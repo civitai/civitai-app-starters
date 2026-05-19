@@ -1,0 +1,34 @@
+{
+  "name": "civitai-sveltekit-app-starter",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:install": "playwright install --with-deps chromium"
+  },
+  "dependencies": {
+    "@civitai/app-sdk": "workspace:^"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.57.0",
+    "@sveltejs/adapter-auto": "^4.0.0",
+    "@sveltejs/kit": "^2.46.0",
+    "@sveltejs/vite-plugin-svelte": "^7.0.4",
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/node": "^20.19.9",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "svelte": "^5.50.0",
+    "svelte-check": "^4.4.0",
+    "tailwindcss": "^3.4.17",
+    "tslib": "^2.6.2",
+    "typescript": "^5.9.2",
+    "vite": "^7.2.0"
+  }
+}

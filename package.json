@@ -1,0 +1,22 @@
+{
+  "name": "civitai-app-starters",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Starter templates and shared SDK for building apps on Civitai.",
+  "packageManager": "pnpm@10.28.1",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter \"./packages/*\" build",
+    "test": "pnpm -r --filter \"./packages/*\" test",
+    "typecheck": "pnpm -r --filter \"./packages/*\" typecheck",
+    "lint": "pnpm -r --filter \"./packages/*\" lint",
+    "e2e:all": "node scripts/run-all-e2e.mjs"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/civitai/civitai-app-starters.git"
+  }
+}
