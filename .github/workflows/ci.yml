@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  sdk:
+    name: SDK (typecheck + test + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm --filter @civitai/app-sdk typecheck
+      - run: pnpm --filter @civitai/app-sdk test
+      - run: pnpm --filter @civitai/app-sdk build
+
+  starter:
+    name: Starter
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        starter:
+          - next-app
+          - sveltekit-app
+          - react-pwa
+          - svelte-pwa
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Starters consume @civitai/app-sdk via workspace:^; package main points at dist/.
+      - run: pnpm --filter @civitai/app-sdk build
+
+      - name: Typecheck
+        run: pnpm --filter ./starters/${{ matrix.starter }} typecheck
+
+      - name: Build
+        run: pnpm --filter ./starters/${{ matrix.starter }} build
+
+      - name: Lint (if defined)
+        run: |
+          if pnpm --filter ./starters/${{ matrix.starter }} exec node -e "process.exit(require('./package.json').scripts?.lint ? 0 : 1)" 2>/dev/null; then
+            pnpm --filter ./starters/${{ matrix.starter }} lint
+          else
+            echo "No lint script for ${{ matrix.starter }} — skipping."
+          fi
