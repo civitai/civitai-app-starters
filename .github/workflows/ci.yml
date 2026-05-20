@@ -62,7 +62,12 @@ jobs:
         run: pnpm --filter ./starters/${{ matrix.starter }} typecheck
 
       - name: Build
+        # Each starter's env helper bails on missing CIVITAI_CLIENT_ID etc.
+        # CI doesn't have real secrets; SKIP_ENV_VALIDATION turns the bailout
+        # off so the build verifies code compiles, not that env is wired.
         run: pnpm --filter ./starters/${{ matrix.starter }} build
+        env:
+          SKIP_ENV_VALIDATION: '1'
 
       - name: Lint (if defined)
         run: |

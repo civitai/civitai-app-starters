@@ -24,6 +24,10 @@ export const config = createEnv({
   },
   runtimeEnv,
   emptyStringAsUndefined: true,
+  // CI runs `vite build` without real env. Setting SKIP_ENV_VALIDATION=1 in
+  // that path turns validation off so the build is reproducible; production
+  // deploys leave it unset and fail fast on missing.
+  skipValidation: !!process.env.SKIP_ENV_VALIDATION,
 });
 
 export const REDIRECT_URI = `${config.APP_URL}/api/auth/callback/civitai`;

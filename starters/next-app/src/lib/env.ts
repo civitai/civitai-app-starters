@@ -31,6 +31,10 @@ export const env = createEnv({
     NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
   },
   emptyStringAsUndefined: true,
+  // CI runs `next build` without real env. Setting SKIP_ENV_VALIDATION=1 in
+  // that path turns validation off so the build is reproducible; production
+  // deploys (Vercel, Render, etc.) leave it unset and fail fast on missing.
+  skipValidation: !!process.env.SKIP_ENV_VALIDATION,
 });
 
 export const REDIRECT_URI = `${env.NEXT_PUBLIC_APP_URL}/api/auth/callback/civitai`;
