@@ -1,4 +1,5 @@
 import { Hono, type Context } from 'hono';
+import { secureHeaders } from 'hono/secure-headers';
 import {
   buildAuthorizeUrl,
   exchangeCode,
@@ -34,6 +35,46 @@ import {
 const production = process.env.NODE_ENV === 'production';
 
 export const app = new Hono();
+
+/**
+ * Security headers on every BFF response. The production hardening path is a
+ * CSP nonce — see https://hono.dev/docs/middleware/builtin/secure-headers.
+ * The static policy here keeps HMR working in dev.
+ */
+const CIVITAI_HOSTS = [
+  'https://civitai.com',
+  'https://*.civitai.com',
+  'https://civitai.red',
+  'https://*.civitai.red',
+  'https://orchestration.civitai.com',
+  'https://orchestration-new.civitai.com',
+  'https://image.civitai.com',
+];
+
+app.use(
+  '*',
+  secureHeaders({
+    contentSecurityPolicy: {
+      defaultSrc: ["'self'"],
+      imgSrc: ["'self'", 'data:', 'blob:', ...CIVITAI_HOSTS],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      fontSrc: ["'self'", 'data:'],
+      connectSrc: ["'self'", 'ws:', ...CIVITAI_HOSTS],
+      frameAncestors: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'", ...CIVITAI_HOSTS],
+      objectSrc: ["'none'"],
+    },
+    xFrameOptions: 'DENY',
+    referrerPolicy: 'strict-origin-when-cross-origin',
+    permissionsPolicy: { camera: [], microphone: [], geolocation: [] },
+    xContentTypeOptions: 'nosniff',
+    // Disable strict-transport-security in dev (we serve HTTP); production
+    // behind a TLS terminator should re-enable it.
+    strictTransportSecurity: production ? 'max-age=31536000; includeSubDomains' : false,
+  }),
+);
 
 // --- helpers ---------------------------------------------------------------
 
