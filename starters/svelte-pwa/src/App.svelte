@@ -25,6 +25,34 @@
   });
 </script>
 
+<svelte:boundary onerror={(err) => console.error('Boundary caught:', err)}>
+  {#snippet failed(error, reset)}
+    <main class="mx-auto flex min-h-screen max-w-2xl flex-col gap-3 px-6 py-12">
+      <h1 class="text-xl font-semibold text-red-700 dark:text-red-300">
+        Something went wrong
+      </h1>
+      <p class="text-sm text-zinc-600 dark:text-zinc-400">
+        {error instanceof Error ? error.message : 'The app hit an unexpected error.'}
+      </p>
+      <div class="flex gap-2">
+        <button
+          type="button"
+          onclick={reset}
+          class="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+        >
+          Try again
+        </button>
+        <button
+          type="button"
+          onclick={() => window.location.reload()}
+          class="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+        >
+          Reload
+        </button>
+      </div>
+    </main>
+  {/snippet}
+
 <main class="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 px-6 py-12">
   <header class="flex items-center justify-between">
     <h1 class="text-2xl font-semibold">Civitai App Starter (Svelte PWA)</h1>
@@ -93,3 +121,4 @@
     + <code class="font-mono">@civitai/app-sdk</code>.
   </footer>
 </main>
+</svelte:boundary>
