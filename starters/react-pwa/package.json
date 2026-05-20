@@ -2,7 +2,30 @@
   "name": "civitai-react-pwa-starter",
   "version": "0.0.0",
   "private": true,
+  "description": "Vite + React 19 PWA starter (with Hono BFF) for building Civitai OAuth + Buzz-powered apps.",
   "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "civitai",
+    "oauth",
+    "pkce",
+    "starter",
+    "template",
+    "vite",
+    "react",
+    "pwa",
+    "hono",
+    "bff",
+    "ai",
+    "generation"
+  ],
+  "homepage": "https://github.com/civitai/civitai-app-starters/tree/main/starters/react-pwa#readme",
+  "bugs": "https://github.com/civitai/civitai-app-starters/issues",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/civitai/civitai-app-starters.git",
+    "directory": "starters/react-pwa"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build && tsc -p tsconfig.server.json",

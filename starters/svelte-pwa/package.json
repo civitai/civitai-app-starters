@@ -2,7 +2,30 @@
   "name": "civitai-svelte-pwa-starter",
   "version": "0.0.0",
   "private": true,
+  "description": "Vite + Svelte 5 (no Kit) PWA starter (with Hono BFF) for building Civitai OAuth + Buzz-powered apps.",
   "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "civitai",
+    "oauth",
+    "pkce",
+    "starter",
+    "template",
+    "vite",
+    "svelte",
+    "pwa",
+    "hono",
+    "bff",
+    "ai",
+    "generation"
+  ],
+  "homepage": "https://github.com/civitai/civitai-app-starters/tree/main/starters/svelte-pwa#readme",
+  "bugs": "https://github.com/civitai/civitai-app-starters/issues",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/civitai/civitai-app-starters.git",
+    "directory": "starters/svelte-pwa"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build && tsc -p tsconfig.server.json",

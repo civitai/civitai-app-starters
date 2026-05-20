@@ -50,6 +50,19 @@
   "publishConfig": {
     "access": "public"
   },
+  "keywords": [
+    "civitai",
+    "oauth",
+    "pkce",
+    "sdk",
+    "orchestrator",
+    "ai",
+    "generation",
+    "session",
+    "encrypted-cookie"
+  ],
+  "homepage": "https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-app-sdk#readme",
+  "bugs": "https://github.com/civitai/civitai-app-starters/issues",
   "repository": {
     "type": "git",
     "url": "https://github.com/civitai/civitai-app-starters.git",

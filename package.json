@@ -17,6 +17,18 @@
     "release": "pnpm --filter @civitai/app-sdk build && changeset publish"
   },
   "license": "MIT",
+  "keywords": [
+    "civitai",
+    "oauth",
+    "pkce",
+    "starter",
+    "template",
+    "ai",
+    "generation",
+    "monorepo"
+  ],
+  "homepage": "https://github.com/civitai/civitai-app-starters#readme",
+  "bugs": "https://github.com/civitai/civitai-app-starters/issues",
   "repository": {
     "type": "git",
     "url": "https://github.com/civitai/civitai-app-starters.git"
