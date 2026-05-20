@@ -16,9 +16,11 @@
   "dependencies": {
     "@civitai/app-sdk": "workspace:^",
     "@hono/node-server": "^1.13.0",
+    "@t3-oss/env-core": "^0.13.0",
     "hono": "^4.6.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
     "@hono/vite-dev-server": "^0.18.0",

@@ -1,29 +1,31 @@
-// .env is bridged into process.env by:
-//   - dev:  vite.config.ts (loadEnv + Object.assign)
-//   - prod: `node --env-file=.env dist-server/index.js` (Node ≥20.6 built-in)
+import { createEnv } from '@t3-oss/env-core';
+import { z } from 'zod';
 
-function required(name: string): string {
-  const v = process.env[name];
-  if (!v) {
-    throw new Error(
-      `Missing required env var ${name}. Copy .env.example to .env and fill it in.`,
-    );
-  }
-  return v;
-}
-
-function optional(name: string, fallback: string): string {
-  return process.env[name] ?? fallback;
-}
-
-export const env = {
-  CIVITAI_CLIENT_ID: required('CIVITAI_CLIENT_ID'),
-  CIVITAI_CLIENT_SECRET: required('CIVITAI_CLIENT_SECRET'),
-  SESSION_SECRET: required('SESSION_SECRET'),
-  APP_URL: required('APP_URL'),
-  CIVITAI_BASE_URL: optional('CIVITAI_BASE_URL', 'https://civitai.com'),
-  ORCHESTRATOR_URL: optional('ORCHESTRATOR_URL', 'https://orchestration.civitai.com'),
-  PORT: Number(optional('PORT', '5174')),
-};
+/**
+ * Build-time-validated env for the Hono BFF. Misconfigured vars fail the
+ * server boot with a single readable error listing every problem at once.
+ * Keep in sync with `.env.example`.
+ *
+ * .env is bridged into `process.env` by:
+ *   - dev:  vite.config.ts (loadEnv + Object.assign)
+ *   - prod: `node --env-file=.env dist-server/index.js` (Node ≥20.6 built-in)
+ *
+ * Never import this from client (`src/`) code — these are server secrets.
+ */
+export const env = createEnv({
+  server: {
+    CIVITAI_CLIENT_ID: z.string().min(1),
+    CIVITAI_CLIENT_SECRET: z.string().min(1),
+    SESSION_SECRET: z
+      .string()
+      .min(32, 'SESSION_SECRET must be ≥32 chars. Generate with `node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"`.'),
+    APP_URL: z.string().url(),
+    CIVITAI_BASE_URL: z.string().url().default('https://civitai.com'),
+    ORCHESTRATOR_URL: z.string().url().default('https://orchestration.civitai.com'),
+    PORT: z.coerce.number().int().positive().default(5174),
+  },
+  runtimeEnv: process.env,
+  emptyStringAsUndefined: true,
+});
 
 export const REDIRECT_URI = `${env.APP_URL}/api/auth/callback/civitai`;

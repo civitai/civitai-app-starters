@@ -29,6 +29,9 @@ importers:
       '@civitai/app-sdk':
         specifier: workspace:^
         version: link:../../packages/civitai-app-sdk
+      '@t3-oss/env-nextjs':
+        specifier: ^0.13.0
+        version: 0.13.11(typescript@5.9.3)(zod@3.25.76)
       next:
         specifier: ^15.5.0
         version: 15.5.18(@playwright/test@1.60.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -38,6 +41,9 @@ importers:
       react-dom:
         specifier: ^19.0.0
         version: 19.2.6(react@19.2.6)
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
     devDependencies:
       '@playwright/test':
         specifier: ^1.57.0
@@ -81,6 +87,9 @@ importers:
       '@hono/node-server':
         specifier: ^1.13.0
         version: 1.19.14(hono@4.12.19)
+      '@t3-oss/env-core':
+        specifier: ^0.13.0
+        version: 0.13.11(typescript@5.9.3)(zod@3.25.76)
       hono:
         specifier: ^4.6.0
         version: 4.12.19
@@ -90,6 +99,9 @@ importers:
       react-dom:
         specifier: ^19.0.0
         version: 19.2.6(react@19.2.6)
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
     devDependencies:
       '@hono/vite-dev-server':
         specifier: ^0.18.0
@@ -136,9 +148,15 @@ importers:
       '@hono/node-server':
         specifier: ^1.13.0
         version: 1.19.14(hono@4.12.19)
+      '@t3-oss/env-core':
+        specifier: ^0.13.0
+        version: 0.13.11(typescript@5.9.3)(zod@3.25.76)
       hono:
         specifier: ^4.6.0
         version: 4.12.19
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
     devDependencies:
       '@hono/vite-dev-server':
         specifier: ^0.18.0
@@ -188,6 +206,12 @@ importers:
       '@civitai/app-sdk':
         specifier: workspace:^
         version: link:../../packages/civitai-app-sdk
+      '@t3-oss/env-core':
+        specifier: ^0.13.0
+        version: 0.13.11(typescript@5.9.3)(zod@3.25.76)
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
     devDependencies:
       '@playwright/test':
         specifier: ^1.57.0
@@ -1629,6 +1653,40 @@ packages:
 
   '@swc/helpers@0.5.15':
     resolution: {integrity: sha512-JQ5TuMi45Owi4/BIMAJBoSQoOJu12oOk/gADqlcUL9JEdHB8vyjUSsxqeNXnmXHjYKMi2WcYtezGEEhqUI/E2g==}
+
+  '@t3-oss/env-core@0.13.11':
+    resolution: {integrity: sha512-sM7GYY+KL7H/Hl0BE0inWfk3nRHZOLhmVn7sHGxaZt9FAR6KqREXAE+6TqKfiavfXmpRxO/OZ2QgKRd+oiBYRQ==}
+    peerDependencies:
+      arktype: ^2.1.0
+      typescript: '>=5.0.0'
+      valibot: ^1.0.0-beta.7 || ^1.0.0
+      zod: ^3.24.0 || ^4.0.0
+    peerDependenciesMeta:
+      arktype:
+        optional: true
+      typescript:
+        optional: true
+      valibot:
+        optional: true
+      zod:
+        optional: true
+
+  '@t3-oss/env-nextjs@0.13.11':
+    resolution: {integrity: sha512-NC+3j7YWgpzdFu1t5y/8wqibTK0lm5RS4bjXA1n8uwik3wIR4iZM4Fa+U2BaMa5k3Qk8RZiYhoAIX0WogmGkzg==}
+    peerDependencies:
+      arktype: ^2.1.0
+      typescript: '>=5.0.0'
+      valibot: ^1.0.0-beta.7 || ^1.0.0
+      zod: ^3.24.0 || ^4.0.0
+    peerDependenciesMeta:
+      arktype:
+        optional: true
+      typescript:
+        optional: true
+      valibot:
+        optional: true
+      zod:
+        optional: true
 
   '@tailwindcss/node@4.3.0':
     resolution: {integrity: sha512-aFb4gUhFOgdh9AXo4IzBEOzBkkAxm9VigwDJnMIYv3lcfXCJVesNfbEaBl4BNgVRyid92AmdviqwBUBRKSeY3g==}
@@ -4156,6 +4214,9 @@ packages:
   zimmerframe@1.1.4:
     resolution: {integrity: sha512-B58NGBEoc8Y9MWWCQGl/gq9xBCe4IiKM0a2x7GZdQKOW5Exr8S1W24J6OgM1njK8xCRGvAJIL/MxXHf6SkmQKQ==}
 
+  zod@3.25.76:
+    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+
 snapshots:
 
   '@alloc/quick-lru@5.2.0': {}
@@ -5572,6 +5633,18 @@ snapshots:
   '@swc/helpers@0.5.15':
     dependencies:
       tslib: 2.8.1
+
+  '@t3-oss/env-core@0.13.11(typescript@5.9.3)(zod@3.25.76)':
+    optionalDependencies:
+      typescript: 5.9.3
+      zod: 3.25.76
+
+  '@t3-oss/env-nextjs@0.13.11(typescript@5.9.3)(zod@3.25.76)':
+    dependencies:
+      '@t3-oss/env-core': 0.13.11(typescript@5.9.3)(zod@3.25.76)
+    optionalDependencies:
+      typescript: 5.9.3
+      zod: 3.25.76
 
   '@tailwindcss/node@4.3.0':
     dependencies:
@@ -8368,3 +8441,5 @@ snapshots:
   yocto-queue@0.1.0: {}
 
   zimmerframe@1.1.4: {}
+
+  zod@3.25.76: {}

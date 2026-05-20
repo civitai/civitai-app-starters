@@ -1,26 +1,29 @@
-import { env } from '$env/dynamic/private';
+import { createEnv } from '@t3-oss/env-core';
+import { env as runtimeEnv } from '$env/dynamic/private';
+import { z } from 'zod';
 
-function required(name: keyof typeof env): string {
-  const v = env[name];
-  if (!v) {
-    throw new Error(
-      `Missing required env var ${name}. Copy .env.example to .env and fill it in.`,
-    );
-  }
-  return v;
-}
-
-function optional(name: keyof typeof env, fallback: string): string {
-  return env[name] ?? fallback;
-}
-
-export const config = {
-  CIVITAI_CLIENT_ID: required('CIVITAI_CLIENT_ID'),
-  CIVITAI_CLIENT_SECRET: required('CIVITAI_CLIENT_SECRET'),
-  SESSION_SECRET: required('SESSION_SECRET'),
-  APP_URL: required('APP_URL'),
-  CIVITAI_BASE_URL: optional('CIVITAI_BASE_URL', 'https://civitai.com'),
-  ORCHESTRATOR_URL: optional('ORCHESTRATOR_URL', 'https://orchestration.civitai.com'),
-};
+/**
+ * Build-time-validated env. Misconfigured vars fail the first request (or
+ * the `vite build`) with a single readable error listing every problem at
+ * once. Keep in sync with `.env.example`.
+ *
+ * SvelteKit's `$env/dynamic/private` reads server-only env at request time,
+ * so this module is safe to import from `hooks.server.ts`, `+page.server.ts`,
+ * and `+server.ts` — never from client code.
+ */
+export const config = createEnv({
+  server: {
+    CIVITAI_CLIENT_ID: z.string().min(1),
+    CIVITAI_CLIENT_SECRET: z.string().min(1),
+    SESSION_SECRET: z
+      .string()
+      .min(32, 'SESSION_SECRET must be ≥32 chars. Generate with `node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"`.'),
+    APP_URL: z.string().url(),
+    CIVITAI_BASE_URL: z.string().url().default('https://civitai.com'),
+    ORCHESTRATOR_URL: z.string().url().default('https://orchestration.civitai.com'),
+  },
+  runtimeEnv,
+  emptyStringAsUndefined: true,
+});
 
 export const REDIRECT_URI = `${config.APP_URL}/api/auth/callback/civitai`;
