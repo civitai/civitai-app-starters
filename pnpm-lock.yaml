@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@civitai/app-sdk': workspace:*
+
 importers:
 
   .:
@@ -27,7 +30,7 @@ importers:
   starters/next-app:
     dependencies:
       '@civitai/app-sdk':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../../packages/civitai-app-sdk
       '@t3-oss/env-nextjs':
         specifier: ^0.13.0
@@ -82,7 +85,7 @@ importers:
   starters/react-pwa:
     dependencies:
       '@civitai/app-sdk':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../../packages/civitai-app-sdk
       '@hono/node-server':
         specifier: ^1.13.0
@@ -143,7 +146,7 @@ importers:
   starters/svelte-pwa:
     dependencies:
       '@civitai/app-sdk':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../../packages/civitai-app-sdk
       '@hono/node-server':
         specifier: ^1.13.0
@@ -204,7 +207,7 @@ importers:
   starters/sveltekit-app:
     dependencies:
       '@civitai/app-sdk':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../../packages/civitai-app-sdk
       '@t3-oss/env-core':
         specifier: ^0.13.0

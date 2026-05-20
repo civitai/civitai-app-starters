@@ -1,3 +1,10 @@
 packages:
   - 'packages/*'
   - 'starters/*'
+
+# Starters depend on @civitai/app-sdk via a real npm range (^0.1.0) so the
+# tiged'd package.json works out of the box for external devs. Setting this
+# to true tells pnpm to satisfy that range from the local workspace whenever
+# the version matches — so monorepo dev still picks up SDK changes without
+# a publish.
+link-workspace-packages: true
