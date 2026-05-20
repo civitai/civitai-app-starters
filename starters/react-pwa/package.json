@@ -50,7 +50,7 @@
     "@hono/vite-dev-server": "^0.18.0",
     "@playwright/test": "^1.57.0",
     "@types/node": "^25.9.1",
-    "@types/react": "^19.0.0",
+    "@types/react": "^19.2.15",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.4.0",
     "autoprefixer": "^10.4.20",
