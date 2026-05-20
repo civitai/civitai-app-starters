@@ -31,7 +31,7 @@
   "bugs": "https://github.com/civitai/civitai-app-starters/issues",
   "repository": {
     "type": "git",
-    "url": "https://github.com/civitai/civitai-app-starters.git"
+    "url": "git+https://github.com/civitai/civitai-app-starters.git"
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.10"
