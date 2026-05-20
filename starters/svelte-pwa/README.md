@@ -1,5 +1,15 @@
 # Civitai Svelte PWA Starter
 
+[![CI](https://github.com/civitai/civitai-app-starters/actions/workflows/ci.yml/badge.svg)](https://github.com/civitai/civitai-app-starters/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen.svg)](https://nodejs.org)
+[![Vite](https://img.shields.io/badge/Vite-7-646cff.svg)](https://vitejs.dev)
+[![Svelte](https://img.shields.io/badge/Svelte-5-ff3e00.svg)](https://svelte.dev)
+[![@civitai/app-sdk](https://img.shields.io/npm/v/@civitai/app-sdk.svg?label=%40civitai%2Fapp-sdk)](https://www.npmjs.com/package/@civitai/app-sdk)
+
+[![Open in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://stackblitz.com/fork/github/civitai/civitai-app-starters/tree/main/starters/svelte-pwa)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https%3A%2F%2Fgithub.com%2Fcivitai%2Fcivitai-app-starters)
+
 Minimal Vite + bare Svelte 5 (no Kit) PWA for Civitai apps. OAuth login via a tiny [Hono](https://hono.dev) BFF, encrypted-cookie sessions, Buzz balance, cost preview, and a single image generation flow.
 
 Pick this if you want Svelte runes without SvelteKit's conventions (load functions, `+page.svelte` routes, adapters). For SSR + Kit's routing, use [`sveltekit-app`](../sveltekit-app/) instead.

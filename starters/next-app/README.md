@@ -1,5 +1,13 @@
 # Civitai Next.js Starter
 
+[![CI](https://github.com/civitai/civitai-app-starters/actions/workflows/ci.yml/badge.svg)](https://github.com/civitai/civitai-app-starters/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen.svg)](https://nodejs.org)
+[![Next.js](https://img.shields.io/badge/Next.js-15-black.svg)](https://nextjs.org)
+[![@civitai/app-sdk](https://img.shields.io/npm/v/@civitai/app-sdk.svg?label=%40civitai%2Fapp-sdk)](https://www.npmjs.com/package/@civitai/app-sdk)
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fcivitai%2Fcivitai-app-starters%2Ftree%2Fmain%2Fstarters%2Fnext-app&env=CIVITAI_CLIENT_ID,CIVITAI_CLIENT_SECRET,SESSION_SECRET,NEXT_PUBLIC_APP_URL&envDescription=Civitai+OAuth+App+credentials+%2B+a+32-byte+session+secret&envLink=https%3A%2F%2Fdeveloper.civitai.com%2Fdocs%2Foauth&project-name=civitai-next-app&repository-name=civitai-next-app)
+
 Minimal Next.js 15 App Router starter for building [Civitai](https://civitai.com) apps. Includes OAuth login, encrypted-cookie sessions, Buzz balance, cost preview, and a single image generation flow.
 
 Built on `@civitai/app-sdk` — see the [SDK README](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-app-sdk#readme) for the underlying primitives.

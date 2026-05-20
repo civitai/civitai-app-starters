@@ -1,12 +1,18 @@
 # Civitai App Starters
 
+[![CI](https://github.com/civitai/civitai-app-starters/actions/workflows/ci.yml/badge.svg)](https://github.com/civitai/civitai-app-starters/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen.svg)](https://nodejs.org)
+[![pnpm](https://img.shields.io/badge/pnpm-10-f69220.svg)](https://pnpm.io)
+[![@civitai/app-sdk](https://img.shields.io/npm/v/@civitai/app-sdk.svg?label=%40civitai%2Fapp-sdk)](https://www.npmjs.com/package/@civitai/app-sdk)
+
 Starter templates for building apps on [Civitai](https://civitai.com), plus the shared `@civitai/app-sdk` package they all use.
 
 ## What's in here
 
-- **`packages/civitai-app-sdk`** — OAuth + PKCE, encrypted-cookie sessions, scope helpers, and a typed wrapper around [`@civitai/client`](https://www.npmjs.com/package/@civitai/client) for orchestrator calls. Every starter depends on this. Published to npm as `@civitai/app-sdk`.
-- **`starters/next-app`** — Next.js 15 (App Router) + Better Auth + Tailwind. SSR-friendly, SEO-capable. Best default.
-- **`starters/sveltekit-app`** — SvelteKit 2 + Auth.js v5 + Tailwind. Same demo surface as `next-app`.
+- **`packages/civitai-app-sdk`** — OAuth + PKCE, encrypted-cookie sessions, scope helpers, and orchestrator-call helpers. Every starter depends on this. Published to npm as `@civitai/app-sdk`.
+- **`starters/next-app`** — Next.js 15 (App Router) + Tailwind. SSR-friendly, SEO-capable. Best default.
+- **`starters/sveltekit-app`** — SvelteKit 2 + Tailwind. Same demo surface as `next-app`.
 - **`starters/react-pwa`** — Vite + React 19 + tiny Hono BFF for OAuth token exchange. SPA/PWA shape — use for tools, games, focused gen UIs that don't need SEO.
 - **`starters/svelte-pwa`** — Vite + bare Svelte 5 (no Kit) + tiny Hono BFF. SPA/PWA shape, Svelte audience that prefers not to use Kit.
 
