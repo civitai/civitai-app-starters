@@ -1,0 +1,15 @@
+# Default — anything not otherwise matched
+*                                @civitai/platform
+
+# Shared SDK: security-sensitive (OAuth, sessions, scopes)
+/packages/civitai-app-sdk/       @civitai/platform
+
+# Starters
+/starters/next-app/              @civitai/platform
+/starters/sveltekit-app/         @civitai/platform
+/starters/react-pwa/             @civitai/platform
+/starters/svelte-pwa/            @civitai/platform
+
+# CI, repo policy
+/.github/                        @civitai/platform
+/SECURITY.md                     @civitai/platform

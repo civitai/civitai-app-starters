@@ -1,0 +1,40 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      types:
+        patterns: ['@types/*']
+      eslint:
+        patterns: ['eslint*', '@typescript-eslint/*']
+      playwright:
+        patterns: ['@playwright/*', 'playwright']
+      next:
+        patterns: ['next', 'eslint-config-next']
+      sveltekit:
+        patterns: ['@sveltejs/*', 'svelte', 'svelte-check']
+      react:
+        patterns: ['react', 'react-dom', '@types/react', '@types/react-dom']
+      vite:
+        patterns: ['vite', '@vitejs/*', 'vite-plugin-*', '@hono/vite-dev-server']
+      hono:
+        patterns: ['hono', '@hono/*']
+      tailwind:
+        patterns: ['tailwindcss', '@tailwindcss/*', 'autoprefixer', 'postcss']
+    ignore:
+      # Major bumps land via dedicated PRs, not Dependabot.
+      - dependency-name: 'typescript'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'vitest'
+        update-types: ['version-update:semver-major']

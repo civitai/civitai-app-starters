@@ -1,0 +1,87 @@
+name: Bug report
+description: Something broken in a starter template or the shared SDK.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing! For security issues, please follow
+        [SECURITY.md](../blob/main/SECURITY.md) instead of opening a
+        public issue.
+
+  - type: dropdown
+    id: starter
+    attributes:
+      label: Which starter (or the SDK)?
+      options:
+        - starters/next-app
+        - starters/sveltekit-app
+        - starters/react-pwa
+        - starters/svelte-pwa
+        - packages/civitai-app-sdk
+        - Repo-level (CI, docs, monorepo glue)
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear, short description of the bug.
+      placeholder: Login flow throws on the OAuth callback.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: |
+        Minimum steps to reproduce. If you can share a public repo or a
+        StackBlitz, link it. Otherwise paste the smallest config / code
+        snippet that reproduces.
+      placeholder: |
+        1. npx tiged civitai/civitai-app-starters/starters/next-app demo
+        2. cp .env.example .env  # fill in client id/secret
+        3. pnpm install && pnpm dev
+        4. Click "Sign in with Civitai"
+        5. See error: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: input
+    id: starter-version
+    attributes:
+      label: Starter / SDK version (commit SHA or @civitai/app-sdk version)
+      placeholder: e.g. SDK 0.1.0, starter cloned from main @ abc123
+    validations:
+      required: true
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node version
+      placeholder: e.g. v20.18.0
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: macOS 15, Ubuntu 24.04, Windows 11
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / error output
+      render: shell

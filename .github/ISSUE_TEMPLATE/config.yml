@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Civitai developer docs
+    url: https://developer.civitai.com/
+    about: Questions about the Civitai platform, OAuth scopes, or the orchestrator API.
+  - name: Security disclosure
+    url: https://github.com/civitai/civitai-app-starters/blob/main/SECURITY.md
+    about: Report vulnerabilities privately — please don't open a public issue.
+  - name: Civitai Discord
+    url: https://discord.gg/civitai
+    about: General community questions, app showcase, and chat.
