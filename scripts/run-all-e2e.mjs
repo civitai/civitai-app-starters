@@ -10,9 +10,12 @@
  * svelte-pwa):
  *   1. Freeing the target port if a stale process is bound (cross-platform).
  *   2. Spawning `pnpm dev` (with `--port` for next-app) with NODE_TLS_REJECT_UNAUTHORIZED=0.
- *   3. Waiting for the framework's ready line (or failing on EADDRINUSE / 90s timeout).
- *   4. Pre-warming the dev server with a single fetch so cold-compile doesn't
- *      blow Playwright's per-test timeout.
+ *   3. Polling the starter's /api/health endpoint until it returns 2xx (or
+ *      failing on EADDRINUSE / dev-process exit / 90s timeout). Health is a
+ *      stronger ready signal than a stdout regex — it proves the server is
+ *      actually serving requests, not just that the framework printed "ready".
+ *   4. Pre-warming the dev server with a single fetch on `/` so cold-compile
+ *      of the home page doesn't blow Playwright's per-test timeout.
  *   5. Running `pnpm test:e2e` with APP_URL / CIVITAI_BASE_URL / TEST_USER_ID.
  *   6. Capturing pass/fail + parsed test count, then tearing the dev server down
  *      (SIGTERM → SIGKILL after 5s, plus a re-kill of any zombie on the port).
@@ -65,7 +68,7 @@ const testUserId = argv.user ?? process.env.TEST_USER_ID ?? '1';
  * @property {string} dir         relative path under repoRoot
  * @property {number} port        dev server port (also the APP_URL port)
  * @property {string[]} devArgs   extra args appended to `pnpm dev`
- * @property {RegExp} readyRegex  framework's "ready" stdout line
+ * @property {string} healthPath  path polled for ready signal (200 = ready)
  */
 
 /** @type {Starter[]} */
@@ -76,28 +79,28 @@ const STARTERS = [
     port: 3334,
     // next-app doesn't read APP_URL for its listen port; force it here.
     devArgs: ['--port', '3334'],
-    readyRegex: /Ready in|ready in|started server on/i,
+    healthPath: '/api/health',
   },
   {
     name: 'sveltekit-app',
     dir: 'starters/sveltekit-app',
     port: 5173,
     devArgs: [],
-    readyRegex: /ready in|VITE v.* {2}ready/i,
+    healthPath: '/api/health',
   },
   {
     name: 'react-pwa',
     dir: 'starters/react-pwa',
     port: 5174,
     devArgs: [],
-    readyRegex: /ready in|VITE v.* {2}ready/i,
+    healthPath: '/api/health',
   },
   {
     name: 'svelte-pwa',
     dir: 'starters/svelte-pwa',
     port: 5175,
     devArgs: [],
-    readyRegex: /ready in|VITE v.* {2}ready/i,
+    healthPath: '/api/health',
   },
 ];
 
@@ -307,10 +310,12 @@ async function runStarter(starter) {
     devExitCode = code;
   });
 
-  // 3. Wait for ready.
+  // 3. Wait for ready — poll the health endpoint until it returns 2xx.
+  const healthUrl = `http://localhost:${starter.port}${starter.healthPath}`;
   const readyDeadline = Date.now() + 90_000;
   let ready = false;
   let readyError = null;
+  let lastFetchError = null;
   while (Date.now() < readyDeadline) {
     if (/EADDRINUSE/.test(devBuffer)) {
       readyError = 'dev server reported EADDRINUSE';
@@ -320,14 +325,23 @@ async function runStarter(starter) {
       readyError = `dev server exited before ready (code ${devExitCode})`;
       break;
     }
-    if (starter.readyRegex.test(devBuffer)) {
-      ready = true;
-      break;
+    try {
+      const res = await fetch(healthUrl);
+      // Drain so the connection releases.
+      await res.arrayBuffer().catch(() => {});
+      if (res.ok) {
+        ready = true;
+        break;
+      }
+      lastFetchError = `HTTP ${res.status}`;
+    } catch (err) {
+      // Connection refused while dev server is booting — expected.
+      lastFetchError = err?.code ?? err?.message ?? 'unknown';
     }
-    await sleep(250);
+    await sleep(500);
   }
   if (!ready) {
-    readyError ??= `dev server did not become ready within 90s (no match for ${starter.readyRegex})`;
+    readyError ??= `dev server did not return 2xx from ${healthUrl} within 90s (last: ${lastFetchError ?? 'no attempt'})`;
     log(`error: ${readyError}`);
     await stopDev(devChild, starter, log);
     return {
@@ -339,7 +353,7 @@ async function runStarter(starter) {
       note: readyError,
     };
   }
-  log(`dev server ready`);
+  log(`dev server ready (${healthUrl} → 200)`);
 
   // 4. Pre-warm so first Playwright nav doesn't time out on cold compile.
   const appUrl = `http://localhost:${starter.port}`;

@@ -93,6 +93,21 @@ app.use(
   }),
 );
 
+// --- Health ----------------------------------------------------------------
+
+const STARTED_AT = Date.now();
+
+/** Liveness probe — never touches Civitai. Used by container platforms and
+ * by the repo's e2e runner to know when the dev server is actually serving. */
+app.get('/api/health', (c) => {
+  c.header('Cache-Control', 'no-store');
+  return c.json({
+    status: 'ok',
+    uptime: Math.floor((Date.now() - STARTED_AT) / 1000),
+    startedAt: new Date(STARTED_AT).toISOString(),
+  });
+});
+
 // --- Auth ------------------------------------------------------------------
 
 app.post('/api/auth/login', (c) => {
