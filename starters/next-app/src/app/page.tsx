@@ -83,7 +83,7 @@ async function LoggedIn({ accessToken, scope }: { accessToken: string; scope: nu
       <section className="rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
         {meError ? (
           <p className="text-sm text-red-600">
-            Couldn't load profile: <code className="font-mono">{meError}</code>
+            Couldn&apos;t load profile: <code className="font-mono">{meError}</code>
           </p>
         ) : (
           <>

@@ -48,6 +48,9 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
     devDependencies:
+      '@eslint/eslintrc':
+        specifier: ^3.2.0
+        version: 3.3.5
       '@playwright/test':
         specifier: ^1.57.0
         version: 1.60.0

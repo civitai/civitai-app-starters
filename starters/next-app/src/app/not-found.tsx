@@ -5,7 +5,7 @@ export default function NotFound() {
     <section className="flex flex-col gap-3">
       <h1 className="text-xl font-semibold">Page not found</h1>
       <p className="text-sm text-zinc-600 dark:text-zinc-400">
-        The page you were looking for doesn't exist.
+        The page you were looking for doesn&apos;t exist.
       </p>
       <Link
         href="/"
