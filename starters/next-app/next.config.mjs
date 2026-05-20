@@ -11,7 +11,7 @@
  * clickjacking. `Referrer-Policy: strict-origin-when-cross-origin` keeps the
  * OAuth `code=` query param out of cross-origin Referer headers.
  */
-const CIVITAI_HOSTS = [
+const CIVITAI_HOSTS_BASE = [
   'https://civitai.com',
   'https://*.civitai.com',
   'https://civitai.red',
@@ -20,6 +20,24 @@ const CIVITAI_HOSTS = [
   'https://orchestration-new.civitai.com',
   'https://image.civitai.com',
 ];
+
+/** Read CIVITAI_BASE_URL / ORCHESTRATOR_URL at config-load and fold their
+ * origins into the CSP allow-list. Lets the starter point at a self-hosted
+ * Civitai dev (e.g. https://civitai-dev.blue) without users having to edit
+ * CSP by hand. */
+function originOrNull(url) {
+  try { return new URL(url).origin; } catch { return null; }
+}
+
+const CIVITAI_HOSTS = Array.from(
+  new Set(
+    [
+      ...CIVITAI_HOSTS_BASE,
+      originOrNull(process.env.CIVITAI_BASE_URL),
+      originOrNull(process.env.ORCHESTRATOR_URL),
+    ].filter(Boolean),
+  ),
+);
 
 const csp = [
   `default-src 'self'`,

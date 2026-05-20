@@ -1,4 +1,5 @@
 import { dev } from '$app/environment';
+import { config } from '$lib/env';
 import { readSession } from '$lib/session';
 import type { Handle } from '@sveltejs/kit';
 
@@ -8,7 +9,7 @@ import type { Handle } from '@sveltejs/kit';
  * https://svelte.dev/docs/kit/configuration#csp. The static policy here is
  * deliberately conservative-but-not-strict so HMR keeps working in dev.
  */
-const CIVITAI_HOSTS = [
+const CIVITAI_HOSTS_BASE = [
   'https://civitai.com',
   'https://*.civitai.com',
   'https://civitai.red',
@@ -17,6 +18,23 @@ const CIVITAI_HOSTS = [
   'https://orchestration-new.civitai.com',
   'https://image.civitai.com',
 ];
+
+/** Fold the configured CIVITAI_BASE_URL / ORCHESTRATOR_URL origins into the
+ * CSP allow-list so a self-hosted Civitai dev (e.g. https://civitai-dev.blue)
+ * works without users hand-editing CSP. */
+function originOrNull(url: string): string | null {
+  try { return new URL(url).origin; } catch { return null; }
+}
+
+const CIVITAI_HOSTS = Array.from(
+  new Set(
+    [
+      ...CIVITAI_HOSTS_BASE,
+      originOrNull(config.CIVITAI_BASE_URL),
+      originOrNull(config.ORCHESTRATOR_URL),
+    ].filter((host): host is string => Boolean(host)),
+  ),
+);
 
 const csp = [
   `default-src 'self'`,

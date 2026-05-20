@@ -41,7 +41,7 @@ export const app = new Hono();
  * CSP nonce — see https://hono.dev/docs/middleware/builtin/secure-headers.
  * The static policy here keeps HMR working in dev.
  */
-const CIVITAI_HOSTS = [
+const CIVITAI_HOSTS_BASE = [
   'https://civitai.com',
   'https://*.civitai.com',
   'https://civitai.red',
@@ -50,6 +50,23 @@ const CIVITAI_HOSTS = [
   'https://orchestration-new.civitai.com',
   'https://image.civitai.com',
 ];
+
+/** Fold the configured CIVITAI_BASE_URL / ORCHESTRATOR_URL origins into the
+ * CSP allow-list so a self-hosted Civitai dev (e.g. https://civitai-dev.blue)
+ * works without users hand-editing CSP. */
+function originOrNull(url: string): string | null {
+  try { return new URL(url).origin; } catch { return null; }
+}
+
+const CIVITAI_HOSTS = Array.from(
+  new Set(
+    [
+      ...CIVITAI_HOSTS_BASE,
+      originOrNull(env.CIVITAI_BASE_URL),
+      originOrNull(env.ORCHESTRATOR_URL),
+    ].filter((host): host is string => Boolean(host)),
+  ),
+);
 
 app.use(
   '*',
