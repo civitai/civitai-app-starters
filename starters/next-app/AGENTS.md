@@ -1,6 +1,14 @@
 # Agent Guide — `next-app`
 
-You're inside the Next.js 15 App Router starter for Civitai apps. The user (a developer) cloned this via `npx tiged` to bootstrap their own app. Help them extend it.
+> **If you only read one thing:** this is a Next.js 15 App Router app whose
+> only persistent state is an encrypted session cookie. OAuth tokens never
+> leave the server. The demo: login → balance + scopes → cost preview →
+> submit one generation → display.
+
+You're inside the Next.js 15 App Router starter for Civitai apps. The user
+cloned this via `npx tiged` to bootstrap their own app — there is **no
+monorepo around you**; `@civitai/app-sdk` is an npm dependency, not a
+sibling workspace. Help them extend it.
 
 ## Stack
 
@@ -67,3 +75,17 @@ src/
 3. Submit prompt → client `POST /api/generate/estimate` → display Buzz cost → user confirms.
 4. Client `POST /api/generate` → returns workflow ID → client polls `GET /api/workflow/[id]` every 2s.
 5. On terminal status → display image(s) or error.
+
+## Verifying changes
+
+After any meaningful change, run the matching check before declaring done:
+
+| You touched | Run |
+|---|---|
+| Anything in `src/` | `pnpm typecheck` |
+| `next.config.mjs`, env wiring, security headers | `pnpm build` |
+| Auth flow (`src/app/api/auth/**`), session helpers | `pnpm test:e2e -- auth-flow` |
+| Generation flow (`src/app/api/generate/**`, workflow polling) | `pnpm test:e2e -- generation` |
+
+`pnpm test:e2e` needs a Civitai dev server with the `testing-login` provider
+and matching OAuth app — see [README › End-to-end tests](./README.md#end-to-end-tests).

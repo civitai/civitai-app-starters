@@ -1,6 +1,14 @@
 # Agent Guide — `sveltekit-app`
 
-This is a SvelteKit 2 starter for Civitai apps. The user cloned it via `npx tiged` to bootstrap their own app. Help them extend it.
+> **If you only read one thing:** this is a SvelteKit 2 app whose only
+> persistent state is an encrypted session cookie. OAuth tokens never leave
+> the server (`+server.ts` handlers + `hooks.server.ts`). The demo: login →
+> balance + scopes → cost preview → submit one generation → display.
+
+This is a SvelteKit 2 starter for Civitai apps. The user cloned it via
+`npx tiged` to bootstrap their own app — there is **no monorepo around
+you**; `@civitai/app-sdk` is an npm dependency, not a sibling workspace.
+Help them extend it.
 
 ## Stack
 
@@ -76,3 +84,17 @@ src/
 4. Submit prompt → client `POST /api/generate/estimate` → display Buzz cost.
 5. Confirm → client `POST /api/generate` → returns workflowId → client polls `GET /api/workflow/[id]` every 2s.
 6. On terminal status → display image blobs from `steps[0].output.blobs`.
+
+## Verifying changes
+
+After any meaningful change, run the matching check before declaring done:
+
+| You touched | Run |
+|---|---|
+| Anything in `src/` | `pnpm typecheck` (`svelte-check` + svelte-kit sync) |
+| `svelte.config.js`, env wiring, security headers | `pnpm build` |
+| Auth flow (`src/routes/api/auth/**`, `hooks.server.ts`, `$lib/session.ts`) | `pnpm test:e2e -- auth-flow` |
+| Generation flow (`src/routes/api/generate/**`, workflow polling) | `pnpm test:e2e -- generation` |
+
+`pnpm test:e2e` needs a Civitai dev server with the `testing-login` provider
+and matching OAuth app — see [README › End-to-end tests](./README.md#end-to-end-tests).

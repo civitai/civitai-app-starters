@@ -12,7 +12,7 @@
 
 Minimal Vite + bare Svelte 5 (no Kit) PWA for Civitai apps. OAuth login via a tiny [Hono](https://hono.dev) BFF, encrypted-cookie sessions, Buzz balance, cost preview, and a single image generation flow.
 
-Pick this if you want Svelte runes without SvelteKit's conventions (load functions, `+page.svelte` routes, adapters). For SSR + Kit's routing, use [`sveltekit-app`](../sveltekit-app/) instead.
+Pick this if you want Svelte runes without SvelteKit's conventions (load functions, `+page.svelte` routes, adapters). For SSR + Kit's routing, use [`sveltekit-app`](https://github.com/civitai/civitai-app-starters/tree/main/starters/sveltekit-app) instead.
 
 ## Getting started
 

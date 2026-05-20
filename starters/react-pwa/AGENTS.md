@@ -1,6 +1,15 @@
 # Agent Guide — `react-pwa`
 
-You're inside the React PWA starter for Civitai apps. The user cloned this to bootstrap their own app. Help them extend it.
+> **If you only read one thing:** this is a Vite + React SPA with a
+> co-located Hono BFF at `/api/*`. OAuth tokens live only on the BFF
+> (`server/`); the SPA (`src/`) only ever sees an opaque `civ_session`
+> cookie. The demo: login → balance + scopes → cost preview → submit one
+> generation → display.
+
+You're inside the React PWA starter for Civitai apps. The user cloned this
+to bootstrap their own app — there is **no monorepo around you**;
+`@civitai/app-sdk` is an npm dependency, not a sibling workspace. Help them
+extend it.
 
 ## Stack
 
@@ -76,3 +85,17 @@ src/                          # React SPA (tsconfig.json)
 4. User clicks "Preview Buzz cost" → `POST /api/generate/estimate` → display cost.
 5. User clicks "Generate" → `POST /api/generate` → returns `workflowId` → SPA polls `GET /api/workflow/[id]` every 2s.
 6. On terminal status → display image blobs from `steps[0].output.blobs`.
+
+## Verifying changes
+
+After any meaningful change, run the matching check before declaring done:
+
+| You touched | Run |
+|---|---|
+| Anything in `src/` or `server/` | `pnpm typecheck` (both tsconfigs) |
+| `vite.config.ts`, env wiring, security headers | `pnpm build` |
+| Auth flow (`server/app.ts` auth routes, `server/session.ts`) | `pnpm test:e2e -- auth-flow` |
+| Generation flow (`server/app.ts` generate routes, workflow polling) | `pnpm test:e2e -- generation` |
+
+`pnpm test:e2e` needs a Civitai dev server with the `testing-login` provider
+and matching OAuth app — see [README › End-to-end tests](./README.md#end-to-end-tests).

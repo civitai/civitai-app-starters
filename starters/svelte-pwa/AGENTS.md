@@ -1,82 +1,88 @@
 # Agent Guide — `svelte-pwa`
 
-You're inside the bare Svelte 5 (no Kit) PWA starter for Civitai apps. The user (a developer) cloned this via `npx tiged` to bootstrap their own app. Help them extend it.
+> **If you only read one thing:** Vite + Svelte 5 (no Kit) SPA with a
+> co-located Hono BFF at `/api/*`. OAuth tokens live only on the BFF
+> (`server/`); the SPA (`src/`) sees only an opaque `civ_session` cookie.
+> Demo: login → balance + scopes → cost preview → submit one generation →
+> display.
+
+You're inside the bare Svelte 5 (no Kit) PWA starter for Civitai apps. The
+user cloned this via `npx tiged` — there is **no monorepo around you**;
+`@civitai/app-sdk` is an npm dependency, not a sibling workspace.
 
 ## Stack
 
-- Vite 7 + Svelte 5 with runes + TypeScript strict
-- Tailwind 3.4
-- Hono BFF mounted at `/api/*` via `@hono/vite-dev-server` (dev) / `@hono/node-server` (prod)
-- `vite-plugin-pwa` for manifest + service worker
-- `@civitai/app-sdk` for all OAuth + orchestrator glue
-- **No SvelteKit.** No `+page.svelte`, no load functions, no adapter — pure Svelte components mounted to `#app`.
+Vite 7 + Svelte 5 (runes) + TypeScript strict, Tailwind 3.4, Hono BFF via
+`@hono/vite-dev-server` (dev) / `@hono/node-server` (prod), `vite-plugin-pwa`,
+`@civitai/app-sdk`. **No SvelteKit** — pure components mounted to `#app`.
 
 ## Why this shape
 
-OAuth confidential client → `client_secret` MUST stay server-side. The BFF (`server/app.ts`) is the only thing that ever sees `client_secret` or the user's access token; the SPA holds only an opaque `httpOnly` `civ_session` cookie. **Do not** refactor to "talk to Civitai directly from Svelte" — that leaks the secret or breaks the auth model.
+OAuth confidential client → `client_secret` MUST stay server-side. The BFF
+(`server/app.ts`) is the only thing that sees `client_secret` or the user's
+access token; the SPA holds only an opaque `httpOnly` `civ_session` cookie.
+**Do not** refactor to "talk to Civitai directly from Svelte" — that leaks
+the secret or breaks the auth model.
 
-## File layout
+## Where things live
 
-```
-server/                       # Hono BFF (tsconfig.server.json)
-├── app.ts                    # routes — default-exports the Hono `app`. Both
-│                             #   dev (@hono/vite-dev-server loads this via
-│                             #   `entry: 'server/app.ts'`) and prod
-│                             #   (server/index.ts imports it) consume it.
-├── index.ts                  # prod entry only — calls @hono/node-server's
-│                             #   serve() and serves static dist/. NOT loaded
-│                             #   in dev (Vite's middleware handles that).
-├── env.ts                    # validated env — reads process.env populated by
-│                             #   vite.config.ts loadEnv (dev) or
-│                             #   `node --env-file=.env` (prod start script).
-├── scopes.ts                 # REQUESTED_SCOPES bitmask
-├── session.ts                # readSession / writeSession via app-sdk cookies
-└── civitai.ts                # getMe + raw orchestrator calls
-
-src/                          # Svelte SPA (tsconfig.json)
-├── main.ts                   # mount(App, { target: #app })
-├── App.svelte                # auth bootstrap via GET /api/me + main UI
-├── app.css
-├── components/
-│   ├── LoginButton.svelte    # plain <form action="/api/auth/login">
-│   ├── LogoutControls.svelte
-│   └── GenerateForm.svelte   # estimate → submit → poll → display
-└── lib/
-    └── api.ts                # fetch wrappers for /api/* (types live in @civitai/app-sdk/orchestrator)
-```
+| File | Purpose |
+|---|---|
+| `server/app.ts` | Hono routes — default-exports `app`. Loaded by both dev (`@hono/vite-dev-server`) and prod (`server/index.ts`). |
+| `server/index.ts` | Prod entry — `@hono/node-server` `serve()` + static `dist/`. Not loaded in dev. |
+| `server/env.ts` | Zod-validated env (`@t3-oss/env-core`). Reads `process.env` (Vite `loadEnv` dev / `--env-file=.env` prod). |
+| `server/scopes.ts` | `REQUESTED_SCOPES` bitmask |
+| `server/session.ts` | `readSession` / `writeSession` via app-sdk cookies |
+| `server/civitai.ts` | `getMe` + raw orchestrator calls |
+| `src/main.ts` | `mount(App, { target: #app })` |
+| `src/App.svelte` | Auth bootstrap via `GET /api/me` + main UI, wrapped in `<svelte:boundary>` |
+| `src/components/*.svelte` | `LoginButton`, `LogoutControls`, `GenerateForm` |
+| `src/lib/api.ts` | Fetch wrappers for `/api/*` (types from `@civitai/app-sdk/orchestrator`) |
 
 ## Patterns to keep
 
-- **All Civitai traffic flows through the BFF.** SPA → `/api/*` → BFF → civitai.com / orchestrator. Never direct from the browser.
-- **The SPA bootstraps auth via `GET /api/me`** in `onMount()`. 401 → show login. 200 → show signed-in UI. No client-side token reading.
-- **Svelte 5 runes everywhere.** Use `$state<T>(...)` (with explicit generic to avoid literal narrowing on `null`/string-literal initializers), `$derived(...)`, `$props()`. Don't import from `svelte/store` unless you need cross-component subscription patterns the runes can't express.
-- **Encrypted-cookie sessions, no DB.** `@civitai/app-sdk`'s `sealCookie`/`unsealCookie` (AES-256-GCM). One cookie holds the refresh token blob; another short-lived cookie holds the PKCE state during login.
-- **Buzz cost preview before submission.** Always call `/api/generate/estimate` and show the cost before submitting.
+- **All Civitai traffic flows through the BFF.** SPA → `/api/*` → BFF → civitai.com / orchestrator.
+- **SPA bootstraps auth via `GET /api/me`** in `onMount()`. 401 → login. 200 → signed-in UI.
+- **Svelte 5 runes.** `$state<T>(...)` (explicit generic to avoid literal narrowing on `null`), `$derived`, `$props`. Skip `svelte/store` unless runes can't express it.
+- **Encrypted-cookie sessions, no DB.** `sealCookie`/`unsealCookie` (AES-256-GCM). Refresh-token cookie + short-lived PKCE-state cookie.
+- **Buzz cost preview before submission.** Always call `/api/generate/estimate` first.
 
 ## Patterns to avoid
 
 - Storing tokens in `localStorage` / `sessionStorage` / `IndexedDB` / Svelte state. The BFF holds them.
-- Calling `civitai.com` or `orchestration.civitai.com` directly from `src/`. Add a BFF route instead.
-- Adding SvelteKit. If you want Kit, switch to [`sveltekit-app`](../sveltekit-app/).
-- Exposing `CIVITAI_CLIENT_SECRET` to the SPA build. Server-only env var.
+- Calling `civitai.com` or `orchestration.civitai.com` directly from `src/`. Add a BFF route.
+- Adding SvelteKit. Switch to [`sveltekit-app`](https://github.com/civitai/civitai-app-starters/tree/main/starters/sveltekit-app) if you want Kit.
+- Exposing `CIVITAI_CLIENT_SECRET` to the SPA build. Server-only.
 - Adding a DB silently. Make the user opt in.
 
 ## Extending
 
 | Task | How |
 |---|---|
-| Add a new Civitai API call | Add a function to `server/civitai.ts`, a route in `server/app.ts`, a fetch helper in `src/lib/api.ts`. |
-| Request more OAuth scopes | Edit `server/scopes.ts` (`REQUESTED_SCOPES`). User re-consents on next login. |
-| Add a generation engine option | Edit `buildWorkflowBody` in `server/civitai.ts` and the form UI in `src/components/GenerateForm.svelte`. |
-| Add client-side routing | Wire a minimal hash-based router or `svelte-spa-router`. The BFF falls back to `index.html` for unmatched paths. |
+| Add a Civitai API call | Function in `server/civitai.ts` → route in `server/app.ts` → fetch helper in `src/lib/api.ts`. |
+| Request more OAuth scopes | Edit `REQUESTED_SCOPES` in `server/scopes.ts`. User re-consents on next login. |
+| Add a generation engine option | Edit `buildWorkflowBody` in `server/civitai.ts` and the form in `src/components/GenerateForm.svelte`. |
+| Add client-side routing | Hash router or `svelte-spa-router`. BFF falls back to `index.html` for unmatched paths. |
 | Persist generation history | Net-new infra. Recommend KV / D1 / Postgres. |
-| Deploy to Cloudflare Workers | Swap `@hono/node-server` for `@hono/cloudflare-workers` in `server/index.ts`. Cookie crypto uses Node's `crypto` — needs `nodejs_compat` Worker flag or a Web Crypto shim. |
+| Deploy to Cloudflare Workers | Swap `@hono/node-server` for `@hono/cloudflare-workers` in `server/index.ts`. Cookie crypto needs `nodejs_compat` or a Web Crypto shim. |
 
 ## Demo flow
 
-1. Mount → `onMount` calls `GET /api/me` → 401 → render `<LoginButton>` → form posts to `/api/auth/login` → BFF 303 to civitai.com.
-2. User consents → civitai.com redirects to `GET /api/auth/callback/civitai` → BFF exchanges code + seals session → 303 to `/?notice=connected`.
-3. SPA re-mounts → `GET /api/me` → 200 with `{username, balance, grantedScopes}` → render `<GenerateForm>`.
-4. User clicks "Preview Buzz cost" → `POST /api/generate/estimate` → display cost.
-5. User clicks "Generate" → `POST /api/generate` → returns `workflowId` → SPA polls `GET /api/workflow/[id]` every 2s.
-6. On terminal status → display image blobs.
+1. Mount → `onMount` `GET /api/me` → 401 → `<LoginButton>` → form posts `/api/auth/login` → BFF 303 to civitai.com.
+2. Civitai redirects to `GET /api/auth/callback/civitai` → BFF exchanges code + seals session → 303 to `/?notice=connected`.
+3. SPA re-mounts → `GET /api/me` → 200 `{username, balance, grantedScopes}` → `<GenerateForm>`.
+4. "Preview Buzz cost" → `POST /api/generate/estimate` → display cost.
+5. "Generate" → `POST /api/generate` → `workflowId` → SPA polls `GET /api/workflow/[id]` every 2s.
+6. Terminal status → display image blobs.
+
+## Verifying changes
+
+| You touched | Run |
+|---|---|
+| Anything in `src/` or `server/` | `pnpm typecheck` (`svelte-check` + server tsc) |
+| `vite.config.ts`, env, security headers | `pnpm build` |
+| Auth flow (`server/app.ts` auth routes, `server/session.ts`) | `pnpm test:e2e -- auth-flow` |
+| Generation flow (`server/app.ts` generate routes, polling) | `pnpm test:e2e -- generation` |
+
+`pnpm test:e2e` needs a Civitai dev server with the `testing-login` provider
++ matching OAuth app — see [README › End-to-end tests](./README.md#end-to-end-tests).
