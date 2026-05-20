@@ -67,5 +67,3 @@ src/
 3. Submit prompt → client `POST /api/generate/estimate` → display Buzz cost → user confirms.
 4. Client `POST /api/generate` → returns workflow ID → client polls `GET /api/workflow/[id]` every 2s.
 5. On terminal status → display image(s) or error.
-
-If you change this flow, update the README and this file.

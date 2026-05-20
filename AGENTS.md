@@ -53,7 +53,7 @@ Each starter ships a deliberately minimal demo (login + balance + cost preview +
 - **New page / route** → follow the framework's idioms (App Router for `next-app`, `+page.svelte` for `sveltekit-app`, etc.). Keep auth gating consistent with the existing pattern in each starter.
 - **Persistence (saved generations, user prefs)** → starters intentionally don't include a database. If the app needs persistence, suggest adding one (recommend the framework-native choice — Vercel KV, Cloudflare D1, etc.) but flag it as **net-new infra**.
 
-## Repo layout (for context)
+## Repo layout
 
 ```
 civitai-app-starters/

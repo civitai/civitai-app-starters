@@ -76,5 +76,3 @@ src/
 4. Submit prompt → client `POST /api/generate/estimate` → display Buzz cost.
 5. Confirm → client `POST /api/generate` → returns workflowId → client polls `GET /api/workflow/[id]` every 2s.
 6. On terminal status → display image blobs from `steps[0].output.blobs`.
-
-If you change this flow, update the README and this file to keep them in sync.

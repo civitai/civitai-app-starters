@@ -10,11 +10,9 @@ You're inside the React PWA starter for Civitai apps. The user cloned this to bo
 - `vite-plugin-pwa` for manifest + service worker
 - `@civitai/app-sdk` for all OAuth + orchestrator glue
 
-## Why this shape (read before refactoring)
+## Why this shape
 
-OAuth confidential client → `client_secret` MUST stay server-side. The BFF (`server/app.ts`) is the only thing that ever sees `client_secret` or the user's access token. The SPA holds an opaque `httpOnly` `civ_session` cookie set by the BFF.
-
-This is intentional. **Do not** refactor to "talk to Civitai directly from React" — that would either leak the secret or break the auth model.
+OAuth confidential client → `client_secret` MUST stay server-side. The BFF (`server/app.ts`) is the only thing that ever sees `client_secret` or the user's access token; the SPA holds only an opaque `httpOnly` `civ_session` cookie. **Do not** refactor to "talk to Civitai directly from React" — that leaks the secret or breaks the auth model.
 
 ## File layout
 
