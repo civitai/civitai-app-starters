@@ -12,11 +12,16 @@
     "test": "pnpm -r --filter \"./packages/*\" test",
     "typecheck": "pnpm -r --filter \"./packages/*\" typecheck",
     "lint": "pnpm -r --filter \"./packages/*\" lint",
-    "e2e:all": "node scripts/run-all-e2e.mjs"
+    "e2e:all": "node scripts/run-all-e2e.mjs",
+    "changeset": "changeset",
+    "release": "pnpm --filter @civitai/app-sdk build && changeset publish"
   },
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/civitai/civitai-app-starters.git"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.10"
   }
 }
