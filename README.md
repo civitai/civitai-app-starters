@@ -71,6 +71,17 @@ pnpm test       # run all package tests
 pnpm typecheck  # type-check everything
 ```
 
+### Releasing the SDK
+
+`@civitai/app-sdk` ships via changesets + a GitHub Actions workflow with npm OIDC. After changing the SDK:
+
+```bash
+pnpm changeset           # author a changeset (patch / minor / major)
+pnpm changeset status    # preview pending bumps
+```
+
+Merge the auto-opened *Version Packages* PR to publish. Full guide: [`RELEASING.md`](./RELEASING.md).
+
 ## License
 
 [MIT](./LICENSE)

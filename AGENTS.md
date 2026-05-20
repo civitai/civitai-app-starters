@@ -65,8 +65,19 @@ civitai-app-starters/
     └── svelte-pwa/              # Vite + Svelte 5 (SPA + Hono BFF)
 ```
 
+## Releasing a new SDK version
+
+`@civitai/app-sdk` ships via [changesets](https://github.com/changesets/changesets) + a GitHub Actions workflow with npm OIDC trusted publishing. The maintainer flow is a one-liner:
+
+```bash
+pnpm changeset      # describe the bump; commit the generated .changeset/*.md
+```
+
+Merge to `main` → review the auto-generated *Version Packages* PR → merge it → npm publish runs in CI with no token, no OTP. Full flow: [`RELEASING.md`](./RELEASING.md).
+
 ## See also
 
 - Per-starter `AGENTS.md` files for stack-specific guidance.
 - [`packages/civitai-app-sdk/README.md`](./packages/civitai-app-sdk/README.md) — full SDK API reference.
+- [`RELEASING.md`](./RELEASING.md) — SDK publish + changeset workflow.
 - [Civitai OAuth quickstart](https://developer.civitai.com/docs/oauth) — official upstream docs.
