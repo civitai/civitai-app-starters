@@ -43,7 +43,7 @@ svelte-pwa/
 └── src/
     ├── main.ts, App.svelte, app.css
     ├── components/         # LoginButton, LogoutControls, GenerateForm (.svelte)
-    └── lib/                # api.ts, civitai-types.ts
+    └── lib/                # api.ts
 ```
 
 ## Scripts

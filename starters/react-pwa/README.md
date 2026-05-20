@@ -54,7 +54,7 @@ react-pwa/
 └── src/                   # React SPA
     ├── main.tsx, App.tsx, index.css
     ├── components/        # LoginButton, LogoutControls, GenerateForm
-    └── lib/               # api.ts (fetch helpers), civitai-types.ts
+    └── lib/               # api.ts (fetch helpers)
 ```
 
 ## Scripts

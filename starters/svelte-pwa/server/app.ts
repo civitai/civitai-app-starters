@@ -19,11 +19,14 @@ import {
   type Session,
 } from './session.js';
 import {
-  estimateGenerationCost,
-  getMe,
-  getWorkflowSnapshot,
+  createOrchestratorClient,
   isTerminal,
   OrchestratorError,
+  pollWorkflow,
+} from '@civitai/app-sdk/orchestrator';
+import {
+  estimateGenerationCost,
+  getMe,
   submitGeneration,
   type GenerateInput,
 } from './civitai.js';
@@ -58,7 +61,7 @@ async function parseGenerateInput(
 function handleOrchestratorError(c: Context, err: unknown): Response {
   if (err instanceof OrchestratorError) {
     return c.json(
-      { error: 'orchestrator_error', detail: err.detail },
+      { error: 'orchestrator_error', detail: err.body },
       err.status as Parameters<typeof c.json>[1],
     );
   }
@@ -192,9 +195,8 @@ app.post('/api/generate', async (c) => {
 });
 
 // Long-poll workflow status. `?wait=<ms>` (capped at MAX_WAIT_MS) holds the
-// connection open until the workflow reaches a terminal status, then returns.
-// Clients keep calling until `done: true`.
-const POLL_INTERVAL_MS = 1000;
+// connection open until terminal, then returns. Clients keep calling until
+// `done: true`.
 const MAX_WAIT_MS = 30_000;
 
 app.get('/api/workflow/:id', async (c) => {
@@ -204,17 +206,17 @@ app.get('/api/workflow/:id', async (c) => {
 
   const waitRaw = Number(c.req.query('wait') ?? 0);
   const waitMs = Number.isFinite(waitRaw) ? Math.min(Math.max(waitRaw, 0), MAX_WAIT_MS) : 0;
-  const deadline = Date.now() + waitMs;
+
+  const client = createOrchestratorClient({
+    accessToken: auth.session.tokens.access_token,
+    baseUrl: env.ORCHESTRATOR_URL,
+  });
 
   try {
-    let snapshot = await getWorkflowSnapshot(auth.session, id);
-
-    while (!isTerminal(snapshot) && Date.now() + POLL_INTERVAL_MS <= deadline) {
-      if (c.req.raw.signal?.aborted) break;
-      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-      snapshot = await getWorkflowSnapshot(auth.session, id);
-    }
-
+    const snapshot = await pollWorkflow(client, id, {
+      timeoutMs: waitMs,
+      signal: c.req.raw.signal,
+    });
     return c.json({ snapshot, done: isTerminal(snapshot) });
   } catch (err) {
     return handleOrchestratorError(c, err);

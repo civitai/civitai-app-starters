@@ -1,4 +1,4 @@
-import type { GenerateInput, WorkflowSnapshot } from './civitai-types';
+import type { GenerateInput, WorkflowSnapshot } from '@civitai/app-sdk/orchestrator';
 
 export interface Me {
   authenticated: boolean;

@@ -17,8 +17,7 @@ pnpm add @civitai/app-sdk
 | `oauth/*` — `generatePkce`, `buildAuthorizeUrl`, `exchangeCode`, `refreshToken`, `revokeToken`, `fetchMe` | The Civitai OAuth flow (Authorization Code + PKCE S256), as a set of stateless functions you call from your server-side handlers. |
 | `scopes/*` — `TokenScope`, `TokenScopePresets`, `bitmaskFromScopes`, `scopesFromBitmask`, `hasScope`, `getScopeLabel` | Civitai scopes are stored as bitmasks. These helpers let you compose scope sets from named flags rather than magic numbers. |
 | `cookies/*` — `sealCookie`, `unsealCookie`, `buildSetCookieHeader`, `readCookie` | AES-256-CTR encrypted cookie crypto. Use to seal a session blob (refresh token, expiry, scope) into an `httpOnly` cookie with zero external session store. |
-| `client/*` — `createAppClient` | Thin wrapper around `@civitai/client`'s factory with the right defaults for third-party apps (prod orchestrator URL, Bearer auth). |
-| `workflows/*` — `estimateCost`, `submitWorkflow`, `getWorkflow`, `pollWorkflow` | Orchestrator workflow helpers. `estimateCost` calls `?whatif=true` to preview Buzz cost without spending. `pollWorkflow` waits to terminal state. |
+| `orchestrator/*` — `createOrchestratorClient`, `estimateWorkflow`, `submitWorkflow`, `getWorkflow`, `pollWorkflow`, `buildTextToImageBody`, `isTerminal`, `extractImageUrls`, `OrchestratorError`, `WorkflowSnapshot`, `GenerateInput`, `DEFAULT_MODEL_AIR` | Orchestrator workflow glue — types, body builder, raw HTTP, and long-poll helper. Client + server safe (fetch-only). `estimateWorkflow` calls `?whatif=true` to preview Buzz cost without spending. `pollWorkflow` long-polls to terminal status. |
 
 ## Minimal usage example
 
@@ -28,7 +27,8 @@ import {
   exchangeCode, fetchMe,
   TokenScope, bitmaskFromScopes,
   sealCookie, unsealCookie, buildSetCookieHeader,
-  createAppClient, estimateCost, submitWorkflow, pollWorkflow,
+  createOrchestratorClient, buildTextToImageBody,
+  estimateWorkflow, submitWorkflow, pollWorkflow,
 } from '@civitai/app-sdk';
 
 // 1. Kick off OAuth login from your server-side handler
@@ -60,17 +60,17 @@ const sealed = sealCookie(JSON.stringify(tokens), process.env.SESSION_SECRET!);
 const setCookie = buildSetCookieHeader('civ_session', sealed, { maxAge: 3600 });
 
 // 4. Use the token to make orchestrator calls
-const client = createAppClient({ token: tokens.access_token });
+const client = createOrchestratorClient({ accessToken: tokens.access_token });
 const me = await fetchMe({ accessToken: tokens.access_token });
 console.log(`Hi ${me.username}, you have ${me.balance} Buzz`);
 
 // 5. Estimate cost, then submit
-const body = { /* WorkflowBody — see @civitai/client */ };
-const estimate = await estimateCost(client, body);
-console.log(`This will cost ${estimate.total} Buzz`);
+const body = buildTextToImageBody({ prompt: 'a fox' }, { tags: ['my-app'] });
+const estimate = await estimateWorkflow(client, body);
+console.log(`This will cost ${estimate.cost?.total ?? 0} Buzz`);
 // ...show to user, get confirmation...
 const submitted = await submitWorkflow(client, body);
-const finished = await pollWorkflow(client, submitted.id);
+const finished = await pollWorkflow(client, submitted.id, { timeoutMs: 30_000 });
 ```
 
 The starters in `civitai/civitai-app-starters` wire this into framework-specific route handlers (Next.js App Router, SvelteKit `+server.ts`, Hono inside a Vite-built PWA). Read those for end-to-end reference implementations.

@@ -5,7 +5,7 @@
     DEFAULT_MODEL_AIR,
     extractImageUrls,
     type WorkflowSnapshot,
-  } from '../lib/civitai-types';
+  } from '@civitai/app-sdk/orchestrator';
 
   let { initialBalance }: { initialBalance?: number } = $props();
 

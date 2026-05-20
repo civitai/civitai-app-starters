@@ -18,11 +18,14 @@ import {
   writeSession,
 } from './session.js';
 import {
-  estimateGenerationCost,
-  getMe,
-  getWorkflowSnapshot,
+  createOrchestratorClient,
   isTerminal,
   OrchestratorError,
+  pollWorkflow,
+} from '@civitai/app-sdk/orchestrator';
+import {
+  estimateGenerationCost,
+  getMe,
   submitGeneration,
   type GenerateInput,
 } from './civitai.js';
@@ -131,7 +134,7 @@ app.get('/api/me', async (c) => {
 function orchestratorErrorResponse(c: Context, err: unknown) {
   if (err instanceof OrchestratorError) {
     return c.json(
-      { error: 'orchestrator_error', detail: err.detail },
+      { error: 'orchestrator_error', detail: err.body },
       err.status as Parameters<typeof c.json>[1],
     );
   }
@@ -174,10 +177,9 @@ app.post('/api/generate', async (c) => {
 
 /**
  * Long-poll workflow status. `?wait=<ms>` (capped at MAX_WAIT_MS) holds the
- * connection open, re-checking every POLL_INTERVAL_MS until terminal. Client
- * loops on `done: false` — one endpoint, no client-side timer.
+ * connection open until terminal. Client loops on `done: false` — one
+ * endpoint, no client-side timer.
  */
-const POLL_INTERVAL_MS = 1000;
 const MAX_WAIT_MS = 30_000;
 
 app.get('/api/workflow/:id', async (c) => {
@@ -187,15 +189,17 @@ app.get('/api/workflow/:id', async (c) => {
 
   const waitRaw = Number(c.req.query('wait') ?? 0);
   const waitMs = Number.isFinite(waitRaw) ? Math.min(Math.max(waitRaw, 0), MAX_WAIT_MS) : 0;
-  const deadline = Date.now() + waitMs;
+
+  const client = createOrchestratorClient({
+    accessToken: session.tokens.access_token,
+    baseUrl: env.ORCHESTRATOR_URL,
+  });
 
   try {
-    let snapshot = await getWorkflowSnapshot(session, id);
-    while (!isTerminal(snapshot) && Date.now() + POLL_INTERVAL_MS <= deadline) {
-      if (c.req.raw.signal?.aborted) break;
-      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-      snapshot = await getWorkflowSnapshot(session, id);
-    }
+    const snapshot = await pollWorkflow(client, id, {
+      timeoutMs: waitMs,
+      signal: c.req.raw.signal,
+    });
     return c.json({ snapshot, done: isTerminal(snapshot) });
   } catch (err) {
     return orchestratorErrorResponse(c, err);

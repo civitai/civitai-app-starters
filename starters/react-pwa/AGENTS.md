@@ -43,8 +43,7 @@ src/                          # React SPA (tsconfig.json)
 │   ├── LogoutControls.tsx
 │   └── GenerateForm.tsx      # estimate → submit → poll → display
 └── lib/
-    ├── api.ts                # fetch wrappers for /api/*
-    └── civitai-types.ts      # client-safe types
+    └── api.ts                # fetch wrappers for /api/* (types live in @civitai/app-sdk/orchestrator)
 ```
 
 ## Patterns to keep

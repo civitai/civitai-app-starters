@@ -23,8 +23,7 @@ src/
 │   ├── env.ts              # validated env config
 │   ├── scopes.ts           # REQUESTED_SCOPES bitmask
 │   ├── session.ts          # readSession / writeSession / OAuth state cookie
-│   ├── civitai.ts          # server-only orchestrator helpers
-│   ├── civitai-types.ts    # client-safe types + DEFAULT_MODEL_AIR
+│   ├── civitai.ts          # server-only orchestrator helpers (re-exports SDK types)
 │   └── components/
 │       ├── GenerateForm.svelte
 │       └── LogoutControls.svelte

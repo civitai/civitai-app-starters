@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     if (err instanceof OrchestratorError) {
       return NextResponse.json(
-        { error: 'orchestrator_error', detail: err.detail },
+        { error: 'orchestrator_error', detail: err.body },
         { status: err.status },
       );
     }

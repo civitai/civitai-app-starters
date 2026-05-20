@@ -3,7 +3,7 @@
     DEFAULT_MODEL_AIR,
     extractImageUrls,
     type WorkflowSnapshot,
-  } from '$lib/civitai-types';
+  } from '@civitai/app-sdk/orchestrator';
   import { onDestroy } from 'svelte';
 
   let { initialBalance }: { initialBalance?: number } = $props();
@@ -116,7 +116,7 @@
     ></textarea>
     <span class="text-xs text-zinc-500">
       Model: <code class="font-mono">{DEFAULT_MODEL_AIR}</code> (edit
-      <code class="mx-1 font-mono">src/lib/civitai-types.ts</code> to change)
+      <code class="mx-1 font-mono">src/lib/civitai.ts</code> to change)
     </span>
   </label>
 

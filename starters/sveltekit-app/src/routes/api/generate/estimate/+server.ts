@@ -16,7 +16,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
     return json({ cost: snapshot.cost?.total ?? 0, snapshot });
   } catch (err) {
     if (err instanceof OrchestratorError) {
-      return json({ error: 'orchestrator_error', detail: err.detail }, { status: err.status });
+      return json({ error: 'orchestrator_error', detail: err.body }, { status: err.status });
     }
     return json({ error: 'unknown' }, { status: 500 });
   }

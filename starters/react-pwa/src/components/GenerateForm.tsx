@@ -4,7 +4,7 @@ import {
   DEFAULT_MODEL_AIR,
   extractImageUrls,
   type WorkflowSnapshot,
-} from '../lib/civitai-types';
+} from '@civitai/app-sdk/orchestrator';
 
 type Phase = 'idle' | 'estimating' | 'previewed' | 'submitting' | 'polling' | 'done' | 'error';
 

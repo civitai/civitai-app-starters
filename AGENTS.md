@@ -40,7 +40,7 @@ These are validated in production by Civitai's own apps. Don't rewrite them; ext
 
 - ❌ Putting `CIVITAI_CLIENT_SECRET` in any client-side bundle, manifest, or build artifact. It belongs in `.env` on the server side only.
 - ❌ Putting `access_token` or `refresh_token` in `localStorage`, `sessionStorage`, or rendered HTML.
-- ❌ Reaching directly into `@civitai/client` for orchestrator calls when the SDK has a wrapper. Use `@civitai/app-sdk`'s `estimateCost`, `submitWorkflow`, `getWorkflow`, `pollWorkflow`.
+- ❌ Reimplementing the orchestrator fetch + body shape in each starter. Use `@civitai/app-sdk/orchestrator`'s `estimateWorkflow`, `submitWorkflow`, `getWorkflow`, `pollWorkflow`, and `buildTextToImageBody`.
 - ❌ Adding Redis, Postgres, or any external session store. The starters are designed to deploy as a single static bundle + (for PWAs) a single edge function. Don't add stateful infra.
 - ❌ Hardcoding the orchestrator URL or scope bitmask values. Use `@civitai/app-sdk`'s constants.
 - ❌ Replacing the OAuth flow with a "just store an API key" shortcut. API keys spend *the key owner's* Buzz, not the end user's — that's the wrong tenant model for a third-party app.
@@ -49,7 +49,7 @@ These are validated in production by Civitai's own apps. Don't rewrite them; ext
 
 Each starter ships a deliberately minimal demo (login + balance + cost preview + one generation + display). When the user asks you to add features:
 
-- **New API call against Civitai** → add a wrapper to `@civitai/app-sdk/src/client/` if it'll be reused; otherwise inline in the starter. Always go through the SDK's authenticated client, not raw `fetch`.
+- **New API call against Civitai** → if it'll be reused across starters, add a helper next to `@civitai/app-sdk/src/orchestrator/` (or a new sibling module). Otherwise inline in the starter using `callOrchestrator` from `@civitai/app-sdk/orchestrator`.
 - **New page / route** → follow the framework's idioms (App Router for `next-app`, `+page.svelte` for `sveltekit-app`, etc.). Keep auth gating consistent with the existing pattern in each starter.
 - **Persistence (saved generations, user prefs)** → starters intentionally don't include a database. If the app needs persistence, suggest adding one (recommend the framework-native choice — Vercel KV, Cloudflare D1, etc.) but flag it as **net-new infra**.
 
