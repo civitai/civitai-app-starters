@@ -58,6 +58,10 @@ git clone --filter=blob:none --sparse https://github.com/civitai/civitai-app-sta
 cd civitai-app-starters && git sparse-checkout set --cone starters/next-app
 ```
 
+## Porting an existing app
+
+Already have an app and want to **add Sign-in-with-Civitai** or **swap your image-gen provider** for Civitai's orchestrator? See [`PORTING.md`](./PORTING.md) — step-by-step recipe for grafting the SDK into an existing codebase, with notes on both additive ("Civitai as one more provider") and full-replacement integration modes.
+
 ## For AI coding agents
 
 See [`AGENTS.md`](./AGENTS.md) at the root and the per-starter `AGENTS.md` inside each `starters/*`. The agent guides document which patterns to keep (auth + SDK lives in `@civitai/app-sdk`), which to avoid (don't put `client_secret` in the browser), and how the demo surface is structured.
