@@ -3,6 +3,15 @@
  * starter's BFF. Client + server safe: no Node-only imports, no `process.env`
  * access. All configuration flows through the `OrchestratorClient` value that
  * the caller builds.
+ *
+ * The orchestrator is a workflow API: you POST a `{ steps: [...] }` body with
+ * one or more typed steps (`textToImage`, `imageGen`, `videoGen`, `comfy`, ...)
+ * and get back a workflow snapshot. {@link WORKFLOW_STEP_TYPES} is the catalog
+ * of available step types — start there to find the one you need, then either
+ * use the matching `build*Body` helper or hand-craft a body and pass it to
+ * {@link submitWorkflow} / {@link callOrchestrator}.
+ *
+ * Full OpenAPI spec: https://orchestration.civitai.com/openapi/v2-consumers.json
  */
 
 // ---------- Constants -------------------------------------------------------
@@ -17,6 +26,138 @@ export const DEFAULT_MODEL_AIR = 'urn:air:sdxl:checkpoint:civitai:101055@128078'
  */
 export const TERMINAL_STATUSES = ['succeeded', 'failed', 'expired', 'canceled'] as const;
 export type TerminalStatus = (typeof TERMINAL_STATUSES)[number];
+
+// ---------- Step type catalog ----------------------------------------------
+
+/**
+ * Every workflow step type the orchestrator accepts, with a one-line
+ * description. Use this as a map: find the step `$type` you want, then look
+ * at the matching `build*Body` helper (if one exists) or fall back to
+ * {@link callOrchestrator} with a hand-crafted body.
+ *
+ * Source of truth is `https://orchestration.civitai.com/openapi/v2-consumers.json`.
+ * If a step type is missing here, the catalog is stale — open a PR.
+ */
+export const WORKFLOW_STEP_TYPES = {
+  // ----- Image gen ---------------------------------------------------------
+  /** Diffusion image gen (SDXL / Flux.1 / Pony / Illustrious / SD1.5 / etc.). Use {@link buildTextToImageBody}. */
+  textToImage: 'Text-to-image via diffusion checkpoints (AIR URN models)',
+  /**
+   * Closed-source image-gen APIs (Nano Banana, Gemini, Flux.1 Kontext, Flux.2,
+   * GPT-Image, Seedream, Grok, fal, …). Each engine has its own input shape;
+   * see {@link IMAGE_GEN_ENGINES}. Use {@link buildImageGenBody}.
+   */
+  imageGen: 'Closed-source image gen (Nano Banana, Gemini, GPT-Image, Flux Kontext, Seedream, Grok, fal, …)',
+  /** Arbitrary ComfyUI workflow graphs. Pass a `prompt` object (node graph). */
+  comfy: 'Custom ComfyUI node-graph workflows',
+  /** Upscale an existing image. Input is a source image URL + scale factor. */
+  imageUpscaler: 'Image upscaling',
+  /** LoRA / DoRA / embedding training. Long-running. */
+  imageResourceTraining: 'Train a LoRA / DoRA / embedding from a dataset',
+  /** Pre-process an image (resize, ControlNet preprocessor, etc.). */
+  preprocessImage: 'Image preprocessing (resize, ControlNet preprocessors, …)',
+  /** Format conversion between png/jpeg/webp/avif. */
+  convertImage: 'Image format conversion',
+  /** Upload arbitrary blob bytes for use as a reference in a later step. */
+  imageUpload: 'Upload an image blob to use as input in a later step',
+
+  // ----- Video gen ---------------------------------------------------------
+  /** Video gen across all engines (VEO 3, Kling, Wan, Vidu, Sora, LTX, …). */
+  videoGen: 'Video generation across all engines (VEO 3, Kling, Wan, Vidu, Sora, LTX, …)',
+  /** Upscale an existing video. */
+  videoUpscaler: 'Video upscaling',
+  /** Frame interpolation / smoothing. */
+  videoInterpolation: 'Video frame interpolation',
+  /** Per-frame transformations (denoise, color correct, etc.). */
+  videoEnhancement: 'Per-frame video enhancement',
+  /** Extract individual frames from a video. */
+  videoFrameExtraction: 'Extract frames from a video',
+  /** Read video metadata (duration, codec, dimensions). */
+  videoMetadata: 'Read video file metadata',
+  /** Transcode video format / codec. */
+  transcode: 'Audio/video transcoding',
+
+  // ----- Audio -------------------------------------------------------------
+  /** Text-to-speech (multi-voice, multi-language). */
+  textToSpeech: 'Text-to-speech synthesis',
+  /** Music generation via ACE Step 1.5 (lyrics + style → song). */
+  aceStepAudio: 'Music generation (ACE Step 1.5)',
+  /** Speech-to-text transcription. */
+  transcription: 'Speech-to-text transcription',
+  /** Mix multiple audio tracks. */
+  audioMix: 'Audio track mixing',
+  /** Generate captions from audio. */
+  audioCaptioning: 'Caption generation from audio',
+
+  // ----- Classification / tagging / moderation ----------------------------
+  /** Hash an image / video / model for dedup or lookup. */
+  mediaHash: 'Media content hashing',
+  /** Hash a model file. */
+  modelHash: 'Model file hashing',
+  /** Rate media on aesthetic / quality axes. */
+  mediaRating: 'Media aesthetic / quality rating',
+  /** Caption an image with a vision model. */
+  mediaCaptioning: 'Image captioning via vision models',
+  /** WD-14 tagger (anime / booru tags). */
+  wdTagging: 'WD-14 anime tagging',
+  /** Estimate an age range for faces in an image. */
+  ageClassification: 'Age range classification',
+  /** xGuard NSFW / safety moderation. */
+  xGuardModeration: 'NSFW / safety moderation',
+  /** ClamAV scan a model file for malware. */
+  modelClamScan: 'Antivirus scan a model file',
+  /** Pickle-scan a model file for unsafe pickles. */
+  modelPickleScan: 'Pickle-safety scan for model files',
+  /** Parse model file metadata (SafeTensors / GGUF headers). */
+  modelParseMetadata: 'Parse model file metadata',
+
+  // ----- LLM ---------------------------------------------------------------
+  /** Chat completion (OpenAI / Anthropic / Gemini / local OSS). */
+  chatCompletion: 'LLM chat completion',
+  /** Generate a richer prompt from a short seed prompt. */
+  promptEnhancement: 'Prompt expansion via LLM',
+
+  // ----- Utility -----------------------------------------------------------
+  /** Echo the input back. Useful for testing the round-trip. */
+  echo: 'Echo step — round-trip the input for testing',
+  /** Package multiple blobs into a zip archive. */
+  blobArchive: 'Zip multiple blobs into an archive',
+} as const;
+
+export type WorkflowStepType = keyof typeof WORKFLOW_STEP_TYPES;
+
+/**
+ * Engines that the `imageGen` step accepts. Each one has its own input shape;
+ * the body's `engine` field selects which shape applies.
+ *
+ * Pair with {@link buildImageGenBody} or hand-craft via {@link callOrchestrator}.
+ */
+export const IMAGE_GEN_ENGINES = {
+  /** Nano Banana 2 / Nano Banana Pro / Imagen 4. */
+  google: 'Google (Nano Banana, Imagen)',
+  /** Gemini 2.5 Flash image gen + editing. */
+  gemini: 'Gemini',
+  /** GPT-Image-1 / GPT-Image-1.5 / DALL-E-3. */
+  openai: 'OpenAI (GPT-Image, DALL-E)',
+  /** Flux.1 Kontext (pro/max/dev) — image editing with ref images. */
+  'flux1-kontext': 'Flux.1 Kontext (image editing)',
+  /** Flux.2 family (pro/max/dev/flex/klein). */
+  flux2: 'Flux.2',
+  /** Seedream (ByteDance) — 2K/4K image gen. */
+  seedream: 'Seedream',
+  /** Grok image generation. */
+  grok: 'Grok',
+  /** Wan image generation. */
+  wan: 'Wan',
+  /** Self-hosted SDCpp (stable-diffusion.cpp) gen. */
+  sdcpp: 'SDCpp (self-hosted diffusion)',
+  /** fal.ai routed gen. */
+  fal: 'fal.ai',
+  /** Comfy graph as an imageGen step (vs. the top-level `comfy` step). */
+  comfy: 'Comfy (engine-style)',
+} as const;
+
+export type ImageGenEngine = keyof typeof IMAGE_GEN_ENGINES;
 
 // ---------- Types -----------------------------------------------------------
 
@@ -172,6 +313,149 @@ export function buildTextToImageBody(
           seed: input.seed,
           quantity: input.quantity ?? 1,
         },
+      },
+    ],
+  };
+  if (opts.tags && opts.tags.length > 0) body.tags = opts.tags;
+  return body;
+}
+
+// ---------- imageGen body builder ------------------------------------------
+
+/**
+ * Input for an `imageGen` step. The engine + model pair picks which
+ * sub-schema applies. Every closed-source image-gen API plugs in here:
+ *
+ *  - `{ engine: 'google', model: 'nano-banana-2' | 'nano-banana-pro' | 'imagen4', images?: string[] }`
+ *  - `{ engine: 'gemini', model: '2.5-flash', operation: 'createImage' | 'editImage', images?: string[] }`
+ *  - `{ engine: 'flux1-kontext', model: 'pro' | 'max' | 'dev', images?: string[] }`
+ *  - `{ engine: 'flux2', model: 'pro' | 'max' | 'dev' | 'flex' | 'klein' }`
+ *  - `{ engine: 'openai', model: 'gpt-image-1' | 'gpt-image-1.5' | 'dall-e-3' | 'dall-e-2' }`
+ *  - `{ engine: 'seedream', model: '4b' | '20b' | 'v1.0' }`
+ *  - `{ engine: 'grok', model: 'createImage' | 'editImage' }`
+ *  - `{ engine: 'fal' | 'wan' | 'sdcpp' | 'comfy', model: ..., ... }`
+ *
+ * Reference images go in `images: [...]` (URL, data URL, or base64 string).
+ * For aspect ratio / dimensions / seed / etc., pass the engine-specific
+ * input fields directly — this builder is intentionally pass-through.
+ *
+ * See `https://orchestration.civitai.com/openapi/v2-consumers.json` for the
+ * complete per-engine schema. The shape is forward-compat: any field the
+ * engine accepts can be added to `input` without changing this SDK.
+ */
+export interface ImageGenInput {
+  engine: ImageGenEngine | (string & {});
+  model: string;
+  prompt?: string;
+  /** Reference images. Each item is a URL, data URL, or raw base64 string. */
+  images?: string[];
+  /** Catch-all for engine-specific fields. */
+  [field: string]: unknown;
+}
+
+export interface BuildImageGenBodyOptions {
+  tags?: string[];
+  /** Step name. Defaults to `step_0`. */
+  name?: string;
+  /** Step timeout. Defaults to `'00:10:00'`. */
+  timeout?: string;
+}
+
+/**
+ * Build an `imageGen` workflow body. Pass-through for engine-specific input
+ * fields — see {@link ImageGenInput} for examples per engine.
+ *
+ * @example  Nano Banana 2 with a reference image
+ * ```ts
+ * const body = buildImageGenBody({
+ *   engine: 'google',
+ *   model: 'nano-banana-2',
+ *   prompt: 'turn this into a cartoon sticker',
+ *   images: ['data:image/png;base64,...'],
+ *   aspectRatio: '1:1',
+ *   numImages: 1,
+ *   resolution: '1K',
+ * }, { tags: ['my-app'] });
+ *
+ * const estimate = await estimateWorkflow(client, body);
+ * const submitted = await submitWorkflow(client, body);
+ * ```
+ *
+ * @example  Flux.1 Kontext for image editing
+ * ```ts
+ * const body = buildImageGenBody({
+ *   engine: 'flux1-kontext',
+ *   model: 'pro',
+ *   prompt: 'add sunglasses',
+ *   images: ['https://example.com/portrait.jpg'],
+ *   aspectRatio: '1:1',
+ * });
+ * ```
+ */
+export function buildImageGenBody(
+  input: ImageGenInput,
+  opts: BuildImageGenBodyOptions = {},
+): unknown {
+  const body: { tags?: string[]; steps: unknown[] } = {
+    steps: [
+      {
+        $type: 'imageGen' as const,
+        name: opts.name ?? 'step_0',
+        timeout: opts.timeout ?? '00:10:00',
+        input,
+      },
+    ],
+  };
+  if (opts.tags && opts.tags.length > 0) body.tags = opts.tags;
+  return body;
+}
+
+// ---------- Generic single-step body builder -------------------------------
+
+export interface BuildWorkflowBodyStep {
+  $type: WorkflowStepType | (string & {});
+  /** Step name. Defaults to `step_0`. */
+  name?: string;
+  /** Step timeout. Defaults to `'00:10:00'`. */
+  timeout?: string;
+  /** The step's input — shape is per-step-type. See {@link WORKFLOW_STEP_TYPES}. */
+  input: unknown;
+  /** Optional metadata attached to the step. */
+  metadata?: Record<string, unknown>;
+}
+
+export interface BuildWorkflowBodyOptions {
+  tags?: string[];
+}
+
+/**
+ * Lowest-level body builder — drops a single step into the `{ steps: [...] }`
+ * envelope and fills in `name` / `timeout` defaults. Use this when no dedicated
+ * `build*Body` exists for your step type.
+ *
+ * For multi-step workflows, hand-build `{ tags?, steps: [step1, step2, ...] }`
+ * yourself — there's no special envelope work beyond a JSON array.
+ *
+ * @example  videoGen via VEO 3
+ * ```ts
+ * const body = buildWorkflowBody({
+ *   $type: 'videoGen',
+ *   input: { engine: 'veo3', prompt: 'a fox jumping', duration: 8 },
+ * }, { tags: ['my-app'] });
+ * ```
+ */
+export function buildWorkflowBody(
+  step: BuildWorkflowBodyStep,
+  opts: BuildWorkflowBodyOptions = {},
+): unknown {
+  const body: { tags?: string[]; steps: unknown[] } = {
+    steps: [
+      {
+        $type: step.$type,
+        name: step.name ?? 'step_0',
+        timeout: step.timeout ?? '00:10:00',
+        input: step.input,
+        ...(step.metadata ? { metadata: step.metadata } : {}),
       },
     ],
   };

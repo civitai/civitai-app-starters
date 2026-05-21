@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  buildImageGenBody,
   buildTextToImageBody,
+  buildWorkflowBody,
   callOrchestrator,
   createOrchestratorClient,
   DEFAULT_MODEL_AIR,
@@ -8,10 +10,12 @@ import {
   estimateWorkflow,
   extractImageUrls,
   getWorkflow,
+  IMAGE_GEN_ENGINES,
   isTerminal,
   OrchestratorError,
   submitWorkflow,
   TERMINAL_STATUSES,
+  WORKFLOW_STEP_TYPES,
   type WorkflowSnapshot,
 } from '../src/orchestrator/index.js';
 
@@ -205,6 +209,143 @@ describe('buildTextToImageBody', () => {
       seed: 123,
       quantity: 4,
     });
+  });
+});
+
+describe('buildImageGenBody', () => {
+  it('wraps engine + model + input as a single imageGen step', () => {
+    const body = buildImageGenBody(
+      {
+        engine: 'google',
+        model: 'nano-banana-2',
+        prompt: 'a fox',
+        aspectRatio: '1:1',
+        numImages: 1,
+      },
+      { tags: ['my-app'] },
+    ) as { tags?: string[]; steps: Array<{ $type: string; name: string; timeout: string; input: Record<string, unknown> }> };
+    expect(body.tags).toEqual(['my-app']);
+    expect(body.steps).toHaveLength(1);
+    expect(body.steps[0]!.$type).toBe('imageGen');
+    expect(body.steps[0]!.name).toBe('step_0');
+    expect(body.steps[0]!.timeout).toBe('00:10:00');
+    expect(body.steps[0]!.input).toEqual({
+      engine: 'google',
+      model: 'nano-banana-2',
+      prompt: 'a fox',
+      aspectRatio: '1:1',
+      numImages: 1,
+    });
+  });
+
+  it('passes images[] through verbatim', () => {
+    const body = buildImageGenBody({
+      engine: 'gemini',
+      model: '2.5-flash',
+      operation: 'editImage',
+      prompt: 'add sunglasses',
+      images: ['https://example.com/a.png', 'data:image/png;base64,xxx'],
+    }) as { steps: Array<{ input: { images: string[] } }> };
+    expect(body.steps[0]!.input.images).toEqual([
+      'https://example.com/a.png',
+      'data:image/png;base64,xxx',
+    ]);
+  });
+
+  it('honors caller-provided name + timeout overrides', () => {
+    const body = buildImageGenBody(
+      { engine: 'flux1-kontext', model: 'pro', prompt: 'p' },
+      { name: 'edit_step', timeout: '00:05:00' },
+    ) as { steps: Array<{ name: string; timeout: string }> };
+    expect(body.steps[0]!.name).toBe('edit_step');
+    expect(body.steps[0]!.timeout).toBe('00:05:00');
+  });
+});
+
+describe('buildWorkflowBody', () => {
+  it('wraps an arbitrary step into the workflow envelope', () => {
+    const body = buildWorkflowBody(
+      {
+        $type: 'videoGen',
+        input: { engine: 'veo3', prompt: 'a fox jumping', duration: 8 },
+      },
+      { tags: ['app'] },
+    ) as { tags?: string[]; steps: Array<{ $type: string; input: Record<string, unknown> }> };
+    expect(body.tags).toEqual(['app']);
+    expect(body.steps[0]!.$type).toBe('videoGen');
+    expect(body.steps[0]!.input).toMatchObject({ engine: 'veo3', prompt: 'a fox jumping' });
+  });
+
+  it('attaches metadata when provided', () => {
+    const body = buildWorkflowBody({
+      $type: 'echo',
+      input: { value: 'hi' },
+      metadata: { source: 'test' },
+    }) as { steps: Array<{ metadata?: Record<string, unknown> }> };
+    expect(body.steps[0]!.metadata).toEqual({ source: 'test' });
+  });
+
+  it('omits metadata when not provided', () => {
+    const body = buildWorkflowBody({
+      $type: 'echo',
+      input: { value: 'hi' },
+    }) as { steps: Array<Record<string, unknown>> };
+    expect(body.steps[0]!.metadata).toBeUndefined();
+  });
+
+  it('accepts a step $type not in the catalog (forward-compat)', () => {
+    // The orchestrator ships new step types continuously. The catalog is a
+    // hint, not a gate — passing a string that isn't a WorkflowStepType key
+    // must still type-check and serialize correctly.
+    const body = buildWorkflowBody({
+      $type: 'someFutureStepType',
+      input: { foo: 'bar', nestedNewField: { deep: true } },
+    }) as { steps: Array<{ $type: string; input: Record<string, unknown> }> };
+    expect(body.steps[0]!.$type).toBe('someFutureStepType');
+    expect(body.steps[0]!.input).toEqual({ foo: 'bar', nestedNewField: { deep: true } });
+  });
+});
+
+describe('buildImageGenBody (forward-compat)', () => {
+  it('accepts an engine + per-engine input fields not enumerated in IMAGE_GEN_ENGINES', () => {
+    // Same rationale: new engines + new per-engine fields ship continuously.
+    // The `engine: ImageGenEngine | (string & {})` union + `[field]: unknown`
+    // catch-all on ImageGenInput must keep this compiling and serializing.
+    const body = buildImageGenBody({
+      engine: 'someFutureEngine',
+      model: 'v0',
+      prompt: 'hi',
+      futureField: 42,
+      nested: { newOption: true },
+    }) as { steps: Array<{ input: Record<string, unknown> }> };
+    expect(body.steps[0]!.input).toMatchObject({
+      engine: 'someFutureEngine',
+      model: 'v0',
+      futureField: 42,
+      nested: { newOption: true },
+    });
+  });
+});
+
+describe('WORKFLOW_STEP_TYPES + IMAGE_GEN_ENGINES catalogs', () => {
+  it('includes the major step types', () => {
+    const keys = Object.keys(WORKFLOW_STEP_TYPES);
+    expect(keys).toContain('textToImage');
+    expect(keys).toContain('imageGen');
+    expect(keys).toContain('videoGen');
+    expect(keys).toContain('comfy');
+    expect(keys).toContain('textToSpeech');
+    expect(keys).toContain('aceStepAudio');
+    expect(keys).toContain('transcription');
+  });
+
+  it('exposes the closed-source image gen engines for imageGen', () => {
+    const engines = Object.keys(IMAGE_GEN_ENGINES);
+    expect(engines).toContain('google');
+    expect(engines).toContain('gemini');
+    expect(engines).toContain('openai');
+    expect(engines).toContain('flux1-kontext');
+    expect(engines).toContain('flux2');
   });
 });
 
