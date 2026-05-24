@@ -26,10 +26,16 @@
     "./orchestrator": {
       "types": "./dist/orchestrator/index.d.ts",
       "import": "./dist/orchestrator/index.js"
-    }
+    },
+    "./blocks": {
+      "types": "./dist/blocks/index.d.ts",
+      "import": "./dist/blocks/index.js"
+    },
+    "./schemas/app-block/v1.json": "./schemas/app-block/v1.json"
   },
   "files": [
     "dist",
+    "schemas",
     "README.md"
   ],
   "scripts": {

@@ -1,0 +1,45 @@
+{
+  "name": "civitai-block-starter",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Vite + React 19 starter for building Civitai App Blocks — iframe-embedded UIs that render on civitai.com pages.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "civitai",
+    "blocks",
+    "iframe",
+    "starter",
+    "template",
+    "vite",
+    "react"
+  ],
+  "homepage": "https://github.com/civitai/civitai-app-starters/tree/main/starters/civitai-block-starter#readme",
+  "bugs": "https://github.com/civitai/civitai-app-starters/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/civitai/civitai-app-starters.git",
+    "directory": "starters/civitai-block-starter"
+  },
+  "scripts": {
+    "dev": "vite",
+    "dev:harness": "VITE_DEV_HARNESS=true vite",
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@civitai/app-sdk": "workspace:^",
+    "@civitai/blocks-react": "workspace:^",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.4.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.2.0"
+  }
+}

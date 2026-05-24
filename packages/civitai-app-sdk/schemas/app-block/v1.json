@@ -1,0 +1,184 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://civitai.com/schemas/app-block/v1.json",
+  "title": "Civitai App Block Manifest v1",
+  "description": "Manifest shape for a Civitai App Block. Mirrors the runtime check performed by defineBlock() in @civitai/app-sdk/blocks.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "appId",
+    "blockId",
+    "version",
+    "name",
+    "type",
+    "targets",
+    "scopes",
+    "iframe",
+    "contentRating",
+    "minApiVersion"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "const": "https://civitai.com/schemas/app-block/v1.json"
+    },
+    "appId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "blockId": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]{3,64}$",
+      "description": "Immutable block identifier. Lowercase letters, digits, and hyphens; 3-64 characters."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+      "description": "Semver."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "type": {
+      "type": "string",
+      "enum": ["block", "embed"]
+    },
+    "targets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["slotId", "priority"],
+        "properties": {
+          "slotId": { "type": "string", "minLength": 1 },
+          "priority": { "type": "integer" },
+          "requiredContext": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "scopes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z]+:[a-z]+:[a-z]+$",
+        "description": "Colon-separated lowercase, e.g. models:read:self. PascalCase is rejected."
+      }
+    },
+    "iframe": {
+      "type": "object",
+      "required": ["src", "minHeight", "resizable", "sandbox"],
+      "properties": {
+        "src": {
+          "type": "string",
+          "description": "HTTPS URL of the block app. http://localhost or http://127.0.0.1 also accepted for local dev."
+        },
+        "minHeight": { "type": "integer", "exclusiveMinimum": 0 },
+        "maxHeight": { "type": ["integer", "null"] },
+        "resizable": { "type": "boolean" },
+        "sandbox": {
+          "type": "string",
+          "allOf": [
+            {
+              "not": { "pattern": "(^|\\s)allow-same-origin(\\s|$)" },
+              "description": "Must not contain allow-same-origin — combined with allow-scripts it defeats the sandbox."
+            },
+            {
+              "not": { "pattern": "(^|\\s)allow-top-navigation(\\s|$)" },
+              "description": "Must not contain allow-top-navigation — use the NAVIGATE postMessage instead."
+            },
+            {
+              "not": { "pattern": "(^|\\s)allow-top-navigation-by-user-activation(\\s|$)" },
+              "description": "Must not contain allow-top-navigation-by-user-activation — same threat as allow-top-navigation, gated on a user gesture."
+            },
+            {
+              "not": { "pattern": "(^|\\s)allow-top-navigation-to-custom-protocols(\\s|$)" },
+              "description": "Must not contain allow-top-navigation-to-custom-protocols — same threat as allow-top-navigation, restricted to non-fetch schemes."
+            }
+          ]
+        }
+      }
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["url", "integrity"],
+        "properties": {
+          "url": { "type": "string" },
+          "integrity": {
+            "type": "string",
+            "pattern": "^sha(256|384|512)-[A-Za-z0-9+/=]+$"
+          }
+        }
+      }
+    },
+    "settings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "label"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "type": { "type": "string", "enum": ["string", "number", "boolean", "select"] },
+          "label": { "type": "string", "minLength": 1 },
+          "default": {},
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["value", "label"],
+              "properties": {
+                "value": { "type": "string" },
+                "label": { "type": "string" }
+              }
+            }
+          },
+          "min": { "type": "number" },
+          "max": { "type": "number" },
+          "required": { "type": "boolean" }
+        }
+      }
+    },
+    "contentRating": {
+      "type": "string",
+      "enum": ["g", "pg", "pg13", "r", "x"]
+    },
+    "preview": {
+      "type": "object",
+      "required": ["thumbnail", "description"],
+      "properties": {
+        "thumbnail": { "type": "string" },
+        "description": { "type": "string" },
+        "screenshots": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "promotionEligible": { "type": "boolean" },
+    "minApiVersion": { "type": "string" },
+    "renderMode": {
+      "type": "string",
+      "enum": ["iframe", "inline", "hybrid"],
+      "description": "Optional. Defaults to iframe. v1 manifests may omit."
+    },
+    "assetBundle": {
+      "type": "object",
+      "properties": {
+        "url": { "type": ["string", "null"] },
+        "sha256": { "type": ["string", "null"] }
+      }
+    },
+    "trustTier": {
+      "type": "string",
+      "enum": ["unverified", "verified", "internal"]
+    }
+  }
+}
