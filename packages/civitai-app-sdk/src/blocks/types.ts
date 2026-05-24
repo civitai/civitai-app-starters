@@ -113,7 +113,52 @@ export type WorkflowStatus =
   | 'done'
   | 'error';
 
-export type WorkflowBody = Record<string, unknown>;
+/**
+ * Generation parameters a block can override. All optional — the host fills
+ * sensible defaults (sampler='Euler', steps=25, dimensions from the
+ * base-model family) when omitted, so the simplest block can submit
+ * `{ kind: 'textToImage', modelId, modelVersionId, params: { prompt } }`.
+ *
+ * Bounds mirror civitai/civitai's `blockWorkflowBodySchema` zod gate; over-
+ * limit values are rejected server-side before reaching the orchestrator.
+ */
+export interface BlockTextToImageParams {
+  prompt: string;
+  negativePrompt?: string;
+  /** Range 1–30. */
+  cfgScale?: number;
+  /** Sampler name (e.g. 'Euler', 'DPM++ 2M Karras'). Defaults to 'Euler'. */
+  sampler?: string;
+  /** Range 1–50. */
+  steps?: number;
+  /** `null` lets the orchestrator pick. */
+  seed?: number | null;
+  /** Range 64–2048. Defaults to 1024 for SDXL/Flux, 512 for SD1/SD2. */
+  width?: number;
+  /** Range 64–2048. Same defaults as width. */
+  height?: number;
+  /** Range 1–4. Defaults to 1. */
+  quantity?: number;
+}
+
+/**
+ * Body the block sends to `useBuzzWorkflow().{submit,estimate}`. A
+ * discriminated union keyed by `kind` — v1 ships text-to-image only;
+ * new kinds (e.g. img2img, video) extend this union as the host gains
+ * support for them.
+ *
+ * Both `modelId` and `modelVersionId` are required even though they're
+ * conceptually redundant — the host validates that `modelId` matches the
+ * JWT's `ctx.modelId` (context binding) AND that the version belongs to
+ * that model (DB lookup). The block always has both values from
+ * `useBlockContext().context as ModelSlotContext`.
+ */
+export type WorkflowBody = {
+  kind: 'textToImage';
+  modelId: number;
+  modelVersionId: number;
+  params: BlockTextToImageParams;
+};
 
 /**
  * The host-mediated view of an orchestrator workflow that an iframe block

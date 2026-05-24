@@ -56,13 +56,13 @@ describe('useBuzzWorkflow', () => {
 
     let estimatePromise!: Promise<unknown>;
     act(() => {
-      estimatePromise = result.current.estimate({ prompt: 'cat' });
+      estimatePromise = result.current.estimate({ kind: 'textToImage', modelId: 7, modelVersionId: 99, params: { prompt: 'cat' } });
     });
     expect(result.current.status).toBe('estimating');
 
     const sent = postMessageMock.mock.calls[0][0] as { type: string; payload: { requestId: string; body: unknown } };
     expect(sent.type).toBe('ESTIMATE_WORKFLOW');
-    expect(sent.payload.body).toEqual({ prompt: 'cat' });
+    expect(sent.payload.body).toEqual({ kind: 'textToImage', modelId: 7, modelVersionId: 99, params: { prompt: 'cat' } });
 
     act(() => {
       window.dispatchEvent(
@@ -89,7 +89,7 @@ describe('useBuzzWorkflow', () => {
 
     let submitPromise!: Promise<unknown>;
     act(() => {
-      submitPromise = result.current.submit({ prompt: 'cat' });
+      submitPromise = result.current.submit({ kind: 'textToImage', modelId: 7, modelVersionId: 99, params: { prompt: 'cat' } });
     });
     expect(result.current.status).toBe('submitting');
 

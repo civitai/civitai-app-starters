@@ -39,6 +39,7 @@ export type {
   SettingType,
   Theme,
   ViewerInfo,
+  BlockTextToImageParams,
   BlockWorkflowSnapshot,
   WorkflowBody,
   WorkflowStatus,
