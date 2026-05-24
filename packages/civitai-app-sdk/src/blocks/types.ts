@@ -26,6 +26,27 @@ export interface BlockContext {
 }
 
 /**
+ * Snapshot of the effective Checkpoint the block will generate against —
+ * already merged from publisher default + viewer override on the host.
+ * For Checkpoint-bound installs this is the model itself; for LoRA installs
+ * it's whichever Checkpoint the resolver picked.
+ *
+ * `null` (via `ModelSlotContext.checkpoint`) means no checkpoint is
+ * configured; blocks should render a "missing checkpoint" CTA pointing the
+ * user at the model owner.
+ *
+ * Mirrors `BlockCheckpointInfo` in civitai/civitai's
+ * `src/components/AppBlocks/types.ts`.
+ */
+export interface BlockCheckpointInfo {
+  versionId: number;
+  modelId: number;
+  modelName: string;
+  versionName: string;
+  baseModel: string;
+}
+
+/**
  * The shape the host delivers for the three model-page slots
  * (`model.sidebar_top`, `model.below_images`, `model.actions_extra`).
  *
@@ -56,6 +77,13 @@ export interface ModelSlotContext extends BlockContext {
   viewerStatus?: 'active' | 'banned' | 'muted';
   /** Host-page color scheme; lets the iframe match without a flicker. */
   theme?: 'light' | 'dark';
+  /**
+   * Effective Checkpoint after publisher-default ∪ viewer-override merge.
+   * `null` when no checkpoint is configured (publisher hasn't set one AND
+   * the bound model isn't a Checkpoint itself) — block should render a
+   * "missing checkpoint" state and prompt the user to ask the model owner.
+   */
+  checkpoint?: BlockCheckpointInfo | null;
 }
 
 /**

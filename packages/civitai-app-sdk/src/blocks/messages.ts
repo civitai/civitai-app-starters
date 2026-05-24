@@ -9,6 +9,7 @@
  */
 
 import type {
+  BlockCheckpointInfo,
   BlockContext,
   BlockSettings,
   Theme,
@@ -93,6 +94,20 @@ export type ParentToBlockMessage =
       type: 'BUZZ_PURCHASE_RESULT';
       payload: { requestId: string; purchased: boolean; newBalance?: number };
     }
+  | {
+      // Reply to OPEN_CHECKPOINT_PICKER. `selected` is absent when the user
+      // dismissed the picker without choosing — the block's hook resolves
+      // to `{ selected: undefined }` in that case.
+      type: 'CHECKPOINT_PICKER_RESULT';
+      payload: { requestId: string; selected?: BlockCheckpointInfo };
+    }
+  | {
+      // Reply to SET_USER_CHECKPOINT. `ok: false` carries a UI-renderable
+      // `error` string (e.g. "wrong-ecosystem"), distinct from the block
+      // lifecycle error class.
+      type: 'USER_CHECKPOINT_SET';
+      payload: { requestId: string; ok: boolean; error?: string };
+    }
   | { type: 'SUSPEND'; payload?: undefined }
   | { type: 'RESUME'; payload?: undefined };
 
@@ -111,6 +126,25 @@ export type BlockToParentMessage =
   | { type: 'ESTIMATE_WORKFLOW'; payload: { requestId: string; body: WorkflowBody } }
   | { type: 'POLL_WORKFLOW'; payload: { requestId: string; workflowId: string } }
   | { type: 'OPEN_BUZZ_PURCHASE'; payload: { requestId: string; suggestedAmount?: number } }
+  | {
+      // Ask the host to open the platform's Checkpoint picker. `baseModelGroup`
+      // is the ecosystem key (e.g. 'Flux1', 'SDXL') the picker filters to —
+      // typically derived from `useBlockContext().context.checkpoint?.baseModel`
+      // or from the LoRA's `baseModel` via the platform's group mapping.
+      type: 'OPEN_CHECKPOINT_PICKER';
+      payload: {
+        requestId: string;
+        baseModelGroup: string;
+        /** Currently-selected versionId so the picker can pre-highlight it. */
+        currentVersionId?: number;
+      };
+    }
+  | {
+      // Persist a viewer's checkpoint override via the host. `null` clears
+      // the override and falls back to the publisher default.
+      type: 'SET_USER_CHECKPOINT';
+      payload: { requestId: string; versionId: number | null };
+    }
   | {
       type: 'NAVIGATE';
       payload: { path: string; target: 'current' | 'new_tab' };
