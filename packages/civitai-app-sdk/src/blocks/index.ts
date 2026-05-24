@@ -42,6 +42,7 @@ export type {
   BlockCheckpointInfo,
   BlockTextToImageParams,
   BlockWorkflowSnapshot,
+  ShowcaseImage,
   WorkflowBody,
   WorkflowStatus,
 } from './types.js';

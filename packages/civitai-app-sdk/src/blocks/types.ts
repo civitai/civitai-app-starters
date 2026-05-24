@@ -47,6 +47,32 @@ export interface BlockCheckpointInfo {
 }
 
 /**
+ * One of the model version's curated preview images, with the standard
+ * gen params extracted from its source meta. Block UIs use these to let
+ * the user "remix" a known-good prompt without typing it.
+ *
+ * `null` on a gen-param field means the source image's meta didn't have
+ * that value (or it was malformed). The block should treat null as "keep
+ * the current value" rather than clearing the field — that way a partial
+ * meta doesn't trash a prompt the user already typed.
+ *
+ * Mirrors `ShowcaseImage` in civitai/civitai's
+ * `src/components/AppBlocks/types.ts`. Keep in lockstep.
+ */
+export interface ShowcaseImage {
+  id: number;
+  url: string;
+  width: number;
+  height: number;
+  prompt: string | null;
+  negativePrompt: string | null;
+  cfgScale: number | null;
+  steps: number | null;
+  seed: number | null;
+  sampler: string | null;
+}
+
+/**
  * The shape the host delivers for the three model-page slots
  * (`model.sidebar_top`, `model.below_images`, `model.actions_extra`).
  *
@@ -84,6 +110,14 @@ export interface ModelSlotContext extends BlockContext {
    * "missing checkpoint" state and prompt the user to ask the model owner.
    */
   checkpoint?: BlockCheckpointInfo | null;
+  /**
+   * Top showcase images for the bound model version, ordered by all-time
+   * reactions. Capped at 6 by the host. Empty array means the version
+   * has no preview images yet. The block uses these to render a "click
+   * to remix" carousel that populates the form from the selected image's
+   * gen meta.
+   */
+  showcaseImages?: ShowcaseImage[];
 }
 
 /**
