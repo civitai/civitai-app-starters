@@ -70,6 +70,8 @@ export interface ShowcaseImage {
   steps: number | null;
   seed: number | null;
   sampler: string | null;
+  /** Per-resource CLIP layer skip count (SD1/SDXL). Flux ignores it. */
+  clipSkip: number | null;
 }
 
 /**
@@ -199,6 +201,8 @@ export interface BlockTextToImageParams {
   width?: number;
   /** Range 64–2048. Same defaults as width. */
   height?: number;
+  /** Per-resource CLIP layer skip count (SD1/SDXL). Range 0–12. Flux ignores it. */
+  clipSkip?: number;
   /** Range 1–4. Defaults to 1. */
   quantity?: number;
 }
