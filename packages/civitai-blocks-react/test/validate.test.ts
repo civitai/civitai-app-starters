@@ -67,11 +67,44 @@ describe('isValidWorkflowSnapshot', () => {
       }),
     ).toBe(true);
   });
+  it('accepts a snapshot carrying a well-formed autoClaim (dailyBoost)', () => {
+    expect(
+      isValidWorkflowSnapshot({
+        workflowId: 'w1',
+        status: 'succeeded',
+        autoClaim: { type: 'dailyBoost', amount: 25, accountType: 'blue' },
+      }),
+    ).toBe(true);
+  });
   it.each([
     ['unknown status', { workflowId: 'w', status: 'queued' }],
     ['missing workflowId', { status: 'pending' }],
     ['imageUrls contains non-string', { workflowId: 'w', status: 'succeeded', imageUrls: [1] }],
     ['cost.total not number', { workflowId: 'w', status: 'succeeded', cost: { total: 'free' } }],
+    [
+      'autoClaim.type unknown',
+      {
+        workflowId: 'w',
+        status: 'succeeded',
+        autoClaim: { type: 'jackpot', amount: 25, accountType: 'blue' },
+      },
+    ],
+    [
+      'autoClaim.amount NaN',
+      {
+        workflowId: 'w',
+        status: 'succeeded',
+        autoClaim: { type: 'dailyBoost', amount: Number.NaN, accountType: 'blue' },
+      },
+    ],
+    [
+      'autoClaim.accountType unknown',
+      {
+        workflowId: 'w',
+        status: 'succeeded',
+        autoClaim: { type: 'dailyBoost', amount: 25, accountType: 'purple' },
+      },
+    ],
   ])('rejects %s', (_, payload) => {
     expect(isValidWorkflowSnapshot(payload)).toBe(false);
   });

@@ -87,6 +87,9 @@ const WORKFLOW_STATUSES = new Set<string>([
   'canceled',
 ]);
 
+const AUTO_CLAIM_TYPES = new Set<string>(['dailyBoost']);
+const AUTO_CLAIM_ACCOUNT_TYPES = new Set<string>(['yellow', 'blue', 'red', 'green']);
+
 export function isValidWorkflowSnapshot(s: unknown): s is BlockWorkflowSnapshot {
   if (!isObject(s)) return false;
   if (!isNonEmptyString(s.workflowId)) return false;
@@ -99,6 +102,21 @@ export function isValidWorkflowSnapshot(s: unknown): s is BlockWorkflowSnapshot 
     if (!s.imageUrls.every((u): u is string => typeof u === 'string')) return false;
   }
   if (s.error !== undefined && typeof s.error !== 'string') return false;
+  if (s.autoClaim !== undefined) {
+    if (!isObject(s.autoClaim)) return false;
+    if (typeof s.autoClaim.type !== 'string' || !AUTO_CLAIM_TYPES.has(s.autoClaim.type)) {
+      return false;
+    }
+    if (typeof s.autoClaim.amount !== 'number' || !Number.isFinite(s.autoClaim.amount)) {
+      return false;
+    }
+    if (
+      typeof s.autoClaim.accountType !== 'string' ||
+      !AUTO_CLAIM_ACCOUNT_TYPES.has(s.autoClaim.accountType)
+    ) {
+      return false;
+    }
+  }
   return true;
 }
 

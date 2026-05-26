@@ -248,6 +248,22 @@ export interface BlockWorkflowSnapshot {
   cost?: { total: number };
   imageUrls?: string[];
   error?: string;
+  /**
+   * Set when the host opportunistically claimed a Buzz reward on the user's
+   * behalf during submit. Currently the host only fires this for the daily
+   * boost (25 blue Buzz, one per UTC day) when the user's balance would
+   * otherwise have been short by less than the boost amount.
+   *
+   * Informational only — the block has no obligation to reconcile state
+   * (the claim already settled in the orchestrator). A typical block UX
+   * surfaces a small "+25 daily boost claimed" notice next to the
+   * succeeded result.
+   */
+  autoClaim?: {
+    type: 'dailyBoost';
+    amount: number;
+    accountType: 'yellow' | 'blue' | 'red' | 'green';
+  };
 }
 
 // ============================================================
