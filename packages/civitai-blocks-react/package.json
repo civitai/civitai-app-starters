@@ -1,6 +1,6 @@
 {
   "name": "@civitai/blocks-react",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "React hooks and iframe transport for Civitai App Blocks. Pairs with @civitai/app-sdk/blocks.",
   "license": "MIT",
   "type": "module",
@@ -34,11 +34,11 @@
     "node": ">=20"
   },
   "peerDependencies": {
-    "@civitai/app-sdk": "workspace:^",
+    "@civitai/app-sdk": "^0.6.0",
     "react": "^18.0.0 || ^19.0.0"
   },
   "devDependencies": {
-    "@civitai/app-sdk": "workspace:*",
+    "@civitai/app-sdk": "^0.6.0",
     "@testing-library/react": "^16.0.0",
     "@types/node": "^25.9.1",
     "@types/react": "^19.2.15",

@@ -1,5 +1,11 @@
 # @civitai/blocks-react
 
+## 0.4.1
+
+### Patch Changes
+
+- Republish to fix `workspace:^` protocol leaking into `peerDependencies."@civitai/app-sdk"` of the 0.4.0 tarball — npm consumers got `EUNSUPPORTEDPROTOCOL` on install. Replaced with explicit `^0.6.0` semver.
+
 ## 0.4.0
 
 ### Minor Changes
