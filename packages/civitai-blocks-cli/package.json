@@ -1,6 +1,6 @@
 {
   "name": "@civitai/blocks-cli",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Command-line tools for scaffolding and shipping Civitai App Blocks.",
   "license": "MIT",
   "type": "module",
