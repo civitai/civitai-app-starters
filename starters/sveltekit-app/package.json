@@ -41,7 +41,7 @@
   "devDependencies": {
     "@playwright/test": "^1.57.0",
     "@sveltejs/adapter-auto": "^7.0.1",
-    "@sveltejs/kit": "^2.46.0",
+    "@sveltejs/kit": "^2.61.1",
     "@sveltejs/vite-plugin-svelte": "^7.0.4",
     "@tailwindcss/postcss": "^4.0.0",
     "@types/node": "^25.9.1",
