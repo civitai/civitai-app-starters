@@ -14,7 +14,7 @@
     "lint": "pnpm -r --filter \"./packages/*\" lint",
     "e2e:all": "node scripts/run-all-e2e.mjs",
     "changeset": "changeset",
-    "release": "pnpm --filter @civitai/app-sdk build && changeset publish",
+    "release": "pnpm -r --filter \"./packages/*\" build && changeset publish",
     "release:check": "changeset status --verbose"
   },
   "license": "MIT",

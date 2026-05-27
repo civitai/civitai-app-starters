@@ -1,0 +1,49 @@
+{
+  "name": "@civitai/blocks-cli",
+  "version": "0.1.0",
+  "description": "Command-line tools for scaffolding and shipping Civitai App Blocks.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "civitai": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@civitai/app-sdk": "workspace:^",
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "typescript": "^5.9.2",
+    "vitest": "^4.0.18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "civitai",
+    "blocks",
+    "cli",
+    "iframe",
+    "scaffold"
+  ],
+  "homepage": "https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-blocks-cli#readme",
+  "bugs": "https://github.com/civitai/civitai-app-starters/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/civitai/civitai-app-starters.git",
+    "directory": "packages/civitai-blocks-cli"
+  }
+}

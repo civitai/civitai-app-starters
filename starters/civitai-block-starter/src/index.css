@@ -1,0 +1,30 @@
+:root {
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  line-height: 1.5;
+  color-scheme: light dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+
+#root {
+  /* The host iframe controls width via its style + RESIZE_IFRAME messages;
+     the block's root just fills it. */
+  min-width: 100%;
+}
+
+[data-theme='light'] {
+  color: #1a1a1a;
+}
+
+[data-theme='dark'] {
+  color: #e6e6e6;
+}

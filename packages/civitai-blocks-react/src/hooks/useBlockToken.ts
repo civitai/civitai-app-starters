@@ -1,0 +1,71 @@
+import { useEffect } from 'react';
+
+import type { BlockToken } from '@civitai/app-sdk/blocks';
+
+import { getTransport } from '../internal/singleton.js';
+import { sendTypedRequest } from '../internal/transport.js';
+import { useTransportSnapshot } from './useBlockContext.js';
+
+/** Refresh fires `REFRESH_LEAD_MS` before the token's `expiresAt`. */
+const REFRESH_LEAD_MS = 2 * 60 * 1000;
+
+/**
+ * Returns the current block-scoped JWT and keeps it fresh.
+ *
+ * Iframe path: schedules a `REQUEST_TOKEN` postMessage T-2min before expiry.
+ * The host replies with `TOKEN_REFRESH_RESPONSE`, the transport updates its
+ * snapshot, and the hook re-renders with the new token.
+ *
+ * Consumers also get a `refresh()` callable for the 401-retry path. Call it
+ * after any API request returns 401 — it forces an immediate token mint and
+ * resolves once the new token is applied to the snapshot.
+ */
+export function useBlockToken(): BlockToken & { refresh: () => Promise<void> } {
+  const snap = useTransportSnapshot();
+  const token = snap.token;
+  const instanceId = snap.blockInstanceId;
+
+  useEffect(() => {
+    if (!snap.ready) return;
+    const msUntilRefresh = token.expiresAt.getTime() - Date.now() - REFRESH_LEAD_MS;
+    if (msUntilRefresh <= 0) {
+      // Already past the refresh window — refresh now.
+      // Background refresh — swallow errors. The next 401 will re-trigger
+      // via the explicit refresh() callable below.
+      requestRefresh(instanceId).catch(() => {});
+      return;
+    }
+    const id = setTimeout(() => {
+      // Background refresh — swallow errors. The next 401 will re-trigger
+      // via the explicit refresh() callable below.
+      requestRefresh(instanceId).catch(() => {});
+    }, msUntilRefresh);
+    return () => clearTimeout(id);
+  }, [snap.ready, token.expiresAt, instanceId]);
+
+  return { ...token, refresh: () => requestRefresh(instanceId) };
+}
+
+/**
+ * In-flight dedup. Both the scheduled-timeout path and the "already past"
+ * synchronous path can fire while a previous refresh is still pending —
+ * coalescing into a single round-trip avoids fanning out duplicate
+ * REQUEST_TOKEN messages, which would otherwise hit the host once per
+ * snapshot update.
+ */
+let inFlightRefresh: Promise<void> | null = null;
+
+async function requestRefresh(blockInstanceId: string): Promise<void> {
+  if (inFlightRefresh) return inFlightRefresh;
+  const transport = getTransport();
+  inFlightRefresh = sendTypedRequest(
+    transport,
+    { type: 'REQUEST_TOKEN', payload: { blockInstanceId } },
+    'TOKEN_REFRESH_RESPONSE',
+  )
+    .then(() => undefined)
+    .finally(() => {
+      inFlightRefresh = null;
+    });
+  return inFlightRefresh;
+}

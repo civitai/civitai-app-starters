@@ -1,6 +1,11 @@
-# Releasing `@civitai/app-sdk`
+# Releasing packages
 
-This repo publishes one package to npm: [`@civitai/app-sdk`](https://www.npmjs.com/package/@civitai/app-sdk). The four starter templates under `starters/*` are private and aren't on npm — external devs `tiged` them directly from GitHub.
+This repo publishes two packages to npm:
+
+- [`@civitai/app-sdk`](https://www.npmjs.com/package/@civitai/app-sdk) — framework-agnostic OAuth + orchestrator + blocks contract.
+- [`@civitai/blocks-react`](https://www.npmjs.com/package/@civitai/blocks-react) — React hooks + iframe transport that pair with `@civitai/app-sdk/blocks`.
+
+The four starter templates under `starters/*` are private and aren't on npm — external devs `tiged` them directly from GitHub.
 
 The release pipeline runs on [changesets](https://github.com/changesets/changesets) plus a GitHub Actions workflow ([`.github/workflows/release.yml`](./.github/workflows/release.yml)) authenticated via npm **OIDC trusted publishing** — no `NPM_TOKEN` secret, no manual `npm login`, no OTP after the initial bootstrap.
 
@@ -24,7 +29,7 @@ That's it. The Version Packages PR is the only thing a maintainer reviews per re
 
 ## When to author a changeset
 
-For any change to `packages/civitai-app-sdk/src/**`. Pick the bump type:
+For any change to a published package — `packages/civitai-app-sdk/src/**` or `packages/civitai-blocks-react/src/**`. A single changeset may bump both packages; pick the appropriate level for each. Pick the bump type:
 
 - **`patch`** — bug fix, internal refactor, doc-only tweak that affects the published bundle. No API shape change.
 - **`minor`** — new exported function, new optional argument, new subpath export, looser input acceptance. **Adding API.**
@@ -46,32 +51,32 @@ On every push to `main`, [`changesets/action@v1`](https://github.com/changesets/
 
 1. **Pending changesets exist** → open / refresh a PR titled `chore(release): version @civitai/app-sdk`. The PR's diff applies the version bumps + CHANGELOG entries that `changeset version` produces.
 
-2. **No pending changesets** (i.e. the Version Packages PR was just merged) → run `pnpm release`, which is `pnpm --filter @civitai/app-sdk build && changeset publish`. The publish step calls `npm publish` from `packages/civitai-app-sdk/`; npm detects it's running in GitHub Actions with `id-token: write` and uses **OIDC trusted publishing** to authenticate against the trust configured on [npmjs.com](https://www.npmjs.com/package/@civitai/app-sdk/access).
+2. **No pending changesets** (i.e. the Version Packages PR was just merged) → run `pnpm release`, which is `pnpm -r --filter "./packages/*" build && changeset publish`. The publish step calls `npm publish` from each package directory whose version changed; npm detects it's running in GitHub Actions with `id-token: write` and uses **OIDC trusted publishing** to authenticate against the trust configured on each package's npm page (`access`). **Every publishable package must be in the `pnpm -r --filter "./packages/*" build` set** — `changeset publish` does not compile, so a package whose `dist/` isn't fresh will publish with stale or missing output.
 
 No `NPM_TOKEN`. No 2FA prompt. The deploy completes in ~90 seconds.
 
-## Bootstrapping the OIDC trust (one-time)
+## Bootstrapping the OIDC trust (one-time, per package)
 
-Already done as of `0.1.0`. For reference / disaster recovery:
+Done for `@civitai/app-sdk` as of `0.1.0`. **Must be repeated for every newly-published package** — including `@civitai/blocks-react` before its first OIDC publish. For reference / disaster recovery:
 
 1. Log in to npmjs.com as a `@civitai` org maintainer.
-2. Go to `@civitai/app-sdk` → **Settings** → **Trusted Publishers** → **Add publisher**.
+2. Go to the package page → **Settings** → **Trusted Publishers** → **Add publisher**.
 3. Choose **GitHub Actions**, then fill:
    - Repository owner: `civitai`
    - Repository: `civitai-app-starters`
    - Workflow file: `release.yml`
    - Environment: *(blank)*
 
-After this, subsequent publishes from the configured workflow auth via OIDC. Until the first OIDC publish succeeds, the package's history retains the legacy publisher of the bootstrap publish (`justmaier`, `0.1.0`).
+After this, subsequent publishes from the configured workflow auth via OIDC. Until the first OIDC publish for a package succeeds, npm history retains whatever bootstrap publisher created the initial release.
 
 ## Emergency manual publish
 
-If the workflow is broken and you need to ship right now:
+If the workflow is broken and you need to ship right now (substitute the package name as needed):
 
 ```bash
-# from packages/civitai-app-sdk/
+# from packages/<package>/
 npm version <patch|minor|major> --no-git-tag-version    # or set the version explicitly
-pnpm --filter @civitai/app-sdk build
+pnpm --filter <package-name> build
 npm publish --access public --otp=<your-otp>            # legacy token + 2FA
 # commit version bump + CHANGELOG manually, then push
 ```

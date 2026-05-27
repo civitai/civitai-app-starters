@@ -1,0 +1,102 @@
+import { useCallback, useState } from 'react';
+
+import type { BlockWorkflowSnapshot, WorkflowBody, WorkflowStatus } from '@civitai/app-sdk/blocks';
+
+import { getTransport } from '../internal/singleton.js';
+import { sendTypedRequest } from '../internal/transport.js';
+
+/**
+ * Snapshot statuses that mean "no further polling is needed."
+ * Used by both `submit` (a host can return an instant-fail / cached result)
+ * and `poll` so the hook can't get stuck in 'polling' after a terminal reply.
+ */
+const TERMINAL_STATUSES: ReadonlySet<BlockWorkflowSnapshot['status']> = new Set([
+  'succeeded',
+  'failed',
+  'canceled',
+  'expired',
+]);
+
+interface UseBuzzWorkflowReturn {
+  estimate: (body: WorkflowBody) => Promise<BlockWorkflowSnapshot>;
+  submit: (body: WorkflowBody) => Promise<BlockWorkflowSnapshot>;
+  poll: (workflowId: string) => Promise<BlockWorkflowSnapshot>;
+  status: WorkflowStatus;
+  result: BlockWorkflowSnapshot | null;
+  error: Error | null;
+}
+
+/**
+ * Orchestrates the estimate → confirm → submit → poll dance through the
+ * host-mediated `postMessage` path.
+ *
+ * The host enforces budget rules (`cost_estimate <= token.buzzBudget`)
+ * before forwarding to the orchestrator; submit() will reject if the host
+ * refuses. Block apps should call `useBuzzPurchase().openPurchaseModal()`
+ * when that happens.
+ */
+export function useBuzzWorkflow(): UseBuzzWorkflowReturn {
+  const [status, setStatus] = useState<WorkflowStatus>('idle');
+  const [result, setResult] = useState<BlockWorkflowSnapshot | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+
+  const estimate = useCallback(async (body: WorkflowBody) => {
+    setError(null);
+    setStatus('estimating');
+    try {
+      const { snapshot } = await sendTypedRequest(
+        getTransport(),
+        { type: 'ESTIMATE_WORKFLOW', payload: { body } },
+        'ESTIMATE_RESULT',
+      );
+      setResult(snapshot);
+      setStatus('confirming');
+      return snapshot;
+    } catch (err) {
+      setError(err as Error);
+      setStatus('error');
+      throw err;
+    }
+  }, []);
+
+  const submit = useCallback(async (body: WorkflowBody) => {
+    setError(null);
+    setStatus('submitting');
+    try {
+      const { snapshot } = await sendTypedRequest(
+        getTransport(),
+        { type: 'SUBMIT_WORKFLOW', payload: { body } },
+        'WORKFLOW_SUBMITTED',
+      );
+      setResult(snapshot);
+      setStatus(TERMINAL_STATUSES.has(snapshot.status) ? 'done' : 'polling');
+      return snapshot;
+    } catch (err) {
+      setError(err as Error);
+      setStatus('error');
+      throw err;
+    }
+  }, []);
+
+  const poll = useCallback(async (workflowId: string) => {
+    setStatus('polling');
+    try {
+      const { snapshot } = await sendTypedRequest(
+        getTransport(),
+        { type: 'POLL_WORKFLOW', payload: { workflowId } },
+        'WORKFLOW_STATUS',
+      );
+      setResult(snapshot);
+      if (TERMINAL_STATUSES.has(snapshot.status)) {
+        setStatus('done');
+      }
+      return snapshot;
+    } catch (err) {
+      setError(err as Error);
+      setStatus('error');
+      throw err;
+    }
+  }, []);
+
+  return { estimate, submit, poll, status, result, error };
+}

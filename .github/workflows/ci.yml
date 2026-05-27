@@ -32,17 +32,9 @@ jobs:
       - run: pnpm --filter @civitai/app-sdk test
       - run: pnpm --filter @civitai/app-sdk build
 
-  starter:
-    name: Starter
+  blocks-react:
+    name: blocks-react (typecheck + test + build)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        starter:
-          - next-app
-          - sveltekit-app
-          - react-pwa
-          - svelte-pwa
     steps:
       - uses: actions/checkout@v6
 
@@ -55,8 +47,67 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # Starters consume @civitai/app-sdk via workspace:^; package main points at dist/.
+      # blocks-react consumes @civitai/app-sdk via workspace:^ and resolves
+      # types from its dist/. Build the SDK first so the package isn't
+      # typechecking against stale or missing declarations.
       - run: pnpm --filter @civitai/app-sdk build
+
+      - run: pnpm --filter @civitai/blocks-react typecheck
+      - run: pnpm --filter @civitai/blocks-react test
+      - run: pnpm --filter @civitai/blocks-react build
+
+  blocks-cli:
+    name: blocks-cli (typecheck + test + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # blocks-cli imports `defineBlock` + `BLOCK_SCOPES` from
+      # @civitai/app-sdk/blocks (workspace:^) — SDK must be built first so
+      # the .d.ts is current.
+      - run: pnpm --filter @civitai/app-sdk build
+
+      - run: pnpm --filter @civitai/blocks-cli typecheck
+      - run: pnpm --filter @civitai/blocks-cli test
+      - run: pnpm --filter @civitai/blocks-cli build
+
+  starter:
+    name: Starter
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        starter:
+          - next-app
+          - sveltekit-app
+          - react-pwa
+          - svelte-pwa
+          - civitai-block-starter
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Starters consume @civitai/app-sdk via workspace:^ (and the block
+      # starter additionally consumes @civitai/blocks-react). Building all
+      # packages up front so each starter's typecheck sees fresh .d.ts files.
+      - run: pnpm -r --filter "./packages/*" build
 
       - name: Typecheck
         run: pnpm --filter ./starters/${{ matrix.starter }} typecheck
