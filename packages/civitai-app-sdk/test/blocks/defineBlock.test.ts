@@ -37,10 +37,28 @@ describe('defineBlock', () => {
       assets: [
         { url: 'https://cdn.example.com/a.js', integrity: 'sha384-AAAAAAAAAAAAAAAAAAAA' },
       ],
-      settings: [
-        { id: 'theme', type: 'select', label: 'Theme', options: [{ value: 'a', label: 'A' }] },
-        { id: 'count', type: 'number', label: 'Count', min: 0, max: 10, default: 1 },
-      ],
+      settings: {
+        // W3 v0 — record keyed by snake_case field name.
+        theme: {
+          scope: 'publisher',
+          type: 'string',
+          widget: 'select',
+          label: 'Theme',
+          description: 'Light or dark.',
+          enum: ['light', 'dark'],
+          default: 'light',
+        },
+        count: {
+          scope: 'publisher',
+          type: 'number',
+          widget: 'number',
+          label: 'Count',
+          description: 'How many items.',
+          min: 0,
+          max: 10,
+          default: 1,
+        },
+      },
       preview: {
         thumbnail: 'https://cdn.example.com/thumb.png',
         description: 'desc',
@@ -298,9 +316,36 @@ describe('defineBlock', () => {
 
     it('rejects setting with unknown type', () => {
       const manifest = validManifest({
-        settings: [{ id: 'x', type: 'date', label: 'X' } as never],
+        settings: {
+          x: { scope: 'publisher', type: 'date', label: 'X', description: 'D' },
+        } as never,
       });
-      expect(() => defineBlock({ manifest })).toThrow(/type must be one of string, number, boolean, select/);
+      expect(() => defineBlock({ manifest })).toThrow(/type must be one of number, string, boolean/);
+    });
+
+    it('rejects settings as an array (old v0-pre shape)', () => {
+      const manifest = validManifest({
+        settings: [{ id: 'x', type: 'number', label: 'X' }] as never,
+      });
+      expect(() => defineBlock({ manifest })).toThrow(/settings must be an object/);
+    });
+
+    it('rejects setting key in non-snake_case', () => {
+      const manifest = validManifest({
+        settings: {
+          BadKey: { scope: 'publisher', type: 'boolean', label: 'L', description: 'D' },
+        } as never,
+      });
+      expect(() => defineBlock({ manifest })).toThrow(/snake_case/);
+    });
+
+    it('rejects setting with missing scope', () => {
+      const manifest = validManifest({
+        settings: {
+          x: { type: 'boolean', label: 'L', description: 'D' },
+        } as never,
+      });
+      expect(() => defineBlock({ manifest })).toThrow(/scope must be one of publisher, viewer/);
     });
 
     it('rejects wrong $schema URL', () => {

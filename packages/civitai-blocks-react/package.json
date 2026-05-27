@@ -1,6 +1,6 @@
 {
   "name": "@civitai/blocks-react",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "React hooks and iframe transport for Civitai App Blocks. Pairs with @civitai/app-sdk/blocks.",
   "license": "MIT",
   "type": "module",
@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./ui": {
+      "types": "./dist/ui/index.d.ts",
+      "import": "./dist/ui/index.js"
     },
     "./testing": {
       "types": "./dist/testing.d.ts",
