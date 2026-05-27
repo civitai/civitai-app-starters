@@ -33,3 +33,10 @@ export { useBuzzPurchase } from './hooks/useBuzzPurchase.js';
 export { useCheckpointPicker } from './hooks/useCheckpointPicker.js';
 export { useCivitaiNavigate } from './hooks/useCivitaiNavigate.js';
 export { useBlockAnalytics } from './hooks/useBlockAnalytics.js';
+export { useAppStorage } from './hooks/useAppStorage.js';
+export type {
+  AppStorageKeyEntry,
+  AppStorageListResult,
+  AppStorageQuota,
+  UseAppStorage,
+} from './hooks/useAppStorage.js';

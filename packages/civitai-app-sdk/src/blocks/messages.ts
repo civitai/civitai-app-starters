@@ -108,6 +108,55 @@ export type ParentToBlockMessage =
       type: 'USER_CHECKPOINT_SET';
       payload: { requestId: string; ok: boolean; error?: string };
     }
+  | {
+      // Reply to APP_STORAGE_GET. `value` is `null` when the key isn't
+      // set OR when the viewer is anon. `error` is set on host-side
+      // failure; consumers always treat a non-empty `error` as the
+      // promise-reject signal.
+      type: 'APP_STORAGE_GET_RESULT';
+      payload: { requestId: string; value: unknown; error?: string };
+    }
+  | {
+      // Reply to APP_STORAGE_SET. `error: "PAYLOAD_TOO_LARGE"` covers
+      // both the per-value 64KB cap and the per-app 50MB quota — the
+      // host doesn't leak which one tripped. `sizeBytes` is the byte
+      // size the row landed at, so the block can update its own quota
+      // estimate without another round-trip to `getQuota`.
+      type: 'APP_STORAGE_SET_RESULT';
+      payload: { requestId: string; ok: boolean; error?: string; sizeBytes?: number };
+    }
+  | {
+      // Reply to APP_STORAGE_DELETE. `deleted: false` indicates the
+      // key wasn't present (still treated as success); explicit so
+      // callers can distinguish "I cleared it" from "it was already
+      // gone."
+      type: 'APP_STORAGE_DELETE_RESULT';
+      payload: { requestId: string; ok: boolean; deleted: boolean; error?: string };
+    }
+  | {
+      // Reply to APP_STORAGE_LIST. `keys` carries the key + a
+      // last-write timestamp (ISO string on the wire; the hook
+      // rehydrates to Date). `nextCursor` is omitted when the page is
+      // partial.
+      type: 'APP_STORAGE_LIST_RESULT';
+      payload: {
+        requestId: string;
+        keys: Array<{ key: string; updatedAt: string }>;
+        nextCursor?: string;
+        error?: string;
+      };
+    }
+  | {
+      type: 'APP_STORAGE_QUOTA_RESULT';
+      payload: {
+        requestId: string;
+        usedBytes: number;
+        rowCount: number;
+        limitBytes: number;
+        limitRows: number;
+        error?: string;
+      };
+    }
   | { type: 'SUSPEND'; payload?: undefined }
   | { type: 'RESUME'; payload?: undefined };
 
@@ -152,6 +201,30 @@ export type BlockToParentMessage =
   | {
       type: 'TRACK_EVENT';
       payload: { eventName: string; properties?: Record<string, unknown> };
+    }
+  // App Blocks KV datastore (W4-v0). Storage calls go through the host —
+  // the block never sees the apps DB credentials. Scope is (block instance,
+  // user). `value` is freeform JSON; the host enforces a 64 KB per-value
+  // cap and a 50 MB per-app quota.
+  | {
+      type: 'APP_STORAGE_GET';
+      payload: { requestId: string; key: string };
+    }
+  | {
+      type: 'APP_STORAGE_SET';
+      payload: { requestId: string; key: string; value: unknown };
+    }
+  | {
+      type: 'APP_STORAGE_DELETE';
+      payload: { requestId: string; key: string };
+    }
+  | {
+      type: 'APP_STORAGE_LIST';
+      payload: { requestId: string; prefix?: string; limit?: number; cursor?: string };
+    }
+  | {
+      type: 'APP_STORAGE_QUOTA';
+      payload: { requestId: string };
     };
 
 export type BlockToParentMessageType = BlockToParentMessage['type'];
