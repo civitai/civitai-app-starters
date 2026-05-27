@@ -1,6 +1,6 @@
 {
   "name": "@civitai/blocks-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Command-line tools for scaffolding and shipping Civitai App Blocks.",
   "license": "MIT",
   "type": "module",
@@ -21,7 +21,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@civitai/app-sdk": "workspace:^",
+    "@civitai/app-sdk": "^0.6.0",
     "commander": "^12.1.0"
   },
   "devDependencies": {

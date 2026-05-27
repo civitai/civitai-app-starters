@@ -1,5 +1,11 @@
 # @civitai/blocks-cli
 
+## 0.1.1
+
+### Patch Changes
+
+- Republish to fix `workspace:^` protocol leaking into `dependencies."@civitai/app-sdk"` of the 0.1.0 tarball — npm consumers got `EUNSUPPORTEDPROTOCOL` on install. Replaced with explicit `^0.6.0` semver.
+
 ## 0.1.0
 
 ### Minor Changes
