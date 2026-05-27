@@ -12,7 +12,7 @@
  */
 
 import { BLOCK_SCOPE_PATTERN } from './scopes.js';
-import type { BlockManifest, ContentRating, SettingType } from './types.js';
+import type { BlockManifest, ContentRating } from './types.js';
 
 const BLOCK_ID_PATTERN = /^[a-z0-9-]{3,64}$/;
 const NAME_MAX_LENGTH = 80;
@@ -24,7 +24,16 @@ const PASCAL_CASE_PATTERN = /^[A-Z][A-Za-z0-9]*$/;
 const EXPECTED_SCHEMA_URL = 'https://civitai.com/schemas/app-block/v1.json';
 
 const CONTENT_RATINGS: readonly ContentRating[] = ['g', 'pg', 'pg13', 'r', 'x'];
-const SETTING_TYPES: readonly SettingType[] = ['string', 'number', 'boolean', 'select'];
+/**
+ * W3 v0 — settings type set. Mirrors the meta-schema discriminated union
+ * in civitai/civitai's `manifest-settings.meta.schema.ts`. Keep aligned.
+ */
+const SETTING_TYPES = ['number', 'string', 'boolean'] as const;
+const SETTING_SCOPES = ['publisher', 'viewer'] as const;
+const SETTING_KEY_PATTERN = /^[a-z][a-z0-9_]{0,40}$/;
+const MAX_SETTINGS_PER_BLOCK = 32;
+type SettingType = (typeof SETTING_TYPES)[number];
+type SettingScope = (typeof SETTING_SCOPES)[number];
 /**
  * All `allow-top-navigation*` sandbox tokens are rejected. The
  * `-by-user-activation` and `-to-custom-protocols` variants gate on a user
@@ -276,18 +285,48 @@ function validateAssets(assets: BlockManifest['assets']): void {
   });
 }
 
+/**
+ * W3 v0 settings validation. Manifest authors declare fields as a record
+ * keyed by snake_case field name; each entry carries scope, type, label,
+ * description, and a widget hint. This is a strict subset of the platform
+ * meta-schema (`manifestSettingsSchema`) — keep both sides aligned.
+ */
 function validateSettings(settings: BlockManifest['settings']): void {
-  if (!Array.isArray(settings)) {
-    throw new BlockManifestError('manifest.settings must be an array', 'settings');
+  if (settings == null || typeof settings !== 'object' || Array.isArray(settings)) {
+    throw new BlockManifestError(
+      'manifest.settings must be an object (record keyed by snake_case field name)',
+      'settings',
+    );
   }
-  settings.forEach((setting, i) => {
-    const path = `settings[${i}]`;
-    if (setting == null || typeof setting !== 'object') {
+  const entries = Object.entries(settings as Record<string, unknown>);
+  if (entries.length > MAX_SETTINGS_PER_BLOCK) {
+    throw new BlockManifestError(
+      `manifest.settings has ${entries.length} entries (max ${MAX_SETTINGS_PER_BLOCK})`,
+      'settings',
+    );
+  }
+  for (const [key, raw] of entries) {
+    const path = `settings.${key}`;
+    if (!SETTING_KEY_PATTERN.test(key)) {
+      throw new BlockManifestError(
+        `manifest.${path}: key must match ${SETTING_KEY_PATTERN} (snake_case, must start with a letter)`,
+        path,
+      );
+    }
+    if (raw == null || typeof raw !== 'object') {
       throw new BlockManifestError(`manifest.${path} must be an object`, path);
     }
-    const s = setting as { id?: unknown; type?: unknown; label?: unknown };
-    if (typeof s.id !== 'string' || s.id.length === 0) {
-      throw new BlockManifestError(`manifest.${path}.id must be a non-empty string`, `${path}.id`);
+    const s = raw as {
+      scope?: unknown;
+      type?: unknown;
+      label?: unknown;
+      description?: unknown;
+    };
+    if (typeof s.scope !== 'string' || !SETTING_SCOPES.includes(s.scope as SettingScope)) {
+      throw new BlockManifestError(
+        `manifest.${path}.scope must be one of ${SETTING_SCOPES.join(', ')}. Got: ${JSON.stringify(s.scope)}`,
+        `${path}.scope`,
+      );
     }
     if (typeof s.type !== 'string' || !SETTING_TYPES.includes(s.type as SettingType)) {
       throw new BlockManifestError(
@@ -296,9 +335,18 @@ function validateSettings(settings: BlockManifest['settings']): void {
       );
     }
     if (typeof s.label !== 'string' || s.label.length === 0) {
-      throw new BlockManifestError(`manifest.${path}.label must be a non-empty string`, `${path}.label`);
+      throw new BlockManifestError(
+        `manifest.${path}.label must be a non-empty string`,
+        `${path}.label`,
+      );
     }
-  });
+    if (typeof s.description !== 'string' || s.description.length === 0) {
+      throw new BlockManifestError(
+        `manifest.${path}.description must be a non-empty string`,
+        `${path}.description`,
+      );
+    }
+  }
 }
 
 function isAllowedIframeSrc(src: string): boolean {

@@ -270,18 +270,86 @@ export interface BlockWorkflowSnapshot {
 // Manifest
 // ============================================================
 
-export type SettingType = 'string' | 'number' | 'boolean' | 'select';
+/**
+ * Which side of the settings split a field lives on.
+ * - `publisher`: stored on `model_block_installs.settings` (or a publisher
+ *   subscription row). The model owner / app installer controls it.
+ * - `viewer`: stored on `block_user_settings.settings` (or a viewer
+ *   subscription row). Each signed-in user controls their own value.
+ */
+export type SettingScope = 'publisher' | 'viewer';
 
-export interface SettingDefinition {
-  id: string;
-  type: SettingType;
+/**
+ * Widget hints the platform's generic SettingsForm renderer consumes.
+ * `resource_picker` is the v0 escape hatch for the checkpoint case —
+ * delegates to `useCheckpointPicker` (or a future generic picker hook)
+ * via the host bridge.
+ */
+export type SettingWidget =
+  | 'number'
+  | 'slider'
+  | 'resource_picker'
+  | 'text'
+  | 'textarea'
+  | 'select'
+  | 'toggle';
+
+interface ManifestSettingFieldBase {
+  scope: SettingScope;
   label: string;
-  default?: unknown;
-  options?: Array<{ value: string; label: string }>;
+  description: string;
+  /**
+   * Hide the field when this scope isn't in the app's declared scopes.
+   * Lets a manifest carry a "Max Buzz per generation" field that only
+   * renders for apps that requested `ai:write:budgeted`.
+   */
+  requires_scope?: string;
+}
+
+export interface ManifestNumberField extends ManifestSettingFieldBase {
+  type: 'number';
+  widget?: 'number' | 'slider' | 'resource_picker';
+  default?: number | null;
   min?: number;
   max?: number;
-  required?: boolean;
+  step?: number;
+  /**
+   * Widget-specific config. For `resource_picker`:
+   *   `{ resource_type: 'Checkpoint' | 'LORA' | ..., filter_by_ecosystem?: boolean }`.
+   */
+  widget_options?: Record<string, unknown>;
 }
+
+export interface ManifestStringField extends ManifestSettingFieldBase {
+  type: 'string';
+  widget?: 'text' | 'textarea' | 'select';
+  default?: string | null;
+  max_length?: number;
+  /** RegExp source. Compiled at validate-time. */
+  pattern?: string;
+  /** Required when `widget === 'select'`. */
+  enum?: string[];
+}
+
+export interface ManifestBooleanField extends ManifestSettingFieldBase {
+  type: 'boolean';
+  widget?: 'toggle';
+  default?: boolean;
+}
+
+export type ManifestSettingField =
+  | ManifestNumberField
+  | ManifestStringField
+  | ManifestBooleanField;
+
+/**
+ * W3 v0 manifest settings declaration. Keyed by snake_case field name.
+ * Mirrors `manifestSettingsSchema` in civitai/civitai's
+ * `src/server/schema/blocks/manifest-settings.meta.schema.ts`. Keep in
+ * lockstep — adding a field type or widget on one side without the other
+ * will silently degrade the form renderer or the platform validator.
+ */
+export type ManifestSettings = Record<string, ManifestSettingField>;
 
 export type ContentRating = 'g' | 'pg' | 'pg13' | 'r' | 'x';
 
@@ -329,7 +397,12 @@ export interface BlockManifestV1 {
   scopes: string[];
   iframe: ManifestIframe;
   assets?: ManifestAsset[];
-  settings?: SettingDefinition[];
+  /**
+   * Per-field settings declaration the platform validates user input
+   * against AND renders the publisher/viewer settings UI from. v0 shape;
+   * see {@link ManifestSettings}.
+   */
+  settings?: ManifestSettings;
   contentRating: ContentRating;
   preview?: ManifestPreview;
   promotionEligible?: boolean;
