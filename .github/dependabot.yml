@@ -38,3 +38,7 @@ updates:
         update-types: ['version-update:semver-major']
       - dependency-name: 'vitest'
         update-types: ['version-update:semver-major']
+      # eslint v10 removed context.getFilename(); eslint-plugin-react (pulled
+      # via eslint-config-next) has no eslint-10-compatible release yet.
+      - dependency-name: 'eslint'
+        update-types: ['version-update:semver-major']
