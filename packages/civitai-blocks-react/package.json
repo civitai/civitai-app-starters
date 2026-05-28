@@ -46,7 +46,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "typescript": "^5.9.2",
-    "vitest": "^4.0.18"
+    "vitest": "^4.1.7"
   },
   "publishConfig": {
     "access": "public"
