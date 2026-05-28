@@ -39,7 +39,9 @@
   },
   "pnpm": {
     "overrides": {
-      "@civitai/app-sdk": "workspace:*"
+      "@civitai/app-sdk": "workspace:*",
+      "cookie@<0.7.0": "^0.7.0",
+      "postcss@<8.5.10": ">=8.5.10"
     }
   }
 }
