@@ -1,4 +1,5 @@
 import { defineConfig, loadEnv } from 'vite';
+import tailwindcss from '@tailwindcss/vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import devServer from '@hono/vite-dev-server';
 import { VitePWA } from 'vite-plugin-pwa';
@@ -12,6 +13,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [
+      tailwindcss(),
       svelte(),
       devServer({
         // server/app.ts default-exports the Hono app (what dev-server expects).

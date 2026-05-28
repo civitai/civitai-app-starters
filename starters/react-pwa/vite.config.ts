@@ -1,4 +1,5 @@
 import { defineConfig, loadEnv } from 'vite';
+import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import devServer from '@hono/vite-dev-server';
 import { VitePWA } from 'vite-plugin-pwa';
@@ -10,6 +11,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [
+      tailwindcss(),
       react(),
       devServer({
         // server/app.ts default-exports the Hono app (what dev-server expects).
