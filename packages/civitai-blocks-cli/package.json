@@ -21,7 +21,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@civitai/app-sdk": "^0.6.0",
+    "@civitai/app-sdk": "workspace:^",
     "commander": "^12.1.0"
   },
   "devDependencies": {
