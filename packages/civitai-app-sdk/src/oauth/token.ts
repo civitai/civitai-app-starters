@@ -121,3 +121,56 @@ export async function fetchMe(opts: { baseUrl?: string; accessToken: string }): 
   }
   return res.json();
 }
+
+/** Buzz currency pools tracked per user account. */
+export type BuzzAccountType = 'yellow' | 'blue' | 'red' | 'green' | 'purple';
+
+export interface BuzzAccount {
+  /** The user's Civitai account id. */
+  id: number;
+  /** Current spendable balance in this pool. */
+  balance: number;
+  /** Lifetime credited buzz in this pool (null when unavailable). */
+  lifetimeBalance: number | null;
+  /** Which buzz pool this balance belongs to. */
+  accountType: BuzzAccountType;
+}
+
+export interface FetchBuzzAccountOpts {
+  baseUrl?: string;
+  accessToken: string;
+}
+
+/**
+ * Fetch the OAuth-authenticated user's Buzz account(s).
+ *
+ * Civitai's `/api/v1/me` does NOT include balance. Balance lives behind the
+ * `buzz.getUserAccount` tRPC procedure which requires the `BuzzRead` scope.
+ * Returns one entry per buzz pool — typically just `yellow` for end users.
+ *
+ * NOTE: this hits Civitai's tRPC surface directly because no REST endpoint
+ * exists yet. If/when Civitai exposes one, switch this helper over without
+ * breaking callers.
+ */
+export async function fetchBuzzAccount(opts: FetchBuzzAccountOpts): Promise<BuzzAccount[]> {
+  const base = opts.baseUrl ?? DEFAULT_CIVITAI_BASE_URL;
+  const res = await fetch(`${base}/api/trpc/buzz.getUserAccount`, {
+    headers: { Authorization: `Bearer ${opts.accessToken}` },
+  });
+  if (!res.ok) {
+    throw new OAuthError(
+      `buzz.getUserAccount failed: ${res.status}`,
+      res.status,
+      await res.text(),
+    );
+  }
+  // Civitai's tRPC uses a superjson transformer, so the payload is
+  // `{ result: { data: { json: T } } }`. Older or transformer-less routes
+  // return `{ result: { data: T } }` directly — handle both defensively.
+  const json = (await res.json()) as {
+    result?: { data?: BuzzAccount[] | { json?: BuzzAccount[] } };
+  };
+  const data = json.result?.data;
+  if (Array.isArray(data)) return data;
+  return data?.json ?? [];
+}
