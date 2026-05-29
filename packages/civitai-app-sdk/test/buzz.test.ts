@@ -21,13 +21,13 @@ afterEach(() => {
 });
 
 describe('fetchBuzzAccount', () => {
-  it('returns the unwrapped buzz accounts array', async () => {
+  it('returns the unwrapped buzz accounts array (superjson shape)', async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({
         result: {
-          data: [
-            { id: 42, balance: 1234, lifetimeBalance: 9999, accountType: 'yellow' },
-          ],
+          data: {
+            json: [{ id: 42, balance: 1234, lifetimeBalance: 9999, accountType: 'yellow' }],
+          },
         },
       }),
     );
@@ -37,6 +37,20 @@ describe('fetchBuzzAccount', () => {
     expect(accounts).toEqual([
       { id: 42, balance: 1234, lifetimeBalance: 9999, accountType: 'yellow' },
     ]);
+  });
+
+  it('also handles a transformer-less response (data is the array directly)', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        result: {
+          data: [{ id: 1, balance: 5, lifetimeBalance: 5, accountType: 'yellow' }],
+        },
+      }),
+    );
+
+    const accounts = await fetchBuzzAccount({ accessToken: 'tok' });
+
+    expect(accounts).toEqual([{ id: 1, balance: 5, lifetimeBalance: 5, accountType: 'yellow' }]);
   });
 
   it('sends the bearer token to the tRPC procedure on the default base URL', async () => {
@@ -61,6 +75,14 @@ describe('fetchBuzzAccount', () => {
 
   it('returns [] when the tRPC response has no data', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ result: {} }));
+
+    const accounts = await fetchBuzzAccount({ accessToken: 'tok' });
+
+    expect(accounts).toEqual([]);
+  });
+
+  it('returns [] when superjson wrapper has no json field', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ result: { data: {} } }));
 
     const accounts = await fetchBuzzAccount({ accessToken: 'tok' });
 

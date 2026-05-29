@@ -164,6 +164,13 @@ export async function fetchBuzzAccount(opts: FetchBuzzAccountOpts): Promise<Buzz
       await res.text(),
     );
   }
-  const json = (await res.json()) as { result?: { data?: BuzzAccount[] } };
-  return json.result?.data ?? [];
+  // Civitai's tRPC uses a superjson transformer, so the payload is
+  // `{ result: { data: { json: T } } }`. Older or transformer-less routes
+  // return `{ result: { data: T } }` directly — handle both defensively.
+  const json = (await res.json()) as {
+    result?: { data?: BuzzAccount[] | { json?: BuzzAccount[] } };
+  };
+  const data = json.result?.data;
+  if (Array.isArray(data)) return data;
+  return data?.json ?? [];
 }
