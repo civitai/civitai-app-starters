@@ -17,6 +17,19 @@ const TERMINAL_STATUSES: ReadonlySet<BlockWorkflowSnapshot['status']> = new Set(
   'expired',
 ]);
 
+/**
+ * The workflow requests (estimate / submit / poll) are orchestrator-bound:
+ * the host forwards them to the generation orchestrator and only replies
+ * once it answers. `submit` is the slowest — server-side it does a whatif
+ * cost-preflight AND the real submit (two orchestrator round-trips) plus a
+ * prompt audit before responding, which legitimately exceeds the
+ * transport's 30s `DEFAULT_REQUEST_TIMEOUT_MS` (tuned for fast bridge
+ * messages) when the orchestrator queue is busy. Give these calls a
+ * generous ceiling so a busy-but-healthy orchestrator doesn't surface as
+ * a spurious `request "SUBMIT_WORKFLOW" timed out` rejection.
+ */
+const WORKFLOW_REQUEST_TIMEOUT_MS = 120_000;
+
 interface UseBuzzWorkflowReturn {
   estimate: (body: WorkflowBody) => Promise<BlockWorkflowSnapshot>;
   submit: (body: WorkflowBody) => Promise<BlockWorkflowSnapshot>;
@@ -48,6 +61,7 @@ export function useBuzzWorkflow(): UseBuzzWorkflowReturn {
         getTransport(),
         { type: 'ESTIMATE_WORKFLOW', payload: { body } },
         'ESTIMATE_RESULT',
+        { timeoutMs: WORKFLOW_REQUEST_TIMEOUT_MS },
       );
       setResult(snapshot);
       setStatus('confirming');
@@ -67,6 +81,7 @@ export function useBuzzWorkflow(): UseBuzzWorkflowReturn {
         getTransport(),
         { type: 'SUBMIT_WORKFLOW', payload: { body } },
         'WORKFLOW_SUBMITTED',
+        { timeoutMs: WORKFLOW_REQUEST_TIMEOUT_MS },
       );
       setResult(snapshot);
       setStatus(TERMINAL_STATUSES.has(snapshot.status) ? 'done' : 'polling');
@@ -85,6 +100,7 @@ export function useBuzzWorkflow(): UseBuzzWorkflowReturn {
         getTransport(),
         { type: 'POLL_WORKFLOW', payload: { workflowId } },
         'WORKFLOW_STATUS',
+        { timeoutMs: WORKFLOW_REQUEST_TIMEOUT_MS },
       );
       setResult(snapshot);
       if (TERMINAL_STATUSES.has(snapshot.status)) {
