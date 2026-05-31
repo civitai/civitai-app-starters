@@ -116,6 +116,38 @@ describe('useBuzzWorkflow', () => {
     expect(result.current.result?.workflowId).toBe('wf-1');
   });
 
+  it('submit() tolerates a slow host past the 30s default request timeout', async () => {
+    // Regression: submitWorkflow does two orchestrator round-trips +
+    // prompt audit server-side, so it can take >30s on a busy queue. The
+    // hook must give SUBMIT_WORKFLOW a raised timeout (120s) rather than
+    // the transport's 30s default, or a healthy-but-slow submit surfaces
+    // as a spurious `request "SUBMIT_WORKFLOW" timed out` rejection.
+    vi.useFakeTimers();
+    try {
+      const { result } = renderHook(() => useBuzzWorkflow());
+
+      let rejected = false;
+      act(() => {
+        result.current
+          .submit({ kind: 'textToImage', modelId: 7, modelVersionId: 99, params: { prompt: 'cat' } })
+          .catch(() => {
+            rejected = true;
+          });
+      });
+      expect(result.current.status).toBe('submitting');
+
+      // Advance 60s — well past the old 30s default, well under 120s.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+
+      expect(rejected).toBe(false);
+      expect(result.current.status).toBe('submitting');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('poll() to a terminal status transitions to done', async () => {
     const { result } = renderHook(() => useBuzzWorkflow());
 
