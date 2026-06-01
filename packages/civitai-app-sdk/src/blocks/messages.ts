@@ -90,6 +90,7 @@ export type ParentToBlockMessage =
   | { type: 'ESTIMATE_RESULT'; payload: { requestId: string; snapshot: BlockWorkflowSnapshot } }
   | { type: 'WORKFLOW_SUBMITTED'; payload: { requestId: string; snapshot: BlockWorkflowSnapshot } }
   | { type: 'WORKFLOW_STATUS'; payload: { requestId: string; snapshot: BlockWorkflowSnapshot } }
+  | { type: 'WORKFLOW_CANCELED'; payload: { requestId: string; snapshot: BlockWorkflowSnapshot } }
   | {
       type: 'BUZZ_PURCHASE_RESULT';
       payload: { requestId: string; purchased: boolean; newBalance?: number };
@@ -174,6 +175,11 @@ export type BlockToParentMessage =
   | { type: 'SUBMIT_WORKFLOW'; payload: { requestId: string; body: WorkflowBody } }
   | { type: 'ESTIMATE_WORKFLOW'; payload: { requestId: string; body: WorkflowBody } }
   | { type: 'POLL_WORKFLOW'; payload: { requestId: string; workflowId: string } }
+  // Ask the host to cancel a running workflow on the orchestrator (real
+  // server-side stop, not just client-side untracking). The host re-derives
+  // ownership from the viewer's orchestrator token, so a block can only
+  // cancel workflows the viewer owns.
+  | { type: 'CANCEL_WORKFLOW'; payload: { requestId: string; workflowId: string } }
   | { type: 'OPEN_BUZZ_PURCHASE'; payload: { requestId: string; suggestedAmount?: number } }
   | {
       // Ask the host to open the platform's Checkpoint picker. `baseModelGroup`

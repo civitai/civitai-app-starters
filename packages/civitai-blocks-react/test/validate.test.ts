@@ -186,6 +186,7 @@ describe('payloadValidatorFor', () => {
     expect(payloadValidatorFor('ESTIMATE_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('WORKFLOW_SUBMITTED')).toBeTypeOf('function');
     expect(payloadValidatorFor('WORKFLOW_STATUS')).toBeTypeOf('function');
+    expect(payloadValidatorFor('WORKFLOW_CANCELED')).toBeTypeOf('function');
     expect(payloadValidatorFor('BUZZ_PURCHASE_RESULT')).toBeTypeOf('function');
   });
   it('returns null for payload-less lifecycle messages', () => {
