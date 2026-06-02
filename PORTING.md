@@ -88,7 +88,7 @@ Scopes are bitmask flags. For the standard "generate images on the user's behalf
 import { bitmaskFromScopes } from '@civitai/app-sdk/scopes';
 
 export const REQUESTED_SCOPES = bitmaskFromScopes([
-  'UserRead',         // /api/v1/me — username, id, profile photo
+  'UserRead',         // /api/v1/me + /userinfo — username, id, email, profile photo (always granted)
   'BuzzRead',         // user's Buzz balance
   'AIServicesRead',   // history of past generations
   'AIServicesWrite',  // submit generations / spend Buzz on orchestrator

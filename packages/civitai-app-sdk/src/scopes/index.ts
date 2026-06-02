@@ -75,7 +75,7 @@ export type TokenScopeKey = Exclude<keyof typeof TokenScope, 'None' | 'Full'>;
 export type TokenScopeValue = (typeof TokenScope)[keyof typeof TokenScope];
 
 export const tokenScopeLabels: Record<number, string> = {
-  [TokenScope.UserRead]: 'Read profile & settings',
+  [TokenScope.UserRead]: 'Read profile, settings & email',
   [TokenScope.UserWrite]: 'Update profile & settings',
   [TokenScope.ModelsRead]: 'Browse & download models',
   [TokenScope.ModelsWrite]: 'Upload & edit models',
@@ -131,7 +131,11 @@ export const TokenScopePresets = {
     TokenScope.BountiesWrite |
     TokenScope.CollectionsWrite |
     TokenScope.SocialWrite,
-  AIServices: TokenScope.AIServicesWrite | TokenScope.AIServicesRead | TokenScope.BuzzRead,
+  AIServices:
+    TokenScope.UserRead |
+    TokenScope.AIServicesWrite |
+    TokenScope.AIServicesRead |
+    TokenScope.BuzzRead,
   Full: TokenScope.Full,
 } as const;
 
