@@ -34,6 +34,14 @@ interface UseBuzzWorkflowReturn {
   estimate: (body: WorkflowBody) => Promise<BlockWorkflowSnapshot>;
   submit: (body: WorkflowBody) => Promise<BlockWorkflowSnapshot>;
   poll: (workflowId: string) => Promise<BlockWorkflowSnapshot>;
+  /**
+   * Cancel a running workflow on the orchestrator (a real server-side stop,
+   * not just client-side untracking). The host re-derives ownership from the
+   * viewer's orchestrator token, so this can only cancel workflows the viewer
+   * owns; the orchestrator rejects others. Resolves with the workflow's
+   * (now-canceled) snapshot.
+   */
+  cancel: (workflowId: string) => Promise<BlockWorkflowSnapshot>;
   status: WorkflowStatus;
   result: BlockWorkflowSnapshot | null;
   error: Error | null;
@@ -114,5 +122,25 @@ export function useBuzzWorkflow(): UseBuzzWorkflowReturn {
     }
   }, []);
 
-  return { estimate, submit, poll, status, result, error };
+  const cancel = useCallback(async (workflowId: string) => {
+    try {
+      const { snapshot } = await sendTypedRequest(
+        getTransport(),
+        { type: 'CANCEL_WORKFLOW', payload: { workflowId } },
+        'WORKFLOW_CANCELED',
+        { timeoutMs: WORKFLOW_REQUEST_TIMEOUT_MS },
+      );
+      setResult(snapshot);
+      setStatus('done');
+      return snapshot;
+    } catch (err) {
+      // A cancel that fails (e.g. the workflow already finished, or a transient
+      // host error) is surfaced but must not wedge the hook — callers treat
+      // cancel as best-effort and still clear their own UI.
+      setError(err as Error);
+      throw err;
+    }
+  }, []);
+
+  return { estimate, submit, poll, cancel, status, result, error };
 }

@@ -184,6 +184,7 @@ export function payloadValidatorFor(
     case 'ESTIMATE_RESULT':
     case 'WORKFLOW_SUBMITTED':
     case 'WORKFLOW_STATUS':
+    case 'WORKFLOW_CANCELED':
       return isValidWorkflowReply;
     case 'BUZZ_PURCHASE_RESULT':
       return isValidBuzzPurchaseResult;
