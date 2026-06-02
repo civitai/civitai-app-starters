@@ -1,0 +1,25 @@
+{
+  "$schema": "https://civitai.com/schemas/app-block/v1.json",
+  "appId": "app_REPLACE_ME",
+  "blockId": "hello-world",
+  "version": "0.1.0",
+  "name": "Hello World",
+  "type": "block",
+  "targets": [
+    {
+      "slotId": "model.sidebar_top",
+      "priority": 100,
+      "requiredContext": ["modelId", "modelVersionId"]
+    }
+  ],
+  "scopes": ["models:read:self"],
+  "iframe": {
+    "src": "https://hello-world.civit.ai/",
+    "minHeight": 220,
+    "maxHeight": 600,
+    "resizable": true,
+    "sandbox": "allow-scripts allow-forms"
+  },
+  "contentRating": "pg",
+  "minApiVersion": "1.0"
+}

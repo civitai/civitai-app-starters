@@ -1,0 +1,64 @@
+{
+  "$schema": "https://civitai.com/schemas/app-block/v1.json",
+  "appId": "app_REPLACE_ME",
+  "blockId": "settings-demo",
+  "version": "0.1.0",
+  "name": "Settings Demo",
+  "type": "block",
+  "targets": [
+    {
+      "slotId": "model.sidebar_top",
+      "priority": 100,
+      "requiredContext": ["modelId", "modelVersionId"]
+    }
+  ],
+  "scopes": ["models:read:self", "block:settings:read", "block:settings:write"],
+  "settings": {
+    "watermark_text": {
+      "scope": "publisher",
+      "type": "string",
+      "widget": "text",
+      "label": "Watermark text",
+      "description": "Set by the model owner / installer. Stamped onto outputs.",
+      "default": "made on civitai",
+      "max_length": 40
+    },
+    "default_steps": {
+      "scope": "publisher",
+      "type": "number",
+      "widget": "slider",
+      "label": "Default steps",
+      "description": "Publisher-controlled generation step count.",
+      "default": 25,
+      "min": 1,
+      "max": 50,
+      "step": 1
+    },
+    "show_advanced": {
+      "scope": "viewer",
+      "type": "boolean",
+      "widget": "toggle",
+      "label": "Show advanced controls",
+      "description": "Each viewer controls their own preference.",
+      "default": false
+    },
+    "preferred_sampler": {
+      "scope": "viewer",
+      "type": "string",
+      "widget": "select",
+      "label": "Preferred sampler",
+      "description": "Per-viewer sampler choice.",
+      "enum": ["Euler", "Euler a", "DPM++ 2M Karras", "DPM++ SDE Karras"],
+      "default": "Euler"
+    }
+  },
+  "iframe": {
+    "src": "https://settings-demo.civit.ai/",
+    "minHeight": 320,
+    "maxHeight": 800,
+    "resizable": true,
+    "sandbox": "allow-scripts allow-forms"
+  },
+  "contentRating": "pg",
+  "minApiVersion": "1.0"
+}

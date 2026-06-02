@@ -1,0 +1,58 @@
+:root {
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  line-height: 1.5;
+  color-scheme: light dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  /* The host owns the iframe's outer surface (the W7 trust frame). Keep the
+     block background transparent so it blends into the host card. */
+  background: transparent;
+}
+
+/*
+ * GOTCHA #60: these `[data-theme=…]` rules ONLY match if the BLOCK sets
+ * `data-theme` on an ancestor inside its OWN iframe document. The host
+ * cannot reach across the iframe boundary to set it. `App.tsx` reads
+ * `useBlockContext().theme` and sets `data-theme={theme}` on its root —
+ * without that, every rule below is dormant and the block renders in the
+ * light-mode defaults even on a dark host page.
+ *
+ * Pseudo-elements (::after), :hover and :focus states are the usual
+ * casualties because they can't be inline-styled. Inline-style what you can
+ * (`theme === 'dark' ? … : …`); use these selectors for the rest.
+ */
+[data-theme='light'] {
+  color: #1a1a1a;
+}
+[data-theme='light'] .hw-card {
+  background: #f4f4f5;
+  border: 1px solid #e0e0e3;
+}
+
+[data-theme='dark'] {
+  color: #e6e6e6;
+}
+[data-theme='dark'] .hw-card {
+  background: #1a1b1e;
+  border: 1px solid #2c2e33;
+}
+
+.hw-root {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hw-card {
+  padding: 12px;
+  border-radius: 8px;
+}

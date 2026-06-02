@@ -28,6 +28,105 @@ import { defineBlock, BLOCK_SCOPES } from '@civitai/app-sdk/blocks';
 import manifestSchema from '@civitai/app-sdk/schemas/app-block/v1.json' with { type: 'json' };
 ```
 
+## App Blocks contract (`@civitai/app-sdk/blocks`)
+
+> Building an **App Block** (an iframe-embedded UI on a civitai.com page)? This
+> subpath is the framework-agnostic contract — manifest types, scope strings,
+> the `postMessage` protocol, and the `defineBlock` validator. The React hooks +
+> transport that consume it live in
+> [`@civitai/blocks-react`](https://www.npmjs.com/package/@civitai/blocks-react).
+> Start from the runnable [examples](https://github.com/civitai/civitai-app-starters/tree/main/starters/examples).
+>
+> This is distinct from the OAuth flow above: a *block* runs inside civitai.com
+> and gets a short-lived block-scoped JWT handed to it; an *app* (the OAuth
+> starters) runs on your own domain and does the Authorization-Code dance.
+
+### The transport / message contract
+
+A block runs in a sandboxed iframe. The host (civitai.com) and the block speak
+over `window.postMessage({ type, payload }, targetOrigin)`, discriminated by
+`type`. The full union is exported:
+
+- **parent → block**: `BLOCK_INIT`, `TOKEN_REFRESH`, `TOKEN_REFRESH_RESPONSE`,
+  `ESTIMATE_RESULT`, `WORKFLOW_SUBMITTED`, `WORKFLOW_STATUS`,
+  `BUZZ_PURCHASE_RESULT`, `CHECKPOINT_PICKER_RESULT`, `USER_CHECKPOINT_SET`,
+  `APP_STORAGE_*_RESULT`, `SUSPEND`, `RESUME` (`ParentToBlockMessage`).
+- **block → parent**: `BLOCK_READY`, `BLOCK_ERROR`, `REQUEST_TOKEN`,
+  `RESIZE_IFRAME`, `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`, `POLL_WORKFLOW`,
+  `OPEN_BUZZ_PURCHASE`, `OPEN_CHECKPOINT_PICKER`, `SET_USER_CHECKPOINT`,
+  `NAVIGATE`, `TRACK_EVENT`, `APP_STORAGE_*` (`BlockToParentMessage`).
+
+`isMessage(data, 'BLOCK_INIT')` is a **discriminator-only** narrowing helper — it
+checks `data.type`, NOT the payload shape. Anything crossing the iframe trust
+boundary must be payload-validated at the boundary (the React transport does this
+for you).
+
+### `BLOCK_INIT` — the first message
+
+The host waits for the iframe `load` event AND a minted token, then posts:
+
+```ts
+interface BlockInitPayload {
+  blockInstanceId: string;
+  blockId: string;
+  appId: string;                       // the OauthClient (app) this block belongs to
+  token: WrappedToken;                 // { raw, scopes[], expiresAt (ISO), buzzBudget? }
+  context: BlockContext;               // { slotId, … } — narrow to ModelSlotContext
+  settings: BlockSettings;             // { publisherSettings, userSettings }
+  viewer: ViewerInfo | null;           // null = anonymous
+  theme: 'light' | 'dark';
+  renderMode: 'iframe' | 'inline';
+}
+```
+
+`token.buzzBudget` is only present when the manifest declares `ai:write:budgeted`.
+`expiresAt` is an ISO string on the wire; the React transport rehydrates it to a
+`Date`.
+
+### Primitives
+
+| Export | What |
+|---|---|
+| `defineBlock({ manifest })` | Validates a `BlockManifestV1` (subset of the server checks) and returns it. Call at module scope so authoring mistakes throw before mount. Throws `BlockManifestError` (has a `.field` dot-path). |
+| `BLOCK_SCOPES` / `BLOCK_SCOPE_PATTERN` | The known block scope strings + the `domain:verb:target` regex. |
+| `isMessage(data, type)` | Discriminator-only message narrowing (see above). |
+| types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
+
+### `defineBlock` validator rules
+
+Mirrors a strict subset of the civitai/civitai server gate. It throws on:
+
+- A missing **required** field: `$schema`, `appId`, `blockId`, `version`, `name`,
+  `type`, `targets`, `scopes`, `iframe`, `contentRating`, `minApiVersion`.
+- `$schema` ≠ `https://civitai.com/schemas/app-block/v1.json`.
+- `blockId` not matching `/^[a-z0-9-]{3,64}$/`; `version` not semver; `name` > 80 chars.
+- `type` not `block` | `embed`; `contentRating` not `g|pg|pg13|r|x`.
+- **Empty `scopes`** (must be a non-empty array) or any scope not matching
+  `domain:verb:target` lowercase — PascalCase like `ModelsReadSelf` gets a
+  pointed error.
+- **Empty `targets`**, or a target with a non-string `slotId` / non-integer `priority`.
+- `iframe.src` not https (http only for `localhost`/`127.0.0.1`/`[::1]`/`*.localhost`);
+  a banned sandbox token (`allow-same-origin`, any `allow-top-navigation*`);
+  non-positive integer `minHeight`; bad `maxHeight`; non-boolean `resizable`.
+- `settings` with a bad key (must be `snake_case`), > 32 fields, or a field
+  missing/mis-typed `scope` / `type` / `label` / `description`.
+
+> The validator does **not** check that `iframe.src` hostname equals
+> `<blockId>.<APPS_DOMAIN>` or that the path is root — those are enforced
+> **server-side** at submit time (gotcha #33). Keep `iframe.src` =
+> `https://<blockId>.civit.ai/` (root, no path prefix) and your Vite `base: '/'`.
+
+### Version compatibility
+
+| `@civitai/app-sdk` | adds (blocks surface) |
+|---|---|
+| `0.7.0` | `CANCEL_WORKFLOW` / `WORKFLOW_CANCELED` messages (real cancel, gotcha #51) |
+| `0.6.0` | `APP_STORAGE_*` messages, `ManifestSettings` types |
+| `0.5.0` | settings types, earlier message set |
+
+Pair with `@civitai/blocks-react` at the matching minor (it peer-depends on this
+contract). See the blocks-react README's compatibility table.
+
 ## Minimal usage example
 
 ```ts
