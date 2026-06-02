@@ -113,6 +113,22 @@ export function Harness({ children }: { children: ReactNode }) {
             },
           });
         }
+
+        if (typed.type === 'CANCEL_WORKFLOW') {
+          // Mirror the host: a real server-side cancel resolves with the
+          // now-canceled snapshot (gotcha #51).
+          dispatchToBlock({
+            type: 'WORKFLOW_CANCELED',
+            payload: {
+              requestId,
+              snapshot: {
+                workflowId: typed.payload?.workflowId ?? 'wf',
+                status: 'canceled',
+                cost: { total: 0 },
+              },
+            },
+          });
+        }
       },
     };
     Object.defineProperty(window, 'parent', { value: parentMock, configurable: true, writable: true });

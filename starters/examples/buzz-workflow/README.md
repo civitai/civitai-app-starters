@@ -64,19 +64,19 @@ re-quotes *before* the next click.
 
 ## Cancel
 
-This example does a **client-side** cancel (stop polling + clear the card). In
-`@civitai/blocks-react >= 0.5.0` the hook also exposes `cancel(workflowId)` for a
-**real server-side orchestrator cancel** (gotcha #51) so a running workflow stops
-spending Buzz:
+This example does a **real server-side cancel** (gotcha #51): `cancel(workflowId)`
+asks the host to STOP the workflow on the orchestrator — not just untrack it
+client-side — so a running job stops spending Buzz. It then clears the card.
 
 ```tsx
-const { cancel } = useBuzzWorkflow();      // available in published 0.5.0+
+const { cancel } = useBuzzWorkflow();      // @civitai/blocks-react >= 0.5.0
 if (item.workflowId) cancel(item.workflowId).catch(() => {}); // best-effort
+setQueue((q) => q.filter((it) => it.localId !== localId));     // clear the card
 ```
 
-> The workspace SDK this monorepo builds against may predate `cancel`. The code
-> here uses the client-side half only so it compiles everywhere; add the
-> `cancel(...)` call once you're on a published 0.5.0+ SDK.
+The host re-derives ownership from the viewer's orchestrator token, so a block
+can only cancel workflows the viewer owns. `cancel` is best-effort: if the
+workflow already finished it rejects, but the card is cleared regardless.
 
 ## Run it
 

@@ -36,7 +36,7 @@ const QUANTITY = 1;
 
 export function App() {
   const { ready, context, theme } = useBlockContext();
-  const { estimate, submit, poll, status } = useBuzzWorkflow();
+  const { estimate, submit, poll, cancel, status } = useBuzzWorkflow();
   const rootRef = useRef<HTMLDivElement>(null);
   useBlockResize(rootRef);
 
@@ -141,17 +141,24 @@ export function App() {
     return () => timers.forEach((t) => window.clearTimeout(t));
   }, [queue, poll]);
 
-  const cancelJob = useCallback((localId: string) => {
-    // Client-side cancel: stop polling + clear the card. NOTE: in
-    // @civitai/blocks-react >= 0.5.0 the hook also exposes
-    // `cancel(workflowId)` for a REAL server-side orchestrator cancel
-    // (gotcha #51) — call that too so the workflow stops spending Buzz:
-    //   const { cancel } = useBuzzWorkflow();
-    //   if (item.workflowId) cancel(item.workflowId).catch(() => {});
-    // This example targets the buildable workspace SDK (no cancel yet) and
-    // does the client-side half only.
-    setQueue((q) => q.filter((it) => it.localId !== localId));
-  }, []);
+  const cancelJob = useCallback(
+    (localId: string) => {
+      // Real server-side cancel (gotcha #51): `cancel(workflowId)` asks the
+      // host to STOP the workflow on the orchestrator — not just untrack it
+      // client-side — so the job stops spending Buzz. The host re-derives
+      // ownership from the viewer's token, so a block can only cancel
+      // workflows the viewer owns. cancel is best-effort: if the workflow
+      // already finished, it rejects, but we still clear the card.
+      const item = queue.find((it) => it.localId === localId);
+      if (item?.workflowId) {
+        cancel(item.workflowId).catch(() => {
+          /* already finished / transient — the card is cleared regardless */
+        });
+      }
+      setQueue((q) => q.filter((it) => it.localId !== localId));
+    },
+    [queue, cancel],
+  );
 
   if (!ready) {
     return (
