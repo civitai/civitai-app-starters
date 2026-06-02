@@ -6,17 +6,29 @@
 [![pnpm](https://img.shields.io/badge/pnpm-10-f69220.svg)](https://pnpm.io)
 [![@civitai/app-sdk](https://img.shields.io/npm/v/@civitai/app-sdk.svg?label=%40civitai%2Fapp-sdk)](https://www.npmjs.com/package/@civitai/app-sdk)
 
-Starter templates for building apps on [Civitai](https://civitai.com), plus the shared `@civitai/app-sdk` package they all use.
+Starter templates for building on [Civitai](https://civitai.com), plus the shared SDK packages they use. Two product surfaces live here:
+
+1. **OAuth apps** — full apps on your own domain that sign in with Civitai and
+   call the orchestrator. The four `starters/*` templates + `@civitai/app-sdk`.
+2. **App Blocks** — iframe-embedded UIs that render *inside* civitai.com pages
+   (e.g. a generator in a model's sidebar). The `@civitai/app-sdk/blocks`
+   contract + `@civitai/blocks-react` hooks + the runnable
+   [`starters/examples/*`](./starters/examples). **See [App Blocks](#app-blocks)
+   below.**
 
 ## What's in here
 
-- **`packages/civitai-app-sdk`** — OAuth + PKCE, encrypted-cookie sessions, scope helpers, and orchestrator-call helpers. Every starter depends on this. Published to npm as `@civitai/app-sdk`.
-- **`starters/next-app`** — Next.js 15 (App Router) + Tailwind. SSR-friendly, SEO-capable. Best default.
+- **`packages/civitai-app-sdk`** — OAuth + PKCE, encrypted-cookie sessions, scope helpers, orchestrator-call helpers, AND the framework-agnostic **App Blocks** contract (`/blocks` subpath). Published to npm as `@civitai/app-sdk`.
+- **`packages/civitai-blocks-react`** — React hooks + iframe transport for App Blocks. Published as `@civitai/blocks-react`.
+- **`packages/civitai-blocks-cli`** — `civitai init` / `civitai dev` scaffolding for App Blocks. Published as `@civitai/blocks-cli`.
+- **`starters/next-app`** — Next.js 15 (App Router) + Tailwind. SSR-friendly, SEO-capable. Best OAuth-app default.
 - **`starters/sveltekit-app`** — SvelteKit 2 + Tailwind. Same demo surface as `next-app`.
-- **`starters/react-pwa`** — Vite + React 19 + tiny Hono BFF for OAuth token exchange. SPA/PWA shape — use for tools, games, focused gen UIs that don't need SEO.
-- **`starters/svelte-pwa`** — Vite + bare Svelte 5 (no Kit) + tiny Hono BFF. SPA/PWA shape, Svelte audience that prefers not to use Kit.
+- **`starters/react-pwa`** — Vite + React 19 + tiny Hono BFF for OAuth token exchange. SPA/PWA shape.
+- **`starters/svelte-pwa`** — Vite + bare Svelte 5 (no Kit) + tiny Hono BFF. SPA/PWA shape.
+- **`starters/civitai-block-starter`** — Vite + React 19 App Block scaffold (what `civitai init` clones).
+- **`starters/examples/*`** — six minimal, runnable App Block examples, one per feature (see [App Blocks](#app-blocks)).
 
-All four ship the **same minimal demo:** log in via Civitai OAuth → show your Buzz balance → preview cost of a generation (`whatif`) → submit one image generation → display the result.
+The four OAuth starters ship the **same minimal demo:** log in via Civitai OAuth → show your Buzz balance → preview cost of a generation (`whatif`) → submit one image generation → display the result.
 
 ## Pick a starter
 
@@ -57,6 +69,69 @@ npx create-next-app --example "https://github.com/civitai/civitai-app-starters/t
 git clone --filter=blob:none --sparse https://github.com/civitai/civitai-app-starters
 cd civitai-app-starters && git sparse-checkout set --cone starters/next-app
 ```
+
+## App Blocks
+
+An **App Block** is a small iframe-embedded UI that renders inside a civitai.com
+page — for example, a generator in a model's sidebar (`model.sidebar_top` slot).
+Unlike an OAuth app, a block runs *inside* civitai.com and gets a short-lived,
+block-scoped JWT + page context handed to it via `postMessage`. It's much smaller
+than a full app: a single static SPA, no OAuth dance, no BFF.
+
+### Packages
+
+| Package | What |
+|---|---|
+| [`@civitai/app-sdk`](./packages/civitai-app-sdk) (`/blocks` subpath) | Framework-agnostic contract: manifest types, scopes, the `postMessage` protocol, `defineBlock` validator. |
+| [`@civitai/blocks-react`](./packages/civitai-blocks-react) | React hooks (`useBlockContext`, `useBuzzWorkflow`, `useAppStorage`, …) + iframe transport. Plus `/ui` (the `SettingsForm`). |
+| [`@civitai/blocks-cli`](./packages/civitai-blocks-cli) | `civitai init` / `civitai dev` scaffolding. |
+
+### Examples (start here)
+
+Six minimal, runnable blocks under [`starters/examples/`](./starters/examples) —
+one per feature, each with its own README. Each runs offline via a dev harness
+that simulates the host.
+
+| Example | Shows |
+|---|---|
+| [`hello-world`](./starters/examples/hello-world) | lifecycle: `useBlockContext`, the host trust frame, self-set `data-theme` |
+| [`settings`](./starters/examples/settings) | manifest `settings` + the headless `SettingsForm`, publisher vs viewer scopes |
+| [`buzz-workflow`](./starters/examples/buzz-workflow) | `useBuzzWorkflow` estimate→submit→poll, the cost-quote-matches-charge rule |
+| [`kv-storage`](./starters/examples/kv-storage) | `useAppStorage` get/set/delete/list/getQuota |
+| [`scopes-api`](./starters/examples/scopes-api) | declaring scopes + calling scope-gated REST with the BLOCK_INIT token |
+| [`buzz-purchase`](./starters/examples/buzz-purchase) | `useBuzzPurchase` + the insufficient-budget flow |
+
+### The dev → submit → review → deploy lifecycle
+
+Devs never touch git hosting. The path is:
+
+1. **Build** — scaffold with `civitai init`, iterate with `pnpm dev:harness`,
+   `vite build` to a static `dist/`.
+2. **Submit** — ZIP your project (Dockerfile + `block.manifest.json` + `src/` +
+   …) and upload it at **`/apps/submit`** on civitai.com.
+3. **Review** — a moderator reviews the manifest + file diff at **`/apps/review`**
+   and approves (or rejects with a reason you see on `/apps/my-submissions`).
+4. **Deploy** — on approve, the platform builds your Dockerfile, deploys it, and
+   serves the block at **`https://<blockId>.civit.ai/`** (root-served). Within
+   ~5 min your block is live in its slot.
+
+→ **[Build your first App Block](./docs/build-your-first-app-block.md)** — the
+end-to-end guide, from `civitai init` to a live block.
+
+### Gotchas worth knowing up front
+
+These bit us building the reference block; the examples + the guide bake in the fixes:
+
+- **Set `data-theme` on your own root** — the host can't inject it into your
+  iframe, so any `[data-theme="dark"]` CSS is dormant until you do.
+- **Your estimate must build params identically to submit** (esp. the seed) or
+  the quoted Buzz cost won't match the charge.
+- **Runtime image must be `nginxinc/nginx-unprivileged:1.27-alpine`** — the
+  deploy smoke step requires a non-root container.
+- **`iframe.src` must be `https://<blockId>.civit.ai/`** (root, no path prefix)
+  with Vite `base: '/'`.
+- **The dev harness pins the parent origin** — serve on the matching origin or
+  `BLOCK_INIT` is rejected and the block hangs on "Loading…".
 
 ## Porting an existing app
 

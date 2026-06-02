@@ -37,15 +37,34 @@ civitai dev
 civitai dev --port 5180
 ```
 
-### `civitai deploy`
+### `civitai deploy` (preflight only — not the publish path)
 
-Validates every manifest listed in `civitai.app.json.blocks[]` (preflight, useful even without a server round-trip), then prints a "coming soon" notice.
-
-The platform endpoint `POST /api/v1/developer/block-manifests` is currently `JOB_TOKEN`-gated — only civitai/civitai server jobs can call it. Hand the validated manifest(s) to the platform team along with your `appId` for registration. The CLI will publish directly once per-app OAuth replaces `JOB_TOKEN` (Phase 2 follow-up).
+Runs the `defineBlock` validator over every manifest in
+`civitai.app.json.blocks[]` (a useful local preflight), then prints a notice.
+**It does not publish your block** — manifest registration is no longer a direct
+API call from the CLI.
 
 ### `civitai bundle` / `civitai upload` / `civitai publish`
 
-Reserved for v2 inline mode (host-rendered blocks loaded as static asset bundles rather than embedded iframes). All print "coming soon" today.
+Reserved for v2 inline mode (host-rendered blocks loaded as static asset bundles
+rather than embedded iframes). All print "coming soon" today.
+
+## How the CLI maps to the publish flow
+
+The canonical way to publish a block is the **submit → review → deploy** flow on
+civitai.com — devs never touch git hosting:
+
+1. **`civitai init`** scaffolds the project.
+2. **`civitai dev`** (or `pnpm dev:harness`) iterates locally.
+3. **`vite build`** produces the static bundle. (`civitai deploy` is just a
+   preflight validation — there's no CLI publish step.)
+4. **ZIP the project** (Dockerfile + `block.manifest.json` + `src/` + …) and
+   upload it at **`/apps/submit`** on civitai.com.
+5. A **moderator reviews** it at `/apps/review`; on approve, the platform builds
+   the Dockerfile, deploys it, and serves your block at `https://<blockId>.civit.ai/`.
+
+See the [root README](https://github.com/civitai/civitai-app-starters#readme) for
+the full lifecycle and the [examples](https://github.com/civitai/civitai-app-starters/tree/main/starters/examples).
 
 ## License
 

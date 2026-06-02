@@ -1,6 +1,7 @@
 packages:
   - 'packages/*'
   - 'starters/*'
+  - 'starters/examples/*'
 
 # Starters depend on @civitai/app-sdk via a real npm range (^0.1.0) so the
 # tiged'd package.json works out of the box for external devs. Setting this

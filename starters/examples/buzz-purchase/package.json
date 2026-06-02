@@ -1,0 +1,29 @@
+{
+  "name": "example-buzz-purchase",
+  "version": "0.0.0",
+  "private": true,
+  "description": "App Block example — useBuzzPurchase (OPEN_BUZZ_PURCHASE) + insufficient-budget UX.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "dev:harness": "VITE_DEV_HARNESS=true vite --host localhost --port 5185",
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@civitai/app-sdk": "workspace:^",
+    "@civitai/blocks-react": "workspace:^",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^6.0.2",
+    "typescript": "^5.9.2",
+    "vite": "^8.0.14"
+  }
+}
