@@ -25,6 +25,10 @@ function getClient(session: Session): OrchestratorClient {
 export interface MeResponse {
   id?: number;
   username?: string;
+  /** Email address. Returned because every OAuth token carries the `UserRead` baseline scope. */
+  email?: string;
+  /** Whether the email address is verified. */
+  emailVerified?: boolean;
   /** Buzz balance from /api/v1/me. Civitai returns it under `balance` (number). */
   balance?: number;
   // The endpoint returns many more fields; widen as you use them.
