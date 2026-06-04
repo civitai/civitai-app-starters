@@ -31,12 +31,12 @@
   "dependencies": {
     "@civitai/app-sdk": "workspace:^",
     "@civitai/blocks-react": "workspace:^",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
-    "@types/react": "^19.2.15",
+    "@types/react": "^19.2.16",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^6.0.2",
     "typescript": "^5.9.2",
