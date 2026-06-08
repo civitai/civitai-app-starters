@@ -204,6 +204,20 @@ export type BlockToParentMessage =
       type: 'NAVIGATE';
       payload: { path: string; target: 'current' | 'new_tab' };
     }
+  // Anonymous conversion. A block rendered for a logged-out viewer
+  // (`BLOCK_INIT.viewer === null`) asks the host to start the platform's
+  // login flow when the user clicks an action that needs auth/money (e.g.
+  // Generate). The host validates this like every other inbound message
+  // (origin + `event.source` pinned, only honored after BLOCK_READY) and
+  // opens its login UI. `returnUrl` is an optional same-origin in-app path
+  // to return to after sign-in; the host sanitises it (rejecting absolute /
+  // protocol-relative values) and defaults to the current page when omitted.
+  // Fire-and-forget — there is no host→block reply (the page reloads /
+  // re-inits the block as an authenticated viewer once login completes).
+  | {
+      type: 'REQUEST_SIGN_IN';
+      payload?: { returnUrl?: string };
+    }
   | {
       type: 'TRACK_EVENT';
       payload: { eventName: string; properties?: Record<string, unknown> };
