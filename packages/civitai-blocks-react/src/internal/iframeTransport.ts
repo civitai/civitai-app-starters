@@ -15,6 +15,7 @@ import {
   type BlockTransport,
   type OutboundRequest,
 } from './transport.js';
+import { OriginMatcher } from './originMatcher.js';
 import { payloadValidatorFor } from './validate.js';
 
 import type { WrappedToken } from '@civitai/app-sdk/blocks';
@@ -50,7 +51,7 @@ interface PendingRequest {
  * correlates request/response pairs by `requestId`.
  */
 export class IframeTransport implements BlockTransport {
-  private readonly allowedOrigins: ReadonlySet<string>;
+  private readonly originMatcher: OriginMatcher;
   private readonly window: Window;
 
   private snapshot: BlockSnapshot = EMPTY_SNAPSHOT;
@@ -78,7 +79,10 @@ export class IframeTransport implements BlockTransport {
           'Configure NEXT_PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS (or the framework equivalent).',
       );
     }
-    this.allowedOrigins = new Set(opts.allowedParentOrigins);
+    // Build the matcher from the allowlist. Exact entries match by equality;
+    // `https://*.example.com` entries match any subdomain on a dot boundary
+    // (mirrors the host-side CSP frame-ancestors convention).
+    this.originMatcher = new OriginMatcher(opts.allowedParentOrigins);
     this.window = opts.window ?? (globalThis as { window?: Window }).window!;
     if (!this.window) {
       throw new Error('IframeTransport: no window available; cannot mount on the server.');
@@ -179,7 +183,7 @@ export class IframeTransport implements BlockTransport {
   }
 
   private handleMessage(event: MessageEvent): void {
-    if (!this.allowedOrigins.has(event.origin)) return;
+    if (!this.originMatcher.matches(event.origin)) return;
     const data = event.data as { type?: unknown; payload?: unknown };
     if (data == null || typeof data !== 'object' || typeof data.type !== 'string') return;
 
