@@ -33,6 +33,7 @@ export { useBuzzPurchase } from './hooks/useBuzzPurchase.js';
 export { useCheckpointPicker } from './hooks/useCheckpointPicker.js';
 export { useCivitaiNavigate } from './hooks/useCivitaiNavigate.js';
 export { useRequestSignIn } from './hooks/useRequestSignIn.js';
+export { useRequestConsent } from './hooks/useRequestConsent.js';
 export { useBlockAnalytics } from './hooks/useBlockAnalytics.js';
 export { useAppStorage } from './hooks/useAppStorage.js';
 export type {
