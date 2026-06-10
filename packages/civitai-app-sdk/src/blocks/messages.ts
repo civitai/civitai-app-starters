@@ -218,6 +218,23 @@ export type BlockToParentMessage =
       type: 'REQUEST_SIGN_IN';
       payload?: { returnUrl?: string };
     }
+  // Lazy consent. A block rendered for a LOGGED-IN viewer whose block token is
+  // missing a consent-gated scope (e.g. `ai:write:budgeted` / `buzz:read:self`
+  // were withheld at mint because the viewer hasn't granted them yet) asks the
+  // host to open its consent UI when the user clicks an action that needs that
+  // capability (e.g. Generate) — instead of prompting on load. The host already
+  // knows which scopes are missing (from the mint response), so `scopes` is an
+  // optional advisory hint; the host grants the missing set it computed and
+  // re-mints the token. The host validates this like every inbound message
+  // (origin + `event.source` pinned, only honored after BLOCK_READY).
+  //
+  // Fire-and-forget — there is no host→block reply. On grant the host re-mints
+  // and pushes a TOKEN_REFRESH carrying the now-granted scopes; the block sees
+  // the new scope on its token and retries the action. Mirrors REQUEST_SIGN_IN.
+  | {
+      type: 'REQUEST_CONSENT';
+      payload?: { scopes?: string[] };
+    }
   | {
       type: 'TRACK_EVENT';
       payload: { eventName: string; properties?: Record<string, unknown> };
