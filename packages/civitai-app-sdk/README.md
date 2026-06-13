@@ -181,10 +181,6 @@ const submitted = await submitWorkflow(client, body);
 const finished = await pollWorkflow(client, submitted.id, { timeoutMs: 30_000 });
 ```
 
-`createOrchestratorClient` logs failed orchestrator responses to `console.error`
-by default. Pass `logger` to redirect those SDK diagnostics, or `logger: null`
-to silence them while keeping the same `OrchestratorError` throws.
-
 The starters in `civitai/civitai-app-starters` wire this into framework-specific route handlers (Next.js App Router, SvelteKit `+server.ts`, Hono inside a Vite-built PWA). Read those for end-to-end reference implementations.
 
 ## Choosing a workflow step type

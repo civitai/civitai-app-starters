@@ -217,7 +217,6 @@ export interface OrchestratorClient {
 
 export interface OrchestratorLogger {
   error: (...args: unknown[]) => void;
-  warn?: (...args: unknown[]) => void;
 }
 
 export class OrchestratorError extends Error {
