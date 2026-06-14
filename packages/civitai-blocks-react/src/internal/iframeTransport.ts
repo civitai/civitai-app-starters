@@ -196,6 +196,15 @@ export class IframeTransport implements BlockTransport {
       return;
     }
 
+    // CONTRACT — load-bearing, do NOT weaken the `!this.initResolved` guard:
+    // BLOCK_INIT is DEDUPED. Only the FIRST valid init is honored; every repeat
+    // is a complete no-op (no re-snapshot, no re-emit to subscribers, no second
+    // BLOCK_READY, parentOrigin frozen to the first sender). The civitai host
+    // (`IframeHost.tsx`) depends on this: to defeat the cross-origin iframe
+    // `onLoad` race it RE-SENDS BLOCK_INIT on a ~400ms interval until it observes
+    // BLOCK_READY (civitai PR #2546). If this dedupe were removed, every retry
+    // tick would re-init the block and re-emit BLOCK_READY. Pinned by
+    // iframe-transport.test.ts → "dedupes repeated BLOCK_INIT (host retry-until-ready contract)".
     if (isMessage<ParentToBlockMessage, 'BLOCK_INIT'>(data, 'BLOCK_INIT')) {
       if (!this.initResolved) {
         this.initResolved = true;

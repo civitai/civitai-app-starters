@@ -243,6 +243,50 @@ describe('IframeTransport', () => {
     transport.dispose();
   });
 
+  it('dedupes repeated BLOCK_INIT (host retry-until-ready contract)', async () => {
+    // The civitai host (IframeHost.tsx) re-sends BLOCK_INIT on a ~400ms interval
+    // until it sees BLOCK_READY, to defeat the cross-origin iframe onLoad race
+    // (civitai PR #2546). That design is ONLY safe because the transport dedupes:
+    // every BLOCK_INIT after the first MUST be a no-op. This pins that contract.
+    const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+    const listener = vi.fn();
+    transport.subscribe(listener);
+
+    // First (authoritative) init.
+    window.dispatchEvent(
+      mockParentMessage(
+        { type: 'BLOCK_INIT', payload: buildInitPayload({ context: { slotId: 'model.sidebar_top', modelId: 42 } }) },
+        PARENT_ORIGIN,
+      ),
+    );
+    await transport.waitForInit();
+    const emitsAfterFirst = listener.mock.calls.length;
+    const readyAfterFirst = postMessageMock.mock.calls.filter((c) => c[0]?.type === 'BLOCK_READY').length;
+    expect(readyAfterFirst).toBe(1);
+
+    // A second BLOCK_INIT (a retry tick) with DIFFERENT content. Must be ignored:
+    // no snapshot change, no extra BLOCK_READY, no re-emit to subscribers.
+    window.dispatchEvent(
+      mockParentMessage(
+        {
+          type: 'BLOCK_INIT',
+          payload: buildInitPayload({
+            context: { slotId: 'model.sidebar_top', modelId: 999 },
+            token: { raw: 'jwt-OTHER', scopes: [], expiresAt: new Date(Date.now() + 60_000).toISOString() },
+          }),
+        },
+        PARENT_ORIGIN,
+      ),
+    );
+
+    const snap = transport.getSnapshot();
+    expect(snap.context.modelId).toBe(42); // unchanged — repeat init ignored
+    expect(snap.token.raw).toBe('jwt-1'); // unchanged
+    expect(postMessageMock.mock.calls.filter((c) => c[0]?.type === 'BLOCK_READY').length).toBe(1); // no second READY
+    expect(listener.mock.calls.length).toBe(emitsAfterFirst); // no additional emit
+    transport.dispose();
+  });
+
   describe('trust-boundary payload validation', () => {
     let warnSpy: ReturnType<typeof vi.spyOn>;
     beforeEach(() => {
