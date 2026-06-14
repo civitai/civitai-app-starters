@@ -63,12 +63,22 @@ export function isValidBlockInitPayload(p: unknown): p is BlockInitPayload {
   if (!isObject(p.settings.publisherSettings)) return false;
   if (!isObject(p.settings.userSettings)) return false;
 
-  // `null` for anonymous viewers; otherwise { id, username, status }.
+  // `null` for anonymous viewers; otherwise { id, username, status? }.
   if (p.viewer !== null) {
     if (!isObject(p.viewer)) return false;
     if (typeof p.viewer.id !== 'number') return false;
     if (p.viewer.username !== null && typeof p.viewer.username !== 'string') return false;
-    if (p.viewer.status !== 'active' && p.viewer.status !== 'banned' && p.viewer.status !== 'muted') {
+    // `status` is OPTIONAL. The platform deliberately omits the viewer's coarse
+    // ban/mute moderation state from BLOCK_INIT to third-party iframes for
+    // privacy (civitai #2521). When present it must be one of the three values;
+    // when absent (undefined) the init is still valid. Requiring it here
+    // rejected every signed-in viewer's init from a #2521-minimized host.
+    if (
+      p.viewer.status !== undefined &&
+      p.viewer.status !== 'active' &&
+      p.viewer.status !== 'banned' &&
+      p.viewer.status !== 'muted'
+    ) {
       return false;
     }
   }

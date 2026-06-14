@@ -146,8 +146,10 @@ export interface BlockSettings {
 /**
  * The signed-in viewer. `null` in `BlockInitPayload.viewer` means anonymous.
  *
- * `status` is a coarse surface for the iframe — `/api/v1/blocks/me` is the
- * authoritative re-check if the block needs to gate on it.
+ * `status` is OPTIONAL and a coarse surface — `/api/v1/blocks/me` is the
+ * authoritative re-check if the block needs to gate on it. The platform omits
+ * it from BLOCK_INIT to third-party iframes for privacy (civitai #2521), so
+ * blocks must not assume it is present.
  *
  * Mirrors the inline viewer shape in `BlockInitPayload` on the platform
  * side (civitai/civitai `src/components/AppBlocks/types.ts`).
@@ -155,7 +157,7 @@ export interface BlockSettings {
 export interface ViewerInfo {
   id: number;
   username: string | null;
-  status: 'active' | 'banned' | 'muted';
+  status?: 'active' | 'banned' | 'muted';
 }
 
 /**

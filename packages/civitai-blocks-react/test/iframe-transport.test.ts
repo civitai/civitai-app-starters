@@ -64,6 +64,43 @@ describe('IframeTransport', () => {
     transport.dispose();
   });
 
+  it('accepts BLOCK_INIT when viewer omits status (#2521 privacy minimization)', async () => {
+    // The platform omits the viewer's coarse ban/mute `status` from BLOCK_INIT
+    // for privacy (civitai #2521). A signed-in viewer WITHOUT `status` must still
+    // validate + init. Regression: it used to drop as "malformed", which left
+    // every signed-in viewer's block blank once BLOCK_INIT actually arrived.
+    const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+    const initPromise = transport.waitForInit();
+    window.dispatchEvent(
+      mockParentMessage(
+        { type: 'BLOCK_INIT', payload: buildInitPayload({ viewer: { id: 7, username: 'mod' } }) },
+        PARENT_ORIGIN,
+      ),
+    );
+    await initPromise;
+    expect(transport.getSnapshot().ready).toBe(true);
+    expect(transport.getSnapshot().viewer?.id).toBe(7);
+    expect(transport.getSnapshot().viewer?.status).toBeUndefined();
+    transport.dispose();
+  });
+
+  it('still drops BLOCK_INIT with a present-but-invalid viewer.status', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+    const initPromise = transport.waitForInit();
+    window.dispatchEvent(
+      mockParentMessage(
+        { type: 'BLOCK_INIT', payload: buildInitPayload({ viewer: { id: 7, username: 'mod', status: 'bogus' as never } }) },
+        PARENT_ORIGIN,
+      ),
+    );
+    expect(transport.getSnapshot().ready).toBe(false);
+    vi.advanceTimersByTime(11_000);
+    await expect(initPromise).rejects.toThrow(/timed out/);
+    warnSpy.mockRestore();
+    transport.dispose();
+  });
+
   it('silently drops BLOCK_INIT from a disallowed origin', async () => {
     const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
     const initPromise = transport.waitForInit();
