@@ -14,7 +14,6 @@
   ],
   "scopes": ["models:read:self"],
   "iframe": {
-    "src": "https://hello-world.civit.ai/",
     "minHeight": 220,
     "maxHeight": 600,
     "resizable": true,

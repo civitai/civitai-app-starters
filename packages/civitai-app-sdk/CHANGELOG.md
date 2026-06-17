@@ -1,5 +1,29 @@
 # @civitai/app-sdk
 
+## 0.9.0
+
+### Minor Changes
+
+- Add the `REQUEST_SIGN_IN` block→host message (anonymous conversion). New
+  variant on the `BlockToParentMessage` union with payload `{ returnUrl?: string }`.
+  A block rendered for a logged-out viewer (`BLOCK_INIT.viewer === null`) sends
+  this to ask the host to start civitai.com's login flow when the user clicks an
+  action that needs auth/money (e.g. Generate). The host validates it like every
+  inbound message (origin + `event.source` pinned, only honored after
+  `BLOCK_READY`) and sanitises `returnUrl` to a same-origin in-app path,
+  defaulting to the current page when omitted.
+
+- Add the `REQUEST_CONSENT` block→host message (lazy consent). New variant on the
+  `BlockToParentMessage` union with payload `{ scopes?: string[] }`. A block
+  rendered for a LOGGED-IN viewer whose token is missing a consent-gated scope
+  (e.g. `ai:write:budgeted` / `buzz:read:self` were withheld at mint because the
+  viewer hasn't granted them yet) sends this to ask the host to open its consent
+  UI when the user clicks an action that needs that capability — instead of
+  prompting on load. The host already knows the missing scopes (from the mint
+  response), so `scopes` is an optional advisory hint. Fire-and-forget — on grant
+  the host re-mints and pushes a `TOKEN_REFRESH` carrying the now-granted scopes;
+  the block observes the new scope and retries.
+
 ## 0.8.0
 
 ### Minor Changes

@@ -27,7 +27,6 @@
     }
   },
   "iframe": {
-    "src": "https://buzz-workflow-demo.civit.ai/",
     "minHeight": 400,
     "maxHeight": 1200,
     "resizable": true,

@@ -107,13 +107,16 @@ Devs never touch git hosting. The path is:
 
 1. **Build** — scaffold with `civitai init`, iterate with `pnpm dev:harness`,
    `vite build` to a static `dist/`.
-2. **Submit** — ZIP your project (Dockerfile + `block.manifest.json` + `src/` +
-   …) and upload it at **`/apps/submit`** on civitai.com.
+2. **Submit** — ZIP your project (`block.manifest.json` + `src/` + `index.html` +
+   `package.json` + `vite.config.ts` + …) and upload it at **`/apps/submit`** on
+   civitai.com. You don't include a `Dockerfile` or `nginx.conf` — the platform
+   injects its own build recipe at approve.
 3. **Review** — a moderator reviews the manifest + file diff at **`/apps/review`**
    and approves (or rejects with a reason you see on `/apps/my-submissions`).
-4. **Deploy** — on approve, the platform builds your Dockerfile, deploys it, and
-   serves the block at **`https://<blockId>.civit.ai/`** (root-served). Within
-   ~5 min your block is live in its slot.
+4. **Deploy** — on approve, the platform builds + serves your `dist/` and stamps
+   the block's `iframe.src` server-side, serving it at
+   **`https://<blockId>.civit.ai/`** (root-served). Within ~5 min your block is
+   live in its slot.
 
 → **[Build your first App Block](./docs/build-your-first-app-block.md)** — the
 end-to-end guide, from `civitai init` to a live block.
@@ -126,10 +129,10 @@ These bit us building the reference block; the examples + the guide bake in the 
   iframe, so any `[data-theme="dark"]` CSS is dormant until you do.
 - **Your estimate must build params identically to submit** (esp. the seed) or
   the quoted Buzz cost won't match the charge.
-- **Runtime image must be `nginxinc/nginx-unprivileged:1.27-alpine`** — the
-  deploy smoke step requires a non-root container.
-- **`iframe.src` must be `https://<blockId>.civit.ai/`** (root, no path prefix)
-  with Vite `base: '/'`.
+- **The platform owns the runtime image + `iframe.src`** — you don't ship a
+  `Dockerfile`/`nginx.conf` or set `iframe.src`; the platform injects the build
+  and stamps the src (`https://<blockId>.civit.ai/`, root-served) at approve.
+  Keep Vite `base: '/'` so the bundle resolves its own assets at the root.
 - **The dev harness pins the parent origin** — serve on the matching origin or
   `BLOCK_INIT` is rejected and the block hangs on "Loading…".
 

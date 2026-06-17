@@ -116,6 +116,20 @@ describe('IframeTransport', () => {
     transport.dispose();
   });
 
+  it('accepts BLOCK_INIT from a wildcard-matched preview subdomain', async () => {
+    const transport = new IframeTransport({
+      allowedParentOrigins: ['https://civitai.com', 'https://*.civitaic.com'],
+    });
+    const initPromise = transport.waitForInit();
+
+    const init: ParentToBlockMessage = { type: 'BLOCK_INIT', payload: buildInitPayload() };
+    window.dispatchEvent(mockParentMessage(init, 'https://pr-2319.civitaic.com'));
+
+    await initPromise;
+    expect(transport.getSnapshot().ready).toBe(true);
+    transport.dispose();
+  });
+
   it('rejects waitForInit after 10s with no BLOCK_INIT', async () => {
     const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
     const initPromise = transport.waitForInit();

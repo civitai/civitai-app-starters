@@ -14,7 +14,6 @@
   ],
   "scopes": ["models:read:self"],
   "iframe": {
-    "src": "https://kv-storage-demo.civit.ai/",
     "minHeight": 360,
     "maxHeight": 900,
     "resizable": true,

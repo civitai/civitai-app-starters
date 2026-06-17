@@ -204,6 +204,37 @@ export type BlockToParentMessage =
       type: 'NAVIGATE';
       payload: { path: string; target: 'current' | 'new_tab' };
     }
+  // Anonymous conversion. A block rendered for a logged-out viewer
+  // (`BLOCK_INIT.viewer === null`) asks the host to start the platform's
+  // login flow when the user clicks an action that needs auth/money (e.g.
+  // Generate). The host validates this like every other inbound message
+  // (origin + `event.source` pinned, only honored after BLOCK_READY) and
+  // opens its login UI. `returnUrl` is an optional same-origin in-app path
+  // to return to after sign-in; the host sanitises it (rejecting absolute /
+  // protocol-relative values) and defaults to the current page when omitted.
+  // Fire-and-forget — there is no host→block reply (the page reloads /
+  // re-inits the block as an authenticated viewer once login completes).
+  | {
+      type: 'REQUEST_SIGN_IN';
+      payload?: { returnUrl?: string };
+    }
+  // Lazy consent. A block rendered for a LOGGED-IN viewer whose block token is
+  // missing a consent-gated scope (e.g. `ai:write:budgeted` / `buzz:read:self`
+  // were withheld at mint because the viewer hasn't granted them yet) asks the
+  // host to open its consent UI when the user clicks an action that needs that
+  // capability (e.g. Generate) — instead of prompting on load. The host already
+  // knows which scopes are missing (from the mint response), so `scopes` is an
+  // optional advisory hint; the host grants the missing set it computed and
+  // re-mints the token. The host validates this like every inbound message
+  // (origin + `event.source` pinned, only honored after BLOCK_READY).
+  //
+  // Fire-and-forget — there is no host→block reply. On grant the host re-mints
+  // and pushes a TOKEN_REFRESH carrying the now-granted scopes; the block sees
+  // the new scope on its token and retries the action. Mirrors REQUEST_SIGN_IN.
+  | {
+      type: 'REQUEST_CONSENT';
+      payload?: { scopes?: string[] };
+    }
   | {
       type: 'TRACK_EVENT';
       payload: { eventName: string; properties?: Record<string, unknown> };

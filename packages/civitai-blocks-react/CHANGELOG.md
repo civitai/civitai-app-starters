@@ -1,5 +1,36 @@
 # @civitai/blocks-react
 
+## 0.6.0
+
+### Minor Changes
+
+- Add `useRequestSignIn()` — anonymous conversion. Returns
+  `requestSignIn(payload?)`, a fire-and-forget helper that posts the new
+  `REQUEST_SIGN_IN` message (`{ returnUrl?: string }`) through the active
+  transport. A block rendered for a logged-out viewer (`viewer === null`) calls
+  it when the user clicks an action that needs auth/money (e.g. Generate) so the
+  host starts civitai.com's login flow. Pairs with `@civitai/app-sdk@^0.9`.
+
+- Add `useRequestConsent()` — lazy consent. Returns `requestConsent(payload?)`,
+  a fire-and-forget helper mirroring `useRequestSignIn()` that posts the new
+  `REQUEST_CONSENT` message (`{ scopes?: string[] }`). A block rendered for a
+  logged-in viewer whose token is missing a consent-gated scope calls it on the
+  gated action (instead of prompting on load); the host opens its consent UI and,
+  on grant, re-mints and pushes a `TOKEN_REFRESH` with the now-granted scopes so
+  the block can retry.
+
+- Suffix-wildcard support in the `IframeTransport` origin allowlist (new
+  `internal/originMatcher`). The allowed-parent-origin list now accepts entries
+  like `https://*.civitai.com`: a bare host still matches exactly; a `*.` prefix
+  matches any subdomain of the suffix (never the apex unless listed separately,
+  never a different registrable domain). Lets a block be embedded under
+  preview/canary hosts without enumerating every one.
+
+- Fix `peerDependencies["@civitai/app-sdk"]`: widened from `^0.7.0` (which
+  excluded the `0.8.x`/`0.9.x` it is actually used with) to `>=0.7.0 <1`, so
+  installing the current `@civitai/blocks-react` alongside the current
+  `@civitai/app-sdk` no longer emits an unmet-peer-dependency warning.
+
 ## 0.4.2
 
 ### Patch Changes

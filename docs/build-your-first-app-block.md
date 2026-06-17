@@ -44,12 +44,10 @@ This gives you:
 
 ```
 my-block/
-├── block.manifest.json   # what you register — slot, scopes, iframe url
+├── block.manifest.json   # what you register — slot + scopes (NOT iframe.src; the platform stamps it)
 ├── index.html
 ├── vite.config.ts        # base: '/'  (important — see §6)
-├── Dockerfile            # nginx-unprivileged (important — see §6)
-├── nginx.conf
-└── src/
+└── src/                  # no Dockerfile/nginx.conf — the platform injects its own build at approve
     ├── App.tsx           # your UI
     ├── main.tsx
     └── Harness.tsx       # local host simulator (dev only)
@@ -148,8 +146,8 @@ pnpm build          # → dist/  (static SPA)
 | # | Rule | Why |
 |---|---|---|
 | **theme** | Set `data-theme={theme}` on your root. | The host can't reach into the iframe; `[data-theme=…]` CSS (pseudo-elements, `:hover`) is otherwise dormant. |
-| **iframe.src** | `https://<blockId>.civit.ai/` (root) + Vite `base: '/'`. | The block is served at the subdomain root with no path prefix; submit rejects a non-root `src`, and a stale `base` makes the bundle 404 its own assets. |
-| **runtime image** | `Dockerfile` uses `nginxinc/nginx-unprivileged:1.27-alpine`. | The deploy smoke step admits the pod under `runAsNonRoot`; plain `nginx:alpine` fails it and the deploy hangs. |
+| **iframe.src** | Don't set it — the platform stamps it server-side at approve (`https://<blockId>.civit.ai/`, root-served). Keep Vite `base: '/'`. | The block is served at the subdomain root with no path prefix; a stale `base` makes the bundle 404 its own assets. |
+| **runtime image** | You don't ship a `Dockerfile`/`nginx.conf` — the platform injects its own (non-root) build + serve recipe at approve. | The platform owns the runtime so every block runs the same hardened image; a tenant Dockerfile is stripped at approve. |
 | **minHeight** | Set `iframe.minHeight` to the block's real rendered height. | A too-small value makes the iframe seed short and grow-jump on `BLOCK_READY` (layout shift). Measure it in the harness. |
 
 And for generators specifically: your **estimate must build params identically to
@@ -158,9 +156,9 @@ submit** (esp. the seed), or the quoted cost won't match the charge — see the
 
 ## 7. Submit
 
-1. ZIP your project directory (include the `Dockerfile`, `block.manifest.json`,
-   `nginx.conf`, `index.html`, `src/`, `package.json`, `vite.config.ts` — exclude
-   `node_modules`, `dist`, `.env`).
+1. ZIP your project directory (include `block.manifest.json`, `index.html`,
+   `src/`, `package.json`, `vite.config.ts` — exclude `node_modules`, `dist`,
+   `.env`, and any `Dockerfile`/`nginx.conf`; the platform injects its own build).
 2. Go to **`/apps/submit`** on civitai.com. Attach the ZIP — the page parses your
    manifest client-side and shows a preview card. Click Submit.
 3. You're redirected to **`/apps/my-submissions`** with status `pending`.
@@ -171,9 +169,10 @@ A moderator reviews your submission at `/apps/review` (manifest + file diff) and
 
 - **Approves** → on the **first** version the platform auto-creates your
   OauthClient (`allowedOrigins=[https://<blockId>.civit.ai]`) and a private git
-  repo, commits your files, and fires the build chain: build the Dockerfile →
-  push the image → deploy (Deployment + Service + IngressRoute) → program the
-  `<blockId>.civit.ai` DNS record. Within ~5 min your block serves live. Your
+  repo, commits your files, and fires the build chain: inject the platform build
+  recipe → build the image → push it → deploy (Deployment + Service +
+  IngressRoute) → stamp `iframe.src` + program the `<blockId>.civit.ai` DNS
+  record. Within ~5 min your block serves live. Your
   submission flips to `approved` with an "Open live" button.
 - **Rejects** (with a reason) → you see the reason inline on `/apps/my-submissions`,
   fix, and resubmit.

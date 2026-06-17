@@ -14,7 +14,6 @@
   ],
   "scopes": ["models:read:self", "ai:write:budgeted"],
   "iframe": {
-    "src": "https://buzz-purchase-demo.civit.ai/",
     "minHeight": 300,
     "maxHeight": 700,
     "resizable": true,

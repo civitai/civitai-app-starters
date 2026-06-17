@@ -14,7 +14,8 @@ The smallest complete App Block. Read this first.
 
 ## The lifecycle
 
-1. civitai.com renders an `<iframe>` at your manifest's `iframe.src`, wrapped in
+1. civitai.com renders an `<iframe>` at the URL the platform assigns your block
+   (it stamps `iframe.src` server-side at approve — you don't set it), wrapped in
    a host-drawn **trust frame** (a bordered chrome bar with a "Civitai App
    block" badge + a ⋯ menu). That frame is rendered by the host, *outside* the
    iframe, so a sandboxed block can't fake, restyle, or hide it. **Don't draw
@@ -59,9 +60,10 @@ your outbound messages into a debug log, and echoes token refreshes.
 pnpm build          # → dist/ (static SPA, base '/')
 ```
 
-The platform builds the `Dockerfile` (nginx-unprivileged, gotcha #37) and
-serves `dist/` at `https://hello-world.civit.ai/`. To publish: submit a ZIP of
-this directory at `/apps/submit` on civitai.com — a moderator reviews it at
-`/apps/review`, and on approve the build + deploy chain runs automatically. You
-never touch git hosting directly. See the [root README](../../../README.md) for
-the full submit → review → deploy lifecycle.
+The platform owns the build + serve recipe: it injects its own build (you don't
+ship a `Dockerfile` or `nginx.conf`), serves your `dist/`, and stamps the
+block's `iframe.src` server-side. To publish: submit a ZIP of this directory at
+`/apps/submit` on civitai.com — a moderator reviews it at `/apps/review`, and on
+approve the build + deploy chain runs automatically. You never touch git hosting
+directly. See the [root README](../../../README.md) for the full submit → review
+→ deploy lifecycle.

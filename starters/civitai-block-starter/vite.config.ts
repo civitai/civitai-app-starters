@@ -3,7 +3,8 @@ import react from '@vitejs/plugin-react';
 
 // Block apps are pure SPAs — the host page hands the iframe everything it
 // needs via BLOCK_INIT. No BFF, no server-side rendering. Build output is
-// a single static bundle to be served from `iframe.src` in the manifest.
+// a single static bundle; the platform builds + serves it and stamps the
+// block's iframe.src server-side (you don't set it in the manifest).
 export default defineConfig({
   plugins: [react()],
   server: {
