@@ -25,8 +25,8 @@ token refreshes so the UI iterates without civitai.com embedding your block.
 
 ## What you ship
 
-- **`block.manifest.json`** — registered with civitai.com (server team for now). Declares the slot you target, the scopes you request, and the sandboxed iframe URL.
-- **The Vite build output** (`pnpm build` → `dist/`) — deployed somewhere reachable from civitai.com, served at the URL declared in `iframe.src`. A static host (Cloudflare Pages / Vercel / Netlify) is plenty.
+- **`block.manifest.json`** — registered with civitai.com. Declares the slot you target and the scopes you request. You do **not** set `iframe.src`: the platform stamps it server-side when your block is approved (and ignores/strips any `src` you include).
+- **The Vite build output** (`pnpm build` → `dist/`) — submitted to civitai.com. The platform owns the build + serve recipe (it injects its own build; you don't ship a `Dockerfile` or `nginx.conf`) and serves your `dist/` at the URL it assigns. You don't self-host.
 
 ## What runs in the iframe
 

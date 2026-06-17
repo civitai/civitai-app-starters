@@ -14,7 +14,6 @@
   ],
   "scopes": ["user:read:self", "models:read:self"],
   "iframe": {
-    "src": "https://scopes-api-demo.civit.ai/",
     "minHeight": 320,
     "maxHeight": 800,
     "resizable": true,

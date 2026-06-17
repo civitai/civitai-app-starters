@@ -58,10 +58,12 @@ civitai.com — devs never touch git hosting:
 2. **`civitai dev`** (or `pnpm dev:harness`) iterates locally.
 3. **`vite build`** produces the static bundle. (`civitai deploy` is just a
    preflight validation — there's no CLI publish step.)
-4. **ZIP the project** (Dockerfile + `block.manifest.json` + `src/` + …) and
-   upload it at **`/apps/submit`** on civitai.com.
-5. A **moderator reviews** it at `/apps/review`; on approve, the platform builds
-   the Dockerfile, deploys it, and serves your block at `https://<blockId>.civit.ai/`.
+4. **ZIP the project** (`block.manifest.json` + `src/` + `index.html` +
+   `package.json` + `vite.config.ts` + …) and upload it at **`/apps/submit`** on
+   civitai.com. No `Dockerfile`/`nginx.conf` — the platform injects its own build.
+5. A **moderator reviews** it at `/apps/review`; on approve, the platform builds +
+   serves your `dist/` and stamps `iframe.src`, serving your block at
+   `https://<blockId>.civit.ai/`.
 
 See the [root README](https://github.com/civitai/civitai-app-starters#readme) for
 the full lifecycle and the [examples](https://github.com/civitai/civitai-app-starters/tree/main/starters/examples).

@@ -53,8 +53,9 @@ coarse hint). It returns only what your granted scopes allow. Other endpoints
 are gated by their own scopes — e.g. reading the bound model needs
 `models:read:self`.
 
-> Mind your nginx CSP: `connect-src` must allow `https://civitai.com` (the
-> bundled `nginx.conf` does).
+> The platform serves your built `dist/` and owns the CSP — it allows
+> `https://civitai.com` for `connect-src` for you. You don't ship an
+> `nginx.conf` (or `Dockerfile`); the build recipe is injected at approve.
 
 ## Run it
 

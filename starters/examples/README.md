@@ -1,8 +1,8 @@
 # App Block examples
 
 Six minimal, runnable App Block examples — one per feature area. Each is
-self-contained (its own `block.manifest.json`, `src/`, `Dockerfile`, and README)
-and runs offline via a dev harness that simulates the civitai.com host.
+self-contained (its own `block.manifest.json`, `src/`, and README) and runs
+offline via a dev harness that simulates the civitai.com host.
 
 | Example | Feature | Key hooks / APIs | Gotchas baked in |
 |---|---|---|---|
@@ -33,8 +33,9 @@ pnpm build          # → dist/  (static SPA, base '/')
 ```
 
 Then submit a ZIP of the example directory at `/apps/submit` on civitai.com. The
-bundled `Dockerfile` (nginx-unprivileged) and `nginx.conf` are what the platform
-builds + serves at `https://<blockId>.civit.ai/`. See the
+platform owns the build + serve recipe — it injects its own build (you don't
+ship a `Dockerfile` or `nginx.conf`), serves your `dist/`, and stamps the
+block's `iframe.src` server-side. See the
 [end-to-end guide](../../docs/build-your-first-app-block.md).
 
 ## Notes

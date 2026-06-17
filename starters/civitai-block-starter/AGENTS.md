@@ -40,7 +40,7 @@ Don't try to "make this a real OAuth app." That's what `react-pwa` is for.
 
 ```
 .
-├── block.manifest.json     # registered with civitai.com — declares slot, scopes, iframe.src
+├── block.manifest.json     # registered with civitai.com — declares slot + scopes (NOT iframe.src; platform stamps it)
 ├── civitai.app.json        # CLI config (appId + manifest list)
 ├── index.html
 ├── vite.config.ts

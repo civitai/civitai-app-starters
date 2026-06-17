@@ -14,7 +14,6 @@
   ],
   "scopes": ["models:read:self"],
   "iframe": {
-    "src": "https://blocks.example.com/my-block",
     "minHeight": 200,
     "maxHeight": 600,
     "resizable": true,
