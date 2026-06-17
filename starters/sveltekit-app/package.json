@@ -44,7 +44,7 @@
     "@sveltejs/kit": "^2.61.1",
     "@sveltejs/vite-plugin-svelte": "^7.0.4",
     "@tailwindcss/vite": "^4.0.0",
-    "@types/node": "^25.9.1",
+    "@types/node": "^25.9.3",
     "svelte": "^5.55.10",
     "svelte-check": "^4.4.0",
     "tailwindcss": "^4.3.0",
