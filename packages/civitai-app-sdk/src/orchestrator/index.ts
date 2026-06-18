@@ -212,6 +212,11 @@ export interface WorkflowSnapshot {
 export interface OrchestratorClient {
   baseUrl: string;
   accessToken: string;
+  logger?: OrchestratorLogger | null;
+}
+
+export interface OrchestratorLogger {
+  error: (...args: unknown[]) => void;
 }
 
 export class OrchestratorError extends Error {
@@ -232,23 +237,27 @@ export interface CreateOrchestratorClientOptions {
   accessToken: string;
   /** Orchestrator base URL. Defaults to Civitai's prod orchestrator. */
   baseUrl?: string;
+  /** Optional logger for SDK diagnostics. Defaults to console; set null to silence. */
+  logger?: OrchestratorLogger | null;
 }
 
 export function createOrchestratorClient(
   opts: CreateOrchestratorClientOptions,
 ): OrchestratorClient {
-  return {
+  const client: OrchestratorClient = {
     baseUrl: opts.baseUrl ?? DEFAULT_ORCHESTRATOR_BASE_URL,
     accessToken: opts.accessToken,
   };
+  if (opts.logger !== undefined) client.logger = opts.logger;
+  return client;
 }
 
 // ---------- Raw HTTP --------------------------------------------------------
 
 /**
- * Internal raw-fetch helper. Logs the failing response to console.error and
- * throws {@link OrchestratorError} on non-2xx. Exported so callers can build
- * their own orchestrator routes without duplicating this code.
+ * Internal raw-fetch helper. Logs the failing response to the configured logger
+ * and throws {@link OrchestratorError} on non-2xx. Exported so callers can
+ * build their own orchestrator routes without duplicating this code.
  */
 export async function callOrchestrator(
   client: OrchestratorClient,
@@ -272,7 +281,8 @@ export async function callOrchestrator(
     body = text;
   }
   if (!res.ok) {
-    console.error(
+    const logger = client.logger === undefined ? console : client.logger;
+    logger?.error(
       `[orchestrator] ${init.method ?? 'GET'} ${path} -> ${res.status} ${res.statusText}\n` +
         `  raw body: ${text.length ? text.slice(0, 500) : '(empty)'}`,
     );
