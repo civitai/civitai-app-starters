@@ -225,6 +225,17 @@ export type WorkflowBody = {
   kind: 'textToImage';
   modelId: number;
   modelVersionId: number;
+  /**
+   * Optional additional generation resources (LoRAs) layered on top of the
+   * checkpoint (`modelVersionId`). Mirrors civitai's `blockWorkflowBodySchema`:
+   *  - max 5 entries
+   *  - each: { modelVersionId: positive int, strength?: number in [-1, 2], default 1 }
+   *  - the server is LoRA-only for additional resources (non-LoRA versions are
+   *    rejected) and enforces base-model-family compatibility with the checkpoint
+   *    + per-resource entitlement (early-access/Private) before any Buzz spend.
+   * Omit for a checkpoint-only generation (backward compatible).
+   */
+  additionalResources?: Array<{ modelVersionId: number; strength?: number }>;
   params: BlockTextToImageParams;
 };
 
