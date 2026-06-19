@@ -41,7 +41,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
+    "test:types": "tsc -p tsconfig.typecheck.json",
+    "test": "vitest run && tsc -p tsconfig.typecheck.json",
     "test:watch": "vitest"
   },
   "engines": {
