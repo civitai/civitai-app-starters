@@ -57,7 +57,17 @@ jobs:
           title: 'chore(release): version packages'
           commit: 'chore(release): version packages'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Open the Version-Packages PR with a NON-Actions token. The org
+          # disables "Allow GitHub Actions to create and approve pull requests"
+          # (enforced), so the default GITHUB_TOKEN 409s at the create-PR step —
+          # which is why the Version PR had to be opened by hand every release.
+          # A fine-grained PAT / GitHub App token is NOT subject to that org
+          # restriction, so the action can open (and trigger CI on) the PR.
+          # Falls back to GITHUB_TOKEN when the secret is absent: publishing still
+          # works via OIDC; only the auto-PR-creation needs CHANGESETS_TOKEN.
+          # SECRET: a fine-grained PAT (ideally a bot account) scoped to this repo
+          # with Contents: write + Pull requests: write.
+          GITHUB_TOKEN: ${{ secrets.CHANGESETS_TOKEN || secrets.GITHUB_TOKEN }}
           # No NPM_TOKEN — npm OIDC trusted publishing handles auth via
           # the id-token permission above. Configure the trust on npmjs.com
           # for every published package: @civitai/app-sdk and
