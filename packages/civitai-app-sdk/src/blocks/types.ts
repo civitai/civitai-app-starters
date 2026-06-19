@@ -73,6 +73,13 @@ export interface BlockResourceInfo {
    * `additionalResources[].modelVersionId` needs. */
   versionId: number;
   modelId: number;
+  /** Public display name of the picked model — the user chose this resource,
+   * so the host surfaces its name for the block to render (instead of `#id`).
+   * Same source as `BlockCheckpointInfo.modelName`. */
+  modelName: string;
+  /** Public display name of the picked model version. Same source as
+   * `BlockCheckpointInfo.versionName`. */
+  versionName: string;
   /** The resource's base model (e.g. 'Flux.1 D', 'SDXL 1.0') so the block can
    * keep a LoRA pick in the checkpoint's family client-side. */
   baseModel: string;
