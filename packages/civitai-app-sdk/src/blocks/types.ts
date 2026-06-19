@@ -47,6 +47,40 @@ export interface BlockCheckpointInfo {
 }
 
 /**
+ * The resource types the PAGE resource picker (`useResourcePicker`) accepts in
+ * v1: Checkpoint + LoRA only. Matches the page-LoRA body contract — a
+ * Checkpoint pick goes into `body.modelVersionId`, a LoRA pick into
+ * `body.additionalResources`. The host REJECTS any other requested type (the
+ * native modal never opens). Widen here + on the host when the body schema
+ * grows.
+ */
+export type BlockResourcePickerType = 'Checkpoint' | 'LORA';
+
+/**
+ * What the host returns from the PAGE resource picker
+ * (`RESOURCE_PICKER_RESULT.selected`). DELIBERATELY narrow: only the fields a
+ * block needs to build a generation body + dedupe/display — never the catalog,
+ * a list, or any private / availability / early-access / NSFW internal. The
+ * picker is DISCOVERY ONLY: `versionId` is re-validated server-side at
+ * estimate/submit by the page gate + orchestrator belt, so nothing here is an
+ * entitlement.
+ *
+ * Mirrors the host's `RESOURCE_PICKER_RESULT` projection in civitai/civitai's
+ * `PageBlockHost.tsx`. Keep in lockstep.
+ */
+export interface BlockResourceInfo {
+  /** ModelVersion id — the wire identifier `body.modelVersionId` /
+   * `additionalResources[].modelVersionId` needs. */
+  versionId: number;
+  modelId: number;
+  /** The resource's base model (e.g. 'Flux.1 D', 'SDXL 1.0') so the block can
+   * keep a LoRA pick in the checkpoint's family client-side. */
+  baseModel: string;
+  /** 'Checkpoint' | 'LORA' (the canonical model type the host resolved). */
+  modelType: string;
+}
+
+/**
  * One of the model version's curated preview images, with the standard
  * gen params extracted from its source meta. Block UIs use these to let
  * the user "remix" a known-good prompt without typing it.

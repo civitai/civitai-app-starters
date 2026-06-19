@@ -10,6 +10,8 @@
 
 import type {
   BlockCheckpointInfo,
+  BlockResourceInfo,
+  BlockResourcePickerType,
   BlockContext,
   BlockSettings,
   Theme,
@@ -103,6 +105,14 @@ export type ParentToBlockMessage =
       payload: { requestId: string; selected?: BlockCheckpointInfo };
     }
   | {
+      // Reply to OPEN_RESOURCE_PICKER (the PAGE resource picker). `selected` is
+      // absent when the user dismissed without choosing — the block's hook
+      // resolves to `null`. The payload is the narrow `BlockResourceInfo`
+      // projection ONLY; the iframe never receives a list or the catalog.
+      type: 'RESOURCE_PICKER_RESULT';
+      payload: { requestId: string; selected?: BlockResourceInfo };
+    }
+  | {
       // Reply to SET_USER_CHECKPOINT. `ok: false` carries a UI-renderable
       // `error` string (e.g. "wrong-ecosystem"), distinct from the block
       // lifecycle error class.
@@ -192,6 +202,23 @@ export type BlockToParentMessage =
         baseModelGroup: string;
         /** Currently-selected versionId so the picker can pre-highlight it. */
         currentVersionId?: number;
+      };
+    }
+  | {
+      // Ask the host (PAGE surface) to open its native resource picker filtered
+      // to a single type. Generalizes OPEN_CHECKPOINT_PICKER from Checkpoint-only
+      // to a typed allowlist (v1: 'Checkpoint' | 'LORA'); the host REJECTS any
+      // other `resourceType` (the modal never opens, the hook resolves to null
+      // via the SDK timeout — callers should restrict to the allowed types).
+      // `baseModelGroup` is an optional family hint (ecosystem key like 'Flux1'
+      // or a baseModel name) so a LoRA pick can be constrained to the page's
+      // checkpoint family. The host returns ONLY the chosen `BlockResourceInfo`.
+      type: 'OPEN_RESOURCE_PICKER';
+      payload: {
+        requestId: string;
+        resourceType: BlockResourcePickerType;
+        /** Optional base-model family hint (ecosystem key or baseModel name). */
+        baseModelGroup?: string;
       };
     }
   | {
