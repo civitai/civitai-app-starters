@@ -1,5 +1,12 @@
 # @civitai/blocks-cli
 
+## 0.1.3
+
+### Patch Changes
+
+- Updated dependencies [1790749]
+  - @civitai/app-sdk@0.10.0
+
 ## 0.1.2
 
 ### Patch Changes
