@@ -7,6 +7,12 @@ This repo publishes two packages to npm:
 
 The four starter templates under `starters/*` are private and aren't on npm — external devs `tiged` them directly from GitHub.
 
+`@civitai/blocks-cli` was a third published package (the `civitai init`/`dev`
+scaffolder) but is now **deprecated and unpublished** — superseded by the Go
+**`civitai` CLI** ([github.com/civitai/cli](https://github.com/civitai/cli)). It's
+marked `"private": true` and listed in the changesets `ignore` set, so the release
+pipeline never versions or publishes it again.
+
 The release pipeline runs on [changesets](https://github.com/changesets/changesets) plus a GitHub Actions workflow ([`.github/workflows/release.yml`](./.github/workflows/release.yml)) authenticated via npm **OIDC trusted publishing** — no `NPM_TOKEN` secret, no manual `npm login`, no OTP after the initial bootstrap.
 
 ## TL;DR — the happy path
@@ -57,7 +63,7 @@ No `NPM_TOKEN`. No 2FA prompt. The deploy completes in ~90 seconds.
 
 ## Bootstrapping the OIDC trust (one-time, per package)
 
-Done for `@civitai/app-sdk` as of `0.1.0`. **Must be repeated for every newly-published package** — including `@civitai/blocks-react` before its first OIDC publish. For reference / disaster recovery:
+Done for `@civitai/app-sdk` as of `0.1.0`. **Must be repeated for every newly-published package** — including `@civitai/blocks-react` before its first OIDC publish. (`@civitai/blocks-cli` is now deprecated + unpublished, so it needs no trust.) For reference / disaster recovery:
 
 1. Log in to npmjs.com as a `@civitai` org maintainer.
 2. Go to the package page → **Settings** → **Trusted Publishers** → **Add publisher**.

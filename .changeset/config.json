@@ -12,7 +12,8 @@
     "civitai-sveltekit-app-starter",
     "civitai-react-pwa-starter",
     "civitai-svelte-pwa-starter",
-    "civitai-block-starter"
+    "civitai-block-starter",
+    "@civitai/blocks-cli"
   ],
   "privatePackages": {
     "version": false,

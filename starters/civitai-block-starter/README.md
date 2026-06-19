@@ -77,7 +77,7 @@ substrate — calls will reject on the per-request timeout until then.
 ```
 .
 ├── block.manifest.json    # what you register with civitai.com
-├── civitai.app.json       # CLI config (used by @civitai/blocks-cli for deploy)
+├── civitai.app.json       # CLI config (used by the Go `civitai` CLI: civitai app submit)
 ├── index.html
 ├── vite.config.ts
 ├── src/
@@ -91,11 +91,12 @@ substrate — calls will reject on the per-request timeout until then.
 
 ## Registering the block
 
-Until per-app OAuth ships for the `POST /api/v1/developer/block-manifests`
-endpoint, manifest registration is `JOB_TOKEN`-gated and handled by the
-civitai/civitai server team. Coordinate by handing over `block.manifest.json`
-plus the OauthClient ID for your app. The CLI's `deploy` command will become
-self-service once that gate lifts.
+The canonical path is the **submit → review → deploy** flow on civitai.com,
+driven by the Go **`civitai` CLI** ([github.com/civitai/cli](https://github.com/civitai/cli)):
+`civitai app validate` then `civitai app submit` uploads the project at
+`/apps/submit`; a moderator reviews and approves it. (You can also ZIP the project
+and submit it via the web UI.) The old `@civitai/blocks-cli` npm scaffolder is
+**deprecated** in favor of this Go CLI.
 
 ## See also
 
