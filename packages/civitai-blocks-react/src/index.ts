@@ -31,6 +31,7 @@ export { useBuzzWorkflow } from './hooks/useBuzzWorkflow.js';
 export { useBlockResize } from './hooks/useBlockResize.js';
 export { useBuzzPurchase } from './hooks/useBuzzPurchase.js';
 export { useCheckpointPicker } from './hooks/useCheckpointPicker.js';
+export { useResourcePicker } from './hooks/useResourcePicker.js';
 export { useCivitaiNavigate } from './hooks/useCivitaiNavigate.js';
 export { useRequestSignIn } from './hooks/useRequestSignIn.js';
 export { useRequestConsent } from './hooks/useRequestConsent.js';

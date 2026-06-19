@@ -45,6 +45,8 @@ export type {
   Theme,
   ViewerInfo,
   BlockCheckpointInfo,
+  BlockResourceInfo,
+  BlockResourcePickerType,
   BlockTextToImageParams,
   BlockWorkflowSnapshot,
   ShowcaseImage,
