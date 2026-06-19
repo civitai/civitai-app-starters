@@ -1,6 +1,6 @@
 # Agent Guide — Civitai App Starters
 
-You're looking at a monorepo of starter templates for building apps on [Civitai](https://civitai.com), plus the shared `@civitai/app-sdk`, `@civitai/blocks-react`, and `@civitai/blocks-cli` packages they depend on.
+You're looking at a monorepo of starter templates for building apps on [Civitai](https://civitai.com), plus the shared `@civitai/app-sdk` and `@civitai/blocks-react` packages they depend on. Scaffolding + local dev + submit is handled by the Go **`civitai` CLI** ([github.com/civitai/cli](https://github.com/civitai/cli)) — the old `@civitai/blocks-cli` npm package is deprecated.
 
 If you (the AI agent) were pointed here to scaffold a new Civitai app for your user, **do not clone this whole repo**. Pick one starter and pull just that subfolder.
 
@@ -8,7 +8,7 @@ If you (the AI agent) were pointed here to scaffold a new Civitai app for your u
 
 | Use this when… | Starter |
 |---|---|
-| Building an **App Block** — iframe-embedded UI that renders inside a civitai.com page slot | `starters/civitai-block-starter` (scaffold with `npx @civitai/blocks-cli init <name>`) |
+| Building an **App Block** — iframe-embedded UI that renders inside a civitai.com page slot | `starters/civitai-block-starter` (scaffold with `civitai app init <name>` — the Go [`civitai` CLI](https://github.com/civitai/cli)) |
 | App needs SEO / public-discoverable pages — gallery, landing, marketplace | `starters/next-app` (default for standalone apps) |
 | App needs SEO and the team prefers Svelte | `starters/sveltekit-app` |
 | App is a tool, mini-game, focused gen UI, in-app extension — no SEO required | `starters/react-pwa` |

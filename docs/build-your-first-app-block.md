@@ -27,8 +27,11 @@ civitai.com model page
 
 ## 1. Scaffold
 
+Scaffolding (and local dev + submit) is handled by the Go **`civitai` CLI**
+([github.com/civitai/cli](https://github.com/civitai/cli)):
+
 ```bash
-npx @civitai/blocks-cli@latest init my-block \
+civitai app init my-block \
   --block-id my-block \
   --slot model.sidebar_top \
   --content-rating pg
@@ -36,6 +39,18 @@ cd my-block
 cp .env.example .env
 pnpm install
 ```
+
+> **Installing the CLI:** the Go `civitai` CLI repo and its Homebrew tap are
+> currently **private** — there's no public release yet, so the public
+> `brew install civitai/tap/civitai` instruction is pending the CLI going
+> public. Until then, internal / moderator users build from source:
+>
+> ```bash
+> git clone https://github.com/civitai/cli && cd cli && go build -o civitai .
+> ```
+>
+> The old `npx @civitai/blocks-cli` scaffolder is **deprecated** — its `civitai`
+> binary collided with this Go CLI, which is a superset.
 
 Or copy one of the [examples](../starters/examples) that's closest to what you're
 building (`hello-world` for a static UI, `buzz-workflow` for a generator).
@@ -124,7 +139,8 @@ pattern including the cost-quote rule and the caller-driven poll loop.
 ## 4. Run it locally
 
 ```bash
-pnpm dev:harness    # → http://localhost:<port> with a mock host
+civitai app dev     # → http://localhost:<port> with a mock host
+# (equivalent to `pnpm dev:harness` from inside the project)
 ```
 
 The harness (`src/Harness.tsx`) posts a fake `BLOCK_INIT`, intercepts your
@@ -156,12 +172,22 @@ submit** (esp. the seed), or the quoted cost won't match the charge — see the
 
 ## 7. Submit
 
-1. ZIP your project directory (include `block.manifest.json`, `index.html`,
-   `src/`, `package.json`, `vite.config.ts` — exclude `node_modules`, `dist`,
-   `.env`, and any `Dockerfile`/`nginx.conf`; the platform injects its own build).
-2. Go to **`/apps/submit`** on civitai.com. Attach the ZIP — the page parses your
-   manifest client-side and shows a preview card. Click Submit.
-3. You're redirected to **`/apps/my-submissions`** with status `pending`.
+Use the Go CLI (after `civitai login`):
+
+```bash
+civitai app validate    # checks the manifest before you ship
+civitai app submit      # ZIPs the project and uploads it to /apps/submit
+```
+
+`civitai app submit` bundles the project (`block.manifest.json`, `index.html`,
+`src/`, `package.json`, `vite.config.ts` — excluding `node_modules`, `dist`,
+`.env`, and any `Dockerfile`/`nginx.conf`; the platform injects its own build)
+and uploads it. You're then redirected to **`/apps/my-submissions`** with status
+`pending`.
+
+Prefer the web UI? You can still ZIP the project yourself and attach it at
+**`/apps/submit`** on civitai.com — the page parses your manifest client-side and
+shows a preview card.
 
 ## 8. Review + deploy (automatic after approve)
 
