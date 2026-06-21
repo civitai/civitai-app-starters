@@ -12,4 +12,6 @@ when a given `level` is allowed), else an optional `fallback`. `createMockHost`
 now emits `domain`/`maxBrowsingLevel` on `BLOCK_INIT` (driven by `domain`,
 `maxBrowsingLevel`, or a `maturity: 'sfw'|'mature'` convenience) so the hook and
 gate are exercisable in tests and the dev harness. Additive only; forward-
-compatible (works before #2670 deploys).
+compatible (works before #2670 deploys). Requires `@civitai/app-sdk` >=0.13.0
+(for `isSfwCeiling`/`isLevelAllowed`/`ColorDomain` and the `browsingLevel`
+constants); the peer-dependency constraint is bumped accordingly.
