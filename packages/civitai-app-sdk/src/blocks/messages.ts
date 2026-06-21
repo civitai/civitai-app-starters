@@ -8,6 +8,7 @@
  * Wire format: `window.postMessage({ type, payload }, targetOrigin)`.
  */
 
+import type { ColorDomain } from './browsingLevel.js';
 import type {
   BlockCheckpointInfo,
   BlockResourceInfo,
@@ -66,6 +67,27 @@ export interface BlockInitPayload {
   viewer: ViewerInfo | null;
   theme: Theme;
   renderMode: 'iframe' | 'inline';
+  /**
+   * The color-domain the block is rendered inside (`green` | `blue` | `red`),
+   * or `null` when the host did not resolve one. Informational ONLY — the SFW
+   * policy is server-side; derive "is this SFW?" from {@link maxBrowsingLevel}
+   * (via `isSfwCeiling` / `useDomainMaturity`), never from this string.
+   *
+   * Sent by civitai/civitai PR #2670. A host that predates it omits this field
+   * (reads `undefined`).
+   */
+  domain?: ColorDomain | null;
+  /**
+   * Authoritative browsing-level BITMASK = the max NSFW levels the domain
+   * allows, computed server-side from `domainBrowsingCeiling(color)` (green/
+   * blue → SFW, red → all). Bits mirror the server `NsfwLevel` (see
+   * `browsingLevel.ts`). A block reads this to decide whether to surface mature
+   * affordances — `isSfwCeiling(maxBrowsingLevel)` is the canonical test.
+   *
+   * Sent by civitai/civitai PR #2670. A host that predates it omits this field
+   * (reads `undefined`); the SDK fail-closes to SFW when it is absent.
+   */
+  maxBrowsingLevel?: number;
 }
 
 // ============================================================

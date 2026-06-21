@@ -31,6 +31,26 @@ describe('isValidBlockInitPayload', () => {
     expect(isValidBlockInitPayload({ ...validInit, viewer: null })).toBe(true);
   });
 
+  it('accepts the #2670 domain/maxBrowsingLevel fields when present', () => {
+    expect(isValidBlockInitPayload({ ...validInit, domain: 'green', maxBrowsingLevel: 3 })).toBe(true);
+    expect(isValidBlockInitPayload({ ...validInit, domain: 'red', maxBrowsingLevel: 31 })).toBe(true);
+    expect(isValidBlockInitPayload({ ...validInit, domain: null })).toBe(true);
+  });
+
+  it('accepts a payload without the #2670 fields (host predating it)', () => {
+    expect(isValidBlockInitPayload(validInit)).toBe(true);
+  });
+
+  it.each([
+    ['domain unknown string', { ...validInit, domain: 'purple' }],
+    ['domain wrong type', { ...validInit, domain: 1 }],
+    ['maxBrowsingLevel non-finite', { ...validInit, maxBrowsingLevel: Infinity }],
+    ['maxBrowsingLevel NaN', { ...validInit, maxBrowsingLevel: NaN }],
+    ['maxBrowsingLevel wrong type', { ...validInit, maxBrowsingLevel: '4' }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidBlockInitPayload(payload)).toBe(false);
+  });
+
   it.each([
     ['missing token', { ...validInit, token: undefined }],
     ['token.raw not a string', { ...validInit, token: { ...validInit.token, raw: 123 } }],
