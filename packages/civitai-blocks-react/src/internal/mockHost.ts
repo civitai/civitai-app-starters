@@ -26,15 +26,26 @@
  * round-trips are exercised. Never import this from production code.
  */
 
-import type {
-  BlockContext,
-  BlockInitPayload,
-  BlockResourceInfo,
-  BlockResourcePickerType,
-  Theme,
-  ViewerInfo,
-  WrappedToken,
+import {
+  BrowsingLevel,
+  SFW_LEVELS,
+  type BlockContext,
+  type BlockInitPayload,
+  type BlockResourceInfo,
+  type BlockResourcePickerType,
+  type ColorDomain,
+  type Theme,
+  type ViewerInfo,
+  type WrappedToken,
 } from '@civitai/app-sdk/blocks';
+
+/** The full all-levels ceiling a `red` domain projects (mirrors the server). */
+const ALL_LEVELS =
+  BrowsingLevel.PG |
+  BrowsingLevel.PG13 |
+  BrowsingLevel.R |
+  BrowsingLevel.X |
+  BrowsingLevel.XXX;
 
 const DEV_TOKEN = 'dev.mockhost.mock.jwt.NOT.A.REAL.RS256';
 const BUDGETED_SCOPE = 'ai:write:budgeted';
@@ -96,14 +107,28 @@ export interface MockHostOptions {
    */
   context?: BlockContext;
   /**
-   * Forward-compat hook for a future content-domain / maturity field on
-   * `BLOCK_INIT`. Stored verbatim and surfaced on the init payload's context
-   * under `domain` / `maturity` so a block can read it once the platform ships
-   * the field — inert until then.
+   * The color-domain the host projects into `BLOCK_INIT` (civitai #2670),
+   * surfaced on the top-level `domain` field. When set WITHOUT an explicit
+   * {@link MockHostOptions.maxBrowsingLevel}, the mock host derives a matching
+   * ceiling: `green`/`blue` → SFW (`SFW_LEVELS`), `red` → all levels — so
+   * `useDomainMaturity()`/`<SfwGate>` are exercisable. Omit for a host that
+   * predates #2670 (neither field is emitted → the hook fail-closes to SFW).
    */
-  domain?: string;
-  /** @see {@link MockHostOptions.domain} */
-  maturity?: string;
+  domain?: ColorDomain;
+  /**
+   * The authoritative browsing-level ceiling BITMASK emitted on `BLOCK_INIT`
+   * (`maxBrowsingLevel`). Overrides whatever {@link MockHostOptions.domain} /
+   * {@link MockHostOptions.maturity} would derive. Use `BrowsingLevel` bits
+   * from `@civitai/app-sdk/blocks` to compose one.
+   */
+  maxBrowsingLevel?: number;
+  /**
+   * Convenience for the common case: `'sfw'` → an SFW ceiling (`SFW_LEVELS`),
+   * `'mature'` → an all-levels ceiling. Lower precedence than an explicit
+   * {@link MockHostOptions.maxBrowsingLevel}, higher than the
+   * {@link MockHostOptions.domain}-derived default.
+   */
+  maturity?: 'sfw' | 'mature';
   /** Identity fields delivered in `BLOCK_INIT`. Sensible dev defaults. */
   blockInstanceId?: string;
   blockId?: string;
@@ -172,6 +197,13 @@ export function readMockHostUrlOptions(
   }
   if (params.get('theme') === 'light') out.theme = 'light';
   else if (params.get('theme') === 'dark') out.theme = 'dark';
+
+  // ?domain=green|blue|red projects a color-domain (and its derived ceiling);
+  // ?maturity=sfw|mature sets the ceiling directly.
+  const domain = params.get('domain');
+  if (domain === 'green' || domain === 'blue' || domain === 'red') out.domain = domain;
+  const maturity = params.get('maturity');
+  if (maturity === 'sfw' || maturity === 'mature') out.maturity = maturity;
 
   // ?pick (LoRA) / ?pickCkpt (Checkpoint): 'cancel' → dismissed; 'pony' → an
   // incompatible Pony LoRA; any other value → the default curated pick.
@@ -430,14 +462,26 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       writable: true,
     });
 
-    // Merge theme + forward-compat domain/maturity into the init context.
+    // Merge theme into the init context.
     const baseContext: BlockContext = options.context ?? { slotId: 'app.page' };
-    const context: BlockContext = {
-      ...baseContext,
-      theme,
-      ...(options.domain !== undefined ? { domain: options.domain } : {}),
-      ...(options.maturity !== undefined ? { maturity: options.maturity } : {}),
-    };
+    const context: BlockContext = { ...baseContext, theme };
+
+    // Color-domain maturity (civitai #2670). Resolve the ceiling by precedence:
+    // explicit maxBrowsingLevel > maturity convenience > domain-derived. Only
+    // EMIT a field when the corresponding option was set, so the default mock
+    // host stays a #2670-predating host (the hook fail-closes to SFW).
+    const resolvedCeiling: number | undefined =
+      options.maxBrowsingLevel !== undefined
+        ? options.maxBrowsingLevel
+        : options.maturity === 'sfw'
+          ? SFW_LEVELS
+          : options.maturity === 'mature'
+            ? ALL_LEVELS
+            : options.domain !== undefined
+              ? options.domain === 'red'
+                ? ALL_LEVELS
+                : SFW_LEVELS
+              : undefined;
 
     const initPayload: BlockInitPayload = {
       blockInstanceId,
@@ -449,6 +493,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       viewer,
       theme,
       renderMode: 'iframe',
+      ...(options.domain !== undefined ? { domain: options.domain } : {}),
+      ...(resolvedCeiling !== undefined ? { maxBrowsingLevel: resolvedCeiling } : {}),
     };
 
     const initTimer = setTimeout(() => dispatchToBlock({ type: 'BLOCK_INIT', payload: initPayload }), 0);

@@ -36,6 +36,10 @@ export { useCivitaiNavigate } from './hooks/useCivitaiNavigate.js';
 export { useRequestSignIn } from './hooks/useRequestSignIn.js';
 export { useRequestConsent } from './hooks/useRequestConsent.js';
 export { useBlockAnalytics } from './hooks/useBlockAnalytics.js';
+export { useDomainMaturity } from './hooks/useDomainMaturity.js';
+export type { DomainMaturity } from './hooks/useDomainMaturity.js';
+export { SfwGate } from './hooks/SfwGate.js';
+export type { SfwGateProps } from './hooks/SfwGate.js';
 export { useAppStorage } from './hooks/useAppStorage.js';
 export type {
   AppStorageKeyEntry,

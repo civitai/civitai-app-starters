@@ -13,6 +13,15 @@ export type { DefineBlockConfig } from './defineBlock.js';
 export { BLOCK_SCOPES, BLOCK_SCOPE_PATTERN } from './scopes.js';
 export type { BlockScope, BlockScopeKey } from './scopes.js';
 
+export {
+  BrowsingLevel,
+  SFW_LEVELS,
+  NSFW_LEVELS,
+  isSfwCeiling,
+  isLevelAllowed,
+} from './browsingLevel.js';
+export type { BrowsingLevelKey, BrowsingLevelBit, ColorDomain } from './browsingLevel.js';
+
 export { isMessage } from './messages.js';
 export type {
   BlockInitPayload,

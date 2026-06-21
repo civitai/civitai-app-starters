@@ -85,6 +85,26 @@ export function isValidBlockInitPayload(p: unknown): p is BlockInitPayload {
 
   if (p.theme !== 'light' && p.theme !== 'dark') return false;
 
+  // Color-domain maturity (civitai #2670). Both OPTIONAL + additive: a host
+  // that predates #2670 omits them (still valid). When present, shape-check so
+  // a malformed value drops rather than poisoning `useDomainMaturity`. `domain`
+  // is informational; the SFW decision is derived from `maxBrowsingLevel`.
+  if (
+    p.domain !== undefined &&
+    p.domain !== null &&
+    p.domain !== 'green' &&
+    p.domain !== 'blue' &&
+    p.domain !== 'red'
+  ) {
+    return false;
+  }
+  if (
+    p.maxBrowsingLevel !== undefined &&
+    (typeof p.maxBrowsingLevel !== 'number' || !Number.isFinite(p.maxBrowsingLevel))
+  ) {
+    return false;
+  }
+
   return true;
 }
 

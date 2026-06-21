@@ -3,6 +3,7 @@ import type {
   BlockInitPayload,
   BlockSettings,
   BlockToken,
+  ColorDomain,
   Theme,
   ViewerInfo,
   WrappedToken,
@@ -32,6 +33,19 @@ export interface BlockSnapshot {
   blockInstanceId: string;
   blockId: string;
   appId: string;
+  /**
+   * The color-domain the host projected at init (`green`|`blue`|`red`), or
+   * `null`/`undefined` when absent (anon read, or a host predating PR #2670).
+   * Informational only — `useDomainMaturity` derives SFW from
+   * `maxBrowsingLevel`, not this. Sentinel-`undefined` before `BLOCK_INIT`.
+   */
+  domain?: ColorDomain | null;
+  /**
+   * Authoritative domain browsing-level ceiling bitmask from `BLOCK_INIT`.
+   * `undefined` before init / when the host doesn't send it → consumers
+   * fail-closed to SFW.
+   */
+  maxBrowsingLevel?: number;
 }
 
 /**
@@ -127,6 +141,8 @@ export function snapshotFromInit(payload: BlockInitPayload): BlockSnapshot {
     blockInstanceId: payload.blockInstanceId,
     blockId: payload.blockId,
     appId: payload.appId,
+    domain: payload.domain,
+    maxBrowsingLevel: payload.maxBrowsingLevel,
   };
 }
 
