@@ -30,6 +30,13 @@ export {
   type MockHost,
   type MockHostOptions,
   type MockHostFailMode,
+  type MockHostScenarioPatch,
+  type MockGenerationScenario,
+  type MockBuzzScenario,
+  type MockBuzzHandle,
+  type MockStorageScenario,
+  type CostSpec,
+  type ImageSpec,
   type CannedPick,
 } from './internal/mockHost.js';
 
