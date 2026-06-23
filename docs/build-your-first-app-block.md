@@ -4,6 +4,28 @@ End-to-end: from nothing to a block live in a civitai.com model sidebar. ~20
 minutes. By the end you'll understand the four phases — **build → submit →
 review → deploy** — and the handful of gotchas that trip up first-timers.
 
+## 0. Install + log in
+
+Scaffolding, validation, and submission are handled by the Go **`civitai` CLI**
+([github.com/civitai/cli](https://github.com/civitai/cli)). Install it once:
+
+```bash
+# Go install (Go 1.25+)
+go install github.com/civitai/cli/cmd/civitai@latest
+# …or download a prebuilt binary from https://github.com/civitai/cli/releases
+civitai version
+```
+
+(A Homebrew tap is coming soon — `brew install civitai/tap/civitai` is not live
+yet.) Then authenticate once (browser device login):
+
+```bash
+civitai login        # or `civitai login --token <key>` for a personal API key
+```
+
+> The old `npx @civitai/blocks-cli` scaffolder is **deprecated** and no longer
+> published — its `civitai` binary collided with this Go CLI, which is a superset.
+
 ## What an App Block is
 
 A small iframe-embedded UI that renders *inside* a civitai.com page. The host
@@ -27,30 +49,22 @@ civitai.com model page
 
 ## 1. Scaffold
 
-Scaffolding (and local dev + submit) is handled by the Go **`civitai` CLI**
-([github.com/civitai/cli](https://github.com/civitai/cli)):
+Scaffolding is handled by the Go **`civitai` CLI**
+([github.com/civitai/cli](https://github.com/civitai/cli)) — you installed it in
+§0:
 
 ```bash
-civitai app init my-block \
-  --block-id my-block \
-  --slot model.sidebar_top \
-  --content-rating pg
+civitai app create my-block   # batteries-included page-money template
+# (or `civitai app init my-block` for a no-build static template)
 cd my-block
 cp .env.example .env
 pnpm install
 ```
 
-> **Installing the CLI:** the Go `civitai` CLI repo and its Homebrew tap are
-> currently **private** — there's no public release yet, so the public
-> `brew install civitai/tap/civitai` instruction is pending the CLI going
-> public. Until then, internal / moderator users build from source:
->
-> ```bash
-> git clone https://github.com/civitai/cli && cd cli && go build -o civitai .
-> ```
->
-> The old `npx @civitai/blocks-cli` scaffolder is **deprecated** — its `civitai`
-> binary collided with this Go CLI, which is a superset.
+The scaffolder writes a correct `block.manifest.json`; you then edit it by hand
+to set your slot and content rating (the manifest is the source of truth — see
+§2). Pick the template that fits: `--template static | page-vite | page-money`
+(`create` defaults to `page-money`, `init` defaults to `static`).
 
 Or copy one of the [examples](../starters/examples) that's closest to what you're
 building (`hello-world` for a static UI, `buzz-workflow` for a generator).
@@ -139,8 +153,8 @@ pattern including the cost-quote rule and the caller-driven poll loop.
 ## 4. Run it locally
 
 ```bash
-civitai app dev     # → http://localhost:<port> with a mock host
-# (equivalent to `pnpm dev:harness` from inside the project)
+pnpm dev:harness    # → http://localhost:<port> with a mock host
+# (the Go CLI has no `dev` command — run the project's own dev script)
 ```
 
 The harness (`src/Harness.tsx`) posts a fake `BLOCK_INIT`, intercepts your
@@ -176,7 +190,7 @@ Use the Go CLI (after `civitai login`):
 
 ```bash
 civitai app validate    # checks the manifest before you ship
-civitai app submit      # ZIPs the project and uploads it to /apps/submit
+civitai app submit      # validates, ZIPs the project, and uploads it for review
 ```
 
 `civitai app submit` bundles the project (`block.manifest.json`, `index.html`,

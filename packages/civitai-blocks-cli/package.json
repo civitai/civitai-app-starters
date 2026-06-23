@@ -1,9 +1,9 @@
 {
   "name": "@civitai/blocks-cli",
   "version": "0.1.3",
-  "description": "DEPRECATED — superseded by the Go `civitai` CLI (https://github.com/civitai/cli). Use `civitai app init/dev/validate/submit`.",
+  "description": "DEPRECATED — superseded by the Go `civitai` CLI (https://github.com/civitai/cli). Use `civitai login` + `civitai app init/validate/submit`.",
   "private": true,
-  "deprecated": "Use the Go `civitai` CLI instead: https://github.com/civitai/cli — `civitai app init/dev/validate/submit/login`. This npm package is no longer maintained and is not published.",
+  "deprecated": "Use the Go `civitai` CLI instead: https://github.com/civitai/cli — `civitai login` + `civitai app init/validate/submit`. This npm package is no longer maintained and is not published.",
   "license": "MIT",
   "type": "module",
   "bin": {

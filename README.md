@@ -20,7 +20,7 @@ Starter templates for building on [Civitai](https://civitai.com), plus the share
 
 - **`packages/civitai-app-sdk`** — OAuth + PKCE, encrypted-cookie sessions, scope helpers, orchestrator-call helpers, AND the framework-agnostic **App Blocks** contract (`/blocks` subpath). Published to npm as `@civitai/app-sdk`.
 - **`packages/civitai-blocks-react`** — React hooks + iframe transport for App Blocks. Published as `@civitai/blocks-react`.
-- **Scaffolding + local dev + submit for App Blocks** — handled by the Go **`civitai` CLI** ([github.com/civitai/cli](https://github.com/civitai/cli)): `civitai app init` / `dev` / `validate` / `submit`. (The old `packages/civitai-blocks-cli` / `@civitai/blocks-cli` npm package is **deprecated** and no longer published — see its [README](./packages/civitai-blocks-cli/README.md).)
+- **Scaffolding + submit for App Blocks** — handled by the Go **`civitai` CLI** ([github.com/civitai/cli](https://github.com/civitai/cli)): `civitai login` → `civitai app init` / `civitai app validate` / `civitai app submit`. (Local dev is the scaffolded project's own `npm run dev:harness` / `npm run dev:live`.) The old `packages/civitai-blocks-cli` / `@civitai/blocks-cli` npm package is **deprecated** and no longer published — see its [README](./packages/civitai-blocks-cli/README.md).
 - **`starters/next-app`** — Next.js 15 (App Router) + Tailwind. SSR-friendly, SEO-capable. Best OAuth-app default.
 - **`starters/sveltekit-app`** — SvelteKit 2 + Tailwind. Same demo surface as `next-app`.
 - **`starters/react-pwa`** — Vite + React 19 + tiny Hono BFF for OAuth token exchange. SPA/PWA shape.
@@ -84,7 +84,7 @@ than a full app: a single static SPA, no OAuth dance, no BFF.
 |---|---|
 | [`@civitai/app-sdk`](./packages/civitai-app-sdk) (`/blocks` subpath) | Framework-agnostic contract: manifest types, scopes, the `postMessage` protocol, `defineBlock` validator. |
 | [`@civitai/blocks-react`](./packages/civitai-blocks-react) | React hooks (`useBlockContext`, `useBuzzWorkflow`, `useAppStorage`, …) + iframe transport. Plus `/ui` (the `SettingsForm`). |
-| Go [`civitai` CLI](https://github.com/civitai/cli) | `civitai app init` / `dev` / `validate` / `submit` — scaffold, iterate, and ship a block. (Replaces the deprecated `@civitai/blocks-cli`.) |
+| Go [`civitai` CLI](https://github.com/civitai/cli) | `civitai login` / `civitai app init` / `civitai app validate` / `civitai app submit` — scaffold and ship a block. (Local dev is the project's own `npm run dev:harness`.) Replaces the deprecated `@civitai/blocks-cli`. |
 
 ### Examples (start here)
 
@@ -105,13 +105,16 @@ that simulates the host.
 
 Devs never touch git hosting. The path is:
 
-1. **Build** — scaffold with `civitai app init`, iterate with `civitai app dev`
-   (or `pnpm dev:harness`), `vite build` to a static `dist/`. Validate the
-   manifest any time with `civitai app validate`.
-2. **Submit** — ZIP your project (`block.manifest.json` + `src/` + `index.html` +
-   `package.json` + `vite.config.ts` + …) and upload it at **`/apps/submit`** on
-   civitai.com. You don't include a `Dockerfile` or `nginx.conf` — the platform
-   injects its own build recipe at approve.
+1. **Auth + Build** — `civitai login` once, scaffold with `civitai app init`,
+   iterate locally with `npm run dev:harness` (mock host) or `npm run dev:live`
+   (live host), `vite build` to a static `dist/`. Validate the manifest any time
+   with `civitai app validate`.
+2. **Submit** — `civitai app submit` validates, packages your project
+   (`block.manifest.json` + `src/` + `index.html` + `package.json` +
+   `vite.config.ts` + …), and uploads it for review with your stored token. You
+   don't include a `Dockerfile` or `nginx.conf` — the platform injects its own
+   build recipe at approve. (If you have no token configured, `submit` writes the
+   `.zip` and prints next steps; you can also web-upload at `/apps/submit`.)
 3. **Review** — a moderator reviews the manifest + file diff at **`/apps/review`**
    and approves (or rejects with a reason you see on `/apps/my-submissions`).
 4. **Deploy** — on approve, the platform builds + serves your `dist/` and stamps
