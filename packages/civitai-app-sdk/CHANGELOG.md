@@ -1,5 +1,16 @@
 # @civitai/app-sdk
 
+## 0.13.1
+
+### Patch Changes
+
+- f20d590: docs: repoint the App Blocks README link to the real guide
+
+  The `blocks/*` row linked "Civitai App Blocks" at the bare
+  `developer.civitai.com` dev portal, which has no App Blocks content. Point it at
+  the public "Build your first App Block" guide in this repo so readers land
+  somewhere that actually documents App Blocks.
+
 ## 0.13.0
 
 ### Minor Changes
