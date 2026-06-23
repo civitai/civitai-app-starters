@@ -128,16 +128,25 @@ export function Harness({
 
   return (
     <div data-harness="true" style={{ position: 'relative', width: '100vw', minHeight: '100dvh' }}>
-      <main data-harness-frame="true" style={{ width: '100%', minHeight: '100%' }}>
+      {/* Reserve space at the bottom so the fixed dev-log badge never sits over
+          the block's own bottom content (e.g. action buttons). Without this the
+          badge overlaps + intercepts clicks on whatever the app renders last. */}
+      <main
+        data-harness-frame="true"
+        style={{ width: '100%', minHeight: '100%', paddingBottom: showLog ? 56 : 0 }}
+      >
         {children}
       </main>
       {showLog && (
+        // pointerEvents:none on the wrapper so the badge's bounding box can't
+        // steal clicks from content beneath it; re-enabled on the interactive
+        // bits (summary toggles the log; pre is scrollable/selectable).
         <details style={harnessLogStyle}>
-          <summary style={{ cursor: 'pointer' }}>
+          <summary style={{ cursor: 'pointer', pointerEvents: 'auto' }}>
             DEV HARNESS · viewer={anon ? 'anon' : 'dev-viewer'} · consent={consent} · theme={theme} ·
             outbound:{outbound.length}
           </summary>
-          <pre style={{ margin: 0, maxHeight: 200, overflow: 'auto' }}>
+          <pre style={{ margin: 0, maxHeight: 200, overflow: 'auto', pointerEvents: 'auto' }}>
             {outbound.length === 0
               ? '// no outbound messages yet'
               : outbound
@@ -158,6 +167,7 @@ const harnessLogStyle = {
   bottom: 8,
   right: 8,
   zIndex: 9999,
+  pointerEvents: 'none',
   maxWidth: 520,
   background: 'rgba(17,17,17,0.92)',
   color: '#7fc',
