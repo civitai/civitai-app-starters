@@ -4,6 +4,16 @@ End-to-end: from nothing to a block live in a civitai.com model sidebar. ~20
 minutes. By the end you'll understand the four phases — **build → submit →
 review → deploy** — and the handful of gotchas that trip up first-timers.
 
+> **App Blocks is in a limited, moderator-gated preview (pre-GA).** Submission is
+> restricted to enrolled/approved accounts while the feature is dark. You can
+> install the CLI, scaffold, and run a block locally today — but `civitai app
+> submit` requires App Blocks access, and an un-enrolled account can't get a
+> block reviewed/approved (so it won't go live) until the feature opens up.
+> There is no public self-serve "request access" form yet — watch
+> [civitai.com](https://civitai.com) and the
+> [civitai/cli issues](https://github.com/civitai/cli/issues) for the general-
+> availability announcement.
+
 ## 0. Install + log in
 
 Scaffolding, validation, and submission are handled by the Go **`civitai` CLI**
