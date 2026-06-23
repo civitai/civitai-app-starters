@@ -62,8 +62,11 @@ pnpm build          # → dist/ (static SPA, base '/')
 
 The platform owns the build + serve recipe: it injects its own build (you don't
 ship a `Dockerfile` or `nginx.conf`), serves your `dist/`, and stamps the
-block's `iframe.src` server-side. To publish: submit a ZIP of this directory at
-`/apps/submit` on civitai.com — a moderator reviews it at `/apps/review`, and on
+block's `iframe.src` server-side. To publish, use the Go **`civitai` CLI**
+([github.com/civitai/cli](https://github.com/civitai/cli)): after `civitai login`,
+run `civitai app validate` then `civitai app submit` — it packages this directory
+and uploads it for review. A moderator reviews it at `/apps/review`, and on
 approve the build + deploy chain runs automatically. You never touch git hosting
-directly. See the [root README](../../../README.md) for the full submit → review
-→ deploy lifecycle.
+directly. (With no token, the CLI writes the `.zip` and you can web-upload it at
+`/apps/submit`.) See the [root README](../../../README.md) for the full
+submit → review → deploy lifecycle.

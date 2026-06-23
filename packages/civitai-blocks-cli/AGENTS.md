@@ -2,7 +2,8 @@
 
 > **DEPRECATED — do not extend.** This npm scaffolder is retired in favor of the
 > Go **`civitai` CLI** ([github.com/civitai/cli](https://github.com/civitai/cli)),
-> which is a superset (`civitai app init/dev/validate/submit/login`). It's
+> which is a superset (`civitai login` + `civitai app init/validate/submit`; the
+> local dev loop is the scaffolded project's own `npm run dev:harness`). It's
 > `"private": true` and `ignore`'d in `.changeset/config.json`, so it's never
 > versioned or published again. The source below is kept only for history; new
 > scaffolding/dev/submit work belongs in the Go CLI repo.

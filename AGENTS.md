@@ -1,6 +1,6 @@
 # Agent Guide — Civitai App Starters
 
-You're looking at a monorepo of starter templates for building apps on [Civitai](https://civitai.com), plus the shared `@civitai/app-sdk` and `@civitai/blocks-react` packages they depend on. Scaffolding + local dev + submit is handled by the Go **`civitai` CLI** ([github.com/civitai/cli](https://github.com/civitai/cli)) — the old `@civitai/blocks-cli` npm package is deprecated.
+You're looking at a monorepo of starter templates for building apps on [Civitai](https://civitai.com), plus the shared `@civitai/app-sdk` and `@civitai/blocks-react` packages they depend on. Scaffolding, validation, and submit are handled by the Go **`civitai` CLI** ([github.com/civitai/cli](https://github.com/civitai/cli)) (`civitai login` + `civitai app init/validate/submit`); the local dev loop is the scaffolded project's own `npm run dev:harness`. The old `@civitai/blocks-cli` npm package is deprecated.
 
 If you (the AI agent) were pointed here to scaffold a new Civitai app for your user, **do not clone this whole repo**. Pick one starter and pull just that subfolder.
 

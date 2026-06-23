@@ -28,14 +28,19 @@ pnpm dev:harness    # → http://localhost:518x (each example pins its own port)
 
 ## Shipping any example
 
+Submit with the Go **`civitai` CLI** ([github.com/civitai/cli](https://github.com/civitai/cli))
+— after a one-time `civitai login`:
+
 ```bash
-pnpm build          # → dist/  (static SPA, base '/')
+civitai app validate    # check the manifest
+civitai app submit      # validate, package, and upload for review
 ```
 
-Then submit a ZIP of the example directory at `/apps/submit` on civitai.com. The
-platform owns the build + serve recipe — it injects its own build (you don't
-ship a `Dockerfile` or `nginx.conf`), serves your `dist/`, and stamps the
-block's `iframe.src` server-side. See the
+`civitai app submit` packages the example directory and uploads it for review
+with your stored token. The platform owns the build + serve recipe — it injects
+its own build (you don't ship a `Dockerfile` or `nginx.conf`), serves your
+`dist/`, and stamps the block's `iframe.src` server-side. (With no token, the CLI
+writes the `.zip` and you can web-upload it at `/apps/submit`.) See the
 [end-to-end guide](../../docs/build-your-first-app-block.md).
 
 ## Notes
