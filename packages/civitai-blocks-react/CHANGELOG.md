@@ -1,5 +1,14 @@
 # @civitai/blocks-react
 
+## 0.11.1
+
+### Patch Changes
+
+- f20d590: docs: repoint the dead `developer.civitai.com/docs/blocks` README link
+
+  The dev portal has no App Blocks section, so the intro link returned 404. Point
+  it at the real, public "Build your first App Block" guide in this repo instead.
+
 ## 0.11.0
 
 ### Minor Changes
