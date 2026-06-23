@@ -40,6 +40,12 @@ export {
   type CannedPick,
 } from './internal/mockHost.js';
 
+export {
+  createLiveHost,
+  decodeBlockTokenPayload,
+  type LiveHostOptions,
+} from './internal/liveHost.js';
+
 /**
  * Builds a `MessageEvent` that mimics a parent-frame postMessage so tests can
  * exercise `IframeTransport.handleMessage` without a real cross-frame setup.
