@@ -203,11 +203,44 @@ function errorSnapshot(error: string): BlockWorkflowSnapshot {
 
 /**
  * Result of one tRPC mutation call: the parsed snapshot, or an error string.
+ *
+ * `transient` distinguishes a TRANSPORT/INFRA blip (network throw, or an HTTP
+ * status that says "the backend couldn't answer right now" — 5xx / 408 / 429 /
+ * 401) from a genuine, non-retryable error. It is NEVER a workflow `failed`
+ * STATUS: the backend reports a failed *workflow* as a 200 response whose
+ * snapshot has `status: 'failed'`, so a non-2xx / throw on POLL is always a
+ * transport problem, not the orchestrator saying the generation failed. Callers
+ * (the POLL handler) retry transient errors with bounded backoff instead of
+ * synthesizing a terminal `failed` snapshot — see {@link pollWithRetry}.
  */
 interface TrpcCallResult {
   snapshot?: BlockWorkflowSnapshot;
   error?: string;
+  /** True when `error` is a transport/infra blip worth retrying. */
+  transient?: boolean;
 }
+
+/**
+ * Whether an HTTP status from a tRPC call is a transient transport/infra blip
+ * (retry may succeed) vs. a deterministic error. 401 is included because a
+ * not-yet-rolled-out backend pod legitimately 401s for a few seconds during a
+ * deploy (the dev token is fine; the pod just hasn't loaded the verifier yet) —
+ * the exact blip the round-5 dogfood hit. Anything ≥ 500, plus 408 (timeout)
+ * and 429 (rate-limit), is also transient.
+ */
+function isTransientHttpStatus(status: number): boolean {
+  return status >= 500 || status === 408 || status === 429 || status === 401;
+}
+
+/**
+ * Bounded-retry policy for transient POLL transport errors. A few quick
+ * attempts with short exponential backoff (~1.75s total worst case) absorbs a
+ * single bad pod / network hiccup without turning a server-side success into a
+ * terminal `failed`. After the cap, the POLL handler replies with a NON-terminal
+ * `processing` snapshot (keep-polling) rather than fabricating `failed`, so the
+ * block's own poll loop tries again.
+ */
+const POLL_RETRY_BACKOFF_MS = [250, 500, 1000] as const;
 
 /**
  * Create a LIVE host that forwards the App-Block postMessage protocol to the
@@ -291,7 +324,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
       }
       if (!res.ok) {
         const msg = extractTrpcError(parsed) ?? `${procedure} failed: HTTP ${res.status}`;
-        return { error: msg };
+        return { error: msg, transient: isTransientHttpStatus(res.status) };
       }
       const snapshot = extractSnapshot(parsed);
       if (!snapshot) {
@@ -299,8 +332,35 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
       }
       return { snapshot };
     } catch (err) {
-      return { error: err instanceof Error ? err.message : String(err) };
+      // A thrown fetch is a network/transport failure (DNS, connection reset,
+      // CORS, offline) — always transient, never a workflow `failed` STATUS.
+      return { error: err instanceof Error ? err.message : String(err), transient: true };
     }
+  }
+
+  /**
+   * POLL with bounded retry of transient transport errors. A genuine workflow
+   * `failed` arrives as a `snapshot` (HTTP 200) and is returned immediately; a
+   * transient transport blip (network throw / 5xx / 408 / 429 / 401) is retried
+   * with {@link POLL_RETRY_BACKOFF_MS} backoff. The final result is only ever a
+   * `snapshot` OR a still-transient error — the caller turns the latter into a
+   * keep-polling `processing` reply, never a fabricated terminal `failed`.
+   */
+  async function pollWithRetry(workflowId: string): Promise<TrpcCallResult> {
+    let last: TrpcCallResult = { error: 'poll failed', transient: true };
+    for (let attempt = 0; attempt <= POLL_RETRY_BACKOFF_MS.length; attempt += 1) {
+      last = await callTrpcMutation('blocks.pollWorkflow', { blockToken: rawToken, workflowId });
+      // A real snapshot (incl. a genuine terminal `failed`) — done.
+      if (last.snapshot) return last;
+      // A non-transient error (malformed response, deterministic 4xx) — don't
+      // burn retries; surface it.
+      if (!last.transient) return last;
+      // Transient: back off and retry, unless we've exhausted the budget.
+      const delay = POLL_RETRY_BACKOFF_MS[attempt];
+      if (delay === undefined) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, delay));
+    }
+    return last;
   }
 
   let installed = false;
@@ -474,22 +534,38 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
 
           case 'POLL_WORKFLOW': {
             const workflowId = typed.payload?.workflowId ?? '';
-            void callTrpcMutation('blocks.pollWorkflow', {
-              blockToken: rawToken,
-              workflowId,
-            }).then((r) => {
+            void pollWithRetry(workflowId).then((r) => {
+              // Snapshot present (incl. a genuine terminal `failed` from the
+              // backend) — forward it as-is.
+              if (r.snapshot) {
+                dispatchToBlock({
+                  type: 'WORKFLOW_STATUS',
+                  payload: { requestId, snapshot: r.snapshot },
+                });
+                return;
+              }
+              // A still-transient transport error AFTER bounded retries must NOT
+              // become a terminal `failed` (the workflow may well be succeeding
+              // server-side). Reply with a NON-terminal `processing` snapshot
+              // carrying the transient error so the block's poll loop keeps
+              // polling and the real outcome surfaces on a later tick. A genuine
+              // workflow failure only ever arrives as `r.snapshot.status` ===
+              // 'failed' above.
+              const transient = r.transient ?? false;
+              logOnce(
+                'poll-transient',
+                `pollWorkflow transport error (kept polling, not failed): ${r.error ?? 'unknown'}`,
+              );
               dispatchToBlock({
                 type: 'WORKFLOW_STATUS',
                 payload: {
                   requestId,
-                  snapshot:
-                    r.snapshot ?? {
-                      // A failed poll keeps the workflowId so the block can map
-                      // it back to the right card.
-                      workflowId,
-                      status: 'failed' as const,
-                      error: r.error ?? 'poll failed',
-                    },
+                  // keeps the workflowId so the block maps it back to the right card.
+                  snapshot: {
+                    workflowId,
+                    status: transient ? ('processing' as const) : ('failed' as const),
+                    error: r.error ?? 'poll failed',
+                  },
                 },
               });
             });

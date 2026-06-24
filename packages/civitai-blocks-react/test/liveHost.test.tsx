@@ -120,6 +120,24 @@ async function waitForMessage(
   );
 }
 
+/**
+ * Like {@link waitForMessage} but with a generous budget (~5s) for replies that
+ * land after the live host's POLL retry backoff (250/500/1000ms).
+ */
+async function waitForMessageLong(
+  inbound: ReturnType<typeof collectInbound>,
+  type: string,
+): Promise<Record<string, unknown>> {
+  for (let i = 0; i < 250; i += 1) {
+    const found = inbound.messages.find((m) => m.type === type);
+    if (found) return found.payload ?? {};
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  throw new Error(
+    `timed out waiting for ${type}; saw: ${inbound.messages.map((m) => m.type).join(', ')}`,
+  );
+}
+
 /** Post an outbound message through the patched `window.parent`. */
 function post(type: string, payload: Record<string, unknown>) {
   window.parent.postMessage({ type, payload }, ORIGIN);
@@ -298,6 +316,86 @@ describe('createLiveHost — workflow forwarding', () => {
     expect((payload.snapshot as BlockWorkflowSnapshot).imageUrls).toEqual([
       'https://img.test/a.png',
     ]);
+  });
+
+  it('POLL transient error then success → retries, dispatches the SUCCESS (not failed)', async () => {
+    // The poll's FIRST tRPC call errors (a 500 transport blip — e.g. a
+    // not-yet-rolled-out pod); the retry succeeds. The block must see the
+    // eventual `succeeded` snapshot, NEVER a fabricated terminal `failed`. This
+    // is the round-5 dogfood bug: a poll blip turned a server-side success into
+    // FAILED and stopped the loop.
+    let pollCalls = 0;
+    installWithFetch(async (url) => {
+      if (url.endsWith('blocks.pollWorkflow')) {
+        pollCalls += 1;
+        if (pollCalls === 1) return trpcErr('upstream connect error (503)', 503);
+        return trpcOk({
+          workflowId: 'wf_1',
+          status: 'succeeded',
+          imageUrls: ['https://img.test/ok.png'],
+        });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('POLL_WORKFLOW', { requestId: 'r-retry', workflowId: 'wf_1' });
+    // First retry backoff is 250ms — wait generously.
+    const payload = await waitForMessageLong(inbound, 'WORKFLOW_STATUS');
+    expect(payload.requestId).toBe('r-retry');
+    const snap = payload.snapshot as BlockWorkflowSnapshot;
+    expect(snap.status).toBe('succeeded'); // NOT 'failed'
+    expect(snap.imageUrls).toEqual(['https://img.test/ok.png']);
+    expect(pollCalls).toBe(2); // retried exactly once before succeeding
+  });
+
+  it('POLL with a GENUINE failed status (HTTP 200 snapshot) → terminal failed (no retry)', async () => {
+    // A workflow the orchestrator actually failed comes back as a 200 response
+    // whose snapshot.status is 'failed'. That IS terminal — forward it as-is,
+    // do not retry it as if it were a transport blip.
+    let pollCalls = 0;
+    installWithFetch(async (url) => {
+      if (url.endsWith('blocks.pollWorkflow')) {
+        pollCalls += 1;
+        return trpcOk({ workflowId: 'wf_1', status: 'failed', error: 'NSFW prompt rejected' });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('POLL_WORKFLOW', { requestId: 'r-realfail', workflowId: 'wf_1' });
+    const payload = await waitForMessage(inbound, 'WORKFLOW_STATUS');
+    const snap = payload.snapshot as BlockWorkflowSnapshot;
+    expect(snap.status).toBe('failed');
+    expect(snap.error).toMatch(/NSFW prompt rejected/);
+    expect(pollCalls).toBe(1); // a real failed status is not retried
+  });
+
+  it('POLL transport error that NEVER recovers → keep-polling `processing`, not terminal `failed`', async () => {
+    // Every poll attempt 401s (a backend that stays unreachable through the
+    // retry budget). After the bounded retries the host must NOT fabricate a
+    // terminal `failed` — it replies with a NON-terminal `processing` snapshot
+    // carrying the transient error, so the block's own poll loop keeps trying
+    // and a real outcome can still surface.
+    let pollCalls = 0;
+    installWithFetch(async (url) => {
+      if (url.endsWith('blocks.pollWorkflow')) {
+        pollCalls += 1;
+        return trpcErr('unauthorized (pod not ready)', 401);
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('POLL_WORKFLOW', { requestId: 'r-stuck', workflowId: 'wf_1' });
+    const payload = await waitForMessageLong(inbound, 'WORKFLOW_STATUS');
+    const snap = payload.snapshot as BlockWorkflowSnapshot;
+    expect(snap.status).toBe('processing'); // NON-terminal — keep polling
+    expect(snap.status).not.toBe('failed');
+    expect(snap.workflowId).toBe('wf_1'); // keeps the id so the block maps it back
+    expect(snap.error).toMatch(/unauthorized/);
+    // 1 initial + 3 retries (POLL_RETRY_BACKOFF_MS has 3 entries).
+    expect(pollCalls).toBe(4);
   });
 
   it('CANCEL_WORKFLOW → blocks.cancelWorkflow → WORKFLOW_CANCELED', async () => {
