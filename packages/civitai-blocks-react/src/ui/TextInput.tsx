@@ -78,6 +78,7 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(
         ) : null}
         <input
           ref={ref}
+          {...rest}
           id={inputId}
           className={inputClassName}
           data-civitai-ui-control
@@ -85,7 +86,6 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(
           aria-invalid={hasError || undefined}
           aria-describedby={describedBy}
           aria-required={required || undefined}
-          {...rest}
         />
         {hasError ? (
           <span id={errId} data-civitai-ui-error role="alert">

@@ -29,12 +29,14 @@ export const Loader = forwardRef<HTMLSpanElement, LoaderProps>(function Loader(
   return (
     <span
       ref={ref}
+      {...rest}
       data-civitai-ui="loader"
       data-size={size}
       role="status"
+      // Author may override aria-label (it's pulled from rest above as the
+      // default); but data-civitai-ui / data-size / role stay authoritative.
       aria-label={rest['aria-label'] ?? 'Loading'}
       style={color ? { color, ...style } : style}
-      {...rest}
     />
   );
 });

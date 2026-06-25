@@ -54,4 +54,16 @@ describe('Card', () => {
     expect(ref.current?.tagName).toBe('DIV');
     expect(card().classList.contains('c')).toBe(true);
   });
+
+  // Regression (B1): a structural component must also pin its own
+  // data-civitai-ui after the author spread. Select by test-id (NOT by
+  // data-civitai-ui) so the assertion can't be a tautology.
+  it('keeps data-civitai-ui="card" even when an author passes data-civitai-ui="evil"', () => {
+    render(
+      <Card data-testid="c" {...({ 'data-civitai-ui': 'evil' } as Record<string, string>)}>
+        x
+      </Card>
+    );
+    expect(screen.getByTestId('c').getAttribute('data-civitai-ui')).toBe('card');
+  });
 });

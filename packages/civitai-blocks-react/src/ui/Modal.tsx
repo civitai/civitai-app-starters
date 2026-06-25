@@ -87,7 +87,9 @@ export function Modal(props: ModalProps): React.JSX.Element | null {
     if (!opened || !closeOnEscape) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        e.stopPropagation();
+        // Don't stopPropagation — that swallows Escape unpredictably when two
+        // modals (or an author's own document Escape handler) are present. v0
+        // assumes a single modal, so letting the event continue is correct.
         onClose();
       }
     };

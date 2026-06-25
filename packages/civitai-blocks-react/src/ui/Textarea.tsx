@@ -86,6 +86,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
         ) : null}
         <textarea
           ref={ref}
+          {...rest}
           id={inputId}
           className={textareaClassName}
           data-civitai-ui-control
@@ -94,7 +95,6 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
           aria-invalid={hasError || undefined}
           aria-describedby={describedBy}
           aria-required={required || undefined}
-          {...rest}
         />
         {hasError ? (
           <span id={errId} data-civitai-ui-error role="alert">

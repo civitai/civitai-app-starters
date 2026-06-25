@@ -29,6 +29,7 @@ export const Group = forwardRef<HTMLDivElement, GroupProps>(function Group(
   return (
     <div
       ref={ref}
+      {...rest}
       data-civitai-ui="group"
       style={{
         gap: toLength(gap),
@@ -37,7 +38,6 @@ export const Group = forwardRef<HTMLDivElement, GroupProps>(function Group(
         flexWrap: wrap ? 'wrap' : 'nowrap',
         ...style,
       }}
-      {...rest}
     >
       {children}
     </div>

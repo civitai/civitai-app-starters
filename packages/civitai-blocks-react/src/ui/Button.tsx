@@ -75,6 +75,10 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       // <form> almost never wants an implicit submit. They can opt into
       // type="submit" explicitly.
       type={type ?? 'button'}
+      // Spread author props FIRST so the component-owned attributes below win —
+      // an author must not be able to clobber data-civitai-ui (the stylesheet
+      // selector) or aria-busy (the loading state) via a stray spread prop.
+      {...rest}
       data-civitai-ui="button"
       data-variant={variant}
       data-size={size}
@@ -99,7 +103,6 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
             } as React.CSSProperties)
           : style
       }
-      {...rest}
     >
       {loading ? <Loader size="sm" aria-hidden="true" /> : null}
       {leftSection != null ? (

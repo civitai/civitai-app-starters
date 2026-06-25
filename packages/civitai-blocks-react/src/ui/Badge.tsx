@@ -38,6 +38,7 @@ export const Badge = forwardRef<HTMLSpanElement, BadgeProps>(function Badge(
   return (
     <span
       ref={ref}
+      {...rest}
       data-civitai-ui="badge"
       data-variant={variant}
       data-size={size}
@@ -49,7 +50,6 @@ export const Badge = forwardRef<HTMLSpanElement, BadgeProps>(function Badge(
             } as React.CSSProperties)
           : style
       }
-      {...rest}
     >
       {children}
     </span>

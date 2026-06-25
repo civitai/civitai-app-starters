@@ -222,6 +222,12 @@ primary, the dark/light surfaces) — **with zero setup**:
 - **No Mantine dependency, no CSS import, no setup step.** The pack ships its
   CSS as a string and injects it into your block document's `<head>` the first
   time you render any component (idempotent). There's nothing to wire up.
+- **First paint is briefly unstyled (FOUC).** Because the CSS injects in a
+  `useEffect` (after the first paint), the very first frame of a pack component
+  renders unstyled, then snaps to themed. It's a single frame and usually
+  unnoticeable. To eliminate it, call `injectBlocksStyles()` at module init in
+  your entry file (before the first render) so the stylesheet is present up
+  front — see `injectBlocksStyles` below (already exported).
 - **Auto-themed via your block's `data-theme`.** Set `data-theme={theme}` on
   your block's own root (from `useBlockContext().theme` — gotcha #60; the host
   can't reach across the iframe to set it for you). The components read an

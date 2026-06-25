@@ -38,10 +38,10 @@ export const Alert = forwardRef<HTMLDivElement, AlertProps>(function Alert(
   return (
     <div
       ref={ref}
+      {...rest}
       data-civitai-ui="alert"
       data-color={color}
       role="alert"
-      {...rest}
     >
       <div data-civitai-ui-alert-body>
         {title != null ? (

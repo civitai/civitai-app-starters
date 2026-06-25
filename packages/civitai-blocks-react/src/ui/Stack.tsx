@@ -27,6 +27,7 @@ export const Stack = forwardRef<HTMLDivElement, StackProps>(function Stack(
   return (
     <div
       ref={ref}
+      {...rest}
       data-civitai-ui="stack"
       style={{
         gap: toLength(gap),
@@ -34,7 +35,6 @@ export const Stack = forwardRef<HTMLDivElement, StackProps>(function Stack(
         justifyContent: justify,
         ...style,
       }}
-      {...rest}
     >
       {children}
     </div>

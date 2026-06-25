@@ -24,11 +24,11 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
   return (
     <div
       ref={ref}
+      {...rest}
       data-civitai-ui="card"
       data-with-border={withBorder ? 'true' : undefined}
       data-padding={padding}
       style={radius != null ? { borderRadius: radius, ...style } : style}
-      {...rest}
     >
       {children}
     </div>

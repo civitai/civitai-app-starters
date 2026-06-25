@@ -150,4 +150,28 @@ describe('Button', () => {
     expect(btn.classList.contains('custom')).toBe(true);
     expect(btn.getAttribute('aria-label')).toBe('go-btn');
   });
+
+  // Regression (B1): an author-passed data-civitai-ui must NOT win — the whole
+  // injected stylesheet keys off [data-civitai-ui='button'], so letting a stray
+  // spread prop clobber it would render the button completely unstyled.
+  it('keeps data-civitai-ui="button" even when an author passes data-civitai-ui="evil"', () => {
+    render(
+      <Button data-testid="b" {...({ 'data-civitai-ui': 'evil' } as Record<string, string>)}>
+        Go
+      </Button>
+    );
+    expect(screen.getByTestId('b').getAttribute('data-civitai-ui')).toBe('button');
+  });
+
+  // Regression (B2): aria-busy is component-owned while loading — an author
+  // passing aria-busy="false" must not falsely tell a screen reader the control
+  // is idle during a load.
+  it('keeps aria-busy="true" while loading even when an author passes aria-busy="false"', () => {
+    render(
+      <Button data-testid="b" loading aria-busy="false">
+        Go
+      </Button>
+    );
+    expect(screen.getByTestId('b').getAttribute('aria-busy')).toBe('true');
+  });
 });
