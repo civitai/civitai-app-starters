@@ -117,6 +117,19 @@ describe('createMockHost — generation scenario', () => {
     expect(snap.status).toBe('succeeded');
   });
 
+  it('default synthetic result image is prominently labeled MOCK', async () => {
+    // No custom image configured → the host falls back to its placehold.co
+    // default. That default MUST read "MOCK" so a first-run dev in dev:harness
+    // can't mistake the scaffold placeholder for a real generation.
+    uninstall = createMockHost({ pollsUntilDone: 1 }).install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+    const snap = await runGen(result, 1);
+    expect(snap.status).toBe('succeeded');
+    const url = result.current.result?.imageUrls?.[0] ?? '';
+    expect(url).toContain('text=MOCK');
+  });
+
   it('latencyMs delays the terminal poll without changing the outcome', async () => {
     // Use a small real delay (120ms) so the terminal poll lands behind a timer
     // but the test stays fast + deterministic (no fake-timer orchestration).

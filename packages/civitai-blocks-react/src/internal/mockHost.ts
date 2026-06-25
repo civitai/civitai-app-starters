@@ -552,8 +552,12 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   const imagesFor = (workflowId: string, body: WorkflowBody): string[] => {
     if (gen.images) return typeof gen.images === 'function' ? gen.images(body) : gen.images;
     if (gen.image) return [typeof gen.image === 'function' ? gen.image(body) : gen.image];
+    // Default synthetic result: prominently labeled MOCK so a first-run dev in
+    // `dev:harness` can't mistake the scaffold's placeholder for a real (or
+    // broken) generation. "MOCK" is the dominant line; the short workflow id
+    // keeps per-gen uniqueness. (`%0A` is a newline in placehold.co's text.)
     return [
-      `https://placehold.co/512x512/1971c2/ffffff/png?text=${encodeURIComponent(
+      `https://placehold.co/512x512/1971c2/ffffff/png?text=MOCK%0A${encodeURIComponent(
         workflowId.slice(-4),
       )}`,
     ];
