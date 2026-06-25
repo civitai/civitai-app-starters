@@ -274,7 +274,7 @@ export function App() {
 | `TextInput` / `Textarea` | `label` / `description` / `error` / `required`, wired via `htmlFor` + `aria-describedby` + `aria-invalid`. `Textarea` takes `minRows`. |
 | `Card` | themed surface; `withBorder`, `padding`, `radius`. |
 | `Stack` / `Group` | vertical / horizontal flex; `gap`, `align`, `justify` (+ `Group` `wrap`). |
-| `Alert` | `color` (`info`/`success`/`warning`/`error`), `title`, `withCloseButton` + `onClose`; `role="alert"`. |
+| `Alert` | `color` (`info`/`success`/`warning`/`error`), `title`, `withCloseButton` + `onClose`. ARIA role defaults by color — `error`/`warning` → `role="alert"` (assertive), `info`/`success` → `role="status"` (polite); pass `role` to override. |
 | `Loader` | CSS-keyframe spinner; `size`, `color`; `role="status"`. |
 | `Badge` | `variant`, `size`, `color`. |
 | `Modal` | `opened` + `onClose`, `title`, `size`; `role="dialog"` + `aria-modal`, Escape- and overlay-click-to-close, focuses the panel on open and restores focus on close. |
