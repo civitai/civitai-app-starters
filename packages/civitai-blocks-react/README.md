@@ -208,7 +208,94 @@ track('generate_clicked', { modelId });
 ## The `/ui` subexport
 
 Opinionated components, imported separately so a transport-only block stays lean.
-v0 ships the headless, manifest-driven `SettingsForm`:
+Two surfaces live here:
+
+1. The **W6 component pack** — a small, Civitai-looking, self-styled component
+   set you drop straight into a block.
+2. The headless, manifest-driven **`SettingsForm`** (host-themed native controls).
+
+### W6 component pack
+
+A drop-in set of primitives that match Civitai's look (8px radius, the blue
+primary, the dark/light surfaces) — **with zero setup**:
+
+- **No Mantine dependency, no CSS import, no setup step.** The pack ships its
+  CSS as a string and injects it into your block document's `<head>` the first
+  time you render any component (idempotent). There's nothing to wire up.
+- **First paint is briefly unstyled (FOUC).** Because the CSS injects in a
+  `useEffect` (after the first paint), the very first frame of a pack component
+  renders unstyled, then snaps to themed. It's a single frame and usually
+  unnoticeable. To eliminate it, call `injectBlocksStyles()` at module init in
+  your entry file (before the first render) so the stylesheet is present up
+  front — see `injectBlocksStyles` below (already exported).
+- **Auto-themed via your block's `data-theme`.** Set `data-theme={theme}` on
+  your block's own root (from `useBlockContext().theme` — gotcha #60; the host
+  can't reach across the iframe to set it for you). The components read an
+  ancestor `[data-theme='dark']` / `[data-theme='light']`; **no attribute =
+  light**, matching the starter palette.
+
+```tsx
+import { useRef } from 'react';
+import { useBlockContext } from '@civitai/blocks-react';
+import {
+  Button, TextInput, Textarea, Card, Stack, Group,
+  Alert, Loader, Badge, Modal,
+} from '@civitai/blocks-react/ui';
+
+export function App() {
+  const { ready, theme } = useBlockContext();
+  const rootRef = useRef<HTMLDivElement>(null);
+  if (!ready) return <div ref={rootRef}>Loading…</div>;
+
+  return (
+    // GOTCHA #60 — theme your OWN root; that's what the pack reads.
+    <div ref={rootRef} data-theme={theme}>
+      <Card>
+        <Stack gap={12}>
+          <Group justify="space-between">
+            <strong>My block</strong>
+            <Badge color="success">ready</Badge>
+          </Group>
+          <TextInput label="Prompt" description="What to generate" />
+          <Alert color="info" title="Heads up">Costs Buzz.</Alert>
+          <Button fullWidth onClick={() => {/* … */}}>Generate</Button>
+        </Stack>
+      </Card>
+    </div>
+  );
+}
+```
+
+**The components** (each with an exported props interface):
+
+| Component | Highlights |
+|---|---|
+| `Button` | `variant` (`filled`/`light`/`outline`/`subtle`), `size`, `color`, `loading` (shows a `Loader`, disables + `aria-busy`), `fullWidth`, `leftSection`/`rightSection`. Defaults to `type="button"`. |
+| `TextInput` / `Textarea` | `label` / `description` / `error` / `required`, wired via `htmlFor` + `aria-describedby` + `aria-invalid`. `Textarea` takes `minRows`. |
+| `Card` | themed surface; `withBorder`, `padding`, `radius`. |
+| `Stack` / `Group` | vertical / horizontal flex; `gap`, `align`, `justify` (+ `Group` `wrap`). |
+| `Alert` | `color` (`info`/`success`/`warning`/`error`), `title`, `withCloseButton` + `onClose`; `role="alert"`. |
+| `Loader` | CSS-keyframe spinner; `size`, `color`; `role="status"`. |
+| `Badge` | `variant`, `size`, `color`. |
+| `Modal` | `opened` + `onClose`, `title`, `size`; `role="dialog"` + `aria-modal`, Escape- and overlay-click-to-close, focuses the panel on open and restores focus on close. |
+
+Each component forwards `className` + `style`, forwards a `ref` to its DOM
+node (where it wraps one), and carries a `data-civitai-ui="<name>"` hook. Need
+to inject the CSS yourself (SSR, or a non-React shell)? Call
+`injectBlocksStyles(doc?)` once, or read the raw `BLOCKS_UI_STYLES` string.
+`useBlocksStyles()` is the hook the components call internally.
+
+> **Modal focus limitation (v0):** the modal focuses its panel on open and
+> restores focus on close, but it does **not** trap focus — Tab can still reach
+> content behind the overlay. That's fine for a simple confirm/settings dialog
+> inside the sandboxed block; a full focus-trap is a v1 follow-up (kept
+> dependency-free here on purpose).
+
+### `SettingsForm`
+
+The headless, manifest-driven settings form (its contract is intentionally
+**unstyled native controls** — the host page themes it, so it does *not* use the
+W6 pack):
 
 ```tsx
 import { SettingsForm } from '@civitai/blocks-react/ui';
@@ -222,8 +309,8 @@ import { SettingsForm } from '@civitai/blocks-react/ui';
 />
 ```
 
-Unstyled native controls (host themes them). `isFieldVisible` + `SettingsFormError`
-are also exported. See the `settings` example.
+`isFieldVisible` + `SettingsFormError` are also exported. See the `settings`
+example.
 
 ## Lower-level transport
 
