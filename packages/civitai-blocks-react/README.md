@@ -18,9 +18,15 @@ your block app and the SDK share a single React tree.
 
 ## Quick start
 
+> **Building a UI?** The `/ui` subexport ships a drop-in, Civitai-themed
+> component pack (Button, TextInput, Textarea, Card, Stack, Group, Alert, Loader,
+> Badge, Modal + `injectBlocksStyles`) — zero CSS setup, auto-themed via your
+> block's `data-theme`. See [The `/ui` subexport](#the-ui-subexport).
+
 ```tsx
 import { useRef } from 'react';
 import { useBlockContext, useBlockResize, useBuzzWorkflow } from '@civitai/blocks-react';
+import { Button } from '@civitai/blocks-react/ui';
 import type { ModelSlotContext } from '@civitai/app-sdk/blocks';
 
 export function App() {
@@ -37,7 +43,9 @@ export function App() {
     // the iframe to set it. Without this any [data-theme="dark"] CSS is dormant.
     <div ref={rootRef} data-theme={theme}>
       <p>Block for model {model.modelName} ({viewer?.username ?? 'anon'})</p>
-      <button
+      {/* `/ui` Button — themed by the data-theme above; `loading` disables + shows a spinner */}
+      <Button
+        loading={status === 'submitting' || status === 'polling'}
         onClick={() =>
           submit({
             kind: 'textToImage',
@@ -48,7 +56,7 @@ export function App() {
         }
       >
         Generate
-      </button>
+      </Button>
       {status === 'done' && result?.imageUrls?.map((u) => <img key={u} src={u} />)}
     </div>
   );
