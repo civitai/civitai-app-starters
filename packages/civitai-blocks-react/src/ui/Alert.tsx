@@ -16,11 +16,21 @@ export interface AlertProps
   onClose?: () => void;
   /** Accessible label for the close button. Defaults to "Close alert". */
   closeButtonLabel?: string;
+  /**
+   * ARIA live-region role. Defaults by `color`: `error`/`warning` →
+   * `'alert'` (assertive, interrupts), `info`/`success` → `'status'`
+   * (polite). Set explicitly to override the color-derived default — an
+   * explicit value always wins.
+   */
+  role?: React.AriaRole;
 }
 
 /**
- * A themed callout. Carries `role="alert"` so it's announced. Optional
- * dismiss button calls `onClose`. Auto-themed via `useBlocksStyles()`.
+ * A themed callout. Its ARIA role defaults by `color` —
+ * `error`/`warning` get `role="alert"` (assertive), `info`/`success`
+ * get `role="status"` (polite) so a static callout isn't announced
+ * interruptively. Pass `role` to override. Optional dismiss button
+ * calls `onClose`. Auto-themed via `useBlocksStyles()`.
  */
 export const Alert = forwardRef<HTMLDivElement, AlertProps>(function Alert(
   {
@@ -29,19 +39,22 @@ export const Alert = forwardRef<HTMLDivElement, AlertProps>(function Alert(
     withCloseButton = false,
     onClose,
     closeButtonLabel = 'Close alert',
+    role,
     children,
     ...rest
   },
   ref
 ): React.JSX.Element {
   useBlocksStyles();
+  const resolvedRole =
+    role ?? (color === 'error' || color === 'warning' ? 'alert' : 'status');
   return (
     <div
       ref={ref}
       {...rest}
       data-civitai-ui="alert"
       data-color={color}
-      role="alert"
+      role={resolvedRole}
     >
       <div data-civitai-ui-alert-body>
         {title != null ? (
