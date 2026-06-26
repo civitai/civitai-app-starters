@@ -288,6 +288,23 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
     );
   }
 
+  // A token minted from an OAuth login carries no spend scope (the server
+  // strips `ai:write:budgeted` — the civitai-cli OAuth client has no AI
+  // Services). With such a token the block's `granted` is false, so Generate
+  // calls REQUEST_CONSENT — which live mode CANNOT grant (there's no scope to
+  // re-mint into). Warn UP FRONT, before the dev wastes a click on a Generate
+  // that silently dead-ends. (The CLI also warns at mint time.)
+  const tokenCanSpend = Array.isArray(decoded.scopes) && decoded.scopes.includes(BUDGETED_SCOPE);
+  if (rawToken && !isExpired(decoded) && !tokenCanSpend) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[createLiveHost] This dev token is READ-ONLY — it has no `ai:write:budgeted` scope, so ' +
+        'Generate will NOT spend Buzz (REQUEST_CONSENT cannot be granted in live mode). It was ' +
+        'likely minted from an OAuth login. Real generation needs a full-scope personal API key: ' +
+        '`civitai login --token <key>` (https://civitai.com/user/account), then re-mint the dev token.',
+    );
+  }
+
   // One-time "not supported in live v1" log gating per capability.
   const loggedOnce = new Set<string>();
   const logOnce = (key: string, message: string) => {
@@ -717,13 +734,30 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             return;
           }
 
+          case 'REQUEST_CONSENT': {
+            // Live mode CANNOT grant consent: there is no host UI to open and no
+            // way to re-mint a token with a scope it doesn't carry. If the token
+            // already has the budgeted scope, the block never gets here (its
+            // `granted` is true) — so reaching this case means the token is
+            // read-only (typically an OAuth-minted token) and Generate would
+            // otherwise dead-end SILENTLY. Log a clear, actionable error rather
+            // than swallowing it. (The startup warning above already fired once.)
+            logOnce(
+              'request-consent',
+              'REQUEST_CONSENT received but live mode cannot grant scopes. Your dev token lacks ' +
+                '`ai:write:budgeted`, so Generate will not spend. Re-mint with a full-scope personal ' +
+                'API key: `civitai login --token <key>` (https://civitai.com/user/account), then ' +
+                'update VITE_LIVE_BLOCK_TOKEN and restart.',
+            );
+            return;
+          }
+
           case 'TRACK_EVENT':
           case 'REQUEST_SIGN_IN':
-          case 'REQUEST_CONSENT':
           case 'BLOCK_ERROR':
-            // Log + no-op. Consent is implicit in live mode (dev-as-owner; the
-            // scopes are already in the token), so there is no withhold / grant
-            // round-trip and nothing to re-mint.
+            // No-op. TRACK_EVENT/BLOCK_ERROR are fire-and-forget; REQUEST_SIGN_IN
+            // can't open a login in dev (the viewer comes from the token — a
+            // failed viewer fetch already warns in resolveViewer).
             return;
 
           default:
