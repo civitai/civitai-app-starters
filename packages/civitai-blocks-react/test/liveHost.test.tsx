@@ -559,16 +559,64 @@ describe('createLiveHost — token + non-forwarded messages', () => {
     expect(quota.rowCount).toBe(0);
   });
 
-  it('TRACK_EVENT / REQUEST_SIGN_IN / REQUEST_CONSENT / BLOCK_ERROR are no-op (no reply, no throw)', async () => {
+  it('TRACK_EVENT / REQUEST_SIGN_IN / BLOCK_ERROR are no-op (no reply, no throw)', async () => {
     install();
     await waitForMessage(inbound, 'BLOCK_INIT');
     const before = inbound.messages.length;
     post('TRACK_EVENT', { eventName: 'x' });
     post('REQUEST_SIGN_IN', {});
-    post('REQUEST_CONSENT', {});
     post('BLOCK_ERROR', { message: 'boom', fatal: false });
     // Give any (incorrect) replies a tick to land.
     await new Promise((r) => setTimeout(r, 20));
     expect(inbound.messages.length).toBe(before);
+  });
+
+  it('REQUEST_CONSENT logs an actionable error (live mode cannot grant) — no reply', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    const before = inbound.messages.length;
+    post('REQUEST_CONSENT', { scopes: ['ai:write:budgeted'] });
+    await new Promise((r) => setTimeout(r, 20));
+    // No reply dispatched (can't grant), but a clear warning is logged.
+    expect(inbound.messages.length).toBe(before);
+    const logged = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(logged).toMatch(/REQUEST_CONSENT/);
+    expect(logged).toMatch(/civitai login --token/);
+  });
+});
+
+describe('createLiveHost — read-only token startup warning', () => {
+  let uninstall: (() => void) | undefined;
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    vi.restoreAllMocks();
+  });
+
+  function install(token: string) {
+    const host = createLiveHost({
+      blockToken: token,
+      viewer: { id: 42, username: 'm' },
+      fetchImpl: vi.fn(async () => meOk({ id: 42, username: 'm' })) as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+  }
+
+  it('warns up front when the token lacks ai:write:budgeted (OAuth-minted)', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const readOnly = fakeJwt({ ...DEFAULT_CLAIMS, scopes: ['user:read:self'], buzzBudget: undefined });
+    install(readOnly);
+    const logged = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(logged).toMatch(/READ-ONLY/);
+    expect(logged).toMatch(/ai:write:budgeted/);
+    expect(logged).toMatch(/civitai login --token/);
+  });
+
+  it('does NOT warn for a spendable (personal-key-minted) token', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    install(fakeJwt(DEFAULT_CLAIMS));
+    const logged = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(logged).not.toMatch(/READ-ONLY/);
   });
 });
