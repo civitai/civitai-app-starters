@@ -97,11 +97,12 @@ export interface PickerOverlayHandle {
 const Z_INDEX = 2_147_483_000; // above the dev harness log (9999) and most chrome.
 
 /**
- * Catalog page size for the picker. The server caps at 100; we ask for it so the
- * dev browses a FULL family page (hundreds exist) instead of the catalog's
- * 24-item default. `fetchCatalog`/`buildCatalogUrl` clamp to [1,100] anyway.
+ * Catalog page size for the picker. The server-side family filter already gives
+ * the right coverage and the search box narrows further, so 50 lazy-loaded cards
+ * is plenty and snappy — 100 froze the main thread (every thumbnail decoded at
+ * once). `fetchCatalog`/`buildCatalogUrl` clamp to [1,100] anyway.
  */
-const PICKER_PAGE_LIMIT = 100;
+const PICKER_PAGE_LIMIT = 50;
 
 /**
  * Open the in-harness picker overlay. Mounts a modal into the document, loads
@@ -183,10 +184,26 @@ export function openPickerOverlay(opts: OpenPickerOptions): PickerOverlayHandle 
         cell.style.outline = '2px solid #5ec8a0';
       }
 
-      const thumb = doc.createElement('div');
-      Object.assign(thumb.style, THUMB_STYLE);
-      if (card.thumbnailUrl) thumb.style.backgroundImage = `url("${card.thumbnailUrl}")`;
-      cell.appendChild(thumb);
+      // Lazy <img> thumbnail (mirrors civitai's native ResourceSelectCard, which
+      // uses <EdgeMedia loading="lazy" />). A CSS background-image CANNOT lazy-load,
+      // so the old approach fetched + decoded all ~100 thumbnails at once → froze
+      // the main thread. The browser now defers off-screen images. The src is
+      // already a 320px edge image (catalog.ts edgeThumb), not a full original.
+      if (card.thumbnailUrl) {
+        const thumb = doc.createElement('img');
+        Object.assign(thumb.style, THUMB_STYLE);
+        thumb.loading = 'lazy';
+        thumb.decoding = 'async';
+        thumb.alt = ''; // decorative — the cell already carries an aria-label
+        thumb.src = card.thumbnailUrl;
+        cell.appendChild(thumb);
+      } else {
+        // No thumbnail — render the neutral placeholder tile (NOT an <img> with an
+        // empty src, which would show a broken-image icon).
+        const placeholder = doc.createElement('div');
+        Object.assign(placeholder.style, THUMB_STYLE);
+        cell.appendChild(placeholder);
+      }
 
       const name = doc.createElement('div');
       Object.assign(name.style, NAME_STYLE);
@@ -240,8 +257,8 @@ export function openPickerOverlay(opts: OpenPickerOptions): PickerOverlayHandle 
         // that matches no baseModel name falls back to a generic page inside
         // fetchCatalog (empty-family retry) rather than blanking the picker.
         baseModels: opts.baseModelGroup,
-        // Pull a full page toward the server cap so the dev sees many options
-        // (the old default of 24 + a client narrow left ~2 cards).
+        // Pull a sizeable page so the dev sees many options (the old default of
+        // 24 + a client narrow left ~2 cards); lazy-loaded thumbnails keep it snappy.
         limit: PICKER_PAGE_LIMIT,
       },
       {
@@ -414,6 +431,12 @@ const STATUS_STYLE: Partial<CSSStyleDeclaration> = {
 
 const GRID_STYLE: Partial<CSSStyleDeclaration> = {
   marginTop: '8px',
+  // Scroll WITHIN the 86vh flex-column modal. `flex:1 1 auto` lets the grid take
+  // the remaining space; `minHeight:0` is the classic flexbox fix that lets a flex
+  // child shrink below its content height so `overflow:auto` actually scrolls
+  // (without it the grid overflows the modal instead).
+  flex: '1 1 auto',
+  minHeight: '0',
   overflow: 'auto',
   display: 'grid',
   gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
@@ -435,9 +458,12 @@ const CARD_STYLE: Partial<CSSStyleDeclaration> = {
 };
 
 const THUMB_STYLE: Partial<CSSStyleDeclaration> = {
+  display: 'block',
   width: '100%',
   aspectRatio: '1 / 1',
-  background: '#1c2128 center/cover no-repeat',
+  objectFit: 'cover',
+  // Neutral tile shown before/while the lazy <img> loads (and for no-thumb cells).
+  background: '#1c2128',
 };
 
 const NAME_STYLE: Partial<CSSStyleDeclaration> = {
