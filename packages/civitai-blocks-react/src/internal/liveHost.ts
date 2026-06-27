@@ -297,8 +297,14 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
   }
 
   const baseUrl = (options.backendBaseUrl ?? DEFAULT_BACKEND_BASE_URL).replace(/\/+$/, '');
+  // The default fetch MUST be invoked as a method of globalThis. A detached
+  // reference (`const f = globalThis.fetch; f(url)`) throws "Illegal invocation"
+  // in browsers — fetch is a DOM-bound builtin — which broke the catalog/picker
+  // and every live-host network call when no fetchImpl was supplied. Wrap it so
+  // the call is always bound.
   const fetchImpl: typeof fetch =
-    options.fetchImpl ?? ((globalThis as { fetch?: typeof fetch }).fetch as typeof fetch);
+    options.fetchImpl ??
+    ((input, init) => (globalThis as { fetch: typeof fetch }).fetch(input, init));
   const theme: Theme = options.theme ?? 'dark';
   const decoded = decodeBlockTokenPayload(rawToken ?? '');
 

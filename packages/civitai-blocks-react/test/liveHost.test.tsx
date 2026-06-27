@@ -212,6 +212,30 @@ describe('createLiveHost — BLOCK_INIT', () => {
     });
   });
 
+  it('default fetch (no fetchImpl) is invoked BOUND to globalThis (no "Illegal invocation")', async () => {
+    // A real browser `fetch` throws "Illegal invocation" when called as a
+    // detached reference; we encode that contract by recording `this`. The
+    // default fetch wrapper must call `globalThis.fetch` as a METHOD
+    // (this === globalThis), not a bare reference (this === undefined under ESM
+    // strict mode), which was the bug that broke the catalog/picker + every
+    // live-host call when no fetchImpl was passed.
+    const calledThis: unknown[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = function (this: unknown) {
+      calledThis.push(this);
+      return Promise.resolve(meOk({ id: 7, username: 'dev', status: 'active' }));
+    } as unknown as typeof fetch;
+    try {
+      const host = createLiveHost({ blockToken: fakeJwt(DEFAULT_CLAIMS) }); // NO fetchImpl
+      uninstall = host.install();
+      await waitForMessage(inbound, 'BLOCK_INIT'); // triggers /blocks/me via the default fetch
+      expect(calledThis.length).toBeGreaterThan(0);
+      for (const t of calledThis) expect(t).toBe(globalThis);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
   it('falls back to an anon-ish viewer when /blocks/me fails', async () => {
     const fetchImpl = vi.fn(async () => trpcErr('nope', 401)) as unknown as typeof fetch;
     const host = createLiveHost({ blockToken: fakeJwt(DEFAULT_CLAIMS), fetchImpl });
