@@ -31,7 +31,6 @@ import {
   cardToCheckpoint,
   cardToResource,
   fetchCatalog,
-  filterCardsByFamily,
   type CatalogCard,
   type CatalogModelType,
   type CatalogResult,
@@ -52,7 +51,14 @@ export interface OpenPickerOptions {
   token?: string | null;
   /** Injectable `fetch` — the live host's `fetchImpl`. */
   fetchImpl: typeof fetch;
-  /** Optional ecosystem/family hint to narrow the browse client-side. */
+  /**
+   * Optional family hint — passed to the catalog as the SERVER-SIDE `baseModels`
+   * filter so the server returns a full page of the requested family (not a
+   * generic page narrowed client-side, which starved the grid to ~2 cards).
+   * Typically a baseModel NAME ('SDXL 1.0', 'Flux.1 D'); an ecosystem KEY
+   * ('Flux1'/'SDXL') that matches no name triggers fetchCatalog's empty-family
+   * retry (generic page rather than a blank picker).
+   */
   baseModelGroup?: string;
   /** Currently-selected versionId so the overlay can pre-highlight it. */
   currentVersionId?: number;
@@ -74,7 +80,7 @@ export interface OpenPickerOptions {
 
 /** Programmatic control surface returned by {@link openPickerOverlay}. */
 export interface PickerOverlayHandle {
-  /** The cards currently rendered (after the family filter). Empty until ready. */
+  /** The cards currently rendered (the server-filtered page). Empty until ready. */
   readonly cards: readonly CatalogCard[];
   /** Pick the first available card (no-op if none). Resolves + tears down. */
   selectFirst(): void;
@@ -89,6 +95,13 @@ export interface PickerOverlayHandle {
 }
 
 const Z_INDEX = 2_147_483_000; // above the dev harness log (9999) and most chrome.
+
+/**
+ * Catalog page size for the picker. The server caps at 100; we ask for it so the
+ * dev browses a FULL family page (hundreds exist) instead of the catalog's
+ * 24-item default. `fetchCatalog`/`buildCatalogUrl` clamp to [1,100] anyway.
+ */
+const PICKER_PAGE_LIMIT = 100;
 
 /**
  * Open the in-harness picker overlay. Mounts a modal into the document, loads
@@ -196,7 +209,10 @@ export function openPickerOverlay(opts: OpenPickerOptions): PickerOverlayHandle 
 
   const applyResult = (res: CatalogResult) => {
     if (res.kind === 'ok') {
-      cards = filterCardsByFamily(res.page.cards, opts.baseModelGroup);
+      // The server already filtered by family (the `baseModels` param) — render
+      // the full returned page directly. No client-side narrowing (that starved
+      // the grid to ~2 of a generic page); the server is the real constraint.
+      cards = res.page.cards;
       setStatus(
         cards.length > 0
           ? `${cards.length} ${opts.type === 'LORA' ? 'LoRAs' : 'checkpoints'}`
@@ -217,7 +233,17 @@ export function openPickerOverlay(opts: OpenPickerOptions): PickerOverlayHandle 
     const id = ++reqId;
     setStatus('Loading…');
     void fetchCatalog(
-      { types: opts.type, query },
+      {
+        types: opts.type,
+        query,
+        // Server-side family filter (the real constraint). An ecosystem-key value
+        // that matches no baseModel name falls back to a generic page inside
+        // fetchCatalog (empty-family retry) rather than blanking the picker.
+        baseModels: opts.baseModelGroup,
+        // Pull a full page toward the server cap so the dev sees many options
+        // (the old default of 24 + a client narrow left ~2 cards).
+        limit: PICKER_PAGE_LIMIT,
+      },
       {
         fetch: opts.fetchImpl,
         baseUrl: opts.baseUrl,

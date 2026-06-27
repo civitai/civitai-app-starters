@@ -102,6 +102,25 @@ describe('buildCatalogUrl', () => {
   it('passes the cursor through', () => {
     expect(buildCatalogUrl({ types: 'Checkpoint', cursor: 'XYZ' })).toContain('cursor=XYZ');
   });
+
+  it('emits baseModels (server-side family filter) when set, on BOTH bases', () => {
+    const pub = new URL(buildCatalogUrl({ types: 'Checkpoint', baseModels: 'SDXL 1.0' }), BASE);
+    expect(pub.searchParams.get('baseModels')).toBe('SDXL 1.0');
+    const blocks = new URL(
+      buildCatalogUrl({ types: 'Checkpoint', baseModels: 'Flux.1 D' }, { base: CATALOG_API_BASE_BLOCKS }),
+      BASE,
+    );
+    expect(blocks.pathname).toBe('/api/v1/blocks/models');
+    expect(blocks.searchParams.get('baseModels')).toBe('Flux.1 D');
+  });
+
+  it('omits baseModels when absent / empty / whitespace (and trims)', () => {
+    expect(buildCatalogUrl({ types: 'Checkpoint' })).not.toContain('baseModels=');
+    expect(buildCatalogUrl({ types: 'Checkpoint', baseModels: '' })).not.toContain('baseModels=');
+    expect(buildCatalogUrl({ types: 'Checkpoint', baseModels: '   ' })).not.toContain('baseModels=');
+    const trimmed = new URL(buildCatalogUrl({ types: 'Checkpoint', baseModels: '  SDXL 1.0  ' }), BASE);
+    expect(trimmed.searchParams.get('baseModels')).toBe('SDXL 1.0');
+  });
 });
 
 describe('edgeThumb', () => {
@@ -325,5 +344,127 @@ describe('fetchCatalog — fetch client', () => {
     if (r.kind === 'error') expect(r.status).toBe(500);
     // Only one call — a 500 is NOT a deploy-order fallback status.
     expect((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+  });
+});
+
+describe('fetchCatalog — server-side family filter + empty-family retry', () => {
+  /** Decode a recorded request URL's query params (assert via params, not substring). */
+  const params = (url: unknown) => new URL(String(url), BASE).searchParams;
+
+  it('threads baseModels onto the AUTHORITATIVE request (full family page, no narrowing)', async () => {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string) => {
+      calls.push(url);
+      return res(200, RAW_PAGE);
+    }) as unknown as typeof fetch;
+    const r = await fetchCatalog(
+      { types: 'Checkpoint', baseModels: 'SDXL 1.0' },
+      { fetch: fetchImpl, baseUrl: BASE, token: 'TOK' },
+    );
+    expect(r.kind).toBe('ok');
+    // BOTH raw cards returned — no client-side narrowing to the matching family.
+    if (r.kind === 'ok') expect(r.page.cards.map((c) => c.versionId)).toEqual([9001, 9002]);
+    expect(calls).toHaveLength(1); // non-empty → no retry
+    expect(params(calls[0]).get('baseModels')).toBe('SDXL 1.0');
+    expect(String(calls[0])).toContain('/api/v1/blocks/models');
+  });
+
+  it('threads baseModels onto the PUBLIC request (no token)', async () => {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string) => {
+      calls.push(url);
+      return res(200, RAW_PAGE);
+    }) as unknown as typeof fetch;
+    const r = await fetchCatalog(
+      { types: 'Checkpoint', baseModels: 'Illustrious' },
+      { fetch: fetchImpl, baseUrl: BASE },
+    );
+    expect(r.kind).toBe('ok');
+    expect(calls).toHaveLength(1);
+    expect(params(calls[0]).get('baseModels')).toBe('Illustrious');
+    expect(String(calls[0])).toContain('/api/v1/models');
+  });
+
+  it('AUTHORITATIVE empty family page → retries ONCE without baseModels, returns generic page', async () => {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string) => {
+      calls.push(url);
+      // First (family-filtered) call empty; the cleared retry returns items.
+      if (params(url).get('baseModels')) return res(200, { items: [] });
+      return res(200, RAW_PAGE);
+    }) as unknown as typeof fetch;
+    const r = await fetchCatalog(
+      { types: 'Checkpoint', baseModels: 'Flux1' },
+      { fetch: fetchImpl, baseUrl: BASE, token: 'TOK' },
+    );
+    expect(r.kind).toBe('ok');
+    if (r.kind === 'ok') {
+      expect(r.authoritative).toBe(true); // retry stays on the authoritative path
+      expect(r.page.cards).toHaveLength(2);
+    }
+    expect(calls).toHaveLength(2);
+    expect(params(calls[0]).get('baseModels')).toBe('Flux1'); // first: filtered
+    expect(params(calls[1]).get('baseModels')).toBeNull(); // retry: cleared
+    expect(String(calls[1])).toContain('/api/v1/blocks/models');
+  });
+
+  it('PUBLIC empty family page → retries ONCE without baseModels (no token)', async () => {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string) => {
+      calls.push(url);
+      if (params(url).get('baseModels')) return res(200, { items: [] });
+      return res(200, RAW_PAGE);
+    }) as unknown as typeof fetch;
+    const r = await fetchCatalog(
+      { types: 'Checkpoint', baseModels: 'SDXL' },
+      { fetch: fetchImpl, baseUrl: BASE },
+    );
+    expect(r.kind).toBe('ok');
+    expect(calls).toHaveLength(2);
+    expect(params(calls[0]).get('baseModels')).toBe('SDXL');
+    expect(params(calls[1]).get('baseModels')).toBeNull();
+    expect(String(calls[1])).toContain('/api/v1/models');
+  });
+
+  it('empty family AND empty without it → stays empty, retries exactly once (no loop)', async () => {
+    const fetchImpl = vi.fn(async () => res(200, { items: [] })) as unknown as typeof fetch;
+    const r = await fetchCatalog(
+      { types: 'Checkpoint', baseModels: 'Nonexistent' },
+      { fetch: fetchImpl, baseUrl: BASE, token: 'TOK' },
+    );
+    expect(r.kind).toBe('empty');
+    expect((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(2);
+  });
+
+  it('no family filter + empty → does NOT retry (single call)', async () => {
+    const fetchImpl = vi.fn(async () => res(200, { items: [] })) as unknown as typeof fetch;
+    const r = await fetchCatalog(
+      { types: 'Checkpoint' },
+      { fetch: fetchImpl, baseUrl: BASE, token: 'TOK' },
+    );
+    expect(r.kind).toBe('empty');
+    expect((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+  });
+
+  it('AUTHORITATIVE 404 with family → falls back to PUBLIC, which retries the empty family itself', async () => {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string) => {
+      calls.push(url);
+      if (String(url).includes('/blocks/models')) return res(404, null);
+      // Public: family-filtered empty, then cleared returns items.
+      if (params(url).get('baseModels')) return res(200, { items: [] });
+      return res(200, RAW_PAGE);
+    }) as unknown as typeof fetch;
+    const r = await fetchCatalog(
+      { types: 'Checkpoint', baseModels: 'Flux1' },
+      { fetch: fetchImpl, baseUrl: BASE, token: 'TOK' },
+    );
+    expect(r.kind).toBe('ok');
+    if (r.kind === 'ok') expect(r.authoritative).toBe(false); // served by public
+    // auth(404) → public(family, empty) → public(cleared, ok) = 3 calls, one retry on public.
+    expect(calls).toHaveLength(3);
+    expect(String(calls[0])).toContain('/blocks/models');
+    expect(params(calls[1]).get('baseModels')).toBe('Flux1');
+    expect(params(calls[2]).get('baseModels')).toBeNull();
   });
 });
