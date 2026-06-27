@@ -1,5 +1,11 @@
 # @civitai/blocks-react
 
+## 0.14.0
+
+### Minor Changes
+
+- 3086d68: dev:live live host now serves App-Storage KV + forwards SET_USER_CHECKPOINT against the real backend
+
 ## 0.13.2
 
 ### Patch Changes
