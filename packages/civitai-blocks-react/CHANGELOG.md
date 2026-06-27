@@ -1,5 +1,11 @@
 # @civitai/blocks-react
 
+## 0.14.1
+
+### Patch Changes
+
+- 49416ec: dev:live picker filters resources by family server-side instead of starving a single generic page
+
 ## 0.14.0
 
 ### Minor Changes
