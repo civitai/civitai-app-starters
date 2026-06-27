@@ -1,6 +1,6 @@
 {
   "name": "@civitai/blocks-react",
-  "version": "0.12.4",
+  "version": "0.13.0",
   "description": "React hooks and iframe transport for Civitai App Blocks. Pairs with @civitai/app-sdk/blocks.",
   "license": "MIT",
   "type": "module",
