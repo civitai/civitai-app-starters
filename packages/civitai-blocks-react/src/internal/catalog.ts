@@ -62,6 +62,17 @@ export interface CatalogQuery {
   /** ≤100 (server cap). Defaults to {@link DEFAULT_LIMIT}. */
   limit?: number;
   cursor?: string;
+  /**
+   * Server-side family filter — the REST `baseModels` param. A baseModel NAME
+   * (e.g. 'SDXL 1.0', 'Flux.1 D', 'Illustrious') the server matches exactly so
+   * the page is FULL of the requested family (not a generic page narrowed
+   * client-side). Empty/whitespace → omitted. Both the authoritative
+   * (`/blocks/models`) and public (`/api/v1/models`) bases accept it (the former
+   * is a behavior-preserving DRY refactor of the latter — civitai #2671). A
+   * value that matches no baseModel name (e.g. an ecosystem KEY like 'Flux1')
+   * yields an empty page → {@link fetchCatalog} retries once without it.
+   */
+  baseModels?: string;
 }
 
 export interface BuildUrlOptions {
@@ -98,6 +109,8 @@ export function buildCatalogUrl(
   if (query) params.set('query', query);
   params.set('limit', String(clampLimit(q.limit ?? DEFAULT_LIMIT)));
   if (q.cursor) params.set('cursor', q.cursor);
+  const baseModels = q.baseModels?.trim();
+  if (baseModels) params.set('baseModels', baseModels);
   if (opts.sfwOnly) params.set('nsfw', 'false');
   return `${base}?${params.toString()}`;
 }
@@ -363,39 +376,67 @@ export interface FetchCatalogDeps {
  * to the latter when it isn't deployed / authorized yet (404/401/403) or throws
  * (CORS/preflight/network). A failure on the PUBLIC path is a hard error (no
  * infinite loop). Never throws.
+ *
+ * EMPTY-FAMILY RETRY: when `q.baseModels` is set and the family-filtered read
+ * resolves `kind:'empty'`, retry ONCE with `baseModels` cleared. The picker may
+ * pass an ecosystem KEY ('Flux1'/'SDXL') that matches no baseModel NAME exactly
+ * — without this, the dev would see a blank grid instead of a generic page. The
+ * retry runs on BOTH the authoritative and the public read path, exactly once
+ * (no loop). A non-empty family page is returned as-is (the server already did
+ * the real family filter — no client-side narrowing).
  */
 export async function fetchCatalog(q: CatalogQuery, deps: FetchCatalogDeps): Promise<CatalogResult> {
   const baseUrl = stripTrailingSlashes(deps.baseUrl);
   const token = deps.token;
   const anonSfwOnly = deps.anonSfwOnly !== false;
+  const familyFilter = q.baseModels?.trim();
 
   const fetchPublic = async (sfwOnly: boolean): Promise<CatalogResult> => {
-    const url = baseUrl + buildCatalogUrl(q, { base: CATALOG_API_BASE, sfwOnly });
-    try {
-      const res = await deps.fetch(url);
-      return toResult(res, false, deps.imageWidth);
-    } catch (err) {
-      return { kind: 'error', message: err instanceof Error ? err.message : 'network error' };
+    const attempt = async (query: CatalogQuery): Promise<CatalogResult> => {
+      const url = baseUrl + buildCatalogUrl(query, { base: CATALOG_API_BASE, sfwOnly });
+      try {
+        const res = await deps.fetch(url);
+        return toResult(res, false, deps.imageWidth);
+      } catch (err) {
+        return { kind: 'error', message: err instanceof Error ? err.message : 'network error' };
+      }
+    };
+    const first = await attempt(q);
+    // Empty family page → retry ONCE without the family filter (a generic page
+    // beats a blank picker when the hint was an ecosystem key, not a name).
+    if (first.kind === 'empty' && familyFilter) {
+      return attempt({ ...q, baseModels: undefined });
     }
+    return first;
   };
 
   // No token: public endpoint, advisory SFW.
   if (!token) return fetchPublic(anonSfwOnly);
 
+  const fetchAuth = async (query: CatalogQuery): Promise<CatalogResult> => {
+    const authUrl = baseUrl + buildCatalogUrl(query, { base: CATALOG_API_BASE_BLOCKS });
+    let authRes: Awaited<ReturnType<typeof fetch>>;
+    try {
+      authRes = await deps.fetch(authUrl, { headers: { Authorization: `Bearer ${token}` } });
+    } catch {
+      deps.onFallback?.({ reason: 'network' });
+      return fetchPublic(true);
+    }
+
+    if (!authRes.ok && isFallbackStatus(authRes.status)) {
+      deps.onFallback?.({ status: authRes.status });
+      return fetchPublic(true);
+    }
+
+    return toResult(authRes, true, deps.imageWidth);
+  };
+
   // With token: authoritative, server-maturity-clamped endpoint.
-  const authUrl = baseUrl + buildCatalogUrl(q, { base: CATALOG_API_BASE_BLOCKS });
-  let authRes: Awaited<ReturnType<typeof fetch>>;
-  try {
-    authRes = await deps.fetch(authUrl, { headers: { Authorization: `Bearer ${token}` } });
-  } catch {
-    deps.onFallback?.({ reason: 'network' });
-    return fetchPublic(true);
+  const first = await fetchAuth(q);
+  // Empty family page on the authoritative read → retry ONCE without the family
+  // filter (still authoritative — never a degraded path just to drop the hint).
+  if (first.kind === 'empty' && familyFilter) {
+    return fetchAuth({ ...q, baseModels: undefined });
   }
-
-  if (!authRes.ok && isFallbackStatus(authRes.status)) {
-    deps.onFallback?.({ status: authRes.status });
-    return fetchPublic(true);
-  }
-
-  return toResult(authRes, true, deps.imageWidth);
+  return first;
 }
