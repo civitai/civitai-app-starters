@@ -1,5 +1,18 @@
 # @civitai/blocks-react
 
+## 0.13.1
+
+### Patch Changes
+
+- 0826d32: fix(live host): bind the default fetch to globalThis
+
+  `createLiveHost`'s default fetch was the bare `globalThis.fetch` reference;
+  called detached it throws "Illegal invocation" in browsers (fetch is a
+  DOM-bound builtin), which broke the catalog/picker overlay and every live-host
+  network call when no `fetchImpl` was supplied. The default now wraps it so the
+  call is always bound. Regression test asserts the global fetch is invoked with
+  `this === globalThis`.
+
 ## 0.13.0
 
 ### Minor Changes
