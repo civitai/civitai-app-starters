@@ -166,11 +166,38 @@ export function edgeThumb(url: string, width: number = THUMB_WIDTH): string {
   if (/\/width=\d+(?:,[^/]*)?\//.test(url)) {
     return url.replace(/\/width=\d+(?:,[^/]*)?\//, `/${seg}/`);
   }
-  if (url.includes('image.civitai.com') || url.includes('imagecache.civitai.com')) {
+  if (isCivitaiImageHost(url)) {
     const lastSlash = url.lastIndexOf('/');
     if (lastSlash > 0) return `${url.slice(0, lastSlash)}/${seg}${url.slice(lastSlash)}`;
   }
   return url;
+}
+
+/** Civitai image-edge hosts whose URLs we rewrite to a cached thumbnail variant. */
+const CIVITAI_IMAGE_HOSTS = new Set(['image.civitai.com', 'imagecache.civitai.com']);
+
+/**
+ * True iff `url` is served by a Civitai image-edge HOST. Parses the URL and
+ * checks the exact hostname (not a substring `.includes`, which a crafted URL
+ * like `https://evil.example/image.civitai.com/x` would defeat). Total — a
+ * malformed/relative URL yields `false` (no rewrite).
+ */
+function isCivitaiImageHost(url: string): boolean {
+  try {
+    return CIVITAI_IMAGE_HOSTS.has(new URL(url).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Strip trailing '/' from a base URL in linear time. Avoids the regex
+ * `/\/+$/` whose backtracking is polynomial (ReDoS) on a long run of slashes.
+ */
+function stripTrailingSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 47 /* '/' */) end -= 1;
+  return s.slice(0, end);
 }
 
 /**
@@ -338,7 +365,7 @@ export interface FetchCatalogDeps {
  * infinite loop). Never throws.
  */
 export async function fetchCatalog(q: CatalogQuery, deps: FetchCatalogDeps): Promise<CatalogResult> {
-  const baseUrl = deps.baseUrl.replace(/\/+$/, '');
+  const baseUrl = stripTrailingSlashes(deps.baseUrl);
   const token = deps.token;
   const anonSfwOnly = deps.anonSfwOnly !== false;
 
