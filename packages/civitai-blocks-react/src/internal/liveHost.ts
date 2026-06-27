@@ -31,8 +31,18 @@
  * real compute. The token's per-call budget + the per-user daily cap are the
  * server-side bounds (scope doc §4).
  *
- * SCOPE — live v1 deliberately does NOT support: pickers
- * (OPEN_CHECKPOINT_PICKER / OPEN_RESOURCE_PICKER), SET_USER_CHECKPOINT, the
+ * PICKERS (Phase 1 of "make dev:live a faithful local host"): the live host
+ * SERVES the resource pickers locally. On `OPEN_CHECKPOINT_PICKER` /
+ * `OPEN_RESOURCE_PICKER` it opens an in-harness catalog-browser overlay (real
+ * models fetched with the dev block token via `/api/v1/blocks/models`, public
+ * fallback), the dev picks one, and the host replies with a REAL
+ * `BlockCheckpointInfo` / `BlockResourceInfo` in the EXACT shape the production
+ * host returns — so `useCheckpointPicker` / `useResourcePicker` are byte-identical
+ * in dev:live and in prod (protocol fidelity, not chrome fidelity). A pick is
+ * DISCOVERY ONLY: the server re-validates + prices every id at estimate/submit;
+ * nothing the dev clicks here is trusted or spends Buzz. See the picker handlers.
+ *
+ * SCOPE — live v1 deliberately does NOT support: SET_USER_CHECKPOINT, the
  * App-Storage KV protocol, and an in-band Buzz purchase. Each of those replies
  * with a clearly-labelled "not supported in live v1" outcome (never a fabricated
  * success) and logs once. Use mock mode for those flows, or a later live
@@ -51,6 +61,11 @@ import {
 } from '@civitai/app-sdk/blocks';
 
 import type { MockHost, MockHostScenarioPatch, MockBuzzHandle } from './mockHost.js';
+import {
+  openPickerOverlay,
+  type PickerOverlayHandle,
+  type OpenPickerOptions,
+} from './pickerOverlay.js';
 
 /** Default civitai backend the live host forwards to. */
 const DEFAULT_BACKEND_BASE_URL = 'https://civitai.com';
@@ -94,6 +109,15 @@ export interface LiveHostOptions {
    * Injectable `fetch` (tests pass a mock). Defaults to the global `fetch`.
    */
   fetchImpl?: typeof fetch;
+  /**
+   * TEST SEAM for the in-harness picker overlay. Called with the overlay's
+   * {@link PickerOverlayHandle} once its first catalog page has loaded, on every
+   * `OPEN_CHECKPOINT_PICKER` / `OPEN_RESOURCE_PICKER`. Tests use it to drive a
+   * deterministic selection (`handle.selectFirst()` / `selectByVersionId()`) or
+   * a dismissal (`handle.dismiss()`) without synthesizing DOM clicks. In a real
+   * `dev:live` run this is omitted — the dev clicks a card in the overlay.
+   */
+  onPickerReady?: (handle: PickerOverlayHandle) => void;
 }
 
 /** Page slot id — dev-token mints page tokens (mirrors PAGE_SLOT_ID server-side). */
@@ -103,7 +127,6 @@ const PAGE_SLOT_ID = 'app.page';
 const BUDGETED_SCOPE = 'ai:write:budgeted';
 
 const NOT_SUPPORTED_STORAGE = 'app-storage not supported in live v1 yet';
-const NOT_SUPPORTED_PICKER = 'picker not supported in live v1 (use mock mode or v1.1)';
 const NOT_SUPPORTED_USER_CHECKPOINT = 'not supported in live v1';
 
 /**
@@ -390,6 +413,9 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
     const parentOrigin = win.location.origin;
     const originalParent = win.parent;
     const timers = new Set<ReturnType<typeof setTimeout>>();
+    // Picker overlays currently mounted in the document. Closed on host teardown
+    // so a still-open picker can never outlive the host (or leak a DOM node).
+    const openOverlays = new Set<PickerOverlayHandle>();
     let torn = false;
 
     const dispatchToBlock = (data: unknown) => {
@@ -465,6 +491,46 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
       dispatchToBlock({ type: 'BLOCK_INIT', payload: initPayload });
     }
 
+    /**
+     * Open the in-harness picker overlay and resolve it into a picker-result
+     * message. `resultType` is the inbound message type the block awaits
+     * (`CHECKPOINT_PICKER_RESULT` / `RESOURCE_PICKER_RESULT`); a pick dispatches
+     * `{ requestId, selected }`, a dismissal `{ requestId }` (no `selected`) —
+     * EXACTLY the production host's contract, so the hooks are byte-identical.
+     *
+     * DISCOVERY ONLY: the overlay just browses the catalog. The picked id is a
+     * hint — the server re-validates + prices it at estimate/submit. Nothing here
+     * is trusted or spends Buzz.
+     */
+    const openPicker = (
+      params: Pick<OpenPickerOptions, 'type' | 'baseModelGroup' | 'currentVersionId'>,
+      resultType: 'CHECKPOINT_PICKER_RESULT' | 'RESOURCE_PICKER_RESULT',
+      requestId: string,
+    ) => {
+      const handle = openPickerOverlay({
+        type: params.type,
+        baseUrl,
+        token: rawToken,
+        fetchImpl,
+        ...(params.baseModelGroup != null ? { baseModelGroup: params.baseModelGroup } : {}),
+        ...(params.currentVersionId != null ? { currentVersionId: params.currentVersionId } : {}),
+        ...(win.document ? { document: win.document } : {}),
+        ...(options.onPickerReady ? { onReady: options.onPickerReady } : {}),
+        onResolve: (selection) => {
+          openOverlays.delete(handle);
+          if (torn) return;
+          dispatchToBlock({
+            type: resultType,
+            // A dismissal omits `selected` (the hooks resolve to undefined/null).
+            payload: { requestId, ...(selection ? { selected: selection.selected } : {}) },
+          });
+        },
+      });
+      // `openResolve` may have fired synchronously (e.g. a test's onReady that
+      // immediately selects). Only track an overlay that's still open.
+      if (!handle.resolved) openOverlays.add(handle);
+    };
+
     const parentMock = {
       postMessage: (msg: unknown) => {
         if (
@@ -483,6 +549,9 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             path?: string;
             target?: 'current' | 'new_tab';
             suggestedAmount?: number;
+            baseModelGroup?: string;
+            currentVersionId?: number;
+            resourceType?: 'Checkpoint' | 'LORA';
           };
         };
 
@@ -633,20 +702,44 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           }
 
           case 'OPEN_CHECKPOINT_PICKER': {
-            logOnce('checkpoint-picker', NOT_SUPPORTED_PICKER);
-            dispatchToBlock({
-              type: 'CHECKPOINT_PICKER_RESULT',
-              payload: { requestId: requestId ?? '' },
-            });
+            // Serve the picker locally: open the in-harness catalog browser
+            // filtered to Checkpoints in the requested ecosystem, pre-highlight
+            // the current pick, and reply with a REAL BlockCheckpointInfo (or no
+            // `selected` on dismissal) — the production contract. DISCOVERY ONLY:
+            // the server re-validates + prices the picked id at estimate/submit.
+            openPicker(
+              {
+                type: 'Checkpoint',
+                ...(typeof typed.payload?.baseModelGroup === 'string'
+                  ? { baseModelGroup: typed.payload.baseModelGroup }
+                  : {}),
+                ...(typeof typed.payload?.currentVersionId === 'number'
+                  ? { currentVersionId: typed.payload.currentVersionId }
+                  : {}),
+              },
+              'CHECKPOINT_PICKER_RESULT',
+              requestId ?? '',
+            );
             return;
           }
 
           case 'OPEN_RESOURCE_PICKER': {
-            logOnce('resource-picker', NOT_SUPPORTED_PICKER);
-            dispatchToBlock({
-              type: 'RESOURCE_PICKER_RESULT',
-              payload: { requestId: requestId ?? '' },
-            });
+            // Same as the checkpoint picker but for the requested resourceType
+            // (v1: 'Checkpoint' | 'LORA'). Replies with a REAL BlockResourceInfo
+            // (or no `selected` on dismissal). DISCOVERY ONLY — re-priced +
+            // re-validated server-side at estimate/submit.
+            const resourceType: 'Checkpoint' | 'LORA' =
+              typed.payload?.resourceType === 'Checkpoint' ? 'Checkpoint' : 'LORA';
+            openPicker(
+              {
+                type: resourceType,
+                ...(typeof typed.payload?.baseModelGroup === 'string'
+                  ? { baseModelGroup: typed.payload.baseModelGroup }
+                  : {}),
+              },
+              'RESOURCE_PICKER_RESULT',
+              requestId ?? '',
+            );
             return;
           }
 
@@ -785,6 +878,9 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
       installed = false;
       for (const t of timers) clearTimeout(t);
       timers.clear();
+      // Close any open picker overlay (unmounts its DOM; resolves it `null`).
+      for (const overlay of openOverlays) overlay.close();
+      openOverlays.clear();
       Object.defineProperty(win, 'parent', {
         value: originalParent,
         configurable: true,

@@ -46,6 +46,32 @@ export {
   type LiveHostOptions,
 } from './internal/liveHost.js';
 
+export {
+  buildCatalogUrl,
+  fetchCatalog,
+  modelToCard,
+  responseToPage,
+  edgeThumb,
+  cardToCheckpoint,
+  cardToResource,
+  filterCardsByFamily,
+  CATALOG_API_BASE,
+  CATALOG_API_BASE_BLOCKS,
+  DEFAULT_LIMIT,
+  type CatalogQuery,
+  type CatalogCard,
+  type CatalogPage,
+  type CatalogResult,
+  type CatalogModelType,
+} from './internal/catalog.js';
+
+export {
+  openPickerOverlay,
+  type PickerOverlayHandle,
+  type PickerSelection,
+  type OpenPickerOptions,
+} from './internal/pickerOverlay.js';
+
 /**
  * Builds a `MessageEvent` that mimics a parent-frame postMessage so tests can
  * exercise `IframeTransport.handleMessage` without a real cross-frame setup.

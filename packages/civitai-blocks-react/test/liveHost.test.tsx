@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createLiveHost, decodeBlockTokenPayload } from '../src/testing.js';
-import type { BlockInitPayload, BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
+import type { PickerOverlayHandle } from '../src/testing.js';
+import type {
+  BlockCheckpointInfo,
+  BlockInitPayload,
+  BlockResourceInfo,
+  BlockWorkflowSnapshot,
+} from '@civitai/app-sdk/blocks';
 
 /**
  * Unit coverage for `createLiveHost` (Phase 2 of the dev-token live mode).
@@ -503,24 +509,6 @@ describe('createLiveHost — token + non-forwarded messages', () => {
     expect(openSpy).toHaveBeenCalledWith('https://civitai.com/purchase/buzz', '_blank');
   });
 
-  it('OPEN_CHECKPOINT_PICKER replies cancelled (no selected)', async () => {
-    install();
-    await waitForMessage(inbound, 'BLOCK_INIT');
-    post('OPEN_CHECKPOINT_PICKER', { requestId: 'r-ckpt', baseModelGroup: 'Flux1' });
-    const payload = await waitForMessage(inbound, 'CHECKPOINT_PICKER_RESULT');
-    expect(payload.requestId).toBe('r-ckpt');
-    expect(payload.selected).toBeUndefined();
-  });
-
-  it('OPEN_RESOURCE_PICKER replies cancelled (no selected)', async () => {
-    install();
-    await waitForMessage(inbound, 'BLOCK_INIT');
-    post('OPEN_RESOURCE_PICKER', { requestId: 'r-res', resourceType: 'LORA' });
-    const payload = await waitForMessage(inbound, 'RESOURCE_PICKER_RESULT');
-    expect(payload.requestId).toBe('r-res');
-    expect(payload.selected).toBeUndefined();
-  });
-
   it('SET_USER_CHECKPOINT replies ok:false not-supported', async () => {
     install();
     await waitForMessage(inbound, 'BLOCK_INIT');
@@ -618,5 +606,194 @@ describe('createLiveHost — read-only token startup warning', () => {
     install(fakeJwt(DEFAULT_CLAIMS));
     const logged = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
     expect(logged).not.toMatch(/READ-ONLY/);
+  });
+});
+
+describe('createLiveHost — picker (serves the catalog locally, no longer a stub)', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+  const TOKEN = fakeJwt(DEFAULT_CLAIMS);
+
+  /** A /api/v1/blocks/models (or /api/v1/models) catalog page response. */
+  function catalogOk(items: unknown[], nextCursor: string | null = null) {
+    const body = { items, metadata: { nextCursor } };
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(body),
+      json: async () => body,
+    } as unknown as Response;
+  }
+
+  const CKPT_MODEL = {
+    id: 100,
+    name: 'Awesome XL',
+    type: 'Checkpoint',
+    nsfw: false,
+    modelVersions: [
+      {
+        id: 9001,
+        name: 'v2.0',
+        baseModel: 'SDXL 1.0',
+        images: [{ url: 'https://image.civitai.com/a/original=true/x.jpeg' }],
+      },
+    ],
+  };
+  const LORA_MODEL = {
+    id: 300,
+    name: 'Cool LoRA',
+    type: 'LORA',
+    nsfw: false,
+    modelVersions: [{ id: 7777, name: 'v1', baseModel: 'SDXL 1.0', images: [] }],
+  };
+
+  /**
+   * Install a live host whose fetch answers /blocks/me, the catalog endpoints,
+   * and (optionally) records which catalog URLs were hit. `onPickerReady` is the
+   * test seam — it drives the overlay programmatically once it's loaded.
+   */
+  function install(
+    items: unknown[],
+    onPickerReady: (h: PickerOverlayHandle) => void,
+    sink?: { urls: string[] },
+  ) {
+    const fetchImpl = vi.fn(async (url: string) => {
+      sink?.urls.push(url);
+      if (url.includes('/api/v1/blocks/models') || url.endsWith('/api/v1/models') || url.includes('/api/v1/models?')) {
+        return catalogOk(items);
+      }
+      return meOk({ id: 42, username: 'm' });
+    }) as unknown as typeof fetch;
+    const host = createLiveHost({
+      blockToken: TOKEN,
+      viewer: { id: 42, username: 'm' },
+      fetchImpl,
+      onPickerReady,
+    });
+    uninstall = host.install();
+    return fetchImpl as unknown as ReturnType<typeof vi.fn>;
+  }
+
+  beforeEach(() => {
+    inbound = collectInbound();
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  it('OPEN_CHECKPOINT_PICKER does NOT reply "not supported", fetches the catalog, and on a pick dispatches a correctly-shaped selected', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const sink = { urls: [] as string[] };
+    const fetchImpl = install([CKPT_MODEL], (h) => h.selectFirst(), sink);
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('OPEN_CHECKPOINT_PICKER', { requestId: 'r-ckpt', baseModelGroup: 'SDXL' });
+    const payload = await waitForMessage(inbound, 'CHECKPOINT_PICKER_RESULT');
+
+    // (a) not the old stub — a real selection landed.
+    expect(payload.requestId).toBe('r-ckpt');
+    const selected = payload.selected as BlockCheckpointInfo;
+    expect(selected).toEqual({
+      versionId: 9001,
+      modelId: 100,
+      modelName: 'Awesome XL',
+      versionName: 'v2.0',
+      baseModel: 'SDXL 1.0',
+    });
+
+    // (b) the catalog was fetched via the AUTHORITATIVE blocks endpoint w/ Bearer.
+    const catalogCall = fetchImpl.mock.calls.find((c) =>
+      String(c[0]).includes('/api/v1/blocks/models'),
+    );
+    expect(catalogCall).toBeTruthy();
+    expect(String(catalogCall![0])).toContain('types=Checkpoint');
+    expect((catalogCall![1] as RequestInit).headers).toMatchObject({
+      Authorization: `Bearer ${TOKEN}`,
+    });
+
+    // The old NOT_SUPPORTED warning must NOT have fired.
+    const logged = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(logged).not.toMatch(/not supported/i);
+  });
+
+  it('OPEN_CHECKPOINT_PICKER dismissal yields NO selected', async () => {
+    install([CKPT_MODEL], (h) => h.dismiss());
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('OPEN_CHECKPOINT_PICKER', { requestId: 'r-dismiss', baseModelGroup: 'SDXL' });
+    const payload = await waitForMessage(inbound, 'CHECKPOINT_PICKER_RESULT');
+    expect(payload.requestId).toBe('r-dismiss');
+    expect(payload.selected).toBeUndefined();
+  });
+
+  it('OPEN_RESOURCE_PICKER (LORA) fetches the catalog and dispatches a BlockResourceInfo on pick', async () => {
+    const fetchImpl = install([LORA_MODEL], (h) => h.selectFirst());
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('OPEN_RESOURCE_PICKER', { requestId: 'r-lora', resourceType: 'LORA' });
+    const payload = await waitForMessage(inbound, 'RESOURCE_PICKER_RESULT');
+    expect(payload.requestId).toBe('r-lora');
+    const selected = payload.selected as BlockResourceInfo;
+    expect(selected).toEqual({
+      versionId: 7777,
+      modelId: 300,
+      modelName: 'Cool LoRA',
+      versionName: 'v1',
+      baseModel: 'SDXL 1.0',
+      modelType: 'LORA',
+    });
+    const catalogCall = fetchImpl.mock.calls.find((c) =>
+      String(c[0]).includes('/api/v1/blocks/models'),
+    );
+    expect(String(catalogCall![0])).toContain('types=LORA');
+  });
+
+  it('OPEN_RESOURCE_PICKER dismissal yields NO selected', async () => {
+    install([LORA_MODEL], (h) => h.dismiss());
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('OPEN_RESOURCE_PICKER', { requestId: 'r-lora-x', resourceType: 'LORA' });
+    const payload = await waitForMessage(inbound, 'RESOURCE_PICKER_RESULT');
+    expect(payload.requestId).toBe('r-lora-x');
+    expect(payload.selected).toBeUndefined();
+  });
+
+  it('mounts an overlay into the document and tears it down on selection', async () => {
+    let captured: PickerOverlayHandle | undefined;
+    install([CKPT_MODEL], (h) => {
+      captured = h;
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('OPEN_CHECKPOINT_PICKER', { requestId: 'r-dom', baseModelGroup: 'SDXL' });
+
+    // Wait for the overlay to be ready (catalog loaded) → DOM node present.
+    for (let i = 0; i < 50 && !captured; i += 1) await new Promise((r) => setTimeout(r, 5));
+    expect(captured).toBeTruthy();
+    expect(document.querySelector('[data-live-picker-overlay]')).not.toBeNull();
+    // A clickable card exists for the loaded model.
+    expect(document.querySelector('[data-picker-card="9001"]')).not.toBeNull();
+
+    // Pick → overlay unmounts + a result lands.
+    captured!.selectByVersionId(9001);
+    const payload = await waitForMessage(inbound, 'CHECKPOINT_PICKER_RESULT');
+    expect((payload.selected as BlockCheckpointInfo).versionId).toBe(9001);
+    expect(document.querySelector('[data-live-picker-overlay]')).toBeNull();
+  });
+
+  it('host teardown closes an open overlay (no leaked DOM, dismissal result)', async () => {
+    let captured: PickerOverlayHandle | undefined;
+    install([CKPT_MODEL], (h) => {
+      captured = h;
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('OPEN_CHECKPOINT_PICKER', { requestId: 'r-teardown', baseModelGroup: 'SDXL' });
+    for (let i = 0; i < 50 && !captured; i += 1) await new Promise((r) => setTimeout(r, 5));
+    expect(document.querySelector('[data-live-picker-overlay]')).not.toBeNull();
+
+    uninstall?.();
+    uninstall = undefined;
+    expect(document.querySelector('[data-live-picker-overlay]')).toBeNull();
+    expect(captured!.resolved).toBe(true);
   });
 });
