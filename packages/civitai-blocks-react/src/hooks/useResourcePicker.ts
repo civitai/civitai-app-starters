@@ -4,6 +4,7 @@ import type { BlockResourceInfo, BlockResourcePickerType } from '@civitai/app-sd
 
 import { getTransport } from '../internal/singleton.js';
 import { sendTypedRequest } from '../internal/transport.js';
+import { PICKER_REQUEST_TIMEOUT_MS } from './useCheckpointPicker.js';
 
 /**
  * Drives the platform-side resource picker for PAGE App Blocks (Design 1 —
@@ -53,6 +54,7 @@ export function useResourcePicker(): {
           },
         },
         'RESOURCE_PICKER_RESULT',
+        { timeoutMs: PICKER_REQUEST_TIMEOUT_MS },
       );
       // Normalize the "dismissed" case to an explicit null so callers can
       // `if (!picked) return;` without an `undefined` ambiguity.
