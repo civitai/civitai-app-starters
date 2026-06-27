@@ -148,11 +148,19 @@ export function Harness({
         // steal clicks from content beneath it; re-enabled on the interactive
         // bits (summary toggles the log; pre is scrollable/selectable).
         <details style={harnessLogStyle}>
-          <summary style={{ cursor: 'pointer', pointerEvents: 'auto' }}>
-            DEV HARNESS · viewer={anon ? 'anon' : 'dev-viewer'} · consent={consent} · theme={theme} ·
-            outbound:{outbound.length}
+          <summary style={harnessSummaryStyle}>
+            <span style={{ color: '#5ec8a0' }}>$</span>{' '}
+            <span style={{ color: '#9aa0aa' }}>DEV HARNESS</span>{' '}
+            <span style={{ color: '#5b626d' }}>·</span> viewer=
+            <span style={{ color: '#7fd9ff' }}>{anon ? 'anon' : 'dev-viewer'}</span>{' '}
+            <span style={{ color: '#5b626d' }}>·</span> consent=
+            <span style={{ color: '#7fd9ff' }}>{consent}</span>{' '}
+            <span style={{ color: '#5b626d' }}>·</span> theme=
+            <span style={{ color: '#7fd9ff' }}>{theme}</span>{' '}
+            <span style={{ color: '#5b626d' }}>·</span> outbound:
+            <span style={{ color: '#e2c08d' }}>{outbound.length}</span>
           </summary>
-          <pre style={{ margin: 0, maxHeight: 200, overflow: 'auto', pointerEvents: 'auto' }}>
+          <pre style={harnessPreStyle}>
             {outbound.length === 0
               ? '// no outbound messages yet'
               : outbound
@@ -168,6 +176,10 @@ export function Harness({
 /** Alias of {@link Harness} — same component, clearer name when used as a context provider. */
 export const MockHostProvider = Harness;
 
+// Minimal console / terminal aesthetic: dark terminal slab, monospace, a
+// subtle accent top border, dim chrome text with brighter accents for the
+// live readout values. Compact + unobtrusive — shared chrome rendered by
+// every block app's `dev:harness`, so kept neutral, not loud.
 const harnessLogStyle = {
   position: 'fixed',
   bottom: 8,
@@ -175,10 +187,33 @@ const harnessLogStyle = {
   zIndex: 9999,
   pointerEvents: 'none',
   maxWidth: 520,
-  background: 'rgba(17,17,17,0.92)',
-  color: '#7fc',
+  background: 'rgba(13,15,18,0.94)',
+  color: '#c8ccd2',
   fontSize: 11,
-  fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+  lineHeight: 1.5,
+  letterSpacing: '0.01em',
+  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
   padding: '6px 10px',
   borderRadius: 6,
+  border: '1px solid rgba(255,255,255,0.06)',
+  borderTop: '1px solid rgba(94,200,160,0.35)',
+  boxShadow: '0 2px 10px rgba(0,0,0,0.35)',
+} as const;
+
+const harnessSummaryStyle = {
+  cursor: 'pointer',
+  pointerEvents: 'auto',
+  color: '#c8ccd2',
+  listStyle: 'none',
+  userSelect: 'none',
+} as const;
+
+const harnessPreStyle = {
+  margin: '6px 0 0',
+  paddingTop: 6,
+  borderTop: '1px solid rgba(255,255,255,0.06)',
+  maxHeight: 200,
+  overflow: 'auto',
+  color: '#9aa0aa',
+  pointerEvents: 'auto',
 } as const;
