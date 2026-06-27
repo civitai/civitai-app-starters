@@ -19,8 +19,11 @@ import type {
  *     envelope, and dispatches the correct reply keyed by `requestId`;
  *   - maps a backend error into a failed-shape reply (never hangs);
  *   - builds BLOCK_INIT from the decoded token + a mocked `/blocks/me`;
- *   - replies "not supported in live v1" for storage / pickers / user-checkpoint;
- *   - opens a buzz-purchase tab and replies purchased:false.
+ *   - SERVES App-Storage KV via the block-token `apps.storage.*` procs (GET for
+ *     queries, POST for mutations) and FORWARDS SET_USER_CHECKPOINT to
+ *     `blocks.updateUserSettings`;
+ *   - opens a buzz-purchase tab and replies purchased:false (the one remaining
+ *     honest-by-design non-served capability).
  *
  * The live host fires inbound replies as `MessageEvent`s on `window`; we listen
  * directly (no SDK transport / hooks) so the wire contract is asserted at the
@@ -74,6 +77,24 @@ function trpcOk(snapshot: BlockWorkflowSnapshot) {
     text: async () => JSON.stringify({ result: { data: { json: { snapshot } } } }),
     json: async () => ({ result: { data: { json: { snapshot } } } }),
   } as unknown as Response;
+}
+
+/** A tRPC superjson success envelope carrying an arbitrary plain `data` object. */
+function trpcData(data: unknown) {
+  return {
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({ result: { data: { json: data } } }),
+    json: async () => ({ result: { data: { json: data } } }),
+  } as unknown as Response;
+}
+
+/** Decode a tRPC GET request's `?input=` querystring back to its `{ json }` payload. */
+function decodeInputParam(url: string): unknown {
+  const q = url.indexOf('?');
+  const params = new URLSearchParams(q >= 0 ? url.slice(q + 1) : '');
+  const raw = params.get('input');
+  return raw == null ? undefined : JSON.parse(raw);
 }
 
 /** A tRPC error envelope (HTTP 500-ish). */
@@ -533,44 +554,6 @@ describe('createLiveHost — token + non-forwarded messages', () => {
     expect(openSpy).toHaveBeenCalledWith('https://civitai.com/purchase/buzz', '_blank');
   });
 
-  it('SET_USER_CHECKPOINT replies ok:false not-supported', async () => {
-    install();
-    await waitForMessage(inbound, 'BLOCK_INIT');
-    post('SET_USER_CHECKPOINT', { requestId: 'r-suc', versionId: 5 });
-    const payload = await waitForMessage(inbound, 'USER_CHECKPOINT_SET');
-    expect(payload.ok).toBe(false);
-    expect(payload.error).toMatch(/not supported/i);
-  });
-
-  it('APP_STORAGE_* reply with not-supported defaults', async () => {
-    install();
-    await waitForMessage(inbound, 'BLOCK_INIT');
-
-    post('APP_STORAGE_GET', { requestId: 'r-g', key: 'k' });
-    const get = await waitForMessage(inbound, 'APP_STORAGE_GET_RESULT');
-    expect(get.value).toBeNull();
-    expect(get.error).toMatch(/not supported/i);
-
-    post('APP_STORAGE_SET', { requestId: 'r-s', key: 'k', value: 1 });
-    const set = await waitForMessage(inbound, 'APP_STORAGE_SET_RESULT');
-    expect(set.ok).toBe(false);
-    expect(set.error).toMatch(/not supported/i);
-
-    post('APP_STORAGE_DELETE', { requestId: 'r-d', key: 'k' });
-    const del = await waitForMessage(inbound, 'APP_STORAGE_DELETE_RESULT');
-    expect(del.ok).toBe(false);
-    expect(del.deleted).toBe(false);
-
-    post('APP_STORAGE_LIST', { requestId: 'r-l' });
-    const list = await waitForMessage(inbound, 'APP_STORAGE_LIST_RESULT');
-    expect(list.keys).toEqual([]);
-
-    post('APP_STORAGE_QUOTA', { requestId: 'r-q' });
-    const quota = await waitForMessage(inbound, 'APP_STORAGE_QUOTA_RESULT');
-    expect(quota.usedBytes).toBe(0);
-    expect(quota.rowCount).toBe(0);
-  });
-
   it('TRACK_EVENT / REQUEST_SIGN_IN / BLOCK_ERROR are no-op (no reply, no throw)', async () => {
     install();
     await waitForMessage(inbound, 'BLOCK_INIT');
@@ -819,5 +802,306 @@ describe('createLiveHost — picker (serves the catalog locally, no longer a stu
     uninstall = undefined;
     expect(document.querySelector('[data-live-picker-overlay]')).toBeNull();
     expect(captured!.resolved).toBe(true);
+  });
+});
+
+describe('createLiveHost — App-Storage KV (served via apps.storage.*)', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+  let fetchMock: ReturnType<typeof vi.fn>;
+  const TOKEN = fakeJwt(DEFAULT_CLAIMS);
+
+  function installWithFetch(impl: (url: string, init?: RequestInit) => Promise<Response>) {
+    fetchMock = vi.fn(impl);
+    const host = createLiveHost({
+      blockToken: TOKEN,
+      viewer: { id: 42, username: 'dev-mod' }, // skip /blocks/me
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+  }
+
+  beforeEach(() => {
+    inbound = collectInbound();
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  it('APP_STORAGE_GET → apps.storage.get (GET, ?input) → value', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('apps.storage.get')) return trpcData({ value: { theme: 'dark' } });
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('APP_STORAGE_GET', { requestId: 'r-g', key: 'prefs' });
+    const payload = await waitForMessage(inbound, 'APP_STORAGE_GET_RESULT');
+    expect(payload.requestId).toBe('r-g');
+    expect(payload.value).toEqual({ theme: 'dark' });
+
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('apps.storage.get'))!;
+    // GET — no body, input in the querystring.
+    expect((call[1] as RequestInit).method).toBe('GET');
+    expect((call[1] as RequestInit).body).toBeUndefined();
+    expect(String(call[0])).toContain('/api/trpc/apps.storage.get?input=');
+    expect((call[1] as RequestInit).headers).toMatchObject({ authorization: `Bearer ${TOKEN}` });
+    expect(decodeInputParam(String(call[0]))).toEqual({ json: { blockToken: TOKEN, key: 'prefs' } });
+  });
+
+  it('APP_STORAGE_GET missing value → null', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('apps.storage.get')) return trpcData({ value: null });
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('APP_STORAGE_GET', { requestId: 'r-g2', key: 'missing' });
+    const payload = await waitForMessage(inbound, 'APP_STORAGE_GET_RESULT');
+    expect(payload.value).toBeNull();
+    expect(payload.error).toBeUndefined();
+  });
+
+  it('APP_STORAGE_SET → apps.storage.set (POST body) → ok:true + sizeBytes', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('apps.storage.set')) return trpcData({ ok: true, sizeBytes: 17 });
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('APP_STORAGE_SET', { requestId: 'r-s', key: 'prefs', value: { theme: 'dark' } });
+    const payload = await waitForMessage(inbound, 'APP_STORAGE_SET_RESULT');
+    expect(payload.requestId).toBe('r-s');
+    expect(payload.ok).toBe(true);
+    expect(payload.sizeBytes).toBe(17);
+
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('apps.storage.set'))!;
+    expect((call[1] as RequestInit).method).toBe('POST');
+    expect(String(call[0])).toBe('https://civitai.com/api/trpc/apps.storage.set');
+    expect(JSON.parse(String((call[1] as RequestInit).body))).toEqual({
+      json: { blockToken: TOKEN, key: 'prefs', value: { theme: 'dark' } },
+    });
+  });
+
+  it('APP_STORAGE_SET without a backend sizeBytes → ok:true, sizeBytes omitted', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('apps.storage.set')) return trpcData({ ok: true });
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('APP_STORAGE_SET', { requestId: 'r-s2', key: 'k', value: 1 });
+    const payload = await waitForMessage(inbound, 'APP_STORAGE_SET_RESULT');
+    expect(payload.ok).toBe(true);
+    expect('sizeBytes' in payload).toBe(false);
+  });
+
+  it('APP_STORAGE_DELETE → apps.storage.delete (POST) → ok + deleted', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('apps.storage.delete')) return trpcData({ ok: true, deleted: true });
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('APP_STORAGE_DELETE', { requestId: 'r-d', key: 'prefs' });
+    const payload = await waitForMessage(inbound, 'APP_STORAGE_DELETE_RESULT');
+    expect(payload.requestId).toBe('r-d');
+    expect(payload.ok).toBe(true);
+    expect(payload.deleted).toBe(true);
+
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('apps.storage.delete'))!;
+    expect((call[1] as RequestInit).method).toBe('POST');
+    expect(JSON.parse(String((call[1] as RequestInit).body))).toEqual({
+      json: { blockToken: TOKEN, key: 'prefs' },
+    });
+  });
+
+  it('APP_STORAGE_DELETE of an absent key → ok:true, deleted:false', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('apps.storage.delete')) return trpcData({ ok: true, deleted: false });
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('APP_STORAGE_DELETE', { requestId: 'r-d2', key: 'gone' });
+    const payload = await waitForMessage(inbound, 'APP_STORAGE_DELETE_RESULT');
+    expect(payload.ok).toBe(true);
+    expect(payload.deleted).toBe(false);
+  });
+
+  it('APP_STORAGE_LIST → apps.storage.list (GET) → keys (ISO updatedAt) + nextCursor', async () => {
+    const updated = new Date('2026-06-27T12:00:00.000Z');
+    installWithFetch(async (url) => {
+      if (url.includes('apps.storage.list')) {
+        return trpcData({
+          keys: [{ key: 'a', updatedAt: updated }],
+          nextCursor: 'Y3Vyc29y',
+        });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('APP_STORAGE_LIST', { requestId: 'r-l', prefix: 'pre', limit: 10, cursor: 'cur' });
+    const payload = await waitForMessage(inbound, 'APP_STORAGE_LIST_RESULT');
+    expect(payload.requestId).toBe('r-l');
+    expect(payload.keys).toEqual([{ key: 'a', updatedAt: '2026-06-27T12:00:00.000Z' }]);
+    expect(payload.nextCursor).toBe('Y3Vyc29y');
+
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('apps.storage.list'))!;
+    expect((call[1] as RequestInit).method).toBe('GET');
+    // limit clamped + prefix/cursor included as strings.
+    expect(decodeInputParam(String(call[0]))).toEqual({
+      json: { blockToken: TOKEN, limit: 10, prefix: 'pre', cursor: 'cur' },
+    });
+  });
+
+  it('APP_STORAGE_LIST clamps the limit + drops a partial-page nextCursor', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('apps.storage.list')) return trpcData({ keys: [], nextCursor: undefined });
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('APP_STORAGE_LIST', { requestId: 'r-l2', limit: 9999 });
+    const payload = await waitForMessage(inbound, 'APP_STORAGE_LIST_RESULT');
+    expect(payload.keys).toEqual([]);
+    expect('nextCursor' in payload).toBe(false);
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('apps.storage.list'))!;
+    // 9999 clamped to 200; no prefix/cursor keys present.
+    expect(decodeInputParam(String(call[0]))).toEqual({ json: { blockToken: TOKEN, limit: 200 } });
+  });
+
+  it('APP_STORAGE_QUOTA → apps.storage.getQuota (GET) → the 4 numbers', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('apps.storage.getQuota')) {
+        return trpcData({ usedBytes: 12, rowCount: 3, limitBytes: 50_000_000, limitRows: 1000 });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('APP_STORAGE_QUOTA', { requestId: 'r-q' });
+    const payload = await waitForMessage(inbound, 'APP_STORAGE_QUOTA_RESULT');
+    expect(payload).toMatchObject({
+      requestId: 'r-q',
+      usedBytes: 12,
+      rowCount: 3,
+      limitBytes: 50_000_000,
+      limitRows: 1000,
+    });
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('apps.storage.getQuota'))!;
+    expect((call[1] as RequestInit).method).toBe('GET');
+    expect(decodeInputParam(String(call[0]))).toEqual({ json: { blockToken: TOKEN } });
+  });
+
+  it('a storage error (FORBIDDEN) maps to the error-shape reply (no hang)', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('apps.storage.get')) {
+        return trpcErr('storage get requires the apps:storage:read scope', 403);
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('APP_STORAGE_GET', { requestId: 'r-forbidden', key: 'k' });
+    const payload = await waitForMessage(inbound, 'APP_STORAGE_GET_RESULT');
+    expect(payload.requestId).toBe('r-forbidden');
+    expect(payload.value).toBeNull();
+    expect(payload.error).toMatch(/apps:storage:read/);
+  });
+});
+
+describe('createLiveHost — SET_USER_CHECKPOINT (forwarded to blocks.updateUserSettings)', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+  let fetchMock: ReturnType<typeof vi.fn>;
+  const TOKEN = fakeJwt(DEFAULT_CLAIMS);
+
+  function installWithFetch(impl: (url: string, init?: RequestInit) => Promise<Response>) {
+    fetchMock = vi.fn(impl);
+    const host = createLiveHost({
+      blockToken: TOKEN,
+      viewer: { id: 42, username: 'dev-mod' },
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+  }
+
+  beforeEach(() => {
+    inbound = collectInbound();
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  it('forwards a numeric versionId to blocks.updateUserSettings → ok:true', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('blocks.updateUserSettings')) return trpcData({ ok: true });
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('SET_USER_CHECKPOINT', { requestId: 'r-suc', versionId: 9001 });
+    const payload = await waitForMessage(inbound, 'USER_CHECKPOINT_SET');
+    expect(payload.requestId).toBe('r-suc');
+    expect(payload.ok).toBe(true);
+    expect(payload.error).toBeUndefined();
+
+    const call = fetchMock.mock.calls.find((c) =>
+      String(c[0]).includes('blocks.updateUserSettings'),
+    )!;
+    expect((call[1] as RequestInit).method).toBe('POST');
+    expect(JSON.parse(String((call[1] as RequestInit).body))).toEqual({
+      json: { blockToken: TOKEN, settings: { checkpoint_version_id: 9001 } },
+    });
+  });
+
+  it('forwards an explicit null versionId (clear override) to the backend', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('blocks.updateUserSettings')) return trpcData({ ok: true });
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SET_USER_CHECKPOINT', { requestId: 'r-null', versionId: null });
+    const payload = await waitForMessage(inbound, 'USER_CHECKPOINT_SET');
+    expect(payload.ok).toBe(true);
+    const call = fetchMock.mock.calls.find((c) =>
+      String(c[0]).includes('blocks.updateUserSettings'),
+    )!;
+    expect(JSON.parse(String((call[1] as RequestInit).body))).toEqual({
+      json: { blockToken: TOKEN, settings: { checkpoint_version_id: null } },
+    });
+  });
+
+  it('surfaces the REAL backend error (page token lacks modelId) as ok:false', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('blocks.updateUserSettings')) {
+        return trpcErr('block token lacks modelId context', 400);
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SET_USER_CHECKPOINT', { requestId: 'r-page', versionId: 9001 });
+    const payload = await waitForMessage(inbound, 'USER_CHECKPOINT_SET');
+    expect(payload.ok).toBe(false);
+    expect(payload.error).toMatch(/lacks modelId context/);
+  });
+
+  it('an invalid versionId is rejected WITHOUT a backend call', async () => {
+    installWithFetch(async (url) => {
+      throw new Error(`should not have fetched ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SET_USER_CHECKPOINT', { requestId: 'r-bad', versionId: 'not-a-number' });
+    const payload = await waitForMessage(inbound, 'USER_CHECKPOINT_SET');
+    expect(payload.ok).toBe(false);
+    expect(payload.error).toMatch(/versionId must be a number or null/);
+    // No updateUserSettings call was made.
+    const called = fetchMock.mock.calls.some((c) =>
+      String(c[0]).includes('blocks.updateUserSettings'),
+    );
+    expect(called).toBe(false);
   });
 });
