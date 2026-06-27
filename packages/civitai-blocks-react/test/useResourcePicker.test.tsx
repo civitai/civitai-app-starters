@@ -144,6 +144,42 @@ describe('useResourcePicker', () => {
     await expect(pick).resolves.toEqual(mine);
   });
 
+  it('open() does NOT reject at the default ~30s timeout (a picker is human-interactive)', async () => {
+    vi.useFakeTimers();
+    try {
+      const { result } = renderHook(() => useResourcePicker());
+      let pick!: Promise<unknown>;
+      act(() => {
+        pick = result.current.open({ resourceType: 'LORA' });
+      });
+      const sent = lastSent();
+      let settled = false;
+      void pick.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      // Advance WELL past the 30s default request timeout: the old code rejected
+      // here ("timed out after 30000ms"); the picker timeout must keep it pending.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(settled).toBe(false);
+      // A real pick still resolves it.
+      const picked = { versionId: 9, modelId: 1, baseModel: 'SDXL 1.0', modelType: 'LORA' };
+      replyResult(sent.payload.requestId, picked);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      await expect(pick).resolves.toEqual(picked);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('does not cross concurrent requests — each open() resolves its own result', async () => {
     const { result } = renderHook(() => useResourcePicker());
     let pickA!: Promise<unknown>;
