@@ -42,11 +42,24 @@
  * DISCOVERY ONLY: the server re-validates + prices every id at estimate/submit;
  * nothing the dev clicks here is trusted or spends Buzz. See the picker handlers.
  *
- * SCOPE — live v1 deliberately does NOT support: SET_USER_CHECKPOINT, the
- * App-Storage KV protocol, and an in-band Buzz purchase. Each of those replies
- * with a clearly-labelled "not supported in live v1" outcome (never a fabricated
- * success) and logs once. Use mock mode for those flows, or a later live
- * version. See the per-message handlers below.
+ * APP-STORAGE KV (Phase 4): the live host SERVES the five `APP_STORAGE_*` calls
+ * by forwarding to the block-token `apps.storage.{get,set,delete,list,getQuota}`
+ * tRPC procedures (publicProcedure + verifyBlockToken, FLAT `{ blockToken, … }`
+ * input). Reads need the `apps:storage:read` scope, writes `apps:storage:write`
+ * — the dev token already carries whatever the local manifest declared, and the
+ * server enforces. Real per-(block_instance, user) KV, real 64KB/50MB quotas.
+ *
+ * SET_USER_CHECKPOINT (Phase 4): FORWARDED (faithful) to the block-token
+ * `blocks.updateUserSettings` mutation — never fabricated. The default page
+ * setup mints a PAGE token which lacks `ctx.modelId`, so the backend returns the
+ * honest error "block token lacks modelId context"; that real outcome is
+ * surfaced to the block. With a model-slot token it persists for real.
+ *
+ * SCOPE — the ONE capability live mode still cannot SERVE is OPEN_BUZZ_PURCHASE:
+ * there is NO headless / block-token Buzz-purchase path (buying Buzz strictly
+ * requires the interactive Stripe/Paddle host chrome). So it deep-links the real
+ * purchase page and replies `purchased: false` — honest-by-design, never a
+ * fabricated success. See the per-message handlers below.
  */
 
 import {
@@ -125,9 +138,6 @@ const PAGE_SLOT_ID = 'app.page';
 
 /** The budgeted-spend scope the workflow procedures require. */
 const BUDGETED_SCOPE = 'ai:write:budgeted';
-
-const NOT_SUPPORTED_STORAGE = 'app-storage not supported in live v1 yet';
-const NOT_SUPPORTED_USER_CHECKPOINT = 'not supported in live v1';
 
 /**
  * Decoded payload of a block-token JWT (the claims `BlockTokenService.sign`
@@ -244,6 +254,34 @@ interface TrpcCallResult {
 }
 
 /**
+ * The raw result of one tRPC call BEFORE any per-procedure unwrap: the parsed
+ * response envelope (or `undefined` on a thrown fetch / empty body), or an error
+ * string. {@link callTrpcMutation} (workflow path) and {@link callTrpcData}
+ * (storage / checkpoint path) both build on this, so the fetch / parse / status
+ * / error logic lives in exactly one place.
+ */
+interface RawTrpcResult {
+  /** The parsed JSON response (the `{ result: { data: { json } } }` envelope). */
+  parsed?: unknown;
+  error?: string;
+  /** True when `error` is a transport/infra blip worth retrying. */
+  transient?: boolean;
+}
+
+/**
+ * The result of one generic tRPC DATA call: the UNWRAPPED data object the
+ * procedure returned (the storage / settings procs return plain records, not a
+ * `{ snapshot }` wrapper), or an error string. Mirrors {@link TrpcCallResult}'s
+ * `transient` semantics.
+ */
+interface TrpcDataResult {
+  data?: unknown;
+  error?: string;
+  /** True when `error` is a transport/infra blip worth retrying. */
+  transient?: boolean;
+}
+
+/**
  * Whether an HTTP status from a tRPC call is a transient transport/infra blip
  * (retry may succeed) vs. a deterministic error. 401 is included because a
  * not-yet-rolled-out backend pod legitimately 401s for a few seconds during a
@@ -343,24 +381,43 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
     console.warn(`[createLiveHost] ${message}`);
   };
 
-  /** POST a tRPC mutation (superjson, non-batched httpLink shape). */
-  async function callTrpcMutation(
+  /**
+   * The single tRPC transport primitive. Builds the non-batched httpLink +
+   * superjson request for `procedure` and returns the PARSED envelope (or an
+   * error). `method` selects the tRPC verb:
+   *   - `'POST'` (mutation): body is `{ json: <input> }`.
+   *   - `'GET'` (query): input is querystring-encoded as
+   *     `?input=encodeURIComponent(JSON.stringify({ json: <input> }))`.
+   * Every call carries `Authorization: Bearer <rawToken>`. A thrown fetch →
+   * `{ error, transient: true }`; a non-2xx → `{ error, transient }` (status-
+   * classified via {@link isTransientHttpStatus}). Both `callTrpcMutation` and
+   * `callTrpcData` build on this so the fetch/parse/error logic lives once.
+   */
+  async function rawTrpcCall(
     procedure: string,
     input: Record<string, unknown>,
-  ): Promise<TrpcCallResult> {
+    method: 'GET' | 'POST',
+  ): Promise<RawTrpcResult> {
     if (!fetchImpl) return { error: 'no fetch available' };
     try {
-      const res = await fetchImpl(`${baseUrl}/api/trpc/${procedure}`, {
-        method: 'POST',
+      let url = `${baseUrl}/api/trpc/${procedure}`;
+      const init: RequestInit = {
+        method,
         headers: {
           'content-type': 'application/json',
           authorization: `Bearer ${rawToken}`,
         },
+      };
+      if (method === 'GET') {
+        // tRPC query: superjson input goes in the querystring.
+        const encoded = encodeURIComponent(JSON.stringify({ json: input }));
+        url = `${url}?input=${encoded}`;
+      } else {
         // Non-batched httpLink + superjson transformer wraps the input as
-        // `{ json: <input> }` (no `meta` for plain JSON inputs). The blocks
-        // procedures take `{ blockToken, body? }`.
-        body: JSON.stringify({ json: input }),
-      });
+        // `{ json: <input> }` (no `meta` for plain JSON inputs).
+        init.body = JSON.stringify({ json: input });
+      }
+      const res = await fetchImpl(url, init);
       const text = await res.text();
       let parsed: unknown;
       try {
@@ -372,16 +429,51 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
         const msg = extractTrpcError(parsed) ?? `${procedure} failed: HTTP ${res.status}`;
         return { error: msg, transient: isTransientHttpStatus(res.status) };
       }
-      const snapshot = extractSnapshot(parsed);
-      if (!snapshot) {
-        return { error: `${procedure}: malformed response (no snapshot)` };
-      }
-      return { snapshot };
+      return { parsed };
     } catch (err) {
       // A thrown fetch is a network/transport failure (DNS, connection reset,
-      // CORS, offline) — always transient, never a workflow `failed` STATUS.
+      // CORS, offline) — always transient.
       return { error: err instanceof Error ? err.message : String(err), transient: true };
     }
+  }
+
+  /**
+   * POST a tRPC WORKFLOW mutation (the `blocks.{estimate,submit,poll,cancel}-
+   * Workflow` procs which return a `{ snapshot }` wrapper). Byte-for-byte
+   * behaviourally identical to the previous direct implementation — still POST,
+   * still {@link extractSnapshot}.
+   */
+  async function callTrpcMutation(
+    procedure: string,
+    input: Record<string, unknown>,
+  ): Promise<TrpcCallResult> {
+    const raw = await rawTrpcCall(procedure, input, 'POST');
+    if (raw.error !== undefined) return { error: raw.error, transient: raw.transient };
+    const snapshot = extractSnapshot(raw.parsed);
+    if (!snapshot) {
+      return { error: `${procedure}: malformed response (no snapshot)` };
+    }
+    return { snapshot };
+  }
+
+  /**
+   * Call a tRPC DATA procedure (storage / settings) and unwrap the plain data
+   * object it returns (via {@link extractData}). `method` is `'GET'` for queries
+   * (`apps.storage.{get,list,getQuota}`) and `'POST'` for mutations
+   * (`apps.storage.{set,delete}`, `blocks.updateUserSettings`).
+   */
+  async function callTrpcData(
+    procedure: string,
+    input: Record<string, unknown>,
+    method: 'GET' | 'POST',
+  ): Promise<TrpcDataResult> {
+    const raw = await rawTrpcCall(procedure, input, method);
+    if (raw.error !== undefined) return { error: raw.error, transient: raw.transient };
+    const data = extractData(raw.parsed);
+    if (data === undefined) {
+      return { error: `${procedure}: malformed response (no data)` };
+    }
+    return { data };
   }
 
   /**
@@ -558,6 +650,12 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             baseModelGroup?: string;
             currentVersionId?: number;
             resourceType?: 'Checkpoint' | 'LORA';
+            key?: string;
+            value?: unknown;
+            prefix?: string;
+            limit?: number;
+            cursor?: string;
+            versionId?: number | null;
           };
         };
 
@@ -750,68 +848,218 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           }
 
           case 'SET_USER_CHECKPOINT': {
-            logOnce('set-user-checkpoint', `SET_USER_CHECKPOINT ${NOT_SUPPORTED_USER_CHECKPOINT}`);
-            dispatchToBlock({
-              type: 'USER_CHECKPOINT_SET',
-              payload: { requestId: requestId ?? '', ok: false, error: NOT_SUPPORTED_USER_CHECKPOINT },
+            // FORWARD (faithful) to blocks.updateUserSettings — never fabricate.
+            // Mirror the prod IframeHost's versionId validation: a number or an
+            // explicit null is valid; anything else is rejected WITHOUT a backend
+            // call. NOTE: dev-token mints PAGE tokens which lack `ctx.modelId`, so
+            // with the default page setup the backend returns the honest error
+            // "block token lacks modelId context" — this is FAITHFUL (it surfaces
+            // the real outcome) and works for real with a model-slot token.
+            const rawVersionId = typed.payload?.versionId;
+            const versionId =
+              rawVersionId === null
+                ? null
+                : typeof rawVersionId === 'number'
+                  ? rawVersionId
+                  : undefined;
+            if (versionId === undefined) {
+              dispatchToBlock({
+                type: 'USER_CHECKPOINT_SET',
+                payload: {
+                  requestId: requestId ?? '',
+                  ok: false,
+                  error: 'versionId must be a number or null',
+                },
+              });
+              return;
+            }
+            void callTrpcData(
+              'blocks.updateUserSettings',
+              { blockToken: rawToken, settings: { checkpoint_version_id: versionId } },
+              'POST',
+            ).then((r) => {
+              dispatchToBlock({
+                type: 'USER_CHECKPOINT_SET',
+                payload: r.error
+                  ? { requestId: requestId ?? '', ok: false, error: r.error }
+                  : { requestId: requestId ?? '', ok: true },
+              });
             });
             return;
           }
 
           case 'APP_STORAGE_GET': {
-            logOnce('app-storage', NOT_SUPPORTED_STORAGE);
-            dispatchToBlock({
-              type: 'APP_STORAGE_GET_RESULT',
-              payload: { requestId: requestId ?? '', value: null, error: NOT_SUPPORTED_STORAGE },
-            });
+            // Query apps.storage.get {blockToken, key} (GET). The server enforces
+            // the apps:storage:read scope; the dev token carries it iff the local
+            // manifest declared it.
+            const key = typed.payload?.key ?? '';
+            void callTrpcData('apps.storage.get', { blockToken: rawToken, key }, 'GET').then(
+              (r) => {
+                if (r.error) {
+                  dispatchToBlock({
+                    type: 'APP_STORAGE_GET_RESULT',
+                    payload: { requestId: requestId ?? '', value: null, error: r.error },
+                  });
+                  return;
+                }
+                const value = (r.data as { value?: unknown })?.value ?? null;
+                dispatchToBlock({
+                  type: 'APP_STORAGE_GET_RESULT',
+                  payload: { requestId: requestId ?? '', value },
+                });
+              },
+            );
             return;
           }
 
           case 'APP_STORAGE_SET': {
-            logOnce('app-storage', NOT_SUPPORTED_STORAGE);
-            dispatchToBlock({
-              type: 'APP_STORAGE_SET_RESULT',
-              payload: { requestId: requestId ?? '', ok: false, error: NOT_SUPPORTED_STORAGE },
+            // Mutation apps.storage.set {blockToken, key, value} (POST). The
+            // server enforces apps:storage:write + the 64KB/50MB quotas.
+            const key = typed.payload?.key ?? '';
+            const value = typed.payload?.value;
+            void callTrpcData(
+              'apps.storage.set',
+              { blockToken: rawToken, key, value },
+              'POST',
+            ).then((r) => {
+              if (r.error) {
+                dispatchToBlock({
+                  type: 'APP_STORAGE_SET_RESULT',
+                  payload: { requestId: requestId ?? '', ok: false, error: r.error },
+                });
+                return;
+              }
+              const sizeBytes = (r.data as { sizeBytes?: unknown })?.sizeBytes;
+              dispatchToBlock({
+                type: 'APP_STORAGE_SET_RESULT',
+                payload: {
+                  requestId: requestId ?? '',
+                  ok: true,
+                  ...(typeof sizeBytes === 'number' ? { sizeBytes } : {}),
+                },
+              });
             });
             return;
           }
 
           case 'APP_STORAGE_DELETE': {
-            logOnce('app-storage', NOT_SUPPORTED_STORAGE);
-            dispatchToBlock({
-              type: 'APP_STORAGE_DELETE_RESULT',
-              payload: {
-                requestId: requestId ?? '',
-                ok: false,
-                deleted: false,
-                error: NOT_SUPPORTED_STORAGE,
-              },
+            // Mutation apps.storage.delete {blockToken, key} (POST).
+            const key = typed.payload?.key ?? '';
+            void callTrpcData(
+              'apps.storage.delete',
+              { blockToken: rawToken, key },
+              'POST',
+            ).then((r) => {
+              if (r.error) {
+                dispatchToBlock({
+                  type: 'APP_STORAGE_DELETE_RESULT',
+                  payload: {
+                    requestId: requestId ?? '',
+                    ok: false,
+                    deleted: false,
+                    error: r.error,
+                  },
+                });
+                return;
+              }
+              dispatchToBlock({
+                type: 'APP_STORAGE_DELETE_RESULT',
+                payload: {
+                  requestId: requestId ?? '',
+                  ok: true,
+                  deleted: Boolean((r.data as { deleted?: unknown })?.deleted),
+                },
+              });
             });
             return;
           }
 
           case 'APP_STORAGE_LIST': {
-            logOnce('app-storage', NOT_SUPPORTED_STORAGE);
-            dispatchToBlock({
-              type: 'APP_STORAGE_LIST_RESULT',
-              payload: { requestId: requestId ?? '', keys: [], error: NOT_SUPPORTED_STORAGE },
+            // Query apps.storage.list {blockToken, prefix?, limit, cursor?} (GET).
+            // Clamp the limit to the server's [1,200] bound (default 50); only
+            // include prefix/cursor when they're strings so JSON.stringify drops
+            // the undefined keys (the server input is `.optional()`).
+            const rawLimit = typed.payload?.limit;
+            const limit =
+              typeof rawLimit === 'number'
+                ? Math.min(Math.max(Math.floor(rawLimit), 1), 200)
+                : 50;
+            const prefix = typed.payload?.prefix;
+            const cursor = typed.payload?.cursor;
+            const listInput: Record<string, unknown> = { blockToken: rawToken, limit };
+            if (typeof prefix === 'string') listInput.prefix = prefix;
+            if (typeof cursor === 'string') listInput.cursor = cursor;
+            void callTrpcData('apps.storage.list', listInput, 'GET').then((r) => {
+              if (r.error) {
+                dispatchToBlock({
+                  type: 'APP_STORAGE_LIST_RESULT',
+                  payload: { requestId: requestId ?? '', keys: [], error: r.error },
+                });
+                return;
+              }
+              const rawKeys = (r.data as { keys?: unknown })?.keys;
+              const keys = (Array.isArray(rawKeys) ? rawKeys : []).map((k) => {
+                const entry = k as { key?: unknown; updatedAt?: unknown };
+                return {
+                  key: String(entry.key),
+                  updatedAt:
+                    entry.updatedAt instanceof Date
+                      ? entry.updatedAt.toISOString()
+                      : String(entry.updatedAt),
+                };
+              });
+              const nextCursor = (r.data as { nextCursor?: unknown })?.nextCursor;
+              dispatchToBlock({
+                type: 'APP_STORAGE_LIST_RESULT',
+                payload: {
+                  requestId: requestId ?? '',
+                  keys,
+                  ...(typeof nextCursor === 'string' && nextCursor.length > 0
+                    ? { nextCursor }
+                    : {}),
+                },
+              });
             });
             return;
           }
 
           case 'APP_STORAGE_QUOTA': {
-            logOnce('app-storage', NOT_SUPPORTED_STORAGE);
-            dispatchToBlock({
-              type: 'APP_STORAGE_QUOTA_RESULT',
-              payload: {
-                requestId: requestId ?? '',
-                usedBytes: 0,
-                rowCount: 0,
-                limitBytes: 0,
-                limitRows: 0,
-                error: NOT_SUPPORTED_STORAGE,
+            // Query apps.storage.getQuota {blockToken} (GET).
+            void callTrpcData('apps.storage.getQuota', { blockToken: rawToken }, 'GET').then(
+              (r) => {
+                if (r.error) {
+                  dispatchToBlock({
+                    type: 'APP_STORAGE_QUOTA_RESULT',
+                    payload: {
+                      requestId: requestId ?? '',
+                      usedBytes: 0,
+                      rowCount: 0,
+                      limitBytes: 0,
+                      limitRows: 0,
+                      error: r.error,
+                    },
+                  });
+                  return;
+                }
+                const d = r.data as {
+                  usedBytes?: unknown;
+                  rowCount?: unknown;
+                  limitBytes?: unknown;
+                  limitRows?: unknown;
+                };
+                const num = (v: unknown) => (typeof v === 'number' ? v : 0);
+                dispatchToBlock({
+                  type: 'APP_STORAGE_QUOTA_RESULT',
+                  payload: {
+                    requestId: requestId ?? '',
+                    usedBytes: num(d?.usedBytes),
+                    rowCount: num(d?.rowCount),
+                    limitBytes: num(d?.limitBytes),
+                    limitRows: num(d?.limitRows),
+                  },
+                });
               },
-            });
+            );
             return;
           }
 
@@ -939,6 +1187,26 @@ function extractSnapshot(parsed: unknown): BlockWorkflowSnapshot | undefined {
   const snapshot = (unwrapped as { snapshot?: unknown }).snapshot;
   if (typeof snapshot !== 'object' || snapshot === null) return undefined;
   return snapshot as BlockWorkflowSnapshot;
+}
+
+/**
+ * Extract the UNWRAPPED data object from a tRPC response — the generalization of
+ * {@link extractSnapshot} for procedures that return a plain record (storage /
+ * settings) rather than a `{ snapshot }` wrapper. Handles the superjson
+ * `{ result: { data: { json: T } } }` envelope AND the transformer-less
+ * `{ result: { data: T } }` shape. Returns `undefined` only when there is no
+ * `result.data` at all (a genuinely malformed response); a procedure that
+ * legitimately returns `null`/`{}` round-trips as that value.
+ */
+function extractData(parsed: unknown): unknown {
+  if (typeof parsed !== 'object' || parsed === null) return undefined;
+  const result = (parsed as { result?: { data?: unknown } }).result;
+  const data = result?.data;
+  if (data === undefined || data === null) return undefined;
+  // superjson: { json: <T> } ; plain: <T>
+  return typeof data === 'object' && data !== null && 'json' in data
+    ? (data as { json?: unknown }).json
+    : data;
 }
 
 /**
