@@ -1,5 +1,11 @@
 # @civitai/blocks-react
 
+## 0.14.2
+
+### Patch Changes
+
+- eed9cf8: dev:live picker lazy-loads thumbnails (no freeze) + scroll-bounds the grid + smaller page
+
 ## 0.14.1
 
 ### Patch Changes
