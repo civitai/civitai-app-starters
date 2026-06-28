@@ -78,6 +78,16 @@ function renderedCells(): HTMLElement[] {
   );
 }
 
+// Tests that pass NO `document` still render into the shared global `document`
+// (the overlay falls back to `globalThis.document`). If such a test fails BEFORE
+// it can `dismiss()`, its overlay would leak into the next test's DOM queries —
+// so sweep the global document after every test, file-wide.
+afterEach(() => {
+  document
+    .querySelectorAll('[data-live-picker-overlay]')
+    .forEach((el) => el.parentNode?.removeChild(el));
+});
+
 describe('openPickerOverlay — server-side family filter (no client narrowing)', () => {
   it('renders the FULL returned page for a baseModelGroup (not narrowed to ~2)', async () => {
     const N = 40;
@@ -101,12 +111,16 @@ describe('openPickerOverlay — server-side family filter (no client narrowing)'
       });
     });
 
-    // FULL page rendered — NOT a client-narrowed subset.
+    // FULL first page rendered — NOT a client-narrowed subset. (The mock answers
+    // a 40-card page with nextCursor:null, so there's only one page; the overlay
+    // renders all of it.)
     expect(handle.cards).toHaveLength(N);
     // The family hint went out as the SERVER-SIDE baseModels filter…
     expect(params(calls[0]).get('baseModels')).toBe('SDXL 1.0');
-    // …at a sizeable page limit (50 lazy-loaded cards), not the old 24 default.
-    expect(params(calls[0]).get('limit')).toBe('50');
+    // …at the per-PAGE limit (24, infinite-scroll paginates) — not 50/all-at-once.
+    expect(params(calls[0]).get('limit')).toBe('24');
+    // …and the initial load carries NO cursor (page 1).
+    expect(params(calls[0]).has('cursor')).toBe(false);
     // …on the authoritative endpoint (token present).
     expect(String(calls[0])).toContain('/api/v1/blocks/models');
     handle.dismiss();
@@ -354,6 +368,243 @@ describe('openPickerOverlay — lazy <img> thumbnails (perf fix)', () => {
       .filter((c) => Number(c.getAttribute('data-picker-card')) !== 9002)
       .forEach((c) => expect(c.style.outline).toBe(''));
 
+    handle.dismiss();
+  });
+});
+
+/**
+ * Infinite-scroll pagination coverage: the overlay loads ONE page (24) initially
+ * and appends the next page when the scroll sentinel intersects. happy-dom never
+ * fires a real IntersectionObserver (no layout), so we drive the load-more path
+ * deterministically via the `loadMore()` test seam on the handle.
+ */
+describe('openPickerOverlay — infinite-scroll pagination', () => {
+  /** A page of `n` checkpoint models numbered from `start`, with the given nextCursor. */
+  function page(start: number, n: number, nextCursor: string | null) {
+    const items = Array.from({ length: n }, (_, i) => {
+      const k = start + i;
+      return {
+        id: 1000 + k,
+        name: `Model ${k}`,
+        type: 'Checkpoint',
+        nsfw: false,
+        modelVersions: [
+          {
+            id: 9000 + k,
+            name: 'v1',
+            baseModel: 'SDXL 1.0',
+            images: [{ url: `https://image.civitai.com/img-${k}.jpeg`, nsfwLevel: 1 }],
+          },
+        ],
+      };
+    });
+    return { items, metadata: { nextCursor } };
+  }
+
+  it('initial load renders the first page (24), not 50, and carries no cursor', async () => {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string) => {
+      calls.push(url);
+      return res(200, page(0, 24, 'cursor-2'));
+    }) as unknown as typeof fetch;
+
+    const handle = await new Promise<PickerOverlayHandle>((resolve) => {
+      openPickerOverlay({
+        type: 'Checkpoint',
+        baseUrl: BASE,
+        token: 'TOK',
+        fetchImpl,
+        document,
+        onReady: (h) => resolve(h),
+        onResolve: () => {},
+      });
+    });
+
+    expect(handle.cards).toHaveLength(24);
+    expect(renderedCells()).toHaveLength(24);
+    expect(params(calls[0]).get('limit')).toBe('24');
+    expect(params(calls[0]).has('cursor')).toBe(false);
+    // More to come → not done.
+    expect(handle.done).toBe(false);
+    handle.dismiss();
+  });
+
+  it('loadMore APPENDS the next page without rebuilding the first page cells', async () => {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string) => {
+      calls.push(url);
+      const cursor = params(url).get('cursor');
+      if (cursor === 'cursor-2') return res(200, page(24, 24, null));
+      return res(200, page(0, 24, 'cursor-2'));
+    }) as unknown as typeof fetch;
+
+    const handle = await new Promise<PickerOverlayHandle>((resolve) => {
+      openPickerOverlay({
+        type: 'Checkpoint',
+        baseUrl: BASE,
+        token: 'TOK',
+        fetchImpl,
+        document,
+        onReady: (h) => resolve(h),
+        onResolve: () => {},
+      });
+    });
+
+    // Snapshot the first page's actual DOM nodes BEFORE loading more.
+    const firstPageCells = renderedCells();
+    expect(firstPageCells).toHaveLength(24);
+    const firstNode = firstPageCells[0];
+
+    await handle.loadMore();
+
+    // The grid now has BOTH pages (24 + 24) …
+    const after = renderedCells();
+    expect(after).toHaveLength(48);
+    expect(handle.cards).toHaveLength(48);
+    // … and the first page's cells were NOT torn down + rebuilt (same node refs).
+    expect(after[0]).toBe(firstNode);
+    // The second page fetch carried the cursor from page 1's nextCursor.
+    expect(params(calls[1]).get('cursor')).toBe('cursor-2');
+    // Page 2 returned nextCursor null → exhausted.
+    expect(handle.done).toBe(true);
+    handle.dismiss();
+  });
+
+  it('when nextCursor is null no further fetch happens (done)', async () => {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string) => {
+      calls.push(url);
+      // Single, terminal page.
+      return res(200, page(0, 10, null));
+    }) as unknown as typeof fetch;
+
+    const handle = await new Promise<PickerOverlayHandle>((resolve) => {
+      openPickerOverlay({
+        type: 'Checkpoint',
+        baseUrl: BASE,
+        token: 'TOK',
+        fetchImpl,
+        document,
+        onReady: (h) => resolve(h),
+        onResolve: () => {},
+      });
+    });
+
+    expect(handle.done).toBe(true);
+    expect(calls).toHaveLength(1);
+
+    // loadMore is a no-op once done — no second fetch.
+    await handle.loadMore();
+    expect(calls).toHaveLength(1);
+    expect(handle.cards).toHaveLength(10);
+    handle.dismiss();
+  });
+
+  it('a new search RESETS: clears the grid and loads page 1 of the new query (no cursor)', async () => {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string) => {
+      calls.push(url);
+      const p = params(url);
+      if (p.get('query') === 'anime') {
+        return res(200, page(100, 5, null)); // different cards for the new query
+      }
+      if (p.get('cursor') === 'cursor-2') return res(200, page(24, 24, null));
+      return res(200, page(0, 24, 'cursor-2'));
+    }) as unknown as typeof fetch;
+
+    const handle = await new Promise<PickerOverlayHandle>((resolve) => {
+      openPickerOverlay({
+        type: 'Checkpoint',
+        baseUrl: BASE,
+        token: 'TOK',
+        fetchImpl,
+        document,
+        onReady: (h) => resolve(h),
+        onResolve: () => {},
+      });
+    });
+
+    // Load a 2nd page first so there's accumulated state to reset.
+    await handle.loadMore();
+    expect(handle.cards).toHaveLength(48);
+
+    // Now type a search by driving the search box (mirrors a real keystroke).
+    const search = document.querySelector<HTMLInputElement>(
+      '[data-live-picker-overlay] input[type="search"]',
+    )!;
+    search.value = 'anime';
+    search.dispatchEvent(new Event('input'));
+    // Wait out the 300ms debounce + the fetch.
+    await new Promise((r) => setTimeout(r, 360));
+
+    // The new query reset to page 1: only the new query's 5 cards remain.
+    expect(handle.cards).toHaveLength(5);
+    const cells = renderedCells();
+    expect(cells).toHaveLength(5);
+    // Old cards (versionId 9000..) are GONE; the new ones (9100..) are present.
+    const ids = cells.map((c) => Number(c.getAttribute('data-picker-card')));
+    expect(ids.every((id) => id >= 9100)).toBe(true);
+    // The search fetch carried the new query + NO cursor (page 1).
+    const searchCall = calls.find((u) => params(u).get('query') === 'anime')!;
+    expect(searchCall).toBeTruthy();
+    expect(params(searchCall).has('cursor')).toBe(false);
+    handle.dismiss();
+  });
+
+  it('reqId race guard: a late page from a superseded query does not append', async () => {
+    // First query's next-page fetch is SLOW; a new search supersedes it. When the
+    // slow page finally resolves it must be DROPPED (not appended) — the reqId no
+    // longer matches.
+    let resolveSlow: ((v: Response) => void) | null = null;
+    const fetchImpl = vi.fn(async (url: string) => {
+      const p = params(url);
+      if (p.get('query') === 'fresh') {
+        return res(200, page(200, 3, null));
+      }
+      if (p.get('cursor') === 'cursor-2') {
+        // The slow page-2 of the ORIGINAL query — hold it open.
+        return new Promise<Response>((r) => {
+          resolveSlow = r;
+        });
+      }
+      return res(200, page(0, 24, 'cursor-2'));
+    }) as unknown as typeof fetch;
+
+    const handle = await new Promise<PickerOverlayHandle>((resolve) => {
+      openPickerOverlay({
+        type: 'Checkpoint',
+        baseUrl: BASE,
+        token: 'TOK',
+        fetchImpl,
+        document,
+        onReady: (h) => resolve(h),
+        onResolve: () => {},
+      });
+    });
+
+    expect(handle.cards).toHaveLength(24);
+
+    // Kick off the slow page-2 (does not resolve yet).
+    const slowLoad = handle.loadMore();
+
+    // Supersede with a new search (resets reqId) — resolves quickly.
+    const search = document.querySelector<HTMLInputElement>(
+      '[data-live-picker-overlay] input[type="search"]',
+    )!;
+    search.value = 'fresh';
+    search.dispatchEvent(new Event('input'));
+    await new Promise((r) => setTimeout(r, 360));
+
+    // New query landed: 3 cards.
+    expect(handle.cards).toHaveLength(3);
+
+    // NOW let the stale page-2 resolve — it must NOT append onto the fresh result.
+    resolveSlow?.(res(200, page(24, 24, null)));
+    await slowLoad;
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(handle.cards).toHaveLength(3);
+    expect(renderedCells()).toHaveLength(3);
     handle.dismiss();
   });
 });

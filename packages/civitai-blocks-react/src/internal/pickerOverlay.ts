@@ -80,7 +80,7 @@ export interface OpenPickerOptions {
 
 /** Programmatic control surface returned by {@link openPickerOverlay}. */
 export interface PickerOverlayHandle {
-  /** The cards currently rendered (the server-filtered page). Empty until ready. */
+  /** All cards accumulated across loaded pages (the server-filtered result). Empty until ready. */
   readonly cards: readonly CatalogCard[];
   /** Pick the first available card (no-op if none). Resolves + tears down. */
   selectFirst(): void;
@@ -92,17 +92,36 @@ export interface PickerOverlayHandle {
   close(): void;
   /** True once the overlay has resolved (selection or dismissal). */
   readonly resolved: boolean;
+  /**
+   * Load the NEXT catalog page now (the infinite-scroll trigger), as if the
+   * scroll sentinel had intersected. A TEST SEAM: jsdom/happy-dom don't run
+   * layout so a real IntersectionObserver never fires — tests call this to drive
+   * the load-more path deterministically. No-op when already loading, when the
+   * result is exhausted (`done`), or after resolve. Returns a promise that
+   * settles once the page has loaded + appended (or immediately for a no-op).
+   */
+  loadMore(): Promise<void>;
+  /** True once there is no further page to load (nextCursor === null). */
+  readonly done: boolean;
 }
 
 const Z_INDEX = 2_147_483_000; // above the dev harness log (9999) and most chrome.
 
 /**
- * Catalog page size for the picker. The server-side family filter already gives
- * the right coverage and the search box narrows further, so 50 lazy-loaded cards
- * is plenty and snappy — 100 froze the main thread (every thumbnail decoded at
- * once). `fetchCatalog`/`buildCatalogUrl` clamp to [1,100] anyway.
+ * Catalog page size for the picker — now the size of EACH page, not the whole
+ * result. The overlay paginates with infinite scroll: it renders this many cards
+ * initially, then appends another page as the dev scrolls near the bottom. 24 per
+ * page keeps the DOM small and the lazy thumbnails few; rendering all ~50 at once
+ * was laggy. `fetchCatalog`/`buildCatalogUrl` clamp to [1,100] anyway.
  */
-const PICKER_PAGE_LIMIT = 50;
+const PICKER_PAGE_LIMIT = 24;
+
+/**
+ * IntersectionObserver prefetch margin: start loading the next page when the
+ * scroll sentinel is within this distance of the grid's viewport, so the next
+ * page is usually ready before the dev reaches the very bottom.
+ */
+const PICKER_SCROLL_ROOT_MARGIN = '400px';
 
 /**
  * Open the in-harness picker overlay. Mounts a modal into the document, loads
@@ -116,13 +135,34 @@ export function openPickerOverlay(opts: OpenPickerOptions): PickerOverlayHandle 
   let resolved = false;
   let cards: CatalogCard[] = [];
 
+  // --- Pagination state (infinite scroll). ---
+  // `cards` ACCUMULATES across pages. `nextCursor` is the cursor for the next
+  // page (null once exhausted). `query` is the active search string (a new search
+  // resets pagination). `isLoading` guards against overlapping fetches.
+  let query = '';
+  let nextCursor: string | null = null;
+  let done = false;
+  let isLoading = false;
+
   // --- DOM scaffold (created even without a document so the handle is total). ---
   let root: HTMLElement | null = null;
   let grid: HTMLElement | null = null;
   let statusEl: HTMLElement | null = null;
   let searchEl: HTMLInputElement | null = null;
+  let sentinel: HTMLElement | null = null;
+  let observer: IntersectionObserver | null = null;
+
+  /** Disconnect + drop the scroll observer (idempotent). */
+  const disconnectObserver = () => {
+    if (observer) {
+      observer.disconnect();
+      observer = null;
+    }
+    sentinel = null;
+  };
 
   const teardown = () => {
+    disconnectObserver();
     if (root && root.parentNode) root.parentNode.removeChild(root);
     root = null;
     grid = null;
@@ -166,90 +206,174 @@ export function openPickerOverlay(opts: OpenPickerOptions): PickerOverlayHandle 
     close() {
       resolve(null);
     },
+    get done() {
+      return done;
+    },
+    loadMore() {
+      return loadNext();
+    },
   };
 
   // No document (pure-node smoke test): still load the catalog so onReady fires
   // and the handle is drivable; just skip the DOM.
+
+  /** Build ONE card cell. Shared by the initial render + the append-on-scroll path. */
+  const buildCard = (card: CatalogCard): HTMLElement | null => {
+    if (!doc) return null;
+    const cell = doc.createElement('button');
+    cell.type = 'button';
+    cell.setAttribute('data-picker-card', String(card.versionId));
+    cell.setAttribute('aria-label', `${card.modelName} (${card.baseModel || 'unknown base'})`);
+    Object.assign(cell.style, CARD_STYLE);
+    if (opts.currentVersionId != null && card.versionId === opts.currentVersionId) {
+      cell.style.outline = '2px solid #5ec8a0';
+    }
+
+    // Lazy <img> thumbnail (mirrors civitai's native ResourceSelectCard, which
+    // uses <EdgeMedia loading="lazy" />). A CSS background-image CANNOT lazy-load,
+    // so the old approach fetched + decoded all ~100 thumbnails at once → froze
+    // the main thread. The browser now defers off-screen images. The src is
+    // already a 320px edge image (catalog.ts edgeThumb), not a full original.
+    // Pagination + lazy compose: fewer cards in the DOM AND off-screen images deferred.
+    if (card.thumbnailUrl) {
+      const thumb = doc.createElement('img');
+      Object.assign(thumb.style, THUMB_STYLE);
+      thumb.loading = 'lazy';
+      thumb.decoding = 'async';
+      thumb.alt = ''; // decorative — the cell already carries an aria-label
+      thumb.src = card.thumbnailUrl;
+      cell.appendChild(thumb);
+    } else {
+      // No thumbnail — render the neutral placeholder tile (NOT an <img> with an
+      // empty src, which would show a broken-image icon).
+      const placeholder = doc.createElement('div');
+      Object.assign(placeholder.style, THUMB_STYLE);
+      cell.appendChild(placeholder);
+    }
+
+    const name = doc.createElement('div');
+    Object.assign(name.style, NAME_STYLE);
+    name.textContent = card.modelName;
+    cell.appendChild(name);
+
+    const meta = doc.createElement('div');
+    Object.assign(meta.style, META_STYLE);
+    meta.textContent = [card.baseModel, card.versionName].filter(Boolean).join(' · ');
+    cell.appendChild(meta);
+
+    cell.addEventListener('click', () => selectCard(card));
+    return cell;
+  };
+
+  /**
+   * Reposition the scroll sentinel as the LAST child of the grid (after every
+   * card) and (re)wire the IntersectionObserver. Called after each append so the
+   * sentinel stays at the bottom. When the result is exhausted, the sentinel is
+   * removed + the observer disconnected (no more triggers / no leak).
+   */
+  const refreshSentinel = () => {
+    if (!grid || !doc) return;
+    if (done) {
+      // Nothing more to load — drop the sentinel + observer entirely.
+      if (sentinel && sentinel.parentNode) sentinel.parentNode.removeChild(sentinel);
+      disconnectObserver();
+      return;
+    }
+    if (!sentinel) {
+      sentinel = doc.createElement('div');
+      sentinel.setAttribute('data-picker-sentinel', '');
+      Object.assign(sentinel.style, SENTINEL_STYLE);
+    }
+    // Move it to the end (appendChild re-parents if already present).
+    grid.appendChild(sentinel);
+
+    // Resolve IntersectionObserver from the grid's own window (live host passes a
+    // real document; happy-dom exposes one too — but it won't FIRE without layout,
+    // which is why `loadMore()` is the deterministic test seam).
+    const IO =
+      (doc.defaultView as { IntersectionObserver?: typeof IntersectionObserver } | null)
+        ?.IntersectionObserver ??
+      (globalThis as { IntersectionObserver?: typeof IntersectionObserver }).IntersectionObserver;
+    if (!observer && typeof IO === 'function') {
+      observer = new IO(
+        (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              void loadNext();
+              break;
+            }
+          }
+        },
+        { root: grid, rootMargin: PICKER_SCROLL_ROOT_MARGIN },
+      );
+    }
+    if (observer && sentinel) observer.observe(sentinel);
+  };
+
+  /** Append just the NEW page's cards (keeps already-loaded cells + images). */
+  const appendCards = (newCards: CatalogCard[]) => {
+    if (!grid || !doc) return;
+    for (const card of newCards) {
+      const cell = buildCard(card);
+      if (cell) {
+        // Insert before the sentinel so it stays last (else just append).
+        if (sentinel && sentinel.parentNode === grid) grid.insertBefore(cell, sentinel);
+        else grid.appendChild(cell);
+      }
+    }
+    refreshSentinel();
+  };
+
+  /** Clear + rebuild the whole grid (initial load / a NEW search query). */
   const renderCards = () => {
     if (!grid || !doc) return;
     grid.innerHTML = '';
-    if (cards.length === 0) return;
-    for (const card of cards) {
-      const cell = doc.createElement('button');
-      cell.type = 'button';
-      cell.setAttribute('data-picker-card', String(card.versionId));
-      cell.setAttribute('aria-label', `${card.modelName} (${card.baseModel || 'unknown base'})`);
-      Object.assign(cell.style, CARD_STYLE);
-      if (opts.currentVersionId != null && card.versionId === opts.currentVersionId) {
-        cell.style.outline = '2px solid #5ec8a0';
-      }
-
-      // Lazy <img> thumbnail (mirrors civitai's native ResourceSelectCard, which
-      // uses <EdgeMedia loading="lazy" />). A CSS background-image CANNOT lazy-load,
-      // so the old approach fetched + decoded all ~100 thumbnails at once → froze
-      // the main thread. The browser now defers off-screen images. The src is
-      // already a 320px edge image (catalog.ts edgeThumb), not a full original.
-      if (card.thumbnailUrl) {
-        const thumb = doc.createElement('img');
-        Object.assign(thumb.style, THUMB_STYLE);
-        thumb.loading = 'lazy';
-        thumb.decoding = 'async';
-        thumb.alt = ''; // decorative — the cell already carries an aria-label
-        thumb.src = card.thumbnailUrl;
-        cell.appendChild(thumb);
-      } else {
-        // No thumbnail — render the neutral placeholder tile (NOT an <img> with an
-        // empty src, which would show a broken-image icon).
-        const placeholder = doc.createElement('div');
-        Object.assign(placeholder.style, THUMB_STYLE);
-        cell.appendChild(placeholder);
-      }
-
-      const name = doc.createElement('div');
-      Object.assign(name.style, NAME_STYLE);
-      name.textContent = card.modelName;
-      cell.appendChild(name);
-
-      const meta = doc.createElement('div');
-      Object.assign(meta.style, META_STYLE);
-      meta.textContent = [card.baseModel, card.versionName].filter(Boolean).join(' · ');
-      cell.appendChild(meta);
-
-      cell.addEventListener('click', () => selectCard(card));
-      grid.appendChild(cell);
+    sentinel = null; // innerHTML cleared the old node
+    if (cards.length === 0) {
+      disconnectObserver();
+      return;
     }
+    for (const card of cards) {
+      const cell = buildCard(card);
+      if (cell) grid.appendChild(cell);
+    }
+    refreshSentinel();
   };
 
   const setStatus = (text: string) => {
     if (statusEl) statusEl.textContent = text;
   };
 
-  const applyResult = (res: CatalogResult) => {
-    if (res.kind === 'ok') {
-      // The server already filtered by family (the `baseModels` param) — render
-      // the full returned page directly. No client-side narrowing (that starved
-      // the grid to ~2 of a generic page); the server is the real constraint.
-      cards = res.page.cards;
-      setStatus(
-        cards.length > 0
-          ? `${cards.length} ${opts.type === 'LORA' ? 'LoRAs' : 'checkpoints'}`
-          : 'No matches',
-      );
-    } else if (res.kind === 'empty') {
-      cards = [];
-      setStatus('No results');
-    } else {
-      cards = [];
-      setStatus(`Catalog error: ${res.message}`);
+  const noun = () => (opts.type === 'LORA' ? 'LoRAs' : 'checkpoints');
+
+  /** Status reflecting the current accumulated count + whether more is coming. */
+  const settledStatus = () => {
+    if (cards.length === 0) {
+      setStatus('No matches');
+      return;
     }
-    renderCards();
+    // `done` → show the total; otherwise hint that more will load on scroll.
+    setStatus(done ? `${cards.length} ${noun()}` : `${cards.length} ${noun()} — scroll for more`);
   };
 
   let reqId = 0;
-  const load = (query: string, firstLoad: boolean) => {
+
+  /**
+   * Fetch one page. `reset` true = a NEW query (page 1): clear accumulated cards +
+   * cursor, rebuild the grid. `reset` false = the next page: APPEND. The `reqId`
+   * race-guard ensures a stale page from a superseded query can't land.
+   */
+  const fetchPage = (reset: boolean, firstLoad: boolean): Promise<void> => {
+    // An APPEND is guarded against overlap + exhaustion. A RESET (new query) is
+    // NOT blocked by an in-flight append — it must always proceed and bump `reqId`
+    // so the stale append is invalidated (the race guard). Bumping `reqId` here
+    // means the in-flight append's `id !== reqId` check drops its late page.
+    if (!reset && (isLoading || done)) return Promise.resolve();
+    isLoading = true;
     const id = ++reqId;
-    setStatus('Loading…');
-    void fetchCatalog(
+    setStatus(reset ? 'Loading…' : 'Loading more…');
+    const cursor = reset ? undefined : (nextCursor ?? undefined);
+    return fetchCatalog(
       {
         types: opts.type,
         query,
@@ -257,9 +381,9 @@ export function openPickerOverlay(opts: OpenPickerOptions): PickerOverlayHandle 
         // that matches no baseModel name falls back to a generic page inside
         // fetchCatalog (empty-family retry) rather than blanking the picker.
         baseModels: opts.baseModelGroup,
-        // Pull a sizeable page so the dev sees many options (the old default of
-        // 24 + a client narrow left ~2 cards); lazy-loaded thumbnails keep it snappy.
+        // One PAGE per fetch — infinite scroll appends the next page on demand.
         limit: PICKER_PAGE_LIMIT,
+        ...(cursor != null ? { cursor } : {}),
       },
       {
         fetch: opts.fetchImpl,
@@ -268,10 +392,67 @@ export function openPickerOverlay(opts: OpenPickerOptions): PickerOverlayHandle 
         anonSfwOnly: opts.anonSfwOnly,
       },
     ).then((res) => {
+      // Race-guard: a late page from an old query (or a resolved overlay) is dropped
+      // BEFORE it can append. `isLoading` is only cleared for the LIVE request so a
+      // superseded fetch can't unlock a fresh one mid-flight.
       if (id !== reqId || resolved) return;
-      applyResult(res);
+      isLoading = false;
+
+      if (res.kind === 'ok') {
+        const page = res.page.cards;
+        nextCursor = res.page.nextCursor;
+        done = nextCursor === null;
+        if (reset) {
+          // The server already filtered by family — render the full page directly.
+          cards = page;
+          renderCards();
+        } else {
+          cards = cards.concat(page);
+          appendCards(page);
+        }
+        settledStatus();
+      } else if (res.kind === 'empty') {
+        // No (further) results. On a reset that's an empty grid; on an append it
+        // just means we've reached the end.
+        nextCursor = null;
+        done = true;
+        if (reset) {
+          cards = [];
+          renderCards();
+          setStatus('No results');
+        } else {
+          settledStatus();
+          refreshSentinel(); // tears the sentinel/observer down (done === true)
+        }
+      } else {
+        // Error. On a reset, surface it + clear; on an append, keep what we have
+        // and stop paginating (don't wipe already-loaded cards over a transient).
+        if (reset) {
+          cards = [];
+          nextCursor = null;
+          done = true;
+          renderCards();
+        }
+        setStatus(`Catalog error: ${res.message}`);
+      }
+
       if (firstLoad) opts.onReady?.(handle);
     });
+  };
+
+  /** Reset pagination + load page 1 of the active `query` (initial load / new search). */
+  const load = (q: string, firstLoad: boolean): Promise<void> => {
+    query = q;
+    nextCursor = null;
+    done = false;
+    cards = [];
+    return fetchPage(true, firstLoad);
+  };
+
+  /** Load the next page (infinite-scroll trigger). No-op when loading / done. */
+  const loadNext = (): Promise<void> => {
+    if (isLoading || done || resolved) return Promise.resolve();
+    return fetchPage(false, false);
   };
 
   // --- Build the DOM (when a document exists). ---
@@ -451,6 +632,15 @@ const GRID_STYLE: Partial<CSSStyleDeclaration> = {
   gridAutoRows: 'max-content',
   gap: '10px',
   paddingRight: '4px',
+};
+
+const SENTINEL_STYLE: Partial<CSSStyleDeclaration> = {
+  // A zero-height marker spanning the full grid row. The IntersectionObserver
+  // (root = the scroll container, rootMargin prefetch) watches it; when it nears
+  // the viewport the next page loads. It carries no content and never collapses a
+  // row (height 0, grid-column: 1 / -1 so it doesn't occupy a card slot).
+  gridColumn: '1 / -1',
+  height: '1px',
 };
 
 const CARD_STYLE: Partial<CSSStyleDeclaration> = {
