@@ -122,6 +122,8 @@ export function buildCatalogUrl(
 
 interface RawImage {
   url?: string;
+  /** API media kind — 'image' | 'video'. A video cover must NEVER seed an <img>. */
+  type?: string;
 }
 interface RawModelVersion {
   id?: number;
@@ -213,10 +215,35 @@ function stripTrailingSlashes(s: string): string {
   return s.slice(0, end);
 }
 
+/** Trailing media extensions we treat as VIDEO (never a valid <img src>). */
+const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov'] as const;
+
+/**
+ * True iff `im` is VIDEO media — by explicit `type: 'video'` OR a video file
+ * extension on its url. A video cover served into an `<img>` downloads the FULL
+ * file (verified: a model-version video cover returns HTTP 200 video/mp4 ~73 MB)
+ * and renders nothing, AND the edge transcode-to-jpeg trick does NOT defuse it
+ * (still serves the mp4) — so a video must never be selected as the thumbnail.
+ *
+ * Extension test is a case-insensitive `endsWith` (no backtracking/ReDoS regex,
+ * no host-style `.includes`). These catalog urls have no query string — they end
+ * `/<id>.<ext>` — but we strip at the first `?` defensively before testing.
+ */
+function isVideoMedia(im: RawImage): boolean {
+  if (im?.type === 'video') return true;
+  const url = im?.url;
+  if (typeof url !== 'string' || url.length === 0) return false;
+  const q = url.indexOf('?');
+  const path = (q >= 0 ? url.slice(0, q) : url).toLowerCase();
+  return VIDEO_EXTENSIONS.some((ext) => path.endsWith(ext));
+}
+
 /**
  * Map ONE raw model → a card using its FIRST modelVersion (REST default order
- * puts the latest/primary first) and that version's first image. Returns `null`
- * for an unusable row (no version id). Tolerant of any missing field.
+ * puts the latest/primary first) and that version's first NON-VIDEO image.
+ * Returns `null` for an unusable row (no version id). Tolerant of any missing
+ * field. A version with only video media → `thumbnailUrl: null` (the overlay
+ * renders the neutral placeholder tile; never a broken/heavy mp4 in an <img>).
  */
 export function modelToCard(
   raw: RawModel | null | undefined,
@@ -227,7 +254,9 @@ export function modelToCard(
   const versionId = version?.id;
   if (typeof versionId !== 'number' || !Number.isFinite(versionId)) return null;
   const modelId = typeof raw.id === 'number' ? raw.id : 0;
-  const firstImage = version?.images?.find((im) => typeof im?.url === 'string' && im.url);
+  const cover = version?.images?.find(
+    (im) => typeof im?.url === 'string' && im.url.length > 0 && !isVideoMedia(im),
+  );
   return {
     modelId,
     versionId,
@@ -235,7 +264,7 @@ export function modelToCard(
     versionName: (version?.name ?? '').trim(),
     baseModel: (version?.baseModel ?? '').trim(),
     modelType: (raw.type ?? '').trim(),
-    thumbnailUrl: firstImage?.url ? edgeThumb(firstImage.url, imageWidth) : null,
+    thumbnailUrl: cover?.url ? edgeThumb(cover.url, imageWidth) : null,
     nsfw: raw.nsfw === true,
   };
 }

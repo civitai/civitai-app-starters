@@ -166,6 +166,71 @@ describe('modelToCard / responseToPage', () => {
     expect(card!.thumbnailUrl).toBeNull();
   });
 
+  it('skips a video cover (type:video) and selects the first IMAGE media', () => {
+    const card = modelToCard({
+      id: 7,
+      name: 'Has Video Cover',
+      type: 'Checkpoint',
+      modelVersions: [
+        {
+          id: 700,
+          name: 'v1',
+          baseModel: 'SDXL 1.0',
+          images: [
+            { type: 'video', url: 'https://image.civitai.com/a/original=true/clip.mp4' },
+            { type: 'image', url: 'https://image.civitai.com/a/original=true/still.jpeg' },
+          ],
+        },
+      ],
+    });
+    expect(card!.thumbnailUrl).toBe(
+      edgeThumb('https://image.civitai.com/a/original=true/still.jpeg'),
+    );
+    // The video url must NOT have leaked into the thumbnail.
+    expect(card!.thumbnailUrl).not.toContain('.mp4');
+  });
+
+  it('a version whose ONLY media is a video → thumbnailUrl is null (placeholder)', () => {
+    const card = modelToCard({
+      id: 8,
+      name: 'Video Only',
+      type: 'Checkpoint',
+      modelVersions: [
+        {
+          id: 800,
+          name: 'v1',
+          baseModel: 'SDXL 1.0',
+          images: [{ type: 'video', url: 'https://image.civitai.com/a/original=true/only.mp4' }],
+        },
+      ],
+    });
+    expect(card!.versionId).toBe(800);
+    expect(card!.thumbnailUrl).toBeNull();
+  });
+
+  it('treats a .mp4 url as video even when type is ABSENT (belt-and-suspenders)', () => {
+    const card = modelToCard({
+      id: 9,
+      name: 'Typeless Video',
+      type: 'Checkpoint',
+      modelVersions: [
+        {
+          id: 900,
+          name: 'v1',
+          baseModel: 'SDXL 1.0',
+          images: [
+            { url: 'https://image.civitai.com/a/original=true/notype.mp4' },
+            { url: 'https://image.civitai.com/a/original=true/good.jpeg' },
+          ],
+        },
+      ],
+    });
+    expect(card!.thumbnailUrl).toBe(
+      edgeThumb('https://image.civitai.com/a/original=true/good.jpeg'),
+    );
+    expect(card!.thumbnailUrl).not.toContain('.mp4');
+  });
+
   it('responseToPage maps items + nextCursor, skipping unusable rows', () => {
     const page = responseToPage(RAW_PAGE);
     expect(page.cards.map((c) => c.versionId)).toEqual([9001, 9002]);
