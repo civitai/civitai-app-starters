@@ -1,5 +1,11 @@
 # @civitai/blocks-react
 
+## 0.14.3
+
+### Patch Changes
+
+- 67c8c2e: dev:live picker grid no longer collapses its rows (align-content:start + grid-auto-rows:max-content) — fixes broken cards, missing thumbnails, and lag
+
 ## 0.14.2
 
 ### Patch Changes
