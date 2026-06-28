@@ -123,6 +123,54 @@ const PICKER_PAGE_LIMIT = 24;
  */
 const PICKER_SCROLL_ROOT_MARGIN = '400px';
 
+/** SVG namespace for the inline play icon (createElementNS — not HTML createElement). */
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** Muted grey for the video-tile icon — matches the card meta colour. */
+const VIDEO_ICON_COLOR = '#8b919b';
+
+/**
+ * Build the labeled VIDEO tile for a video-only card: a square neutral tile
+ * (same {@link THUMB_STYLE} dimensions + `#1c2128` bg as the placeholder, so it
+ * doesn't collapse and matches the grid) with a centered inline-SVG play icon
+ * (a filmstrip rectangle + a play triangle, zero-dep, muted grey, aria-hidden).
+ * Carries `data-picker-video-tile` as a stable test/clarity hook. Pure DOM —
+ * happy-dom-testable, no <video>, no network.
+ */
+function buildVideoTile(doc: Document): HTMLElement {
+  const tile = doc.createElement('div');
+  tile.setAttribute('data-picker-video-tile', '');
+  Object.assign(tile.style, THUMB_STYLE);
+  Object.assign(tile.style, VIDEO_TILE_STYLE);
+
+  const svg = doc.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('width', '30');
+  svg.setAttribute('height', '30');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('aria-hidden', 'true');
+
+  // Filmstrip / video frame (rounded rect outline).
+  const frame = doc.createElementNS(SVG_NS, 'rect');
+  frame.setAttribute('x', '2');
+  frame.setAttribute('y', '4');
+  frame.setAttribute('width', '20');
+  frame.setAttribute('height', '16');
+  frame.setAttribute('rx', '3');
+  frame.setAttribute('stroke', VIDEO_ICON_COLOR);
+  frame.setAttribute('stroke-width', '1.6');
+  svg.appendChild(frame);
+
+  // Centered play triangle (filled).
+  const play = doc.createElementNS(SVG_NS, 'path');
+  play.setAttribute('d', 'M10 9.2l5 2.8-5 2.8z');
+  play.setAttribute('fill', VIDEO_ICON_COLOR);
+  svg.appendChild(play);
+
+  tile.appendChild(svg);
+  return tile;
+}
+
 /**
  * Open the in-harness picker overlay. Mounts a modal into the document, loads
  * the catalog (filtered to `type` + family hint), and resolves via `onResolve`
@@ -243,9 +291,18 @@ export function openPickerOverlay(opts: OpenPickerOptions): PickerOverlayHandle 
       thumb.alt = ''; // decorative — the cell already carries an aria-label
       thumb.src = card.thumbnailUrl;
       cell.appendChild(thumb);
+    } else if (card.isVideoOnly) {
+      // Video-only model: civitai's SFW media for this version is all video, so
+      // there's NO image to thumbnail (a video cover in an <img> downloads the
+      // full mp4 and renders nothing — see catalog.ts isVideoMedia). Render a
+      // labeled VIDEO tile — the same square neutral tile but with a centered
+      // play icon — so the card reads as an intentional video, not a broken/blank
+      // cell. We deliberately do NOT mount a <video> (no cheap static poster from
+      // the CDN; <video> is heavy/codec-dependent).
+      cell.appendChild(buildVideoTile(doc));
     } else {
-      // No thumbnail — render the neutral placeholder tile (NOT an <img> with an
-      // empty src, which would show a broken-image icon).
+      // No media at all — render the neutral placeholder tile (NOT an <img> with
+      // an empty src, which would show a broken-image icon).
       const placeholder = doc.createElement('div');
       Object.assign(placeholder.style, THUMB_STYLE);
       cell.appendChild(placeholder);
@@ -663,6 +720,14 @@ const THUMB_STYLE: Partial<CSSStyleDeclaration> = {
   objectFit: 'cover',
   // Neutral tile shown before/while the lazy <img> loads (and for no-thumb cells).
   background: '#1c2128',
+};
+
+const VIDEO_TILE_STYLE: Partial<CSSStyleDeclaration> = {
+  // Centre the play icon within the square neutral tile (flex). Layered ON TOP of
+  // THUMB_STYLE (same square dims + #1c2128 bg) so the tile matches the grid.
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
 };
 
 const NAME_STYLE: Partial<CSSStyleDeclaration> = {
