@@ -1,5 +1,11 @@
 # @civitai/blocks-react
 
+## 0.15.2
+
+### Patch Changes
+
+- 2b19d78: dev:live picker shows a labeled video tile for video-only models instead of a blank placeholder
+
 ## 0.15.1
 
 ### Patch Changes
