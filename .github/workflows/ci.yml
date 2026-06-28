@@ -56,6 +56,15 @@ jobs:
       - run: pnpm --filter @civitai/blocks-react test
       - run: pnpm --filter @civitai/blocks-react build
 
+      # Real-browser (vitest browser mode) perf/layout tests for the dev:live
+      # picker overlay — happy-dom can't lay out, decode images, or run
+      # IntersectionObserver/PerformanceObserver, so these run in headless
+      # Chromium. Install Playwright's bundled Chromium + its OS deps first.
+      # (CI uses the bundled binary; NixOS local runs set
+      # PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=$(command -v chromium) instead.)
+      - run: pnpm --filter @civitai/blocks-react exec playwright install --with-deps chromium
+      - run: pnpm --filter @civitai/blocks-react test:browser
+
   blocks-cli:
     name: blocks-cli (typecheck + test + build)
     runs-on: ubuntu-latest
