@@ -1,5 +1,11 @@
 # @civitai/blocks-react
 
+## 0.15.1
+
+### Patch Changes
+
+- 76a8adb: docs: dev:live block token lifetime is now ~4h (was 15min)
+
 ## 0.15.0
 
 ### Minor Changes
