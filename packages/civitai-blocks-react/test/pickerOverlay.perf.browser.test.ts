@@ -31,38 +31,34 @@ import {
  *    PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=$(command -v chromium); viewport 800×600) ──
  *   OPEN:   cards 24 · fetchCalls 1 · minCardHeight 220.5px ·
  *           gridScrollHeight 1384 / clientHeight 404 (scrolls) ·
- *           imgsInDom 24 · imgsLoadedOnOpen 24 · imgResourceEntries 0 ·
+ *           imgsInDom 24 · imgsLoadedOnOpen 12 · offScreenTotal 12 ·
+ *           offScreenLoaded 0 · imgResourceEntries 0 ·
  *           longTaskCount 0 · longTaskMs 0
  *   SCROLL: cardsAfterScroll 48 · fetchCallsAfterScroll 2 ·
  *           minAppendedHeight 220.5px · scrollLongTaskCount 0 · scrollLongTaskMs 0
  *
  * Thresholds are deliberately lenient around this so a real regression
- * (storm-load, row-collapse, decode blowup) trips the assertion while normal
- * jitter does not. See the per-metric comments.
+ * (storm-load, row-collapse, lost deferral, decode blowup) trips the assertion
+ * while normal jitter does not. See the per-metric comments.
  *
- * ── WHAT THE BASELINE PINS (the "why is it choppy" answer) ──
- *   ✓ NO page-load storm on open (fetchCalls 1) — the sentinel/observer behave;
- *     the grid-collapse-→-load-everything freeze is NOT present.
+ * ── WHAT THE BASELINE PINS ──
+ *   ✓ NO page-load storm on open (fetchCalls 1) — the sentinel/observer behave.
  *   ✓ Cards lay out non-collapsed (220px) and the grid scrolls — the
  *     row-collapse regression is fixed and now guarded.
  *   ✓ Real IntersectionObserver infinite-scroll appends a page on scroll (24→48).
  *   ✓ longTaskMs 0 — with the CDN decode mocked away, the picker's
- *     render/layout/observer cost is trivial. So the open/scroll choppiness is
- *     NOT in the overlay's own JS/layout — it is dominated by IMAGE work.
- *   ⚠ imgsLoadedOnOpen 24 (= ALL of them): every thumbnail loads on open even
- *     though only the top ~2 rows are visible in the 404px grid. With REAL 320px
- *     CDN thumbnails that is 24 concurrent fetch+decodes on open → the freeze.
- *     i.e. `loading="lazy"` is NOT deferring the off-screen thumbnails here.
- *     CAVEAT: these hermetic thumbnails are Blob object URLs, which are
- *     synchronously available, so this run cannot fully distinguish "lazy is
- *     ineffective inside the overflow:auto modal (Chromium keys lazy off the
- *     DOCUMENT viewport, and the whole modal is in-viewport)" from "blob URLs
- *     bypass lazy". imgResourceEntries 0 confirms blob loads don't surface in
- *     resource-timing. CONFIRMING which it is — and whether a real fix is needed
- *     (IntersectionObserver-gated <img src> swap, or capping decode concurrency)
- *     — needs a served HTTP image fixture; tracked as the follow-up, NOT a
- *     speculative pickerOverlay.ts edit (this harness exists so fixes are
- *     MEASURED, not eyeballed).
+ *     render/layout/observer cost is trivial.
+ *   ✓ OFF-SCREEN THUMBNAILS ARE DEFERRED (offScreenLoaded 0 / 12). This guards
+ *     the IntersectionObserver(root:grid)-gated thumbnail load in
+ *     pickerOverlay.ts (`observeThumb`). BEFORE that fix, native `loading="lazy"`
+ *     did NOT defer inside the overflow:auto grid (Chromium keys lazy off the
+ *     DOCUMENT viewport, and the whole modal is in-viewport), so all 24
+ *     thumbnails loaded on open (confirmed 16/16 off-screen with a real
+ *     HTTP-served JPEG during the investigation) → on real 320px CDN images that
+ *     is the open-time main-thread freeze. With the fix, only the visible (+150px
+ *     prefetch) thumbnails get a `src`. A regression back to native-lazy-only
+ *     would reload all off-screen thumbnails → offScreenLoaded ≈ offScreenTotal
+ *     and this test fails.
  */
 
 const PAGE_SIZE = 24; // mirrors PICKER_PAGE_LIMIT
@@ -115,9 +111,32 @@ describe('pickerOverlay perf (real Chromium)', () => {
     expect(fetchCalls.length).toBeLessThan(TOTAL_PAGES);
     expect(fetchCalls.length).toBeLessThanOrEqual(2); // ideally exactly 1
 
-    // ── Lazy-load: off-screen thumbnails are deferred ─────────────────────
+    // ── Lazy-load: OFF-SCREEN thumbnails are deferred (STRONG) ────────────
+    // The regression this pins: native loading="lazy" does NOT defer inside the
+    // overflow:auto grid (it measures against the document viewport), so every
+    // thumbnail loaded on open (16/16 off-screen) → on real CDN images that's the
+    // open-time freeze. The IntersectionObserver(root:grid)-gated src swap fixes
+    // it: only on-screen (+150px prefetch) thumbs load. We classify each card by
+    // whether it intersects the grid's client rect and assert the off-screen ones
+    // are overwhelmingly deferred.
     const imgs = imgEls();
     const loadedOnOpen = imgs.filter((im) => im.complete && im.naturalWidth > 0).length;
+    const gridRect = grid.getBoundingClientRect();
+    let offScreenTotal = 0;
+    let offScreenLoaded = 0;
+    for (const card of cards) {
+      const r = card.getBoundingClientRect();
+      const onScreen = r.top < gridRect.bottom + 150 && r.bottom > gridRect.top - 150;
+      if (onScreen) continue;
+      const img = card.querySelector('img');
+      offScreenTotal++;
+      if (img && img.complete && img.naturalWidth > 0) offScreenLoaded++;
+    }
+    // There MUST be off-screen cards (else the test isn't exercising deferral).
+    expect(offScreenTotal).toBeGreaterThan(4);
+    // …and at most a couple of them may have loaded (prefetch slop). A regression
+    // back to native-lazy-only would load ALL of them → offScreenLoaded≈offScreenTotal.
+    expect(offScreenLoaded).toBeLessThanOrEqual(2);
     const imgResourceCount = performance
       .getEntriesByType('resource')
       .filter((e) => (e as PerformanceResourceTiming).initiatorType === 'img').length;
@@ -143,6 +162,8 @@ describe('pickerOverlay perf (real Chromium)', () => {
           gridClientHeight: grid.clientHeight,
           imgsInDom: imgs.length,
           imgsLoadedOnOpen: loadedOnOpen,
+          offScreenTotal,
+          offScreenLoaded,
           imgResourceEntries: imgResourceCount,
           longTaskCount: longTasks.length,
           longTaskMs: round(longTaskMs),
