@@ -164,6 +164,28 @@ describe('modelToCard / responseToPage', () => {
     const card = modelToCard({ id: 5, modelVersions: [{ id: 77 }] });
     expect(card!.modelName).toContain('Model #5');
     expect(card!.thumbnailUrl).toBeNull();
+    // No media at all → neutral placeholder, NOT a video tile.
+    expect(card!.isVideoOnly).toBe(false);
+  });
+
+  it('an image-only version → isVideoOnly:false', () => {
+    const card = modelToCard({
+      id: 6,
+      name: 'Image Only',
+      type: 'Checkpoint',
+      modelVersions: [
+        {
+          id: 600,
+          name: 'v1',
+          baseModel: 'SDXL 1.0',
+          images: [{ type: 'image', url: 'https://image.civitai.com/a/original=true/pic.jpeg' }],
+        },
+      ],
+    });
+    expect(card!.thumbnailUrl).toBe(
+      edgeThumb('https://image.civitai.com/a/original=true/pic.jpeg'),
+    );
+    expect(card!.isVideoOnly).toBe(false);
   });
 
   it('skips a video cover (type:video) and selects the first IMAGE media', () => {
@@ -188,6 +210,8 @@ describe('modelToCard / responseToPage', () => {
     );
     // The video url must NOT have leaked into the thumbnail.
     expect(card!.thumbnailUrl).not.toContain('.mp4');
+    // A usable image alternate WAS found → not a video-only card.
+    expect(card!.isVideoOnly).toBe(false);
   });
 
   it('a version whose ONLY media is a video → thumbnailUrl is null (placeholder)', () => {
@@ -206,6 +230,8 @@ describe('modelToCard / responseToPage', () => {
     });
     expect(card!.versionId).toBe(800);
     expect(card!.thumbnailUrl).toBeNull();
+    // No image alternate but the version HAD a video → labeled video tile.
+    expect(card!.isVideoOnly).toBe(true);
   });
 
   it('treats a .mp4 url as video even when type is ABSENT (belt-and-suspenders)', () => {
@@ -257,6 +283,7 @@ describe('cardToCheckpoint / cardToResource', () => {
     baseModel: 'SDXL 1.0',
     modelType: 'Checkpoint',
     thumbnailUrl: null,
+    isVideoOnly: false,
     nsfw: false,
   };
 

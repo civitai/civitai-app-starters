@@ -68,6 +68,34 @@ function familyPageWithImages(n: number, opts: { firstImageless?: boolean } = {}
   return { items, metadata: { nextCursor: null } };
 }
 
+/**
+ * N Checkpoint models whose FIRST card is video-only (its only media is a video
+ * → catalog derives `thumbnailUrl: null` + `isVideoOnly: true`), the rest images.
+ * Drives the labeled video-tile render path.
+ */
+function familyPageVideoFirst(n: number) {
+  const items = Array.from({ length: n }, (_, i) => {
+    const videoOnly = i === 0;
+    return {
+      id: 1000 + i,
+      name: `Model ${i}`,
+      type: 'Checkpoint',
+      nsfw: false,
+      modelVersions: [
+        {
+          id: 9000 + i,
+          name: 'v1',
+          baseModel: 'SDXL 1.0',
+          images: videoOnly
+            ? [{ type: 'video', url: `https://image.civitai.com/clip-${i}.mp4` }]
+            : [{ url: `https://image.civitai.com/img-${i}.jpeg`, nsfwLevel: 1 }],
+        },
+      ],
+    };
+  });
+  return { items, metadata: { nextCursor: null } };
+}
+
 /** Decode a recorded request URL's query params. */
 const params = (url: unknown) => new URL(String(url), BASE).searchParams;
 
@@ -367,6 +395,112 @@ describe('openPickerOverlay — lazy <img> thumbnails (perf fix)', () => {
     cells
       .filter((c) => Number(c.getAttribute('data-picker-card')) !== 9002)
       .forEach((c) => expect(c.style.outline).toBe(''));
+
+    handle.dismiss();
+  });
+});
+
+/**
+ * Labeled video-tile coverage: a video-only card (catalog derives
+ * `thumbnailUrl: null` + `isVideoOnly: true`) renders a `[data-picker-video-tile]`
+ * div containing a play `<svg>` — an intentional video marker, NOT a blank
+ * placeholder and NOT an <img>. Image cards still render the lazy <img>; a
+ * genuinely-imageless card (no video) still renders the neutral placeholder.
+ */
+describe('openPickerOverlay — labeled video tile (video-only cards)', () => {
+  afterEach(() => {
+    document
+      .querySelectorAll('[data-live-picker-overlay]')
+      .forEach((el) => el.parentNode?.removeChild(el));
+  });
+
+  it('renders the video tile (svg, no <img>) for a video-only card and the lazy <img> for image cards', async () => {
+    const N = 4;
+    const fetchImpl = vi.fn(async () =>
+      res(200, familyPageVideoFirst(N)),
+    ) as unknown as typeof fetch;
+
+    const handle = await new Promise<PickerOverlayHandle>((resolve) => {
+      openPickerOverlay({
+        type: 'Checkpoint',
+        baseUrl: BASE,
+        token: 'TOK',
+        fetchImpl,
+        baseModelGroup: 'SDXL 1.0',
+        document,
+        onReady: (h) => resolve(h),
+        onResolve: () => {},
+      });
+    });
+
+    const cells = renderedCells();
+    expect(cells).toHaveLength(N);
+
+    // The first card is video-only.
+    const videoCard = handle.cards.find((c) => c.isVideoOnly)!;
+    expect(videoCard.versionId).toBe(9000);
+    expect(videoCard.thumbnailUrl).toBeNull();
+
+    const videoCell = cells.find(
+      (c) => Number(c.getAttribute('data-picker-card')) === videoCard.versionId,
+    )!;
+    const tile = videoCell.querySelector('[data-picker-video-tile]');
+    expect(tile).not.toBeNull();
+    // It carries a centered inline <svg> play icon, and is NOT an <img>.
+    expect(tile!.querySelector('svg')).not.toBeNull();
+    expect(videoCell.querySelector('img')).toBeNull();
+
+    // The image cards still render the lazy <img> (regression) + no video tile.
+    handle.cards
+      .filter((c) => !c.isVideoOnly)
+      .forEach((card) => {
+        const cell = cells.find(
+          (c) => Number(c.getAttribute('data-picker-card')) === card.versionId,
+        )!;
+        const img = cell.querySelector('img');
+        expect(img).not.toBeNull();
+        expect(img!.getAttribute('src')).toBe(card.thumbnailUrl);
+        expect(cell.querySelector('[data-picker-video-tile]')).toBeNull();
+      });
+
+    // No <img> with an empty/missing src anywhere (no broken-image icon).
+    document
+      .querySelectorAll<HTMLImageElement>('[data-live-picker-overlay] img')
+      .forEach((img) => expect(img.getAttribute('src')).toBeTruthy());
+
+    handle.dismiss();
+  });
+
+  it('renders the neutral placeholder (no video tile, no svg) for a card with NO media', async () => {
+    const fetchImpl = vi.fn(async () =>
+      res(200, familyPageWithImages(4, { firstImageless: true })),
+    ) as unknown as typeof fetch;
+
+    const handle = await new Promise<PickerOverlayHandle>((resolve) => {
+      openPickerOverlay({
+        type: 'Checkpoint',
+        baseUrl: BASE,
+        token: 'TOK',
+        fetchImpl,
+        baseModelGroup: 'SDXL 1.0',
+        document,
+        onReady: (h) => resolve(h),
+        onResolve: () => {},
+      });
+    });
+
+    const cells = renderedCells();
+    // The imageless card is NOT video-only → neutral placeholder, no video tile.
+    const imageless = handle.cards.find((c) => c.thumbnailUrl == null)!;
+    expect(imageless.isVideoOnly).toBe(false);
+    const cell = cells.find(
+      (c) => Number(c.getAttribute('data-picker-card')) === imageless.versionId,
+    )!;
+    expect(cell.querySelector('[data-picker-video-tile]')).toBeNull();
+    expect(cell.querySelector('svg')).toBeNull();
+    expect(cell.querySelector('img')).toBeNull();
+    // …but it still has a (placeholder) child tile so the cell doesn't collapse.
+    expect(cell.querySelector('div')).not.toBeNull();
 
     handle.dismiss();
   });

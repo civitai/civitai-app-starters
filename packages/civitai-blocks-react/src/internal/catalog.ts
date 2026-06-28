@@ -156,6 +156,15 @@ export interface CatalogCard {
   baseModel: string;
   modelType: string;
   thumbnailUrl: string | null;
+  /**
+   * True iff NO usable image alternate was found for the thumbnail but the
+   * version DID carry a video. Such cards render a labeled VIDEO tile (a play/film
+   * icon) instead of a blank neutral placeholder — so a video-only model reads as
+   * intentional, not broken. A version with genuinely no media stays `false` (→
+   * neutral placeholder). Mutually informs the overlay's no-thumbnail branch only;
+   * `thumbnailUrl` is always `null` when this is `true`.
+   */
+  isVideoOnly: boolean;
   nsfw: boolean;
 }
 
@@ -242,8 +251,10 @@ function isVideoMedia(im: RawImage): boolean {
  * Map ONE raw model → a card using its FIRST modelVersion (REST default order
  * puts the latest/primary first) and that version's first NON-VIDEO image.
  * Returns `null` for an unusable row (no version id). Tolerant of any missing
- * field. A version with only video media → `thumbnailUrl: null` (the overlay
- * renders the neutral placeholder tile; never a broken/heavy mp4 in an <img>).
+ * field. A version with only video media → `thumbnailUrl: null` + `isVideoOnly:
+ * true` (the overlay renders a labeled VIDEO tile, never a broken/heavy mp4 in an
+ * <img>). A version with NO media → `thumbnailUrl: null` + `isVideoOnly: false`
+ * (the neutral placeholder tile).
  */
 export function modelToCard(
   raw: RawModel | null | undefined,
@@ -254,9 +265,16 @@ export function modelToCard(
   const versionId = version?.id;
   if (typeof versionId !== 'number' || !Number.isFinite(versionId)) return null;
   const modelId = typeof raw.id === 'number' ? raw.id : 0;
-  const cover = version?.images?.find(
+  const images = version?.images;
+  const cover = images?.find(
     (im) => typeof im?.url === 'string' && im.url.length > 0 && !isVideoMedia(im),
   );
+  // No usable image alternate, but the version DID carry a (usable-url) video →
+  // the overlay renders a labeled video tile instead of a blank placeholder.
+  const isVideoOnly =
+    !cover &&
+    Array.isArray(images) &&
+    images.some((im) => typeof im?.url === 'string' && im.url.length > 0 && isVideoMedia(im));
   return {
     modelId,
     versionId,
@@ -265,6 +283,7 @@ export function modelToCard(
     baseModel: (version?.baseModel ?? '').trim(),
     modelType: (raw.type ?? '').trim(),
     thumbnailUrl: cover?.url ? edgeThumb(cover.url, imageWidth) : null,
+    isVideoOnly,
     nsfw: raw.nsfw === true,
   };
 }
