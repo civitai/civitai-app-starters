@@ -92,7 +92,7 @@ export interface LiveHostOptions {
   /**
    * The PASTED dev block token — a short-lived RS256 JWT minted by
    * `POST /api/v1/blocks/dev-token`. v1 echoes this token on `REQUEST_TOKEN`
-   * (no auto-refresh); when it expires (~15min) the dev re-mints + restarts.
+   * (no auto-refresh); when it expires (~4h) the dev re-mints + restarts.
    * VITE_-bundled, so it must be SHORT-LIVED — never an API key (scope §5.1).
    */
   blockToken: string;
