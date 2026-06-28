@@ -123,6 +123,15 @@ const PICKER_PAGE_LIMIT = 24;
  */
 const PICKER_SCROLL_ROOT_MARGIN = '400px';
 
+/**
+ * Prefetch margin for the THUMBNAIL IntersectionObserver: a thumbnail's `<img>`
+ * gets its `src` set once the card is within this distance of the grid's
+ * viewport. Smaller than the page-prefetch margin — we only want to warm the row
+ * or two just below the fold, NOT every off-screen thumbnail. See `observeThumb`
+ * for WHY native `loading="lazy"` alone is insufficient here.
+ */
+const PICKER_THUMB_ROOT_MARGIN = '150px';
+
 /** SVG namespace for the inline play icon (createElementNS — not HTML createElement). */
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -199,6 +208,18 @@ export function openPickerOverlay(opts: OpenPickerOptions): PickerOverlayHandle 
   let searchEl: HTMLInputElement | null = null;
   let sentinel: HTMLElement | null = null;
   let observer: IntersectionObserver | null = null;
+  // Separate observer that gates each thumbnail's `<img src>` (see observeThumb).
+  let thumbObserver: IntersectionObserver | null = null;
+
+  /**
+   * Resolve the `IntersectionObserver` constructor from the grid's own window
+   * (the live host passes a real document; happy-dom exposes a non-firing stub),
+   * falling back to the global. Shared by the scroll-sentinel + thumbnail observers.
+   */
+  const resolveIO = (): typeof IntersectionObserver | undefined =>
+    (doc?.defaultView as { IntersectionObserver?: typeof IntersectionObserver } | null)
+      ?.IntersectionObserver ??
+    (globalThis as { IntersectionObserver?: typeof IntersectionObserver }).IntersectionObserver;
 
   /** Disconnect + drop the scroll observer (idempotent). */
   const disconnectObserver = () => {
@@ -209,8 +230,65 @@ export function openPickerOverlay(opts: OpenPickerOptions): PickerOverlayHandle 
     sentinel = null;
   };
 
+  /** Disconnect + drop the thumbnail observer (idempotent). */
+  const disconnectThumbObserver = () => {
+    if (thumbObserver) {
+      thumbObserver.disconnect();
+      thumbObserver = null;
+    }
+  };
+
+  /**
+   * Defer a thumbnail's network load until its card nears the grid's viewport.
+   *
+   * WHY NOT just `loading="lazy"`: the browser's native lazy-loading measures
+   * "near viewport" against the DOCUMENT viewport, NOT an inner `overflow:auto`
+   * scroll container. The picker grid is a scroll container that sits entirely
+   * inside the document viewport, so EVERY card — including ones scrolled far
+   * below the grid's visible area — counts as "near viewport" and all ~24
+   * thumbnails fetch + decode on open (verified in a real-Chromium perf test:
+   * 16/16 off-screen thumbnails loaded on open). With real 320px CDN images that
+   * is the open-time main-thread freeze. So we gate `src` ourselves with an
+   * IntersectionObserver scoped to `root: grid` — the same mechanism the scroll
+   * sentinel already uses — and only set `src` when the card actually nears the
+   * grid's viewport.
+   *
+   * The URL is parked on `data-src` until then. If no IntersectionObserver is
+   * available (or there's no grid root), we load immediately so the image still
+   * appears — the deferral is an optimization, never a correctness gate.
+   */
+  const observeThumb = (thumb: HTMLImageElement) => {
+    const pending = thumb.dataset.src;
+    if (!pending) return;
+    const IO = resolveIO();
+    if (typeof IO !== 'function' || !grid) {
+      thumb.src = pending;
+      delete thumb.dataset.src;
+      return;
+    }
+    if (!thumbObserver) {
+      thumbObserver = new IO(
+        (entries) => {
+          for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            const img = entry.target as HTMLImageElement;
+            const url = img.dataset.src;
+            if (url) {
+              img.src = url;
+              delete img.dataset.src;
+            }
+            thumbObserver?.unobserve(img);
+          }
+        },
+        { root: grid, rootMargin: PICKER_THUMB_ROOT_MARGIN },
+      );
+    }
+    thumbObserver.observe(thumb);
+  };
+
   const teardown = () => {
     disconnectObserver();
+    disconnectThumbObserver();
     if (root && root.parentNode) root.parentNode.removeChild(root);
     root = null;
     grid = null;
@@ -277,20 +355,24 @@ export function openPickerOverlay(opts: OpenPickerOptions): PickerOverlayHandle 
       cell.style.outline = '2px solid #5ec8a0';
     }
 
-    // Lazy <img> thumbnail (mirrors civitai's native ResourceSelectCard, which
-    // uses <EdgeMedia loading="lazy" />). A CSS background-image CANNOT lazy-load,
-    // so the old approach fetched + decoded all ~100 thumbnails at once → froze
-    // the main thread. The browser now defers off-screen images. The src is
-    // already a 320px edge image (catalog.ts edgeThumb), not a full original.
-    // Pagination + lazy compose: fewer cards in the DOM AND off-screen images deferred.
+    // Deferred <img> thumbnail. The URL is parked on `data-src` and promoted to
+    // `src` by `observeThumb` only when the card nears the grid's viewport —
+    // native `loading="lazy"` does NOT defer here because it measures against the
+    // document viewport, not this inner overflow:auto scroll container (so it
+    // loaded all ~24 thumbnails on open and froze the main thread on real CDN
+    // images). `loading="lazy"`/`decoding="async"` stay as belt-and-suspenders
+    // for once `src` is set. The url is already a 320px edge image (catalog.ts
+    // edgeThumb), not a full original. The THUMB aspect-ratio reserves the cell's
+    // height before load so the grid doesn't reflow when the image arrives.
     if (card.thumbnailUrl) {
       const thumb = doc.createElement('img');
       Object.assign(thumb.style, THUMB_STYLE);
       thumb.loading = 'lazy';
       thumb.decoding = 'async';
       thumb.alt = ''; // decorative — the cell already carries an aria-label
-      thumb.src = card.thumbnailUrl;
+      thumb.dataset.src = card.thumbnailUrl;
       cell.appendChild(thumb);
+      observeThumb(thumb);
     } else if (card.isVideoOnly) {
       // Video-only model: civitai's SFW media for this version is all video, so
       // there's NO image to thumbnail (a video cover in an <img> downloads the
@@ -386,6 +468,9 @@ export function openPickerOverlay(opts: OpenPickerOptions): PickerOverlayHandle 
     if (!grid || !doc) return;
     grid.innerHTML = '';
     sentinel = null; // innerHTML cleared the old node
+    // The cleared thumbnails are gone — drop their observer so the rebuilt page
+    // starts a fresh one (a new search must not keep observing detached <img>s).
+    disconnectThumbObserver();
     if (cards.length === 0) {
       disconnectObserver();
       return;

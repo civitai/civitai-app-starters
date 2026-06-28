@@ -248,7 +248,7 @@ describe('openPickerOverlay — lazy <img> thumbnails (perf fix)', () => {
       .forEach((el) => el.parentNode?.removeChild(el));
   });
 
-  it('renders each thumbnail as a lazy, async <img> whose src is the card thumbnailUrl', async () => {
+  it('renders each thumbnail as a lazy, async <img> whose URL is wired (data-src until visible)', async () => {
     const N = 6;
     const fetchImpl = vi.fn(async () =>
       res(200, familyPageWithImages(N)),
@@ -281,8 +281,13 @@ describe('openPickerOverlay — lazy <img> thumbnails (perf fix)', () => {
       // A REAL lazy <img>, not a CSS background-image (which cannot lazy-load).
       expect(img!.loading).toBe('lazy');
       expect(img!.decoding).toBe('async');
-      // src is the card's (already-320px edge) thumbnailUrl — not a full original.
-      expect(img!.getAttribute('src')).toBe(card.thumbnailUrl);
+      // The (already-320px edge) thumbnailUrl is WIRED to the img — but parked on
+      // `data-src` and only promoted to `src` once the card nears the grid's
+      // viewport (the IntersectionObserver-gated lazy load; native loading="lazy"
+      // doesn't defer inside the inner scroll container). happy-dom never lays out
+      // → the IO never fires → src stays empty + the url stays on data-src here.
+      // (The no-layout fallback path instead sets src directly, so accept either.)
+      expect(img!.dataset.src ?? img!.getAttribute('src')).toBe(card.thumbnailUrl);
       // Decorative — the cell carries the aria-label, so the img has none.
       expect(img!.getAttribute('alt')).toBe('');
     });
@@ -311,11 +316,13 @@ describe('openPickerOverlay — lazy <img> thumbnails (perf fix)', () => {
     const cells = renderedCells();
     expect(cells).toHaveLength(4);
 
-    // No card ANYWHERE renders an <img> with an empty/missing src (broken image).
+    // No card ANYWHERE renders a blank/broken <img>: every img has its URL wired
+    // (deferred on data-src until visible, or eager on src in the no-layout
+    // fallback). An <img> is only created when there IS a thumbnail.
     document
       .querySelectorAll<HTMLImageElement>('[data-live-picker-overlay] img')
       .forEach((img) => {
-        expect(img.getAttribute('src')).toBeTruthy();
+        expect(img.dataset.src ?? img.getAttribute('src')).toBeTruthy();
       });
 
     // The imageless first card (versionId 9000) has no <img> — a placeholder div.
@@ -459,14 +466,16 @@ describe('openPickerOverlay — labeled video tile (video-only cards)', () => {
         )!;
         const img = cell.querySelector('img');
         expect(img).not.toBeNull();
-        expect(img!.getAttribute('src')).toBe(card.thumbnailUrl);
+        // URL wired via data-src (deferred) or src (no-layout fallback).
+        expect(img!.dataset.src ?? img!.getAttribute('src')).toBe(card.thumbnailUrl);
         expect(cell.querySelector('[data-picker-video-tile]')).toBeNull();
       });
 
-    // No <img> with an empty/missing src anywhere (no broken-image icon).
+    // Every image <img> carries its URL (deferred on data-src, or eager on src) —
+    // never a blank/broken image. (No <img> is even created for video/placeholder.)
     document
       .querySelectorAll<HTMLImageElement>('[data-live-picker-overlay] img')
-      .forEach((img) => expect(img.getAttribute('src')).toBeTruthy());
+      .forEach((img) => expect(img.dataset.src ?? img.getAttribute('src')).toBeTruthy());
 
     handle.dismiss();
   });
