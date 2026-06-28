@@ -440,6 +440,15 @@ const GRID_STYLE: Partial<CSSStyleDeclaration> = {
   overflow: 'auto',
   display: 'grid',
   gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
+  // A `display:grid` element that is flex-shrunk via `flex:1 1 auto; min-height:0`
+  // will, with the DEFAULT `align-content` (stretch), squish its auto-rows to fit
+  // the shrunken track box INSTEAD of overflowing — collapsing every card to a few
+  // px and clipping their thumbnails + titles (the cards' `overflow:hidden`), while
+  // stacking all 50 into the viewport so every lazy <img> loads at once (lag).
+  // `align-content:start` + `grid-auto-rows:max-content` pin rows to their content
+  // height and let the grid actually scroll (overflow:auto) instead of squishing.
+  alignContent: 'start',
+  gridAutoRows: 'max-content',
   gap: '10px',
   paddingRight: '4px',
 };

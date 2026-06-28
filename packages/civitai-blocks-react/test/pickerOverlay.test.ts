@@ -289,6 +289,42 @@ describe('openPickerOverlay — lazy <img> thumbnails (perf fix)', () => {
     handle.dismiss();
   });
 
+  it('applies align-content:start + grid-auto-rows:max-content to the grid (no row-collapse)', async () => {
+    // The `display:grid` grid is flex-shrunk inside the 86vh flex-column modal
+    // (`flex:1 1 auto; min-height:0`). With the DEFAULT align-content it squishes
+    // its auto-rows to fit the shrunken track box instead of overflowing — every
+    // card collapses to a few px (thumbnails + titles clipped) and all 50 stack
+    // into the viewport so every lazy <img> loads at once (lag). `align-content:
+    // start` + `grid-auto-rows:max-content` pin rows to content height and let the
+    // grid scroll. jsdom/happy-dom don't compute layout, so we can only assert the
+    // style is APPLIED — the actual no-collapse layout was verified in a real
+    // browser (Chromium, 50 cards: 213px cards, 0 collapsed, grid scrolls).
+    const fetchImpl = vi.fn(async () =>
+      res(200, familyPageWithImages(6)),
+    ) as unknown as typeof fetch;
+
+    await new Promise<PickerOverlayHandle>((resolve) => {
+      openPickerOverlay({
+        type: 'Checkpoint',
+        baseUrl: BASE,
+        token: 'TOK',
+        fetchImpl,
+        baseModelGroup: 'SDXL 1.0',
+        document,
+        onReady: (h) => resolve(h),
+        onResolve: () => {},
+      });
+    });
+
+    // The grid is the overlay element with display:grid (the card container).
+    const grid = Array.from(
+      document.querySelectorAll<HTMLElement>('[data-live-picker-overlay] *'),
+    ).find((el) => el.style.display === 'grid');
+    expect(grid).toBeDefined();
+    expect(grid!.style.alignContent).toBe('start');
+    expect(grid!.style.gridAutoRows).toBe('max-content');
+  });
+
   it('currentVersionId outlines its rendered card in the DOM', async () => {
     const fetchImpl = vi.fn(async () =>
       res(200, familyPageWithImages(5)),
