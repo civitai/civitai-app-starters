@@ -237,6 +237,6 @@ the platform does all of it on approve. You ship a ZIP; civitai.com does the res
 
 ## Next steps
 
-- [`@civitai/blocks-react`](../packages/civitai-blocks-react) — every hook with a snippet.
-- [`@civitai/app-sdk` /blocks](../packages/civitai-app-sdk) — the message/manifest contract + validator rules.
+- [`@civitai/blocks-react`](https://www.npmjs.com/package/@civitai/blocks-react) — every hook with a snippet ([source](../packages/civitai-blocks-react)).
+- [`@civitai/app-sdk` /blocks](https://www.npmjs.com/package/@civitai/app-sdk) — the message/manifest contract + validator rules ([source](../packages/civitai-app-sdk)).
 - The [examples](../starters/examples) — copy the one closest to your block.
