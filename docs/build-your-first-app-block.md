@@ -33,8 +33,9 @@ authenticate once (browser device login):
 civitai login        # or `civitai login --token <key>` for a personal API key
 ```
 
-> The old `npx @civitai/blocks-cli` scaffolder is **deprecated** and no longer
-> published — its `civitai` binary collided with this Go CLI, which is a superset.
+> The old `@civitai/blocks-cli` npm scaffolder is **deprecated** — use the Go
+> `civitai` CLI ([github.com/civitai/cli](https://github.com/civitai/cli))
+> instead, which is a superset of it.
 
 ## What an App Block is
 

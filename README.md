@@ -20,7 +20,7 @@ Starter templates for building on [Civitai](https://civitai.com), plus the share
 
 - **`packages/civitai-app-sdk`** — OAuth + PKCE, encrypted-cookie sessions, scope helpers, orchestrator-call helpers, AND the framework-agnostic **App Blocks** contract (`/blocks` subpath). Published to npm as `@civitai/app-sdk`.
 - **`packages/civitai-blocks-react`** — React hooks + iframe transport for App Blocks. Published as `@civitai/blocks-react`.
-- **Scaffolding + submit for App Blocks** — handled by the Go **`civitai` CLI** ([github.com/civitai/cli](https://github.com/civitai/cli)): `civitai login` → `civitai app init` / `civitai app validate` / `civitai app submit`. (Local dev is the scaffolded project's own `npm run dev:harness` / `npm run dev:live`.) The old `packages/civitai-blocks-cli` / `@civitai/blocks-cli` npm package is **deprecated** and no longer published — see its [README](./packages/civitai-blocks-cli/README.md).
+- **Scaffolding + submit for App Blocks** — handled by the Go **`civitai` CLI** ([github.com/civitai/cli](https://github.com/civitai/cli)): `civitai login` → `civitai app init` / `civitai app validate` / `civitai app submit`. (Local dev is the scaffolded project's own `npm run dev:harness` / `npm run dev:live`.) The old `@civitai/blocks-cli` npm scaffolder it replaced stays published-but-deprecated on npm but is no longer part of this repo.
 - **`starters/next-app`** — Next.js 15 (App Router) + Tailwind. SSR-friendly, SEO-capable. Best OAuth-app default.
 - **`starters/sveltekit-app`** — SvelteKit 2 + Tailwind. Same demo surface as `next-app`.
 - **`starters/react-pwa`** — Vite + React 19 + tiny Hono BFF for OAuth token exchange. SPA/PWA shape.

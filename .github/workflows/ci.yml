@@ -65,30 +65,6 @@ jobs:
       - run: pnpm --filter @civitai/blocks-react exec playwright install --with-deps chromium
       - run: pnpm --filter @civitai/blocks-react test:browser
 
-  blocks-cli:
-    name: blocks-cli (typecheck + test + build)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      # blocks-cli imports `defineBlock` + `BLOCK_SCOPES` from
-      # @civitai/app-sdk/blocks (workspace:^) — SDK must be built first so
-      # the .d.ts is current.
-      - run: pnpm --filter @civitai/app-sdk build
-
-      - run: pnpm --filter @civitai/blocks-cli typecheck
-      - run: pnpm --filter @civitai/blocks-cli test
-      - run: pnpm --filter @civitai/blocks-cli build
-
   starter:
     name: Starter
     runs-on: ubuntu-latest
