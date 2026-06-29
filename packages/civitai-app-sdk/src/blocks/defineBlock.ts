@@ -11,10 +11,20 @@
  * the TypeScript type is a lie.
  */
 
-import { BLOCK_SCOPE_PATTERN } from './scopes.js';
+import { BLOCK_SCOPES, BLOCK_SCOPE_PATTERN } from './scopes.js';
 import type { BlockManifest, ContentRating } from './types.js';
 
-const BLOCK_ID_PATTERN = /^[a-z0-9-]{3,64}$/;
+/**
+ * Canonical `blockId` rule (https://civitai.com/schemas/app-block/v1.json):
+ * lowercase, must start with a letter, end alphanumeric, hyphen-separated,
+ * 3–40 chars. This is the DNS-subdomain-safe rule — the blockId becomes
+ * `<blockId>.civit.ai`, so it must be a valid DNS label.
+ */
+const BLOCK_ID_PATTERN = /^[a-z][a-z0-9-]*[a-z0-9]$/;
+const BLOCK_ID_MIN_LENGTH = 3;
+const BLOCK_ID_MAX_LENGTH = 40;
+/** The 10 canonical block scopes (enum the schema validates `scopes` against). */
+const KNOWN_BLOCK_SCOPES = new Set<string>(Object.values(BLOCK_SCOPES));
 const NAME_MAX_LENGTH = 80;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 /** Detects the SubresourceIntegrity hash format (sha256/384/512 + base64). */
@@ -130,10 +140,15 @@ export function defineBlock(config: DefineBlockConfig): BlockManifest {
   requireNonEmptyString(manifest.appId, 'appId');
 
   requireNonEmptyString(manifest.blockId, 'blockId');
-  if (!BLOCK_ID_PATTERN.test(manifest.blockId)) {
+  if (
+    manifest.blockId.length < BLOCK_ID_MIN_LENGTH ||
+    manifest.blockId.length > BLOCK_ID_MAX_LENGTH ||
+    !BLOCK_ID_PATTERN.test(manifest.blockId)
+  ) {
     throw new BlockManifestError(
-      `manifest.blockId must match ${BLOCK_ID_PATTERN} ` +
-        `(lowercase letters, digits, and hyphens; 3-64 chars). Got: ${JSON.stringify(manifest.blockId)}`,
+      `manifest.blockId must match ${BLOCK_ID_PATTERN} and be ${BLOCK_ID_MIN_LENGTH}-${BLOCK_ID_MAX_LENGTH} chars ` +
+        `(lowercase, starts with a letter, ends alphanumeric, hyphen-separated — DNS-subdomain-safe since it becomes <blockId>.civit.ai). ` +
+        `Got: ${JSON.stringify(manifest.blockId)}`,
       'blockId',
     );
   }
@@ -165,7 +180,10 @@ export function defineBlock(config: DefineBlockConfig): BlockManifest {
     throw new BlockManifestError('manifest.scopes must be a non-empty array', 'scopes');
   }
   for (const scope of manifest.scopes) {
-    if (typeof scope !== 'string' || !BLOCK_SCOPE_PATTERN.test(scope)) {
+    // Authoritative validity = membership in the canonical enum (BLOCK_SCOPES),
+    // matching how the published schema validates `scopes`. The format pattern
+    // is only used to pick a pointed error message.
+    if (typeof scope !== 'string' || !KNOWN_BLOCK_SCOPES.has(scope)) {
       throw new BlockManifestError(buildScopeError(scope), 'scopes');
     }
   }
@@ -200,15 +218,23 @@ function requireNonEmptyString(value: unknown, field: string): asserts value is 
 
 function buildScopeError(scope: unknown): string {
   const shown = JSON.stringify(scope);
+  const known = Object.values(BLOCK_SCOPES).join(', ');
   if (typeof scope === 'string' && PASCAL_CASE_PATTERN.test(scope)) {
     return (
       `Block scope strings must use colon-separated lowercase format ` +
       `(e.g. "models:read:self"), not PascalCase (e.g. "ModelsReadSelf"). Got: ${shown}`
     );
   }
+  if (typeof scope === 'string' && !BLOCK_SCOPE_PATTERN.test(scope)) {
+    return (
+      `Block scope strings must match ${BLOCK_SCOPE_PATTERN} ` +
+      `(three colon-separated lowercase segments, e.g. "models:read:self"). Got: ${shown}`
+    );
+  }
+  // Well-formed but not one of the known/approved scopes.
   return (
-    `Block scope strings must match ${BLOCK_SCOPE_PATTERN} ` +
-    `(three colon-separated lowercase segments, e.g. "models:read:self"). Got: ${shown}`
+    `manifest.scopes contains an unknown block scope ${shown}. ` +
+    `Must be one of: ${known}.`
   );
 }
 
