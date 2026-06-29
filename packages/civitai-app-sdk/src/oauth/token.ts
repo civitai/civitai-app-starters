@@ -74,7 +74,21 @@ function shapeTokens(json: OAuthTokenResponse, fallbackScope?: number): OAuthTok
   };
 }
 
-/** Exchange an authorization code for tokens (PKCE flow). */
+/**
+ * Exchange an authorization code for tokens (PKCE flow). Call this in your
+ * `redirect_uri` callback handler with the `code` from the query string and the
+ * `codeVerifier` you stashed when starting the flow. Omit `clientSecret` for
+ * public clients. Throws {@link OAuthError} on a non-2xx token response.
+ *
+ * @example
+ * const tokens = await exchangeCode({
+ *   clientId: process.env.CIVITAI_CLIENT_ID!,
+ *   clientSecret: process.env.CIVITAI_CLIENT_SECRET, // omit for public clients
+ *   redirectUri: 'https://your-app.com/api/auth/callback/civitai',
+ *   code: codeFromQuery,
+ *   codeVerifier: verifierFromSealedCookie,
+ * });
+ */
 export async function exchangeCode(opts: ExchangeCodeOpts): Promise<OAuthTokens> {
   const base = opts.baseUrl ?? DEFAULT_CIVITAI_BASE_URL;
   const json = (await postForm(`${base}/api/auth/oauth/token`, {
@@ -88,7 +102,18 @@ export async function exchangeCode(opts: ExchangeCodeOpts): Promise<OAuthTokens>
   return shapeTokens(json);
 }
 
-/** Refresh an access token using a refresh_token grant. */
+/**
+ * Refresh an access token using a refresh_token grant. Returns a fresh
+ * {@link OAuthTokens} (with a recomputed `expires_at`). Throws
+ * {@link OAuthError} on failure — treat that as "re-authenticate."
+ *
+ * @example
+ * const tokens = await refreshToken({
+ *   clientId: process.env.CIVITAI_CLIENT_ID!,
+ *   clientSecret: process.env.CIVITAI_CLIENT_SECRET, // omit for public clients
+ *   refreshToken: stored.refresh_token,
+ * });
+ */
 export async function refreshToken(opts: RefreshTokenOpts): Promise<OAuthTokens> {
   const base = opts.baseUrl ?? DEFAULT_CIVITAI_BASE_URL;
   const json = (await postForm(`${base}/api/auth/oauth/token`, {
@@ -100,7 +125,16 @@ export async function refreshToken(opts: RefreshTokenOpts): Promise<OAuthTokens>
   return shapeTokens(json);
 }
 
-/** Revoke an access or refresh token. */
+/**
+ * Revoke an access or refresh token (e.g. on logout). Omit `clientSecret` for
+ * public clients. Throws {@link OAuthError} on a non-2xx response.
+ *
+ * @example
+ * await revokeToken({
+ *   clientId: process.env.CIVITAI_CLIENT_ID!,
+ *   token: tokens.refresh_token,
+ * });
+ */
 export async function revokeToken(opts: RevokeTokenOpts): Promise<void> {
   const base = opts.baseUrl ?? DEFAULT_CIVITAI_BASE_URL;
   await postForm(`${base}/api/auth/oauth/revoke`, {
@@ -110,7 +144,14 @@ export async function revokeToken(opts: RevokeTokenOpts): Promise<void> {
   });
 }
 
-/** Fetch the OAuth-authenticated user's profile via `/api/v1/me`. */
+/**
+ * Fetch the OAuth-authenticated user's profile via `/api/v1/me`. Does NOT
+ * include Buzz balance — use {@link fetchBuzzAccount} (needs `BuzzRead`) for
+ * that. Throws {@link OAuthError} on a non-2xx response.
+ *
+ * @example
+ * const me = await fetchMe({ accessToken: tokens.access_token });
+ */
 export async function fetchMe(opts: { baseUrl?: string; accessToken: string }): Promise<unknown> {
   const base = opts.baseUrl ?? DEFAULT_CIVITAI_BASE_URL;
   const res = await fetch(`${base}/api/v1/me`, {

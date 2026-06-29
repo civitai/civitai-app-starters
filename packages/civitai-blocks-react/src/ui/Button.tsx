@@ -46,6 +46,11 @@ function resolveAccent(color: ButtonProps['color']): string | undefined {
  *
  * Styling is automatic via `useBlocksStyles()`; the `data-variant` / `data-size`
  * / `data-full-width` attributes drive the injected CSS.
+ *
+ * @example
+ * <Button loading={status === 'submitting'} fullWidth onClick={onGenerate}>
+ *   Generate
+ * </Button>
  */
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
   {

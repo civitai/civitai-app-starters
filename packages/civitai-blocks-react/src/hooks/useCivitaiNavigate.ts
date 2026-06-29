@@ -8,6 +8,10 @@ import { getTransport } from '../internal/singleton.js';
  * requires `allow-popups-to-escape-sandbox` in the manifest sandbox).
  *
  * Fire-and-forget: the host doesn't reply with confirmation.
+ *
+ * @example
+ * const { navigate } = useCivitaiNavigate();
+ * navigate('/models/12345', 'new_tab');   // 'new_tab' needs allow-popups* in the manifest sandbox
  */
 export function useCivitaiNavigate(): {
   navigate: (path: string, target?: 'current' | 'new_tab') => void;

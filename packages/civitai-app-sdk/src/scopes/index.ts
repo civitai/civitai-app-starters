@@ -141,12 +141,23 @@ export const TokenScopePresets = {
 
 export type TokenScopePresetKey = keyof typeof TokenScopePresets;
 
-/** True if the given bitmask grants the named scope. */
+/**
+ * True if the given bitmask grants the named scope.
+ *
+ * @example
+ * if (hasScope(token.scope, TokenScope.AIServicesWrite)) allowGeneration();
+ */
 export function hasScope(bitmask: number, scope: number): boolean {
   return (bitmask & scope) === scope;
 }
 
-/** Return the list of named scopes contained in a bitmask. */
+/**
+ * Return the list of named scopes contained in a bitmask (excludes the
+ * `None`/`Full` aggregates). The inverse of {@link bitmaskFromScopes}.
+ *
+ * @example
+ * scopesFromBitmask(token.scope); // e.g. ['UserRead', 'AIServicesWrite', 'BuzzRead']
+ */
 export function scopesFromBitmask(bitmask: number): TokenScopeKey[] {
   const out: TokenScopeKey[] = [];
   for (const [name, bit] of Object.entries(TokenScope)) {
@@ -158,14 +169,27 @@ export function scopesFromBitmask(bitmask: number): TokenScopeKey[] {
   return out;
 }
 
-/** Combine a list of named scopes into a single bitmask. */
+/**
+ * Combine a list of named scopes into a single bitmask — use this to build the
+ * `scope` you pass to {@link buildAuthorizeUrl} instead of a magic number.
+ *
+ * @example
+ * const scope = bitmaskFromScopes(['AIServicesWrite', 'BuzzRead', 'UserRead']);
+ */
 export function bitmaskFromScopes(scopes: readonly TokenScopeKey[]): number {
   let mask = 0;
   for (const s of scopes) mask |= TokenScope[s];
   return mask;
 }
 
-/** Human-readable label for a tokenScope bitmask (matches the Civitai UI). */
+/**
+ * Human-readable label for a tokenScope bitmask (matches the Civitai UI).
+ * Returns a preset name (`Full Access`/`Read Only`/`Creator`/`AI Services`),
+ * `Legacy` for `null`/`undefined`, or `Custom` for any other combination.
+ *
+ * @example
+ * getScopeLabel(token.scope); // 'AI Services' | 'Custom' | …
+ */
 export function getScopeLabel(tokenScope: number | null | undefined): string {
   if (tokenScope == null) return 'Legacy';
   if (tokenScope === TokenScope.Full) return 'Full Access';

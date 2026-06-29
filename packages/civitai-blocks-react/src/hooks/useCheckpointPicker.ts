@@ -28,6 +28,11 @@ export const PICKER_REQUEST_TIMEOUT_MS = 10 * 60_000;
  * Both flows are host-mediated: the block never touches the picker UI or
  * the user-settings table directly. Same trust model as useBuzzPurchase /
  * useBuzzWorkflow.
+ *
+ * @example
+ * const { open, persist } = useCheckpointPicker();
+ * const { selected } = await open({ baseModelGroup: 'SDXL', currentVersionId });
+ * if (selected) await persist(selected.versionId);   // null clears the override
  */
 export function useCheckpointPicker(): {
   open: (opts: {

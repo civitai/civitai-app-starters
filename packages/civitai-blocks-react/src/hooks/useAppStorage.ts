@@ -73,6 +73,16 @@ export interface UseAppStorage {
  * The hook is stable across renders — it returns the same object identity
  * once the transport singleton is created, so it's safe to put in
  * dependency arrays of `useEffect` / `useMemo`.
+ *
+ * 64 KB per value, 50 MB + ~1M rows per app.
+ *
+ * @example
+ * const storage = useAppStorage();
+ * await storage.set('key', { any: 'json' });   // throws "PAYLOAD_TOO_LARGE" over a limit
+ * const v = await storage.get<{ any: string }>('key'); // null if unset / anon
+ * await storage.delete('key');                  // idempotent
+ * const { keys } = await storage.list({ prefix: 'note-' });
+ * const quota = await storage.getQuota();       // { usedBytes, rowCount, limitBytes, limitRows }
  */
 export function useAppStorage(): UseAppStorage {
   return useMemo<UseAppStorage>(() => {

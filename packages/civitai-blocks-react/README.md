@@ -128,8 +128,17 @@ The generation flow: `estimate` → `submit` → `poll`, host-mediated. Returns
 `{ estimate, submit, poll, status, result, error }`.
 
 ```tsx
+import type { WorkflowBody } from '@civitai/app-sdk/blocks';
+
 const { estimate, submit, poll, status, result } = useBuzzWorkflow();
-const body = { kind: 'textToImage', modelId, modelVersionId, params: { prompt } };
+declare const modelId: number, modelVersionId: number, userPrompt: string;
+
+const body: WorkflowBody = {
+  kind: 'textToImage',
+  modelId,
+  modelVersionId,
+  params: { prompt: userPrompt },
+};
 await estimate(body);            // status 'estimating' → 'confirming' (cost in result.cost.total)
 const snap = await submit(body); // status 'submitting' → 'polling'; returns a workflowId
 await poll(snap.workflowId);     // you loop this on a backoff until terminal

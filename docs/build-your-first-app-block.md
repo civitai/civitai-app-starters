@@ -126,6 +126,7 @@ Validate it any time with `defineBlock` (it throws with a `.field` path on the
 first violation):
 
 ```ts
+// @ts-skip-readme: imports a project-local ./block.manifest.json that doesn't exist in isolation
 import { defineBlock } from '@civitai/app-sdk/blocks';
 import manifest from './block.manifest.json' with { type: 'json' };
 defineBlock({ manifest });   // call at module scope so mistakes throw at startup
