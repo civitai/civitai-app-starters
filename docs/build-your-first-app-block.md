@@ -26,8 +26,8 @@ go install github.com/civitai/cli/cmd/civitai@latest
 civitai version
 ```
 
-(A Homebrew tap is coming soon — `brew install civitai/tap/civitai` is not live
-yet.) Then authenticate once (browser device login):
+(Or, on macOS/Linux with Homebrew: `brew install civitai/tap/civitai`.) Then
+authenticate once (browser device login):
 
 ```bash
 civitai login        # or `civitai login --token <key>` for a personal API key
