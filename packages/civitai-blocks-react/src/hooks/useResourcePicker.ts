@@ -27,6 +27,12 @@ import { PICKER_REQUEST_TIMEOUT_MS } from './useCheckpointPicker.js';
  *
  * Host-mediated, same trust model as `useCheckpointPicker` / `useBuzzWorkflow`:
  * the block never touches the picker UI directly.
+ *
+ * @example
+ * const { open } = useResourcePicker();
+ * const picked = await open({ resourceType: 'LORA', baseModelGroup: 'SDXL' });
+ * if (!picked) return;                 // user dismissed
+ * // feed picked.versionId into body.additionalResources and submit
  */
 export function useResourcePicker(): {
   open: (opts: {

@@ -84,7 +84,28 @@ export interface DefineBlockConfig {
 /**
  * Validates the manifest and returns it unchanged. Acts as a typed identity
  * function — call it at module scope in the block app so violations throw
- * before the app mounts.
+ * before the app mounts. Mirrors a strict subset of the civitai/civitai server
+ * gate, so authoring mistakes surface in `pnpm dev` instead of at submit time.
+ * Throws {@link BlockManifestError} (with a `.field` dot-path) on a bad manifest.
+ *
+ * @example
+ * import { defineBlock } from '@civitai/app-sdk/blocks';
+ *
+ * export const manifest = defineBlock({
+ *   manifest: {
+ *     $schema: 'https://civitai.com/schemas/app-block/v1.json',
+ *     appId: 'my-app',
+ *     blockId: 'my-block',
+ *     version: '1.0.0',
+ *     name: 'My Block',
+ *     type: 'block',
+ *     targets: [{ slotId: 'model.sidebar_top', priority: 100 }],
+ *     scopes: ['ai:write:budgeted'],
+ *     iframe: { src: 'https://my-block.civit.ai/', minHeight: 200 },
+ *     contentRating: 'pg',
+ *     minApiVersion: 1,
+ *   },
+ * });
  */
 export function defineBlock(config: DefineBlockConfig): BlockManifest {
   const { manifest } = config;

@@ -169,8 +169,10 @@ const setCookie = buildSetCookieHeader('civ_session', sealed, { maxAge: 3600 });
 
 // 4. Use the token to make orchestrator calls
 const client = createOrchestratorClient({ accessToken: tokens.access_token });
-const me = await fetchMe({ accessToken: tokens.access_token });
-console.log(`Hi ${me.username}, you have ${me.balance} Buzz`);
+// fetchMe returns `unknown` — narrow it to the fields you read. Note `/api/v1/me`
+// does NOT include Buzz balance; use `fetchBuzzAccount` (needs `BuzzRead`) for that.
+const me = (await fetchMe({ accessToken: tokens.access_token })) as { username: string };
+console.log(`Hi ${me.username}`);
 
 // 5. Estimate cost, then submit
 const body = buildTextToImageBody({ prompt: 'a fox' }, { tags: ['my-app'] });

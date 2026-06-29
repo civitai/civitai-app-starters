@@ -11,6 +11,13 @@ import { getTransport } from '../internal/singleton.js';
  * - Iframe path: posts `RESIZE_IFRAME` with the integer-rounded height.
  * - Inline path: `InlineTransport.sendMessage` is a no-op (the host DOM
  *   reflows naturally), so the observer fires but no message goes out.
+ *
+ * @param ref - Ref to the block's root DOM element to observe.
+ *
+ * @example
+ * const rootRef = useRef<HTMLDivElement>(null);
+ * useBlockResize(rootRef);              // host fits the iframe to content
+ * return <div ref={rootRef}>…</div>;
  */
 export function useBlockResize(ref: RefObject<HTMLElement | null>): void {
   useEffect(() => {

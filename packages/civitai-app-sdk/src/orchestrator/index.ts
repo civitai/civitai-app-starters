@@ -234,6 +234,17 @@ export interface CreateOrchestratorClientOptions {
   baseUrl?: string;
 }
 
+/**
+ * Build an {@link OrchestratorClient} from a user's access token. Pass the
+ * result to the per-call helpers ({@link estimateWorkflow},
+ * {@link submitWorkflow}, {@link pollWorkflow}, …). The orchestrator debits the
+ * TOKEN OWNER's Buzz, so this is the user's OAuth token (or personal API key).
+ *
+ * @example
+ * const client = createOrchestratorClient({ accessToken: tokens.access_token });
+ * const body = buildTextToImageBody({ prompt: 'a fox' });
+ * const estimate = await estimateWorkflow(client, body);
+ */
 export function createOrchestratorClient(
   opts: CreateOrchestratorClientOptions,
 ): OrchestratorClient {
@@ -290,7 +301,14 @@ export interface BuildTextToImageBodyOptions {
 
 /**
  * Build a `textToImage` workflow body from a {@link GenerateInput}. Mirrors
- * the shape every starter's existing `buildWorkflowBody` produced.
+ * the shape every starter's existing `buildWorkflowBody` produced. For diffusion
+ * checkpoints (SDXL / Flux.1 / Pony / SD1.5) via an AIR URN `model`; for
+ * closed-source image-gen APIs use {@link buildImageGenBody} instead.
+ *
+ * @example
+ * const body = buildTextToImageBody({ prompt: 'a fox' }, { tags: ['my-app'] });
+ * const estimate = await estimateWorkflow(client, body);
+ * const submitted = await submitWorkflow(client, body);
  */
 export function buildTextToImageBody(
   input: GenerateInput,
@@ -467,7 +485,12 @@ export function buildWorkflowBody(
 
 /**
  * Cost preview ("what if") — runs the workflow validation/pricing pipeline
- * without committing any Buzz.
+ * without committing any Buzz. Read `cost.total` off the returned snapshot and
+ * show it before {@link submitWorkflow}.
+ *
+ * @example
+ * const estimate = await estimateWorkflow(client, body);
+ * console.log(`This will cost ${estimate.cost?.total ?? 0} Buzz`);
  */
 export function estimateWorkflow(
   client: OrchestratorClient,
@@ -479,7 +502,15 @@ export function estimateWorkflow(
   }) as Promise<WorkflowSnapshot>;
 }
 
-/** Submit a workflow for real execution. Debits the token-owner's Buzz. */
+/**
+ * Submit a workflow for real execution. Debits the token-owner's Buzz. Returns
+ * the initial snapshot — poll it to terminal with {@link pollWorkflow}.
+ *
+ * @example
+ * const submitted = await submitWorkflow(client, body);
+ * const finished = await pollWorkflow(client, submitted.id, { timeoutMs: 30_000 });
+ * const urls = extractImageUrls(finished);
+ */
 export function submitWorkflow(
   client: OrchestratorClient,
   body: unknown,
@@ -490,6 +521,14 @@ export function submitWorkflow(
   }) as Promise<WorkflowSnapshot>;
 }
 
+/**
+ * Fetch a single workflow's current snapshot by id. One-shot; for "wait until
+ * done" use {@link pollWorkflow}.
+ *
+ * @example
+ * const snap = await getWorkflow(client, workflowId);
+ * if (isTerminal(snap)) console.log(extractImageUrls(snap));
+ */
 export function getWorkflow(
   client: OrchestratorClient,
   workflowId: string,
@@ -517,6 +556,10 @@ export interface PollWorkflowOptions {
  * until it reaches a terminal status, the timeout elapses, or the signal
  * aborts. Returns the latest snapshot regardless of which condition tripped —
  * callers inspect {@link isTerminal} on the result to decide what to do.
+ *
+ * @example
+ * const finished = await pollWorkflow(client, submitted.id, { timeoutMs: 30_000 });
+ * if (isTerminal(finished)) console.log(extractImageUrls(finished));
  */
 export async function pollWorkflow(
   client: OrchestratorClient,
@@ -538,12 +581,27 @@ export async function pollWorkflow(
 
 // ---------- Snapshot inspection --------------------------------------------
 
+/**
+ * True when a snapshot has reached a terminal status (`succeeded` | `failed` |
+ * `expired` | `canceled`) — i.e. no further polling is needed. Null/undefined
+ * or a status-less snapshot is treated as non-terminal.
+ *
+ * @example
+ * if (isTerminal(snap)) stopPolling();
+ */
 export function isTerminal(snap: WorkflowSnapshot | null | undefined): boolean {
   if (!snap?.status) return false;
   return (TERMINAL_STATUSES as readonly string[]).includes(String(snap.status));
 }
 
-/** Pull every available image URL out of a workflow snapshot. */
+/**
+ * Pull every available image URL out of a workflow snapshot — reads both the
+ * canonical `output.images[]` and the legacy `output.blobs[]` (image/* only).
+ *
+ * @example
+ * const urls = extractImageUrls(finished);   // string[]
+ * urls.forEach((u) => render(<img src={u} />));
+ */
 export function extractImageUrls(snap: WorkflowSnapshot | null | undefined): string[] {
   if (!snap?.steps) return [];
   const out: string[] = [];

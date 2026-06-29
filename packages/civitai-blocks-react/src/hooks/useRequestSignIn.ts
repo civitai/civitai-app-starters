@@ -15,6 +15,10 @@ import { getTransport } from '../internal/singleton.js';
  *
  * Fire-and-forget: the host doesn't reply. After login the page reloads / the
  * block re-inits as an authenticated viewer.
+ *
+ * @example
+ * const { requestSignIn } = useRequestSignIn();
+ * if (viewer === null) return <button onClick={() => requestSignIn()}>Sign in</button>;
  */
 export function useRequestSignIn(): {
   requestSignIn: (payload?: { returnUrl?: string }) => void;

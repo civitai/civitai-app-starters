@@ -19,6 +19,11 @@ import { getTransport } from '../internal/singleton.js';
  * token and pushes a TOKEN_REFRESH carrying the now-granted scopes — observe
  * `useBlockToken().scopes` and retry the action once the scope appears. Mirrors
  * {@link useRequestSignIn} (the anonymous-conversion analog).
+ *
+ * @example
+ * const { requestConsent } = useRequestConsent();
+ * // viewer is logged in but the token lacks the spend scopes:
+ * requestConsent({ scopes: ['ai:write:budgeted', 'buzz:read:self'] });
  */
 export function useRequestConsent(): {
   requestConsent: (payload?: { scopes?: string[] }) => void;

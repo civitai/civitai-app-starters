@@ -55,6 +55,27 @@ interface UseBuzzWorkflowReturn {
  * before forwarding to the orchestrator; submit() will reject if the host
  * refuses. Block apps should call `useBuzzPurchase().openPurchaseModal()`
  * when that happens.
+ *
+ * The hook does NOT auto-poll: after `submit` flips `status` to `'polling'`,
+ * the caller runs a `useEffect` that calls `poll(workflowId)` on a backoff
+ * until the snapshot is terminal. `status === 'confirming'` is IDLE (estimate
+ * landed, user reviewing cost) — keep the Generate button enabled.
+ *
+ * @returns `{ estimate, submit, poll, cancel, status, result, error }`.
+ * `submit` takes a full {@link WorkflowBody} (`{ kind, modelId,
+ * modelVersionId, params }`), not `{ prompt }`.
+ *
+ * @example
+ * const { estimate, submit, poll, status, result } = useBuzzWorkflow();
+ * const body = {
+ *   kind: 'textToImage' as const,
+ *   modelId,
+ *   modelVersionId,
+ *   params: { prompt: 'a cat' },
+ * };
+ * await estimate(body);            // status 'estimating' → 'confirming' (cost in result.cost.total)
+ * const snap = await submit(body); // status 'submitting' → 'polling'; returns a workflowId
+ * await poll(snap.workflowId);     // caller loops this on a backoff until terminal
  */
 export function useBuzzWorkflow(): UseBuzzWorkflowReturn {
   const [status, setStatus] = useState<WorkflowStatus>('idle');

@@ -25,6 +25,18 @@ function useTransportSnapshot(): BlockSnapshot {
  *
  * The transport detection (iframe vs inline) happens on first call and is
  * cached process-wide; block apps don't branch on render mode.
+ *
+ * @returns The per-instance block context: `ready` gate plus `renderMode`,
+ * `context` (narrow to `ModelSlotContext` on model-page slots), `token`,
+ * `settings`, `viewer` (`null` = anonymous), `theme` (`'light' | 'dark'` —
+ * set `data-theme={theme}` on your root, gotcha #60), `blockId`,
+ * `blockInstanceId`, and `appId`.
+ *
+ * @example
+ * const { ready, context, viewer, theme, settings } = useBlockContext();
+ * if (!ready) return <div>Loading…</div>;
+ * // Set data-theme on YOUR root — the host can't reach into the iframe (gotcha #60).
+ * return <div data-theme={theme}>Hi {viewer?.username ?? 'anon'}</div>;
  */
 export function useBlockContext(): Pick<
   BlockSnapshot,

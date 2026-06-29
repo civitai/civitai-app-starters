@@ -13,6 +13,19 @@ const DEFAULT_CIVITAI_BASE_URL = 'https://civitai.com';
 /**
  * Build the Civitai OAuth authorize URL. The returned URL is what you redirect
  * the browser to. Token exchange happens on the redirect_uri callback.
+ *
+ * `scope` is a bitmask — compose it from named flags with
+ * {@link bitmaskFromScopes} rather than hard-coding a number.
+ *
+ * @example
+ * const { challenge } = generatePkce();
+ * const url = buildAuthorizeUrl({
+ *   clientId: process.env.CIVITAI_CLIENT_ID!,
+ *   redirectUri: 'https://your-app.com/api/auth/callback/civitai',
+ *   scope: bitmaskFromScopes(['AIServicesWrite', 'BuzzRead', 'UserRead']),
+ *   state: generateState(),
+ *   codeChallenge: challenge,
+ * });
  */
 export function buildAuthorizeUrl(opts: BuildAuthorizeUrlOptions): string {
   const base = opts.baseUrl ?? DEFAULT_CIVITAI_BASE_URL;

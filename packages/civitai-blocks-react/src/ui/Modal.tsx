@@ -47,6 +47,12 @@ export interface ModalProps {
  * can still reach content behind the overlay. Sufficient for a simple
  * confirm/settings dialog inside the sandboxed block; a full focus-trap is a
  * v1 follow-up (kept dependency-free here on purpose).
+ *
+ * @example
+ * const [opened, setOpened] = useState(false);
+ * <Modal opened={opened} onClose={() => setOpened(false)} title="Confirm">
+ *   <p>Costs Buzz.</p>
+ * </Modal>
  */
 export function Modal(props: ModalProps): React.JSX.Element | null {
   const {

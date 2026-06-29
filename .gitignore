@@ -30,3 +30,7 @@ Thumbs.db
 
 *.tsbuildinfo
 .eslintcache
+
+# Scratch dir for scripts/typecheck-readme-snippets.mjs (auto-cleaned; ignored
+# in case a run is interrupted mid-flight).
+.readme-snippets-tmp/

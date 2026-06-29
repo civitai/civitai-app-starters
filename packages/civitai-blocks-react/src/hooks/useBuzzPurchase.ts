@@ -7,6 +7,12 @@ import { sendTypedRequest } from '../internal/transport.js';
  * Opens the Civitai Buzz purchase modal on the host. Resolves with the
  * outcome when the user closes the modal — `purchased: true` means the
  * balance increased; the new balance is included if the host reports it.
+ * The insufficient-budget recovery path for {@link useBuzzWorkflow}.
+ *
+ * @example
+ * const { openPurchaseModal } = useBuzzPurchase();
+ * const { purchased, newBalance } = await openPurchaseModal(suggestedAmount);
+ * if (purchased) { /* retry the generation *\/ }
  */
 export function useBuzzPurchase(): {
   openPurchaseModal: (suggestedAmount?: number) => Promise<{ purchased: boolean; newBalance?: number }>;

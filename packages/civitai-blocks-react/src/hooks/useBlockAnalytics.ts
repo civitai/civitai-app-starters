@@ -6,6 +6,10 @@ import { getTransport } from '../internal/singleton.js';
  * Fire-and-forget analytics tracking. The host forwards events to its
  * analytics pipeline (ClickHouse in production); the block doesn't see
  * acknowledgements and shouldn't block on them.
+ *
+ * @example
+ * const { track } = useBlockAnalytics();
+ * track('generate_clicked', { modelId });
  */
 export function useBlockAnalytics(): {
   track: (eventName: string, properties?: Record<string, unknown>) => void;

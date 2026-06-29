@@ -65,6 +65,28 @@ jobs:
       - run: pnpm --filter @civitai/blocks-react exec playwright install --with-deps chromium
       - run: pnpm --filter @civitai/blocks-react test:browser
 
+  readme-snippets:
+    name: README snippets (typecheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The snippet checker resolves documented imports against the packages'
+      # BUILT declarations, so build both first (blocks-react consumes app-sdk).
+      - run: pnpm --filter @civitai/app-sdk build
+      - run: pnpm --filter @civitai/blocks-react build
+
+      - run: pnpm typecheck:readme
+
   starter:
     name: Starter
     runs-on: ubuntu-latest

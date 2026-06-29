@@ -19,6 +19,13 @@ const REFRESH_LEAD_MS = 2 * 60 * 1000;
  * Consumers also get a `refresh()` callable for the 401-retry path. Call it
  * after any API request returns 401 — it forces an immediate token mint and
  * resolves once the new token is applied to the snapshot.
+ *
+ * @returns The {@link BlockToken} fields (`raw`, `scopes`, `expiresAt`,
+ * `buzzBudget`, …) plus a `refresh()` for the 401-retry path.
+ *
+ * @example
+ * const { raw, scopes, expiresAt, buzzBudget, refresh } = useBlockToken();
+ * // after a 401: await refresh(); then retry the request once with the new `raw`.
  */
 export function useBlockToken(): BlockToken & { refresh: () => Promise<void> } {
   const snap = useTransportSnapshot();
