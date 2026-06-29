@@ -30,12 +30,21 @@ export type BlockScopeKey = keyof typeof BLOCK_SCOPES;
 export type BlockScope = (typeof BLOCK_SCOPES)[BlockScopeKey];
 
 /**
- * Regex enforced by `defineBlock` and the JSON schema.
+ * Format helper for the `domain:verb:target` block-scope shape.
+ *
+ * NOTE: this regex is **not** the authoritative validity contract. The
+ * canonical manifest schema (https://civitai.com/schemas/app-block/v1.json)
+ * validates `scopes` by MEMBERSHIP in a fixed enum — i.e. the 10 values in
+ * {@link BLOCK_SCOPES}. `defineBlock` therefore gates on membership in
+ * `BLOCK_SCOPES`; this pattern is kept only to give a pointed error message
+ * (e.g. distinguishing a malformed/PascalCase scope from a well-formed but
+ * unknown one). A scope can match this pattern and still be rejected for not
+ * being a known block scope.
  *
  * The 3-segment shape (`domain:verb:target`) is **intentional**: scope
  * comparisons in token validation rely on it. Relaxing this (e.g. to allow
  * 4+ segments like `ai:write:image:budgeted`) requires a coordinated change
- * across the SDK, the JSON schema, the civitai/civitai token validator,
- * and a `@civitai/app-sdk` major bump.
+ * across the SDK, the canonical JSON schema, the civitai/civitai token
+ * validator, and a `@civitai/app-sdk` major bump.
  */
 export const BLOCK_SCOPE_PATTERN = /^[a-z]+:[a-z]+:[a-z]+$/;

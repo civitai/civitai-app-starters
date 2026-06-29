@@ -18,7 +18,7 @@ pnpm add @civitai/app-sdk
 | `scopes/*` — `TokenScope`, `TokenScopePresets`, `bitmaskFromScopes`, `scopesFromBitmask`, `hasScope`, `getScopeLabel` | Civitai scopes are stored as bitmasks. These helpers let you compose scope sets from named flags rather than magic numbers. |
 | `cookies/*` — `sealCookie`, `unsealCookie`, `buildSetCookieHeader`, `readCookie` | AES-256-CTR encrypted cookie crypto. Use to seal a session blob (refresh token, expiry, scope) into an `httpOnly` cookie with zero external session store. |
 | `orchestrator/*` — `createOrchestratorClient`, `estimateWorkflow`, `submitWorkflow`, `getWorkflow`, `pollWorkflow`, `buildTextToImageBody`, `buildImageGenBody`, `buildWorkflowBody`, `WORKFLOW_STEP_TYPES`, `IMAGE_GEN_ENGINES`, `isTerminal`, `extractImageUrls`, `OrchestratorError`, `WorkflowSnapshot`, `GenerateInput`, `ImageGenInput`, `WorkflowStepType`, `ImageGenEngine`, `DEFAULT_MODEL_AIR` | Orchestrator workflow glue — types, body builders, raw HTTP, and long-poll helper. Client + server safe (fetch-only). `estimateWorkflow` calls `?whatif=true` to preview Buzz cost without spending. `pollWorkflow` long-polls to terminal status. `WORKFLOW_STEP_TYPES` is the catalog of every step `$type` the orchestrator accepts. |
-| `blocks/*` — `defineBlock`, `BlockManifestError`, `BLOCK_SCOPES`, `BLOCK_SCOPE_PATTERN`, `isMessage`, types (`BlockManifestV1`, `BlockContext`, `BlockToken`, `BlockSettings`, `ViewerInfo`, `ThemeInfo`, `BlockWorkflowSnapshot`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`, …) | Framework-agnostic contract for [Civitai App Blocks](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md). `defineBlock(config)` validates a `BlockManifestV1` at startup so authoring mistakes surface in `pnpm dev` instead of at `civitai app validate`/submit. Ships the JSON Schema (draft-07) at the `./schemas/app-block/v1.json` subpath for offline validation. Runtime-agnostic — no React or DOM types. Hooks and the iframe transport live in a separate package. |
+| `blocks/*` — `defineBlock`, `BlockManifestError`, `BLOCK_SCOPES`, `BLOCK_SCOPE_PATTERN`, `isMessage`, types (`BlockManifestV1`, `BlockContext`, `BlockToken`, `BlockSettings`, `ViewerInfo`, `ThemeInfo`, `BlockWorkflowSnapshot`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`, …) | Framework-agnostic contract for [Civitai App Blocks](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md). `defineBlock(config)` validates a `BlockManifestV1` at startup so authoring mistakes surface in `pnpm dev` instead of at `civitai app validate`/submit. Ships a byte-identical copy of the server-published canonical JSON Schema (draft 2020-12, https://civitai.com/schemas/app-block/v1.json) at the `./schemas/app-block/v1.json` subpath for offline validation; a CI drift-check keeps it in sync. Runtime-agnostic — no React or DOM types. Hooks and the iframe transport live in a separate package. |
 
 ## Subpath imports
 
@@ -88,7 +88,7 @@ interface BlockInitPayload {
 | Export | What |
 |---|---|
 | `defineBlock({ manifest })` | Validates a `BlockManifestV1` (subset of the server checks) and returns it. Call at module scope so authoring mistakes throw before mount. Throws `BlockManifestError` (has a `.field` dot-path). |
-| `BLOCK_SCOPES` / `BLOCK_SCOPE_PATTERN` | The known block scope strings + the `domain:verb:target` regex. |
+| `BLOCK_SCOPES` / `BLOCK_SCOPE_PATTERN` | The 10 known block scope strings (the authoritative enum `defineBlock` validates against) + the `domain:verb:target` format-helper regex. A scope is valid only if it's a member of `BLOCK_SCOPES`, matching the [canonical schema](https://civitai.com/schemas/app-block/v1.json). |
 | `isMessage(data, type)` | Discriminator-only message narrowing (see above). |
 | types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
 
@@ -99,10 +99,14 @@ Mirrors a strict subset of the civitai/civitai server gate. It throws on:
 - A missing **required** field: `$schema`, `appId`, `blockId`, `version`, `name`,
   `type`, `targets`, `scopes`, `iframe`, `contentRating`, `minApiVersion`.
 - `$schema` ≠ `https://civitai.com/schemas/app-block/v1.json`.
-- `blockId` not matching `/^[a-z0-9-]{3,64}$/`; `version` not semver; `name` > 80 chars.
+- `blockId` not matching the canonical `/^[a-z][a-z0-9-]*[a-z0-9]$/` (DNS-subdomain-safe:
+  lowercase, starts with a letter, ends alphanumeric) or outside 3–40 chars —
+  the blockId becomes `<blockId>.civit.ai`; `version` not semver; `name` > 80 chars.
 - `type` not `block` | `embed`; `contentRating` not `g|pg|pg13|r|x`.
-- **Empty `scopes`** (must be a non-empty array) or any scope not matching
-  `domain:verb:target` lowercase — PascalCase like `ModelsReadSelf` gets a
+- **Empty `scopes`** (must be a non-empty array) or any scope that isn't one of
+  the 10 known block scopes (`BLOCK_SCOPES`). The [canonical schema](https://civitai.com/schemas/app-block/v1.json)
+  validates `scopes` by **enum membership**, so a well-formed but unknown scope
+  (e.g. `models:read:all`) is rejected; PascalCase like `ModelsReadSelf` gets a
   pointed error.
 - **Empty `targets`**, or a target with a non-string `slotId` / non-integer `priority`.
 - `iframe.src` not https (http only for `localhost`/`127.0.0.1`/`[::1]`/`*.localhost`);

@@ -32,6 +32,19 @@ jobs:
       - run: pnpm --filter @civitai/app-sdk test
       - run: pnpm --filter @civitai/app-sdk build
 
+  schema-drift:
+    name: Canonical schema drift-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # The vendored manifest schema MUST stay byte-identical to the
+      # server-published canonical (the single source of truth shared by the
+      # platform validator + the `civitai` CLI). Fetch it and diff. A non-200
+      # (canonical unreachable) fails the job — the canonical is expected live.
+      # Runs the bare script (curl + diff only) — no node/pnpm needed.
+      - run: ./scripts/check-canonical-schema.sh
+
   blocks-react:
     name: blocks-react (typecheck + test + build)
     runs-on: ubuntu-latest
