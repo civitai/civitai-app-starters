@@ -19,6 +19,11 @@ export const BLOCK_SCOPES = {
   BLOCK_SETTINGS_READ: 'block:settings:read',
   BLOCK_SETTINGS_WRITE: 'block:settings:write',
   SOCIAL_TIP_SELF: 'social:tip:self',
+  // apps:storage:* — the per-app KV datastore (W4). These have no OAuth bit
+  // (storage never touches the user's civitai resources); the server gates them
+  // by presence in the block's approved scope set, not a bitmask.
+  APPS_STORAGE_READ: 'apps:storage:read',
+  APPS_STORAGE_WRITE: 'apps:storage:write',
 } as const;
 
 export type BlockScopeKey = keyof typeof BLOCK_SCOPES;
