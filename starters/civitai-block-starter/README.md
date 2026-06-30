@@ -59,7 +59,7 @@ substrate — calls will reject on the per-request timeout until then.
 
 | Variable | When | Purpose |
 |---|---|---|
-| `VITE_BLOCK_ALLOWED_PARENT_ORIGINS` | always (build + dev) | Comma-separated list of allowed parent-frame origins. The `IframeTransport` drops every `postMessage` whose `event.origin` isn't in this list. **Required** — without it the transport refuses to mount. |
+| `VITE_BLOCK_ALLOWED_PARENT_ORIGINS` | always (build + dev) | Comma-separated list of allowed parent-frame origins. The `IframeTransport` drops every `postMessage` whose `event.origin` isn't in this list. **Required** — without it the transport refuses to mount. **In production this value is platform-injected at build time by the App Blocks build recipe** (it sets an `ENV` that Vite prioritizes over `.env` files), so the value you commit here only matters for **local dev** (point it at your dev-server origin). The injected prod set must mirror the host CSP `frame-ancestors` allowlist — both layers gate which parent domains may embed and message a block. |
 | `VITE_DEV_HARNESS` | dev only | Set to `"true"` to wrap the block in the local simulator. `pnpm dev:harness` flips this on for you. Strip from production builds. |
 
 ## Scripts
