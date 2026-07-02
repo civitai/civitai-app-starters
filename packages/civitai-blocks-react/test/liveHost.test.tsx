@@ -1105,3 +1105,90 @@ describe('createLiveHost — SET_USER_CHECKPOINT (forwarded to blocks.updateUser
     expect(called).toBe(false);
   });
 });
+
+describe('createLiveHost — GET_BUZZ_BALANCE (served via blocks.getMyBuzzBalance)', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+  let fetchMock: ReturnType<typeof vi.fn>;
+  const TOKEN = fakeJwt(DEFAULT_CLAIMS);
+
+  function installWithFetch(impl: (url: string, init?: RequestInit) => Promise<Response>) {
+    fetchMock = vi.fn(impl);
+    const host = createLiveHost({
+      blockToken: TOKEN,
+      viewer: { id: 42, username: 'dev-mod' }, // skip /blocks/me
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+  }
+
+  beforeEach(() => {
+    inbound = collectInbound();
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  it('GET_BUZZ_BALANCE → blocks.getMyBuzzBalance (POST body) → balance', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('blocks.getMyBuzzBalance')) {
+        return trpcData({ blue: 100, green: 20, yellow: 3 });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('GET_BUZZ_BALANCE', { requestId: 'r-bal' });
+    const payload = await waitForMessage(inbound, 'BUZZ_BALANCE_RESULT');
+    expect(payload.requestId).toBe('r-bal');
+    expect(payload.balance).toEqual({ blue: 100, green: 20, yellow: 3 });
+    expect(payload.error).toBeUndefined();
+
+    const call = fetchMock.mock.calls.find((c) =>
+      String(c[0]).includes('blocks.getMyBuzzBalance'),
+    )!;
+    // MUTATION → POST, token-bound in the body (never the URL).
+    expect((call[1] as RequestInit).method).toBe('POST');
+    expect(String(call[0])).toBe('https://civitai.com/api/trpc/blocks.getMyBuzzBalance');
+    expect((call[1] as RequestInit).headers).toMatchObject({ authorization: `Bearer ${TOKEN}` });
+    expect(JSON.parse(String((call[1] as RequestInit).body))).toEqual({
+      json: { blockToken: TOKEN },
+    });
+  });
+
+  it('a backend error maps to the error-shape reply (no hang)', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('blocks.getMyBuzzBalance')) {
+        return trpcErr('buzz balance unavailable for an anonymous viewer', 401);
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('GET_BUZZ_BALANCE', { requestId: 'r-bal-err' });
+    const payload = await waitForMessage(inbound, 'BUZZ_BALANCE_RESULT');
+    expect(payload.requestId).toBe('r-bal-err');
+    expect(payload.balance).toBeUndefined();
+    expect(payload.error).toMatch(/anonymous viewer/);
+  });
+
+  it('a request without a requestId is dropped WITHOUT a backend call', async () => {
+    installWithFetch(async (url) => {
+      throw new Error(`should not have fetched ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('GET_BUZZ_BALANCE', {});
+    // Give the host a tick to (not) reply, then assert nothing was dispatched
+    // and no balance call was made.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(inbound.messages.some((m) => m.type === 'BUZZ_BALANCE_RESULT')).toBe(false);
+    const called = fetchMock.mock.calls.some((c) =>
+      String(c[0]).includes('blocks.getMyBuzzBalance'),
+    );
+    expect(called).toBe(false);
+  });
+});

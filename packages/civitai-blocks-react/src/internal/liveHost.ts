@@ -805,6 +805,31 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             return;
           }
 
+          case 'GET_BUZZ_BALANCE': {
+            // Read the viewer's per-pool Buzz balance via the token-bound
+            // `blocks.getMyBuzzBalance` tRPC MUTATION (POST — the block JWT rides
+            // in the request body, never the URL). It returns a plain
+            // `{ blue, green, yellow }` object, so unwrap it with `callTrpcData`
+            // (NOT `callTrpcMutation`, which expects a `{ snapshot }` wrapper).
+            // Mirrors the `APP_STORAGE_SET` value-or-error convention. Drop a
+            // request with no `requestId` — the block correlates the reply by it,
+            // so a reply without one is unroutable.
+            if (typeof requestId !== 'string') return;
+            void callTrpcData(
+              'blocks.getMyBuzzBalance',
+              { blockToken: rawToken },
+              'POST',
+            ).then((r) => {
+              dispatchToBlock({
+                type: 'BUZZ_BALANCE_RESULT',
+                payload: r.data
+                  ? { requestId, balance: r.data }
+                  : { requestId, error: r.error ?? 'balance unavailable' },
+              });
+            });
+            return;
+          }
+
           case 'OPEN_CHECKPOINT_PICKER': {
             // Serve the picker locally: open the in-harness catalog browser
             // filtered to Checkpoints in the requested ecosystem, pre-highlight
