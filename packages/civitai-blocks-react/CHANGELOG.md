@@ -1,5 +1,47 @@
 # @civitai/blocks-react
 
+## 0.16.0
+
+### Minor Changes
+
+- a7e43d3: App Blocks per-account Buzz (Phase 2 — SDK contract + hook). All additive and backward-compatible.
+
+  `@civitai/app-sdk/blocks`:
+
+  - New `BuzzAccountType` (`'blue' | 'green' | 'yellow'`) — the domain-clamped pools a block may spend from / read (no platform-internal `red`/`purple`).
+  - Optional `WorkflowBody.accountType` — a _preference_ for which pool funds a generation; the host clamps it server-side. Rides through `useBuzzWorkflow().submit(body)` unchanged; omit for today's default funding order.
+  - Optional `BlockWorkflowSnapshot.spentAccountType` — the primary funder (largest debit), which can be `blue`/free — populated by the host from the backend.
+  - New `GET_BUZZ_BALANCE` (block→host) / `BUZZ_BALANCE_RESULT` (host→block) message pair to read the viewer's per-pool balance.
+
+  `@civitai/blocks-react`:
+
+  - New `useBuzzBalance()` hook — reads the viewer's `{ blue, green, yellow }` balance via the host bridge; fetches on mount, exposes `refetch`, `loading`, and `error`.
+
+  Requires the civitai host to add a `GET_BUZZ_BALANCE` handler (Phase 3, parity-guard dependency) before the balance path works end-to-end.
+
+### Patch Changes
+
+- 04a591f: Add TSDoc (summary + `@example`) to the public API surface so usage surfaces in
+  the editor exactly when an agent/dev writes the call.
+
+  - `@civitai/blocks-react`: examples on every exported hook (`useBlockContext`,
+    `useBlockResize`, `useBlockToken`, `useBlockSettings`, `useBuzzWorkflow`,
+    `useBuzzPurchase`, `useAppStorage`, `useCheckpointPicker`, `useResourcePicker`,
+    `useCivitaiNavigate`, `useRequestSignIn`, `useRequestConsent`,
+    `useBlockAnalytics`) plus the `/ui` `Button` and `Modal` components. Examples
+    mirror the README so docs and tag stay in sync.
+  - `@civitai/app-sdk`: examples on the most-called exports — `defineBlock`, the
+    OAuth functions (`generatePkce`, `buildAuthorizeUrl`, `exchangeCode`,
+    `refreshToken`, `revokeToken`, `fetchMe`), the orchestrator helpers
+    (`createOrchestratorClient`, `buildTextToImageBody`, `estimateWorkflow`,
+    `submitWorkflow`, `getWorkflow`, `pollWorkflow`, `isTerminal`,
+    `extractImageUrls`), and the scopes helpers (`hasScope`, `scopesFromBitmask`,
+    `bitmaskFromScopes`, `getScopeLabel`).
+
+  No runtime or API-shape changes — documentation only (now emitted into the
+  shipped `.d.ts`). Also corrects a README OAuth example that read a non-existent
+  `balance` field off `fetchMe`'s `unknown` return.
+
 ## 0.15.3
 
 ### Patch Changes

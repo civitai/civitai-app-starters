@@ -1,5 +1,56 @@
 # @civitai/app-sdk
 
+## 0.14.0
+
+### Minor Changes
+
+- a7e43d3: App Blocks per-account Buzz (Phase 2 — SDK contract + hook). All additive and backward-compatible.
+
+  `@civitai/app-sdk/blocks`:
+
+  - New `BuzzAccountType` (`'blue' | 'green' | 'yellow'`) — the domain-clamped pools a block may spend from / read (no platform-internal `red`/`purple`).
+  - Optional `WorkflowBody.accountType` — a _preference_ for which pool funds a generation; the host clamps it server-side. Rides through `useBuzzWorkflow().submit(body)` unchanged; omit for today's default funding order.
+  - Optional `BlockWorkflowSnapshot.spentAccountType` — the primary funder (largest debit), which can be `blue`/free — populated by the host from the backend.
+  - New `GET_BUZZ_BALANCE` (block→host) / `BUZZ_BALANCE_RESULT` (host→block) message pair to read the viewer's per-pool balance.
+
+  `@civitai/blocks-react`:
+
+  - New `useBuzzBalance()` hook — reads the viewer's `{ blue, green, yellow }` balance via the host bridge; fetches on mount, exposes `refetch`, `loading`, and `error`.
+
+  Requires the civitai host to add a `GET_BUZZ_BALANCE` handler (Phase 3, parity-guard dependency) before the balance path works end-to-end.
+
+- a563b08: Align the App Block manifest schema and `defineBlock` runtime checks to the now-published canonical schema at https://civitai.com/schemas/app-block/v1.json (the single source of truth shared by the server validator and the `civitai` CLI).
+
+  - The vendored `schemas/app-block/v1.json` is now a byte-identical copy of the canonical (was a stale, divergent draft-07 copy), and a CI drift-check (`scripts/check-canonical-schema.sh` / `pnpm check:schema`) fails on any difference so it can't silently diverge again.
+  - `defineBlock` now enforces the canonical `blockId` rule: `/^[a-z][a-z0-9-]*[a-z0-9]$/`, length 3–40 (DNS-subdomain-safe, since the blockId becomes `<blockId>.civit.ai`) — tightened from the previous `/^[a-z0-9-]{3,64}$/`.
+  - `defineBlock` now validates `scopes` by **membership** in the canonical 10-scope enum (`BLOCK_SCOPES`), matching how the schema validates them — a well-formed but unknown scope (e.g. `models:read:all`) is now rejected. The `domain:verb:target` pattern is kept only as an error-message helper.
+
+  BREAKING-ish for authors: this can reject manifests that previously passed `defineBlock` — specifically blockIds that are 41–64 chars, start with a digit/hyphen, or end in a hyphen, and any scope not in the approved set. These would have been rejected server-side anyway; the SDK now surfaces them at `pnpm dev` time.
+
+### Patch Changes
+
+- ec5afff: Add the `apps:storage:read` / `apps:storage:write` block scopes (W4 KV datastore) to `BLOCK_SCOPES`. The convenience map was missing them, so authors had no `BLOCK_SCOPES.APPS_STORAGE_*` constant for the per-app storage scopes even though the server accepts them. A new test pins `BLOCK_SCOPES` to the server's canonical block-scope set to catch future drift.
+- 04a591f: Add TSDoc (summary + `@example`) to the public API surface so usage surfaces in
+  the editor exactly when an agent/dev writes the call.
+
+  - `@civitai/blocks-react`: examples on every exported hook (`useBlockContext`,
+    `useBlockResize`, `useBlockToken`, `useBlockSettings`, `useBuzzWorkflow`,
+    `useBuzzPurchase`, `useAppStorage`, `useCheckpointPicker`, `useResourcePicker`,
+    `useCivitaiNavigate`, `useRequestSignIn`, `useRequestConsent`,
+    `useBlockAnalytics`) plus the `/ui` `Button` and `Modal` components. Examples
+    mirror the README so docs and tag stay in sync.
+  - `@civitai/app-sdk`: examples on the most-called exports — `defineBlock`, the
+    OAuth functions (`generatePkce`, `buildAuthorizeUrl`, `exchangeCode`,
+    `refreshToken`, `revokeToken`, `fetchMe`), the orchestrator helpers
+    (`createOrchestratorClient`, `buildTextToImageBody`, `estimateWorkflow`,
+    `submitWorkflow`, `getWorkflow`, `pollWorkflow`, `isTerminal`,
+    `extractImageUrls`), and the scopes helpers (`hasScope`, `scopesFromBitmask`,
+    `bitmaskFromScopes`, `getScopeLabel`).
+
+  No runtime or API-shape changes — documentation only (now emitted into the
+  shipped `.d.ts`). Also corrects a README OAuth example that read a non-existent
+  `balance` field off `fetchMe`'s `unknown` return.
+
 ## 0.13.1
 
 ### Patch Changes
