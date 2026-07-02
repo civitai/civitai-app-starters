@@ -30,6 +30,8 @@ export { useBlockToken } from './hooks/useBlockToken.js';
 export { useBuzzWorkflow } from './hooks/useBuzzWorkflow.js';
 export { useBlockResize } from './hooks/useBlockResize.js';
 export { useBuzzPurchase } from './hooks/useBuzzPurchase.js';
+export { useBuzzBalance } from './hooks/useBuzzBalance.js';
+export type { BuzzBalance, UseBuzzBalance } from './hooks/useBuzzBalance.js';
 export { useCheckpointPicker } from './hooks/useCheckpointPicker.js';
 export { useResourcePicker } from './hooks/useResourcePicker.js';
 export { useCivitaiNavigate } from './hooks/useCivitaiNavigate.js';

@@ -120,6 +120,19 @@ export type ParentToBlockMessage =
       payload: { requestId: string; purchased: boolean; newBalance?: number };
     }
   | {
+      // Reply to GET_BUZZ_BALANCE. On success `balance` carries the viewer's
+      // per-pool balance ({ blue, green, yellow }); on host-side failure (or an
+      // anonymous viewer / missing scope) `error` is set and `balance` is
+      // absent. Mirrors the `APP_STORAGE_GET_RESULT` value-or-error convention:
+      // consumers treat a non-empty `error` as the failure signal.
+      type: 'BUZZ_BALANCE_RESULT';
+      payload: {
+        requestId: string;
+        balance?: { blue: number; green: number; yellow: number };
+        error?: string;
+      };
+    }
+  | {
       // Reply to OPEN_CHECKPOINT_PICKER. `selected` is absent when the user
       // dismissed the picker without choosing — the block's hook resolves
       // to `{ selected: undefined }` in that case.
@@ -213,6 +226,11 @@ export type BlockToParentMessage =
   // cancel workflows the viewer owns.
   | { type: 'CANCEL_WORKFLOW'; payload: { requestId: string; workflowId: string } }
   | { type: 'OPEN_BUZZ_PURCHASE'; payload: { requestId: string; suggestedAmount?: number } }
+  // Ask the host for the viewer's per-pool Buzz balance. Host-mediated + token-
+  // bound: the host reads it via the `blocks.getMyBuzzBalance` tRPC mutation
+  // (scoped to the block token's viewer) and replies with `BUZZ_BALANCE_RESULT`.
+  // The block never sees the balance API or credentials directly.
+  | { type: 'GET_BUZZ_BALANCE'; payload: { requestId: string } }
   | {
       // Ask the host to open the platform's Checkpoint picker. `baseModelGroup`
       // is the ecosystem key (e.g. 'Flux1', 'SDXL') the picker filters to —

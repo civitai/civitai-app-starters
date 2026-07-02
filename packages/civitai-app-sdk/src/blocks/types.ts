@@ -221,6 +221,18 @@ export type WorkflowStatus =
   | 'error';
 
 /**
+ * The Buzz currency pools an App Block may spend from / read a balance for.
+ *
+ * DELIBERATELY narrow — the domain-clamped set the App Blocks host honors:
+ * `blue` (free/earned), `green` (creator-compensation pool), and `yellow`
+ * (purchased). It intentionally omits the platform-internal pools (`red`,
+ * `purple`, …) that appear in the broader `@civitai/app-sdk/oauth`
+ * `BuzzAccountType` — a block can neither prefer nor read those. Keep this in
+ * lockstep with civitai/civitai's block submit-body schema clamp.
+ */
+export type BuzzAccountType = 'blue' | 'green' | 'yellow';
+
+/**
  * Generation parameters a block can override. All optional — the host fills
  * sensible defaults (sampler='Euler', steps=25, dimensions from the
  * base-model family) when omitted, so the simplest block can submit
@@ -277,6 +289,15 @@ export type WorkflowBody = {
    * Omit for a checkpoint-only generation (backward compatible).
    */
   additionalResources?: Array<{ modelVersionId: number; strength?: number }>;
+  /**
+   * Optional preferred Buzz pool to fund this generation from — a *preference*,
+   * not a guarantee. The host clamps it server-side to what the viewer actually
+   * holds and to the domain-allowed pools (a `blockWorkflowBodySchema` field on
+   * civitai/civitai; preferred-first, then falls back). Omit for today's default
+   * host-chosen funding order (backward compatible). Whichever pool ended up the
+   * primary funder is echoed back on {@link BlockWorkflowSnapshot.spentAccountType}.
+   */
+  accountType?: BuzzAccountType;
   params: BlockTextToImageParams;
 };
 
@@ -302,6 +323,16 @@ export interface BlockWorkflowSnapshot {
   cost?: { total: number };
   imageUrls?: string[];
   error?: string;
+  /**
+   * The Buzz pool that was the PRIMARY FUNDER of this generation — i.e. the
+   * account with the LARGEST debit, which the host stamps onto the workflow
+   * snapshot server-side. This is NOT necessarily "the paid account": a
+   * generation covered mostly by free/earned Buzz reports `spentAccountType:
+   * 'blue'`. Populated by the host from the Phase-1 backend `spentAccountType`
+   * field; absent when the host predates it or no spend occurred. Informational
+   * only — surface it (e.g. "funded from your yellow balance") but don't gate on it.
+   */
+  spentAccountType?: BuzzAccountType;
   /**
    * Set when the host opportunistically claimed a Buzz reward on the user's
    * behalf during submit. Currently the host only fires this for the daily
