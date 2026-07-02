@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   isValidBlockInitPayload,
+  isValidBuzzBalanceResult,
   isValidBuzzPurchaseResult,
   isValidTokenRefresh,
   isValidTokenRefreshResponse,
@@ -198,6 +199,30 @@ describe('isValidBuzzPurchaseResult', () => {
   });
 });
 
+describe('isValidBuzzBalanceResult', () => {
+  it('accepts a success reply carrying the { blue, green, yellow } balance', () => {
+    expect(
+      isValidBuzzBalanceResult({ requestId: 'r', balance: { blue: 0, green: 12, yellow: 340 } }),
+    ).toBe(true);
+  });
+  it('accepts an error-only reply', () => {
+    expect(isValidBuzzBalanceResult({ requestId: 'r', error: 'RATE_LIMITED' })).toBe(true);
+  });
+  it.each([
+    ['neither balance nor error', { requestId: 'r' }],
+    ['balance missing a pool', { requestId: 'r', balance: { blue: 1, green: 2 } }],
+    ['balance pool not a number', { requestId: 'r', balance: { blue: 1, green: 2, yellow: '3' } }],
+    ['balance pool NaN', { requestId: 'r', balance: { blue: 1, green: 2, yellow: Number.NaN } }],
+    ['balance not an object', { requestId: 'r', balance: 5 }],
+    ['error not a string', { requestId: 'r', error: 500 }],
+    ['requestId not a string', { requestId: 5, balance: { blue: 1, green: 2, yellow: 3 } }],
+    ['null payload', null],
+    ['string payload', 'oops'],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidBuzzBalanceResult(payload)).toBe(false);
+  });
+});
+
 describe('payloadValidatorFor', () => {
   it('returns a validator for each documented inbound type', () => {
     expect(payloadValidatorFor('BLOCK_INIT')).toBeTypeOf('function');
@@ -208,6 +233,7 @@ describe('payloadValidatorFor', () => {
     expect(payloadValidatorFor('WORKFLOW_STATUS')).toBeTypeOf('function');
     expect(payloadValidatorFor('WORKFLOW_CANCELED')).toBeTypeOf('function');
     expect(payloadValidatorFor('BUZZ_PURCHASE_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('BUZZ_BALANCE_RESULT')).toBeTypeOf('function');
   });
   it('returns null for payload-less lifecycle messages', () => {
     expect(payloadValidatorFor('SUSPEND')).toBeNull();

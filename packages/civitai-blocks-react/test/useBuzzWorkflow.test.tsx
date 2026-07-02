@@ -116,6 +116,54 @@ describe('useBuzzWorkflow', () => {
     expect(result.current.result?.workflowId).toBe('wf-1');
   });
 
+  it('submit() forwards an optional accountType preference on the body unchanged', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+
+    let submitPromise!: Promise<unknown>;
+    act(() => {
+      submitPromise = result.current.submit({
+        kind: 'textToImage',
+        modelId: 7,
+        modelVersionId: 99,
+        accountType: 'yellow',
+        params: { prompt: 'cat' },
+      });
+    });
+
+    const sent = postMessageMock.mock.calls[0][0] as {
+      type: string;
+      payload: { requestId: string; body: { accountType?: string } };
+    };
+    expect(sent.type).toBe('SUBMIT_WORKFLOW');
+    // The whole body — accountType included — rides through SUBMIT_WORKFLOW unchanged.
+    expect(sent.payload.body).toEqual({
+      kind: 'textToImage',
+      modelId: 7,
+      modelVersionId: 99,
+      accountType: 'yellow',
+      params: { prompt: 'cat' },
+    });
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'WORKFLOW_SUBMITTED',
+            payload: {
+              requestId: sent.payload.requestId,
+              // Host echoes the primary-funder pool back on the snapshot.
+              snapshot: { workflowId: 'wf-1', status: 'processing', spentAccountType: 'yellow' },
+            },
+          },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+
+    await submitPromise;
+    await waitFor(() => expect(result.current.result?.spentAccountType).toBe('yellow'));
+  });
+
   it('submit() tolerates a slow host past the 30s default request timeout', async () => {
     // Regression: submitWorkflow does two orchestrator round-trips +
     // prompt audit server-side, so it can take >30s on a busy queue. The

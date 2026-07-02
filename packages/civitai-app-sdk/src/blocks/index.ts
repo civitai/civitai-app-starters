@@ -58,6 +58,7 @@ export type {
   BlockResourcePickerType,
   BlockTextToImageParams,
   BlockWorkflowSnapshot,
+  BuzzAccountType,
   ShowcaseImage,
   WorkflowBody,
   WorkflowStatus,

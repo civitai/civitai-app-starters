@@ -194,6 +194,36 @@ export function isValidBuzzPurchaseResult(
   return true;
 }
 
+const isFiniteNumber = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isFinite(v);
+
+/**
+ * Reply to a block-initiated `GET_BUZZ_BALANCE`. A well-formed reply carries
+ * EITHER a `balance` ({ blue, green, yellow } — each a finite number) OR an
+ * `error` string; one with neither is malformed and dropped. Mirrors the
+ * `APP_STORAGE_GET_RESULT` value-or-error convention.
+ */
+export function isValidBuzzBalanceResult(
+  p: unknown,
+): p is {
+  balance?: { blue: number; green: number; yellow: number };
+  error?: string;
+  requestId?: string;
+} {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.balance !== undefined) {
+    if (!isObject(p.balance)) return false;
+    if (!isFiniteNumber(p.balance.blue)) return false;
+    if (!isFiniteNumber(p.balance.green)) return false;
+    if (!isFiniteNumber(p.balance.yellow)) return false;
+  }
+  // A reply must resolve to something — either the balance or an error.
+  if (p.balance === undefined && p.error === undefined) return false;
+  return true;
+}
+
 /**
  * Returns the validator for an inbound message type, or `null` for types
  * that don't carry a payload requiring shape checks (SUSPEND/RESUME).
@@ -218,6 +248,8 @@ export function payloadValidatorFor(
       return isValidWorkflowReply;
     case 'BUZZ_PURCHASE_RESULT':
       return isValidBuzzPurchaseResult;
+    case 'BUZZ_BALANCE_RESULT':
+      return isValidBuzzBalanceResult;
     case 'SUSPEND':
     case 'RESUME':
       return null;
