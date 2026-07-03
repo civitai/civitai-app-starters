@@ -418,11 +418,20 @@ export function disallowedAccountError(accountType: BuzzAccountType): string {
   return `buzz account '${accountType}' is not spendable for this app's content rating`;
 }
 
-/** Normalize a {@link MockHostOptions.buzzBalanceError} value to an error string (or `undefined` when unset). */
+/**
+ * Normalize a {@link MockHostOptions.buzzBalanceError} value to an error string
+ * (or `undefined` when genuinely unset — `false`/`undefined`).
+ *
+ * An intentionally-EMPTY string (or an `Error` with an empty `.message`) is
+ * coerced to {@link DEFAULT_BUZZ_BALANCE_ERROR} rather than treated as "unset":
+ * once a caller opts into the error mode, the balance read must FAIL — a blank
+ * message would otherwise silently re-enable the successful read and diverge
+ * from the `Error`-with-empty-message branch. Only `false`/`undefined` disable.
+ */
 function normalizeBalanceError(e: boolean | string | Error | undefined): string | undefined {
-  if (!e) return undefined;
+  if (e === undefined || e === false) return undefined;
   if (e === true) return DEFAULT_BUZZ_BALANCE_ERROR;
-  if (typeof e === 'string') return e;
+  if (typeof e === 'string') return e || DEFAULT_BUZZ_BALANCE_ERROR;
   return e.message || DEFAULT_BUZZ_BALANCE_ERROR;
 }
 
@@ -574,6 +583,15 @@ export function readMockHostUrlOptions(
  * `uninstall()` teardown (restores `window.parent`, clears timers). Safe to use
  * from a node/jsdom/happy-dom test OR a browser dev harness.
  *
+ * FIDELITY CAVEAT — `spentAccountType`: on a successful gen the mock stamps the
+ * PICKED pool (`body.accountType`), which equals the real backend's primary
+ * realized debit only in the common FULL-COVERAGE case. The mock's
+ * single-total-balance model cannot simulate split/fallback debits, so when a
+ * real gen would split across pools the stamped pool may DIFFER from the
+ * backend; and the mock ALWAYS stamps on success, so it cannot model the
+ * no-debit / field-OMITTED case (e.g. a credits-only gen, or picking an empty
+ * pool). Treat the mock stamp as an approximation, not a guarantee.
+ *
  * @example
  * const host = createMockHost({ generation: { failNext: 1, latencyMs: 1500 }, buzz: { balance: 5 } });
  * const uninstall = host.install();
@@ -711,11 +729,16 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
         status: 'succeeded' as const,
         cost: { total: cost },
         imageUrls: imagesFor(workflowId, body),
-        // Pick-aware parity with the real backend's
-        // BlockWorkflowSnapshot.spentAccountType: the funded pool is the one the
-        // block PICKED (`body.accountType`, preferred-first). Only when no pool
-        // was submitted do we fall back to the largest-wallet primary-funder
-        // heuristic (the host-chosen default funding order).
+        // Pick-aware APPROXIMATION of the real backend's
+        // BlockWorkflowSnapshot.spentAccountType. The real backend stamps the
+        // LARGEST realized debit (`primaryDebitedAccountType`), and its currency
+        // resolution is preferred-first + fallback/SPLIT — so when the picked
+        // pool can't cover the cost the realized primary debit is a DIFFERENT
+        // (fallback) pool than the pick. The mock's single-total-balance model
+        // can't simulate splits, so it stamps the PICKED pool: that equals the
+        // primary debit only in the common FULL-COVERAGE case, and always stamps
+        // on success (it can't model the no-debit / field-OMITTED case). When no
+        // pool was submitted, fall back to the largest-wallet heuristic.
         spentAccountType: body.accountType ?? primaryFunder(buzzBalance),
       };
     };

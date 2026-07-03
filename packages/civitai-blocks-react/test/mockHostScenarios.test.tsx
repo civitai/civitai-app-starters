@@ -382,6 +382,17 @@ describe('createMockHost — GET_BUZZ_BALANCE (per-pool wallet)', () => {
     }
   });
 
+  it('buzzBalanceError as an empty string still fails (coerced to default, not unset)', async () => {
+    uninstall = createMockHost({ buzzBalanceError: '' }).install();
+    const { result } = renderHook(() => useBuzzBalance());
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    // An intentionally-empty message must NOT silently re-enable the read.
+    expect(result.current.balance).toBeNull();
+    expect(result.current.error).toBeTruthy();
+    expect(result.current.error?.message).toBe('balance unavailable');
+  });
+
   it('setScenario can clear buzzBalanceError mid-session (error → wallet)', async () => {
     const host = createMockHost({ buzzBalanceError: true });
     uninstall = host.install();
