@@ -5,7 +5,12 @@ import { useBuzzWorkflow } from '../src/hooks/useBuzzWorkflow.js';
 import { useBuzzBalance } from '../src/hooks/useBuzzBalance.js';
 import { useAppStorage } from '../src/hooks/useAppStorage.js';
 import { getTransport } from '../src/internal/singleton.js';
-import { createMockHost, resetTransport, readMockHostUrlOptions } from '../src/testing.js';
+import {
+  createMockHost,
+  resetTransport,
+  readMockHostUrlOptions,
+  disallowedAccountError,
+} from '../src/testing.js';
 
 /**
  * Layer-1 scenario coverage for `createMockHost`: the `generation` / `buzz` /
@@ -236,8 +241,9 @@ describe('createMockHost — buzz balance scenario', () => {
     await waitFor(() => expect(host!.buzz.getBalance()).toBeGreaterThan(0));
   });
 
-  it('stamps a synthetic spentAccountType (primary funder) on the succeeded snapshot', async () => {
-    // Default wallet is yellow-dominant (5000) → primary funder 'yellow'.
+  it('stamps a synthetic spentAccountType (primary funder) when no accountType is picked', async () => {
+    // Default wallet is yellow-dominant (5000) → primary funder 'yellow'. BODY
+    // carries NO accountType, so the mock falls back to the largest-pool stamp.
     host = createMockHost({ pollsUntilDone: 1 });
     uninstall = host.install();
     const { result } = renderHook(() => useBuzzWorkflow());
@@ -246,6 +252,28 @@ describe('createMockHost — buzz balance scenario', () => {
     const snap = (await runGen(result, 1)) as { status: string; spentAccountType?: string };
     expect(snap.status).toBe('succeeded');
     expect(snap.spentAccountType).toBe('yellow');
+  });
+
+  it('stamps spentAccountType from the SUBMITTED accountType (pick-aware, not largest pool)', async () => {
+    // Default wallet is yellow-dominant → the pick-blind stamp would be 'yellow'.
+    // A pick of 'green' must win: spentAccountType echoes the submitted pool.
+    host = createMockHost({ pollsUntilDone: 1 });
+    uninstall = host.install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    let snap!: { status: string; workflowId: string; spentAccountType?: string };
+    await act(async () => {
+      snap = (await result.current.submit({
+        ...BODY,
+        accountType: 'green',
+      })) as typeof snap;
+    });
+    await act(async () => {
+      snap = (await result.current.poll(snap.workflowId)) as typeof snap;
+    });
+    expect(snap.status).toBe('succeeded');
+    expect(snap.spentAccountType).toBe('green');
   });
 });
 
@@ -315,6 +343,157 @@ describe('createMockHost — GET_BUZZ_BALANCE (per-pool wallet)', () => {
     } finally {
       window.removeEventListener('message', listener);
     }
+  });
+
+  it('buzzBalanceError: true surfaces the default error on useBuzzBalance (no balance)', async () => {
+    uninstall = createMockHost({ buzzBalanceError: true }).install();
+    const { result } = renderHook(() => useBuzzBalance());
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.balance).toBeNull();
+    expect(result.current.error).toBeTruthy();
+  });
+
+  it('buzzBalanceError as a string uses that exact message in the error reply shape', async () => {
+    uninstall = createMockHost({ buzzBalanceError: 'boom' }).install();
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    const replies: Array<{ requestId?: string; balance?: unknown; error?: unknown }> = [];
+    const listener = (ev: MessageEvent) => {
+      const d = ev.data as {
+        type?: string;
+        payload?: { requestId?: string; balance?: unknown; error?: unknown };
+      };
+      if (d?.type === 'BUZZ_BALANCE_RESULT') replies.push(d.payload ?? {});
+    };
+    window.addEventListener('message', listener);
+    try {
+      await act(async () => {
+        window.parent.postMessage(
+          { type: 'GET_BUZZ_BALANCE', payload: { requestId: 'buzz-err' } },
+          ORIGIN,
+        );
+      });
+      await waitFor(() => expect(replies.length).toBe(1));
+      // Exact error shape: { requestId, error } and NO balance (mirrors createLiveHost).
+      expect(replies[0]).toEqual({ requestId: 'buzz-err', error: 'boom' });
+    } finally {
+      window.removeEventListener('message', listener);
+    }
+  });
+
+  it('buzzBalanceError as an empty string still fails (coerced to default, not unset)', async () => {
+    uninstall = createMockHost({ buzzBalanceError: '' }).install();
+    const { result } = renderHook(() => useBuzzBalance());
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    // An intentionally-empty message must NOT silently re-enable the read.
+    expect(result.current.balance).toBeNull();
+    expect(result.current.error).toBeTruthy();
+    expect(result.current.error?.message).toBe('balance unavailable');
+  });
+
+  it('setScenario can clear buzzBalanceError mid-session (error → wallet)', async () => {
+    const host = createMockHost({ buzzBalanceError: true });
+    uninstall = host.install();
+    const { result, rerender } = renderHook(() => useBuzzBalance());
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error).toBeTruthy();
+
+    act(() => host.setScenario({ buzzBalanceError: false }));
+    await act(async () => {
+      await result.current.refetch();
+    });
+    rerender();
+    await waitFor(() => expect(result.current.error).toBeNull());
+    expect(result.current.balance).toEqual({ blue: 1000, green: 0, yellow: 5000 });
+  });
+});
+
+describe('createMockHost — disallowed account (content-rating clamp)', () => {
+  let host: ReturnType<typeof createMockHost> | undefined;
+  let uninstall: (() => void) | undefined;
+
+  beforeEach(() => {
+    getTransport({ allowedParentOrigins: [ORIGIN] });
+  });
+  afterEach(() => {
+    cleanup();
+    uninstall?.();
+    uninstall = host = undefined;
+    resetTransport();
+  });
+
+  async function submitWith(
+    result: { current: ReturnType<typeof useBuzzWorkflow> },
+    accountType: 'blue' | 'green' | 'yellow',
+  ) {
+    let snap!: { status: string; workflowId: string; error?: string };
+    await act(async () => {
+      snap = (await result.current.submit({ ...BODY, accountType })) as typeof snap;
+    });
+    return snap;
+  }
+
+  it('rejects a submit whose accountType is disallowed with the real backend message', async () => {
+    host = createMockHost({ disallowedAccountTypes: ['yellow'], pollsUntilDone: 1 });
+    uninstall = host.install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    const snap = await submitWith(result, 'yellow');
+    expect(snap.status).toBe('failed');
+    expect(snap.error).toBe(disallowedAccountError('yellow'));
+  });
+
+  it('accepts a submit whose accountType is NOT in the disallowed set', async () => {
+    host = createMockHost({ disallowedAccountTypes: ['yellow'], pollsUntilDone: 1 });
+    uninstall = host.install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    let snap = await submitWith(result, 'green');
+    expect(snap.status).not.toBe('failed');
+    await act(async () => {
+      snap = (await result.current.poll(snap.workflowId)) as typeof snap;
+    });
+    expect(snap.status).toBe('succeeded');
+  });
+
+  it('disallowed check runs BEFORE the balance/insufficient path', async () => {
+    // Even with a balance that could NOT cover the gen, a disallowed pool fails
+    // with the content-rating message (not insufficient-Buzz) — matches the real
+    // backend rejecting at the currency boundary before any spend check.
+    host = createMockHost({
+      disallowedAccountTypes: ['yellow'],
+      buzz: { balance: 0 },
+      generation: { costPerGen: 999 },
+      pollsUntilDone: 1,
+    });
+    uninstall = host.install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    const snap = await submitWith(result, 'yellow');
+    expect(snap.status).toBe('failed');
+    expect(snap.error).toBe(disallowedAccountError('yellow'));
+  });
+
+  it('setScenario can add a disallowed pool mid-session', async () => {
+    host = createMockHost({ pollsUntilDone: 1 });
+    uninstall = host.install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    // Initially any pool is accepted.
+    let snap = await submitWith(result, 'yellow');
+    expect(snap.status).not.toBe('failed');
+
+    act(() => host!.setScenario({ disallowedAccountTypes: ['yellow'] }));
+    snap = await submitWith(result, 'yellow');
+    expect(snap.status).toBe('failed');
+    expect(snap.error).toBe(disallowedAccountError('yellow'));
   });
 });
 
