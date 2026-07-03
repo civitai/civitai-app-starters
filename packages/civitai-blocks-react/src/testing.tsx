@@ -27,6 +27,7 @@ export { __resetTransport as resetTransport };
 export {
   createMockHost,
   readMockHostUrlOptions,
+  disallowedAccountError,
   type MockHost,
   type MockHostOptions,
   type MockHostFailMode,

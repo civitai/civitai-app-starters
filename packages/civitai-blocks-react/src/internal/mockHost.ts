@@ -258,6 +258,28 @@ export interface MockHostOptions {
    */
   buzzBalance?: MockBuzzBalance;
   /**
+   * Force `GET_BUZZ_BALANCE` to FAIL instead of returning a wallet — exercises
+   * the block's balance-read error UI (what `useBuzzBalance().error` surfaces).
+   * `true` → a default `'balance unavailable'` message; a string → that exact
+   * message; an `Error` → its `.message`. The reply mirrors the real
+   * (`createLiveHost`) error shape exactly: `BUZZ_BALANCE_RESULT` with
+   * `{ requestId, error }` and NO `balance`. Absent → the balance read
+   * succeeds (back-compat). Live-tunable via {@link MockHost.setScenario}.
+   */
+  buzzBalanceError?: boolean | string | Error;
+  /**
+   * Buzz pools a `SUBMIT_WORKFLOW` must REJECT when named in `body.accountType`
+   * — simulates the real backend's content-rating clamp. The real host throws a
+   * `BAD_REQUEST` at the currency-resolution boundary (before any spend) when a
+   * block picks a pool the app's maturity policy disallows; the mock mirrors
+   * that: a submit whose `accountType` is in this set resolves to a `failed`
+   * snapshot carrying {@link disallowedAccountError}'s message (checked BEFORE
+   * the insufficient-Buzz / generic-failure paths, matching the real ordering).
+   * Absent/empty → any pool is accepted (back-compat). Live-tunable via
+   * {@link MockHost.setScenario}.
+   */
+  disallowedAccountTypes?: BuzzAccountType[];
+  /**
    * STORAGE scenario: in-memory KV backend (seed / quota / failNext). See
    * {@link MockStorageScenario}. When omitted, the store starts EMPTY with the
    * v0 defaults — `APP_STORAGE_*` is answered either way (the mock host always
@@ -320,7 +342,15 @@ export interface MockHostOptions {
  */
 export type MockHostScenarioPatch = Pick<
   MockHostOptions,
-  'failMode' | 'cost' | 'pollsUntilDone' | 'cannedPicks' | 'generation' | 'buzz' | 'storage'
+  | 'failMode'
+  | 'cost'
+  | 'pollsUntilDone'
+  | 'cannedPicks'
+  | 'generation'
+  | 'buzz'
+  | 'storage'
+  | 'buzzBalanceError'
+  | 'disallowedAccountTypes'
 >;
 
 /** Runtime Buzz-balance handle exposed on {@link MockHost.buzz}. */
@@ -373,6 +403,28 @@ const DEFAULT_VIEWER: ViewerInfo = { id: 2, username: 'dev-viewer', status: 'act
 
 const INSUFFICIENT_BUZZ_ERROR = 'Insufficient Buzz to run this generation.';
 const GENERIC_GEN_ERROR = 'Generation failed (simulated).';
+
+/** Default message for a simulated balance-read failure ({@link MockHostOptions.buzzBalanceError}). */
+const DEFAULT_BUZZ_BALANCE_ERROR = 'balance unavailable';
+
+/**
+ * The error a `SUBMIT_WORKFLOW` fails with when its `body.accountType` names a
+ * pool the app's content rating disallows — byte-for-byte the message the real
+ * backend throws (civitai/civitai `blocks.router` `resolveBlockCurrenciesForAccount`,
+ * `TRPCError` `BAD_REQUEST`) so a block's error UI can assert the same copy
+ * locally. Exported for tests + block-side assertions.
+ */
+export function disallowedAccountError(accountType: BuzzAccountType): string {
+  return `buzz account '${accountType}' is not spendable for this app's content rating`;
+}
+
+/** Normalize a {@link MockHostOptions.buzzBalanceError} value to an error string (or `undefined` when unset). */
+function normalizeBalanceError(e: boolean | string | Error | undefined): string | undefined {
+  if (!e) return undefined;
+  if (e === true) return DEFAULT_BUZZ_BALANCE_ERROR;
+  if (typeof e === 'string') return e;
+  return e.message || DEFAULT_BUZZ_BALANCE_ERROR;
+}
 
 /**
  * Default per-pool wallet reported on `GET_BUZZ_BALANCE` when
@@ -560,6 +612,10 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   let legacyCost = options.cost ?? 8;
   let cannedPicks: Partial<Record<BlockResourcePickerType, CannedPick | null>> =
     options.cannedPicks ?? { Checkpoint: DEFAULT_CHECKPOINT_PICK, LORA: DEFAULT_LORA_PICK };
+  // Simulated balance-read failure (undefined = read succeeds).
+  let buzzBalanceError: string | undefined = normalizeBalanceError(options.buzzBalanceError);
+  // Pools a submit must reject (content-rating clamp). Normalized to a Set.
+  let disallowedAccounts = new Set<BuzzAccountType>(options.disallowedAccountTypes ?? []);
 
   // ---- Storage scenario (in-memory KV backend) ----
   const storageScenario: MockStorageScenario = { ...(options.storage ?? {}) };
@@ -655,9 +711,12 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
         status: 'succeeded' as const,
         cost: { total: cost },
         imageUrls: imagesFor(workflowId, body),
-        // Synthetic primary-funder parity with the real backend's
-        // BlockWorkflowSnapshot.spentAccountType (largest-debit pool).
-        spentAccountType: primaryFunder(buzzBalance),
+        // Pick-aware parity with the real backend's
+        // BlockWorkflowSnapshot.spentAccountType: the funded pool is the one the
+        // block PICKED (`body.accountType`, preferred-first). Only when no pool
+        // was submitted do we fall back to the largest-wallet primary-funder
+        // heuristic (the host-chosen default funding order).
+        spentAccountType: body.accountType ?? primaryFunder(buzzBalance),
       };
     };
 
@@ -732,6 +791,26 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             submitCount += 1;
             const body = typed.payload?.body ?? ({} as WorkflowBody);
             const cost = costFor(body);
+
+            // Disallowed-account path (content-rating clamp): the real backend
+            // rejects a picked pool outside the app's maturity policy at the
+            // currency-resolution boundary — BEFORE any Buzz spend — so this is
+            // checked first. Surfaces as a `failed` snapshot (mirrors how a
+            // submit tRPC BAD_REQUEST becomes an errorSnapshot in createLiveHost).
+            if (body.accountType && disallowedAccounts.has(body.accountType)) {
+              dispatchToBlock({
+                type: 'WORKFLOW_SUBMITTED',
+                payload: {
+                  requestId,
+                  snapshot: {
+                    workflowId: `wf_fail_${submitCount}`,
+                    status: 'failed',
+                    error: disallowedAccountError(body.accountType),
+                  },
+                },
+              });
+              return;
+            }
 
             // Insufficient-Buzz path: legacy failMode, the buzz scenario's
             // force flag, OR a simulated balance that can't cover this gen.
@@ -855,6 +934,16 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // the reply by it, so a reply without one is unroutable (matches
             // the sibling request cases + createLiveHost).
             if (typeof requestId !== 'string') return;
+            // Simulated read failure: reply with the error shape
+            // (`{ requestId, error }`, no `balance`) — byte-for-byte
+            // createLiveHost's failure reply — so the block's error UI fires.
+            if (buzzBalanceError !== undefined) {
+              dispatchToBlock({
+                type: 'BUZZ_BALANCE_RESULT',
+                payload: { requestId, error: buzzBalanceError },
+              });
+              return;
+            }
             dispatchToBlock({
               type: 'BUZZ_BALANCE_RESULT',
               payload: { requestId, balance: { ...buzzBalance } },
@@ -1077,6 +1166,10 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     if (patch.cannedPicks !== undefined) cannedPicks = patch.cannedPicks;
     if (patch.generation !== undefined) gen = { ...gen, ...patch.generation };
     if (patch.buzz !== undefined) buzz = { ...buzz, ...patch.buzz };
+    if (patch.buzzBalanceError !== undefined)
+      buzzBalanceError = normalizeBalanceError(patch.buzzBalanceError);
+    if (patch.disallowedAccountTypes !== undefined)
+      disallowedAccounts = new Set(patch.disallowedAccountTypes);
     if (patch.storage !== undefined) {
       // Only the live-tunable storage knob (`failNext`) is applied mid-session;
       // seed/quota are install-time (re-install to change the backing store).
