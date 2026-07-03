@@ -239,7 +239,7 @@ Pass `clientSecret` to `exchangeCode` / `refreshToken` / `revokeToken` for confi
 When your app calls the orchestrator with a user's OAuth access token, the orchestrator debits **the user's Buzz**, not yours. This is the right tenant model for a third-party app, but it means:
 
 1. **Request `AIServicesWrite` scope at consent time.** Without it the user can't grant their Buzz for generation.
-2. **Show cost before spending.** Call `estimateCost` first — it returns `cost.total` in Buzz without debiting. Display it. Let the user confirm.
+2. **Show cost before spending.** Call `estimateWorkflow` first — it returns `cost.total` in Buzz without debiting. Display it. Let the user confirm.
 3. **Show balance.** Request `BuzzRead` scope, then call Civitai's balance endpoint. Don't surprise users.
 4. **Handle the cap-denial case.** Per-app spending caps (set by the user at consent and at Account → Connected Apps) can cause a successful `whatif` to be rejected at real submit time with a generic `BAD_REQUEST`. Treat that as "insufficient or denied" in your UI.
 

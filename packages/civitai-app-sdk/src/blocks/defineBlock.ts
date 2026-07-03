@@ -113,7 +113,7 @@ export interface DefineBlockConfig {
  *     scopes: ['ai:write:budgeted'],
  *     iframe: { src: 'https://my-block.civit.ai/', minHeight: 200 },
  *     contentRating: 'pg',
- *     minApiVersion: 1,
+ *     minApiVersion: '1.0',
  *   },
  * });
  */

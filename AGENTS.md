@@ -36,7 +36,7 @@ These are validated in production by Civitai's own apps. Don't rewrite them; ext
 - **OAuth + SDK glue lives in `@civitai/app-sdk`.** PKCE, token exchange, refresh, revoke, encrypted-cookie sessions, scope bitmask, and the orchestrator-client factory are all there. Each starter has a ~30-line framework adapter that calls these primitives. If you find yourself reimplementing any of those, stop — use the package.
 - **Token exchange runs server-side.** Even in the PWA starters, the BFF (a single Hono route) does the OAuth token exchange. The browser never sees `client_secret` or the raw access token — only an opaque `httpOnly` session cookie.
 - **Encrypted-cookie sessions.** AES-256-CTR via `@civitai/app-sdk`'s `sealCookie` / `unsealCookie`. No JWT-in-localStorage. No external session store.
-- **Buzz is the user's, not the developer's.** When a user authenticates with OAuth and your app submits a generation, the orchestrator debits **the user's Buzz** via their token. App developers don't front the cost. Show the user a cost preview (`estimateCost` from `@civitai/app-sdk` → calls `?whatif=true`) before submitting.
+- **Buzz is the user's, not the developer's.** When a user authenticates with OAuth and your app submits a generation, the orchestrator debits **the user's Buzz** via their token. App developers don't front the cost. Show the user a cost preview (`estimateWorkflow` from `@civitai/app-sdk` → calls `?whatif=true`) before submitting.
 - **Scopes are bitmasks.** Request only what you need at consent time. For the standard image-generation demo: `AIServicesWrite | BuzzRead | UserRead`. Use the named constants from `@civitai/app-sdk/scopes`, not magic numbers.
 
 ## Patterns to avoid

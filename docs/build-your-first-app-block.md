@@ -101,7 +101,7 @@ my-block/
 {
   "$schema": "https://civitai.com/schemas/app-block/v1.json",
   "appId": "app_REPLACE_ME",        // your OauthClient id (created on first approve)
-  "blockId": "my-block",            // /^[a-z0-9-]{3,64}$/ — also your subdomain
+  "blockId": "my-block",            // /^[a-z][a-z0-9-]*[a-z0-9]$/, 3–40 chars — also your subdomain
   "version": "0.1.0",               // semver; bump on each new submission
   "name": "My Block",
   "type": "block",
