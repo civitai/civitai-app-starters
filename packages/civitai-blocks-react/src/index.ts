@@ -1,5 +1,5 @@
 /**
- * `@civitai/blocks-react` — React hooks + iframe transport for Civitai App Blocks.
+ * `@civitai/blocks-react` — React hooks + iframe transport for Civitai Apps.
  *
  * Pair with `@civitai/app-sdk/blocks` (framework-agnostic contract). Hooks
  * land in a follow-up commit; this commit ships the transport layer so the

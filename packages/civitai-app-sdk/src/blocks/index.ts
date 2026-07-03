@@ -1,5 +1,5 @@
 /**
- * `@civitai/app-sdk/blocks` — framework-agnostic contract for Civitai App Blocks.
+ * `@civitai/app-sdk/blocks` — framework-agnostic contract for Civitai Apps.
  *
  * This subpath exports the manifest type, scope strings, postMessage protocol,
  * and the `defineBlock` validator. Hooks and transport implementations live in

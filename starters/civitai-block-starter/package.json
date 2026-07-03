@@ -2,7 +2,7 @@
   "name": "civitai-block-starter",
   "version": "0.0.0",
   "private": true,
-  "description": "Vite + React 19 starter for building Civitai App Blocks — iframe-embedded UIs that render on civitai.com pages.",
+  "description": "Vite + React 19 starter for building Civitai Apps — iframe-embedded UIs that render on civitai.com pages.",
   "type": "module",
   "license": "MIT",
   "keywords": [

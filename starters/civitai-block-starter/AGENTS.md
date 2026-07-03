@@ -7,7 +7,7 @@
 > `useBlockContext()`, render UI keyed on slot + viewer + theme, let
 > `useBlockResize` drive iframe height.
 
-You're inside the App Blocks starter for Civitai. The user cloned this to
+You're inside the Civitai Apps starter for Civitai. The user cloned this to
 bootstrap their own block — there is **no monorepo around you**;
 `@civitai/app-sdk` and `@civitai/blocks-react` are npm dependencies, not
 sibling workspaces. Help them extend it.
@@ -21,7 +21,7 @@ sibling workspaces. Help them extend it.
 
 ## Why this shape
 
-App Blocks render *inside* civitai.com pages, not as standalone destinations.
+Civitai Apps render *inside* civitai.com pages, not as standalone destinations.
 That changes the trust model:
 
 - The block has no session of its own — it has a short-lived JWT minted by

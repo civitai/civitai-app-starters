@@ -10,23 +10,23 @@ Starter templates for building on [Civitai](https://civitai.com), plus the share
 
 1. **OAuth apps** — full apps on your own domain that sign in with Civitai and
    call the orchestrator. The four `starters/*` templates + `@civitai/app-sdk`.
-2. **App Blocks** — iframe-embedded UIs that render *inside* civitai.com pages
+2. **Civitai Apps** — iframe-embedded UIs that render *inside* civitai.com pages
    (e.g. a generator in a model's sidebar). The `@civitai/app-sdk/blocks`
    contract + `@civitai/blocks-react` hooks + the runnable
-   [`starters/examples/*`](./starters/examples). **See [App Blocks](#app-blocks)
+   [`starters/examples/*`](./starters/examples). **See [Civitai Apps](#civitai-apps)
    below.**
 
 ## What's in here
 
-- **`packages/civitai-app-sdk`** — OAuth + PKCE, encrypted-cookie sessions, scope helpers, orchestrator-call helpers, AND the framework-agnostic **App Blocks** contract (`/blocks` subpath). Published to npm as `@civitai/app-sdk`.
-- **`packages/civitai-blocks-react`** — React hooks + iframe transport for App Blocks. Published as `@civitai/blocks-react`.
-- **Scaffolding + submit for App Blocks** — handled by the Go **`civitai` CLI** ([github.com/civitai/cli](https://github.com/civitai/cli)): `civitai login` → `civitai app init` / `civitai app validate` / `civitai app submit`. (Local dev is the scaffolded project's own `npm run dev:harness` / `npm run dev:live`.) The old `@civitai/blocks-cli` npm scaffolder it replaced stays published-but-deprecated on npm but is no longer part of this repo.
+- **`packages/civitai-app-sdk`** — OAuth + PKCE, encrypted-cookie sessions, scope helpers, orchestrator-call helpers, AND the framework-agnostic **Civitai Apps** contract (`/blocks` subpath). Published to npm as `@civitai/app-sdk`.
+- **`packages/civitai-blocks-react`** — React hooks + iframe transport for Civitai Apps. Published as `@civitai/blocks-react`.
+- **Scaffolding + submit for Civitai Apps** — handled by the Go **`civitai` CLI** ([github.com/civitai/cli](https://github.com/civitai/cli)): `civitai login` → `civitai app init` / `civitai app validate` / `civitai app submit`. (Local dev is the scaffolded project's own `npm run dev:harness` / `npm run dev:live`.) The old `@civitai/blocks-cli` npm scaffolder it replaced stays published-but-deprecated on npm but is no longer part of this repo.
 - **`starters/next-app`** — Next.js 15 (App Router) + Tailwind. SSR-friendly, SEO-capable. Best OAuth-app default.
 - **`starters/sveltekit-app`** — SvelteKit 2 + Tailwind. Same demo surface as `next-app`.
 - **`starters/react-pwa`** — Vite + React 19 + tiny Hono BFF for OAuth token exchange. SPA/PWA shape.
 - **`starters/svelte-pwa`** — Vite + bare Svelte 5 (no Kit) + tiny Hono BFF. SPA/PWA shape.
-- **`starters/civitai-block-starter`** — Vite + React 19 App Block scaffold (what `civitai app init` clones).
-- **`starters/examples/*`** — six minimal, runnable App Block examples, one per feature (see [App Blocks](#app-blocks)).
+- **`starters/civitai-block-starter`** — Vite + React 19 Civitai App scaffold (what `civitai app init` clones).
+- **`starters/examples/*`** — six minimal, runnable Civitai App examples, one per feature (see [Civitai Apps](#civitai-apps)).
 
 The four OAuth starters ship the **same minimal demo:** log in via Civitai OAuth → show your Buzz balance → preview cost of a generation (`whatif`) → submit one image generation → display the result.
 
@@ -70,9 +70,9 @@ git clone --filter=blob:none --sparse https://github.com/civitai/civitai-app-sta
 cd civitai-app-starters && git sparse-checkout set --cone starters/next-app
 ```
 
-## App Blocks
+## Civitai Apps
 
-An **App Block** is a small iframe-embedded UI that renders inside a civitai.com
+A **Civitai App** is a small iframe-embedded UI that renders inside a civitai.com
 page — for example, a generator in a model's sidebar (`model.sidebar_top` slot).
 Unlike an OAuth app, a block runs *inside* civitai.com and gets a short-lived,
 block-scoped JWT + page context handed to it via `postMessage`. It's much smaller
@@ -122,7 +122,7 @@ Devs never touch git hosting. The path is:
    **`https://<blockId>.civit.ai/`** (root-served). Within ~5 min your block is
    live in its slot.
 
-→ **[Build your first App Block](./docs/build-your-first-app-block.md)** — the
+→ **[Build your first App](./docs/build-your-first-app-block.md)** — the
 end-to-end guide, from `civitai app init` to a live block.
 
 ### Gotchas worth knowing up front

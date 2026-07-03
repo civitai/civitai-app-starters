@@ -1,5 +1,5 @@
 /**
- * `@civitai/blocks-react/ui` — opinionated UI components for App Block authoring.
+ * `@civitai/blocks-react/ui` — opinionated UI components for Civitai App authoring.
  *
  * Two surfaces:
  *

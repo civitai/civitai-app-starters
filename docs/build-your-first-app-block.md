@@ -1,13 +1,13 @@
-# Build your first App Block
+# Build your first App
 
 End-to-end: from nothing to a block live in a civitai.com model sidebar. ~20
 minutes. By the end you'll understand the four phases — **build → submit →
 review → deploy** — and the handful of gotchas that trip up first-timers.
 
-> **App Blocks is in a limited, moderator-gated preview (pre-GA).** Submission is
+> **Civitai Apps is in a limited, moderator-gated preview (pre-GA).** Submission is
 > restricted to enrolled/approved accounts while the feature is dark. You can
 > install the CLI, scaffold, and run a block locally today — but `civitai app
-> submit` requires App Blocks access, and an un-enrolled account can't get a
+> submit` requires Civitai Apps access, and an un-enrolled account can't get a
 > block reviewed/approved (so it won't go live) until the feature opens up.
 > There is no public self-serve "request access" form yet — watch
 > [civitai.com](https://civitai.com) and the
@@ -37,7 +37,7 @@ civitai login        # or `civitai login --token <key>` for a personal API key
 > `civitai` CLI ([github.com/civitai/cli](https://github.com/civitai/cli))
 > instead, which is a superset of it.
 
-## What an App Block is
+## What a Civitai App is
 
 A small iframe-embedded UI that renders *inside* a civitai.com page. The host
 (civitai.com) draws a trust frame around your iframe, hands you a short-lived

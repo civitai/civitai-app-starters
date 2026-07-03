@@ -2,7 +2,7 @@
   "name": "example-buzz-workflow",
   "version": "0.0.0",
   "private": true,
-  "description": "App Block example — useBuzzWorkflow estimate to submit to poll, with the cost-quote-matches-charge rule.",
+  "description": "Civitai App example — useBuzzWorkflow estimate to submit to poll, with the cost-quote-matches-charge rule.",
   "type": "module",
   "license": "MIT",
   "scripts": {

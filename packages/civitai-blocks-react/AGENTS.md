@@ -1,7 +1,7 @@
 # Agent Guide — `@civitai/blocks-react`
 
 > **If you only read one thing:** this package is the React-runtime side of
-> Civitai App Blocks. The framework-agnostic contract — manifest types,
+> Civitai Apps. The framework-agnostic contract — manifest types,
 > `defineBlock`, `BLOCK_SCOPES`, the `postMessage` protocol — lives in
 > [`@civitai/app-sdk/blocks`](../civitai-app-sdk/). This package adds the
 > `IframeTransport`, the singleton that detects + caches it, and the eight

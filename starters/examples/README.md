@@ -1,6 +1,6 @@
-# App Block examples
+# Civitai App examples
 
-Six minimal, runnable App Block examples — one per feature area. Each is
+Six minimal, runnable Civitai App examples — one per feature area. Each is
 self-contained (its own `block.manifest.json`, `src/`, and README) and runs
 offline via a dev harness that simulates the civitai.com host.
 

@@ -41,7 +41,7 @@ export function App() {
       data-block-instance-id={blockInstanceId}
       style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}
     >
-      <strong>Civitai App Block starter</strong>
+      <strong>Civitai App starter</strong>
       <small style={{ opacity: 0.7 }}>
         slot: <code>{context.slotId}</code>
       </small>

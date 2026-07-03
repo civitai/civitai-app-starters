@@ -1,6 +1,6 @@
-# Civitai App Block — Vite + React starter
+# Civitai App — Vite + React starter
 
-Scaffold for an [App Block](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-app-sdk/src/blocks) — an iframe-embedded UI that renders on civitai.com pages and authenticates via short-lived block-scoped JWTs.
+Scaffold for a [Civitai App](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-app-sdk/src/blocks) — an iframe-embedded UI that renders on civitai.com pages and authenticates via short-lived block-scoped JWTs.
 
 > This is **not** the same as the `react-pwa` starter. That one builds a full
 > third-party app with OAuth and a BFF. A *block* is much smaller: a single
@@ -52,14 +52,14 @@ Other hooks ship with `@civitai/blocks-react`:
 - `useBlockSettings()` — publisher + per-viewer settings (per-viewer is Phase 2)
 
 `useBuzzPurchase`, `useCivitaiNavigate`, and `useBlockAnalytics` are exported
-but the host-side handlers ship in Phase 2 of civitai.com's App Blocks
+but the host-side handlers ship in Phase 2 of civitai.com's Civitai Apps
 substrate — calls will reject on the per-request timeout until then.
 
 ## Environment
 
 | Variable | When | Purpose |
 |---|---|---|
-| `VITE_BLOCK_ALLOWED_PARENT_ORIGINS` | always (build + dev) | Comma-separated list of allowed parent-frame origins. The `IframeTransport` drops every `postMessage` whose `event.origin` isn't in this list. **Required** — without it the transport refuses to mount. **In production this value is platform-injected at build time by the App Blocks build recipe** (it sets an `ENV` that Vite prioritizes over `.env` files), so the value you commit here only matters for **local dev** (point it at your dev-server origin). The injected prod set must mirror the host CSP `frame-ancestors` allowlist — both layers gate which parent domains may embed and message a block. |
+| `VITE_BLOCK_ALLOWED_PARENT_ORIGINS` | always (build + dev) | Comma-separated list of allowed parent-frame origins. The `IframeTransport` drops every `postMessage` whose `event.origin` isn't in this list. **Required** — without it the transport refuses to mount. **In production this value is platform-injected at build time by the Civitai Apps build recipe** (it sets an `ENV` that Vite prioritizes over `.env` files), so the value you commit here only matters for **local dev** (point it at your dev-server origin). The injected prod set must mirror the host CSP `frame-ancestors` allowlist — both layers gate which parent domains may embed and message a block. |
 | `VITE_DEV_HARNESS` | dev only | Set to `"true"` to wrap the block in the local simulator. `pnpm dev:harness` flips this on for you. Strip from production builds. |
 
 ## Scripts

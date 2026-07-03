@@ -1,6 +1,6 @@
 # `@civitai/blocks-react`
 
-React hooks and iframe transport for [Civitai App Blocks](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md).
+React hooks and iframe transport for [Civitai Apps](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md).
 
 Pairs with [`@civitai/app-sdk`](https://www.npmjs.com/package/@civitai/app-sdk)'s
 `/blocks` subpath, which carries the framework-agnostic manifest, scope, and

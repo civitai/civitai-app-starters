@@ -306,7 +306,7 @@ export type BlockToParentMessage =
       type: 'TRACK_EVENT';
       payload: { eventName: string; properties?: Record<string, unknown> };
     }
-  // App Blocks KV datastore (W4-v0). Storage calls go through the host —
+  // Civitai Apps KV datastore (W4-v0). Storage calls go through the host —
   // the block never sees the apps DB credentials. Scope is (block instance,
   // user). `value` is freeform JSON; the host enforces a 64 KB per-value
   // cap and a 50 MB per-app quota.

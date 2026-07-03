@@ -8,14 +8,14 @@ If you (the AI agent) were pointed here to scaffold a new Civitai app for your u
 
 | Use this when… | Starter |
 |---|---|
-| Building an **App Block** — iframe-embedded UI that renders inside a civitai.com page slot | `starters/civitai-block-starter` (scaffold with `civitai app init <name>` — the Go [`civitai` CLI](https://github.com/civitai/cli)) |
+| Building a **Civitai App** — iframe-embedded UI that renders inside a civitai.com page slot | `starters/civitai-block-starter` (scaffold with `civitai app init <name>` — the Go [`civitai` CLI](https://github.com/civitai/cli)) |
 | App needs SEO / public-discoverable pages — gallery, landing, marketplace | `starters/next-app` (default for standalone apps) |
 | App needs SEO and the team prefers Svelte | `starters/sveltekit-app` |
 | App is a tool, mini-game, focused gen UI, in-app extension — no SEO required | `starters/react-pwa` |
 | Same as above but the team prefers Svelte | `starters/svelte-pwa` |
 | Unsure | `starters/next-app` |
 
-App Blocks are a different shape from the standalone-app starters: no OAuth flow of their own, no BFF, no session cookies. The host civitai.com page mints a short-lived block-scoped JWT and ships it to the iframe via `BLOCK_INIT`. See [`packages/civitai-app-sdk/src/blocks/`](./packages/civitai-app-sdk/src/blocks/) for the contract and [`packages/civitai-blocks-react/`](./packages/civitai-blocks-react/) for the hooks.
+Civitai Apps are a different shape from the standalone-app starters: no OAuth flow of their own, no BFF, no session cookies. The host civitai.com page mints a short-lived block-scoped JWT and ships it to the iframe via `BLOCK_INIT`. See [`packages/civitai-app-sdk/src/blocks/`](./packages/civitai-app-sdk/src/blocks/) for the contract and [`packages/civitai-blocks-react/`](./packages/civitai-blocks-react/) for the hooks.
 
 ## Cloning standalone
 
@@ -62,7 +62,7 @@ Each starter ships a deliberately minimal demo (login + balance + cost preview +
 civitai-app-starters/
 ├── packages/
 │   ├── civitai-app-sdk/         # shared OAuth + SDK glue + framework-agnostic blocks contract
-│   └── civitai-blocks-react/    # React hooks + iframe transport for Civitai App Blocks
+│   └── civitai-blocks-react/    # React hooks + iframe transport for Civitai Apps
 └── starters/
     ├── next-app/                # Next.js 15 App Router (SSR)
     ├── sveltekit-app/           # SvelteKit 2 (SSR)
@@ -84,6 +84,6 @@ Merge to `main` → review the auto-generated *Version Packages* PR → merge it
 
 - Per-starter `AGENTS.md` files for stack-specific guidance.
 - [`packages/civitai-app-sdk/README.md`](./packages/civitai-app-sdk/README.md) — full SDK API reference.
-- [`packages/civitai-blocks-react/README.md`](./packages/civitai-blocks-react/README.md) — React hooks + iframe transport for App Blocks.
+- [`packages/civitai-blocks-react/README.md`](./packages/civitai-blocks-react/README.md) — React hooks + iframe transport for Civitai Apps.
 - [`RELEASING.md`](./RELEASING.md) — SDK publish + changeset workflow.
 - [Civitai OAuth quickstart](https://developer.civitai.com/docs/oauth) — official upstream docs.

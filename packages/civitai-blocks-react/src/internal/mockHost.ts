@@ -831,7 +831,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             return;
           }
 
-          // ---- App Blocks KV datastore (W4) — in-memory backend ----
+          // ---- Civitai Apps KV datastore (W4) — in-memory backend ----
           case 'APP_STORAGE_GET': {
             const key = typed.payload?.key ?? '';
             const row = store.get(key);

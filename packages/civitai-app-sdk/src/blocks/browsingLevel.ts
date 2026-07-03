@@ -1,5 +1,5 @@
 /**
- * Browsing-level bit constants + ceiling helpers for App Blocks.
+ * Browsing-level bit constants + ceiling helpers for Civitai Apps.
  *
  * The host (civitai/civitai) projects an authoritative `maxBrowsingLevel`
  * BITMASK into `BLOCK_INIT` — the max NSFW levels the surrounding color-domain
