@@ -180,6 +180,26 @@ const { purchased, newBalance } = await openPurchaseModal(suggestedAmount);
 if (purchased) { /* retry the generation */ }
 ```
 
+### `useBuzzBalance()`
+
+The signed-in viewer's per-pool Buzz balance (`{ blue, green, yellow }` — the
+domain-clamped pools a block may read; never the platform-internal `red`/`purple`).
+Host-mediated over `GET_BUZZ_BALANCE` → `BUZZ_BALANCE_RESULT`; same trust model as
+`useBuzzWorkflow`/`useBuzzPurchase` (the host resolves the viewer from the block
+token — the block never touches the balance API). Fetches on mount; `refetch` for
+on-demand refreshes.
+
+```tsx
+const { balance, loading, error, refetch } = useBuzzBalance();
+// `balance` is null until the first successful fetch. refetch() after a
+// generation debits it. An anon viewer / missing scope / host failure → `error`.
+if (!loading && balance) console.log(`Yellow: ${balance.yellow}`);
+```
+
+> Per-account Buzz: `useBuzzWorkflow().submit(body)` also takes an optional
+> `body.accountType` (`'blue' | 'green' | 'yellow'`) — a *preference* for which
+> pool funds the generation; the host clamps it server-side.
+
 ### `useAppStorage()`
 
 Per-(block instance, viewer) KV datastore, host-mediated. 64 KB per value,
