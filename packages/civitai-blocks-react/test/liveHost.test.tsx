@@ -1192,3 +1192,83 @@ describe('createLiveHost — GET_BUZZ_BALANCE (served via blocks.getMyBuzzBalanc
     expect(called).toBe(false);
   });
 });
+
+describe('createLiveHost — NAVIGATE', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+  let openSpy: ReturnType<typeof vi.spyOn>;
+  let assignSpy: ReturnType<typeof vi.spyOn>;
+  const TOKEN = fakeJwt(DEFAULT_CLAIMS);
+
+  function install() {
+    const host = createLiveHost({
+      blockToken: TOKEN,
+      viewer: { id: 42, username: 'dev-mod' }, // skip /blocks/me
+      fetchImpl: vi.fn(async () =>
+        trpcOk({ workflowId: 'x', status: 'pending' }),
+      ) as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+  }
+
+  beforeEach(() => {
+    inbound = collectInbound();
+    openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+    assignSpy = vi.spyOn(window.location, 'assign').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  it('new_tab target opens the resolved URL in a new tab (relative path → backend origin)', async () => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('NAVIGATE', { path: '/models/123', target: 'new_tab' });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(openSpy).toHaveBeenCalledWith('https://civitai.com/models/123', '_blank');
+    expect(assignSpy).not.toHaveBeenCalled();
+  });
+
+  it('current target assigns the resolved URL on the same frame', async () => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('NAVIGATE', { path: '/user/alice', target: 'current' });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(assignSpy).toHaveBeenCalledWith('https://civitai.com/user/alice');
+    expect(openSpy).not.toHaveBeenCalled();
+  });
+
+  it('defaults to current-frame assign when no target is supplied', async () => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('NAVIGATE', { path: '/' });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(assignSpy).toHaveBeenCalledWith('https://civitai.com/');
+  });
+
+  it('passes an absolute URL through unchanged (not re-prefixed with the backend origin)', async () => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('NAVIGATE', { path: 'https://example.com/x', target: 'new_tab' });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(openSpy).toHaveBeenCalledWith('https://example.com/x', '_blank');
+  });
+});
+
+describe('createLiveHost — startup guards', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('logs an actionable console.error when no block token is supplied', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // Non-fatal: the host is still returned so the dev sees a clear error.
+    const host = createLiveHost({ blockToken: '' });
+    expect(host).toBeDefined();
+    expect(typeof host.install).toBe('function');
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('No block token supplied'));
+  });
+});
