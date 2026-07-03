@@ -2,6 +2,7 @@ import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useBuzzWorkflow } from '../src/hooks/useBuzzWorkflow.js';
+import { useBuzzBalance } from '../src/hooks/useBuzzBalance.js';
 import { useAppStorage } from '../src/hooks/useAppStorage.js';
 import { getTransport } from '../src/internal/singleton.js';
 import { createMockHost, resetTransport, readMockHostUrlOptions } from '../src/testing.js';
@@ -233,6 +234,87 @@ describe('createMockHost — buzz balance scenario', () => {
       window.parent.postMessage({ type: 'OPEN_BUZZ_PURCHASE', payload: { requestId: 'r1' } }, ORIGIN);
     });
     await waitFor(() => expect(host!.buzz.getBalance()).toBeGreaterThan(0));
+  });
+
+  it('stamps a synthetic spentAccountType (primary funder) on the succeeded snapshot', async () => {
+    // Default wallet is yellow-dominant (5000) → primary funder 'yellow'.
+    host = createMockHost({ pollsUntilDone: 1 });
+    uninstall = host.install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    const snap = (await runGen(result, 1)) as { status: string; spentAccountType?: string };
+    expect(snap.status).toBe('succeeded');
+    expect(snap.spentAccountType).toBe('yellow');
+  });
+});
+
+describe('createMockHost — GET_BUZZ_BALANCE (per-pool wallet)', () => {
+  let uninstall: (() => void) | undefined;
+
+  beforeEach(() => {
+    getTransport({ allowedParentOrigins: [ORIGIN] });
+  });
+  afterEach(() => {
+    cleanup();
+    uninstall?.();
+    uninstall = undefined;
+    resetTransport();
+  });
+
+  it('replies BUZZ_BALANCE_RESULT with the default wallet (useBuzzBalance resolves, not hangs)', async () => {
+    uninstall = createMockHost().install();
+    const { result } = renderHook(() => useBuzzBalance());
+
+    // The hook fetches on mount and is loading until the mock host answers.
+    expect(result.current.loading).toBe(true);
+
+    // Resolves (does NOT hang to the request timeout) against the mock host.
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error).toBeNull();
+    expect(result.current.balance).toEqual({ blue: 1000, green: 0, yellow: 5000 });
+  });
+
+  it('honors a custom buzzBalance option', async () => {
+    const custom = { blue: 42, green: 7, yellow: 999 };
+    uninstall = createMockHost({ buzzBalance: custom }).install();
+    const { result } = renderHook(() => useBuzzBalance());
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.balance).toEqual(custom);
+    expect(result.current.error).toBeNull();
+  });
+
+  it('replies with the exact BUZZ_BALANCE_RESULT shape and drops a request with no requestId', async () => {
+    uninstall = createMockHost({ buzzBalance: { blue: 1, green: 2, yellow: 3 } }).install();
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    const replies: Array<{ requestId?: string; balance?: unknown }> = [];
+    const listener = (ev: MessageEvent) => {
+      const d = ev.data as { type?: string; payload?: { requestId?: string; balance?: unknown } };
+      if (d?.type === 'BUZZ_BALANCE_RESULT') replies.push(d.payload ?? {});
+    };
+    window.addEventListener('message', listener);
+    try {
+      // A well-formed request → one reply carrying the wallet + requestId.
+      await act(async () => {
+        window.parent.postMessage(
+          { type: 'GET_BUZZ_BALANCE', payload: { requestId: 'buzz-1' } },
+          ORIGIN,
+        );
+      });
+      await waitFor(() => expect(replies.length).toBe(1));
+      expect(replies[0]).toEqual({ requestId: 'buzz-1', balance: { blue: 1, green: 2, yellow: 3 } });
+
+      // A request with NO requestId is unroutable → dropped (no reply).
+      await act(async () => {
+        window.parent.postMessage({ type: 'GET_BUZZ_BALANCE', payload: {} }, ORIGIN);
+      });
+      await Promise.resolve();
+      expect(replies.length).toBe(1);
+    } finally {
+      window.removeEventListener('message', listener);
+    }
   });
 });
 

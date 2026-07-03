@@ -33,6 +33,7 @@ export {
   type MockHostScenarioPatch,
   type MockGenerationScenario,
   type MockBuzzScenario,
+  type MockBuzzBalance,
   type MockBuzzHandle,
   type MockStorageScenario,
   type CostSpec,

@@ -45,6 +45,7 @@ import {
   type BlockInitPayload,
   type BlockResourceInfo,
   type BlockResourcePickerType,
+  type BuzzAccountType,
   type ColorDomain,
   type Theme,
   type ViewerInfo,
@@ -155,6 +156,17 @@ export interface MockBuzzScenario {
 }
 
 /**
+ * Per-pool Buzz wallet the mock host reports on `GET_BUZZ_BALANCE`. Mirrors the
+ * SDK `BuzzBalance` / block-side `isValidBuzzBalanceResult` shape (each a finite
+ * number; never the platform-internal `red`/`purple` pools).
+ */
+export interface MockBuzzBalance {
+  blue: number;
+  green: number;
+  yellow: number;
+}
+
+/**
  * STORAGE scenario controls — drive the in-memory KV backend that answers the
  * `APP_STORAGE_*` protocol, so the W4 KV apps (e.g. Prompt Library) can test
  * load / quota / error states against `createMockHost` directly instead of
@@ -235,6 +247,16 @@ export interface MockHostOptions {
    * {@link MockBuzzScenario}.
    */
   buzz?: MockBuzzScenario;
+  /**
+   * The viewer's per-pool Buzz WALLET ({ blue, green, yellow }) reported to a
+   * block via the host-mediated `GET_BUZZ_BALANCE` → `BUZZ_BALANCE_RESULT`
+   * bridge (what the `useBuzzBalance` hook reads). Distinct from the
+   * {@link MockBuzzScenario.balance} spendable-wallet knob, which only drives
+   * the insufficient-Buzz / top-up SUBMIT path — this is the displayable
+   * per-pool balance. Absent → {@link DEFAULT_BUZZ_BALANCE} (a plausible
+   * non-zero wallet, so a block shows a balance out of the box).
+   */
+  buzzBalance?: MockBuzzBalance;
   /**
    * STORAGE scenario: in-memory KV backend (seed / quota / failNext). See
    * {@link MockStorageScenario}. When omitted, the store starts EMPTY with the
@@ -351,6 +373,27 @@ const DEFAULT_VIEWER: ViewerInfo = { id: 2, username: 'dev-viewer', status: 'act
 
 const INSUFFICIENT_BUZZ_ERROR = 'Insufficient Buzz to run this generation.';
 const GENERIC_GEN_ERROR = 'Generation failed (simulated).';
+
+/**
+ * Default per-pool wallet reported on `GET_BUZZ_BALANCE` when
+ * {@link MockHostOptions.buzzBalance} is omitted — a plausible non-zero balance
+ * (some free/earned blue, some purchased yellow) so a block renders a real
+ * balance out of the box.
+ */
+const DEFAULT_BUZZ_BALANCE: MockBuzzBalance = { blue: 1000, green: 0, yellow: 5000 };
+
+/**
+ * The pool that "funded" a mock generation — the largest wallet pool, mirroring
+ * the backend's primary-funder (largest-debit) stamp on
+ * `BlockWorkflowSnapshot.spentAccountType`. Ties resolve to the conservative
+ * free `blue` pool.
+ */
+function primaryFunder(balance: MockBuzzBalance): BuzzAccountType {
+  const { blue, green, yellow } = balance;
+  if (yellow > blue && yellow >= green) return 'yellow';
+  if (green > blue && green > yellow) return 'green';
+  return 'blue';
+}
 
 /** Byte size of a JSON value as the mock store would persist it. */
 function jsonByteSize(value: unknown): number {
@@ -498,6 +541,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
   const viewer = options.viewer === undefined ? DEFAULT_VIEWER : options.viewer;
   const buzzBudget = options.buzzBudget ?? 200;
+  // Per-pool wallet reported on GET_BUZZ_BALANCE (install-time, threaded like
+  // `viewer`). Defaulted so `useBuzzBalance()` resolves out of the box.
+  const buzzBalance: MockBuzzBalance = options.buzzBalance ?? DEFAULT_BUZZ_BALANCE;
   const theme: Theme = options.theme ?? 'dark';
   const blockInstanceId = options.blockInstanceId ?? 'page_mock';
   const blockId = options.blockId ?? 'mock-block';
@@ -609,6 +655,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
         status: 'succeeded' as const,
         cost: { total: cost },
         imageUrls: imagesFor(workflowId, body),
+        // Synthetic primary-funder parity with the real backend's
+        // BlockWorkflowSnapshot.spentAccountType (largest-debit pool).
+        spentAccountType: primaryFunder(buzzBalance),
       };
     };
 
@@ -795,6 +844,20 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             dispatchToBlock({
               type: 'BUZZ_PURCHASE_RESULT',
               payload: { requestId, purchased: true, newBalance },
+            });
+            return;
+          }
+
+          case 'GET_BUZZ_BALANCE': {
+            // Reply with the synthetic per-pool wallet (what useBuzzBalance
+            // reads). Mirrors createLiveHost's BUZZ_BALANCE_RESULT reply shape
+            // exactly. Drop a request with no requestId — the block correlates
+            // the reply by it, so a reply without one is unroutable (matches
+            // the sibling request cases + createLiveHost).
+            if (typeof requestId !== 'string') return;
+            dispatchToBlock({
+              type: 'BUZZ_BALANCE_RESULT',
+              payload: { requestId, balance: { ...buzzBalance } },
             });
             return;
           }
