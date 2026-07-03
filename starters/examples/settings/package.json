@@ -2,7 +2,7 @@
   "name": "example-settings",
   "version": "0.0.0",
   "private": true,
-  "description": "App Block example — manifest settings + the headless SettingsForm (publisher vs user scopes).",
+  "description": "Civitai App example — manifest settings + the headless SettingsForm (publisher vs user scopes).",
   "type": "module",
   "license": "MIT",
   "scripts": {

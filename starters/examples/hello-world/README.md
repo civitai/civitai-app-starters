@@ -1,6 +1,6 @@
-# hello-world — App Block lifecycle
+# hello-world — Civitai App lifecycle
 
-The smallest complete App Block. Read this first.
+The smallest complete Civitai App. Read this first.
 
 ## What it shows
 

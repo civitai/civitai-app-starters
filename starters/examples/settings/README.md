@@ -1,6 +1,6 @@
 # settings — manifest-driven settings
 
-How an App Block declares settings and renders the form for them.
+How a Civitai App declares settings and renders the form for them.
 
 ## What it shows
 

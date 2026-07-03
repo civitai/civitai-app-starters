@@ -4,7 +4,7 @@ import { useBlockContext, useBlockResize } from '@civitai/blocks-react';
 import type { BlockContext, ModelSlotContext } from '@civitai/app-sdk/blocks';
 
 /**
- * hello-world — the App Block lifecycle in one file.
+ * hello-world — the Civitai App lifecycle in one file.
  *
  * Demonstrates:
  *  - `useBlockContext()` — reads everything the host hands the block in
@@ -40,7 +40,7 @@ export function App() {
 
   return (
     <div ref={rootRef} data-theme={theme} className="hw-root">
-      <strong>Hello from a Civitai App Block 👋</strong>
+      <strong>Hello from a Civitai App 👋</strong>
       <div className="hw-card">
         <div>
           slot: <code>{context.slotId}</code>

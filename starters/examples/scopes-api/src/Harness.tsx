@@ -8,7 +8,7 @@ const DEV_BLOCK_ID = 'scopes-api-demo';
 const DEV_APP_ID = 'app_dev';
 
 /**
- * Local dev harness. App Blocks normally mount inside an iframe the civitai.com
+ * Local dev harness. Civitai Apps normally mount inside an iframe the civitai.com
  * host controls; locally there's no host. `pnpm dev:harness` wraps the block in
  * this component, which:
  *

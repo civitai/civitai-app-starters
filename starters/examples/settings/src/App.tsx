@@ -9,7 +9,7 @@ import manifest from '../block.manifest.json' with { type: 'json' };
 /**
  * settings — manifest-driven settings, two scopes.
  *
- * App Blocks declare their settings as a record in `block.manifest.json`
+ * Civitai Apps declare their settings as a record in `block.manifest.json`
  * (`settings: { field_name: { scope, type, widget, label, … } }`). The
  * platform validates user input against that declaration AND renders the
  * settings UI from it with the headless `SettingsForm` from

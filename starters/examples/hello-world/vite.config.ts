@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// App Blocks are served at the ROOT of their own subdomain
+// Civitai Apps are served at the ROOT of their own subdomain
 // (https://<blockId>.civit.ai/) by an nginx container, and the manifest's
 // `iframe.src` must point at that root with NO path prefix (gotcha #33/#36).
 // So `base` MUST be '/' — a stale Vite `base: '/my-block/'` makes the bundle

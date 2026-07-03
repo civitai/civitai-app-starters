@@ -221,9 +221,9 @@ export type WorkflowStatus =
   | 'error';
 
 /**
- * The Buzz currency pools an App Block may spend from / read a balance for.
+ * The Buzz currency pools a Civitai App may spend from / read a balance for.
  *
- * DELIBERATELY narrow — the domain-clamped set the App Blocks host honors:
+ * DELIBERATELY narrow — the domain-clamped set the Civitai Apps host honors:
  * `blue` (free/earned), `green` (creator-compensation pool), and `yellow`
  * (purchased). It intentionally omits the platform-internal pools (`red`,
  * `purple`, …) that appear in the broader `@civitai/app-sdk/oauth`

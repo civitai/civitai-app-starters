@@ -2,7 +2,7 @@
   "name": "example-kv-storage",
   "version": "0.0.0",
   "private": true,
-  "description": "App Block example — useAppStorage get/set/delete/list/getQuota + the apps:storage capability.",
+  "description": "Civitai App example — useAppStorage get/set/delete/list/getQuota + the apps:storage capability.",
   "type": "module",
   "license": "MIT",
   "scripts": {

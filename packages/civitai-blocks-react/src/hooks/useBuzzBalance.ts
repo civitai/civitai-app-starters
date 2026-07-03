@@ -4,7 +4,7 @@ import { getTransport } from '../internal/singleton.js';
 import { sendTypedRequest } from '../internal/transport.js';
 
 /**
- * The viewer's per-pool Buzz balance, in the domain-clamped set an App Block
+ * The viewer's per-pool Buzz balance, in the domain-clamped set a Civitai App
  * can read (mirrors `@civitai/app-sdk/blocks`' `BuzzAccountType`). Never
  * includes the platform-internal pools (`red`/`purple`).
  */

@@ -2,7 +2,7 @@
   "name": "example-buzz-purchase",
   "version": "0.0.0",
   "private": true,
-  "description": "App Block example — useBuzzPurchase (OPEN_BUZZ_PURCHASE) + insufficient-budget UX.",
+  "description": "Civitai App example — useBuzzPurchase (OPEN_BUZZ_PURCHASE) + insufficient-budget UX.",
   "type": "module",
   "license": "MIT",
   "scripts": {

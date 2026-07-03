@@ -10,7 +10,7 @@ const DEV_APP_ID = 'app_dev';
 /**
  * Local development harness.
  *
- * Civitai App Blocks normally mount inside an iframe that the host page on
+ * Civitai Apps normally mount inside an iframe that the host page on
  * civitai.com controls. Locally we have no host — `pnpm dev:harness` wraps
  * the block in this component, which:
  *
