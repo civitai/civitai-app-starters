@@ -17,7 +17,7 @@ jobs:
     name: SDK (typecheck + test + build)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
 
@@ -36,7 +36,7 @@ jobs:
     name: Canonical schema drift-check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # The vendored manifest schema MUST stay byte-identical to the
       # server-published canonical (the single source of truth shared by the
@@ -49,7 +49,7 @@ jobs:
     name: blocks-react (typecheck + test + build)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
 
@@ -82,7 +82,7 @@ jobs:
     name: README snippets (typecheck)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
 
@@ -113,7 +113,7 @@ jobs:
           - svelte-pwa
           - civitai-block-starter
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
 
