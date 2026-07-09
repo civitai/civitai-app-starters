@@ -35,11 +35,12 @@ jobs:
           cache: pnpm
           registry-url: 'https://registry.npmjs.org'
 
-      # Belt-and-suspenders: pin npm to a version known to support OIDC
-      # trusted publishing, independent of whatever npm the Node release
-      # happens to bundle. `changeset publish` shells out to this global
-      # `npm publish`, so this is the version that authenticates.
-      - run: npm install -g npm@latest
+      # Use the npm bundled with Node 24 (>= 11.5.1 — has OIDC trusted-publishing
+      # AND a working `sigstore` for provenance). Do NOT `npm install -g npm@latest`:
+      # that global reinstall lands an npm whose provenance path fails with
+      # `Cannot find module 'sigstore'` (MODULE_NOT_FOUND from libnpmpublish/
+      # provenance.js), breaking `changeset publish` (run 29030639528). The bundled
+      # npm already satisfies the OIDC minimum, so the reinstall was redundant.
       - run: npm --version
 
       - run: pnpm install --frozen-lockfile
