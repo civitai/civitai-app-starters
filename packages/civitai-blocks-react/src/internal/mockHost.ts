@@ -47,6 +47,7 @@ import {
   type BlockResourcePickerType,
   type BuzzAccountType,
   type ColorDomain,
+  type SharedStorageValue,
   type Theme,
   type ViewerInfo,
   type WorkflowBody,
@@ -199,6 +200,35 @@ export interface MockStorageScenario {
 }
 
 /**
+ * A seed entry for the in-memory SHARED store. `value` is the contributed
+ * `{ title, body? }` record; `authorUserId` defaults to the viewer's id;
+ * `voters` seeds the set of user-ids who've up-voted it (so `count` and the
+ * per-user one-vote invariant start populated). Newest seeds list first.
+ */
+export interface MockSharedSeed {
+  value: SharedStorageValue;
+  authorUserId?: number;
+  voters?: number[];
+}
+
+/**
+ * SHARED-storage scenario controls — drive the in-memory, app-scoped, votable
+ * backend that answers the `SHARED_*` protocol, so App-Blocks SHARED apps can
+ * develop/test against `createMockHost` directly. Sibling of
+ * {@link MockStorageScenario}.
+ */
+export interface MockSharedScenario {
+  /** Initial entries the store is seeded with (listed newest-first, in order). */
+  seed?: MockSharedSeed[];
+  /**
+   * Force the next N SHARED mutations (`append`/`vote`/`unvote`/`withdraw`) to
+   * fail with a generic `SHARED_UNAVAILABLE` error (counts down) — exercises the
+   * error UX.
+   */
+  failNext?: number;
+}
+
+/**
  * Drives `createMockHost`. Every field is optional with a sensible default so
  * `createMockHost()` works out of the box. Each block configures SCENARIOS
  * here instead of forking the host code.
@@ -286,6 +316,13 @@ export interface MockHostOptions {
    * serves storage now).
    */
   storage?: MockStorageScenario;
+  /**
+   * SHARED scenario: in-memory, app-scoped, votable backend (seed / failNext).
+   * See {@link MockSharedScenario}. When omitted, the shared store starts EMPTY
+   * — the `SHARED_*` protocol is answered either way (the mock host always
+   * serves shared storage now).
+   */
+  shared?: MockSharedScenario;
   /** Host theme delivered in `BLOCK_INIT` + context. Default `'dark'`. */
   theme?: Theme;
   /**
@@ -349,6 +386,7 @@ export type MockHostScenarioPatch = Pick<
   | 'generation'
   | 'buzz'
   | 'storage'
+  | 'shared'
   | 'buzzBalanceError'
   | 'disallowedAccountTypes'
 >;
@@ -653,6 +691,48 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     return total;
   };
 
+  // ---- SHARED scenario (in-memory, app-scoped, votable backend) ----
+  // The "current mock user" whose identity the host injects — every SHARED
+  // vote/append is attributed to it. A single-user mock, so the per-user
+  // one-vote set is naturally satisfied (voting twice keeps count at 1).
+  const mockUserId = viewer?.id ?? 0;
+  const sharedScenario: MockSharedScenario = { ...(options.shared ?? {}) };
+  interface SharedRow {
+    key: string;
+    seq: number;
+    authorUserId: number;
+    value: SharedStorageValue;
+    voters: Set<number>;
+    createdAt: string;
+    updatedAt: string;
+  }
+  const sharedStore = new Map<string, SharedRow>();
+  let sharedSeq = 0;
+  let sharedFailNext = sharedScenario.failNext ?? 0;
+  const sharedNow = new Date().toISOString();
+  // Seed newest-LAST so the last-listed seed has the highest seq (newest-first).
+  for (const s of sharedScenario.seed ?? []) {
+    sharedSeq += 1;
+    const key = `shared_${sharedSeq}`;
+    sharedStore.set(key, {
+      key,
+      seq: sharedSeq,
+      authorUserId: s.authorUserId ?? mockUserId,
+      value: s.value,
+      voters: new Set(s.voters ?? []),
+      createdAt: sharedNow,
+      updatedAt: sharedNow,
+    });
+  }
+  const sharedItemWire = (row: SharedRow) => ({
+    key: row.key,
+    authorUserId: row.authorUserId,
+    value: row.value,
+    count: row.voters.size,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  });
+
   // Resolve a per-gen cost from the scenario (or legacy `cost`).
   const costFor = (body: WorkflowBody): number => {
     const spec: CostSpec | undefined = gen.costPerGen ?? legacyCost;
@@ -760,6 +840,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             resourceType?: BlockResourcePickerType;
             body?: WorkflowBody;
             key?: string;
+            keys?: string[];
             value?: unknown;
             prefix?: string;
             limit?: number;
@@ -1117,6 +1198,165 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             return;
           }
 
+          // ---- Civitai Apps SHARED datastore — in-memory votable backend ----
+          case 'SHARED_LIST': {
+            const prefix = typed.payload?.prefix ?? '';
+            const limit = typed.payload?.limit ?? 100;
+            const cursor = typed.payload?.cursor;
+            // Newest-first: highest seq first.
+            const all = [...sharedStore.values()]
+              .filter((r) => r.key.startsWith(prefix))
+              .sort((a, b) => b.seq - a.seq);
+            // Cursor = base64 of the last returned key (matches the hook's
+            // opaque-nextCursor contract).
+            const afterKey = cursor ? safeAtob(cursor) : undefined;
+            const startIdx = afterKey ? all.findIndex((r) => r.key === afterKey) + 1 : 0;
+            const slice = (startIdx <= 0 && afterKey ? [] : all.slice(startIdx)).slice(0, limit);
+            const items = slice.map(sharedItemWire);
+            const last = slice[slice.length - 1]?.key;
+            const hasMore =
+              last !== undefined && all.findIndex((r) => r.key === last) < all.length - 1;
+            dispatchToBlock({
+              type: 'SHARED_LIST_RESULT',
+              payload: {
+                requestId,
+                items,
+                ...(hasMore && last ? { nextCursor: safeBtoa(last) } : {}),
+              },
+            });
+            return;
+          }
+
+          case 'SHARED_GET_COUNT': {
+            const key = typed.payload?.key ?? '';
+            const row = sharedStore.get(key);
+            dispatchToBlock({
+              type: 'SHARED_GET_COUNT_RESULT',
+              payload: { requestId, count: row ? row.voters.size : 0 },
+            });
+            return;
+          }
+
+          case 'SHARED_GET_COUNTS': {
+            const keys = typed.payload?.keys ?? [];
+            const counts: Record<string, number> = {};
+            for (const k of keys) counts[k] = sharedStore.get(k)?.voters.size ?? 0;
+            dispatchToBlock({
+              type: 'SHARED_GET_COUNTS_RESULT',
+              payload: { requestId, counts },
+            });
+            return;
+          }
+
+          case 'SHARED_APPEND': {
+            if (sharedFailNext > 0) {
+              sharedFailNext -= 1;
+              dispatchToBlock({
+                type: 'SHARED_APPEND_RESULT',
+                payload: { requestId, key: '', error: 'SHARED_UNAVAILABLE' },
+              });
+              return;
+            }
+            const value = typed.payload?.value as SharedStorageValue | undefined;
+            if (!value || typeof value.title !== 'string' || value.title.length === 0) {
+              dispatchToBlock({
+                type: 'SHARED_APPEND_RESULT',
+                payload: { requestId, key: '', error: 'INVALID_VALUE' },
+              });
+              return;
+            }
+            sharedSeq += 1;
+            const key = `shared_${sharedSeq}`;
+            const now = new Date().toISOString();
+            sharedStore.set(key, {
+              key,
+              seq: sharedSeq,
+              authorUserId: mockUserId,
+              value: { title: value.title, ...(value.body !== undefined ? { body: value.body } : {}) },
+              voters: new Set<number>(),
+              createdAt: now,
+              updatedAt: now,
+            });
+            dispatchToBlock({
+              type: 'SHARED_APPEND_RESULT',
+              payload: { requestId, key },
+            });
+            return;
+          }
+
+          case 'SHARED_VOTE': {
+            const key = typed.payload?.key ?? '';
+            if (sharedFailNext > 0) {
+              sharedFailNext -= 1;
+              dispatchToBlock({
+                type: 'SHARED_VOTE_RESULT',
+                payload: { requestId, count: 0, error: 'SHARED_UNAVAILABLE' },
+              });
+              return;
+            }
+            const row = sharedStore.get(key);
+            if (!row) {
+              dispatchToBlock({
+                type: 'SHARED_VOTE_RESULT',
+                payload: { requestId, count: 0, error: 'NOT_FOUND' },
+              });
+              return;
+            }
+            // Set membership → one vote per user (voting twice is a no-op).
+            row.voters.add(mockUserId);
+            row.updatedAt = new Date().toISOString();
+            dispatchToBlock({
+              type: 'SHARED_VOTE_RESULT',
+              payload: { requestId, count: row.voters.size },
+            });
+            return;
+          }
+
+          case 'SHARED_UNVOTE': {
+            const key = typed.payload?.key ?? '';
+            if (sharedFailNext > 0) {
+              sharedFailNext -= 1;
+              dispatchToBlock({
+                type: 'SHARED_UNVOTE_RESULT',
+                payload: { requestId, count: 0, error: 'SHARED_UNAVAILABLE' },
+              });
+              return;
+            }
+            const row = sharedStore.get(key);
+            if (!row) {
+              dispatchToBlock({
+                type: 'SHARED_UNVOTE_RESULT',
+                payload: { requestId, count: 0, error: 'NOT_FOUND' },
+              });
+              return;
+            }
+            row.voters.delete(mockUserId);
+            row.updatedAt = new Date().toISOString();
+            dispatchToBlock({
+              type: 'SHARED_UNVOTE_RESULT',
+              payload: { requestId, count: row.voters.size },
+            });
+            return;
+          }
+
+          case 'SHARED_WITHDRAW': {
+            const key = typed.payload?.key ?? '';
+            if (sharedFailNext > 0) {
+              sharedFailNext -= 1;
+              dispatchToBlock({
+                type: 'SHARED_WITHDRAW_RESULT',
+                payload: { requestId, ok: false, deleted: false, error: 'SHARED_UNAVAILABLE' },
+              });
+              return;
+            }
+            const had = sharedStore.delete(key);
+            dispatchToBlock({
+              type: 'SHARED_WITHDRAW_RESULT',
+              payload: { requestId, ok: true, deleted: had },
+            });
+            return;
+          }
+
           default:
             return;
         }
@@ -1197,6 +1437,11 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       // Only the live-tunable storage knob (`failNext`) is applied mid-session;
       // seed/quota are install-time (re-install to change the backing store).
       if (patch.storage.failNext !== undefined) storageFailNext = patch.storage.failNext;
+    }
+    if (patch.shared !== undefined) {
+      // Only `failNext` is live-tunable; `seed` is install-time (re-install to
+      // change the backing store).
+      if (patch.shared.failNext !== undefined) sharedFailNext = patch.shared.failNext;
     }
   }
 

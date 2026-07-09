@@ -91,6 +91,39 @@ export interface BlockInitPayload {
 }
 
 // ============================================================
+// Shared storage (App Blocks SHARED datastore, W?-Phase 2)
+// ============================================================
+
+/**
+ * The freeform value carried by one SHARED-storage entry. Unlike the per-user
+ * `APP_STORAGE_*` KV (arbitrary JSON), the SHARED store is a structured,
+ * append-only, community-votable list — every entry is a `{ title, body? }`
+ * record contributed by one viewer and vote-counted across all viewers. `title`
+ * is required; `body` is optional long-form.
+ */
+export interface SharedStorageValue {
+  title: string;
+  body?: string;
+}
+
+/**
+ * One SHARED-storage entry as it appears on the wire in `SHARED_LIST_RESULT`.
+ * `createdAt`/`updatedAt` are ISO-8601 strings; the block-side hook rehydrates
+ * them to `Date` (mirrors `APP_STORAGE_LIST_RESULT`'s `updatedAt`). `count` is
+ * the current vote total; `authorUserId` is the contributing viewer.
+ */
+export interface SharedStorageItemWire {
+  key: string;
+  authorUserId: number;
+  value: SharedStorageValue;
+  count: number;
+  /** ISO-8601; consumers rehydrate to Date. */
+  createdAt: string;
+  /** ISO-8601; consumers rehydrate to Date. */
+  updatedAt: string;
+}
+
+// ============================================================
 // Parent → block
 // ============================================================
 
@@ -202,6 +235,56 @@ export type ParentToBlockMessage =
         limitRows: number;
         error?: string;
       };
+    }
+  | {
+      // Reply to SHARED_LIST. `items` are newest-first; `createdAt`/`updatedAt`
+      // are ISO strings on the wire (the hook rehydrates to Date). `nextCursor`
+      // is omitted on the final page. `error` on host-side failure — consumers
+      // treat a non-empty `error` as the promise-reject signal (mirrors
+      // `APP_STORAGE_LIST_RESULT`).
+      type: 'SHARED_LIST_RESULT';
+      payload: {
+        requestId: string;
+        items: SharedStorageItemWire[];
+        nextCursor?: string;
+        error?: string;
+      };
+    }
+  | {
+      // Reply to SHARED_GET_COUNT. `count` is the entry's current vote total
+      // (0 when the key isn't present).
+      type: 'SHARED_GET_COUNT_RESULT';
+      payload: { requestId: string; count: number; error?: string };
+    }
+  | {
+      // Reply to SHARED_GET_COUNTS. `counts` maps each requested key to its
+      // vote total (absent keys resolve to 0).
+      type: 'SHARED_GET_COUNTS_RESULT';
+      payload: { requestId: string; counts: Record<string, number>; error?: string };
+    }
+  | {
+      // Reply to SHARED_APPEND. `key` is the id the host minted for the new
+      // entry. `error` on validation/host failure.
+      type: 'SHARED_APPEND_RESULT';
+      payload: { requestId: string; key: string; error?: string };
+    }
+  | {
+      // Reply to SHARED_VOTE. `count` is the entry's vote total AFTER applying
+      // the (idempotent) vote from this viewer.
+      type: 'SHARED_VOTE_RESULT';
+      payload: { requestId: string; count: number; error?: string };
+    }
+  | {
+      // Reply to SHARED_UNVOTE. `count` is the entry's vote total AFTER
+      // removing this viewer's vote (idempotent when they hadn't voted).
+      type: 'SHARED_UNVOTE_RESULT';
+      payload: { requestId: string; count: number; error?: string };
+    }
+  | {
+      // Reply to SHARED_WITHDRAW. `deleted: false` means the viewer's entry
+      // wasn't present (still treated as success — idempotent withdraw).
+      type: 'SHARED_WITHDRAW_RESULT';
+      payload: { requestId: string; ok: boolean; deleted: boolean; error?: string };
     }
   | { type: 'SUSPEND'; payload?: undefined }
   | { type: 'RESUME'; payload?: undefined };
@@ -329,6 +412,40 @@ export type BlockToParentMessage =
   | {
       type: 'APP_STORAGE_QUOTA';
       payload: { requestId: string };
+    }
+  // Civitai Apps SHARED datastore (W?-Phase 2). Unlike APP_STORAGE (per block
+  // instance + viewer, arbitrary JSON), the SHARED store is APP-scoped, append-
+  // only, and community-votable: any viewer appends a `{ title, body? }` entry
+  // and any viewer votes it up/down. Calls go through the host — the block never
+  // sees the datastore credentials, and the host injects the viewer identity +
+  // block token (the block sends NO token).
+  | {
+      type: 'SHARED_LIST';
+      payload: { requestId: string; prefix?: string; limit?: number; cursor?: string };
+    }
+  | {
+      type: 'SHARED_GET_COUNT';
+      payload: { requestId: string; key: string };
+    }
+  | {
+      type: 'SHARED_GET_COUNTS';
+      payload: { requestId: string; keys: string[] };
+    }
+  | {
+      type: 'SHARED_APPEND';
+      payload: { requestId: string; value: SharedStorageValue };
+    }
+  | {
+      type: 'SHARED_VOTE';
+      payload: { requestId: string; key: string };
+    }
+  | {
+      type: 'SHARED_UNVOTE';
+      payload: { requestId: string; key: string };
+    }
+  | {
+      type: 'SHARED_WITHDRAW';
+      payload: { requestId: string; key: string };
     };
 
 export type BlockToParentMessageType = BlockToParentMessage['type'];

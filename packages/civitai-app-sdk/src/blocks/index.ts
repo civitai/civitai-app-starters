@@ -29,6 +29,8 @@ export type {
   BlockToParentMessageType,
   ParentToBlockMessage,
   ParentToBlockMessageType,
+  SharedStorageItemWire,
+  SharedStorageValue,
   WrappedToken,
 } from './messages.js';
 
