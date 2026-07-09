@@ -37,6 +37,8 @@ export {
   type MockBuzzBalance,
   type MockBuzzHandle,
   type MockStorageScenario,
+  type MockSharedScenario,
+  type MockSharedSeed,
   type CostSpec,
   type ImageSpec,
   type CannedPick,

@@ -49,3 +49,10 @@ export type {
   AppStorageQuota,
   UseAppStorage,
 } from './hooks/useAppStorage.js';
+export { useSharedStorage } from './hooks/useSharedStorage.js';
+export type {
+  SharedAppendValue,
+  SharedListItem,
+  SharedListResult,
+  UseSharedStorage,
+} from './hooks/useSharedStorage.js';
