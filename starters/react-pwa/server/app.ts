@@ -51,9 +51,9 @@ const CIVITAI_HOSTS_BASE = [
   'https://image.civitai.com',
 ];
 
-/** Fold the configured CIVITAI_BASE_URL / ORCHESTRATOR_URL origins into the
- * CSP allow-list so a self-hosted Civitai dev (e.g. https://civitai-dev.blue)
- * works without users hand-editing CSP. */
+/** Fold the configured CIVITAI_AUTH_URL / CIVITAI_BASE_URL / ORCHESTRATOR_URL
+ * origins into the CSP allow-list so a self-hosted Civitai dev (e.g.
+ * https://civitai-dev.blue) works without users hand-editing CSP. */
 function originOrNull(url: string): string | null {
   try { return new URL(url).origin; } catch { return null; }
 }
@@ -62,6 +62,7 @@ const CIVITAI_HOSTS = Array.from(
   new Set(
     [
       ...CIVITAI_HOSTS_BASE,
+      originOrNull(env.CIVITAI_AUTH_URL),
       originOrNull(env.CIVITAI_BASE_URL),
       originOrNull(env.ORCHESTRATOR_URL),
     ].filter((host): host is string => Boolean(host)),
@@ -117,7 +118,7 @@ app.post('/api/auth/login', (c) => {
   writeOAuthState(c, { state, verifier: pkce.verifier, scope: REQUESTED_SCOPES }, production);
 
   const authorizeUrl = buildAuthorizeUrl({
-    baseUrl: env.CIVITAI_BASE_URL,
+    baseUrl: env.CIVITAI_AUTH_URL,
     clientId: env.CIVITAI_CLIENT_ID,
     redirectUri: REDIRECT_URI,
     scope: REQUESTED_SCOPES,
@@ -141,7 +142,7 @@ app.get('/api/auth/callback/civitai', async (c) => {
 
   try {
     const tokens = await exchangeCode({
-      baseUrl: env.CIVITAI_BASE_URL,
+      baseUrl: env.CIVITAI_AUTH_URL,
       clientId: env.CIVITAI_CLIENT_ID,
       clientSecret: env.CIVITAI_CLIENT_SECRET,
       redirectUri: REDIRECT_URI,
@@ -170,7 +171,7 @@ app.post('/api/auth/revoke', async (c) => {
   for (const token of tokens) {
     try {
       await revokeToken({
-        baseUrl: env.CIVITAI_BASE_URL,
+        baseUrl: env.CIVITAI_AUTH_URL,
         clientId: env.CIVITAI_CLIENT_ID,
         clientSecret: env.CIVITAI_CLIENT_SECRET,
         token,

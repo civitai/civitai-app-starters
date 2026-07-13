@@ -71,10 +71,19 @@ CIVITAI_CLIENT_SECRET=...
 SESSION_SECRET=...
 # Your app's public URL. Used to build the redirect_uri.
 APP_URL=http://localhost:3000
-# Override only for self-hosted Civitai instances.
+# Auth hub — OAuth endpoints (authorize / token / revoke) live here.
+CIVITAI_AUTH_URL=https://auth.civitai.com
+# Main app — ONLY /api/v1/me and tRPC/buzz calls (NOT oauth). Override only for
+# self-hosted Civitai instances.
 CIVITAI_BASE_URL=https://civitai.com
 ORCHESTRATOR_URL=https://orchestration.civitai.com
 ```
+
+Civitai's auth server was broken out into a standalone hub, so the base URL is
+split in two: OAuth endpoints target `CIVITAI_AUTH_URL` (default
+`https://auth.civitai.com`), while `/api/v1/me` and any tRPC/buzz calls stay on
+`CIVITAI_BASE_URL` (default `https://civitai.com`). The orchestrator has always
+been separate (`ORCHESTRATOR_URL`).
 
 **Never** put `CIVITAI_CLIENT_SECRET` in client-side bundles, `next.config.js`'s `env` block, Vite's `import.meta.env`, or anywhere shipped to the browser. The token exchange runs server-side only.
 
@@ -129,7 +138,7 @@ const stateCookie = sealCookie(
 setResponseCookie('civ_oauth_state', stateCookie, { httpOnly: true, maxAge: 600, secure: true, sameSite: 'lax' });
 
 const authorizeUrl = buildAuthorizeUrl({
-  baseUrl: process.env.CIVITAI_BASE_URL ?? 'https://civitai.com',
+  baseUrl: process.env.CIVITAI_AUTH_URL ?? 'https://auth.civitai.com',
   clientId: process.env.CIVITAI_CLIENT_ID!,
   redirectUri: `${process.env.APP_URL}/api/auth/callback/civitai`,
   scope: REQUESTED_SCOPES,
@@ -157,7 +166,7 @@ if (expected.state !== state) return redirect('/?error=state_mismatch');
 
 try {
   const tokens = await exchangeCode({
-    baseUrl: process.env.CIVITAI_BASE_URL,
+    baseUrl: process.env.CIVITAI_AUTH_URL,
     clientId: process.env.CIVITAI_CLIENT_ID!,
     clientSecret: process.env.CIVITAI_CLIENT_SECRET, // omit for public clients
     redirectUri: `${process.env.APP_URL}/api/auth/callback/civitai`,
@@ -241,7 +250,7 @@ export async function readSession(): Promise<Session | null> {
   if (!session.tokens.refresh_token) return null;
   try {
     const fresh = await oauthRefresh({
-      baseUrl: process.env.CIVITAI_BASE_URL,
+      baseUrl: process.env.CIVITAI_AUTH_URL,
       clientId: process.env.CIVITAI_CLIENT_ID!,
       clientSecret: process.env.CIVITAI_CLIENT_SECRET,
       refreshToken: session.tokens.refresh_token,

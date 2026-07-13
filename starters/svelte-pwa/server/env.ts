@@ -20,6 +20,7 @@ export const env = createEnv({
       .string()
       .min(32, 'SESSION_SECRET must be ≥32 chars. Generate with `node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"`.'),
     APP_URL: z.string().url(),
+    CIVITAI_AUTH_URL: z.string().url().default('https://auth.civitai.com'),
     CIVITAI_BASE_URL: z.string().url().default('https://civitai.com'),
     ORCHESTRATOR_URL: z.string().url().default('https://orchestration.civitai.com'),
     PORT: z.coerce.number().int().positive().default(5175),

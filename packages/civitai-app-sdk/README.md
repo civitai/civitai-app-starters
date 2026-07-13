@@ -177,6 +177,16 @@ const client = createOrchestratorClient({ accessToken: tokens.access_token });
 // does NOT include Buzz balance; use `fetchBuzzAccount` (needs `BuzzRead`) for that.
 const me = (await fetchMe({ accessToken: tokens.access_token })) as { username: string };
 console.log(`Hi ${me.username}`);
+```
+
+> **Two base URLs.** The OAuth endpoints moved to a standalone auth hub, so
+> `buildAuthorizeUrl` / `exchangeCode` / `refreshToken` / `revokeToken` default
+> `baseUrl` to `https://auth.civitai.com`, while `fetchMe` (`/api/v1/me`) and
+> `fetchBuzzAccount` (buzz tRPC) default to `https://civitai.com`. Pass an
+> explicit `baseUrl` to each call only when targeting a local / self-hosted
+> instance (e.g. a dev auth hub vs a dev main app).
+
+```ts
 
 // 5. Estimate cost, then submit
 const body = buildTextToImageBody({ prompt: 'a fox' }, { tags: ['my-app'] });

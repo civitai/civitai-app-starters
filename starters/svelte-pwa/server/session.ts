@@ -51,7 +51,7 @@ export async function readSession(c: Context, production: boolean): Promise<Sess
   if (!session.tokens.refresh_token) return null;
   try {
     const fresh = await oauthRefresh({
-      baseUrl: env.CIVITAI_BASE_URL,
+      baseUrl: env.CIVITAI_AUTH_URL,
       clientId: env.CIVITAI_CLIENT_ID,
       clientSecret: env.CIVITAI_CLIENT_SECRET,
       refreshToken: session.tokens.refresh_token,
