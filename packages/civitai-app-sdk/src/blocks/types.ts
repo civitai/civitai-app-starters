@@ -5,6 +5,8 @@
  * live in a separate package so this module stays usable from any runtime.
  */
 
+import type { BlockCategory } from './scopes.js';
+
 // ============================================================
 // Runtime context delivered to a block at init
 // ============================================================
@@ -489,6 +491,14 @@ export interface BlockManifestV1 {
    */
   settings?: ManifestSettings;
   contentRating: ContentRating;
+  /**
+   * Optional marketplace category for the app's `/apps` store listing. When
+   * present it flows to the listing automatically on moderator-approve (only
+   * when a mod has not already curated one). Omit to let a moderator
+   * categorise. One of {@link BlockCategory} — kept in lockstep with the
+   * canonical schema's `category` enum and MARKETPLACE_CATEGORIES on the server.
+   */
+  category?: BlockCategory;
   preview?: ManifestPreview;
   promotionEligible?: boolean;
   minApiVersion: string;
