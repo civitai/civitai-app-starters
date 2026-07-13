@@ -1,5 +1,12 @@
 # @civitai/app-sdk
 
+## 0.17.0
+
+### Minor Changes
+
+- 18ef496: Sync the vendored App Block manifest schema + SDK constants with the canonical server-published schema (https://civitai.com/schemas/app-block/v1.json). Adds the three App Blocks Collections scopes `collections:read:self`, `collections:write:self`, and `collections:read:private` to `BLOCK_SCOPES` and the schema's `scopes` enum. All three are 3-segment, so the existing `BLOCK_SCOPE_PATTERN` already accepts them (no widening needed — that was the `apps:storage:shared:*` sync in #131). The schema↔`BLOCK_SCOPES` parity/drift-guard test and the `defineBlock` scope-acceptance tests are extended to cover the three additions. Purely additive for authors — these scopes are now declarable in a manifest and validated by membership; the server continues to gate them per-op (collection visibility/ownership + maturity clamp on read, self-bound actor on follow/write, explicit consent for `collections:read:private`).
+- 4600603: Sync the vendored App Block manifest schema + SDK constants with the canonical server-published schema (https://civitai.com/schemas/app-block/v1.json). Adds the two 4-segment shared-storage scopes `apps:storage:shared:read` / `apps:storage:shared:write` to `BLOCK_SCOPES` and the schema's `scopes` enum, widens `BLOCK_SCOPE_PATTERN` to accept 4 colon segments (now only a format heuristic — membership is enforced against `BLOCK_SCOPES`), and adds the optional `category` manifest field backed by a new `BLOCK_CATEGORIES` const + `BlockCategory` type (the 7 marketplace categories). `defineBlock` now rejects a well-formed-but-unknown category and validates `category` against the canonical set. The schema↔`BLOCK_SCOPES` parity test is now a real drift guard (Set equality), extended to cover the category enum. Additive for authors; the only new rejection (`category` must be a known value) matches what the server already enforces.
+
 ## 0.16.0
 
 ### Minor Changes
