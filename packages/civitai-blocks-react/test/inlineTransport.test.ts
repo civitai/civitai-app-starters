@@ -61,6 +61,22 @@ describe('InlineTransport', () => {
     });
   });
 
+  describe('getHostOrigin()', () => {
+    it('returns null when no bootstrap is present', () => {
+      const t = new InlineTransport();
+      expect(t.getHostOrigin()).toBeNull();
+    });
+
+    it('returns the same-document host origin once bootstrapped', () => {
+      // Inline mode runs in the host's own document, so window.location.origin
+      // IS the trusted host origin (no cross-origin boundary). happy-dom's
+      // default origin is http://localhost:3000.
+      window.__CIVITAI_BLOCK_CONTEXT__ = buildInit();
+      const t = new InlineTransport();
+      expect(t.getHostOrigin()).toBe(window.location.origin);
+    });
+  });
+
   describe('subscribe()', () => {
     it('returns a callable no-op unsubscribe (never notifies in v1)', () => {
       const t = new InlineTransport();

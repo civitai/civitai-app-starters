@@ -113,6 +113,29 @@ const { raw, scopes, expiresAt, buzzBudget, refresh } = useBlockToken();
 // after a 401: await refresh(); then retry the request once with the new `raw`.
 ```
 
+### `useHostOrigin()`
+
+The validated host origin to direct-fetch the App Blocks HTTP API against —
+`undefined` until init. Use it as the base URL when you need to bypass the host
+bridge, always paired with the bearer token from `useBlockToken()`.
+
+```tsx
+const host = useHostOrigin();          // e.g. "https://civitai.com" (undefined until BLOCK_INIT)
+const { raw } = useBlockToken();
+// Once `host` is set, fetch the API on that validated origin with the block token:
+if (host) {
+  const res = await fetch(`${host}/api/v1/blocks/me`, {
+    headers: { authorization: `Bearer ${raw}` },
+  });
+}
+```
+
+> **Security:** this is ONLY ever the origin that passed the SDK's origin
+> allowlist (the same gate `BLOCK_INIT` passes) — never `document.referrer` or
+> `window.location` of the parent. The block token is a money-scoped bearer
+> credential, so always send it to *this* origin. Never derive the API host
+> from a spoofable browser signal.
+
 ### `useBlockSettings()`
 
 Shorthand for `useBlockContext().settings`. Read-only from the iframe — settings

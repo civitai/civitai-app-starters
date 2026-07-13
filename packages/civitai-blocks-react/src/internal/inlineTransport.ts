@@ -35,14 +35,36 @@ declare global {
 
 export class InlineTransport implements BlockTransport {
   private snapshot: BlockSnapshot;
+  private readonly hostOrigin: string | null;
 
   constructor() {
-    const bootstrap = (globalThis as { window?: Window }).window?.__CIVITAI_BLOCK_CONTEXT__;
+    const win = (globalThis as { window?: Window }).window;
+    const bootstrap = win?.__CIVITAI_BLOCK_CONTEXT__;
     this.snapshot = bootstrap ? snapshotFromInit(bootstrap) : EMPTY_SNAPSHOT;
+    // SECURITY INVARIANT — mirrors IframeTransport.getHostOrigin(): the value
+    // returned here is only ever a trusted host origin. In inline mode the
+    // block executes INSIDE the host's own document (the host injected
+    // `__CIVITAI_BLOCK_CONTEXT__` on its own window), so there is no
+    // cross-origin trust boundary and `window.location.origin` IS the host
+    // origin by construction — it is the origin the host page is served from,
+    // not a spoofable signal like `document.referrer`. Gated on bootstrap
+    // presence so the accessor stays `null` until inline init, matching the
+    // iframe contract. It becomes the base URL a money-scoped bearer token is
+    // sent to, so it must never be derived from any caller-supplied value.
+    this.hostOrigin = bootstrap ? (win?.location?.origin ?? null) : null;
   }
 
   getSnapshot(): BlockSnapshot {
     return this.snapshot;
+  }
+
+  /**
+   * The host origin — `null` until an inline bootstrap is present. See the
+   * constructor's SECURITY INVARIANT note for why `window.location.origin` is
+   * the trusted host origin in inline (same-document) mode.
+   */
+  getHostOrigin(): string | null {
+    return this.hostOrigin;
   }
 
   subscribe(_listener: () => void): () => void {
