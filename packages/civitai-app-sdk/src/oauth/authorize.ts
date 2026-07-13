@@ -8,7 +8,8 @@ export interface BuildAuthorizeUrlOptions {
   codeChallengeMethod?: 'S256';
 }
 
-const DEFAULT_CIVITAI_BASE_URL = 'https://civitai.com';
+// The OAuth authorize endpoint lives on the standalone auth hub.
+const DEFAULT_AUTH_BASE_URL = 'https://auth.civitai.com';
 
 /**
  * Build the Civitai OAuth authorize URL. The returned URL is what you redirect
@@ -28,7 +29,7 @@ const DEFAULT_CIVITAI_BASE_URL = 'https://civitai.com';
  * });
  */
 export function buildAuthorizeUrl(opts: BuildAuthorizeUrlOptions): string {
-  const base = opts.baseUrl ?? DEFAULT_CIVITAI_BASE_URL;
+  const base = opts.baseUrl ?? DEFAULT_AUTH_BASE_URL;
   const url = new URL('/api/auth/oauth/authorize', base);
   url.searchParams.set('client_id', opts.clientId);
   url.searchParams.set('redirect_uri', opts.redirectUri);

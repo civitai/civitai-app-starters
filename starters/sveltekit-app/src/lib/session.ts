@@ -50,7 +50,7 @@ export async function readSession(cookies: Cookies, production: boolean): Promis
   if (!session.tokens.refresh_token) return null;
   try {
     const fresh = await oauthRefresh({
-      baseUrl: config.CIVITAI_BASE_URL,
+      baseUrl: config.CIVITAI_AUTH_URL,
       clientId: config.CIVITAI_CLIENT_ID,
       clientSecret: config.CIVITAI_CLIENT_SECRET,
       refreshToken: session.tokens.refresh_token,

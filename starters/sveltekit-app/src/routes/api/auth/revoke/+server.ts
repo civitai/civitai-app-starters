@@ -9,7 +9,7 @@ async function tryRevoke(token: string | undefined) {
   if (!token) return;
   try {
     await revokeToken({
-      baseUrl: config.CIVITAI_BASE_URL,
+      baseUrl: config.CIVITAI_AUTH_URL,
       clientId: config.CIVITAI_CLIENT_ID,
       clientSecret: config.CIVITAI_CLIENT_SECRET,
       token,

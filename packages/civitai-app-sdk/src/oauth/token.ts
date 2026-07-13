@@ -1,6 +1,9 @@
 import type { OAuthTokenResponse, OAuthTokens } from '../types.js';
 
-const DEFAULT_CIVITAI_BASE_URL = 'https://civitai.com';
+// OAuth endpoints (token/revoke) live on the standalone auth hub.
+const DEFAULT_AUTH_BASE_URL = 'https://auth.civitai.com';
+// /api/v1/me and the buzz tRPC surface live on the main app.
+const DEFAULT_API_BASE_URL = 'https://civitai.com';
 
 interface CommonOpts {
   baseUrl?: string;
@@ -90,7 +93,7 @@ function shapeTokens(json: OAuthTokenResponse, fallbackScope?: number): OAuthTok
  * });
  */
 export async function exchangeCode(opts: ExchangeCodeOpts): Promise<OAuthTokens> {
-  const base = opts.baseUrl ?? DEFAULT_CIVITAI_BASE_URL;
+  const base = opts.baseUrl ?? DEFAULT_AUTH_BASE_URL;
   const json = (await postForm(`${base}/api/auth/oauth/token`, {
     grant_type: 'authorization_code',
     code: opts.code,
@@ -115,7 +118,7 @@ export async function exchangeCode(opts: ExchangeCodeOpts): Promise<OAuthTokens>
  * });
  */
 export async function refreshToken(opts: RefreshTokenOpts): Promise<OAuthTokens> {
-  const base = opts.baseUrl ?? DEFAULT_CIVITAI_BASE_URL;
+  const base = opts.baseUrl ?? DEFAULT_AUTH_BASE_URL;
   const json = (await postForm(`${base}/api/auth/oauth/token`, {
     grant_type: 'refresh_token',
     refresh_token: opts.refreshToken,
@@ -136,7 +139,7 @@ export async function refreshToken(opts: RefreshTokenOpts): Promise<OAuthTokens>
  * });
  */
 export async function revokeToken(opts: RevokeTokenOpts): Promise<void> {
-  const base = opts.baseUrl ?? DEFAULT_CIVITAI_BASE_URL;
+  const base = opts.baseUrl ?? DEFAULT_AUTH_BASE_URL;
   await postForm(`${base}/api/auth/oauth/revoke`, {
     token: opts.token,
     client_id: opts.clientId,
@@ -153,7 +156,7 @@ export async function revokeToken(opts: RevokeTokenOpts): Promise<void> {
  * const me = await fetchMe({ accessToken: tokens.access_token });
  */
 export async function fetchMe(opts: { baseUrl?: string; accessToken: string }): Promise<unknown> {
-  const base = opts.baseUrl ?? DEFAULT_CIVITAI_BASE_URL;
+  const base = opts.baseUrl ?? DEFAULT_API_BASE_URL;
   const res = await fetch(`${base}/api/v1/me`, {
     headers: { Authorization: `Bearer ${opts.accessToken}` },
   });
@@ -194,7 +197,7 @@ export interface FetchBuzzAccountOpts {
  * breaking callers.
  */
 export async function fetchBuzzAccount(opts: FetchBuzzAccountOpts): Promise<BuzzAccount[]> {
-  const base = opts.baseUrl ?? DEFAULT_CIVITAI_BASE_URL;
+  const base = opts.baseUrl ?? DEFAULT_API_BASE_URL;
   const res = await fetch(`${base}/api/trpc/buzz.getUserAccount`, {
     headers: { Authorization: `Bearer ${opts.accessToken}` },
   });
