@@ -23,7 +23,7 @@ import type { BlockManifest, ContentRating } from './types.js';
 const BLOCK_ID_PATTERN = /^[a-z][a-z0-9-]*[a-z0-9]$/;
 const BLOCK_ID_MIN_LENGTH = 3;
 const BLOCK_ID_MAX_LENGTH = 40;
-/** The 12 canonical block scopes (enum the schema validates `scopes` against). */
+/** The 15 canonical block scopes (enum the schema validates `scopes` against). */
 const KNOWN_BLOCK_SCOPES = new Set<string>(Object.values(BLOCK_SCOPES));
 /** The 7 canonical marketplace categories (enum the schema validates `category` against). */
 const KNOWN_CATEGORIES = new Set<string>(BLOCK_CATEGORIES);

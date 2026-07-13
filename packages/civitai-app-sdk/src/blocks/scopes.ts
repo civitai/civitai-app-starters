@@ -30,6 +30,16 @@ export const BLOCK_SCOPES = {
   // These are the SDK's only 4-segment scopes — see BLOCK_SCOPE_PATTERN below.
   APPS_STORAGE_SHARED_READ: 'apps:storage:shared:read',
   APPS_STORAGE_SHARED_WRITE: 'apps:storage:shared:write',
+  // collections:* — the App Blocks Collections surface. These have no OAuth bit
+  // (they never touch the user's civitai resources via the OAuth surface); the
+  // server gates them per-op server-side (collection visibility/ownership +
+  // maturity clamp on read; self-bound actor on follow/write). All 3-segment.
+  // `collections:read:self`  — own-PUBLIC + any PUBLIC collection (consent-exempt).
+  // `collections:write:self` — follow/bookmark on the viewer's own behalf.
+  // `collections:read:private` — the subject's OWN PRIVATE collections; CONSENT-GATED.
+  COLLECTIONS_READ_SELF: 'collections:read:self',
+  COLLECTIONS_WRITE_SELF: 'collections:write:self',
+  COLLECTIONS_READ_PRIVATE: 'collections:read:private',
 } as const;
 
 export type BlockScopeKey = keyof typeof BLOCK_SCOPES;
@@ -41,7 +51,7 @@ export type BlockScope = (typeof BLOCK_SCOPES)[BlockScopeKey];
  *
  * NOTE: this regex is **not** the authoritative validity contract. The
  * canonical manifest schema (https://civitai.com/schemas/app-block/v1.json)
- * validates `scopes` by MEMBERSHIP in a fixed enum — i.e. the 12 values in
+ * validates `scopes` by MEMBERSHIP in a fixed enum — i.e. the 15 values in
  * {@link BLOCK_SCOPES}. `defineBlock` therefore gates on membership in
  * `BLOCK_SCOPES`; this pattern is kept only as a FORMAT HEURISTIC to give a
  * pointed error message (e.g. distinguishing a malformed/PascalCase scope from

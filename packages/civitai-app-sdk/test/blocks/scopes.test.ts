@@ -26,6 +26,10 @@ const CANONICAL_BLOCK_SCOPES = [
   // 4-segment SHARED (cross-user) datastore scopes.
   'apps:storage:shared:read',
   'apps:storage:shared:write',
+  // App Blocks Collections surface scopes.
+  'collections:read:self',
+  'collections:write:self',
+  'collections:read:private',
 ] as const;
 
 describe('BLOCK_SCOPES', () => {
