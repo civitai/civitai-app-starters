@@ -130,6 +130,71 @@ describe('IframeTransport', () => {
     transport.dispose();
   });
 
+  describe('getHostOrigin (validated host origin — token-exfiltration guard)', () => {
+    it('returns null before BLOCK_INIT lands', () => {
+      const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+      expect(transport.getHostOrigin()).toBeNull();
+      transport.dispose();
+    });
+
+    it('returns exactly the allowlisted origin after a valid BLOCK_INIT', async () => {
+      const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+      window.dispatchEvent(mockParentMessage({ type: 'BLOCK_INIT', payload: buildInitPayload() }, PARENT_ORIGIN));
+      await transport.waitForInit();
+      // Exactly the sender's origin — this is the base URL the money-scoped
+      // block token is later sent to.
+      expect(transport.getHostOrigin()).toBe(PARENT_ORIGIN);
+      transport.dispose();
+    });
+
+    it('returns the wildcard-matched preview subdomain that actually sent BLOCK_INIT', async () => {
+      const transport = new IframeTransport({
+        allowedParentOrigins: ['https://civitai.com', 'https://*.civitaic.com'],
+      });
+      window.dispatchEvent(
+        mockParentMessage({ type: 'BLOCK_INIT', payload: buildInitPayload() }, 'https://pr-2319.civitaic.com'),
+      );
+      await transport.waitForInit();
+      expect(transport.getHostOrigin()).toBe('https://pr-2319.civitaic.com');
+      transport.dispose();
+    });
+
+    it('SECURITY: a BLOCK_INIT from a NON-allowlisted origin never sets the host origin', async () => {
+      // The whole point: getHostOrigin() must only ever be an allowlist-validated
+      // origin. A spoofed init from evil.example.com is dropped at the origin gate,
+      // so the host origin stays null — the block would never send its bearer
+      // token to the attacker's origin.
+      const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+      window.dispatchEvent(mockParentMessage({ type: 'BLOCK_INIT', payload: buildInitPayload() }, OTHER_ORIGIN));
+
+      // Never captured the bad origin.
+      expect(transport.getHostOrigin()).toBeNull();
+
+      // And a subsequent LEGITIMATE init still sets it to the good origin only.
+      window.dispatchEvent(mockParentMessage({ type: 'BLOCK_INIT', payload: buildInitPayload() }, PARENT_ORIGIN));
+      await transport.waitForInit();
+      expect(transport.getHostOrigin()).toBe(PARENT_ORIGIN);
+      transport.dispose();
+    });
+
+    it('freezes the host origin to the FIRST init sender (dedupe contract)', async () => {
+      // A retry tick from a different (still-allowlisted) origin must not move it.
+      const transport = new IframeTransport({
+        allowedParentOrigins: ['https://civitai.com', 'https://*.civitaic.com'],
+      });
+      window.dispatchEvent(mockParentMessage({ type: 'BLOCK_INIT', payload: buildInitPayload() }, PARENT_ORIGIN));
+      await transport.waitForInit();
+      expect(transport.getHostOrigin()).toBe(PARENT_ORIGIN);
+
+      window.dispatchEvent(
+        mockParentMessage({ type: 'BLOCK_INIT', payload: buildInitPayload() }, 'https://pr-9.civitaic.com'),
+      );
+      // Frozen to the first sender — the repeat init is a no-op.
+      expect(transport.getHostOrigin()).toBe(PARENT_ORIGIN);
+      transport.dispose();
+    });
+  });
+
   it('rejects waitForInit after 10s with no BLOCK_INIT', async () => {
     const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
     const initPromise = transport.waitForInit();

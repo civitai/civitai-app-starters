@@ -27,6 +27,7 @@ export type {
 export { useBlockContext } from './hooks/useBlockContext.js';
 export { useBlockSettings } from './hooks/useBlockSettings.js';
 export { useBlockToken } from './hooks/useBlockToken.js';
+export { useHostOrigin } from './hooks/useHostOrigin.js';
 export { useBuzzWorkflow } from './hooks/useBuzzWorkflow.js';
 export { useBlockResize } from './hooks/useBlockResize.js';
 export { useBuzzPurchase } from './hooks/useBuzzPurchase.js';

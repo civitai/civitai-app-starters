@@ -112,6 +112,27 @@ export class IframeTransport implements BlockTransport {
     return this.snapshot;
   }
 
+  /**
+   * The validated parent origin — `null` until `BLOCK_INIT` lands.
+   *
+   * SECURITY INVARIANT — do NOT change what this returns: it hands back ONLY
+   * `this.parentOrigin`, which is set exactly once, in `handleMessage`, from
+   * the `event.origin` of the FIRST `BLOCK_INIT` — AND only after that message
+   * cleared `this.originMatcher.matches(event.origin)` (the allowlist gate at
+   * the very top of `handleMessage`, the same gate every inbound message
+   * passes). It is therefore guaranteed to be a legitimate civitai origin.
+   *
+   * It is NEVER derived from `document.referrer`, `window.location`, or an
+   * unvalidated `event.origin`. Blocks send a money-scoped bearer token
+   * (`useBlockToken().raw`) to this origin, so returning a spoofable value
+   * would be a token-exfiltration vector. This is the same value already
+   * trusted as the `targetOrigin` of every `postMessage` to the parent
+   * (see `postToParent`).
+   */
+  getHostOrigin(): string | null {
+    return this.parentOrigin;
+  }
+
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => {

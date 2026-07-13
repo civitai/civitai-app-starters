@@ -82,6 +82,22 @@ export type OutboundRequest = {
 export interface BlockTransport {
   /** Current snapshot; cheap to call (no allocation). */
   getSnapshot(): BlockSnapshot;
+  /**
+   * The validated host (parent) origin a block may safely direct-fetch the
+   * civitai App Blocks HTTP API against — `null` until the transport has
+   * established it (iframe: the first allowlist-passing `BLOCK_INIT`; inline:
+   * bootstrap present).
+   *
+   * SECURITY INVARIANT — the whole point of this accessor: it MUST return
+   * ONLY an origin that passed the same trust gate every inbound message
+   * passes (the iframe `OriginMatcher` allowlist / the inline same-origin
+   * host). It must NEVER be derived from `document.referrer`, `window.location`
+   * of a cross-origin parent, an unvalidated `event.origin`, or any
+   * caller-supplied value. The returned origin becomes the base URL a
+   * money-scoped block bearer token (`useBlockToken().raw`) is sent to, so
+   * returning an unvalidated origin would be a token-exfiltration vector.
+   */
+  getHostOrigin(): string | null;
   /** Subscribe to snapshot changes. Returns an unsubscribe function. */
   subscribe(listener: () => void): () => void;
   /** Fire-and-forget message to the peer. */
