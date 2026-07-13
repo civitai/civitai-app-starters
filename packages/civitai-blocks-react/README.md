@@ -120,12 +120,14 @@ The validated host origin to direct-fetch the App Blocks HTTP API against —
 bridge, always paired with the bearer token from `useBlockToken()`.
 
 ```tsx
-const host = useHostOrigin();          // e.g. "https://civitai.com"
+const host = useHostOrigin();          // e.g. "https://civitai.com" (undefined until BLOCK_INIT)
 const { raw } = useBlockToken();
-if (!host) return null;                // not initialized yet
-const res = await fetch(`${host}/api/v1/blocks/me`, {
-  headers: { authorization: `Bearer ${raw}` },
-});
+// Once `host` is set, fetch the API on that validated origin with the block token:
+if (host) {
+  const res = await fetch(`${host}/api/v1/blocks/me`, {
+    headers: { authorization: `Bearer ${raw}` },
+  });
+}
 ```
 
 > **Security:** this is ONLY ever the origin that passed the SDK's origin
