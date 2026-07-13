@@ -23,6 +23,9 @@ const CANONICAL_BLOCK_SCOPES = [
   'social:tip:self',
   'apps:storage:read',
   'apps:storage:write',
+  // 4-segment SHARED (cross-user) datastore scopes.
+  'apps:storage:shared:read',
+  'apps:storage:shared:write',
 ] as const;
 
 describe('BLOCK_SCOPES', () => {
@@ -35,7 +38,12 @@ describe('BLOCK_SCOPES', () => {
     expect(BLOCK_SCOPES.APPS_STORAGE_WRITE).toBe('apps:storage:write');
   });
 
-  it('every value matches BLOCK_SCOPE_PATTERN', () => {
+  it('includes the 4-segment SHARED apps:storage:shared:* datastore scopes', () => {
+    expect(BLOCK_SCOPES.APPS_STORAGE_SHARED_READ).toBe('apps:storage:shared:read');
+    expect(BLOCK_SCOPES.APPS_STORAGE_SHARED_WRITE).toBe('apps:storage:shared:write');
+  });
+
+  it('every value matches BLOCK_SCOPE_PATTERN (3 or 4 colon segments)', () => {
     for (const scope of Object.values(BLOCK_SCOPES)) {
       expect(scope, scope).toMatch(BLOCK_SCOPE_PATTERN);
     }

@@ -150,9 +150,49 @@ describe('defineBlock', () => {
       }
     });
 
+    it('rejects a well-formed but UNKNOWN scope (membership, not just format)', () => {
+      const manifest = validManifest({ scopes: ['foo:bar:baz'] });
+      try {
+        defineBlock({ manifest });
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(BlockManifestError);
+        expect((err as Error).message).toContain('unknown block scope');
+        expect((err as BlockManifestError).field).toBe('scopes');
+      }
+    });
+
+    it.each([
+      'apps:storage:read',
+      'apps:storage:write',
+      'apps:storage:shared:read',
+      'apps:storage:shared:write',
+    ])('accepts the storage scope %s (incl. 4-segment shared scopes)', (scope) => {
+      const manifest = validManifest({ scopes: [scope] });
+      expect(() => defineBlock({ manifest })).not.toThrow();
+    });
+
     it('rejects empty scopes array', () => {
       const manifest = validManifest({ scopes: [] });
       expect(() => defineBlock({ manifest })).toThrow(/scopes must be a non-empty array/);
+    });
+
+    it('accepts a known optional category', () => {
+      const manifest = validManifest({ category: 'utility' });
+      expect(() => defineBlock({ manifest })).not.toThrow();
+    });
+
+    it('accepts a manifest with category omitted', () => {
+      const manifest = validManifest();
+      expect((manifest as Record<string, unknown>).category).toBeUndefined();
+      expect(() => defineBlock({ manifest })).not.toThrow();
+    });
+
+    it('rejects an unknown category', () => {
+      const manifest = validManifest({
+        category: 'nonsense' as unknown as BlockManifest['category'],
+      });
+      expect(() => defineBlock({ manifest })).toThrow(/category must be one of/);
     });
 
     it.each([

@@ -10,8 +10,8 @@
 export { defineBlock, BlockManifestError } from './defineBlock.js';
 export type { DefineBlockConfig } from './defineBlock.js';
 
-export { BLOCK_SCOPES, BLOCK_SCOPE_PATTERN } from './scopes.js';
-export type { BlockScope, BlockScopeKey } from './scopes.js';
+export { BLOCK_SCOPES, BLOCK_SCOPE_PATTERN, BLOCK_CATEGORIES } from './scopes.js';
+export type { BlockScope, BlockScopeKey, BlockCategory } from './scopes.js';
 
 export {
   BrowsingLevel,

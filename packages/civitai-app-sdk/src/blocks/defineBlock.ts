@@ -11,7 +11,7 @@
  * the TypeScript type is a lie.
  */
 
-import { BLOCK_SCOPES, BLOCK_SCOPE_PATTERN } from './scopes.js';
+import { BLOCK_CATEGORIES, BLOCK_SCOPES, BLOCK_SCOPE_PATTERN } from './scopes.js';
 import type { BlockManifest, ContentRating } from './types.js';
 
 /**
@@ -23,8 +23,10 @@ import type { BlockManifest, ContentRating } from './types.js';
 const BLOCK_ID_PATTERN = /^[a-z][a-z0-9-]*[a-z0-9]$/;
 const BLOCK_ID_MIN_LENGTH = 3;
 const BLOCK_ID_MAX_LENGTH = 40;
-/** The 10 canonical block scopes (enum the schema validates `scopes` against). */
+/** The 12 canonical block scopes (enum the schema validates `scopes` against). */
 const KNOWN_BLOCK_SCOPES = new Set<string>(Object.values(BLOCK_SCOPES));
+/** The 7 canonical marketplace categories (enum the schema validates `category` against). */
+const KNOWN_CATEGORIES = new Set<string>(BLOCK_CATEGORIES);
 const NAME_MAX_LENGTH = 80;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 /** Detects the SubresourceIntegrity hash format (sha256/384/512 + base64). */
@@ -198,6 +200,19 @@ export function defineBlock(config: DefineBlockConfig): BlockManifest {
       `manifest.contentRating must be one of ${CONTENT_RATINGS.join(', ')}. Got: ${JSON.stringify(manifest.contentRating)}`,
       'contentRating',
     );
+  }
+
+  // `category` is OPTIONAL. When present it must be one of the canonical
+  // marketplace categories (mirrors the schema's `category` enum + the server's
+  // MARKETPLACE_CATEGORIES). Omission is fine — a moderator categorises then.
+  if (manifest.category !== undefined) {
+    if (typeof manifest.category !== 'string' || !KNOWN_CATEGORIES.has(manifest.category)) {
+      throw new BlockManifestError(
+        `manifest.category must be one of ${BLOCK_CATEGORIES.join(', ')} (or omitted). ` +
+          `Got: ${JSON.stringify(manifest.category)}`,
+        'category',
+      );
+    }
   }
 
   requireNonEmptyString(manifest.minApiVersion, 'minApiVersion');

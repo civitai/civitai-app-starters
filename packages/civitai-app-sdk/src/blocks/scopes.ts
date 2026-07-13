@@ -24,27 +24,57 @@ export const BLOCK_SCOPES = {
   // by presence in the block's approved scope set, not a bitmask.
   APPS_STORAGE_READ: 'apps:storage:read',
   APPS_STORAGE_WRITE: 'apps:storage:write',
+  // apps:storage:shared:* — the SHARED (app-global / cross-user) datastore. Same
+  // no-OAuth-bit posture as apps:storage:*; the server gates them by presence in
+  // the block's approved scope set (plus a min-trust gate + fail-closed flag).
+  // These are the SDK's only 4-segment scopes — see BLOCK_SCOPE_PATTERN below.
+  APPS_STORAGE_SHARED_READ: 'apps:storage:shared:read',
+  APPS_STORAGE_SHARED_WRITE: 'apps:storage:shared:write',
 } as const;
 
 export type BlockScopeKey = keyof typeof BLOCK_SCOPES;
 export type BlockScope = (typeof BLOCK_SCOPES)[BlockScopeKey];
 
 /**
- * Format helper for the `domain:verb:target` block-scope shape.
+ * Format helper for the block-scope shape — 3 OR 4 colon-separated lowercase
+ * segments (`domain:verb:target` or `domain:area:verb:target`).
  *
  * NOTE: this regex is **not** the authoritative validity contract. The
  * canonical manifest schema (https://civitai.com/schemas/app-block/v1.json)
- * validates `scopes` by MEMBERSHIP in a fixed enum — i.e. the 10 values in
+ * validates `scopes` by MEMBERSHIP in a fixed enum — i.e. the 12 values in
  * {@link BLOCK_SCOPES}. `defineBlock` therefore gates on membership in
- * `BLOCK_SCOPES`; this pattern is kept only to give a pointed error message
- * (e.g. distinguishing a malformed/PascalCase scope from a well-formed but
- * unknown one). A scope can match this pattern and still be rejected for not
- * being a known block scope.
+ * `BLOCK_SCOPES`; this pattern is kept only as a FORMAT HEURISTIC to give a
+ * pointed error message (e.g. distinguishing a malformed/PascalCase scope from
+ * a well-formed but unknown one). A scope can match this pattern and still be
+ * rejected for not being a known block scope.
  *
- * The 3-segment shape (`domain:verb:target`) is **intentional**: scope
- * comparisons in token validation rely on it. Relaxing this (e.g. to allow
- * 4+ segments like `ai:write:image:budgeted`) requires a coordinated change
- * across the SDK, the canonical JSON schema, the civitai/civitai token
- * validator, and a `@civitai/app-sdk` major bump.
+ * The 4th segment was added to mirror the server's 4-segment
+ * `apps:storage:shared:read` / `apps:storage:shared:write` scopes (the SHARED
+ * cross-user datastore). The SDK now tracks the server's 4-segment scopes
+ * directly, so this is no longer a coordinated-major-bump situation — the
+ * pattern just widened to accept the shapes the canonical enum already lists.
  */
-export const BLOCK_SCOPE_PATTERN = /^[a-z]+:[a-z]+:[a-z]+$/;
+export const BLOCK_SCOPE_PATTERN = /^[a-z]+:[a-z]+:[a-z]+(?::[a-z]+)?$/;
+
+/**
+ * Marketplace category taxonomy for the optional manifest `category` field —
+ * the app's `/apps` store listing bucket. Mirrors `MARKETPLACE_CATEGORIES` in
+ * civitai/civitai's `src/server/services/blocks/marketplace-categories.constants.ts`
+ * (the single source of truth) and the `category` enum in the canonical schema
+ * (https://civitai.com/schemas/app-block/v1.json). Keep all three in lockstep.
+ *
+ * `category` is OPTIONAL: omit it to let a moderator categorise the app; when
+ * present it flows to the listing automatically on moderator-approve (only when
+ * a mod has not already curated one).
+ */
+export const BLOCK_CATEGORIES = [
+  'generation',
+  'games',
+  'utility',
+  'discovery',
+  'moderation',
+  'analytics',
+  'other',
+] as const;
+
+export type BlockCategory = (typeof BLOCK_CATEGORIES)[number];

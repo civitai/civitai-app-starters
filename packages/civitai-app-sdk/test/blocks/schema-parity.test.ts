@@ -18,7 +18,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { defineBlock } from '../../src/blocks/defineBlock.js';
-import { BLOCK_SCOPES } from '../../src/blocks/scopes.js';
+import { BLOCK_CATEGORIES, BLOCK_SCOPES } from '../../src/blocks/scopes.js';
 import type { BlockManifest } from '../../src/blocks/types.js';
 
 const SCHEMA_PATH = join(__dirname, '../../schemas/app-block/v1.json');
@@ -71,7 +71,7 @@ describe('canonical JSON schema ↔ defineBlock parity', () => {
     expect(() => defineBlock({ manifest: valid({ blockId: 'a' + 'b'.repeat(39) }) })).not.toThrow();
   });
 
-  it('scopes is validated by enum membership (not just a pattern)', () => {
+  it('scopes enum ↔ BLOCK_SCOPES drift guard (schema enum === defineBlock membership set)', () => {
     const scopeItems = (schema.properties as Record<string, { items?: {
       pattern?: string;
       enum?: string[];
@@ -79,18 +79,49 @@ describe('canonical JSON schema ↔ defineBlock parity', () => {
     // Canonical validates by an enum, not a regex pattern.
     expect(scopeItems?.pattern).toBeUndefined();
     expect(Array.isArray(scopeItems?.enum)).toBe(true);
-    // The enum contains the 10 known block scopes, exactly.
+    // DRIFT GUARD: the schema's scope enum is EXACTLY the SDK's BLOCK_SCOPES set.
+    // If either side gains/loses a scope without the other, this fails — which is
+    // the whole point of vendoring the schema (byte-identical copy of canonical).
     expect(new Set(scopeItems?.enum)).toEqual(new Set(Object.values(BLOCK_SCOPES)));
-    // Every known scope is accepted by defineBlock...
+    // Every known scope is accepted by defineBlock (incl. the 4-segment
+    // apps:storage:shared:* scopes)...
     for (const scope of Object.values(BLOCK_SCOPES)) {
       expect(() => defineBlock({ manifest: valid({ scopes: [scope] }) }), scope).not.toThrow();
     }
-    // ...but a well-formed yet UNKNOWN scope (not in the enum) is rejected by
-    // membership, even though it matches the colon-segment shape.
+    // ...and the 4-segment shared-storage scope specifically is accepted.
+    expect(() =>
+      defineBlock({ manifest: valid({ scopes: ['apps:storage:shared:write'] }) }),
+    ).not.toThrow();
+    // A well-formed yet UNKNOWN scope (not in the enum) is rejected by membership,
+    // even though it matches the colon-segment shape.
+    expect(() => defineBlock({ manifest: valid({ scopes: ['foo:bar:baz'] }) })).toThrow();
     expect(() => defineBlock({ manifest: valid({ scopes: ['models:read:all'] }) })).toThrow();
-    // Malformed scopes are still rejected.
+    // Malformed scopes are still rejected (PascalCase and 2-segment).
     expect(() => defineBlock({ manifest: valid({ scopes: ['ModelsReadSelf'] }) })).toThrow();
     expect(() => defineBlock({ manifest: valid({ scopes: ['models:read'] }) })).toThrow();
+  });
+
+  it('category enum ↔ BLOCK_CATEGORIES drift guard (optional field)', () => {
+    const categorySchema = (schema.properties as Record<string, { enum?: string[]; type?: string }>)
+      .category;
+    // The schema declares an optional `category` string with a fixed enum.
+    expect(categorySchema?.type).toBe('string');
+    expect(Array.isArray(categorySchema?.enum)).toBe(true);
+    // DRIFT GUARD: schema `category` enum is EXACTLY the SDK's BLOCK_CATEGORIES.
+    expect(categorySchema?.enum).toEqual([...BLOCK_CATEGORIES]);
+    // category is NOT in the canonical required set.
+    expect((schema.required as string[]) ?? []).not.toContain('category');
+    // Every known category is accepted by defineBlock.
+    for (const category of BLOCK_CATEGORIES) {
+      expect(() => defineBlock({ manifest: valid({ category }) }), category).not.toThrow();
+    }
+    // An unknown category is rejected; omission is fine.
+    expect(() =>
+      defineBlock({
+        manifest: valid({ category: 'nonsense' as unknown as BlockManifest['category'] }),
+      }),
+    ).toThrow();
+    expect(() => defineBlock({ manifest: valid() })).not.toThrow();
   });
 
   it('shares the contentRating enum', () => {
