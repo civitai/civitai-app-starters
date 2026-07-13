@@ -92,6 +92,14 @@ describe('canonical JSON schema ↔ defineBlock parity', () => {
     expect(() =>
       defineBlock({ manifest: valid({ scopes: ['apps:storage:shared:write'] }) }),
     ).not.toThrow();
+    // ...and the App Blocks Collections scopes specifically are accepted.
+    expect(() =>
+      defineBlock({
+        manifest: valid({
+          scopes: ['collections:read:self', 'collections:write:self', 'collections:read:private'],
+        }),
+      }),
+    ).not.toThrow();
     // A well-formed yet UNKNOWN scope (not in the enum) is rejected by membership,
     // even though it matches the colon-segment shape.
     expect(() => defineBlock({ manifest: valid({ scopes: ['foo:bar:baz'] }) })).toThrow();

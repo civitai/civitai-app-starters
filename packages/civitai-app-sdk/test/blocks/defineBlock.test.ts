@@ -172,6 +172,15 @@ describe('defineBlock', () => {
       expect(() => defineBlock({ manifest })).not.toThrow();
     });
 
+    it.each([
+      'collections:read:self',
+      'collections:write:self',
+      'collections:read:private',
+    ])('accepts the collections scope %s', (scope) => {
+      const manifest = validManifest({ scopes: [scope] });
+      expect(() => defineBlock({ manifest })).not.toThrow();
+    });
+
     it('rejects empty scopes array', () => {
       const manifest = validManifest({ scopes: [] });
       expect(() => defineBlock({ manifest })).toThrow(/scopes must be a non-empty array/);
