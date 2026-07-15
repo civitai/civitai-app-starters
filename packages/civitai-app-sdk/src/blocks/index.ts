@@ -58,6 +58,8 @@ export type {
   BlockCheckpointInfo,
   BlockResourceInfo,
   BlockResourcePickerType,
+  BlockSourceImage,
+  BlockUploadedImageInfo,
   BlockTextToImageParams,
   BlockWorkflowSnapshot,
   BuzzAccountType,

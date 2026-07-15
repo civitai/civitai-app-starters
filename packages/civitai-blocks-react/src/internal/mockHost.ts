@@ -45,6 +45,7 @@ import {
   type BlockInitPayload,
   type BlockResourceInfo,
   type BlockResourcePickerType,
+  type BlockUploadedImageInfo,
   type BuzzAccountType,
   type ColorDomain,
   type SharedStorageValue,
@@ -258,6 +259,13 @@ export interface MockHostOptions {
    * for that type. Defaults to a curated Checkpoint + LoRA pick.
    */
   cannedPicks?: Partial<Record<BlockResourcePickerType, CannedPick | null>>;
+  /**
+   * The canned moderated image returned from `OPEN_IMAGE_UPLOAD` (what
+   * `useImageUpload().open()` resolves with). `null` simulates a dismissed
+   * upload modal (→ `IMAGE_UPLOAD_RESULT` with no `selected`). Absent →
+   * {@link DEFAULT_IMAGE_UPLOAD} (a plausible SFW Civitai-hosted image).
+   */
+  cannedImageUpload?: BlockUploadedImageInfo | null;
   /** Number of `POLL_WORKFLOW` round-trips before a workflow succeeds. Default 2. */
   pollsUntilDone?: number;
   /**
@@ -383,6 +391,7 @@ export type MockHostScenarioPatch = Pick<
   | 'cost'
   | 'pollsUntilDone'
   | 'cannedPicks'
+  | 'cannedImageUpload'
   | 'generation'
   | 'buzz'
   | 'storage'
@@ -419,6 +428,10 @@ export interface MockHost {
   buzz: MockBuzzHandle;
 }
 
+// The canned picks carry the WIDENED BlockResourceInfo projection (PR-C) — the
+// public recommended settings a real host now returns — so dev:mock mirrors prod
+// (a picked resource seeds a weight slider + trigger words). Defaults match the
+// host's `projectSafeGenerationResource` (strength 1, min -1, max 2, no clipSkip).
 const DEFAULT_CHECKPOINT_PICK: CannedPick = {
   versionId: 691639,
   modelId: 618692,
@@ -426,6 +439,11 @@ const DEFAULT_CHECKPOINT_PICK: CannedPick = {
   versionName: 'fp8',
   baseModel: 'Flux.1 D',
   modelType: 'Checkpoint',
+  strength: 1,
+  minStrength: -1,
+  maxStrength: 2,
+  trainedWords: [],
+  clipSkip: null,
 };
 
 const DEFAULT_LORA_PICK: CannedPick = {
@@ -435,6 +453,25 @@ const DEFAULT_LORA_PICK: CannedPick = {
   versionName: 'v2.0',
   baseModel: 'SDXL 1.0',
   modelType: 'LORA',
+  strength: 1,
+  minStrength: -1,
+  maxStrength: 2,
+  trainedWords: ['sinfully stylish'],
+  clipSkip: null,
+};
+
+/**
+ * The canned image the mock host "returns" from `OPEN_IMAGE_UPLOAD`. Mirrors the
+ * host's moderated {@link BlockUploadedImageInfo} projection (imageId/nsfwLevel/
+ * contentRating/url). `null` simulates a user-dismissed upload modal (→
+ * `IMAGE_UPLOAD_RESULT` with no `selected`). The url is a Civitai-hosted image so
+ * a dev can feed it straight into a `sourceImage` (img2img) body.
+ */
+const DEFAULT_IMAGE_UPLOAD: BlockUploadedImageInfo = {
+  imageId: 12345678,
+  nsfwLevel: 1,
+  contentRating: 'pg',
+  url: 'https://image.civitai.com/mock/original=true/dev-upload.jpeg',
 };
 
 const DEFAULT_VIEWER: ViewerInfo = { id: 2, username: 'dev-viewer', status: 'active' };
@@ -668,6 +705,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   let legacyCost = options.cost ?? 8;
   let cannedPicks: Partial<Record<BlockResourcePickerType, CannedPick | null>> =
     options.cannedPicks ?? { Checkpoint: DEFAULT_CHECKPOINT_PICK, LORA: DEFAULT_LORA_PICK };
+  // Canned image-upload result. `null` = dismissed; undefined = default image.
+  let cannedImageUpload: BlockUploadedImageInfo | null =
+    options.cannedImageUpload === undefined ? DEFAULT_IMAGE_UPLOAD : options.cannedImageUpload;
   // Simulated balance-read failure (undefined = read succeeds).
   let buzzBalanceError: string | undefined = normalizeBalanceError(options.buzzBalanceError);
   // Pools a submit must reject (content-rating clamp). Normalized to a Set.
@@ -1087,6 +1127,17 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             return;
           }
 
+          case 'OPEN_IMAGE_UPLOAD': {
+            // Host-chrome image upload: return the canned MODERATED image
+            // (mirrors the real host's IMAGE_UPLOAD_RESULT). `null` → dismissed
+            // (no `selected`), so the hook resolves to null.
+            dispatchToBlock({
+              type: 'IMAGE_UPLOAD_RESULT',
+              payload: { requestId, ...(cannedImageUpload ? { selected: cannedImageUpload } : {}) },
+            });
+            return;
+          }
+
           // ---- Civitai Apps KV datastore (W4) — in-memory backend ----
           case 'APP_STORAGE_GET': {
             const key = typed.payload?.key ?? '';
@@ -1272,7 +1323,13 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               key,
               seq: sharedSeq,
               authorUserId: mockUserId,
-              value: { title: value.title, ...(value.body !== undefined ? { body: value.body } : {}) },
+              value: {
+                title: value.title,
+                ...(value.body !== undefined ? { body: value.body } : {}),
+                // Echo the opaque app-owned `data` blob unmodified (mirrors the
+                // real host storing it alongside the moderated title/body).
+                ...(value.data !== undefined ? { data: value.data } : {}),
+              },
               voters: new Set<number>(),
               createdAt: now,
               updatedAt: now,
@@ -1427,6 +1484,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     if (patch.pollsUntilDone !== undefined) pollsUntilDone = patch.pollsUntilDone;
     if (patch.cost !== undefined) legacyCost = patch.cost;
     if (patch.cannedPicks !== undefined) cannedPicks = patch.cannedPicks;
+    // `null` is a meaningful value (dismissed), so check for the KEY's presence.
+    if ('cannedImageUpload' in patch) cannedImageUpload = patch.cannedImageUpload ?? null;
     if (patch.generation !== undefined) gen = { ...gen, ...patch.generation };
     if (patch.buzz !== undefined) buzz = { ...buzz, ...patch.buzz };
     if (patch.buzzBalanceError !== undefined)

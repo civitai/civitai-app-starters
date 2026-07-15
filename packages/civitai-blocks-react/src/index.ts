@@ -35,6 +35,14 @@ export { useBuzzBalance } from './hooks/useBuzzBalance.js';
 export type { BuzzBalance, UseBuzzBalance } from './hooks/useBuzzBalance.js';
 export { useCheckpointPicker } from './hooks/useCheckpointPicker.js';
 export { useResourcePicker } from './hooks/useResourcePicker.js';
+export { useImageUpload } from './hooks/useImageUpload.js';
+export { useGenerationResources } from './hooks/useGenerationResources.js';
+export {
+  GENERATION_RESOURCES_API_BASE,
+  MAX_GENERATION_RESOURCE_IDS,
+  buildGenerationResourcesUrl,
+  responseToResources,
+} from './api/generationResources.js';
 export { useCivitaiNavigate } from './hooks/useCivitaiNavigate.js';
 export { useRequestSignIn } from './hooks/useRequestSignIn.js';
 export { useRequestConsent } from './hooks/useRequestConsent.js';

@@ -4,6 +4,7 @@ import {
   isValidBlockInitPayload,
   isValidBuzzBalanceResult,
   isValidBuzzPurchaseResult,
+  isValidImageUploadResult,
   isValidTokenRefresh,
   isValidTokenRefreshResponse,
   isValidWorkflowReply,
@@ -223,6 +224,45 @@ describe('isValidBuzzBalanceResult', () => {
   });
 });
 
+describe('isValidImageUploadResult', () => {
+  const selected = {
+    imageId: 12345,
+    nsfwLevel: 1,
+    contentRating: 'pg',
+    url: 'https://image.civitai.com/x/original=true/a.jpeg',
+  };
+
+  it('accepts a successful upload (moderated image)', () => {
+    expect(isValidImageUploadResult({ requestId: 'r', selected })).toBe(true);
+  });
+  it('accepts a cancelled upload (no `selected`)', () => {
+    expect(isValidImageUploadResult({ requestId: 'r' })).toBe(true);
+    expect(isValidImageUploadResult({})).toBe(true);
+  });
+  it('accepts every content-rating ladder value', () => {
+    for (const cr of ['g', 'pg', 'pg13', 'r', 'x']) {
+      expect(isValidImageUploadResult({ selected: { ...selected, contentRating: cr } })).toBe(true);
+    }
+  });
+  it.each([
+    ['imageId not a number', { selected: { ...selected, imageId: '12' } }],
+    ['imageId non-integer', { selected: { ...selected, imageId: 1.5 } }],
+    ['imageId non-positive', { selected: { ...selected, imageId: 0 } }],
+    ['nsfwLevel not a number', { selected: { ...selected, nsfwLevel: 'sfw' } }],
+    ['nsfwLevel NaN', { selected: { ...selected, nsfwLevel: Number.NaN } }],
+    ['contentRating unknown', { selected: { ...selected, contentRating: 'xxx' } }],
+    ['contentRating wrong type', { selected: { ...selected, contentRating: 3 } }],
+    ['url empty', { selected: { ...selected, url: '' } }],
+    ['url wrong type', { selected: { ...selected, url: 42 } }],
+    ['selected not an object', { selected: 5 }],
+    ['requestId not a string', { requestId: 7, selected }],
+    ['null payload', null],
+    ['string payload', 'oops'],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidImageUploadResult(payload)).toBe(false);
+  });
+});
+
 describe('payloadValidatorFor', () => {
   it('returns a validator for each documented inbound type', () => {
     expect(payloadValidatorFor('BLOCK_INIT')).toBeTypeOf('function');
@@ -234,6 +274,7 @@ describe('payloadValidatorFor', () => {
     expect(payloadValidatorFor('WORKFLOW_CANCELED')).toBeTypeOf('function');
     expect(payloadValidatorFor('BUZZ_PURCHASE_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('BUZZ_BALANCE_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('IMAGE_UPLOAD_RESULT')).toBeTypeOf('function');
   });
   it('returns null for payload-less lifecycle messages', () => {
     expect(payloadValidatorFor('SUSPEND')).toBeNull();
