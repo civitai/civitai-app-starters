@@ -48,6 +48,11 @@ import {
   type BlockUploadedImageInfo,
   type BlockGenerationSourceImageInfo,
   type BuzzAccountType,
+  type BlockBuzzTransaction,
+  type BlockBuzzAccount,
+  type BlockDailyCompensationResource,
+  type BlockWildcardPack,
+  type BlockWildcardPackErrorCode,
   type ColorDomain,
   type SharedStorageValue,
   type Theme,
@@ -317,6 +322,47 @@ export interface MockHostOptions {
    */
   buzzBalanceError?: boolean | string | Error;
   /**
+   * The Buzz-transaction ledger reported on `GET_BUZZ_TRANSACTIONS` (what
+   * `useBuzzTransactions` reads). `transactions` mirror the host projection;
+   * `cursor` (when set) drives the block's "next page" affordance. Absent →
+   * {@link DEFAULT_BUZZ_TRANSACTIONS}. Live-tunable via {@link MockHost.setScenario}.
+   */
+  buzzTransactions?: { transactions: BlockBuzzTransaction[]; cursor?: string };
+  /**
+   * The all-pool balances reported on `GET_BUZZ_ACCOUNTS` (what
+   * `useBuzzAccounts` reads). Absent → {@link DEFAULT_BUZZ_ACCOUNTS}.
+   */
+  buzzAccounts?: BlockBuzzAccount[];
+  /**
+   * The per-modelVersion compensation reported on `GET_DAILY_COMPENSATION` (what
+   * `useDailyCompensation` reads). Absent → {@link DEFAULT_DAILY_COMPENSATION}.
+   */
+  dailyCompensation?: {
+    resources: BlockDailyCompensationResource[];
+    hasPublishedResources: boolean;
+  };
+  /**
+   * Force the three buzz SELF-READ bridges (`GET_BUZZ_TRANSACTIONS` /
+   * `GET_BUZZ_ACCOUNTS` / `GET_DAILY_COMPENSATION`) to reply with the FREE-TEXT
+   * `error` variant instead of data — exercises those hooks' error UI. `true` →
+   * a default message; a string → that message; an `Error` → its `.message`.
+   * Absent → the reads succeed. Live-tunable via {@link MockHost.setScenario}.
+   */
+  buzzReadError?: boolean | string | Error;
+  /**
+   * The parsed pack returned from `GET_WILDCARD_PACK` (what `useWildcardPack`
+   * reads). Absent → {@link DEFAULT_WILDCARD_PACK}. Ignored when
+   * {@link wildcardPackError} is set.
+   */
+  wildcardPack?: BlockWildcardPack;
+  /**
+   * Force `GET_WILDCARD_PACK` to reply with the DISCRIMINATED `error` code
+   * (`not-found` | `forbidden` | `too-large` | `parse-failed` | `busy`) instead
+   * of a pack — exercises `useWildcardPack`'s typed-error UI. Absent → a pack is
+   * returned. Live-tunable via {@link MockHost.setScenario}.
+   */
+  wildcardPackError?: BlockWildcardPackErrorCode;
+  /**
    * Buzz pools a `SUBMIT_WORKFLOW` must REJECT when named in `body.accountType`
    * — simulates the real backend's content-rating clamp. The real host throws a
    * `BAD_REQUEST` at the currency-resolution boundary (before any spend) when a
@@ -409,6 +455,12 @@ export type MockHostScenarioPatch = Pick<
   | 'storage'
   | 'shared'
   | 'buzzBalanceError'
+  | 'buzzTransactions'
+  | 'buzzAccounts'
+  | 'dailyCompensation'
+  | 'buzzReadError'
+  | 'wildcardPack'
+  | 'wildcardPackError'
   | 'disallowedAccountTypes'
 >;
 
@@ -535,6 +587,17 @@ function normalizeBalanceError(e: boolean | string | Error | undefined): string 
   return e.message || DEFAULT_BUZZ_BALANCE_ERROR;
 }
 
+/** Default message for a simulated buzz SELF-READ failure ({@link MockHostOptions.buzzReadError}). */
+const DEFAULT_BUZZ_READ_ERROR = 'buzz read unavailable';
+
+/** Normalize a {@link MockHostOptions.buzzReadError} value to an error string (or `undefined`). */
+function normalizeReadError(e: boolean | string | Error | undefined): string | undefined {
+  if (e === undefined || e === false) return undefined;
+  if (e === true) return DEFAULT_BUZZ_READ_ERROR;
+  if (typeof e === 'string') return e || DEFAULT_BUZZ_READ_ERROR;
+  return e.message || DEFAULT_BUZZ_READ_ERROR;
+}
+
 /**
  * Default per-pool wallet reported on `GET_BUZZ_BALANCE` when
  * {@link MockHostOptions.buzzBalance} is omitted — a plausible non-zero balance
@@ -542,6 +605,89 @@ function normalizeBalanceError(e: boolean | string | Error | undefined): string 
  * balance out of the box.
  */
 const DEFAULT_BUZZ_BALANCE: MockBuzzBalance = { blue: 1000, green: 0, yellow: 5000 };
+
+/**
+ * Default Buzz-transaction ledger reported on `GET_BUZZ_TRANSACTIONS`. `date`s
+ * are `Date` INSTANCES (not ISO strings) to mirror the REAL host, which forwards
+ * the raw tRPC `result` over structured-clone `postMessage` (see the DATE WIRE
+ * CAVEAT on `BlockBuzzTransaction`). Newest-first; `externalTransactionId` nulled
+ * on the purchase row exactly as the host's projection does.
+ */
+const DEFAULT_BUZZ_TRANSACTIONS: BlockBuzzTransaction[] = [
+  {
+    date: new Date('2026-07-14T12:00:00.000Z') as unknown as string,
+    type: 'Tip',
+    amount: 250,
+    fromAccountId: 2,
+    toAccountId: 5,
+    fromAccountType: 'yellow',
+    toAccountType: 'yellow',
+    description: 'Tip on an image',
+    details: { entityType: 'Image', entityId: 12345, url: '/images/12345' },
+    externalTransactionId: null,
+    toUser: { id: 5, username: 'creator' },
+    fromUser: { id: 2, username: 'dev-viewer' },
+  },
+  {
+    date: new Date('2026-07-10T09:30:00.000Z') as unknown as string,
+    type: 'Purchase',
+    amount: 5000,
+    fromAccountId: 0,
+    toAccountId: 2,
+    fromAccountType: 'yellow',
+    toAccountType: 'yellow',
+    description: 'Buzz purchase',
+    // Host nulls externalTransactionId on Purchase rows (processor-ref leak class).
+    externalTransactionId: null,
+  },
+];
+
+/** Default all-pool balances reported on `GET_BUZZ_ACCOUNTS` (spendable + payout pools). */
+const DEFAULT_BUZZ_ACCOUNTS: BlockBuzzAccount[] = [
+  { accountType: 'yellow', balance: 5000 },
+  { accountType: 'blue', balance: 1000 },
+  { accountType: 'green', balance: 0 },
+  { accountType: 'creatorProgramBank', balance: 0 },
+  { accountType: 'cashSettled', balance: 1234 },
+];
+
+/** Default per-modelVersion compensation reported on `GET_DAILY_COMPENSATION`. */
+const DEFAULT_DAILY_COMPENSATION: {
+  resources: BlockDailyCompensationResource[];
+  hasPublishedResources: boolean;
+} = {
+  resources: [
+    {
+      id: 691639,
+      name: 'fp8',
+      modelName: 'FLUX.1 [dev]',
+      data: [
+        { createdAt: '2026-07-01', total: 120 },
+        { createdAt: '2026-07-02', total: 80 },
+      ],
+      cashData: [{ createdAt: '2026-07-01', total: 45 }],
+      totalSum: 200,
+      cashCents: 45,
+    },
+  ],
+  hasPublishedResources: true,
+};
+
+/** Default parsed pack reported on `GET_WILDCARD_PACK` (a small SFW pack). */
+const DEFAULT_WILDCARD_PACK: BlockWildcardPack = {
+  modelId: 618692,
+  modelVersionId: 691639,
+  modelName: 'Sample Wildcard Pack',
+  versionName: 'v1.0',
+  creatorUsername: 'creator',
+  lists: {
+    'clothing/tops': ['t-shirt', 'hoodie', 'tank top'],
+    colors: ['red', 'green', 'blue'],
+  },
+  truncated: false,
+  truncatedLists: [],
+  maturity: { browsingLevel: SFW_LEVELS, sfwOnly: true },
+};
 
 /**
  * The pool that "funded" a mock generation — the largest wallet pool, mirroring
@@ -740,6 +886,18 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       : options.cannedGenerationSourceUpload;
   // Simulated balance-read failure (undefined = read succeeds).
   let buzzBalanceError: string | undefined = normalizeBalanceError(options.buzzBalanceError);
+  // Buzz self-read bridge data + forced-error knob.
+  let buzzTransactions: { transactions: BlockBuzzTransaction[]; cursor?: string } =
+    options.buzzTransactions ?? { transactions: DEFAULT_BUZZ_TRANSACTIONS };
+  let buzzAccounts: BlockBuzzAccount[] = options.buzzAccounts ?? DEFAULT_BUZZ_ACCOUNTS;
+  let dailyCompensation: {
+    resources: BlockDailyCompensationResource[];
+    hasPublishedResources: boolean;
+  } = options.dailyCompensation ?? DEFAULT_DAILY_COMPENSATION;
+  let buzzReadError: string | undefined = normalizeReadError(options.buzzReadError);
+  // Wildcard-pack bridge data + forced discriminated-error knob.
+  let wildcardPack: BlockWildcardPack = options.wildcardPack ?? DEFAULT_WILDCARD_PACK;
+  let wildcardPackError: BlockWildcardPackErrorCode | undefined = options.wildcardPackError;
   // Pools a submit must reject (content-rating clamp). Normalized to a Set.
   let disallowedAccounts = new Set<BuzzAccountType>(options.disallowedAccountTypes ?? []);
 
@@ -1122,6 +1280,89 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             dispatchToBlock({
               type: 'BUZZ_BALANCE_RESULT',
               payload: { requestId, balance: { ...buzzBalance } },
+            });
+            return;
+          }
+
+          case 'GET_BUZZ_TRANSACTIONS': {
+            // Buzz-dashboard ledger read. Drop a request with no requestId
+            // (unroutable). A forced read error replies with the FREE-TEXT error
+            // variant (mirrors the real host forwarding err.message).
+            if (typeof requestId !== 'string') return;
+            if (buzzReadError !== undefined) {
+              dispatchToBlock({
+                type: 'BUZZ_TRANSACTIONS_RESULT',
+                payload: { requestId, error: buzzReadError },
+              });
+              return;
+            }
+            dispatchToBlock({
+              type: 'BUZZ_TRANSACTIONS_RESULT',
+              payload: {
+                requestId,
+                result: {
+                  transactions: buzzTransactions.transactions,
+                  ...(buzzTransactions.cursor !== undefined
+                    ? { cursor: buzzTransactions.cursor }
+                    : {}),
+                },
+              },
+            });
+            return;
+          }
+
+          case 'GET_BUZZ_ACCOUNTS': {
+            if (typeof requestId !== 'string') return;
+            if (buzzReadError !== undefined) {
+              dispatchToBlock({
+                type: 'BUZZ_ACCOUNTS_RESULT',
+                payload: { requestId, error: buzzReadError },
+              });
+              return;
+            }
+            dispatchToBlock({
+              type: 'BUZZ_ACCOUNTS_RESULT',
+              payload: { requestId, result: { accounts: buzzAccounts } },
+            });
+            return;
+          }
+
+          case 'GET_DAILY_COMPENSATION': {
+            if (typeof requestId !== 'string') return;
+            if (buzzReadError !== undefined) {
+              dispatchToBlock({
+                type: 'DAILY_COMPENSATION_RESULT',
+                payload: { requestId, error: buzzReadError },
+              });
+              return;
+            }
+            dispatchToBlock({
+              type: 'DAILY_COMPENSATION_RESULT',
+              payload: {
+                requestId,
+                result: {
+                  resources: dailyCompensation.resources,
+                  hasPublishedResources: dailyCompensation.hasPublishedResources,
+                },
+              },
+            });
+            return;
+          }
+
+          case 'GET_WILDCARD_PACK': {
+            // Token-INDEPENDENT import. A forced error replies with the
+            // DISCRIMINATED enum code (NOT free-text) — mirrors the real host.
+            if (typeof requestId !== 'string') return;
+            if (wildcardPackError !== undefined) {
+              dispatchToBlock({
+                type: 'WILDCARD_PACK_RESULT',
+                payload: { requestId, error: wildcardPackError },
+              });
+              return;
+            }
+            dispatchToBlock({
+              type: 'WILDCARD_PACK_RESULT',
+              payload: { requestId, pack: wildcardPack },
             });
             return;
           }
@@ -1583,6 +1824,12 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     if (patch.buzz !== undefined) buzz = { ...buzz, ...patch.buzz };
     if (patch.buzzBalanceError !== undefined)
       buzzBalanceError = normalizeBalanceError(patch.buzzBalanceError);
+    if (patch.buzzTransactions !== undefined) buzzTransactions = patch.buzzTransactions;
+    if (patch.buzzAccounts !== undefined) buzzAccounts = patch.buzzAccounts;
+    if (patch.dailyCompensation !== undefined) dailyCompensation = patch.dailyCompensation;
+    if (patch.buzzReadError !== undefined) buzzReadError = normalizeReadError(patch.buzzReadError);
+    if (patch.wildcardPack !== undefined) wildcardPack = patch.wildcardPack;
+    if (patch.wildcardPackError !== undefined) wildcardPackError = patch.wildcardPackError;
     if (patch.disallowedAccountTypes !== undefined)
       disallowedAccounts = new Set(patch.disallowedAccountTypes);
     if (patch.storage !== undefined) {

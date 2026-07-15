@@ -656,6 +656,8 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             limit?: number;
             cursor?: string;
             versionId?: number | null;
+            params?: Record<string, unknown>;
+            modelVersionId?: number;
           };
         };
 
@@ -826,6 +828,84 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
                   ? { requestId, balance: r.data }
                   : { requestId, error: r.error ?? 'balance unavailable' },
               });
+            });
+            return;
+          }
+
+          case 'GET_BUZZ_TRANSACTIONS': {
+            // Ledger read via the token-bound `blocks.getMyBuzzTransactions`
+            // MUTATION (POST). params are spread FIRST so the host-authoritative
+            // `blockToken` (spread LAST) can never be overridden — mirrors the
+            // real host. FREE-TEXT error on failure. Unroutable without requestId.
+            if (typeof requestId !== 'string') return;
+            void callTrpcData(
+              'blocks.getMyBuzzTransactions',
+              { ...(typed.payload?.params ?? {}), blockToken: rawToken },
+              'POST',
+            ).then((r) => {
+              dispatchToBlock({
+                type: 'BUZZ_TRANSACTIONS_RESULT',
+                payload: r.data
+                  ? { requestId, result: r.data }
+                  : { requestId, error: r.error ?? 'buzz transactions unavailable' },
+              });
+            });
+            return;
+          }
+
+          case 'GET_BUZZ_ACCOUNTS': {
+            if (typeof requestId !== 'string') return;
+            void callTrpcData(
+              'blocks.getMyBuzzAccounts',
+              { blockToken: rawToken },
+              'POST',
+            ).then((r) => {
+              dispatchToBlock({
+                type: 'BUZZ_ACCOUNTS_RESULT',
+                payload: r.data
+                  ? { requestId, result: r.data }
+                  : { requestId, error: r.error ?? 'buzz accounts unavailable' },
+              });
+            });
+            return;
+          }
+
+          case 'GET_DAILY_COMPENSATION': {
+            if (typeof requestId !== 'string') return;
+            void callTrpcData(
+              'blocks.getMyDailyCompensation',
+              { ...(typed.payload?.params ?? {}), blockToken: rawToken },
+              'POST',
+            ).then((r) => {
+              dispatchToBlock({
+                type: 'DAILY_COMPENSATION_RESULT',
+                payload: r.data
+                  ? { requestId, result: r.data }
+                  : { requestId, error: r.error ?? 'daily compensation unavailable' },
+              });
+            });
+            return;
+          }
+
+          case 'GET_WILDCARD_PACK': {
+            // UNSUPPORTED in live v1 (honest-by-design, like OPEN_BUZZ_PURCHASE):
+            // the real host resolves the pack via a SESSION-authed proc and does
+            // the fetch + unzip + parse in the viewer's page tab (the jszip/js-yaml
+            // machinery lives in civitai, not this SDK). A liveHost holds a BLOCK
+            // token, not a session — so it cannot resolve the pack. Reply with an
+            // honest `parse-failed` (never a fabricated pack) so the block's hook
+            // surfaces a typed error rather than hanging. Use dev:mock for the
+            // full wildcard-import path.
+            if (typeof requestId !== 'string') return;
+            logOnce(
+              'wildcard-pack',
+              'GET_WILDCARD_PACK is not supported in dev:live (it needs the session-authed ' +
+                'resolve + in-tab zip parse). Replying `parse-failed`. Use dev:mock to exercise ' +
+                'the wildcard-pack import path.',
+            );
+            dispatchToBlock({
+              type: 'WILDCARD_PACK_RESULT',
+              payload: { requestId, error: 'parse-failed' },
             });
             return;
           }

@@ -22,7 +22,51 @@ import type {
   ViewerInfo,
   WorkflowBody,
   BlockWorkflowSnapshot,
+  BlockBuzzTransaction,
+  BlockBuzzAccount,
+  BlockDailyCompensationResource,
+  BlockWildcardPack,
+  BlockWildcardPackErrorCode,
 } from './types.js';
+
+// ============================================================
+// Buzz self-read request params (block → parent)
+// ============================================================
+
+/**
+ * Filter params for `GET_BUZZ_TRANSACTIONS`. All optional; the host validates
+ * them server-side (they are NEVER trusted for auth — the account is self-bound
+ * off the block token). Mirrors civitai/civitai's `getMyBuzzTransactionsInput`
+ * (`src/server/schema/buzz.schema.ts`) minus the host-injected `blockToken`.
+ */
+export interface BlockBuzzTransactionsParams {
+  /** Buzz pool to read (e.g. `'yellow'`, `'blue'`, `'cashSettled'`). Default `'yellow'` server-side. */
+  accountType?: string;
+  /** A `TransactionType` NAME (e.g. `'Tip'`); the host maps it to the numeric enum. */
+  type?: string;
+  /** Opaque page cursor — the ISO-8601 `cursor` a prior `BUZZ_TRANSACTIONS_RESULT` returned (`z.coerce.date` server-side). */
+  cursor?: string;
+  /** Window start (ISO-8601; `z.coerce.date` server-side). */
+  start?: string;
+  /** Window end (ISO-8601; `z.coerce.date` server-side). */
+  end?: string;
+  /** Page size, 1..200 (default 50 server-side). */
+  limit?: number;
+}
+
+/**
+ * Params for `GET_DAILY_COMPENSATION`. `date` is REQUIRED — the host reads the
+ * whole MONTH containing it. Mirrors civitai/civitai's
+ * `getMyDailyCompensationInput` minus the host-injected `blockToken`.
+ */
+export interface BlockDailyCompensationParams {
+  /** ISO-8601 date; the host reads the month containing it. Required (`z.coerce.date` server-side). */
+  date: string;
+  /** Compensation source (default `'compensation'` server-side). */
+  source?: string;
+  /** Restrict to one Buzz pool (optional). */
+  accountType?: string;
+}
 
 // ============================================================
 // Token wrapper (shared by BLOCK_INIT, TOKEN_REFRESH, TOKEN_REFRESH_RESPONSE)
@@ -176,6 +220,59 @@ export type ParentToBlockMessage =
         requestId: string;
         balance?: { blue: number; green: number; yellow: number };
         error?: string;
+      };
+    }
+  | {
+      // Reply to GET_BUZZ_TRANSACTIONS — the Buzz-dashboard ledger read. On
+      // success `result` carries the page (`cursor` for the next page +
+      // `transactions`); on host-side failure `error` is a FREE-TEXT string
+      // (the host forwards `err.message`, e.g. a missing-scope / rate-limit
+      // message) and `result` is absent. Consumers treat a non-empty `error`
+      // as the reject signal (mirrors BUZZ_BALANCE_RESULT). See the DATE WIRE
+      // CAVEAT on {@link BlockBuzzTransaction} — `cursor` + each `date` arrive
+      // as a `Date` INSTANCE today (raw structured-clone), not an ISO string;
+      // the block-side guard + hook tolerate both.
+      type: 'BUZZ_TRANSACTIONS_RESULT';
+      payload: {
+        requestId: string;
+        result?: { cursor?: string; transactions: BlockBuzzTransaction[] };
+        error?: string;
+      };
+    }
+  | {
+      // Reply to GET_BUZZ_ACCOUNTS — the viewer's all-pool balances (spendable
+      // pools + creator payout pools). Success → `result.accounts`; host-side
+      // failure → a free-text `error` (same convention as BUZZ_TRANSACTIONS).
+      type: 'BUZZ_ACCOUNTS_RESULT';
+      payload: {
+        requestId: string;
+        result?: { accounts: BlockBuzzAccount[] };
+        error?: string;
+      };
+    }
+  | {
+      // Reply to GET_DAILY_COMPENSATION — per-modelVersion generation earnings
+      // for the month of the requested `date`. Success → `result` ({ resources,
+      // hasPublishedResources }); host-side failure → a free-text `error`.
+      type: 'DAILY_COMPENSATION_RESULT';
+      payload: {
+        requestId: string;
+        result?: { resources: BlockDailyCompensationResource[]; hasPublishedResources: boolean };
+        error?: string;
+      };
+    }
+  | {
+      // Reply to GET_WILDCARD_PACK — the parsed wildcard pack the host resolved,
+      // fetched, unzipped, and parsed AS THE USER. Success → `pack`; failure →
+      // `error` a DISCRIMINATED ENUM ({@link BlockWildcardPackErrorCode}), NOT a
+      // free-text string (unlike the buzz bridges). Consumers switch on the code
+      // (`not-found`/`forbidden`/`too-large`/`parse-failed`/`busy`); `busy` is a
+      // retryable host-side backpressure signal.
+      type: 'WILDCARD_PACK_RESULT';
+      payload: {
+        requestId: string;
+        pack?: BlockWildcardPack;
+        error?: BlockWildcardPackErrorCode;
       };
     }
   | {
@@ -358,6 +455,32 @@ export type BlockToParentMessage =
   // (scoped to the block token's viewer) and replies with `BUZZ_BALANCE_RESULT`.
   // The block never sees the balance API or credentials directly.
   | { type: 'GET_BUZZ_BALANCE'; payload: { requestId: string } }
+  // Ask the host for the viewer's Buzz-transaction ledger page. Host-mediated +
+  // token-bound (scope `buzz:read:self`): the host self-binds the account off
+  // the block token and reads via `blocks.getMyBuzzTransactions`, replying with
+  // `BUZZ_TRANSACTIONS_RESULT`. `params` are advisory filters — never trusted for
+  // auth. The block never sees the ledger API or credentials directly.
+  | {
+      type: 'GET_BUZZ_TRANSACTIONS';
+      payload: { requestId: string; params?: BlockBuzzTransactionsParams };
+    }
+  // Ask the host for the viewer's all-pool Buzz balances (scope `buzz:read:self`).
+  // Host reads via `blocks.getMyBuzzAccounts` → `BUZZ_ACCOUNTS_RESULT`.
+  | { type: 'GET_BUZZ_ACCOUNTS'; payload: { requestId: string } }
+  // Ask the host for the viewer's per-modelVersion generation compensation for
+  // the month of `params.date` (scope `buzz:read:self`). Host reads via
+  // `blocks.getMyDailyCompensation` → `DAILY_COMPENSATION_RESULT`.
+  | {
+      type: 'GET_DAILY_COMPENSATION';
+      payload: { requestId: string; params?: BlockDailyCompensationParams };
+    }
+  // Ask the host to import a wildcard pack's parsed prompt lists by model version.
+  // TOKEN-INDEPENDENT (no block scope): the host resolves + fetches + unzips +
+  // parses it in the USER'S authenticated page session (every real download gate
+  // enforced) and replies with `WILDCARD_PACK_RESULT` (a `pack` or a discriminated
+  // `error` code). The untrusted iframe never sees the session, signed URL, or raw
+  // bytes.
+  | { type: 'GET_WILDCARD_PACK'; payload: { requestId: string; modelVersionId: number } }
   | {
       // Ask the host to open the platform's Checkpoint picker. `baseModelGroup`
       // is the ecosystem key (e.g. 'Flux1', 'SDXL') the picker filters to —

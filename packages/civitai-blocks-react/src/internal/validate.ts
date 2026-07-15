@@ -298,6 +298,135 @@ export function isValidSharedUpdateResult(
 }
 
 /**
+ * A value the block-side hooks will rehydrate to a `Date`: EITHER a `Date`
+ * instance OR an ISO-8601 string `new Date()` parses to a finite timestamp.
+ *
+ * The buzz self-read bridges need this both-ways tolerance because the host
+ * forwards the RAW tRPC `result` over a structured-clone `postMessage` (it does
+ * NOT `.toISOString()`-map it the way the `SHARED_LIST` bridge does), so
+ * `cursor` + each transaction's `date` arrive as a `Date` INSTANCE today. A
+ * string-only guard would DROP every real reply → the hook would hang.
+ */
+function isDateLike(v: unknown): boolean {
+  if (v instanceof Date) return Number.isFinite(v.getTime());
+  return isParseableDateString(v);
+}
+
+/**
+ * Reply to a block-initiated `GET_BUZZ_TRANSACTIONS`. A well-formed reply carries
+ * EITHER a `result` ({ transactions[], cursor? }) OR a free-text `error`; one with
+ * neither is malformed and dropped. Each transaction row is shape-checked to the
+ * fields the hook dereferences (`date` date-like, `type` string, `amount` finite),
+ * so a malformed row drops the whole reply rather than yielding a `NaN` date.
+ */
+export function isValidBuzzTransactionsResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    // `cursor` is `z.coerce.date().nullish()` server-side: `null` is a REAL
+    // value the host returns verbatim on the last/only page (any viewer with
+    // ≤ limit transactions gets it on the FIRST fetch). Accept `null`/`undefined`
+    // (the hook's `toIso` maps both to `cursor: null`); only a present-but-
+    // non-date-like cursor is malformed.
+    if (r.cursor != null && !isDateLike(r.cursor)) return false;
+    if (!Array.isArray(r.transactions)) return false;
+    for (const t of r.transactions) {
+      if (!isObject(t)) return false;
+      if (!isDateLike(t.date)) return false;
+      if (typeof t.type !== 'string') return false;
+      if (!isFiniteNumber(t.amount)) return false;
+    }
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+/**
+ * Reply to a block-initiated `GET_BUZZ_ACCOUNTS`. A well-formed reply carries
+ * EITHER a `result` ({ accounts[] }, each `{ accountType: string, balance: finite }`)
+ * OR a free-text `error`.
+ */
+export function isValidBuzzAccountsResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (!Array.isArray(r.accounts)) return false;
+    for (const a of r.accounts) {
+      if (!isObject(a)) return false;
+      if (typeof a.accountType !== 'string') return false;
+      if (!isFiniteNumber(a.balance)) return false;
+    }
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+/**
+ * Reply to a block-initiated `GET_DAILY_COMPENSATION`. A well-formed reply carries
+ * EITHER a `result` ({ resources[], hasPublishedResources: boolean }) OR a
+ * free-text `error`.
+ */
+export function isValidDailyCompensationResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (typeof r.hasPublishedResources !== 'boolean') return false;
+    if (!Array.isArray(r.resources)) return false;
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+const WILDCARD_PACK_ERROR_CODES = new Set<string>([
+  'not-found',
+  'forbidden',
+  'too-large',
+  'parse-failed',
+  'busy',
+]);
+
+/**
+ * Reply to a block-initiated `GET_WILDCARD_PACK`. A well-formed reply carries
+ * EITHER a `pack` (shape-checked to the fields the hook reads — `modelVersionId`
+ * a positive int, `lists` an object, `maturity.browsingLevel` finite) OR a
+ * DISCRIMINATED `error` code (one of {@link WILDCARD_PACK_ERROR_CODES}); one with
+ * neither, or an unknown `error` string, is malformed and dropped. Unlike the
+ * buzz guards the error is NOT free-text — a rogue free-text error would drop the
+ * reply, mirroring the host's enum contract.
+ */
+export function isValidWildcardPackResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.error !== undefined) {
+    if (typeof p.error !== 'string' || !WILDCARD_PACK_ERROR_CODES.has(p.error)) return false;
+  }
+  if (p.pack !== undefined) {
+    const pack = p.pack;
+    if (!isObject(pack)) return false;
+    if (typeof pack.modelVersionId !== 'number' || !Number.isInteger(pack.modelVersionId)) {
+      return false;
+    }
+    if (!isObject(pack.lists)) return false;
+    if (typeof pack.truncated !== 'boolean') return false;
+    if (!Array.isArray(pack.truncatedLists)) return false;
+    if (!isObject(pack.maturity)) return false;
+    if (!isFiniteNumber(pack.maturity.browsingLevel)) return false;
+    if (typeof pack.maturity.sfwOnly !== 'boolean') return false;
+  }
+  if (p.pack === undefined && p.error === undefined) return false;
+  return true;
+}
+
+/**
  * Returns the validator for an inbound message type, or `null` for types
  * that don't carry a payload requiring shape checks (SUSPEND/RESUME).
  *
@@ -323,6 +452,14 @@ export function payloadValidatorFor(
       return isValidBuzzPurchaseResult;
     case 'BUZZ_BALANCE_RESULT':
       return isValidBuzzBalanceResult;
+    case 'BUZZ_TRANSACTIONS_RESULT':
+      return isValidBuzzTransactionsResult;
+    case 'BUZZ_ACCOUNTS_RESULT':
+      return isValidBuzzAccountsResult;
+    case 'DAILY_COMPENSATION_RESULT':
+      return isValidDailyCompensationResult;
+    case 'WILDCARD_PACK_RESULT':
+      return isValidWildcardPackResult;
     case 'IMAGE_UPLOAD_RESULT':
       return isValidImageUploadResult;
     case 'SHARED_UPDATE_RESULT':
