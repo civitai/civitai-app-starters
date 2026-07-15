@@ -61,6 +61,17 @@ export interface UseSharedStorage {
    */
   append(value: SharedAppendValue): Promise<{ key: string }>;
   /**
+   * Update the viewer's OWN entry in place. Author-scoped: the host rejects when
+   * the viewer isn't the entry's author (`FORBIDDEN`) or the key is missing/hidden
+   * (`NOT_FOUND`). The `key` and the entry's vote/report totals are preserved —
+   * only the contributed `{ title, body?, data? }` value changes. `title`/`body`
+   * go through the same content belt as {@link append}; `data` is opaque.
+   * Resolves once the update lands; rejects with the host's `error` string on
+   * failure (or when the viewer is anonymous). Gated by the same
+   * `apps:storage:shared:write` scope as `append` — no new scope.
+   */
+  update(key: string, value: SharedAppendValue): Promise<void>;
+  /**
    * Cast (or re-affirm) this viewer's up-vote on an entry — idempotent, one
    * vote per viewer. Resolves with the entry's vote total AFTER the vote.
    */
@@ -158,6 +169,16 @@ export function useSharedStorage(): UseSharedStorage {
         );
         if (result.error) throw new Error(result.error);
         return { key: result.key };
+      },
+      async update(key, value) {
+        const result = await sendTypedRequest(
+          transport,
+          { type: 'SHARED_UPDATE', payload: { key, value } },
+          'SHARED_UPDATE_RESULT',
+        );
+        if (!result.ok || result.error) {
+          throw new Error(result.error ?? 'shared update failed');
+        }
       },
       async vote(key) {
         const result = await sendTypedRequest(

@@ -282,6 +282,22 @@ export function isValidImageUploadResult(
 }
 
 /**
+ * Reply to a block-initiated `SHARED_UPDATE`. A well-formed reply carries a
+ * boolean `ok` and an optional `error` string (set on `NOT_FOUND` / `FORBIDDEN`
+ * / a belt/size rejection). Mirrors the `SHARED_WITHDRAW_RESULT` ok/error
+ * convention — the block's hook treats `!ok || error` as the reject signal.
+ */
+export function isValidSharedUpdateResult(
+  p: unknown,
+): p is { ok: boolean; error?: string; requestId?: string } {
+  if (!isObject(p)) return false;
+  if (typeof p.ok !== 'boolean') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  return true;
+}
+
+/**
  * Returns the validator for an inbound message type, or `null` for types
  * that don't carry a payload requiring shape checks (SUSPEND/RESUME).
  *
@@ -309,6 +325,8 @@ export function payloadValidatorFor(
       return isValidBuzzBalanceResult;
     case 'IMAGE_UPLOAD_RESULT':
       return isValidImageUploadResult;
+    case 'SHARED_UPDATE_RESULT':
+      return isValidSharedUpdateResult;
     case 'SUSPEND':
     case 'RESUME':
       return null;

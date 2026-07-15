@@ -27,6 +27,7 @@ describe('SHARED_* message discriminators (App Blocks shared storage)', () => {
     { type: 'SHARED_VOTE', payload: { requestId: 'r', key: 'k' } },
     { type: 'SHARED_UNVOTE', payload: { requestId: 'r', key: 'k' } },
     { type: 'SHARED_WITHDRAW', payload: { requestId: 'r', key: 'k' } },
+    { type: 'SHARED_UPDATE', payload: { requestId: 'r', key: 'k', value } },
   ];
 
   const results: ParentToBlockMessage[] = [
@@ -37,6 +38,7 @@ describe('SHARED_* message discriminators (App Blocks shared storage)', () => {
     { type: 'SHARED_VOTE_RESULT', payload: { requestId: 'r', count: 4 } },
     { type: 'SHARED_UNVOTE_RESULT', payload: { requestId: 'r', count: 2 } },
     { type: 'SHARED_WITHDRAW_RESULT', payload: { requestId: 'r', ok: true, deleted: true } },
+    { type: 'SHARED_UPDATE_RESULT', payload: { requestId: 'r', ok: true } },
   ];
 
   it('isMessage accepts each SHARED request by discriminator', () => {
@@ -68,6 +70,30 @@ describe('SHARED_* message discriminators (App Blocks shared storage)', () => {
       expect(msg.payload.nextCursor).toBe('n');
     } else {
       expect.unreachable('should narrow to SHARED_LIST_RESULT');
+    }
+  });
+
+  it('narrows a SHARED_UPDATE request to key + value, and its result to ok/error', () => {
+    const req: BlockToParentMessage = {
+      type: 'SHARED_UPDATE',
+      payload: { requestId: 'r', key: 'shared_1', value },
+    };
+    if (isMessage<BlockToParentMessage, 'SHARED_UPDATE'>(req, 'SHARED_UPDATE')) {
+      expect(req.payload.key).toBe('shared_1');
+      expect(req.payload.value).toEqual(value);
+    } else {
+      expect.unreachable('should narrow to SHARED_UPDATE');
+    }
+
+    const forbidden: ParentToBlockMessage = {
+      type: 'SHARED_UPDATE_RESULT',
+      payload: { requestId: 'r', ok: false, error: 'FORBIDDEN' },
+    };
+    if (isMessage<ParentToBlockMessage, 'SHARED_UPDATE_RESULT'>(forbidden, 'SHARED_UPDATE_RESULT')) {
+      expect(forbidden.payload.ok).toBe(false);
+      expect(forbidden.payload.error).toBe('FORBIDDEN');
+    } else {
+      expect.unreachable('should narrow to SHARED_UPDATE_RESULT');
     }
   });
 
