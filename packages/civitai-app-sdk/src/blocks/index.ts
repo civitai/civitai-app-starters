@@ -60,6 +60,8 @@ export type {
   BlockResourcePickerType,
   BlockSourceImage,
   BlockUploadedImageInfo,
+  BlockGenerationSourceImageInfo,
+  BlockUploadPurpose,
   BlockTextToImageParams,
   BlockWorkflowSnapshot,
   BuzzAccountType,

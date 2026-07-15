@@ -148,6 +148,36 @@ export interface BlockUploadedImageInfo {
 }
 
 /**
+ * Upload MODE for `OPEN_IMAGE_UPLOAD` (via {@link useImageUpload}). Mirrors the
+ * host's `BlockUploadPurpose` in civitai/civitai's `pageBlockHostLogic.ts`.
+ *
+ *  - `'display'` (DEFAULT — absent/unrecognized normalizes to this on the host,
+ *    so an SDK that omits `purpose` stays byte-compatible): a PUBLIC image that
+ *    routes through the session-authed scan pipeline (SFW + no-flag gate). The
+ *    host returns a moderated {@link BlockUploadedImageInfo}.
+ *  - `'generationSource'`: a PRIVATE generation INPUT (an img2img source image).
+ *    UNSCANNED — the orchestrator scans it at generation time — so the host
+ *    returns ONLY the source shape ({@link BlockGenerationSourceImageInfo}); no
+ *    `imageId`/`nsfwLevel`/`contentRating` crosses back into the block.
+ */
+export type BlockUploadPurpose = 'display' | 'generationSource';
+
+/**
+ * The source-image result the host returns from `OPEN_IMAGE_UPLOAD` when the
+ * block requested `purpose: 'generationSource'` (`IMAGE_UPLOAD_RESULT.selected`)
+ * — an UNSCANNED private img2img input. Identical to {@link BlockSourceImage}
+ * ({@link WorkflowBody.sourceImage}'s type): only `{ url, width, height }`, with
+ * no `imageId`/`nsfwLevel`/`contentRating` (the image is scanned later, at
+ * generation time, not before its handle crosses into the block). The `url` is a
+ * Civitai-hosted host, so it feeds straight into a `WorkflowBody.sourceImage`.
+ *
+ * Mirrors the host's `BlockSourceImageInfo` in civitai/civitai's
+ * `src/components/AppBlocks/BlockGenerationSourceUploadModal.tsx`. Keep in
+ * lockstep.
+ */
+export type BlockGenerationSourceImageInfo = BlockSourceImage;
+
+/**
  * One of the model version's curated preview images, with the standard
  * gen params extracted from its source meta. Block UIs use these to let
  * the user "remix" a known-good prompt without typing it.

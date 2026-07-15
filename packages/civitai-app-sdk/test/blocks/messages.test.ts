@@ -6,7 +6,11 @@ import type {
   ParentToBlockMessage,
   SharedStorageValue,
 } from '../../src/blocks/messages.js';
-import type { BlockUploadedImageInfo, WorkflowBody } from '../../src/blocks/types.js';
+import type {
+  BlockGenerationSourceImageInfo,
+  BlockUploadedImageInfo,
+  WorkflowBody,
+} from '../../src/blocks/types.js';
 
 describe('GET_BUZZ_BALANCE / BUZZ_BALANCE_RESULT message guards', () => {
   const request: BlockToParentMessage = {
@@ -100,12 +104,59 @@ describe('OPEN_IMAGE_UPLOAD / IMAGE_UPLOAD_RESULT message guards', () => {
     if (
       isMessage<ParentToBlockMessage, 'IMAGE_UPLOAD_RESULT'>(successResult, 'IMAGE_UPLOAD_RESULT')
     ) {
-      const info: BlockUploadedImageInfo | undefined = successResult.payload.selected;
+      // display variant of the `selected` union — structurally has `imageId`.
+      const info = successResult.payload.selected as BlockUploadedImageInfo | undefined;
       expect(info?.imageId).toBe(12345);
       expect(typeof info?.imageId).toBe('number');
       expect(info?.contentRating).toBe('pg');
     } else {
       expect.unreachable('successResult should narrow to IMAGE_UPLOAD_RESULT');
+    }
+  });
+
+  it('OPEN_IMAGE_UPLOAD carries an optional purpose (display | generationSource)', () => {
+    // type-level: both are assignable to the request payload.
+    const display: BlockToParentMessage = {
+      type: 'OPEN_IMAGE_UPLOAD',
+      payload: { requestId: 'u-2', purpose: 'display' },
+    };
+    const genSource: BlockToParentMessage = {
+      type: 'OPEN_IMAGE_UPLOAD',
+      payload: { requestId: 'u-3', purpose: 'generationSource' },
+    };
+    // absent purpose stays valid (byte-compatible with older hosts).
+    expect(request.payload).not.toHaveProperty('purpose');
+    if (
+      isMessage<BlockToParentMessage, 'OPEN_IMAGE_UPLOAD'>(display, 'OPEN_IMAGE_UPLOAD') &&
+      isMessage<BlockToParentMessage, 'OPEN_IMAGE_UPLOAD'>(genSource, 'OPEN_IMAGE_UPLOAD')
+    ) {
+      expect(display.payload.purpose).toBe('display');
+      expect(genSource.payload.purpose).toBe('generationSource');
+    } else {
+      expect.unreachable('both should narrow to OPEN_IMAGE_UPLOAD');
+    }
+  });
+
+  it('IMAGE_UPLOAD_RESULT.selected accepts the generationSource { url, width, height } variant', () => {
+    const source: BlockGenerationSourceImageInfo = {
+      url: 'https://image.civitai.com/x/original=true/source.jpeg',
+      width: 768,
+      height: 1024,
+    };
+    const sourceResult: ParentToBlockMessage = {
+      type: 'IMAGE_UPLOAD_RESULT',
+      payload: { requestId: 'u-3', selected: source },
+    };
+    if (
+      isMessage<ParentToBlockMessage, 'IMAGE_UPLOAD_RESULT'>(sourceResult, 'IMAGE_UPLOAD_RESULT')
+    ) {
+      const sel = sourceResult.payload.selected;
+      expect(sel).toBeDefined();
+      // structural narrowing: the source variant has width/height, no imageId.
+      expect(sel && 'imageId' in sel).toBe(false);
+      expect(sel && 'width' in sel && sel.width).toBe(768);
+    } else {
+      expect.unreachable('sourceResult should narrow to IMAGE_UPLOAD_RESULT');
     }
   });
 });

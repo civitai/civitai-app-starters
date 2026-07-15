@@ -1,7 +1,11 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { BlockInitPayload, BlockUploadedImageInfo } from '@civitai/app-sdk/blocks';
+import type {
+  BlockGenerationSourceImageInfo,
+  BlockInitPayload,
+  BlockUploadedImageInfo,
+} from '@civitai/app-sdk/blocks';
 
 import { useImageUpload } from '../src/hooks/useImageUpload.js';
 import { getTransport } from '../src/internal/singleton.js';
@@ -36,6 +40,12 @@ const MODERATED: BlockUploadedImageInfo = {
   nsfwLevel: 1,
   contentRating: 'pg',
   url: 'https://image.civitai.com/x/original=true/pic.jpeg',
+};
+
+const GENERATION_SOURCE: BlockGenerationSourceImageInfo = {
+  url: 'https://image.civitai.com/x/original=true/source.jpeg',
+  width: 768,
+  height: 1024,
 };
 
 describe('useImageUpload', () => {
@@ -89,6 +99,47 @@ describe('useImageUpload', () => {
     expect(sent.type).toBe('OPEN_IMAGE_UPLOAD');
     expect(typeof sent.payload.requestId).toBe('string');
     expect(Object.keys(sent.payload)).toEqual(['requestId']);
+  });
+
+  it("open() omits `purpose` for the default (display) mode — byte-compatible wire", () => {
+    const { result } = renderHook(() => useImageUpload({ purpose: 'display' }));
+    act(() => {
+      result.current.open().catch(() => {});
+    });
+    const sent = lastSent() as { payload: { requestId: string; purpose?: string } };
+    expect(sent.payload.purpose).toBeUndefined();
+    expect(Object.keys(sent.payload)).toEqual(['requestId']);
+  });
+
+  it("open() sends purpose:'generationSource' when requested", () => {
+    const { result } = renderHook(() => useImageUpload({ purpose: 'generationSource' }));
+    act(() => {
+      result.current.open().catch(() => {});
+    });
+    const sent = lastSent() as { payload: { requestId: string; purpose?: string } };
+    expect(sent.type).toBe('OPEN_IMAGE_UPLOAD');
+    expect(sent.payload.purpose).toBe('generationSource');
+    expect(typeof sent.payload.requestId).toBe('string');
+  });
+
+  it('generationSource: resolves with the { url, width, height } source shape', async () => {
+    const { result } = renderHook(() => useImageUpload({ purpose: 'generationSource' }));
+    let pick!: Promise<BlockGenerationSourceImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyResult(lastSent().payload.requestId, GENERATION_SOURCE);
+    await expect(pick).resolves.toEqual(GENERATION_SOURCE);
+  });
+
+  it('generationSource: resolves to null when the user dismissed', async () => {
+    const { result } = renderHook(() => useImageUpload({ purpose: 'generationSource' }));
+    let pick!: Promise<BlockGenerationSourceImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyResult(lastSent().payload.requestId); // cancelled — no `selected`
+    await expect(pick).resolves.toBeNull();
   });
 
   it('resolves with the moderated image on the matching IMAGE_UPLOAD_RESULT', async () => {

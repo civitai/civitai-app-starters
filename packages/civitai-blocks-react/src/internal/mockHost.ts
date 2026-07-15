@@ -46,6 +46,7 @@ import {
   type BlockResourceInfo,
   type BlockResourcePickerType,
   type BlockUploadedImageInfo,
+  type BlockGenerationSourceImageInfo,
   type BuzzAccountType,
   type ColorDomain,
   type SharedStorageValue,
@@ -260,12 +261,22 @@ export interface MockHostOptions {
    */
   cannedPicks?: Partial<Record<BlockResourcePickerType, CannedPick | null>>;
   /**
-   * The canned moderated image returned from `OPEN_IMAGE_UPLOAD` (what
-   * `useImageUpload().open()` resolves with). `null` simulates a dismissed
-   * upload modal (→ `IMAGE_UPLOAD_RESULT` with no `selected`). Absent →
-   * {@link DEFAULT_IMAGE_UPLOAD} (a plausible SFW Civitai-hosted image).
+   * The canned moderated image returned from `OPEN_IMAGE_UPLOAD` when the block
+   * requests `purpose:'display'` (the default) — what `useImageUpload().open()`
+   * resolves with. `null` simulates a dismissed upload modal (→
+   * `IMAGE_UPLOAD_RESULT` with no `selected`). Absent → {@link DEFAULT_IMAGE_UPLOAD}
+   * (a plausible SFW Civitai-hosted image).
    */
   cannedImageUpload?: BlockUploadedImageInfo | null;
+  /**
+   * The canned source image returned from `OPEN_IMAGE_UPLOAD` when the block
+   * requests `purpose:'generationSource'` — what
+   * `useImageUpload({ purpose:'generationSource' }).open()` resolves with. The
+   * UNSCANNED private img2img shape `{ url, width, height }`. `null` simulates a
+   * dismissed modal (→ no `selected`). Absent →
+   * {@link DEFAULT_GENERATION_SOURCE_UPLOAD}.
+   */
+  cannedGenerationSourceUpload?: BlockGenerationSourceImageInfo | null;
   /** Number of `POLL_WORKFLOW` round-trips before a workflow succeeds. Default 2. */
   pollsUntilDone?: number;
   /**
@@ -392,6 +403,7 @@ export type MockHostScenarioPatch = Pick<
   | 'pollsUntilDone'
   | 'cannedPicks'
   | 'cannedImageUpload'
+  | 'cannedGenerationSourceUpload'
   | 'generation'
   | 'buzz'
   | 'storage'
@@ -472,6 +484,19 @@ const DEFAULT_IMAGE_UPLOAD: BlockUploadedImageInfo = {
   nsfwLevel: 1,
   contentRating: 'pg',
   url: 'https://image.civitai.com/mock/original=true/dev-upload.jpeg',
+};
+
+/**
+ * The canned source image the mock host "returns" from `OPEN_IMAGE_UPLOAD` when
+ * the block requested `purpose:'generationSource'`. Mirrors the host's
+ * UNSCANNED {@link BlockGenerationSourceImageInfo} shape (`{ url, width, height }`
+ * — no imageId/nsfwLevel). `null` simulates a user-dismissed modal. The url is a
+ * Civitai-hosted image so a dev can feed it straight into a `sourceImage` body.
+ */
+const DEFAULT_GENERATION_SOURCE_UPLOAD: BlockGenerationSourceImageInfo = {
+  url: 'https://image.civitai.com/mock/original=true/dev-generation-source.jpeg',
+  width: 1024,
+  height: 1024,
 };
 
 const DEFAULT_VIEWER: ViewerInfo = { id: 2, username: 'dev-viewer', status: 'active' };
@@ -708,6 +733,11 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   // Canned image-upload result. `null` = dismissed; undefined = default image.
   let cannedImageUpload: BlockUploadedImageInfo | null =
     options.cannedImageUpload === undefined ? DEFAULT_IMAGE_UPLOAD : options.cannedImageUpload;
+  // Canned generationSource-upload result (purpose:'generationSource').
+  let cannedGenerationSourceUpload: BlockGenerationSourceImageInfo | null =
+    options.cannedGenerationSourceUpload === undefined
+      ? DEFAULT_GENERATION_SOURCE_UPLOAD
+      : options.cannedGenerationSourceUpload;
   // Simulated balance-read failure (undefined = read succeeds).
   let buzzBalanceError: string | undefined = normalizeBalanceError(options.buzzBalanceError);
   // Pools a submit must reject (content-rating clamp). Normalized to a Set.
@@ -878,6 +908,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             requestId?: string;
             workflowId?: string;
             resourceType?: BlockResourcePickerType;
+            purpose?: 'display' | 'generationSource';
             body?: WorkflowBody;
             key?: string;
             keys?: string[];
@@ -1128,12 +1159,18 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           }
 
           case 'OPEN_IMAGE_UPLOAD': {
-            // Host-chrome image upload: return the canned MODERATED image
-            // (mirrors the real host's IMAGE_UPLOAD_RESULT). `null` → dismissed
-            // (no `selected`), so the hook resolves to null.
+            // Host-chrome image upload: return the canned result keyed by the
+            // requested `purpose` (mirrors the real host's IMAGE_UPLOAD_RESULT).
+            //   • 'generationSource' → the UNSCANNED source { url, width, height }
+            //   • 'display' (default / absent) → the MODERATED image
+            // `null` → dismissed (no `selected`), so the hook resolves to null.
+            const selected =
+              typed.payload?.purpose === 'generationSource'
+                ? cannedGenerationSourceUpload
+                : cannedImageUpload;
             dispatchToBlock({
               type: 'IMAGE_UPLOAD_RESULT',
-              payload: { requestId, ...(cannedImageUpload ? { selected: cannedImageUpload } : {}) },
+              payload: { requestId, ...(selected ? { selected } : {}) },
             });
             return;
           }
@@ -1486,6 +1523,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     if (patch.cannedPicks !== undefined) cannedPicks = patch.cannedPicks;
     // `null` is a meaningful value (dismissed), so check for the KEY's presence.
     if ('cannedImageUpload' in patch) cannedImageUpload = patch.cannedImageUpload ?? null;
+    if ('cannedGenerationSourceUpload' in patch)
+      cannedGenerationSourceUpload = patch.cannedGenerationSourceUpload ?? null;
     if (patch.generation !== undefined) gen = { ...gen, ...patch.generation };
     if (patch.buzz !== undefined) buzz = { ...buzz, ...patch.buzz };
     if (patch.buzzBalanceError !== undefined)

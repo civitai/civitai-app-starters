@@ -244,6 +244,26 @@ describe('isValidImageUploadResult', () => {
       expect(isValidImageUploadResult({ selected: { ...selected, contentRating: cr } })).toBe(true);
     }
   });
+
+  const source = {
+    url: 'https://image.civitai.com/x/original=true/source.jpeg',
+    width: 1024,
+    height: 768,
+  };
+  it("accepts the generationSource shape ({ url, width, height }, no imageId)", () => {
+    expect(isValidImageUploadResult({ requestId: 'r', selected: source })).toBe(true);
+  });
+  it.each([
+    ['source width missing', { selected: { url: source.url, height: 768 } }],
+    ['source height missing', { selected: { url: source.url, width: 1024 } }],
+    ['source width not a number', { selected: { ...source, width: '1024' } }],
+    ['source width non-positive', { selected: { ...source, width: 0 } }],
+    ['source height NaN', { selected: { ...source, height: Number.NaN } }],
+    ['source url empty', { selected: { ...source, url: '' } }],
+    ['neither moderated nor source (url only)', { selected: { url: source.url } }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidImageUploadResult(payload)).toBe(false);
+  });
   it.each([
     ['imageId not a number', { selected: { ...selected, imageId: '12' } }],
     ['imageId non-integer', { selected: { ...selected, imageId: 1.5 } }],
