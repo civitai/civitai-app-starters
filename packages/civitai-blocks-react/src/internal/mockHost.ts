@@ -1451,6 +1451,60 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             return;
           }
 
+          case 'SHARED_UPDATE': {
+            const key = typed.payload?.key ?? '';
+            if (sharedFailNext > 0) {
+              sharedFailNext -= 1;
+              dispatchToBlock({
+                type: 'SHARED_UPDATE_RESULT',
+                payload: { requestId, ok: false, error: 'SHARED_UNAVAILABLE' },
+              });
+              return;
+            }
+            const row = sharedStore.get(key);
+            // NOT_FOUND — the key is missing (mirrors the host's missing/hidden
+            // rejection). Checked before the author gate so a non-author can't
+            // probe for a row's existence.
+            if (!row) {
+              dispatchToBlock({
+                type: 'SHARED_UPDATE_RESULT',
+                payload: { requestId, ok: false, error: 'NOT_FOUND' },
+              });
+              return;
+            }
+            // FORBIDDEN — author gate: only the contributing viewer can update
+            // in place (the real host re-derives `author_user_id === caller`).
+            if (row.authorUserId !== mockUserId) {
+              dispatchToBlock({
+                type: 'SHARED_UPDATE_RESULT',
+                payload: { requestId, ok: false, error: 'FORBIDDEN' },
+              });
+              return;
+            }
+            // Belt on title (mirrors SHARED_APPEND's INVALID_VALUE check).
+            const value = typed.payload?.value as SharedStorageValue | undefined;
+            if (!value || typeof value.title !== 'string' || value.title.length === 0) {
+              dispatchToBlock({
+                type: 'SHARED_UPDATE_RESULT',
+                payload: { requestId, ok: false, error: 'INVALID_VALUE' },
+              });
+              return;
+            }
+            // In-place update: preserve key/voters/createdAt; replace the value
+            // and bump updatedAt (mirrors the real "preserving key/votes/reports").
+            row.value = {
+              title: value.title,
+              ...(value.body !== undefined ? { body: value.body } : {}),
+              ...(value.data !== undefined ? { data: value.data } : {}),
+            };
+            row.updatedAt = new Date().toISOString();
+            dispatchToBlock({
+              type: 'SHARED_UPDATE_RESULT',
+              payload: { requestId, ok: true },
+            });
+            return;
+          }
+
           default:
             return;
         }

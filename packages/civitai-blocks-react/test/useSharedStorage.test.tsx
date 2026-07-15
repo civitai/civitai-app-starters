@@ -74,11 +74,12 @@ describe('useSharedStorage', () => {
       result.current.getCount('k').catch(swallow);
       result.current.getCounts(['a', 'b']).catch(swallow);
       result.current.append({ title: 't' }).catch(swallow);
+      result.current.update('k', { title: 't2' }).catch(swallow);
       result.current.vote('k').catch(swallow);
       result.current.unvote('k').catch(swallow);
       result.current.withdraw('k').catch(swallow);
     });
-    expect(postMessageMock.mock.calls.length).toBeGreaterThanOrEqual(7);
+    expect(postMessageMock.mock.calls.length).toBeGreaterThanOrEqual(8);
     for (const call of postMessageMock.mock.calls) {
       const msg = call[0] as { payload?: Record<string, unknown> };
       expect(msg.payload).not.toHaveProperty('blockToken');
@@ -377,6 +378,86 @@ describe('useSharedStorage', () => {
       reply({ type: 'SHARED_APPEND_RESULT', payload: { requestId: sent.payload.requestId, key: 'shared_2' } });
     });
     await expect(p).resolves.toEqual({ key: 'shared_2' });
+  });
+
+  // ---- update ----
+  it('update() posts SHARED_UPDATE with key + value + resolves on ok', async () => {
+    const { result } = renderHook(() => useSharedStorage());
+    let p!: Promise<unknown>;
+    act(() => {
+      p = result.current.update('req:1', { title: 'Renamed', body: 'edited' });
+    });
+    const sent = lastSent<{
+      type: string;
+      payload: { requestId: string; key: string; value: { title: string; body?: string } };
+    }>();
+    expect(sent.type).toBe('SHARED_UPDATE');
+    expect(sent.payload.key).toBe('req:1');
+    expect(sent.payload.value).toEqual({ title: 'Renamed', body: 'edited' });
+    expect(sent.payload).not.toHaveProperty('blockToken');
+    expect(sent.payload).not.toHaveProperty('token');
+
+    act(() => {
+      reply({
+        type: 'SHARED_UPDATE_RESULT',
+        payload: { requestId: sent.payload.requestId, ok: true },
+      });
+    });
+    await expect(p).resolves.toBeUndefined();
+  });
+
+  it('update() rejects on an error reply', async () => {
+    const { result } = renderHook(() => useSharedStorage());
+    let p!: Promise<unknown>;
+    act(() => {
+      p = result.current.update('k', { title: 't' });
+    });
+    const sent = lastSent<{ payload: { requestId: string } }>();
+    act(() => {
+      reply({
+        type: 'SHARED_UPDATE_RESULT',
+        payload: { requestId: sent.payload.requestId, ok: false, error: 'FORBIDDEN' },
+      });
+    });
+    await expect(p).rejects.toThrow('FORBIDDEN');
+  });
+
+  it('update() rejects on ok:false with no error string', async () => {
+    const { result } = renderHook(() => useSharedStorage());
+    let p!: Promise<unknown>;
+    act(() => {
+      p = result.current.update('k', { title: 't' });
+    });
+    const sent = lastSent<{ payload: { requestId: string } }>();
+    act(() => {
+      reply({
+        type: 'SHARED_UPDATE_RESULT',
+        payload: { requestId: sent.payload.requestId, ok: false },
+      });
+    });
+    await expect(p).rejects.toThrow('shared update failed');
+  });
+
+  it('update() ignores a mismatched requestId, resolves on the right one', async () => {
+    const { result } = renderHook(() => useSharedStorage());
+    let p!: Promise<unknown>;
+    act(() => {
+      p = result.current.update('k', { title: 't' });
+    });
+    const sent = lastSent<{ payload: { requestId: string } }>();
+    const settled = vi.fn();
+    p.then(settled, settled);
+    act(() => {
+      reply({ type: 'SHARED_UPDATE_RESULT', payload: { requestId: 'wrong', ok: true } });
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).not.toHaveBeenCalled();
+
+    act(() => {
+      reply({ type: 'SHARED_UPDATE_RESULT', payload: { requestId: sent.payload.requestId, ok: true } });
+    });
+    await expect(p).resolves.toBeUndefined();
   });
 
   // ---- vote ----

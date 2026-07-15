@@ -320,6 +320,16 @@ export type ParentToBlockMessage =
       type: 'SHARED_WITHDRAW_RESULT';
       payload: { requestId: string; ok: boolean; deleted: boolean; error?: string };
     }
+  | {
+      // Reply to SHARED_UPDATE. `ok: true` when the author's entry was updated
+      // in place (key/votes/reports preserved). `error` on failure — `NOT_FOUND`
+      // (missing/hidden), `FORBIDDEN` (viewer isn't the author), or a
+      // belt/size/serialization rejection. Consumers treat a non-empty `error`
+      // (or `ok: false`) as the promise-reject signal (mirrors
+      // `SHARED_WITHDRAW_RESULT`).
+      type: 'SHARED_UPDATE_RESULT';
+      payload: { requestId: string; ok: boolean; error?: string };
+    }
   | { type: 'SUSPEND'; payload?: undefined }
   | { type: 'RESUME'; payload?: undefined };
 
@@ -498,6 +508,16 @@ export type BlockToParentMessage =
   | {
       type: 'SHARED_WITHDRAW';
       payload: { requestId: string; key: string };
+    }
+  // Author-scoped in-place update of a SHARED entry the viewer contributed.
+  // The host re-derives ownership from the injected viewer identity (the block
+  // sends NO token) and rejects a non-author with FORBIDDEN / a missing (or
+  // hidden) key with NOT_FOUND. `title`/`body` go through the same content
+  // belt as SHARED_APPEND; `data` is opaque. The `key` and vote/report totals
+  // are preserved — only the contributed `value` changes.
+  | {
+      type: 'SHARED_UPDATE';
+      payload: { requestId: string; key: string; value: SharedStorageValue };
     };
 
 export type BlockToParentMessageType = BlockToParentMessage['type'];

@@ -145,6 +145,80 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
     expect(await result.current.withdraw(key)).toEqual({ ok: true, deleted: false });
   });
 
+  it('update() edits the author\'s own entry in place, preserving key + votes', async () => {
+    host = createMockHost({ shared: {} });
+    uninstall = host.install();
+    const { result } = renderHook(() => useSharedStorage());
+    await ready();
+
+    const { key } = await result.current.append({ title: 'draft', body: 'v1', data: { n: 1 } });
+    await result.current.vote(key); // one vote → count 1
+    expect(await result.current.getCount(key)).toBe(1);
+
+    await expect(
+      result.current.update(key, { title: 'final', body: 'v2', data: { n: 2 } }),
+    ).resolves.toBeUndefined();
+
+    const entry = (await result.current.list()).items.find((i) => i.key === key)!;
+    expect(entry.key).toBe(key); // key preserved
+    expect(entry.value).toEqual({ title: 'final', body: 'v2', data: { n: 2 } });
+    expect(entry.count).toBe(1); // votes preserved
+  });
+
+  it('update() on a missing key rejects with NOT_FOUND', async () => {
+    host = createMockHost({ shared: {} });
+    uninstall = host.install();
+    const { result } = renderHook(() => useSharedStorage());
+    await ready();
+    await expect(result.current.update('does-not-exist', { title: 't' })).rejects.toThrow(
+      'NOT_FOUND',
+    );
+  });
+
+  it('update() on another author\'s entry rejects with FORBIDDEN', async () => {
+    // Seed an entry owned by a DIFFERENT user (the mock viewer is id 2).
+    host = createMockHost({
+      shared: { seed: [{ value: { title: 'not mine' }, authorUserId: 999 }] },
+    });
+    uninstall = host.install();
+    const { result } = renderHook(() => useSharedStorage());
+    await ready();
+
+    const { items } = await result.current.list();
+    const foreign = items[0]!;
+    expect(foreign.authorUserId).toBe(999);
+    await expect(result.current.update(foreign.key, { title: 'hijack' })).rejects.toThrow(
+      'FORBIDDEN',
+    );
+    // The foreign entry is untouched.
+    const after = (await result.current.list()).items[0]!;
+    expect(after.value).toEqual({ title: 'not mine' });
+  });
+
+  it('update() rejects an empty title with INVALID_VALUE', async () => {
+    host = createMockHost({ shared: {} });
+    uninstall = host.install();
+    const { result } = renderHook(() => useSharedStorage());
+    await ready();
+    const { key } = await result.current.append({ title: 'ok' });
+    await expect(result.current.update(key, { title: '' })).rejects.toThrow('INVALID_VALUE');
+  });
+
+  it('shared.failNext also forces update() to error then recovers', async () => {
+    host = createMockHost({ shared: {} });
+    uninstall = host.install();
+    const { result } = renderHook(() => useSharedStorage());
+    await ready();
+
+    // Seed an author-owned entry (default authorUserId = the mock viewer, id 2).
+    const { key } = await result.current.append({ title: 'x' });
+    // Arm one forced failure on the NEXT mutation.
+    host.setScenario({ shared: { failNext: 1 } });
+    await expect(result.current.update(key, { title: 'y' })).rejects.toThrow('SHARED_UNAVAILABLE');
+    // Recovers on the next call.
+    await expect(result.current.update(key, { title: 'z' })).resolves.toBeUndefined();
+  });
+
   it('vote() on a missing key rejects with NOT_FOUND', async () => {
     host = createMockHost({ shared: {} });
     uninstall = host.install();

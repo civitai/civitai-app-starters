@@ -5,6 +5,7 @@ import {
   isValidBuzzBalanceResult,
   isValidBuzzPurchaseResult,
   isValidImageUploadResult,
+  isValidSharedUpdateResult,
   isValidTokenRefresh,
   isValidTokenRefreshResponse,
   isValidWorkflowReply,
@@ -283,6 +284,22 @@ describe('isValidImageUploadResult', () => {
   });
 });
 
+describe('isValidSharedUpdateResult', () => {
+  it('accepts an ok reply (with or without an error)', () => {
+    expect(isValidSharedUpdateResult({ requestId: 'r', ok: true })).toBe(true);
+    expect(isValidSharedUpdateResult({ ok: true })).toBe(true);
+    expect(isValidSharedUpdateResult({ requestId: 'r', ok: false, error: 'FORBIDDEN' })).toBe(true);
+    expect(isValidSharedUpdateResult({ requestId: 'r', ok: false, error: 'NOT_FOUND' })).toBe(true);
+  });
+  it('rejects a malformed reply', () => {
+    expect(isValidSharedUpdateResult(null)).toBe(false);
+    expect(isValidSharedUpdateResult({})).toBe(false); // missing ok
+    expect(isValidSharedUpdateResult({ ok: 'yes' })).toBe(false); // ok not boolean
+    expect(isValidSharedUpdateResult({ ok: true, error: 5 })).toBe(false); // error not string
+    expect(isValidSharedUpdateResult({ ok: true, requestId: 5 })).toBe(false); // requestId not string
+  });
+});
+
 describe('payloadValidatorFor', () => {
   it('returns a validator for each documented inbound type', () => {
     expect(payloadValidatorFor('BLOCK_INIT')).toBeTypeOf('function');
@@ -295,6 +312,7 @@ describe('payloadValidatorFor', () => {
     expect(payloadValidatorFor('BUZZ_PURCHASE_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('BUZZ_BALANCE_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('IMAGE_UPLOAD_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('SHARED_UPDATE_RESULT')).toBeTypeOf('function');
   });
   it('returns null for payload-less lifecycle messages', () => {
     expect(payloadValidatorFor('SUSPEND')).toBeNull();
