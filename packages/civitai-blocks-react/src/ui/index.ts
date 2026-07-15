@@ -7,7 +7,8 @@
  *    controls; its contract is intentionally unstyled).
  * 2. The W6 component pack — a small, Civitai-looking, self-styled component
  *    set (Button, TextInput, Textarea, Card, Stack, Group, Alert, Loader,
- *    Badge, Modal). Zero setup: rendering any of them runs `useBlocksStyles()`
+ *    Badge, Modal, plus the form primitives Slider, NumberInput, Select,
+ *    Collapse). Zero setup: rendering any of them runs `useBlocksStyles()`
  *    which injects the pack's CSS into the block document's `<head>` once.
  *    Theme via your block's `data-theme` root (gotcha #60).
  *
@@ -56,3 +57,15 @@ export type { BadgeProps, BadgeVariant, BadgeSize } from './Badge.js';
 
 export { Modal } from './Modal.js';
 export type { ModalProps, ModalSize } from './Modal.js';
+
+export { Slider } from './Slider.js';
+export type { SliderProps } from './Slider.js';
+
+export { NumberInput } from './NumberInput.js';
+export type { NumberInputProps } from './NumberInput.js';
+
+export { Select } from './Select.js';
+export type { SelectProps, SelectOption } from './Select.js';
+
+export { Collapse } from './Collapse.js';
+export type { CollapseProps } from './Collapse.js';
