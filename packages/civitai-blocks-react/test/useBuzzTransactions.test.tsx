@@ -152,6 +152,38 @@ describe('useBuzzTransactions', () => {
     expect(result.current.cursor).toBe('2026-07-01T00:00:00.000Z');
   });
 
+  it('RESOLVES a null cursor (last/only page) — does not hang', async () => {
+    // The host cursor is `z.coerce.date().nullish()`: any viewer with ≤ limit
+    // transactions gets `cursor: null` on the FIRST fetch, and every paginated
+    // read gets it on the LAST page. The reply must resolve, not be dropped.
+    const { result } = renderHook(() => useBuzzTransactions());
+    const requestId = lastRequest(postMessageMock).payload.requestId;
+
+    dispatchResult({
+      requestId,
+      result: {
+        cursor: null,
+        transactions: [
+          {
+            date: '2026-07-14T12:00:00.000Z',
+            type: 'Tip',
+            amount: 10,
+            fromAccountId: 2,
+            toAccountId: 5,
+            fromAccountType: 'yellow',
+            toAccountType: 'yellow',
+            externalTransactionId: null,
+          },
+        ],
+      },
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error).toBeNull();
+    expect(result.current.cursor).toBeNull();
+    expect(result.current.transactions).toHaveLength(1);
+  });
+
   it('surfaces the FREE-TEXT error variant (error string, no result)', async () => {
     const { result } = renderHook(() => useBuzzTransactions());
     const requestId = lastRequest(postMessageMock).payload.requestId;

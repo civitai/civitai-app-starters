@@ -36,6 +36,12 @@ describe('isValidBuzzTransactionsResult', () => {
     ).toBe(true);
   });
 
+  it('accepts a null cursor (last/only page — `z.coerce.date().nullish()`)', () => {
+    expect(
+      isValidBuzzTransactionsResult({ requestId: 'r', result: { cursor: null, transactions: [row] } }),
+    ).toBe(true);
+  });
+
   it('accepts the error variant', () => {
     expect(isValidBuzzTransactionsResult({ requestId: 'r', error: 'nope' })).toBe(true);
   });

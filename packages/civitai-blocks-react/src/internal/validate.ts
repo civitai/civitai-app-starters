@@ -326,7 +326,12 @@ export function isValidBuzzTransactionsResult(p: unknown): boolean {
   if (p.result !== undefined) {
     const r = p.result;
     if (!isObject(r)) return false;
-    if (r.cursor !== undefined && !isDateLike(r.cursor)) return false;
+    // `cursor` is `z.coerce.date().nullish()` server-side: `null` is a REAL
+    // value the host returns verbatim on the last/only page (any viewer with
+    // ≤ limit transactions gets it on the FIRST fetch). Accept `null`/`undefined`
+    // (the hook's `toIso` maps both to `cursor: null`); only a present-but-
+    // non-date-like cursor is malformed.
+    if (r.cursor != null && !isDateLike(r.cursor)) return false;
     if (!Array.isArray(r.transactions)) return false;
     for (const t of r.transactions) {
       if (!isObject(t)) return false;
