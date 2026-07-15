@@ -13,6 +13,7 @@ import type {
   BlockCheckpointInfo,
   BlockResourceInfo,
   BlockResourcePickerType,
+  BlockUploadedImageInfo,
   BlockContext,
   BlockSettings,
   Theme,
@@ -104,6 +105,16 @@ export interface BlockInitPayload {
 export interface SharedStorageValue {
   title: string;
   body?: string;
+  /**
+   * Optional, opaque, app-owned structured payload stored alongside the
+   * moderated `title`/`body`. Mirrors civitai's merged shared-storage `data`
+   * jsonb (`appendValueInput.data`). UNMODERATED — the content-safety belt runs
+   * on `title`/`body` only, so apps MUST keep ALL user-visible TEXT in
+   * `title`/`body` and place ONLY opaque app structure here (e.g. a serialized
+   * generator spec / settings blob). Counts toward the per-value byte cap + the
+   * per-app quota. Omit when the entry carries no structured payload.
+   */
+  data?: unknown;
 }
 
 /**
@@ -179,6 +190,16 @@ export type ParentToBlockMessage =
       // projection ONLY; the iframe never receives a list or the catalog.
       type: 'RESOURCE_PICKER_RESULT';
       payload: { requestId: string; selected?: BlockResourceInfo };
+    }
+  | {
+      // Reply to OPEN_IMAGE_UPLOAD (the host-mediated block image upload).
+      // `selected` is absent when the user dismissed the upload modal without a
+      // successful upload — the block's hook resolves to `null`. When present it
+      // is a MODERATED image (scanned clean, within the SFW ceiling, unflagged);
+      // the iframe never handles the bytes. Mirrors the OPEN_RESOURCE_PICKER
+      // host-chrome pattern.
+      type: 'IMAGE_UPLOAD_RESULT';
+      payload: { requestId: string; selected?: BlockUploadedImageInfo };
     }
   | {
       // Reply to SET_USER_CHECKPOINT. `ok: false` carries a UI-renderable
@@ -343,6 +364,17 @@ export type BlockToParentMessage =
         /** Optional base-model family hint (ecosystem key or baseModel name). */
         baseModelGroup?: string;
       };
+    }
+  | {
+      // Ask the host to open its native image-upload modal (host-chrome — the
+      // iframe never handles the bytes). The app decides what the image is for
+      // (avatar / cover / background / reference / img2img source / …). The upload
+      // routes through civitai's session-authed scan pipeline; the host returns
+      // ONLY a moderated image id + rating + url on `IMAGE_UPLOAD_RESULT`. No
+      // extra payload fields — the app's intent is opaque to the platform.
+      // Generalizes cleanly the same way OPEN_RESOURCE_PICKER did the picker.
+      type: 'OPEN_IMAGE_UPLOAD';
+      payload: { requestId: string };
     }
   | {
       // Persist a viewer's checkpoint override via the host. `null` clears

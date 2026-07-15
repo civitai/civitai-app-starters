@@ -6,9 +6,11 @@ import { getTransport } from '../internal/singleton.js';
 import { sendTypedRequest } from '../internal/transport.js';
 
 /**
- * The value a viewer contributes to the SHARED store: a required `title` plus
- * an optional long-form `body`. Re-exported from the app-sdk contract so block
- * authors get one canonical shape.
+ * The value a viewer contributes to the SHARED store: a required `title`, an
+ * optional long-form `body`, and an optional opaque app-owned `data` blob.
+ * `title`/`body` are the MODERATED, user-visible TEXT; `data` is UNMODERATED
+ * structured app state (keep all user-visible text in title/body). Re-exported
+ * from the app-sdk contract so block authors get one canonical shape.
  */
 export type SharedAppendValue = SharedStorageValue;
 
@@ -51,9 +53,11 @@ export interface UseSharedStorage {
    */
   getCounts(keys: string[]): Promise<Record<string, number>>;
   /**
-   * Append a new entry on behalf of the viewer. Resolves with the host-minted
-   * `key`. Rejects with the host's `error` string on validation/host failure
-   * (or when the viewer is anonymous).
+   * Append a new entry on behalf of the viewer. Accepts the generic
+   * `{ title, body?, data? }` value — `data` is an optional opaque app-owned
+   * payload stored alongside the moderated title/body. Resolves with the
+   * host-minted `key`. Rejects with the host's `error` string on validation/host
+   * failure (or when the viewer is anonymous).
    */
   append(value: SharedAppendValue): Promise<{ key: string }>;
   /**

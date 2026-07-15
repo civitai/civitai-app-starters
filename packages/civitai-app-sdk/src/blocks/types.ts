@@ -87,6 +87,64 @@ export interface BlockResourceInfo {
   baseModel: string;
   /** 'Checkpoint' | 'LORA' (the canonical model type the host resolved). */
   modelType: string;
+  // --- Public recommended-settings projection (App Blocks Phase-2a PR-C) ---
+  // The host WIDENED the `RESOURCE_PICKER_RESULT.selected` projection (and the
+  // sibling `GET /api/v1/blocks/generation-resources` rehydrate endpoint) to also
+  // carry the PUBLIC recommended settings a block needs to render a per-resource
+  // weight slider + trigger words — nothing availability/entitlement-related. All
+  // OPTIONAL + additive: a host predating PR-C omits them, and the values are
+  // still DISCOVERY-ONLY hints (the server re-derives + re-prices at submit).
+  // Mirrors civitai's `SafeGenerationResource` / `projectSafeGenerationResource`.
+  /** Recommended default resource weight (the host defaults this to `1`). */
+  strength?: number;
+  /** Recommended min weight clamp (host default `-1`). */
+  minStrength?: number;
+  /** Recommended max weight clamp (host default `2`). */
+  maxStrength?: number;
+  /** Public trigger words (host default `[]`). */
+  trainedWords?: string[];
+  /** Public recommended CLIP-skip; `null` when the resource has none. */
+  clipSkip?: number | null;
+}
+
+/**
+ * A Civitai-hosted source image for an img2img generation. Mirrors civitai's
+ * merged `blockTextToImageBodySchema.sourceImage` (`{ url, width, height }`).
+ *
+ * `url` MUST resolve to a Civitai-controlled host — the server rejects an
+ * arbitrary remote URL (SSRF / arbitrary-fetch). An image obtained from
+ * {@link BlockUploadedImageInfo.url} (via `useImageUpload`) satisfies this.
+ * `width`/`height` are the intrinsic dimensions the graph uses for its
+ * denoise/aspect derivation.
+ */
+export interface BlockSourceImage {
+  url: string;
+  width: number;
+  height: number;
+}
+
+/**
+ * The moderated image the host returns from `OPEN_IMAGE_UPLOAD`
+ * (`IMAGE_UPLOAD_RESULT.selected`) — see {@link BlockUploadedImageInfo} usage in
+ * `useImageUpload`. The platform's only guarantee is that the image is scanned
+ * clean, within the SFW ceiling, and unflagged before its id crosses back into
+ * the (untrusted) block.
+ *
+ * Mirrors the host's `BlockUploadedImageInfo` projection in civitai/civitai's
+ * `src/components/AppBlocks/BlockImageUploadModal.tsx`. Keep in lockstep.
+ * NOTE: `imageId` is a NUMBER (the `Image` row id), matching the host — not a
+ * string. `contentRating` is the off-site rating ladder value (identical to
+ * {@link ContentRating}).
+ */
+export interface BlockUploadedImageInfo {
+  /** The moderated `Image` row id. */
+  imageId: number;
+  /** The scanner's resolved NSFW-level bitmask value. */
+  nsfwLevel: number;
+  /** Off-site content rating (`'g' | 'pg' | 'pg13' | 'r' | 'x'`). */
+  contentRating: ContentRating;
+  /** The Civitai-hosted image URL — usable directly as a {@link BlockSourceImage.url}. */
+  url: string;
 }
 
 /**
@@ -291,6 +349,25 @@ export type WorkflowBody = {
    * Omit for a checkpoint-only generation (backward compatible).
    */
   additionalResources?: Array<{ modelVersionId: number; strength?: number }>;
+  /**
+   * Optional img2img init/source image (App Blocks IMAGE bridge). When present,
+   * the block bridge emits an `img2img` graph workflow instead of `txt2img`;
+   * omit for a plain text-to-image generation (backward compatible). Constraints
+   * (all SERVER-ENFORCED — mirrors civitai's merged `blockTextToImageBodySchema`):
+   *  - `url` must be a Civitai-hosted https image (an uploaded image from
+   *    {@link BlockUploadedImageInfo.url} qualifies) — never an arbitrary remote URL.
+   *  - SD-family checkpoints ONLY (a non-SD-family checkpoint is rejected fail-closed).
+   *  - PAGE apps only — the server rejects `sourceImage` on a model-bound token.
+   */
+  sourceImage?: BlockSourceImage;
+  /**
+   * Optional shared-storage key of the published content this generation runs on
+   * behalf of. The server resolves it to the content's author for attribution
+   * (see the G5 civitai PR). Opaque string — the block passes back the `key` it
+   * got from `useSharedStorage()` for the content being generated against; omit
+   * when not applicable.
+   */
+  sharedContentKey?: string;
   /**
    * Optional preferred Buzz pool to fund this generation from — a *preference*,
    * not a guarantee. The host clamps it server-side to what the viewer actually

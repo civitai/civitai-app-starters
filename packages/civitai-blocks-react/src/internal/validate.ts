@@ -224,6 +224,44 @@ export function isValidBuzzBalanceResult(
   return true;
 }
 
+const CONTENT_RATINGS = new Set<string>(['g', 'pg', 'pg13', 'r', 'x']);
+
+/**
+ * Reply to a block-initiated `OPEN_IMAGE_UPLOAD`. `selected` is ABSENT when the
+ * user dismissed the upload modal (the block's hook resolves to `null`); when
+ * present it is the moderated `BlockUploadedImageInfo` the host hands back —
+ * `imageId` a positive integer (the `Image` row id), `nsfwLevel` a finite
+ * number, `contentRating` an off-site ladder value (`g|pg|pg13|r|x`), `url` a
+ * non-empty string. Kept in lockstep with the host's `IMAGE_UPLOAD_RESULT`
+ * (civitai/civitai `PageBlockHost.tsx` / `BlockImageUploadModal.tsx`).
+ */
+export function isValidImageUploadResult(
+  p: unknown,
+): p is {
+  requestId?: string;
+  selected?: {
+    imageId: number;
+    nsfwLevel: number;
+    contentRating: string;
+    url: string;
+  };
+} {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  // `selected` absent → cancelled upload (valid). When present, shape-check it.
+  if (p.selected !== undefined) {
+    const s = p.selected;
+    if (!isObject(s)) return false;
+    if (typeof s.imageId !== 'number' || !Number.isInteger(s.imageId) || s.imageId <= 0) {
+      return false;
+    }
+    if (!isFiniteNumber(s.nsfwLevel)) return false;
+    if (typeof s.contentRating !== 'string' || !CONTENT_RATINGS.has(s.contentRating)) return false;
+    if (!isNonEmptyString(s.url)) return false;
+  }
+  return true;
+}
+
 /**
  * Returns the validator for an inbound message type, or `null` for types
  * that don't carry a payload requiring shape checks (SUSPEND/RESUME).
@@ -250,6 +288,8 @@ export function payloadValidatorFor(
       return isValidBuzzPurchaseResult;
     case 'BUZZ_BALANCE_RESULT':
       return isValidBuzzBalanceResult;
+    case 'IMAGE_UPLOAD_RESULT':
+      return isValidImageUploadResult;
     case 'SUSPEND':
     case 'RESUME':
       return null;

@@ -55,6 +55,24 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
     expect(items[0]!.updatedAt).toBeInstanceOf(Date);
   });
 
+  it('append() echoes the opaque `data` payload back through list()', async () => {
+    host = createMockHost({ shared: {} });
+    uninstall = host.install();
+    const { result } = renderHook(() => useSharedStorage());
+    await ready();
+
+    const data = { spec: { steps: 20, sampler: 'Euler' }, v: 1 };
+    const { key } = await result.current.append({ title: 'gen', body: 'notes', data });
+
+    const { items } = await result.current.list();
+    const entry = items.find((i) => i.key === key)!;
+    expect(entry.value).toEqual({ title: 'gen', body: 'notes', data });
+    // An entry appended without `data` has no data key (not an explicit undefined).
+    const bare = await result.current.append({ title: 'no-data' });
+    const bareEntry = (await result.current.list()).items.find((i) => i.key === bare.key)!;
+    expect('data' in bareEntry.value).toBe(false);
+  });
+
   it('seed populates the store (newest-first) with author + votes', async () => {
     host = createMockHost({
       shared: {

@@ -4,7 +4,9 @@ import { isMessage } from '../../src/blocks/messages.js';
 import type {
   BlockToParentMessage,
   ParentToBlockMessage,
+  SharedStorageValue,
 } from '../../src/blocks/messages.js';
+import type { BlockUploadedImageInfo, WorkflowBody } from '../../src/blocks/types.js';
 
 describe('GET_BUZZ_BALANCE / BUZZ_BALANCE_RESULT message guards', () => {
   const request: BlockToParentMessage = {
@@ -59,5 +61,84 @@ describe('GET_BUZZ_BALANCE / BUZZ_BALANCE_RESULT message guards', () => {
     } else {
       expect.unreachable('successResult should narrow to BUZZ_BALANCE_RESULT');
     }
+  });
+});
+
+describe('OPEN_IMAGE_UPLOAD / IMAGE_UPLOAD_RESULT message guards', () => {
+  const request: BlockToParentMessage = {
+    type: 'OPEN_IMAGE_UPLOAD',
+    payload: { requestId: 'u-1' },
+  };
+  const moderated: BlockUploadedImageInfo = {
+    imageId: 12345,
+    nsfwLevel: 1,
+    contentRating: 'pg',
+    url: 'https://image.civitai.com/x/original=true/a.jpeg',
+  };
+  const successResult: ParentToBlockMessage = {
+    type: 'IMAGE_UPLOAD_RESULT',
+    payload: { requestId: 'u-1', selected: moderated },
+  };
+  const cancelledResult: ParentToBlockMessage = {
+    type: 'IMAGE_UPLOAD_RESULT',
+    payload: { requestId: 'u-1' },
+  };
+
+  it('isMessage accepts OPEN_IMAGE_UPLOAD + IMAGE_UPLOAD_RESULT by discriminator', () => {
+    expect(isMessage<BlockToParentMessage, 'OPEN_IMAGE_UPLOAD'>(request, 'OPEN_IMAGE_UPLOAD')).toBe(
+      true,
+    );
+    expect(
+      isMessage<ParentToBlockMessage, 'IMAGE_UPLOAD_RESULT'>(successResult, 'IMAGE_UPLOAD_RESULT'),
+    ).toBe(true);
+    expect(
+      isMessage<ParentToBlockMessage, 'IMAGE_UPLOAD_RESULT'>(cancelledResult, 'IMAGE_UPLOAD_RESULT'),
+    ).toBe(true);
+  });
+
+  it('narrows the success payload to the BlockUploadedImageInfo shape (imageId is a number)', () => {
+    if (
+      isMessage<ParentToBlockMessage, 'IMAGE_UPLOAD_RESULT'>(successResult, 'IMAGE_UPLOAD_RESULT')
+    ) {
+      const info: BlockUploadedImageInfo | undefined = successResult.payload.selected;
+      expect(info?.imageId).toBe(12345);
+      expect(typeof info?.imageId).toBe('number');
+      expect(info?.contentRating).toBe('pg');
+    } else {
+      expect.unreachable('successResult should narrow to IMAGE_UPLOAD_RESULT');
+    }
+  });
+});
+
+describe('WorkflowBody + SharedStorageValue widened fields (type-level)', () => {
+  it('WorkflowBody carries optional sourceImage + sharedContentKey (img2img / attribution)', () => {
+    const body: WorkflowBody = {
+      kind: 'textToImage',
+      modelId: 1,
+      modelVersionId: 2,
+      sourceImage: { url: 'https://civitai.com/x.jpeg', width: 1024, height: 1024 },
+      sharedContentKey: 'shared_42',
+      params: { prompt: 'a cat' },
+    };
+    expect(body.sourceImage).toEqual({
+      url: 'https://civitai.com/x.jpeg',
+      width: 1024,
+      height: 1024,
+    });
+    expect(body.sharedContentKey).toBe('shared_42');
+    // txt2img body without the new fields still typechecks (backward compatible).
+    const plain: WorkflowBody = { kind: 'textToImage', modelId: 1, modelVersionId: 2, params: { prompt: 'x' } };
+    expect(plain.sourceImage).toBeUndefined();
+  });
+
+  it('SharedStorageValue carries an optional opaque `data` payload', () => {
+    const value: SharedStorageValue = {
+      title: 'My generator',
+      body: 'notes',
+      data: { spec: { steps: 20 }, version: 1 },
+    };
+    expect(value.data).toEqual({ spec: { steps: 20 }, version: 1 });
+    const minimal: SharedStorageValue = { title: 'no data' };
+    expect(minimal.data).toBeUndefined();
   });
 });
