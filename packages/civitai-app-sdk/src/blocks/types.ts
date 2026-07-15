@@ -620,3 +620,136 @@ export interface BlockManifestV1 {
 }
 
 export type BlockManifest = BlockManifestV1;
+
+// ============================================================
+// Buzz self-read + wildcard-pack bridge result types
+// ============================================================
+
+/**
+ * One buzz-transaction row as the host projects it for a block, on the wire in
+ * `BUZZ_TRANSACTIONS_RESULT`.
+ *
+ * Mirrors civitai/civitai's `projectBlockBuzzTransaction`
+ * (`src/server/services/blocks/block-buzz-read.projection.ts`) — keep in
+ * lockstep. The host deliberately STRIPS the sensitive fields the raw ledger
+ * carries: `details` is allowlisted to the entity-attribution keys (the
+ * passthrough — incl. `stripePaymentIntentId` — is dropped), and
+ * `externalTransactionId` is nulled on money-movement rows (Purchase / Refund /
+ * ChargeBack / Withdrawal + the merch Shopify value), keeping only the
+ * civitai-internal prize/reward classifier.
+ *
+ * DATE WIRE CAVEAT: `date` is documented as ISO-8601 to match the SDK's
+ * wire convention, BUT the host currently forwards the raw tRPC `result` over a
+ * structured-clone `postMessage` (it does NOT `.toISOString()`-map it the way
+ * the `SHARED_LIST` bridge does), so at runtime `date` arrives as a `Date`
+ * INSTANCE. The block-side guard + `useBuzzTransactions` hook tolerate BOTH a
+ * `Date` and an ISO string (rehydrating to `Date`), so either representation
+ * round-trips correctly. See `civitai-blocks-react`'s `isValidBuzzTransactionsResult`.
+ */
+export interface BlockBuzzTransaction {
+  /** ISO-8601 on the wire (a `Date` instance at runtime today — see the caveat above). */
+  date: string;
+  /** The `TransactionType` enum NAME (e.g. `'Tip'`, `'Purchase'`), never the numeric value. */
+  type: string;
+  amount: number;
+  fromAccountId: number;
+  toAccountId: number;
+  /** Buzz pool name (e.g. `'yellow'`, `'blue'`, `'cashSettled'`). */
+  fromAccountType: string;
+  toAccountType: string;
+  description?: string | null;
+  /**
+   * Entity-attribution fields ONLY — the host allowlists these five keys and
+   * drops every passthrough key (incl. `stripePaymentIntentId`).
+   */
+  details?: {
+    user?: string;
+    entityId?: number;
+    entityType?: string;
+    url?: string;
+    toAccountType?: string;
+  } | null;
+  /** Nulled by the host on processor-reference rows; a civitai-internal classifier otherwise. */
+  externalTransactionId: string | null;
+  fromUser?: { id: number; username: string | null };
+  toUser?: { id: number; username: string | null };
+}
+
+/**
+ * One all-pool balance row on the wire in `BUZZ_ACCOUNTS_RESULT`. Mirrors
+ * civitai/civitai's `blocks.getMyBuzzAccounts` projection (`{ accountType,
+ * balance }` for each pool in `blockBuzzAccountTypes` — the three spendable pools
+ * PLUS the creator payout pools) — keep in lockstep.
+ */
+export interface BlockBuzzAccount {
+  /** Buzz pool name — a spendable pool or a creator payout pool. */
+  accountType: string;
+  balance: number;
+}
+
+/**
+ * One model-version's generation-compensation row for the month containing the
+ * requested `date`, on the wire in `DAILY_COMPENSATION_RESULT`. Mirrors
+ * civitai/civitai's `getDailyCompensationRewardByUser`
+ * (`src/server/services/buzz.service.ts`) — keep in lockstep. `data` totals are
+ * Buzz; `cashData` totals are in pennies (`cashCents` is their sum). The
+ * per-day `createdAt` is a `YYYY-MM-DD` day-string (NOT a full ISO timestamp),
+ * so — unlike a transaction's `date` — it is NOT rehydrated to a `Date`.
+ */
+export interface BlockDailyCompensationResource {
+  id: number;
+  name: string;
+  modelName: string;
+  /** Per-day Buzz totals; `createdAt` is a `YYYY-MM-DD` day-string. */
+  data: Array<{ createdAt: string; total: number }>;
+  /** Per-day cash totals in pennies; `createdAt` is a `YYYY-MM-DD` day-string. */
+  cashData: Array<{ createdAt: string; total: number }>;
+  totalSum: number;
+  cashCents: number;
+}
+
+/**
+ * The DISCRIMINATED error enum a `WILDCARD_PACK_RESULT` carries on failure —
+ * mirror civitai/civitai's `WildcardPackErrorCode`
+ * (`src/components/AppBlocks/wildcardPackParse.ts`) EXACTLY. Unlike the buzz
+ * bridges' free-text `error`, the wildcard bridge's error is one of these five
+ * codes: `not-found`/`forbidden` (the resolve proc's gates), `too-large` (the
+ * pre-download or inflation cap), `parse-failed` (fetch/unzip/parse/abort), and
+ * `busy` (host-side per-tab concurrency backpressure — the block should retry).
+ */
+export type BlockWildcardPackErrorCode =
+  | 'not-found'
+  | 'forbidden'
+  | 'too-large'
+  | 'parse-failed'
+  | 'busy';
+
+/**
+ * A parsed wildcard pack the host resolves + fetches + unzips + parses AS THE
+ * USER and returns on `WILDCARD_PACK_RESULT`. Mirrors civitai/civitai's
+ * `ResolveWildcardPackResult` `meta` + `maturity` spread with the parsed prompt
+ * lists (`src/server/services/wildcard-pack.service.ts` +
+ * `src/components/AppBlocks/PageBlockHost.tsx`) — keep in lockstep. `lists` maps
+ * each list name (`clothing/tops`) to its options; `truncated`/`truncatedLists`
+ * flag caps that were hit (anti-zip-bomb / result caps); `maturity` is the
+ * viewer's authoritative ceiling.
+ */
+export interface BlockWildcardPack {
+  modelId: number;
+  modelVersionId: number;
+  modelName: string;
+  versionName: string;
+  creatorUsername: string | null;
+  /** List name → its options (e.g. `{ 'clothing/tops': ['tee', 'hoodie'] }`). */
+  lists: Record<string, string[]>;
+  /** True when ANY cap (entries / bytes / options / chars / yaml traversal) was hit. */
+  truncated: boolean;
+  /** The names of the lists whose OWN options were capped/char-truncated. */
+  truncatedLists: string[];
+  maturity: {
+    /** The viewer's authoritative browsing-level ceiling (flag bitmask). */
+    browsingLevel: number;
+    /** True when that ceiling permits no mature content. */
+    sfwOnly: boolean;
+  };
+}

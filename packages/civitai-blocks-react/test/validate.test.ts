@@ -311,6 +311,10 @@ describe('payloadValidatorFor', () => {
     expect(payloadValidatorFor('WORKFLOW_CANCELED')).toBeTypeOf('function');
     expect(payloadValidatorFor('BUZZ_PURCHASE_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('BUZZ_BALANCE_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('BUZZ_TRANSACTIONS_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('BUZZ_ACCOUNTS_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('DAILY_COMPENSATION_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('WILDCARD_PACK_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('IMAGE_UPLOAD_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('SHARED_UPDATE_RESULT')).toBeTypeOf('function');
   });

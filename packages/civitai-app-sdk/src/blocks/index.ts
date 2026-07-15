@@ -32,6 +32,8 @@ export type {
   SharedStorageItemWire,
   SharedStorageValue,
   WrappedToken,
+  BlockBuzzTransactionsParams,
+  BlockDailyCompensationParams,
 } from './messages.js';
 
 export type {
@@ -68,4 +70,9 @@ export type {
   ShowcaseImage,
   WorkflowBody,
   WorkflowStatus,
+  BlockBuzzTransaction,
+  BlockBuzzAccount,
+  BlockDailyCompensationResource,
+  BlockWildcardPack,
+  BlockWildcardPackErrorCode,
 } from './types.js';

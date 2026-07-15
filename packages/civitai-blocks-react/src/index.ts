@@ -33,6 +33,21 @@ export { useBlockResize } from './hooks/useBlockResize.js';
 export { useBuzzPurchase } from './hooks/useBuzzPurchase.js';
 export { useBuzzBalance } from './hooks/useBuzzBalance.js';
 export type { BuzzBalance, UseBuzzBalance } from './hooks/useBuzzBalance.js';
+export { useBuzzTransactions } from './hooks/useBuzzTransactions.js';
+export type { BuzzTransaction, UseBuzzTransactions } from './hooks/useBuzzTransactions.js';
+export { useBuzzAccounts } from './hooks/useBuzzAccounts.js';
+export type { UseBuzzAccounts } from './hooks/useBuzzAccounts.js';
+export { useDailyCompensation } from './hooks/useDailyCompensation.js';
+export type { UseDailyCompensation } from './hooks/useDailyCompensation.js';
+export { useWildcardPack, WildcardPackError } from './hooks/useWildcardPack.js';
+export type { UseWildcardPack } from './hooks/useWildcardPack.js';
+export type {
+  BlockBuzzTransaction,
+  BlockBuzzAccount,
+  BlockDailyCompensationResource,
+  BlockWildcardPack,
+  BlockWildcardPackErrorCode,
+} from '@civitai/app-sdk/blocks';
 export { useCheckpointPicker } from './hooks/useCheckpointPicker.js';
 export { useResourcePicker } from './hooks/useResourcePicker.js';
 export { useImageUpload } from './hooks/useImageUpload.js';
