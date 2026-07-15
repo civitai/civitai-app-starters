@@ -226,38 +226,57 @@ export function isValidBuzzBalanceResult(
 
 const CONTENT_RATINGS = new Set<string>(['g', 'pg', 'pg13', 'r', 'x']);
 
+/** The moderated (`purpose:'display'`) `IMAGE_UPLOAD_RESULT.selected` shape. */
+function isModeratedUpload(s: Record<string, unknown>): boolean {
+  if (typeof s.imageId !== 'number' || !Number.isInteger(s.imageId) || s.imageId <= 0) return false;
+  if (!isFiniteNumber(s.nsfwLevel)) return false;
+  if (typeof s.contentRating !== 'string' || !CONTENT_RATINGS.has(s.contentRating)) return false;
+  if (!isNonEmptyString(s.url)) return false;
+  return true;
+}
+
+/**
+ * The `purpose:'generationSource'` `IMAGE_UPLOAD_RESULT.selected` shape — an
+ * UNSCANNED private img2img source `{ url, width, height }` (no imageId /
+ * nsfwLevel). Mirrors civitai's `BlockSourceImageInfo`.
+ */
+function isGenerationSourceUpload(s: Record<string, unknown>): boolean {
+  if (!isNonEmptyString(s.url)) return false;
+  if (!isFiniteNumber(s.width) || s.width <= 0) return false;
+  if (!isFiniteNumber(s.height) || s.height <= 0) return false;
+  return true;
+}
+
 /**
  * Reply to a block-initiated `OPEN_IMAGE_UPLOAD`. `selected` is ABSENT when the
- * user dismissed the upload modal (the block's hook resolves to `null`); when
- * present it is the moderated `BlockUploadedImageInfo` the host hands back —
- * `imageId` a positive integer (the `Image` row id), `nsfwLevel` a finite
- * number, `contentRating` an off-site ladder value (`g|pg|pg13|r|x`), `url` a
- * non-empty string. Kept in lockstep with the host's `IMAGE_UPLOAD_RESULT`
- * (civitai/civitai `PageBlockHost.tsx` / `BlockImageUploadModal.tsx`).
+ * user dismissed the upload modal (the block's hook resolves to `null`). When
+ * present it is a UNION keyed by the request's `purpose`:
+ *   • `'display'`  → the moderated `BlockUploadedImageInfo` (`imageId` a positive
+ *     integer, `nsfwLevel` finite, `contentRating` a `g|pg|pg13|r|x` ladder
+ *     value, `url` non-empty).
+ *   • `'generationSource'` → the source `{ url, width, height }` (positive finite
+ *     dimensions, non-empty url; no imageId/nsfwLevel).
+ * The guard accepts EITHER shape (the result carries no purpose discriminator).
+ * Kept in lockstep with the host's `IMAGE_UPLOAD_RESULT` (civitai/civitai
+ * `PageBlockHost.tsx` / `BlockImageUploadModal.tsx` /
+ * `BlockGenerationSourceUploadModal.tsx`).
  */
 export function isValidImageUploadResult(
   p: unknown,
 ): p is {
   requestId?: string;
-  selected?: {
-    imageId: number;
-    nsfwLevel: number;
-    contentRating: string;
-    url: string;
-  };
+  selected?:
+    | { imageId: number; nsfwLevel: number; contentRating: string; url: string }
+    | { url: string; width: number; height: number };
 } {
   if (!isObject(p)) return false;
   if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
-  // `selected` absent → cancelled upload (valid). When present, shape-check it.
+  // `selected` absent → cancelled upload (valid). When present, it must match
+  // one of the two purpose-keyed shapes.
   if (p.selected !== undefined) {
     const s = p.selected;
     if (!isObject(s)) return false;
-    if (typeof s.imageId !== 'number' || !Number.isInteger(s.imageId) || s.imageId <= 0) {
-      return false;
-    }
-    if (!isFiniteNumber(s.nsfwLevel)) return false;
-    if (typeof s.contentRating !== 'string' || !CONTENT_RATINGS.has(s.contentRating)) return false;
-    if (!isNonEmptyString(s.url)) return false;
+    if (!isModeratedUpload(s) && !isGenerationSourceUpload(s)) return false;
   }
   return true;
 }

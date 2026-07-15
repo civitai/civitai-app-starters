@@ -1,7 +1,10 @@
 import { cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { BlockUploadedImageInfo } from '@civitai/app-sdk/blocks';
+import type {
+  BlockGenerationSourceImageInfo,
+  BlockUploadedImageInfo,
+} from '@civitai/app-sdk/blocks';
 
 import { useImageUpload } from '../src/hooks/useImageUpload.js';
 import { getTransport } from '../src/internal/singleton.js';
@@ -80,5 +83,56 @@ describe('createMockHost — image-upload scenario', () => {
     expect(await result.current.open()).not.toBeNull();
     host.setScenario({ cannedImageUpload: null });
     expect(await result.current.open()).toBeNull();
+  });
+
+  it("generationSource: open() resolves with the default canned { url, width, height } source", async () => {
+    host = createMockHost({});
+    uninstall = host.install();
+    const { result } = renderHook(() => useImageUpload({ purpose: 'generationSource' }));
+    await ready();
+
+    const src = await result.current.open();
+    expect(src).not.toBeNull();
+    expect(src!.url).toContain('civitai.com');
+    expect(typeof src!.width).toBe('number');
+    expect(typeof src!.height).toBe('number');
+    // The source shape must NOT carry the moderated fields.
+    expect('imageId' in (src as object)).toBe(false);
+  });
+
+  it('generationSource: returns a custom canned source', async () => {
+    const custom: BlockGenerationSourceImageInfo = {
+      url: 'https://image.civitai.com/z/original=true/custom-source.jpeg',
+      width: 512,
+      height: 512,
+    };
+    host = createMockHost({ cannedGenerationSourceUpload: custom });
+    uninstall = host.install();
+    const { result } = renderHook(() => useImageUpload({ purpose: 'generationSource' }));
+    await ready();
+
+    await expect(result.current.open()).resolves.toEqual(custom);
+  });
+
+  it('generationSource: cannedGenerationSourceUpload:null → resolves null (dismissed)', async () => {
+    host = createMockHost({ cannedGenerationSourceUpload: null });
+    uninstall = host.install();
+    const { result } = renderHook(() => useImageUpload({ purpose: 'generationSource' }));
+    await ready();
+
+    await expect(result.current.open()).resolves.toBeNull();
+  });
+
+  it('display and generationSource canned results are independent knobs', async () => {
+    // Dismiss display, but keep a live generationSource — proves the handler
+    // branches on the requested purpose, not a single shared knob.
+    host = createMockHost({ cannedImageUpload: null });
+    uninstall = host.install();
+    const display = renderHook(() => useImageUpload());
+    const source = renderHook(() => useImageUpload({ purpose: 'generationSource' }));
+    await ready();
+
+    expect(await display.result.current.open()).toBeNull();
+    expect(await source.result.current.open()).not.toBeNull();
   });
 });

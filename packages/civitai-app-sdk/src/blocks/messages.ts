@@ -14,6 +14,8 @@ import type {
   BlockResourceInfo,
   BlockResourcePickerType,
   BlockUploadedImageInfo,
+  BlockGenerationSourceImageInfo,
+  BlockUploadPurpose,
   BlockContext,
   BlockSettings,
   Theme,
@@ -194,12 +196,23 @@ export type ParentToBlockMessage =
   | {
       // Reply to OPEN_IMAGE_UPLOAD (the host-mediated block image upload).
       // `selected` is absent when the user dismissed the upload modal without a
-      // successful upload — the block's hook resolves to `null`. When present it
-      // is a MODERATED image (scanned clean, within the SFW ceiling, unflagged);
-      // the iframe never handles the bytes. Mirrors the OPEN_RESOURCE_PICKER
-      // host-chrome pattern.
+      // successful upload — the block's hook resolves to `null`. The iframe never
+      // handles the bytes. Mirrors the OPEN_RESOURCE_PICKER host-chrome pattern.
+      //
+      // `selected` is a UNION keyed by the request's `purpose`:
+      //   • `'display'` (default): a MODERATED public image
+      //     ({@link BlockUploadedImageInfo} — imageId/nsfwLevel/contentRating/url,
+      //     scanned clean, within the SFW ceiling, unflagged).
+      //   • `'generationSource'`: an UNSCANNED private img2img source
+      //     ({@link BlockGenerationSourceImageInfo} — only { url, width, height };
+      //     no imageId/nsfwLevel, scanned by the orchestrator at gen time).
+      // The variant the host returns matches the `purpose` the block requested;
+      // narrow structurally (`'imageId' in selected`) when a block uses both.
       type: 'IMAGE_UPLOAD_RESULT';
-      payload: { requestId: string; selected?: BlockUploadedImageInfo };
+      payload: {
+        requestId: string;
+        selected?: BlockUploadedImageInfo | BlockGenerationSourceImageInfo;
+      };
     }
   | {
       // Reply to SET_USER_CHECKPOINT. `ok: false` carries a UI-renderable
@@ -368,13 +381,20 @@ export type BlockToParentMessage =
   | {
       // Ask the host to open its native image-upload modal (host-chrome — the
       // iframe never handles the bytes). The app decides what the image is for
-      // (avatar / cover / background / reference / img2img source / …). The upload
-      // routes through civitai's session-authed scan pipeline; the host returns
-      // ONLY a moderated image id + rating + url on `IMAGE_UPLOAD_RESULT`. No
-      // extra payload fields — the app's intent is opaque to the platform.
+      // (avatar / cover / background / reference / img2img source / …).
+      //
+      // `purpose` selects the upload MODE (absent ⇒ `'display'`, so an older SDK
+      // stays byte-compatible — the host normalizes an unknown value to the safe
+      // moderated default):
+      //   • `'display'` — a PUBLIC image; routes through civitai's session-authed
+      //     scan pipeline (SFW + no-flag gate). The host returns a MODERATED
+      //     {@link BlockUploadedImageInfo} on `IMAGE_UPLOAD_RESULT`.
+      //   • `'generationSource'` — a PRIVATE img2img source; UNSCANNED (the
+      //     orchestrator scans at gen time). The host returns ONLY the source
+      //     shape ({@link BlockGenerationSourceImageInfo} — { url, width, height }).
       // Generalizes cleanly the same way OPEN_RESOURCE_PICKER did the picker.
       type: 'OPEN_IMAGE_UPLOAD';
-      payload: { requestId: string };
+      payload: { requestId: string; purpose?: BlockUploadPurpose };
     }
   | {
       // Persist a viewer's checkpoint override via the host. `null` clears
