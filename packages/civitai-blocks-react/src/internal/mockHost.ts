@@ -51,6 +51,7 @@ import {
   type BlockBuzzTransaction,
   type BlockBuzzAccount,
   type BlockDailyCompensationResource,
+  type BlockViewer,
   type BlockWildcardPack,
   type BlockWildcardPackErrorCode,
   type ColorDomain,
@@ -322,6 +323,26 @@ export interface MockHostOptions {
    */
   buzzBalanceError?: boolean | string | Error;
   /**
+   * The canned viewer returned to a block via the host-mediated `GET_VIEWER` →
+   * `VIEWER_RESULT` bridge (what the `useViewer` hook reads). Distinct from the
+   * install-time {@link MockHostOptions.viewer} (the coarse BLOCK_INIT snapshot,
+   * a nullable-username `ViewerInfo`): this is the authoritative self-read shape
+   * ({@link BlockViewer} — non-null `username`, `active`/`muted` status, current
+   * `buzzBudget`). Absent → {@link DEFAULT_VIEWER_RESULT}. Live-tunable via
+   * {@link MockHost.setScenario}.
+   */
+  viewerResult?: BlockViewer;
+  /**
+   * Force `GET_VIEWER` to FAIL instead of returning a viewer — exercises the
+   * block's viewer-read error UI (what `useViewer().error` surfaces). `true` → a
+   * default `'viewer unavailable'` message; a string → that exact message; an
+   * `Error` → its `.message`. The reply mirrors the real (`createLiveHost`) error
+   * shape exactly: `VIEWER_RESULT` with `{ requestId, error }` and NO `viewer`.
+   * Absent → the viewer read succeeds (back-compat). Live-tunable via
+   * {@link MockHost.setScenario}.
+   */
+  viewerError?: boolean | string | Error;
+  /**
    * The Buzz-transaction ledger reported on `GET_BUZZ_TRANSACTIONS` (what
    * `useBuzzTransactions` reads). `transactions` mirror the host projection;
    * `cursor` (when set) drives the block's "next page" affordance. Absent →
@@ -455,6 +476,8 @@ export type MockHostScenarioPatch = Pick<
   | 'storage'
   | 'shared'
   | 'buzzBalanceError'
+  | 'viewerResult'
+  | 'viewerError'
   | 'buzzTransactions'
   | 'buzzAccounts'
   | 'dailyCompensation'
@@ -585,6 +608,30 @@ function normalizeBalanceError(e: boolean | string | Error | undefined): string 
   if (e === true) return DEFAULT_BUZZ_BALANCE_ERROR;
   if (typeof e === 'string') return e || DEFAULT_BUZZ_BALANCE_ERROR;
   return e.message || DEFAULT_BUZZ_BALANCE_ERROR;
+}
+
+/**
+ * Default viewer reported on `GET_VIEWER` when {@link MockHostOptions.viewerResult}
+ * is omitted — mirrors {@link DEFAULT_VIEWER}'s id/username (the authoritative
+ * self-read shape: non-null username, `active` status, a plausible buzzBudget) so
+ * `useViewer()` resolves out of the box.
+ */
+const DEFAULT_VIEWER_RESULT: BlockViewer = {
+  id: 2,
+  username: 'dev-viewer',
+  status: 'active',
+  buzzBudget: 200,
+};
+
+/** Default message for a simulated viewer-read failure ({@link MockHostOptions.viewerError}). */
+const DEFAULT_VIEWER_ERROR = 'viewer unavailable';
+
+/** Normalize a {@link MockHostOptions.viewerError} value to an error string (or `undefined`). */
+function normalizeViewerError(e: boolean | string | Error | undefined): string | undefined {
+  if (e === undefined || e === false) return undefined;
+  if (e === true) return DEFAULT_VIEWER_ERROR;
+  if (typeof e === 'string') return e || DEFAULT_VIEWER_ERROR;
+  return e.message || DEFAULT_VIEWER_ERROR;
 }
 
 /** Default message for a simulated buzz SELF-READ failure ({@link MockHostOptions.buzzReadError}). */
@@ -886,6 +933,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       : options.cannedGenerationSourceUpload;
   // Simulated balance-read failure (undefined = read succeeds).
   let buzzBalanceError: string | undefined = normalizeBalanceError(options.buzzBalanceError);
+  // Canned viewer reported on GET_VIEWER + forced-error knob.
+  let viewerResult: BlockViewer = options.viewerResult ?? DEFAULT_VIEWER_RESULT;
+  let viewerError: string | undefined = normalizeViewerError(options.viewerError);
   // Buzz self-read bridge data + forced-error knob.
   let buzzTransactions: { transactions: BlockBuzzTransaction[]; cursor?: string } =
     options.buzzTransactions ?? { transactions: DEFAULT_BUZZ_TRANSACTIONS };
@@ -1280,6 +1330,30 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             dispatchToBlock({
               type: 'BUZZ_BALANCE_RESULT',
               payload: { requestId, balance: { ...buzzBalance } },
+            });
+            return;
+          }
+
+          case 'GET_VIEWER': {
+            // Reply with the canned viewer (what useViewer reads). Mirrors
+            // createLiveHost's VIEWER_RESULT reply shape exactly. Drop a request
+            // with no requestId — the block correlates the reply by it, so a
+            // reply without one is unroutable (matches the sibling request cases
+            // + createLiveHost).
+            if (typeof requestId !== 'string') return;
+            // Simulated read failure: reply with the error shape
+            // (`{ requestId, error }`, no `viewer`) — byte-for-byte
+            // createLiveHost's failure reply — so the block's error UI fires.
+            if (viewerError !== undefined) {
+              dispatchToBlock({
+                type: 'VIEWER_RESULT',
+                payload: { requestId, error: viewerError },
+              });
+              return;
+            }
+            dispatchToBlock({
+              type: 'VIEWER_RESULT',
+              payload: { requestId, viewer: { ...viewerResult } },
             });
             return;
           }
@@ -1824,6 +1898,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     if (patch.buzz !== undefined) buzz = { ...buzz, ...patch.buzz };
     if (patch.buzzBalanceError !== undefined)
       buzzBalanceError = normalizeBalanceError(patch.buzzBalanceError);
+    if (patch.viewerResult !== undefined) viewerResult = patch.viewerResult;
+    if (patch.viewerError !== undefined) viewerError = normalizeViewerError(patch.viewerError);
     if (patch.buzzTransactions !== undefined) buzzTransactions = patch.buzzTransactions;
     if (patch.buzzAccounts !== undefined) buzzAccounts = patch.buzzAccounts;
     if (patch.dailyCompensation !== undefined) dailyCompensation = patch.dailyCompensation;

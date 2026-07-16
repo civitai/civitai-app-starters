@@ -709,6 +709,28 @@ export interface BlockDailyCompensationResource {
 }
 
 /**
+ * The signed-in viewer as the host projects it for a block on the wire in
+ * `VIEWER_RESULT` (the host-mediated `GET_VIEWER` self-read).
+ *
+ * Mirrors civitai/civitai's `blocks.getMyViewer` projection
+ * (`src/server/routers/blocks.router.ts`) — keep in lockstep. Distinct from the
+ * BLOCK_INIT-embedded {@link ViewerInfo}: `username` is NON-NULL here (a
+ * signed-in viewer always has one), `status` is the narrow spendable/mutable
+ * pair (`'active' | 'muted'` — a `banned` viewer can't read at all, so the read
+ * fails rather than returning `status: 'banned'`), and it additionally carries
+ * the viewer's current `buzzBudget` (optional). The read is token-bound: only a
+ * signed-in viewer resolves; an anonymous / banned token comes back as the
+ * `VIEWER_RESULT` free-text `error` instead.
+ */
+export interface BlockViewer {
+  id: number;
+  username: string;
+  status: 'active' | 'muted';
+  /** The viewer's current Buzz budget, when the host includes it. */
+  buzzBudget?: number;
+}
+
+/**
  * The DISCRIMINATED error enum a `WILDCARD_PACK_RESULT` carries on failure —
  * mirror civitai/civitai's `WildcardPackErrorCode`
  * (`src/components/AppBlocks/wildcardPackParse.ts`) EXACTLY. Unlike the buzz

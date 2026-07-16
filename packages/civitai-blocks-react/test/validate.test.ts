@@ -8,6 +8,7 @@ import {
   isValidSharedUpdateResult,
   isValidTokenRefresh,
   isValidTokenRefreshResponse,
+  isValidViewerResult,
   isValidWorkflowReply,
   isValidWorkflowSnapshot,
   payloadValidatorFor,
@@ -225,6 +226,51 @@ describe('isValidBuzzBalanceResult', () => {
   });
 });
 
+describe('isValidViewerResult', () => {
+  it('accepts a success reply carrying the { id, username, status } viewer', () => {
+    expect(
+      isValidViewerResult({ requestId: 'r', viewer: { id: 7, username: 'v', status: 'active' } }),
+    ).toBe(true);
+  });
+  // THE OPTIONAL-FIELD TRAP: a valid reply with NO `buzzBudget` must be accepted.
+  // Over-requiring the optional field is the class of guard bug that dropped a
+  // valid reply and hung the reading hook — keep optionals optional.
+  it('accepts a viewer WITHOUT the optional buzzBudget', () => {
+    expect(
+      isValidViewerResult({ requestId: 'r', viewer: { id: 7, username: 'v', status: 'muted' } }),
+    ).toBe(true);
+  });
+  it('accepts a viewer WITH the optional buzzBudget', () => {
+    expect(
+      isValidViewerResult({
+        requestId: 'r',
+        viewer: { id: 7, username: 'v', status: 'active', buzzBudget: 200 },
+      }),
+    ).toBe(true);
+  });
+  it('accepts an error-only reply', () => {
+    expect(isValidViewerResult({ requestId: 'r', error: 'not signed in' })).toBe(true);
+  });
+  it.each([
+    ['neither viewer nor error', { requestId: 'r' }],
+    ['viewer missing id', { requestId: 'r', viewer: { username: 'v', status: 'active' } }],
+    ['viewer id not a number', { requestId: 'r', viewer: { id: '7', username: 'v', status: 'active' } }],
+    ['viewer id NaN', { requestId: 'r', viewer: { id: Number.NaN, username: 'v', status: 'active' } }],
+    ['viewer username empty', { requestId: 'r', viewer: { id: 7, username: '', status: 'active' } }],
+    ['viewer username null', { requestId: 'r', viewer: { id: 7, username: null, status: 'active' } }],
+    ['viewer status unknown', { requestId: 'r', viewer: { id: 7, username: 'v', status: 'banned' } }],
+    ['viewer status missing', { requestId: 'r', viewer: { id: 7, username: 'v' } }],
+    ['buzzBudget not a number', { requestId: 'r', viewer: { id: 7, username: 'v', status: 'active', buzzBudget: 'x' } }],
+    ['viewer not an object', { requestId: 'r', viewer: 5 }],
+    ['error not a string', { requestId: 'r', error: 500 }],
+    ['requestId not a string', { requestId: 5, viewer: { id: 7, username: 'v', status: 'active' } }],
+    ['null payload', null],
+    ['string payload', 'oops'],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidViewerResult(payload)).toBe(false);
+  });
+});
+
 describe('isValidImageUploadResult', () => {
   const selected = {
     imageId: 12345,
@@ -311,6 +357,7 @@ describe('payloadValidatorFor', () => {
     expect(payloadValidatorFor('WORKFLOW_CANCELED')).toBeTypeOf('function');
     expect(payloadValidatorFor('BUZZ_PURCHASE_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('BUZZ_BALANCE_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('VIEWER_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('BUZZ_TRANSACTIONS_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('BUZZ_ACCOUNTS_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('DAILY_COMPENSATION_RESULT')).toBeTypeOf('function');
