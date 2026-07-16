@@ -23,12 +23,17 @@
  *     published version to compare against. (The block-starter + examples use
  *     these; CI's `starter` job already builds them against the workspace.)
  *
- * FAILS (exit 1) when a semver-range pin no longer admits the published latest,
- * printing the stale pin + the one-line fix (`bump to ^<latest>`).
+ * FAILS (exit 1) when:
+ *   - a semver-range pin no longer admits the published latest (prints the stale
+ *     pin + the one-line fix, `bump to ^<latest>`), OR
+ *   - npm returns a DEFINITIVE 404/410 for a pinned package — the package does
+ *     not exist (renamed / typo'd / unpublished). A "package not found" is a real
+ *     bug in the pin, never a transient outage, so it must NOT be silently skipped.
  *
- * SKIPS GRACEFULLY (exit 0 + warning) when npm is unreachable — an offline dev
- * or a CI network blip must not turn this into a flaky red. Only a genuinely
- * stale-but-resolvable pin fails the job.
+ * SKIPS GRACEFULLY (exit 0 + warning) only on genuine unreachability — a
+ * transport error (DNS/timeout/connection-refused/offline) or a 5xx/429
+ * (server-side/rate-limit) response. An offline dev or a CI network blip must
+ * not turn this into a flaky red; a nonexistent package still fails loud.
  *
  * Uses `semver` if it happens to be resolvable (for exotic ranges); otherwise
  * a built-in caret/exact/wildcard checker (every current pin is a caret range).
@@ -129,14 +134,24 @@ function suggestPin(version) {
   return `^${version}`;
 }
 
-const latestCache = new Map(); // pkg -> { version } | { error }
+// fetchLatest returns exactly one of:
+//   { version }        — resolved published version
+//   { notFound, ... }  — DEFINITIVE 404/410: the package does not exist on npm
+//                        (a starter pins a nonexistent/renamed/typo'd package) → HARD FAIL
+//   { error }          — genuine unreachability (DNS/timeout/connection-refused,
+//                        or a 5xx/429 server-side/rate-limit response) → graceful SKIP
+const latestCache = new Map();
 async function fetchLatest(pkg) {
   if (latestCache.has(pkg)) return latestCache.get(pkg);
   const url = `${REGISTRY}/${pkg}/latest`;
   let result;
   try {
     const res = await fetch(url, { headers: { accept: 'application/json' } });
-    if (!res.ok) {
+    if (res.status === 404 || res.status === 410) {
+      // Definitive "this package is not on npm" — NOT a transient outage.
+      result = { notFound: true, status: res.status };
+    } else if (!res.ok) {
+      // 5xx / 429 (rate-limit) / any other non-2xx: treat as transient/unreachable.
       result = { error: `HTTP ${res.status}` };
     } else {
       const body = await res.json();
@@ -144,6 +159,7 @@ async function fetchLatest(pkg) {
       else result = { version: body.version };
     }
   } catch (err) {
+    // Transport-level failure (DNS, timeout, connection refused, offline).
     result = { error: err?.message || String(err) };
   }
   latestCache.set(pkg, result);
@@ -184,11 +200,18 @@ async function main() {
   }
 
   const failures = [];
+  const notFound = []; // { pin, status } — definitive 404/410, package not on npm
   const skipped = []; // { pin, reason }
   const checked = [];
 
   for (const pin of pins) {
     const latest = await fetchLatest(pin.pkg);
+    if (latest.notFound) {
+      // Definitive: the package does not exist on npm. This is a real bug in
+      // the pin (nonexistent / renamed / typo'd package), not an outage.
+      notFound.push({ pin, status: latest.status });
+      continue;
+    }
     if (latest.error) {
       skipped.push({ pin, reason: `npm unreachable (${latest.error})` });
       continue;
@@ -212,6 +235,22 @@ async function main() {
   }
   for (const s of skipped) {
     console.warn(`SKIP ${s.pin.pkg} ${s.pin.range}  — ${s.reason}  (${rel(s.pin.file)})`);
+  }
+
+  // A 404/410 is DEFINITIVE (the package isn't on npm) → hard fail, never skip.
+  if (notFound.length > 0) {
+    console.error('');
+    console.error('ERROR: a starter pins a nonexistent @civitai/* package.');
+    console.error('       npm returned 404/410 — the package does not exist (renamed / typo / unpublished).');
+    console.error('');
+    for (const n of notFound) {
+      console.error(
+        `  ${rel(n.pin.file)} [${n.pin.field}]\n` +
+          `    package ${n.pin.pkg} not found on npm (HTTP ${n.status}) — a starter pins a nonexistent package; correct the name.`,
+      );
+    }
+    console.error('');
+    process.exit(1);
   }
 
   if (failures.length > 0) {

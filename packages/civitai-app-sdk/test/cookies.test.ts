@@ -43,7 +43,11 @@ describe('sealCookie / unsealCookie', () => {
 
   it('returns null on tampered ciphertext (AEAD)', () => {
     const sealed = sealCookie('original', SECRET);
-    const tampered = sealed.slice(0, -2) + 'ff';
+    // Flip the last ciphertext byte to one GUARANTEED to differ from the
+    // original — otherwise a random-IV keystream ending in 0xff makes the
+    // hardcoded '…ff' a no-op tamper (unseal succeeds → flaky ~1/256). Mirrors
+    // the auth-tag test's guard below.
+    const tampered = sealed.slice(0, -2) + (sealed.endsWith('ff') ? '00' : 'ff');
     expect(unsealCookie(sealed, SECRET)).toBe('original');
     expect(unsealCookie(tampered, SECRET)).toBe(null);
   });
