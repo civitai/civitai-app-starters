@@ -435,6 +435,65 @@ textarea[data-civitai-ui-control] {
 [data-civitai-ui='collapse'] [data-civitai-ui-collapse-region] {
   padding-top: 4px;
 }
+
+/* ----- SegmentedControl ----- */
+[data-civitai-ui='segmented-control'] {
+  display: inline-flex;
+  flex-direction: row;
+  gap: 2px;
+  padding: 3px;
+  background: var(--ci-color-surface-2);
+  border: 1px solid var(--ci-color-border);
+  border-radius: var(--ci-radius);
+  vertical-align: middle;
+}
+[data-civitai-ui='segmented-control'][data-full-width='true'] {
+  display: flex;
+  width: 100%;
+}
+[data-civitai-ui='segmented-control'] [data-civitai-ui-segment] {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: calc(var(--ci-radius) - 3px);
+  background: transparent;
+  color: var(--ci-color-text-dimmed);
+  font-family: var(--ci-font);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+[data-civitai-ui='segmented-control'][data-full-width='true'] [data-civitai-ui-segment] {
+  flex: 1 1 0;
+}
+[data-civitai-ui='segmented-control'][data-size='sm'] [data-civitai-ui-segment] { height: 24px; padding: 0 12px; font-size: 13px; }
+[data-civitai-ui='segmented-control'][data-size='md'] [data-civitai-ui-segment] { height: 30px; padding: 0 16px; font-size: 14px; }
+[data-civitai-ui='segmented-control'][data-size='lg'] [data-civitai-ui-segment] { height: 38px; padding: 0 20px; font-size: 16px; }
+[data-civitai-ui='segmented-control'] [data-civitai-ui-segment]:hover:not(:disabled):not([data-active]) {
+  color: var(--ci-color-text);
+  background: color-mix(in srgb, var(--ci-color-text) 6%, transparent);
+}
+[data-civitai-ui='segmented-control'] [data-civitai-ui-segment][data-active] {
+  background: var(--ci-color-surface);
+  color: var(--ci-color-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+[data-civitai-ui='segmented-control'] [data-civitai-ui-segment]:focus-visible {
+  outline: 2px solid var(--ci-color-primary);
+  outline-offset: 1px;
+}
+[data-civitai-ui='segmented-control'] [data-civitai-ui-segment]:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+[data-civitai-ui='segmented-control'][data-disabled='true'] {
+  opacity: 0.7;
+}
 `;
 
 /** The full stylesheet shipped by the pack. Exported for SSR/manual use. */

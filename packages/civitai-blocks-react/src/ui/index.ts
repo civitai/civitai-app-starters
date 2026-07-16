@@ -69,3 +69,10 @@ export type { SelectProps, SelectOption } from './Select.js';
 
 export { Collapse } from './Collapse.js';
 export type { CollapseProps } from './Collapse.js';
+
+export { SegmentedControl } from './SegmentedControl.js';
+export type {
+  SegmentedControlProps,
+  SegmentedControlItem,
+  SegmentedControlSize,
+} from './SegmentedControl.js';
