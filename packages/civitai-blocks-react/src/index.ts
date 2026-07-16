@@ -43,12 +43,17 @@ export { useDailyCompensation } from './hooks/useDailyCompensation.js';
 export type { UseDailyCompensation } from './hooks/useDailyCompensation.js';
 export { useWildcardPack, WildcardPackError } from './hooks/useWildcardPack.js';
 export type { UseWildcardPack } from './hooks/useWildcardPack.js';
+export { useAppWorkflows } from './hooks/useAppWorkflows.js';
+export type { UseAppWorkflows } from './hooks/useAppWorkflows.js';
 export type {
   BlockBuzzTransaction,
   BlockBuzzAccount,
   BlockDailyCompensationResource,
   BlockWildcardPack,
   BlockWildcardPackErrorCode,
+  AppWorkflow,
+  AppWorkflowImage,
+  AppWorkflowsParams,
 } from '@civitai/app-sdk/blocks';
 export { useCheckpointPicker } from './hooks/useCheckpointPicker.js';
 export { useResourcePicker } from './hooks/useResourcePicker.js';

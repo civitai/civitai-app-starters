@@ -293,6 +293,36 @@ if (error instanceof WildcardPackError && error.code === 'busy') void refetch();
 if (!loading && pack) console.log(Object.keys(pack.lists));
 ```
 
+### `useAppWorkflows(params?)`
+
+The calling app's **own** generator subqueue — the tag-scoped list of generations
+**this app** produced for the viewer (newest-first), plus a fail-closed `cancel`.
+The host self-binds the account off the block token and **forces** the per-app tag
+filter, so a block only ever sees the queue it produced — never the viewer's
+personal queue or another app's. Returns `{ workflows, cursor, loading, error,
+refetch, cancel }`; each `AppWorkflow` is `{ workflowId, status, images[], cost,
+createdAt }`. Pass the returned `cursor` back as `params.cursor` to page forward.
+Requires `ai:write:budgeted` (same trust boundary as submit); host-mediated over
+`QUERY_APP_WORKFLOWS` / `CANCEL_APP_WORKFLOW`.
+
+`cancel(workflowId)` sends `CANCEL_APP_WORKFLOW`, resolves once the host confirms
+the terminal state (which is optimistically spliced into `workflows` in place — no
+refetch round-trip), and rejects with the host's error on failure.
+
+```tsx
+const { workflows, cursor, loading, error, refetch, cancel } = useAppWorkflows({ limit: 20 });
+if (!loading && !error) {
+  workflows.forEach((w) => console.log(w.workflowId, w.status, w.images.length, w.cost));
+}
+async function onCancel(id: string) {
+  try {
+    await cancel(id); // optimistically flips the row to `canceled`
+  } catch (err) {
+    console.error('cancel failed', err);
+  }
+}
+```
+
 ### `useAppStorage()`
 
 Per-(block instance, viewer) KV datastore, host-mediated. 64 KB per value,
@@ -583,7 +613,8 @@ Runnable, minimal blocks — one per feature, each with its own README:
 
 | `@civitai/blocks-react` | pairs with `@civitai/app-sdk` | adds |
 |---|---|---|
-| `0.27.x` | `^0.23.0` | async-scan image upload; transport validators for all `SHARED_*` / `APP_STORAGE_*` / picker replies |
+| `0.29.x` | `^0.24.0` | `useAppWorkflows()` — app generator subqueue read + cancel (`QUERY_APP_WORKFLOWS` / `CANCEL_APP_WORKFLOW`) |
+| `0.27.x`–`0.28.x` | `^0.23.0` | async-scan image upload; transport validators for all `SHARED_*` / `APP_STORAGE_*` / picker replies |
 | `0.26.x` | `^0.22.0` | `useViewer()` (`GET_VIEWER`) |
 | `0.25.x` | `^0.21.0` | `useBuzzTransactions`, `useBuzzAccounts`, `useDailyCompensation`, `useWildcardPack` |
 | `0.5.0` | `^0.7.0` | `useBuzzWorkflow().cancel()` (real server-side cancel, gotcha #51) |

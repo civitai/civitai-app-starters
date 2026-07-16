@@ -1,11 +1,14 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import type { AppWorkflow } from '@civitai/app-sdk/blocks';
+
 import { useBlockContext } from '../src/hooks/useBlockContext.js';
 import { useBuzzWorkflow } from '../src/hooks/useBuzzWorkflow.js';
 import { useResourcePicker } from '../src/hooks/useResourcePicker.js';
 import { useRequestConsent } from '../src/hooks/useRequestConsent.js';
 import { useBlockToken } from '../src/hooks/useBlockToken.js';
+import { useAppWorkflows } from '../src/hooks/useAppWorkflows.js';
 import { getTransport } from '../src/internal/singleton.js';
 import { createMockHost, resetTransport } from '../src/testing.js';
 
@@ -156,5 +159,47 @@ describe('createMockHost', () => {
     teardown();
     teardown(); // idempotent
     expect(window.parent).toBe(before);
+  });
+
+  const APP_WFS: AppWorkflow[] = [
+    {
+      workflowId: 'wf_app_2',
+      status: 'succeeded',
+      images: [{ url: 'https://image.civitai.com/x/a.jpeg', width: 1024, height: 1024, nsfwLevel: 1 }],
+      cost: 12,
+      createdAt: '2026-07-14T12:00:00.000Z',
+    },
+    { workflowId: 'wf_app_1', status: 'processing', images: [], cost: null, createdAt: '2026-07-14T11:58:00.000Z' },
+  ];
+
+  it('QUERY_APP_WORKFLOWS returns the canned subqueue; CANCEL_APP_WORKFLOW flips + persists the row', async () => {
+    uninstall = createMockHost({ appWorkflows: { workflows: APP_WFS, cursor: 'pg2' } }).install();
+    const { result } = renderHook(() => useAppWorkflows());
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.workflows).toEqual(APP_WFS);
+    expect(result.current.cursor).toBe('pg2');
+    expect(result.current.error).toBeNull();
+
+    await act(async () => {
+      await result.current.cancel('wf_app_1');
+    });
+    // Optimistically flipped in the hook.
+    expect(result.current.workflows.find((w) => w.workflowId === 'wf_app_1')?.status).toBe('canceled');
+
+    // …and the mock host persisted it: a refetch reflects the canceled status.
+    act(() => result.current.refetch());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.workflows.find((w) => w.workflowId === 'wf_app_1')?.status).toBe('canceled');
+  });
+
+  it('appWorkflowsError forces BOTH bridges to the error variant (read errors, cancel rejects)', async () => {
+    uninstall = createMockHost({ appWorkflowsError: 'block lacks scope' }).install();
+    const { result } = renderHook(() => useAppWorkflows());
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error?.message).toBe('block lacks scope');
+
+    await expect(result.current.cancel('wf_app_1')).rejects.toThrow('block lacks scope');
   });
 });
