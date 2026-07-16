@@ -15,6 +15,7 @@
     "e2e:all": "node scripts/run-all-e2e.mjs",
     "typecheck:readme": "node scripts/typecheck-readme-snippets.mjs",
     "check:schema": "bash scripts/check-canonical-schema.sh",
+    "check:starter-pins": "node scripts/check-starter-pins.mjs",
     "changeset": "changeset",
     "release": "pnpm -r --filter \"./packages/*\" build && changeset publish",
     "release:check": "changeset status --verbose"

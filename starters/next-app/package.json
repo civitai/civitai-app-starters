@@ -36,7 +36,7 @@
     "test:e2e:install": "playwright install --with-deps chromium"
   },
   "dependencies": {
-    "@civitai/app-sdk": "^0.2.0",
+    "@civitai/app-sdk": "^0.24.0",
     "@t3-oss/env-nextjs": "^0.13.0",
     "next": "^16.2.6",
     "react": "^19.0.0",

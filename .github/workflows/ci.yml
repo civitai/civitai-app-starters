@@ -45,6 +45,22 @@ jobs:
       # Runs the bare script (curl + diff only) — no node/pnpm needed.
       - run: ./scripts/check-canonical-schema.sh
 
+  starter-pins:
+    name: Starter pins vs published
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # Assert every starter/template @civitai/* pin still admits the
+      # currently-published npm version (a 0.x caret locks the minor, so a
+      # stale pin silently births apps behind the SDK). Pure fetch + compare —
+      # no install needed, and it skips gracefully if npm is unreachable.
+      - run: node scripts/check-starter-pins.mjs
+
   blocks-react:
     name: blocks-react (typecheck + test + build)
     runs-on: ubuntu-latest
