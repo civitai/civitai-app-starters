@@ -81,4 +81,5 @@ export type {
   BlockWildcardPackErrorCode,
   AppWorkflow,
   AppWorkflowImage,
+  BlockGatedImage,
 } from './types.js';

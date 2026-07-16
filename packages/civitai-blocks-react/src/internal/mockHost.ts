@@ -56,6 +56,7 @@ import {
   type BlockWildcardPack,
   type BlockWildcardPackErrorCode,
   type AppWorkflow,
+  type BlockGatedImage,
   type ColorDomain,
   type SharedStorageValue,
   type Theme,
@@ -415,6 +416,38 @@ export interface MockHostOptions {
    */
   appWorkflowsError?: boolean | string | Error;
   /**
+   * The bare (post-less) scanned `Image` row ids returned from
+   * `PUBLISH_GENERATION_OUTPUTS` (what `usePublishGenerationOutputs().publish()`
+   * resolves with). Absent → {@link DEFAULT_PUBLISH_IMAGE_IDS}. Live-tunable via
+   * {@link MockHost.setScenario}.
+   */
+  publishImageIds?: number[];
+  /**
+   * Force `PUBLISH_GENERATION_OUTPUTS` to reply with the FREE-TEXT `error` variant
+   * instead of ids — exercises the block's publish error UI (a rejected
+   * `publish()`). `true` → a default message; a string → that message; an `Error`
+   * → its `.message`. Absent → the publish succeeds. Live-tunable via
+   * {@link MockHost.setScenario}.
+   */
+  publishError?: boolean | string | Error;
+  /**
+   * The per-viewer gated projection returned from `GET_IMAGES_BY_IDS` (what
+   * `useGatedImages().getImages()` resolves with). Each entry is a
+   * {@link BlockGatedImage} — `visible` (moderated projection incl. url) or
+   * `hidden` (NO url). Absent → {@link DEFAULT_GATED_IMAGES} (includes at least one
+   * `visible` AND one `hidden` entry so the blurred/hidden cell is exercised).
+   * Live-tunable via {@link MockHost.setScenario}.
+   */
+  gatedImages?: BlockGatedImage[];
+  /**
+   * Force `GET_IMAGES_BY_IDS` to reply with the FREE-TEXT `error` variant instead
+   * of images — exercises the block's gated-read error UI (a rejected
+   * `getImages()`). `true` → a default message; a string → that message; an
+   * `Error` → its `.message`. Absent → the read succeeds. Live-tunable via
+   * {@link MockHost.setScenario}.
+   */
+  gatedImagesError?: boolean | string | Error;
+  /**
    * The parsed pack returned from `GET_WILDCARD_PACK` (what `useWildcardPack`
    * reads). Absent → {@link DEFAULT_WILDCARD_PACK}. Ignored when
    * {@link wildcardPackError} is set.
@@ -531,6 +564,10 @@ export type MockHostScenarioPatch = Pick<
   | 'wildcardPackError'
   | 'appWorkflows'
   | 'appWorkflowsError'
+  | 'publishImageIds'
+  | 'publishError'
+  | 'gatedImages'
+  | 'gatedImagesError'
   | 'disallowedAccountTypes'
 >;
 
@@ -825,6 +862,57 @@ const DEFAULT_APP_WORKFLOWS: { workflows: AppWorkflow[]; cursor: string | null }
 };
 
 /**
+ * Default bare (post-less) scanned `Image` row ids reported on
+ * `PUBLISH_GENERATION_OUTPUTS` when {@link MockHostOptions.publishImageIds} is
+ * omitted — a plausible pair of newly-created image ids.
+ */
+const DEFAULT_PUBLISH_IMAGE_IDS: number[] = [9001, 9002];
+
+/** Default message for a simulated publish failure ({@link MockHostOptions.publishError}). */
+const DEFAULT_PUBLISH_ERROR = 'publish unavailable';
+
+/** Normalize a {@link MockHostOptions.publishError} value to an error string (or `undefined`). */
+function normalizePublishError(e: boolean | string | Error | undefined): string | undefined {
+  if (e === undefined || e === false) return undefined;
+  if (e === true) return DEFAULT_PUBLISH_ERROR;
+  if (typeof e === 'string') return e || DEFAULT_PUBLISH_ERROR;
+  return e.message || DEFAULT_PUBLISH_ERROR;
+}
+
+/**
+ * Default per-viewer gated projection reported on `GET_IMAGES_BY_IDS` when
+ * {@link MockHostOptions.gatedImages} is omitted. Deliberately mixes a `visible`
+ * entry (full moderated projection incl. url) with a `hidden` one (NO url) so a
+ * block's blurred/placeholder path is exercised out of the box.
+ */
+const DEFAULT_GATED_IMAGES: BlockGatedImage[] = [
+  {
+    imageId: 9001,
+    status: 'visible',
+    nsfwLevel: 1,
+    contentRating: 'pg',
+    url: 'https://image.civitai.com/mock/original=true/gated-9001.jpeg',
+    width: 1024,
+    height: 1024,
+  },
+  {
+    imageId: 9002,
+    status: 'hidden',
+  },
+];
+
+/** Default message for a simulated gated-image read failure ({@link MockHostOptions.gatedImagesError}). */
+const DEFAULT_GATED_IMAGES_ERROR = 'gated images unavailable';
+
+/** Normalize a {@link MockHostOptions.gatedImagesError} value to an error string (or `undefined`). */
+function normalizeGatedImagesError(e: boolean | string | Error | undefined): string | undefined {
+  if (e === undefined || e === false) return undefined;
+  if (e === true) return DEFAULT_GATED_IMAGES_ERROR;
+  if (typeof e === 'string') return e || DEFAULT_GATED_IMAGES_ERROR;
+  return e.message || DEFAULT_GATED_IMAGES_ERROR;
+}
+
+/**
  * The pool that "funded" a mock generation — the largest wallet pool, mirroring
  * the backend's primary-funder (largest-debit) stamp on
  * `BlockWorkflowSnapshot.spentAccountType`. Ties resolve to the conservative
@@ -1046,6 +1134,12 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     cursor: options.appWorkflows?.cursor ?? null,
   };
   let appWorkflowsError: string | undefined = normalizeAppWorkflowsError(options.appWorkflowsError);
+  // Publish-outputs bridge data + forced free-text-error knob.
+  let publishImageIds: number[] = options.publishImageIds ?? DEFAULT_PUBLISH_IMAGE_IDS;
+  let publishError: string | undefined = normalizePublishError(options.publishError);
+  // Gated-image read bridge data + forced free-text-error knob.
+  let gatedImages: BlockGatedImage[] = options.gatedImages ?? DEFAULT_GATED_IMAGES;
+  let gatedImagesError: string | undefined = normalizeGatedImagesError(options.gatedImagesError);
   // Pools a submit must reject (content-rating clamp). Normalized to a Set.
   let disallowedAccounts = new Set<BuzzAccountType>(options.disallowedAccountTypes ?? []);
 
@@ -1213,6 +1307,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           payload?: {
             requestId?: string;
             workflowId?: string;
+            imageIndexes?: number[];
+            imageIds?: number[];
+            title?: string;
             resourceType?: BlockResourcePickerType;
             purpose?: 'display' | 'generationSource';
             asyncScan?: boolean;
@@ -1595,6 +1692,47 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             dispatchToBlock({
               type: 'CANCEL_APP_WORKFLOW_RESULT',
               payload: { requestId, result: { workflow: canceled } },
+            });
+            return;
+          }
+
+          case 'PUBLISH_GENERATION_OUTPUTS': {
+            // Publish selected outputs of one of the app's OWN workflows as bare,
+            // real-scanned public Image rows. Drop a request with no requestId
+            // (unroutable). A forced error replies with the FREE-TEXT error variant
+            // (mirrors the real host forwarding err.message).
+            if (typeof requestId !== 'string') return;
+            if (publishError !== undefined) {
+              dispatchToBlock({
+                type: 'PUBLISH_RESULT',
+                payload: { requestId, error: publishError },
+              });
+              return;
+            }
+            dispatchToBlock({
+              type: 'PUBLISH_RESULT',
+              payload: { requestId, result: { imageIds: [...publishImageIds] } },
+            });
+            return;
+          }
+
+          case 'GET_IMAGES_BY_IDS': {
+            // Per-viewer gated image read. Drop a request with no requestId
+            // (unroutable). A forced error replies with the FREE-TEXT error variant
+            // (mirrors the real host forwarding err.message). The canned images
+            // include at least one `hidden` (no-url) entry so the block's
+            // blurred/placeholder path is exercised.
+            if (typeof requestId !== 'string') return;
+            if (gatedImagesError !== undefined) {
+              dispatchToBlock({
+                type: 'IMAGES_RESULT',
+                payload: { requestId, error: gatedImagesError },
+              });
+              return;
+            }
+            dispatchToBlock({
+              type: 'IMAGES_RESULT',
+              payload: { requestId, result: { images: gatedImages } },
             });
             return;
           }
@@ -2138,6 +2276,11 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     }
     if (patch.appWorkflowsError !== undefined)
       appWorkflowsError = normalizeAppWorkflowsError(patch.appWorkflowsError);
+    if (patch.publishImageIds !== undefined) publishImageIds = patch.publishImageIds;
+    if (patch.publishError !== undefined) publishError = normalizePublishError(patch.publishError);
+    if (patch.gatedImages !== undefined) gatedImages = patch.gatedImages;
+    if (patch.gatedImagesError !== undefined)
+      gatedImagesError = normalizeGatedImagesError(patch.gatedImagesError);
     if (patch.disallowedAccountTypes !== undefined)
       disallowedAccounts = new Set(patch.disallowedAccountTypes);
     if (patch.storage !== undefined) {

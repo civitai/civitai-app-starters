@@ -45,6 +45,10 @@ export { useWildcardPack, WildcardPackError } from './hooks/useWildcardPack.js';
 export type { UseWildcardPack } from './hooks/useWildcardPack.js';
 export { useAppWorkflows } from './hooks/useAppWorkflows.js';
 export type { UseAppWorkflows } from './hooks/useAppWorkflows.js';
+export { usePublishGenerationOutputs } from './hooks/usePublishGenerationOutputs.js';
+export type { UsePublishGenerationOutputs } from './hooks/usePublishGenerationOutputs.js';
+export { useGatedImages } from './hooks/useGatedImages.js';
+export type { UseGatedImages } from './hooks/useGatedImages.js';
 export type {
   BlockBuzzTransaction,
   BlockBuzzAccount,
@@ -54,6 +58,7 @@ export type {
   AppWorkflow,
   AppWorkflowImage,
   AppWorkflowsParams,
+  BlockGatedImage,
 } from '@civitai/app-sdk/blocks';
 export { useCheckpointPicker } from './hooks/useCheckpointPicker.js';
 export { useResourcePicker } from './hooks/useResourcePicker.js';

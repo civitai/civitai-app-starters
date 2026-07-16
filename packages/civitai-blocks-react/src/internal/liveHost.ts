@@ -643,6 +643,9 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           payload?: {
             requestId?: string;
             workflowId?: string;
+            imageIndexes?: number[];
+            imageIds?: number[];
+            title?: string;
             body?: WorkflowBody;
             path?: string;
             target?: 'current' | 'new_tab';
@@ -980,6 +983,59 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
                 payload: r.data
                   ? { requestId, result: r.data }
                   : { requestId, error: r.error ?? 'cancel failed' },
+              });
+            });
+            return;
+          }
+
+          case 'PUBLISH_GENERATION_OUTPUTS': {
+            // Publish selected outputs of one of the app's OWN workflows as bare,
+            // real-scanned public Image rows via the token-bound
+            // `blocks.publishGenerationOutputs` MUTATION (POST). The block sends
+            // `workflowId` + optional `imageIndexes` (NEVER urls); the host
+            // re-derives ownership, re-uploads + FULL-scans server-side. Returns a
+            // plain `{ imageIds }`, unwrapped with `callTrpcData`. FREE-TEXT error
+            // on failure. Unroutable without requestId.
+            if (typeof requestId !== 'string') return;
+            void callTrpcData(
+              'blocks.publishGenerationOutputs',
+              {
+                blockToken: rawToken,
+                workflowId: typed.payload?.workflowId,
+                ...(typed.payload?.imageIndexes !== undefined
+                  ? { imageIndexes: typed.payload.imageIndexes }
+                  : {}),
+                ...(typed.payload?.title !== undefined ? { title: typed.payload.title } : {}),
+              },
+              'POST',
+            ).then((r) => {
+              dispatchToBlock({
+                type: 'PUBLISH_RESULT',
+                payload: r.data
+                  ? { requestId, result: r.data }
+                  : { requestId, error: r.error ?? 'publish unavailable' },
+              });
+            });
+            return;
+          }
+
+          case 'GET_IMAGES_BY_IDS': {
+            // Per-viewer gated image read via the token-bound `blocks.getImagesByIds`
+            // MUTATION (POST). The host applies the requesting viewer's
+            // browsing-level clamp server-side and returns a plain `{ images }`
+            // (`BlockGatedImage[]` — visible/hidden), unwrapped with `callTrpcData`.
+            // FREE-TEXT error on failure. Unroutable without requestId.
+            if (typeof requestId !== 'string') return;
+            void callTrpcData(
+              'blocks.getImagesByIds',
+              { blockToken: rawToken, imageIds: typed.payload?.imageIds ?? [] },
+              'POST',
+            ).then((r) => {
+              dispatchToBlock({
+                type: 'IMAGES_RESULT',
+                payload: r.data
+                  ? { requestId, result: r.data }
+                  : { requestId, error: r.error ?? 'gated images unavailable' },
               });
             });
             return;
