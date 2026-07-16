@@ -611,6 +611,93 @@ export function isValidCancelAppWorkflowResult(p: unknown): boolean {
 }
 
 // ============================================================
+// Publish-outputs + gated-image reply validators
+// ============================================================
+//
+// Kept in lockstep with civitai/civitai's `blocks.publishGenerationOutputs` /
+// `blocks.getImagesByIds` return types + the host's `PUBLISH_RESULT` /
+// `IMAGES_RESULT` builders. Same value-or-error convention as the buzz +
+// app-subqueue bridges.
+
+/**
+ * Reply to a block-initiated `PUBLISH_GENERATION_OUTPUTS`. A well-formed reply
+ * carries EITHER a `result` ({ imageIds: number[] } — each a finite number) OR a
+ * free-text `error`; one with neither is malformed and dropped. Mirrors
+ * `isValidAppWorkflowsResult`'s value-or-error structure.
+ */
+export function isValidPublishResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (!Array.isArray(r.imageIds)) return false;
+    for (const id of r.imageIds) {
+      if (!isFiniteNumber(id)) return false;
+    }
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+const GATED_IMAGE_STATUSES = new Set<string>(['visible', 'hidden']);
+
+/**
+ * Shape-check ONE {@link import('@civitai/app-sdk/blocks').BlockGatedImage} entry.
+ * `imageId` is always a finite number and `status` one of `visible`/`hidden`.
+ *  - `visible` → the full moderated projection (`nsfwLevel` finite,
+ *    `contentRating` a `g|pg|pg13|r|x` ladder value, `url` a non-empty string,
+ *    `width`/`height` each `number | null`).
+ *  - `hidden`  → ONLY `imageId` + `status`. A `hidden` entry carrying a `url` is
+ *    REJECTED — defense in depth against a buggy/hostile host leaking an
+ *    unclamped url on an image the viewer isn't allowed to see.
+ */
+function isValidGatedImage(img: unknown): boolean {
+  if (!isObject(img)) return false;
+  if (!isFiniteNumber(img.imageId)) return false;
+  if (typeof img.status !== 'string' || !GATED_IMAGE_STATUSES.has(img.status)) return false;
+  if (img.status === 'visible') {
+    if (!isFiniteNumber(img.nsfwLevel)) return false;
+    if (typeof img.contentRating !== 'string' || !CONTENT_RATINGS.has(img.contentRating)) {
+      return false;
+    }
+    if (!isNonEmptyString(img.url)) return false;
+    // width/height are each `number | null` — accept a finite number OR null.
+    if (img.width !== null && !isFiniteNumber(img.width)) return false;
+    if (img.height !== null && !isFiniteNumber(img.height)) return false;
+    return true;
+  }
+  // status === 'hidden': ONLY imageId + status. A leaked `url` on a hidden entry
+  // is the exact cross-user moderation-boundary breach this guard exists to catch.
+  if ('url' in img) return false;
+  return true;
+}
+
+/**
+ * Reply to a block-initiated `GET_IMAGES_BY_IDS`. A well-formed reply carries
+ * EITHER a `result` ({ images: BlockGatedImage[] }) OR a free-text `error`; one
+ * with neither is malformed and dropped. Each image is shape-checked via
+ * {@link isValidGatedImage} — a `hidden` entry that carries a `url` DROPS the whole
+ * reply (defense in depth against a leaked unclamped url).
+ */
+export function isValidImagesResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (!Array.isArray(r.images)) return false;
+    for (const img of r.images) {
+      if (!isValidGatedImage(img)) return false;
+    }
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+// ============================================================
 // App-storage (per-viewer KV) reply validators
 // ============================================================
 //
@@ -914,6 +1001,10 @@ export function payloadValidatorFor(
       return isValidAppWorkflowsResult;
     case 'CANCEL_APP_WORKFLOW_RESULT':
       return isValidCancelAppWorkflowResult;
+    case 'PUBLISH_RESULT':
+      return isValidPublishResult;
+    case 'IMAGES_RESULT':
+      return isValidImagesResult;
     case 'IMAGE_UPLOAD_RESULT':
       return isValidImageUploadResult;
     case 'IMAGE_SCAN_RESOLVED':

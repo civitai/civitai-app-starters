@@ -884,3 +884,45 @@ export interface AppWorkflow {
   /** ISO-8601. */
   createdAt: string;
 }
+
+// ============================================================
+// Gated per-viewer image read (GET_IMAGES_BY_IDS / IMAGES_RESULT)
+// ============================================================
+
+/**
+ * Per-viewer gated projection of ONE image returned by `GET_IMAGES_BY_IDS`
+ * (`IMAGES_RESULT`). The host applies the REQUESTING VIEWER's browsing-level
+ * clamp server-side, so the shape a viewer receives depends on THEIR ceiling:
+ *
+ *  - `status: 'visible'` — the image is scanned clean, within this viewer's
+ *    browsing ceiling, and unflagged: the full moderated projection
+ *    (`nsfwLevel`/`contentRating`/`url`, plus `width`/`height` for grid layout).
+ *  - `status: 'hidden'` — the image EXISTS but is withheld from THIS viewer
+ *    (above their browsing ceiling, not-yet-scanned, or flagged). NO `url` is
+ *    ever returned — the block renders a blurred/placeholder cell. This is the
+ *    load-bearing cross-user moderation boundary: an unclamped edge URL never
+ *    crosses to a viewer who can't see the image.
+ *
+ * Image ids the host cannot resolve to a benchmark-eligible bare Image row are
+ * OMITTED from the result entirely (neither visible nor hidden).
+ *
+ * Mirrors civitai/civitai's gated-read projection in
+ * `src/server/services/blocks/*` — keep in lockstep.
+ */
+export type BlockGatedImage =
+  | {
+      imageId: number;
+      status: 'visible';
+      /** Scanner-resolved NSFW-level bitmask value. */
+      nsfwLevel: number;
+      /** Off-site content rating (`'g'|'pg'|'pg13'|'r'|'x'`). */
+      contentRating: ContentRating;
+      /** Civitai-hosted image URL (only present for a viewer allowed to see it). */
+      url: string;
+      width: number | null;
+      height: number | null;
+    }
+  | {
+      imageId: number;
+      status: 'hidden';
+    };

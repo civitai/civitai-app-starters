@@ -31,6 +31,7 @@ import type {
   BlockWildcardPack,
   BlockWildcardPackErrorCode,
   AppWorkflow,
+  BlockGatedImage,
 } from './types.js';
 
 // ============================================================
@@ -323,6 +324,23 @@ export type ParentToBlockMessage =
       };
     }
   | {
+      // Reply to PUBLISH_GENERATION_OUTPUTS. On success `result.imageIds` are the
+      // bare (post-less) scanned Image row ids created (order matches the resolved
+      // outputs). On host-side failure (anon / missing scope / not-owned workflow /
+      // rate-limit / upload/scan failure) `error` is a FREE-TEXT string and
+      // `result` is absent. Consumers treat a non-empty `error` as the reject
+      // signal (mirrors APP_WORKFLOWS_RESULT).
+      type: 'PUBLISH_RESULT';
+      payload: { requestId: string; result?: { imageIds: number[] }; error?: string };
+    }
+  | {
+      // Reply to GET_IMAGES_BY_IDS. On success `result.images` is the per-viewer
+      // gated projection (`BlockGatedImage[]`; unresolvable ids omitted). On host-
+      // side failure `error` is a FREE-TEXT string and `result` is absent.
+      type: 'IMAGES_RESULT';
+      payload: { requestId: string; result?: { images: BlockGatedImage[] }; error?: string };
+    }
+  | {
       // Reply to CANCEL_APP_WORKFLOW — the terminal (canceled) projection of the
       // one workflow the block canceled in its OWN subqueue. On success `result`
       // carries the re-read `workflow`; on host-side failure (FORBIDDEN — not in
@@ -586,6 +604,34 @@ export type BlockToParentMessage =
   | {
       type: 'QUERY_APP_WORKFLOWS';
       payload: { requestId: string; params?: AppWorkflowsParams };
+    }
+  | {
+      // Ask the host to PUBLISH selected outputs of ONE of the calling app's OWN
+      // workflows (from its app subqueue) as bare, REAL-SCANNED public Image rows.
+      // The block sends `workflowId` + optional `imageIndexes` (indexes into the
+      // workflow's `images` as seen via QUERY_APP_WORKFLOWS) — NEVER urls: the
+      // HOST resolves the orchestrator urls server-side from the ownership-
+      // verified workflow, so the iframe can't inject an arbitrary blob. FAIL-
+      // CLOSED server-side: the host re-derives (viewer, app, workflowId)
+      // ownership before reading the workflow, re-uploads each selected output to
+      // civitai storage, and runs the FULL image-scan pipeline (no skip). No Post,
+      // no gallery attach, no rewards/notifications. Host reads via
+      // `blocks.publishGenerationOutputs` → `PUBLISH_RESULT`. Host-chrome shows a
+      // consent confirm before publishing. `imageIndexes` absent ⇒ all available
+      // outputs. `title` is an optional advisory label (host MAY ignore it).
+      type: 'PUBLISH_GENERATION_OUTPUTS';
+      payload: { requestId: string; workflowId: string; imageIndexes?: number[]; title?: string };
+    }
+  | {
+      // Ask the host for per-VIEWER gated display data for a set of image ids
+      // (the ids a benchmark grid stored via shared storage). The host applies
+      // the REQUESTING VIEWER's browsing-level clamp server-side and returns a
+      // `BlockGatedImage` per resolvable id: `visible` (moderated projection incl.
+      // url) or `hidden` (NO url — above ceiling / unscanned / flagged). The block
+      // can NEVER obtain an unclamped url for an image the viewer isn't allowed to
+      // see. Host reads via `blocks.getImagesByIds` → `IMAGES_RESULT`.
+      type: 'GET_IMAGES_BY_IDS';
+      payload: { requestId: string; imageIds: number[] };
     }
   // Ask the host to cancel ONE workflow in the calling app's OWN subqueue. FAIL-
   // CLOSED server-side: the host re-derives (viewer, app, workflowId) ownership +
