@@ -832,6 +832,31 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             return;
           }
 
+          case 'GET_VIEWER': {
+            // Read the signed-in viewer via the token-bound `blocks.getMyViewer`
+            // tRPC MUTATION (POST — the block JWT rides in the request body,
+            // never the URL). It returns a plain `{ id, username, status,
+            // buzzBudget? }` object, so unwrap it with `callTrpcData` (NOT
+            // `callTrpcMutation`, which expects a `{ snapshot }` wrapper). FREE-
+            // TEXT error on failure (anon / banned viewer). Drop a request with
+            // no `requestId` — the block correlates the reply by it, so a reply
+            // without one is unroutable.
+            if (typeof requestId !== 'string') return;
+            void callTrpcData(
+              'blocks.getMyViewer',
+              { blockToken: rawToken },
+              'POST',
+            ).then((r) => {
+              dispatchToBlock({
+                type: 'VIEWER_RESULT',
+                payload: r.data
+                  ? { requestId, viewer: r.data }
+                  : { requestId, error: r.error ?? 'viewer unavailable' },
+              });
+            });
+            return;
+          }
+
           case 'GET_BUZZ_TRANSACTIONS': {
             // Ledger read via the token-bound `blocks.getMyBuzzTransactions`
             // MUTATION (POST). params are spread FIRST so the host-authoritative

@@ -33,6 +33,8 @@ export { useBlockResize } from './hooks/useBlockResize.js';
 export { useBuzzPurchase } from './hooks/useBuzzPurchase.js';
 export { useBuzzBalance } from './hooks/useBuzzBalance.js';
 export type { BuzzBalance, UseBuzzBalance } from './hooks/useBuzzBalance.js';
+export { useViewer } from './hooks/useViewer.js';
+export type { UseViewer } from './hooks/useViewer.js';
 export { useBuzzTransactions } from './hooks/useBuzzTransactions.js';
 export type { BuzzTransaction, UseBuzzTransactions } from './hooks/useBuzzTransactions.js';
 export { useBuzzAccounts } from './hooks/useBuzzAccounts.js';

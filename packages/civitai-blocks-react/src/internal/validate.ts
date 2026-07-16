@@ -224,6 +224,48 @@ export function isValidBuzzBalanceResult(
   return true;
 }
 
+const VIEWER_STATUSES = new Set<string>(['active', 'muted']);
+
+/**
+ * Reply to a block-initiated `GET_VIEWER`. A well-formed reply carries EITHER a
+ * `viewer` ({ id, username, status, buzzBudget }) OR a free-text `error`; one
+ * with neither is malformed and dropped. Mirrors the `BUZZ_BALANCE_RESULT`
+ * value-or-error convention.
+ *
+ * NULLABILITY (host PR #3152): `username` is `string | null` and `buzzBudget` is
+ * `number | null` — both present-but-NULLABLE, not omitted. The guard MUST ACCEPT
+ * `null` for both (the host returns `username: null` for a viewer with no handle,
+ * `buzzBudget: null` when the token lacks the budget claim). Rejecting a valid
+ * `null` is the exact too-strict-guard trap that hung `useBuzzTransactions` on the
+ * null cursor — a dropped valid reply hangs the hook to its 30s timeout.
+ */
+export function isValidViewerResult(
+  p: unknown,
+): p is {
+  viewer?: { id: number; username: string | null; status: string; buzzBudget: number | null };
+  error?: string;
+  requestId?: string;
+} {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.viewer !== undefined) {
+    const v = p.viewer;
+    if (!isObject(v)) return false;
+    if (!isFiniteNumber(v.id)) return false;
+    // `username` is `string | null` — accept a string (any) OR null; reject only
+    // other types (number/undefined/object).
+    if (typeof v.username !== 'string' && v.username !== null) return false;
+    if (typeof v.status !== 'string' || !VIEWER_STATUSES.has(v.status)) return false;
+    // `buzzBudget` is `number | null` — accept a finite number OR null. Do NOT
+    // reject null (see NULLABILITY above).
+    if (!isFiniteNumber(v.buzzBudget) && v.buzzBudget !== null) return false;
+  }
+  // A reply must resolve to something — either the viewer or an error.
+  if (p.viewer === undefined && p.error === undefined) return false;
+  return true;
+}
+
 const CONTENT_RATINGS = new Set<string>(['g', 'pg', 'pg13', 'r', 'x']);
 
 /** The moderated (`purpose:'display'`) `IMAGE_UPLOAD_RESULT.selected` shape. */
@@ -452,6 +494,8 @@ export function payloadValidatorFor(
       return isValidBuzzPurchaseResult;
     case 'BUZZ_BALANCE_RESULT':
       return isValidBuzzBalanceResult;
+    case 'VIEWER_RESULT':
+      return isValidViewerResult;
     case 'BUZZ_TRANSACTIONS_RESULT':
       return isValidBuzzTransactionsResult;
     case 'BUZZ_ACCOUNTS_RESULT':

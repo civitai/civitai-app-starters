@@ -25,6 +25,7 @@ import type {
   BlockBuzzTransaction,
   BlockBuzzAccount,
   BlockDailyCompensationResource,
+  BlockViewer,
   BlockWildcardPack,
   BlockWildcardPackErrorCode,
 } from './types.js';
@@ -219,6 +220,20 @@ export type ParentToBlockMessage =
       payload: {
         requestId: string;
         balance?: { blue: number; green: number; yellow: number };
+        error?: string;
+      };
+    }
+  | {
+      // Reply to GET_VIEWER — the viewer self-read. On success `viewer` carries
+      // the signed-in viewer ({@link BlockViewer} — id/username/status/buzzBudget,
+      // where `username` + `buzzBudget` are present-but-NULLABLE); on host-side
+      // failure (anonymous / banned viewer, missing scope, or host failure)
+      // `error` is a FREE-TEXT string and `viewer` is absent. Consumers treat a
+      // non-empty `error` as the reject signal (mirrors BUZZ_BALANCE_RESULT).
+      type: 'VIEWER_RESULT';
+      payload: {
+        requestId: string;
+        viewer?: BlockViewer;
         error?: string;
       };
     }
@@ -455,6 +470,12 @@ export type BlockToParentMessage =
   // (scoped to the block token's viewer) and replies with `BUZZ_BALANCE_RESULT`.
   // The block never sees the balance API or credentials directly.
   | { type: 'GET_BUZZ_BALANCE'; payload: { requestId: string } }
+  // Ask the host for the signed-in viewer (id/username/status + optional
+  // buzzBudget). Host-mediated + token-bound: the host resolves the viewer from
+  // the block token and reads via the `blocks.getMyViewer` tRPC mutation,
+  // replying with `VIEWER_RESULT`. An anonymous / banned token comes back as the
+  // reply's free-text `error`. The block never sees the viewer API directly.
+  | { type: 'GET_VIEWER'; payload: { requestId: string } }
   // Ask the host for the viewer's Buzz-transaction ledger page. Host-mediated +
   // token-bound (scope `buzz:read:self`): the host self-binds the account off
   // the block token and reads via `blocks.getMyBuzzTransactions`, replying with

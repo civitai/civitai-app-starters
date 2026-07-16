@@ -223,6 +223,76 @@ if (!loading && balance) console.log(`Yellow: ${balance.yellow}`);
 > `body.accountType` (`'blue' | 'green' | 'yellow'`) — a *preference* for which
 > pool funds the generation; the host clamps it server-side.
 
+### `useViewer()`
+
+The signed-in viewer as an on-demand authoritative self-read (`{ id, username,
+status, buzzBudget }`) — distinct from `useBlockContext().viewer`, the coarse
+`BLOCK_INIT`-time snapshot. `status` is `'active' | 'muted'`; `username`
+(`string | null`) and `buzzBudget` (`number | null`) are present-but-nullable, so
+handle the null case. Host-mediated over `GET_VIEWER` → `VIEWER_RESULT` (the host
+resolves the viewer from the block token via `blocks.getMyViewer`); an anonymous /
+banned viewer comes back as `error`. Fetches on mount; `refetch` for on-demand
+refreshes.
+
+```tsx
+const { viewer, loading, error, refetch } = useViewer();
+// `viewer` is null until the first successful fetch. An anon / banned viewer,
+// missing scope, or host failure → `error`. `username`/`buzzBudget` may be null.
+if (!loading && viewer) console.log(`${viewer.username ?? 'anon'} · budget ${viewer.buzzBudget ?? 0}`);
+```
+
+### `useBuzzTransactions(params?)`
+
+The signed-in viewer's Buzz-transaction ledger (a paged, host-projected read of
+the Buzz dashboard). Returns `{ transactions, cursor, loading, error, refetch }`;
+`transactions` rows are rehydrated so `date` is a `Date`. Pass the returned
+`cursor` back as `params.cursor` to page forward. Requires the `buzz:read:self`
+scope; host-mediated over `GET_BUZZ_TRANSACTIONS`.
+
+```tsx
+const { transactions, cursor, loading, error } = useBuzzTransactions({ type: 'Tip', limit: 20 });
+if (!loading && transactions) transactions.forEach((t) => console.log(t.type, t.amount, t.date));
+```
+
+### `useBuzzAccounts()`
+
+The viewer's all-pool Buzz balances — the three spendable pools **plus** the
+creator payout pools (`{ accountType, balance }[]`), a superset of
+`useBuzzBalance`. Returns `{ accounts, loading, error, refetch }`. Requires
+`buzz:read:self`; host-mediated over `GET_BUZZ_ACCOUNTS`.
+
+```tsx
+const { accounts, loading, error } = useBuzzAccounts();
+if (!loading && accounts) accounts.forEach((a) => console.log(a.accountType, a.balance));
+```
+
+### `useDailyCompensation(params)`
+
+Per-modelVersion generation-compensation for the month containing `params.date`
+(Buzz totals + cash totals in pennies). Returns `{ resources,
+hasPublishedResources, loading, error, refetch }`. Requires `buzz:read:self`;
+host-mediated over `GET_DAILY_COMPENSATION`.
+
+```tsx
+const { resources, hasPublishedResources } = useDailyCompensation({ date: '2026-07-01' });
+```
+
+### `useWildcardPack(modelVersionId)`
+
+Import a wildcard pack's parsed prompt lists by model version — the host
+resolves + fetches + unzips + parses it **in the user's own page session** (every
+download gate enforced), so the untrusted iframe never sees the bytes. Returns
+`{ pack, loading, error, refetch }`. On failure `error` is a `WildcardPackError`
+with a discriminated `code` (`not-found` / `forbidden` / `too-large` /
+`parse-failed` / `busy` — `busy` is retryable), not free text.
+
+```tsx
+const { pack, loading, error, refetch } = useWildcardPack(modelVersionId);
+// `error.code === 'busy'` is retryable — call refetch(); the other codes are terminal.
+if (error instanceof WildcardPackError && error.code === 'busy') void refetch();
+if (!loading && pack) console.log(Object.keys(pack.lists));
+```
+
 ### `useAppStorage()`
 
 Per-(block instance, viewer) KV datastore, host-mediated. 64 KB per value,

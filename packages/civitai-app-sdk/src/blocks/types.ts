@@ -709,6 +709,32 @@ export interface BlockDailyCompensationResource {
 }
 
 /**
+ * The signed-in viewer as the host projects it for a block on the wire in
+ * `VIEWER_RESULT` (the host-mediated `GET_VIEWER` self-read).
+ *
+ * Mirrors civitai/civitai's `blocks.getMyViewer` projection
+ * (`src/server/routers/blocks.router.ts`, PR #3152) — keep in lockstep. Distinct
+ * from the BLOCK_INIT-embedded {@link ViewerInfo}: `status` is the narrow
+ * spendable/mutable pair (`'active' | 'muted'` — a `banned` viewer can't read at
+ * all, so the read fails rather than returning `status: 'banned'`). The read is
+ * token-bound: only a signed-in viewer resolves; an anonymous / banned token
+ * comes back as the `VIEWER_RESULT` free-text `error` instead.
+ *
+ * NULLABILITY: both `username` and `buzzBudget` are present-but-NULLABLE, not
+ * omitted. The host returns `username: null` for a viewer with no handle and
+ * `buzzBudget: null` when the block token lacks the budget claim — the fields are
+ * always present on a success reply. Consumers (and the trust-boundary guard)
+ * MUST accept `null` for both; the block handles the null case.
+ */
+export interface BlockViewer {
+  id: number;
+  username: string | null;
+  status: 'active' | 'muted';
+  /** The viewer's current Buzz budget, or `null` when the token lacks the claim. */
+  buzzBudget: number | null;
+}
+
+/**
  * The DISCRIMINATED error enum a `WILDCARD_PACK_RESULT` carries on failure —
  * mirror civitai/civitai's `WildcardPackErrorCode`
  * (`src/components/AppBlocks/wildcardPackParse.ts`) EXACTLY. Unlike the buzz

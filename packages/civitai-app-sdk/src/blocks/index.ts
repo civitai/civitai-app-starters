@@ -73,6 +73,7 @@ export type {
   BlockBuzzTransaction,
   BlockBuzzAccount,
   BlockDailyCompensationResource,
+  BlockViewer,
   BlockWildcardPack,
   BlockWildcardPackErrorCode,
 } from './types.js';
