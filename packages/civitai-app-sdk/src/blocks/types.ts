@@ -148,6 +148,65 @@ export interface BlockUploadedImageInfo {
 }
 
 /**
+ * Early-resolve handle for an ASYNC-SCAN `'display'` upload (`asyncScan: true`
+ * on `OPEN_IMAGE_UPLOAD`). The image has been PERSISTED (its `imageId` is known)
+ * but is NOT yet scanned — so it is AUTHOR-PREVIEW-ONLY until the verdict lands.
+ * The host early-resolves the upload modal with this handle and streams the scan
+ * verdict later via {@link BlockImageScanResult} on a host→block `IMAGE_SCAN_RESOLVED`.
+ *
+ * `status: 'pending'` is the on-wire DISCRIMINANT that tells the SDK hook this is
+ * a pending handle rather than a moderated {@link BlockUploadedImageInfo} (a host
+ * that predates async-scan returns the moderated shape directly — the hook treats
+ * that as immediately-scanned; see the compat matrix in `useImageUpload`).
+ *
+ * SECURITY: a pending handle is NOT a moderation stamp. Its `imageId`/`url` are
+ * the author's OWN just-uploaded image and are safe to preview to that author,
+ * but MUST NOT be persisted to any cross-user surface until a `'scanned'` verdict
+ * arrives — the server-side display gate remains authoritative and refuses to
+ * serve an unscanned/blocked image to others.
+ *
+ * Mirrors the host's pending projection in civitai/civitai's
+ * `BlockImageUploadModal.tsx` / `PageBlockHost.tsx`. Keep in lockstep.
+ */
+export interface BlockPendingImageInfo {
+  /** On-wire discriminant vs the moderated {@link BlockUploadedImageInfo}. */
+  status: 'pending';
+  /** The persisted `Image` row id (NOT yet scan-cleared). */
+  imageId: number;
+  /**
+   * Civitai-hosted edge URL of the author's OWN just-uploaded image (an
+   * unguessable UUID key). AUTHOR-ONLY preview; NOT persisted to any cross-user
+   * surface until the scan verdict is `'scanned'`.
+   */
+  url: string;
+}
+
+/**
+ * Async scan verdict for a pending `'display'` upload, delivered host→block on
+ * `IMAGE_SCAN_RESOLVED` (correlated to the originating `OPEN_IMAGE_UPLOAD` by its
+ * `requestId` + the `imageId`). A discriminated union:
+ *
+ *  - `'scanned'` — the image cleared the pipeline: scanned clean, within the SFW
+ *    ceiling, and unflagged. ONLY this verdict carries a usable moderated
+ *    {@link BlockUploadedImageInfo} projection (the same shape the BLOCKING path
+ *    returns). This is the only verdict on which a block may persist the image to
+ *    a cross-user surface.
+ *  - `'blocked'` — a TERMINAL non-clean outcome (scan verdict / over the NSFW
+ *    ceiling / flagged / import-failed). Carries NO usable image — the block must
+ *    NOT persist it. `reason` is an optional UI-renderable message.
+ *  - `'error'` — a TRANSIENT / host-side error or poll-budget timeout. RETRYABLE
+ *    (a network blip must NOT be mislabelled `'blocked'`); the block may re-call
+ *    `scanStatus`. Carries NO usable image. `message` is an optional detail.
+ *
+ * Mirrors the host's `BlockImageScanPoller` verdict in civitai/civitai's
+ * `PageBlockHost.tsx`. Keep in lockstep.
+ */
+export type BlockImageScanResult =
+  | { status: 'scanned'; image: BlockUploadedImageInfo }
+  | { status: 'blocked'; reason?: string }
+  | { status: 'error'; message?: string };
+
+/**
  * Upload MODE for `OPEN_IMAGE_UPLOAD` (via {@link useImageUpload}). Mirrors the
  * host's `BlockUploadPurpose` in civitai/civitai's `pageBlockHostLogic.ts`.
  *

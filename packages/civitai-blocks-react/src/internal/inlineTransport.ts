@@ -82,4 +82,13 @@ export class InlineTransport implements BlockTransport {
   ): Promise<unknown> {
     return Promise.reject(new Error('InlineTransport.sendRequest is not implemented in v1'));
   }
+
+  onMessage(
+    _type: ParentToBlockMessageType,
+    _handler: (payload: unknown) => void,
+  ): () => void {
+    // v1 inline mode receives no host pushes (sendMessage/sendRequest are no-ops
+    // too); the full implementation lands with v2 inline mode.
+    return () => {};
+  }
 }

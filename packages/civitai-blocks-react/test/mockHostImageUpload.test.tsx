@@ -135,4 +135,74 @@ describe('createMockHost — image-upload scenario', () => {
     expect(await display.result.current.open()).toBeNull();
     expect(await source.result.current.open()).not.toBeNull();
   });
+
+  // ---- Non-blocking (asyncScan) display flow ----
+
+  it('asyncScan: open() early-resolves a pending handle, then scanStatus → scanned', async () => {
+    host = createMockHost({}); // cannedImageScan defaults to 'scanned'
+    uninstall = host.install();
+    const { result } = renderHook(() => useImageUpload({ asyncScan: true }));
+    await ready();
+
+    const handle = await result.current.open();
+    expect(handle).not.toBeNull();
+    expect(handle!.status).toBe('pending');
+    expect(typeof handle!.imageId).toBe('number');
+    expect(handle!.url).toContain('civitai.com');
+
+    const verdict = await result.current.scanStatus!(handle!);
+    expect(verdict.status).toBe('scanned');
+    if (verdict.status === 'scanned') {
+      // the scanned verdict carries the moderated image (same imageId as the handle)
+      expect(verdict.image.imageId).toBe(handle!.imageId);
+      expect(verdict.image.contentRating).toBe('pg');
+    }
+  });
+
+  it('asyncScan: cannedImageScan blocked → scanStatus resolves blocked (no usable image)', async () => {
+    host = createMockHost({ cannedImageScan: { status: 'blocked', reason: 'nsfw' } });
+    uninstall = host.install();
+    const { result } = renderHook(() => useImageUpload({ asyncScan: true }));
+    await ready();
+
+    const handle = (await result.current.open())!;
+    const verdict = await result.current.scanStatus!(handle);
+    expect(verdict).toEqual({ status: 'blocked', reason: 'nsfw' });
+    expect('image' in verdict).toBe(false);
+  });
+
+  it('asyncScan: cannedImageScan error → scanStatus resolves a retryable error', async () => {
+    host = createMockHost({ cannedImageScan: 'error' });
+    uninstall = host.install();
+    const { result } = renderHook(() => useImageUpload({ asyncScan: true }));
+    await ready();
+
+    const handle = (await result.current.open())!;
+    const verdict = await result.current.scanStatus!(handle);
+    expect(verdict.status).toBe('error');
+    expect('image' in verdict).toBe(false);
+  });
+
+  it('asyncScan: cannedImageUpload:null still means dismissed (bare result, no verdict)', async () => {
+    host = createMockHost({ cannedImageUpload: null });
+    uninstall = host.install();
+    const { result } = renderHook(() => useImageUpload({ asyncScan: true }));
+    await ready();
+
+    await expect(result.current.open()).resolves.toBeNull();
+  });
+
+  it('asyncScan: setScenario can flip the verdict mid-session (scanned → blocked)', async () => {
+    host = createMockHost({});
+    uninstall = host.install();
+    const { result } = renderHook(() => useImageUpload({ asyncScan: true }));
+    await ready();
+
+    const first = (await result.current.open())!;
+    expect((await result.current.scanStatus!(first)).status).toBe('scanned');
+
+    host.setScenario({ cannedImageScan: { status: 'blocked', reason: 'flip' } });
+    const second = (await result.current.open())!;
+    expect(await result.current.scanStatus!(second)).toEqual({ status: 'blocked', reason: 'flip' });
+  });
 });

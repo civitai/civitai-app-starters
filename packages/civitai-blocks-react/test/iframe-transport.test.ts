@@ -116,6 +116,45 @@ describe('IframeTransport', () => {
     transport.dispose();
   });
 
+  it('drops a well-formed IMAGE_SCAN_RESOLVED push from a disallowed origin (async-scan invariant #4)', async () => {
+    // Locks the origin gate for UNSOLICITED parent→block pushes: a byte-perfect,
+    // payload-valid IMAGE_SCAN_RESOLVED that happens to come from the wrong origin
+    // must be dropped BEFORE it reaches an onMessage handler — otherwise a
+    // cross-origin page could forge a "scanned" verdict for a block. Guards
+    // against a future reorder that dispatches the push ahead of the origin check.
+    const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+    const initPromise = transport.waitForInit();
+    window.dispatchEvent(mockParentMessage({ type: 'BLOCK_INIT', payload: buildInitPayload() }, PARENT_ORIGIN));
+    await initPromise;
+
+    const received: unknown[] = [];
+    const off = transport.onMessage('IMAGE_SCAN_RESOLVED', (payload) => received.push(payload));
+
+    const scanPush: ParentToBlockMessage = {
+      type: 'IMAGE_SCAN_RESOLVED',
+      payload: {
+        requestId: 'req-1',
+        imageId: 123,
+        result: {
+          status: 'scanned',
+          image: { imageId: 123, nsfwLevel: 1, contentRating: 'pg', url: 'https://image.civitai.com/x' },
+        },
+      },
+    };
+
+    // Disallowed origin → dropped at the allowlist gate, handler never fires
+    // (a consumer's scanStatus() would stay pending, not resolve to "scanned").
+    window.dispatchEvent(mockParentMessage(scanPush, OTHER_ORIGIN));
+    expect(received).toEqual([]);
+
+    // Positive control: the identical push from the ALLOWED origin IS delivered.
+    window.dispatchEvent(mockParentMessage(scanPush, PARENT_ORIGIN));
+    expect(received).toEqual([scanPush.payload]);
+
+    off();
+    transport.dispose();
+  });
+
   it('accepts BLOCK_INIT from a wildcard-matched preview subdomain', async () => {
     const transport = new IframeTransport({
       allowedParentOrigins: ['https://civitai.com', 'https://*.civitaic.com'],

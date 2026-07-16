@@ -290,6 +290,19 @@ function isGenerationSourceUpload(s: Record<string, unknown>): boolean {
 }
 
 /**
+ * The `asyncScan:true` (`purpose:'display'`) EARLY-RESOLVE `IMAGE_UPLOAD_RESULT.selected`
+ * shape — a {@link BlockPendingImageInfo}: `status:'pending'`, a positive-integer
+ * `imageId`, and a non-empty `url`. NOT yet scanned (author-preview-only) — the
+ * verdict arrives later on `IMAGE_SCAN_RESOLVED`.
+ */
+function isPendingUpload(s: Record<string, unknown>): boolean {
+  if (s.status !== 'pending') return false;
+  if (typeof s.imageId !== 'number' || !Number.isInteger(s.imageId) || s.imageId <= 0) return false;
+  if (!isNonEmptyString(s.url)) return false;
+  return true;
+}
+
+/**
  * Reply to a block-initiated `OPEN_IMAGE_UPLOAD`. `selected` is ABSENT when the
  * user dismissed the upload modal (the block's hook resolves to `null`). When
  * present it is a UNION keyed by the request's `purpose`:
@@ -309,18 +322,58 @@ export function isValidImageUploadResult(
   requestId?: string;
   selected?:
     | { imageId: number; nsfwLevel: number; contentRating: string; url: string }
-    | { url: string; width: number; height: number };
+    | { url: string; width: number; height: number }
+    | { status: 'pending'; imageId: number; url: string };
 } {
   if (!isObject(p)) return false;
   if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
   // `selected` absent → cancelled upload (valid). When present, it must match
-  // one of the two purpose-keyed shapes.
+  // one of the purpose-keyed shapes (moderated / generationSource / pending).
   if (p.selected !== undefined) {
     const s = p.selected;
     if (!isObject(s)) return false;
-    if (!isModeratedUpload(s) && !isGenerationSourceUpload(s)) return false;
+    if (!isModeratedUpload(s) && !isGenerationSourceUpload(s) && !isPendingUpload(s)) return false;
   }
   return true;
+}
+
+/**
+ * Host→block `IMAGE_SCAN_RESOLVED` — the async scan verdict for a pending
+ * `'display'` upload (the `asyncScan:true` early-resolve path). Shape-checks the
+ * correlation fields (`requestId` a non-empty string, `imageId` a positive
+ * integer) + the discriminated `result` union the hook dereferences:
+ *   • `'scanned'` → carries a moderated {@link BlockUploadedImageInfo} `image`
+ *     (the ONLY verdict with a usable image).
+ *   • `'blocked'` → optional `reason` string, no image.
+ *   • `'error'`  → optional `message` string, no image.
+ * A malformed / unknown-status verdict drops (the hook keeps awaiting / times out)
+ * rather than crashing. Mirrors the host's `BlockImageScanPoller` verdict.
+ */
+export function isValidImageScanResolved(
+  p: unknown,
+): p is {
+  requestId: string;
+  imageId: number;
+  result:
+    | { status: 'scanned'; image: { imageId: number; nsfwLevel: number; contentRating: string; url: string } }
+    | { status: 'blocked'; reason?: string }
+    | { status: 'error'; message?: string };
+} {
+  if (!isObject(p)) return false;
+  if (!isNonEmptyString(p.requestId)) return false;
+  if (typeof p.imageId !== 'number' || !Number.isInteger(p.imageId) || p.imageId <= 0) return false;
+  if (!isObject(p.result)) return false;
+  const r = p.result;
+  switch (r.status) {
+    case 'scanned':
+      return isObject(r.image) && isModeratedUpload(r.image);
+    case 'blocked':
+      return r.reason === undefined || typeof r.reason === 'string';
+    case 'error':
+      return r.message === undefined || typeof r.message === 'string';
+    default:
+      return false;
+  }
 }
 
 /**
@@ -506,6 +559,8 @@ export function payloadValidatorFor(
       return isValidWildcardPackResult;
     case 'IMAGE_UPLOAD_RESULT':
       return isValidImageUploadResult;
+    case 'IMAGE_SCAN_RESOLVED':
+      return isValidImageScanResolved;
     case 'SHARED_UPDATE_RESULT':
       return isValidSharedUpdateResult;
     case 'SUSPEND':

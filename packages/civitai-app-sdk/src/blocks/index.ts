@@ -63,6 +63,8 @@ export type {
   BlockSourceImage,
   BlockUploadedImageInfo,
   BlockGenerationSourceImageInfo,
+  BlockPendingImageInfo,
+  BlockImageScanResult,
   BlockUploadPurpose,
   BlockTextToImageParams,
   BlockWorkflowSnapshot,
