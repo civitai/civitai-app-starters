@@ -97,7 +97,7 @@ interface BlockInitPayload {
 | Export | What |
 |---|---|
 | `defineBlock({ manifest })` | Validates a `BlockManifestV1` (subset of the server checks) and returns it. Call at module scope so authoring mistakes throw before mount. Throws `BlockManifestError` (has a `.field` dot-path). |
-| `BLOCK_SCOPES` / `BLOCK_SCOPE_PATTERN` | The 10 known block scope strings (the authoritative enum `defineBlock` validates against) + the `domain:verb:target` format-helper regex. A scope is valid only if it's a member of `BLOCK_SCOPES`, matching the [canonical schema](https://civitai.com/schemas/app-block/v1.json). |
+| `BLOCK_SCOPES` / `BLOCK_SCOPE_PATTERN` | The 15 known block scope strings (the authoritative enum `defineBlock` validates against) + the `domain:verb:target` format-helper regex. A scope is valid only if it's a member of `BLOCK_SCOPES`, matching the [canonical schema](https://civitai.com/schemas/app-block/v1.json). |
 | `isMessage(data, type)` | Discriminator-only message narrowing (see above). |
 | types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
 
@@ -113,7 +113,7 @@ Mirrors a strict subset of the civitai/civitai server gate. It throws on:
   the blockId becomes `<blockId>.civit.ai`; `version` not semver; `name` > 80 chars.
 - `type` not `block` | `embed`; `contentRating` not `g|pg|pg13|r|x`.
 - **Empty `scopes`** (must be a non-empty array) or any scope that isn't one of
-  the 10 known block scopes (`BLOCK_SCOPES`). The [canonical schema](https://civitai.com/schemas/app-block/v1.json)
+  the 15 known block scopes (`BLOCK_SCOPES`). The [canonical schema](https://civitai.com/schemas/app-block/v1.json)
   validates `scopes` by **enum membership**, so a well-formed but unknown scope
   (e.g. `models:read:all`) is rejected; PascalCase like `ModelsReadSelf` gets a
   pointed error.
