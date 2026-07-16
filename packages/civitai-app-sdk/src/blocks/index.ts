@@ -34,6 +34,7 @@ export type {
   WrappedToken,
   BlockBuzzTransactionsParams,
   BlockDailyCompensationParams,
+  AppWorkflowsParams,
 } from './messages.js';
 
 export type {
@@ -78,4 +79,6 @@ export type {
   BlockViewer,
   BlockWildcardPack,
   BlockWildcardPackErrorCode,
+  AppWorkflow,
+  AppWorkflowImage,
 } from './types.js';

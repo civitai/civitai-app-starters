@@ -30,6 +30,7 @@ import type {
   BlockViewer,
   BlockWildcardPack,
   BlockWildcardPackErrorCode,
+  AppWorkflow,
 } from './types.js';
 
 // ============================================================
@@ -54,6 +55,20 @@ export interface BlockBuzzTransactionsParams {
   /** Window end (ISO-8601; `z.coerce.date` server-side). */
   end?: string;
   /** Page size, 1..200 (default 50 server-side). */
+  limit?: number;
+}
+
+/**
+ * Filter params for `QUERY_APP_WORKFLOWS` — the app generator SUBQUEUE read. Both
+ * optional; the host validates them server-side (the account + the per-app tag
+ * filter are host-forced off the block token — NEVER trusted from these). Mirrors
+ * civitai/civitai's `blocks.queryAppWorkflows` input (`blocks.router.ts`, PR
+ * #3164) minus the host-injected `blockToken`/`tags`.
+ */
+export interface AppWorkflowsParams {
+  /** Opaque keyset cursor — the `cursor` a prior `APP_WORKFLOWS_RESULT` returned (1..256 chars server-side). */
+  cursor?: string;
+  /** Page size, 1..50 (default 20 server-side). */
   limit?: number;
 }
 
@@ -290,6 +305,35 @@ export type ParentToBlockMessage =
         requestId: string;
         pack?: BlockWildcardPack;
         error?: BlockWildcardPackErrorCode;
+      };
+    }
+  | {
+      // Reply to QUERY_APP_WORKFLOWS — the app generator SUBQUEUE page (the
+      // calling app's OWN tag-scoped generations, newest-first). On success
+      // `result` carries the page (`workflows` + the next-page `cursor`, which is
+      // `null` on the last/only page); on host-side failure `error` is a FREE-TEXT
+      // string (the host forwards `err.message`, e.g. a missing-scope / rate-limit
+      // message) and `result` is absent. Consumers treat a non-empty `error` as
+      // the reject signal (mirrors BUZZ_TRANSACTIONS_RESULT).
+      type: 'APP_WORKFLOWS_RESULT';
+      payload: {
+        requestId: string;
+        result?: { workflows: AppWorkflow[]; cursor: string | null };
+        error?: string;
+      };
+    }
+  | {
+      // Reply to CANCEL_APP_WORKFLOW — the terminal (canceled) projection of the
+      // one workflow the block canceled in its OWN subqueue. On success `result`
+      // carries the re-read `workflow`; on host-side failure (FORBIDDEN — not in
+      // this app's subqueue / not owned — or a transport error) `error` is a
+      // FREE-TEXT string and `result` is absent. Same value-or-error convention as
+      // APP_WORKFLOWS_RESULT.
+      type: 'CANCEL_APP_WORKFLOW_RESULT';
+      payload: {
+        requestId: string;
+        result?: { workflow: AppWorkflow };
+        error?: string;
       };
     }
   | {
@@ -532,6 +576,24 @@ export type BlockToParentMessage =
   // `error` code). The untrusted iframe never sees the session, signed URL, or raw
   // bytes.
   | { type: 'GET_WILDCARD_PACK'; payload: { requestId: string; modelVersionId: number } }
+  // Ask the host for a page of the calling app's OWN generator subqueue — the
+  // tag-scoped list of generations this app produced for the viewer, newest-first
+  // (scope `ai:write:budgeted`, same trust boundary as submit). Host-mediated +
+  // token-bound: the host self-binds the account off the block token and forces
+  // the per-app tag filter (the params carry NO `tags` — a block can't widen it),
+  // reading via `blocks.queryAppWorkflows`, and replies with `APP_WORKFLOWS_RESULT`.
+  // `params` (cursor/limit) are advisory — never trusted for auth.
+  | {
+      type: 'QUERY_APP_WORKFLOWS';
+      payload: { requestId: string; params?: AppWorkflowsParams };
+    }
+  // Ask the host to cancel ONE workflow in the calling app's OWN subqueue. FAIL-
+  // CLOSED server-side: the host re-derives (viewer, app, workflowId) ownership +
+  // asserts the per-app tag before the orchestrator cancel, so a block can only
+  // cancel a workflow it actually submitted for this viewer. Host reads via
+  // `blocks.cancelAppWorkflow` → `CANCEL_APP_WORKFLOW_RESULT` (the terminal
+  // projection, or a free-text `error`).
+  | { type: 'CANCEL_APP_WORKFLOW'; payload: { requestId: string; workflowId: string } }
   | {
       // Ask the host to open the platform's Checkpoint picker. `baseModelGroup`
       // is the ecosystem key (e.g. 'Flux1', 'SDXL') the picker filters to —

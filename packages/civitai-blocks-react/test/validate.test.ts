@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  isValidAppWorkflowsResult,
+  isValidCancelAppWorkflowResult,
   isValidAppStorageDeleteResult,
   isValidAppStorageGetResult,
   isValidAppStorageListResult,
@@ -657,6 +659,106 @@ describe('isValidUserCheckpointSetResult', () => {
   });
 });
 
+describe('isValidAppWorkflowsResult', () => {
+  const validWorkflow = {
+    workflowId: 'wf_1',
+    status: 'succeeded',
+    images: [
+      { url: 'https://image.civitai.com/x/a.jpeg', width: 1024, height: 1024, nsfwLevel: 1 },
+      // legitimate nullish dims/rating — must be accepted (the too-strict trap).
+      { url: 'https://image.civitai.com/x/b.jpeg', width: null, height: null, nsfwLevel: null },
+    ],
+    cost: 12,
+    createdAt: '2026-07-14T12:00:00.000Z',
+  };
+
+  it('accepts a success result with a page of workflows + a null cursor', () => {
+    expect(
+      isValidAppWorkflowsResult({
+        requestId: 'q',
+        result: { workflows: [validWorkflow], cursor: null },
+      }),
+    ).toBe(true);
+  });
+
+  it('accepts a string cursor (has a next page) + a pending workflow with null cost', () => {
+    expect(
+      isValidAppWorkflowsResult({
+        result: {
+          workflows: [
+            { workflowId: 'wf_2', status: 'processing', images: [], cost: null, createdAt: '2026-07-14T11:00:00.000Z' },
+          ],
+          cursor: 'next-page-abc',
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it('accepts an EMPTY workflows array (a fresh app with no gens)', () => {
+    expect(isValidAppWorkflowsResult({ result: { workflows: [], cursor: null } })).toBe(true);
+  });
+
+  it('accepts the free-text error variant', () => {
+    expect(isValidAppWorkflowsResult({ requestId: 'q', error: 'block lacks scope' })).toBe(true);
+  });
+
+  it('rejects a reply that resolves to NOTHING (no result, no error)', () => {
+    expect(isValidAppWorkflowsResult({ requestId: 'q' })).toBe(false);
+  });
+
+  it('rejects a malformed workflow (empty workflowId / bad status / non-string url / NaN cost)', () => {
+    expect(
+      isValidAppWorkflowsResult({ result: { workflows: [{ ...validWorkflow, workflowId: '' }], cursor: null } }),
+    ).toBe(false);
+    expect(
+      isValidAppWorkflowsResult({ result: { workflows: [{ ...validWorkflow, status: 'bogus' }], cursor: null } }),
+    ).toBe(false);
+    expect(
+      isValidAppWorkflowsResult({
+        result: { workflows: [{ ...validWorkflow, images: [{ url: 42, width: null, height: null, nsfwLevel: null }] }], cursor: null },
+      }),
+    ).toBe(false);
+    expect(
+      isValidAppWorkflowsResult({ result: { workflows: [{ ...validWorkflow, cost: 'free' }], cursor: null } }),
+    ).toBe(false);
+    // a non-string, non-null cursor is malformed.
+    expect(
+      isValidAppWorkflowsResult({ result: { workflows: [validWorkflow], cursor: 42 } }),
+    ).toBe(false);
+    // `workflows` must be an array.
+    expect(isValidAppWorkflowsResult({ result: { workflows: 'nope', cursor: null } })).toBe(false);
+  });
+});
+
+describe('isValidCancelAppWorkflowResult', () => {
+  const canceled = {
+    workflowId: 'wf_1',
+    status: 'canceled',
+    images: [],
+    cost: null,
+    createdAt: '2026-07-14T12:00:00.000Z',
+  };
+
+  it('accepts a success result carrying the terminal workflow', () => {
+    expect(isValidCancelAppWorkflowResult({ requestId: 'c', result: { workflow: canceled } })).toBe(true);
+  });
+
+  it('accepts the free-text error variant (FORBIDDEN / transport)', () => {
+    expect(
+      isValidCancelAppWorkflowResult({ requestId: 'c', error: 'workflow is not in this app subqueue' }),
+    ).toBe(true);
+  });
+
+  it('rejects a reply that resolves to NOTHING', () => {
+    expect(isValidCancelAppWorkflowResult({ requestId: 'c' })).toBe(false);
+  });
+
+  it('rejects a malformed workflow', () => {
+    expect(isValidCancelAppWorkflowResult({ result: { workflow: { ...canceled, workflowId: '' } } })).toBe(false);
+    expect(isValidCancelAppWorkflowResult({ result: {} })).toBe(false);
+  });
+});
+
 describe('payloadValidatorFor', () => {
   it('returns a validator for each documented inbound type', () => {
     expect(payloadValidatorFor('BLOCK_INIT')).toBeTypeOf('function');
@@ -673,6 +775,8 @@ describe('payloadValidatorFor', () => {
     expect(payloadValidatorFor('BUZZ_ACCOUNTS_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('DAILY_COMPENSATION_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('WILDCARD_PACK_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('APP_WORKFLOWS_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('CANCEL_APP_WORKFLOW_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('IMAGE_UPLOAD_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('SHARED_UPDATE_RESULT')).toBeTypeOf('function');
     // The 15 reply types added in this PR (previously `default: null`).

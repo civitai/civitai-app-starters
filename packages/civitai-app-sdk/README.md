@@ -53,8 +53,17 @@ over `window.postMessage({ type, payload }, targetOrigin)`, discriminated by
   `APP_STORAGE_*_RESULT`, `SUSPEND`, `RESUME` (`ParentToBlockMessage`).
 - **block → parent**: `BLOCK_READY`, `BLOCK_ERROR`, `REQUEST_TOKEN`,
   `RESIZE_IFRAME`, `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`, `POLL_WORKFLOW`,
-  `OPEN_BUZZ_PURCHASE`, `OPEN_CHECKPOINT_PICKER`, `SET_USER_CHECKPOINT`,
-  `NAVIGATE`, `TRACK_EVENT`, `APP_STORAGE_*` (`BlockToParentMessage`).
+  `QUERY_APP_WORKFLOWS`, `CANCEL_APP_WORKFLOW`, `OPEN_BUZZ_PURCHASE`,
+  `OPEN_CHECKPOINT_PICKER`, `SET_USER_CHECKPOINT`, `NAVIGATE`, `TRACK_EVENT`,
+  `APP_STORAGE_*` (`BlockToParentMessage`).
+
+The app generator **subqueue** pair — `QUERY_APP_WORKFLOWS` →
+`APP_WORKFLOWS_RESULT` and `CANCEL_APP_WORKFLOW` → `CANCEL_APP_WORKFLOW_RESULT` —
+lets an app read + cancel its **own** tag-scoped generations (the `AppWorkflow`
+projection: `workflowId`, `status`, `images[]`, `cost`, `createdAt`). The host
+forces the per-app tag filter off the block token, so a block only ever sees the
+queue it produced. Mirrors civitai/civitai PR #3164; the `@civitai/blocks-react`
+`useAppWorkflows()` hook wraps both.
 
 `isMessage(data, 'BLOCK_INIT')` is a **discriminator-only** narrowing helper — it
 checks `data.type`, NOT the payload shape. Anything crossing the iframe trust
@@ -124,6 +133,7 @@ Mirrors a strict subset of the civitai/civitai server gate. It throws on:
 
 | `@civitai/app-sdk` | adds (blocks surface) |
 |---|---|
+| `0.24.0` | `QUERY_APP_WORKFLOWS` / `CANCEL_APP_WORKFLOW` messages + the `AppWorkflow` type (app generator subqueue, PR #3164) |
 | `0.7.0` | `CANCEL_WORKFLOW` / `WORKFLOW_CANCELED` messages (real cancel, gotcha #51) |
 | `0.6.0` | `APP_STORAGE_*` messages, `ManifestSettings` types |
 | `0.5.0` | settings types, earlier message set |

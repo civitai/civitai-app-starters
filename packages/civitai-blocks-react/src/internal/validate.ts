@@ -522,6 +522,95 @@ export function isValidWildcardPackResult(p: unknown): boolean {
 }
 
 // ============================================================
+// App generator SUBQUEUE reply validators
+// ============================================================
+//
+// Kept in lockstep with civitai/civitai's `AppWorkflow` / `projectAppWorkflow`
+// (`src/server/services/blocks/workflow.service.ts`, PR #3164) and the host's
+// `APP_WORKFLOWS_RESULT` / `CANCEL_APP_WORKFLOW_RESULT` builders in
+// `PageBlockHost.tsx`. Same value-or-error convention as the buzz bridges.
+
+const APP_WORKFLOW_STATUSES = new Set<string>([
+  'pending',
+  'processing',
+  'succeeded',
+  'failed',
+  'expired',
+  'canceled',
+]);
+
+/**
+ * Shape-check ONE {@link import('@civitai/app-sdk/blocks').AppWorkflow} row to the
+ * fields the hook dereferences. Deliberately accepts the LEGITIMATE nullish the
+ * host emits — an image's `width`/`height`/`nsfwLevel` and the workflow `cost` are
+ * `number | null` — while rejecting the malformed (a `NaN`/string cost, a missing
+ * url). Being too strict here (rejecting a valid `null`) is the trap that hangs the
+ * hook to its transport timeout, so `null` is explicitly allowed everywhere it's
+ * contractually valid.
+ */
+function isValidAppWorkflow(w: unknown): boolean {
+  if (!isObject(w)) return false;
+  if (!isNonEmptyString(w.workflowId)) return false;
+  if (typeof w.status !== 'string' || !APP_WORKFLOW_STATUSES.has(w.status)) return false;
+  // `cost` is `number | null` — accept a finite number OR null; reject other types.
+  if (w.cost !== null && !isFiniteNumber(w.cost)) return false;
+  if (!isParseableDateString(w.createdAt)) return false;
+  if (!Array.isArray(w.images)) return false;
+  for (const img of w.images) {
+    if (!isObject(img)) return false;
+    if (!isNonEmptyString(img.url)) return false;
+    // width/height/nsfwLevel are each `number | null` — accept a finite number OR null.
+    if (img.width !== null && !isFiniteNumber(img.width)) return false;
+    if (img.height !== null && !isFiniteNumber(img.height)) return false;
+    if (img.nsfwLevel !== null && !isFiniteNumber(img.nsfwLevel)) return false;
+  }
+  return true;
+}
+
+/**
+ * Reply to a block-initiated `QUERY_APP_WORKFLOWS`. A well-formed reply carries
+ * EITHER a `result` ({ workflows: AppWorkflow[], cursor: string | null }) OR a
+ * free-text `error`; one with neither is malformed and dropped. `cursor` is
+ * `string | null` — `null` is the REAL last/only-page value the host returns
+ * verbatim (accept it; only a present-but-non-string-non-null cursor is malformed).
+ * An EMPTY `workflows` array is valid (a fresh app with no generations).
+ */
+export function isValidAppWorkflowsResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (r.cursor !== null && typeof r.cursor !== 'string') return false;
+    if (!Array.isArray(r.workflows)) return false;
+    for (const w of r.workflows) {
+      if (!isValidAppWorkflow(w)) return false;
+    }
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+/**
+ * Reply to a block-initiated `CANCEL_APP_WORKFLOW`. A well-formed reply carries
+ * EITHER a `result` ({ workflow: AppWorkflow }) OR a free-text `error` (FORBIDDEN /
+ * transport); one with neither is malformed and dropped.
+ */
+export function isValidCancelAppWorkflowResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (!isValidAppWorkflow(r.workflow)) return false;
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+// ============================================================
 // App-storage (per-viewer KV) reply validators
 // ============================================================
 //
@@ -821,6 +910,10 @@ export function payloadValidatorFor(
       return isValidDailyCompensationResult;
     case 'WILDCARD_PACK_RESULT':
       return isValidWildcardPackResult;
+    case 'APP_WORKFLOWS_RESULT':
+      return isValidAppWorkflowsResult;
+    case 'CANCEL_APP_WORKFLOW_RESULT':
+      return isValidCancelAppWorkflowResult;
     case 'IMAGE_UPLOAD_RESULT':
       return isValidImageUploadResult;
     case 'IMAGE_SCAN_RESOLVED':

@@ -55,6 +55,7 @@ import {
   type BlockViewer,
   type BlockWildcardPack,
   type BlockWildcardPackErrorCode,
+  type AppWorkflow,
   type ColorDomain,
   type SharedStorageValue,
   type Theme,
@@ -397,6 +398,23 @@ export interface MockHostOptions {
    */
   buzzReadError?: boolean | string | Error;
   /**
+   * The app generator SUBQUEUE page returned from `QUERY_APP_WORKFLOWS` (what
+   * `useAppWorkflows` reads). `workflows` are the app's own tag-scoped gens
+   * (newest-first); `cursor` (when set) drives the block's "next page" affordance.
+   * The mock's `CANCEL_APP_WORKFLOW` marks the matching row `canceled` in place +
+   * returns it. Absent → {@link DEFAULT_APP_WORKFLOWS}. Live-tunable via
+   * {@link MockHost.setScenario}.
+   */
+  appWorkflows?: { workflows: AppWorkflow[]; cursor?: string | null };
+  /**
+   * Force BOTH app-subqueue bridges (`QUERY_APP_WORKFLOWS` /
+   * `CANCEL_APP_WORKFLOW`) to reply with the FREE-TEXT `error` variant instead of
+   * data — exercises `useAppWorkflows`'s error UI + a rejected `cancel()`. `true` →
+   * a default message; a string → that message; an `Error` → its `.message`.
+   * Absent → the reads/cancel succeed. Live-tunable via {@link MockHost.setScenario}.
+   */
+  appWorkflowsError?: boolean | string | Error;
+  /**
    * The parsed pack returned from `GET_WILDCARD_PACK` (what `useWildcardPack`
    * reads). Absent → {@link DEFAULT_WILDCARD_PACK}. Ignored when
    * {@link wildcardPackError} is set.
@@ -511,6 +529,8 @@ export type MockHostScenarioPatch = Pick<
   | 'buzzReadError'
   | 'wildcardPack'
   | 'wildcardPackError'
+  | 'appWorkflows'
+  | 'appWorkflowsError'
   | 'disallowedAccountTypes'
 >;
 
@@ -672,6 +692,17 @@ function normalizeReadError(e: boolean | string | Error | undefined): string | u
   return e.message || DEFAULT_BUZZ_READ_ERROR;
 }
 
+/** Default message for a simulated app-subqueue failure ({@link MockHostOptions.appWorkflowsError}). */
+const DEFAULT_APP_WORKFLOWS_ERROR = 'app workflows unavailable';
+
+/** Normalize a {@link MockHostOptions.appWorkflowsError} value to an error string (or `undefined`). */
+function normalizeAppWorkflowsError(e: boolean | string | Error | undefined): string | undefined {
+  if (e === undefined || e === false) return undefined;
+  if (e === true) return DEFAULT_APP_WORKFLOWS_ERROR;
+  if (typeof e === 'string') return e || DEFAULT_APP_WORKFLOWS_ERROR;
+  return e.message || DEFAULT_APP_WORKFLOWS_ERROR;
+}
+
 /**
  * Default per-pool wallet reported on `GET_BUZZ_BALANCE` when
  * {@link MockHostOptions.buzzBalance} is omitted — a plausible non-zero balance
@@ -761,6 +792,36 @@ const DEFAULT_WILDCARD_PACK: BlockWildcardPack = {
   truncated: false,
   truncatedLists: [],
   maturity: { browsingLevel: SFW_LEVELS, sfwOnly: true },
+};
+
+/**
+ * Default app generator SUBQUEUE page reported on `QUERY_APP_WORKFLOWS`. A small
+ * mixed-status list (a done gen with two images, one still processing) so a block
+ * renders a realistic subqueue out of the box. `cursor: null` = the only page.
+ * Image dims + nsfwLevel are populated on the done gen and null on the pending one
+ * (mirrors the host projecting them only once the orchestrator has them).
+ */
+const DEFAULT_APP_WORKFLOWS: { workflows: AppWorkflow[]; cursor: string | null } = {
+  workflows: [
+    {
+      workflowId: 'wf_app_2',
+      status: 'succeeded',
+      images: [
+        { url: 'https://image.civitai.com/mock/app-gen-2a.jpeg', width: 1024, height: 1024, nsfwLevel: 1 },
+        { url: 'https://image.civitai.com/mock/app-gen-2b.jpeg', width: 832, height: 1216, nsfwLevel: 1 },
+      ],
+      cost: 12,
+      createdAt: '2026-07-14T12:00:00.000Z',
+    },
+    {
+      workflowId: 'wf_app_1',
+      status: 'processing',
+      images: [],
+      cost: null,
+      createdAt: '2026-07-14T11:58:00.000Z',
+    },
+  ],
+  cursor: null,
 };
 
 /**
@@ -977,6 +1038,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   // Wildcard-pack bridge data + forced discriminated-error knob.
   let wildcardPack: BlockWildcardPack = options.wildcardPack ?? DEFAULT_WILDCARD_PACK;
   let wildcardPackError: BlockWildcardPackErrorCode | undefined = options.wildcardPackError;
+  // App-subqueue bridge data + forced free-text-error knob. `appWorkflows` is
+  // MUTABLE — CANCEL_APP_WORKFLOW marks the matching row canceled in place so a
+  // follow-up QUERY reflects it.
+  let appWorkflows: { workflows: AppWorkflow[]; cursor: string | null } = {
+    workflows: options.appWorkflows?.workflows ?? DEFAULT_APP_WORKFLOWS.workflows,
+    cursor: options.appWorkflows?.cursor ?? null,
+  };
+  let appWorkflowsError: string | undefined = normalizeAppWorkflowsError(options.appWorkflowsError);
   // Pools a submit must reject (content-rating clamp). Normalized to a Set.
   let disallowedAccounts = new Set<BuzzAccountType>(options.disallowedAccountTypes ?? []);
 
@@ -1468,6 +1537,64 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             dispatchToBlock({
               type: 'WILDCARD_PACK_RESULT',
               payload: { requestId, pack: wildcardPack },
+            });
+            return;
+          }
+
+          case 'QUERY_APP_WORKFLOWS': {
+            // App generator SUBQUEUE read. Drop a request with no requestId
+            // (unroutable). A forced error replies with the FREE-TEXT error
+            // variant (mirrors the real host forwarding err.message).
+            if (typeof requestId !== 'string') return;
+            if (appWorkflowsError !== undefined) {
+              dispatchToBlock({
+                type: 'APP_WORKFLOWS_RESULT',
+                payload: { requestId, error: appWorkflowsError },
+              });
+              return;
+            }
+            dispatchToBlock({
+              type: 'APP_WORKFLOWS_RESULT',
+              payload: {
+                requestId,
+                result: { workflows: appWorkflows.workflows, cursor: appWorkflows.cursor },
+              },
+            });
+            return;
+          }
+
+          case 'CANCEL_APP_WORKFLOW': {
+            // Cancel ONE workflow in the app subqueue. Drop a request with no
+            // requestId or a missing/empty workflowId (mirrors the real host
+            // dropping those without a reply). A forced error replies with the
+            // FREE-TEXT error variant (mirrors a FORBIDDEN / transport failure).
+            if (typeof requestId !== 'string') return;
+            const cancelId = typed.payload?.workflowId;
+            if (typeof cancelId !== 'string' || cancelId.length === 0) return;
+            if (appWorkflowsError !== undefined) {
+              dispatchToBlock({
+                type: 'CANCEL_APP_WORKFLOW_RESULT',
+                payload: { requestId, error: appWorkflowsError },
+              });
+              return;
+            }
+            // Mark the matching row canceled IN PLACE (so a follow-up QUERY
+            // reflects it) and reply with the terminal projection. When the id
+            // isn't in the current page, synthesize a canceled projection — the
+            // real host returns the re-read terminal workflow regardless.
+            const existing = appWorkflows.workflows.find((w) => w.workflowId === cancelId);
+            const canceled: AppWorkflow = existing
+              ? { ...existing, status: 'canceled' }
+              : { workflowId: cancelId, status: 'canceled', images: [], cost: null, createdAt: new Date().toISOString() };
+            appWorkflows = {
+              ...appWorkflows,
+              workflows: appWorkflows.workflows.map((w) =>
+                w.workflowId === cancelId ? canceled : w,
+              ),
+            };
+            dispatchToBlock({
+              type: 'CANCEL_APP_WORKFLOW_RESULT',
+              payload: { requestId, result: { workflow: canceled } },
             });
             return;
           }
@@ -2003,6 +2130,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     if (patch.buzzReadError !== undefined) buzzReadError = normalizeReadError(patch.buzzReadError);
     if (patch.wildcardPack !== undefined) wildcardPack = patch.wildcardPack;
     if (patch.wildcardPackError !== undefined) wildcardPackError = patch.wildcardPackError;
+    if (patch.appWorkflows !== undefined) {
+      appWorkflows = {
+        workflows: patch.appWorkflows.workflows,
+        cursor: patch.appWorkflows.cursor ?? null,
+      };
+    }
+    if (patch.appWorkflowsError !== undefined)
+      appWorkflowsError = normalizeAppWorkflowsError(patch.appWorkflowsError);
     if (patch.disallowedAccountTypes !== undefined)
       disallowedAccounts = new Set(patch.disallowedAccountTypes);
     if (patch.storage !== undefined) {

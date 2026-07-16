@@ -838,3 +838,49 @@ export interface BlockWildcardPack {
     sfwOnly: boolean;
   };
 }
+
+// ============================================================
+// App generator SUBQUEUE (QUERY_APP_WORKFLOWS / CANCEL_APP_WORKFLOW)
+// ============================================================
+
+/**
+ * One result image on an {@link AppWorkflow}. Mirrors civitai/civitai's
+ * `AppWorkflowImage` projection (`src/server/services/blocks/workflow.service.ts`,
+ * PR #3164) — keep in lockstep. Only `available` blobs with a non-null url are
+ * surfaced by the host (pending/blocked blobs are dropped rather than handing the
+ * block dead links). `width`/`height` are `null` until the orchestrator populates
+ * them; `nsfwLevel` is the numeric civitai browsing-level bitflag (1/2/4/8/16),
+ * `null` for an unrated blob.
+ */
+export interface AppWorkflowImage {
+  url: string;
+  width: number | null;
+  height: number | null;
+  nsfwLevel: number | null;
+}
+
+/**
+ * The clean, wire-stable projection of ONE orchestrator workflow in the calling
+ * app's own generator SUBQUEUE — what `QUERY_APP_WORKFLOWS` / `CANCEL_APP_WORKFLOW`
+ * return. Mirrors civitai/civitai's `AppWorkflow` / `projectAppWorkflow`
+ * (`src/server/services/blocks/workflow.service.ts`, PR #3164) EXACTLY — KEEP IN
+ * LOCKSTEP; a drift here silently strands the reply's transport validator.
+ *
+ * The host deliberately DROPS every internal/sensitive workflow field (steps,
+ * params, prompts, resources, tokens, transactions, metadata, tags) so a block
+ * can never read generation internals of a queue it only owns by tag.
+ *
+ *   status:    the block-contract status — the orchestrator's
+ *              `unassigned`/`preparing`/`scheduled` all collapse to `pending`.
+ *   images:    only `available` blobs with a non-null url (see {@link AppWorkflowImage}).
+ *   cost:      the workflow's realized/estimated buzz total, or `null` when absent.
+ *   createdAt: ISO-8601 string.
+ */
+export interface AppWorkflow {
+  workflowId: string;
+  status: 'pending' | 'processing' | 'succeeded' | 'failed' | 'expired' | 'canceled';
+  images: AppWorkflowImage[];
+  cost: number | null;
+  /** ISO-8601. */
+  createdAt: string;
+}

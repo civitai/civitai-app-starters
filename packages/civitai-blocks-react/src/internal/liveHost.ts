@@ -936,6 +936,55 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             return;
           }
 
+          case 'QUERY_APP_WORKFLOWS': {
+            // App generator SUBQUEUE read via the token-bound
+            // `blocks.queryAppWorkflows` MUTATION (POST). params (cursor/limit) are
+            // spread FIRST so the host-authoritative `blockToken` (spread LAST) can
+            // never be overridden — mirrors the real host; the host also forces the
+            // per-app tag filter server-side (the input carries no `tags`). It
+            // returns a plain `{ workflows, cursor }`, unwrapped with `callTrpcData`.
+            // FREE-TEXT error on failure. Unroutable without requestId.
+            if (typeof requestId !== 'string') return;
+            void callTrpcData(
+              'blocks.queryAppWorkflows',
+              { ...(typed.payload?.params ?? {}), blockToken: rawToken },
+              'POST',
+            ).then((r) => {
+              dispatchToBlock({
+                type: 'APP_WORKFLOWS_RESULT',
+                payload: r.data
+                  ? { requestId, result: r.data }
+                  : { requestId, error: r.error ?? 'app workflows unavailable' },
+              });
+            });
+            return;
+          }
+
+          case 'CANCEL_APP_WORKFLOW': {
+            // Cancel ONE subqueue workflow via the token-bound
+            // `blocks.cancelAppWorkflow` MUTATION (POST). FAIL-CLOSED server-side
+            // (ownership + app-tag guard). Returns a plain `{ workflow }` (the
+            // terminal projection), unwrapped with `callTrpcData`. FREE-TEXT error
+            // on failure (FORBIDDEN / transport). Drop a request with no requestId
+            // or a missing/empty workflowId (mirrors the real host).
+            if (typeof requestId !== 'string') return;
+            const cancelId = typed.payload?.workflowId;
+            if (typeof cancelId !== 'string' || cancelId.length === 0) return;
+            void callTrpcData(
+              'blocks.cancelAppWorkflow',
+              { blockToken: rawToken, workflowId: cancelId },
+              'POST',
+            ).then((r) => {
+              dispatchToBlock({
+                type: 'CANCEL_APP_WORKFLOW_RESULT',
+                payload: r.data
+                  ? { requestId, result: r.data }
+                  : { requestId, error: r.error ?? 'cancel failed' },
+              });
+            });
+            return;
+          }
+
           case 'OPEN_CHECKPOINT_PICKER': {
             // Serve the picker locally: open the in-harness catalog browser
             // filtered to Checkpoints in the requested ecosystem, pre-highlight

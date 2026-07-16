@@ -1465,3 +1465,128 @@ describe('createLiveHost — OPEN_IMAGE_UPLOAD (no headless upload contract)', (
     expect('selected' in payload).toBe(false);
   });
 });
+
+describe('createLiveHost — app subqueue (served via blocks.queryAppWorkflows / cancelAppWorkflow)', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+  let fetchMock: ReturnType<typeof vi.fn>;
+  const TOKEN = fakeJwt(DEFAULT_CLAIMS);
+
+  const DONE = {
+    workflowId: 'wf_1',
+    status: 'succeeded',
+    images: [{ url: 'https://image.civitai.com/x/a.jpeg', width: 1024, height: 1024, nsfwLevel: 1 }],
+    cost: 12,
+    createdAt: '2026-07-14T12:00:00.000Z',
+  };
+
+  function installWithFetch(impl: (url: string, init?: RequestInit) => Promise<Response>) {
+    fetchMock = vi.fn(impl);
+    const host = createLiveHost({
+      blockToken: TOKEN,
+      viewer: { id: 42, username: 'dev-mod' }, // skip /blocks/me
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+  }
+
+  beforeEach(() => {
+    inbound = collectInbound();
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  it('QUERY_APP_WORKFLOWS → blocks.queryAppWorkflows (POST, params spread first, token last) → result', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('blocks.queryAppWorkflows')) {
+        return trpcData({ workflows: [DONE], cursor: 'next-abc' });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('QUERY_APP_WORKFLOWS', { requestId: 'r-q', params: { limit: 20, cursor: 'c0' } });
+    const payload = await waitForMessage(inbound, 'APP_WORKFLOWS_RESULT');
+    expect(payload.requestId).toBe('r-q');
+    expect(payload.result).toEqual({ workflows: [DONE], cursor: 'next-abc' });
+    expect(payload.error).toBeUndefined();
+
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('blocks.queryAppWorkflows'))!;
+    expect((call[1] as RequestInit).method).toBe('POST');
+    expect(String(call[0])).toBe('https://civitai.com/api/trpc/blocks.queryAppWorkflows');
+    expect((call[1] as RequestInit).headers).toMatchObject({ authorization: `Bearer ${TOKEN}` });
+    // params spread FIRST, blockToken LAST (non-overridable). No `tags` field.
+    expect(JSON.parse(String((call[1] as RequestInit).body))).toEqual({
+      json: { limit: 20, cursor: 'c0', blockToken: TOKEN },
+    });
+  });
+
+  it('CANCEL_APP_WORKFLOW → blocks.cancelAppWorkflow (POST { blockToken, workflowId }) → result', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('blocks.cancelAppWorkflow')) {
+        return trpcData({ workflow: { ...DONE, status: 'canceled' } });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('CANCEL_APP_WORKFLOW', { requestId: 'r-c', workflowId: 'wf_1' });
+    const payload = await waitForMessage(inbound, 'CANCEL_APP_WORKFLOW_RESULT');
+    expect(payload.requestId).toBe('r-c');
+    expect((payload.result as { workflow: { status: string } }).workflow.status).toBe('canceled');
+    expect(payload.error).toBeUndefined();
+
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('blocks.cancelAppWorkflow'))!;
+    expect((call[1] as RequestInit).method).toBe('POST');
+    expect(JSON.parse(String((call[1] as RequestInit).body))).toEqual({
+      json: { blockToken: TOKEN, workflowId: 'wf_1' },
+    });
+  });
+
+  it('a backend error maps to the error-shape reply (no hang) for both bridges', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('blocks.queryAppWorkflows')) return trpcErr('block lacks ai:write:budgeted scope', 403);
+      if (url.includes('blocks.cancelAppWorkflow')) return trpcErr('workflow is not in this app subqueue', 403);
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('QUERY_APP_WORKFLOWS', { requestId: 'r-qe' });
+    const qp = await waitForMessage(inbound, 'APP_WORKFLOWS_RESULT');
+    expect(qp.result).toBeUndefined();
+    expect(qp.error).toMatch(/ai:write:budgeted/);
+
+    post('CANCEL_APP_WORKFLOW', { requestId: 'r-ce', workflowId: 'wf_1' });
+    const cp = await waitForMessage(inbound, 'CANCEL_APP_WORKFLOW_RESULT');
+    expect(cp.result).toBeUndefined();
+    expect(cp.error).toMatch(/not in this app subqueue/);
+  });
+
+  it('a QUERY with no requestId is dropped WITHOUT a backend call', async () => {
+    installWithFetch(async (url) => {
+      throw new Error(`should not have fetched ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('QUERY_APP_WORKFLOWS', {});
+    await new Promise((r) => setTimeout(r, 50));
+    expect(inbound.messages.some((m) => m.type === 'APP_WORKFLOWS_RESULT')).toBe(false);
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('blocks.queryAppWorkflows'))).toBe(false);
+  });
+
+  it('a CANCEL with a missing/empty workflowId is dropped WITHOUT a backend call', async () => {
+    installWithFetch(async (url) => {
+      throw new Error(`should not have fetched ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('CANCEL_APP_WORKFLOW', { requestId: 'r-c', workflowId: '' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(inbound.messages.some((m) => m.type === 'CANCEL_APP_WORKFLOW_RESULT')).toBe(false);
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('blocks.cancelAppWorkflow'))).toBe(false);
+  });
+});
