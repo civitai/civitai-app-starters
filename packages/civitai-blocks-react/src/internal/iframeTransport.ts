@@ -64,6 +64,13 @@ export class IframeTransport implements BlockTransport {
   private readonly outbound: Array<{ type: string; payload: unknown }> = [];
   private readonly pending = new Map<string, PendingRequest>();
 
+  /**
+   * Handlers for UNSOLICITED parent→block pushes (e.g. `IMAGE_SCAN_RESOLVED`) —
+   * messages the host initiates on its own schedule, NOT replies to a pending
+   * `sendRequest`. Keyed by message type; each entry a set of subscribers.
+   */
+  private readonly pushListeners = new Map<string, Set<(payload: unknown) => void>>();
+
   private readonly initPromise: Promise<BlockInitPayload>;
   private resolveInit!: (payload: BlockInitPayload) => void;
   private rejectInit!: (err: Error) => void;
@@ -171,6 +178,24 @@ export class IframeTransport implements BlockTransport {
     });
   }
 
+  onMessage(
+    type: ParentToBlockMessageType,
+    handler: (payload: unknown) => void,
+  ): () => void {
+    let set = this.pushListeners.get(type);
+    if (!set) {
+      set = new Set();
+      this.pushListeners.set(type, set);
+    }
+    set.add(handler);
+    return () => {
+      const s = this.pushListeners.get(type);
+      if (!s) return;
+      s.delete(handler);
+      if (s.size === 0) this.pushListeners.delete(type);
+    };
+  }
+
   /** Test-only: tear down listeners + reject pending. */
   dispose(): void {
     this.window.removeEventListener('message', this.messageListener);
@@ -181,6 +206,7 @@ export class IframeTransport implements BlockTransport {
     }
     this.pending.clear();
     this.listeners.clear();
+    this.pushListeners.clear();
   }
 
   private dispatch(type: string, payload: unknown): void {
@@ -282,6 +308,22 @@ export class IframeTransport implements BlockTransport {
       clearTimeout(pending.timeoutId);
       this.pending.delete(matchedRequestId);
       pending.resolve(payload);
+      return;
+    }
+
+    // Unsolicited parent→block push (not a reply to any pending request) — e.g.
+    // `IMAGE_SCAN_RESOLVED`. Deliver to any handlers registered via `onMessage`.
+    // This runs ONLY AFTER the message has already CLEARED both the origin
+    // allowlist (`this.originMatcher.matches`) and the payload validator
+    // (`payloadValidatorFor`) at the top of `handleMessage` — it does NOT and
+    // must NOT bypass them. Do not reorder this ahead of those gates: a push from
+    // a disallowed origin, or a malformed payload, is dropped before it can reach
+    // here (locked by the origin-drop regression test in iframe-transport.test.ts).
+    // Reply-type messages that arrive without a matching pending have no push
+    // listeners, so they fall through to the no-op tail below unchanged.
+    const handlers = this.pushListeners.get(data.type);
+    if (handlers && handlers.size > 0) {
+      for (const handler of [...handlers]) handler(data.payload);
       return;
     }
 

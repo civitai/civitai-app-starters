@@ -47,6 +47,7 @@ import {
   type BlockResourcePickerType,
   type BlockUploadedImageInfo,
   type BlockGenerationSourceImageInfo,
+  type BlockImageScanResult,
   type BuzzAccountType,
   type BlockBuzzTransaction,
   type BlockBuzzAccount,
@@ -92,6 +93,20 @@ export type MockHostFailMode = 'none' | 'some' | 'all' | 'insufficient';
  * user-dismissed picker (→ `RESOURCE_PICKER_RESULT` with no `selected`).
  */
 export type CannedPick = BlockResourceInfo;
+
+/**
+ * The canned ASYNC scan verdict the mock host streams (on `IMAGE_SCAN_RESOLVED`)
+ * after early-resolving an `asyncScan:true` display upload. Mirrors the three
+ * {@link BlockImageScanResult} outcomes:
+ *  - `'scanned'` (default) — clean; the verdict carries the moderated image
+ *    projection (reuses {@link MockHostOptions.cannedImageUpload}).
+ *  - `{ status:'blocked'; reason? }` — terminal non-clean; NO usable image.
+ *  - `'error'` — transient/host-side error (retryable); NO usable image.
+ */
+export type MockCannedImageScan =
+  | 'scanned'
+  | { status: 'blocked'; reason?: string }
+  | 'error';
 
 /**
  * A per-generation cost: a fixed number, or a function of the submitted
@@ -282,6 +297,17 @@ export interface MockHostOptions {
    * {@link DEFAULT_GENERATION_SOURCE_UPLOAD}.
    */
   cannedGenerationSourceUpload?: BlockGenerationSourceImageInfo | null;
+  /**
+   * The canned ASYNC scan verdict streamed on `IMAGE_SCAN_RESOLVED` after an
+   * `asyncScan:true` display upload early-resolves (what
+   * `useImageUpload({ asyncScan: true }).scanStatus()` resolves with). Default
+   * `'scanned'` (the `'scanned'` verdict reuses {@link cannedImageUpload} for its
+   * moderated image projection). Set `{ status:'blocked', reason }` or `'error'`
+   * to exercise the terminal-blocked / retryable-error UX. Only applies to the
+   * `asyncScan` path — the blocking display + generationSource paths are
+   * unaffected. Live-tunable via {@link MockHost.setScenario}.
+   */
+  cannedImageScan?: MockCannedImageScan;
   /** Number of `POLL_WORKFLOW` round-trips before a workflow succeeds. Default 2. */
   pollsUntilDone?: number;
   /**
@@ -450,6 +476,7 @@ export type MockHostScenarioPatch = Pick<
   | 'cannedPicks'
   | 'cannedImageUpload'
   | 'cannedGenerationSourceUpload'
+  | 'cannedImageScan'
   | 'generation'
   | 'buzz'
   | 'storage'
@@ -884,6 +911,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     options.cannedGenerationSourceUpload === undefined
       ? DEFAULT_GENERATION_SOURCE_UPLOAD
       : options.cannedGenerationSourceUpload;
+  // Canned async scan verdict (asyncScan:true display path). Default 'scanned'.
+  let cannedImageScan: MockCannedImageScan = options.cannedImageScan ?? 'scanned';
   // Simulated balance-read failure (undefined = read succeeds).
   let buzzBalanceError: string | undefined = normalizeBalanceError(options.buzzBalanceError);
   // Buzz self-read bridge data + forced-error knob.
@@ -1067,6 +1096,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             workflowId?: string;
             resourceType?: BlockResourcePickerType;
             purpose?: 'display' | 'generationSource';
+            asyncScan?: boolean;
             body?: WorkflowBody;
             key?: string;
             keys?: string[];
@@ -1405,10 +1435,47 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             //   • 'generationSource' → the UNSCANNED source { url, width, height }
             //   • 'display' (default / absent) → the MODERATED image
             // `null` → dismissed (no `selected`), so the hook resolves to null.
-            const selected =
-              typed.payload?.purpose === 'generationSource'
-                ? cannedGenerationSourceUpload
-                : cannedImageUpload;
+            const isGenerationSource = typed.payload?.purpose === 'generationSource';
+
+            // NON-BLOCKING display path (asyncScan:true): early-resolve with a
+            // PENDING handle, then stream the canned scan verdict on a later tick.
+            // Ignored for generationSource (no host-side scan on that path).
+            if (typed.payload?.asyncScan === true && !isGenerationSource) {
+              // `null` cannedImageUpload = dismissed → bare result, no verdict.
+              if (!cannedImageUpload) {
+                dispatchToBlock({ type: 'IMAGE_UPLOAD_RESULT', payload: { requestId } });
+                return;
+              }
+              const { imageId, url } = cannedImageUpload;
+              // 1) early-resolve on persist (imageId known, NOT yet scanned).
+              dispatchToBlock({
+                type: 'IMAGE_UPLOAD_RESULT',
+                payload: { requestId, selected: { status: 'pending', imageId, url } },
+              });
+              // 2) stream the canned verdict on a later tick (mirrors the host's
+              //    async BlockImageScanPoller resolving after the modal closed).
+              const result: BlockImageScanResult =
+                cannedImageScan === 'scanned'
+                  ? { status: 'scanned', image: cannedImageUpload }
+                  : cannedImageScan === 'error'
+                    ? { status: 'error', message: 'Image scan failed (simulated).' }
+                    : {
+                        status: 'blocked',
+                        ...(cannedImageScan.reason !== undefined
+                          ? { reason: cannedImageScan.reason }
+                          : {}),
+                      };
+              after(0, () =>
+                dispatchToBlock({
+                  type: 'IMAGE_SCAN_RESOLVED',
+                  payload: { requestId, imageId, result },
+                }),
+              );
+              return;
+            }
+
+            // BLOCKING display / generationSource (unchanged).
+            const selected = isGenerationSource ? cannedGenerationSourceUpload : cannedImageUpload;
             dispatchToBlock({
               type: 'IMAGE_UPLOAD_RESULT',
               payload: { requestId, ...(selected ? { selected } : {}) },
@@ -1820,6 +1887,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     if ('cannedImageUpload' in patch) cannedImageUpload = patch.cannedImageUpload ?? null;
     if ('cannedGenerationSourceUpload' in patch)
       cannedGenerationSourceUpload = patch.cannedGenerationSourceUpload ?? null;
+    if (patch.cannedImageScan !== undefined) cannedImageScan = patch.cannedImageScan;
     if (patch.generation !== undefined) gen = { ...gen, ...patch.generation };
     if (patch.buzz !== undefined) buzz = { ...buzz, ...patch.buzz };
     if (patch.buzzBalanceError !== undefined)

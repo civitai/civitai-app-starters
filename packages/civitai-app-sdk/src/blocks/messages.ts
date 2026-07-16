@@ -15,6 +15,8 @@ import type {
   BlockResourcePickerType,
   BlockUploadedImageInfo,
   BlockGenerationSourceImageInfo,
+  BlockPendingImageInfo,
+  BlockImageScanResult,
   BlockUploadPurpose,
   BlockContext,
   BlockSettings,
@@ -296,20 +298,48 @@ export type ParentToBlockMessage =
       // successful upload — the block's hook resolves to `null`. The iframe never
       // handles the bytes. Mirrors the OPEN_RESOURCE_PICKER host-chrome pattern.
       //
-      // `selected` is a UNION keyed by the request's `purpose`:
-      //   • `'display'` (default): a MODERATED public image
+      // `selected` is a UNION keyed by the request's `purpose` (+ `asyncScan`):
+      //   • `'display'` (default), BLOCKING: a MODERATED public image
       //     ({@link BlockUploadedImageInfo} — imageId/nsfwLevel/contentRating/url,
       //     scanned clean, within the SFW ceiling, unflagged).
+      //   • `'display'` + `asyncScan: true`: an EARLY-RESOLVE
+      //     ({@link BlockPendingImageInfo} — `status:'pending'`, imageId, url) that
+      //     resolves the modal on PERSIST (before the scan). The scan verdict
+      //     streams later on `IMAGE_SCAN_RESOLVED`. `status:'pending'` is the
+      //     on-wire discriminant vs the moderated shape.
       //   • `'generationSource'`: an UNSCANNED private img2img source
       //     ({@link BlockGenerationSourceImageInfo} — only { url, width, height };
       //     no imageId/nsfwLevel, scanned by the orchestrator at gen time).
-      // The variant the host returns matches the `purpose` the block requested;
-      // narrow structurally (`'imageId' in selected`) when a block uses both.
+      // The variant the host returns matches the `purpose`/`asyncScan` the block
+      // requested; narrow structurally (`'status' in selected` for pending, then
+      // `'imageId' in selected`) when a block uses more than one.
       type: 'IMAGE_UPLOAD_RESULT';
       payload: {
         requestId: string;
-        selected?: BlockUploadedImageInfo | BlockGenerationSourceImageInfo;
+        selected?:
+          | BlockUploadedImageInfo
+          | BlockGenerationSourceImageInfo
+          | BlockPendingImageInfo;
       };
+    }
+  | {
+      // Host→block ASYNC scan verdict for a pending `'display'` upload (the
+      // `asyncScan: true` early-resolve path). Sent AFTER an `IMAGE_UPLOAD_RESULT`
+      // carrying a {@link BlockPendingImageInfo}, once the host-side scan poll
+      // reaches a terminal outcome. Correlated to the originating
+      // `OPEN_IMAGE_UPLOAD` by `requestId` (the unguessable id the SDK generated)
+      // AND echoes `imageId` so the block can match it to the pending handle.
+      // The host emits it AT MOST ONCE per request; the SDK honors only the first.
+      //
+      // `result` is a discriminated {@link BlockImageScanResult}: `'scanned'`
+      // carries the moderated {@link BlockUploadedImageInfo} (the ONLY verdict a
+      // block may persist to a cross-user surface); `'blocked'` is terminal
+      // non-clean (no usable image); `'error'` is a transient/timeout, retryable.
+      //
+      // PARENT→block, so it is NOT a `BlockToParentMessage` and does NOT belong in
+      // the host `hostHandlerParity.ts` request INVENTORY.
+      type: 'IMAGE_SCAN_RESOLVED';
+      payload: { requestId: string; imageId: number; result: BlockImageScanResult };
     }
   | {
       // Reply to SET_USER_CHECKPOINT. `ok: false` carries a UI-renderable
@@ -526,8 +556,20 @@ export type BlockToParentMessage =
       //     orchestrator scans at gen time). The host returns ONLY the source
       //     shape ({@link BlockGenerationSourceImageInfo} — { url, width, height }).
       // Generalizes cleanly the same way OPEN_RESOURCE_PICKER did the picker.
+      //
+      // `asyncScan` OPTS IN to the NON-BLOCKING display flow (absent/false ⇒
+      // BLOCKING, byte-compatible with an older SDK/host):
+      //   • absent / `false` — the host blocks on the scan and returns a MODERATED
+      //     {@link BlockUploadedImageInfo} on `IMAGE_UPLOAD_RESULT` (as before).
+      //   • `true` (display only) — the host EARLY-RESOLVES on persist with a
+      //     {@link BlockPendingImageInfo} (`status:'pending'`), then streams the
+      //     scan verdict on `IMAGE_SCAN_RESOLVED`. IGNORED for `'generationSource'`
+      //     (that path has no host-side scan). An older host that predates the flag
+      //     ignores it and blocking-resolves a moderated image — the SDK hook
+      //     tolerates that (treats it as immediately-scanned; see the compat matrix
+      //     in `useImageUpload`).
       type: 'OPEN_IMAGE_UPLOAD';
-      payload: { requestId: string; purpose?: BlockUploadPurpose };
+      payload: { requestId: string; purpose?: BlockUploadPurpose; asyncScan?: boolean };
     }
   | {
       // Persist a viewer's checkpoint override via the host. `null` clears

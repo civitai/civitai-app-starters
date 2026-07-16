@@ -8,6 +8,8 @@ import type {
 } from '../../src/blocks/messages.js';
 import type {
   BlockGenerationSourceImageInfo,
+  BlockImageScanResult,
+  BlockPendingImageInfo,
   BlockUploadedImageInfo,
   WorkflowBody,
 } from '../../src/blocks/types.js';
@@ -158,6 +160,82 @@ describe('OPEN_IMAGE_UPLOAD / IMAGE_UPLOAD_RESULT message guards', () => {
     } else {
       expect.unreachable('sourceResult should narrow to IMAGE_UPLOAD_RESULT');
     }
+  });
+});
+
+describe('async-scan display upload: pending handle + IMAGE_SCAN_RESOLVED', () => {
+  const moderated: BlockUploadedImageInfo = {
+    imageId: 4242,
+    nsfwLevel: 1,
+    contentRating: 'pg',
+    url: 'https://image.civitai.com/x/original=true/clean.jpeg',
+  };
+
+  it('OPEN_IMAGE_UPLOAD carries an optional asyncScan flag (opt-in, byte-compat)', () => {
+    const async: BlockToParentMessage = {
+      type: 'OPEN_IMAGE_UPLOAD',
+      payload: { requestId: 'a-1', asyncScan: true },
+    };
+    // absent asyncScan stays valid (byte-compatible blocking path).
+    const blocking: BlockToParentMessage = {
+      type: 'OPEN_IMAGE_UPLOAD',
+      payload: { requestId: 'a-2' },
+    };
+    expect(blocking.payload).not.toHaveProperty('asyncScan');
+    if (isMessage<BlockToParentMessage, 'OPEN_IMAGE_UPLOAD'>(async, 'OPEN_IMAGE_UPLOAD')) {
+      expect(async.payload.asyncScan).toBe(true);
+    } else {
+      expect.unreachable('async should narrow to OPEN_IMAGE_UPLOAD');
+    }
+  });
+
+  it('IMAGE_UPLOAD_RESULT.selected accepts the pending handle (status:pending)', () => {
+    const pending: BlockPendingImageInfo = { status: 'pending', imageId: 4242, url: moderated.url };
+    const result: ParentToBlockMessage = {
+      type: 'IMAGE_UPLOAD_RESULT',
+      payload: { requestId: 'a-1', selected: pending },
+    };
+    if (isMessage<ParentToBlockMessage, 'IMAGE_UPLOAD_RESULT'>(result, 'IMAGE_UPLOAD_RESULT')) {
+      const sel = result.payload.selected;
+      // structural narrowing: the pending variant is the only one with `status`.
+      expect(sel && 'status' in sel && sel.status).toBe('pending');
+      expect(sel && 'imageId' in sel && sel.imageId).toBe(4242);
+    } else {
+      expect.unreachable('result should narrow to IMAGE_UPLOAD_RESULT');
+    }
+  });
+
+  it('IMAGE_SCAN_RESOLVED carries a discriminated verdict correlated by requestId + imageId', () => {
+    const scanned: BlockImageScanResult = { status: 'scanned', image: moderated };
+    const blocked: BlockImageScanResult = { status: 'blocked', reason: 'over the SFW ceiling' };
+    const errored: BlockImageScanResult = { status: 'error', message: 'poll timed out' };
+
+    for (const result of [scanned, blocked, errored]) {
+      const msg: ParentToBlockMessage = {
+        type: 'IMAGE_SCAN_RESOLVED',
+        payload: { requestId: 'a-1', imageId: 4242, result },
+      };
+      expect(
+        isMessage<ParentToBlockMessage, 'IMAGE_SCAN_RESOLVED'>(msg, 'IMAGE_SCAN_RESOLVED'),
+      ).toBe(true);
+      if (isMessage<ParentToBlockMessage, 'IMAGE_SCAN_RESOLVED'>(msg, 'IMAGE_SCAN_RESOLVED')) {
+        expect(msg.payload.requestId).toBe('a-1');
+        expect(msg.payload.imageId).toBe(4242);
+        expect(msg.payload.result.status).toBe(result.status);
+      }
+    }
+  });
+
+  it('only the scanned verdict carries a usable moderated image', () => {
+    const scanned: BlockImageScanResult = { status: 'scanned', image: moderated };
+    if (scanned.status === 'scanned') {
+      expect(scanned.image.imageId).toBe(4242);
+    }
+    const blocked: BlockImageScanResult = { status: 'blocked' };
+    const errored: BlockImageScanResult = { status: 'error' };
+    // type-level: neither blocked nor error exposes an `image` field.
+    expect('image' in blocked).toBe(false);
+    expect('image' in errored).toBe(false);
   });
 });
 

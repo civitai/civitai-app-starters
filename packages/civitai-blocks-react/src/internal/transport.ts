@@ -108,6 +108,21 @@ export interface BlockTransport {
     responseType: ParentToBlockMessageType,
     opts?: { timeoutMs?: number },
   ): Promise<unknown>;
+  /**
+   * Subscribe to an UNSOLICITED parent→block push of a given type — one the host
+   * initiates on its own schedule rather than as a reply to a `sendRequest`
+   * (e.g. `IMAGE_SCAN_RESOLVED`). The handler runs ONLY after the same trust gate
+   * every inbound message passes (origin allowlist + payload validator), so a
+   * hook never has to add its own `window` message listener and bypass the
+   * boundary. Returns an unsubscribe function.
+   *
+   * Untyped on the payload here for the same variance reason `sendRequest` is —
+   * use the free wrapper {@link subscribeTyped} for the type-narrowed view.
+   */
+  onMessage(
+    type: ParentToBlockMessageType,
+    handler: (payload: unknown) => void,
+  ): () => void;
 }
 
 /**
@@ -129,6 +144,21 @@ export async function sendTypedRequest<TRes extends ParentToBlockMessageType>(
   const payload = await transport.sendRequest(request, responseType, opts);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- variance escape; see fn jsdoc
   return payload as any;
+}
+
+/**
+ * Type-safe wrapper around `transport.onMessage`. Hooks that consume an
+ * unsolicited parent→block push (e.g. `IMAGE_SCAN_RESOLVED`) go through this so
+ * the handler's payload narrows to the message type. Mirrors
+ * {@link sendTypedRequest}'s variance-escape pattern.
+ */
+export function subscribeTyped<TType extends ParentToBlockMessageType>(
+  transport: BlockTransport,
+  type: TType,
+  handler: (payload: Extract<ParentToBlockMessage, { type: TType }>['payload']) => void,
+): () => void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- variance escape; see fn jsdoc
+  return transport.onMessage(type, handler as (payload: any) => void);
 }
 
 export const EMPTY_SNAPSHOT: BlockSnapshot = {

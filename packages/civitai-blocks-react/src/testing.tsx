@@ -39,6 +39,7 @@ export {
   type MockStorageScenario,
   type MockSharedScenario,
   type MockSharedSeed,
+  type MockCannedImageScan,
   type CostSpec,
   type ImageSpec,
   type CannedPick,
