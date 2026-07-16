@@ -144,6 +144,41 @@ describe('useResourcePicker', () => {
     await expect(pick).resolves.toEqual(mine);
   });
 
+  it('drops a result whose selected.versionId is malformed (money-adjacent guard)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { result } = renderHook(() => useResourcePicker());
+      let pick!: Promise<unknown>;
+      act(() => {
+        pick = result.current.open({ resourceType: 'Checkpoint' });
+      });
+      const sent = lastSent();
+      let settled = false;
+      void pick.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      // versionId is the id the block feeds into a workflow body — a string is
+      // genuinely malformed and MUST be dropped (not handed to the caller).
+      replyResult(sent.payload.requestId, { versionId: '9001', modelId: 700, baseModel: 'X', modelType: 'LORA' });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('RESOURCE_PICKER_RESULT'));
+
+      // A well-formed reply on the same requestId still resolves the pending pick.
+      const good = { versionId: 9001, modelId: 700, baseModel: 'Flux.1 D', modelType: 'Checkpoint' };
+      replyResult(sent.payload.requestId, good);
+      await expect(pick).resolves.toEqual(good);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('open() does NOT reject at the default ~30s timeout (a picker is human-interactive)', async () => {
     vi.useFakeTimers();
     try {

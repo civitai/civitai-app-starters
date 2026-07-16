@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 import type { BlockResourceInfo } from '@civitai/app-sdk/blocks';
 
@@ -8,6 +8,14 @@ import {
 } from '../api/generationResources.js';
 import { useHostOrigin } from './useHostOrigin.js';
 import { useBlockToken } from './useBlockToken.js';
+
+/**
+ * Backstop timeout for the direct REST fetch. Unlike the postMessage hooks
+ * (which inherit the transport's 30s request timeout), this hook talks to the
+ * HTTP API directly, so it needs its OWN bound — otherwise a hung request never
+ * rejects. Matches the transport's default request timeout.
+ */
+const GENERATION_RESOURCES_TIMEOUT_MS = 30_000;
 
 /**
  * Rehydrate a saved set of generation resources by version id, WITHOUT
@@ -37,6 +45,17 @@ export function useGenerationResources(): {
   const host = useHostOrigin();
   const { raw } = useBlockToken();
 
+  // In-flight AbortControllers, aborted on unmount so a pending fetch never
+  // resolves into an unmounted component (and its timer is cleared).
+  const inFlight = useRef<Set<AbortController>>(new Set());
+  useEffect(() => {
+    const controllers = inFlight.current;
+    return () => {
+      for (const c of controllers) c.abort();
+      controllers.clear();
+    };
+  }, []);
+
   const doFetch = useCallback(
     async (versionIds: number[]): Promise<BlockResourceInfo[]> => {
       if (!host) {
@@ -45,14 +64,36 @@ export function useGenerationResources(): {
         );
       }
       const url = host + buildGenerationResourcesUrl(versionIds);
-      const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${raw}` },
-      });
-      if (!res.ok) {
-        throw new Error(`generation-resources request failed (${res.status})`);
+      const controller = new AbortController();
+      inFlight.current.add(controller);
+      const timeoutId = setTimeout(
+        () => controller.abort(),
+        GENERATION_RESOURCES_TIMEOUT_MS,
+      );
+      try {
+        const res = await fetch(url, {
+          headers: { Authorization: `Bearer ${raw}` },
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          throw new Error(`generation-resources request failed (${res.status})`);
+        }
+        const body = (await res.json()) as unknown;
+        return responseToResources(body as Parameters<typeof responseToResources>[0]);
+      } catch (err) {
+        // Distinguish an abort (timeout OR unmount) from a real network/HTTP
+        // failure so the caller gets an actionable message instead of a bare
+        // DOMException.
+        if (controller.signal.aborted) {
+          throw new Error(
+            `useGenerationResources: request aborted (timed out after ${GENERATION_RESOURCES_TIMEOUT_MS}ms or the hook unmounted).`,
+          );
+        }
+        throw err;
+      } finally {
+        clearTimeout(timeoutId);
+        inFlight.current.delete(controller);
       }
-      const body = (await res.json()) as unknown;
-      return responseToResources(body as Parameters<typeof responseToResources>[0]);
     },
     [host, raw],
   );

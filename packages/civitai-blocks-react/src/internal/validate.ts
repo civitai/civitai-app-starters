@@ -521,6 +521,270 @@ export function isValidWildcardPackResult(p: unknown): boolean {
   return true;
 }
 
+// ============================================================
+// App-storage (per-viewer KV) reply validators
+// ============================================================
+//
+// Kept in lockstep with the host's `APP_STORAGE_*_RESULT` builders in
+// civitai/civitai (`PageBlockHost.tsx` / `IframeHost.tsx`) and the SDK's
+// `ParentToBlockMessage` union. Each guard asserts exactly the fields
+// `useAppStorage` dereferences. NOTE (verified against the live host): every
+// storage error path ALSO carries a zeroed/null success field (e.g.
+// `APP_STORAGE_GET` sends `value:null` with its `error`, `QUOTA` sends the four
+// numbers as `0`), so the guards SHORT-CIRCUIT on a present `error` — the hook
+// throws on it before reading the success fields, so a zeroed error reply must
+// not be dropped as "malformed".
+
+/**
+ * Reply to `APP_STORAGE_GET`. `value` is arbitrary JSON (incl. `null` for an
+ * unset key / anon viewer), so there is nothing to type-check on it — the guard
+ * only asserts the envelope: an object, a string `error` when present, and that
+ * the reply resolves to SOMETHING (a `value` field OR an `error`).
+ */
+export function isValidAppStorageGetResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  // `value` may be any JSON value including `null`; a reply carrying neither a
+  // `value` key nor an `error` is malformed (would silently resolve to `null`).
+  if (!('value' in p) && p.error === undefined) return false;
+  return true;
+}
+
+/** Reply to `APP_STORAGE_SET`. `ok` required; `sizeBytes` present only on success. */
+export function isValidAppStorageSetResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (typeof p.ok !== 'boolean') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.sizeBytes !== undefined && !isFiniteNumber(p.sizeBytes)) return false;
+  return true;
+}
+
+/** Reply to `APP_STORAGE_DELETE`. `ok` + `deleted` are always present (both success and error paths). */
+export function isValidAppStorageDeleteResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (typeof p.ok !== 'boolean') return false;
+  if (typeof p.deleted !== 'boolean') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  return true;
+}
+
+/**
+ * Reply to `APP_STORAGE_LIST`. On success `keys` is an array of
+ * `{ key, updatedAt }` (the hook rehydrates `updatedAt` via `new Date`, so it
+ * must be date-like); the error path sends `keys: []` with an `error`.
+ */
+export function isValidAppStorageListResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading `keys`
+  if (!Array.isArray(p.keys)) return false;
+  for (const k of p.keys) {
+    if (!isObject(k)) return false;
+    if (!isNonEmptyString(k.key)) return false;
+    if (!isDateLike(k.updatedAt)) return false;
+  }
+  if (p.nextCursor !== undefined && typeof p.nextCursor !== 'string') return false;
+  return true;
+}
+
+/** Reply to `APP_STORAGE_QUOTA`. The four counters are finite numbers (error path zeroes them + adds `error`). */
+export function isValidAppStorageQuotaResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading the counters
+  if (!isFiniteNumber(p.usedBytes)) return false;
+  if (!isFiniteNumber(p.rowCount)) return false;
+  if (!isFiniteNumber(p.limitBytes)) return false;
+  if (!isFiniteNumber(p.limitRows)) return false;
+  return true;
+}
+
+// ============================================================
+// Shared (cross-user, votable) storage reply validators
+// ============================================================
+//
+// Kept in lockstep with the host's `SHARED_*_RESULT` builders + `apps.shared.*`
+// server return types. Same SHORT-CIRCUIT-on-`error` convention as the
+// app-storage guards (the SHARED error path is `{ requestId, error }` — no
+// success field — but short-circuiting is still correct and keeps the guards
+// uniform). Closes the silent-corrupt-return hole: without these,
+// `getCount/getCounts/append/vote/unvote`/`list` returned a missing field as
+// `undefined` typed `number`/`string` with no throw, no timeout.
+
+/** The moderated `{ title, body?, data? }` value carried by each SHARED entry. */
+function isValidSharedValue(v: unknown): boolean {
+  if (!isObject(v)) return false;
+  if (typeof v.title !== 'string') return false;
+  if (v.body !== undefined && typeof v.body !== 'string') return false;
+  // `data` is opaque + unmoderated — any JSON value (incl. absent) is legal.
+  return true;
+}
+
+/**
+ * Reply to `SHARED_LIST`. On success `items` is an array the hook maps over,
+ * dereferencing `key`/`authorUserId`/`value`/`count`/`createdAt`/`updatedAt`
+ * (the last two ISO strings the hook rehydrates via `new Date`). Error path is
+ * `{ error }` (the hook throws before touching `items`).
+ */
+export function isValidSharedListResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading `items`
+  if (!Array.isArray(p.items)) return false;
+  for (const it of p.items) {
+    if (!isObject(it)) return false;
+    if (!isNonEmptyString(it.key)) return false;
+    if (!isFiniteNumber(it.authorUserId)) return false;
+    if (!isValidSharedValue(it.value)) return false;
+    if (!isFiniteNumber(it.count)) return false;
+    if (!isDateLike(it.createdAt)) return false;
+    if (!isDateLike(it.updatedAt)) return false;
+  }
+  if (p.nextCursor !== undefined && typeof p.nextCursor !== 'string') return false;
+  return true;
+}
+
+/**
+ * Reply to `SHARED_GET_COUNT` / `SHARED_VOTE` / `SHARED_UNVOTE` — all three
+ * carry an identical `{ count, error? }` shape. On success `count` is the
+ * finite vote total the hook returns directly.
+ */
+export function isValidSharedCountResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading `count`
+  if (!isFiniteNumber(p.count)) return false;
+  return true;
+}
+
+/** Reply to `SHARED_GET_COUNTS`. `counts` maps each key to a finite vote total. */
+export function isValidSharedCountsResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading `counts`
+  if (!isObject(p.counts)) return false;
+  for (const v of Object.values(p.counts)) {
+    if (!isFiniteNumber(v)) return false;
+  }
+  return true;
+}
+
+/** Reply to `SHARED_APPEND`. On success `key` is the host-minted (non-empty) entry id. */
+export function isValidSharedAppendResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading `key`
+  if (!isNonEmptyString(p.key)) return false;
+  return true;
+}
+
+/** Reply to `SHARED_WITHDRAW`. On success `ok` + `deleted` are booleans (error path is `{ error }`). */
+export function isValidSharedWithdrawResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading `deleted`
+  if (typeof p.ok !== 'boolean') return false;
+  if (typeof p.deleted !== 'boolean') return false;
+  return true;
+}
+
+// ============================================================
+// Picker + user-checkpoint reply validators
+// ============================================================
+
+/**
+ * The 5 base fields shared by `BlockCheckpointInfo` and `BlockResourceInfo`.
+ * `versionId` is the MONEY-ADJACENT id a block feeds into a workflow body — the
+ * one field that MUST be a real positive integer (defense-in-depth; the host
+ * also re-validates it server-side at estimate/submit). The rest of the
+ * projection is display-only, so each is checked ONLY WHEN PRESENT — a minimal
+ * reply carrying just a valid `versionId` is still safely consumable, and
+ * over-requiring would drop a legitimate id-only projection.
+ */
+function isValidPickerResourceBase(s: Record<string, unknown>): boolean {
+  if (typeof s.versionId !== 'number' || !Number.isInteger(s.versionId) || s.versionId <= 0) {
+    return false;
+  }
+  if (
+    s.modelId !== undefined &&
+    (typeof s.modelId !== 'number' || !Number.isInteger(s.modelId) || s.modelId <= 0)
+  ) {
+    return false;
+  }
+  if (s.modelName !== undefined && typeof s.modelName !== 'string') return false;
+  if (s.versionName !== undefined && typeof s.versionName !== 'string') return false;
+  if (s.baseModel !== undefined && typeof s.baseModel !== 'string') return false;
+  return true;
+}
+
+/**
+ * Reply to `OPEN_CHECKPOINT_PICKER`. `selected` is ABSENT when the user
+ * dismissed the picker (the hook resolves `{ selected: undefined }`); when
+ * present it is a `BlockCheckpointInfo` projection.
+ */
+export function isValidCheckpointPickerResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.selected !== undefined) {
+    if (!isObject(p.selected)) return false;
+    if (!isValidPickerResourceBase(p.selected)) return false;
+  }
+  return true;
+}
+
+/**
+ * Reply to `OPEN_RESOURCE_PICKER`. `selected` is ABSENT on dismiss (the hook
+ * resolves `null`); when present it is a `BlockResourceInfo` projection — the 5
+ * base fields plus `modelType` and the OPTIONAL public recommended-settings
+ * (`strength`/`minStrength`/`maxStrength` finite, `trainedWords` a string[],
+ * `clipSkip` a finite number OR `null`).
+ */
+export function isValidResourcePickerResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.selected !== undefined) {
+    const s = p.selected;
+    if (!isObject(s)) return false;
+    if (!isValidPickerResourceBase(s)) return false;
+    if (s.modelType !== undefined && typeof s.modelType !== 'string') return false;
+    if (s.strength !== undefined && !isFiniteNumber(s.strength)) return false;
+    if (s.minStrength !== undefined && !isFiniteNumber(s.minStrength)) return false;
+    if (s.maxStrength !== undefined && !isFiniteNumber(s.maxStrength)) return false;
+    if (s.trainedWords !== undefined) {
+      if (!Array.isArray(s.trainedWords)) return false;
+      if (!s.trainedWords.every((w): w is string => typeof w === 'string')) return false;
+    }
+    // `clipSkip` is `number | null` — accept a finite number OR null; reject
+    // other present types.
+    if (s.clipSkip !== undefined && s.clipSkip !== null && !isFiniteNumber(s.clipSkip)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Reply to `SET_USER_CHECKPOINT`. `ok` is required; the hook throws the `error`
+ * string on `ok: false`. Mirrors `isValidSharedUpdateResult`.
+ */
+export function isValidUserCheckpointSetResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (typeof p.ok !== 'boolean') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  return true;
+}
+
 /**
  * Returns the validator for an inbound message type, or `null` for types
  * that don't carry a payload requiring shape checks (SUSPEND/RESUME).
@@ -563,6 +827,34 @@ export function payloadValidatorFor(
       return isValidImageScanResolved;
     case 'SHARED_UPDATE_RESULT':
       return isValidSharedUpdateResult;
+    case 'APP_STORAGE_GET_RESULT':
+      return isValidAppStorageGetResult;
+    case 'APP_STORAGE_SET_RESULT':
+      return isValidAppStorageSetResult;
+    case 'APP_STORAGE_DELETE_RESULT':
+      return isValidAppStorageDeleteResult;
+    case 'APP_STORAGE_LIST_RESULT':
+      return isValidAppStorageListResult;
+    case 'APP_STORAGE_QUOTA_RESULT':
+      return isValidAppStorageQuotaResult;
+    case 'SHARED_LIST_RESULT':
+      return isValidSharedListResult;
+    case 'SHARED_GET_COUNT_RESULT':
+    case 'SHARED_VOTE_RESULT':
+    case 'SHARED_UNVOTE_RESULT':
+      return isValidSharedCountResult;
+    case 'SHARED_GET_COUNTS_RESULT':
+      return isValidSharedCountsResult;
+    case 'SHARED_APPEND_RESULT':
+      return isValidSharedAppendResult;
+    case 'SHARED_WITHDRAW_RESULT':
+      return isValidSharedWithdrawResult;
+    case 'CHECKPOINT_PICKER_RESULT':
+      return isValidCheckpointPickerResult;
+    case 'RESOURCE_PICKER_RESULT':
+      return isValidResourcePickerResult;
+    case 'USER_CHECKPOINT_SET':
+      return isValidUserCheckpointSetResult;
     case 'SUSPEND':
     case 'RESUME':
       return null;

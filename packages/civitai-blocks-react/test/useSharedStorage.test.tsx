@@ -663,4 +663,96 @@ describe('useSharedStorage', () => {
     });
     await expect(p).resolves.toEqual({ ok: true, deleted: false });
   });
+
+  // ---- transport-validator: malformed replies surface an ERROR, not silent undefined ----
+  // Before the SHARED_* transport validators existed, a reply missing its
+  // `count`/`key`/`items` field resolved the promise with `undefined` typed as
+  // `number`/`string` — no throw, no timeout (silent corruption). The validator
+  // now DROPS a malformed reply at the trust boundary (console.warn), so the
+  // request stays pending and REJECTS at its timeout instead of handing corrupt
+  // data to the caller.
+  it('getCount() drops a malformed reply (missing count) → rejects, never silent undefined', async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { result } = renderHook(() => useSharedStorage());
+      let p!: Promise<unknown>;
+      act(() => {
+        p = result.current.getCount('k');
+      });
+      const sent = lastSent<{ payload: { requestId: string } }>();
+      let settled: 'resolved' | 'rejected' | null = null;
+      void p.then(
+        () => {
+          settled = 'resolved';
+        },
+        () => {
+          settled = 'rejected';
+        },
+      );
+      // `count` omitted — the silent-corruption shape.
+      act(() => {
+        reply({ type: 'SHARED_GET_COUNT_RESULT', payload: { requestId: sent.payload.requestId } });
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      // Dropped at the boundary → NOT resolved-with-undefined.
+      expect(settled).toBeNull();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('SHARED_GET_COUNT_RESULT'));
+      // Surfaces an error (timeout reject) rather than hanging silently forever.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(settled).toBe('rejected');
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('list() drops a malformed reply (item missing count) → does not resolve with corrupt data', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { result } = renderHook(() => useSharedStorage());
+      let p!: Promise<unknown>;
+      act(() => {
+        p = result.current.list();
+      });
+      const sent = lastSent<{ payload: { requestId: string } }>();
+      const settled = vi.fn();
+      p.then(settled, settled);
+      // An item missing `count` (would map to a `count: undefined` corrupt row).
+      act(() => {
+        reply({
+          type: 'SHARED_LIST_RESULT',
+          payload: {
+            requestId: sent.payload.requestId,
+            items: [
+              {
+                key: 'req:1',
+                authorUserId: 7,
+                value: { title: 't' },
+                createdAt: '2026-05-01T00:00:00.000Z',
+                updatedAt: '2026-05-02T00:00:00.000Z',
+              },
+            ],
+          },
+        });
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(settled).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('SHARED_LIST_RESULT'));
+
+      // A WELL-FORMED reply on the same requestId still resolves it (the pending
+      // request survived the drop).
+      act(() => {
+        reply({ type: 'SHARED_LIST_RESULT', payload: { requestId: sent.payload.requestId, items: [] } });
+      });
+      await expect(p).resolves.toEqual({ items: [], nextCursor: undefined });
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });

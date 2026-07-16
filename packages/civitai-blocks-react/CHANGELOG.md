@@ -10,7 +10,7 @@
   - **blocks-react:** `useImageUpload({ asyncScan: true })` returns `{ open, scanStatus }` — `open()` early-resolves a `BlockPendingImageInfo` (or `null` on dismiss) and `scanStatus(handle)` resolves the streamed verdict (buffered if it arrives first; re-callable for retry; forgery-resistant correlation by the generated `requestId`). Existing overloads (blocking `display`, `generationSource`) are unchanged. A host that predates `asyncScan` (blocking-resolves a moderated image) is handled transparently — the hook treats it as immediately-scanned. `createMockHost` models the early-resolve → async verdict with a new `cannedImageScan` option (`'scanned'` default | `{ status: 'blocked', reason? }` | `'error'`).
   - The block-side security invariant is unchanged: the pending handle is author-preview-only, only a `scanned` verdict carries the moderated image projection, and cross-user serving stays gated server-side.
 
-  blocks-react bumps its `@civitai/app-sdk` peer range `^0.21.0` → `^0.22.0` in lockstep (it consumes the new types), so the app-sdk minor does not force a blocks-react major.
+  blocks-react bumps its `@civitai/app-sdk` peer range `^0.22.0` → `^0.23.0` in lockstep (it consumes the new types), so the app-sdk minor does not force a blocks-react major.
 
 ## 0.26.0
 

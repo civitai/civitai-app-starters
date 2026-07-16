@@ -1272,3 +1272,196 @@ describe('createLiveHost — startup guards', () => {
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('No block token supplied'));
   });
 });
+
+describe('createLiveHost — SHARED storage (served via apps.shared.*)', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+  let fetchMock: ReturnType<typeof vi.fn>;
+  const TOKEN = fakeJwt(DEFAULT_CLAIMS);
+
+  function installWithFetch(impl: (url: string, init?: RequestInit) => Promise<Response>) {
+    fetchMock = vi.fn(impl);
+    const host = createLiveHost({
+      blockToken: TOKEN,
+      viewer: { id: 42, username: 'dev-mod' }, // skip /blocks/me
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+  }
+
+  beforeEach(() => {
+    inbound = collectInbound();
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  it('SHARED_LIST → apps.shared.list (GET) → items with ISO dates', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('apps.shared.list')) {
+        return trpcData({
+          items: [
+            {
+              key: 'req:1',
+              authorUserId: 7,
+              value: { title: 'Dark mode', body: 'please' },
+              count: 3,
+              createdAt: '2026-05-01T00:00:00.000Z',
+              updatedAt: '2026-05-02T00:00:00.000Z',
+            },
+          ],
+          nextCursor: 'bmV4dA==',
+        });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('SHARED_LIST', { requestId: 'r-l', prefix: 'req:', limit: 5 });
+    const payload = await waitForMessage(inbound, 'SHARED_LIST_RESULT');
+    expect(payload.requestId).toBe('r-l');
+    const items = payload.items as Array<Record<string, unknown>>;
+    expect(items[0].key).toBe('req:1');
+    expect(items[0].count).toBe(3);
+    expect(items[0].createdAt).toBe('2026-05-01T00:00:00.000Z');
+    expect(payload.nextCursor).toBe('bmV4dA==');
+
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('apps.shared.list'))!;
+    expect((call[1] as RequestInit).method).toBe('GET');
+    expect(decodeInputParam(String(call[0]))).toEqual({
+      json: { blockToken: TOKEN, limit: 5, prefix: 'req:' },
+    });
+  });
+
+  it('SHARED_GET_COUNT → apps.shared.getCount (GET) → count', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('apps.shared.getCount')) return trpcData({ count: 42 });
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARED_GET_COUNT', { requestId: 'r-c', key: 'req:1' });
+    const payload = await waitForMessage(inbound, 'SHARED_GET_COUNT_RESULT');
+    expect(payload.count).toBe(42);
+  });
+
+  it('SHARED_GET_COUNTS → apps.shared.getCounts (GET) → counts map', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('apps.shared.getCounts')) return trpcData({ counts: { a: 1, b: 0 } });
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARED_GET_COUNTS', { requestId: 'r-cs', keys: ['a', 'b'] });
+    const payload = await waitForMessage(inbound, 'SHARED_GET_COUNTS_RESULT');
+    expect(payload.counts).toEqual({ a: 1, b: 0 });
+  });
+
+  it('SHARED_APPEND → apps.shared.append (POST) → key', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('apps.shared.append')) return trpcData({ key: 'shared_9' });
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARED_APPEND', { requestId: 'r-a', value: { title: 't' } });
+    const payload = await waitForMessage(inbound, 'SHARED_APPEND_RESULT');
+    expect(payload.key).toBe('shared_9');
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('apps.shared.append'))!;
+    expect((call[1] as RequestInit).method).toBe('POST');
+    expect(JSON.parse(String((call[1] as RequestInit).body))).toEqual({
+      json: { blockToken: TOKEN, value: { title: 't' } },
+    });
+  });
+
+  it('SHARED_VOTE → apps.shared.vote (POST) → count', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('apps.shared.vote')) return trpcData({ count: 5 });
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARED_VOTE', { requestId: 'r-v', key: 'req:1' });
+    const payload = await waitForMessage(inbound, 'SHARED_VOTE_RESULT');
+    expect(payload.count).toBe(5);
+  });
+
+  it('SHARED_UNVOTE → apps.shared.unvote (POST) → count', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('apps.shared.unvote')) return trpcData({ count: 4 });
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARED_UNVOTE', { requestId: 'r-uv', key: 'req:1' });
+    const payload = await waitForMessage(inbound, 'SHARED_UNVOTE_RESULT');
+    expect(payload.count).toBe(4);
+  });
+
+  it('SHARED_UPDATE → apps.shared.update (POST) → ok', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('apps.shared.update')) return trpcData({ ok: true });
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARED_UPDATE', { requestId: 'r-u', key: 'req:1', value: { title: 't2' } });
+    const payload = await waitForMessage(inbound, 'SHARED_UPDATE_RESULT');
+    expect(payload.ok).toBe(true);
+  });
+
+  it('SHARED_WITHDRAW → apps.shared.withdraw (POST) → ok + deleted', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('apps.shared.withdraw')) return trpcData({ ok: true, deleted: true });
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARED_WITHDRAW', { requestId: 'r-w', key: 'req:1' });
+    const payload = await waitForMessage(inbound, 'SHARED_WITHDRAW_RESULT');
+    expect(payload.ok).toBe(true);
+    expect(payload.deleted).toBe(true);
+  });
+
+  it('SHARED_VOTE backend error → error reply (never hangs)', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('apps.shared.vote')) return trpcErr('FORBIDDEN', 403);
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARED_VOTE', { requestId: 'r-ve', key: 'req:1' });
+    const payload = await waitForMessage(inbound, 'SHARED_VOTE_RESULT');
+    expect(payload.error).toBe('FORBIDDEN');
+    expect(payload.count).toBe(0);
+  });
+});
+
+describe('createLiveHost — OPEN_IMAGE_UPLOAD (no headless upload contract)', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+
+  beforeEach(() => {
+    inbound = collectInbound();
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  it('replies IMAGE_UPLOAD_RESULT dismissed (no `selected`) instead of hanging', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const host = createLiveHost({
+      blockToken: fakeJwt(DEFAULT_CLAIMS),
+      viewer: { id: 42, username: 'dev-mod' },
+      fetchImpl: (async () => {
+        throw new Error('no network expected for OPEN_IMAGE_UPLOAD');
+      }) as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('OPEN_IMAGE_UPLOAD', { requestId: 'r-img' });
+    const payload = await waitForMessage(inbound, 'IMAGE_UPLOAD_RESULT');
+    expect(payload.requestId).toBe('r-img');
+    // Dismissed: no `selected` → the hook resolves to null (no fabricated image).
+    expect('selected' in payload).toBe(false);
+  });
+});

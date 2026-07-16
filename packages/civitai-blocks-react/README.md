@@ -307,6 +307,21 @@ const { keys } = await storage.list({ prefix: 'note-' });
 const quota = await storage.getQuota();       // { usedBytes, rowCount, limitBytes, limitRows }
 ```
 
+### `useSharedStorage()`
+
+App-scoped, append-only, community-votable SHARED datastore (every viewer sees
+the same list). Sibling of `useAppStorage`; anonymous viewers get the read path
+and a hard reject on mutations.
+
+```tsx
+const shared = useSharedStorage();
+const { key } = await shared.append({ title: 'Add dark mode', body: 'please' });
+const { items } = await shared.list({ limit: 20 });   // newest-first
+const count = await shared.vote(key);                 // idempotent up-vote
+await shared.unvote(key);
+await shared.withdraw(key);                            // remove my own entry
+```
+
 ### `useCheckpointPicker()`
 
 Drive the platform Checkpoint picker + persist a viewer override.
@@ -315,6 +330,55 @@ Drive the platform Checkpoint picker + persist a viewer override.
 const { open, persist } = useCheckpointPicker();
 const { selected } = await open({ baseModelGroup: 'SDXL', currentVersionId });
 if (selected) await persist(selected.versionId);   // null clears the override
+```
+
+### `useResourcePicker()`
+
+Drive the platform resource picker for page blocks — `'Checkpoint' | 'LORA'`.
+The viewer searches in host chrome; the block only ever sees the one resource it
+picked. DISCOVERY ONLY — the returned `versionId` is re-validated + re-priced
+server-side at estimate/submit.
+
+```tsx
+const { open } = useResourcePicker();
+const picked = await open({ resourceType: 'LORA', baseModelGroup: 'SDXL' });
+if (picked) {
+  const versionId = picked.versionId;   // feed into body.additionalResources
+  const weight = picked.strength;        // recommended default weight (may be undefined)
+}
+```
+
+### `useImageUpload()`
+
+Host-mediated image upload — the host opens its native upload modal and the
+iframe never handles the bytes. Resolves with a moderated image (or `null` on
+dismiss); pass `{ purpose: 'generationSource' }` for an unscanned img2img source
+or `{ asyncScan: true }` for the early-resolve + `scanStatus()` flow.
+
+```tsx
+const { open } = useImageUpload();
+const img = await open();               // BlockUploadedImageInfo | null
+if (img) {
+  await submit({
+    kind: 'textToImage',
+    modelId,
+    modelVersionId,
+    sourceImage: { url: img.url, width: 1024, height: 1024 },
+    params: { prompt },
+  });
+}
+```
+
+### `useGenerationResources()`
+
+Rehydrate a saved set of generation resources by version id — WITHOUT re-opening
+the picker. Returns the same widened projection `useResourcePicker` yields
+(recommended weights, trigger words, clipSkip). DISCOVERY ONLY.
+
+```tsx
+const { fetch } = useGenerationResources();
+const resources = await fetch([691639, 666002]);   // by saved versionIds
+const first = resources[0];             // .versionId / .strength / .trainedWords / .clipSkip
 ```
 
 ### `useCivitaiNavigate()`
@@ -333,6 +397,56 @@ Fire-and-forget event tracking into the host's analytics pipeline.
 ```tsx
 const { track } = useBlockAnalytics();
 track('generate_clicked', { modelId });
+```
+
+### `useRequestSignIn()`
+
+Ask the host to open its sign-in flow for an ANONYMOUS viewer (fire-and-forget).
+On sign-in the host re-inits the block with the now-authenticated viewer.
+
+```tsx
+const { requestSignIn } = useRequestSignIn();
+// e.g. onClick of a "Sign in to generate" button:
+requestSignIn();
+```
+
+### `useRequestConsent()`
+
+Lazy consent: ask the host to open its consent UI when a LOGGED-IN viewer takes
+an action whose consent-gated scope the block token is missing (e.g. Generate
+needs `ai:write:budgeted` but the viewer hasn't granted it). Fire-and-forget —
+on grant the host pushes a new token; observe `useBlockToken().scopes` and retry.
+
+```tsx
+const { requestConsent } = useRequestConsent();
+requestConsent({ scopes: ['ai:write:budgeted', 'buzz:read:self'] });
+```
+
+### `useDomainMaturity()`
+
+Read the surrounding color-domain's maturity ceiling (civitai #2670) so a block
+can hide/blur mature affordances on a SFW domain. **Fail-closed SFW** until
+`BLOCK_INIT` lands or against a host that predates the field.
+
+```tsx
+const { isSfw, isLevelAllowed } = useDomainMaturity();
+const showRSlider = isLevelAllowed(BrowsingLevel.R);   // false on a SFW domain
+```
+
+### `SfwGate`
+
+Convenience component that renders `children` only when the domain permits the
+maturity — no `level` prop gates on the SFW ceiling, a `level` prop gates on that
+browsing-level bit. Fail-closed SFW.
+
+```tsx
+function MatureSection() {
+  return (
+    <SfwGate level={BrowsingLevel.R} fallback={<SafePlaceholder />}>
+      <RRatedControl />
+    </SfwGate>
+  );
+}
 ```
 
 ## The `/ui` subexport
@@ -469,6 +583,9 @@ Runnable, minimal blocks — one per feature, each with its own README:
 
 | `@civitai/blocks-react` | pairs with `@civitai/app-sdk` | adds |
 |---|---|---|
+| `0.27.x` | `^0.23.0` | async-scan image upload; transport validators for all `SHARED_*` / `APP_STORAGE_*` / picker replies |
+| `0.26.x` | `^0.22.0` | `useViewer()` (`GET_VIEWER`) |
+| `0.25.x` | `^0.21.0` | `useBuzzTransactions`, `useBuzzAccounts`, `useDailyCompensation`, `useWildcardPack` |
 | `0.5.0` | `^0.7.0` | `useBuzzWorkflow().cancel()` (real server-side cancel, gotcha #51) |
 | `0.4.x` | `^0.6.0` | `useAppStorage`, `SettingsForm` (`/ui`) |
 | `0.3.x` | `^0.5.0` | earlier hook set |
