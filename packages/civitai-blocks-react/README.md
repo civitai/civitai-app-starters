@@ -287,8 +287,9 @@ with a discriminated `code` (`not-found` / `forbidden` / `too-large` /
 `parse-failed` / `busy` — `busy` is retryable), not free text.
 
 ```tsx
-const { pack, loading, error } = useWildcardPack(modelVersionId);
-if (error instanceof WildcardPackError && error.code === 'busy') return <RetryLater />;
+const { pack, loading, error, refetch } = useWildcardPack(modelVersionId);
+// `error.code === 'busy'` is retryable — call refetch(); the other codes are terminal.
+if (error instanceof WildcardPackError && error.code === 'busy') void refetch();
 if (!loading && pack) console.log(Object.keys(pack.lists));
 ```
 
