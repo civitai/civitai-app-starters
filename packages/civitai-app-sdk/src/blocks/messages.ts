@@ -225,11 +225,11 @@ export type ParentToBlockMessage =
     }
   | {
       // Reply to GET_VIEWER — the viewer self-read. On success `viewer` carries
-      // the signed-in viewer ({@link BlockViewer} — id/username/status + optional
-      // buzzBudget); on host-side failure (anonymous / banned viewer, missing
-      // scope, or host failure) `error` is a FREE-TEXT string and `viewer` is
-      // absent. Consumers treat a non-empty `error` as the reject signal
-      // (mirrors BUZZ_BALANCE_RESULT).
+      // the signed-in viewer ({@link BlockViewer} — id/username/status/buzzBudget,
+      // where `username` + `buzzBudget` are present-but-NULLABLE); on host-side
+      // failure (anonymous / banned viewer, missing scope, or host failure)
+      // `error` is a FREE-TEXT string and `viewer` is absent. Consumers treat a
+      // non-empty `error` as the reject signal (mirrors BUZZ_BALANCE_RESULT).
       type: 'VIEWER_RESULT';
       payload: {
         requestId: string;

@@ -227,24 +227,31 @@ describe('isValidBuzzBalanceResult', () => {
 });
 
 describe('isValidViewerResult', () => {
-  it('accepts a success reply carrying the { id, username, status } viewer', () => {
-    expect(
-      isValidViewerResult({ requestId: 'r', viewer: { id: 7, username: 'v', status: 'active' } }),
-    ).toBe(true);
-  });
-  // THE OPTIONAL-FIELD TRAP: a valid reply with NO `buzzBudget` must be accepted.
-  // Over-requiring the optional field is the class of guard bug that dropped a
-  // valid reply and hung the reading hook — keep optionals optional.
-  it('accepts a viewer WITHOUT the optional buzzBudget', () => {
-    expect(
-      isValidViewerResult({ requestId: 'r', viewer: { id: 7, username: 'v', status: 'muted' } }),
-    ).toBe(true);
-  });
-  it('accepts a viewer WITH the optional buzzBudget', () => {
+  it('accepts a success reply carrying the { id, username, status, buzzBudget } viewer', () => {
     expect(
       isValidViewerResult({
         requestId: 'r',
         viewer: { id: 7, username: 'v', status: 'active', buzzBudget: 200 },
+      }),
+    ).toBe(true);
+  });
+  // THE NULL-VS-UNDEFINED TRAP (host PR #3152): `username` and `buzzBudget` are
+  // present-but-NULLABLE. A too-strict guard that rejected `null` would drop a
+  // valid reply → hang the reading hook to its timeout (the exact bug that hung
+  // useBuzzTransactions on the null cursor). Both nulls MUST be accepted.
+  it('accepts a viewer with NULL username AND NULL buzzBudget', () => {
+    expect(
+      isValidViewerResult({
+        requestId: 'r',
+        viewer: { id: 7, username: null, status: 'muted', buzzBudget: null },
+      }),
+    ).toBe(true);
+  });
+  it('accepts a viewer with a null username but a numeric buzzBudget', () => {
+    expect(
+      isValidViewerResult({
+        requestId: 'r',
+        viewer: { id: 7, username: null, status: 'active', buzzBudget: 0 },
       }),
     ).toBe(true);
   });
@@ -253,17 +260,18 @@ describe('isValidViewerResult', () => {
   });
   it.each([
     ['neither viewer nor error', { requestId: 'r' }],
-    ['viewer missing id', { requestId: 'r', viewer: { username: 'v', status: 'active' } }],
-    ['viewer id not a number', { requestId: 'r', viewer: { id: '7', username: 'v', status: 'active' } }],
-    ['viewer id NaN', { requestId: 'r', viewer: { id: Number.NaN, username: 'v', status: 'active' } }],
-    ['viewer username empty', { requestId: 'r', viewer: { id: 7, username: '', status: 'active' } }],
-    ['viewer username null', { requestId: 'r', viewer: { id: 7, username: null, status: 'active' } }],
-    ['viewer status unknown', { requestId: 'r', viewer: { id: 7, username: 'v', status: 'banned' } }],
-    ['viewer status missing', { requestId: 'r', viewer: { id: 7, username: 'v' } }],
+    ['viewer missing id', { requestId: 'r', viewer: { username: 'v', status: 'active', buzzBudget: 1 } }],
+    ['viewer id not a number', { requestId: 'r', viewer: { id: '7', username: 'v', status: 'active', buzzBudget: 1 } }],
+    ['viewer id NaN', { requestId: 'r', viewer: { id: Number.NaN, username: 'v', status: 'active', buzzBudget: 1 } }],
+    ['viewer username a number', { requestId: 'r', viewer: { id: 7, username: 5, status: 'active', buzzBudget: 1 } }],
+    ['viewer status unknown', { requestId: 'r', viewer: { id: 7, username: 'v', status: 'banned', buzzBudget: 1 } }],
+    ['viewer status missing', { requestId: 'r', viewer: { id: 7, username: 'v', buzzBudget: 1 } }],
+    ['buzzBudget missing (required present)', { requestId: 'r', viewer: { id: 7, username: 'v', status: 'active' } }],
     ['buzzBudget not a number', { requestId: 'r', viewer: { id: 7, username: 'v', status: 'active', buzzBudget: 'x' } }],
+    ['buzzBudget NaN', { requestId: 'r', viewer: { id: 7, username: 'v', status: 'active', buzzBudget: Number.NaN } }],
     ['viewer not an object', { requestId: 'r', viewer: 5 }],
     ['error not a string', { requestId: 'r', error: 500 }],
-    ['requestId not a string', { requestId: 5, viewer: { id: 7, username: 'v', status: 'active' } }],
+    ['requestId not a string', { requestId: 5, viewer: { id: 7, username: 'v', status: 'active', buzzBudget: 1 } }],
     ['null payload', null],
     ['string payload', 'oops'],
   ])('rejects %s', (_, payload) => {

@@ -327,8 +327,8 @@ export interface MockHostOptions {
    * `VIEWER_RESULT` bridge (what the `useViewer` hook reads). Distinct from the
    * install-time {@link MockHostOptions.viewer} (the coarse BLOCK_INIT snapshot,
    * a nullable-username `ViewerInfo`): this is the authoritative self-read shape
-   * ({@link BlockViewer} — non-null `username`, `active`/`muted` status, current
-   * `buzzBudget`). Absent → {@link DEFAULT_VIEWER_RESULT}. Live-tunable via
+   * ({@link BlockViewer} — `active`/`muted` status; `username` + `buzzBudget` are
+   * present-but-nullable). Absent → {@link DEFAULT_VIEWER_RESULT}. Live-tunable via
    * {@link MockHost.setScenario}.
    */
   viewerResult?: BlockViewer;
@@ -613,8 +613,8 @@ function normalizeBalanceError(e: boolean | string | Error | undefined): string 
 /**
  * Default viewer reported on `GET_VIEWER` when {@link MockHostOptions.viewerResult}
  * is omitted — mirrors {@link DEFAULT_VIEWER}'s id/username (the authoritative
- * self-read shape: non-null username, `active` status, a plausible buzzBudget) so
- * `useViewer()` resolves out of the box.
+ * self-read shape: `active` status + a plausible buzzBudget; `username`/`buzzBudget`
+ * are present-but-nullable on the wire) so `useViewer()` resolves out of the box.
  */
 const DEFAULT_VIEWER_RESULT: BlockViewer = {
   id: 2,

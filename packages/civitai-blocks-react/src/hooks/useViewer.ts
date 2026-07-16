@@ -32,8 +32,10 @@ export interface UseViewer {
  *
  * Distinct from `useBlockContext().viewer`, which is the coarse BLOCK_INIT-time
  * snapshot ({@link ViewerInfo}, `status` optional): `useViewer` is the on-demand
- * authoritative self-read (non-null `username`, `active`/`muted` status, current
- * `buzzBudget`).
+ * authoritative self-read (`active`/`muted` status + the viewer's current
+ * `buzzBudget`). `username` and `buzzBudget` are surfaced as-is and may be `null`
+ * (a viewer with no handle / a token lacking the budget claim) — the block
+ * handles the null case.
  *
  * Fetches once on mount and exposes `refetch` for on-demand refreshes. A host
  * that never answers surfaces as an `error` after the transport's request

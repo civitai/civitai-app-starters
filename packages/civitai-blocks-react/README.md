@@ -226,18 +226,19 @@ if (!loading && balance) console.log(`Yellow: ${balance.yellow}`);
 ### `useViewer()`
 
 The signed-in viewer as an on-demand authoritative self-read (`{ id, username,
-status, buzzBudget? }`) — distinct from `useBlockContext().viewer`, the coarse
-`BLOCK_INIT`-time snapshot. `username` is non-null, `status` is `'active' |
-'muted'`, and it carries the viewer's current `buzzBudget`. Host-mediated over
-`GET_VIEWER` → `VIEWER_RESULT` (the host resolves the viewer from the block token
-via `blocks.getMyViewer`); an anonymous / banned viewer comes back as `error`.
-Fetches on mount; `refetch` for on-demand refreshes.
+status, buzzBudget }`) — distinct from `useBlockContext().viewer`, the coarse
+`BLOCK_INIT`-time snapshot. `status` is `'active' | 'muted'`; `username`
+(`string | null`) and `buzzBudget` (`number | null`) are present-but-nullable, so
+handle the null case. Host-mediated over `GET_VIEWER` → `VIEWER_RESULT` (the host
+resolves the viewer from the block token via `blocks.getMyViewer`); an anonymous /
+banned viewer comes back as `error`. Fetches on mount; `refetch` for on-demand
+refreshes.
 
 ```tsx
 const { viewer, loading, error, refetch } = useViewer();
 // `viewer` is null until the first successful fetch. An anon / banned viewer,
-// missing scope, or host failure → `error`.
-if (!loading && viewer) console.log(`${viewer.username} · budget ${viewer.buzzBudget ?? 0}`);
+// missing scope, or host failure → `error`. `username`/`buzzBudget` may be null.
+if (!loading && viewer) console.log(`${viewer.username ?? 'anon'} · budget ${viewer.buzzBudget ?? 0}`);
 ```
 
 ### `useBuzzTransactions(params?)`

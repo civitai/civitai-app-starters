@@ -97,16 +97,24 @@ describe('useViewer', () => {
     expect(result.current.error).toBeNull();
   });
 
-  it('resolves a viewer WITHOUT buzzBudget (optional field absent)', async () => {
+  // NULLABILITY (host PR #3152): `username` and `buzzBudget` are present-but-null.
+  // The transport-level validator must ACCEPT this reply (not drop it) and the
+  // hook surfaces the nulls as-is — a dropped valid reply would hang to timeout.
+  it('resolves a viewer with NULL username and NULL buzzBudget (present-but-nullable)', async () => {
     const { result } = renderHook(() => useViewer());
 
     dispatchResult({
       requestId: lastRequestId(postMessageMock),
-      viewer: { id: 7, username: 'viewer', status: 'muted' },
+      viewer: { id: 7, username: null, status: 'muted', buzzBudget: null },
     });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.viewer).toEqual({ id: 7, username: 'viewer', status: 'muted' });
+    expect(result.current.viewer).toEqual({
+      id: 7,
+      username: null,
+      status: 'muted',
+      buzzBudget: null,
+    });
     expect(result.current.error).toBeNull();
   });
 
@@ -126,7 +134,10 @@ describe('useViewer', () => {
     const realRequestId = lastRequestId(postMessageMock);
 
     // A well-formed result carrying a DIFFERENT requestId must not resolve the hook.
-    dispatchResult({ requestId: 'some-other-id', viewer: { id: 1, username: 'x', status: 'active' } });
+    dispatchResult({
+      requestId: 'some-other-id',
+      viewer: { id: 1, username: 'x', status: 'active', buzzBudget: 1 },
+    });
     // Give any (incorrect) state update a chance to flush.
     await Promise.resolve();
     expect(result.current.loading).toBe(true);
@@ -135,10 +146,15 @@ describe('useViewer', () => {
     // The correctly-correlated reply resolves it.
     dispatchResult({
       requestId: realRequestId,
-      viewer: { id: 7, username: 'viewer', status: 'active' },
+      viewer: { id: 7, username: 'viewer', status: 'active', buzzBudget: 50 },
     });
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.viewer).toEqual({ id: 7, username: 'viewer', status: 'active' });
+    expect(result.current.viewer).toEqual({
+      id: 7,
+      username: 'viewer',
+      status: 'active',
+      buzzBudget: 50,
+    });
   });
 
   it('ignores a late response that arrives after unmount (no state update / no throw)', async () => {
@@ -150,7 +166,7 @@ describe('useViewer', () => {
     // Late reply after unmount — must be a silent no-op.
     dispatchResult({
       requestId: realRequestId,
-      viewer: { id: 7, username: 'viewer', status: 'active' },
+      viewer: { id: 7, username: 'viewer', status: 'active', buzzBudget: 50 },
     });
     await Promise.resolve();
 
@@ -164,10 +180,15 @@ describe('useViewer', () => {
     const { result } = renderHook(() => useViewer());
     dispatchResult({
       requestId: lastRequestId(postMessageMock),
-      viewer: { id: 7, username: 'viewer', status: 'active' },
+      viewer: { id: 7, username: 'viewer', status: 'active', buzzBudget: 100 },
     });
     await waitFor(() =>
-      expect(result.current.viewer).toEqual({ id: 7, username: 'viewer', status: 'active' }),
+      expect(result.current.viewer).toEqual({
+        id: 7,
+        username: 'viewer',
+        status: 'active',
+        buzzBudget: 100,
+      }),
     );
 
     const beforeCount = postMessageMock.mock.calls.filter((c) => c[0]?.type === 'GET_VIEWER').length;

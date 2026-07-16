@@ -228,19 +228,21 @@ const VIEWER_STATUSES = new Set<string>(['active', 'muted']);
 
 /**
  * Reply to a block-initiated `GET_VIEWER`. A well-formed reply carries EITHER a
- * `viewer` ({ id, username, status } — `id` a finite number, `username` a
- * non-empty string, `status` one of `active`/`muted`; `buzzBudget` OPTIONAL) OR
- * a free-text `error`; one with neither is malformed and dropped. Mirrors the
- * `BUZZ_BALANCE_RESULT` value-or-error convention.
+ * `viewer` ({ id, username, status, buzzBudget }) OR a free-text `error`; one
+ * with neither is malformed and dropped. Mirrors the `BUZZ_BALANCE_RESULT`
+ * value-or-error convention.
  *
- * `buzzBudget` is validated ONLY when present — a reply without it is fully
- * valid (the host may omit it). Over-requiring an optional field is the class of
- * bug that dropped valid replies + hung the reading hook, so it stays optional.
+ * NULLABILITY (host PR #3152): `username` is `string | null` and `buzzBudget` is
+ * `number | null` — both present-but-NULLABLE, not omitted. The guard MUST ACCEPT
+ * `null` for both (the host returns `username: null` for a viewer with no handle,
+ * `buzzBudget: null` when the token lacks the budget claim). Rejecting a valid
+ * `null` is the exact too-strict-guard trap that hung `useBuzzTransactions` on the
+ * null cursor — a dropped valid reply hangs the hook to its 30s timeout.
  */
 export function isValidViewerResult(
   p: unknown,
 ): p is {
-  viewer?: { id: number; username: string; status: string; buzzBudget?: number };
+  viewer?: { id: number; username: string | null; status: string; buzzBudget: number | null };
   error?: string;
   requestId?: string;
 } {
@@ -251,10 +253,13 @@ export function isValidViewerResult(
     const v = p.viewer;
     if (!isObject(v)) return false;
     if (!isFiniteNumber(v.id)) return false;
-    if (!isNonEmptyString(v.username)) return false;
+    // `username` is `string | null` — accept a string (any) OR null; reject only
+    // other types (number/undefined/object).
+    if (typeof v.username !== 'string' && v.username !== null) return false;
     if (typeof v.status !== 'string' || !VIEWER_STATUSES.has(v.status)) return false;
-    // `buzzBudget` is OPTIONAL — validate only when present.
-    if (v.buzzBudget !== undefined && !isFiniteNumber(v.buzzBudget)) return false;
+    // `buzzBudget` is `number | null` — accept a finite number OR null. Do NOT
+    // reject null (see NULLABILITY above).
+    if (!isFiniteNumber(v.buzzBudget) && v.buzzBudget !== null) return false;
   }
   // A reply must resolve to something — either the viewer or an error.
   if (p.viewer === undefined && p.error === undefined) return false;
