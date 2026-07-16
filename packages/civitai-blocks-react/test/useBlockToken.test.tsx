@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BlockInitPayload } from '@civitai/app-sdk/blocks';
 
-import { useBlockToken } from '../src/hooks/useBlockToken.js';
+import { requestRefresh, useBlockToken } from '../src/hooks/useBlockToken.js';
 import { getTransport } from '../src/internal/singleton.js';
 import { resetTransport } from '../src/testing.js';
 
@@ -190,6 +190,38 @@ describe('useBlockToken', () => {
     );
     await Promise.all([p1, p2]);
     expect(postMessageMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT coalesce refreshes across DIFFERENT blockInstanceIds (inline v2 multi-instance)', async () => {
+    vi.useRealTimers();
+    getTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+    // BLOCK_INIT so the transport is ready and REQUEST_TOKENs flush immediately.
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'BLOCK_INIT', payload: buildInit(60 * 60_000) },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+    postMessageMock.mockClear();
+
+    // Two concurrent refreshes for DIFFERENT instances (inline mode shares one
+    // module context). The pre-fix module-global singleton coalesced these to a
+    // SINGLE REQUEST_TOKEN, so instance B never minted its own token. Keyed by
+    // blockInstanceId, each instance fires its own request.
+    const a = requestRefresh('inst-A');
+    const b = requestRefresh('inst-B');
+    // Same instance again while in-flight → coalesced (still 2 total, not 3).
+    const a2 = requestRefresh('inst-A');
+    // Swallow the never-answered pending promises (resetTransport rejects them).
+    void Promise.allSettled([a, b, a2]);
+
+    expect(postMessageMock).toHaveBeenCalledTimes(2);
+    const instanceIds = postMessageMock.mock.calls.map(
+      (c) => (c[0] as { payload: { blockInstanceId: string } }).payload.blockInstanceId,
+    );
+    expect(new Set(instanceIds)).toEqual(new Set(['inst-A', 'inst-B']));
   });
 
   it('re-schedules the next refresh after a successful TOKEN_REFRESH_RESPONSE', async () => {

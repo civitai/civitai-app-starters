@@ -1,13 +1,26 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  isValidAppStorageDeleteResult,
+  isValidAppStorageGetResult,
+  isValidAppStorageListResult,
+  isValidAppStorageQuotaResult,
+  isValidAppStorageSetResult,
   isValidBlockInitPayload,
   isValidBuzzBalanceResult,
   isValidBuzzPurchaseResult,
+  isValidCheckpointPickerResult,
   isValidImageUploadResult,
+  isValidResourcePickerResult,
+  isValidSharedAppendResult,
+  isValidSharedCountResult,
+  isValidSharedCountsResult,
+  isValidSharedListResult,
   isValidSharedUpdateResult,
+  isValidSharedWithdrawResult,
   isValidTokenRefresh,
   isValidTokenRefreshResponse,
+  isValidUserCheckpointSetResult,
   isValidViewerResult,
   isValidWorkflowReply,
   isValidWorkflowSnapshot,
@@ -354,6 +367,296 @@ describe('isValidSharedUpdateResult', () => {
   });
 });
 
+// ============================================================
+// App-storage reply validators
+// ============================================================
+
+describe('isValidAppStorageGetResult', () => {
+  it('accepts any value incl. null (unset key / anon)', () => {
+    expect(isValidAppStorageGetResult({ requestId: 'r', value: { any: 'json' } })).toBe(true);
+    expect(isValidAppStorageGetResult({ requestId: 'r', value: null })).toBe(true);
+    expect(isValidAppStorageGetResult({ requestId: 'r', value: 42 })).toBe(true);
+  });
+  it('accepts an error reply (host sends value:null + error)', () => {
+    expect(isValidAppStorageGetResult({ requestId: 'r', value: null, error: 'NOT_FOUND' })).toBe(true);
+  });
+  it.each([
+    ['neither value nor error', { requestId: 'r' }],
+    ['error not a string', { requestId: 'r', value: null, error: 5 }],
+    ['requestId not a string', { requestId: 5, value: 1 }],
+    ['null payload', null],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidAppStorageGetResult(payload)).toBe(false);
+  });
+});
+
+describe('isValidAppStorageSetResult', () => {
+  it('accepts ok:true with sizeBytes', () => {
+    expect(isValidAppStorageSetResult({ requestId: 'r', ok: true, sizeBytes: 23 })).toBe(true);
+  });
+  it('accepts ok:false with error (no sizeBytes)', () => {
+    expect(isValidAppStorageSetResult({ requestId: 'r', ok: false, error: 'PAYLOAD_TOO_LARGE' })).toBe(true);
+  });
+  it.each([
+    ['missing ok', { requestId: 'r' }],
+    ['ok not boolean', { requestId: 'r', ok: 'yes' }],
+    ['sizeBytes not a number', { requestId: 'r', ok: true, sizeBytes: '23' }],
+    ['sizeBytes NaN', { requestId: 'r', ok: true, sizeBytes: Number.NaN }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidAppStorageSetResult(payload)).toBe(false);
+  });
+});
+
+describe('isValidAppStorageDeleteResult', () => {
+  it('accepts ok + deleted booleans (both success and error paths)', () => {
+    expect(isValidAppStorageDeleteResult({ requestId: 'r', ok: true, deleted: true })).toBe(true);
+    expect(isValidAppStorageDeleteResult({ requestId: 'r', ok: true, deleted: false })).toBe(true);
+    expect(isValidAppStorageDeleteResult({ requestId: 'r', ok: false, deleted: false, error: 'X' })).toBe(true);
+  });
+  it.each([
+    ['missing ok', { requestId: 'r', deleted: true }],
+    ['missing deleted', { requestId: 'r', ok: true }],
+    ['deleted not boolean', { requestId: 'r', ok: true, deleted: 'yes' }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidAppStorageDeleteResult(payload)).toBe(false);
+  });
+});
+
+describe('isValidAppStorageListResult', () => {
+  const iso = '2026-05-27T10:11:12.000Z';
+  it('accepts keys with ISO updatedAt + cursor', () => {
+    expect(
+      isValidAppStorageListResult({ requestId: 'r', keys: [{ key: 'k', updatedAt: iso }], nextCursor: 'Zm9v' }),
+    ).toBe(true);
+  });
+  it('accepts an empty keys array', () => {
+    expect(isValidAppStorageListResult({ requestId: 'r', keys: [] })).toBe(true);
+  });
+  it('accepts a Date-instance updatedAt (structured-clone tolerance)', () => {
+    expect(isValidAppStorageListResult({ requestId: 'r', keys: [{ key: 'k', updatedAt: new Date() }] })).toBe(true);
+  });
+  it('accepts an error reply (host sends keys:[] + error)', () => {
+    expect(isValidAppStorageListResult({ requestId: 'r', keys: [], error: 'BOOM' })).toBe(true);
+  });
+  it.each([
+    ['keys not an array', { requestId: 'r', keys: 'nope' }],
+    ['key entry missing key', { requestId: 'r', keys: [{ updatedAt: iso }] }],
+    ['key entry updatedAt not date-like', { requestId: 'r', keys: [{ key: 'k', updatedAt: 'never' }] }],
+    ['nextCursor not a string', { requestId: 'r', keys: [], nextCursor: 5 }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidAppStorageListResult(payload)).toBe(false);
+  });
+});
+
+describe('isValidAppStorageQuotaResult', () => {
+  it('accepts the four numeric counters', () => {
+    expect(
+      isValidAppStorageQuotaResult({ requestId: 'r', usedBytes: 1, rowCount: 2, limitBytes: 3, limitRows: 4 }),
+    ).toBe(true);
+  });
+  it('accepts an error reply (host zeroes the counters + adds error)', () => {
+    expect(
+      isValidAppStorageQuotaResult({ requestId: 'r', usedBytes: 0, rowCount: 0, limitBytes: 0, limitRows: 0, error: 'X' }),
+    ).toBe(true);
+  });
+  it.each([
+    ['usedBytes missing', { requestId: 'r', rowCount: 2, limitBytes: 3, limitRows: 4 }],
+    ['rowCount not a number', { requestId: 'r', usedBytes: 1, rowCount: '2', limitBytes: 3, limitRows: 4 }],
+    ['limitBytes NaN', { requestId: 'r', usedBytes: 1, rowCount: 2, limitBytes: Number.NaN, limitRows: 4 }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidAppStorageQuotaResult(payload)).toBe(false);
+  });
+});
+
+// ============================================================
+// Shared-storage reply validators
+// ============================================================
+
+describe('isValidSharedListResult', () => {
+  const item = {
+    key: 'req:1',
+    authorUserId: 7,
+    value: { title: 'Dark mode', body: 'please' },
+    count: 3,
+    createdAt: '2026-05-01T00:00:00.000Z',
+    updatedAt: '2026-05-02T00:00:00.000Z',
+  };
+  it('accepts a well-formed list', () => {
+    expect(isValidSharedListResult({ requestId: 'r', items: [item], nextCursor: 'bmV4dA==' })).toBe(true);
+  });
+  it('accepts an empty list', () => {
+    expect(isValidSharedListResult({ requestId: 'r', items: [] })).toBe(true);
+  });
+  it('accepts a value with only a title (body/data optional)', () => {
+    expect(isValidSharedListResult({ requestId: 'r', items: [{ ...item, value: { title: 't' } }] })).toBe(true);
+  });
+  it('accepts an error reply', () => {
+    expect(isValidSharedListResult({ requestId: 'r', items: [], error: 'SHARED_UNAVAILABLE' })).toBe(true);
+  });
+  it.each([
+    ['items not an array', { requestId: 'r', items: 'x' }],
+    ['item missing key', { requestId: 'r', items: [{ ...item, key: undefined }] }],
+    ['item authorUserId not a number', { requestId: 'r', items: [{ ...item, authorUserId: '7' }] }],
+    ['item value missing title', { requestId: 'r', items: [{ ...item, value: { body: 'x' } }] }],
+    ['item value not an object', { requestId: 'r', items: [{ ...item, value: 5 }] }],
+    ['item count not a number', { requestId: 'r', items: [{ ...item, count: '3' }] }],
+    ['item createdAt not date-like', { requestId: 'r', items: [{ ...item, createdAt: 'never' }] }],
+    ['nextCursor not a string', { requestId: 'r', items: [], nextCursor: 5 }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidSharedListResult(payload)).toBe(false);
+  });
+});
+
+describe('isValidSharedCountResult (GET_COUNT / VOTE / UNVOTE)', () => {
+  it('accepts a finite count', () => {
+    expect(isValidSharedCountResult({ requestId: 'r', count: 42 })).toBe(true);
+    expect(isValidSharedCountResult({ requestId: 'r', count: 0 })).toBe(true);
+  });
+  it('accepts an error reply', () => {
+    expect(isValidSharedCountResult({ requestId: 'r', error: 'NOT_FOUND' })).toBe(true);
+  });
+  it.each([
+    ['count missing, no error', { requestId: 'r' }],
+    ['count not a number', { requestId: 'r', count: '5' }],
+    ['count NaN', { requestId: 'r', count: Number.NaN }],
+    ['error not a string', { requestId: 'r', error: 5 }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidSharedCountResult(payload)).toBe(false);
+  });
+});
+
+describe('isValidSharedCountsResult', () => {
+  it('accepts a map of key → finite count', () => {
+    expect(isValidSharedCountsResult({ requestId: 'r', counts: { a: 1, b: 0, c: 5 } })).toBe(true);
+    expect(isValidSharedCountsResult({ requestId: 'r', counts: {} })).toBe(true);
+  });
+  it('accepts an error reply', () => {
+    expect(isValidSharedCountsResult({ requestId: 'r', error: 'X' })).toBe(true);
+  });
+  it.each([
+    ['counts missing, no error', { requestId: 'r' }],
+    ['counts not an object', { requestId: 'r', counts: 5 }],
+    ['a count value not a number', { requestId: 'r', counts: { a: '1' } }],
+    ['a count value NaN', { requestId: 'r', counts: { a: Number.NaN } }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidSharedCountsResult(payload)).toBe(false);
+  });
+});
+
+describe('isValidSharedAppendResult', () => {
+  it('accepts a minted key', () => {
+    expect(isValidSharedAppendResult({ requestId: 'r', key: 'shared_9' })).toBe(true);
+  });
+  it('accepts an error reply (key may be empty alongside error)', () => {
+    expect(isValidSharedAppendResult({ requestId: 'r', key: '', error: 'INVALID_VALUE' })).toBe(true);
+  });
+  it.each([
+    ['key missing, no error', { requestId: 'r' }],
+    ['key empty, no error', { requestId: 'r', key: '' }],
+    ['key not a string', { requestId: 'r', key: 5 }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidSharedAppendResult(payload)).toBe(false);
+  });
+});
+
+describe('isValidSharedWithdrawResult', () => {
+  it('accepts ok + deleted booleans', () => {
+    expect(isValidSharedWithdrawResult({ requestId: 'r', ok: true, deleted: true })).toBe(true);
+    expect(isValidSharedWithdrawResult({ requestId: 'r', ok: true, deleted: false })).toBe(true);
+  });
+  it('accepts an error reply', () => {
+    expect(isValidSharedWithdrawResult({ requestId: 'r', error: 'SHARED_UNAVAILABLE' })).toBe(true);
+  });
+  it.each([
+    ['ok missing, no error', { requestId: 'r', deleted: true }],
+    ['deleted missing, no error', { requestId: 'r', ok: true }],
+    ['deleted not boolean', { requestId: 'r', ok: true, deleted: 'yes' }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidSharedWithdrawResult(payload)).toBe(false);
+  });
+});
+
+// ============================================================
+// Picker + user-checkpoint reply validators
+// ============================================================
+
+describe('isValidCheckpointPickerResult', () => {
+  const selected = { versionId: 9001, modelId: 700, modelName: 'M', versionName: 'v2', baseModel: 'SDXL 1.0' };
+  it('accepts a full checkpoint pick', () => {
+    expect(isValidCheckpointPickerResult({ requestId: 'r', selected })).toBe(true);
+  });
+  it('accepts a dismiss (no `selected`)', () => {
+    expect(isValidCheckpointPickerResult({ requestId: 'r' })).toBe(true);
+    expect(isValidCheckpointPickerResult({})).toBe(true);
+  });
+  it('accepts an id-only projection (display fields optional)', () => {
+    expect(isValidCheckpointPickerResult({ requestId: 'r', selected: { versionId: 1, modelId: 2, baseModel: 'X' } })).toBe(true);
+  });
+  it.each([
+    ['versionId missing', { requestId: 'r', selected: { modelId: 2 } }],
+    ['versionId not a number', { requestId: 'r', selected: { ...selected, versionId: '9001' } }],
+    ['versionId non-integer', { requestId: 'r', selected: { ...selected, versionId: 1.5 } }],
+    ['versionId non-positive', { requestId: 'r', selected: { ...selected, versionId: 0 } }],
+    ['modelId non-positive', { requestId: 'r', selected: { ...selected, modelId: 0 } }],
+    ['modelName wrong type', { requestId: 'r', selected: { ...selected, modelName: 5 } }],
+    ['selected not an object', { requestId: 'r', selected: 5 }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidCheckpointPickerResult(payload)).toBe(false);
+  });
+});
+
+describe('isValidResourcePickerResult', () => {
+  const selected = {
+    versionId: 9001,
+    modelId: 700,
+    modelName: 'M',
+    versionName: 'v2',
+    baseModel: 'Flux.1 D',
+    modelType: 'Checkpoint',
+    strength: 1,
+    minStrength: -1,
+    maxStrength: 2,
+    trainedWords: ['a', 'b'],
+    clipSkip: null,
+  };
+  it('accepts a full resource pick (with recommended settings)', () => {
+    expect(isValidResourcePickerResult({ requestId: 'r', selected })).toBe(true);
+  });
+  it('accepts a clipSkip number', () => {
+    expect(isValidResourcePickerResult({ requestId: 'r', selected: { ...selected, clipSkip: 2 } })).toBe(true);
+  });
+  it('accepts an id-only projection', () => {
+    expect(isValidResourcePickerResult({ requestId: 'r', selected: { versionId: 42, modelId: 7, baseModel: 'X', modelType: 'LORA' } })).toBe(true);
+  });
+  it('accepts a dismiss (no `selected`)', () => {
+    expect(isValidResourcePickerResult({ requestId: 'r' })).toBe(true);
+  });
+  it.each([
+    ['versionId missing', { requestId: 'r', selected: { modelType: 'LORA' } }],
+    ['strength not a number', { requestId: 'r', selected: { ...selected, strength: 'x' } }],
+    ['trainedWords not an array', { requestId: 'r', selected: { ...selected, trainedWords: 'a' } }],
+    ['trainedWords contains non-string', { requestId: 'r', selected: { ...selected, trainedWords: [1] } }],
+    ['clipSkip wrong type (not number|null)', { requestId: 'r', selected: { ...selected, clipSkip: 'x' } }],
+    ['modelType wrong type', { requestId: 'r', selected: { ...selected, modelType: 5 } }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidResourcePickerResult(payload)).toBe(false);
+  });
+});
+
+describe('isValidUserCheckpointSetResult', () => {
+  it('accepts ok:true and ok:false+error', () => {
+    expect(isValidUserCheckpointSetResult({ requestId: 'r', ok: true })).toBe(true);
+    expect(isValidUserCheckpointSetResult({ requestId: 'r', ok: false, error: 'wrong-ecosystem' })).toBe(true);
+  });
+  it.each([
+    ['missing ok', { requestId: 'r' }],
+    ['ok not boolean', { requestId: 'r', ok: 'yes' }],
+    ['error not a string', { requestId: 'r', ok: false, error: 5 }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidUserCheckpointSetResult(payload)).toBe(false);
+  });
+});
+
 describe('payloadValidatorFor', () => {
   it('returns a validator for each documented inbound type', () => {
     expect(payloadValidatorFor('BLOCK_INIT')).toBeTypeOf('function');
@@ -372,6 +675,26 @@ describe('payloadValidatorFor', () => {
     expect(payloadValidatorFor('WILDCARD_PACK_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('IMAGE_UPLOAD_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('SHARED_UPDATE_RESULT')).toBeTypeOf('function');
+    // The 15 reply types added in this PR (previously `default: null`).
+    for (const t of [
+      'APP_STORAGE_GET_RESULT',
+      'APP_STORAGE_SET_RESULT',
+      'APP_STORAGE_DELETE_RESULT',
+      'APP_STORAGE_LIST_RESULT',
+      'APP_STORAGE_QUOTA_RESULT',
+      'SHARED_LIST_RESULT',
+      'SHARED_GET_COUNT_RESULT',
+      'SHARED_GET_COUNTS_RESULT',
+      'SHARED_APPEND_RESULT',
+      'SHARED_VOTE_RESULT',
+      'SHARED_UNVOTE_RESULT',
+      'SHARED_WITHDRAW_RESULT',
+      'CHECKPOINT_PICKER_RESULT',
+      'RESOURCE_PICKER_RESULT',
+      'USER_CHECKPOINT_SET',
+    ]) {
+      expect(payloadValidatorFor(t)).toBeTypeOf('function');
+    }
   });
   it('returns null for payload-less lifecycle messages', () => {
     expect(payloadValidatorFor('SUSPEND')).toBeNull();

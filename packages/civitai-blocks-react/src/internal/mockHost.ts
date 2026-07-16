@@ -1154,6 +1154,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             prefix?: string;
             limit?: number;
             cursor?: string;
+            versionId?: number | null;
           };
         };
 
@@ -1882,6 +1883,34 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             row.updatedAt = new Date().toISOString();
             dispatchToBlock({
               type: 'SHARED_UPDATE_RESULT',
+              payload: { requestId, ok: true },
+            });
+            return;
+          }
+
+          case 'SET_USER_CHECKPOINT': {
+            // Persist the checkpoint override (mirrors the real host's
+            // block_user_settings write). Accept a numeric versionId OR an
+            // explicit null (clear); anything else is a bad-input NACK, same as
+            // the real IframeHost. Without this reply `useCheckpointPicker().
+            // persist()` hung to its 30s timeout under the mock host.
+            if (typeof requestId !== 'string') return;
+            const rawVersionId = typed.payload?.versionId;
+            const versionId =
+              rawVersionId === null
+                ? null
+                : typeof rawVersionId === 'number'
+                  ? rawVersionId
+                  : undefined;
+            if (versionId === undefined) {
+              dispatchToBlock({
+                type: 'USER_CHECKPOINT_SET',
+                payload: { requestId, ok: false, error: 'versionId must be a number or null' },
+              });
+              return;
+            }
+            dispatchToBlock({
+              type: 'USER_CHECKPOINT_SET',
               payload: { requestId, ok: true },
             });
             return;

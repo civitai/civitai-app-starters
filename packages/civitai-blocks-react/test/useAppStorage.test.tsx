@@ -265,4 +265,76 @@ describe('useAppStorage', () => {
       limitRows: 1_000_000,
     });
   });
+
+  /** Fire a parent→block reply from the allowed origin. */
+  function reply(data: unknown) {
+    window.dispatchEvent(new MessageEvent('message', { data, origin: PARENT_ORIGIN }));
+  }
+
+  // ---- transport-validator: malformed replies surface an ERROR, not a raw TypeError / silent read ----
+  // A malformed APP_STORAGE_LIST_RESULT (e.g. `keys` not an array) used to throw
+  // a raw `TypeError` from inside the hook's `.map`. The validator now DROPS it
+  // at the boundary so the request rejects cleanly at its timeout instead.
+  it('list() drops a malformed reply (keys not an array) → rejects, no raw TypeError', async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { result } = renderHook(() => useAppStorage());
+      let p!: Promise<unknown>;
+      act(() => {
+        p = result.current.list();
+      });
+      const sent = postMessageMock.mock.calls[0][0] as { payload: { requestId: string } };
+      let settled: 'resolved' | 'rejected' | null = null;
+      void p.then(
+        () => {
+          settled = 'resolved';
+        },
+        () => {
+          settled = 'rejected';
+        },
+      );
+      act(() => {
+        reply({ type: 'APP_STORAGE_LIST_RESULT', payload: { requestId: sent.payload.requestId, keys: 'oops' } });
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(settled).toBeNull();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('APP_STORAGE_LIST_RESULT'));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(settled).toBe('rejected');
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('getQuota() drops a malformed reply (usedBytes missing) rather than reading NaN', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { result } = renderHook(() => useAppStorage());
+      let p!: Promise<unknown>;
+      act(() => {
+        p = result.current.getQuota();
+      });
+      const sent = postMessageMock.mock.calls[0][0] as { payload: { requestId: string } };
+      const settled = vi.fn();
+      p.then(settled, settled);
+      act(() => {
+        reply({
+          type: 'APP_STORAGE_QUOTA_RESULT',
+          payload: { requestId: sent.payload.requestId, rowCount: 1, limitBytes: 2, limitRows: 3 },
+        });
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(settled).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('APP_STORAGE_QUOTA_RESULT'));
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });

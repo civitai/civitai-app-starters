@@ -54,25 +54,38 @@ export function useBlockToken(): BlockToken & { refresh: () => Promise<void> } {
 }
 
 /**
- * In-flight dedup. Both the scheduled-timeout path and the "already past"
- * synchronous path can fire while a previous refresh is still pending —
- * coalescing into a single round-trip avoids fanning out duplicate
- * REQUEST_TOKEN messages, which would otherwise hit the host once per
+ * In-flight dedup, keyed by `blockInstanceId`. Both the scheduled-timeout path
+ * and the "already past" synchronous path can fire while a previous refresh is
+ * still pending — coalescing into a single round-trip avoids fanning out
+ * duplicate REQUEST_TOKEN messages, which would otherwise hit the host once per
  * snapshot update.
+ *
+ * The key MUST include `blockInstanceId`: in iframe mode there is one module per
+ * iframe so any key works, but on the INLINE transport (v2) several block
+ * instances share one module context. A module-global singleton would coalesce
+ * across instances, so instance B's 401-retry `refresh()` would resolve on
+ * instance A's in-flight `REQUEST_TOKEN` and B would never mint its OWN token.
  */
-let inFlightRefresh: Promise<void> | null = null;
+const inFlightRefreshByInstance = new Map<string, Promise<void>>();
 
-async function requestRefresh(blockInstanceId: string): Promise<void> {
-  if (inFlightRefresh) return inFlightRefresh;
+/**
+ * Mint/await a token refresh for one block instance, coalescing concurrent calls
+ * for the SAME `blockInstanceId`. Exported for the inline-mode multi-instance
+ * dedup test — hooks call it via `useBlockToken().refresh`.
+ */
+export async function requestRefresh(blockInstanceId: string): Promise<void> {
+  const existing = inFlightRefreshByInstance.get(blockInstanceId);
+  if (existing) return existing;
   const transport = getTransport();
-  inFlightRefresh = sendTypedRequest(
+  const refresh = sendTypedRequest(
     transport,
     { type: 'REQUEST_TOKEN', payload: { blockInstanceId } },
     'TOKEN_REFRESH_RESPONSE',
   )
     .then(() => undefined)
     .finally(() => {
-      inFlightRefresh = null;
+      inFlightRefreshByInstance.delete(blockInstanceId);
     });
-  return inFlightRefresh;
+  inFlightRefreshByInstance.set(blockInstanceId, refresh);
+  return refresh;
 }

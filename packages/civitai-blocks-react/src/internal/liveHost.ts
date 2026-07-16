@@ -651,6 +651,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             currentVersionId?: number;
             resourceType?: 'Checkpoint' | 'LORA';
             key?: string;
+            keys?: string[];
             value?: unknown;
             prefix?: string;
             limit?: number;
@@ -977,6 +978,27 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             return;
           }
 
+          case 'OPEN_IMAGE_UPLOAD': {
+            // No headless upload contract: the real image-upload flow needs the
+            // host's native modal + the session-authed byte pipeline, neither of
+            // which the dev harness has. Rather than let `useImageUpload()` hang
+            // to its 10-minute picker timeout, reply DISMISSED (no `selected`, so
+            // the hook resolves to `null`) and log an actionable message. Honest-
+            // by-design — never fabricate a moderated image id. Mirrors the
+            // OPEN_BUZZ_PURCHASE "no headless contract" pattern.
+            logOnce(
+              'open-image-upload',
+              'OPEN_IMAGE_UPLOAD received but live dev mode cannot serve the native upload ' +
+                'modal — resolving the upload as dismissed (null). Test the image-upload flow ' +
+                'against the real site, or use createMockHost({ cannedImageUpload }) in dev:mock.',
+            );
+            dispatchToBlock({
+              type: 'IMAGE_UPLOAD_RESULT',
+              payload: { requestId: requestId ?? '' },
+            });
+            return;
+          }
+
           case 'SET_USER_CHECKPOINT': {
             // FORWARD (faithful) to blocks.updateUserSettings — never fabricate.
             // Mirror the prod IframeHost's versionId validation: a number or an
@@ -1186,6 +1208,230 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
                     rowCount: num(d?.rowCount),
                     limitBytes: num(d?.limitBytes),
                     limitRows: num(d?.limitRows),
+                  },
+                });
+              },
+            );
+            return;
+          }
+
+          // ---- SHARED (cross-user, votable) storage ----
+          // FORWARD the eight `SHARED_*` bridges to the block-token
+          // `apps.shared.{list,getCount,getCounts,append,update,vote,unvote,
+          // withdraw}` procedures (reads GET, mutations POST — FLAT
+          // `{ blockToken, … }` input, same convention as apps.storage.*). Reads
+          // need the `apps:storage:shared:read` scope, writes
+          // `apps:storage:shared:write`; the dev token carries whatever the local
+          // manifest declared and the server enforces. Without these,
+          // `useSharedStorage()` hung to its 30s timeout in dev:live.
+          case 'SHARED_LIST': {
+            const rawLimit = typed.payload?.limit;
+            const limit =
+              typeof rawLimit === 'number'
+                ? Math.min(Math.max(Math.floor(rawLimit), 1), 100)
+                : 50;
+            const listInput: Record<string, unknown> = { blockToken: rawToken, limit };
+            if (typeof typed.payload?.prefix === 'string') listInput.prefix = typed.payload.prefix;
+            if (typeof typed.payload?.cursor === 'string') listInput.cursor = typed.payload.cursor;
+            void callTrpcData('apps.shared.list', listInput, 'GET').then((r) => {
+              if (r.error) {
+                dispatchToBlock({
+                  type: 'SHARED_LIST_RESULT',
+                  payload: { requestId: requestId ?? '', items: [], error: r.error },
+                });
+                return;
+              }
+              const rawItems = (r.data as { items?: unknown })?.items;
+              const items = (Array.isArray(rawItems) ? rawItems : []).map((it) => {
+                const e = it as {
+                  key?: unknown;
+                  authorUserId?: unknown;
+                  value?: unknown;
+                  count?: unknown;
+                  createdAt?: unknown;
+                  updatedAt?: unknown;
+                };
+                const iso = (d: unknown) =>
+                  d instanceof Date ? d.toISOString() : String(d);
+                return {
+                  key: String(e.key),
+                  authorUserId: typeof e.authorUserId === 'number' ? e.authorUserId : 0,
+                  value: e.value,
+                  count: typeof e.count === 'number' ? e.count : 0,
+                  createdAt: iso(e.createdAt),
+                  updatedAt: iso(e.updatedAt),
+                };
+              });
+              const nextCursor = (r.data as { nextCursor?: unknown })?.nextCursor;
+              dispatchToBlock({
+                type: 'SHARED_LIST_RESULT',
+                payload: {
+                  requestId: requestId ?? '',
+                  items,
+                  ...(typeof nextCursor === 'string' && nextCursor.length > 0
+                    ? { nextCursor }
+                    : {}),
+                },
+              });
+            });
+            return;
+          }
+
+          case 'SHARED_GET_COUNT': {
+            const key = typed.payload?.key ?? '';
+            void callTrpcData('apps.shared.getCount', { blockToken: rawToken, key }, 'GET').then(
+              (r) => {
+                if (r.error) {
+                  dispatchToBlock({
+                    type: 'SHARED_GET_COUNT_RESULT',
+                    payload: { requestId: requestId ?? '', count: 0, error: r.error },
+                  });
+                  return;
+                }
+                const count = (r.data as { count?: unknown })?.count;
+                dispatchToBlock({
+                  type: 'SHARED_GET_COUNT_RESULT',
+                  payload: { requestId: requestId ?? '', count: typeof count === 'number' ? count : 0 },
+                });
+              },
+            );
+            return;
+          }
+
+          case 'SHARED_GET_COUNTS': {
+            const keys = Array.isArray(typed.payload?.keys) ? typed.payload.keys : [];
+            void callTrpcData(
+              'apps.shared.getCounts',
+              { blockToken: rawToken, keys },
+              'GET',
+            ).then((r) => {
+              if (r.error) {
+                dispatchToBlock({
+                  type: 'SHARED_GET_COUNTS_RESULT',
+                  payload: { requestId: requestId ?? '', counts: {}, error: r.error },
+                });
+                return;
+              }
+              const counts = (r.data as { counts?: unknown })?.counts;
+              dispatchToBlock({
+                type: 'SHARED_GET_COUNTS_RESULT',
+                payload: {
+                  requestId: requestId ?? '',
+                  counts: (counts && typeof counts === 'object' ? counts : {}) as Record<
+                    string,
+                    number
+                  >,
+                },
+              });
+            });
+            return;
+          }
+
+          case 'SHARED_APPEND': {
+            const value = typed.payload?.value;
+            void callTrpcData(
+              'apps.shared.append',
+              { blockToken: rawToken, value },
+              'POST',
+            ).then((r) => {
+              if (r.error) {
+                dispatchToBlock({
+                  type: 'SHARED_APPEND_RESULT',
+                  payload: { requestId: requestId ?? '', key: '', error: r.error },
+                });
+                return;
+              }
+              const key = (r.data as { key?: unknown })?.key;
+              dispatchToBlock({
+                type: 'SHARED_APPEND_RESULT',
+                payload: { requestId: requestId ?? '', key: String(key ?? '') },
+              });
+            });
+            return;
+          }
+
+          case 'SHARED_UPDATE': {
+            const key = typed.payload?.key ?? '';
+            const value = typed.payload?.value;
+            void callTrpcData(
+              'apps.shared.update',
+              { blockToken: rawToken, key, value },
+              'POST',
+            ).then((r) => {
+              dispatchToBlock({
+                type: 'SHARED_UPDATE_RESULT',
+                payload: r.error
+                  ? { requestId: requestId ?? '', ok: false, error: r.error }
+                  : { requestId: requestId ?? '', ok: true },
+              });
+            });
+            return;
+          }
+
+          case 'SHARED_VOTE': {
+            const key = typed.payload?.key ?? '';
+            void callTrpcData('apps.shared.vote', { blockToken: rawToken, key }, 'POST').then(
+              (r) => {
+                if (r.error) {
+                  dispatchToBlock({
+                    type: 'SHARED_VOTE_RESULT',
+                    payload: { requestId: requestId ?? '', count: 0, error: r.error },
+                  });
+                  return;
+                }
+                const count = (r.data as { count?: unknown })?.count;
+                dispatchToBlock({
+                  type: 'SHARED_VOTE_RESULT',
+                  payload: { requestId: requestId ?? '', count: typeof count === 'number' ? count : 0 },
+                });
+              },
+            );
+            return;
+          }
+
+          case 'SHARED_UNVOTE': {
+            const key = typed.payload?.key ?? '';
+            void callTrpcData('apps.shared.unvote', { blockToken: rawToken, key }, 'POST').then(
+              (r) => {
+                if (r.error) {
+                  dispatchToBlock({
+                    type: 'SHARED_UNVOTE_RESULT',
+                    payload: { requestId: requestId ?? '', count: 0, error: r.error },
+                  });
+                  return;
+                }
+                const count = (r.data as { count?: unknown })?.count;
+                dispatchToBlock({
+                  type: 'SHARED_UNVOTE_RESULT',
+                  payload: { requestId: requestId ?? '', count: typeof count === 'number' ? count : 0 },
+                });
+              },
+            );
+            return;
+          }
+
+          case 'SHARED_WITHDRAW': {
+            const key = typed.payload?.key ?? '';
+            void callTrpcData('apps.shared.withdraw', { blockToken: rawToken, key }, 'POST').then(
+              (r) => {
+                if (r.error) {
+                  dispatchToBlock({
+                    type: 'SHARED_WITHDRAW_RESULT',
+                    payload: {
+                      requestId: requestId ?? '',
+                      ok: false,
+                      deleted: false,
+                      error: r.error,
+                    },
+                  });
+                  return;
+                }
+                dispatchToBlock({
+                  type: 'SHARED_WITHDRAW_RESULT',
+                  payload: {
+                    requestId: requestId ?? '',
+                    ok: true,
+                    deleted: Boolean((r.data as { deleted?: unknown })?.deleted),
                   },
                 });
               },
