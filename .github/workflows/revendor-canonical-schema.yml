@@ -1,0 +1,96 @@
+name: Re-vendor canonical schema
+
+# Weekly WRITE twin of the check-canonical-schema CI guard: pulls the
+# server-published canonical App Block manifest schema, re-vendors the byte-exact
+# mirror at packages/civitai-app-sdk/schemas/app-block/v1.json when it drifts, and
+# opens a PR. Keeps the mirror in parity without a human noticing the guard went red.
+# (JS twin of the civitai/cli automation.)
+
+on:
+  schedule:
+    - cron: "37 7 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  revendor:
+    name: Re-vendor + open PR on drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Re-vendor canonical schema
+        run: ./scripts/revendor-canonical-schema.sh
+
+      - name: Detect changes
+        id: changed
+        run: |
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Validate the FULL relevant SDK suite (not a subset): schema-parity /
+      # defineBlock tests read the vendored schema, so a canonical change that
+      # breaks an SDK assertion fails HERE and no PR opens; an additive/optional
+      # change passes and the PR opens.
+      - name: Validate SDK against the re-vendored schema
+        if: steps.changed.outputs.changed == 'true'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @civitai/app-sdk typecheck
+          pnpm --filter @civitai/app-sdk test
+          pnpm --filter @civitai/app-sdk build
+
+      - name: Open PR if schema changed
+        if: steps.changed.outputs.changed == 'true'
+        # SHA-pinned peter-evans/create-pull-request v6.1.0.
+        uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c
+        with:
+          # Reuse CHANGESETS_TOKEN: the org blocks the default GITHUB_TOKEN from
+          # opening PRs, and this secret already carries PR-creation perms for the
+          # changesets release workflow. A dedicated token would be cleaner if the
+          # coupling ever bites, but reusing it avoids adding another secret.
+          token: ${{ secrets.CHANGESETS_TOKEN }}
+          branch: automation/revendor-canonical-schema
+          delete-branch: true
+          commit-message: "chore(sdk): re-vendor canonical app-block manifest schema"
+          title: "chore(sdk): re-vendor canonical app-block manifest schema"
+          body: |
+            Automated re-vendor of the App Block manifest schema mirror at
+            `packages/civitai-app-sdk/schemas/app-block/v1.json` to restore
+            byte-parity with the server-published canonical
+            (https://civitai.com/schemas/app-block/v1.json).
+
+            The vendored copy MUST stay byte-identical to the canonical — the
+            `check-canonical-schema.sh` CI guard enforces that with `diff -u`.
+            This PR was opened because the weekly re-vendor job detected drift.
+
+            Validated in-job before opening this PR: `@civitai/app-sdk`
+            typecheck + test + build all passed against the re-vendored schema
+            (the schema-parity / `defineBlock` tests read the vendored bytes, so
+            a canonical change that broke an SDK assertion would have failed the
+            job and no PR would have opened).
+
+            **Reviewer heads-up:** this bot only re-vendors the schema *bytes*. A
+            semantic canonical addition — e.g. a new manifest field like
+            `scopeJustifications` (civitai #3195) — may also warrant adding the
+            matching field to the `BlockManifestV1` TS type in
+            `packages/civitai-app-sdk/src/blocks/types.ts`. Check the diff for
+            new/changed fields and follow up with a type change if needed.
+
+            _JS twin of the civitai/cli schema re-vendor automation._
