@@ -24,8 +24,10 @@ Declare what you need in the manifest:
 ```
 
 The known set (see `BLOCK_SCOPES` in `@civitai/app-sdk/blocks`): `models:read:self`,
-`media:read:owned`, `user:read:self`, `ai:write:budgeted`, `buzz:read:self`,
-`block:settings:read`, `block:settings:write`, `social:tip:self`.
+`user:read:self`, `ai:write:budgeted`, `buzz:read:self`, `social:tip:self`,
+`apps:storage:read`, `apps:storage:write`, `apps:storage:shared:read`,
+`apps:storage:shared:write`, `collections:read:self`, `collections:write:self`,
+`collections:read:private`.
 
 A moderator sees your declared scopes at review. The issued JWT carries the
 **granted intersection** of what you declared and what the user consented to —

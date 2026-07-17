@@ -14,12 +14,9 @@ import { BLOCK_SCOPES, BLOCK_SCOPE_PATTERN } from '../../src/blocks/scopes.js';
  */
 const CANONICAL_BLOCK_SCOPES = [
   'models:read:self',
-  'media:read:owned',
   'user:read:self',
   'ai:write:budgeted',
   'buzz:read:self',
-  'block:settings:read',
-  'block:settings:write',
   'social:tip:self',
   'apps:storage:read',
   'apps:storage:write',

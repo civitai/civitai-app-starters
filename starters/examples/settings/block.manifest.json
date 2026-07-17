@@ -12,7 +12,7 @@
       "requiredContext": ["modelId", "modelVersionId"]
     }
   ],
-  "scopes": ["models:read:self", "block:settings:read", "block:settings:write"],
+  "scopes": ["models:read:self"],
   "settings": {
     "watermark_text": {
       "scope": "publisher",
