@@ -1,6 +1,8 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
+import { BlockGate } from '@civitai/blocks-react/ui';
+
 import { App } from './App.js';
 import { Harness } from './dev/Harness.js';
 import { LiveHarness } from './dev/LiveHarness.js';
@@ -35,7 +37,16 @@ function Root() {
       </Harness>
     );
   }
-  return <App />;
+  // Production: wrap the app in <BlockGate> so a DIRECT (unembedded) top-level
+  // load of the block's <slug>.civit.ai URL degrades to a branded "Open on
+  // Civitai" landing instead of hanging on the loading spinner forever. When
+  // embedded in the Civitai host (or under the dev harness above, which posts a
+  // fake BLOCK_INIT), the gate is a transparent pass-through.
+  return (
+    <BlockGate>
+      <App />
+    </BlockGate>
+  );
 }
 
 createRoot(container).render(

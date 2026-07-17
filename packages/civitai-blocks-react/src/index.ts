@@ -78,6 +78,9 @@ export { useDomainMaturity } from './hooks/useDomainMaturity.js';
 export type { DomainMaturity } from './hooks/useDomainMaturity.js';
 export { SfwGate } from './hooks/SfwGate.js';
 export type { SfwGateProps } from './hooks/SfwGate.js';
+export { useDirectLoad } from './hooks/useDirectLoad.js';
+export type { UseDirectLoadOptions } from './hooks/useDirectLoad.js';
+export { hostToRunUrl, DIRECT_LOAD_TIMEOUT_MS } from './internal/directLoad.js';
 export { useAppStorage } from './hooks/useAppStorage.js';
 export type {
   AppStorageKeyEntry,
