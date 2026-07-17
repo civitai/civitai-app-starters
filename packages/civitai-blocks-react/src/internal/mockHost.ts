@@ -752,8 +752,8 @@ const DEFAULT_BUZZ_BALANCE: MockBuzzBalance = { blue: 1000, green: 0, yellow: 50
  * Default Buzz-transaction ledger reported on `GET_BUZZ_TRANSACTIONS`. `date`s
  * are `Date` INSTANCES (not ISO strings) to mirror the REAL host, which forwards
  * the raw tRPC `result` over structured-clone `postMessage` (see the DATE WIRE
- * CAVEAT on `BlockBuzzTransaction`). Newest-first; `externalTransactionId` nulled
- * on the purchase row exactly as the host's projection does.
+ * CAVEAT on `BlockBuzzTransaction`). Newest-first; `externalTransactionId` is
+ * `null` on every row, exactly as the host's projection does (default-deny; #3192).
  */
 const DEFAULT_BUZZ_TRANSACTIONS: BlockBuzzTransaction[] = [
   {
@@ -779,7 +779,7 @@ const DEFAULT_BUZZ_TRANSACTIONS: BlockBuzzTransaction[] = [
     fromAccountType: 'yellow',
     toAccountType: 'yellow',
     description: 'Buzz purchase',
-    // Host nulls externalTransactionId on Purchase rows (processor-ref leak class).
+    // Host nulls externalTransactionId on EVERY block-facing row (default-deny; #3192).
     externalTransactionId: null,
   },
 ];
