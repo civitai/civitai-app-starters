@@ -59,8 +59,13 @@ const DNS_LABEL = /^[a-z0-9-]+$/;
  */
 export function hostToRunUrl(hostname: string | null | undefined): string | null {
   if (!hostname) return null;
-  // Normalize: trim, lowercase, strip any trailing FQDN dot(s).
-  const host = hostname.trim().toLowerCase().replace(/\.+$/, '');
+  // Normalize: trim, lowercase, strip any trailing FQDN dot(s). The trailing-dot
+  // strip is a manual linear trim rather than a `/\.+$/` regex, which backtracks
+  // O(n^2) on a string of many dots (ReDoS — CodeQL js/polynomial-redos).
+  const normalized = hostname.trim().toLowerCase();
+  let end = normalized.length;
+  while (end > 0 && normalized.charCodeAt(end - 1) === 46 /* '.' */) end -= 1;
+  const host = normalized.slice(0, end);
   if (!host.endsWith(CIVIT_AI_SUFFIX)) return null; // not a deployed block host
   // The slug is the FIRST DNS label (`<slug>.civit.ai`). Extra labels beyond
   // the first are ignored — deployed block origins are single-label — but the
