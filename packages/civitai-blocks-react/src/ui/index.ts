@@ -20,6 +20,12 @@
 export { SettingsForm, SettingsFormError, isFieldVisible } from './SettingsForm.js';
 export type { SettingsFormProps } from './SettingsForm.js';
 
+// Direct-load (unembedded) fallback — the branded "Open on Civitai" landing
+// that replaces the perpetual loading spinner when a block's <slug>.civit.ai
+// URL is opened top-level instead of embedded in the Civitai host.
+export { BlockGate, DirectLoadFallback } from './BlockGate.js';
+export type { BlockGateProps, DirectLoadFallbackProps } from './BlockGate.js';
+
 // W6 — runtime style injection.
 export {
   injectBlocksStyles,

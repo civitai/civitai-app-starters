@@ -479,6 +479,47 @@ function MatureSection() {
 }
 ```
 
+## Direct-load fallback ("Open on Civitai")
+
+A block is served from its own origin `<slug>.civit.ai` but is designed to run
+**embedded** in the Civitai host iframe at `civitai.com/apps/run/<slug>`, which
+delivers the runtime context via the `BLOCK_INIT` handshake. If someone opens the
+bare `<slug>.civit.ai` URL **directly** (a shared link, a social crawl), no parent
+ever sends `BLOCK_INIT`, so `ready` never flips and the block hangs on its loading
+spinner forever.
+
+Wrap your app root once in `<BlockGate>` (from `/ui`) to degrade that into a
+branded landing instead:
+
+```tsx
+import { BlockGate } from '@civitai/blocks-react/ui';
+
+// A DIRECT (unembedded) top-level load shows an "Open on Civitai" card linking to
+// civitai.com/apps/run/<slug>. Embedded — and the dev harness, which posts a fake
+// BLOCK_INIT — are a transparent pass-through, so the happy path is unchanged.
+createRoot(container).render(
+  <BlockGate>
+    <App />
+  </BlockGate>,
+);
+```
+
+The trigger is precise: the fallback shows **only** when the block is top-level
+(`window.self === window.top`) **and** no `BLOCK_INIT` arrives within a short
+timeout (`~2s`, override with `<BlockGate timeoutMs={…}>`). Framed blocks never
+trip it; the harness posts `BLOCK_INIT` immediately, so it never trips there
+either. On a non-`*.civit.ai` host (e.g. `localhost` in dev), it shows a neutral
+"waiting for the host" state — never a broken `apps/run/localhost` link.
+
+Building your own landing? The primitives are exported from the package root:
+
+```tsx
+import { useDirectLoad, hostToRunUrl } from '@civitai/blocks-react';
+
+const directLoad = useDirectLoad();            // true iff top-level AND no BLOCK_INIT within the timeout
+const runUrl = hostToRunUrl('my-app.civit.ai'); // 'https://civitai.com/apps/run/my-app' | null (null = not a civit.ai host)
+```
+
 ## The `/ui` subexport
 
 Opinionated components, imported separately so a transport-only block stays lean.
