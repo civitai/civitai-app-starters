@@ -12,12 +12,9 @@
  */
 export const BLOCK_SCOPES = {
   MODELS_READ_SELF: 'models:read:self',
-  MEDIA_READ_OWNED: 'media:read:owned',
   USER_READ_SELF: 'user:read:self',
   AI_WRITE_BUDGETED: 'ai:write:budgeted',
   BUZZ_READ_SELF: 'buzz:read:self',
-  BLOCK_SETTINGS_READ: 'block:settings:read',
-  BLOCK_SETTINGS_WRITE: 'block:settings:write',
   SOCIAL_TIP_SELF: 'social:tip:self',
   // apps:storage:* — the per-app KV datastore (W4). These have no OAuth bit
   // (storage never touches the user's civitai resources); the server gates them
@@ -51,7 +48,7 @@ export type BlockScope = (typeof BLOCK_SCOPES)[BlockScopeKey];
  *
  * NOTE: this regex is **not** the authoritative validity contract. The
  * canonical manifest schema (https://civitai.com/schemas/app-block/v1.json)
- * validates `scopes` by MEMBERSHIP in a fixed enum — i.e. the 15 values in
+ * validates `scopes` by MEMBERSHIP in a fixed enum — i.e. the 12 values in
  * {@link BLOCK_SCOPES}. `defineBlock` therefore gates on membership in
  * `BLOCK_SCOPES`; this pattern is kept only as a FORMAT HEURISTIC to give a
  * pointed error message (e.g. distinguishing a malformed/PascalCase scope from
