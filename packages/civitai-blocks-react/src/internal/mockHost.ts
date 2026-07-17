@@ -65,6 +65,15 @@ import {
   type WrappedToken,
 } from '@civitai/app-sdk/blocks';
 
+/**
+ * The block's preferred Buzz pool. On a `textToImage` {@link WorkflowBody} it's
+ * the top-level `accountType`; on a `customComfy` recipe body it lives under
+ * `params.accountType`. Normalize across the union so the mock's currency /
+ * spent-account logic reads one field regardless of `kind`.
+ */
+const preferredAccountType = (body: WorkflowBody): BuzzAccountType | undefined =>
+  body.kind === 'customComfy' ? body.params.accountType : body.accountType;
+
 /** The full all-levels ceiling a `red` domain projects (mirrors the server). */
 const ALL_LEVELS =
   BrowsingLevel.PG |
@@ -1289,7 +1298,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
         // primary debit only in the common FULL-COVERAGE case, and always stamps
         // on success (it can't model the no-debit / field-OMITTED case). When no
         // pool was submitted, fall back to the largest-wallet heuristic.
-        spentAccountType: body.accountType ?? primaryFunder(buzzBalance),
+        spentAccountType: preferredAccountType(body) ?? primaryFunder(buzzBalance),
       };
     };
 
@@ -1377,7 +1386,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // currency-resolution boundary — BEFORE any Buzz spend — so this is
             // checked first. Surfaces as a `failed` snapshot (mirrors how a
             // submit tRPC BAD_REQUEST becomes an errorSnapshot in createLiveHost).
-            if (body.accountType && disallowedAccounts.has(body.accountType)) {
+            const pickedAccount = preferredAccountType(body);
+            if (pickedAccount && disallowedAccounts.has(pickedAccount)) {
               dispatchToBlock({
                 type: 'WORKFLOW_SUBMITTED',
                 payload: {
@@ -1385,7 +1395,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                   snapshot: {
                     workflowId: `wf_fail_${submitCount}`,
                     status: 'failed',
-                    error: disallowedAccountError(body.accountType),
+                    error: disallowedAccountError(pickedAccount),
                   },
                 },
               });

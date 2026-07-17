@@ -61,9 +61,14 @@ interface UseBuzzWorkflowReturn {
  * until the snapshot is terminal. `status === 'confirming'` is IDLE (estimate
  * landed, user reviewing cost) — keep the Generate button enabled.
  *
+ * `estimate`/`submit` take a full {@link WorkflowBody} — the discriminated
+ * union keyed by `kind`, so either a `textToImage` body (`{ kind, modelId,
+ * modelVersionId, params }`) or a `customComfy` recipe body (`{ kind, recipe,
+ * params }`), not a bare `{ prompt }`. The hook forwards the body to the host
+ * verbatim and never reads variant-specific fields, so both members flow
+ * through unchanged.
+ *
  * @returns `{ estimate, submit, poll, cancel, status, result, error }`.
- * `submit` takes a full {@link WorkflowBody} (`{ kind, modelId,
- * modelVersionId, params }`), not `{ prompt }`.
  *
  * @example
  * const { estimate, submit, poll, status, result } = useBuzzWorkflow();
