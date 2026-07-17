@@ -648,6 +648,16 @@ export interface BlockManifestV1 {
   type: 'block' | 'embed';
   targets: ManifestTarget[];
   scopes: string[];
+  /**
+   * Optional per-scope justification: a map of scope-id → free-text rationale
+   * (WHY the app needs that permission), shown to the moderator during review.
+   * Backward-compatible — omit it and the manifest stays valid; `scopes` is
+   * unchanged. Every key MUST be a scope also present in `scopes`; each value is
+   * a non-empty string of at most 500 chars. Captures the developer's STATED
+   * rationale only — the platform does not verify the claims. Kept in lockstep
+   * with the canonical schema's `scopeJustifications` (civitai #3195).
+   */
+  scopeJustifications?: Record<string, string>;
   iframe: ManifestIframe;
   assets?: ManifestAsset[];
   /**
