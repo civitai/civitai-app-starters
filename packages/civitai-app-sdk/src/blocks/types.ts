@@ -412,10 +412,11 @@ export interface BlockTextToImageParams {
 }
 
 /**
- * Body the block sends to `useBuzzWorkflow().{submit,estimate}`. A
- * discriminated union keyed by `kind` — v1 ships text-to-image only;
- * new kinds (e.g. img2img, video) extend this union as the host gains
- * support for them.
+ * The text-to-image member of the {@link WorkflowBody} discriminated union
+ * (`kind: 'textToImage'`). This is the original, single-member shape — kept
+ * byte-identical for backward compatibility. An existing
+ * `{ kind: 'textToImage', modelId, modelVersionId, params }` body must
+ * continue to satisfy {@link WorkflowBody} unchanged.
  *
  * Both `modelId` and `modelVersionId` are required even though they're
  * conceptually redundant — the host validates that `modelId` matches the
@@ -423,7 +424,7 @@ export interface BlockTextToImageParams {
  * that model (DB lookup). The block always has both values from
  * `useBlockContext().context as ModelSlotContext`.
  */
-export type WorkflowBody = {
+export type WorkflowBodyTextToImage = {
   kind: 'textToImage';
   modelId: number;
   modelVersionId: number;
@@ -468,6 +469,81 @@ export type WorkflowBody = {
   accountType?: BuzzAccountType;
   params: BlockTextToImageParams;
 };
+
+/**
+ * The `customComfy` member of the {@link WorkflowBody} discriminated union
+ * (`kind: 'customComfy'`) — runs a **server-registered, code-reviewed ComfyUI
+ * recipe** end-to-end. This is a bounded, fail-closed primitive: the iframe
+ * NEVER sends a Comfy graph. It sends only a registered `recipe` id plus a
+ * small, per-recipe-validated `params` object; the civitai server owns the
+ * entire graph (built by object construction, so the prompt is a leaf value
+ * that cannot perturb graph topology).
+ *
+ * Trust / safety model (all SERVER-ENFORCED — mirrors civitai's forthcoming
+ * `blockCustomComfyBodySchema`):
+ *  - `recipe` is a **registered recipe id** resolved against a code-reviewed,
+ *    in-repo recipe registry. An unknown id is **rejected server-side, fail-
+ *    closed** (the schema enum is derived from the registry keys) — there is
+ *    no way for a block to run an arbitrary/unreviewed graph.
+ *  - `params` are **bounded and validated per-recipe** by the server's
+ *    `.strict()` Zod param schema (extra fields rejected); each recipe pins
+ *    its own resources (checkpoint/LoRA/diffusion AIRs) — the block cannot
+ *    supply them.
+ *
+ * Billing is **post-paid** (the underlying orchestrator `customComfy` step
+ * bills measured GPU runtime at a fixed rate, so there is NO exact pre-price):
+ *  - `estimate` returns a per-recipe **display estimate**, not a firm quote —
+ *    surface it as an estimate; the actual cost is known only on terminal.
+ *  - Each recipe declares a hard per-job `maxBuzz` ceiling backed by an
+ *    aggressive step `timeout`; the orchestrator physically caps the job at
+ *    that ceiling server-side (worst-case Buzz = the timeout in seconds), and
+ *    the host gates `maxBuzz <= token.buzzBudget` before submit. A single job
+ *    therefore cannot exceed the recipe's declared ceiling no matter what.
+ */
+export type WorkflowBodyCustomComfy = {
+  kind: 'customComfy';
+  /**
+   * A **registered recipe id** (e.g. `'seamless-pano-360'`). Resolved server-
+   * side against the code-reviewed recipe registry; an unknown id is rejected
+   * fail-closed. The recipe fixes the graph, the resource allowlist, the
+   * checkpoint policy, and the `maxBuzz`/`timeout` budget ceiling — none of
+   * which the block can influence beyond selecting the recipe + `params`.
+   */
+  recipe: string;
+  /**
+   * Bounded, per-recipe-validated parameters. Only the fields a recipe's
+   * `.strict()` Zod schema accepts are honored; extra fields are rejected
+   * server-side. The common shape:
+   *  - `prompt` — the generation prompt (a leaf string; injected into the
+   *    server-built graph by object construction, never string-templated).
+   *  - `seed` — optional; `null`/omitted lets the orchestrator pick.
+   *  - `engine` — optional recipe engine-variant selector (e.g. a DiT engine);
+   *    the recipe defaults it when omitted.
+   *  - `accountType` — optional preferred Buzz pool (a preference, clamped
+   *    server-side to pools the viewer actually holds; see {@link BuzzAccountType}).
+   */
+  params: {
+    prompt: string;
+    seed?: number | null;
+    engine?: string;
+    accountType?: BuzzAccountType;
+  };
+};
+
+/**
+ * Body the block sends to `useBuzzWorkflow().{submit,estimate}`. A real
+ * discriminated union keyed by `kind`:
+ *  - {@link WorkflowBodyTextToImage} (`kind: 'textToImage'`) — the original
+ *    checkpoint/LoRA/img2img generation body (unchanged, back-compatible).
+ *  - {@link WorkflowBodyCustomComfy} (`kind: 'customComfy'`) — a bounded,
+ *    server-registered ComfyUI recipe (post-paid; the iframe never sends a
+ *    graph).
+ *
+ * New kinds extend this union as the host gains support for them. Narrow on
+ * `body.kind` before touching member-specific fields (e.g. `modelId`/`params`
+ * live only on the `textToImage` member).
+ */
+export type WorkflowBody = WorkflowBodyTextToImage | WorkflowBodyCustomComfy;
 
 /**
  * The host-mediated view of an orchestrator workflow that an iframe block

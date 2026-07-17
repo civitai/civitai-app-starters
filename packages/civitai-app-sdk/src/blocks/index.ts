@@ -72,6 +72,8 @@ export type {
   BuzzAccountType,
   ShowcaseImage,
   WorkflowBody,
+  WorkflowBodyTextToImage,
+  WorkflowBodyCustomComfy,
   WorkflowStatus,
   BlockBuzzTransaction,
   BlockBuzzAccount,

@@ -22,8 +22,12 @@ const baseParams = { prompt: 'a cat' } as const;
 // --- BuzzAccountType is exactly the three domain-clamped pools ---
 expectTypeOf<BuzzAccountType>().toEqualTypeOf<'blue' | 'green' | 'yellow'>();
 
-// --- accountType is OPTIONAL on the submit body (backward compatible) ---
-expectTypeOf<WorkflowBody['accountType']>().toEqualTypeOf<BuzzAccountType | undefined>();
+// --- accountType is OPTIONAL on the textToImage submit body (backward compatible).
+//     `WorkflowBody` is now a discriminated union, so narrow to that arm to read the
+//     top-level field (the customComfy arm carries its preference under `params`). ---
+expectTypeOf<
+  Extract<WorkflowBody, { kind: 'textToImage' }>['accountType']
+>().toEqualTypeOf<BuzzAccountType | undefined>();
 
 // --- a checkpoint-only body with NO accountType still type-checks (today's default) ---
 const noPreference: WorkflowBody = {
@@ -42,7 +46,9 @@ const withPreference: WorkflowBody = {
   accountType: 'yellow',
   params: baseParams,
 };
-expectTypeOf(withPreference.accountType).toEqualTypeOf<BuzzAccountType | undefined>();
+expectTypeOf<
+  Extract<WorkflowBody, { kind: 'textToImage' }>['accountType']
+>().toEqualTypeOf<BuzzAccountType | undefined>();
 
 // The whole body is what `useBuzzWorkflow().submit(body)` accepts and the host
 // forwards unchanged over SUBMIT_WORKFLOW — so accountType is carried by that path.
