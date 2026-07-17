@@ -693,9 +693,9 @@ export type BlockManifest = BlockManifestV1;
  * lockstep. The host deliberately STRIPS the sensitive fields the raw ledger
  * carries: `details` is allowlisted to the entity-attribution keys (the
  * passthrough — incl. `stripePaymentIntentId` — is dropped), and
- * `externalTransactionId` is nulled on money-movement rows (Purchase / Refund /
- * ChargeBack / Withdrawal + the merch Shopify value), keeping only the
- * civitai-internal prize/reward classifier.
+ * `externalTransactionId` is nulled by the host on EVERY block-facing row
+ * (default-deny; civitai/civitai #3192) — the field stays on the wire for
+ * shape-compat but is always `null` for blocks.
  *
  * DATE WIRE CAVEAT: `date` is documented as ISO-8601 to match the SDK's
  * wire convention, BUT the host currently forwards the raw tRPC `result` over a
@@ -728,7 +728,7 @@ export interface BlockBuzzTransaction {
     url?: string;
     toAccountType?: string;
   } | null;
-  /** Nulled by the host on processor-reference rows; a civitai-internal classifier otherwise. */
+  /** Always `null` for blocks — the host nulls it on every row (default-deny; #3192). Present for wire-compat. */
   externalTransactionId: string | null;
   fromUser?: { id: number; username: string | null };
   toUser?: { id: number; username: string | null };
