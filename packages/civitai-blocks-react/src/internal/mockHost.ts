@@ -1061,6 +1061,15 @@ export function readMockHostUrlOptions(
  * `uninstall()` teardown (restores `window.parent`, clears timers). Safe to use
  * from a node/jsdom/happy-dom test OR a browser dev harness.
  *
+ * GENERATION KINDS: the estimate → submit → poll money path is kind-agnostic —
+ * it drives BOTH `WorkflowBody` arms, `{ kind:'textToImage', … }` and
+ * `{ kind:'customComfy', recipe, params }`, with the identical lifecycle,
+ * `generation`/`buzz` scenario config, and `spentAccountType` stamping (a
+ * customComfy body's preferred pool lives under `params.accountType`). The
+ * server-only recipe registry is NOT consulted — any `recipe` id is accepted
+ * (fail-open) since the mock stands in for the server. So a scaffold can test a
+ * customComfy sample generation with no backend, exactly like textToImage.
+ *
  * FIDELITY CAVEAT — `spentAccountType`: on a successful gen the mock stamps the
  * PICKED pool (`body.accountType`), which equals the real backend's primary
  * realized debit only in the common FULL-COVERAGE case. The mock's
@@ -1361,6 +1370,17 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             return;
 
           case 'ESTIMATE_WORKFLOW': {
+            // KIND-AGNOSTIC money path: both WorkflowBody arms — `textToImage`
+            // AND `customComfy` ({ recipe, params }) — are handled by the SAME
+            // estimate/submit/poll code, exactly as the real host forwards
+            // either body to the orchestrator uniformly. `costFor` /
+            // `preferredAccountType` normalize across the union, so NOTHING here
+            // may narrow on `body.kind` or touch textToImage-only fields
+            // (`modelId`/`params.prompt`) — a customComfy body must flow through
+            // unchanged. The recipe id is NEVER validated against a registry
+            // (that's server-only); the mock accepts any id, fail-open. The
+            // sentinel `workflowId` is non-empty so the snapshot survives the
+            // SDK inbound validator (which drops empty-workflowId snapshots).
             const body = typed.payload?.body ?? ({} as WorkflowBody);
             dispatchToBlock({
               type: 'ESTIMATE_RESULT',
@@ -1377,6 +1397,11 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           }
 
           case 'SUBMIT_WORKFLOW': {
+            // Kind-agnostic (see ESTIMATE_WORKFLOW): a `customComfy` recipe body
+            // drives the identical submit → poll → terminal lifecycle, honors the
+            // same generation/buzz scenario config (failRate/failNext/insufficient/
+            // latencyMs), and stamps spentAccountType from `params.accountType`
+            // (via preferredAccountType). No recipe-registry validation.
             submitCount += 1;
             const body = typed.payload?.body ?? ({} as WorkflowBody);
             const cost = costFor(body);
