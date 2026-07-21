@@ -94,6 +94,44 @@ jobs:
       - run: pnpm --filter @civitai/blocks-react exec playwright install --with-deps chromium
       - run: pnpm --filter @civitai/blocks-react test:browser
 
+  design-system:
+    name: design-system (theme + components + components-react)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Build in dependency order: theme (Mantine -> --civitai-* tokens) ->
+      # components (CSS referencing those tokens) -> components-react (bindings).
+      - run: pnpm --filter @civitai/theme build
+      - run: pnpm --filter @civitai/components build
+      - run: pnpm --filter @civitai/components-react build
+
+      # @civitai/theme: generation-parity guard (committed artifacts == fresh
+      # generation) + the drift guard (skips when the civitai checkout is absent,
+      # which it is in CI).
+      - run: pnpm --filter @civitai/theme typecheck
+      - run: pnpm --filter @civitai/theme test
+
+      - run: pnpm --filter @civitai/components typecheck
+      - run: pnpm --filter @civitai/components test
+
+      - run: pnpm --filter @civitai/components-react typecheck
+      - run: pnpm --filter @civitai/components-react test
+
+      # HTML-vs-React computed-style parity + axe a11y in real headless Chromium
+      # (happy-dom has no layout / getComputedStyle). Bundled Chromium in CI.
+      - run: pnpm --filter @civitai/components-react exec playwright install --with-deps chromium
+      - run: pnpm --filter @civitai/components-react test:browser
+
   readme-snippets:
     name: README snippets (typecheck)
     runs-on: ubuntu-latest
