@@ -37,6 +37,16 @@ interface TokenSpec {
   /** Typed-syntax category — drives `@property` registration + DTCG `$type`. */
   type: 'color' | 'length' | 'font';
   description: string;
+  /**
+   * Force this token into the `[data-theme='dark']` block even when its resolved
+   * dark value is IDENTICAL to light (the generator otherwise emits a dark
+   * override only when it differs). Used for symmetry: the primary group
+   * (`color-primary`/`-hover`/`-light`) all shift shade in dark, so the
+   * contrast/foreground token belongs alongside them in the dark block even
+   * though its value (white) happens to be scheme-independent — keeping the dark
+   * block self-contained rather than silently inheriting from `:root`/light.
+   */
+  alwaysDark?: boolean;
 }
 
 /**
@@ -120,6 +130,9 @@ const TOKEN_SPEC: readonly TokenSpec[] = [
     source: '--mantine-primary-color-contrast',
     type: 'color',
     description: 'Foreground/text color on a filled primary surface.',
+    // Emit in the dark block too (value is white in both schemes) so the dark
+    // primary group is symmetric with light. See TokenSpec.alwaysDark.
+    alwaysDark: true,
   },
   {
     name: 'color-primary-light',
@@ -221,7 +234,7 @@ export function resolveTokens(themeOverride: MantineThemeOverride = civitaiTheme
     const lightVal = resolveValue(`var(${spec.source})`, lightDict);
     const darkVal = resolveValue(`var(${spec.source})`, darkDict);
     root[varName] = lightVal;
-    if (darkVal !== lightVal) dark[varName] = darkVal;
+    if (darkVal !== lightVal || spec.alwaysDark) dark[varName] = darkVal;
     meta.push({ varName, camel: camel(spec.name), type: spec.type, description: spec.description });
   }
 

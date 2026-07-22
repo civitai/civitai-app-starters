@@ -115,7 +115,14 @@ Horizontal flex, items center-aligned. `data-gap`: `sm` · `md` · `lg`.
 ### Badge — `data-civitai-ui="badge"`
 - `data-variant`: `filled` (default) · `light` · `outline`.
 - `data-size`: `sm` · `md` (default) · `lg`.
+- `data-color` (optional): `info` · `success` · `warning` · `error` — the same
+  intent set as Alert. Omit it for the default primary accent. Recolors the
+  `filled` / `light` / `outline` variants.
 - Presentational `<span>`. If it conveys status, add an `aria-label`.
+
+```html
+<span data-civitai-ui="badge" data-variant="light" data-color="success" data-size="md">ready</span>
+```
 
 ---
 

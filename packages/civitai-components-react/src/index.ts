@@ -17,4 +17,4 @@ export { Stack, type StackProps, type Gap } from './Stack.js';
 export { Group, type GroupProps } from './Group.js';
 export { Alert, type AlertProps, type AlertColor } from './Alert.js';
 export { Loader, type LoaderProps, type LoaderSize } from './Loader.js';
-export { Badge, type BadgeProps, type BadgeVariant, type BadgeSize } from './Badge.js';
+export { Badge, type BadgeProps, type BadgeVariant, type BadgeSize, type BadgeColor } from './Badge.js';
