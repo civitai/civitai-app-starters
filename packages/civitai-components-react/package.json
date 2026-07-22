@@ -1,6 +1,6 @@
 {
   "name": "@civitai/components-react",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Thin React bindings over @civitai/components — forwardRef wrappers that render the framework-agnostic data-civitai-ui markup, themed by @civitai/theme.",
   "license": "MIT",
   "type": "module",
