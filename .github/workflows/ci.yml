@@ -94,8 +94,60 @@ jobs:
       - run: pnpm --filter @civitai/blocks-react exec playwright install --with-deps chromium
       - run: pnpm --filter @civitai/blocks-react test:browser
 
+  # SELF-CONTAINED design-system job. Everything here builds/typechecks/tests
+  # against THIS repo only — no civitai/civitai checkout, no live external
+  # dependency — so it is safe to make a REQUIRED branch-protection check
+  # (a civitai/civitai outage or theme-file move can never block PRs here).
+  # The live-civitai drift guard lives in the separate advisory
+  # `design-system-drift-guard` job below. KEEP this job named `design-system`
+  # so the required-check setting stays stable.
   design-system:
     name: design-system (theme + components + components-react)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Build in dependency order: theme (Mantine -> --civitai-* tokens) ->
+      # components (CSS referencing those tokens) -> components-react (bindings).
+      - run: pnpm --filter @civitai/theme build
+      - run: pnpm --filter @civitai/components build
+      - run: pnpm --filter @civitai/components-react build
+
+      # @civitai/theme: generation-parity guard only (committed artifacts ==
+      # fresh generation) — fully self-contained. The live-civitai drift guard
+      # is NOT run here; it runs in the advisory `design-system-drift-guard`
+      # job. `test:self` targets test/generation-parity.test.ts specifically.
+      - run: pnpm --filter @civitai/theme typecheck
+      - run: pnpm --filter @civitai/theme test:self
+
+      - run: pnpm --filter @civitai/components typecheck
+      - run: pnpm --filter @civitai/components test
+
+      - run: pnpm --filter @civitai/components-react typecheck
+      - run: pnpm --filter @civitai/components-react test
+
+      # HTML-vs-React computed-style parity + axe a11y in real headless Chromium
+      # (happy-dom has no layout / getComputedStyle). Bundled Chromium in CI.
+      - run: pnpm --filter @civitai/components-react exec playwright install --with-deps chromium
+      - run: pnpm --filter @civitai/components-react test:browser
+
+  # ADVISORY drift guard — depends on a LIVE external checkout of civitai/civitai
+  # (sparse: src/providers) to assert the vendored theme.source.ts hasn't drifted
+  # from civitai's real Mantine theme. Because it can fail for reasons outside
+  # this PR (civitai/civitai unreachable, or its theme file moved), it is kept
+  # ADVISORY — do NOT add it to branch protection. This mirrors the sibling
+  # live-dependent `Canonical schema drift-check` job, which is also advisory.
+  design-system-drift-guard:
+    name: design-system drift guard (vs live civitai/civitai)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -122,32 +174,16 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # Build in dependency order: theme (Mantine -> --civitai-* tokens) ->
-      # components (CSS referencing those tokens) -> components-react (bindings).
+      # Build the theme so the drift test resolves against fresh package state.
       - run: pnpm --filter @civitai/theme build
-      - run: pnpm --filter @civitai/components build
-      - run: pnpm --filter @civitai/components-react build
 
-      # @civitai/theme: generation-parity guard (committed artifacts == fresh
-      # generation) + the drift guard. CIVITAI_REPO points at the sparse civitai
-      # checkout and REQUIRE_DRIFT_GUARD=1 makes the guard RUN-OR-FAIL (never a
-      # silent skip) in CI.
-      - run: pnpm --filter @civitai/theme typecheck
-      - run: pnpm --filter @civitai/theme test
+      # The drift guard only. CIVITAI_REPO points at the sparse civitai checkout
+      # and REQUIRE_DRIFT_GUARD=1 makes the guard RUN-OR-FAIL (never a silent
+      # skip). `test:drift` targets test/theme-drift.test.ts specifically.
+      - run: pnpm --filter @civitai/theme test:drift
         env:
           CIVITAI_REPO: ${{ github.workspace }}/.civitai-src
           REQUIRE_DRIFT_GUARD: '1'
-
-      - run: pnpm --filter @civitai/components typecheck
-      - run: pnpm --filter @civitai/components test
-
-      - run: pnpm --filter @civitai/components-react typecheck
-      - run: pnpm --filter @civitai/components-react test
-
-      # HTML-vs-React computed-style parity + axe a11y in real headless Chromium
-      # (happy-dom has no layout / getComputedStyle). Bundled Chromium in CI.
-      - run: pnpm --filter @civitai/components-react exec playwright install --with-deps chromium
-      - run: pnpm --filter @civitai/components-react test:browser
 
   readme-snippets:
     name: README snippets (typecheck)

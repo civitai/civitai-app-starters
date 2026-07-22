@@ -23,6 +23,8 @@
     "build": "tsx scripts/build-tokens.ts && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
+    "test:self": "vitest run test/generation-parity.test.ts",
+    "test:drift": "vitest run test/theme-drift.test.ts",
     "test:watch": "vitest"
   },
   "engines": {
