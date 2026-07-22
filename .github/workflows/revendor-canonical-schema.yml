@@ -23,11 +23,11 @@ jobs:
     name: Re-vendor + open PR on drift
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -59,7 +59,7 @@ jobs:
       - name: Open PR if schema changed
         if: steps.changed.outputs.changed == 'true'
         # SHA-pinned peter-evans/create-pull-request v6.1.0.
-        uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1
         with:
           # Reuse CHANGESETS_TOKEN: the org blocks the default GITHUB_TOKEN from
           # opening PRs, and this secret already carries PR-creation perms for the
