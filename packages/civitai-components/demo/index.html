@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@civitai/components — no-framework demo</title>
+    <!--
+      ZERO React / JS framework. This page loads ONLY the two stylesheets and
+      hand-written HTML following @civitai/components/MARKUP.md. Build the
+      packages first (`pnpm -r --filter "./packages/*" build`), then open this
+      file. The `html-vs-react-parity` browser test proves this markup renders
+      identically to @civitai/components-react.
+    -->
+    <link rel="stylesheet" href="../../civitai-theme/dist/tokens.css" />
+    <link rel="stylesheet" href="../dist/components.css" />
+    <style>
+      body { margin: 0; font-family: var(--civitai-font); }
+      .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+      .panel { padding: 28px; min-height: 100vh; }
+      .panel[data-theme='light'] { background: #ffffff; }
+      .panel[data-theme='dark'] { background: #101113; }
+      .panel h1 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--civitai-color-text-dimmed); margin: 0 0 20px; }
+      .panel h2 { font-size: 13px; color: var(--civitai-color-text-dimmed); margin: 22px 0 8px; }
+      .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+      @media (max-width: 720px) { .panels { grid-template-columns: 1fr; } .panel { min-height: auto; } }
+    </style>
+  </head>
+  <body>
+    <div class="panels">
+      <!-- LIGHT -->
+      <section class="panel" data-theme="light">
+        <h1>data-theme = light</h1>
+
+        <h2>Button — variants</h2>
+        <div class="row">
+          <button data-civitai-ui="button" data-variant="filled" data-size="md" type="button">Filled</button>
+          <button data-civitai-ui="button" data-variant="light" data-size="md" type="button">Light</button>
+          <button data-civitai-ui="button" data-variant="outline" data-size="md" type="button">Outline</button>
+          <button data-civitai-ui="button" data-variant="subtle" data-size="md" type="button">Subtle</button>
+          <button data-civitai-ui="button" data-variant="filled" data-size="md" type="button" aria-busy="true" disabled>
+            <span data-civitai-ui="loader" data-size="sm" aria-hidden="true"></span>Loading
+          </button>
+        </div>
+
+        <h2>Button — sizes</h2>
+        <div class="row">
+          <button data-civitai-ui="button" data-variant="filled" data-size="sm" type="button">Small</button>
+          <button data-civitai-ui="button" data-variant="filled" data-size="md" type="button">Medium</button>
+          <button data-civitai-ui="button" data-variant="filled" data-size="lg" type="button">Large</button>
+        </div>
+
+        <h2>Badge</h2>
+        <div class="row">
+          <span data-civitai-ui="badge" data-variant="filled" data-size="md">filled</span>
+          <span data-civitai-ui="badge" data-variant="light" data-size="md">light</span>
+          <span data-civitai-ui="badge" data-variant="outline" data-size="md">outline</span>
+        </div>
+
+        <h2>Loader</h2>
+        <div class="row" role="status" aria-label="Loading">
+          <span data-civitai-ui="loader" data-size="sm"></span>
+          <span data-civitai-ui="loader" data-size="md"></span>
+          <span data-civitai-ui="loader" data-size="lg"></span>
+        </div>
+
+        <h2>Card + Stack + inputs</h2>
+        <div data-civitai-ui="card" data-with-border="true" data-padding="md">
+          <div data-civitai-ui="stack" data-gap="md">
+            <div data-civitai-ui="text-input">
+              <label data-civitai-ui-label for="l-name">Name</label>
+              <input data-civitai-ui-control id="l-name" placeholder="Ada Lovelace" />
+            </div>
+            <div data-civitai-ui="number-input">
+              <label data-civitai-ui-label for="l-steps">Steps</label>
+              <input type="number" data-civitai-ui-control id="l-steps" value="30" />
+            </div>
+            <div data-civitai-ui="textarea">
+              <label data-civitai-ui-label for="l-prompt">Prompt<span data-civitai-ui-required aria-hidden="true">*</span></label>
+              <textarea data-civitai-ui-control id="l-prompt" rows="2">a serene mountain lake</textarea>
+            </div>
+            <div data-civitai-ui="text-input" data-invalid="true">
+              <label data-civitai-ui-label for="l-seed">Seed</label>
+              <input data-civitai-ui-control id="l-seed" aria-invalid="true" aria-describedby="l-seed-err" value="-1" />
+              <span id="l-seed-err" data-civitai-ui-error role="alert">Must be a positive integer</span>
+            </div>
+            <div data-civitai-ui="group">
+              <button data-civitai-ui="button" data-variant="filled" data-size="md" type="button">Generate</button>
+              <button data-civitai-ui="button" data-variant="subtle" data-size="md" type="button">Reset</button>
+            </div>
+          </div>
+        </div>
+
+        <h2>Alert</h2>
+        <div data-civitai-ui="stack" data-gap="sm">
+          <div data-civitai-ui="alert" data-color="info" role="alert"><div data-civitai-ui-alert-body><div data-civitai-ui-alert-title>Heads up</div>Your generation is queued.</div></div>
+          <div data-civitai-ui="alert" data-color="success" role="alert"><div data-civitai-ui-alert-body><div data-civitai-ui-alert-title>Saved</div>Changes are live.</div></div>
+          <div data-civitai-ui="alert" data-color="warning" role="alert"><div data-civitai-ui-alert-body>Low on Buzz.</div></div>
+          <div data-civitai-ui="alert" data-color="error" role="alert"><div data-civitai-ui-alert-body><div data-civitai-ui-alert-title>Failed</div>The worker rejected the job.</div></div>
+        </div>
+      </section>
+
+      <!-- DARK -->
+      <section class="panel" data-theme="dark">
+        <h1>data-theme = dark</h1>
+
+        <h2>Button — variants</h2>
+        <div class="row">
+          <button data-civitai-ui="button" data-variant="filled" data-size="md" type="button">Filled</button>
+          <button data-civitai-ui="button" data-variant="light" data-size="md" type="button">Light</button>
+          <button data-civitai-ui="button" data-variant="outline" data-size="md" type="button">Outline</button>
+          <button data-civitai-ui="button" data-variant="subtle" data-size="md" type="button">Subtle</button>
+          <button data-civitai-ui="button" data-variant="filled" data-size="md" type="button" aria-busy="true" disabled>
+            <span data-civitai-ui="loader" data-size="sm" aria-hidden="true"></span>Loading
+          </button>
+        </div>
+
+        <h2>Button — sizes</h2>
+        <div class="row">
+          <button data-civitai-ui="button" data-variant="filled" data-size="sm" type="button">Small</button>
+          <button data-civitai-ui="button" data-variant="filled" data-size="md" type="button">Medium</button>
+          <button data-civitai-ui="button" data-variant="filled" data-size="lg" type="button">Large</button>
+        </div>
+
+        <h2>Badge</h2>
+        <div class="row">
+          <span data-civitai-ui="badge" data-variant="filled" data-size="md">filled</span>
+          <span data-civitai-ui="badge" data-variant="light" data-size="md">light</span>
+          <span data-civitai-ui="badge" data-variant="outline" data-size="md">outline</span>
+        </div>
+
+        <h2>Loader</h2>
+        <div class="row" role="status" aria-label="Loading">
+          <span data-civitai-ui="loader" data-size="sm"></span>
+          <span data-civitai-ui="loader" data-size="md"></span>
+          <span data-civitai-ui="loader" data-size="lg"></span>
+        </div>
+
+        <h2>Card + Stack + inputs</h2>
+        <div data-civitai-ui="card" data-with-border="true" data-padding="md">
+          <div data-civitai-ui="stack" data-gap="md">
+            <div data-civitai-ui="text-input">
+              <label data-civitai-ui-label for="d-name">Name</label>
+              <input data-civitai-ui-control id="d-name" placeholder="Ada Lovelace" />
+            </div>
+            <div data-civitai-ui="number-input">
+              <label data-civitai-ui-label for="d-steps">Steps</label>
+              <input type="number" data-civitai-ui-control id="d-steps" value="30" />
+            </div>
+            <div data-civitai-ui="textarea">
+              <label data-civitai-ui-label for="d-prompt">Prompt<span data-civitai-ui-required aria-hidden="true">*</span></label>
+              <textarea data-civitai-ui-control id="d-prompt" rows="2">a serene mountain lake</textarea>
+            </div>
+            <div data-civitai-ui="text-input" data-invalid="true">
+              <label data-civitai-ui-label for="d-seed">Seed</label>
+              <input data-civitai-ui-control id="d-seed" aria-invalid="true" aria-describedby="d-seed-err" value="-1" />
+              <span id="d-seed-err" data-civitai-ui-error role="alert">Must be a positive integer</span>
+            </div>
+            <div data-civitai-ui="group">
+              <button data-civitai-ui="button" data-variant="filled" data-size="md" type="button">Generate</button>
+              <button data-civitai-ui="button" data-variant="subtle" data-size="md" type="button">Reset</button>
+            </div>
+          </div>
+        </div>
+
+        <h2>Alert</h2>
+        <div data-civitai-ui="stack" data-gap="sm">
+          <div data-civitai-ui="alert" data-color="info" role="alert"><div data-civitai-ui-alert-body><div data-civitai-ui-alert-title>Heads up</div>Your generation is queued.</div></div>
+          <div data-civitai-ui="alert" data-color="success" role="alert"><div data-civitai-ui-alert-body><div data-civitai-ui-alert-title>Saved</div>Changes are live.</div></div>
+          <div data-civitai-ui="alert" data-color="warning" role="alert"><div data-civitai-ui-alert-body>Low on Buzz.</div></div>
+          <div data-civitai-ui="alert" data-color="error" role="alert"><div data-civitai-ui-alert-body><div data-civitai-ui-alert-title>Failed</div>The worker rejected the job.</div></div>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>

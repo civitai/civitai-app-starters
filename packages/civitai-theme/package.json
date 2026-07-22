@@ -1,0 +1,58 @@
+{
+  "name": "@civitai/theme",
+  "version": "0.1.0",
+  "description": "Framework-agnostic --civitai-* design tokens, derived build-time from civitai's real Mantine theme. CSS + typed JS + W3C DTCG.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./styles.css": "./dist/tokens.css",
+    "./tokens.json": "./dist/tokens.dtcg.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "generate": "tsx scripts/build-tokens.ts",
+    "build": "tsx scripts/build-tokens.ts && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@mantine/core": "^7.17.7",
+    "@types/node": "^25.9.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.2",
+    "vitest": "^4.1.7"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "civitai",
+    "design-tokens",
+    "theme",
+    "css-variables",
+    "dtcg",
+    "mantine"
+  ],
+  "homepage": "https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-theme#readme",
+  "bugs": "https://github.com/civitai/civitai-app-starters/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/civitai/civitai-app-starters.git",
+    "directory": "packages/civitai-theme"
+  }
+}

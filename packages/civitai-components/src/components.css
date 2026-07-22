@@ -1,0 +1,288 @@
+/*
+ * @civitai/components — attribute-driven, framework-agnostic component CSS.
+ *
+ * Contract: style is selected by `data-civitai-ui="<name>"` + `data-variant` +
+ * `data-size` (+ a few component-specific `data-*`). Theme via an ancestor
+ * `[data-theme='light'|'dark']`. Tokens come from @civitai/theme's `--civitai-*`
+ * custom properties (link `@civitai/theme/styles.css` alongside this file, or
+ * call `injectStyles()` which injects both).
+ *
+ * ALL rules live in `@layer civitai.components` so a consumer's own unlayered
+ * CSS always wins the cascade WITHOUT specificity fights. State colors are
+ * derived with `color-mix()` from base tokens (no shade enumeration), and
+ * structure uses native CSS nesting (no preprocessor).
+ *
+ * See MARKUP.md for the full per-component markup + ARIA contract.
+ */
+@layer civitai.components {
+  [data-civitai-ui] {
+    box-sizing: border-box;
+    font-family: var(--civitai-font);
+
+    & *,
+    & *::before,
+    & *::after {
+      box-sizing: border-box;
+    }
+  }
+
+  /* ----- Button ----- */
+  [data-civitai-ui='button'] {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border: 1px solid transparent;
+    border-radius: var(--civitai-radius);
+    font-family: var(--civitai-font);
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    user-select: none;
+    text-decoration: none;
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+    background: var(--civitai-color-primary);
+    color: var(--civitai-color-primary-fg);
+
+    &[data-size='sm'] { height: 30px; padding: 0 14px; font-size: 13px; }
+    &[data-size='md'] { height: 36px; padding: 0 18px; font-size: 14px; }
+    &[data-size='lg'] { height: 44px; padding: 0 22px; font-size: 16px; }
+    &[data-full-width='true'] { width: 100%; }
+
+    &[data-variant='filled'] {
+      background: var(--civitai-color-primary);
+      color: var(--civitai-color-primary-fg);
+      border-color: var(--civitai-color-primary);
+
+      &:hover:not(:disabled) {
+        background: var(--civitai-color-primary-hover);
+        border-color: var(--civitai-color-primary-hover);
+      }
+    }
+    &[data-variant='light'] {
+      background: color-mix(in srgb, var(--civitai-color-primary) 12%, transparent);
+      color: var(--civitai-color-primary);
+      border-color: transparent;
+
+      &:hover:not(:disabled) {
+        background: color-mix(in srgb, var(--civitai-color-primary) 22%, transparent);
+      }
+    }
+    &[data-variant='outline'] {
+      background: transparent;
+      color: var(--civitai-color-primary);
+      border-color: var(--civitai-color-primary);
+
+      &:hover:not(:disabled) {
+        background: color-mix(in srgb, var(--civitai-color-primary) 10%, transparent);
+      }
+    }
+    &[data-variant='subtle'] {
+      background: transparent;
+      color: var(--civitai-color-primary);
+      border-color: transparent;
+
+      &:hover:not(:disabled) {
+        background: color-mix(in srgb, var(--civitai-color-primary) 10%, transparent);
+      }
+    }
+    &:disabled,
+    &[aria-busy='true'] {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    & [data-civitai-ui-section] {
+      display: inline-flex;
+      align-items: center;
+    }
+  }
+
+  /* ----- TextInput / Textarea / NumberInput ----- */
+  [data-civitai-ui='text-input'],
+  [data-civitai-ui='textarea'],
+  [data-civitai-ui='number-input'] {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  [data-civitai-ui-label] {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--civitai-color-text);
+  }
+  [data-civitai-ui-required] {
+    color: var(--civitai-color-error);
+    margin-left: 2px;
+  }
+  [data-civitai-ui-description] {
+    font-size: 12px;
+    color: var(--civitai-color-text-dimmed);
+  }
+  [data-civitai-ui-error] {
+    font-size: 12px;
+    color: var(--civitai-color-error);
+  }
+  [data-civitai-ui-control] {
+    width: 100%;
+    font-family: var(--civitai-font);
+    font-size: 14px;
+    color: var(--civitai-color-text);
+    background: var(--civitai-color-surface);
+    border: 1px solid var(--civitai-color-border);
+    border-radius: var(--civitai-radius);
+    padding: 8px 12px;
+    transition: border-color 120ms ease;
+
+    &:focus {
+      outline: none;
+      border-color: var(--civitai-color-primary);
+    }
+    &[aria-invalid='true'] {
+      border-color: var(--civitai-color-error);
+    }
+    &:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+  }
+  textarea[data-civitai-ui-control] {
+    resize: vertical;
+    line-height: 1.5;
+  }
+
+  /* ----- Card ----- */
+  [data-civitai-ui='card'] {
+    background: var(--civitai-color-surface);
+    border-radius: var(--civitai-radius);
+    color: var(--civitai-color-text);
+
+    &[data-with-border='true'] {
+      border: 1px solid var(--civitai-color-border);
+    }
+    &[data-padding='sm'] { padding: 10px; }
+    &[data-padding='md'] { padding: 16px; }
+    &[data-padding='lg'] { padding: 24px; }
+  }
+
+  /* ----- Stack / Group ----- */
+  [data-civitai-ui='stack'] {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+
+    &[data-gap='sm'] { gap: 8px; }
+    &[data-gap='md'] { gap: 16px; }
+    &[data-gap='lg'] { gap: 24px; }
+  }
+  [data-civitai-ui='group'] {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+
+    &[data-gap='sm'] { gap: 6px; }
+    &[data-gap='md'] { gap: 16px; }
+    &[data-gap='lg'] { gap: 24px; }
+  }
+
+  /* ----- Alert ----- */
+  [data-civitai-ui='alert'] {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 12px 14px;
+    border-radius: var(--civitai-radius);
+    border: 1px solid transparent;
+    font-size: 14px;
+    color: var(--civitai-color-text);
+
+    &[data-color='info'] {
+      background: color-mix(in srgb, var(--civitai-color-info) 12%, transparent);
+      border-color: color-mix(in srgb, var(--civitai-color-info) 35%, transparent);
+    }
+    &[data-color='success'] {
+      background: color-mix(in srgb, var(--civitai-color-success) 12%, transparent);
+      border-color: color-mix(in srgb, var(--civitai-color-success) 35%, transparent);
+    }
+    &[data-color='warning'] {
+      background: color-mix(in srgb, var(--civitai-color-warning) 14%, transparent);
+      border-color: color-mix(in srgb, var(--civitai-color-warning) 35%, transparent);
+    }
+    &[data-color='error'] {
+      background: color-mix(in srgb, var(--civitai-color-error) 12%, transparent);
+      border-color: color-mix(in srgb, var(--civitai-color-error) 35%, transparent);
+    }
+    & [data-civitai-ui-alert-body] {
+      flex: 1;
+      min-width: 0;
+    }
+    & [data-civitai-ui-alert-title] {
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+    & [data-civitai-ui-alert-close] {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      color: inherit;
+      font-size: 16px;
+      line-height: 1;
+      padding: 0;
+      opacity: 0.7;
+
+      &:hover { opacity: 1; }
+    }
+  }
+
+  /* ----- Loader ----- */
+  [data-civitai-ui='loader'] {
+    display: inline-block;
+    border-radius: 50%;
+    border-style: solid;
+    border-color: color-mix(in srgb, currentColor 25%, transparent);
+    border-top-color: currentColor;
+    color: var(--civitai-color-primary);
+    animation: civitai-ui-spin 0.7s linear infinite;
+
+    &[data-size='sm'] { width: 16px; height: 16px; border-width: 2px; }
+    &[data-size='md'] { width: 22px; height: 22px; border-width: 3px; }
+    &[data-size='lg'] { width: 32px; height: 32px; border-width: 4px; }
+  }
+  [data-civitai-ui='button'] [data-civitai-ui='loader'] {
+    color: currentColor;
+  }
+  @keyframes civitai-ui-spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* ----- Badge ----- */
+  [data-civitai-ui='badge'] {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+
+    &[data-size='sm'] { height: 18px; padding: 0 8px; font-size: 10px; }
+    &[data-size='md'] { height: 22px; padding: 0 10px; font-size: 11px; }
+    &[data-size='lg'] { height: 26px; padding: 0 12px; font-size: 13px; }
+    &[data-variant='filled'] {
+      background: var(--civitai-color-primary);
+      color: var(--civitai-color-primary-fg);
+      border-color: var(--civitai-color-primary);
+    }
+    &[data-variant='light'] {
+      background: color-mix(in srgb, var(--civitai-color-primary) 14%, transparent);
+      color: var(--civitai-color-primary);
+    }
+    &[data-variant='outline'] {
+      background: transparent;
+      color: var(--civitai-color-primary);
+      border-color: var(--civitai-color-primary);
+    }
+  }
+}
