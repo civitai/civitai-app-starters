@@ -20,6 +20,11 @@ pnpm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Nix / direnv
+.direnv/
+result
+result-*
+
 .DS_Store
 Thumbs.db
 .idea/
