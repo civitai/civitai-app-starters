@@ -1,5 +1,5 @@
 {
-  description = "Dev shell for civitai-app-starters — Node 22 + pnpm 10.28.1 (via corepack)";
+  description = "Dev shell for civitai-app-starters — Node 24 + pnpm 10.28.1 (via corepack)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -18,15 +18,15 @@
       in
       {
         devShells.default = pkgs.mkShell {
-          # Node 22 (current LTS) satisfies engines.node ">=20" and the repo's
-          # release workflow already publishes on Node 24. .nvmrc/CI pin Node 20,
-          # but Node 20 is EOL and marked insecure in current nixpkgs, so we use
-          # the nearest secure LTS that meets the engines constraint.
+          # Node 24 is the current Active LTS (even release, LTS since Oct 2025)
+          # and satisfies engines.node ">=20". Node 20 is EOL/insecure and Node 22
+          # is Maintenance LTS; the repo's release workflow already publishes on
+          # Node 24, so the whole dev/CI/flake toolchain is unified on it here.
           # corepack ships with nodejs and pins the EXACT pnpm from package.json's
           # "packageManager" field (pnpm@10.28.1).
           packages = [
-            pkgs.nodejs_22
-            pkgs.corepack_22
+            pkgs.nodejs_24
+            pkgs.corepack_24
           ];
 
           shellHook = ''
