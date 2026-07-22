@@ -29,7 +29,7 @@ Two guards keep it honest (`pnpm --filter @civitai/theme test`):
 ## Usage
 
 ```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/theme/styles.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/theme@0.1.1/styles.css" />
 ```
 
 ```ts

@@ -3,6 +3,13 @@ docs/working/
 node_modules/
 dist/
 build/
+
+# Generated package-root styles.css copies (built from dist by the package build
+# writers so a literal CDN path @civitai/<pkg>/styles.css resolves on jsDelivr,
+# which ignores package.json `exports`). Build artifacts — shipped via `files`,
+# not committed.
+packages/civitai-theme/styles.css
+packages/civitai-components/styles.css
 .next/
 .svelte-kit/
 .vercel/
