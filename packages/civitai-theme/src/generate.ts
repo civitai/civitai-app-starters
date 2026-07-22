@@ -78,6 +78,13 @@ const TOKEN_SPEC: readonly TokenSpec[] = [
     description: 'Secondary / muted text color.',
   },
   {
+    name: 'color-body',
+    source: '--mantine-color-body',
+    type: 'color',
+    description:
+      'Page / document background (derived from Mantine\'s `--mantine-color-body`). Use for `body { background }` in plain-HTML apps.',
+  },
+  {
     name: 'color-surface',
     source: '--mantine-color-body',
     type: 'color',

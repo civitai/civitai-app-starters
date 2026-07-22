@@ -15,8 +15,8 @@ Alert, Loader, Badge`.
 [`MARKUP.md`](./MARKUP.md):
 
 ```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/theme/styles.css" />
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/components/styles.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/theme@0.1.1/styles.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/components@0.1.1/styles.css" />
 
 <button data-civitai-ui="button" data-variant="filled" data-size="md">Generate</button>
 ```
@@ -44,11 +44,65 @@ which renders exactly this markup.
 
 ## Markup contract
 
-[`MARKUP.md`](./MARKUP.md) documents every component's `data-*` attributes,
-allowed variant/size values, and the expected ARIA/role markup — the executable
-contract the `html-vs-react-parity` browser test enforces.
+Styling is selected entirely by `data-*` attributes; any HTML that follows the
+contract below renders identically to the React bindings. **`legend`:** _bold_ =
+required for correct styling + a11y. [`MARKUP.md`](./MARKUP.md) is the canonical
+source (with per-component examples + a11y wiring) and the executable contract
+the `html-vs-react-parity` browser test enforces; the essentials are inlined
+here so they're readable on the npm package page.
+
+**Theming** — set `data-theme="light"` or `data-theme="dark"` on any ancestor
+(typically `<html>` or the block root); tokens re-resolve from that scope
+(default = light). **Cascade** — every rule lives in `@layer civitai.components`,
+so your own unlayered CSS always wins with no `!important`; override a token
+locally by redeclaring it (`style="--civitai-color-primary: #a259ff"`).
+
+### Button — `data-civitai-ui="button"`
+- Element: **`<button>`** (or `<a role="button">`).
+- `data-variant`: `filled` (default) · `light` · `outline` · `subtle`
+- `data-size`: `sm` · `md` (default) · `lg` · `data-full-width="true"`.
+- Loading: **`aria-busy="true"` + `disabled`**, first child
+  `<span data-civitai-ui="loader" data-size="sm" aria-hidden="true"></span>`.
+- Icon slots: `<span data-civitai-ui-section="left|right">`. Icon-only ⇒ `aria-label`.
+
+### TextInput — `data-civitai-ui="text-input"`
+Wrapper **`<div data-civitai-ui="text-input">`** containing, in order:
+**`<label data-civitai-ui-label for="ID">`** (+ optional
+`<span data-civitai-ui-required aria-hidden="true">*</span>`), optional
+`<span id="ID-desc" data-civitai-ui-description>`, **`<input data-civitai-ui-control id="ID">`**,
+optional `<span id="ID-err" data-civitai-ui-error role="alert">`. When invalid:
+`aria-invalid="true"` on the control + `data-invalid="true"` on the wrapper, and
+`aria-describedby="ID-desc ID-err"`.
+
+- **Textarea** — `data-civitai-ui="textarea"`; control is **`<textarea data-civitai-ui-control>`**.
+- **NumberInput** — `data-civitai-ui="number-input"`; control is **`<input type="number" data-civitai-ui-control>`**.
+
+### Card — `data-civitai-ui="card"`
+`data-with-border="true"` · `data-padding`: `sm` · `md` · `lg`. Presentational
+container (`<div>`/`<section>`/`<article>`).
+
+### Stack / Group — `data-civitai-ui="stack" | "group"`
+Vertical (Stack) / horizontal center-aligned (Group) flex. `data-gap`: `sm` · `md` · `lg`.
+
+### Alert — `data-civitai-ui="alert"`
+**`role="alert"`** (or `role="status"`). `data-color`: `info` (default) ·
+`success` · `warning` · `error`. Structure: optional icon, then
+**`<div data-civitai-ui-alert-body>`** with optional
+`<div data-civitai-ui-alert-title>` + the message; optional
+`<button data-civitai-ui-alert-close aria-label="Dismiss">×</button>`.
+
+### Loader — `data-civitai-ui="loader"`
+`data-size`: `sm` · `md` (default) · `lg`. Decorative inside a button ⇒
+`aria-hidden="true"`; standalone ⇒ `role="status"` + accessible label.
+
+### Badge — `data-civitai-ui="badge"`
+`data-variant`: `filled` (default) · `light` · `outline`. `data-size`: `sm` ·
+`md` (default) · `lg`. Presentational `<span>`; add `aria-label` if it conveys status.
 
 ## Demo
 
-`demo/index.html` renders all components in light + dark with zero JS. Build the
-packages first (`pnpm -r --filter "./packages/*" build`), then open the file.
+`demo/index.html` (shipped in the package) is a **complete, copy-paste
+plain-HTML page** — the two CDN `<link>` tags, one of every component, a
+light/dark `data-theme` toggle, and page theming via `var(--civitai-color-body)`.
+Open it directly in a browser (it loads the CSS from jsDelivr, zero build step),
+or copy it as the starting point for a no-framework block.

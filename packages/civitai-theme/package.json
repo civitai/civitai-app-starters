@@ -16,6 +16,7 @@
   },
   "files": [
     "dist",
+    "styles.css",
     "README.md"
   ],
   "scripts": {
