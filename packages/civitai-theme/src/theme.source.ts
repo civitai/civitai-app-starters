@@ -183,3 +183,18 @@ export const DRIFT_GUARDED_COLOR_KEYS = [
   'accent',
   'success',
 ] as const;
+
+/**
+ * Theme fields civitai deliberately does NOT override today, so the derived
+ * `--civitai-*` tokens fall back to the Mantine defaults (blue primary,
+ * primaryShade {light:6,dark:8}, `sm` radius, the system font stack). This
+ * vendored source omits them on purpose. The drift guard asserts civitai's live
+ * `ThemeProvider.tsx` STILL omits them — if civitai adds an override the
+ * vendored source doesn't mirror, CI fails so we notice and re-vendor.
+ */
+export const DRIFT_GUARDED_ABSENT_KEYS = [
+  'primaryColor',
+  'primaryShade',
+  'defaultRadius',
+  'fontFamily',
+] as const;

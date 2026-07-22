@@ -100,6 +100,19 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # Check out civitai/civitai's theme source (public repo, SPARSE: just
+      # src/providers) so the drift guard RUNS in CI instead of skipping.
+      # REQUIRE_DRIFT_GUARD=1 (below) turns an absent/unreadable source into a
+      # FAILURE, so this can't silently regress to a skip.
+      - uses: actions/checkout@v6
+        with:
+          repository: civitai/civitai
+          ref: main
+          path: .civitai-src
+          sparse-checkout: src/providers
+          sparse-checkout-cone-mode: true
+          fetch-depth: 1
+
       - uses: pnpm/action-setup@v6
 
       - uses: actions/setup-node@v6
@@ -116,10 +129,14 @@ jobs:
       - run: pnpm --filter @civitai/components-react build
 
       # @civitai/theme: generation-parity guard (committed artifacts == fresh
-      # generation) + the drift guard (skips when the civitai checkout is absent,
-      # which it is in CI).
+      # generation) + the drift guard. CIVITAI_REPO points at the sparse civitai
+      # checkout and REQUIRE_DRIFT_GUARD=1 makes the guard RUN-OR-FAIL (never a
+      # silent skip) in CI.
       - run: pnpm --filter @civitai/theme typecheck
       - run: pnpm --filter @civitai/theme test
+        env:
+          CIVITAI_REPO: ${{ github.workspace }}/.civitai-src
+          REQUIRE_DRIFT_GUARD: '1'
 
       - run: pnpm --filter @civitai/components typecheck
       - run: pnpm --filter @civitai/components test

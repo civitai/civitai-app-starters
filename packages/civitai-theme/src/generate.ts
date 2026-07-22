@@ -2,10 +2,14 @@
  * `@civitai/theme` token GENERATOR.
  *
  * Feeds the vendored civitai `createTheme` override (`theme.source.ts`) through
- * Mantine's PUBLIC theme -> CSS-variable pipeline — the exact same primitives
- * civitai/civitai uses in `mantine-css-variables.ts`:
- *   `mergeMantineTheme` -> `defaultCssVariablesResolver` -> (our transitive
- *   var() resolution) -> `convertCssVariables`-shaped output.
+ * Mantine's PUBLIC theme resolver — the same primitives civitai/civitai uses in
+ * `mantine-css-variables.ts`:
+ *   `mergeMantineTheme(DEFAULT_THEME, override)` -> `defaultCssVariablesResolver`
+ *   (yields the `{ variables, light, dark }` map of `--mantine-*` values).
+ * From there this generator does its OWN thing (it does NOT call Mantine's
+ * `convertCssVariables`): a hand-rolled transitive `var()` resolver reduces each
+ * selected Mantine variable to a concrete literal, which is then re-namespaced
+ * and emitted as the `--civitai-*` CSS / typed-JS / DTCG artifacts.
  *
  * The output is a re-namespaced `--civitai-*` token contract. We deliberately
  * do NOT expose `--mantine-*` as the public surface: every `--civitai-*` value
