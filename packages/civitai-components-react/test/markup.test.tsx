@@ -129,5 +129,17 @@ describe('markup contract', () => {
     const badge = b.querySelector('[data-civitai-ui="badge"]')!;
     expect(badge.getAttribute('data-variant')).toBe('light');
     expect(badge.getAttribute('data-size')).toBe('sm');
+    // No `color` prop => no data-color attribute (default primary, non-breaking).
+    expect(badge.hasAttribute('data-color')).toBe(false);
+  });
+
+  it('Badge color maps to data-color (mirrors Alert)', () => {
+    const { container } = render(
+      <Badge color="success" variant="filled">
+        ready
+      </Badge>
+    );
+    const badge = container.querySelector('[data-civitai-ui="badge"]')!;
+    expect(badge.getAttribute('data-color')).toBe('success');
   });
 });

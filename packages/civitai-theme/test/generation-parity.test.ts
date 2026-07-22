@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { buildArtifacts } from '../src/generate.js';
+import { buildArtifacts, resolveTokens } from '../src/generate.js';
 
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const artifacts = buildArtifacts();
@@ -30,6 +30,36 @@ describe('generation parity', () => {
       );
     });
   }
+
+  // --- issue #181 F8: the dark theme block must carry --civitai-color-primary-fg
+  // for symmetry with light (it was previously omitted because its resolved dark
+  // value equals light and the generator skips equal-value dark overrides). It is
+  // now force-emitted via TokenSpec.alwaysDark — GENERATED, not hand-authored.
+  describe('dark --civitai-color-primary-fg symmetry (#181 F8)', () => {
+    const PRIMARY_FG = '--civitai-color-primary-fg';
+    const { root, dark } = resolveTokens();
+
+    it('is emitted into the dark map, derived (white), matching the light contrast color', () => {
+      expect(dark, `${PRIMARY_FG} must be present in the dark block`).toHaveProperty(PRIMARY_FG);
+      // Derived from Mantine's --mantine-primary-color-contrast in the dark
+      // scheme; the contrast on both primary shades is white.
+      expect(dark[PRIMARY_FG]).toBe('#fefefe');
+      // Same value as light (symmetry, not a different color).
+      expect(dark[PRIMARY_FG]).toBe(root[PRIMARY_FG]);
+    });
+
+    it("appears in the generated [data-theme='dark'] CSS block", () => {
+      const css = artifacts['tokens.css'];
+      const darkBlock = /\[data-theme='dark'\] \{([\s\S]*?)\}/.exec(css)?.[1] ?? '';
+      expect(darkBlock, "dark block must declare --civitai-color-primary-fg").toContain(
+        `${PRIMARY_FG}: #fefefe;`
+      );
+    });
+
+    it('leaves the light/:root value unchanged (#fefefe)', () => {
+      expect(root[PRIMARY_FG]).toBe('#fefefe');
+    });
+  });
 
   it('DTCG export is valid JSON with $value/$type on every leaf', () => {
     const dtcg = JSON.parse(artifacts['tokens.dtcg.json']) as Record<string, Record<string, unknown>>;

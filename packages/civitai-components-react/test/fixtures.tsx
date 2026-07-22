@@ -113,6 +113,31 @@ export const CASES: Case[] = [
       compare: [...TEXT, 'backgroundColor', 'height', ...PAD],
     })
   ),
+  // ---- Badge: data-color intents (issue #181 F2) — filled + light, each color
+  ...alertColors.flatMap((color): Case[] => [
+    {
+      id: `badge-color-${color}-filled`,
+      node: (
+        <Badge color={color} variant="filled" size="md">
+          new
+        </Badge>
+      ),
+      html: `<span data-civitai-ui="badge" data-color="${color}" data-variant="filled" data-size="md">new</span>`,
+      selector: '[data-civitai-ui="badge"]',
+      compare: [...TEXT, 'backgroundColor', ...BORDER, ...PAD],
+    },
+    {
+      id: `badge-color-${color}-light`,
+      node: (
+        <Badge color={color} variant="light" size="md">
+          new
+        </Badge>
+      ),
+      html: `<span data-civitai-ui="badge" data-color="${color}" data-variant="light" data-size="md">new</span>`,
+      selector: '[data-civitai-ui="badge"]',
+      compare: [...TEXT, 'backgroundColor', ...BORDER, ...PAD],
+    },
+  ]),
 
   // ---- Loader: every size ----
   ...loaderSizes.map(

@@ -97,7 +97,9 @@ Vertical (Stack) / horizontal center-aligned (Group) flex. `data-gap`: `sm` · `
 
 ### Badge — `data-civitai-ui="badge"`
 `data-variant`: `filled` (default) · `light` · `outline`. `data-size`: `sm` ·
-`md` (default) · `lg`. Presentational `<span>`; add `aria-label` if it conveys status.
+`md` (default) · `lg`. `data-color` (optional): `info` · `success` · `warning` ·
+`error` (mirrors Alert; omit for the default primary accent). Presentational
+`<span>`; add `aria-label` if it conveys status.
 
 ## Demo
 

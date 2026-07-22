@@ -179,6 +179,23 @@ describe('styling anchors — Button', () => {
     );
   });
 
+  // issue #181 F8: the dark theme now emits --civitai-color-primary-fg for
+  // symmetry. A filled button consumes it as its text color in dark — this
+  // anchors that the dark token resolves (white) rather than inheriting nothing.
+  it('filled dark: fg consumes dark --civitai-color-primary-fg (white)', () => {
+    both(
+      pair(
+        'dark',
+        <Button variant="filled" size="md">Go</Button>,
+        `<button data-civitai-ui="button" data-variant="filled" data-size="md" type="button">Go</button>`,
+        '[data-civitai-ui="button"]'
+      ),
+      (cs, who) => {
+        expect(cs.color, who).toBe(solid(darkTokens.colorPrimaryFg));
+      }
+    );
+  });
+
   it('outline light: text+border=primary, bg transparent', () => {
     both(
       pair(
@@ -261,6 +278,113 @@ describe('styling anchors — Badge', () => {
         expect(cs.color, who).toBe(solid(tokens.colorPrimary));
       }
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Badge `data-color` intent anchors (issue #181 F2 — parity with Alert).
+// Each intent recolors filled + light variants from the SAME token the probe
+// oracle evaluates, on BOTH the React (`<Badge color=…>`) and hand-HTML
+// (`data-color=…`) consumers, in light + dark where the token differs.
+// ---------------------------------------------------------------------------
+describe('styling anchors — Badge data-color (issue #181 F2)', () => {
+  const COLORS = [
+    { name: 'info', light: tokens.colorInfo, dark: darkTokens.colorInfo },
+    { name: 'success', light: tokens.colorSuccess, dark: darkTokens.colorSuccess },
+    { name: 'warning', light: tokens.colorWarning, dark: darkTokens.colorWarning },
+    { name: 'error', light: tokens.colorError, dark: darkTokens.colorError },
+  ] as const;
+
+  for (const { name, light, dark } of COLORS) {
+    it(`filled ${name} light: bg+border=${name} token, fg stays primaryFg (white)`, () => {
+      both(
+        pair(
+          'light',
+          <Badge color={name} variant="filled" size="md">
+            x
+          </Badge>,
+          `<span data-civitai-ui="badge" data-color="${name}" data-variant="filled" data-size="md">x</span>`,
+          '[data-civitai-ui="badge"]'
+        ),
+        (cs, who) => {
+          expect(cs.backgroundColor, `${who} ${name}`).toBe(solid(light));
+          expect(cs.borderTopColor, `${who} ${name}`).toBe(solid(light));
+          expect(cs.color, `${who} ${name}`).toBe(solid(tokens.colorPrimaryFg));
+          // Actually recolored — not the default primary accent. (`info` maps to
+          // the same blue as primary, so the recolor is a no-op there; guard
+          // only where the intent token genuinely differs from primary.)
+          if (light !== tokens.colorPrimary) {
+            expect(cs.backgroundColor, `${who} ${name}`).not.toBe(solid(tokens.colorPrimary));
+          }
+        }
+      );
+    });
+
+    it(`light-variant ${name} light: bg=mix(${name} 14%), text=${name} token`, () => {
+      both(
+        pair(
+          'light',
+          <Badge color={name} variant="light" size="md">
+            x
+          </Badge>,
+          `<span data-civitai-ui="badge" data-color="${name}" data-variant="light" data-size="md">x</span>`,
+          '[data-civitai-ui="badge"]'
+        ),
+        (cs, who) => {
+          expect(cs.backgroundColor, `${who} ${name}`).toBe(mix(light, '14%'));
+          expect(cs.color, `${who} ${name}`).toBe(solid(light));
+        }
+      );
+    });
+
+    it(`filled ${name} dark: bg+border=dark ${name} token (theme-tracked)`, () => {
+      both(
+        pair(
+          'dark',
+          <Badge color={name} variant="filled" size="md">
+            x
+          </Badge>,
+          `<span data-civitai-ui="badge" data-color="${name}" data-variant="filled" data-size="md">x</span>`,
+          '[data-civitai-ui="badge"]'
+        ),
+        (cs, who) => {
+          expect(cs.backgroundColor, `${who} ${name}`).toBe(solid(dark));
+          expect(cs.borderTopColor, `${who} ${name}`).toBe(solid(dark));
+          // Theme actually switched (dark token differs from light).
+          expect(cs.backgroundColor, `${who} ${name}`).not.toBe(solid(light));
+        }
+      );
+    });
+  }
+
+  it('DEFAULT badge (no data-color) still renders the primary accent — non-regression', () => {
+    both(
+      pair(
+        'light',
+        <Badge variant="filled" size="md">
+          x
+        </Badge>,
+        `<span data-civitai-ui="badge" data-variant="filled" data-size="md">x</span>`,
+        '[data-civitai-ui="badge"]'
+      ),
+      (cs, who) => {
+        expect(cs.backgroundColor, who).toBe(solid(tokens.colorPrimary));
+        expect(cs.color, who).toBe(solid(tokens.colorPrimaryFg));
+      }
+    );
+    // And the React binding omits the attribute entirely when `color` is unset.
+    const r = mountReact(
+      'light',
+      <Badge variant="filled" size="md">
+        x
+      </Badge>
+    );
+    try {
+      const el = r.mount.querySelector('[data-civitai-ui="badge"]')!;
+      expect(el.hasAttribute('data-color'), 'no color prop => no data-color attribute').toBe(false);
+    } finally {
+      r.cleanup();
+    }
   });
 });
 

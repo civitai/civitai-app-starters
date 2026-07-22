@@ -12,7 +12,11 @@ import { Button, TextInput, Alert } from '@civitai/components-react';
 <Button variant="filled" onClick={onGenerate}>Generate</Button>
 <TextInput label="Prompt" error={err} />
 <Alert color="success" title="Saved">Your changes are live.</Alert>
+<Badge color="success" variant="light">ready</Badge>
 ```
+
+`Badge` takes an optional `color` (`info | success | warning | error`, mirroring
+`Alert`); omit it for the default primary accent.
 
 Components: `Button, TextInput, Textarea, NumberInput, Card, Stack, Group,
 Alert, Loader, Badge`. Each renders the exact markup documented in

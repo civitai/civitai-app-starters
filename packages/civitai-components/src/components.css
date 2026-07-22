@@ -284,5 +284,71 @@
       color: var(--civitai-color-primary);
       border-color: var(--civitai-color-primary);
     }
+
+    /*
+     * Intent color via `data-color`, mirroring Alert's `data-color` contract
+     * (info / success / warning / error). Absent `data-color` => the default
+     * primary above (non-breaking). Each intent recolors the `filled`, `light`
+     * and `outline` variants with the same `color-mix()` token approach Alert
+     * uses; `filled` keeps the white `--civitai-color-primary-fg` text. These
+     * `[data-color][data-variant]` rules out-specify the plain-variant rules
+     * above, so order-independence holds.
+     */
+    &[data-color='info'] {
+      &[data-variant='filled'] {
+        background: var(--civitai-color-info);
+        border-color: var(--civitai-color-info);
+      }
+      &[data-variant='light'] {
+        background: color-mix(in srgb, var(--civitai-color-info) 14%, transparent);
+        color: var(--civitai-color-info);
+      }
+      &[data-variant='outline'] {
+        color: var(--civitai-color-info);
+        border-color: var(--civitai-color-info);
+      }
+    }
+    &[data-color='success'] {
+      &[data-variant='filled'] {
+        background: var(--civitai-color-success);
+        border-color: var(--civitai-color-success);
+      }
+      &[data-variant='light'] {
+        background: color-mix(in srgb, var(--civitai-color-success) 14%, transparent);
+        color: var(--civitai-color-success);
+      }
+      &[data-variant='outline'] {
+        color: var(--civitai-color-success);
+        border-color: var(--civitai-color-success);
+      }
+    }
+    &[data-color='warning'] {
+      &[data-variant='filled'] {
+        background: var(--civitai-color-warning);
+        border-color: var(--civitai-color-warning);
+      }
+      &[data-variant='light'] {
+        background: color-mix(in srgb, var(--civitai-color-warning) 14%, transparent);
+        color: var(--civitai-color-warning);
+      }
+      &[data-variant='outline'] {
+        color: var(--civitai-color-warning);
+        border-color: var(--civitai-color-warning);
+      }
+    }
+    &[data-color='error'] {
+      &[data-variant='filled'] {
+        background: var(--civitai-color-error);
+        border-color: var(--civitai-color-error);
+      }
+      &[data-variant='light'] {
+        background: color-mix(in srgb, var(--civitai-color-error) 14%, transparent);
+        color: var(--civitai-color-error);
+      }
+      &[data-variant='outline'] {
+        color: var(--civitai-color-error);
+        border-color: var(--civitai-color-error);
+      }
+    }
   }
 }
