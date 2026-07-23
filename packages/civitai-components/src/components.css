@@ -234,6 +234,21 @@
       gap: 16px;
     }
   }
+  /*
+   * RadioGroup group-level error (0.2.0): mirrors the field `-error` treatment.
+   * The message reuses the shared `[data-civitai-ui-error]` styling (12px, error
+   * token); the invalid state (`data-invalid` on the group, set alongside
+   * `aria-invalid`) tints the child radios' `accent-color` to the error token so
+   * the invalid cue reads on the group, not just the message text — the group
+   * analogue of a field control's error-colored border.
+   */
+  [data-civitai-ui='radio-group'] [data-civitai-ui-error] {
+    font-size: 12px;
+    color: var(--civitai-color-error);
+  }
+  [data-civitai-ui='radio-group'][data-invalid] input[type='radio'] {
+    accent-color: var(--civitai-color-error);
+  }
 
   /* ----- Card ----- */
   /*

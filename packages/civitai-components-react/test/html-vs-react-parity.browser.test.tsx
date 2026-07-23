@@ -41,6 +41,7 @@ import {
   Loader,
   NumberInput,
   Radio,
+  RadioGroup,
   Select,
   Stack,
   Textarea,
@@ -826,5 +827,73 @@ describe('styling anchors — Checkbox / Radio (issue #181 F6)', () => {
         expect(cs.accentColor, who).not.toBe(solid(tokens.colorPrimary));
       }
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0.2.0 — RadioGroup group-level error slot. Field-family parity: the group is
+// the natural home for a GROUP-level validation message, wired exactly like the
+// field components' `error` contract (role=alert message + aria-invalid /
+// data-invalid / errId joined into aria-describedby). Token-derived anchors on
+// BOTH consumers + a non-regression check on the default (no-error) group.
+// ---------------------------------------------------------------------------
+describe('styling anchors — RadioGroup group-level error (0.2.0)', () => {
+  const RG_INVALID = (
+    <RadioGroup label="S" error="Required">
+      <Radio label="Euler" name="rg-e" id="rge1" />
+    </RadioGroup>
+  );
+  const RG_INVALID_HTML =
+    `<div data-civitai-ui="radio-group" role="radiogroup" data-invalid="true" aria-invalid="true" aria-labelledby="rge-lbl" aria-describedby="rge-err"><span data-civitai-ui-label id="rge-lbl">S</span><div data-civitai-ui-radio-options data-orientation="vertical"><div data-civitai-ui="radio"><div data-civitai-ui-choice><input type="radio" name="rg-e" id="rge1" /><label data-civitai-ui-label for="rge1">Euler</label></div></div></div><span id="rge-err" data-civitai-ui-error role="alert">Required</span></div>`;
+
+  it('invalid: error text = error token @ 12px (both consumers)', () => {
+    both(
+      pair('light', RG_INVALID, RG_INVALID_HTML, '[data-civitai-ui-error]'),
+      (cs, who) => {
+        expect(cs.color, who).toBe(solid(tokens.colorError));
+        expect(cs.fontSize, who).toBe('12px');
+      }
+    );
+  });
+
+  it('invalid: child radios tinted to the error token (invalid state actually applied)', () => {
+    both(
+      pair('light', RG_INVALID, RG_INVALID_HTML, "[data-invalid] input[type='radio']"),
+      (cs, who) => {
+        expect(cs.accentColor, who).toBe(solid(tokens.colorError));
+        expect(cs.accentColor, who).not.toBe(solid(tokens.colorPrimary));
+      }
+    );
+  });
+
+  it('React wires group-level aria-invalid + data-invalid + describedby(errId) + role=alert', () => {
+    const r = mountReact('light', RG_INVALID);
+    try {
+      const group = r.mount.querySelector('[data-civitai-ui="radio-group"]')!;
+      const err = r.mount.querySelector('[data-civitai-ui-error]')!;
+      expect(group.getAttribute('aria-invalid')).toBe('true');
+      expect(group.getAttribute('data-invalid')).toBe('true');
+      expect(err.getAttribute('role')).toBe('alert');
+      expect(group.getAttribute('aria-describedby')).toContain(err.id);
+    } finally {
+      r.cleanup();
+    }
+  });
+
+  it('default (no error): no data-invalid / no aria-invalid / no error node (non-regression)', () => {
+    const r = mountReact(
+      'light',
+      <RadioGroup label="S">
+        <Radio label="Euler" name="rg-n" id="rgn1" />
+      </RadioGroup>
+    );
+    try {
+      const group = r.mount.querySelector('[data-civitai-ui="radio-group"]')!;
+      expect(group.hasAttribute('data-invalid')).toBe(false);
+      expect(group.hasAttribute('aria-invalid')).toBe(false);
+      expect(r.mount.querySelector('[data-civitai-ui-error]')).toBeNull();
+    } finally {
+      r.cleanup();
+    }
   });
 });

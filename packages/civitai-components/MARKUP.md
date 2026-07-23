@@ -132,6 +132,12 @@ Group several by giving them the same **`name`**. Wrap a set in a RadioGroup
 - Options container: **`<div data-civitai-ui-radio-options>`** holding the
   `data-civitai-ui="radio"` items. `data-orientation="horizontal"` lays them out
   in a row (default is a vertical stack).
+- Optional **group-level** error (mirrors the field components): a
+  **`<span id="GID-err" data-civitai-ui-error role="alert">`** *after* the
+  options container. When present, wire a11y on the **wrapper**:
+  `aria-invalid="true"` + `data-invalid="true"`, and join the error id into the
+  wrapper's `aria-describedby="GID-desc GID-err"` (alongside the description id).
+  With no error, emit none of these attributes (backward-compatible).
 
 ```html
 <div data-civitai-ui="radio-group" role="radiogroup" aria-labelledby="sampler-lbl">

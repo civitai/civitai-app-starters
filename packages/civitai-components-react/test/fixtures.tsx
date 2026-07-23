@@ -291,6 +291,18 @@ export const CASES: Case[] = [
     selector: '[data-civitai-ui-radio-options]',
     compare: ['display', 'flexDirection', 'gap'],
   },
+  {
+    id: 'radio-group-invalid',
+    node: (
+      <RadioGroup label="Sampler" error="Selection required">
+        <Radio label="Euler" name="fx-grp-e" id="fx-grp-ea" />
+        <Radio label="DDIM" name="fx-grp-e" id="fx-grp-eb" />
+      </RadioGroup>
+    ),
+    html: `<div data-civitai-ui="radio-group" role="radiogroup" data-invalid="true" aria-invalid="true" aria-labelledby="fx-grpe-lbl" aria-describedby="fx-grpe-err"><span data-civitai-ui-label id="fx-grpe-lbl">Sampler</span><div data-civitai-ui-radio-options data-orientation="vertical"><div data-civitai-ui="radio"><div data-civitai-ui-choice><input type="radio" name="fx-grp-e" id="fx-grp-ea" /><label data-civitai-ui-label for="fx-grp-ea">Euler</label></div></div><div data-civitai-ui="radio"><div data-civitai-ui-choice><input type="radio" name="fx-grp-e" id="fx-grp-eb" /><label data-civitai-ui-label for="fx-grp-eb">DDIM</label></div></div></div><span id="fx-grpe-err" data-civitai-ui-error role="alert">Selection required</span></div>`,
+    selector: '[data-civitai-ui-error]',
+    compare: ['fontSize', 'color'],
+  },
 
   // ---- Stack / Group ----
   {
@@ -342,6 +354,7 @@ export const A11Y_CASES: Case[] = [
   CASES.find((c) => c.id === 'checkbox-default')!,
   CASES.find((c) => c.id === 'radio-default')!,
   CASES.find((c) => c.id === 'radio-group-default')!,
+  CASES.find((c) => c.id === 'radio-group-invalid')!,
   CASES.find((c) => c.id === 'card-border-md')!,
   CASES.find((c) => c.id === 'stack-default')!,
   CASES.find((c) => c.id === 'group-default')!,

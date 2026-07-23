@@ -172,6 +172,36 @@ describe('markup contract', () => {
     expect(options.querySelectorAll('[data-civitai-ui="radio"]')).toHaveLength(2);
   });
 
+  it('RadioGroup error wires group-level aria-invalid + data-invalid + describedby + role=alert (0.2.0)', () => {
+    const { container } = render(
+      <RadioGroup label="Sampler" description="Pick one" error="Selection required">
+        <Radio label="Euler" name="s" id="ge1" />
+        <Radio label="DDIM" name="s" id="ge2" />
+      </RadioGroup>
+    );
+    const group = container.querySelector('[data-civitai-ui="radio-group"]')!;
+    const err = container.querySelector('[data-civitai-ui-error]')!;
+    const desc = container.querySelector('[data-civitai-ui-description]')!;
+    expect(group.getAttribute('aria-invalid')).toBe('true');
+    expect(group.getAttribute('data-invalid')).toBe('true');
+    expect(err.getAttribute('role')).toBe('alert');
+    // errId joined into aria-describedby alongside the description id
+    expect(group.getAttribute('aria-describedby')).toContain(err.id);
+    expect(group.getAttribute('aria-describedby')).toContain(desc.id);
+  });
+
+  it('RadioGroup without error emits no invalid attributes / no error node (backward-compat)', () => {
+    const { container } = render(
+      <RadioGroup label="Sampler">
+        <Radio label="Euler" name="s" id="gn1" />
+      </RadioGroup>
+    );
+    const group = container.querySelector('[data-civitai-ui="radio-group"]')!;
+    expect(group.hasAttribute('data-invalid')).toBe(false);
+    expect(group.hasAttribute('aria-invalid')).toBe(false);
+    expect(container.querySelector('[data-civitai-ui-error]')).toBeNull();
+  });
+
   it('Card exposes border + padding attributes', () => {
     const { container } = render(<Card padding="lg">x</Card>);
     const card = container.querySelector('[data-civitai-ui="card"]')!;
