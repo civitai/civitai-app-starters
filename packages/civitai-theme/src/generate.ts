@@ -165,6 +165,20 @@ const TOKEN_SPEC: readonly TokenSpec[] = [
     type: 'color',
     description: 'Informational color (derived from the blue palette).',
   },
+  // --- Neutral ramp (issue #181 F7) ---
+  // The full 10-step Mantine `gray` ramp, exposed as --civitai-color-gray-0…-9
+  // so consumers mapping a 10-step neutral scale (e.g. a Tailwind gray/neutral
+  // ramp) onto the design system don't collapse it onto the ~4 semantic
+  // neutrals. Each step derives from the resolved `--mantine-color-gray-N`
+  // (the vendored, drift-guarded civitai `gray` tuple) — GENERATED, never
+  // hand-authored. The ramp is a raw palette (scheme-independent), so the
+  // generator emits no dark override (light == dark) — correct and intentional.
+  ...Array.from({ length: 10 }, (_v, i): TokenSpec => ({
+    name: `color-gray-${i}`,
+    source: `--mantine-color-gray-${i}`,
+    type: 'color',
+    description: `Neutral ramp step ${i} (Mantine gray[${i}]); 0 = lightest … 9 = darkest.`,
+  })),
 ] as const;
 
 type VarDict = Record<string, string>;
