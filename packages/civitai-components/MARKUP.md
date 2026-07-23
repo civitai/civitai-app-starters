@@ -76,8 +76,90 @@ Identical to TextInput but the control is **`<textarea data-civitai-ui-control>`
 ### NumberInput — `data-civitai-ui="number-input"`
 Identical to TextInput; the control is **`<input type="number" data-civitai-ui-control>`**.
 
+### Select — `data-civitai-ui="select"`
+Identical field chrome to TextInput; the control is a native
+**`<select data-civitai-ui-control>`** (native disclosure caret retained). Wire
+a11y exactly like TextInput (label `for`, `aria-describedby`, `aria-invalid` +
+`data-invalid` when invalid). This is the framework-agnostic NATIVE select — not
+the interactive JS Select from `@civitai/blocks-react`.
+
+```html
+<div data-civitai-ui="select">
+  <label data-civitai-ui-label for="model">Model</label>
+  <select data-civitai-ui-control id="model">
+    <option value="sdxl">SDXL</option>
+    <option value="flux">Flux</option>
+  </select>
+</div>
+```
+
+### Checkbox — `data-civitai-ui="checkbox"`
+A themed native checkbox: the box and its label sit inline in a `-choice` row,
+with description/error below. `accent-color` carries the theme tint.
+- Wrapper **`<div data-civitai-ui="checkbox">`** containing, in order:
+  - **`<div data-civitai-ui-choice>`** wrapping:
+    - **`<input type="checkbox" id="ID">`** — the checkbox itself. The bare
+      `type="checkbox"` inside the wrapper is what the CSS targets; do **not**
+      put `data-civitai-ui-control` on it (that is the full-width field-input
+      chrome for text/select controls).
+    - **`<label data-civitai-ui-label for="ID">`** (+ optional
+      `<span data-civitai-ui-required aria-hidden="true">*</span>`)
+  - optional `<span id="ID-desc" data-civitai-ui-description>`
+  - optional `<span id="ID-err" data-civitai-ui-error role="alert">`
+- Wire a11y: input `aria-describedby="ID-desc ID-err"`, and when invalid
+  `aria-invalid="true"` + `data-invalid="true"` on the wrapper.
+- Disabled / checked / indeterminate are the native input states.
+
+```html
+<div data-civitai-ui="checkbox">
+  <div data-civitai-ui-choice>
+    <input type="checkbox" id="tos" />
+    <label data-civitai-ui-label for="tos">I agree</label>
+  </div>
+</div>
+```
+
+### Radio — `data-civitai-ui="radio"`
+Identical to Checkbox but the control is **`<input type="radio" id="ID">`**.
+Group several by giving them the same **`name`**. Wrap a set in a RadioGroup
+(below) for the `role=radiogroup` layout + group label.
+
+### RadioGroup — `data-civitai-ui="radio-group"`
+- **`role="radiogroup"`** on the wrapper.
+- Optional group label: **`<span data-civitai-ui-label id="GID">`** referenced by
+  the wrapper's **`aria-labelledby="GID"`** (+ optional description linked via
+  `aria-describedby`).
+- Options container: **`<div data-civitai-ui-radio-options>`** holding the
+  `data-civitai-ui="radio"` items. `data-orientation="horizontal"` lays them out
+  in a row (default is a vertical stack).
+- Optional **group-level** error (mirrors the field components): a
+  **`<span id="GID-err" data-civitai-ui-error role="alert">`** *after* the
+  options container. When present, wire a11y on the **wrapper**:
+  `aria-invalid="true"` + `data-invalid="true"`, and join the error id into the
+  wrapper's `aria-describedby="GID-desc GID-err"` (alongside the description id).
+  With no error, emit none of these attributes (backward-compatible).
+
+```html
+<div data-civitai-ui="radio-group" role="radiogroup" aria-labelledby="sampler-lbl">
+  <span data-civitai-ui-label id="sampler-lbl">Sampler</span>
+  <div data-civitai-ui-radio-options>
+    <div data-civitai-ui="radio"><div data-civitai-ui-choice>
+      <input type="radio" name="sampler" id="s-euler" />
+      <label data-civitai-ui-label for="s-euler">Euler</label>
+    </div></div>
+    <div data-civitai-ui="radio"><div data-civitai-ui-choice>
+      <input type="radio" name="sampler" id="s-ddim" />
+      <label data-civitai-ui-label for="s-ddim">DDIM</label>
+    </div></div>
+  </div>
+</div>
+```
+
 ### Card — `data-civitai-ui="card"`
-- `data-with-border="true"` — add a border.
+- A card has a **subtle default hairline** in light mode (where `surface` ==
+  `body`, an otherwise-borderless card would be invisible). Dark differentiates
+  `surface` from `body`, so no default hairline is drawn there.
+- `data-with-border="true"` — the stronger, fully-opaque explicit border.
 - `data-padding`: `sm` · `md` · `lg`.
 - A11y: use a landmark/heading inside as appropriate; the card itself is a
   presentational container (`<div>`/`<section>`/`<article>`).

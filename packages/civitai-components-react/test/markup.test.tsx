@@ -11,9 +11,13 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   Group,
   Loader,
   NumberInput,
+  Radio,
+  RadioGroup,
+  Select,
   Stack,
   TextInput,
   Textarea,
@@ -88,6 +92,114 @@ describe('markup contract', () => {
     const el = container.querySelector<HTMLInputElement>('[data-civitai-ui-control]')!;
     expect(el.getAttribute('type')).toBe('number');
     expect(container.querySelector('[data-civitai-ui="number-input"]')).toBeTruthy();
+  });
+
+  it('Select renders a <select> control on the shared field chrome (#181 F6)', () => {
+    const { container } = render(
+      <Select label="Model" id="sel1">
+        <option value="a">A</option>
+      </Select>
+    );
+    const wrap = container.querySelector('[data-civitai-ui="select"]')!;
+    const control = container.querySelector('[data-civitai-ui-control]')!;
+    const label = container.querySelector('label[data-civitai-ui-label]')!;
+    expect(wrap).toBeTruthy();
+    expect(control.tagName).toBe('SELECT');
+    expect(label.getAttribute('for')).toBe('sel1');
+    expect(control.getAttribute('id')).toBe('sel1');
+    expect(container.querySelector('option')!.textContent).toBe('A');
+  });
+
+  it('Select error wires aria-invalid + describedby + role=alert (#181 F6)', () => {
+    const { container } = render(
+      <Select label="Model" error="Required" id="sel2">
+        <option value="a">A</option>
+      </Select>
+    );
+    const control = container.querySelector('[data-civitai-ui-control]')!;
+    const err = container.querySelector('[data-civitai-ui-error]')!;
+    expect(control.getAttribute('aria-invalid')).toBe('true');
+    expect(err.getAttribute('role')).toBe('alert');
+    expect(control.getAttribute('aria-describedby')).toContain(err.id);
+    expect(container.querySelector('[data-civitai-ui="select"]')!.getAttribute('data-invalid')).toBe('true');
+  });
+
+  it('Checkbox renders type=checkbox in a -choice row, label associated (#181 F6)', () => {
+    const { container } = render(<Checkbox label="I agree" id="cb1" description="Terms" />);
+    const wrap = container.querySelector('[data-civitai-ui="checkbox"]')!;
+    const row = container.querySelector('[data-civitai-ui-choice]')!;
+    const input = row.querySelector<HTMLInputElement>('input')!;
+    const label = container.querySelector('label[data-civitai-ui-label]')!;
+    const desc = container.querySelector('[data-civitai-ui-description]')!;
+    expect(wrap).toBeTruthy();
+    expect(input.getAttribute('type')).toBe('checkbox');
+    // The checkbox does NOT carry the field-input chrome marker.
+    expect(input.hasAttribute('data-civitai-ui-control')).toBe(false);
+    expect(label.getAttribute('for')).toBe('cb1');
+    expect(input.getAttribute('id')).toBe('cb1');
+    expect(input.getAttribute('aria-describedby')).toContain(desc.id);
+  });
+
+  it('Checkbox controlled checked + disabled reflect (#181 F6)', () => {
+    const { container } = render(<Checkbox label="x" id="cb2" checked disabled onChange={() => {}} />);
+    const input = container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(input.checked).toBe(true);
+    expect(input.disabled).toBe(true);
+  });
+
+  it('Radio renders type=radio with name for grouping (#181 F6)', () => {
+    const { container } = render(<Radio label="Euler" name="sampler" id="rd1" />);
+    const input = container.querySelector<HTMLInputElement>('input')!;
+    expect(input.getAttribute('type')).toBe('radio');
+    expect(input.getAttribute('name')).toBe('sampler');
+    expect(container.querySelector('label[data-civitai-ui-label]')!.getAttribute('for')).toBe('rd1');
+  });
+
+  it('RadioGroup is role=radiogroup with aria-labelledby + options layout (#181 F6)', () => {
+    const { container } = render(
+      <RadioGroup label="Sampler" orientation="horizontal">
+        <Radio label="Euler" name="s" id="g1" />
+        <Radio label="DDIM" name="s" id="g2" />
+      </RadioGroup>
+    );
+    const group = container.querySelector('[data-civitai-ui="radio-group"]')!;
+    expect(group.getAttribute('role')).toBe('radiogroup');
+    const labelId = group.getAttribute('aria-labelledby')!;
+    expect(labelId).toBeTruthy();
+    expect(container.querySelector(`#${labelId}`)!.textContent).toBe('Sampler');
+    const options = container.querySelector('[data-civitai-ui-radio-options]')!;
+    expect(options.getAttribute('data-orientation')).toBe('horizontal');
+    expect(options.querySelectorAll('[data-civitai-ui="radio"]')).toHaveLength(2);
+  });
+
+  it('RadioGroup error wires group-level aria-invalid + data-invalid + describedby + role=alert (0.2.0)', () => {
+    const { container } = render(
+      <RadioGroup label="Sampler" description="Pick one" error="Selection required">
+        <Radio label="Euler" name="s" id="ge1" />
+        <Radio label="DDIM" name="s" id="ge2" />
+      </RadioGroup>
+    );
+    const group = container.querySelector('[data-civitai-ui="radio-group"]')!;
+    const err = container.querySelector('[data-civitai-ui-error]')!;
+    const desc = container.querySelector('[data-civitai-ui-description]')!;
+    expect(group.getAttribute('aria-invalid')).toBe('true');
+    expect(group.getAttribute('data-invalid')).toBe('true');
+    expect(err.getAttribute('role')).toBe('alert');
+    // errId joined into aria-describedby alongside the description id
+    expect(group.getAttribute('aria-describedby')).toContain(err.id);
+    expect(group.getAttribute('aria-describedby')).toContain(desc.id);
+  });
+
+  it('RadioGroup without error emits no invalid attributes / no error node (backward-compat)', () => {
+    const { container } = render(
+      <RadioGroup label="Sampler">
+        <Radio label="Euler" name="s" id="gn1" />
+      </RadioGroup>
+    );
+    const group = container.querySelector('[data-civitai-ui="radio-group"]')!;
+    expect(group.hasAttribute('data-invalid')).toBe(false);
+    expect(group.hasAttribute('aria-invalid')).toBe(false);
+    expect(container.querySelector('[data-civitai-ui-error]')).toBeNull();
   });
 
   it('Card exposes border + padding attributes', () => {

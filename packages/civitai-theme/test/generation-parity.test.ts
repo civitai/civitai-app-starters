@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { buildArtifacts, resolveTokens } from '../src/generate.js';
+import { civitaiThemeSource } from '../src/theme.source.js';
 
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const artifacts = buildArtifacts();
@@ -58,6 +59,60 @@ describe('generation parity', () => {
 
     it('leaves the light/:root value unchanged (#fefefe)', () => {
       expect(root[PRIMARY_FG]).toBe('#fefefe');
+    });
+  });
+
+  // --- issue #181 F7: the full 10-step Mantine gray ramp is exposed as
+  // --civitai-color-gray-0…-9, GENERATED from the vendored (drift-guarded) gray
+  // tuple via the token pipeline — never hand-authored. These assertions pin
+  // presence, count, provenance (each step == Mantine gray[N]), and that the
+  // ramp is additive (the pre-existing semantic neutrals are untouched).
+  describe('neutral gray ramp (#181 F7)', () => {
+    const { root, dark } = resolveTokens();
+    const grayTuple = (civitaiThemeSource.colors as Record<string, readonly string[]>).gray!;
+
+    it('emits all 10 --civitai-color-gray-N tokens into :root', () => {
+      for (let i = 0; i < 10; i++) {
+        expect(root, `--civitai-color-gray-${i} must be present`).toHaveProperty(
+          `--civitai-color-gray-${i}`
+        );
+      }
+      const grayVars = Object.keys(root).filter((k) => /^--civitai-color-gray-\d$/.test(k));
+      expect(grayVars, 'exactly 10 gray ramp steps').toHaveLength(10);
+    });
+
+    it('each step is GENERATED from the vendored Mantine gray[N] tuple', () => {
+      for (let i = 0; i < 10; i++) {
+        expect(
+          root[`--civitai-color-gray-${i}`]!.toLowerCase(),
+          `gray-${i} must derive from Mantine gray[${i}]`
+        ).toBe(grayTuple[i]!.toLowerCase());
+      }
+    });
+
+    it('is a raw palette — scheme-independent (no dark overrides emitted)', () => {
+      for (let i = 0; i < 10; i++) {
+        expect(dark, `gray-${i} must NOT be in the dark block (light == dark)`).not.toHaveProperty(
+          `--civitai-color-gray-${i}`
+        );
+      }
+    });
+
+    it('appears in the generated tokens.css :root + typed JS export, only as --civitai-*', () => {
+      const css = artifacts['tokens.css'];
+      for (let i = 0; i < 10; i++) {
+        expect(css).toContain(`--civitai-color-gray-${i}: ${grayTuple[i]};`);
+      }
+      // css-integrity: the resolved stylesheet references no raw --mantine-* names.
+      expect(css).not.toContain('--mantine-');
+      const ts = artifacts['tokens.generated.ts'];
+      for (let i = 0; i < 10; i++) expect(ts).toContain(`"colorGray${i}"`);
+    });
+
+    it('is ADDITIVE — the pre-existing semantic neutrals are unchanged', () => {
+      expect(root['--civitai-color-border']).toBe('#ced4da');
+      expect(root['--civitai-color-surface']).toBe('#fefefe');
+      expect(root['--civitai-color-text-dimmed']).toBe('#868e96');
     });
   });
 

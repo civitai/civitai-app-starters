@@ -97,10 +97,11 @@
     }
   }
 
-  /* ----- TextInput / Textarea / NumberInput ----- */
+  /* ----- TextInput / Textarea / NumberInput / Select ----- */
   [data-civitai-ui='text-input'],
   [data-civitai-ui='textarea'],
-  [data-civitai-ui='number-input'] {
+  [data-civitai-ui='number-input'],
+  [data-civitai-ui='select'] {
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -149,12 +150,122 @@
     resize: vertical;
     line-height: 1.5;
   }
+  /*
+   * Select (issue #181 F6): a native <select> reusing the shared
+   * `-control` field chrome (border/background/radius/focus/invalid, above).
+   * Keep the native disclosure caret (most robust + accessible); just make the
+   * control feel interactive and reserve room on the right so the caret never
+   * overlaps a long option label.
+   */
+  select[data-civitai-ui-control] {
+    cursor: pointer;
+    padding-right: 28px;
+    line-height: 1.4;
+  }
+  select[data-civitai-ui-control]:disabled {
+    cursor: not-allowed;
+  }
+
+  /* ----- Checkbox / Radio (issue #181 F6) ----- */
+  /*
+   * Themed native <input type="checkbox">/<input type="radio">: `accent-color`
+   * carries the primary tint (native control, so keyboard/indeterminate/tab all
+   * work for free), plus custom sizing, a token focus ring, and disabled state.
+   * The box + its inline label sit in a `-choice` row; description + error live
+   * below, reusing the shared field markers. The inputs deliberately do NOT
+   * carry `data-civitai-ui-control` (that is the full-width field-input chrome).
+   */
+  [data-civitai-ui='checkbox'],
+  [data-civitai-ui='radio'] {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  [data-civitai-ui-choice] {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  [data-civitai-ui='checkbox'] [data-civitai-ui-label],
+  [data-civitai-ui='radio'] [data-civitai-ui-label] {
+    font-weight: 500;
+    cursor: pointer;
+    user-select: none;
+  }
+  [data-civitai-ui='checkbox'] input[type='checkbox'],
+  [data-civitai-ui='radio'] input[type='radio'] {
+    accent-color: var(--civitai-color-primary);
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    flex: none;
+    cursor: pointer;
+  }
+  [data-civitai-ui='checkbox'] input[type='checkbox']:focus-visible,
+  [data-civitai-ui='radio'] input[type='radio']:focus-visible {
+    outline: 2px solid var(--civitai-color-primary);
+    outline-offset: 2px;
+  }
+  [data-civitai-ui='checkbox'] input[type='checkbox']:disabled,
+  [data-civitai-ui='radio'] input[type='radio']:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+  [data-civitai-ui='checkbox'] input[type='checkbox']:disabled ~ [data-civitai-ui-label],
+  [data-civitai-ui='radio'] input[type='radio']:disabled ~ [data-civitai-ui-label] {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  /* ----- RadioGroup (issue #181 F6) — role=radiogroup layout ----- */
+  [data-civitai-ui='radio-group'] {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  [data-civitai-ui-radio-options] {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+
+    &[data-orientation='horizontal'] {
+      flex-direction: row;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+  }
+  /*
+   * RadioGroup group-level error (0.2.0): mirrors the field `-error` treatment.
+   * The message reuses the shared `[data-civitai-ui-error]` styling (12px, error
+   * token); the invalid state (`data-invalid` on the group, set alongside
+   * `aria-invalid`) tints the child radios' `accent-color` to the error token so
+   * the invalid cue reads on the group, not just the message text — the group
+   * analogue of a field control's error-colored border.
+   */
+  [data-civitai-ui='radio-group'] [data-civitai-ui-error] {
+    font-size: 12px;
+    color: var(--civitai-color-error);
+  }
+  [data-civitai-ui='radio-group'][data-invalid] input[type='radio'] {
+    accent-color: var(--civitai-color-error);
+  }
 
   /* ----- Card ----- */
+  /*
+   * F5 (issue #181): in LIGHT mode --civitai-color-surface == --civitai-color-body
+   * (both #fefefe), so a borderless card is invisible against the page. Give
+   * every card a subtle DEFAULT hairline (a low-alpha mix of the border token)
+   * so a card WITHOUT `data-with-border` is still visible. `data-with-border`
+   * stays the stronger, explicit, fully-opaque border. Dark mode already
+   * differentiates surface from body, so the default hairline is removed there
+   * (see the [data-theme='dark'] rule below) — no over-adding. The default
+   * (no [data-theme]) light palette keeps the hairline, matching light mode.
+   */
   [data-civitai-ui='card'] {
     background: var(--civitai-color-surface);
     border-radius: var(--civitai-radius);
     color: var(--civitai-color-text);
+    border: 1px solid color-mix(in srgb, var(--civitai-color-border) 55%, transparent);
 
     &[data-with-border='true'] {
       border: 1px solid var(--civitai-color-border);
@@ -162,6 +273,14 @@
     &[data-padding='sm'] { padding: 10px; }
     &[data-padding='md'] { padding: 16px; }
     &[data-padding='lg'] { padding: 24px; }
+  }
+  /*
+   * Dark already differentiates surface (#1A1B1E) from body — drop the default
+   * hairline on a borderless card so dark is visually unchanged. An explicit
+   * `data-with-border` still renders its full border.
+   */
+  [data-theme='dark'] [data-civitai-ui='card']:not([data-with-border='true']) {
+    border: 0;
   }
 
   /* ----- Stack / Group ----- */

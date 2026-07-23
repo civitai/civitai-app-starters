@@ -36,9 +36,13 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   Group,
   Loader,
   NumberInput,
+  Radio,
+  RadioGroup,
+  Select,
   Stack,
   Textarea,
   TextInput,
@@ -538,6 +542,82 @@ describe('styling anchors — Card', () => {
       }
     );
   });
+
+  // -------------------------------------------------------------------------
+  // issue #181 F5 — default light-mode hairline. In light, surface == body, so
+  // a BORDERLESS card was invisible; it now carries a subtle default border
+  // (a low-alpha mix of the border token). `data-with-border` stays the
+  // stronger, fully-opaque border. Dark is visually unchanged (no hairline on
+  // a borderless card). Anchored on BOTH consumers (React `withBorder={false}`
+  // and hand-HTML without `data-with-border`).
+  // -------------------------------------------------------------------------
+  describe('styling anchors — Card default hairline (issue #181 F5)', () => {
+    const HAIRLINE = mix(tokens.colorBorder, '55%');
+
+    it('borderless light: visible hairline = mix(border 55%), width 1px', () => {
+      both(
+        pair(
+          'light',
+          <Card withBorder={false} padding="sm">x</Card>,
+          `<div data-civitai-ui="card" data-padding="sm">x</div>`,
+          '[data-civitai-ui="card"]'
+        ),
+        (cs, who) => {
+          expect(cs.borderTopStyle, who).toBe('solid');
+          expect(cs.borderTopWidth, who).toBe('1px');
+          expect(cs.borderTopColor, who).toBe(HAIRLINE);
+          // Actually visible: not transparent, and NOT the strong border token.
+          expect(cs.borderTopColor, who).not.toBe('rgba(0, 0, 0, 0)');
+          expect(cs.borderTopColor, who).not.toBe(solid(tokens.colorBorder));
+        }
+      );
+    });
+
+    it('with-border light stays STRONGER: full opaque border token (not the hairline)', () => {
+      both(
+        pair(
+          'light',
+          <Card withBorder padding="sm">x</Card>,
+          `<div data-civitai-ui="card" data-with-border="true" data-padding="sm">x</div>`,
+          '[data-civitai-ui="card"]'
+        ),
+        (cs, who) => {
+          expect(cs.borderTopColor, who).toBe(solid(tokens.colorBorder));
+          expect(cs.borderTopColor, who).not.toBe(HAIRLINE);
+        }
+      );
+    });
+
+    it('borderless dark: UNCHANGED — truly no border box (width 0, style none)', () => {
+      both(
+        pair(
+          'dark',
+          <Card withBorder={false} padding="sm">x</Card>,
+          `<div data-civitai-ui="card" data-padding="sm">x</div>`,
+          '[data-civitai-ui="card"]'
+        ),
+        (cs, who) => {
+          // `border: 0` in dark => original behavior exactly (no hairline inset).
+          expect(cs.borderTopWidth, who).toBe('0px');
+          expect(cs.borderTopStyle, who).toBe('none');
+        }
+      );
+    });
+
+    it('with-border dark still renders the dark border token', () => {
+      both(
+        pair(
+          'dark',
+          <Card withBorder padding="sm">x</Card>,
+          `<div data-civitai-ui="card" data-with-border="true" data-padding="sm">x</div>`,
+          '[data-civitai-ui="card"]'
+        ),
+        (cs, who) => {
+          expect(cs.borderTopColor, who).toBe(solid(darkTokens.colorBorder));
+        }
+      );
+    });
+  });
 });
 
 describe('styling anchors — Stack / Group / Loader', () => {
@@ -597,5 +677,223 @@ describe('styling anchors — Stack / Group / Loader', () => {
         expect(cs.color, who).toBe(solid(tokens.colorPrimary));
       }
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// issue #181 F6 — Select / Checkbox / Radio. Token-derived anchors on BOTH the
+// React binding and hand-HTML (per MARKUP.md), in light AND dark, plus the
+// checked/unchecked + disabled states. Select reuses the shared `-control`
+// field chrome (bg/border/radius from tokens); checkbox/radio carry the theme
+// tint via `accent-color` = --civitai-color-primary + custom 16px sizing.
+// ---------------------------------------------------------------------------
+describe('styling anchors — Select (issue #181 F6)', () => {
+  const SEL_HTML = (id: string, extra = '') =>
+    `<div data-civitai-ui="select"${extra}><label data-civitai-ui-label for="${id}">M</label><select data-civitai-ui-control id="${id}"><option value="a">A</option></select></div>`;
+
+  it('light: bg=surface, border=colorBorder, radius=4px(token), caret room padding-right=28px', () => {
+    both(
+      pair(
+        'light',
+        <Select label="M" id="s1"><option value="a">A</option></Select>,
+        SEL_HTML('s1'),
+        '[data-civitai-ui-control]'
+      ),
+      (cs, who) => {
+        expect(cs.backgroundColor, who).toBe(solid(tokens.colorSurface));
+        expect(cs.borderTopColor, who).toBe(solid(tokens.colorBorder));
+        expect(cs.borderTopLeftRadius, who).toBe('4px');
+        expect(cs.paddingRight, who).toBe('28px');
+        expect(cs.cursor, who).toBe('pointer');
+      }
+    );
+  });
+
+  it('dark: bg=dark surface, border=dark border (theme-tracked)', () => {
+    both(
+      pair(
+        'dark',
+        <Select label="M" id="s2"><option value="a">A</option></Select>,
+        SEL_HTML('s2'),
+        '[data-civitai-ui-control]'
+      ),
+      (cs, who) => {
+        expect(cs.backgroundColor, who).toBe(solid(darkTokens.colorSurface));
+        expect(cs.borderTopColor, who).toBe(solid(darkTokens.colorBorder));
+        expect(cs.backgroundColor, who).not.toBe(solid(tokens.colorSurface));
+      }
+    );
+  });
+
+  it('invalid (data-invalid/aria-invalid): border=error', () => {
+    both(
+      pair(
+        'light',
+        <Select label="M" error="Required" id="s3"><option value="a">A</option></Select>,
+        `<div data-civitai-ui="select" data-invalid="true"><label data-civitai-ui-label for="s3">M</label><select data-civitai-ui-control id="s3" aria-invalid="true" aria-describedby="s3-err"><option value="a">A</option></select><span id="s3-err" data-civitai-ui-error role="alert">Required</span></div>`,
+        '[data-civitai-ui-control]'
+      ),
+      (cs, who) => {
+        expect(cs.borderTopColor, who).toBe(solid(tokens.colorError));
+        expect(cs.borderTopColor, who).not.toBe(solid(tokens.colorBorder));
+      }
+    );
+  });
+});
+
+describe('styling anchors — Checkbox / Radio (issue #181 F6)', () => {
+  const CB_HTML = (id: string, attrs = '') =>
+    `<div data-civitai-ui="checkbox"><div data-civitai-ui-choice><input type="checkbox" id="${id}"${attrs} /><label data-civitai-ui-label for="${id}">L</label></div></div>`;
+  const RD_HTML = (id: string) =>
+    `<div data-civitai-ui="radio"><div data-civitai-ui-choice><input type="radio" id="${id}" /><label data-civitai-ui-label for="${id}">L</label></div></div>`;
+
+  it('checkbox light: accent-color=primary token, 16×16 custom size, pointer', () => {
+    both(
+      pair('light', <Checkbox label="L" id="c1" />, CB_HTML('c1'), 'input[type="checkbox"]'),
+      (cs, who) => {
+        expect(cs.accentColor, who).toBe(solid(tokens.colorPrimary));
+        expect(cs.width, who).toBe('16px');
+        expect(cs.height, who).toBe('16px');
+        expect(cs.cursor, who).toBe('pointer');
+      }
+    );
+  });
+
+  it('checkbox dark: accent-color=dark primary (theme actually switched)', () => {
+    both(
+      pair('dark', <Checkbox label="L" id="c2" />, CB_HTML('c2'), 'input[type="checkbox"]'),
+      (cs, who) => {
+        expect(cs.accentColor, who).toBe(solid(darkTokens.colorPrimary));
+        expect(cs.accentColor, who).not.toBe(solid(tokens.colorPrimary));
+      }
+    );
+  });
+
+  it('checkbox CHECKED still carries the primary accent (unchecked ≡ checked tint)', () => {
+    both(
+      pair(
+        'light',
+        <Checkbox label="L" id="c3" defaultChecked />,
+        CB_HTML('c3', ' checked'),
+        'input[type="checkbox"]'
+      ),
+      (cs, who) => {
+        expect(cs.accentColor, who).toBe(solid(tokens.colorPrimary));
+      }
+    );
+    // The checked state is really applied (native property), both consumers.
+    const r = mountReact('light', <Checkbox label="L" id="c3r" defaultChecked />);
+    const h = mountHtml('light', CB_HTML('c3h', ' checked'));
+    try {
+      expect((r.mount.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true);
+      expect((h.mount.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true);
+    } finally {
+      r.cleanup();
+      h.cleanup();
+    }
+  });
+
+  it('checkbox DISABLED: opacity 0.6 + not-allowed cursor', () => {
+    both(
+      pair(
+        'light',
+        <Checkbox label="L" id="c4" disabled />,
+        CB_HTML('c4', ' disabled'),
+        'input[type="checkbox"]'
+      ),
+      (cs, who) => {
+        expect(cs.opacity, who).toBe('0.6');
+        expect(cs.cursor, who).toBe('not-allowed');
+      }
+    );
+  });
+
+  it('radio light: accent-color=primary token, 16×16', () => {
+    both(
+      pair('light', <Radio label="L" id="r1" />, RD_HTML('r1'), 'input[type="radio"]'),
+      (cs, who) => {
+        expect(cs.accentColor, who).toBe(solid(tokens.colorPrimary));
+        expect(cs.width, who).toBe('16px');
+        expect(cs.height, who).toBe('16px');
+      }
+    );
+  });
+
+  it('radio dark: accent-color=dark primary (theme-tracked)', () => {
+    both(
+      pair('dark', <Radio label="L" id="r2" />, RD_HTML('r2'), 'input[type="radio"]'),
+      (cs, who) => {
+        expect(cs.accentColor, who).toBe(solid(darkTokens.colorPrimary));
+        expect(cs.accentColor, who).not.toBe(solid(tokens.colorPrimary));
+      }
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0.2.0 — RadioGroup group-level error slot. Field-family parity: the group is
+// the natural home for a GROUP-level validation message, wired exactly like the
+// field components' `error` contract (role=alert message + aria-invalid /
+// data-invalid / errId joined into aria-describedby). Token-derived anchors on
+// BOTH consumers + a non-regression check on the default (no-error) group.
+// ---------------------------------------------------------------------------
+describe('styling anchors — RadioGroup group-level error (0.2.0)', () => {
+  const RG_INVALID = (
+    <RadioGroup label="S" error="Required">
+      <Radio label="Euler" name="rg-e" id="rge1" />
+    </RadioGroup>
+  );
+  const RG_INVALID_HTML =
+    `<div data-civitai-ui="radio-group" role="radiogroup" data-invalid="true" aria-invalid="true" aria-labelledby="rge-lbl" aria-describedby="rge-err"><span data-civitai-ui-label id="rge-lbl">S</span><div data-civitai-ui-radio-options data-orientation="vertical"><div data-civitai-ui="radio"><div data-civitai-ui-choice><input type="radio" name="rg-e" id="rge1" /><label data-civitai-ui-label for="rge1">Euler</label></div></div></div><span id="rge-err" data-civitai-ui-error role="alert">Required</span></div>`;
+
+  it('invalid: error text = error token @ 12px (both consumers)', () => {
+    both(
+      pair('light', RG_INVALID, RG_INVALID_HTML, '[data-civitai-ui-error]'),
+      (cs, who) => {
+        expect(cs.color, who).toBe(solid(tokens.colorError));
+        expect(cs.fontSize, who).toBe('12px');
+      }
+    );
+  });
+
+  it('invalid: child radios tinted to the error token (invalid state actually applied)', () => {
+    both(
+      pair('light', RG_INVALID, RG_INVALID_HTML, "[data-invalid] input[type='radio']"),
+      (cs, who) => {
+        expect(cs.accentColor, who).toBe(solid(tokens.colorError));
+        expect(cs.accentColor, who).not.toBe(solid(tokens.colorPrimary));
+      }
+    );
+  });
+
+  it('React wires group-level aria-invalid + data-invalid + describedby(errId) + role=alert', () => {
+    const r = mountReact('light', RG_INVALID);
+    try {
+      const group = r.mount.querySelector('[data-civitai-ui="radio-group"]')!;
+      const err = r.mount.querySelector('[data-civitai-ui-error]')!;
+      expect(group.getAttribute('aria-invalid')).toBe('true');
+      expect(group.getAttribute('data-invalid')).toBe('true');
+      expect(err.getAttribute('role')).toBe('alert');
+      expect(group.getAttribute('aria-describedby')).toContain(err.id);
+    } finally {
+      r.cleanup();
+    }
+  });
+
+  it('default (no error): no data-invalid / no aria-invalid / no error node (non-regression)', () => {
+    const r = mountReact(
+      'light',
+      <RadioGroup label="S">
+        <Radio label="Euler" name="rg-n" id="rgn1" />
+      </RadioGroup>
+    );
+    try {
+      const group = r.mount.querySelector('[data-civitai-ui="radio-group"]')!;
+      expect(group.hasAttribute('data-invalid')).toBe(false);
+      expect(group.hasAttribute('aria-invalid')).toBe(false);
+      expect(r.mount.querySelector('[data-civitai-ui-error]')).toBeNull();
+    } finally {
+      r.cleanup();
+    }
   });
 });
