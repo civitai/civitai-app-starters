@@ -11,6 +11,7 @@ The `/ui` component pack no longer bundles its own private `--ci-*` token palett
 - **Corner radius 8px → 4px** (all buttons, inputs, cards, alerts, modal, segmented control).
 - **Success green → teal** (light `#2f9e44` → `#299C7A`, dark `#51cf66` → `#326D5C`) — Button/Badge `color="success"`, Alert `color="success"`.
 - **Dark primary `#228be6` → `#1971C2`** (filled buttons/badges + accents in dark theme).
+- **Dark hover direction reverses** (`colorPrimaryHover` `#339af0` → `#1864AB`): filled buttons/badges now **darken** on hover in dark mode instead of brightening.
 - **SegmentedControl track `#f4f4f5` → `#fefefe`** (in light; the active pill now separates from the track by shadow, not background).
 - Smaller error / warning / info / border / text / font-stack shifts.
 
