@@ -8,9 +8,13 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   Group,
   Loader,
   NumberInput,
+  Radio,
+  RadioGroup,
+  Select,
   Stack,
   TextInput,
   Textarea,
@@ -31,6 +35,8 @@ const BORDER = ['borderTopColor', 'borderTopWidth', 'borderTopStyle', 'borderTop
 const PAD = ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft'];
 const BTN = [...TEXT, 'backgroundColor', ...BORDER, ...PAD, 'height', 'opacity'];
 const CONTROL = [...TEXT, 'backgroundColor', ...BORDER, ...PAD];
+// Themed native checkbox/radio input: theme tint (accent-color) + custom sizing.
+const CHOICE = ['accentColor', 'width', 'height', 'cursor'];
 
 const buttonVariants = ['filled', 'light', 'outline', 'subtle'] as const;
 const buttonSizes = ['sm', 'md', 'lg'] as const;
@@ -228,6 +234,64 @@ export const CASES: Case[] = [
     compare: CONTROL,
   },
 
+  // ---- Select / Checkbox / Radio / RadioGroup (issue #181 F6) ----
+  {
+    id: 'select-default',
+    node: (
+      <Select label="Model" id="fx-sel">
+        <option value="sdxl">SDXL</option>
+        <option value="flux">Flux</option>
+      </Select>
+    ),
+    html: `<div data-civitai-ui="select"><label data-civitai-ui-label for="fx-sel">Model</label><select data-civitai-ui-control id="fx-sel"><option value="sdxl">SDXL</option><option value="flux">Flux</option></select></div>`,
+    selector: '[data-civitai-ui-control]',
+    compare: CONTROL,
+  },
+  {
+    id: 'select-invalid',
+    node: (
+      <Select label="Model" error="Required" id="fx-sel-err">
+        <option value="sdxl">SDXL</option>
+      </Select>
+    ),
+    html: `<div data-civitai-ui="select" data-invalid="true"><label data-civitai-ui-label for="fx-sel-err">Model</label><select data-civitai-ui-control id="fx-sel-err" aria-invalid="true" aria-describedby="fx-sel-err-err"><option value="sdxl">SDXL</option></select><span id="fx-sel-err-err" data-civitai-ui-error role="alert">Required</span></div>`,
+    selector: '[data-civitai-ui-control]',
+    compare: CONTROL,
+  },
+  {
+    id: 'checkbox-default',
+    node: <Checkbox label="I agree" id="fx-cb" />,
+    html: `<div data-civitai-ui="checkbox"><div data-civitai-ui-choice><input type="checkbox" id="fx-cb" /><label data-civitai-ui-label for="fx-cb">I agree</label></div></div>`,
+    selector: 'input[type="checkbox"]',
+    compare: CHOICE,
+  },
+  {
+    id: 'checkbox-disabled',
+    node: <Checkbox label="Locked" id="fx-cb-dis" disabled />,
+    html: `<div data-civitai-ui="checkbox"><div data-civitai-ui-choice><input type="checkbox" id="fx-cb-dis" disabled /><label data-civitai-ui-label for="fx-cb-dis">Locked</label></div></div>`,
+    selector: 'input[type="checkbox"]',
+    compare: [...CHOICE, 'opacity'],
+  },
+  {
+    id: 'radio-default',
+    node: <Radio label="Euler" name="fx-sampler" id="fx-rd" />,
+    html: `<div data-civitai-ui="radio"><div data-civitai-ui-choice><input type="radio" name="fx-sampler" id="fx-rd" /><label data-civitai-ui-label for="fx-rd">Euler</label></div></div>`,
+    selector: 'input[type="radio"]',
+    compare: CHOICE,
+  },
+  {
+    id: 'radio-group-default',
+    node: (
+      <RadioGroup label="Sampler">
+        <Radio label="Euler" name="fx-grp" id="fx-grp-a" />
+        <Radio label="DDIM" name="fx-grp" id="fx-grp-b" />
+      </RadioGroup>
+    ),
+    html: `<div data-civitai-ui="radio-group" role="radiogroup" aria-labelledby="fx-grp-lbl"><span data-civitai-ui-label id="fx-grp-lbl">Sampler</span><div data-civitai-ui-radio-options data-orientation="vertical"><div data-civitai-ui="radio"><div data-civitai-ui-choice><input type="radio" name="fx-grp" id="fx-grp-a" /><label data-civitai-ui-label for="fx-grp-a">Euler</label></div></div><div data-civitai-ui="radio"><div data-civitai-ui-choice><input type="radio" name="fx-grp" id="fx-grp-b" /><label data-civitai-ui-label for="fx-grp-b">DDIM</label></div></div></div></div>`,
+    selector: '[data-civitai-ui-radio-options]',
+    compare: ['display', 'flexDirection', 'gap'],
+  },
+
   // ---- Stack / Group ----
   {
     id: 'stack-default',
@@ -266,13 +330,18 @@ export const CASES: Case[] = [
   },
 ];
 
-/** The 10 component families, for the a11y sweep. */
+/** The component families, for the a11y sweep. */
 export const A11Y_CASES: Case[] = [
   CASES.find((c) => c.id === 'button-filled-md')!,
   CASES.find((c) => c.id === 'text-input-default')!,
   CASES.find((c) => c.id === 'text-input-invalid')!,
   CASES.find((c) => c.id === 'textarea-default')!,
   CASES.find((c) => c.id === 'number-input-default')!,
+  CASES.find((c) => c.id === 'select-default')!,
+  CASES.find((c) => c.id === 'select-invalid')!,
+  CASES.find((c) => c.id === 'checkbox-default')!,
+  CASES.find((c) => c.id === 'radio-default')!,
+  CASES.find((c) => c.id === 'radio-group-default')!,
   CASES.find((c) => c.id === 'card-border-md')!,
   CASES.find((c) => c.id === 'stack-default')!,
   CASES.find((c) => c.id === 'group-default')!,

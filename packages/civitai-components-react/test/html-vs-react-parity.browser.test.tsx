@@ -36,9 +36,12 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   Group,
   Loader,
   NumberInput,
+  Radio,
+  Select,
   Stack,
   Textarea,
   TextInput,
@@ -669,6 +672,156 @@ describe('styling anchors — Stack / Group / Loader', () => {
         expect(cs.width, who).toBe('22px');
         expect(cs.height, who).toBe('22px');
         expect(cs.color, who).toBe(solid(tokens.colorPrimary));
+      }
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// issue #181 F6 — Select / Checkbox / Radio. Token-derived anchors on BOTH the
+// React binding and hand-HTML (per MARKUP.md), in light AND dark, plus the
+// checked/unchecked + disabled states. Select reuses the shared `-control`
+// field chrome (bg/border/radius from tokens); checkbox/radio carry the theme
+// tint via `accent-color` = --civitai-color-primary + custom 16px sizing.
+// ---------------------------------------------------------------------------
+describe('styling anchors — Select (issue #181 F6)', () => {
+  const SEL_HTML = (id: string, extra = '') =>
+    `<div data-civitai-ui="select"${extra}><label data-civitai-ui-label for="${id}">M</label><select data-civitai-ui-control id="${id}"><option value="a">A</option></select></div>`;
+
+  it('light: bg=surface, border=colorBorder, radius=4px(token), caret room padding-right=28px', () => {
+    both(
+      pair(
+        'light',
+        <Select label="M" id="s1"><option value="a">A</option></Select>,
+        SEL_HTML('s1'),
+        '[data-civitai-ui-control]'
+      ),
+      (cs, who) => {
+        expect(cs.backgroundColor, who).toBe(solid(tokens.colorSurface));
+        expect(cs.borderTopColor, who).toBe(solid(tokens.colorBorder));
+        expect(cs.borderTopLeftRadius, who).toBe('4px');
+        expect(cs.paddingRight, who).toBe('28px');
+        expect(cs.cursor, who).toBe('pointer');
+      }
+    );
+  });
+
+  it('dark: bg=dark surface, border=dark border (theme-tracked)', () => {
+    both(
+      pair(
+        'dark',
+        <Select label="M" id="s2"><option value="a">A</option></Select>,
+        SEL_HTML('s2'),
+        '[data-civitai-ui-control]'
+      ),
+      (cs, who) => {
+        expect(cs.backgroundColor, who).toBe(solid(darkTokens.colorSurface));
+        expect(cs.borderTopColor, who).toBe(solid(darkTokens.colorBorder));
+        expect(cs.backgroundColor, who).not.toBe(solid(tokens.colorSurface));
+      }
+    );
+  });
+
+  it('invalid (data-invalid/aria-invalid): border=error', () => {
+    both(
+      pair(
+        'light',
+        <Select label="M" error="Required" id="s3"><option value="a">A</option></Select>,
+        `<div data-civitai-ui="select" data-invalid="true"><label data-civitai-ui-label for="s3">M</label><select data-civitai-ui-control id="s3" aria-invalid="true" aria-describedby="s3-err"><option value="a">A</option></select><span id="s3-err" data-civitai-ui-error role="alert">Required</span></div>`,
+        '[data-civitai-ui-control]'
+      ),
+      (cs, who) => {
+        expect(cs.borderTopColor, who).toBe(solid(tokens.colorError));
+        expect(cs.borderTopColor, who).not.toBe(solid(tokens.colorBorder));
+      }
+    );
+  });
+});
+
+describe('styling anchors — Checkbox / Radio (issue #181 F6)', () => {
+  const CB_HTML = (id: string, attrs = '') =>
+    `<div data-civitai-ui="checkbox"><div data-civitai-ui-choice><input type="checkbox" id="${id}"${attrs} /><label data-civitai-ui-label for="${id}">L</label></div></div>`;
+  const RD_HTML = (id: string) =>
+    `<div data-civitai-ui="radio"><div data-civitai-ui-choice><input type="radio" id="${id}" /><label data-civitai-ui-label for="${id}">L</label></div></div>`;
+
+  it('checkbox light: accent-color=primary token, 16×16 custom size, pointer', () => {
+    both(
+      pair('light', <Checkbox label="L" id="c1" />, CB_HTML('c1'), 'input[type="checkbox"]'),
+      (cs, who) => {
+        expect(cs.accentColor, who).toBe(solid(tokens.colorPrimary));
+        expect(cs.width, who).toBe('16px');
+        expect(cs.height, who).toBe('16px');
+        expect(cs.cursor, who).toBe('pointer');
+      }
+    );
+  });
+
+  it('checkbox dark: accent-color=dark primary (theme actually switched)', () => {
+    both(
+      pair('dark', <Checkbox label="L" id="c2" />, CB_HTML('c2'), 'input[type="checkbox"]'),
+      (cs, who) => {
+        expect(cs.accentColor, who).toBe(solid(darkTokens.colorPrimary));
+        expect(cs.accentColor, who).not.toBe(solid(tokens.colorPrimary));
+      }
+    );
+  });
+
+  it('checkbox CHECKED still carries the primary accent (unchecked ≡ checked tint)', () => {
+    both(
+      pair(
+        'light',
+        <Checkbox label="L" id="c3" defaultChecked />,
+        CB_HTML('c3', ' checked'),
+        'input[type="checkbox"]'
+      ),
+      (cs, who) => {
+        expect(cs.accentColor, who).toBe(solid(tokens.colorPrimary));
+      }
+    );
+    // The checked state is really applied (native property), both consumers.
+    const r = mountReact('light', <Checkbox label="L" id="c3r" defaultChecked />);
+    const h = mountHtml('light', CB_HTML('c3h', ' checked'));
+    try {
+      expect((r.mount.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true);
+      expect((h.mount.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true);
+    } finally {
+      r.cleanup();
+      h.cleanup();
+    }
+  });
+
+  it('checkbox DISABLED: opacity 0.6 + not-allowed cursor', () => {
+    both(
+      pair(
+        'light',
+        <Checkbox label="L" id="c4" disabled />,
+        CB_HTML('c4', ' disabled'),
+        'input[type="checkbox"]'
+      ),
+      (cs, who) => {
+        expect(cs.opacity, who).toBe('0.6');
+        expect(cs.cursor, who).toBe('not-allowed');
+      }
+    );
+  });
+
+  it('radio light: accent-color=primary token, 16×16', () => {
+    both(
+      pair('light', <Radio label="L" id="r1" />, RD_HTML('r1'), 'input[type="radio"]'),
+      (cs, who) => {
+        expect(cs.accentColor, who).toBe(solid(tokens.colorPrimary));
+        expect(cs.width, who).toBe('16px');
+        expect(cs.height, who).toBe('16px');
+      }
+    );
+  });
+
+  it('radio dark: accent-color=dark primary (theme-tracked)', () => {
+    both(
+      pair('dark', <Radio label="L" id="r2" />, RD_HTML('r2'), 'input[type="radio"]'),
+      (cs, who) => {
+        expect(cs.accentColor, who).toBe(solid(darkTokens.colorPrimary));
+        expect(cs.accentColor, who).not.toBe(solid(tokens.colorPrimary));
       }
     );
   });
