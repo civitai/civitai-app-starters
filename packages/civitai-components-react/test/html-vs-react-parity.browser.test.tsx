@@ -587,7 +587,7 @@ describe('styling anchors — Card', () => {
       );
     });
 
-    it('borderless dark: UNCHANGED — no visible border (hairline removed)', () => {
+    it('borderless dark: UNCHANGED — truly no border box (width 0, style none)', () => {
       both(
         pair(
           'dark',
@@ -596,7 +596,9 @@ describe('styling anchors — Card', () => {
           '[data-civitai-ui="card"]'
         ),
         (cs, who) => {
-          expect(cs.borderTopColor, who).toBe('rgba(0, 0, 0, 0)');
+          // `border: 0` in dark => original behavior exactly (no hairline inset).
+          expect(cs.borderTopWidth, who).toBe('0px');
+          expect(cs.borderTopStyle, who).toBe('none');
         }
       );
     });

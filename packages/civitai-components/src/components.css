@@ -265,7 +265,7 @@
    * `data-with-border` still renders its full border.
    */
   [data-theme='dark'] [data-civitai-ui='card']:not([data-with-border='true']) {
-    border-color: transparent;
+    border: 0;
   }
 
   /* ----- Stack / Group ----- */
