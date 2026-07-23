@@ -121,17 +121,17 @@ describe('Button', () => {
   it('maps a semantic color onto the primary CSS var', () => {
     render(<Button color="error">Go</Button>);
     const btn = btnOf('Go');
-    expect(btn.style.getPropertyValue('--ci-color-primary')).toBe('var(--ci-color-error)');
+    expect(btn.style.getPropertyValue('--civitai-color-primary')).toBe('var(--civitai-color-error)');
   });
 
   it('passes an arbitrary CSS color through to the var', () => {
     render(<Button color="#ff00ff">Go</Button>);
-    expect(btnOf('Go').style.getPropertyValue('--ci-color-primary')).toBe('#ff00ff');
+    expect(btnOf('Go').style.getPropertyValue('--civitai-color-primary')).toBe('#ff00ff');
   });
 
   it('leaves the primary var untouched for the default color', () => {
     render(<Button>Go</Button>);
-    expect(btnOf('Go').style.getPropertyValue('--ci-color-primary')).toBe('');
+    expect(btnOf('Go').style.getPropertyValue('--civitai-color-primary')).toBe('');
   });
 
   it('forwards a ref to the native button', () => {

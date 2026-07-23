@@ -40,7 +40,7 @@ export interface SliderProps
  * implicit `role="slider"` with `aria-valuemin`/`max`/`now` for free. The label,
  * description and error are wired via `htmlFor` / `id` / `aria-describedby` /
  * `aria-invalid`. Auto-themed via `useBlocksStyles()`; the accent tracks
- * `--ci-color-primary`.
+ * `--civitai-color-primary`.
  */
 export const Slider = forwardRef<HTMLInputElement, SliderProps>(function Slider(
   {

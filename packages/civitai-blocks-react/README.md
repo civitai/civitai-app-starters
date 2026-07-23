@@ -594,7 +594,7 @@ export function App() {
 | `Loader` | CSS-keyframe spinner; `size`, `color`; `role="status"`. |
 | `Badge` | `variant`, `size`, `color`. |
 | `Modal` | `opened` + `onClose`, `title`, `size`; `role="dialog"` + `aria-modal`, Escape- and overlay-click-to-close, focuses the panel on open and restores focus on close. |
-| `Slider` | controlled range (`value: number`, `onChange`, `min`/`max`/`step`, `showValue`). Native `input[type=range]` — keyboard-operable, implicit `role="slider"`; accent tracks `--ci-color-primary`. Same `label`/`description`/`error`/`required` wiring as `TextInput`. |
+| `Slider` | controlled range (`value: number`, `onChange`, `min`/`max`/`step`, `showValue`). Native `input[type=range]` — keyboard-operable, implicit `role="slider"`; accent tracks `--civitai-color-primary`. Same `label`/`description`/`error`/`required` wiring as `TextInput`. |
 | `NumberInput` | controlled numeric (`value: number \| null`, `onChange`, `min`/`max`/`step`). Rejects non-numeric (never emits `NaN`), clamps to `[min,max]` on blur, empty → `null`. Same label/description/error wiring. |
 | `Select` | controlled dropdown (`value: string`, `onChange`, `options: {value,label,disabled}[]` **or** `<option>` children, `placeholder`). Native `<select>`, `role="combobox"`. Same label/description/error wiring. |
 | `Collapse` | controlled disclosure (`open` + `onOpenChange`, `title`, `disabled`) for the "advanced params reveal". `aria-expanded` + `aria-controls`; content region `role="region"`, `hidden` when closed. |

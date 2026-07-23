@@ -74,8 +74,8 @@ const wrapperStyle: React.CSSProperties = {
   justifyContent: 'center',
   padding: 24,
   boxSizing: 'border-box',
-  background: 'var(--ci-color-surface-2)',
-  color: 'var(--ci-color-text)',
+  background: 'var(--civitai-color-surface-2)',
+  color: 'var(--civitai-color-text)',
 };
 
 const brandStyle: React.CSSProperties = {
@@ -83,7 +83,7 @@ const brandStyle: React.CSSProperties = {
   fontWeight: 700,
   letterSpacing: '0.08em',
   textTransform: 'uppercase',
-  color: 'var(--ci-color-primary)',
+  color: 'var(--civitai-color-primary)',
 };
 
 const titleStyle: React.CSSProperties = { fontSize: 18, fontWeight: 700 };
@@ -91,7 +91,7 @@ const titleStyle: React.CSSProperties = { fontSize: 18, fontWeight: 700 };
 const bodyStyle: React.CSSProperties = {
   fontSize: 14,
   lineHeight: 1.5,
-  color: 'var(--ci-color-text-dimmed)',
+  color: 'var(--civitai-color-text-dimmed)',
 };
 
 /**
