@@ -76,10 +76,13 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # blocks-react consumes @civitai/app-sdk via workspace:^ and resolves
-      # types from its dist/. Build the SDK first so the package isn't
-      # typechecking against stale or missing declarations.
+      # blocks-react consumes @civitai/app-sdk, @civitai/theme and
+      # @civitai/components via workspace:^ and resolves types from their dist/.
+      # Build those deps first so blocks-react isn't typechecking against stale
+      # or missing declarations.
       - run: pnpm --filter @civitai/app-sdk build
+      - run: pnpm --filter @civitai/theme build
+      - run: pnpm --filter @civitai/components build
 
       - run: pnpm --filter @civitai/blocks-react typecheck
       - run: pnpm --filter @civitai/blocks-react test
@@ -201,8 +204,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       # The snippet checker resolves documented imports against the packages'
-      # BUILT declarations, so build both first (blocks-react consumes app-sdk).
+      # BUILT declarations, so build deps first (blocks-react consumes app-sdk,
+      # @civitai/theme and @civitai/components).
       - run: pnpm --filter @civitai/app-sdk build
+      - run: pnpm --filter @civitai/theme build
+      - run: pnpm --filter @civitai/components build
       - run: pnpm --filter @civitai/blocks-react build
 
       - run: pnpm typecheck:readme
