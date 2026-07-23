@@ -340,6 +340,42 @@ export const CASES: Case[] = [
     selector: '[data-civitai-ui="group"]',
     compare: ['display', 'flexDirection', 'alignItems', 'gap'],
   },
+
+  // ---- Bare markup ≡ documented defaults (0.2.1) ----
+  // The React binding always emits explicit `data-variant`/`data-size`/
+  // `data-color` (defaulting the prop), but hand-written HTML per MARKUP.md may
+  // OMIT them — the documented default then has to come from the base CSS rule.
+  // These pair a DEFAULT-PROP React render against BARE HTML (no variant/size/
+  // color) and assert identical computed styles, proving the bare markup picks
+  // up the documented default (filled/md/info) rather than rendering unstyled.
+  {
+    id: 'button-bare-default',
+    node: <Button>Generate</Button>,
+    html: `<button data-civitai-ui="button" type="button">Generate</button>`,
+    selector: '[data-civitai-ui="button"]',
+    compare: BTN,
+  },
+  {
+    id: 'badge-bare-default',
+    node: <Badge>new</Badge>,
+    html: `<span data-civitai-ui="badge">new</span>`,
+    selector: '[data-civitai-ui="badge"]',
+    compare: [...TEXT, 'backgroundColor', ...BORDER, ...PAD, 'height'],
+  },
+  {
+    id: 'alert-bare-default',
+    node: <Alert title="Heads up">Something happened.</Alert>,
+    html: `<div data-civitai-ui="alert" role="alert"><div data-civitai-ui-alert-body><div data-civitai-ui-alert-title>Heads up</div>Something happened.</div></div>`,
+    selector: '[data-civitai-ui="alert"]',
+    compare: ['backgroundColor', 'color', 'fontSize', ...BORDER, ...PAD],
+  },
+  {
+    id: 'loader-bare-default',
+    node: <Loader aria-hidden="true" />,
+    html: `<span data-civitai-ui="loader" aria-hidden="true"></span>`,
+    selector: '[data-civitai-ui="loader"]',
+    compare: ['width', 'height', 'borderTopWidth', 'borderTopColor', 'borderTopStyle', 'color'],
+  },
 ];
 
 /** The component families, for the a11y sweep. */

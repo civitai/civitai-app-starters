@@ -897,3 +897,173 @@ describe('styling anchors — RadioGroup group-level error (0.2.0)', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// 0.2.1 — BARE-MARKUP DOCUMENTED DEFAULTS. MARKUP.md documents a default
+// `data-variant`/`data-size`/`data-color` for Button (filled/md), Badge
+// (filled/md), Alert (info) and Loader (md), but the base CSS previously gated
+// ALL of that styling on an EXPLICIT attribute — so a bare element (MARKUP's
+// own minimal examples) rendered unstyled/zero-size. The fix moves the
+// documented defaults onto the unconditional base rule; the explicit
+// variant/size/color rules still override. These anchors evaluate BARE HTML
+// (no variant/size/color) AND the React binding's default-prop render against
+// the SAME derived tokens, on BOTH consumers, light + dark where theme-
+// dependent — so a regression back to the unstyled state fails loudly.
+// ---------------------------------------------------------------------------
+describe('styling anchors — bare-markup documented defaults (0.2.1)', () => {
+  it('bare Button ≡ filled+md: non-zero padding, bg=primary, fg=primaryFg, border=primary, height=36px', () => {
+    both(
+      pair(
+        'light',
+        <Button>Go</Button>,
+        `<button data-civitai-ui="button" type="button">Go</button>`,
+        '[data-civitai-ui="button"]'
+      ),
+      (cs, who) => {
+        expect(cs.backgroundColor, who).toBe(solid(tokens.colorPrimary));
+        expect(cs.color, who).toBe(solid(tokens.colorPrimaryFg));
+        expect(cs.borderTopColor, who).toBe(solid(tokens.colorPrimary));
+        expect(cs.height, who).toBe('36px');
+        expect(cs.paddingLeft, who).toBe('18px');
+        // Really styled — not the zero-padding UA button the base rule used to
+        // leave for a bare element.
+        expect(cs.paddingLeft, who).not.toBe('0px');
+      }
+    );
+  });
+
+  it('bare Button dark: bg tracks the dark primary token', () => {
+    both(
+      pair(
+        'dark',
+        <Button>Go</Button>,
+        `<button data-civitai-ui="button" type="button">Go</button>`,
+        '[data-civitai-ui="button"]'
+      ),
+      (cs, who) => {
+        expect(cs.backgroundColor, who).toBe(solid(darkTokens.colorPrimary));
+        expect(cs.backgroundColor, who).not.toBe(solid(tokens.colorPrimary));
+      }
+    );
+  });
+
+  it('bare Badge ≡ filled+md: non-zero padding, bg=primary, fg=primaryFg, pill radius, height=22px', () => {
+    both(
+      pair(
+        'light',
+        <Badge>new</Badge>,
+        `<span data-civitai-ui="badge">new</span>`,
+        '[data-civitai-ui="badge"]'
+      ),
+      (cs, who) => {
+        expect(cs.backgroundColor, who).toBe(solid(tokens.colorPrimary));
+        expect(cs.color, who).toBe(solid(tokens.colorPrimaryFg));
+        expect(cs.borderTopColor, who).toBe(solid(tokens.colorPrimary));
+        expect(cs.borderTopLeftRadius, who).toBe('999px'); // pill token
+        expect(cs.height, who).toBe('22px');
+        expect(cs.paddingLeft, who).toBe('10px');
+        // Really styled — not the zero-padding, fill-less bare pill (the bug).
+        expect(cs.paddingLeft, who).not.toBe('0px');
+        expect(cs.backgroundColor, who).not.toBe('rgba(0, 0, 0, 0)');
+      }
+    );
+  });
+
+  it('bare Badge dark: bg tracks the dark primary token', () => {
+    both(
+      pair(
+        'dark',
+        <Badge>new</Badge>,
+        `<span data-civitai-ui="badge">new</span>`,
+        '[data-civitai-ui="badge"]'
+      ),
+      (cs, who) => {
+        expect(cs.backgroundColor, who).toBe(solid(darkTokens.colorPrimary));
+        expect(cs.backgroundColor, who).not.toBe(solid(tokens.colorPrimary));
+      }
+    );
+  });
+
+  it('bare Alert ≡ info intent: bg=mix(info 12%), border=mix(info 35%)', () => {
+    both(
+      pair(
+        'light',
+        <Alert title="t">b</Alert>,
+        `<div data-civitai-ui="alert" role="alert"><div data-civitai-ui-alert-body>b</div></div>`,
+        '[data-civitai-ui="alert"]'
+      ),
+      (cs, who) => {
+        expect(cs.backgroundColor, who).toBe(mix(tokens.colorInfo, '12%'));
+        expect(cs.borderTopColor, who).toBe(mix(tokens.colorInfo, '35%'));
+        // Really tinted — not the neutral transparent-bordered chrome a bare
+        // alert used to render before the info default was applied.
+        expect(cs.backgroundColor, who).not.toBe('rgba(0, 0, 0, 0)');
+      }
+    );
+  });
+
+  it('bare Alert dark: border tracks the dark info token', () => {
+    both(
+      pair(
+        'dark',
+        <Alert title="t">b</Alert>,
+        `<div data-civitai-ui="alert" role="alert"><div data-civitai-ui-alert-body>b</div></div>`,
+        '[data-civitai-ui="alert"]'
+      ),
+      (cs, who) => {
+        expect(cs.borderTopColor, who).toBe(mix(darkTokens.colorInfo, '35%'));
+        expect(cs.borderTopColor, who).not.toBe(mix(tokens.colorInfo, '35%'));
+      }
+    );
+  });
+
+  it('bare Loader ≡ md: 22×22, border-width 3px, color=primary (not 0×0/invisible)', () => {
+    both(
+      pair(
+        'light',
+        <Loader aria-hidden="true" />,
+        `<span data-civitai-ui="loader" aria-hidden="true"></span>`,
+        '[data-civitai-ui="loader"]'
+      ),
+      (cs, who) => {
+        expect(cs.width, who).toBe('22px');
+        expect(cs.height, who).toBe('22px');
+        expect(cs.borderTopWidth, who).toBe('3px');
+        expect(cs.color, who).toBe(solid(tokens.colorPrimary));
+        // Really sized — not the 0×0, invisible bare loader before the fix.
+        expect(cs.width, who).not.toBe('0px');
+      }
+    );
+  });
+
+  // Non-regression: with the base default now carrying a primary border, the
+  // EXPLICIT non-filled badge variants must still render as before — `light`
+  // stays transparent-bordered, `outline` keeps its primary border + no fill.
+  it('explicit badge variants unchanged (non-regression): light=transparent border, outline=primary border + no fill', () => {
+    both(
+      pair(
+        'light',
+        <Badge variant="light" size="md">x</Badge>,
+        `<span data-civitai-ui="badge" data-variant="light" data-size="md">x</span>`,
+        '[data-civitai-ui="badge"]'
+      ),
+      (cs, who) => {
+        expect(cs.borderTopColor, who).toBe('rgba(0, 0, 0, 0)'); // transparent, as before
+        expect(cs.backgroundColor, who).toBe(mix(tokens.colorPrimary, '14%'));
+      }
+    );
+    both(
+      pair(
+        'light',
+        <Badge variant="outline" size="md">x</Badge>,
+        `<span data-civitai-ui="badge" data-variant="outline" data-size="md">x</span>`,
+        '[data-civitai-ui="badge"]'
+      ),
+      (cs, who) => {
+        expect(cs.borderTopColor, who).toBe(solid(tokens.colorPrimary));
+        expect(cs.backgroundColor, who).toBe('rgba(0, 0, 0, 0)'); // no fill, as before
+        expect(cs.color, who).toBe(solid(tokens.colorPrimary));
+      }
+    );
+  });
+});
