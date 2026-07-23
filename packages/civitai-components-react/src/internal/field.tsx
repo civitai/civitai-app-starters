@@ -91,3 +91,62 @@ export function FieldChrome({
     </div>
   );
 }
+
+/**
+ * Shared chrome for the inline CHOICE controls (checkbox / radio): the control
+ * (`children`) and its label sit side-by-side in a `-choice` row, with the
+ * description and error below. The control passed as `children` must already
+ * carry the wired aria attributes + `id`. Mirrors FieldChrome but with the
+ * box-then-label inline layout choice controls need.
+ */
+export function ChoiceChrome({
+  uiName,
+  label,
+  required,
+  description,
+  error,
+  hasError,
+  className,
+  ids,
+  style,
+  children,
+}: {
+  uiName: string;
+  hasError: boolean;
+  ids: FieldIds;
+  style?: React.CSSProperties;
+  children: React.ReactNode;
+} & Pick<FieldBaseProps, 'label' | 'required' | 'description' | 'error' | 'className'>): React.JSX.Element {
+  return (
+    <div
+      className={className}
+      data-civitai-ui={uiName}
+      data-invalid={hasError ? 'true' : undefined}
+      style={style}
+    >
+      <div data-civitai-ui-choice>
+        {children}
+        {label != null ? (
+          <label htmlFor={ids.inputId} data-civitai-ui-label>
+            {label}
+            {required ? (
+              <span data-civitai-ui-required aria-hidden="true">
+                *
+              </span>
+            ) : null}
+          </label>
+        ) : null}
+      </div>
+      {description != null ? (
+        <span id={ids.descId} data-civitai-ui-description>
+          {description}
+        </span>
+      ) : null}
+      {hasError ? (
+        <span id={ids.errId} data-civitai-ui-error role="alert">
+          {error}
+        </span>
+      ) : null}
+    </div>
+  );
+}
