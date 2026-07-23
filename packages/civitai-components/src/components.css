@@ -151,10 +151,21 @@
   }
 
   /* ----- Card ----- */
+  /*
+   * F5 (issue #181): in LIGHT mode --civitai-color-surface == --civitai-color-body
+   * (both #fefefe), so a borderless card is invisible against the page. Give
+   * every card a subtle DEFAULT hairline (a low-alpha mix of the border token)
+   * so a card WITHOUT `data-with-border` is still visible. `data-with-border`
+   * stays the stronger, explicit, fully-opaque border. Dark mode already
+   * differentiates surface from body, so the default hairline is removed there
+   * (see the [data-theme='dark'] rule below) — no over-adding. The default
+   * (no [data-theme]) light palette keeps the hairline, matching light mode.
+   */
   [data-civitai-ui='card'] {
     background: var(--civitai-color-surface);
     border-radius: var(--civitai-radius);
     color: var(--civitai-color-text);
+    border: 1px solid color-mix(in srgb, var(--civitai-color-border) 55%, transparent);
 
     &[data-with-border='true'] {
       border: 1px solid var(--civitai-color-border);
@@ -162,6 +173,14 @@
     &[data-padding='sm'] { padding: 10px; }
     &[data-padding='md'] { padding: 16px; }
     &[data-padding='lg'] { padding: 24px; }
+  }
+  /*
+   * Dark already differentiates surface (#1A1B1E) from body — drop the default
+   * hairline on a borderless card so dark is visually unchanged. An explicit
+   * `data-with-border` still renders its full border.
+   */
+  [data-theme='dark'] [data-civitai-ui='card']:not([data-with-border='true']) {
+    border-color: transparent;
   }
 
   /* ----- Stack / Group ----- */

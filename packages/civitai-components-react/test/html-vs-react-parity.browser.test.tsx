@@ -538,6 +538,80 @@ describe('styling anchors — Card', () => {
       }
     );
   });
+
+  // -------------------------------------------------------------------------
+  // issue #181 F5 — default light-mode hairline. In light, surface == body, so
+  // a BORDERLESS card was invisible; it now carries a subtle default border
+  // (a low-alpha mix of the border token). `data-with-border` stays the
+  // stronger, fully-opaque border. Dark is visually unchanged (no hairline on
+  // a borderless card). Anchored on BOTH consumers (React `withBorder={false}`
+  // and hand-HTML without `data-with-border`).
+  // -------------------------------------------------------------------------
+  describe('styling anchors — Card default hairline (issue #181 F5)', () => {
+    const HAIRLINE = mix(tokens.colorBorder, '55%');
+
+    it('borderless light: visible hairline = mix(border 55%), width 1px', () => {
+      both(
+        pair(
+          'light',
+          <Card withBorder={false} padding="sm">x</Card>,
+          `<div data-civitai-ui="card" data-padding="sm">x</div>`,
+          '[data-civitai-ui="card"]'
+        ),
+        (cs, who) => {
+          expect(cs.borderTopStyle, who).toBe('solid');
+          expect(cs.borderTopWidth, who).toBe('1px');
+          expect(cs.borderTopColor, who).toBe(HAIRLINE);
+          // Actually visible: not transparent, and NOT the strong border token.
+          expect(cs.borderTopColor, who).not.toBe('rgba(0, 0, 0, 0)');
+          expect(cs.borderTopColor, who).not.toBe(solid(tokens.colorBorder));
+        }
+      );
+    });
+
+    it('with-border light stays STRONGER: full opaque border token (not the hairline)', () => {
+      both(
+        pair(
+          'light',
+          <Card withBorder padding="sm">x</Card>,
+          `<div data-civitai-ui="card" data-with-border="true" data-padding="sm">x</div>`,
+          '[data-civitai-ui="card"]'
+        ),
+        (cs, who) => {
+          expect(cs.borderTopColor, who).toBe(solid(tokens.colorBorder));
+          expect(cs.borderTopColor, who).not.toBe(HAIRLINE);
+        }
+      );
+    });
+
+    it('borderless dark: UNCHANGED — no visible border (hairline removed)', () => {
+      both(
+        pair(
+          'dark',
+          <Card withBorder={false} padding="sm">x</Card>,
+          `<div data-civitai-ui="card" data-padding="sm">x</div>`,
+          '[data-civitai-ui="card"]'
+        ),
+        (cs, who) => {
+          expect(cs.borderTopColor, who).toBe('rgba(0, 0, 0, 0)');
+        }
+      );
+    });
+
+    it('with-border dark still renders the dark border token', () => {
+      both(
+        pair(
+          'dark',
+          <Card withBorder padding="sm">x</Card>,
+          `<div data-civitai-ui="card" data-with-border="true" data-padding="sm">x</div>`,
+          '[data-civitai-ui="card"]'
+        ),
+        (cs, who) => {
+          expect(cs.borderTopColor, who).toBe(solid(darkTokens.colorBorder));
+        }
+      );
+    });
+  });
 });
 
 describe('styling anchors — Stack / Group / Loader', () => {
