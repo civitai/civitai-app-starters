@@ -1,6 +1,6 @@
 {
   "name": "@civitai/theme",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Framework-agnostic --civitai-* design tokens, derived build-time from civitai's real Mantine theme. CSS + typed JS + W3C DTCG.",
   "license": "MIT",
   "type": "module",
