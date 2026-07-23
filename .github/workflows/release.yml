@@ -17,7 +17,7 @@ jobs:
     name: Version + publish packages
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
 
@@ -29,7 +29,7 @@ jobs:
       # failure seen on run 27824888566.
       # Ref: https://docs.npmjs.com/trusted-publishers
       #   "npm CLI version 11.5.1 or later and Node version 22.14.0 or higher"
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
           cache: pnpm
