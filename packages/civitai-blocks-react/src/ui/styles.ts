@@ -1,5 +1,8 @@
 import { useEffect } from 'react';
 
+import { componentsCss, injectStyles as injectComponentsStyles } from '@civitai/components';
+import { tokensCss } from '@civitai/theme';
+
 /**
  * W6 component pack — runtime style injection.
  *
@@ -11,319 +14,63 @@ import { useEffect } from 'react';
  * `injectBlocksStyles()`), so simply rendering any `/ui` component is enough
  * to get the styling — no CSS import, no setup step.
  *
+ * Design-system delegation (0.35.0):
+ *   The pack no longer bundles its own tokens or presentational-component CSS.
+ *   It delegates to the PUBLISHED design-system packages:
+ *     - `@civitai/theme`      — the `--civitai-*` design tokens.
+ *     - `@civitai/components` — the attribute-driven CSS for the 10
+ *       presentational components (Button, TextInput, Textarea, NumberInput,
+ *       Card, Stack, Group, Alert, Loader, Badge), wrapped in
+ *       `@layer civitai.components`.
+ *   Only the 5 INTERACTIVE components that live entirely in this package
+ *   (Modal, Select, Slider, Collapse, SegmentedControl) keep their CSS here,
+ *   repointed onto the `--civitai-*` tokens. This is a VISIBLE repaint — the
+ *   design-system tokens differ from the pack's retired `--ci-*` palette
+ *   (radius 8px→4px, teal success, dark primary `#1971C2`, etc.).
+ *
+ * `injectBlocksStyles()` injects THREE `<style>` elements, each with its own
+ * idempotency marker so they compose cleanly in the sandbox iframe:
+ *   1. `data-civitai-theme`      — the `--civitai-*` tokens (from @civitai/theme)
+ *   2. `data-civitai-components` — the presentational-10 CSS (from @civitai/components)
+ *   3. `data-civitai-blocks-ui`  — the interactive-5-only CSS (below)
+ * (1) and (2) are injected by `@civitai/components`'s `injectStyles()`.
+ *
  * Theming (gotcha #60): a block sets `data-theme={theme}` on its OWN root
  * (from `BLOCK_INIT.theme`); the host can't reach across the iframe boundary.
- * These rules theme via an ancestor `[data-theme='dark']` selector. The
- * default (no `data-theme`, i.e. light) matches the palette in
- * `starters/examples/hello-world/src/index.css`.
+ * The `--civitai-*` tokens theme via an ancestor `[data-theme='dark']`
+ * selector; the default (no `data-theme`, i.e. light) matches @civitai/theme's
+ * `:root` palette.
  */
 
-/** Marker attribute on the injected `<style>` so injection is idempotent. */
+/** Marker attribute on the injected interactive-5 `<style>` so injection is idempotent. */
 const STYLE_MARKER = 'data-civitai-blocks-ui';
 
 /**
- * Design tokens. CSS custom properties under `:root` (light defaults),
- * overridden under `[data-theme='dark']`. Palette mirrors Civitai's Mantine
- * design language (8px radius, blue primary `#228be6`, the dark/light
- * surfaces already used by the hello-world example).
+ * Interactive-5 component CSS — the styles that live ONLY in this package
+ * (Modal / Select / Slider / Collapse / SegmentedControl). Repointed onto the
+ * `--civitai-*` tokens supplied by `@civitai/theme`.
+ *
+ * These rules are intentionally UNLAYERED (unlike @civitai/components' rules,
+ * which live in `@layer civitai.components`). Their selectors are DISJOINT from
+ * the presentational-10 selectors, so the two never conflict. The one exception
+ * is the shared field primitives (`-control` / `-label` / `-required` /
+ * `-description` / `-error`): those are now owned by @civitai/components and are
+ * NOT redefined here — Select and Slider reuse them and only add their own
+ * field WRAPPER (@civitai/components scopes its wrapper rule to
+ * text-input/textarea/number-input) plus a couple of scoped overrides (the
+ * slider label row).
  */
-const TOKENS = `
-:root {
-  --ci-font: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --ci-radius: 8px;
-  --ci-color-text: #1a1a1a;
-  --ci-color-text-dimmed: #6b7280;
-  --ci-color-surface: #ffffff;
-  --ci-color-surface-2: #f4f4f5;
-  --ci-color-border: #e0e0e3;
-  --ci-color-primary: #228be6;
-  --ci-color-primary-hover: #1c7ed6;
-  --ci-color-primary-fg: #ffffff;
-  --ci-color-error: #e03131;
-  --ci-color-success: #2f9e44;
-  --ci-color-warning: #f08c00;
-  --ci-color-info: #1971c2;
-}
-
-[data-theme='light'] {
-  --ci-color-text: #1a1a1a;
-  --ci-color-text-dimmed: #6b7280;
-  --ci-color-surface: #ffffff;
-  --ci-color-surface-2: #f4f4f5;
-  --ci-color-border: #e0e0e3;
-}
-
-[data-theme='dark'] {
-  --ci-color-text: #e6e6e6;
-  --ci-color-text-dimmed: #909296;
-  --ci-color-surface: #1a1b1e;
-  --ci-color-surface-2: #25262b;
-  --ci-color-border: #2c2e33;
-  --ci-color-primary: #228be6;
-  --ci-color-primary-hover: #339af0;
-  --ci-color-primary-fg: #ffffff;
-  --ci-color-error: #ff6b6b;
-  --ci-color-success: #51cf66;
-  --ci-color-warning: #ffa94d;
-  --ci-color-info: #4dabf7;
-}
-`;
-
-/**
- * Component CSS. All selectors hang off the `data-civitai-ui="<name>"`
- * attribute each component renders, so the pack never leaks styles onto the
- * author's own markup.
- */
-const COMPONENT_CSS = `
-[data-civitai-ui] {
-  box-sizing: border-box;
-  font-family: var(--ci-font);
-}
-[data-civitai-ui] *,
-[data-civitai-ui] *::before,
-[data-civitai-ui] *::after {
-  box-sizing: border-box;
-}
-
-/* ----- Button ----- */
-[data-civitai-ui='button'] {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  border: 1px solid transparent;
-  border-radius: var(--ci-radius);
-  font-family: var(--ci-font);
-  font-weight: 600;
-  line-height: 1;
-  cursor: pointer;
-  user-select: none;
-  text-decoration: none;
-  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
-  background: var(--ci-color-primary);
-  color: var(--ci-color-primary-fg);
-}
-[data-civitai-ui='button'][data-size='sm'] { height: 30px; padding: 0 14px; font-size: 13px; }
-[data-civitai-ui='button'][data-size='md'] { height: 36px; padding: 0 18px; font-size: 14px; }
-[data-civitai-ui='button'][data-size='lg'] { height: 44px; padding: 0 22px; font-size: 16px; }
-[data-civitai-ui='button'][data-full-width='true'] { width: 100%; }
-[data-civitai-ui='button'][data-variant='filled'] {
-  background: var(--ci-color-primary);
-  color: var(--ci-color-primary-fg);
-  border-color: var(--ci-color-primary);
-}
-[data-civitai-ui='button'][data-variant='filled']:hover:not(:disabled) {
-  background: var(--ci-color-primary-hover);
-  border-color: var(--ci-color-primary-hover);
-}
-[data-civitai-ui='button'][data-variant='light'] {
-  background: color-mix(in srgb, var(--ci-color-primary) 12%, transparent);
-  color: var(--ci-color-primary);
-  border-color: transparent;
-}
-[data-civitai-ui='button'][data-variant='light']:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--ci-color-primary) 22%, transparent);
-}
-[data-civitai-ui='button'][data-variant='outline'] {
-  background: transparent;
-  color: var(--ci-color-primary);
-  border-color: var(--ci-color-primary);
-}
-[data-civitai-ui='button'][data-variant='outline']:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--ci-color-primary) 10%, transparent);
-}
-[data-civitai-ui='button'][data-variant='subtle'] {
-  background: transparent;
-  color: var(--ci-color-primary);
-  border-color: transparent;
-}
-[data-civitai-ui='button'][data-variant='subtle']:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--ci-color-primary) 10%, transparent);
-}
-[data-civitai-ui='button']:disabled,
-[data-civitai-ui='button'][aria-busy='true'] {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-[data-civitai-ui='button'] [data-civitai-ui-section] {
-  display: inline-flex;
-  align-items: center;
-}
-
-/* ----- TextInput / Textarea / NumberInput / Select / Slider ----- */
-[data-civitai-ui='text-input'],
-[data-civitai-ui='textarea'],
-[data-civitai-ui='number-input'],
+const INTERACTIVE_STYLES = `
+/* ----- Select / Slider field wrappers -----
+   The shared -control/-label/-required/-description/-error primitives come from
+   @civitai/components (layered). Only the select/slider WRAPPERS live here — the
+   design-system package scopes its field-wrapper rule to the presentational
+   inputs (text-input/textarea/number-input). */
 [data-civitai-ui='select'],
 [data-civitai-ui='slider'] {
   display: flex;
   flex-direction: column;
   gap: 4px;
-}
-[data-civitai-ui-label] {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--ci-color-text);
-}
-[data-civitai-ui-required] {
-  color: var(--ci-color-error);
-  margin-left: 2px;
-}
-[data-civitai-ui-description] {
-  font-size: 12px;
-  color: var(--ci-color-text-dimmed);
-}
-[data-civitai-ui-error] {
-  font-size: 12px;
-  color: var(--ci-color-error);
-}
-[data-civitai-ui-control] {
-  width: 100%;
-  font-family: var(--ci-font);
-  font-size: 14px;
-  color: var(--ci-color-text);
-  background: var(--ci-color-surface);
-  border: 1px solid var(--ci-color-border);
-  border-radius: var(--ci-radius);
-  padding: 8px 12px;
-  transition: border-color 120ms ease;
-}
-[data-civitai-ui-control]:focus {
-  outline: none;
-  border-color: var(--ci-color-primary);
-}
-[data-civitai-ui-control][aria-invalid='true'] {
-  border-color: var(--ci-color-error);
-}
-[data-civitai-ui-control]:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-textarea[data-civitai-ui-control] {
-  resize: vertical;
-  line-height: 1.5;
-}
-
-/* ----- Card ----- */
-[data-civitai-ui='card'] {
-  background: var(--ci-color-surface);
-  border-radius: var(--ci-radius);
-  color: var(--ci-color-text);
-}
-[data-civitai-ui='card'][data-with-border='true'] {
-  border: 1px solid var(--ci-color-border);
-}
-[data-civitai-ui='card'][data-padding='sm'] { padding: 10px; }
-[data-civitai-ui='card'][data-padding='md'] { padding: 16px; }
-[data-civitai-ui='card'][data-padding='lg'] { padding: 24px; }
-
-/* ----- Stack / Group ----- */
-[data-civitai-ui='stack'] {
-  display: flex;
-  flex-direction: column;
-}
-[data-civitai-ui='group'] {
-  display: flex;
-  flex-direction: row;
-}
-
-/* ----- Alert ----- */
-[data-civitai-ui='alert'] {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  padding: 12px 14px;
-  border-radius: var(--ci-radius);
-  border: 1px solid transparent;
-  font-size: 14px;
-  color: var(--ci-color-text);
-}
-[data-civitai-ui='alert'][data-color='info'] {
-  background: color-mix(in srgb, var(--ci-color-info) 12%, transparent);
-  border-color: color-mix(in srgb, var(--ci-color-info) 35%, transparent);
-}
-[data-civitai-ui='alert'][data-color='success'] {
-  background: color-mix(in srgb, var(--ci-color-success) 12%, transparent);
-  border-color: color-mix(in srgb, var(--ci-color-success) 35%, transparent);
-}
-[data-civitai-ui='alert'][data-color='warning'] {
-  background: color-mix(in srgb, var(--ci-color-warning) 14%, transparent);
-  border-color: color-mix(in srgb, var(--ci-color-warning) 35%, transparent);
-}
-[data-civitai-ui='alert'][data-color='error'] {
-  background: color-mix(in srgb, var(--ci-color-error) 12%, transparent);
-  border-color: color-mix(in srgb, var(--ci-color-error) 35%, transparent);
-}
-[data-civitai-ui='alert'] [data-civitai-ui-alert-body] {
-  flex: 1;
-  min-width: 0;
-}
-[data-civitai-ui='alert'] [data-civitai-ui-alert-title] {
-  font-weight: 600;
-  margin-bottom: 2px;
-}
-[data-civitai-ui='alert'] [data-civitai-ui-alert-close] {
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  color: inherit;
-  font-size: 16px;
-  line-height: 1;
-  padding: 0;
-  opacity: 0.7;
-}
-[data-civitai-ui='alert'] [data-civitai-ui-alert-close]:hover {
-  opacity: 1;
-}
-
-/* ----- Loader ----- */
-[data-civitai-ui='loader'] {
-  display: inline-block;
-  border-radius: 50%;
-  border-style: solid;
-  border-color: color-mix(in srgb, currentColor 25%, transparent);
-  border-top-color: currentColor;
-  color: var(--ci-color-primary);
-  animation: civitai-ui-spin 0.7s linear infinite;
-}
-[data-civitai-ui='loader'][data-size='sm'] { width: 16px; height: 16px; border-width: 2px; }
-[data-civitai-ui='loader'][data-size='md'] { width: 22px; height: 22px; border-width: 3px; }
-[data-civitai-ui='loader'][data-size='lg'] { width: 32px; height: 32px; border-width: 4px; }
-@keyframes civitai-ui-spin {
-  to { transform: rotate(360deg); }
-}
-[data-civitai-ui='button'] [data-civitai-ui='loader'] {
-  color: currentColor;
-}
-
-/* ----- Badge ----- */
-[data-civitai-ui='badge'] {
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  font-weight: 600;
-  line-height: 1;
-  white-space: nowrap;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-}
-[data-civitai-ui='badge'][data-size='sm'] { height: 18px; padding: 0 8px; font-size: 10px; }
-[data-civitai-ui='badge'][data-size='md'] { height: 22px; padding: 0 10px; font-size: 11px; }
-[data-civitai-ui='badge'][data-size='lg'] { height: 26px; padding: 0 12px; font-size: 13px; }
-[data-civitai-ui='badge'][data-variant='filled'] {
-  background: var(--ci-color-primary);
-  color: var(--ci-color-primary-fg);
-  border-color: var(--ci-color-primary);
-}
-[data-civitai-ui='badge'][data-variant='light'] {
-  background: color-mix(in srgb, var(--ci-color-primary) 14%, transparent);
-  color: var(--ci-color-primary);
-}
-[data-civitai-ui='badge'][data-variant='outline'] {
-  background: transparent;
-  color: var(--ci-color-primary);
-  border-color: var(--ci-color-primary);
 }
 
 /* ----- Modal ----- */
@@ -339,10 +86,10 @@ textarea[data-civitai-ui-control] {
   z-index: 1000;
 }
 [data-civitai-ui='modal'] {
-  background: var(--ci-color-surface);
-  color: var(--ci-color-text);
-  border: 1px solid var(--ci-color-border);
-  border-radius: var(--ci-radius);
+  background: var(--civitai-color-surface);
+  color: var(--civitai-color-text);
+  border: 1px solid var(--civitai-color-border);
+  border-radius: var(--civitai-radius);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
   width: 100%;
   max-width: 440px;
@@ -357,7 +104,7 @@ textarea[data-civitai-ui-control] {
   justify-content: space-between;
   gap: 12px;
   padding: 16px 18px;
-  border-bottom: 1px solid var(--ci-color-border);
+  border-bottom: 1px solid var(--civitai-color-border);
 }
 [data-civitai-ui='modal'] [data-civitai-ui-modal-title] {
   font-size: 16px;
@@ -368,13 +115,13 @@ textarea[data-civitai-ui-control] {
   background: transparent;
   border: none;
   cursor: pointer;
-  color: var(--ci-color-text-dimmed);
+  color: var(--civitai-color-text-dimmed);
   font-size: 20px;
   line-height: 1;
   padding: 0;
 }
 [data-civitai-ui='modal'] [data-civitai-ui-modal-close]:hover {
-  color: var(--ci-color-text);
+  color: var(--civitai-color-text);
 }
 [data-civitai-ui='modal'] [data-civitai-ui-modal-body] {
   padding: 18px;
@@ -389,13 +136,13 @@ textarea[data-civitai-ui-control] {
 }
 [data-civitai-ui-slider-value] {
   font-weight: 500;
-  color: var(--ci-color-text-dimmed);
+  color: var(--civitai-color-text-dimmed);
   font-variant-numeric: tabular-nums;
 }
 [data-civitai-ui-range] {
   width: 100%;
   margin: 0;
-  accent-color: var(--ci-color-primary);
+  accent-color: var(--civitai-color-primary);
   cursor: pointer;
 }
 [data-civitai-ui-range]:disabled {
@@ -403,7 +150,7 @@ textarea[data-civitai-ui-control] {
   cursor: not-allowed;
 }
 [data-civitai-ui-range]:focus-visible {
-  outline: 2px solid var(--ci-color-primary);
+  outline: 2px solid var(--civitai-color-primary);
   outline-offset: 2px;
 }
 
@@ -416,10 +163,10 @@ textarea[data-civitai-ui-control] {
   padding: 6px 0;
   background: transparent;
   border: none;
-  font-family: var(--ci-font);
+  font-family: var(--civitai-font);
   font-size: 14px;
   font-weight: 600;
-  color: var(--ci-color-text);
+  color: var(--civitai-color-text);
   text-align: left;
   cursor: pointer;
 }
@@ -430,7 +177,7 @@ textarea[data-civitai-ui-control] {
 [data-civitai-ui='collapse'] [data-civitai-ui-collapse-chevron] {
   display: inline-block;
   width: 1em;
-  color: var(--ci-color-text-dimmed);
+  color: var(--civitai-color-text-dimmed);
 }
 [data-civitai-ui='collapse'] [data-civitai-ui-collapse-region] {
   padding-top: 4px;
@@ -442,9 +189,9 @@ textarea[data-civitai-ui-control] {
   flex-direction: row;
   gap: 2px;
   padding: 3px;
-  background: var(--ci-color-surface-2);
-  border: 1px solid var(--ci-color-border);
-  border-radius: var(--ci-radius);
+  background: var(--civitai-color-surface-2);
+  border: 1px solid var(--civitai-color-border);
+  border-radius: var(--civitai-radius);
   vertical-align: middle;
 }
 [data-civitai-ui='segmented-control'][data-full-width='true'] {
@@ -457,10 +204,10 @@ textarea[data-civitai-ui-control] {
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: calc(var(--ci-radius) - 3px);
+  border-radius: calc(var(--civitai-radius) - 3px);
   background: transparent;
-  color: var(--ci-color-text-dimmed);
-  font-family: var(--ci-font);
+  color: var(--civitai-color-text-dimmed);
+  font-family: var(--civitai-font);
   font-weight: 600;
   line-height: 1;
   white-space: nowrap;
@@ -475,16 +222,16 @@ textarea[data-civitai-ui-control] {
 [data-civitai-ui='segmented-control'][data-size='md'] [data-civitai-ui-segment] { height: 30px; padding: 0 16px; font-size: 14px; }
 [data-civitai-ui='segmented-control'][data-size='lg'] [data-civitai-ui-segment] { height: 38px; padding: 0 20px; font-size: 16px; }
 [data-civitai-ui='segmented-control'] [data-civitai-ui-segment]:hover:not(:disabled):not([data-active]) {
-  color: var(--ci-color-text);
-  background: color-mix(in srgb, var(--ci-color-text) 6%, transparent);
+  color: var(--civitai-color-text);
+  background: color-mix(in srgb, var(--civitai-color-text) 6%, transparent);
 }
 [data-civitai-ui='segmented-control'] [data-civitai-ui-segment][data-active] {
-  background: var(--ci-color-surface);
-  color: var(--ci-color-primary);
+  background: var(--civitai-color-surface);
+  color: var(--civitai-color-primary);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 [data-civitai-ui='segmented-control'] [data-civitai-ui-segment]:focus-visible {
-  outline: 2px solid var(--ci-color-primary);
+  outline: 2px solid var(--civitai-color-primary);
   outline-offset: 1px;
 }
 [data-civitai-ui='segmented-control'] [data-civitai-ui-segment]:disabled {
@@ -496,13 +243,28 @@ textarea[data-civitai-ui-control] {
 }
 `;
 
-/** The full stylesheet shipped by the pack. Exported for SSR/manual use. */
-export const BLOCKS_UI_STYLES = `${TOKENS}\n${COMPONENT_CSS}`;
+/**
+ * The full stylesheet shipped by the pack, composed as a single string for
+ * SSR / manual (non-JS-inject) consumers: the `--civitai-*` tokens, the
+ * `@civitai/components` presentational CSS, then this package's interactive-5
+ * CSS. (At RUNTIME, `injectBlocksStyles()` injects these as three separately
+ * marked `<style>` elements instead — see below.)
+ */
+export const BLOCKS_UI_STYLES = `${tokensCss}\n${componentsCss}\n${INTERACTIVE_STYLES}`;
 
 /**
- * Inject the pack's stylesheet into a document's `<head>` exactly once.
- * Idempotent: subsequent calls (including from other components) detect the
- * marker `<style>` and no-op. Safe to call from any component's effect.
+ * Inject the pack's stylesheets into a document's `<head>`, idempotently.
+ *
+ * Injects THREE separately-marked `<style>` elements so they coexist cleanly in
+ * the block's sandbox iframe (and with any other consumer of the design-system
+ * packages in the same document):
+ *   1. `@civitai/theme` tokens      (`data-civitai-theme`)
+ *   2. `@civitai/components` CSS     (`data-civitai-components`)
+ *   3. this package's interactive-5  (`data-civitai-blocks-ui`)
+ * (1) and (2) are handled by `@civitai/components`'s `injectStyles()` (which
+ * injects the tokens first so the component rules always resolve their vars).
+ * Each has its own marker, so subsequent calls (including from other components,
+ * or from a block that also imports `@civitai/components` directly) no-op.
  *
  * @param doc Target document. Defaults to the ambient `document`. No-op when
  *   no document is available (e.g. SSR) — callers in the browser get styling,
@@ -512,11 +274,14 @@ export function injectBlocksStyles(doc?: Document): void {
   const target =
     doc ?? (typeof document !== 'undefined' ? document : undefined);
   if (!target) return;
-  // Already injected → no-op (idempotent).
+  // Tokens (@civitai/theme) + presentational-10 (@civitai/components). Idempotent
+  // via their own markers; injects tokens first so var() refs always resolve.
+  injectComponentsStyles(target);
+  // Interactive-5-only CSS. Already injected → no-op (idempotent).
   if (target.querySelector(`style[${STYLE_MARKER}]`)) return;
   const style = target.createElement('style');
   style.setAttribute(STYLE_MARKER, 'true');
-  style.textContent = BLOCKS_UI_STYLES;
+  style.textContent = INTERACTIVE_STYLES;
   const head = target.head ?? target.getElementsByTagName('head')[0];
   if (head) {
     head.appendChild(style);

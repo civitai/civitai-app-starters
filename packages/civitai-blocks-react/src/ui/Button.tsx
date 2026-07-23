@@ -15,7 +15,7 @@ export interface ButtonProps
   /**
    * Accent color. `'primary'` (default) or a semantic token name
    * (`'error' | 'success' | 'warning' | 'info'`), or any CSS color string —
-   * it overrides the `--ci-color-primary` the variant styling reads.
+   * it overrides the `--civitai-color-primary` the variant styling reads.
    */
   color?: 'primary' | 'error' | 'success' | 'warning' | 'info' | (string & {});
   /**
@@ -36,7 +36,7 @@ const SEMANTIC_COLORS = new Set(['error', 'success', 'warning', 'info']);
 
 function resolveAccent(color: ButtonProps['color']): string | undefined {
   if (!color || color === 'primary') return undefined;
-  if (SEMANTIC_COLORS.has(color)) return `var(--ci-color-${color})`;
+  if (SEMANTIC_COLORS.has(color)) return `var(--civitai-color-${color})`;
   return color;
 }
 
@@ -102,8 +102,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       style={
         accent
           ? ({
-              ['--ci-color-primary' as string]: accent,
-              ['--ci-color-primary-hover' as string]: accent,
+              ['--civitai-color-primary' as string]: accent,
+              ['--civitai-color-primary-hover' as string]: accent,
               ...style,
             } as React.CSSProperties)
           : style

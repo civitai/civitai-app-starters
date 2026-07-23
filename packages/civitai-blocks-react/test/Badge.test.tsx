@@ -37,14 +37,14 @@ describe('Badge', () => {
 
   it('maps a semantic color onto the primary CSS var', () => {
     render(<Badge color="success">x</Badge>);
-    expect(badge().style.getPropertyValue('--ci-color-primary')).toBe(
-      'var(--ci-color-success)'
+    expect(badge().style.getPropertyValue('--civitai-color-primary')).toBe(
+      'var(--civitai-color-success)'
     );
   });
 
   it('leaves the var untouched for the default color', () => {
     render(<Badge>x</Badge>);
-    expect(badge().style.getPropertyValue('--ci-color-primary')).toBe('');
+    expect(badge().style.getPropertyValue('--civitai-color-primary')).toBe('');
   });
 
   it('forwards a ref', () => {
