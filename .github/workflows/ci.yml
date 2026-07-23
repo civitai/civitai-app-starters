@@ -17,11 +17,11 @@ jobs:
     name: SDK (typecheck + test + build)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -36,7 +36,7 @@ jobs:
     name: Canonical schema drift-check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # The vendored manifest schema MUST stay byte-identical to the
       # server-published canonical (the single source of truth shared by the
@@ -49,9 +49,9 @@ jobs:
     name: Starter pins vs published
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -65,11 +65,11 @@ jobs:
     name: blocks-react (typecheck + test + build)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -108,11 +108,11 @@ jobs:
     name: design-system (theme + components + components-react)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -153,13 +153,13 @@ jobs:
     name: design-system drift guard (vs live civitai/civitai)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Check out civitai/civitai's theme source (public repo, SPARSE: just
       # src/providers) so the drift guard RUNS in CI instead of skipping.
       # REQUIRE_DRIFT_GUARD=1 (below) turns an absent/unreadable source into a
       # FAILURE, so this can't silently regress to a skip.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           repository: civitai/civitai
           ref: main
@@ -170,7 +170,7 @@ jobs:
 
       - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -192,11 +192,11 @@ jobs:
     name: README snippets (typecheck)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -226,11 +226,11 @@ jobs:
           - svelte-pwa
           - civitai-block-starter
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
