@@ -41,8 +41,28 @@
     user-select: none;
     text-decoration: none;
     transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+
+    /*
+     * Documented DEFAULTS (MARKUP.md): variant=filled, size=md. Applied on the
+     * BASE rule (unconditionally) so BARE markup — a `<button data-civitai-ui=
+     * "button">` with no `data-variant`/`data-size` — renders the documented
+     * default (filled + md), not an unstyled/zero-size button. The explicit
+     * `[data-variant]` / `[data-size]` rules below OVERRIDE (all four variants
+     * set their own bg/border/hover, so the base filled default only ever wins
+     * for a bare button). Every non-filled variant also sets its own
+     * `border-color`, so the base primary border never leaks to them.
+     */
     background: var(--civitai-color-primary);
     color: var(--civitai-color-primary-fg);
+    border-color: var(--civitai-color-primary);
+    height: 36px;
+    padding: 0 18px;
+    font-size: 14px;
+
+    &:hover:not(:disabled) {
+      background: var(--civitai-color-primary-hover);
+      border-color: var(--civitai-color-primary-hover);
+    }
 
     &[data-size='sm'] { height: 30px; padding: 0 14px; font-size: 13px; }
     &[data-size='md'] { height: 36px; padding: 0 18px; font-size: 14px; }
@@ -315,6 +335,17 @@
     font-size: 14px;
     color: var(--civitai-color-text);
 
+    /*
+     * Documented DEFAULT (MARKUP.md): color=info (default intent). Applied on
+     * the base rule so a BARE alert — `<div data-civitai-ui="alert">` with no
+     * `data-color` — renders the info intent (tinted bg + border), not just the
+     * neutral chrome. The explicit `[data-color]` rules below OVERRIDE (success
+     * / warning / error each set both bg + border-color), so the info default
+     * only ever wins when `data-color` is omitted.
+     */
+    background: color-mix(in srgb, var(--civitai-color-info) 12%, transparent);
+    border-color: color-mix(in srgb, var(--civitai-color-info) 35%, transparent);
+
     &[data-color='info'] {
       background: color-mix(in srgb, var(--civitai-color-info) 12%, transparent);
       border-color: color-mix(in srgb, var(--civitai-color-info) 35%, transparent);
@@ -363,6 +394,15 @@
     color: var(--civitai-color-primary);
     animation: civitai-ui-spin 0.7s linear infinite;
 
+    /*
+     * Documented DEFAULT (MARKUP.md): size=md. Applied on the base rule so a
+     * BARE loader — `<span data-civitai-ui="loader">` with no `data-size` — has
+     * real dimensions (otherwise 0×0 and invisible). sm/lg OVERRIDE below.
+     */
+    width: 22px;
+    height: 22px;
+    border-width: 3px;
+
     &[data-size='sm'] { width: 16px; height: 16px; border-width: 2px; }
     &[data-size='md'] { width: 22px; height: 22px; border-width: 3px; }
     &[data-size='lg'] { width: 32px; height: 32px; border-width: 4px; }
@@ -386,6 +426,23 @@
     text-transform: uppercase;
     letter-spacing: 0.02em;
 
+    /*
+     * Documented DEFAULTS (MARKUP.md): variant=filled, size=md. Applied on the
+     * base rule so a BARE badge — `<span data-civitai-ui="badge">` with no
+     * `data-variant`/`data-size` (MARKUP's own minimal example) — renders
+     * filled + md (padding + primary fill), not an unstyled, zero-padding pill.
+     * The explicit `[data-variant]`/`[data-size]` rules below OVERRIDE. Because
+     * the base now carries a primary `border-color`, the `light` variant (which
+     * previously relied on the base transparent border) explicitly resets it to
+     * transparent so light badges are visually unchanged.
+     */
+    height: 22px;
+    padding: 0 10px;
+    font-size: 11px;
+    background: var(--civitai-color-primary);
+    color: var(--civitai-color-primary-fg);
+    border-color: var(--civitai-color-primary);
+
     &[data-size='sm'] { height: 18px; padding: 0 8px; font-size: 10px; }
     &[data-size='md'] { height: 22px; padding: 0 10px; font-size: 11px; }
     &[data-size='lg'] { height: 26px; padding: 0 12px; font-size: 13px; }
@@ -397,6 +454,7 @@
     &[data-variant='light'] {
       background: color-mix(in srgb, var(--civitai-color-primary) 14%, transparent);
       color: var(--civitai-color-primary);
+      border-color: transparent;
     }
     &[data-variant='outline'] {
       background: transparent;
