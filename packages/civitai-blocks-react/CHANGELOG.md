@@ -1,5 +1,13 @@
 # @civitai/blocks-react
 
+## 0.35.1
+
+### Patch Changes
+
+- Updated dependencies [b896dd9]
+  - @civitai/theme@0.2.0
+  - @civitai/components@0.2.0
+
 ## 0.35.0
 
 ### Minor Changes
