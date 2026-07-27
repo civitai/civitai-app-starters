@@ -1,4 +1,5 @@
 <script lang="ts">
+  import DesignSystemDemo from '$lib/components/DesignSystemDemo.svelte';
   import GenerateForm from '$lib/components/GenerateForm.svelte';
   import LogoutControls from '$lib/components/LogoutControls.svelte';
   import type { PageData } from './$types';
@@ -12,6 +13,8 @@
     <LogoutControls />
   {/if}
 </header>
+
+<DesignSystemDemo />
 
 {#if data.error}
   <div

@@ -35,6 +35,8 @@
   },
   "dependencies": {
     "@civitai/app-sdk": "^0.26.0",
+    "@civitai/components": "^0.2.1",
+    "@civitai/theme": "^0.2.0",
     "@t3-oss/env-core": "^0.13.0",
     "zod": "^3.24.0"
   },

@@ -3,6 +3,7 @@ import { getMe, type Me } from './lib/api';
 import { LoginButton } from './components/LoginButton';
 import { LogoutControls } from './components/LogoutControls';
 import { GenerateForm } from './components/GenerateForm';
+import { DesignSystemDemo } from './components/DesignSystemDemo';
 
 function readQueryFlash(): { error?: string; notice?: string } {
   const params = new URLSearchParams(window.location.search);
@@ -38,6 +39,8 @@ export function App() {
         <h1 className="text-2xl font-semibold">Civitai App Starter (React PWA)</h1>
         {me?.authenticated && <LogoutControls />}
       </header>
+
+      <DesignSystemDemo />
 
       {flash.error && (
         <div className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
