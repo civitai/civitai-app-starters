@@ -1,1 +1,12 @@
+/*
+ * Cascade layer order — declared ONCE, before any layered CSS is imported.
+ *
+ * Tailwind v4's Preflight reset lives in `@layer base` (transparent buttons,
+ * zeroed borders); the Civitai design system ships in `@layer civitai.components`.
+ * Listing `civitai.components` LAST guarantees it wins over the reset, so the
+ * bare `data-civitai-ui` markup never renders unstyled (the @layer trap). The
+ * design-system stylesheets themselves are imported in the root `+layout.svelte`.
+ */
+@layer theme, base, components, utilities, app, civitai.components;
+
 @import 'tailwindcss';

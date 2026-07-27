@@ -1,5 +1,10 @@
 import type { Metadata } from 'next';
 import './globals.css';
+// Civitai design system — tokens + component CSS. Loaded in the layout so the
+// styles are present in the SSR HTML on first paint (order-locked by the
+// @layer declaration at the top of globals.css).
+import '@civitai/theme/styles.css';
+import '@civitai/components/styles.css';
 
 export const metadata: Metadata = {
   title: 'Civitai App Starter',

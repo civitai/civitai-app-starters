@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import DesignSystemDemo from './components/DesignSystemDemo.svelte';
   import GenerateForm from './components/GenerateForm.svelte';
   import LoginButton from './components/LoginButton.svelte';
   import LogoutControls from './components/LogoutControls.svelte';
@@ -60,6 +61,8 @@
       <LogoutControls />
     {/if}
   </header>
+
+  <DesignSystemDemo />
 
   {#if flash.error}
     <div

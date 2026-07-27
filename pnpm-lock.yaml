@@ -413,6 +413,15 @@ importers:
       '@civitai/app-sdk':
         specifier: workspace:*
         version: link:../../packages/civitai-app-sdk
+      '@civitai/components':
+        specifier: workspace:^
+        version: link:../../packages/civitai-components
+      '@civitai/components-react':
+        specifier: workspace:^
+        version: link:../../packages/civitai-components-react
+      '@civitai/theme':
+        specifier: workspace:^
+        version: link:../../packages/civitai-theme
       '@t3-oss/env-nextjs':
         specifier: ^0.13.0
         version: 0.13.11(typescript@5.9.3)(zod@3.25.76)
@@ -468,6 +477,12 @@ importers:
       '@civitai/app-sdk':
         specifier: workspace:*
         version: link:../../packages/civitai-app-sdk
+      '@civitai/components-react':
+        specifier: workspace:^
+        version: link:../../packages/civitai-components-react
+      '@civitai/theme':
+        specifier: workspace:^
+        version: link:../../packages/civitai-theme
       '@hono/node-server':
         specifier: ^2.0.4
         version: 2.0.4(hono@4.12.23)
@@ -526,6 +541,12 @@ importers:
       '@civitai/app-sdk':
         specifier: workspace:*
         version: link:../../packages/civitai-app-sdk
+      '@civitai/components':
+        specifier: workspace:^
+        version: link:../../packages/civitai-components
+      '@civitai/theme':
+        specifier: workspace:^
+        version: link:../../packages/civitai-theme
       '@hono/node-server':
         specifier: ^2.0.4
         version: 2.0.4(hono@4.12.23)
@@ -584,6 +605,12 @@ importers:
       '@civitai/app-sdk':
         specifier: workspace:*
         version: link:../../packages/civitai-app-sdk
+      '@civitai/components':
+        specifier: workspace:^
+        version: link:../../packages/civitai-components
+      '@civitai/theme':
+        specifier: workspace:^
+        version: link:../../packages/civitai-theme
       '@t3-oss/env-core':
         specifier: ^0.13.0
         version: 0.13.11(typescript@5.9.3)(zod@3.25.76)

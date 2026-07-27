@@ -1,9 +1,25 @@
+/*
+ * Cascade layer order — declared ONCE, before any layered CSS is imported.
+ *
+ * Tailwind v4's Preflight reset lives in `@layer base` (it zeroes borders and
+ * makes `button { background: transparent }`); the Civitai design system ships
+ * every rule in `@layer civitai.components`. Layer order is decided by
+ * first-encounter, so listing `civitai.components` LAST guarantees the design
+ * system wins over the reset — otherwise the components render silently
+ * unstyled (transparent buttons, borderless cards). This is the @layer trap.
+ *
+ * `app` holds this starter's own global rules, kept below civitai.components.
+ */
+@layer theme, base, components, utilities, app, civitai.components;
+
 @import 'tailwindcss';
 
-:root {
-  color-scheme: light dark;
-}
+@layer app {
+  :root {
+    color-scheme: light dark;
+  }
 
-body {
-  @apply bg-zinc-50 text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
+  body {
+    @apply bg-zinc-50 text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
+  }
 }
