@@ -414,14 +414,14 @@ importers:
         specifier: workspace:*
         version: link:../../packages/civitai-app-sdk
       '@civitai/components':
-        specifier: workspace:^
-        version: link:../../packages/civitai-components
+        specifier: ^0.2.1
+        version: 0.2.1
       '@civitai/components-react':
-        specifier: workspace:^
-        version: link:../../packages/civitai-components-react
+        specifier: ^0.2.1
+        version: 0.2.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@civitai/theme':
-        specifier: workspace:^
-        version: link:../../packages/civitai-theme
+        specifier: ^0.2.0
+        version: 0.2.0
       '@t3-oss/env-nextjs':
         specifier: ^0.13.0
         version: 0.13.11(typescript@5.9.3)(zod@3.25.76)
@@ -478,11 +478,11 @@ importers:
         specifier: workspace:*
         version: link:../../packages/civitai-app-sdk
       '@civitai/components-react':
-        specifier: workspace:^
-        version: link:../../packages/civitai-components-react
+        specifier: ^0.2.1
+        version: 0.2.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@civitai/theme':
-        specifier: workspace:^
-        version: link:../../packages/civitai-theme
+        specifier: ^0.2.0
+        version: 0.2.0
       '@hono/node-server':
         specifier: ^2.0.4
         version: 2.0.4(hono@4.12.23)
@@ -542,11 +542,11 @@ importers:
         specifier: workspace:*
         version: link:../../packages/civitai-app-sdk
       '@civitai/components':
-        specifier: workspace:^
-        version: link:../../packages/civitai-components
+        specifier: ^0.2.1
+        version: 0.2.1
       '@civitai/theme':
-        specifier: workspace:^
-        version: link:../../packages/civitai-theme
+        specifier: ^0.2.0
+        version: 0.2.0
       '@hono/node-server':
         specifier: ^2.0.4
         version: 2.0.4(hono@4.12.23)
@@ -606,11 +606,11 @@ importers:
         specifier: workspace:*
         version: link:../../packages/civitai-app-sdk
       '@civitai/components':
-        specifier: workspace:^
-        version: link:../../packages/civitai-components
+        specifier: ^0.2.1
+        version: 0.2.1
       '@civitai/theme':
-        specifier: workspace:^
-        version: link:../../packages/civitai-theme
+        specifier: ^0.2.0
+        version: 0.2.0
       '@t3-oss/env-core':
         specifier: ^0.13.0
         version: 0.13.11(typescript@5.9.3)(zod@3.25.76)
@@ -1234,6 +1234,21 @@ packages:
 
   '@changesets/write@0.4.0':
     resolution: {integrity: sha512-CdTLvIOPiCNuH71pyDu3rA+Q0n65cmAbXnwWH84rKGiFumFzkmHNT8KHTMEchcxN+Kl8I54xGUhJ7l3E7X396Q==}
+
+  '@civitai/components-react@0.2.1':
+    resolution: {integrity: sha512-LwzxAv7u97/KKkyynd1wWxr67rghGRS+cThzlWISiF52oA7/kj3ETjpPukJkpE8syHi+UHQbEi8VwJ6nx9AgnQ==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      react: ^18.0.0 || ^19.0.0
+      react-dom: ^18.0.0 || ^19.0.0
+
+  '@civitai/components@0.2.1':
+    resolution: {integrity: sha512-HRLftwBdtj+lNZM3rRBbO4T+2pd6Xd9o6o3LvQ4pFsVy2ofNFGn2XrL2OZXlc/+6FCs8q7++EyumOqn6A2MX+A==}
+    engines: {node: '>=20'}
+
+  '@civitai/theme@0.2.0':
+    resolution: {integrity: sha512-eYtfCiMvrjH2aiBg0G0pMFXnE/fo6tRL4oBQVLNQ863WKPIrLxUsYfsSlRMYF9tIQAaJ1N28OdUkxs6iYNb7rQ==}
+    engines: {node: '>=20'}
 
   '@emnapi/core@1.10.0':
     resolution: {integrity: sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw==}
@@ -5549,6 +5564,19 @@ snapshots:
       fs-extra: 7.0.1
       human-id: 4.1.3
       prettier: 2.8.8
+
+  '@civitai/components-react@0.2.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
+    dependencies:
+      '@civitai/components': 0.2.1
+      '@civitai/theme': 0.2.0
+      react: 19.2.6
+      react-dom: 19.2.6(react@19.2.6)
+
+  '@civitai/components@0.2.1':
+    dependencies:
+      '@civitai/theme': 0.2.0
+
+  '@civitai/theme@0.2.0': {}
 
   '@emnapi/core@1.10.0':
     dependencies:
