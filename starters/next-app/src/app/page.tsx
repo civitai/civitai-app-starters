@@ -1,6 +1,7 @@
 import { getMe } from '@/lib/civitai';
 import { getSession } from '@/lib/session';
 import { scopesFromBitmask } from '@civitai/app-sdk/scopes';
+import { DesignSystemDemo } from '@/components/DesignSystemDemo';
 import { GenerateForm } from '@/components/GenerateForm';
 import { LoginButton } from '@/components/LoginButton';
 import { LogoutControls } from '@/components/LogoutControls';
@@ -19,6 +20,8 @@ export default async function HomePage({
         <h1 className="text-2xl font-semibold">Civitai App Starter</h1>
         {session && <LogoutControls />}
       </header>
+
+      <DesignSystemDemo />
 
       {params.error && (
         <div className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
