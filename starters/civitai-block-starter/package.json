@@ -30,8 +30,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@civitai/app-sdk": "workspace:^",
-    "@civitai/blocks-react": "workspace:^",
+    "@civitai/app-sdk": "^0.26.0",
+    "@civitai/blocks-react": "^0.35.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
