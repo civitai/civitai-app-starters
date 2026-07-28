@@ -30,6 +30,12 @@ export const COMPONENT_NAMES = [
   'alert',
   'loader',
   'badge',
+  'slider',
+  'segmented-control',
+  'toast-region',
+  'toast',
+  'tooltip',
+  'image',
 ] as const;
 export type ComponentName = (typeof COMPONENT_NAMES)[number];
 

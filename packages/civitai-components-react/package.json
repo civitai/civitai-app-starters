@@ -40,6 +40,7 @@
     "@testing-library/react": "^16.0.0",
     "@types/node": "^25.9.1",
     "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.0",
     "@vitest/browser": "^4.1.7",
     "@vitest/browser-playwright": "^4.1.7",
     "axe-core": "^4.10.2",

@@ -528,4 +528,283 @@
       }
     }
   }
+
+  /* ----- Slider ----- */
+  /*
+   * A themed native <input type="range">: `accent-color` carries the primary
+   * tint (native control, so keyboard arrow-key nav + ARIA come for free), plus
+   * a full-width track, a token focus ring, and disabled/invalid states. Like
+   * checkbox/radio, the range input deliberately does NOT carry
+   * `data-civitai-ui-control` (that is the bordered field-input chrome). The
+   * label/description/error reuse the shared field markers, laid out in a
+   * column; an optional value read-out sits inline with the label in a header.
+   */
+  [data-civitai-ui='slider'] {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  [data-civitai-ui-slider-header] {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  [data-civitai-ui-slider-value] {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--civitai-color-text-dimmed);
+    font-variant-numeric: tabular-nums;
+  }
+  [data-civitai-ui='slider'] input[type='range'] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 6px;
+    margin: 6px 0;
+    padding: 0;
+    border-radius: 999px;
+    accent-color: var(--civitai-color-primary);
+    background: var(--civitai-color-gray-2);
+    cursor: pointer;
+  }
+  [data-theme='dark'] [data-civitai-ui='slider'] input[type='range'] {
+    background: var(--civitai-color-surface-2);
+  }
+  [data-civitai-ui='slider'] input[type='range']:focus-visible {
+    outline: 2px solid var(--civitai-color-primary);
+    outline-offset: 4px;
+  }
+  [data-civitai-ui='slider'] input[type='range']:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+    accent-color: var(--civitai-color-gray-5);
+  }
+  [data-civitai-ui='slider'][data-invalid] input[type='range'] {
+    accent-color: var(--civitai-color-error);
+  }
+
+  /* ----- SegmentedControl / Tabs ----- */
+  /*
+   * A `role=tablist` of segment buttons (`role=tab`). Presentational chrome
+   * only — the roving-tabindex + arrow-key nav + selection follow-focus live in
+   * the React binding (or must be author-provided for hand HTML). The selected
+   * segment (`aria-selected='true'`) lifts to the surface color with a soft
+   * shadow; unselected segments read dimmed. Paired tab panels use
+   * `data-civitai-ui-tabpanel` (role=tabpanel).
+   */
+  [data-civitai-ui='segmented-control'] {
+    display: inline-flex;
+    gap: 2px;
+    padding: 4px;
+    background: var(--civitai-color-gray-1);
+    border-radius: var(--civitai-radius);
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  [data-theme='dark'] [data-civitai-ui='segmented-control'] {
+    background: var(--civitai-color-surface-2);
+  }
+  [data-civitai-ui-segment] {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    background: transparent;
+    color: var(--civitai-color-text-dimmed);
+    font-family: var(--civitai-font);
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    border-radius: calc(var(--civitai-radius) - 1px);
+    transition: background-color 120ms ease, color 120ms ease;
+
+    /* Documented DEFAULT (MARKUP.md): size=md. On the base rule so a bare
+       segment renders at md height, not zero-height. sm/lg override below. */
+    height: 30px;
+    padding: 0 14px;
+    font-size: 13px;
+
+    &[data-size='sm'] { height: 26px; padding: 0 10px; font-size: 12px; }
+    &[data-size='md'] { height: 30px; padding: 0 14px; font-size: 13px; }
+    &[data-size='lg'] { height: 38px; padding: 0 18px; font-size: 15px; }
+
+    &:hover:not(:disabled):not([aria-selected='true']) {
+      color: var(--civitai-color-text);
+    }
+    &[aria-selected='true'] {
+      background: var(--civitai-color-surface);
+      color: var(--civitai-color-text);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+    }
+    &:focus-visible {
+      outline: 2px solid var(--civitai-color-primary);
+      outline-offset: 2px;
+    }
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+  [data-civitai-ui-tabpanel] {
+    color: var(--civitai-color-text);
+
+    &:focus-visible {
+      outline: 2px solid var(--civitai-color-primary);
+      outline-offset: 2px;
+    }
+    &[hidden] { display: none; }
+  }
+
+  /* ----- Toast ----- */
+  /*
+   * `toast-region` is the fixed-position `aria-live` host (bottom-right stack).
+   * The behavior — enqueue, auto-dismiss timers, portal — lives in the React
+   * binding's ToastProvider/useToast; the presentational `toast` is a standalone
+   * component so hand HTML and React share one visual contract. Each toast is
+   * opaque (it sits over content) with an intent-colored left accent, mirroring
+   * Alert's `data-color` set.
+   */
+  [data-civitai-ui='toast-region'] {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: min(92vw, 380px);
+    pointer-events: none;
+  }
+  [data-civitai-ui='toast'] {
+    pointer-events: auto;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 12px 14px;
+    border-radius: var(--civitai-radius);
+    background: var(--civitai-color-surface);
+    color: var(--civitai-color-text);
+    border: 1px solid var(--civitai-color-border);
+    border-left: 4px solid var(--civitai-color-border);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+    font-size: 14px;
+
+    &[data-color='info'] { border-left-color: var(--civitai-color-info); }
+    &[data-color='success'] { border-left-color: var(--civitai-color-success); }
+    &[data-color='warning'] { border-left-color: var(--civitai-color-warning); }
+    &[data-color='error'] { border-left-color: var(--civitai-color-error); }
+
+    & [data-civitai-ui-toast-body] {
+      flex: 1;
+      min-width: 0;
+    }
+    & [data-civitai-ui-toast-title] {
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+    & [data-civitai-ui-toast-close] {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      color: inherit;
+      font-size: 16px;
+      line-height: 1;
+      padding: 0;
+      opacity: 0.7;
+
+      &:hover { opacity: 1; }
+    }
+  }
+
+  /* ----- Tooltip ----- */
+  /*
+   * A hover/focus tooltip: a positioned `role=tooltip` bubble revealed when the
+   * wrapper is hovered or contains focus (pure-CSS reveal), or explicitly via
+   * `data-open='true'` (the React binding also wires `aria-describedby` +
+   * Escape-to-dismiss). The bubble is a dark chip (gray-9) with light text in
+   * both themes.
+   */
+  [data-civitai-ui='tooltip'] {
+    position: relative;
+    display: inline-flex;
+  }
+  [data-civitai-ui-tooltip-bubble] {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 200;
+    max-width: 260px;
+    width: max-content;
+    padding: 4px 8px;
+    border-radius: var(--civitai-radius);
+    background: var(--civitai-color-gray-9);
+    color: var(--civitai-color-primary-fg);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.4;
+    text-align: center;
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 120ms ease;
+  }
+  [data-civitai-ui='tooltip']:hover [data-civitai-ui-tooltip-bubble],
+  [data-civitai-ui='tooltip']:focus-within [data-civitai-ui-tooltip-bubble],
+  [data-civitai-ui-tooltip-bubble][data-open='true'] {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  /* ----- Image ----- */
+  /*
+   * A media container with a token placeholder background (visible while the
+   * image loads), object-fit control, and a broken-image fallback. `data-status`
+   * (loading|loaded|error) — set by the React binding's onLoad/onError, or by
+   * the author for hand HTML — fades the <img> in on load and swaps to the
+   * fallback overlay on error. Bare markup (no `data-status`) shows the image.
+   */
+  [data-civitai-ui='image'] {
+    position: relative;
+    display: block;
+    overflow: hidden;
+    background: var(--civitai-color-gray-2);
+    border-radius: var(--civitai-radius);
+  }
+  [data-theme='dark'] [data-civitai-ui='image'] {
+    background: var(--civitai-color-surface-2);
+  }
+  [data-civitai-ui-image-img] {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 1;
+    transition: opacity 200ms ease;
+
+    &[data-fit='contain'] { object-fit: contain; }
+    &[data-fit='cover'] { object-fit: cover; }
+  }
+  [data-civitai-ui='image'][data-status='loading'] [data-civitai-ui-image-img],
+  [data-civitai-ui='image'][data-status='error'] [data-civitai-ui-image-img] {
+    opacity: 0;
+  }
+  [data-civitai-ui-image-fallback] {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    color: var(--civitai-color-text-dimmed);
+    font-size: 13px;
+    text-align: center;
+  }
+  [data-civitai-ui='image'][data-status='error'] [data-civitai-ui-image-fallback] {
+    display: flex;
+  }
 }
