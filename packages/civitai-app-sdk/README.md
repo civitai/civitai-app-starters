@@ -24,6 +24,8 @@ pnpm add @civitai/app-sdk
 
 ```ts
 import { defineBlock, BLOCK_SCOPES } from '@civitai/app-sdk/blocks';
+// Opaque-origin storage shim — see "Web storage in a block" below:
+import '@civitai/app-sdk/safe-storage';
 // JSON Schema for the manifest, e.g. for IDE validation:
 import manifestSchema from '@civitai/app-sdk/schemas/app-block/v1.json' with { type: 'json' };
 ```
@@ -129,10 +131,67 @@ Mirrors a strict subset of the civitai/civitai server gate. It throws on:
 > **server-side** at submit time (gotcha #33). Keep `iframe.src` =
 > `https://<blockId>.civit.ai/` (root, no path prefix) and your Vite `base: '/'`.
 
+### Web storage in a block (`@civitai/app-sdk/safe-storage`)
+
+Block iframes are sandboxed **without `allow-same-origin`**, so the document has
+an *opaque origin*. There is no origin to key web storage against, and the
+platform doesn't hand back an empty store — merely **reading** the property
+throws:
+
+```
+SecurityError: Failed to read the 'localStorage' property from 'Window':
+The document is sandboxed and lacks the 'allow-same-origin' flag.
+```
+
+Guarding your own call sites isn't enough: **any dependency** that touches
+storage unguarded takes the app down, and libraries routinely mislabel the
+failure — one popular viewer catches the SecurityError and reports "your browser
+does not support WebGL", so the app's own fallback never runs and the user
+dead-ends on a wrong error message.
+
+So the SDK repairs it for you. Importing `@civitai/app-sdk/blocks` (or
+`@civitai/blocks-react`, which imports it) installs a spec-shaped in-memory
+`Storage` over `localStorage` / `sessionStorage` — **only** when a real
+round-trip probe shows they're unusable. Rules:
+
+- **No-op where storage works.** A healthy `Storage` is never replaced, and its
+  contents are never read or written (beyond a probe key it removes).
+- **No-op where storage is absent** (Node / SSR / workers). Nothing is
+  fabricated, so `typeof localStorage === 'undefined'` feature detection keeps
+  working server-side.
+- **Idempotent**, and safe to call as often as you like.
+- The fallback is **session-scoped** — nothing survives a reload. That's the
+  honest semantic at an opaque origin. Treat storage as a cache; use the
+  platform's app-storage messages (`useAppStorage` in `@civitai/blocks-react`)
+  for anything durable.
+
+Most apps need to do nothing. Two cases where you reach for it explicitly:
+
+```ts
+// 1. A dependency reads storage while its module EVALUATES, and it's imported
+//    before anything from the SDK. Import statements are hoisted above every
+//    statement, so only another import can win the race — put this first in
+//    your entry file.
+import '@civitai/app-sdk/safe-storage';
+```
+
+```ts
+// 2. Right before dynamically importing such a dependency.
+import { installSafeStorage } from '@civitai/app-sdk/blocks';
+
+installSafeStorage(); // no-op if already healthy
+const { Viewer } = await import(viewerModuleSpecifier);
+```
+
+`installSafeStorage(scope?)` returns `{ localStorage, sessionStorage }` — `true`
+for each global it actually replaced. `createMemoryStorage()` is exported too,
+if you want the standalone `Storage` work-alike.
+
 ### Version compatibility
 
 | `@civitai/app-sdk` | adds (blocks surface) |
 |---|---|
+| `0.27.0` | `@civitai/app-sdk/safe-storage` — opaque-origin `localStorage`/`sessionStorage` shim, auto-installed by the `blocks` subpath |
 | `0.24.0` | `QUERY_APP_WORKFLOWS` / `CANCEL_APP_WORKFLOW` messages + the `AppWorkflow` type (app generator subqueue, PR #3164) |
 | `0.7.0` | `CANCEL_WORKFLOW` / `WORKFLOW_CANCELED` messages (real cancel, gotcha #51) |
 | `0.6.0` | `APP_STORAGE_*` messages, `ManifestSettings` types |

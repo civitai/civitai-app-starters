@@ -7,6 +7,17 @@
  * from any runtime — Node, browsers, workers — with no React dependency.
  */
 
+// FIRST import, on purpose. Blocks are framed at an opaque origin (sandbox
+// without `allow-same-origin`), where touching `localStorage`/`sessionStorage`
+// THROWS — including from third-party dependencies nobody can guard from the
+// outside. Importing this repairs those globals before anything else in the
+// block's module graph can trip over them. It is inert wherever storage works
+// or is absent (Node/SSR/workers); see `../safe-storage/index.ts`.
+import '../safe-storage/index.js';
+
+export { installSafeStorage, createMemoryStorage } from '../safe-storage/index.js';
+export type { SafeStorageInstallResult, SafeStorageName } from '../safe-storage/index.js';
+
 export { defineBlock, BlockManifestError } from './defineBlock.js';
 export type { DefineBlockConfig } from './defineBlock.js';
 

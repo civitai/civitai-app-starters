@@ -31,6 +31,10 @@
       "types": "./dist/blocks/index.d.ts",
       "import": "./dist/blocks/index.js"
     },
+    "./safe-storage": {
+      "types": "./dist/safe-storage/index.d.ts",
+      "import": "./dist/safe-storage/index.js"
+    },
     "./schemas/app-block/v1.json": "./schemas/app-block/v1.json"
   },
   "files": [

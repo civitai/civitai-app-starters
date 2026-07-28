@@ -21,6 +21,7 @@ to `dist/`. Tested with `vitest`. Published to npm with subpath exports
 | `src/cookies/` | AES-256-CTR `sealCookie` / `unsealCookie` + `buildSetCookieHeader` / `readCookie`. Used by every starter to seal sessions into one `httpOnly` cookie. |
 | `src/orchestrator/` | Orchestrator client factory, `estimateWorkflow` / `submitWorkflow` / `getWorkflow` / `pollWorkflow`, `buildTextToImageBody`, types + `OrchestratorError`. |
 | `src/blocks/` | Civitai Apps contract: `BlockManifestV1`, `defineBlock`, `BLOCK_SCOPES`, typed parent↔block `postMessage` protocol. **Subpath-only** (`@civitai/app-sdk/blocks`) — deliberately not re-exported from `src/index.ts` so default-imports stay lean. Hooks + iframe transport live in [`@civitai/blocks-react`](../civitai-blocks-react/) so this module stays runtime-agnostic. |
+| `src/safe-storage/` | Opaque-origin `localStorage`/`sessionStorage` repair. Block iframes are sandboxed without `allow-same-origin`, where *reading* those globals throws — usually from a dependency nobody can guard. **The only module in this package with an import side effect**, and deliberately so: import order is hoisted, so a side-effect import is the only thing that can beat a dependency that reads storage while evaluating. `src/blocks/index.ts` imports it first; `@civitai/blocks-react` does too. It replaces a global only after a round-trip probe proves it unusable — never touches working storage, never fabricates storage where the runtime has none (Node/SSR/workers). |
 | `schemas/app-block/v1.json` | JSON Schema (draft-07) for the manifest. Shipped at the `./schemas/app-block/v1.json` subpath for offline validation; kept in lockstep with `defineBlock`. |
 | `src/index.ts` | Re-exports the headline functions. Subpath exports stay the primary public surface. |
 | `package.json` `exports` | Drives what's importable. Adding a new subpath means adding a new entry here. |
@@ -50,6 +51,10 @@ to `dist/`. Tested with `vitest`. Published to npm with subpath exports
 - ❌ Adding runtime dependencies without an explicit reason. Even small
   ones (e.g. `cookie`) get rewritten by hand here.
 - ❌ Persisting state in module scope. Every function is stateless.
+  (The one sanctioned import side effect is `src/safe-storage/`'s
+  install-on-import — it stores no state, and hoisting makes a side effect the
+  only mechanism that can run before a dependency's own module body. Don't
+  "clean it up" into an opt-in call; that reintroduces the bug it fixes.)
 - ❌ Mutating arguments. Inputs are read-only; return new objects.
 - ❌ `console.log` from library code. Throw or return; let callers log.
 
