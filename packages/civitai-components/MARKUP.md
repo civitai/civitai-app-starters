@@ -222,7 +222,11 @@ keyboard (arrow keys, Home/End, Page Up/Down) + ARIA come from the native contro
   - optional `<span id="ID-err" data-civitai-ui-error role="alert">`
 - Wire a11y: input `aria-describedby="ID-desc ID-err"`, and when invalid
   `aria-invalid="true"` + `data-invalid="true"` on the wrapper (tints the track
-  to the error token). Disabled is the native input state.
+  to the error token). Disabled is the native input state. When you render a
+  formatted value read-out (e.g. `20%`, `Large`), also set **`aria-valuetext`**
+  on the input to that same string so screen readers announce it instead of the
+  raw `aria-valuenow` (the React binding sets this automatically from a
+  string/number `valueLabel`).
 
 ```html
 <div data-civitai-ui="slider">
@@ -235,26 +239,42 @@ keyboard (arrow keys, Home/End, Page Up/Down) + ARIA come from the native contro
 ```
 
 ### SegmentedControl / Tabs — `data-civitai-ui="segmented-control"`
-A `role="tablist"` of segment buttons (`role="tab"`) with **roving tabindex** +
-**arrow-key navigation** + **`aria-controls`/tabpanel** semantics. The CSS is
-presentational; hand-HTML authors MUST implement the keyboard behavior
-themselves (the `@civitai/components-react` `SegmentedControl` binding does it
-for you — prefer it for interactive use).
-- Wrapper **`<div data-civitai-ui="segmented-control" role="tablist">`** with an
-  accessible name (**`aria-label`** or `aria-labelledby`). `data-size`: `sm` ·
-  `md` (default) · `lg`.
-- Each segment: **`<button data-civitai-ui-segment role="tab">`** with:
-  - **`aria-selected="true|false"`** — exactly one selected.
-  - **`tabindex="0"` on the selected** segment, **`tabindex="-1"` on the rest**
-    (roving tabindex).
-  - optional **`aria-controls="PANEL_ID"`** + **`id`** linking its tab panel.
-  - `disabled` for a disabled segment.
+A row of segment buttons with **roving tabindex** + **arrow-key navigation**,
+in one of **two ARIA role modes**. The CSS is presentational; hand-HTML authors
+MUST implement the keyboard behavior themselves (the `@civitai/components-react`
+`SegmentedControl` binding does it for you — prefer it for interactive use, and
+pick the mode with its `mode` prop: `'toggle'` default, or `'tabs'`).
+
+**Common to both modes:**
+- Wrapper **`<div data-civitai-ui="segmented-control">`** with an accessible name
+  (**`aria-label`** or `aria-labelledby`). `data-size`: `sm` · `md` (default) ·
+  `lg`.
+- Each segment: **`<button data-civitai-ui-segment>`**, `disabled` for a disabled
+  one. Exactly one is selected: **`tabindex="0"` on the selected** segment,
+  **`tabindex="-1"` on the rest** (roving tabindex).
 - Keyboard (roving): `ArrowLeft`/`ArrowRight` (+ `ArrowUp`/`ArrowDown`) move to
   the previous/next enabled segment (wrapping), `Home`/`End` jump to first/last;
   selection follows focus. Move focus to the newly-selected segment.
-- Tab panel (optional): **`<div data-civitai-ui-tabpanel role="tabpanel"
-  id="PANEL_ID" aria-labelledby="TAB_ID" tabindex="0">`**, `hidden` when its tab
-  is not selected.
+
+**Mode `toggle` (default) — a panel-less value switch (Mantine-style):**
+- Wrapper **`role="radiogroup"`**; each segment **`role="radio"`** with
+  **`aria-checked="true|false"`**. No `aria-controls`. Use this when the control
+  just picks a value (no panels).
+
+```html
+<div data-civitai-ui="segmented-control" role="radiogroup" aria-label="Layout" data-size="md">
+  <button data-civitai-ui-segment role="radio" aria-checked="true" tabindex="0">Grid</button>
+  <button data-civitai-ui-segment role="radio" aria-checked="false" tabindex="-1">List</button>
+</div>
+```
+
+**Mode `tabs` — a tab set that switches visible panels:**
+- Wrapper **`role="tablist"`**; each segment **`role="tab"`** with
+  **`aria-selected="true|false"`** + optional **`aria-controls="PANEL_ID"`** +
+  **`id`** linking its tab panel.
+- Tab panel: **`<div data-civitai-ui-tabpanel role="tabpanel" id="PANEL_ID"
+  aria-labelledby="TAB_ID" tabindex="0">`**, `hidden` when its tab is not
+  selected.
 
 ```html
 <div data-civitai-ui="segmented-control" role="tablist" aria-label="View" data-size="md">
@@ -302,7 +322,9 @@ wrapper is hovered or contains focus. The React binding also wires the trigger's
   - the **trigger** element (button/link/etc.), with **`aria-describedby="TIP_ID"`**.
   - **`<span data-civitai-ui-tooltip-bubble role="tooltip" id="TIP_ID">`** — the
     bubble. Revealed on `:hover`/`:focus-within`, or force-open with
-    `data-open="true"`.
+    `data-open="true"`. **`data-dismissed="true"` force-HIDES it** — it overrides
+    the hover/focus reveal, so Escape-to-dismiss works even while the pointer
+    still hovers / focus is still within (the React binding sets/clears this).
 - A11y: the trigger must be focusable so keyboard users can reveal the tooltip;
   keep the tooltip text short (it is supplementary, not the accessible name).
 

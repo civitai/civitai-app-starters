@@ -18,8 +18,11 @@ export interface TooltipProps {
 /**
  * Hover/focus tooltip. Wraps a single focusable trigger, wires its
  * `aria-describedby` to a `role="tooltip"` bubble, and reveals the bubble on
- * hover or keyboard focus (CSS `:hover`/`:focus-within`), with `Escape` to
- * dismiss. Renders the `data-civitai-ui="tooltip"` contract.
+ * hover or keyboard focus (CSS `:hover`/`:focus-within`). `Escape` genuinely
+ * dismisses it: the binding sets `data-dismissed`, which overrides the CSS
+ * reveal so the bubble hides even while the pointer still hovers / focus is
+ * still within; the flag clears on the next hover/focus so it re-opens normally.
+ * Renders the `data-civitai-ui="tooltip"` contract.
  */
 export function Tooltip({
   label,
@@ -32,23 +35,36 @@ export function Tooltip({
   const reactId = useId();
   const tipId = id ?? `ci-tooltip-${reactId}`;
   const [open, setOpen] = useState(defaultOpen);
+  const [dismissed, setDismissed] = useState(false);
 
   const existing = children.props['aria-describedby'];
   const describedBy = existing ? `${existing} ${tipId}` : tipId;
   const trigger = cloneElement(children, { 'aria-describedby': describedBy });
 
+  // A new hover/focus intent both opens the tooltip AND clears a prior dismissal.
+  const reveal = useCallback(() => {
+    setOpen(true);
+    setDismissed(false);
+  }, []);
+
   const onKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') setOpen(false);
+    if (e.key === 'Escape') {
+      setOpen(false);
+      setDismissed(true);
+    }
   }, []);
 
   return (
     <span
       className={className}
       data-civitai-ui="tooltip"
-      onMouseEnter={() => setOpen(true)}
+      onMouseEnter={reveal}
       onMouseLeave={() => setOpen(false)}
-      onFocus={() => setOpen(true)}
-      onBlur={() => setOpen(false)}
+      onFocus={reveal}
+      onBlur={() => {
+        setOpen(false);
+        setDismissed(false);
+      }}
       onKeyDown={onKeyDown}
     >
       {trigger}
@@ -57,6 +73,7 @@ export function Tooltip({
         role="tooltip"
         id={tipId}
         data-open={open ? 'true' : undefined}
+        data-dismissed={dismissed ? 'true' : undefined}
       >
         {label}
       </span>

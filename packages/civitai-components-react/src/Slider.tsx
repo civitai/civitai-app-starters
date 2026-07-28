@@ -56,6 +56,13 @@ export const Slider = forwardRef<HTMLInputElement, SliderProps>(function Slider(
     typeof valueLabel === 'function'
       ? (valueLabel as (v: number) => React.ReactNode)(current)
       : valueLabel;
+  // Expose the human-readable value to screen readers when it differs from the
+  // raw number (e.g. "20%", "Large") — `aria-valuenow` alone would be wrong.
+  // Only a string/number-yielding label maps to a valid `aria-valuetext`.
+  const valueText =
+    typeof valueNode === 'string' || typeof valueNode === 'number'
+      ? String(valueNode)
+      : undefined;
 
   return (
     <div
@@ -106,6 +113,7 @@ export const Slider = forwardRef<HTMLInputElement, SliderProps>(function Slider(
         defaultValue={defaultValue}
         aria-describedby={describedBy(description != null, hasError, ids)}
         aria-invalid={hasError || undefined}
+        aria-valuetext={valueText}
         onChange={(e) => {
           if (!isControlled) setInternal(Number(e.currentTarget.value));
           onChange?.(e);

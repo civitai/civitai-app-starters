@@ -4,6 +4,17 @@ import { useComponentStyles } from './styles.js';
 
 export type SegmentedControlSize = 'sm' | 'md' | 'lg';
 
+/**
+ * ARIA role model:
+ * - `'toggle'` (default) — a panel-less value switch. `role="radiogroup"` with
+ *   `role="radio"` segments (`aria-checked`). This is the correct pattern for a
+ *   Mantine-style segmented control that just picks a value.
+ * - `'tabs'` — a tab set that switches visible panels. `role="tablist"` with
+ *   `role="tab"` segments (`aria-selected` + `aria-controls`); pair with
+ *   `<TabPanel>`.
+ */
+export type SegmentedControlMode = 'toggle' | 'tabs';
+
 export interface SegmentItem {
   /** Stable value emitted on selection. */
   value: string;
@@ -36,7 +47,13 @@ export interface SegmentedControlProps
   onChange?: (value: string) => void;
   /** Size preset. Defaults to `'md'`. */
   size?: SegmentedControlSize;
-  /** Accessible name (required for the tablist unless `aria-labelledby` is set). */
+  /**
+   * ARIA role model. `'toggle'` (default) = `radiogroup`/`radio` for a
+   * panel-less value switch; `'tabs'` = `tablist`/`tab` + `aria-controls` for a
+   * panel-switching tab set. See `SegmentedControlMode`.
+   */
+  mode?: SegmentedControlMode;
+  /** Accessible name (required for the group unless `aria-labelledby` is set). */
   'aria-label'?: string;
   'aria-labelledby'?: string;
 }
@@ -47,12 +64,14 @@ export function segmentId(baseId: string, value: string): string {
 }
 
 /**
- * Accessible segmented control / tablist. Renders `role="tablist"` with a
- * `role="tab"` button per item and implements the WAI-ARIA **roving tabindex**
- * (only the selected tab is in the tab order) + **arrow-key navigation**
- * (Left/Right/Up/Down wrap across enabled segments, Home/End jump to the ends),
- * with **selection following focus**. Segments may declare a `panelId` to set
- * `aria-controls`; pair with `<TabPanel>` for the tab-panel half.
+ * Accessible segmented control. In `'toggle'` mode (default) it is a
+ * `role="radiogroup"` of `role="radio"` segments (a panel-less value switch); in
+ * `'tabs'` mode a `role="tablist"` of `role="tab"` segments with
+ * `aria-controls` panel wiring. BOTH modes implement the WAI-ARIA **roving
+ * tabindex** (only the selected segment is in the tab order) + **arrow-key
+ * navigation** (Left/Right/Up/Down wrap across enabled segments, Home/End jump
+ * to the ends), with **selection following focus**. In tabs mode, segments may
+ * declare a `panelId`; pair with `<TabPanel>` for the tab-panel half.
  */
 export const SegmentedControl = forwardRef<HTMLDivElement, SegmentedControlProps>(
   function SegmentedControl(
@@ -62,12 +81,14 @@ export const SegmentedControl = forwardRef<HTMLDivElement, SegmentedControlProps
       defaultValue,
       onChange,
       size = 'md',
+      mode = 'toggle',
       'aria-label': ariaLabel,
       'aria-labelledby': ariaLabelledby,
       ...rest
     },
     ref
   ): React.JSX.Element {
+    const isTabs = mode === 'tabs';
     useComponentStyles();
     const baseId = useId();
     const isControlled = value != null;
@@ -116,7 +137,7 @@ export const SegmentedControl = forwardRef<HTMLDivElement, SegmentedControlProps
         {...rest}
         data-civitai-ui="segmented-control"
         data-size={size}
-        role="tablist"
+        role={isTabs ? 'tablist' : 'radiogroup'}
         aria-label={ariaLabel}
         aria-labelledby={ariaLabelledby}
         onKeyDown={onKeyDown}
@@ -133,9 +154,10 @@ export const SegmentedControl = forwardRef<HTMLDivElement, SegmentedControlProps
               id={item.id ?? segmentId(baseId, item.value)}
               data-civitai-ui-segment
               data-size={size}
-              role="tab"
-              aria-selected={isSelected}
-              aria-controls={item.panelId}
+              role={isTabs ? 'tab' : 'radio'}
+              aria-selected={isTabs ? isSelected : undefined}
+              aria-checked={isTabs ? undefined : isSelected}
+              aria-controls={isTabs ? item.panelId : undefined}
               tabIndex={isSelected ? 0 : -1}
               disabled={item.disabled}
               onClick={() => {

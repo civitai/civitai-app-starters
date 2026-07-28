@@ -372,6 +372,7 @@ export const CASES: Case[] = [
     id: 'segmented-control-container',
     node: (
       <SegmentedControl
+        mode="tabs"
         aria-label="View"
         defaultValue="grid"
         data={[
@@ -388,6 +389,7 @@ export const CASES: Case[] = [
     id: 'segmented-control-selected',
     node: (
       <SegmentedControl
+        mode="tabs"
         aria-label="View"
         defaultValue="grid"
         data={[
@@ -404,6 +406,7 @@ export const CASES: Case[] = [
     id: 'segmented-control-unselected',
     node: (
       <SegmentedControl
+        mode="tabs"
         aria-label="View"
         defaultValue="grid"
         data={[
@@ -415,6 +418,24 @@ export const CASES: Case[] = [
     html: `<div data-civitai-ui="segmented-control" data-size="md" role="tablist" aria-label="View"><button type="button" id="sc3-grid" data-civitai-ui-segment data-size="md" role="tab" aria-selected="true" tabindex="0">Grid</button><button type="button" id="sc3-list" data-civitai-ui-segment data-size="md" role="tab" aria-selected="false" tabindex="-1">List</button></div>`,
     selector: '[data-civitai-ui-segment][aria-selected="false"]',
     compare: ['color', 'height', 'backgroundColor'],
+  },
+  {
+    // toggle mode (default): role=radiogroup/radio, aria-checked drives the
+    // same selected styling as aria-selected does in tabs mode.
+    id: 'segmented-control-toggle-selected',
+    node: (
+      <SegmentedControl
+        aria-label="Layout"
+        defaultValue="grid"
+        data={[
+          { value: 'grid', label: 'Grid' },
+          { value: 'list', label: 'List' },
+        ]}
+      />
+    ),
+    html: `<div data-civitai-ui="segmented-control" data-size="md" role="radiogroup" aria-label="Layout"><button type="button" id="sct-grid" data-civitai-ui-segment data-size="md" role="radio" aria-checked="true" tabindex="0">Grid</button><button type="button" id="sct-list" data-civitai-ui-segment data-size="md" role="radio" aria-checked="false" tabindex="-1">List</button></div>`,
+    selector: '[data-civitai-ui-segment][aria-checked="true"]',
+    compare: [...TEXT, 'backgroundColor', 'height'],
   },
 
   // ---- Toast (new primitive) — presentational card ----
@@ -508,6 +529,7 @@ export const CASES: Case[] = [
 const SEG_TABS_A11Y: React.ReactElement = (
   <div>
     <SegmentedControl
+      mode="tabs"
       aria-label="View"
       defaultValue="grid"
       data={[
@@ -545,8 +567,24 @@ const A11Y_EXTRA: Case[] = [
     compare: [],
   },
   {
-    id: 'segmented-control-a11y',
+    id: 'segmented-control-tabs-a11y',
     node: SEG_TABS_A11Y,
+    html: '',
+    selector: '[data-civitai-ui="segmented-control"]',
+    compare: [],
+  },
+  {
+    id: 'segmented-control-toggle-a11y',
+    node: (
+      <SegmentedControl
+        aria-label="Layout"
+        defaultValue="grid"
+        data={[
+          { value: 'grid', label: 'Grid' },
+          { value: 'list', label: 'List' },
+        ]}
+      />
+    ),
     html: '',
     selector: '[data-civitai-ui="segmented-control"]',
     compare: [],

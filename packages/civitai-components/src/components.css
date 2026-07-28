@@ -632,10 +632,13 @@
     &[data-size='md'] { height: 30px; padding: 0 14px; font-size: 13px; }
     &[data-size='lg'] { height: 38px; padding: 0 18px; font-size: 15px; }
 
-    &:hover:not(:disabled):not([aria-selected='true']) {
+    &:hover:not(:disabled):not([aria-selected='true']):not([aria-checked='true']) {
       color: var(--civitai-color-text);
     }
-    &[aria-selected='true'] {
+    /* Selected state — `aria-selected` in tabs mode (role=tab) OR `aria-checked`
+       in toggle mode (role=radio). Same visual treatment for both. */
+    &[aria-selected='true'],
+    &[aria-checked='true'] {
       background: var(--civitai-color-surface);
       color: var(--civitai-color-text);
       box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
@@ -753,9 +756,16 @@
     visibility: hidden;
     transition: opacity 120ms ease;
   }
-  [data-civitai-ui='tooltip']:hover [data-civitai-ui-tooltip-bubble],
-  [data-civitai-ui='tooltip']:focus-within [data-civitai-ui-tooltip-bubble],
-  [data-civitai-ui-tooltip-bubble][data-open='true'] {
+  /*
+   * Reveal on hover/focus or an explicit `data-open='true'` — BUT
+   * `data-dismissed='true'` overrides (gates every reveal selector), so the
+   * React binding's Escape-to-dismiss can force-HIDE the bubble even while the
+   * pointer still hovers or focus is still within. The dismissed flag is cleared
+   * on the next hover/focus so the tooltip can re-open normally.
+   */
+  [data-civitai-ui='tooltip']:hover [data-civitai-ui-tooltip-bubble]:not([data-dismissed='true']),
+  [data-civitai-ui='tooltip']:focus-within [data-civitai-ui-tooltip-bubble]:not([data-dismissed='true']),
+  [data-civitai-ui-tooltip-bubble][data-open='true']:not([data-dismissed='true']) {
     opacity: 1;
     visibility: visible;
   }

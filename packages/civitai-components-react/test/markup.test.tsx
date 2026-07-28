@@ -298,6 +298,28 @@ describe('Slider (new primitive)', () => {
     fireEvent.change(input, { target: { value: '55' } });
     expect(container.querySelector('[data-civitai-ui-slider-value]')!.textContent).toBe('55%');
   });
+
+  it('aria-valuetext mirrors the formatted valueLabel (SR hears what sighted users see)', () => {
+    const { container } = render(
+      <Slider label="V" id="slvt" min={0} max={100} defaultValue={10} valueLabel={(v) => `${v}%`} />
+    );
+    const input = container.querySelector<HTMLInputElement>('input[type="range"]')!;
+    expect(input.getAttribute('aria-valuetext')).toBe('10%');
+    fireEvent.change(input, { target: { value: '55' } });
+    expect(input.getAttribute('aria-valuetext')).toBe('55%');
+  });
+
+  it('aria-valuetext supports a non-numeric static label', () => {
+    const { container } = render(
+      <Slider label="Size" id="slvt2" min={0} max={2} defaultValue={1} valueLabel="Large" />
+    );
+    expect(container.querySelector('input[type="range"]')!.getAttribute('aria-valuetext')).toBe('Large');
+  });
+
+  it('no aria-valuetext without a valueLabel (raw aria-valuenow stands)', () => {
+    const { container } = render(<Slider label="V" id="slnovt" defaultValue={10} />);
+    expect(container.querySelector('input[type="range"]')!.hasAttribute('aria-valuetext')).toBe(false);
+  });
 });
 
 describe('SegmentedControl (new primitive)', () => {
@@ -306,63 +328,81 @@ describe('SegmentedControl (new primitive)', () => {
     { value: 'list', label: 'List' },
     { value: 'map', label: 'Map' },
   ];
+  const segs = (c: HTMLElement) =>
+    Array.from(c.querySelectorAll<HTMLButtonElement>('[data-civitai-ui-segment]'));
 
-  it('is role=tablist with role=tab buttons + roving tabindex', () => {
+  it('toggle mode (default): role=radiogroup with role=radio + aria-checked + roving tabindex', () => {
     const { container } = render(
-      <SegmentedControl aria-label="View" defaultValue="grid" data={DATA} />
+      <SegmentedControl aria-label="Layout" defaultValue="grid" data={DATA} />
+    );
+    const group = container.querySelector('[data-civitai-ui="segmented-control"]')!;
+    expect(group.getAttribute('role')).toBe('radiogroup');
+    expect(group.getAttribute('aria-label')).toBe('Layout');
+    const b = segs(container);
+    expect(b).toHaveLength(3);
+    expect(b.every((x) => x.getAttribute('role') === 'radio')).toBe(true);
+    expect(b[0].getAttribute('aria-checked')).toBe('true');
+    expect(b[0].hasAttribute('aria-selected')).toBe(false);
+    expect(b[0].getAttribute('tabindex')).toBe('0');
+    expect(b[1].getAttribute('aria-checked')).toBe('false');
+    expect(b[1].getAttribute('tabindex')).toBe('-1');
+    expect(b[2].getAttribute('tabindex')).toBe('-1');
+  });
+
+  it('tabs mode: role=tablist with role=tab + aria-selected + roving tabindex', () => {
+    const { container } = render(
+      <SegmentedControl mode="tabs" aria-label="View" defaultValue="grid" data={DATA} />
     );
     const tablist = container.querySelector('[data-civitai-ui="segmented-control"]')!;
     expect(tablist.getAttribute('role')).toBe('tablist');
-    expect(tablist.getAttribute('aria-label')).toBe('View');
-    const tabs = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
-    expect(tabs).toHaveLength(3);
+    const tabs = segs(container);
+    expect(tabs.every((x) => x.getAttribute('role') === 'tab')).toBe(true);
     expect(tabs[0].getAttribute('aria-selected')).toBe('true');
+    expect(tabs[0].hasAttribute('aria-checked')).toBe(false);
     expect(tabs[0].getAttribute('tabindex')).toBe('0');
-    expect(tabs[1].getAttribute('aria-selected')).toBe('false');
     expect(tabs[1].getAttribute('tabindex')).toBe('-1');
-    expect(tabs[2].getAttribute('tabindex')).toBe('-1');
   });
 
-  it('click selects + fires onChange', () => {
-    const onChange = vi.fn();
-    const { container } = render(
-      <SegmentedControl aria-label="View" defaultValue="grid" data={DATA} onChange={onChange} />
-    );
-    const tabs = container.querySelectorAll<HTMLButtonElement>('[role="tab"]');
-    fireEvent.click(tabs[1]);
-    expect(onChange).toHaveBeenCalledWith('list');
-    expect(tabs[1].getAttribute('aria-selected')).toBe('true');
-    expect(tabs[1].getAttribute('tabindex')).toBe('0');
-    expect(tabs[0].getAttribute('tabindex')).toBe('-1');
+  it('click selects + fires onChange + moves roving tabindex (both modes)', () => {
+    for (const mode of ['toggle', 'tabs'] as const) {
+      const onChange = vi.fn();
+      const { container, unmount } = render(
+        <SegmentedControl mode={mode} aria-label="X" defaultValue="grid" data={DATA} onChange={onChange} />
+      );
+      const b = segs(container);
+      fireEvent.click(b[1]);
+      expect(onChange).toHaveBeenCalledWith('list');
+      expect(b[1].getAttribute('tabindex')).toBe('0');
+      expect(b[0].getAttribute('tabindex')).toBe('-1');
+      unmount();
+    }
   });
 
   it('ArrowRight/ArrowLeft move selection (roving + follows focus), wrapping', () => {
     const onChange = vi.fn();
     const { container } = render(
-      <SegmentedControl aria-label="View" defaultValue="grid" data={DATA} onChange={onChange} />
+      <SegmentedControl aria-label="X" defaultValue="grid" data={DATA} onChange={onChange} />
     );
-    const tablist = container.querySelector('[data-civitai-ui="segmented-control"]')!;
-    const tabs = container.querySelectorAll<HTMLButtonElement>('[role="tab"]');
-    fireEvent.keyDown(tablist, { key: 'ArrowRight' });
+    const group = container.querySelector('[data-civitai-ui="segmented-control"]')!;
+    fireEvent.keyDown(group, { key: 'ArrowRight' });
     expect(onChange).toHaveBeenLastCalledWith('list');
-    expect(tabs[1].getAttribute('aria-selected')).toBe('true');
-    fireEvent.keyDown(tablist, { key: 'ArrowLeft' });
+    fireEvent.keyDown(group, { key: 'ArrowLeft' });
     expect(onChange).toHaveBeenLastCalledWith('grid');
     // wrap: ArrowLeft from first goes to last
-    fireEvent.keyDown(tablist, { key: 'ArrowLeft' });
+    fireEvent.keyDown(group, { key: 'ArrowLeft' });
     expect(onChange).toHaveBeenLastCalledWith('map');
   });
 
   it('Home/End jump to the first/last segment', () => {
     const { container } = render(
-      <SegmentedControl aria-label="View" defaultValue="list" data={DATA} />
+      <SegmentedControl aria-label="X" defaultValue="list" data={DATA} />
     );
-    const tablist = container.querySelector('[data-civitai-ui="segmented-control"]')!;
-    const tabs = container.querySelectorAll<HTMLButtonElement>('[role="tab"]');
-    fireEvent.keyDown(tablist, { key: 'End' });
-    expect(tabs[2].getAttribute('aria-selected')).toBe('true');
-    fireEvent.keyDown(tablist, { key: 'Home' });
-    expect(tabs[0].getAttribute('aria-selected')).toBe('true');
+    const group = container.querySelector('[data-civitai-ui="segmented-control"]')!;
+    const b = segs(container);
+    fireEvent.keyDown(group, { key: 'End' });
+    expect(b[2].getAttribute('tabindex')).toBe('0');
+    fireEvent.keyDown(group, { key: 'Home' });
+    expect(b[0].getAttribute('tabindex')).toBe('0');
   });
 
   it('disabled segments are skipped by arrow-key nav and not selectable', () => {
@@ -375,18 +415,19 @@ describe('SegmentedControl (new primitive)', () => {
     const { container } = render(
       <SegmentedControl aria-label="X" defaultValue="a" data={data} onChange={onChange} />
     );
-    const tablist = container.querySelector('[data-civitai-ui="segmented-control"]')!;
-    const tabs = container.querySelectorAll<HTMLButtonElement>('[role="tab"]');
-    expect(tabs[1].disabled).toBe(true);
-    fireEvent.keyDown(tablist, { key: 'ArrowRight' });
+    const group = container.querySelector('[data-civitai-ui="segmented-control"]')!;
+    const b = segs(container);
+    expect(b[1].disabled).toBe(true);
+    fireEvent.keyDown(group, { key: 'ArrowRight' });
     expect(onChange).toHaveBeenLastCalledWith('c'); // skipped disabled 'b'
-    fireEvent.click(tabs[1]);
+    fireEvent.click(b[1]);
     expect(onChange).not.toHaveBeenCalledWith('b');
   });
 
-  it('panelId sets aria-controls; explicit id lets a TabPanel reference the tab', () => {
+  it('tabs mode: panelId sets aria-controls; explicit id lets a TabPanel reference the tab', () => {
     const { container } = render(
       <SegmentedControl
+        mode="tabs"
         aria-label="View"
         defaultValue="grid"
         data={[{ value: 'grid', label: 'Grid', id: 'tab-grid', panelId: 'panel-grid' }]}
@@ -397,12 +438,24 @@ describe('SegmentedControl (new primitive)', () => {
     expect(tab.getAttribute('aria-controls')).toBe('panel-grid');
   });
 
+  it('toggle mode: no aria-controls even if a panelId is provided (panels are tabs-only)', () => {
+    const { container } = render(
+      <SegmentedControl
+        aria-label="X"
+        defaultValue="grid"
+        data={[{ value: 'grid', label: 'Grid', panelId: 'p' }]}
+      />
+    );
+    const radio = container.querySelector('[role="radio"]')!;
+    expect(radio.hasAttribute('aria-controls')).toBe(false);
+  });
+
   it('controlled value ignores internal state (stays put until prop changes)', () => {
     const onChange = vi.fn();
     const { container } = render(
-      <SegmentedControl aria-label="V" value="grid" data={DATA} onChange={onChange} />
+      <SegmentedControl mode="tabs" aria-label="V" value="grid" data={DATA} onChange={onChange} />
     );
-    const tabs = container.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+    const tabs = segs(container);
     fireEvent.click(tabs[1]);
     expect(onChange).toHaveBeenCalledWith('list');
     // Controlled: still shows 'grid' selected because the prop did not change.
@@ -560,7 +613,11 @@ describe('Tooltip (new primitive)', () => {
     expect(trigger.getAttribute('aria-describedby')).toBe(`existing ${bubble.id}`);
   });
 
-  it('opens on mouseenter/focus and Escape dismisses (data-open)', () => {
+  it('Escape sets data-dismissed (real hide authority over :hover/:focus-within); re-focus clears it', () => {
+    // NOTE: the AUTHORITATIVE assertion — that the bubble is actually not
+    // visible after Escape even while focus/hover persists — lives in the
+    // browser suite (real getComputedStyle + :focus-within). Here (happy-dom)
+    // we assert the mechanism the CSS reveal is gated on: `data-dismissed`.
     const { container } = render(
       <Tooltip label="Info">
         <button type="button">t</button>
@@ -569,10 +626,22 @@ describe('Tooltip (new primitive)', () => {
     const wrap = container.querySelector('[data-civitai-ui="tooltip"]')!;
     const bubble = container.querySelector('[data-civitai-ui-tooltip-bubble]')!;
     expect(bubble.hasAttribute('data-open')).toBe(false);
+    expect(bubble.hasAttribute('data-dismissed')).toBe(false);
+
     fireEvent.mouseEnter(wrap);
     expect(bubble.getAttribute('data-open')).toBe('true');
+
+    // Escape must force-HIDE: data-dismissed overrides the CSS reveal, and
+    // data-open is cleared. (data-open alone flipping would NOT hide it, since
+    // :hover/:focus-within still match — that was the bug.)
     fireEvent.keyDown(wrap, { key: 'Escape' });
+    expect(bubble.getAttribute('data-dismissed')).toBe('true');
     expect(bubble.hasAttribute('data-open')).toBe(false);
+
+    // A fresh hover/focus intent clears the dismissal so it can re-open.
+    fireEvent.mouseEnter(wrap);
+    expect(bubble.hasAttribute('data-dismissed')).toBe(false);
+    expect(bubble.getAttribute('data-open')).toBe('true');
   });
 });
 

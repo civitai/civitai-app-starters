@@ -32,6 +32,7 @@ export {
   segmentId,
   type SegmentedControlProps,
   type SegmentedControlSize,
+  type SegmentedControlMode,
   type SegmentItem,
 } from './SegmentedControl.js';
 export { TabPanel, type TabPanelProps } from './TabPanel.js';

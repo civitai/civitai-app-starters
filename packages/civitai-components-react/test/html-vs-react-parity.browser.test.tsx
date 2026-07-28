@@ -1128,6 +1128,7 @@ describe('styling anchors — Slider (new primitive)', () => {
 describe('styling anchors — SegmentedControl (new primitive)', () => {
   const SC = (
     <SegmentedControl
+      mode="tabs"
       aria-label="View"
       defaultValue="grid"
       data={[
@@ -1137,6 +1138,18 @@ describe('styling anchors — SegmentedControl (new primitive)', () => {
     />
   );
   const SC_HTML = `<div data-civitai-ui="segmented-control" data-size="md" role="tablist" aria-label="View"><button type="button" id="a-grid" data-civitai-ui-segment data-size="md" role="tab" aria-selected="true" tabindex="0">Grid</button><button type="button" id="a-list" data-civitai-ui-segment data-size="md" role="tab" aria-selected="false" tabindex="-1">List</button></div>`;
+
+  const SC_TOGGLE = (
+    <SegmentedControl
+      aria-label="Layout"
+      defaultValue="grid"
+      data={[
+        { value: 'grid', label: 'Grid' },
+        { value: 'list', label: 'List' },
+      ]}
+    />
+  );
+  const SC_TOGGLE_HTML = `<div data-civitai-ui="segmented-control" data-size="md" role="radiogroup" aria-label="Layout"><button type="button" id="tg-grid" data-civitai-ui-segment data-size="md" role="radio" aria-checked="true" tabindex="0">Grid</button><button type="button" id="tg-list" data-civitai-ui-segment data-size="md" role="radio" aria-checked="false" tabindex="-1">List</button></div>`;
 
   it('container light: bg=gray-1, padding 4px, radius=4px(token)', () => {
     both(pair('light', SC, SC_HTML, '[data-civitai-ui="segmented-control"]'), (cs, who) => {
@@ -1171,6 +1184,16 @@ describe('styling anchors — SegmentedControl (new primitive)', () => {
       (cs, who) => {
         expect(cs.color, who).toBe(solid(tokens.colorTextDimmed));
         expect(cs.backgroundColor, who).toBe('rgba(0, 0, 0, 0)');
+      }
+    );
+  });
+
+  it('toggle mode (radiogroup): checked segment styled via aria-checked = surface bg', () => {
+    both(
+      pair('light', SC_TOGGLE, SC_TOGGLE_HTML, '[data-civitai-ui-segment][aria-checked="true"]'),
+      (cs, who) => {
+        expect(cs.backgroundColor, who).toBe(solid(tokens.colorSurface));
+        expect(cs.color, who).toBe(solid(tokens.colorText));
       }
     );
   });
@@ -1280,5 +1303,54 @@ describe('styling anchors — Image (new primitive)', () => {
         expect(cs.display, who).toBe('block');
       }
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tooltip Escape-to-dismiss — REAL computed visibility (the definitive check).
+// Focus reveals the bubble via :focus-within; Escape must HIDE it even though
+// focus is still on the trigger (the `data-dismissed` override gates the CSS
+// reveal). A pure `data-open`-flip could never hide it here — this test fails
+// against the pre-fix behavior.
+// ---------------------------------------------------------------------------
+describe('Tooltip Escape-to-dismiss (real visibility)', () => {
+  // Let React flush the scheduled render triggered by the dispatched event.
+  const flush = () => new Promise<void>((res) => setTimeout(res, 0));
+
+  it('focus shows the bubble; Escape hides it while focus remains; re-focus re-shows', async () => {
+    const r = mountReact(
+      'light',
+      <Tooltip label="Info">
+        <button type="button">trigger</button>
+      </Tooltip>
+    );
+    try {
+      const trigger = r.mount.querySelector('button')!;
+      const bubble = r.mount.querySelector('[data-civitai-ui-tooltip-bubble]') as HTMLElement;
+
+      // Hidden at rest.
+      expect(getComputedStyle(bubble).visibility).toBe('hidden');
+
+      // Focus reveals it (pure CSS :focus-within — no React state needed).
+      trigger.focus();
+      await flush();
+      expect(document.activeElement).toBe(trigger);
+      expect(getComputedStyle(bubble).visibility).toBe('visible');
+
+      // Escape dismisses despite focus still on the trigger (data-dismissed
+      // overrides the reveal). A data-open flip alone could NOT hide it here.
+      trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await flush();
+      expect(document.activeElement).toBe(trigger);
+      expect(getComputedStyle(bubble).visibility).toBe('hidden');
+
+      // Blur + refocus clears the dismissal so it re-opens normally.
+      trigger.blur();
+      trigger.focus();
+      await flush();
+      expect(getComputedStyle(bubble).visibility).toBe('visible');
+    } finally {
+      r.cleanup();
+    }
   });
 });
