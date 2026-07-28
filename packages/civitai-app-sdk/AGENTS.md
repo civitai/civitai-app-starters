@@ -55,6 +55,13 @@ to `dist/`. Tested with `vitest`. Published to npm with subpath exports
   install-on-import — it stores no state, and hoisting makes a side effect the
   only mechanism that can run before a dependency's own module body. Don't
   "clean it up" into an opt-in call; that reintroduces the bug it fixes.)
+- ❌ **Never set `"sideEffects": false`** in `package.json`. The safe-storage
+  fix *is* a bare `import '.../safe-storage/index.js'` in `src/blocks/`, and
+  a blanket `false` lets bundlers tree-shake it away — silently, with every
+  test still green, because Node/vitest doesn't tree-shake. The allow-list
+  (`dist/safe-storage/index.js` + `dist/blocks/index.js`, and
+  `dist/index.js` in `@civitai/blocks-react`) is load-bearing: extend it if
+  another module gains an import side effect, never replace it with `false`.
 - ❌ Mutating arguments. Inputs are read-only; return new objects.
 - ❌ `console.log` from library code. Throw or return; let callers log.
 

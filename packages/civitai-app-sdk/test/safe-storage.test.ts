@@ -12,11 +12,19 @@ const SECURITY_ERROR_MESSAGE =
 
 type StorageName = 'localStorage' | 'sessionStorage';
 
-/** A `scope` whose storage getter throws exactly like an opaque origin does. */
+/**
+ * A `scope` whose storage getter throws exactly like an opaque origin does.
+ *
+ * `enumerable: true` + no setter is the real `Window.localStorage` shape (a
+ * WebIDL *readonly* attribute), and the sandbox does not change it — only the
+ * getter's behaviour differs there.
+ */
 function scopeWhereStorageThrows(name: StorageName = 'localStorage'): Record<string, unknown> {
   const scope: Record<string, unknown> = {};
   Object.defineProperty(scope, name, {
     configurable: true,
+    enumerable: true,
+    set: undefined,
     get() {
       throw new DOMException(SECURITY_ERROR_MESSAGE, 'SecurityError');
     },
@@ -35,11 +43,23 @@ function scopeWithWorkingStorage(name: StorageName = 'localStorage'): Record<str
   return scope;
 }
 
-/** Same failure, but installed on the real global — with a restore function. */
+/**
+ * Same failure, but installed on the real global — with a restore function.
+ *
+ * The descriptor is spelled out in full on purpose. `Object.defineProperty`
+ * *merges* into an existing configurable property, and Node >= 22 already
+ * defines `globalThis.localStorage` as a non-enumerable accessor **with a
+ * setter** — so a `{ get }`-only redefinition would silently inherit Node's
+ * `set` and `enumerable: false` and no longer look like a browser at all.
+ * A real `Window.localStorage` is a WebIDL *readonly* attribute: enumerable,
+ * with no setter.
+ */
 function breakGlobalStorage(name: StorageName = 'localStorage'): () => void {
   const original = Object.getOwnPropertyDescriptor(globalThis, name);
   Object.defineProperty(globalThis, name, {
     configurable: true,
+    enumerable: true,
+    set: undefined,
     get() {
       throw new DOMException(SECURITY_ERROR_MESSAGE, 'SecurityError');
     },
@@ -143,6 +163,57 @@ describe('createMemoryStorage', () => {
     ]);
   });
 
+  it('refuses preventExtensions/freeze instead of bricking enumeration forever', () => {
+    const s = createMemoryStorage();
+    s.setItem('a', '1');
+
+    // A SES / `harden()` lockdown sweep freezes every reachable global. Real
+    // `Storage` is a legacy platform object with a named-property handler, so
+    // its [[PreventExtensions]] returns false and it carries on working.
+    expect(() => Object.preventExtensions(s)).toThrow(TypeError);
+    expect(() => Object.freeze(s)).toThrow(TypeError);
+    expect(Object.isExtensible(s)).toBe(true);
+
+    // The point of refusing: a non-extensible target would make the `ownKeys`
+    // trap violate a proxy invariant, and `Object.keys` / spread /
+    // `JSON.stringify` / `for...in` would throw on this object PERMANENTLY.
+    expect(Object.keys(s)).toEqual(['a']);
+    expect(JSON.stringify(s)).toBe('{"a":"1"}');
+
+    s.setItem('b', '2');
+    expect({ ...(s as unknown as Record<string, unknown>) }).toEqual({ a: '1', b: '2' });
+    const seen: string[] = [];
+    for (const key in s as unknown as Record<string, unknown>) seen.push(key);
+    expect(seen).toEqual(['a', 'b']);
+  });
+
+  it('ignores deletes of the Storage API, exactly as the real thing does', () => {
+    const s = createMemoryStorage();
+    s.setItem('kept', 'yes');
+    const bare = s as unknown as Record<string, unknown>;
+
+    // Real `Storage` keeps its API on `Storage.prototype`, so an instance
+    // delete finds no own property: it reports success and changes nothing.
+    expect(delete bare.getItem).toBe(true);
+    expect(delete bare.setItem).toBe(true);
+    expect(delete bare.length).toBe(true);
+
+    expect(typeof s.getItem).toBe('function');
+    expect(typeof s.setItem).toBe('function');
+    expect(s.length).toBe(1);
+    expect(s.getItem('kept')).toBe('yes');
+
+    // The corruption this prevents: `length` gone undefined makes every
+    // `for (i < storage.length)` loop silently iterate zero times.
+    const keys: Array<string | null> = [];
+    for (let i = 0; i < s.length; i += 1) keys.push(s.key(i));
+    expect(keys).toEqual(['kept']);
+
+    // Stored keys still delete for real.
+    expect(delete bare.kept).toBe(true);
+    expect(s.getItem('kept')).toBeNull();
+  });
+
   it('still exposes the Storage methods through the proxy', () => {
     const s = createMemoryStorage();
     expect(typeof s.getItem).toBe('function');
@@ -166,8 +237,50 @@ describe('installSafeStorage', () => {
 
     expect(() => scope.localStorage).not.toThrow();
     const ls = scope.localStorage as Storage;
+    // Nothing to inherit at an opaque origin — the old store was unreadable.
+    expect(ls.length).toBe(0);
     ls.setItem('k', 'v');
     expect(ls.getItem('k')).toBe('v');
+  });
+
+  it('classifies the sandbox as broken even though `typeof` throws there too', () => {
+    const scope = scopeWhereStorageThrows();
+
+    // The conventional `typeof localStorage === 'undefined'` guard does NOT
+    // protect: `typeof` still resolves the property and runs the throwing
+    // getter. Only `typeof` of an *undeclared identifier* is safe.
+    expect(() => typeof (scope as { localStorage: unknown }).localStorage).toThrow(
+      /allow-same-origin/,
+    );
+
+    // `in` runs [[HasProperty]], which never invokes the getter — and it
+    // correctly answers `true`: in the sandbox the global exists, it is merely
+    // unreadable. So the sandbox must never be mistaken for `absent`.
+    expect('localStorage' in scope).toBe(true);
+    expect(installSafeStorage(scope).localStorage).toBe(true);
+  });
+
+  it('installs the fallback as a non-writable property', () => {
+    const scope = scopeWhereStorageThrows();
+    installSafeStorage(scope);
+    const installed = scope.localStorage;
+
+    const descriptor = Object.getOwnPropertyDescriptor(scope, 'localStorage');
+    expect(descriptor?.writable).toBe(false);
+
+    // Matches the browser, sandboxed or not: `window.localStorage = x` throws
+    // in strict mode on the real thing. A writable shim would quietly accept
+    // the assignment and hand blocks behaviour production does not have.
+    expect(() => {
+      (scope as Record<string, unknown>).localStorage = createMemoryStorage();
+    }).toThrow(TypeError);
+    expect(scope.localStorage).toBe(installed);
+
+    // Still `configurable`, so a consumer can deliberately swap in its own.
+    expect(descriptor?.configurable).toBe(true);
+    const own = createMemoryStorage();
+    Object.defineProperty(scope, 'localStorage', { configurable: true, value: own });
+    expect(scope.localStorage).toBe(own);
   });
 
   it('repairs sessionStorage independently of localStorage', () => {
@@ -213,6 +326,69 @@ describe('installSafeStorage', () => {
     expect(scope.sessionStorage).toBeUndefined();
   });
 
+  it('answers "does it exist" with `in`, never by reading the property', () => {
+    // [[HasProperty]] cannot run user code; a property *read* can run anything.
+    let reads = 0;
+    const scope = new Proxy({} as Record<string, unknown>, {
+      has: () => false,
+      get(_target, prop) {
+        reads += 1;
+        throw new Error(`must not read ${String(prop)}`);
+      },
+    });
+
+    expect(installSafeStorage(scope)).toEqual({ localStorage: false, sessionStorage: false });
+    expect(reads).toBe(0);
+  });
+
+  it("never reads Node's disabled web-storage stub", () => {
+    // Node >= 22 defines `localStorage`/`sessionStorage` as lazy accessors.
+    // Without `--localstorage-file` they return `undefined` AND emit
+    // `ExperimentalWarning: localStorage is not available…` on every read — so
+    // a bare import of this module would print that on every server boot and
+    // in CI. `in` does not trip the warning, but it does answer `true` there,
+    // so existence alone is not enough to skip the read.
+    let reads = 0;
+    const scope: Record<string, unknown> = {};
+    for (const name of ['localStorage', 'sessionStorage']) {
+      Object.defineProperty(scope, name, {
+        configurable: true,
+        enumerable: false, // Node's stub. A browser's is enumerable.
+        get() {
+          reads += 1;
+          return undefined;
+        },
+        set() {}, // Node's stub is replaceable. A WebIDL readonly attribute is not.
+      });
+    }
+
+    expect(installSafeStorage(scope)).toEqual({ localStorage: false, sessionStorage: false });
+    expect(reads).toBe(0);
+  });
+
+  it('still probes a browser-shaped accessor while running on Node', () => {
+    // The guard above must never swallow a real sandbox — including in the
+    // Node-hosted test/SSR runs where every one of these tests executes.
+    // `Window.localStorage` is a WebIDL *readonly* attribute, so it is
+    // enumerable with no setter; that is what separates it from Node's stub.
+    let reads = 0;
+    const scope: Record<string, unknown> = {};
+    Object.defineProperty(scope, 'localStorage', {
+      configurable: true,
+      enumerable: true,
+      set: undefined,
+      get() {
+        reads += 1;
+        throw new DOMException(SECURITY_ERROR_MESSAGE, 'SecurityError');
+      },
+    });
+
+    expect(installSafeStorage(scope).localStorage).toBe(true);
+    // Read exactly once: an arbitrary getter can have arbitrary side effects,
+    // so the probe carries its value out rather than re-reading it to seed.
+    expect(reads).toBe(1);
+  });
+
   it('treats an explicitly null storage as absent, not broken', () => {
     const scope: Record<string, unknown> = { localStorage: null };
     expect(installSafeStorage(scope).localStorage).toBe(false);
@@ -250,10 +426,104 @@ describe('installSafeStorage', () => {
     expect(() => (scope.localStorage as Storage).setItem('a', 'b')).not.toThrow();
   });
 
+  it('inherits the entries of a store that reads fine but refuses writes', () => {
+    // The likeliest real-world trigger — a full quota, historically the
+    // Safari-private-mode shape — on an ordinary (non-sandboxed) origin, where
+    // the data is real and readable. Shadowing it with an empty store would
+    // turn "can't save" into "the session is gone".
+    const entries = new Map([
+      ['session', 'abc123'],
+      ['prefs', '{"theme":"dark"}'],
+    ]);
+    const full = {
+      get length() {
+        return entries.size;
+      },
+      key: (index: number) => Array.from(entries.keys())[index] ?? null,
+      getItem: (key: string) => entries.get(key) ?? null,
+      setItem() {
+        throw new DOMException('QuotaExceededError', 'QuotaExceededError');
+      },
+      removeItem: (key: string) => void entries.delete(key),
+      clear: () => entries.clear(),
+    };
+    const scope: Record<string, unknown> = { localStorage: full };
+
+    expect(installSafeStorage(scope).localStorage).toBe(true);
+
+    const now = scope.localStorage as Storage;
+    expect(now).not.toBe(full);
+    expect(now.getItem('session')).toBe('abc123');
+    expect(now.getItem('prefs')).toBe('{"theme":"dark"}');
+    expect(now.length).toBe(2);
+    // …and writes stop throwing, which is why we replaced it at all.
+    expect(() => now.setItem('fresh', 'v')).not.toThrow();
+    expect(now.getItem('fresh')).toBe('v');
+  });
+
+  it('still installs when the old store cannot be enumerated', () => {
+    // Seeding is best-effort: a store that reads but explodes mid-enumeration
+    // must still end up replaced, not propagate.
+    const scope: Record<string, unknown> = {
+      localStorage: {
+        length: 3,
+        key() {
+          throw new Error('enumeration exploded');
+        },
+        getItem: () => null,
+        setItem() {
+          throw new DOMException('QuotaExceededError', 'QuotaExceededError');
+        },
+        removeItem() {},
+      },
+    };
+
+    expect(() => installSafeStorage(scope)).not.toThrow();
+    expect(installSafeStorage(scope).localStorage).toBe(false);
+    expect((scope.localStorage as Storage).length).toBe(0);
+    expect(() => (scope.localStorage as Storage).setItem('a', 'b')).not.toThrow();
+  });
+
   it('repairs an object that is not Storage-shaped at all', () => {
     const scope: Record<string, unknown> = { localStorage: { nope: true } };
     expect(installSafeStorage(scope).localStorage).toBe(true);
     expect(typeof (scope.localStorage as Storage).getItem).toBe('function');
+  });
+
+  it('repairs a revoked Proxy without propagating its TypeError', () => {
+    // Every operation on a revoked Proxy throws — including the plain property
+    // read of `.getItem`. This runs at module scope, so an escaping error would
+    // reject `import '@civitai/app-sdk/blocks'` and take the whole block down.
+    const { proxy, revoke } = Proxy.revocable(
+      { getItem: () => null, setItem() {}, removeItem() {} },
+      {},
+    );
+    revoke();
+    const scope: Record<string, unknown> = { localStorage: proxy };
+
+    expect(() => (proxy as { getItem: unknown }).getItem).toThrow(TypeError);
+    expect(() => installSafeStorage(scope)).not.toThrow();
+    expect(installSafeStorage(scope).localStorage).toBe(false);
+
+    const now = scope.localStorage as Storage;
+    now.setItem('k', 'v');
+    expect(now.getItem('k')).toBe('v');
+  });
+
+  it('repairs an object whose property access throws', () => {
+    const hostile: Record<string, unknown> = {};
+    Object.defineProperty(hostile, 'getItem', {
+      configurable: true,
+      get() {
+        throw new TypeError('property access explodes');
+      },
+    });
+    const scope: Record<string, unknown> = { localStorage: hostile };
+
+    expect(() => installSafeStorage(scope)).not.toThrow();
+    expect(installSafeStorage(scope).localStorage).toBe(false);
+    expect(typeof (scope.localStorage as Storage).getItem).toBe('function');
+    expect(() => (scope.localStorage as Storage).setItem('a', 'b')).not.toThrow();
   });
 
   it('degrades quietly when the property cannot be redefined', () => {

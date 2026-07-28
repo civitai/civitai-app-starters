@@ -6,6 +6,10 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "sideEffects": [
+    "./dist/safe-storage/index.js",
+    "./dist/blocks/index.js"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

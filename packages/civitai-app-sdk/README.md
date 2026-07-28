@@ -143,9 +143,15 @@ SecurityError: Failed to read the 'localStorage' property from 'Window':
 The document is sandboxed and lacks the 'allow-same-origin' flag.
 ```
 
-Guarding your own call sites isn't enough: **any dependency** that touches
-storage unguarded takes the app down, and libraries routinely mislabel the
-failure — one popular viewer catches the SecurityError and reports "your browser
+> **The usual guard does not work here.** `typeof localStorage === 'undefined'`
+> **also throws** in the sandbox — `typeof` still resolves the property and runs
+> the throwing getter; only `typeof` of an *undeclared identifier* is safe.
+> `'localStorage' in window` is the check that survives, and it returns `true`:
+> the global exists, it's just unreadable.
+
+Guarding your own call sites isn't enough anyway: **any dependency** that
+touches storage unguarded takes the app down, and libraries routinely mislabel
+the failure — one popular viewer catches the SecurityError and reports "your browser
 does not support WebGL", so the app's own fallback never runs and the user
 dead-ends on a wrong error message.
 
@@ -160,6 +166,14 @@ round-trip probe shows they're unusable. Rules:
   fabricated, so `typeof localStorage === 'undefined'` feature detection keeps
   working server-side.
 - **Idempotent**, and safe to call as often as you like.
+- **Never loses readable data.** A store that reads fine but refuses writes (a
+  full quota, storage disabled) still gets replaced — writes have to stop
+  throwing — but the fallback **inherits its entries first**, so the shim can't
+  shadow a live session.
+- **Never throws.** It installs at import, so an error escaping it would reject
+  `import '@civitai/app-sdk/blocks'` and take the whole block down. Even a
+  revoked `Proxy` or a throwing getter sitting on `localStorage` is classified,
+  not propagated.
 - The fallback is **session-scoped** — nothing survives a reload. That's the
   honest semantic at an opaque origin. Treat storage as a cache; use the
   platform's app-storage messages (`useAppStorage` in `@civitai/blocks-react`)
