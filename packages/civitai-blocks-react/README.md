@@ -67,6 +67,32 @@ export function App() {
 > **not** `{ prompt }`. Both ids come from `useBlockContext().context` narrowed to
 > `ModelSlotContext`.
 
+## Web storage works, even sandboxed
+
+Block iframes have no `allow-same-origin`, so the document runs at an **opaque
+origin** where even *reading* `localStorage` throws a `SecurityError` — most
+often from a third-party dependency you can't guard from the outside, which then
+reports it as something else entirely.
+
+Importing `@civitai/blocks-react` installs the SDK's in-memory `Storage`
+fallback over `localStorage` / `sessionStorage` when — and only when — a
+round-trip probe shows they're broken. Working storage is left untouched, and
+nothing is fabricated in Node/SSR. You don't have to do anything.
+
+The one case that needs your help: a dependency that reads storage **while its
+module evaluates**, imported ahead of this package. Import statements are
+hoisted above every statement, so put the shim's side-effect import first in
+your entry file:
+
+```ts
+import '@civitai/app-sdk/safe-storage';
+```
+
+Full rules + the `installSafeStorage()` / `createMemoryStorage()` API:
+[`@civitai/app-sdk` README → Web storage in a block](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-app-sdk#web-storage-in-a-block-civitaiapp-sdksafe-storage).
+Remember the fallback is session-scoped — use [`useAppStorage()`](#useappstorage)
+for anything durable.
+
 ## The hooks
 
 All hooks build on a singleton transport, so they're safe to call from any
@@ -654,6 +680,7 @@ Runnable, minimal blocks — one per feature, each with its own README:
 
 | `@civitai/blocks-react` | pairs with `@civitai/app-sdk` | adds |
 |---|---|---|
+| `0.36.x` | `^0.27.0` | auto-installs the SDK's opaque-origin web-storage shim (`@civitai/app-sdk/safe-storage`) on import |
 | `0.29.x` | `^0.24.0` | `useAppWorkflows()` — app generator subqueue read + cancel (`QUERY_APP_WORKFLOWS` / `CANCEL_APP_WORKFLOW`) |
 | `0.27.x`–`0.28.x` | `^0.23.0` | async-scan image upload; transport validators for all `SHARED_*` / `APP_STORAGE_*` / picker replies |
 | `0.26.x` | `^0.22.0` | `useViewer()` (`GET_VIEWER`) |

@@ -6,6 +6,14 @@
  * platform side can integration-test against a real iframe receiver.
  */
 
+// FIRST import, on purpose. A block iframe has no `allow-same-origin`, so its
+// document runs at an opaque origin where reading `localStorage` /
+// `sessionStorage` THROWS — a failure mode that most often arrives via a
+// third-party dependency, not the app's own code. Importing this installs an
+// in-memory `Storage` over those globals when (and only when) they are broken,
+// before the rest of the app's module graph runs. Inert everywhere else.
+import '@civitai/app-sdk/safe-storage';
+
 export { IframeTransport } from './internal/iframeTransport.js';
 export type { IframeTransportOptions } from './internal/iframeTransport.js';
 
