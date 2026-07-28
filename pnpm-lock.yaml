@@ -6,6 +6,7 @@ settings:
 
 overrides:
   '@civitai/app-sdk': workspace:*
+  '@civitai/blocks-react': workspace:*
   cookie@<0.7.0: ^0.7.0
   postcss@<8.5.10: '>=8.5.10'
 
@@ -176,8 +177,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/civitai-app-sdk
       '@civitai/blocks-react':
-        specifier: ^0.35.2
-        version: 0.35.2(@civitai/app-sdk@packages+civitai-app-sdk)(react@19.2.6)
+        specifier: workspace:*
+        version: link:../../packages/civitai-blocks-react
       react:
         specifier: ^19.0.0
         version: 19.2.6
@@ -210,7 +211,7 @@ importers:
         specifier: workspace:*
         version: link:../../../packages/civitai-app-sdk
       '@civitai/blocks-react':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../../../packages/civitai-blocks-react
       react:
         specifier: ^19.0.0
@@ -244,7 +245,7 @@ importers:
         specifier: workspace:*
         version: link:../../../packages/civitai-app-sdk
       '@civitai/blocks-react':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../../../packages/civitai-blocks-react
       react:
         specifier: ^19.0.0
@@ -278,7 +279,7 @@ importers:
         specifier: workspace:*
         version: link:../../../packages/civitai-app-sdk
       '@civitai/blocks-react':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../../../packages/civitai-blocks-react
       react:
         specifier: ^19.0.0
@@ -312,7 +313,7 @@ importers:
         specifier: workspace:*
         version: link:../../../packages/civitai-app-sdk
       '@civitai/blocks-react':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../../../packages/civitai-blocks-react
       react:
         specifier: ^19.0.0
@@ -346,7 +347,7 @@ importers:
         specifier: workspace:*
         version: link:../../../packages/civitai-app-sdk
       '@civitai/blocks-react':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../../../packages/civitai-blocks-react
       react:
         specifier: ^19.0.0
@@ -380,7 +381,7 @@ importers:
         specifier: workspace:*
         version: link:../../../packages/civitai-app-sdk
       '@civitai/blocks-react':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../../../packages/civitai-blocks-react
       react:
         specifier: ^19.0.0
@@ -1234,13 +1235,6 @@ packages:
 
   '@changesets/write@0.4.0':
     resolution: {integrity: sha512-CdTLvIOPiCNuH71pyDu3rA+Q0n65cmAbXnwWH84rKGiFumFzkmHNT8KHTMEchcxN+Kl8I54xGUhJ7l3E7X396Q==}
-
-  '@civitai/blocks-react@0.35.2':
-    resolution: {integrity: sha512-dFKh5DYnMJ3DI7pXD1fSXavWDRyeAifaCjm32HT+V6SZK6ne+RmnnXyd7BLeaRqCoyksnR4ggh84/oQj3QKZqg==}
-    engines: {node: '>=20'}
-    peerDependencies:
-      '@civitai/app-sdk': workspace:*
-      react: ^18.0.0 || ^19.0.0
 
   '@civitai/components-react@0.2.1':
     resolution: {integrity: sha512-LwzxAv7u97/KKkyynd1wWxr67rghGRS+cThzlWISiF52oA7/kj3ETjpPukJkpE8syHi+UHQbEi8VwJ6nx9AgnQ==}
@@ -5571,13 +5565,6 @@ snapshots:
       fs-extra: 7.0.1
       human-id: 4.1.3
       prettier: 2.8.8
-
-  '@civitai/blocks-react@0.35.2(@civitai/app-sdk@packages+civitai-app-sdk)(react@19.2.6)':
-    dependencies:
-      '@civitai/app-sdk': link:packages/civitai-app-sdk
-      '@civitai/components': 0.2.1
-      '@civitai/theme': 0.2.0
-      react: 19.2.6
 
   '@civitai/components-react@0.2.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
