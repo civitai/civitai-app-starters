@@ -11,7 +11,12 @@
  * the TypeScript type is a lie.
  */
 
-import { BLOCK_CATEGORIES, BLOCK_SCOPES, BLOCK_SCOPE_PATTERN } from './scopes.js';
+import {
+  BLOCK_CATEGORIES,
+  BLOCK_SCOPES,
+  BLOCK_SCOPE_PATTERN,
+  BLOCK_TAGLINE_MAX_LENGTH,
+} from './scopes.js';
 import type { BlockManifest, ContentRating } from './types.js';
 
 /**
@@ -211,6 +216,27 @@ export function defineBlock(config: DefineBlockConfig): BlockManifest {
         `manifest.category must be one of ${BLOCK_CATEGORIES.join(', ')} (or omitted). ` +
           `Got: ${JSON.stringify(manifest.category)}`,
         'category',
+      );
+    }
+  }
+
+  // `tagline` is OPTIONAL. When present it must be a string whose TRIMMED length
+  // is 1..BLOCK_TAGLINE_MAX_LENGTH — mirroring the server's authoritative
+  // BlockManifestValidator check (which also trims), so a padded-but-fitting
+  // value is never rejected here and then accepted at submit. Omission is fine —
+  // the store simply renders no tagline.
+  if (manifest.tagline !== undefined) {
+    const tagline = manifest.tagline;
+    if (typeof tagline !== 'string' || tagline.trim().length === 0) {
+      throw new BlockManifestError(
+        `manifest.tagline must be a non-empty string (or omitted). Got: ${JSON.stringify(tagline)}`,
+        'tagline',
+      );
+    }
+    if (tagline.trim().length > BLOCK_TAGLINE_MAX_LENGTH) {
+      throw new BlockManifestError(
+        `manifest.tagline must be at most ${BLOCK_TAGLINE_MAX_LENGTH} characters. Got: ${tagline.trim().length}`,
+        'tagline',
       );
     }
   }

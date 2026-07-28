@@ -18,7 +18,11 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { defineBlock } from '../../src/blocks/defineBlock.js';
-import { BLOCK_CATEGORIES, BLOCK_SCOPES } from '../../src/blocks/scopes.js';
+import {
+  BLOCK_CATEGORIES,
+  BLOCK_SCOPES,
+  BLOCK_TAGLINE_MAX_LENGTH,
+} from '../../src/blocks/scopes.js';
 import type { BlockManifest } from '../../src/blocks/types.js';
 
 const SCHEMA_PATH = join(__dirname, '../../schemas/app-block/v1.json');
@@ -129,6 +133,49 @@ describe('canonical JSON schema ↔ defineBlock parity', () => {
         manifest: valid({ category: 'nonsense' as unknown as BlockManifest['category'] }),
       }),
     ).toThrow();
+    expect(() => defineBlock({ manifest: valid() })).not.toThrow();
+  });
+
+  it('tagline bound ↔ BLOCK_TAGLINE_MAX_LENGTH drift guard (optional field)', () => {
+    const taglineSchema = (
+      schema.properties as Record<string, { type?: string; minLength?: number; maxLength?: number }>
+    ).tagline;
+    // The schema declares an optional non-empty string with a length cap.
+    expect(taglineSchema?.type).toBe('string');
+    expect(taglineSchema?.minLength).toBe(1);
+    // DRIFT GUARD: the schema's cap is EXACTLY the SDK's exported bound (which
+    // mirrors the server's MANIFEST_TAGLINE_MAX_LENGTH).
+    expect(taglineSchema?.maxLength).toBe(BLOCK_TAGLINE_MAX_LENGTH);
+    // The `\S` pattern is what keeps the SCHEMA from being MORE PERMISSIVE than
+    // the server, which trims before measuring: without it `"   "` would pass
+    // `minLength: 1` locally and then be rejected at submit.
+    expect(taglineSchema?.pattern).toBe('\\S');
+    // tagline is NOT in the canonical required set.
+    expect((schema.required as string[]) ?? []).not.toContain('tagline');
+
+    // defineBlock mirrors the server: TRIMMED length 1..cap.
+    expect(() => defineBlock({ manifest: valid({ tagline: 'A crisp one-liner' }) })).not.toThrow();
+    expect(() =>
+      defineBlock({ manifest: valid({ tagline: 'a'.repeat(BLOCK_TAGLINE_MAX_LENGTH) }) }),
+    ).not.toThrow();
+    // Padding is not counted (the server trims first) — over-raw but fitting trimmed.
+    expect(() =>
+      defineBlock({
+        manifest: valid({ tagline: `   ${'a'.repeat(BLOCK_TAGLINE_MAX_LENGTH)}   ` }),
+      }),
+    ).not.toThrow();
+    // One char over the cap, blank, and non-string are all rejected.
+    expect(() =>
+      defineBlock({ manifest: valid({ tagline: 'a'.repeat(BLOCK_TAGLINE_MAX_LENGTH + 1) }) }),
+    ).toThrow(/tagline/);
+    expect(() => defineBlock({ manifest: valid({ tagline: '' }) })).toThrow(/tagline/);
+    expect(() => defineBlock({ manifest: valid({ tagline: '   ' }) })).toThrow(/tagline/);
+    expect(() =>
+      defineBlock({
+        manifest: valid({ tagline: 42 as unknown as BlockManifest['tagline'] }),
+      }),
+    ).toThrow(/tagline/);
+    // Omission is fine.
     expect(() => defineBlock({ manifest: valid() })).not.toThrow();
   });
 

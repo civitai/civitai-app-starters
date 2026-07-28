@@ -21,7 +21,12 @@ export type { SafeStorageInstallResult, SafeStorageName } from '../safe-storage/
 export { defineBlock, BlockManifestError } from './defineBlock.js';
 export type { DefineBlockConfig } from './defineBlock.js';
 
-export { BLOCK_SCOPES, BLOCK_SCOPE_PATTERN, BLOCK_CATEGORIES } from './scopes.js';
+export {
+  BLOCK_SCOPES,
+  BLOCK_SCOPE_PATTERN,
+  BLOCK_CATEGORIES,
+  BLOCK_TAGLINE_MAX_LENGTH,
+} from './scopes.js';
 export type { BlockScope, BlockScopeKey, BlockCategory } from './scopes.js';
 
 export {

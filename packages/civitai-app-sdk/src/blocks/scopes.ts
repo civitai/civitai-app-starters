@@ -85,3 +85,18 @@ export const BLOCK_CATEGORIES = [
 ] as const;
 
 export type BlockCategory = (typeof BLOCK_CATEGORIES)[number];
+
+/**
+ * Max length of the optional manifest `tagline` — the one-line store pitch shown
+ * under the app's name on its `/apps` card + detail page. Mirrors
+ * `MANIFEST_TAGLINE_MAX_LENGTH` in civitai/civitai's
+ * `src/server/services/block-manifest-validator.service.ts` (the authoritative
+ * gate) and the `tagline.maxLength` in the canonical schema
+ * (https://civitai.com/schemas/app-block/v1.json). Keep all three in lockstep —
+ * the schema-parity test asserts this const equals the vendored schema's bound.
+ *
+ * NOTE: the SERVER measures the TRIMMED length; JSON Schema's `maxLength` counts
+ * the raw string. `defineBlock` mirrors the server (trimmed) so an author is
+ * never rejected locally for padding the server would ignore.
+ */
+export const BLOCK_TAGLINE_MAX_LENGTH = 140;

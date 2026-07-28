@@ -751,6 +751,17 @@ export interface BlockManifestV1 {
    * canonical schema's `category` enum and MARKETPLACE_CATEGORIES on the server.
    */
   category?: BlockCategory;
+  /**
+   * Optional one-line pitch shown under the app's name on its `/apps` store card
+   * + detail page. Manifest-governed: it flows to the store listing on
+   * moderator-approve and is re-synced from the manifest on every subsequent
+   * approved version — for an ON-SITE app the manifest is the ONLY surface that
+   * sets it. Omit it and the store simply shows no tagline. Trimmed and capped at
+   * {@link BLOCK_TAGLINE_MAX_LENGTH} (140) characters, the same bound off-site
+   * listings use, so both store kinds render the same slot. Kept in lockstep with
+   * the canonical schema's `tagline` (civitai #3441).
+   */
+  tagline?: string;
   preview?: ManifestPreview;
   promotionEligible?: boolean;
   minApiVersion: string;
