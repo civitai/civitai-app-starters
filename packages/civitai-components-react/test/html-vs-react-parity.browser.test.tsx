@@ -38,14 +38,19 @@ import {
   Card,
   Checkbox,
   Group,
+  Image,
   Loader,
   NumberInput,
   Radio,
   RadioGroup,
+  SegmentedControl,
   Select,
+  Slider,
   Stack,
   Textarea,
   TextInput,
+  Toast,
+  Tooltip,
 } from '../src/index.js';
 import { CASES } from './fixtures.js';
 import { ensureStyles, mountHtml, mountReact } from './render.js';
@@ -1065,5 +1070,287 @@ describe('styling anchors — bare-markup documented defaults (0.2.1)', () => {
         expect(cs.color, who).toBe(solid(tokens.colorPrimary));
       }
     );
+  });
+});
+
+// ===========================================================================
+// NEW PRIMITIVES — token-derived anchors on BOTH the React binding and hand-HTML
+// (per MARKUP.md), light + dark where theme-dependent. Neuter injectStyles() and
+// these fail (values come only from @civitai/components + @civitai/theme).
+// ===========================================================================
+
+/** 1×1 transparent GIF (loads without network — deterministic). */
+const PIXEL_GIF = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
+
+describe('styling anchors — Slider (new primitive)', () => {
+  const SL_HTML = (id: string, extra = '', ctrlExtra = '') =>
+    `<div data-civitai-ui="slider"${extra}><label data-civitai-ui-label for="${id}">S</label><input type="range" id="${id}" min="0" max="100" value="20"${ctrlExtra} /></div>`;
+
+  it('light: accent-color=primary token, track bg=gray-2, 6px track', () => {
+    both(
+      pair('light', <Slider label="S" id="sl1" defaultValue={20} />, SL_HTML('sl1'), 'input[type="range"]'),
+      (cs, who) => {
+        expect(cs.accentColor, who).toBe(solid(tokens.colorPrimary));
+        expect(cs.backgroundColor, who).toBe(solid(tokens.colorGray2));
+        expect(cs.height, who).toBe('6px');
+        expect(cs.cursor, who).toBe('pointer');
+      }
+    );
+  });
+
+  it('dark: accent-color=dark primary (theme actually switched)', () => {
+    both(
+      pair('dark', <Slider label="S" id="sl2" defaultValue={20} />, SL_HTML('sl2'), 'input[type="range"]'),
+      (cs, who) => {
+        expect(cs.accentColor, who).toBe(solid(darkTokens.colorPrimary));
+        expect(cs.accentColor, who).not.toBe(solid(tokens.colorPrimary));
+      }
+    );
+  });
+
+  it('invalid (data-invalid): accent-color=error token', () => {
+    both(
+      pair(
+        'light',
+        <Slider label="S" id="sl3" error="Too high" defaultValue={20} />,
+        SL_HTML('sl3', ' data-invalid="true"', ' aria-invalid="true" aria-describedby="sl3-err"') +
+          '',
+        'input[type="range"]'
+      ),
+      (cs, who) => {
+        expect(cs.accentColor, who).toBe(solid(tokens.colorError));
+        expect(cs.accentColor, who).not.toBe(solid(tokens.colorPrimary));
+      }
+    );
+  });
+});
+
+describe('styling anchors — SegmentedControl (new primitive)', () => {
+  const SC = (
+    <SegmentedControl
+      mode="tabs"
+      aria-label="View"
+      defaultValue="grid"
+      data={[
+        { value: 'grid', label: 'Grid' },
+        { value: 'list', label: 'List' },
+      ]}
+    />
+  );
+  const SC_HTML = `<div data-civitai-ui="segmented-control" data-size="md" role="tablist" aria-label="View"><button type="button" id="a-grid" data-civitai-ui-segment data-size="md" role="tab" aria-selected="true" tabindex="0">Grid</button><button type="button" id="a-list" data-civitai-ui-segment data-size="md" role="tab" aria-selected="false" tabindex="-1">List</button></div>`;
+
+  const SC_TOGGLE = (
+    <SegmentedControl
+      aria-label="Layout"
+      defaultValue="grid"
+      data={[
+        { value: 'grid', label: 'Grid' },
+        { value: 'list', label: 'List' },
+      ]}
+    />
+  );
+  const SC_TOGGLE_HTML = `<div data-civitai-ui="segmented-control" data-size="md" role="radiogroup" aria-label="Layout"><button type="button" id="tg-grid" data-civitai-ui-segment data-size="md" role="radio" aria-checked="true" tabindex="0">Grid</button><button type="button" id="tg-list" data-civitai-ui-segment data-size="md" role="radio" aria-checked="false" tabindex="-1">List</button></div>`;
+
+  it('container light: bg=gray-1, padding 4px, radius=4px(token)', () => {
+    both(pair('light', SC, SC_HTML, '[data-civitai-ui="segmented-control"]'), (cs, who) => {
+      expect(cs.backgroundColor, who).toBe(solid(tokens.colorGray1));
+      expect(cs.paddingTop, who).toBe('4px');
+      expect(cs.borderTopLeftRadius, who).toBe('4px');
+      expect(cs.display, who).toBe('inline-flex');
+    });
+  });
+
+  it('container dark: bg=surface-2 (theme-tracked)', () => {
+    both(pair('dark', SC, SC_HTML, '[data-civitai-ui="segmented-control"]'), (cs, who) => {
+      expect(cs.backgroundColor, who).toBe(solid(darkTokens.colorSurface2));
+      expect(cs.backgroundColor, who).not.toBe(solid(tokens.colorGray1));
+    });
+  });
+
+  it('selected segment light: bg=surface, color=text, md height=30px', () => {
+    both(
+      pair('light', SC, SC_HTML, '[data-civitai-ui-segment][aria-selected="true"]'),
+      (cs, who) => {
+        expect(cs.backgroundColor, who).toBe(solid(tokens.colorSurface));
+        expect(cs.color, who).toBe(solid(tokens.colorText));
+        expect(cs.height, who).toBe('30px');
+      }
+    );
+  });
+
+  it('unselected segment light: color=text-dimmed, transparent bg', () => {
+    both(
+      pair('light', SC, SC_HTML, '[data-civitai-ui-segment][aria-selected="false"]'),
+      (cs, who) => {
+        expect(cs.color, who).toBe(solid(tokens.colorTextDimmed));
+        expect(cs.backgroundColor, who).toBe('rgba(0, 0, 0, 0)');
+      }
+    );
+  });
+
+  it('toggle mode (radiogroup): checked segment styled via aria-checked = surface bg', () => {
+    both(
+      pair('light', SC_TOGGLE, SC_TOGGLE_HTML, '[data-civitai-ui-segment][aria-checked="true"]'),
+      (cs, who) => {
+        expect(cs.backgroundColor, who).toBe(solid(tokens.colorSurface));
+        expect(cs.color, who).toBe(solid(tokens.colorText));
+      }
+    );
+  });
+});
+
+describe('styling anchors — Toast (new primitive)', () => {
+  it('success light: bg=surface (opaque), left accent=success token', () => {
+    both(
+      pair(
+        'light',
+        <Toast color="success" title="t">
+          b
+        </Toast>,
+        `<div data-civitai-ui="toast" data-color="success" role="status"><div data-civitai-ui-toast-body>b</div></div>`,
+        '[data-civitai-ui="toast"]'
+      ),
+      (cs, who) => {
+        expect(cs.backgroundColor, who).toBe(solid(tokens.colorSurface));
+        expect(cs.borderLeftColor, who).toBe(solid(tokens.colorSuccess));
+      }
+    );
+  });
+
+  it('error dark: bg=dark surface, left accent=dark error token (theme-tracked)', () => {
+    both(
+      pair(
+        'dark',
+        <Toast color="error" title="t">
+          b
+        </Toast>,
+        `<div data-civitai-ui="toast" data-color="error" role="status"><div data-civitai-ui-toast-body>b</div></div>`,
+        '[data-civitai-ui="toast"]'
+      ),
+      (cs, who) => {
+        expect(cs.backgroundColor, who).toBe(solid(darkTokens.colorSurface));
+        expect(cs.borderLeftColor, who).toBe(solid(darkTokens.colorError));
+      }
+    );
+  });
+
+  it('neutral (no data-color): left accent = border token', () => {
+    both(
+      pair(
+        'light',
+        <Toast title="t">b</Toast>,
+        `<div data-civitai-ui="toast" role="status"><div data-civitai-ui-toast-body>b</div></div>`,
+        '[data-civitai-ui="toast"]'
+      ),
+      (cs, who) => {
+        expect(cs.borderLeftColor, who).toBe(solid(tokens.colorBorder));
+      }
+    );
+  });
+});
+
+describe('styling anchors — Tooltip (new primitive)', () => {
+  it('bubble: bg=gray-9 chip, text=primaryFg (white), radius=4px(token)', () => {
+    both(
+      pair(
+        'light',
+        <Tooltip label="Info" defaultOpen>
+          <button type="button">t</button>
+        </Tooltip>,
+        `<span data-civitai-ui="tooltip"><button type="button" aria-describedby="tt-x">t</button><span data-civitai-ui-tooltip-bubble role="tooltip" id="tt-x" data-open="true">Info</span></span>`,
+        '[data-civitai-ui-tooltip-bubble]'
+      ),
+      (cs, who) => {
+        expect(cs.backgroundColor, who).toBe(solid(tokens.colorGray9));
+        expect(cs.color, who).toBe(solid(tokens.colorPrimaryFg));
+        expect(cs.borderTopLeftRadius, who).toBe('4px');
+        expect(cs.position, who).toBe('absolute');
+      }
+    );
+  });
+});
+
+describe('styling anchors — Image (new primitive)', () => {
+  const IMG_HTML = `<div data-civitai-ui="image" data-status="loaded"><img data-civitai-ui-image-img data-fit="cover" src="${PIXEL_GIF}" alt="p" /></div>`;
+
+  it('container light: placeholder bg=gray-2, radius=4px(token), overflow hidden', () => {
+    both(
+      pair('light', <Image src={PIXEL_GIF} alt="p" />, IMG_HTML, '[data-civitai-ui="image"]'),
+      (cs, who) => {
+        expect(cs.backgroundColor, who).toBe(solid(tokens.colorGray2));
+        expect(cs.borderTopLeftRadius, who).toBe('4px');
+        expect(cs.overflow, who).toBe('hidden');
+        expect(cs.position, who).toBe('relative');
+      }
+    );
+  });
+
+  it('container dark: placeholder bg=surface-2 (theme-tracked)', () => {
+    both(
+      pair('dark', <Image src={PIXEL_GIF} alt="p" />, IMG_HTML, '[data-civitai-ui="image"]'),
+      (cs, who) => {
+        expect(cs.backgroundColor, who).toBe(solid(darkTokens.colorSurface2));
+        expect(cs.backgroundColor, who).not.toBe(solid(tokens.colorGray2));
+      }
+    );
+  });
+
+  it('img: object-fit=cover (data-fit), block display', () => {
+    both(
+      pair('light', <Image src={PIXEL_GIF} alt="p" fit="cover" />, IMG_HTML, '[data-civitai-ui-image-img]'),
+      (cs, who) => {
+        expect(cs.objectFit, who).toBe('cover');
+        expect(cs.display, who).toBe('block');
+      }
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tooltip Escape-to-dismiss — REAL computed visibility (the definitive check).
+// Focus reveals the bubble via :focus-within; Escape must HIDE it even though
+// focus is still on the trigger (the `data-dismissed` override gates the CSS
+// reveal). A pure `data-open`-flip could never hide it here — this test fails
+// against the pre-fix behavior.
+// ---------------------------------------------------------------------------
+describe('Tooltip Escape-to-dismiss (real visibility)', () => {
+  // Let React flush the scheduled render triggered by the dispatched event.
+  const flush = () => new Promise<void>((res) => setTimeout(res, 0));
+
+  it('focus shows the bubble; Escape hides it while focus remains; re-focus re-shows', async () => {
+    const r = mountReact(
+      'light',
+      <Tooltip label="Info">
+        <button type="button">trigger</button>
+      </Tooltip>
+    );
+    try {
+      const trigger = r.mount.querySelector('button')!;
+      const bubble = r.mount.querySelector('[data-civitai-ui-tooltip-bubble]') as HTMLElement;
+
+      // Hidden at rest.
+      expect(getComputedStyle(bubble).visibility).toBe('hidden');
+
+      // Focus reveals it (pure CSS :focus-within — no React state needed).
+      trigger.focus();
+      await flush();
+      expect(document.activeElement).toBe(trigger);
+      expect(getComputedStyle(bubble).visibility).toBe('visible');
+
+      // Escape dismisses despite focus still on the trigger (data-dismissed
+      // overrides the reveal). A data-open flip alone could NOT hide it here.
+      trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await flush();
+      expect(document.activeElement).toBe(trigger);
+      expect(getComputedStyle(bubble).visibility).toBe('hidden');
+
+      // Blur + refocus clears the dismissal so it re-opens normally.
+      trigger.blur();
+      trigger.focus();
+      await flush();
+      expect(getComputedStyle(bubble).visibility).toBe('visible');
+    } finally {
+      r.cleanup();
+    }
   });
 });

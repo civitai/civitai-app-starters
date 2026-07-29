@@ -26,3 +26,23 @@ export { Group, type GroupProps } from './Group.js';
 export { Alert, type AlertProps, type AlertColor } from './Alert.js';
 export { Loader, type LoaderProps, type LoaderSize } from './Loader.js';
 export { Badge, type BadgeProps, type BadgeVariant, type BadgeSize, type BadgeColor } from './Badge.js';
+export { Slider, type SliderProps } from './Slider.js';
+export {
+  SegmentedControl,
+  segmentId,
+  type SegmentedControlProps,
+  type SegmentedControlSize,
+  type SegmentedControlMode,
+  type SegmentItem,
+} from './SegmentedControl.js';
+export { TabPanel, type TabPanelProps } from './TabPanel.js';
+export { Toast, type ToastProps, type ToastColor } from './Toast.js';
+export {
+  ToastProvider,
+  useToast,
+  type ToastProviderProps,
+  type ToastOptions,
+  type ToastApi,
+} from './ToastProvider.js';
+export { Tooltip, type TooltipProps } from './Tooltip.js';
+export { Image, type ImageProps, type ImageFit, type ImageStatus } from './Image.js';

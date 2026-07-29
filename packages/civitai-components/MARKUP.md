@@ -206,6 +206,154 @@ Horizontal flex, items center-aligned. `data-gap`: `sm` · `md` · `lg`.
 <span data-civitai-ui="badge" data-variant="light" data-color="success" data-size="md">ready</span>
 ```
 
+### Slider — `data-civitai-ui="slider"`
+A themed native `<input type="range">`. `accent-color` carries the theme tint, so
+keyboard (arrow keys, Home/End, Page Up/Down) + ARIA come from the native control.
+- Wrapper **`<div data-civitai-ui="slider">`** containing, in order:
+  - optional header **`<div data-civitai-ui-slider-header>`** wrapping the
+    **`<label data-civitai-ui-label for="ID">`** and an optional current-value
+    read-out **`<output data-civitai-ui-slider-value for="ID">`**. Without a
+    value read-out, use a bare `<label data-civitai-ui-label for="ID">` instead
+    of the header.
+  - optional `<span id="ID-desc" data-civitai-ui-description>`
+  - **`<input type="range" id="ID">`** — the slider itself. Like checkbox/radio
+    it does **not** carry `data-civitai-ui-control` (that is the bordered
+    field-input chrome). Set `min`/`max`/`step`/`value` natively.
+  - optional `<span id="ID-err" data-civitai-ui-error role="alert">`
+- Wire a11y: input `aria-describedby="ID-desc ID-err"`, and when invalid
+  `aria-invalid="true"` + `data-invalid="true"` on the wrapper (tints the track
+  to the error token). Disabled is the native input state. When you render a
+  formatted value read-out (e.g. `20%`, `Large`), also set **`aria-valuetext`**
+  on the input to that same string so screen readers announce it instead of the
+  raw `aria-valuenow` (the React binding sets this automatically from a
+  string/number `valueLabel`).
+
+```html
+<div data-civitai-ui="slider">
+  <div data-civitai-ui-slider-header>
+    <label data-civitai-ui-label for="steps">Steps</label>
+    <output data-civitai-ui-slider-value for="steps">20</output>
+  </div>
+  <input type="range" id="steps" min="0" max="100" value="20" />
+</div>
+```
+
+### SegmentedControl / Tabs — `data-civitai-ui="segmented-control"`
+A row of segment buttons with **roving tabindex** + **arrow-key navigation**,
+in one of **two ARIA role modes**. The CSS is presentational; hand-HTML authors
+MUST implement the keyboard behavior themselves (the `@civitai/components-react`
+`SegmentedControl` binding does it for you — prefer it for interactive use, and
+pick the mode with its `mode` prop: `'toggle'` default, or `'tabs'`).
+
+**Common to both modes:**
+- Wrapper **`<div data-civitai-ui="segmented-control">`** with an accessible name
+  (**`aria-label`** or `aria-labelledby`). `data-size`: `sm` · `md` (default) ·
+  `lg`.
+- Each segment: **`<button data-civitai-ui-segment>`**, `disabled` for a disabled
+  one. Exactly one is selected: **`tabindex="0"` on the selected** segment,
+  **`tabindex="-1"` on the rest** (roving tabindex).
+- Keyboard (roving): `ArrowLeft`/`ArrowRight` (+ `ArrowUp`/`ArrowDown`) move to
+  the previous/next enabled segment (wrapping), `Home`/`End` jump to first/last;
+  selection follows focus. Move focus to the newly-selected segment.
+
+**Mode `toggle` (default) — a panel-less value switch (Mantine-style):**
+- Wrapper **`role="radiogroup"`**; each segment **`role="radio"`** with
+  **`aria-checked="true|false"`**. No `aria-controls`. Use this when the control
+  just picks a value (no panels).
+
+```html
+<div data-civitai-ui="segmented-control" role="radiogroup" aria-label="Layout" data-size="md">
+  <button data-civitai-ui-segment role="radio" aria-checked="true" tabindex="0">Grid</button>
+  <button data-civitai-ui-segment role="radio" aria-checked="false" tabindex="-1">List</button>
+</div>
+```
+
+**Mode `tabs` — a tab set that switches visible panels:**
+- Wrapper **`role="tablist"`**; each segment **`role="tab"`** with
+  **`aria-selected="true|false"`** + optional **`aria-controls="PANEL_ID"`** +
+  **`id`** linking its tab panel.
+- Tab panel: **`<div data-civitai-ui-tabpanel role="tabpanel" id="PANEL_ID"
+  aria-labelledby="TAB_ID" tabindex="0">`**, `hidden` when its tab is not
+  selected.
+
+```html
+<div data-civitai-ui="segmented-control" role="tablist" aria-label="View" data-size="md">
+  <button data-civitai-ui-segment role="tab" id="t-grid" aria-selected="true"
+          aria-controls="p-grid" tabindex="0">Grid</button>
+  <button data-civitai-ui-segment role="tab" id="t-list" aria-selected="false"
+          aria-controls="p-list" tabindex="-1">List</button>
+</div>
+<div data-civitai-ui-tabpanel role="tabpanel" id="p-grid" aria-labelledby="t-grid" tabindex="0">…</div>
+<div data-civitai-ui-tabpanel role="tabpanel" id="p-list" aria-labelledby="t-list" tabindex="0" hidden>…</div>
+```
+
+### Toast — `data-civitai-ui="toast-region"` + `data-civitai-ui="toast"`
+An `aria-live` notification host (`toast-region`) plus the individual `toast`
+card. The React binding (`ToastProvider` + `useToast()`) owns the queue,
+auto-dismiss timers and portal; hand-HTML authors render into the region and add
+each toast so the live region announces it.
+- Host: **`<div data-civitai-ui="toast-region" role="region" aria-label="Notifications" aria-live="polite">`**
+  (fixed bottom-right stack). Use `aria-live="assertive"` for urgent errors.
+- Toast: **`<div data-civitai-ui="toast" role="status">`** (or `role="alert"` for
+  urgent). `data-color`: `info` · `success` · `warning` · `error` (colors the
+  left accent; same intent set as Alert). Omit for the neutral accent.
+  - **`<div data-civitai-ui-toast-body>`** with an optional
+    `<div data-civitai-ui-toast-title>` and the message.
+  - optional dismiss:
+    `<button data-civitai-ui-toast-close aria-label="Dismiss">×</button>`.
+
+```html
+<div data-civitai-ui="toast-region" role="region" aria-label="Notifications" aria-live="polite">
+  <div data-civitai-ui="toast" data-color="success" role="status">
+    <div data-civitai-ui-toast-body>
+      <div data-civitai-ui-toast-title>Saved</div>
+      Your changes are live.
+    </div>
+    <button data-civitai-ui-toast-close aria-label="Dismiss">×</button>
+  </div>
+</div>
+```
+
+### Tooltip — `data-civitai-ui="tooltip"`
+A hover/focus tooltip: a positioned `role="tooltip"` bubble revealed when the
+wrapper is hovered or contains focus. The React binding also wires the trigger's
+`aria-describedby` to the bubble + Escape-to-dismiss.
+- Wrapper **`<span data-civitai-ui="tooltip">`** containing, in order:
+  - the **trigger** element (button/link/etc.), with **`aria-describedby="TIP_ID"`**.
+  - **`<span data-civitai-ui-tooltip-bubble role="tooltip" id="TIP_ID">`** — the
+    bubble. Revealed on `:hover`/`:focus-within`, or force-open with
+    `data-open="true"`. **`data-dismissed="true"` force-HIDES it** — it overrides
+    the hover/focus reveal, so Escape-to-dismiss works even while the pointer
+    still hovers / focus is still within (the React binding sets/clears this).
+- A11y: the trigger must be focusable so keyboard users can reveal the tooltip;
+  keep the tooltip text short (it is supplementary, not the accessible name).
+
+```html
+<span data-civitai-ui="tooltip">
+  <button data-civitai-ui="button" aria-describedby="tip-seed">Seed</button>
+  <span data-civitai-ui-tooltip-bubble role="tooltip" id="tip-seed">Randomize the seed</span>
+</span>
+```
+
+### Image — `data-civitai-ui="image"`
+A media container with a token placeholder background (visible while loading),
+`object-fit` control, and a broken-image fallback. The React binding wires
+`onLoad`/`onError` to `data-status`; hand-HTML authors set it themselves.
+- Wrapper **`<div data-civitai-ui="image">`** (size it with `width`/`height`/
+  `aspect-ratio` inline or via your own class). `data-status`: `loading` ·
+  `loaded` · `error` (omitted ⇒ the image shows).
+  - **`<img data-civitai-ui-image-img>`** — `data-fit`: `cover` (default) ·
+    `contain`. Always provide `alt`.
+  - optional **`<div data-civitai-ui-image-fallback>`** — shown (overlay) only
+    when `data-status="error"`.
+
+```html
+<div data-civitai-ui="image" data-status="loaded" style="aspect-ratio: 16 / 9">
+  <img data-civitai-ui-image-img src="/img.jpg" alt="Preview" />
+  <div data-civitai-ui-image-fallback aria-hidden="true">Image unavailable</div>
+</div>
+```
+
 ---
 
 ## React parity

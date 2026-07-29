@@ -10,14 +10,20 @@ import {
   Card,
   Checkbox,
   Group,
+  Image,
   Loader,
   NumberInput,
   Radio,
   RadioGroup,
+  SegmentedControl,
   Select,
+  Slider,
   Stack,
+  TabPanel,
   TextInput,
   Textarea,
+  Toast,
+  Tooltip,
 } from '../src/index.js';
 
 export interface Case {
@@ -37,6 +43,10 @@ const BTN = [...TEXT, 'backgroundColor', ...BORDER, ...PAD, 'height', 'opacity']
 const CONTROL = [...TEXT, 'backgroundColor', ...BORDER, ...PAD];
 // Themed native checkbox/radio input: theme tint (accent-color) + custom sizing.
 const CHOICE = ['accentColor', 'width', 'height', 'cursor'];
+
+/** 1×1 transparent GIF (loads without network — deterministic for the Image tests). */
+const PIXEL_GIF =
+  'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
 
 const buttonVariants = ['filled', 'light', 'outline', 'subtle'] as const;
 const buttonSizes = ['sm', 'md', 'lg'] as const;
@@ -341,6 +351,142 @@ export const CASES: Case[] = [
     compare: ['display', 'flexDirection', 'alignItems', 'gap'],
   },
 
+  // ---- Slider (new primitive) — themed native <input type="range"> ----
+  {
+    id: 'slider-default',
+    node: <Slider label="Steps" id="fx-sl" min={0} max={100} defaultValue={20} />,
+    html: `<div data-civitai-ui="slider"><label data-civitai-ui-label for="fx-sl">Steps</label><input type="range" id="fx-sl" min="0" max="100" value="20" /></div>`,
+    selector: 'input[type="range"]',
+    compare: ['accentColor', 'height', 'cursor'],
+  },
+  {
+    id: 'slider-invalid',
+    node: <Slider label="Steps" id="fx-sl-e" error="Too high" defaultValue={20} />,
+    html: `<div data-civitai-ui="slider" data-invalid="true"><label data-civitai-ui-label for="fx-sl-e">Steps</label><input type="range" id="fx-sl-e" min="0" max="100" value="20" aria-invalid="true" aria-describedby="fx-sl-e-err" /><span id="fx-sl-e-err" data-civitai-ui-error role="alert">Too high</span></div>`,
+    selector: 'input[type="range"]',
+    compare: ['accentColor'],
+  },
+
+  // ---- SegmentedControl (new primitive) — role=tablist chrome ----
+  {
+    id: 'segmented-control-container',
+    node: (
+      <SegmentedControl
+        mode="tabs"
+        aria-label="View"
+        defaultValue="grid"
+        data={[
+          { value: 'grid', label: 'Grid' },
+          { value: 'list', label: 'List' },
+        ]}
+      />
+    ),
+    html: `<div data-civitai-ui="segmented-control" data-size="md" role="tablist" aria-label="View"><button type="button" id="sc1-grid" data-civitai-ui-segment data-size="md" role="tab" aria-selected="true" tabindex="0">Grid</button><button type="button" id="sc1-list" data-civitai-ui-segment data-size="md" role="tab" aria-selected="false" tabindex="-1">List</button></div>`,
+    selector: '[data-civitai-ui="segmented-control"]',
+    compare: ['display', 'backgroundColor', 'borderTopLeftRadius', ...PAD],
+  },
+  {
+    id: 'segmented-control-selected',
+    node: (
+      <SegmentedControl
+        mode="tabs"
+        aria-label="View"
+        defaultValue="grid"
+        data={[
+          { value: 'grid', label: 'Grid' },
+          { value: 'list', label: 'List' },
+        ]}
+      />
+    ),
+    html: `<div data-civitai-ui="segmented-control" data-size="md" role="tablist" aria-label="View"><button type="button" id="sc2-grid" data-civitai-ui-segment data-size="md" role="tab" aria-selected="true" tabindex="0">Grid</button><button type="button" id="sc2-list" data-civitai-ui-segment data-size="md" role="tab" aria-selected="false" tabindex="-1">List</button></div>`,
+    selector: '[data-civitai-ui-segment][aria-selected="true"]',
+    compare: [...TEXT, 'backgroundColor', 'height'],
+  },
+  {
+    id: 'segmented-control-unselected',
+    node: (
+      <SegmentedControl
+        mode="tabs"
+        aria-label="View"
+        defaultValue="grid"
+        data={[
+          { value: 'grid', label: 'Grid' },
+          { value: 'list', label: 'List' },
+        ]}
+      />
+    ),
+    html: `<div data-civitai-ui="segmented-control" data-size="md" role="tablist" aria-label="View"><button type="button" id="sc3-grid" data-civitai-ui-segment data-size="md" role="tab" aria-selected="true" tabindex="0">Grid</button><button type="button" id="sc3-list" data-civitai-ui-segment data-size="md" role="tab" aria-selected="false" tabindex="-1">List</button></div>`,
+    selector: '[data-civitai-ui-segment][aria-selected="false"]',
+    compare: ['color', 'height', 'backgroundColor'],
+  },
+  {
+    // toggle mode (default): role=radiogroup/radio, aria-checked drives the
+    // same selected styling as aria-selected does in tabs mode.
+    id: 'segmented-control-toggle-selected',
+    node: (
+      <SegmentedControl
+        aria-label="Layout"
+        defaultValue="grid"
+        data={[
+          { value: 'grid', label: 'Grid' },
+          { value: 'list', label: 'List' },
+        ]}
+      />
+    ),
+    html: `<div data-civitai-ui="segmented-control" data-size="md" role="radiogroup" aria-label="Layout"><button type="button" id="sct-grid" data-civitai-ui-segment data-size="md" role="radio" aria-checked="true" tabindex="0">Grid</button><button type="button" id="sct-list" data-civitai-ui-segment data-size="md" role="radio" aria-checked="false" tabindex="-1">List</button></div>`,
+    selector: '[data-civitai-ui-segment][aria-checked="true"]',
+    compare: [...TEXT, 'backgroundColor', 'height'],
+  },
+
+  // ---- Toast (new primitive) — presentational card ----
+  {
+    id: 'toast-success',
+    node: (
+      <Toast color="success" title="Saved">
+        Your changes are live.
+      </Toast>
+    ),
+    html: `<div data-civitai-ui="toast" data-color="success" role="status"><div data-civitai-ui-toast-body><div data-civitai-ui-toast-title>Saved</div>Your changes are live.</div></div>`,
+    selector: '[data-civitai-ui="toast"]',
+    compare: ['backgroundColor', 'color', 'borderLeftColor', 'fontSize', ...PAD],
+  },
+  {
+    id: 'toast-neutral',
+    node: <Toast title="Note">Body</Toast>,
+    html: `<div data-civitai-ui="toast" role="status"><div data-civitai-ui-toast-body><div data-civitai-ui-toast-title>Note</div>Body</div></div>`,
+    selector: '[data-civitai-ui="toast"]',
+    compare: ['backgroundColor', 'borderLeftColor'],
+  },
+
+  // ---- Tooltip (new primitive) — bubble ----
+  {
+    id: 'tooltip-bubble',
+    node: (
+      <Tooltip label="Info" defaultOpen>
+        <button type="button">t</button>
+      </Tooltip>
+    ),
+    html: `<span data-civitai-ui="tooltip"><button type="button" aria-describedby="tip-fx">t</button><span data-civitai-ui-tooltip-bubble role="tooltip" id="tip-fx" data-open="true">Info</span></span>`,
+    selector: '[data-civitai-ui-tooltip-bubble]',
+    compare: ['backgroundColor', 'color', 'fontSize', 'borderTopLeftRadius'],
+  },
+
+  // ---- Image (new primitive) — container + img ----
+  {
+    id: 'image-container',
+    node: <Image src={PIXEL_GIF} alt="p" fallback="unavailable" />,
+    html: `<div data-civitai-ui="image" data-status="loaded"><img data-civitai-ui-image-img data-fit="cover" src="${PIXEL_GIF}" alt="p" /><div data-civitai-ui-image-fallback aria-hidden="true">unavailable</div></div>`,
+    selector: '[data-civitai-ui="image"]',
+    compare: ['backgroundColor', 'borderTopLeftRadius', 'position', 'overflow'],
+  },
+  {
+    id: 'image-img',
+    node: <Image src={PIXEL_GIF} alt="p" fit="cover" />,
+    html: `<div data-civitai-ui="image" data-status="loaded"><img data-civitai-ui-image-img data-fit="cover" src="${PIXEL_GIF}" alt="p" /></div>`,
+    selector: '[data-civitai-ui-image-img]',
+    compare: ['objectFit', 'display'],
+  },
+
   // ---- Bare markup ≡ documented defaults (0.2.1) ----
   // The React binding always emits explicit `data-variant`/`data-size`/
   // `data-color` (defaulting the prop), but hand-written HTML per MARKUP.md may
@@ -378,6 +524,111 @@ export const CASES: Case[] = [
   },
 ];
 
+/** Full tabs example (SegmentedControl + TabPanels) with reciprocal
+ * aria-controls / aria-labelledby wiring, for the a11y sweep. */
+const SEG_TABS_A11Y: React.ReactElement = (
+  <div>
+    <SegmentedControl
+      mode="tabs"
+      aria-label="View"
+      defaultValue="grid"
+      data={[
+        { value: 'grid', label: 'Grid', id: 'a11y-tab-grid', panelId: 'a11y-panel-grid' },
+        { value: 'list', label: 'List', id: 'a11y-tab-list', panelId: 'a11y-panel-list' },
+      ]}
+    />
+    <TabPanel id="a11y-panel-grid" tabId="a11y-tab-grid" active>
+      Grid content
+    </TabPanel>
+    <TabPanel id="a11y-panel-list" tabId="a11y-tab-list" active={false}>
+      List content
+    </TabPanel>
+  </div>
+);
+
+/** Extra a11y-only fixtures for the new primitives (structural nodes; the
+ * html/selector/compare fields are unused by the axe sweep). */
+const A11Y_EXTRA: Case[] = [
+  {
+    id: 'slider-a11y',
+    node: (
+      <Slider
+        label="Steps"
+        id="a11y-slider"
+        min={0}
+        max={100}
+        defaultValue={20}
+        description="How many diffusion steps"
+        valueLabel={(v) => `${v}`}
+      />
+    ),
+    html: '',
+    selector: 'input[type="range"]',
+    compare: [],
+  },
+  {
+    id: 'segmented-control-tabs-a11y',
+    node: SEG_TABS_A11Y,
+    html: '',
+    selector: '[data-civitai-ui="segmented-control"]',
+    compare: [],
+  },
+  {
+    id: 'segmented-control-toggle-a11y',
+    node: (
+      <SegmentedControl
+        aria-label="Layout"
+        defaultValue="grid"
+        data={[
+          { value: 'grid', label: 'Grid' },
+          { value: 'list', label: 'List' },
+        ]}
+      />
+    ),
+    html: '',
+    selector: '[data-civitai-ui="segmented-control"]',
+    compare: [],
+  },
+  {
+    id: 'toast-a11y',
+    node: (
+      <div
+        data-civitai-ui="toast-region"
+        role="region"
+        aria-label="Notifications"
+        aria-live="polite"
+      >
+        <Toast color="success" title="Saved" onClose={() => {}}>
+          Your changes are live.
+        </Toast>
+      </div>
+    ),
+    html: '',
+    selector: '[data-civitai-ui="toast"]',
+    compare: [],
+  },
+  {
+    id: 'tooltip-a11y',
+    node: (
+      <Tooltip label="Randomize the seed">
+        <button type="button" data-civitai-ui="button" data-variant="filled" data-size="md">
+          Seed
+        </button>
+      </Tooltip>
+    ),
+    html: '',
+    selector: '[data-civitai-ui-tooltip-bubble]',
+    compare: [],
+  },
+  {
+    id: 'image-a11y',
+    node: <Image src={PIXEL_GIF} alt="Preview" fallback="Image unavailable" />,
+    html: '',
+    selector: '[data-civitai-ui="image"]',
+    compare: [],
+  },
+];
+
 /** The component families, for the a11y sweep. */
 export const A11Y_CASES: Case[] = [
   CASES.find((c) => c.id === 'button-filled-md')!,
@@ -397,4 +648,5 @@ export const A11Y_CASES: Case[] = [
   CASES.find((c) => c.id === 'alert-info')!,
   CASES.find((c) => c.id === 'badge-filled-md')!,
   CASES.find((c) => c.id === 'loader-md')!,
+  ...A11Y_EXTRA,
 ];
