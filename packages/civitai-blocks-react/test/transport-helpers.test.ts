@@ -117,10 +117,15 @@ describe('nextRequestId', () => {
 });
 
 describe('generateIdempotencyKey', () => {
-  // The civitai host restricts the money-POST idempotency key to `^[A-Za-z0-9_-]{1,200}$`
-  // (audit 🟢) and 400s anything else. Every key this helper emits MUST clear that
-  // charset — otherwise a workflow submit / tip would be rejected at the input.
-  const SERVER_CHARSET = /^[A-Za-z0-9_-]{1,200}$/;
+  // The civitai host restricts the money-POST idempotency key to `^[A-Za-z0-9_-]{1,64}$`
+  // (BLOCK_IDEMPOTENCY_KEY_REGEX) and 400s anything else. Every key this helper emits
+  // MUST clear that charset — otherwise a workflow submit / tip is rejected at the input.
+  //
+  // The 64 bound is derived, not arbitrary: the host composes the orchestrator
+  // `externalId` as `blk<NN><appBlockId><key>`, and the orchestrator enforces
+  // `^[A-Za-z0-9_-]+$` with max 128 (WorkflowTemplate.cs). 64 keeps the worst-case
+  // composition inside 128. `crypto.randomUUID()` is 36 chars; the fallback ~35.
+  const SERVER_CHARSET = /^[A-Za-z0-9_-]{1,64}$/;
 
   it('emits crypto.randomUUID() when available, and it clears the server charset', () => {
     // Happy path: a secure context provides crypto.randomUUID.
