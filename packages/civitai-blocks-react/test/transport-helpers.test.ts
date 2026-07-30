@@ -4,6 +4,7 @@ import type { BlockInitPayload, WrappedToken } from '@civitai/app-sdk/blocks';
 
 import {
   EMPTY_SNAPSHOT,
+  generateIdempotencyKey,
   nextRequestId,
   sendTypedRequest,
   snapshotFromInit,
@@ -112,6 +113,38 @@ describe('nextRequestId', () => {
     expect(ids.size).toBe(50);
     // shape: `<6-char base36>-<counter>`
     for (const id of ids) expect(id).toMatch(/^[a-z0-9]{1,6}-\d+$/);
+  });
+});
+
+describe('generateIdempotencyKey', () => {
+  // The civitai host restricts the money-POST idempotency key to `^[A-Za-z0-9_-]{1,200}$`
+  // (audit 🟢) and 400s anything else. Every key this helper emits MUST clear that
+  // charset — otherwise a workflow submit / tip would be rejected at the input.
+  const SERVER_CHARSET = /^[A-Za-z0-9_-]{1,200}$/;
+
+  it('emits crypto.randomUUID() when available, and it clears the server charset', () => {
+    // Happy path: a secure context provides crypto.randomUUID.
+    const key = generateIdempotencyKey();
+    expect(key).toMatch(SERVER_CHARSET);
+  });
+
+  it('the RANDOM FALLBACK (no crypto.randomUUID) also clears the server charset', () => {
+    // Force the fallback branch (older webview / non-secure context / test env).
+    const original = globalThis.crypto;
+    try {
+      // @ts-expect-error — intentionally remove crypto to exercise the fallback.
+      delete (globalThis as { crypto?: unknown }).crypto;
+      for (let i = 0; i < 50; i++) {
+        expect(generateIdempotencyKey()).toMatch(SERVER_CHARSET);
+      }
+    } finally {
+      Object.defineProperty(globalThis, 'crypto', { value: original, configurable: true });
+    }
+  });
+
+  it('is UNIQUE per call (each call is a distinct logical operation — audit 🟡-3 rationale)', () => {
+    const keys = new Set(Array.from({ length: 100 }, () => generateIdempotencyKey()));
+    expect(keys.size).toBe(100);
   });
 });
 
