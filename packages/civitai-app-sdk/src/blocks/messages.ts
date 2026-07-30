@@ -197,6 +197,16 @@ export interface SharedStorageItemWire {
   createdAt: string;
   /** ISO-8601; consumers rehydrate to Date. */
   updatedAt: string;
+  /**
+   * Whether the REQUESTING viewer has an active up-vote on this entry. Lets a
+   * block hydrate its vote-button state on load instead of guessing (fixes the
+   * "double-click to unvote" bug). ADDITIVE + OPTIONAL: a host that predates
+   * this field omits it — the block-side hook defaults a missing value to
+   * `false`, so a new block on an old host degrades to today's behavior. An
+   * anonymous viewer is always `false` (no per-viewer vote row). Resolved
+   * server-side per viewer; never client-trusted.
+   */
+  viewerVoted?: boolean;
 }
 
 // ============================================================
@@ -534,6 +544,37 @@ export type ParentToBlockMessage =
       type: 'SHARED_UPDATE_RESULT';
       payload: { requestId: string; ok: boolean; error?: string };
     }
+  | {
+      // Reply to SHARED_GET (single-row fetch-by-key). On success `item` is the
+      // same wire shape as one `SHARED_LIST_RESULT` item (incl. `count` +
+      // `viewerVoted`), or `null` when the key is missing / hidden (so a `?g=`
+      // deep-link to a withdrawn or moderated row resolves cleanly to "not
+      // found" rather than leaking it). `error` on host-side failure — consumers
+      // treat a non-empty `error` as the promise-reject signal.
+      type: 'SHARED_GET_RESULT';
+      payload: { requestId: string; item: SharedStorageItemWire | null; error?: string };
+    }
+  | {
+      // Reply to SHARED_REPORT. `ok: true` when the report was filed for mod
+      // review. `error` on host-side failure — NOT_FOUND (missing key), a
+      // trust/scope rejection, or rate-limit. Consumers treat a non-empty
+      // `error` (or `ok: false`) as the reject signal (mirrors
+      // `SHARED_WITHDRAW_RESULT`). Filing a report does NOT hide the row — a
+      // moderator decides.
+      type: 'SHARED_REPORT_RESULT';
+      payload: { requestId: string; ok: boolean; error?: string };
+    }
+  | {
+      // Reply to SAVE_IMAGE (host-mediated download bridge). `ok: true` once the
+      // host has triggered the browser download in its unsandboxed top frame.
+      // `error` on host-side failure — a URL whose origin isn't on the civitai
+      // image/blob allowlist, an `imageId` the requesting viewer isn't allowed
+      // to see (gated read returned `hidden`/omitted), an over-size blob, or a
+      // fetch failure. Consumers treat a non-empty `error` (or `ok: false`) as
+      // the reject signal.
+      type: 'SAVE_IMAGE_RESULT';
+      payload: { requestId: string; ok: boolean; error?: string };
+    }
   | { type: 'SUSPEND'; payload?: undefined }
   | { type: 'RESUME'; payload?: undefined };
 
@@ -812,6 +853,54 @@ export type BlockToParentMessage =
   | {
       type: 'SHARED_UPDATE';
       payload: { requestId: string; key: string; value: SharedStorageValue };
+    }
+  // Fetch ONE shared entry by key — the single-row companion to SHARED_LIST's
+  // paged read, so a `?g=<key>` deep-link to an item past the first page
+  // resolves. Host reads via `apps.shared.get`, replying with
+  // `SHARED_GET_RESULT` (the full item incl. `count`/`viewerVoted`, or `null`
+  // for a missing/hidden row). Respects the SAME per-viewer visibility gate as
+  // `list` — a hidden/withdrawn row is never leaked. The block sends NO token.
+  | {
+      type: 'SHARED_GET';
+      payload: { requestId: string; key: string };
+    }
+  // Report a posted shared entry for moderator review (post-write abuse
+  // reporting on a shared board). Host reads via `apps.shared.report`, replying
+  // with `SHARED_REPORT_RESULT`. Trust-gated + rate-limited server-side (same
+  // write-scope trust boundary as SHARED_APPEND). `reason` is optional free
+  // text (bounded server-side). The block sends NO token.
+  | {
+      type: 'SHARED_REPORT';
+      payload: { requestId: string; key: string; reason?: string };
+    }
+  // Ask the host to DOWNLOAD an image the block already displays — the host
+  // fetches the blob in its UNSANDBOXED top frame and triggers the browser
+  // "Save As" (a sandboxed opaque-origin block lacks `allow-downloads`, so it
+  // can only copy a URL). Host reads/validates + downloads, replying with
+  // `SAVE_IMAGE_RESULT`. TWO complementary variants (send exactly one of `url`
+  // / `imageId`):
+  //   • `url` — the block's OWN fresh generation output (an orchestration blob
+  //     it has no `imageId` for yet). The host ALLOWLISTS the URL's origin to
+  //     the civitai image/blob CDN and REFUSES an arbitrary host (an unverified
+  //     block's `url`/`data` is untrusted — never a host-side fetch of an
+  //     attacker origin).
+  //   • `imageId` — a cross-user grid image (e.g. a benchmark cell). The host
+  //     resolves it through the SAME per-viewer gated read that backs
+  //     `GET_IMAGES_BY_IDS`, so a withheld/above-ceiling image can NEVER be
+  //     coerced into a download.
+  // `filename` is an optional download name (the host sanitizes it — no path
+  // traversal / duplicate-extension). The block sends NO token.
+  | {
+      type: 'SAVE_IMAGE';
+      payload: {
+        requestId: string;
+        /** Own-output URL — origin-allowlisted host-side. Mutually exclusive with `imageId`. */
+        url?: string;
+        /** Cross-user image id — routed through the gated per-viewer read. Mutually exclusive with `url`. */
+        imageId?: number;
+        /** Optional download filename (host-sanitized). */
+        filename?: string;
+      };
     };
 
 export type BlockToParentMessageType = BlockToParentMessage['type'];

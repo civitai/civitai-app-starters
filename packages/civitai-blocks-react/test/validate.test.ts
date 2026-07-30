@@ -17,9 +17,12 @@ import {
   isValidSharedAppendResult,
   isValidSharedCountResult,
   isValidSharedCountsResult,
+  isValidSharedGetResult,
   isValidSharedListResult,
+  isValidSharedReportResult,
   isValidSharedUpdateResult,
   isValidSharedWithdrawResult,
+  isValidSaveImageResult,
   isValidTokenRefresh,
   isValidTokenRefreshResponse,
   isValidUserCheckpointSetResult,
@@ -492,6 +495,12 @@ describe('isValidSharedListResult', () => {
   it('accepts a value with only a title (body/data optional)', () => {
     expect(isValidSharedListResult({ requestId: 'r', items: [{ ...item, value: { title: 't' } }] })).toBe(true);
   });
+  it('accepts an item WITH viewerVoted (additive) and one WITHOUT it (absent-safe)', () => {
+    expect(isValidSharedListResult({ requestId: 'r', items: [{ ...item, viewerVoted: true }] })).toBe(true);
+    expect(isValidSharedListResult({ requestId: 'r', items: [{ ...item, viewerVoted: false }] })).toBe(true);
+    // Absent is fine — an old host omits it (the hook defaults false).
+    expect(isValidSharedListResult({ requestId: 'r', items: [item] })).toBe(true);
+  });
   it('accepts an error reply', () => {
     expect(isValidSharedListResult({ requestId: 'r', items: [], error: 'SHARED_UNAVAILABLE' })).toBe(true);
   });
@@ -503,9 +512,73 @@ describe('isValidSharedListResult', () => {
     ['item value not an object', { requestId: 'r', items: [{ ...item, value: 5 }] }],
     ['item count not a number', { requestId: 'r', items: [{ ...item, count: '3' }] }],
     ['item createdAt not date-like', { requestId: 'r', items: [{ ...item, createdAt: 'never' }] }],
+    ['item viewerVoted not a boolean', { requestId: 'r', items: [{ ...item, viewerVoted: 'yes' }] }],
     ['nextCursor not a string', { requestId: 'r', items: [], nextCursor: 5 }],
   ])('rejects %s', (_, payload) => {
     expect(isValidSharedListResult(payload)).toBe(false);
+  });
+});
+
+describe('isValidSharedGetResult (SHARED_GET)', () => {
+  const item = {
+    key: 'req:1',
+    authorUserId: 7,
+    value: { title: 'Dark mode', body: 'please' },
+    count: 3,
+    createdAt: '2026-05-01T00:00:00.000Z',
+    updatedAt: '2026-05-02T00:00:00.000Z',
+    viewerVoted: true,
+  };
+  it('accepts a found item', () => {
+    expect(isValidSharedGetResult({ requestId: 'r', item })).toBe(true);
+  });
+  it('accepts a null item (missing/hidden — a valid non-error result)', () => {
+    expect(isValidSharedGetResult({ requestId: 'r', item: null })).toBe(true);
+  });
+  it('accepts an item without viewerVoted (absent-safe)', () => {
+    const { viewerVoted: _drop, ...rest } = item;
+    expect(isValidSharedGetResult({ requestId: 'r', item: rest })).toBe(true);
+  });
+  it('accepts an error reply', () => {
+    expect(isValidSharedGetResult({ requestId: 'r', item: null, error: 'SHARED_UNAVAILABLE' })).toBe(true);
+  });
+  it.each([
+    ['item missing (undefined), no error', { requestId: 'r' }],
+    ['item missing key', { requestId: 'r', item: { ...item, key: undefined } }],
+    ['item count not a number', { requestId: 'r', item: { ...item, count: '3' } }],
+    ['item value missing title', { requestId: 'r', item: { ...item, value: { body: 'x' } } }],
+    ['item viewerVoted not boolean', { requestId: 'r', item: { ...item, viewerVoted: 1 } }],
+    ['error not a string', { requestId: 'r', item: null, error: 5 }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidSharedGetResult(payload)).toBe(false);
+  });
+});
+
+describe('isValidSharedReportResult (SHARED_REPORT)', () => {
+  it('accepts ok true/false', () => {
+    expect(isValidSharedReportResult({ requestId: 'r', ok: true })).toBe(true);
+    expect(isValidSharedReportResult({ requestId: 'r', ok: false, error: 'NOT_FOUND' })).toBe(true);
+  });
+  it.each([
+    ['ok missing', { requestId: 'r' }],
+    ['ok not boolean', { requestId: 'r', ok: 'yes' }],
+    ['error not a string', { requestId: 'r', ok: false, error: 5 }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidSharedReportResult(payload)).toBe(false);
+  });
+});
+
+describe('isValidSaveImageResult (SAVE_IMAGE)', () => {
+  it('accepts ok true/false', () => {
+    expect(isValidSaveImageResult({ requestId: 'r', ok: true })).toBe(true);
+    expect(isValidSaveImageResult({ requestId: 'r', ok: false, error: 'image url is not allowed' })).toBe(true);
+  });
+  it.each([
+    ['ok missing', { requestId: 'r' }],
+    ['ok not boolean', { requestId: 'r', ok: 1 }],
+    ['error not a string', { requestId: 'r', ok: false, error: {} }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidSaveImageResult(payload)).toBe(false);
   });
 });
 
@@ -793,6 +866,9 @@ describe('payloadValidatorFor', () => {
       'SHARED_VOTE_RESULT',
       'SHARED_UNVOTE_RESULT',
       'SHARED_WITHDRAW_RESULT',
+      'SHARED_GET_RESULT',
+      'SHARED_REPORT_RESULT',
+      'SAVE_IMAGE_RESULT',
       'CHECKPOINT_PICKER_RESULT',
       'RESOURCE_PICKER_RESULT',
       'USER_CHECKPOINT_SET',

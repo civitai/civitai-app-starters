@@ -664,6 +664,182 @@ describe('useSharedStorage', () => {
     await expect(p).resolves.toEqual({ ok: true, deleted: false });
   });
 
+  // ---- viewerVoted (Batch-D item 3) ----
+  it('list() surfaces viewerVoted per item and defaults a missing flag to false', async () => {
+    const { result } = renderHook(() => useSharedStorage());
+    let p!: Promise<unknown>;
+    act(() => {
+      p = result.current.list();
+    });
+    const sent = lastSent<{ payload: { requestId: string } }>();
+    act(() => {
+      reply({
+        type: 'SHARED_LIST_RESULT',
+        payload: {
+          requestId: sent.payload.requestId,
+          items: [
+            {
+              key: 'req:1',
+              authorUserId: 7,
+              value: { title: 'voted' },
+              count: 2,
+              createdAt: '2026-05-01T00:00:00.000Z',
+              updatedAt: '2026-05-01T00:00:00.000Z',
+              viewerVoted: true,
+            },
+            {
+              // No viewerVoted → an OLD host; the hook must default it to false.
+              key: 'req:2',
+              authorUserId: 8,
+              value: { title: 'old-host' },
+              count: 0,
+              createdAt: '2026-05-01T00:00:00.000Z',
+              updatedAt: '2026-05-01T00:00:00.000Z',
+            },
+          ],
+        },
+      });
+    });
+    const out = (await p) as { items: Array<{ key: string; viewerVoted: boolean }> };
+    expect(out.items[0].viewerVoted).toBe(true);
+    expect(out.items[1].viewerVoted).toBe(false);
+  });
+
+  // ---- get (Batch-D item 6) ----
+  it('get() posts SHARED_GET and resolves the full item (incl. viewerVoted)', async () => {
+    const { result } = renderHook(() => useSharedStorage());
+    let p!: Promise<unknown>;
+    act(() => {
+      p = result.current.get('req:1');
+    });
+    const sent = lastSent<{ type: string; payload: { requestId: string; key: string } }>();
+    expect(sent.type).toBe('SHARED_GET');
+    expect(sent.payload.key).toBe('req:1');
+    expect(sent.payload).not.toHaveProperty('blockToken');
+
+    act(() => {
+      reply({
+        type: 'SHARED_GET_RESULT',
+        payload: {
+          requestId: sent.payload.requestId,
+          item: {
+            key: 'req:1',
+            authorUserId: 7,
+            value: { title: 'Dark mode' },
+            count: 3,
+            createdAt: '2026-05-01T00:00:00.000Z',
+            updatedAt: '2026-05-02T00:00:00.000Z',
+            viewerVoted: true,
+          },
+        },
+      });
+    });
+    const out = (await p) as {
+      key: string;
+      count: number;
+      createdAt: Date;
+      viewerVoted: boolean;
+    } | null;
+    expect(out?.key).toBe('req:1');
+    expect(out?.count).toBe(3);
+    expect(out?.viewerVoted).toBe(true);
+    expect(out?.createdAt).toBeInstanceOf(Date);
+  });
+
+  it('get() resolves null when the key is missing/hidden', async () => {
+    const { result } = renderHook(() => useSharedStorage());
+    let p!: Promise<unknown>;
+    act(() => {
+      p = result.current.get('gone');
+    });
+    const sent = lastSent<{ payload: { requestId: string } }>();
+    act(() => {
+      reply({ type: 'SHARED_GET_RESULT', payload: { requestId: sent.payload.requestId, item: null } });
+    });
+    await expect(p).resolves.toBeNull();
+  });
+
+  it('get() rejects on an error reply', async () => {
+    const { result } = renderHook(() => useSharedStorage());
+    let p!: Promise<unknown>;
+    act(() => {
+      p = result.current.get('k');
+    });
+    const sent = lastSent<{ payload: { requestId: string } }>();
+    act(() => {
+      reply({
+        type: 'SHARED_GET_RESULT',
+        payload: { requestId: sent.payload.requestId, item: null, error: 'SHARED_UNAVAILABLE' },
+      });
+    });
+    await expect(p).rejects.toThrow('SHARED_UNAVAILABLE');
+  });
+
+  // ---- report (Batch-D item 5) ----
+  it('report() posts SHARED_REPORT with key + reason and resolves on ok', async () => {
+    const { result } = renderHook(() => useSharedStorage());
+    let p!: Promise<unknown>;
+    act(() => {
+      p = result.current.report('req:1', 'harassment');
+    });
+    const sent = lastSent<{
+      type: string;
+      payload: { requestId: string; key: string; reason?: string };
+    }>();
+    expect(sent.type).toBe('SHARED_REPORT');
+    expect(sent.payload.key).toBe('req:1');
+    expect(sent.payload.reason).toBe('harassment');
+    expect(sent.payload).not.toHaveProperty('blockToken');
+
+    act(() => {
+      reply({ type: 'SHARED_REPORT_RESULT', payload: { requestId: sent.payload.requestId, ok: true } });
+    });
+    await expect(p).resolves.toBeUndefined();
+  });
+
+  it('report() omits reason when not provided', async () => {
+    const { result } = renderHook(() => useSharedStorage());
+    let p!: Promise<unknown>;
+    act(() => {
+      p = result.current.report('req:1');
+    });
+    const sent = lastSent<{ payload: { requestId: string; reason?: string } }>();
+    expect(sent.payload.reason).toBeUndefined();
+    act(() => {
+      reply({ type: 'SHARED_REPORT_RESULT', payload: { requestId: sent.payload.requestId, ok: true } });
+    });
+    await expect(p).resolves.toBeUndefined();
+  });
+
+  it('report() rejects on an error reply (ok:false)', async () => {
+    const { result } = renderHook(() => useSharedStorage());
+    let p!: Promise<unknown>;
+    act(() => {
+      p = result.current.report('k');
+    });
+    const sent = lastSent<{ payload: { requestId: string } }>();
+    act(() => {
+      reply({
+        type: 'SHARED_REPORT_RESULT',
+        payload: { requestId: sent.payload.requestId, ok: false, error: 'NOT_FOUND' },
+      });
+    });
+    await expect(p).rejects.toThrow('NOT_FOUND');
+  });
+
+  it('report() rejects on ok:false with no error string', async () => {
+    const { result } = renderHook(() => useSharedStorage());
+    let p!: Promise<unknown>;
+    act(() => {
+      p = result.current.report('k');
+    });
+    const sent = lastSent<{ payload: { requestId: string } }>();
+    act(() => {
+      reply({ type: 'SHARED_REPORT_RESULT', payload: { requestId: sent.payload.requestId, ok: false } });
+    });
+    await expect(p).rejects.toThrow('shared report failed');
+  });
+
   // ---- transport-validator: malformed replies surface an ERROR, not silent undefined ----
   // Before the SHARED_* transport validators existed, a reply missing its
   // `count`/`key`/`items` field resolved the promise with `undefined` typed as

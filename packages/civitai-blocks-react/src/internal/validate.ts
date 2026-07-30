@@ -821,8 +821,67 @@ export function isValidSharedListResult(p: unknown): boolean {
     if (!isFiniteNumber(it.count)) return false;
     if (!isDateLike(it.createdAt)) return false;
     if (!isDateLike(it.updatedAt)) return false;
+    // ADDITIVE + OPTIONAL: `viewerVoted` is present on a new host, absent on an
+    // old one (the hook defaults it to false). Only a WRONG type is a drop.
+    if (it.viewerVoted !== undefined && typeof it.viewerVoted !== 'boolean') return false;
   }
   if (p.nextCursor !== undefined && typeof p.nextCursor !== 'string') return false;
+  return true;
+}
+
+/** The wire item shape shared by `SHARED_LIST_RESULT` items + `SHARED_GET_RESULT`. */
+function isValidSharedItemWire(it: unknown): boolean {
+  if (!isObject(it)) return false;
+  if (!isNonEmptyString(it.key)) return false;
+  if (!isFiniteNumber(it.authorUserId)) return false;
+  if (!isValidSharedValue(it.value)) return false;
+  if (!isFiniteNumber(it.count)) return false;
+  if (!isDateLike(it.createdAt)) return false;
+  if (!isDateLike(it.updatedAt)) return false;
+  if (it.viewerVoted !== undefined && typeof it.viewerVoted !== 'boolean') return false;
+  return true;
+}
+
+/**
+ * Reply to `SHARED_GET` (single-row fetch-by-key). On success `item` is either
+ * the wire item shape (same as one `SHARED_LIST_RESULT` item) OR `null` (a
+ * missing/hidden key — a legitimate "not found", NOT an error). Error path is
+ * `{ error }` (the hook throws before reading `item`).
+ */
+export function isValidSharedGetResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading `item`
+  // `null` is a valid, non-error result (key not found / hidden).
+  if (p.item === null) return true;
+  return isValidSharedItemWire(p.item);
+}
+
+/**
+ * Reply to `SHARED_REPORT`. On success `ok` is a boolean; error path is
+ * `{ error }` (with `ok: false`). Mirrors `isValidSharedUpdateResult`'s
+ * ok/error shape — the SDK hook rejects on `!ok || error`, so the error path
+ * MUST carry `ok: false` or the reply is dropped and the block hangs.
+ */
+export function isValidSharedReportResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (typeof p.ok !== 'boolean') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  return true;
+}
+
+/**
+ * Reply to `SAVE_IMAGE` (host download bridge). `ok` is a boolean; `error` is a
+ * free-text host-side failure (disallowed origin / withheld image / over-size /
+ * fetch failure). Same ok/error shape as `isValidSharedReportResult`.
+ */
+export function isValidSaveImageResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (typeof p.ok !== 'boolean') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
   return true;
 }
 
@@ -1033,6 +1092,12 @@ export function payloadValidatorFor(
       return isValidSharedAppendResult;
     case 'SHARED_WITHDRAW_RESULT':
       return isValidSharedWithdrawResult;
+    case 'SHARED_GET_RESULT':
+      return isValidSharedGetResult;
+    case 'SHARED_REPORT_RESULT':
+      return isValidSharedReportResult;
+    case 'SAVE_IMAGE_RESULT':
+      return isValidSaveImageResult;
     case 'CHECKPOINT_PICKER_RESULT':
       return isValidCheckpointPickerResult;
     case 'RESOURCE_PICKER_RESULT':
