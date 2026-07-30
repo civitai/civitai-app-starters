@@ -589,7 +589,16 @@ export type BlockToParentMessage =
   | { type: 'BLOCK_ERROR'; payload: { message: string; fatal: boolean } }
   | { type: 'REQUEST_TOKEN'; payload: { requestId: string; blockInstanceId: string } }
   | { type: 'RESIZE_IFRAME'; payload: { height: number } }
-  | { type: 'SUBMIT_WORKFLOW'; payload: { requestId: string; body: WorkflowBody } }
+  // `idempotencyKey` (OPTIONAL): a stable client id the block reuses across its
+  // own retry of the SAME logical submit. The host forwards it to the server,
+  // which threads it to the orchestrator `externalId` dedupe so a lost-response /
+  // timeout retry collapses to the existing workflow instead of a SECOND Buzz
+  // charge. Absent → today's behavior (no dedupe). Additive/backward-compatible:
+  // an older host that ignores the field simply never dedupes.
+  | {
+      type: 'SUBMIT_WORKFLOW';
+      payload: { requestId: string; body: WorkflowBody; idempotencyKey?: string };
+    }
   | { type: 'ESTIMATE_WORKFLOW'; payload: { requestId: string; body: WorkflowBody } }
   | { type: 'POLL_WORKFLOW'; payload: { requestId: string; workflowId: string } }
   // Ask the host to cancel a running workflow on the orchestrator (real
