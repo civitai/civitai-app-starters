@@ -1219,6 +1219,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     count: row.voters.size,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    // Per-viewer vote state (the mock's `mockUserId` is the "requesting viewer").
+    viewerVoted: row.voters.has(mockUserId),
   });
 
   // Resolve a per-gen cost from the scenario (or legacy `cost`).
@@ -1339,6 +1341,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             limit?: number;
             cursor?: string;
             versionId?: number | null;
+            reason?: string;
+            url?: string;
+            imageId?: number;
           };
         };
 
@@ -2183,6 +2188,70 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             row.updatedAt = new Date().toISOString();
             dispatchToBlock({
               type: 'SHARED_UPDATE_RESULT',
+              payload: { requestId, ok: true },
+            });
+            return;
+          }
+
+          case 'SHARED_GET': {
+            const key = typed.payload?.key ?? '';
+            if (sharedFailNext > 0) {
+              sharedFailNext -= 1;
+              dispatchToBlock({
+                type: 'SHARED_GET_RESULT',
+                payload: { requestId, item: null, error: 'SHARED_UNAVAILABLE' },
+              });
+              return;
+            }
+            const row = sharedStore.get(key);
+            dispatchToBlock({
+              type: 'SHARED_GET_RESULT',
+              payload: { requestId, item: row ? sharedItemWire(row) : null },
+            });
+            return;
+          }
+
+          case 'SHARED_REPORT': {
+            const key = typed.payload?.key ?? '';
+            if (sharedFailNext > 0) {
+              sharedFailNext -= 1;
+              dispatchToBlock({
+                type: 'SHARED_REPORT_RESULT',
+                payload: { requestId, ok: false, error: 'SHARED_UNAVAILABLE' },
+              });
+              return;
+            }
+            // NOT_FOUND for a missing key (mirrors the server's row pre-check).
+            if (!sharedStore.has(key)) {
+              dispatchToBlock({
+                type: 'SHARED_REPORT_RESULT',
+                payload: { requestId, ok: false, error: 'NOT_FOUND' },
+              });
+              return;
+            }
+            // Filing a report does NOT hide the row (a moderator decides).
+            dispatchToBlock({
+              type: 'SHARED_REPORT_RESULT',
+              payload: { requestId, ok: true },
+            });
+            return;
+          }
+
+          case 'SAVE_IMAGE': {
+            // The mock host can't trigger a real browser download; it just
+            // validates the request shape and acks so `useSaveImage()` resolves.
+            // Exactly one of url / imageId must be present.
+            const hasUrl = typeof typed.payload?.url === 'string' && typed.payload.url.length > 0;
+            const hasId = typeof typed.payload?.imageId === 'number';
+            if (hasUrl === hasId) {
+              dispatchToBlock({
+                type: 'SAVE_IMAGE_RESULT',
+                payload: { requestId, ok: false, error: 'INVALID_REQUEST' },
+              });
+              return;
+            }
+            dispatchToBlock({
+              type: 'SAVE_IMAGE_RESULT',
               payload: { requestId, ok: true },
             });
             return;

@@ -57,6 +57,8 @@ export { usePublishGenerationOutputs } from './hooks/usePublishGenerationOutputs
 export type { UsePublishGenerationOutputs } from './hooks/usePublishGenerationOutputs.js';
 export { useGatedImages } from './hooks/useGatedImages.js';
 export type { UseGatedImages } from './hooks/useGatedImages.js';
+export { useSaveImage } from './hooks/useSaveImage.js';
+export type { UseSaveImage, SaveImageInput } from './hooks/useSaveImage.js';
 export type {
   BlockBuzzTransaction,
   BlockBuzzAccount,

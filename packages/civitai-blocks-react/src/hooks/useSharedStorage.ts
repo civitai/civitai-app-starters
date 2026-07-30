@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 
-import type { SharedStorageValue } from '@civitai/app-sdk/blocks';
+import type { SharedStorageValue, SharedStorageItemWire } from '@civitai/app-sdk/blocks';
 
 import { getTransport } from '../internal/singleton.js';
 import { sendTypedRequest } from '../internal/transport.js';
@@ -27,6 +27,14 @@ export interface SharedListItem {
   count: number;
   createdAt: Date;
   updatedAt: Date;
+  /**
+   * Whether the current viewer has an active up-vote on this entry — hydrate the
+   * vote-button state from this on load instead of guessing (fixes the
+   * "double-click to unvote" bug). Anonymous viewers are always `false`. Defaults
+   * to `false` when talking to an older host that doesn't send it, so a new block
+   * on an old host degrades to today's behavior.
+   */
+  viewerVoted: boolean;
 }
 
 export interface SharedListResult {
@@ -45,6 +53,24 @@ export interface UseSharedStorage {
     limit?: number;
     cursor?: string;
   }): Promise<SharedListResult>;
+  /**
+   * Fetch ONE entry by its key — the single-row companion to {@link list} for
+   * resolving a `?g=<key>` deep-link to an item past the first page. Resolves
+   * with the full {@link SharedListItem} (incl. `count`/`viewerVoted`) or `null`
+   * when the key is missing / hidden (a withdrawn or moderated row is never
+   * leaked). Respects the same per-viewer visibility as `list`. Rejects with the
+   * host's `error` string on host-side failure.
+   */
+  get(key: string): Promise<SharedListItem | null>;
+  /**
+   * Report a posted entry for moderator review — the post-write abuse seam for a
+   * shared board. `reason` is optional free text. Resolves once the report is
+   * filed; rejects with the host's `error` string on failure (`NOT_FOUND` for a
+   * missing key, a trust/scope rejection, or when the viewer is anonymous).
+   * Filing a report does not hide the row — a moderator decides. Gated by the
+   * same `apps:storage:shared:write` trust boundary as {@link append}.
+   */
+  report(key: string, reason?: string): Promise<void>;
   /** Current vote total for a single entry (`0` when the key isn't present). */
   getCount(key: string): Promise<number>;
   /**
@@ -113,6 +139,25 @@ export interface UseSharedStorage {
  * await shared.unvote(key);
  * await shared.withdraw(key);                            // remove my own entry
  */
+/**
+ * Rehydrate one wire item (ISO date strings) into a public {@link SharedListItem}
+ * (`Date`s). `viewerVoted` defaults to `false` when a host predating the field
+ * omits it, so a new block on an old host degrades to today's behavior. Shared by
+ * {@link UseSharedStorage.list} and {@link UseSharedStorage.get} so the two stay
+ * in lockstep.
+ */
+function rehydrateSharedItem(item: SharedStorageItemWire): SharedListItem {
+  return {
+    key: item.key,
+    authorUserId: item.authorUserId,
+    value: item.value,
+    count: item.count,
+    createdAt: new Date(item.createdAt),
+    updatedAt: new Date(item.updatedAt),
+    viewerVoted: item.viewerVoted ?? false,
+  };
+}
+
 export function useSharedStorage(): UseSharedStorage {
   return useMemo<UseSharedStorage>(() => {
     const transport = getTransport();
@@ -132,16 +177,28 @@ export function useSharedStorage(): UseSharedStorage {
         );
         if (result.error) throw new Error(result.error);
         return {
-          items: result.items.map((item) => ({
-            key: item.key,
-            authorUserId: item.authorUserId,
-            value: item.value,
-            count: item.count,
-            createdAt: new Date(item.createdAt),
-            updatedAt: new Date(item.updatedAt),
-          })),
+          items: result.items.map(rehydrateSharedItem),
           nextCursor: result.nextCursor,
         };
+      },
+      async get(key) {
+        const result = await sendTypedRequest(
+          transport,
+          { type: 'SHARED_GET', payload: { key } },
+          'SHARED_GET_RESULT',
+        );
+        if (result.error) throw new Error(result.error);
+        return result.item ? rehydrateSharedItem(result.item) : null;
+      },
+      async report(key, reason) {
+        const result = await sendTypedRequest(
+          transport,
+          { type: 'SHARED_REPORT', payload: { key, reason } },
+          'SHARED_REPORT_RESULT',
+        );
+        if (!result.ok || result.error) {
+          throw new Error(result.error ?? 'shared report failed');
+        }
       },
       async getCount(key) {
         const result = await sendTypedRequest(
