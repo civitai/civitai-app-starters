@@ -109,13 +109,18 @@ export interface BlockResourceInfo {
 
 /**
  * A Civitai-hosted source image for an img2img generation. Mirrors civitai's
- * merged `blockTextToImageBodySchema.sourceImage` (`{ url, width, height }`).
+ * `blockSourceImageSchema` (`{ url, width, height }` — all three REQUIRED), the
+ * element type of BOTH `blockTextToImageBodySchema.sourceImages` (current) and
+ * its deprecated singular alias `.sourceImage`.
  *
  * `url` MUST resolve to a Civitai-controlled host — the server rejects an
  * arbitrary remote URL (SSRF / arbitrary-fetch). An image obtained from
  * {@link BlockUploadedImageInfo.url} (via `useImageUpload`) satisfies this.
  * `width`/`height` are the intrinsic dimensions the graph uses for its
- * denoise/aspect derivation.
+ * denoise/aspect derivation; the server bounds each to 64–2048.
+ *
+ * In the array form EVERY element is validated individually against exactly
+ * these rules — there is no "first element only" shortcut server-side.
  */
 export interface BlockSourceImage {
   url: string;
@@ -225,10 +230,12 @@ export type BlockUploadPurpose = 'display' | 'generationSource';
  * The source-image result the host returns from `OPEN_IMAGE_UPLOAD` when the
  * block requested `purpose: 'generationSource'` (`IMAGE_UPLOAD_RESULT.selected`)
  * — an UNSCANNED private img2img input. Identical to {@link BlockSourceImage}
- * ({@link WorkflowBody.sourceImage}'s type): only `{ url, width, height }`, with
- * no `imageId`/`nsfwLevel`/`contentRating` (the image is scanned later, at
- * generation time, not before its handle crosses into the block). The `url` is a
- * Civitai-hosted host, so it feeds straight into a `WorkflowBody.sourceImage`.
+ * (the element type of {@link WorkflowBodyTextToImage.sourceImages}): only
+ * `{ url, width, height }`, with no `imageId`/`nsfwLevel`/`contentRating` (the
+ * image is scanned later, at generation time, not before its handle crosses into
+ * the block). The `url` is a Civitai-hosted host, so it feeds straight into a
+ * `WorkflowBody.sourceImages` entry (or the deprecated singular
+ * `WorkflowBody.sourceImage`).
  *
  * Mirrors the host's `BlockSourceImageInfo` in civitai/civitai's
  * `src/components/AppBlocks/BlockGenerationSourceUploadModal.tsx`. Keep in
@@ -441,15 +448,69 @@ export type WorkflowBodyTextToImage = {
   additionalResources?: Array<{ modelVersionId: number; strength?: number }>;
   /**
    * Optional img2img init/source image (App Blocks IMAGE bridge). When present,
-   * the block bridge emits an `img2img` graph workflow instead of `txt2img`;
-   * omit for a plain text-to-image generation (backward compatible). Constraints
-   * (all SERVER-ENFORCED — mirrors civitai's merged `blockTextToImageBodySchema`):
+   * the block bridge emits an img2img graph workflow instead of `txt2img`; omit
+   * for a plain text-to-image generation (backward compatible). Constraints
+   * (all SERVER-ENFORCED — mirrors civitai's `blockTextToImageBodySchema`):
    *  - `url` must be a Civitai-hosted https image (an uploaded image from
    *    {@link BlockUploadedImageInfo.url} qualifies) — never an arbitrary remote URL.
-   *  - SD-family checkpoints ONLY (a non-SD-family checkpoint is rejected fail-closed).
-   *  - PAGE apps only — the server rejects `sourceImage` on a model-bound token.
+   *  - The checkpoint's ecosystem must support an img2img variant — SD-family →
+   *    `img2img`, edit-capable (OpenAI / Qwen / Flux Kontext / …) →
+   *    `img2img:edit`. An ecosystem supporting NEITHER is rejected fail-closed.
+   *  - PAGE apps only — the server rejects source images on a model-bound token.
+   *
+   * @deprecated Send {@link WorkflowBodyTextToImage.sourceImages} instead — a
+   * 1-element `sourceImages` array produces a byte-identical generation (the
+   * server normalizes this singular field into a 1-element array and everything
+   * downstream sees only arrays). This alias keeps working INDEFINITELY — every
+   * deployed block and the published developer docs ship it — so nothing breaks
+   * by leaving it; it just cannot express more than one image. Sending BOTH
+   * fields is rejected as ambiguous.
    */
   sourceImage?: BlockSourceImage;
+  /**
+   * Optional img2img/edit source images — multi-image conditioning (App Blocks
+   * IMAGE bridge). The current field; supersedes the deprecated singular
+   * {@link WorkflowBodyTextToImage.sourceImage}. Omit BOTH for a plain
+   * text-to-image generation (backward compatible).
+   *
+   * Constraints (all SERVER-ENFORCED — mirrors civitai's
+   * `blockTextToImageBodySchema.sourceImages`, which is
+   * `z.array(blockSourceImageSchema).min(1).max(BLOCK_SOURCE_IMAGES_WIRE_MAX)`):
+   *  - **Every element is validated individually** — each `url` must be a
+   *    Civitai-hosted **https** image (an image from
+   *    {@link BlockUploadedImageInfo.url}, or a
+   *    {@link BlockGenerationSourceImageInfo} from a `'generationSource'`
+   *    upload, qualifies) and each `width`/`height` must be within 64–2048.
+   *    A bad element ANYWHERE rejects the whole body — there is no
+   *    "first element only" path.
+   *  - **The maximum count is PER-ECOSYSTEM, not a constant.** It is derived
+   *    from the checkpoint's own generation-graph `images` node, so it tracks
+   *    what the ecosystem actually supports: SD-family / Flux.1 Kontext / Boogu
+   *    / MAI **1**; Qwen / Qwen2 / MageFlow **3**; Reve / HiDream-O1 **4**;
+   *    WanImage **5**; Flux.2 / Flux.2 Klein / OpenAI / NanoBanana / Seedream /
+   *    Grok **7**. Exceeding the checkpoint's cap is REJECTED (never silently
+   *    truncated), and the error names both the count sent and the ecosystem's
+   *    limit. A flat wire bound of 10 additionally rejects an oversized array
+   *    before the body is parsed — it is NOT the product cap.
+   *  - **An empty array is REJECTED** (`.min(1)`); it is NOT treated as "no
+   *    source image". Omit the field entirely for text-to-image.
+   *  - **PAGE apps only** — the server rejects source images on a model-bound
+   *    token, for this array form as well as the singular one.
+   *  - Sending **both** `sourceImage` and `sourceImages` is REJECTED as
+   *    ambiguous rather than resolved to a winner. TypeScript cannot express
+   *    that mutual exclusion here (both are independently optional on this
+   *    member), so it surfaces as a server-side validation error — send exactly
+   *    one.
+   *  - Element ORDER is preserved into the graph's `images` input.
+   *
+   * 🔴 Requires a host running civitai/civitai#3518 or later. The text-to-image
+   * body schema is NOT `.strict()`, so a host predating #3518 does not error on
+   * this field — it SILENTLY STRIPS it and runs (and bills) a plain
+   * text-to-image generation with no image conditioning at all. There is no
+   * client-side way to detect that, so until #3518 is deployed everywhere you
+   * target, send the singular `sourceImage` (which works on both).
+   */
+  sourceImages?: BlockSourceImage[];
   /**
    * Optional shared-storage key of the published content this generation runs on
    * behalf of. The server resolves it to the content's author for attribution

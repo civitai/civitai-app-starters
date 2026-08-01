@@ -4,6 +4,10 @@
  *    member is backward-compatible and matches civitai's
  *    `blockWorkflowBodySchema` shape from PRs #2640/#2641
  *    (`{ modelVersionId: number; strength?: number }`, optional, array-of);
+ *  - the optional `sourceImages` (multi-image conditioning) field mirrors
+ *    civitai's `blockTextToImageBodySchema.sourceImages` element-for-element
+ *    (`BlockSourceImage[]`), and the deprecated singular `sourceImage` alias is
+ *    still present and unchanged;
  *  - `WorkflowBody` is now a REAL discriminated union — an existing
  *    `{ kind: 'textToImage', … }` body still satisfies it unchanged
  *    (mandatory back-compat), and the new `customComfy` recipe member is a
@@ -19,6 +23,7 @@
 import { expectTypeOf } from 'vitest';
 
 import type {
+  BlockSourceImage,
   WorkflowBody,
   WorkflowBodyCustomComfy,
   WorkflowBodyTextToImage,
@@ -80,6 +85,64 @@ expectTypeOf(emptyLoras).toMatchTypeOf<WorkflowBody>();
 expectTypeOf<
   NonNullable<TextToImage['additionalResources']>[number]
 >().toEqualTypeOf<{ modelVersionId: number; strength?: number }>();
+
+// --- sourceImages[]: multi-image conditioning (civitai#3518) ---------------
+// The array is OPTIONAL, and its element type is EXACTLY `BlockSourceImage`
+// (`{ url, width, height }`, all required) — the same element contract the
+// deprecated singular field has. A mismatch here (e.g. an element type with
+// optional width/height, or a widened `unknown[]`) is invisible until a runtime
+// 400 from the server, so pin it at compile time.
+expectTypeOf<TextToImage['sourceImages']>().toEqualTypeOf<
+  BlockSourceImage[] | undefined
+>();
+expectTypeOf<NonNullable<TextToImage['sourceImages']>[number]>().toEqualTypeOf<{
+  url: string;
+  width: number;
+  height: number;
+}>();
+// The deprecated singular alias is UNCHANGED and still present (removing it
+// would break every deployed block).
+expectTypeOf<TextToImage['sourceImage']>().toEqualTypeOf<
+  BlockSourceImage | undefined
+>();
+
+// A multi-image body satisfies WorkflowBody.
+const withSourceImages: WorkflowBody = {
+  kind: 'textToImage',
+  modelId: 1,
+  modelVersionId: 2,
+  sourceImages: [
+    { url: 'https://civitai.com/a.jpeg', width: 1024, height: 1024 },
+    { url: 'https://image.civitai.com/b.jpeg', width: 512, height: 768 },
+  ],
+  params: baseParams,
+};
+expectTypeOf(withSourceImages).toMatchTypeOf<WorkflowBody>();
+
+// A 1-element array is the drop-in replacement for the deprecated singular
+// field (server-side they normalize to the same graph input).
+const withOneSourceImage: WorkflowBody = {
+  kind: 'textToImage',
+  modelId: 1,
+  modelVersionId: 2,
+  sourceImages: [{ url: 'https://civitai.com/a.jpeg', width: 1024, height: 1024 }],
+  params: baseParams,
+};
+expectTypeOf(withOneSourceImage).toMatchTypeOf<WorkflowBody>();
+
+// The deprecated singular form still satisfies WorkflowBody (back-compat).
+const withDeprecatedSingular: WorkflowBody = {
+  kind: 'textToImage',
+  modelId: 1,
+  modelVersionId: 2,
+  sourceImage: { url: 'https://civitai.com/a.jpeg', width: 1024, height: 1024 },
+  params: baseParams,
+};
+expectTypeOf(withDeprecatedSingular).toMatchTypeOf<WorkflowBody>();
+
+// A source image is NOT expressible on the customComfy member (recipes own
+// their own graph) — `sourceImages` exists only on the textToImage arm.
+expectTypeOf<CustomComfy>().not.toHaveProperty('sourceImages');
 
 // --- customComfy member: a registered-recipe body is a valid WorkflowBody ---
 const customComfyMinimal: WorkflowBody = {
