@@ -260,6 +260,53 @@ describe('WorkflowBody + SharedStorageValue widened fields (type-level)', () => 
     expect(plain.sourceImage).toBeUndefined();
   });
 
+  it('WorkflowBody carries optional sourceImages[] (multi-image conditioning)', () => {
+    // Mirrors civitai's `blockTextToImageBodySchema.sourceImages`:
+    // z.array(blockSourceImageSchema).min(1).max(BLOCK_SOURCE_IMAGES_WIRE_MAX).
+    // Every element is the SAME `{ url, width, height }` shape as the deprecated
+    // singular field — the array form has no reduced per-element contract.
+    const body: WorkflowBody = {
+      kind: 'textToImage',
+      modelId: 1,
+      modelVersionId: 2,
+      sourceImages: [
+        { url: 'https://civitai.com/a.jpeg', width: 1024, height: 1024 },
+        { url: 'https://image.civitai.com/b.jpeg', width: 512, height: 768 },
+        { url: 'https://civitai.green/c.jpeg', width: 64, height: 2048 },
+      ],
+      params: { prompt: 'a cat' },
+    };
+    if (body.kind !== 'textToImage') throw new Error('narrowing failed');
+    // ORDER is preserved into the graph's `images` input — assert the whole
+    // array, not just [0] (a "first element only" bug reads as passing if you
+    // only check the head).
+    expect(body.sourceImages).toEqual([
+      { url: 'https://civitai.com/a.jpeg', width: 1024, height: 1024 },
+      { url: 'https://image.civitai.com/b.jpeg', width: 512, height: 768 },
+      { url: 'https://civitai.green/c.jpeg', width: 64, height: 2048 },
+    ]);
+    // The deprecated singular alias is NOT set when the array form is used —
+    // sending both is rejected server-side as ambiguous.
+    expect(body.sourceImage).toBeUndefined();
+
+    // A 1-element array is the direct replacement for the singular field.
+    const single: WorkflowBody = {
+      kind: 'textToImage',
+      modelId: 1,
+      modelVersionId: 2,
+      sourceImages: [{ url: 'https://civitai.com/x.jpeg', width: 1024, height: 1024 }],
+      params: { prompt: 'a cat' },
+    };
+    if (single.kind !== 'textToImage') throw new Error('narrowing failed');
+    expect(single.sourceImages).toHaveLength(1);
+
+    // Both fields remain OPTIONAL: a txt2img body omitting both still satisfies
+    // WorkflowBody (backward compatible).
+    const plain: WorkflowBody = { kind: 'textToImage', modelId: 1, modelVersionId: 2, params: { prompt: 'x' } };
+    if (plain.kind !== 'textToImage') throw new Error('narrowing failed');
+    expect(plain.sourceImages).toBeUndefined();
+  });
+
   it('SharedStorageValue carries an optional opaque `data` payload', () => {
     const value: SharedStorageValue = {
       title: 'My generator',
