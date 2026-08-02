@@ -196,6 +196,102 @@ describe('useBuzzWorkflow', () => {
     }
   });
 
+  // ── Idempotency (item 2, gen half) ──────────────────────────────────────────
+
+  function replySubmitted(requestId: string) {
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'WORKFLOW_SUBMITTED',
+            payload: { requestId, snapshot: { workflowId: 'wf-1', status: 'processing' } },
+          },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+  }
+
+  it('submit() attaches a non-empty auto-generated idempotencyKey to the payload', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    let submitPromise!: Promise<unknown>;
+    act(() => {
+      submitPromise = result.current.submit({
+        kind: 'textToImage',
+        modelId: 7,
+        modelVersionId: 99,
+        params: { prompt: 'cat' },
+      });
+    });
+    const sent = postMessageMock.mock.calls[0][0] as {
+      type: string;
+      payload: { requestId: string; body: unknown; idempotencyKey?: unknown };
+    };
+    expect(sent.type).toBe('SUBMIT_WORKFLOW');
+    expect(typeof sent.payload.idempotencyKey).toBe('string');
+    expect((sent.payload.idempotencyKey as string).length).toBeGreaterThan(0);
+    // The body is unchanged — the key rides ALONGSIDE it, not inside it.
+    expect(sent.payload.body).toEqual({
+      kind: 'textToImage',
+      modelId: 7,
+      modelVersionId: 99,
+      params: { prompt: 'cat' },
+    });
+    replySubmitted(sent.payload.requestId);
+    await submitPromise;
+  });
+
+  it('submit() reuses a caller-supplied stable idempotencyKey (retry-safe)', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const body = { kind: 'textToImage' as const, modelId: 7, modelVersionId: 99, params: { prompt: 'cat' } };
+
+    // First attempt with an explicit key.
+    let p1!: Promise<unknown>;
+    act(() => {
+      p1 = result.current.submit(body, { idempotencyKey: 'stable-key-abc' });
+    });
+    const s1 = postMessageMock.mock.calls[0][0] as { payload: { requestId: string; idempotencyKey?: unknown } };
+    expect(s1.payload.idempotencyKey).toBe('stable-key-abc');
+    replySubmitted(s1.payload.requestId);
+    await p1;
+
+    // A RETRY of the same logical submit reuses the SAME key → the host+server
+    // collapse it to one Buzz charge.
+    postMessageMock.mockClear();
+    let p2!: Promise<unknown>;
+    act(() => {
+      p2 = result.current.submit(body, { idempotencyKey: 'stable-key-abc' });
+    });
+    const s2 = postMessageMock.mock.calls[0][0] as { payload: { requestId: string; idempotencyKey?: unknown } };
+    expect(s2.payload.idempotencyKey).toBe('stable-key-abc');
+    replySubmitted(s2.payload.requestId);
+    await p2;
+  });
+
+  it('two auto-keyed submits get DIFFERENT keys (each call is a new logical submit)', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const body = { kind: 'textToImage' as const, modelId: 7, modelVersionId: 99, params: { prompt: 'cat' } };
+
+    let p1!: Promise<unknown>;
+    act(() => {
+      p1 = result.current.submit(body);
+    });
+    const s1 = postMessageMock.mock.calls[0][0] as { payload: { requestId: string; idempotencyKey: string } };
+    replySubmitted(s1.payload.requestId);
+    await p1;
+
+    postMessageMock.mockClear();
+    let p2!: Promise<unknown>;
+    act(() => {
+      p2 = result.current.submit(body);
+    });
+    const s2 = postMessageMock.mock.calls[0][0] as { payload: { requestId: string; idempotencyKey: string } };
+    replySubmitted(s2.payload.requestId);
+    await p2;
+
+    expect(s1.payload.idempotencyKey).not.toBe(s2.payload.idempotencyKey);
+  });
+
   it('poll() to a terminal status transitions to done', async () => {
     const { result } = renderHook(() => useBuzzWorkflow());
 

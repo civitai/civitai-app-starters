@@ -3,7 +3,7 @@ import { useCallback, useState } from 'react';
 import type { BlockWorkflowSnapshot, WorkflowBody, WorkflowStatus } from '@civitai/app-sdk/blocks';
 
 import { getTransport } from '../internal/singleton.js';
-import { sendTypedRequest } from '../internal/transport.js';
+import { generateIdempotencyKey, sendTypedRequest } from '../internal/transport.js';
 
 /**
  * Snapshot statuses that mean "no further polling is needed."
@@ -30,9 +30,24 @@ const TERMINAL_STATUSES: ReadonlySet<BlockWorkflowSnapshot['status']> = new Set(
  */
 const WORKFLOW_REQUEST_TIMEOUT_MS = 120_000;
 
+/** Optional per-submit controls. */
+export interface SubmitWorkflowOptions {
+  /**
+   * A STABLE idempotency key for this logical submit. Reuse the SAME value when
+   * RETRYING a submit whose response was lost (timeout / network drop) so the
+   * host+orchestrator collapse it to ONE Buzz charge instead of double-charging.
+   * Omit → the hook generates a fresh key per `submit()` call (each call is a new
+   * logical submit); pass a stable id (e.g. a grid-cell id) to make a retry safe.
+   */
+  idempotencyKey?: string;
+}
+
 interface UseBuzzWorkflowReturn {
   estimate: (body: WorkflowBody) => Promise<BlockWorkflowSnapshot>;
-  submit: (body: WorkflowBody) => Promise<BlockWorkflowSnapshot>;
+  submit: (
+    body: WorkflowBody,
+    options?: SubmitWorkflowOptions,
+  ) => Promise<BlockWorkflowSnapshot>;
   poll: (workflowId: string) => Promise<BlockWorkflowSnapshot>;
   /**
    * Cancel a running workflow on the orchestrator (a real server-side stop,
@@ -107,13 +122,16 @@ export function useBuzzWorkflow(): UseBuzzWorkflowReturn {
     }
   }, []);
 
-  const submit = useCallback(async (body: WorkflowBody) => {
+  const submit = useCallback(async (body: WorkflowBody, options?: SubmitWorkflowOptions) => {
     setError(null);
     setStatus('submitting');
+    // Idempotency: reuse a caller-supplied stable key across a retry (→ one Buzz
+    // charge), or mint a fresh one per call (each call is a new logical submit).
+    const idempotencyKey = options?.idempotencyKey ?? generateIdempotencyKey();
     try {
       const { snapshot } = await sendTypedRequest(
         getTransport(),
-        { type: 'SUBMIT_WORKFLOW', payload: { body } },
+        { type: 'SUBMIT_WORKFLOW', payload: { body, idempotencyKey } },
         'WORKFLOW_SUBMITTED',
         { timeoutMs: WORKFLOW_REQUEST_TIMEOUT_MS },
       );

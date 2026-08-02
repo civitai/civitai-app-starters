@@ -217,3 +217,20 @@ export function nextRequestId(): string {
   requestIdCounter += 1;
   return `${Math.random().toString(36).slice(2, 8)}-${requestIdCounter}`;
 }
+
+/**
+ * A collision-resistant IDEMPOTENCY key for a money POST (workflow submit / tip).
+ * Distinct from `nextRequestId` (a per-message correlation id that is regenerated
+ * on every retry): an idempotency key must be STABLE across the retry of one
+ * logical operation, so the caller generates it ONCE and reuses it. Prefers the
+ * platform `crypto.randomUUID()` (strong, unguessable); falls back to a random
+ * string where it is unavailable (older webviews / non-secure contexts / test).
+ */
+export function generateIdempotencyKey(): string {
+  const c: Crypto | undefined =
+    typeof globalThis !== 'undefined' ? (globalThis.crypto as Crypto | undefined) : undefined;
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID();
+  return `idem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}-${Math.random()
+    .toString(36)
+    .slice(2, 12)}`;
+}
