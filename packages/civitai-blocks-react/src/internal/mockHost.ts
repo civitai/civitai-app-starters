@@ -68,11 +68,36 @@ import {
 /**
  * The block's preferred Buzz pool. On a `textToImage` {@link WorkflowBody} it's
  * the top-level `accountType`; on a `customComfy` recipe body it lives under
- * `params.accountType`. Normalize across the union so the mock's currency /
- * spent-account logic reads one field regardless of `kind`.
+ * `params.accountType`; a `step` body has NO account preference at all — the
+ * host's `blockStepBodySchema` is `.strict()` and accepts only
+ * `{ kind, step, params }`, so there is no field to read and `undefined` (let
+ * the host pick) is the accurate answer rather than a fallback.
+ *
+ * 🔴 SWITCH ON EVERY MEMBER, NEVER `kind === 'x' ? … : …`. The previous shape
+ * was a two-way ternary whose `else` branch assumed "not customComfy therefore
+ * textToImage". Adding the `step` member turned that assumption into a
+ * `Property 'accountType' does not exist on type 'WorkflowBodyStep'` build
+ * failure — which is the union doing its job, and the reason it is worth
+ * writing this exhaustively: the next member added to `WorkflowBody` will land
+ * on the `default` below and be a compile error naming this function, instead
+ * of being silently absorbed by an `else`.
  */
-const preferredAccountType = (body: WorkflowBody): BuzzAccountType | undefined =>
-  body.kind === 'customComfy' ? body.params.accountType : body.accountType;
+const preferredAccountType = (body: WorkflowBody): BuzzAccountType | undefined => {
+  switch (body.kind) {
+    case 'textToImage':
+      return body.accountType;
+    case 'customComfy':
+      return body.params.accountType;
+    case 'step':
+      return undefined;
+    default: {
+      // Exhaustiveness check: a new `WorkflowBody` member makes this assignment
+      // fail to compile, right here, rather than defaulting somewhere.
+      const unhandled: never = body;
+      return unhandled;
+    }
+  }
+};
 
 /** The full all-levels ceiling a `red` domain projects (mirrors the server). */
 const ALL_LEVELS =
