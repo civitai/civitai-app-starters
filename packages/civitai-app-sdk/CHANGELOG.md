@@ -1,5 +1,46 @@
 # @civitai/app-sdk
 
+## 0.29.0
+
+### Minor Changes
+
+- f314e51: Batch D money slice: idempotency keys for the paid paths + a tip-allowance read.
+
+  - `useBuzzWorkflow().submit(body, { idempotencyKey? })` and the `SUBMIT_WORKFLOW`
+    message now carry an OPTIONAL client idempotency key. The host threads it to the
+    orchestrator dedupe so a lost-response / timeout retry collapses to ONE Buzz
+    charge instead of double-charging. Omit it and each `submit()` mints a fresh key
+    (today's behavior); pass a stable key (e.g. a grid-cell id) to make a retry safe.
+  - New `useTip()` hook — a REST wrapper for the block tip endpoint with the same
+    optional `idempotencyKey` (a retry with the same key is collapsed server-side to
+    the first result, so a timeout can't double-tip).
+  - New `useTipAllowance()` hook — reads the viewer's REAL remaining daily tip
+    allowance `{ cap, spent, remaining }` (scope `social:tip:self`) so a block can
+    show a genuinely-tracked ceiling instead of a dead client-side full-cap guess.
+
+  All additive/backward-compatible: an older host that ignores the new field simply
+  never dedupes; old-shape hook calls keep working unchanged.
+
+- ce7611e: Add the App Blocks Batch-D block↔host messages: `SHARED_GET` / `SHARED_GET_RESULT`, `SHARED_REPORT` / `SHARED_REPORT_RESULT`, and `SAVE_IMAGE` / `SAVE_IMAGE_RESULT`, plus an additive `viewerVoted?: boolean` on `SharedStorageItemWire`.
+
+  - **`SHARED_GET { key }` → `SHARED_GET_RESULT { item: SharedStorageItemWire | null }`** — single-row fetch-by-key, the companion to `SHARED_LIST`'s paged read so a `?g=<key>` deep-link to an item past the first page resolves. A missing / moderator-hidden row comes back as `item: null` (never leaked). The item carries the same shape as one list item, including `count` + `viewerVoted`.
+  - **`SHARED_REPORT { key, reason? }` → `SHARED_REPORT_RESULT { ok, error? }`** — report a posted shared-board entry for moderator review (the `apps.shared.report` server procedure already existed; this is the postMessage seam). Same `{ ok, error? }` reply convention as `SHARED_WITHDRAW_RESULT` (the error path carries `ok: false`).
+  - **`SAVE_IMAGE` → `SAVE_IMAGE_RESULT { ok, error? }`** — ask the host to DOWNLOAD an image the block already displays (a sandboxed opaque-origin block has no `allow-downloads`, so it can otherwise only copy a URL). Two mutually-exclusive variants: `{ url }` for the block's own output (origin-allowlisted host-side to the civitai image/blob CDN — never an arbitrary host) and `{ imageId }` for a cross-user grid image (routed through the same per-viewer gated read as `GET_IMAGES_BY_IDS`, so a withheld image can't be saved). Optional `filename` (host-sanitized).
+  - **`SharedStorageItemWire.viewerVoted`** is OPTIONAL on the wire so a host that predates it still typechecks; consumers default a missing value to `false`.
+
+  All additive — old blocks never send the new messages, and the new field is optional. Host handlers land ahead of this publish (the host↔SDK parity gate is one-directional).
+
+- d52e50d: Add `WorkflowBodyTextToImage.sourceImages?: BlockSourceImage[]` — multi-image conditioning for App Blocks generations — and deprecate the singular `sourceImage`.
+
+  Mirrors civitai/civitai's `blockTextToImageBodySchema.sourceImages` (`z.array(blockSourceImageSchema).min(1).max(BLOCK_SOURCE_IMAGES_WIRE_MAX)`). The element type is unchanged (`{ url, width, height }`, all required), so an existing `sourceImage` value drops straight into a 1-element array.
+
+  - **`sourceImage` stays, deprecated.** It is a permanent alias — every deployed block and the published developer docs ship it, and the server normalizes it into a 1-element array so both forms produce a byte-identical generation. Only the JSDoc changed (`@deprecated` → `sourceImages`); the type is untouched.
+  - **The maximum count is PER-ECOSYSTEM, not a constant** — derived server-side from the checkpoint's own generation-graph `images` node: SD-family / Flux.1 Kontext / Boogu / MAI **1**; Qwen / Qwen2 / MageFlow **3**; Reve / HiDream-O1 **4**; WanImage **5**; Flux.2 / Flux.2 Klein / OpenAI / NanoBanana / Seedream / Grok **7**. Over-cap is rejected, never silently truncated. A flat wire bound of 10 rejects an oversized array before parse; it is not the product cap.
+  - **Every element is validated individually** (Civitai-hosted https URL + 64–2048 dimensions) — no "first element only" path. An empty array is rejected (omit the field for text-to-image). Source images are **PAGE-only**: the server rejects them on a model-bound token, array form included. Sending **both** `sourceImage` and `sourceImages` is rejected as ambiguous (TypeScript cannot express that mutual exclusion, so it surfaces as a server-side error).
+  - Also corrects a now-stale constraint in the singular field's JSDoc: img2img is not SD-family-only — edit-capable ecosystems (OpenAI / Qwen / Flux Kontext / …) route to the `img2img:edit` variant, and only an ecosystem supporting neither variant is rejected fail-closed.
+
+  🔴 **Host dependency — do not publish before civitai/civitai#3518 deploys.** The text-to-image body schema is not `.strict()`, so a host predating #3518 does not reject `sourceImages`: it silently strips the field and bills a plain text-to-image generation with no conditioning. The deprecated singular `sourceImage` works on hosts either side of #3518 and is the safe choice until it lands.
+
 ## 0.28.0
 
 ### Minor Changes

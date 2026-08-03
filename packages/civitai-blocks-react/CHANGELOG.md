@@ -1,5 +1,57 @@
 # @civitai/blocks-react
 
+## 0.38.0
+
+### Minor Changes
+
+- f314e51: Batch D money slice: idempotency keys for the paid paths + a tip-allowance read.
+
+  - `useBuzzWorkflow().submit(body, { idempotencyKey? })` and the `SUBMIT_WORKFLOW`
+    message now carry an OPTIONAL client idempotency key. The host threads it to the
+    orchestrator dedupe so a lost-response / timeout retry collapses to ONE Buzz
+    charge instead of double-charging. Omit it and each `submit()` mints a fresh key
+    (today's behavior); pass a stable key (e.g. a grid-cell id) to make a retry safe.
+  - New `useTip()` hook — a REST wrapper for the block tip endpoint with the same
+    optional `idempotencyKey` (a retry with the same key is collapsed server-side to
+    the first result, so a timeout can't double-tip).
+  - New `useTipAllowance()` hook — reads the viewer's REAL remaining daily tip
+    allowance `{ cap, spent, remaining }` (scope `social:tip:self`) so a block can
+    show a genuinely-tracked ceiling instead of a dead client-side full-cap guess.
+
+  All additive/backward-compatible: an older host that ignores the new field simply
+  never dedupes; old-shape hook calls keep working unchanged.
+
+- ce7611e: Surface the App Blocks Batch-D platform seams as hooks: `useSharedStorage().get()` / `.report()` / per-item `viewerVoted`, and a new `useSaveImage()`.
+
+  - **`useSharedStorage().get(key)`** — resolve ONE shared entry by key (`SharedListItem | null`), for a `?g=<key>` deep-link to any item, not just the first page. Respects the same per-viewer visibility as `list` (a hidden/withdrawn row resolves to `null`).
+  - **`useSharedStorage().report(key, reason?)`** — report a posted entry for moderator review. Trust-gated + rate-limited server-side (same `apps:storage:shared:write` boundary as `append`).
+  - **`SharedListItem.viewerVoted: boolean`** — hydrate a vote button's state on load instead of guessing (fixes the "double-click to unvote" bug). `list()` and `get()` both populate it; it defaults to `false` when talking to an older host that doesn't send the field, so a new block on an old host degrades to today's behavior. Anonymous viewers are always `false`.
+  - **`useSaveImage()`** — `saveImage({ url, filename? })` for the block's OWN output (origin-allowlisted host-side to the civitai image/blob CDN) or `saveImage({ imageId, filename? })` for a cross-user grid image (routed through the gated per-viewer read, so a withheld image can't be saved). The host does the blob fetch + download in its unsandboxed top frame — the only way a sandboxed block (no `allow-downloads`) can save a paid output.
+
+  Adds transport-boundary validators for the three new `*_RESULT` replies (a malformed reply is dropped rather than resolving a promise with corrupt data), and the mock host now serves `SHARED_GET` / `SHARED_REPORT` / `SAVE_IMAGE` for local dev. All additive; existing hooks and blocks are unaffected.
+
+### Patch Changes
+
+- b773b0b: Widen the `@civitai/app-sdk` peer range to `>=0.29.0 <1.0.0` (was `^0.28.0`).
+
+  `^0.28.0` on a **0.x** package means `>=0.28.0 <0.29.0`, so every SDK _minor_ put the
+  peer out of range. With `onlyUpdatePeerDependentsWhenOutOfRange: true` in
+  `.changeset/config.json`, changesets then promotes the peer-dependent to a **major** —
+  which is why the first release after the Batch-D SDK minor computed
+  `@civitai/blocks-react` **1.0.0** out of four changesets that all declared `minor`.
+
+  That was mechanical, not a stability declaration, and it recurred: the regenerated
+  range would have been `^0.29.0`, taking the next SDK minor to `2.0.0`, then `3.0.0` —
+  one major burned per SDK minor.
+
+  With the range spanning the whole 0.x line, an SDK minor stays in range and
+  `blocks-react` versions on its own changesets again (verified: this release now
+  computes `0.38.0` / `0.29.0`, and the range is not rewritten).
+
+  The floor is `0.29.0`, not `0.28.0`: this package's `useSaveImage` /
+  `useSharedStorage` hooks depend on message types that ship in the same release, so
+  `0.28.0` is not a compatibility claim that can be substantiated.
+
 ## 0.37.0
 
 ### Minor Changes
