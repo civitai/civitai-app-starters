@@ -90,6 +90,7 @@ export type {
   WorkflowBody,
   WorkflowBodyTextToImage,
   WorkflowBodyCustomComfy,
+  WorkflowBodyStep,
   WorkflowStatus,
   BlockBuzzTransaction,
   BlockBuzzAccount,

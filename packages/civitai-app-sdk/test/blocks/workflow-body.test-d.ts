@@ -11,7 +11,11 @@
  *  - `WorkflowBody` is now a REAL discriminated union — an existing
  *    `{ kind: 'textToImage', … }` body still satisfies it unchanged
  *    (mandatory back-compat), and the new `customComfy` recipe member is a
- *    valid `WorkflowBody`.
+ *    valid `WorkflowBody`;
+ *  - the `step` member (`kind: 'step'`) mirrors the host's `blockStepBodySchema`
+ *    exactly — `{ kind, step, params }` and nothing else, since that schema is
+ *    `.strict()` — and is the ONLY way a block can reach the host's step
+ *    registry (`'convert-image'`, `'chat-completion'`, …).
  *
  * This is a TYPE test: it is compiled by `tsc -p tsconfig.typecheck.json`
  * (the `test:types` script, run by `pnpm test`). If the type shape regresses,
@@ -26,6 +30,7 @@ import type {
   BlockSourceImage,
   WorkflowBody,
   WorkflowBodyCustomComfy,
+  WorkflowBodyStep,
   WorkflowBodyTextToImage,
 } from '../../src/blocks/types.js';
 
@@ -33,6 +38,8 @@ import type {
 type TextToImage = Extract<WorkflowBody, { kind: 'textToImage' }>;
 /** The `customComfy` member, narrowed out of the union. */
 type CustomComfy = Extract<WorkflowBody, { kind: 'customComfy' }>;
+/** The `step` member, narrowed out of the union. */
+type Step = Extract<WorkflowBody, { kind: 'step' }>;
 
 const baseParams = { prompt: 'a cat' } as const;
 
@@ -49,8 +56,9 @@ expectTypeOf(checkpointOnly).toMatchTypeOf<WorkflowBody>();
 // --- the exported member types line up with the union arms ---
 expectTypeOf<TextToImage>().toEqualTypeOf<WorkflowBodyTextToImage>();
 expectTypeOf<CustomComfy>().toEqualTypeOf<WorkflowBodyCustomComfy>();
+expectTypeOf<Step>().toEqualTypeOf<WorkflowBodyStep>();
 expectTypeOf<WorkflowBody>().toEqualTypeOf<
-  WorkflowBodyTextToImage | WorkflowBodyCustomComfy
+  WorkflowBodyTextToImage | WorkflowBodyCustomComfy | WorkflowBodyStep
 >();
 
 // --- additionalResources is OPTIONAL on the textToImage member ---
@@ -172,10 +180,37 @@ expectTypeOf<CustomComfy['params']>().toEqualTypeOf<{
   accountType?: 'blue' | 'green' | 'yellow';
 }>();
 
+// --- step member: a registered-step body is a valid WorkflowBody ---
+const stepBody: WorkflowBody = {
+  kind: 'step',
+  step: 'chat-completion',
+  params: {
+    model: 'deepseek/deepseek-chat',
+    messages: [{ role: 'user', content: 'hello' }],
+    maxTokens: 128,
+  },
+};
+expectTypeOf(stepBody).toMatchTypeOf<WorkflowBody>();
+
+// --- the step member mirrors `blockStepBodySchema` EXACTLY: three fields ---
+// The host schema is `.strict()`, so a fourth field here would be rejected at
+// the wire rather than dropped. Pinning the key set is what makes this a mirror
+// rather than a lookalike.
+expectTypeOf<keyof Step>().toEqualTypeOf<'kind' | 'step' | 'params'>();
+expectTypeOf<Step['step']>().toEqualTypeOf<string>();
+expectTypeOf<Step['params']>().toEqualTypeOf<Record<string, unknown>>();
+
+// Notably there is NO top-level `accountType` on this arm — unlike the
+// `textToImage` member. The host schema does not accept one.
+expectTypeOf<Step>().not.toHaveProperty('accountType');
+expectTypeOf<Step>().not.toHaveProperty('recipe');
+
 // --- narrowing on `kind` exposes the right member fields ---
 declare const someBody: WorkflowBody;
 if (someBody.kind === 'textToImage') {
   expectTypeOf(someBody.modelId).toEqualTypeOf<number>();
-} else {
+} else if (someBody.kind === 'customComfy') {
   expectTypeOf(someBody.recipe).toEqualTypeOf<string>();
+} else {
+  expectTypeOf(someBody.step).toEqualTypeOf<string>();
 }

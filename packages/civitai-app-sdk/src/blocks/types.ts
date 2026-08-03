@@ -592,6 +592,61 @@ export type WorkflowBodyCustomComfy = {
 };
 
 /**
+ * A **registered orchestrator step**, submitted through the host's step
+ * registry — the uniform bridge for step types that are not full generation
+ * recipes (image conversion, chat completion, captioning, …).
+ *
+ * Mirrors the host's `blockStepBodySchema` element-for-element. That schema is
+ * `.strict()` with exactly these three fields, so anything else on this object
+ * is REJECTED server-side rather than dropped.
+ *
+ * Trust / safety model (all SERVER-ENFORCED, same posture as
+ * {@link WorkflowBodyCustomComfy}):
+ *  - `step` is a **registered step id** resolved against a code-reviewed,
+ *    non-DB-editable registry. The wire enum is DERIVED from the registry keys,
+ *    so an unregistered id is rejected **fail-closed at the schema**, before any
+ *    translator, any spend reservation, or any orchestrator call.
+ *  - `params` are **bounded and validated per-step** by that step's own
+ *    `.strict()` Zod schema. They are deliberately opaque on the wire (the host
+ *    keeps the transport step-agnostic), so this field is `Record<string,
+ *    unknown>` here and the host's per-step schema is the authority for what a
+ *    given step accepts. An unknown param is a `BAD_REQUEST`, never a silent
+ *    drop.
+ *  - Each entry declares its own billing mode and moderation posture in that
+ *    registry; a step that produces free text has its output scanned before it
+ *    can reach the block.
+ *
+ * Registered ids at the time of writing: `'convert-image'` (fixed-price image
+ * format conversion + resize) and `'chat-completion'` (fixed-price LLM chat
+ * completion over a server-pinned model allowlist). The set grows additively —
+ * `step` is typed `string` rather than a literal union on purpose, because the
+ * registry lives on the host and a pinned union here would go stale against any
+ * host deploy that adds one.
+ */
+export type WorkflowBodyStep = {
+  kind: 'step';
+  /**
+   * A **registered step id** (e.g. `'chat-completion'`). Resolved server-side
+   * against the code-reviewed step registry; an unregistered id is rejected
+   * fail-closed at the wire schema.
+   */
+  step: string;
+  /**
+   * Bounded, per-step-validated parameters. Only the fields that step's
+   * `.strict()` schema accepts are honored; anything else is rejected.
+   *
+   * For `'chat-completion'` the accepted shape is
+   * `{ model: string; messages: Array<{ role: 'system' | 'user' | 'assistant';
+   * content: string }>; maxTokens: number; temperature?: number }`, where
+   * `model` must be one of the host's allowlisted models and `maxTokens` is
+   * REQUIRED and bounded. Documented rather than typed here: the host's schema
+   * is the single source of truth, and a hand-mirrored param type in this
+   * package would drift against it silently.
+   */
+  params: Record<string, unknown>;
+};
+
+/**
  * Body the block sends to `useBuzzWorkflow().{submit,estimate}`. A real
  * discriminated union keyed by `kind`:
  *  - {@link WorkflowBodyTextToImage} (`kind: 'textToImage'`) — the original
@@ -599,12 +654,23 @@ export type WorkflowBodyCustomComfy = {
  *  - {@link WorkflowBodyCustomComfy} (`kind: 'customComfy'`) — a bounded,
  *    server-registered ComfyUI recipe (post-paid; the iframe never sends a
  *    graph).
+ *  - {@link WorkflowBodyStep} (`kind: 'step'`) — a bounded, server-registered
+ *    orchestrator step (the host's step registry; billing mode and moderation
+ *    posture are declared per entry).
  *
  * New kinds extend this union as the host gains support for them. Narrow on
  * `body.kind` before touching member-specific fields (e.g. `modelId`/`params`
  * live only on the `textToImage` member).
+ *
+ * ⚠️ Adding a member is additive for PRODUCERS (every existing body still
+ * satisfies the union) but narrowing for CONSUMERS that `switch` exhaustively
+ * over `kind`. Host code that must handle every member gets a compile error
+ * pointing at the new one, which is the intended behaviour.
  */
-export type WorkflowBody = WorkflowBodyTextToImage | WorkflowBodyCustomComfy;
+export type WorkflowBody =
+  | WorkflowBodyTextToImage
+  | WorkflowBodyCustomComfy
+  | WorkflowBodyStep;
 
 /**
  * The host-mediated view of an orchestrator workflow that an iframe block
