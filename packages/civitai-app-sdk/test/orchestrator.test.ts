@@ -9,10 +9,12 @@ import {
   DEFAULT_ORCHESTRATOR_BASE_URL,
   estimateWorkflow,
   extractImageUrls,
+  DEFAULT_POLL_WAIT_SECONDS,
   getWorkflow,
   IMAGE_GEN_ENGINES,
   isTerminal,
   OrchestratorError,
+  pollWorkflow,
   submitWorkflow,
   TERMINAL_STATUSES,
   WORKFLOW_STEP_TYPES,
@@ -430,5 +432,210 @@ describe('extractImageUrls', () => {
     expect(extractImageUrls(undefined)).toEqual([]);
     expect(extractImageUrls({ id: 'wf', status: 'succeeded' })).toEqual([]);
     expect(extractImageUrls({ id: 'wf', status: 'succeeded', steps: [] })).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Long polling (`?wait=`). The orchestrator holds the request open until the
+// workflow reaches a terminal status, answering with 202 + the current snapshot
+// when the hold elapses first. Before 0.31.0 `pollWorkflow` was a client-side
+// timer loop DOCUMENTED as a long poll; these pin the real behaviour.
+//
+// Fixture ids/statuses/costs are pairwise DISTINCT so an implementation that
+// returns the wrong attempt's snapshot fails rather than coincidentally passing.
+// ---------------------------------------------------------------------------
+describe('getWorkflow long-poll (?wait=)', () => {
+  const client = createOrchestratorClient({ accessToken: 'tok', baseUrl: 'https://orch.test' });
+
+  it('omits ?wait entirely when no options are passed (pre-0.31 call shape)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ id: 'wf_bare', status: 'processing' }));
+    await getWorkflow(client, 'wf_bare');
+    expect(fetchMock.mock.calls[0]![0]).toBe('https://orch.test/v2/consumer/workflows/wf_bare');
+  });
+
+  it('sends ?wait=<seconds> when waitSeconds is given', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ id: 'wf_hold', status: 'succeeded' }));
+    const snap = await getWorkflow(client, 'wf_hold', { waitSeconds: 13 });
+    expect(snap.id).toBe('wf_hold');
+    expect(fetchMock.mock.calls[0]![0]).toBe(
+      'https://orch.test/v2/consumer/workflows/wf_hold?wait=13',
+    );
+  });
+
+  it('floors a fractional waitSeconds and drops 0 / negative / non-finite', async () => {
+    const cases: Array<[number, string]> = [
+      [2.9, '?wait=2'],
+      [0, ''],
+      [-5, ''],
+      [Number.NaN, ''],
+      [Number.POSITIVE_INFINITY, ''],
+    ];
+    for (const [waitSeconds, expectedQs] of cases) {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ id: 'wf_q', status: 'processing' }));
+      await getWorkflow(client, 'wf_q', { waitSeconds });
+      const url = fetchMock.mock.calls.at(-1)![0];
+      expect(url, `waitSeconds=${String(waitSeconds)}`).toBe(
+        `https://orch.test/v2/consumer/workflows/wf_q${expectedQs}`,
+      );
+    }
+  });
+
+  it('forwards the caller signal to fetch so a hold is genuinely cancellable', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ id: 'wf_sig', status: 'processing' }));
+    const ctl = new AbortController();
+    await getWorkflow(client, 'wf_sig', { waitSeconds: 4, signal: ctl.signal });
+    expect((fetchMock.mock.calls[0]![1] as RequestInit).signal).toBe(ctl.signal);
+  });
+});
+
+describe('pollWorkflow', () => {
+  const client = createOrchestratorClient({ accessToken: 'tok', baseUrl: 'https://orch.test' });
+
+  /** The `?wait=` value on each fetch the loop made, in order. */
+  function waitParams(): Array<string | null> {
+    return fetchMock.mock.calls.map(([url]) =>
+      new URL(url as string).searchParams.get('wait'),
+    );
+  }
+
+  it('completes inside the wait window: ONE request, terminal snapshot', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ id: 'wf_fast', status: 'succeeded', cost: { total: 11 } }),
+    );
+    const snap = await pollWorkflow(client, 'wf_fast', { timeoutMs: 30_000, intervalMs: 1 });
+    expect(snap.id).toBe('wf_fast');
+    expect(isTerminal(snap)).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(waitParams()).toEqual([String(DEFAULT_POLL_WAIT_SECONDS)]);
+  });
+
+  it('202 (hold elapsed, still running) RE-ARMS and returns the later snapshot', async () => {
+    // A 202 is a 2xx, so it arrives as an ordinary non-terminal snapshot.
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({ id: 'wf_rearm', status: 'processing', cost: { total: 22 } }, 202),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ id: 'wf_rearm', status: 'succeeded', cost: { total: 33 } }),
+      );
+    const snap = await pollWorkflow(client, 'wf_rearm', {
+      timeoutMs: 30_000,
+      intervalMs: 1,
+      waitSeconds: 5,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // Distinct costs: returning attempt #1's snapshot would read 22, not 33.
+    expect(snap.cost?.total).toBe(33);
+    expect(snap.status).toBe('succeeded');
+    expect(waitParams()).toEqual(['5', '5']);
+  });
+
+  it('a terminal FAILURE stops the loop immediately and is returned, not thrown', async () => {
+    // `mockImplementation`, not `mockResolvedValue`: a Response body can only be
+    // read once, so a single shared instance makes attempt #2 throw
+    // "Body is unusable" and the assertion would pass for the wrong reason.
+    fetchMock.mockImplementation(() => jsonResponse({ id: 'wf_fail', status: 'failed' }));
+    const snap = await pollWorkflow(client, 'wf_fail', {
+      timeoutMs: 30_000,
+      intervalMs: 1,
+      waitSeconds: 7,
+    });
+    expect(snap.status).toBe('failed');
+    expect(isTerminal(snap)).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('CANCELLATION: aborts the in-flight request and returns the last snapshot', async () => {
+    const ctl = new AbortController();
+    let inFlightSignal: AbortSignal | undefined;
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ id: 'wf_cancel', status: 'processing' }))
+      .mockImplementationOnce((_url: string, init: RequestInit) => {
+        inFlightSignal = init.signal ?? undefined;
+        // Hangs until aborted — a real long hold.
+        return new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => {
+            const e = new Error('The operation was aborted.');
+            e.name = 'AbortError';
+            reject(e);
+          });
+        });
+      });
+
+    const promise = pollWorkflow(client, 'wf_cancel', {
+      timeoutMs: 30_000,
+      intervalMs: 1,
+      waitSeconds: 9,
+      signal: ctl.signal,
+    });
+    // Let attempt #2 start, then cancel.
+    await new Promise((r) => setTimeout(r, 20));
+    ctl.abort();
+
+    const snap = await promise;
+    // The caller's abort must reach the SOCKET, not just stop the loop.
+    expect(inFlightSignal?.aborted).toBe(true);
+    // …and must not destroy the snapshot we already had.
+    expect(snap.id).toBe('wf_cancel');
+    expect(snap.status).toBe('processing');
+  });
+
+  it('clamps the hold down to the time left on timeoutMs', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ id: 'wf_clamp', status: 'succeeded' }));
+    await pollWorkflow(client, 'wf_clamp', {
+      timeoutMs: 4_000,
+      intervalMs: 1,
+      waitSeconds: 20,
+    });
+    const asked = Number(waitParams()[0]);
+    expect(asked).toBeLessThanOrEqual(4);
+    expect(asked).toBeGreaterThan(0);
+  });
+
+  it('waitSeconds: 0 restores the pure-timer behaviour (no ?wait, repeated reads)', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ id: 'wf_timer', status: 'processing' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'wf_timer', status: 'succeeded' }));
+    const snap = await pollWorkflow(client, 'wf_timer', {
+      timeoutMs: 30_000,
+      intervalMs: 1,
+      waitSeconds: 0,
+    });
+    expect(snap.status).toBe('succeeded');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(waitParams()).toEqual([null, null]);
+  });
+
+  it('a NON-abort error on a later attempt still propagates', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ id: 'wf_err', status: 'processing' }))
+      .mockResolvedValueOnce(jsonResponse({ detail: 'boom' }, 500));
+    await expect(
+      pollWorkflow(client, 'wf_err', { timeoutMs: 30_000, intervalMs: 1, waitSeconds: 3 }),
+    ).rejects.toBeInstanceOf(OrchestratorError);
+  });
+
+  it('an error on the FIRST attempt propagates (no snapshot to fall back to)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ detail: 'nope' }, 404));
+    await expect(
+      pollWorkflow(client, 'wf_first', { timeoutMs: 30_000, intervalMs: 1 }),
+    ).rejects.toBeInstanceOf(OrchestratorError);
+  });
+
+  it('still spaces attempts by intervalMs if the orchestrator ignores ?wait', async () => {
+    // The hot-loop guard: an instantly-returning non-terminal response must not
+    // be re-fetched at fetch speed.
+    fetchMock.mockImplementation(() => jsonResponse({ id: 'wf_hot', status: 'processing' }));
+    await pollWorkflow(client, 'wf_hot', {
+      timeoutMs: 1_000,
+      intervalMs: 100,
+      waitSeconds: 20,
+    });
+    // We DID ask for a hold — the mock just ignored it, which is the scenario.
+    expect(waitParams()[0]).toBe('1');
+    // ~9 gaps of 100ms inside a 1s budget. A zero-gap re-arm would issue
+    // thousands of requests in the same window.
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(4);
+    expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(15);
   });
 });

@@ -600,7 +600,24 @@ export type BlockToParentMessage =
       payload: { requestId: string; body: WorkflowBody; idempotencyKey?: string };
     }
   | { type: 'ESTIMATE_WORKFLOW'; payload: { requestId: string; body: WorkflowBody } }
-  | { type: 'POLL_WORKFLOW'; payload: { requestId: string; workflowId: string } }
+  // `waitSeconds` (OPTIONAL): ask the host to LONG-POLL this read — to hold the
+  // request open on the orchestrator (its `?wait=` parameter, in SECONDS, not
+  // milliseconds) until the workflow reaches a terminal status, instead of
+  // answering with whatever the status is right now. Absent → today's behavior
+  // (an immediate read). Additive/backward-compatible in BOTH directions: an
+  // older host that ignores the field answers immediately, and a block that
+  // never sends it is unaffected by a host that honors it.
+  //
+  // 🔴 ONLY SEND THIS FROM A LOOP THAT AWAITS EACH POLL BEFORE ISSUING THE NEXT.
+  // A fixed `setInterval` against a host holding 15s stacks ~7 concurrent
+  // requests per workflow — which is why this is a per-message hint rather than
+  // a server-side default: deployed blocks' loop shapes are unknown and cannot
+  // be assumed sequential. `useBuzzWorkflow().watch()` is sequential by
+  // construction and is the intended sender.
+  | {
+      type: 'POLL_WORKFLOW';
+      payload: { requestId: string; workflowId: string; waitSeconds?: number };
+    }
   // Ask the host to cancel a running workflow on the orchestrator (real
   // server-side stop, not just client-side untracking). The host re-derives
   // ownership from the viewer's orchestrator token, so a block can only
