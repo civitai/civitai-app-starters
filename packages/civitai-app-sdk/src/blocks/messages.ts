@@ -585,6 +585,23 @@ export type ParentToBlockMessageType = ParentToBlockMessage['type'];
 // ============================================================
 
 export type BlockToParentMessage =
+  // READINESS ANNOUNCE (the inverted handshake). Posted by the block's
+  // transport the instant its `message` listener is attached — i.e. the first
+  // moment a `BLOCK_INIT` could possibly be received — so the host can push the
+  // payload IN RESPONSE instead of blind-polling for it.
+  //
+  // 🔴 It is a HINT, never a precondition. It carries no data, expects no
+  // reply, and a host that never receives one (because the block runs an older
+  // SDK, because the post was dropped, or because the block simply never sends
+  // it) must still deliver `BLOCK_INIT` on its own bounded retry/timeout
+  // schedule. Conversely a host that does not understand `BLOCK_HELLO` ignores
+  // it — nothing about the handshake depends on it being handled.
+  //
+  // It is posted BEFORE any `BLOCK_INIT` has been validated, so at that moment
+  // the block has NOT yet authenticated its parent. That is precisely why the
+  // payload is empty: it discloses nothing a parent frame cannot already infer
+  // from the URL it framed.
+  | { type: 'BLOCK_HELLO'; payload?: undefined }
   | { type: 'BLOCK_READY'; payload: { height: number } }
   | { type: 'BLOCK_ERROR'; payload: { message: string; fatal: boolean } }
   | { type: 'REQUEST_TOKEN'; payload: { requestId: string; blockInstanceId: string } }

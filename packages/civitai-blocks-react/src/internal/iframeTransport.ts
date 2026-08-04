@@ -1,5 +1,7 @@
 import {
   isMessage,
+  parseBlockInitFragment,
+  stripBlockInitFragment,
   type BlockInitPayload,
   type BlockToParentMessage,
   type ParentToBlockMessage,
@@ -52,6 +54,13 @@ interface PendingRequest {
  */
 export class IframeTransport implements BlockTransport {
   private readonly originMatcher: OriginMatcher;
+  /**
+   * The EXACT (non-wildcard) entries of `allowedParentOrigins`, usable as a
+   * `postMessage` `targetOrigin`. A wildcard entry (`https://*.civitaic.com`)
+   * is not a concrete origin and cannot be a target, so it is excluded here —
+   * see {@link announceReady} for what happens when nothing exact remains.
+   */
+  private readonly exactAllowedOrigins: readonly string[];
   private readonly window: Window;
 
   private snapshot: BlockSnapshot = EMPTY_SNAPSHOT;
@@ -90,6 +99,9 @@ export class IframeTransport implements BlockTransport {
     // `https://*.example.com` entries match any subdomain on a dot boundary
     // (mirrors the host-side CSP frame-ancestors convention).
     this.originMatcher = new OriginMatcher(opts.allowedParentOrigins);
+    this.exactAllowedOrigins = opts.allowedParentOrigins
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0 && !entry.includes('*'));
     this.window = opts.window ?? (globalThis as { window?: Window }).window!;
     if (!this.window) {
       throw new Error('IframeTransport: no window available; cannot mount on the server.');
@@ -111,8 +123,119 @@ export class IframeTransport implements BlockTransport {
       }
     }, INIT_TIMEOUT_MS);
 
+    // FAST PATH (additive): seed the three non-secret init fields from the URL
+    // fragment, if the host put one there. This runs BEFORE the listener is
+    // attached so that even a `BLOCK_INIT` racing in on the very next task
+    // finds a snapshot already carrying theme/renderMode/blockInstanceId.
+    //
+    // 🔴 `ready` stays FALSE. Only `BLOCK_INIT` flips it, and only
+    // `snapshotFromInit` — which runs later and overwrites all three fields —
+    // is authoritative. No token, viewer, context or settings is ever sourced
+    // from the URL.
+    this.seedFromFragment();
+
     this.messageListener = (event) => this.handleMessage(event);
     this.window.addEventListener('message', this.messageListener);
+
+    // INVERTED HANDSHAKE (additive): tell the parent we are listening, so it can
+    // push `BLOCK_INIT` in response rather than waiting out its retry tick. This
+    // MUST come after `addEventListener` — otherwise a host that answers
+    // synchronously would post into a frame with no listener and the announce
+    // would have made things worse, not better.
+    //
+    // 🔴 Best-effort only. Nothing downstream depends on it: the host keeps its
+    // own bounded retry + readiness timeout, so a dropped/ignored announce costs
+    // at most the latency this was meant to save.
+    this.announceReady();
+  }
+
+  /**
+   * Read the host's URL-fragment fast path into the pre-init snapshot.
+   *
+   * Silent no-op when the fragment is absent, belongs to the block app itself,
+   * or is a version we do not understand — in every one of those cases the
+   * block falls back to waiting for `BLOCK_INIT`, i.e. today's behaviour.
+   */
+  private seedFromFragment(): void {
+    let hash: string | undefined;
+    try {
+      hash = this.window.location?.hash;
+    } catch {
+      // A location read can throw in exotic embeddings; the fast path is
+      // optional, so degrade to "no fragment".
+      return;
+    }
+
+    const fragment = parseBlockInitFragment(hash);
+    if (
+      fragment.theme === undefined &&
+      fragment.renderMode === undefined &&
+      fragment.blockInstanceId === undefined
+    ) {
+      return;
+    }
+
+    this.snapshot = {
+      ...this.snapshot,
+      ...(fragment.theme !== undefined ? { theme: fragment.theme } : {}),
+      ...(fragment.renderMode !== undefined ? { renderMode: fragment.renderMode } : {}),
+      ...(fragment.blockInstanceId !== undefined
+        ? { blockInstanceId: fragment.blockInstanceId }
+        : {}),
+    };
+
+    // Hygiene: take our keys back out of the visible URL, preserving anything
+    // the block app itself put in the fragment. Purely cosmetic — every
+    // consumer reads the snapshot, not the URL — so a failure (an opaque-origin
+    // sandbox rejects `history.replaceState`) is swallowed.
+    try {
+      const remainder = stripBlockInitFragment(hash);
+      if (remainder !== null) {
+        const loc = this.window.location;
+        const base = `${loc.pathname}${loc.search}`;
+        this.window.history.replaceState(
+          this.window.history.state,
+          '',
+          remainder.length > 0 ? `${base}#${remainder}` : base,
+        );
+      }
+    } catch {
+      // Sandboxed opaque origin, or no History API. Nothing depends on this.
+    }
+  }
+
+  /**
+   * Post the contentless `BLOCK_HELLO` announce to the parent.
+   *
+   * Targeting: the announce goes out BEFORE any `BLOCK_INIT` has been
+   * validated, so `parentOrigin` is still null and we cannot use the normal
+   * `postToParent` path. We therefore aim at each EXACT entry of the configured
+   * allowlist — the set of origins this block was built to trust — rather than
+   * broadcasting. Only when the allowlist is wildcard-only (no exact origin can
+   * be derived, e.g. a preview-subdomain-only build) do we fall back to `'*'`,
+   * which is acceptable solely because the message carries no payload: it
+   * discloses nothing a framing page does not already know from the URL it
+   * chose to frame.
+   */
+  private announceReady(): void {
+    let parent: Window;
+    try {
+      parent = this.window.parent;
+      // Not framed (or self-framed) — nobody to announce to.
+      if (!parent || parent === this.window) return;
+    } catch {
+      return;
+    }
+
+    const targets = this.exactAllowedOrigins.length > 0 ? this.exactAllowedOrigins : ['*'];
+    for (const target of targets) {
+      try {
+        parent.postMessage({ type: 'BLOCK_HELLO' } satisfies BlockToParentMessage, target);
+      } catch {
+        // An unreachable/mismatched target throws nothing in practice; guard
+        // anyway so one bad allowlist entry can't abort the remaining posts.
+      }
+    }
   }
 
   getSnapshot(): BlockSnapshot {
