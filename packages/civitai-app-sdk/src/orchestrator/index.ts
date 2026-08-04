@@ -521,41 +521,144 @@ export function submitWorkflow(
   }) as Promise<WorkflowSnapshot>;
 }
 
-/**
- * Fetch a single workflow's current snapshot by id. One-shot; for "wait until
- * done" use {@link pollWorkflow}.
- *
- * @example
- * const snap = await getWorkflow(client, workflowId);
- * if (isTerminal(snap)) console.log(extractImageUrls(snap));
- */
-export function getWorkflow(
-  client: OrchestratorClient,
-  workflowId: string,
-): Promise<WorkflowSnapshot> {
-  return callOrchestrator(
-    client,
-    `/v2/consumer/workflows/${encodeURIComponent(workflowId)}`,
-    { method: 'GET' },
-  ) as Promise<WorkflowSnapshot>;
-}
-
-// ---------- Polling ---------------------------------------------------------
-
-export interface PollWorkflowOptions {
-  /** Polling interval in ms. Default 1000. */
-  intervalMs?: number;
-  /** Max total time to poll in ms. Default 30000. */
-  timeoutMs?: number;
-  /** Optional abort signal — checked between ticks. */
+/** Per-call controls for {@link getWorkflow}. */
+export interface GetWorkflowOptions {
+  /**
+   * 🔴 THE ORCHESTRATOR'S OWN LONG-POLL HOLD, IN **SECONDS**, NOT MILLISECONDS.
+   *
+   * Sent as the `?wait=` query parameter, which the orchestrator documents as
+   * *"Whether to wait for the workflow to complete before returning or to
+   * return immediately. The request may return a 202 if the client waits for
+   * the workflow to complete and the workflow does not complete within the
+   * requested timeout."*
+   *
+   * The unit is seconds. That is not obvious from the parameter's name and
+   * getting it wrong is silent in both directions — `wait: 30000` asks for
+   * ~8 hours and `wait: 0.03` rounds to nothing — so it is spelled out here and
+   * in the option's name. Omit (or `0`) for the pre-existing one-shot read.
+   *
+   * A 202 is a NORMAL outcome, not an error: `callOrchestrator` treats every
+   * 2xx as success, so a timed-out hold returns the current (non-terminal)
+   * snapshot exactly like a 200 would. Callers re-arm; see {@link pollWorkflow}.
+   */
+  waitSeconds?: number;
+  /**
+   * Abort signal forwarded to `fetch`, so a long hold is genuinely CANCELLED
+   * rather than merely abandoned. A `Promise.race` against a timer leaves the
+   * underlying request in flight holding a socket, which is precisely the
+   * failure mode a long poll makes expensive.
+   */
   signal?: AbortSignal;
 }
 
 /**
- * Server-side long-poll helper. Re-fetches the workflow every `intervalMs`
- * until it reaches a terminal status, the timeout elapses, or the signal
- * aborts. Returns the latest snapshot regardless of which condition tripped —
- * callers inspect {@link isTerminal} on the result to decide what to do.
+ * Fetch a single workflow's current snapshot by id.
+ *
+ * One-shot by default. Pass {@link GetWorkflowOptions.waitSeconds} to have the
+ * ORCHESTRATOR hold the request open until the workflow reaches a terminal
+ * status (a real long poll, server-side) instead of returning immediately; for
+ * a full "wait until done, re-arming across timeouts" loop use
+ * {@link pollWorkflow}.
+ *
+ * @example
+ * const snap = await getWorkflow(client, workflowId);
+ * if (isTerminal(snap)) console.log(extractImageUrls(snap));
+ *
+ * @example  Long poll: one request that returns as soon as the workflow ends
+ * const snap = await getWorkflow(client, workflowId, { waitSeconds: 20 });
+ * // A non-terminal snapshot here means the hold elapsed (HTTP 202) — ask again.
+ * if (!isTerminal(snap)) await getWorkflow(client, workflowId, { waitSeconds: 20 });
+ */
+export function getWorkflow(
+  client: OrchestratorClient,
+  workflowId: string,
+  opts: GetWorkflowOptions = {},
+): Promise<WorkflowSnapshot> {
+  // Built with URLSearchParams rather than string concatenation so a future
+  // second parameter cannot reintroduce a `?`-vs-`&` bug, and so a non-finite
+  // `waitSeconds` can never be serialised into the URL.
+  const wait =
+    typeof opts.waitSeconds === 'number' && Number.isFinite(opts.waitSeconds)
+      ? Math.max(0, Math.floor(opts.waitSeconds))
+      : 0;
+  const qs = wait > 0 ? `?${new URLSearchParams({ wait: String(wait) }).toString()}` : '';
+  return callOrchestrator(client, `/v2/consumer/workflows/${encodeURIComponent(workflowId)}${qs}`, {
+    method: 'GET',
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  }) as Promise<WorkflowSnapshot>;
+}
+
+// ---------- Polling ---------------------------------------------------------
+
+/**
+ * Default orchestrator-side hold per {@link pollWorkflow} attempt, in seconds.
+ *
+ * 20s rather than something larger because a held request occupies a socket on
+ * BOTH sides for its whole duration, and because the platforms these starters
+ * deploy to cap total request time (see PORTING.md's serverless note). It turns
+ * the default 30s budget from ~30 requests into ~2 while DETECTING completion
+ * sooner, not later — the hold returns the instant the workflow ends.
+ */
+export const DEFAULT_POLL_WAIT_SECONDS = 20;
+
+/**
+ * Slack added to a per-attempt abort deadline, in ms.
+ *
+ * 🔴 THE ABORT MUST SIT ABOVE THE HOLD, NOT AT IT. `waitSeconds` is what we ASK
+ * the orchestrator to hold for; the abort is this side's defence against a
+ * socket it accepted and abandoned, which `wait` cannot cover because a request
+ * that never returns never times out. Set equal to the hold, the abort would
+ * race the orchestrator's own timely 202 and cancel healthy requests.
+ */
+const POLL_ABORT_SLACK_MS = 5_000;
+
+export interface PollWorkflowOptions {
+  /**
+   * Delay BETWEEN attempts, in ms. Default 1000.
+   *
+   * 🔴 KEPT, AND LOAD-BEARING, EVEN THOUGH LONG POLLING MAKES IT LOOK
+   * REDUNDANT. With `waitSeconds > 0` an attempt normally consumes the whole
+   * hold, so this is ~3% overhead on a cycle. But if the orchestrator ever
+   * stops honouring `wait` — an older deployment, a proxy that strips the query
+   * string, a 202 returned instantly — a zero gap turns this loop into a hot
+   * loop hammering the API at fetch speed. This delay is the floor that makes
+   * that failure slow instead of catastrophic.
+   */
+  intervalMs?: number;
+  /** Max total time to poll in ms. Default 30000. */
+  timeoutMs?: number;
+  /** Optional abort signal — cancels the in-flight request and stops the loop. */
+  signal?: AbortSignal;
+  /**
+   * Orchestrator-side hold per attempt, in **seconds**. Default
+   * {@link DEFAULT_POLL_WAIT_SECONDS}. Pass `0` to restore the pre-0.31
+   * pure-timer behaviour (one immediate read per `intervalMs`).
+   *
+   * Automatically clamped down to the time left on `timeoutMs`, so a long hold
+   * cannot overrun the caller's budget.
+   */
+  waitSeconds?: number;
+}
+
+/**
+ * Wait for a workflow to reach a terminal status, using the orchestrator's
+ * SERVER-SIDE long poll (`?wait=`) and re-arming across each 202 until the
+ * workflow ends, the `timeoutMs` budget elapses, or `signal` aborts. Returns
+ * the latest snapshot regardless of which condition tripped — callers inspect
+ * {@link isTerminal} on the result to decide what to do.
+ *
+ * 🔴 THIS FUNCTION USED TO BE LABELLED A LONG POLL AND WAS NOT ONE. Until
+ * @civitai/app-sdk 0.31.0 it was a client-side `setTimeout` loop re-reading the
+ * workflow every `intervalMs` (default 1000) with no `wait` parameter — i.e. a
+ * TIMER poll wearing a long poll's docstring, and the same false claim had
+ * propagated into README.md and PORTING.md. The label is now true rather than
+ * softened, because the orchestrator has supported the parameter all along and
+ * four non-blocks civitai call sites were already using it.
+ *
+ * WHAT A CALLER SEES THAT IS DIFFERENT: fewer requests (~2 instead of ~30 on
+ * the default budget) and terminal status detected sooner (the hold returns
+ * when the workflow ends, not on the next tick after it ended). The RETURN
+ * CONTRACT is unchanged.
  *
  * @example
  * const finished = await pollWorkflow(client, submitted.id, { timeoutMs: 30_000 });
@@ -568,15 +671,79 @@ export async function pollWorkflow(
 ): Promise<WorkflowSnapshot> {
   const interval = opts.intervalMs ?? 1000;
   const timeout = opts.timeoutMs ?? 30_000;
+  const requestedWait = opts.waitSeconds ?? DEFAULT_POLL_WAIT_SECONDS;
   const deadline = Date.now() + timeout;
 
-  let snapshot = await getWorkflow(client, workflowId);
+  // The hold this attempt may ask for: the caller's `waitSeconds`, floored at 0
+  // and clamped to whatever is LEFT of the total budget, so a 20s hold started
+  // with 3s remaining asks for 3s rather than overrunning by 17.
+  const holdFor = (): number => {
+    if (!Number.isFinite(requestedWait) || requestedWait <= 0) return 0;
+    const remainingSeconds = Math.floor((deadline - Date.now()) / 1000);
+    return Math.max(0, Math.min(Math.floor(requestedWait), remainingSeconds));
+  };
+
+  const attempt = (waitSeconds: number): Promise<WorkflowSnapshot> => {
+    if (waitSeconds <= 0) {
+      return getWorkflow(client, workflowId, {
+        ...(opts.signal ? { signal: opts.signal } : {}),
+      });
+    }
+    // Per-attempt deadline as a real AbortController — the fetch is CANCELLED,
+    // not just stopped being awaited. Linked to the caller's signal by hand
+    // rather than via `AbortSignal.any`, which is too new to require of every
+    // browser this client-safe package runs in.
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), waitSeconds * 1000 + POLL_ABORT_SLACK_MS);
+    const onOuterAbort = () => ctl.abort();
+    opts.signal?.addEventListener('abort', onOuterAbort);
+    return getWorkflow(client, workflowId, { waitSeconds, signal: ctl.signal }).finally(() => {
+      clearTimeout(timer);
+      opts.signal?.removeEventListener('abort', onOuterAbort);
+    });
+  };
+
+  // The FIRST read is not wrapped: a throw here propagates, exactly as it did
+  // before long polling existed. There is no prior snapshot to fall back to, so
+  // swallowing it would return `undefined` typed as a snapshot.
+  let snapshot = await attempt(holdFor());
   while (!isTerminal(snapshot) && Date.now() + interval <= deadline) {
     if (opts.signal?.aborted) break;
     await new Promise((r) => setTimeout(r, interval));
-    snapshot = await getWorkflow(client, workflowId);
+    if (opts.signal?.aborted) break;
+    try {
+      snapshot = await attempt(holdFor());
+    } catch (err) {
+      // 🔴 A LATER ATTEMPT'S ABORT MUST NOT DESTROY A SNAPSHOT WE ALREADY HAVE.
+      // Both this function's own per-attempt deadline and the caller's signal
+      // surface as an abort throw. Neither is news about the workflow, and the
+      // documented contract is "returns the latest snapshot" — so we keep the
+      // one we hold and stop. Any OTHER error still propagates, which is what
+      // the pre-long-poll loop did for every error.
+      if (!isAbortError(err)) throw err;
+      break;
+    }
   }
   return snapshot;
+}
+
+/**
+ * Is this thrown value an abort (either our per-attempt deadline or the
+ * caller's signal)?
+ *
+ * Matched on `name`, not `instanceof DOMException`: the abort reason is
+ * produced by whichever fetch implementation is in play (undici, a browser, a
+ * test double), and those do not share a class. Node's undici throws a
+ * `DOMException` named `AbortError`; a polyfilled or mocked fetch may throw a
+ * plain `Error` with the same name.
+ */
+function isAbortError(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'name' in err &&
+    (err as { name?: unknown }).name === 'AbortError'
+  );
 }
 
 // ---------- Snapshot inspection --------------------------------------------

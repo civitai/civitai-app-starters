@@ -280,6 +280,8 @@ const submitted = await submitWorkflow(client, body);
 const finished = await pollWorkflow(client, submitted.id, { timeoutMs: 30_000 });
 ```
 
+`pollWorkflow` is a real **long poll**: it sends the orchestrator's `?wait=<seconds>` parameter (20s per attempt by default) so the request returns the moment the workflow ends, and re-arms across each 202 until the `timeoutMs` budget runs out. On the budget above that is ~2 requests rather than ~30. Pass `waitSeconds: 0` for the older immediate-read-per-`intervalMs` behaviour, and keep `timeoutMs` under your platform's request budget on serverless (see PORTING.md).
+
 The starters in `civitai/civitai-app-starters` wire this into framework-specific route handlers (Next.js App Router, SvelteKit `+server.ts`, Hono inside a Vite-built PWA). Read those for end-to-end reference implementations.
 
 ## Choosing a workflow step type
