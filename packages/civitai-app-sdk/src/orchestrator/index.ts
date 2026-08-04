@@ -651,9 +651,15 @@ export interface PollWorkflowOptions {
  * @civitai/app-sdk 0.31.0 it was a client-side `setTimeout` loop re-reading the
  * workflow every `intervalMs` (default 1000) with no `wait` parameter — i.e. a
  * TIMER poll wearing a long poll's docstring, and the same false claim had
- * propagated into README.md and PORTING.md. The label is now true rather than
+ * propagated into this package's README (its API table and the "`pollWorkflow`
+ * long-polls to terminal status" line). The label is now true rather than
  * softened, because the orchestrator has supported the parameter all along and
  * four non-blocks civitai call sites were already using it.
+ *
+ * (PORTING.md's "long-poll" wording is NOT part of that: it describes the
+ * BLOCK-IN-THE-HANDLER pattern, which the starters genuinely did regardless of
+ * the mechanism underneath, and its advice to cap `timeoutMs` under the
+ * platform budget is still correct — more so now that the hold is real.)
  *
  * WHAT A CALLER SEES THAT IS DIFFERENT: fewer requests (~2 instead of ~30 on
  * the default budget) and terminal status detected sooner (the hold returns
