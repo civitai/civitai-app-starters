@@ -246,7 +246,15 @@ describe('IframeTransport', () => {
     const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
     transport.sendMessage({ type: 'RESIZE_IFRAME', payload: { height: 400 } });
     transport.sendMessage({ type: 'RESIZE_IFRAME', payload: { height: 500 } });
-    expect(postMessageMock).not.toHaveBeenCalled();
+    // The ONLY thing that may leave the frame before BLOCK_INIT is the
+    // contentless `BLOCK_HELLO` announce posted by the constructor. Assert that
+    // exactly, rather than "nothing was sent": the property under test is that
+    // the outbound QUEUE is not flushed early, and stating it as a filter keeps
+    // the test able to catch a real early flush.
+    expect(postMessageMock.mock.calls.map((c) => (c[0] as { type: string }).type)).toEqual([
+      'BLOCK_HELLO',
+    ]);
+    postMessageMock.mockClear();
 
     window.dispatchEvent(mockParentMessage({ type: 'BLOCK_INIT', payload: buildInitPayload() }, PARENT_ORIGIN));
     await transport.waitForInit();

@@ -38,6 +38,16 @@ export {
 } from './browsingLevel.js';
 export type { BrowsingLevelKey, BrowsingLevelBit, ColorDomain } from './browsingLevel.js';
 
+export {
+  BLOCK_INIT_FRAGMENT_MARKER_KEY,
+  BLOCK_INIT_FRAGMENT_VERSION,
+  BLOCK_INIT_FRAGMENT_KEYS,
+  encodeBlockInitFragment,
+  parseBlockInitFragment,
+  stripBlockInitFragment,
+} from './initFragment.js';
+export type { BlockInitFragment } from './initFragment.js';
+
 export { isMessage } from './messages.js';
 export type {
   BlockInitPayload,
