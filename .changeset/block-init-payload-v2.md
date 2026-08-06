@@ -28,11 +28,26 @@ Two things fall out of writing the members honestly:
   theme? }`; page authors just had no name for it.
 - `ModelSlotContext` **loses `creatorUserId`, `viewerUserId`, `viewerNsfwEnabled`,
   `viewerUsername` and `viewerStatus`.** The host's `projectBlockInitContext`
-  allowlist has never forwarded them, so the first three were declared REQUIRED
-  while arriving `undefined` — TypeScript said `number`, the wire said nothing.
+  allowlist does not forward them (they rode the wire before that
+  data-minimisation projection landed — which is what it was written to stop —
+  and have not since), so the first three were declared REQUIRED while arriving
+  `undefined` — TypeScript said `number`, the wire said nothing.
   This is a **type-level fix to an existing latent bug**, not a removal of data.
   A block reading `ctx.creatorUserId` was already reading `undefined`; it now
   fails to compile, which is the point.
+
+🔴 **The guards check every field they assert, not just `slotId`.** Because
+`UnknownSlotContext` declares `slotId: string`, a structurally-incomplete known
+slot — `const c: BlockContext = { slotId: 'model.sidebar_top' }` — is a legal
+`BlockContext` and **compiles**. A `slotId`-only guard would return `true` for it
+and hand the block `ctx.modelId` typed `number` and valued `undefined`, straight
+into a generation body. So `isModelSlotContext` also requires `modelId`,
+`modelVersionId`, `modelName`, `modelType` and `modelNsfwLevel`, and
+`isPageSlotContext` requires `slug`, `subPath` and `viewerUserId`. No real
+payload is rejected: the only production model-slot producer sets all five
+unconditionally and `CONTEXT_ALLOWLIST` forwards them, `subPath` is checked as a
+string (not a non-empty one, since `''` is the real value on an app's index) and
+`viewerUserId` accepts `null` (the real anonymous value).
 
 **2. `TOKEN_REFRESH_RESPONSE.payload.requestId` is REQUIRED (was optional).**
 A reply that may not name its request is not usable as a reply. The transport
@@ -52,21 +67,61 @@ too), and answers an uncorrelatable `REQUEST_TOKEN` with a `TOKEN_REFRESH` push
 🔴 **Why 3 and 4 stop at deprecation.** Removing a field from `BLOCK_INIT` is not
 a type change: `isValidBlockInitPayload` is compiled into every already-built,
 already-deployed block bundle, and it hard-requires a non-empty `blockId` and
-`appId` and a `viewer` that is `null` or an object with a numeric `id`. Fetching
-the bundles served from the 9 live `<slug>.civit.ai` apps and executing their own
-copy of that guard confirms it: dropping `blockId`, dropping `appId`, or thinning
-`viewer` to a boolean each returns `false`, and a rejected `BLOCK_INIT` is never
-re-sent — the block stays blank forever. That is a fleet-wide outage. Separately,
-5 of those 9 apps read `viewer.id` at runtime for load-bearing logic (ownership
-filters, optimistic row authorship). Nothing reads `blockId`/`appId` off
-`useBlockContext()` — the type deprecation is safe, the wire removal is not.
+`appId` and a `viewer` that is `null` or an object with a numeric `id` and a
+PRESENT `username` (`null` is fine; absent is not). Fetching block bundles from
+`<slug>.civit.ai` and executing their own copy of that guard confirms it:
+dropping `blockId`, dropping `appId`, thinning `viewer` to a boolean, or omitting
+`username` each returns `false`.
+
+**What that population is.** `app_blocks` has 21 rows — 9 `approved`, 12
+`suspended` — of which 20 are deployed and reachable. Only approved blocks are
+served today (both surfaces gate on `status='approved'`), so the currently-served
+set is the 9. But suspension is **reversible**, so the set a wire change must
+stay compatible with is every deployed bundle, not just today's served ones. The
+guard was executed out of 19 of those 20 bundles, unanimously — so this is 19/20
+of the compatibility population, not a sample of a handful, and not a claim about
+all 20.
+
+A rejected `BLOCK_INIT` **is** re-sent — the host re-posts it every
+`INIT_RETRY_INTERVAL_MS` (400ms) until the block acks `BLOCK_READY` — but every
+retry carries the same payload, so a validator that rejects one rejects all ~25
+of them, and at `BLOCK_READY_TIMEOUT_MS` (10s) the host gives up and settles on
+its terminal failure state: the model slot collapses to nothing (`IframeHost`
+renders `null` so the slot takes no space), and the page host shows its fallback
+and reports the launch as an error. So the block never works — it just fails in
+10s rather than hanging forever. That is a fleet-wide outage. Separately,
+5 of the 9 approved apps read `viewer.id` at runtime for load-bearing logic
+(ownership filters, optimistic row authorship). Nothing reads `blockId`/`appId`
+off `useBlockContext()` — the type deprecation is safe, the wire removal is not.
+
+One consequence, applied here: `isValidBlockInitPayload` **no longer rejects a
+malformed `viewer.signedIn`**. An earlier revision failed the whole payload when
+the flag was present and not `true`. That is the wrong-sized response by the very
+argument above — this guard gates the ENTIRE init, so a bad advisory flag would
+have cost the block its token, context, settings and theme, and the retry loop
+would replay the same rejection for 10s and then abandon the launch. It is
+unreachable from today's host (which writes a literal `true`), which is exactly
+why the strict version bought nothing and risked a fleet-wide brick the day a
+host wrote `signedIn: !!user`. A block should compare it to `true` and fall back
+to `viewer !== null`.
 
 The staged path: ship the deprecations and `signedIn` (this release) → blocks
-migrate to `viewer?.signedIn` for the sign-in gate and `useViewer()` for
-identity, and to their own manifest for `blockId`/`appId` → once the deployed
-population is known to run a validator tolerant of their absence, drop them from
-the wire. The SDK starter and the `hello-world` example are migrated here as the
-reference for step two.
+migrate off `viewer.id`/`viewer.username` to a `viewer !== null` sign-in gate and
+`useViewer()` for identity, and to their own manifest for `blockId`/`appId` →
+once the host emits `signedIn` in production, `viewer?.signedIn === true` becomes
+the gate to write → once the deployed population is known to run a validator
+tolerant of their absence, drop `id`/`username` from the wire. The SDK starter
+and the `hello-world` example are migrated here as the reference; note they use
+`viewer !== null`, **not** `viewer?.signedIn`, because a block that gates on
+`signedIn` before the host emits it renders its anonymous branch to every
+signed-in user. Both dev hosts do emit it, so it is exercisable locally today.
+
+The dev hosts also stop sending `viewer.status`. The platform withholds the
+viewer's moderation state from third-party iframes (civitai #2521) — `status` is
+`@deprecated` for exactly that reason — so a mock that sent it was inviting
+blocks to read a field production never provides, the same fidelity defect this
+release fixed in the seven context harnesses. `GET_VIEWER` / `useViewer()` still
+carries `status`; that read is scope-gated and audited.
 
 **Back-compat, both directions.**
 

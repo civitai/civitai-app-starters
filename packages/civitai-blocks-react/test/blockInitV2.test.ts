@@ -23,9 +23,16 @@
  * already-deployed block bundle. Fetching the 9 live bundles served from
  * `<slug>.civit.ai` and executing their copy of it shows that dropping
  * `blockId`, dropping `appId`, or replacing `viewer` with a boolean each makes
- * it return `false` — and a rejected `BLOCK_INIT` is never re-sent, so the block
- * never becomes ready. Those are fleet-wide blank-block outages, not type
- * changes. The guards below are the regression fence around that finding.
+ * it return `false`.
+ *
+ * A rejected `BLOCK_INIT` IS re-sent — the host re-posts it every
+ * `INIT_RETRY_INTERVAL_MS` (400ms) until `BLOCK_READY` — but every retry carries
+ * the same payload, so a rejecting validator rejects all of them, and at
+ * `BLOCK_READY_TIMEOUT_MS` (10s) the host settles on its terminal failure state
+ * (model slot collapses to nothing; page host renders its fallback). The block
+ * never becomes ready either way; it fails in 10s rather than hanging forever.
+ * Those are fleet-wide outages, not type changes. The guards below are the
+ * regression fence around that finding.
  *
  * FIXTURES. Values are non-default and pairwise distinct on purpose: a fixture
  * of `0` / `''` / `'test'` collapses distinct implementations into identical
@@ -34,16 +41,20 @@
  * fixture — the point of that one is to pin the SDK type against the REAL wire
  * contract rather than against the same mental model that produced it.
  */
-import { describe, expect, it } from 'vitest';
+import { cleanup, renderHook, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { isModelSlotContext, isPageSlotContext } from '@civitai/app-sdk/blocks';
 
+import { useBlockContext } from '../src/hooks/useBlockContext.js';
+import { getTransport } from '../src/internal/singleton.js';
+import { createMockHost, resetTransport } from '../src/testing.js';
 import {
   isValidBlockInitPayload,
   isValidTokenRefreshResponse,
   payloadValidatorFor,
 } from '../src/internal/validate.js';
-import { snapshotFromInit, withContextTheme } from '../src/internal/transport.js';
+import { hostContextWithTheme, snapshotFromInit } from '../src/internal/transport.js';
 
 // ============================================================
 // Fixtures
@@ -210,14 +221,89 @@ describe('BlockContext union (change 1)', () => {
     ['app.page', false, true],
     ['image.below_actions', false, false],
   ])('guards classify slotId %s as model=%s page=%s', (slotId, isModel, isPage) => {
-    // Every registered slot id, exercised through the RUNTIME guards.
+    // Every registered slot id, exercised through the RUNTIME guards on a
+    // COMPLETE context for that slot — the guards check the fields they assert,
+    // so a bare `{ slotId }` would not isolate the slot-id arm (that case is the
+    // structural-completeness block below).
     // `model.actions_extra` is registered and live but has no production
     // producer yet, so it is the arm most likely to be dropped by a "tidy the
     // union" edit and least likely to be noticed — which is exactly why each
     // arm gets its own case rather than one representative model slot.
-    const ctx = { slotId } as never;
+    const ctx = {
+      ...HOST_DERIVED_MODEL_CONTEXT,
+      slug: 'seed-explorer',
+      subPath: '',
+      viewerUserId: 8888,
+      slotId,
+    } as never;
     expect(isModelSlotContext(ctx)).toBe(isModel);
     expect(isPageSlotContext(ctx)).toBe(isPage);
+  });
+
+  // 🔴 The reason the guards check more than `slotId`. `UnknownSlotContext`
+  // declares `slotId: string`, so a structurally-INCOMPLETE known slot is a
+  // legal `BlockContext` that compiles (verified with tsc against
+  // `const c: BlockContext = { slotId: 'model.sidebar_top' }`). A slotId-only
+  // guard would return true for it and hand the block `ctx.modelId` typed
+  // `number` and valued `undefined` — straight into a generation body. Each case
+  // drops exactly ONE required field so no case can pass for a neighbour's
+  // reason.
+  describe('a known slotId with MISSING required fields does not narrow', () => {
+    const completeModel = {
+      slotId: 'model.below_images',
+      modelId: 8813,
+      modelVersionId: 21774,
+      modelName: 'Aurora Mix',
+      modelType: 'Checkpoint',
+      modelNsfwLevel: 4,
+    };
+
+    it('the complete model context DOES narrow (positive control)', () => {
+      expect(isModelSlotContext(completeModel as never)).toBe(true);
+    });
+
+    it.each(['modelId', 'modelVersionId', 'modelName', 'modelType', 'modelNsfwLevel'])(
+      'a model context missing %s does not narrow',
+      (field) => {
+        expect(isModelSlotContext(without(completeModel, field) as never)).toBe(false);
+      },
+    );
+
+    it('a bare { slotId } model context does not narrow', () => {
+      expect(isModelSlotContext({ slotId: 'model.sidebar_top' } as never)).toBe(false);
+    });
+
+    it('a model context with a WRONG-TYPED field does not narrow', () => {
+      // Deletion is not the only shape of a broken payload; a stringified id is
+      // what a JSON round-trip through a sloppy producer actually yields.
+      expect(isModelSlotContext({ ...completeModel, modelId: '8813' } as never)).toBe(false);
+      expect(isModelSlotContext({ ...completeModel, modelNsfwLevel: null } as never)).toBe(false);
+    });
+
+    const completePage = {
+      slotId: 'app.page',
+      slug: 'seed-explorer',
+      subPath: '',
+      viewerUserId: null,
+    };
+
+    it('the complete page context DOES narrow, with subPath: "" and a null viewer (positive control)', () => {
+      // Both of these are REAL values — `''` on an app's own index, `null` for an
+      // anonymous viewer. A guard that reached for `isNonEmptyString`/truthiness
+      // would reject every app landing page and every logged-out visit.
+      expect(isPageSlotContext(completePage as never)).toBe(true);
+    });
+
+    it.each(['slug', 'subPath', 'viewerUserId'])(
+      'a page context missing %s does not narrow',
+      (field) => {
+        expect(isPageSlotContext(without(completePage, field) as never)).toBe(false);
+      },
+    );
+
+    it('a bare { slotId } page context does not narrow', () => {
+      expect(isPageSlotContext({ slotId: 'app.page' } as never)).toBe(false);
+    });
   });
 
   it('still rejects a context with no usable slotId', () => {
@@ -227,20 +313,52 @@ describe('BlockContext union (change 1)', () => {
     expect(isValidBlockInitPayload(without(v2Init, 'context'))).toBe(false);
   });
 
-  it('withContextTheme never invents `theme` on a context that lacks it', () => {
-    // The unknown arm carries `slotId` only. Bolting a theme onto it would
-    // fabricate a field the host never sent, on exactly the contexts this SDK
-    // understands least. Same test `applyThemeChange` applies to a push.
-    expect(withContextTheme({ slotId: 'image.below_actions' }, 'dark')).toEqual({
-      slotId: 'image.below_actions',
+  describe('hostContextWithTheme (the HOST-side theme merge)', () => {
+    it('never invents `theme` on a slot whose shape has no place for it', () => {
+      // The unknown arm carries `slotId` only. Bolting a theme onto it would
+      // fabricate a field for a slot this SDK has no shape for.
+      expect(hostContextWithTheme({ slotId: 'image.below_actions' }, 'dark')).toEqual({
+        slotId: 'image.below_actions',
+      });
     });
-    // …and it DOES update one that carries the field.
-    expect(
-      withContextTheme(
-        { slotId: 'app.page', slug: 'notepad', subPath: '', viewerUserId: null, theme: 'light' },
-        'dark',
-      ),
-    ).toMatchObject({ slotId: 'app.page', theme: 'dark' });
+
+    it('updates `theme` on a context that already carries it', () => {
+      expect(
+        hostContextWithTheme(
+          { slotId: 'app.page', slug: 'notepad', subPath: '', viewerUserId: null, theme: 'light' },
+          'dark',
+        ),
+      ).toMatchObject({ slotId: 'app.page', theme: 'dark' });
+    });
+
+    it.each(['model.sidebar_top', 'model.below_images', 'model.actions_extra', 'app.page'])(
+      '🔴 SETS `theme` on a %s context that omits it',
+      (slotId) => {
+        // The distinguishing case, and the one the block-side `'theme' in ctx`
+        // rule gets WRONG here. On the block side, omission is the host's
+        // decision and must be respected. On the HOST side we ARE the host: a
+        // dev-supplied `options.context` that omits `theme` is an incomplete
+        // description of a slot, and the real host sends `theme` on every one of
+        // these four unconditionally. Honouring the omission left the harness's
+        // theme toggle unable to reach `context.theme` — not at init, and not on
+        // a later THEME_CHANGE either, because `applyThemeChange` only UPDATES a
+        // key that already exists.
+        const out = hostContextWithTheme({ slotId } as never, 'dark') as { theme?: string };
+        expect(out.theme).toBe('dark');
+      },
+    );
+
+    it('returns a FRESH object on every path — never the caller’s own', () => {
+      // `options.context` belongs to the dev harness that passed it. Aliasing it
+      // into the block's snapshot would let a later harness mutation reach
+      // through a `BlockSnapshot` the block may treat as immutable. The
+      // no-theme-field path is the one that used to return the input verbatim.
+      const themed = { slotId: 'app.page', slug: 'n', subPath: '', viewerUserId: null } as const;
+      expect(hostContextWithTheme(themed, 'dark')).not.toBe(themed);
+      const unknown = { slotId: 'image.below_actions' } as const;
+      expect(hostContextWithTheme(unknown, 'dark')).not.toBe(unknown);
+      expect(hostContextWithTheme(unknown, 'dark')).toEqual(unknown);
+    });
   });
 });
 
@@ -300,10 +418,12 @@ describe('TOKEN_REFRESH_RESPONSE requestId (change 2)', () => {
 describe('blockId + appId are deprecated but MUST still be sent (change 3)', () => {
   it('🔴 rejects an init with blockId removed — deployed blocks would never become ready', () => {
     // Not a preference. This guard is compiled into all 9 live block bundles;
-    // executing their copy against this payload returns false, and a rejected
-    // BLOCK_INIT is never retried. Removing the field from the host is a
-    // fleet-wide blank-block outage. THIS TEST IS THE FENCE — if a future change
-    // makes it pass, the wire removal it unblocks is the outage.
+    // executing their copy against this payload returns false. The host DOES
+    // retry (every 400ms for 10s) but each retry is byte-identical, so it is
+    // rejected too and the launch ends in the host's terminal failure state.
+    // Removing the field from the host is a fleet-wide outage. THIS TEST IS THE
+    // FENCE — if a future change makes it pass, the wire removal it unblocks is
+    // the outage.
     expect(isValidBlockInitPayload(without(v2Init, 'blockId'))).toBe(false);
   });
 
@@ -356,22 +476,39 @@ describe('viewer thinning (change 4)', () => {
     expect(snap.viewer !== null).toBe(true);
   });
 
-  it('rejects a signedIn that is present but not `true`', () => {
+  it('🔴 a MALFORMED signedIn does NOT reject the payload', () => {
     // `signedIn: false` inside a NON-NULL viewer is a contradiction — anonymous
-    // is `viewer: null`. Letting it through would let a block gate its UI on a
-    // malformed claim about identity state.
-    expect(
-      isValidBlockInitPayload({
-        ...structuredClone(v2Init),
-        viewer: { id: 8888, username: 'alice', signedIn: false },
-      }),
-    ).toBe(false);
-    expect(
-      isValidBlockInitPayload({
-        ...structuredClone(v2Init),
-        viewer: { id: 8888, username: 'alice', signedIn: 'yes' },
-      }),
-    ).toBe(false);
+    // is `viewer: null` — but `isValidBlockInitPayload` gates the WHOLE init, so
+    // returning false costs the block its token, context, settings and theme
+    // over one advisory flag. The host retries the identical payload for 10s and
+    // then abandons the launch, so a strict check here is a BRICKED block; an
+    // ignored flag is a degraded one (the block reads `signedIn` as falsy and
+    // may show a sign-in CTA, while `viewer !== null` still answers correctly).
+    //
+    // Currently unreachable from the real host (`projectBlockInitViewer` writes
+    // a literal `true`) — which is the point: the strict version bought nothing
+    // and cost a fleet-wide brick the day a host started writing
+    // `signedIn: !!user`.
+    for (const signedIn of [false, 'yes', 0, 1, null]) {
+      expect(
+        isValidBlockInitPayload({
+          ...structuredClone(v2Init),
+          viewer: { id: 8888, username: 'alice', signedIn },
+        }),
+      ).toBe(true);
+    }
+  });
+
+  it('a malformed signedIn still reaches the snapshot verbatim — not coerced', () => {
+    // The guard tolerating it must not be mistaken for the SDK sanitising it.
+    // A block reading `viewer?.signedIn === true` sees `false` here; the
+    // documented `viewer !== null` fallback is what still reads correctly.
+    const snap = snapshotFromInit({
+      ...structuredClone(v2Init),
+      viewer: { id: 8888, username: 'alice', signedIn: false },
+    } as never);
+    expect(snap.viewer?.signedIn).toBe(false);
+    expect(snap.viewer !== null).toBe(true);
   });
 
   it('🔴 rejects a viewer thinned to a bare boolean — deployed blocks would never become ready', () => {
@@ -420,10 +557,152 @@ describe('viewer thinning (change 4)', () => {
   });
 
   it('still surfaces the deprecated identity fields for the blocks reading them today', () => {
-    // 5 of the 9 live apps read `viewer.id` for load-bearing logic (ownership
+    // 5 of the 9 approved apps read `viewer.id` for load-bearing logic (ownership
     // filters, optimistic row authorship). It stays until those migrate.
     const snap = snapshotFromInit(v2Init as never);
     expect(snap.viewer?.id).toBe(8888);
     expect(snap.viewer?.username).toBe('alice');
+  });
+
+  it('🔴 rejects a viewer whose `username` is ABSENT, but accepts an explicit null', () => {
+    // Measured against the deployed bundles: an absent `username` is rejected
+    // 16/16, an explicit `null` accepted. `ViewerInfo.username` is `string |
+    // null` — REQUIRED-but-nullable, never optional — so a host "tidying" the
+    // field away (e.g. `...(username ? { username } : {})`, the same truthiness
+    // spread that dropped `requestId`) is a wire removal with the same
+    // fleet-wide blast radius as dropping `blockId`.
+    expect(
+      isValidBlockInitPayload({
+        ...structuredClone(v2Init),
+        viewer: { id: 8888, signedIn: true },
+      }),
+    ).toBe(false);
+    expect(
+      isValidBlockInitPayload({
+        ...structuredClone(v2Init),
+        viewer: { id: 8888, username: null, signedIn: true },
+      }),
+    ).toBe(true);
+  });
+});
+
+// ============================================================
+// 5. The DEV HOSTS must send what the real host sends
+// ============================================================
+//
+// A fake that encodes a shape the platform does not send is how a both-wrong-
+// blind bug survives a green suite: the block compiles against the fake, the
+// harness proves nothing, and the divergence only surfaces in production. The
+// wire truth these pin is civitai/civitai's `projectBlockInitViewer` +
+// `PageBlockHost.buildContext()`, whose own contract tests assert the viewer key
+// set EXACTLY.
+
+describe('createMockHost BLOCK_INIT fidelity', () => {
+  const ORIGIN = window.location.origin;
+  let uninstall: (() => void) | undefined;
+
+  beforeEach(() => {
+    getTransport({ allowedParentOrigins: [ORIGIN] });
+  });
+
+  afterEach(() => {
+    cleanup();
+    uninstall?.();
+    uninstall = undefined;
+    resetTransport();
+  });
+
+  it('🔴 the DEFAULT viewer is exactly { id, username, signedIn } — no `status`', async () => {
+    // `status` is @deprecated precisely because the platform withholds the
+    // viewer's moderation state from third-party iframes (civitai #2521). The
+    // host's own contract test pins `Object.keys(init.viewer).sort()` as
+    // ['id','signedIn','username']; this is the mirror of that assertion.
+    // `toEqual` is load-bearing — `toMatchObject` cannot see an extra key.
+    uninstall = createMockHost().install();
+    const { result } = renderHook(() => useBlockContext());
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    expect(result.current.viewer).toEqual({ id: 2, username: 'dev-viewer', signedIn: true });
+    expect(Object.keys(result.current.viewer ?? {}).sort()).toEqual([
+      'id',
+      'signedIn',
+      'username',
+    ]);
+  });
+
+  it('🔴 the DEFAULT context is a complete PageSlotContext, not a { slotId } stub', async () => {
+    // The mutant this kills: reverting the default back to `{ slotId: 'app.page' }`.
+    // A stub lets a page author compile against slug/subPath/viewerUserId while
+    // the harness never delivers them — and, since `isPageSlotContext` now checks
+    // the fields it asserts, a stub does not even narrow, so every guarded read
+    // in a page block silently takes the else branch in local dev.
+    uninstall = createMockHost({ viewer: { id: 42, username: 'tester' } }).install();
+    const { result } = renderHook(() => useBlockContext());
+    await waitFor(() => expect(result.current.ready).toBe(true));
+
+    const ctx = result.current.context;
+    expect(isPageSlotContext(ctx)).toBe(true);
+    if (!isPageSlotContext(ctx)) throw new Error('expected a page slot context');
+    expect(ctx.slug).toBe('mock-app');
+    expect(ctx.subPath).toBe('');
+    expect(ctx.entityType).toBe('none');
+    // Derived from the resolved viewer, not hardcoded — a constant here would
+    // pass with the viewer wiring severed.
+    expect(ctx.viewerUserId).toBe(42);
+    expect(ctx.viewerUsername).toBe('tester');
+    // The mock host's default theme is 'dark' (MockHostOptions.theme).
+    expect(ctx.theme).toBe('dark');
+  });
+
+  it('🔴 a caller-supplied context that omits `theme` still receives the harness theme', async () => {
+    // The mutant this kills: dropping the `hostContextWithTheme(...)` call and
+    // using `baseContext` directly. It survived the whole suite because the
+    // DEFAULT context already carries `theme`, so only a caller-supplied context
+    // can see the difference. The real host sends `theme` on every model and
+    // page slot unconditionally, so a harness that does not is simulating a host
+    // that does not exist — and `applyThemeChange` can never repair it later,
+    // because it only UPDATES a key that already exists.
+    uninstall = createMockHost({
+      theme: 'dark',
+      context: {
+        slotId: 'model.sidebar_top',
+        modelId: 4471,
+        modelVersionId: 90233,
+        modelName: 'Nocturne XL',
+        modelType: 'LORA',
+        modelNsfwLevel: 2,
+      },
+    }).install();
+    const { result } = renderHook(() => useBlockContext());
+    await waitFor(() => expect(result.current.ready).toBe(true));
+
+    const ctx = result.current.context;
+    expect(isModelSlotContext(ctx)).toBe(true);
+    if (!isModelSlotContext(ctx)) throw new Error('expected a model slot context');
+    expect(ctx.theme).toBe('dark');
+    // Top-level and in-context theme agree — the two fields the SDK's own types
+    // invite a block to read interchangeably.
+    expect(result.current.theme).toBe('dark');
+  });
+
+  it('does not alias the caller’s own context object into the snapshot', async () => {
+    const mine = {
+      slotId: 'app.page' as const,
+      slug: 'notepad',
+      subPath: '',
+      viewerUserId: null,
+    };
+    uninstall = createMockHost({ context: mine }).install();
+    const { result } = renderHook(() => useBlockContext());
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    // structuredClone across the postMessage boundary already breaks identity;
+    // the assertion that matters is that the harness's object was not MUTATED by
+    // the host layering `theme` onto it.
+    expect(mine).toEqual({
+      slotId: 'app.page',
+      slug: 'notepad',
+      subPath: '',
+      viewerUserId: null,
+    });
+    expect('theme' in mine).toBe(false);
   });
 });

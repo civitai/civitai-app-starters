@@ -133,10 +133,15 @@ export interface BlockInitPayload {
    * 🔴 STILL SENT, and it MUST be. This is a type-level deprecation ONLY.
    * `isValidBlockInitPayload` — compiled into every already-built, already-
    * deployed block bundle — rejects a payload whose `blockId` is not a non-empty
-   * string, and a rejected `BLOCK_INIT` never resolves: the block stays blank
-   * forever. Removing it from the wire is a fleet-wide outage, not a type
-   * change. It comes off the wire only once the deployed population is known to
-   * be running a validator that tolerates its absence.
+   * string, and a rejected `BLOCK_INIT` is never ACKED. The host does retry: it
+   * re-posts `BLOCK_INIT` every `INIT_RETRY_INTERVAL_MS` (400ms) until
+   * `BLOCK_READY`, but every retry carries the SAME payload, so a validator that
+   * rejects one rejects all of them; at `BLOCK_READY_TIMEOUT_MS` (10s) the host
+   * abandons the handshake and settles on its terminal failure state — a model
+   * slot collapses to nothing, the page host renders its fallback. Removing this
+   * field from the wire is a fleet-wide outage, not a type change. It comes off
+   * the wire only once the deployed population is known to be running a
+   * validator that tolerates its absence.
    */
   blockId: string;
   /**

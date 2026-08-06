@@ -69,7 +69,9 @@ export function isValidBlockInitPayload(p: unknown): p is BlockInitPayload {
   // 🔴 The object-or-null SHAPE here is a compatibility floor, not a preference.
   // This exact guard is compiled into every already-built, already-deployed block
   // bundle, so a host that "thinned" `viewer` to a boolean would be rejected by
-  // the DEPLOYED copy of this function and those blocks would never become ready.
+  // the DEPLOYED copy of this function — and a rejected BLOCK_INIT is retried by
+  // the host for ~10s and then abandoned (see the note on `signedIn` below), so
+  // those blocks never become ready.
   // `id`/`username` are @deprecated on `ViewerInfo` and the platform is migrating
   // blocks to the scope-gated `GET_VIEWER` read, but the wire shape stays.
   if (p.viewer !== null) {
@@ -77,11 +79,30 @@ export function isValidBlockInitPayload(p: unknown): p is BlockInitPayload {
     if (typeof p.viewer.id !== 'number') return false;
     if (p.viewer.username !== null && typeof p.viewer.username !== 'string') return false;
     // `signedIn` is ADDITIVE + OPTIONAL: a host predating it omits the field
-    // (still valid — `viewer !== null` already means signed in). When present it
-    // is the literal `true`; anything else is a malformed claim about identity
-    // state, so reject rather than let a block gate its UI on `signedIn: false`
-    // inside a non-null viewer.
-    if (p.viewer.signedIn !== undefined && p.viewer.signedIn !== true) return false;
+    // (still valid — `viewer !== null` already means signed in), and when a host
+    // does send it, it is the literal `true`.
+    //
+    // 🔴 DELIBERATELY NOT REJECTED WHEN MALFORMED. A `signedIn` that is not
+    // `true` on a non-null viewer is a contradiction, but failing the WHOLE
+    // payload over it is the wrong-sized response: `isValidBlockInitPayload` is
+    // the gate on the entire init, so returning false here costs the block every
+    // field — token, context, settings, theme — over one advisory flag. The host
+    // re-posts BLOCK_INIT every 400ms (`INIT_RETRY_INTERVAL_MS`) until
+    // BLOCK_READY, but every retry carries the SAME payload, so a rejecting
+    // validator rejects all of them; at `BLOCK_READY_TIMEOUT_MS` (10s) the host
+    // gives up and settles on its terminal failure state (the model slot
+    // collapses to nothing; the page host shows its fallback). That is a broken
+    // block, where ignoring the flag is merely a degraded one: `viewer?.signedIn
+    // === true` reads false, the block shows a sign-in CTA to someone already
+    // signed in, and the documented `viewer !== null` fallback still answers
+    // correctly. Same principle the `isValidTokenRefreshResponse` comment below
+    // spells out — do not turn a degraded path into a broken one.
+    //
+    // It is also unreachable from the real host today (civitai/civitai
+    // `projectBlockInitViewer` writes a literal `true`), so the strict version
+    // bought nothing and cost a fleet-wide brick if that ever stopped holding —
+    // e.g. a future host writing `signedIn: !!user`, which is `false` exactly
+    // when `viewer` should have been `null`.
     // `status` is OPTIONAL. The platform deliberately omits the viewer's coarse
     // ban/mute moderation state from BLOCK_INIT to third-party iframes for
     // privacy (civitai #2521). When present it must be one of the three values;

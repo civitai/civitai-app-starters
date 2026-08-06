@@ -73,7 +73,7 @@ import {
   type WrappedToken,
 } from '@civitai/app-sdk/blocks';
 
-import { withContextTheme } from './transport.js';
+import { hostContextWithTheme } from './transport.js';
 import type { MockHost, MockHostScenarioPatch, MockBuzzHandle } from './mockHost.js';
 import {
   openPickerOverlay,
@@ -108,8 +108,14 @@ export interface LiveHostOptions {
   /** Host theme delivered in `BLOCK_INIT` + context. Default `'dark'`. */
   theme?: Theme;
   /**
-   * The `BLOCK_INIT` context. Defaults to a PAGE context (`{ slotId: 'app.page' }`),
-   * since dev-token mints PAGE tokens only.
+   * The `BLOCK_INIT` context. Defaults to a COMPLETE `PageSlotContext` mirroring
+   * what `PageBlockHost.buildContext()` sends (slug/subPath/viewerUserId/
+   * viewerUsername/theme), since dev-token mints PAGE tokens only — not a
+   * `{ slotId }` stub, which would not even narrow through `isPageSlotContext`.
+   *
+   * Pass this to set a REAL `slug`: the block token carries no slug claim, so the
+   * default is the placeholder `'live-dev-app'`. `theme` is layered in from
+   * {@link LiveHostOptions.theme} even if the context you pass omits it.
    */
   context?: BlockContext;
   /**
@@ -560,10 +566,17 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           status?: 'active' | 'banned' | 'muted';
         };
         if (typeof me.id !== 'number') return anonFallbackViewer();
+        // `/api/v1/blocks/me` is the AUTHORITATIVE self-read and does carry
+        // `status` — but this builds `BLOCK_INIT.viewer`, which the real host
+        // projects down to `{ id, username, signedIn }` and never includes
+        // moderation state in (civitai #2521). Forwarding `me.status` here would
+        // make the live dev host more generous than production. A block that
+        // wants `status` must ask for it via `GET_VIEWER` / `useViewer()`, which
+        // is exactly the scope-gated path this release steers authors to.
         return {
           id: me.id,
           username: me.username ?? null,
-          ...(me.status ? { status: me.status } : {}),
+          signedIn: true,
         };
       } catch (err) {
         // eslint-disable-next-line no-console
@@ -581,16 +594,24 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
       if (torn) return;
       // A FAITHFUL `PageSlotContext` default — see the same note in `mockHost`.
       // The real `PageBlockHost` always sends slug/subPath/viewerUserId/theme.
+      //
+      // `slug` is a PLACEHOLDER, not a derived value: the block token carries no
+      // slug claim (see `DecodedBlockTokenPayload`), so the live host genuinely
+      // cannot know the app's `<slug>` in `<slug>.civit.ai`. It must not be
+      // filled from `decoded.blockId` — a blockId is a different identifier in a
+      // different namespace, and handing it over as a slug is the kind of
+      // plausible-but-wrong dev value a block would build a URL out of. A dev who
+      // needs the real slug passes `options.context`.
       const baseContext: BlockContext = options.context ?? {
         slotId: PAGE_SLOT_ID,
         entityType: 'none',
-        slug: decoded.blockId ?? 'live-block',
+        slug: 'live-dev-app',
         subPath: '',
         viewerUserId: viewer?.id ?? null,
         viewerUsername: viewer?.username ?? null,
         theme: currentTheme,
       };
-      const context: BlockContext = withContextTheme(baseContext, currentTheme);
+      const context: BlockContext = hostContextWithTheme(baseContext, currentTheme);
       const initPayload: BlockInitPayload = {
         blockInstanceId: decoded.blockInstanceId ?? 'page_live',
         blockId: decoded.blockId ?? 'live-block',
@@ -1674,9 +1695,18 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
   };
 }
 
-/** A minimal anon-ish viewer used when `/api/v1/blocks/me` can't be reached. */
+/**
+ * A minimal anon-ish viewer used when `/api/v1/blocks/me` can't be reached.
+ *
+ * Carries EXACTLY the key set the real host puts on the wire —
+ * `{ id, username, signedIn }` (civitai/civitai `projectBlockInitViewer`, pinned
+ * as an exact key set by both host contract tests). NO `status`: the platform
+ * withholds the viewer's moderation state from third-party iframes (civitai
+ * #2521), so a dev host that sends it invites a block to read a field production
+ * never provides. See {@link DEFAULT_VIEWER} in `mockHost` for the same note.
+ */
 function anonFallbackViewer(): ViewerInfo {
-  return { id: 0, username: 'dev-live', status: 'active' };
+  return { id: 0, username: 'dev-live', signedIn: true };
 }
 
 /**

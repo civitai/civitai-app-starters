@@ -333,7 +333,10 @@ export interface ShowcaseImage {
  *
  * Every field here is one the host's `projectBlockInitContext` ALLOWLIST
  * actually forwards — see the note below; the v1 shape of this interface named
- * five more that never arrive.
+ * five more that no longer arrive. (They DID arrive once: before the
+ * data-minimisation projection landed, `IframeHost` spread the entire producer
+ * context onto the wire, which is what the allowlist was written to stop. So the
+ * accurate claim is "not forwarded since the projection", not "never sent".)
  *
  * Narrow to it with {@link isModelSlotContext}:
  *
@@ -415,22 +418,61 @@ export interface PageSlotContext {
  * Narrow a {@link BlockContext} to {@link ModelSlotContext}.
  *
  * A real runtime check, not just a cast: the context arrived over
- * `postMessage`, so its static type is the host's claim about it. Checking the
- * `slotId` against the registry mirror is what makes the model fields safe to
- * read — and it is what lets the block render a useful "wrong slot" state
- * instead of `undefined`-ing its way through a generation body.
+ * `postMessage`, so its static type is the host's claim about it. Returning
+ * `true` here is what lets the block render a useful "wrong slot" state instead
+ * of `undefined`-ing its way through a generation body.
+ *
+ * 🔴 IT CHECKS EVERY FIELD IT ASSERTS, not just `slotId`. A `slotId`-only check
+ * is not enough, because {@link UnknownSlotContext} declares `slotId: string` —
+ * so a structurally-incomplete known slot (`{ slotId: 'model.sidebar_top' }` and
+ * nothing else) is a legal `BlockContext` that COMPILES, passes a `slotId`-only
+ * guard, and then hands the block `ctx.modelId` typed `number` and valued
+ * `undefined`. The five required fields are asserted individually so the
+ * predicate is true exactly when the type it claims is true.
+ *
+ * No legitimate host payload is rejected by the extra checks. The only
+ * production producer of a model slot (civitai/civitai
+ * `ModelVersionDetails.tsx`) sets all five unconditionally, and the host's own
+ * pinned allowlist test (`__tests__/projectBlockInit.test.ts`) asserts the
+ * projected context carries them as an EXACT key set. A payload that somehow
+ * lacked one is precisely the case the block must not treat as a model context.
  */
 export function isModelSlotContext(ctx: BlockContext): ctx is ModelSlotContext {
+  if (
+    ctx.slotId !== 'model.sidebar_top' &&
+    ctx.slotId !== 'model.below_images' &&
+    ctx.slotId !== 'model.actions_extra'
+  ) {
+    return false;
+  }
+  const c = ctx as Partial<ModelSlotContext>;
   return (
-    ctx.slotId === 'model.sidebar_top' ||
-    ctx.slotId === 'model.below_images' ||
-    ctx.slotId === 'model.actions_extra'
+    typeof c.modelId === 'number' &&
+    typeof c.modelVersionId === 'number' &&
+    typeof c.modelName === 'string' &&
+    typeof c.modelType === 'string' &&
+    typeof c.modelNsfwLevel === 'number'
   );
 }
 
-/** Narrow a {@link BlockContext} to {@link PageSlotContext}. See {@link isModelSlotContext}. */
+/**
+ * Narrow a {@link BlockContext} to {@link PageSlotContext}. Same shape and same
+ * reasoning as {@link isModelSlotContext}: the three fields `PageSlotContext`
+ * declares REQUIRED are checked, not just `slotId`.
+ *
+ * `subPath` is checked as a string, not a NON-EMPTY one — `''` is the real value
+ * on an app's own index (`PageBlockHost.buildContext()`), and rejecting it would
+ * make every app's landing route fail to narrow. `viewerUserId` is `number |
+ * null`, and `null` is the genuine anonymous value.
+ */
 export function isPageSlotContext(ctx: BlockContext): ctx is PageSlotContext {
-  return ctx.slotId === 'app.page';
+  if (ctx.slotId !== 'app.page') return false;
+  const c = ctx as Partial<PageSlotContext>;
+  return (
+    typeof c.slug === 'string' &&
+    typeof c.subPath === 'string' &&
+    (typeof c.viewerUserId === 'number' || c.viewerUserId === null)
+  );
 }
 
 /**
@@ -473,8 +515,11 @@ export interface BlockSettings {
  * OBJECT-OR-NULL on the wire. Both of those are load-bearing: the
  * `isValidBlockInitPayload` guard compiled into every already-deployed block
  * bundle rejects a `viewer` that is not `null` and not an object with a numeric
- * `id`, and a rejected `BLOCK_INIT` means the block never becomes ready. See
- * the migration note in the changeset.
+ * `id`. The host re-posts `BLOCK_INIT` every `INIT_RETRY_INTERVAL_MS` (400ms)
+ * until the block acks `BLOCK_READY`, but every retry carries the same payload,
+ * so a rejecting validator rejects all ~25 of them; at `BLOCK_READY_TIMEOUT_MS`
+ * (10s) the host settles on its terminal failure state and the block never
+ * becomes ready. See the migration note in the changeset.
  *
  * `status` is OPTIONAL and a coarse surface — `/api/v1/blocks/me` is the
  * authoritative re-check if the block needs to gate on it. The platform omits
@@ -495,8 +540,18 @@ export interface ViewerInfo {
    * block reading it keeps compiling and keeps meaning the same thing after
    * `id`/`username` go away.
    *
-   * OPTIONAL for back-compat: a host predating this field omits it, so treat
-   * `viewer !== null` as the fallback (which is exactly what it means).
+   * 🔴 OPTIONAL, AND ABSENT IN PRODUCTION UNTIL THE HOST COUNTERPART SHIPS.
+   * `viewer !== null` is the gate to write TODAY — it means exactly the same
+   * thing, and it is what the migrated starter and `hello-world` use for that
+   * reason. A block that gates on `viewer?.signedIn` before the host emits the
+   * field renders its anonymous branch to every signed-in user. Both dev hosts
+   * (`createMockHost` / `createLiveHost`) DO emit it, so the field is
+   * exercisable locally ahead of the host.
+   *
+   * A malformed value is not rejected at the trust boundary — see the note on
+   * `isValidBlockInitPayload` in `@civitai/blocks-react`: failing the whole init
+   * over one advisory flag would cost the block every other field. So a block
+   * that reads it should compare to `true` rather than treat it as a boolean.
    */
   signedIn?: true;
   /**

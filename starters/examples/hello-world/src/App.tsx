@@ -17,7 +17,10 @@ import { isModelSlotContext, isPageSlotContext } from '@civitai/app-sdk/blocks';
  *  - The viewer as a SIGN-IN GATE (`viewer ? … : 'anonymous'`) rather than an
  *    identity read. `viewer.id`/`viewer.username` are deprecated — BLOCK_INIT
  *    discloses them to every block on load, before any interaction. Need the
- *    identity? Call `useViewer()`: scope-gated, audited per call.
+ *    identity? Call `useViewer()`: scope-gated, audited per call. (Not
+ *    `viewer?.signedIn` yet: the dev hosts send it, production does not until
+ *    the host counterpart ships, so gating on it today would show every
+ *    signed-in user the anonymous branch.)
  *  - `useBlockResize(ref)` — tells the host how tall the iframe should be
  *    (emits RESIZE_IFRAME on every height change). Attach to the root.
  *  - The host TRUST FRAME — civitai.com draws a bordered chrome bar with a

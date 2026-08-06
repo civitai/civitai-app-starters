@@ -12,9 +12,11 @@
  *    keeps the union open to slots this SDK version has no shape for;
  *  - `ModelSlotContext` matches what the host's `CONTEXT_ALLOWLIST` actually
  *    forwards. v1 declared `creatorUserId` / `viewerUserId` / `viewerNsfwEnabled`
- *    as REQUIRED fields that the host's projection has never sent — a block
- *    narrowing to `ModelSlotContext` was handed `number`/`boolean` by TypeScript
- *    and `undefined` at runtime. Their absence here is the fix, and is pinned;
+ *    as REQUIRED fields that the host's projection does not send (it DID send
+ *    them before the data-minimisation allowlist landed, which is what the
+ *    allowlist was written to stop) — a block narrowing to `ModelSlotContext`
+ *    was handed `number`/`boolean` by TypeScript and `undefined` at runtime.
+ *    Their absence here is the fix, and is pinned;
  *  - `PageSlotContext` exists at all. `PageBlockHost` has always sent this
  *    object; v1 just had no name for it, so page authors read it untyped.
  *
@@ -33,7 +35,44 @@ import type {
   PageSlotContext,
   PageSlotId,
   UnknownSlotContext,
+  ViewerInfo,
 } from '../../src/blocks/types.js';
+
+// ============================================================
+// ViewerInfo.signedIn — pinned HERE because nothing else in this package does
+// ============================================================
+//
+// 🔴 Deleting `signedIn?: true` from `ViewerInfo` was mutation-tested and
+// SURVIVED both this package's vitest suite AND this type test — it was caught
+// only by `@civitai/blocks-react`'s `tsc`, three packages-worth of indirection
+// away, because that is where the dev hosts assign the field. A contract field
+// whose only gate lives in a DOWNSTREAM package is one refactor from being
+// silently droppable, so the SDK pins its own.
+{
+  const signedIn: ViewerInfo = { id: 1, username: 'alice', signedIn: true };
+  expectTypeOf(signedIn.signedIn).toEqualTypeOf<true | undefined>();
+
+  // OPTIONAL: an older host omits it entirely, and that must stay assignable.
+  const oldHost: ViewerInfo = { id: 1, username: 'alice' };
+  expectTypeOf(oldHost.signedIn).toEqualTypeOf<true | undefined>();
+
+  // `true` LITERAL, not boolean: `viewer: null` is the anonymous case, so
+  // `signedIn: false` inside a present viewer is a contradiction the type
+  // refuses. (The runtime guard tolerates it rather than failing the whole
+  // init — see `isValidBlockInitPayload`; the type is the contract on the host,
+  // the guard is the defence against the wire.)
+  // @ts-expect-error - `signedIn` is the literal `true`, never `false`
+  const contradiction: ViewerInfo = { id: 1, username: 'alice', signedIn: false };
+  void contradiction;
+
+  // `username` is REQUIRED-but-nullable, never optional: the deployed guards
+  // reject an ABSENT username and accept an explicit `null`.
+  const nullHandle: ViewerInfo = { id: 1, username: null };
+  void nullHandle;
+  // @ts-expect-error - `username` is required (nullable ≠ optional)
+  const noHandle: ViewerInfo = { id: 1 };
+  void noHandle;
+}
 
 // ============================================================
 // The union itself
@@ -112,6 +151,30 @@ if (isPageSlotContext(ctx)) {
   expectTypeOf(ctx.viewerUserId).toEqualTypeOf<number | null>();
   // @ts-expect-error - a model field is not readable on a page context
   ctx.modelId;
+}
+
+// ============================================================
+// 🔴 Why the guards are RUNTIME field checks and not `slotId` checks
+// ============================================================
+//
+// The type system CANNOT close this hole, and that is the point of pinning it
+// here rather than describing it in a comment: because `UnknownSlotContext`
+// declares `slotId: string`, a structurally-INCOMPLETE known slot is a perfectly
+// legal `BlockContext`. It satisfies the unknown arm, so it compiles — while
+// looking, to a reader and to a `slotId`-only guard, exactly like a model
+// context. `isModelSlotContext` therefore checks the five fields
+// `ModelSlotContext` declares required; the runtime behaviour is pinned in
+// blocks-react's `blockInitV2.test.ts`.
+{
+  // NOT a `@ts-expect-error`: this genuinely compiles, and MUST keep compiling —
+  // if a future change made it an error, the union would have stopped being open
+  // to new slots, which is the forward-compat property below.
+  const structurallyIncomplete: BlockContext = { slotId: 'model.sidebar_top' };
+  expectTypeOf(structurallyIncomplete.slotId).toEqualTypeOf<string>();
+  // …and the fields are NOT readable on it without narrowing, which is what
+  // stops the `undefined`-typed-as-`number` read at the type level.
+  // @ts-expect-error - unnarrowed: `modelId` is not on every arm of the union
+  structurallyIncomplete.modelId;
 }
 
 // A slot whose context legitimately LACKS its optional fields still satisfies

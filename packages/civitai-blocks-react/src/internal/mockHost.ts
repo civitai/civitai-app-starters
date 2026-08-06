@@ -65,7 +65,7 @@ import {
   type WrappedToken,
 } from '@civitai/app-sdk/blocks';
 
-import { withContextTheme } from './transport.js';
+import { hostContextWithTheme } from './transport.js';
 
 /**
  * The block's preferred Buzz pool. On a `textToImage` {@link WorkflowBody} it's
@@ -534,9 +534,15 @@ export interface MockHostOptions {
   /** Host theme delivered in `BLOCK_INIT` + context. Default `'dark'`. */
   theme?: Theme;
   /**
-   * The `BLOCK_INIT` context. Defaults to a PAGE context
-   * (`{ slotId: 'app.page' }`). Pass a `ModelSlotContext` for a model-slot
-   * block. `theme` is merged in from {@link MockHostOptions.theme}.
+   * The `BLOCK_INIT` context. Defaults to a COMPLETE `PageSlotContext` —
+   * `{ slotId, entityType, slug, subPath, viewerUserId, viewerUsername, theme }`
+   * — mirroring what `PageBlockHost.buildContext()` really sends, not a
+   * `{ slotId }` stub. Pass a `ModelSlotContext` for a model-slot block.
+   *
+   * `theme` is layered in from {@link MockHostOptions.theme} for every slot whose
+   * shape carries the field, so a context you pass WITHOUT a `theme` key still
+   * gets the harness theme (and still follows a later `setTheme`). Only a slot
+   * this SDK has no shape for is left alone — there is no `theme` field to set.
    */
   context?: BlockContext;
   /**
@@ -712,7 +718,27 @@ const DEFAULT_GENERATION_SOURCE_UPLOAD: BlockGenerationSourceImageInfo = {
   height: 1024,
 };
 
-const DEFAULT_VIEWER: ViewerInfo = { id: 2, username: 'dev-viewer', status: 'active' };
+/**
+ * The `BLOCK_INIT.viewer` the mock host sends when {@link MockHostOptions.viewer}
+ * is omitted — byte-for-byte the key set the REAL host puts on the wire.
+ *
+ * 🔴 EXACTLY `{ id, username, signedIn }`, and that is asserted on the host side:
+ * civitai/civitai's `projectBlockInitViewer` builds only those three, and both
+ * host contract tests pin `Object.keys(init.viewer).sort()` as that exact set.
+ *
+ *  - NO `status`. The platform deliberately withholds the viewer's coarse
+ *    ban/mute moderation state from third-party iframes (civitai #2521) —
+ *    `ViewerInfo.status` is `@deprecated` for precisely that reason. A fake that
+ *    sends it lets a block read a field production never provides and still pass
+ *    every local test: the same both-wrong-blind fidelity defect this release
+ *    fixed in the seven context harnesses. The authoritative self-read
+ *    (`GET_VIEWER` → {@link DEFAULT_VIEWER_RESULT}) is where `status` belongs,
+ *    and it still carries it.
+ *  - WITH `signedIn: true`. The field only means anything if a dev sees it
+ *    locally; a mock that omits it hands every local run `undefined` for the
+ *    field this release tells authors to migrate TO.
+ */
+const DEFAULT_VIEWER: ViewerInfo = { id: 2, username: 'dev-viewer', signedIn: true };
 
 const INSUFFICIENT_BUZZ_ERROR = 'Insufficient Buzz to run this generation.';
 const GENERIC_GEN_ERROR = 'Generation failed (simulated).';
@@ -2358,8 +2384,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     // real `PageBlockHost.buildContext()` always sends slug/subPath/viewerUserId/
     // theme, so a fake that omits them lets a block compile against fields the
     // host really does provide while the harness silently proves nothing about
-    // them. (It also has to carry `theme` for `withContextTheme` to have a field
-    // to update — which is exactly the fidelity gap that surfaced it.)
+    // them — and, because the strengthened `isPageSlotContext` checks the fields
+    // it asserts, a `{ slotId }` stub would not even narrow to a page context.
     const baseContext: BlockContext = options.context ?? {
       slotId: 'app.page',
       entityType: 'none',
@@ -2369,7 +2395,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       viewerUsername: viewer?.username ?? null,
       theme: currentTheme,
     };
-    const context: BlockContext = withContextTheme(baseContext, currentTheme);
+    const context: BlockContext = hostContextWithTheme(baseContext, currentTheme);
 
     // Color-domain maturity (civitai #2670). Resolve the ceiling by precedence:
     // explicit maxBrowsingLevel > maturity convenience > domain-derived. Only

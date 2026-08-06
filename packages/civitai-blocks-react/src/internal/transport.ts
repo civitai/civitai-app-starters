@@ -187,26 +187,51 @@ export const EMPTY_SNAPSHOT: BlockSnapshot = {
 };
 
 /**
- * Layer a resolved `theme` onto a slot context WITHOUT inventing the field on a
- * context that has no place for it.
+ * The slot ids whose context shape DECLARES a `theme` field — the three
+ * `model.*` slots ({@link ModelSlotContext}) plus `app.page`
+ * ({@link PageSlotContext}). Deliberately keyed on the slot id and not on
+ * whether the caller's object happens to carry the key; see
+ * {@link hostContextWithTheme}.
+ */
+const SLOT_IDS_CARRYING_THEME = new Set<string>([
+  'model.sidebar_top',
+  'model.below_images',
+  'model.actions_extra',
+  'app.page',
+]);
+
+/**
+ * HOST-SIDE: layer the resolved `theme` onto a slot context being put on the
+ * wire, for every slot whose shape has a place for it.
  *
  * Both dev hosts (`createMockHost`, `createLiveHost`) forward the theme twice —
- * top-level on `BLOCK_INIT` and, where the slot carries it, inside `context` —
- * mirroring what the real host does. This is the second half.
+ * top-level on `BLOCK_INIT` and again inside `context` — because that is what
+ * the real host does, on BOTH surfaces and unconditionally: the model-slot
+ * producer (civitai/civitai `ModelVersionDetails.tsx`) always sets
+ * `theme`, `CONTEXT_ALLOWLIST` always forwards it, and
+ * `PageBlockHost.buildContext()` always includes it. This is the second half.
  *
- * The `'theme' in ctx` test is what keeps that honest, and it is the same test
- * `IframeTransport.applyThemeChange` uses on a `THEME_CHANGE` push, so the
- * init-time and push-time paths agree. It matters more since `BlockContext`
- * became a discriminated union: {@link UnknownSlotContext} — the arm for a slot
- * this SDK has no shape for — carries `slotId` and NOTHING else, so blindly
- * spreading a `theme` onto it would fabricate a field the host never sent, on
- * precisely the contexts the SDK understands least. Under v1's index signature
- * that was silent and untypeable; now it is a compile error, which is how this
- * helper came to exist.
+ * 🔴 KEYED ON THE SLOT ID, NOT ON `'theme' in ctx`. The presence test is the
+ * right one on the BLOCK side (`IframeTransport.applyThemeChange`), where the
+ * SDK must never fabricate a field the host did not send. It is the WRONG one
+ * here, because here we ARE the host: a dev-supplied `options.context` that
+ * omits `theme` is an incomplete description of a slot, not a host that chose to
+ * withhold it — and honouring the omission silently produced a harness whose
+ * theme toggle could not reach `context.theme` at init OR on a later
+ * `THEME_CHANGE` push (`applyThemeChange` only UPDATES a key that exists, so the
+ * omission propagates for the lifetime of the mount). The slot-id test keeps the
+ * one case the presence test was really protecting: {@link UnknownSlotContext}
+ * carries `slotId` and nothing else, so there is no `theme` to set and none is
+ * invented.
+ *
+ * Always returns a FRESH object — never the caller's own. `options.context` is
+ * owned by the dev harness that passed it; aliasing it into the block's snapshot
+ * would let a later harness mutation reach through a `BlockSnapshot` the block
+ * is entitled to treat as immutable.
  */
-export function withContextTheme(ctx: BlockContext, theme: Theme): BlockContext {
-  if (!('theme' in ctx)) return ctx;
-  return { ...ctx, theme };
+export function hostContextWithTheme(ctx: BlockContext, theme: Theme): BlockContext {
+  if (!SLOT_IDS_CARRYING_THEME.has(ctx.slotId)) return { ...ctx };
+  return { ...ctx, theme } as BlockContext;
 }
 
 /** Convert a wire `BlockInitPayload` (ISO string expiresAt) into a `BlockSnapshot`. */

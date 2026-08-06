@@ -21,6 +21,12 @@ import { isModelSlotContext } from '@civitai/app-sdk/blocks';
  * hands them to every block on load, before any interaction. If your block
  * genuinely needs the viewer's identity, call `useViewer()` — that read is
  * scope-gated and audited per call rather than broadcast at mount.
+ *
+ * Deliberately NOT `viewer?.signedIn` yet. That flag is the successor signal and
+ * both dev hosts already send it, but the production host does not until its
+ * counterpart ships — so a block gating on it today renders its anonymous branch
+ * to every signed-in user. `viewer !== null` means exactly the same thing and
+ * works against both.
  */
 export function App() {
   const { ready, context, viewer, theme, blockInstanceId } = useBlockContext();
