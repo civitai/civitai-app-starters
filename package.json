@@ -16,6 +16,7 @@
     "typecheck:readme": "node scripts/typecheck-readme-snippets.mjs",
     "check:schema": "bash scripts/check-canonical-schema.sh",
     "check:starter-pins": "node scripts/check-starter-pins.mjs",
+    "check:catalogs": "node scripts/check-orchestrator-catalogs.mjs",
     "changeset": "changeset",
     "release": "pnpm -r --filter \"./packages/*\" build && changeset publish",
     "release:check": "changeset status --verbose"

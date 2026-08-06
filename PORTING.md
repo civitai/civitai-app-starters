@@ -372,7 +372,7 @@ const body = buildWorkflowBody({
 }, { tags: ['my-app'] });
 ```
 
-`WORKFLOW_STEP_TYPES` is the in-code catalog of every step type with one-line descriptions — start there to find the right step before reaching for the OpenAPI spec at <https://orchestration.civitai.com/openapi/v2-consumers.json>.
+`WORKFLOW_STEP_TYPES` is the in-code catalog of every step type with one-line descriptions — start there to find the right step before reaching for the OpenAPI spec at <https://orchestration.civitai.com/openapi/v2-consumers.json>. It is machine-checked against that spec (`pnpm check:catalogs` in CI plus an offline unit test), so a `$type` it lists is one the orchestrator accepts.
 
 ### Buzz mechanics (always read this)
 

@@ -20,6 +20,7 @@ import {
   WORKFLOW_STEP_TYPES,
   type WorkflowSnapshot,
 } from '../src/orchestrator/index.js';
+import specCatalogs from './fixtures/orchestrator-spec-catalogs.json' with { type: 'json' };
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -329,25 +330,72 @@ describe('buildImageGenBody (forward-compat)', () => {
   });
 });
 
+// ── Catalog wire-parity pins ────────────────────────────────────────────────
+//
+// 🔴 THE EXPECTED LISTS ARE TRANSCRIBED FROM THE ORCHESTRATOR SPEC, NOT FROM
+// `src/orchestrator/index.ts`. That is the point: a test whose expectation is
+// copied from the implementation it tests can only ever confirm that the file
+// equals itself. They live in `fixtures/orchestrator-spec-catalogs.json` so the
+// LIVE-spec drift script (`pnpm check:catalogs`) can pin the same lists from the
+// other side — see that file's `$comment` for the two-leg argument.
+//
+// This replaced `expect(keys).toContain('textToImage')`-style assertions over 7
+// of the then-34 names. That guard could not fail on either half of a drift, and
+// did not: the catalog shipped a phantom `audioMix` (0 occurrences in the spec,
+// i.e. a guaranteed 400) while missing 10 real step types. An exact-set
+// comparison catches BOTH directions — a name the orchestrator does not accept,
+// and one it does.
+const SPEC_WORKFLOW_STEP_TYPES: readonly string[] = specCatalogs.workflowStepTypes;
+const SPEC_IMAGE_GEN_ENGINES: readonly string[] = specCatalogs.imageGenEngines;
+
 describe('WORKFLOW_STEP_TYPES + IMAGE_GEN_ENGINES catalogs', () => {
-  it('includes the major step types', () => {
-    const keys = Object.keys(WORKFLOW_STEP_TYPES);
-    expect(keys).toContain('textToImage');
-    expect(keys).toContain('imageGen');
-    expect(keys).toContain('videoGen');
-    expect(keys).toContain('comfy');
-    expect(keys).toContain('textToSpeech');
-    expect(keys).toContain('aceStepAudio');
-    expect(keys).toContain('transcription');
+  it('lists EXACTLY the step types the orchestrator spec accepts', () => {
+    // `toEqual` on sorted arrays, not two `toContain` sweeps: an extra key and a
+    // missing key are different defects and this must report either one.
+    expect([...Object.keys(WORKFLOW_STEP_TYPES)].sort()).toEqual([...SPEC_WORKFLOW_STEP_TYPES].sort());
   });
 
-  it('exposes the closed-source image gen engines for imageGen', () => {
-    const engines = Object.keys(IMAGE_GEN_ENGINES);
-    expect(engines).toContain('google');
-    expect(engines).toContain('gemini');
-    expect(engines).toContain('openai');
-    expect(engines).toContain('flux1-kontext');
-    expect(engines).toContain('flux2');
+  it('names no step type the orchestrator does not accept', () => {
+    // The half a `toContain` guard structurally cannot express. Spelled out
+    // separately so a failure names WHICH phantom rather than dumping a 44-line
+    // array diff — this is the assertion `audioMix` would have tripped.
+    const phantom = Object.keys(WORKFLOW_STEP_TYPES).filter(
+      (k) => !SPEC_WORKFLOW_STEP_TYPES.includes(k),
+    );
+    expect(phantom).toEqual([]);
+  });
+
+  it('omits no step type the orchestrator does accept', () => {
+    const missing = SPEC_WORKFLOW_STEP_TYPES.filter(
+      (k) => !Object.prototype.hasOwnProperty.call(WORKFLOW_STEP_TYPES, k),
+    );
+    expect(missing).toEqual([]);
+  });
+
+  it('gives every step type a non-empty one-line description', () => {
+    // A key with a blank description reads as documented in the catalog and is
+    // not — the description is the catalog's whole job.
+    const blank = Object.entries(WORKFLOW_STEP_TYPES)
+      .filter(([, v]) => typeof v !== 'string' || v.trim().length === 0)
+      .map(([k]) => k);
+    expect(blank).toEqual([]);
+  });
+
+  it('lists EXACTLY the imageGen engines the orchestrator spec accepts', () => {
+    expect([...Object.keys(IMAGE_GEN_ENGINES)].sort()).toEqual([...SPEC_IMAGE_GEN_ENGINES].sort());
+  });
+
+  it('reads a NON-EMPTY expectation from the spec fixture', () => {
+    // Positive control for the four assertions above. Every one of them is an
+    // "expect(...).toEqual([])"-shaped or set-equality check, and all of them
+    // pass VACUOUSLY if the fixture arrives empty (a bad path, a renamed key, a
+    // JSON import that silently yields {}). A green run must therefore also
+    // prove the expectation had content — and the counts are pinned, not merely
+    // asserted non-zero, so a truncated fixture is a failure and not a smaller
+    // vacuous pass.
+    expect(SPEC_WORKFLOW_STEP_TYPES).toHaveLength(44);
+    expect(SPEC_IMAGE_GEN_ENGINES).toHaveLength(11);
+    expect(new Set(SPEC_WORKFLOW_STEP_TYPES).size).toBe(SPEC_WORKFLOW_STEP_TYPES.length);
   });
 });
 

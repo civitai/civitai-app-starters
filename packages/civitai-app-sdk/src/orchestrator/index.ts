@@ -35,8 +35,30 @@ export type TerminalStatus = (typeof TERMINAL_STATUSES)[number];
  * at the matching `build*Body` helper (if one exists) or fall back to
  * {@link callOrchestrator} with a hand-crafted body.
  *
- * Source of truth is `https://orchestration.civitai.com/openapi/v2-consumers.json`.
- * If a step type is missing here, the catalog is stale — open a PR.
+ * 🔴 SOURCE OF TRUTH — AND HOW IT IS HELD. The authoritative population is the
+ * `WorkflowStepTemplate` **discriminator mapping** in
+ * `https://orchestration.civitai.com/openapi/v2-consumers.json` (the submit-side
+ * union; `WorkflowStep`'s mapping is identical). That is the *defining* surface —
+ * enumerate it, do not sample the spec's type names or a generated client's
+ * exports, which include shapes that are not submittable step types.
+ *
+ * The keys below are pinned EXACTLY against that mapping two ways:
+ *  - `test/orchestrator.test.ts` compares this catalog's key set to a list
+ *    transcribed from the spec (hermetic, offline, order-insensitive), and
+ *  - `scripts/check-orchestrator-catalogs.mjs` re-fetches the LIVE spec and
+ *    diffs it (network; wired into CI as `pnpm check:catalogs`).
+ *
+ * The second one is what notices the orchestrator shipping a new step. When it
+ * fails, refresh both this catalog and the test's transcribed list in the same
+ * PR — the test is a deliberate second copy so a catalog edit cannot mark its
+ * own homework.
+ *
+ * 🔴 A SPOT-CHECK IS NOT A PIN. Until 2026-08 this catalog was guarded only by
+ * `expect(keys).toContain('textToImage')`-style assertions over 7 names. It
+ * carried a phantom `audioMix` — a `$type` that appears **0 times** in the spec
+ * and would have come back a 400 — and was missing 10 real step types, for as
+ * long as those assertions existed. An exact-set comparison is the whole
+ * difference.
  */
 export const WORKFLOW_STEP_TYPES = {
   // ----- Image gen ---------------------------------------------------------
@@ -50,8 +72,18 @@ export const WORKFLOW_STEP_TYPES = {
   imageGen: 'Closed-source image gen (Nano Banana, Gemini, GPT-Image, Flux Kontext, Seedream, Grok, fal, …)',
   /** Arbitrary ComfyUI workflow graphs. Pass a `prompt` object (node graph). */
   comfy: 'Custom ComfyUI node-graph workflows',
+  /**
+   * Raw ComfyUI graph + an explicit AIR download manifest (`resources`). The
+   * orchestrator forwards the graph opaquely, so anything the graph references
+   * must also be declared in `resources` or it fails at load time inside ComfyUI.
+   */
+  customComfy: 'Raw ComfyUI graph with a declared AIR resource manifest',
   /** Upscale an existing image. Input is a source image URL + scale factor. */
   imageUpscaler: 'Image upscaling',
+  /** Remove an image background via BiRefNet (runs as a comfy job under the hood). */
+  imageBackgroundRemoval: 'Image background removal (BiRefNet)',
+  /** Vectorize a raster image with a local StarVector / OmniSVG model. */
+  imageToSvg: 'Raster image → SVG vectorization',
   /** LoRA / DoRA / embedding training. Long-running. */
   imageResourceTraining: 'Train a LoRA / DoRA / embedding from a dataset',
   /** Pre-process an image (resize, ControlNet preprocessor, etc.). */
@@ -72,6 +104,8 @@ export const WORKFLOW_STEP_TYPES = {
   videoEnhancement: 'Per-frame video enhancement',
   /** Extract individual frames from a video. */
   videoFrameExtraction: 'Extract frames from a video',
+  /** Track a prompted foreground object and return a transparent animated WebP. */
+  videoBackgroundRemoval: 'Video background removal (prompted object tracking)',
   /** Read video metadata (duration, codec, dimensions). */
   videoMetadata: 'Read video file metadata',
   /** Transcode video format / codec. */
@@ -84,10 +118,33 @@ export const WORKFLOW_STEP_TYPES = {
   aceStepAudio: 'Music generation (ACE Step 1.5)',
   /** Speech-to-text transcription. */
   transcription: 'Speech-to-text transcription',
-  /** Mix multiple audio tracks. */
-  audioMix: 'Audio track mixing',
   /** Generate captions from audio. */
   audioCaptioning: 'Caption generation from audio',
+
+  // ----- Media composition -------------------------------------------------
+  /**
+   * Compose an ordered list of media `elements` into one output. Its output is
+   * discriminated on `type`: `'audio'` for a mixdown, `'video'` for a
+   * composition — so this covers audio mixing as well as video assembly.
+   *
+   * 🔴 This replaced a catalog entry named `audioMix`, which never existed in
+   * the orchestrator spec. If you were reaching for `audioMix`, this is it.
+   */
+  composeMedia: 'Compose media elements into one audio mixdown or video',
+
+  // ----- 3D ----------------------------------------------------------------
+  /** Generate a 3D model. Engines: `comfy`, `fal`. */
+  polyGen: '3D model generation',
+  /** Render a preview of an existing 3D model. */
+  model3DPreview: '3D model preview rendering',
+
+  // ----- Training ----------------------------------------------------------
+  /**
+   * Generic training step. Engines: `ai-toolkit`, `comfy`. Distinct from
+   * {@link WORKFLOW_STEP_TYPES.imageResourceTraining}, which is the older
+   * kohya/musubi/flux-dev-fast LoRA path.
+   */
+  training: 'Model training (ai-toolkit / comfy engines)',
 
   // ----- Classification / tagging / moderation ----------------------------
   /** Hash an image / video / model for dedup or lookup. */
@@ -104,6 +161,8 @@ export const WORKFLOW_STEP_TYPES = {
   ageClassification: 'Age range classification',
   /** xGuard NSFW / safety moderation. */
   xGuardModeration: 'NSFW / safety moderation',
+  /** Shieldstral text/prompt safety moderation (`mode: 'prompt' | 'text'`). */
+  shieldstralModeration: 'Text / prompt safety moderation (Shieldstral)',
   /** ClamAV scan a model file for malware. */
   modelClamScan: 'Antivirus scan a model file',
   /** Pickle-scan a model file for unsafe pickles. */
@@ -122,6 +181,15 @@ export const WORKFLOW_STEP_TYPES = {
   echo: 'Echo step — round-trip the input for testing',
   /** Package multiple blobs into a zip archive. */
   blobArchive: 'Zip multiple blobs into an archive',
+
+  // ----- Platform internals ------------------------------------------------
+  // Present in the consumer spec, so listed here for completeness — but these
+  // exist to serve Civitai's own pipelines. A third-party app has no reason to
+  // submit one, and the surrounding features may be gated or disabled.
+  /** Snapshot the installed ComfyUI custom-node packs on a worker. */
+  comfyNodepackSnapshot: 'Snapshot a worker’s installed ComfyUI node packs (internal)',
+  /** Qwen image benchmarking harness. */
+  qwenImageBench: 'Qwen image benchmarking (internal)',
 } as const;
 
 export type WorkflowStepType = keyof typeof WORKFLOW_STEP_TYPES;

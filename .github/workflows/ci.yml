@@ -61,6 +61,27 @@ jobs:
       # no install needed, and it skips gracefully if npm is unreachable.
       - run: node scripts/check-starter-pins.mjs
 
+  # ADVISORY, like the sibling `schema-drift` job: depends on a LIVE external
+  # endpoint (the orchestrator's public OpenAPI spec), so it can fail for
+  # reasons outside the PR. Do NOT add it to branch protection.
+  #
+  # The SDK's WORKFLOW_STEP_TYPES / IMAGE_GEN_ENGINES catalogs are hand-written
+  # mirrors of that spec's discriminator mappings. `pnpm --filter
+  # @civitai/app-sdk test` pins the catalogs to a transcribed fixture offline;
+  # this job pins that fixture to the live spec. Only the pair covers "the
+  # orchestrator shipped a new step type". Pure fetch + compare — no install.
+  orchestrator-catalog-drift:
+    name: Orchestrator catalog drift-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - run: node scripts/check-orchestrator-catalogs.mjs
+
   blocks-react:
     name: blocks-react (typecheck + test + build)
     runs-on: ubuntu-latest
