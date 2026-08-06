@@ -64,11 +64,24 @@ export function isValidBlockInitPayload(p: unknown): p is BlockInitPayload {
   if (!isObject(p.settings.publisherSettings)) return false;
   if (!isObject(p.settings.userSettings)) return false;
 
-  // `null` for anonymous viewers; otherwise { id, username, status? }.
+  // `null` for anonymous viewers; otherwise { id, username, status?, signedIn? }.
+  //
+  // 🔴 The object-or-null SHAPE here is a compatibility floor, not a preference.
+  // This exact guard is compiled into every already-built, already-deployed block
+  // bundle, so a host that "thinned" `viewer` to a boolean would be rejected by
+  // the DEPLOYED copy of this function and those blocks would never become ready.
+  // `id`/`username` are @deprecated on `ViewerInfo` and the platform is migrating
+  // blocks to the scope-gated `GET_VIEWER` read, but the wire shape stays.
   if (p.viewer !== null) {
     if (!isObject(p.viewer)) return false;
     if (typeof p.viewer.id !== 'number') return false;
     if (p.viewer.username !== null && typeof p.viewer.username !== 'string') return false;
+    // `signedIn` is ADDITIVE + OPTIONAL: a host predating it omits the field
+    // (still valid — `viewer !== null` already means signed in). When present it
+    // is the literal `true`; anything else is a malformed claim about identity
+    // state, so reject rather than let a block gate its UI on `signedIn: false`
+    // inside a non-null viewer.
+    if (p.viewer.signedIn !== undefined && p.viewer.signedIn !== true) return false;
     // `status` is OPTIONAL. The platform deliberately omits the viewer's coarse
     // ban/mute moderation state from BLOCK_INIT to third-party iframes for
     // privacy (civitai #2521). When present it must be one of the three values;
@@ -189,8 +202,30 @@ export function isValidThemeChange(p: unknown): p is { theme: Theme } {
 }
 
 /**
- * Reply to a block-initiated `REQUEST_TOKEN`. `requestId` is optional — the
- * platform's IframeHost.tsx echoes it back when supplied, omits it otherwise.
+ * Reply to a block-initiated `REQUEST_TOKEN`.
+ *
+ * 🔴 DELIBERATELY LOOSER THAN THE TYPE. `ParentToBlockMessage` declares
+ * `payload: { requestId: string; token: WrappedToken }` — `requestId` REQUIRED
+ * as of v2 — but this guard still accepts a payload without it. That asymmetry
+ * is the whole back-compat story for a NEW SDK against an OLD host, so do not
+ * "fix" it by tightening:
+ *
+ *  - A pre-v2 host echoes `requestId` only via `...(requestId ? {requestId} : {})`,
+ *    so it OMITS the field whenever the block sent none — and also when the block
+ *    sent an empty string, because that spread is a truthiness test.
+ *  - The transport correlates a reply to a pending request STRICTLY by
+ *    `requestId`, so such a reply has never resolved `useBlockToken().refresh()`;
+ *    it only ever worked through the side effect that applies the token to the
+ *    snapshot regardless of correlation (`iframeTransport.handleMessage`).
+ *  - Requiring `requestId` here would DROP the message before that side effect
+ *    runs. The block would then lose the token update it currently still gets,
+ *    on top of the `refresh()` rejection it already gets — converting a degraded
+ *    path into a broken one, on the exact hosts that need the tolerance.
+ *
+ * So: the TYPE is a contract on the host (enforced by the host's own tests); the
+ * GUARD is a defence against the wire, and stays permissive. `requestId` is
+ * still shape-checked when present — a non-string cannot masquerade as a
+ * correlation id.
  */
 export function isValidTokenRefreshResponse(
   p: unknown,

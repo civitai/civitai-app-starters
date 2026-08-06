@@ -138,11 +138,6 @@ export function Harness({ children }: { children: ReactNode }) {
       modelName: 'Dev Mock Model',
       modelType: 'Checkpoint',
       modelNsfwLevel: 1,
-      creatorUserId: 1,
-      viewerUserId: 2,
-      viewerNsfwEnabled: false,
-      viewerUsername: 'dev-viewer',
-      viewerStatus: 'active',
       theme: 'dark',
     };
     const payload: BlockInitPayload = {

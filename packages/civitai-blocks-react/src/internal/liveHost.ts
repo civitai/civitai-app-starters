@@ -73,6 +73,7 @@ import {
   type WrappedToken,
 } from '@civitai/app-sdk/blocks';
 
+import { withContextTheme } from './transport.js';
 import type { MockHost, MockHostScenarioPatch, MockBuzzHandle } from './mockHost.js';
 import {
   openPickerOverlay,
@@ -578,8 +579,18 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
     async function dispatchInit() {
       const viewer = await resolveViewer();
       if (torn) return;
-      const baseContext: BlockContext = options.context ?? { slotId: PAGE_SLOT_ID };
-      const context: BlockContext = { ...baseContext, theme: currentTheme };
+      // A FAITHFUL `PageSlotContext` default — see the same note in `mockHost`.
+      // The real `PageBlockHost` always sends slug/subPath/viewerUserId/theme.
+      const baseContext: BlockContext = options.context ?? {
+        slotId: PAGE_SLOT_ID,
+        entityType: 'none',
+        slug: decoded.blockId ?? 'live-block',
+        subPath: '',
+        viewerUserId: viewer?.id ?? null,
+        viewerUsername: viewer?.username ?? null,
+        theme: currentTheme,
+      };
+      const context: BlockContext = withContextTheme(baseContext, currentTheme);
       const initPayload: BlockInitPayload = {
         blockInstanceId: decoded.blockInstanceId ?? 'page_live',
         blockId: decoded.blockId ?? 'live-block',

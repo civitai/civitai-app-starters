@@ -12,19 +12,75 @@ import type { BlockCategory } from './scopes.js';
 // ============================================================
 
 /**
- * Per-instance context the host page passes to the block at mount time.
+ * The slot ids the host renders a block into TODAY, as a closed union.
  *
- * `slotId` is the only field guaranteed to be present; every other field
- * depends on which slot the block is rendered into. Authors who target a
- * specific slot should narrow to a slot-specific context type
- * (e.g. {@link ModelSlotContext}) rather than reaching into the index
- * signature.
+ * Mirrors `SLOT_REGISTRY` in civitai/civitai's
+ * `src/shared/constants/slot-registry.ts`. Keep in lockstep — the registry is
+ * the authority, this is the mirror.
  *
- * Mirrors `SlotContext` in civitai/civitai's `src/components/AppBlocks/types.ts`.
+ * `model.actions_extra` is registered and live but has no production producer
+ * yet; it is listed because the registry lists it, not because a page emits it.
  */
-export interface BlockContext {
+export type ModelSlotId =
+  | 'model.sidebar_top'
+  | 'model.below_images'
+  | 'model.actions_extra';
+
+/** The single PAGE slot (`<slug>.civit.ai` / `/apps/run/<slug>`). */
+export type PageSlotId = 'app.page';
+
+/** Every slot id this SDK version knows a context shape for. */
+export type KnownSlotId = ModelSlotId | PageSlotId;
+
+/**
+ * Per-instance context the host page passes to the block at mount time — a
+ * DISCRIMINATED UNION keyed on `slotId`.
+ *
+ * v1 shipped this as `{ slotId: string; [key: string]: unknown }`. An untyped
+ * index signature in a public third-party contract can't be relied on (it types
+ * every misspelling as a legal `unknown` read) and it leaks by accident (any
+ * field a producer happens to set is typed as readable, whether or not the host
+ * actually forwards it). It is replaced by named per-slot members:
+ *
+ *  - {@link ModelSlotContext} — the three `model.*` slots.
+ *  - {@link PageSlotContext}  — the `app.page` slot.
+ *  - {@link UnknownSlotContext} — the FORWARD-COMPAT arm: a slot this SDK
+ *    version has no shape for. It carries `slotId` and NOTHING else, so a host
+ *    that adds a slot cannot break a block's typecheck, and reading a field off
+ *    it requires an explicit, visible cast rather than an accidental
+ *    index-signature read.
+ *
+ * NARROW WITH THE GUARDS, not with a bare `===`. {@link isModelSlotContext} /
+ * {@link isPageSlotContext} narrow exactly (and are real RUNTIME checks — the
+ * value crossed a `postMessage` boundary, so its static type is a claim, not a
+ * fact). A bare `ctx.slotId === 'model.sidebar_top'` cannot exclude
+ * {@link UnknownSlotContext}, whose `slotId` is a plain `string`, so it narrows
+ * to `ModelSlotContext | UnknownSlotContext` and the model fields stay
+ * unreadable. That is the cost of staying open to new slots; the guards pay it.
+ *
+ * Mirrors `BlockSlotContext` in civitai/civitai's
+ * `src/components/AppBlocks/types.ts`.
+ *
+ * @example
+ * const { context } = useBlockContext();
+ * if (isModelSlotContext(context)) {
+ *   // context.modelId is `number` here
+ *   submit({ kind: 'textToImage', modelId: context.modelId, ... });
+ * }
+ */
+export type BlockContext = ModelSlotContext | PageSlotContext | UnknownSlotContext;
+
+/**
+ * A slot this SDK version has no named shape for — the forward-compat arm of
+ * {@link BlockContext}.
+ *
+ * DELIBERATELY has no index signature. A host that adds a slot id keeps
+ * typechecking (the arm absorbs it), but nothing becomes silently readable: to
+ * read a field the author must cast, which is a visible, reviewable act rather
+ * than the accidental `ctx.whatever` an index signature permits.
+ */
+export interface UnknownSlotContext {
   slotId: string;
-  [key: string]: unknown;
 }
 
 /**
@@ -275,38 +331,38 @@ export interface ShowcaseImage {
  * The shape the host delivers for the three model-page slots
  * (`model.sidebar_top`, `model.below_images`, `model.actions_extra`).
  *
- * Optional fields are present when the host has them: `viewerUserId` is
- * `null` for anonymous viewers, and `viewerUsername`/`viewerStatus`/`theme`
- * are only filled when a viewer is signed in or the host's theme is
- * resolved.
+ * Every field here is one the host's `projectBlockInitContext` ALLOWLIST
+ * actually forwards — see the note below; the v1 shape of this interface named
+ * five more that never arrive.
  *
- * Block authors using these slots should narrow:
+ * Narrow to it with {@link isModelSlotContext}:
  *
- *   const ctx = useBlockContext().context as ModelSlotContext;
+ *   const { context } = useBlockContext();
+ *   if (isModelSlotContext(context)) { context.modelId // number }
  *
- * Mirrors `ModelSlotContext` in civitai/civitai. Keep in lockstep — adding
- * a field on either side without the other will silently degrade.
+ * Mirrors `ModelSlotContext` in civitai/civitai, INTERSECTED WITH that repo's
+ * `CONTEXT_ALLOWLIST` (`src/components/AppBlocks/projectBlockInit.ts`). Keep in
+ * lockstep — and note the two sides are not the same set: the host's interface
+ * describes what a PRODUCER passes to `<BlockSlot>`, this one describes what
+ * survives the projection and reaches the iframe.
  */
-export interface ModelSlotContext extends BlockContext {
-  slotId: 'model.sidebar_top' | 'model.below_images' | 'model.actions_extra';
+export interface ModelSlotContext {
+  slotId: ModelSlotId;
   modelId: number;
   modelVersionId: number;
   modelName: string;
   modelType: string;
   modelNsfwLevel: number;
-  creatorUserId: number;
-  viewerUserId: number | null;
-  viewerNsfwEnabled: boolean;
-  viewerUsername?: string | null;
-  /** Coarse status surface; authoritative re-check is `/api/v1/blocks/me`. */
-  viewerStatus?: 'active' | 'banned' | 'muted';
   /** Host-page color scheme; lets the iframe match without a flicker. */
-  theme?: 'light' | 'dark';
+  theme?: Theme;
   /**
    * Effective Checkpoint after publisher-default ∪ viewer-override merge.
    * `null` when no checkpoint is configured (publisher hasn't set one AND
    * the bound model isn't a Checkpoint itself) — block should render a
    * "missing checkpoint" state and prompt the user to ask the model owner.
+   *
+   * The host sets this EXPLICITLY on every model-slot init (never spread from
+   * the producer), so on a model slot it is always present — `null` or a value.
    */
   checkpoint?: BlockCheckpointInfo | null;
   /**
@@ -317,6 +373,64 @@ export interface ModelSlotContext extends BlockContext {
    * gen meta.
    */
   showcaseImages?: ShowcaseImage[];
+}
+
+/**
+ * The shape the host delivers for the PAGE slot (`app.page`) — a per-app page
+ * at `<slug>.civit.ai` / `/apps/run/<slug>`.
+ *
+ * 🔴 This member is NEW in the SDK, not new on the wire. `PageBlockHost` has
+ * been sending exactly this object since the page surface shipped; v1's
+ * `BlockContext` index signature simply meant page blocks read it untyped. So
+ * adding it changes no runtime behaviour on either side — it only stops page
+ * authors from guessing.
+ *
+ * Unlike the model slots, this context is NOT run through
+ * `projectBlockInitContext` — `PageBlockHost.buildContext()` builds it directly,
+ * which is why `viewerUserId` / `viewerUsername` DO arrive here even though the
+ * model-slot allowlist drops them.
+ *
+ * Mirrors `PageContext` in civitai/civitai's `src/components/AppBlocks/types.ts`.
+ */
+export interface PageSlotContext {
+  slotId: PageSlotId;
+  /** Always `'none'` — a page slot is not bound to an entity. */
+  entityType?: 'none';
+  /** The app's slug (the `<slug>` in `<slug>.civit.ai`). */
+  slug: string;
+  /**
+   * The path segment BELOW the app root, from `router.query.path` — `''` on the
+   * app's own index. Lets a page app route internally without owning history.
+   */
+  subPath: string;
+  /** `null` for an anonymous viewer. */
+  viewerUserId: number | null;
+  /** Absent/`null` when the viewer has no handle. */
+  viewerUsername?: string | null;
+  /** Host-page color scheme; lets the iframe match without a flicker. */
+  theme?: Theme;
+}
+
+/**
+ * Narrow a {@link BlockContext} to {@link ModelSlotContext}.
+ *
+ * A real runtime check, not just a cast: the context arrived over
+ * `postMessage`, so its static type is the host's claim about it. Checking the
+ * `slotId` against the registry mirror is what makes the model fields safe to
+ * read — and it is what lets the block render a useful "wrong slot" state
+ * instead of `undefined`-ing its way through a generation body.
+ */
+export function isModelSlotContext(ctx: BlockContext): ctx is ModelSlotContext {
+  return (
+    ctx.slotId === 'model.sidebar_top' ||
+    ctx.slotId === 'model.below_images' ||
+    ctx.slotId === 'model.actions_extra'
+  );
+}
+
+/** Narrow a {@link BlockContext} to {@link PageSlotContext}. See {@link isModelSlotContext}. */
+export function isPageSlotContext(ctx: BlockContext): ctx is PageSlotContext {
+  return ctx.slotId === 'app.page';
 }
 
 /**
@@ -343,6 +457,25 @@ export interface BlockSettings {
 /**
  * The signed-in viewer. `null` in `BlockInitPayload.viewer` means anonymous.
  *
+ * 🔴 DATA-MINIMISATION IN PROGRESS — read {@link ViewerInfo.signedIn}, not
+ * `id`/`username`.
+ *
+ * `BLOCK_INIT` discloses the viewer's identity to EVERY block unconditionally
+ * on load, before any interaction. Almost every block only needs to know
+ * *whether* someone is signed in (to choose between a real UI and a
+ * sign-in CTA) — and for that, `signedIn` is sufficient. A block that genuinely
+ * needs the identity should call {@link BlockViewer} via `GET_VIEWER` /
+ * `useViewer()`, which is scope-gated and auditable PER CALL rather than
+ * broadcast to everyone on mount.
+ *
+ * `id` and `username` are therefore `@deprecated` and will be removed in a
+ * later release — but they are still SENT, and this interface is still an
+ * OBJECT-OR-NULL on the wire. Both of those are load-bearing: the
+ * `isValidBlockInitPayload` guard compiled into every already-deployed block
+ * bundle rejects a `viewer` that is not `null` and not an object with a numeric
+ * `id`, and a rejected `BLOCK_INIT` means the block never becomes ready. See
+ * the migration note in the changeset.
+ *
  * `status` is OPTIONAL and a coarse surface — `/api/v1/blocks/me` is the
  * authoritative re-check if the block needs to gate on it. The platform omits
  * it from BLOCK_INIT to third-party iframes for privacy (civitai #2521), so
@@ -352,8 +485,32 @@ export interface BlockSettings {
  * side (civitai/civitai `src/components/AppBlocks/types.ts`).
  */
 export interface ViewerInfo {
+  /**
+   * Whether a viewer is signed in. The MINIMAL signal, and the one to build
+   * against: it is what replaces `id`/`username` once those are removed.
+   *
+   * Always `true` on a present `ViewerInfo` — `viewer: null` is the anonymous
+   * case — so `viewer?.signedIn === true` and `viewer !== null` agree today.
+   * It exists as a field rather than as "non-null means signed in" so that a
+   * block reading it keeps compiling and keeps meaning the same thing after
+   * `id`/`username` go away.
+   *
+   * OPTIONAL for back-compat: a host predating this field omits it, so treat
+   * `viewer !== null` as the fallback (which is exactly what it means).
+   */
+  signedIn?: true;
+  /**
+   * @deprecated Init-time identity disclosure. Use `useViewer()` (`GET_VIEWER`)
+   * for the viewer id — it is scope-gated and audited per call. Still sent;
+   * scheduled for removal once block adoption of `useViewer()` is measured.
+   */
   id: number;
+  /**
+   * @deprecated Init-time identity disclosure. Use `useViewer()` (`GET_VIEWER`)
+   * for the username. Still sent; scheduled for removal alongside `id`.
+   */
   username: string | null;
+  /** @deprecated Not sent by the platform to third-party iframes (civitai #2521). */
   status?: 'active' | 'banned' | 'muted';
 }
 

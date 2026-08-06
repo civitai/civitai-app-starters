@@ -123,13 +123,39 @@ export interface WrappedToken {
  */
 export interface BlockInitPayload {
   blockInstanceId: string;
+  /**
+   * @deprecated A block knows its own `blockId` at BUILD time — it is the
+   * `blockId` in its own `block.manifest.json`. Receiving it again at init is
+   * parity surface with no consumer: across the 21 rows of the platform's
+   * `app_blocks` table, ZERO read it off `useBlockContext()`. Read your manifest
+   * instead.
+   *
+   * 🔴 STILL SENT, and it MUST be. This is a type-level deprecation ONLY.
+   * `isValidBlockInitPayload` — compiled into every already-built, already-
+   * deployed block bundle — rejects a payload whose `blockId` is not a non-empty
+   * string, and a rejected `BLOCK_INIT` never resolves: the block stays blank
+   * forever. Removing it from the wire is a fleet-wide outage, not a type
+   * change. It comes off the wire only once the deployed population is known to
+   * be running a validator that tolerates its absence.
+   */
   blockId: string;
-  /** The OauthClient (app) this block belongs to. */
+  /**
+   * The OauthClient (app) this block belongs to.
+   *
+   * @deprecated Same reasoning and the SAME hard constraint as
+   * {@link BlockInitPayload.blockId} — build-time identity, zero deployed
+   * readers, still sent because the deployed validator requires it.
+   */
   appId: string;
   token: WrappedToken;
   context: BlockContext;
   settings: BlockSettings;
-  /** `null` when the viewer is anonymous. */
+  /**
+   * `null` when the viewer is anonymous; otherwise a {@link ViewerInfo} whose
+   * `signedIn` is the field to read — `id`/`username` are deprecated
+   * init-time identity disclosure. The OBJECT-OR-NULL shape is load-bearing for
+   * deployed blocks; see {@link ViewerInfo}.
+   */
   viewer: ViewerInfo | null;
   theme: Theme;
   renderMode: 'iframe' | 'inline';
@@ -224,11 +250,39 @@ export type ParentToBlockMessage =
       payload: { token: WrappedToken };
     }
   | {
-      // Reply to a block-initiated `REQUEST_TOKEN`. `requestId` is echoed
-      // back when the block supplied one; the payload otherwise mirrors
-      // `TOKEN_REFRESH` so consumers can apply both through the same path.
+      // Reply to a block-initiated `REQUEST_TOKEN`. The payload otherwise
+      // mirrors `TOKEN_REFRESH` so consumers can apply both through the same
+      // path.
+      //
+      // `requestId` is REQUIRED as of v2 (it was `requestId?: string`).
+      //
+      // WHY: a reply that may not name its request is not usable as a reply. A
+      // React consumer never noticed because the SDK also applies the token to
+      // the snapshot as a side effect — but `useBlockToken().refresh()` awaits
+      // the CORRELATED reply, and the transport matches a pending request
+      // strictly by `requestId`. So a response without one has ALWAYS failed to
+      // resolve `refresh()`, which then rejects on its 30s timeout while the
+      // token silently updates underneath. For a non-React consumer building
+      // straight against the wire there is no side channel at all: the reply is
+      // simply unattributable. Requiring the field documents what already had
+      // to be true, and lets the host's own tests enforce it.
+      //
+      // The host (civitai/civitai `IframeHost.tsx` / `PageBlockHost.tsx`) now
+      // echoes it unconditionally. Previously both spread it in only via
+      // `...(requestId ? { requestId } : {})` — a TRUTHINESS test, so an empty
+      // string was dropped too.
+      //
+      // 🔴 BACK-COMPAT, AND WHY THE GUARD STAYS LOOSE. `isValidTokenRefreshResponse`
+      // deliberately does NOT require `requestId`, so this type is stricter than
+      // the guard. That asymmetry is intentional: against an OLDER host that
+      // omits the field, a strict guard would DROP the message, and dropping it
+      // is strictly worse than today — the block would lose the token update it
+      // currently still gets, on top of the `refresh()` rejection it already
+      // gets. Tightening the guard would convert a degraded path into a broken
+      // one. The type is a contract on the HOST; the guard is a defence against
+      // the wire.
       type: 'TOKEN_REFRESH_RESPONSE';
-      payload: { requestId?: string; token: WrappedToken };
+      payload: { requestId: string; token: WrappedToken };
     }
   | {
       // Host-pushed SITE-THEME change. Sent when the viewer toggles light/dark

@@ -63,8 +63,20 @@ export type {
   AppWorkflowsParams,
 } from './messages.js';
 
+/**
+ * Runtime narrowing for the `slotId`-discriminated {@link BlockContext} union.
+ * Values, not types — a slot context crosses a `postMessage` boundary, so its
+ * static shape is a claim the guard is what actually checks.
+ */
+export { isModelSlotContext, isPageSlotContext } from './types.js';
+
 export type {
   BlockContext,
+  KnownSlotId,
+  ModelSlotId,
+  PageSlotContext,
+  PageSlotId,
+  UnknownSlotContext,
   BlockManifest,
   BlockManifestV1,
   BlockSettings,

@@ -27,11 +27,23 @@ export interface BlockSnapshot {
   context: BlockContext;
   token: BlockToken;
   settings: BlockSettings;
-  /** `null` for anonymous viewers, matching `BlockInitPayload.viewer`. */
+  /**
+   * `null` for anonymous viewers, matching `BlockInitPayload.viewer`.
+   *
+   * Read `viewer?.signedIn` (or the equivalent `viewer !== null`) for the
+   * sign-in gate; `viewer.id` / `viewer.username` are @deprecated init-time
+   * identity disclosure — use `useViewer()` for identity.
+   */
   viewer: ViewerInfo | null;
   theme: Theme;
   blockInstanceId: string;
+  /**
+   * @deprecated Your block's `blockId` is in its own `block.manifest.json` at
+   * build time; receiving it again at init is parity surface. Still delivered —
+   * see `BlockInitPayload.blockId` for why it cannot simply come off the wire.
+   */
   blockId: string;
+  /** @deprecated Build-time identity. See `BlockInitPayload.appId`. */
   appId: string;
   /**
    * The color-domain the host projected at init (`green`|`blue`|`red`), or
@@ -173,6 +185,29 @@ export const EMPTY_SNAPSHOT: BlockSnapshot = {
   blockId: '',
   appId: '',
 };
+
+/**
+ * Layer a resolved `theme` onto a slot context WITHOUT inventing the field on a
+ * context that has no place for it.
+ *
+ * Both dev hosts (`createMockHost`, `createLiveHost`) forward the theme twice —
+ * top-level on `BLOCK_INIT` and, where the slot carries it, inside `context` —
+ * mirroring what the real host does. This is the second half.
+ *
+ * The `'theme' in ctx` test is what keeps that honest, and it is the same test
+ * `IframeTransport.applyThemeChange` uses on a `THEME_CHANGE` push, so the
+ * init-time and push-time paths agree. It matters more since `BlockContext`
+ * became a discriminated union: {@link UnknownSlotContext} — the arm for a slot
+ * this SDK has no shape for — carries `slotId` and NOTHING else, so blindly
+ * spreading a `theme` onto it would fabricate a field the host never sent, on
+ * precisely the contexts the SDK understands least. Under v1's index signature
+ * that was silent and untypeable; now it is a compile error, which is how this
+ * helper came to exist.
+ */
+export function withContextTheme(ctx: BlockContext, theme: Theme): BlockContext {
+  if (!('theme' in ctx)) return ctx;
+  return { ...ctx, theme };
+}
 
 /** Convert a wire `BlockInitPayload` (ISO string expiresAt) into a `BlockSnapshot`. */
 export function snapshotFromInit(payload: BlockInitPayload): BlockSnapshot {

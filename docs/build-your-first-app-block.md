@@ -139,7 +139,7 @@ Read everything from the host with `useBlockContext()`; gate on `ready`:
 ```tsx
 import { useRef } from 'react';
 import { useBlockContext, useBlockResize } from '@civitai/blocks-react';
-import type { ModelSlotContext } from '@civitai/app-sdk/blocks';
+import { isModelSlotContext } from '@civitai/app-sdk/blocks';
 
 export function App() {
   const { ready, context, viewer, theme } = useBlockContext();
@@ -147,12 +147,13 @@ export function App() {
   useBlockResize(rootRef);             // host fits the iframe to content
 
   if (!ready) return <div ref={rootRef} data-theme={theme}>Loading…</div>;
-  const model = context as ModelSlotContext;
+  // `context` is a union keyed on slotId — narrow with the guard, not a cast.
+  if (!isModelSlotContext(context)) return <div ref={rootRef}>Wrong slot.</div>;
 
   return (
     // GOTCHA: data-theme on YOUR root — the host can't set it inside the iframe.
     <div ref={rootRef} data-theme={theme}>
-      Block for {model.modelName}, hi {viewer?.username ?? 'anon'}
+      Block for {context.modelName}, hi {viewer ? 'there' : 'anon'}
     </div>
   );
 }

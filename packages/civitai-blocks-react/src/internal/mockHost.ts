@@ -65,6 +65,8 @@ import {
   type WrappedToken,
 } from '@civitai/app-sdk/blocks';
 
+import { withContextTheme } from './transport.js';
+
 /**
  * The block's preferred Buzz pool. On a `textToImage` {@link WorkflowBody} it's
  * the top-level `accountType`; on a `customComfy` RECIPE body it lives under
@@ -2352,8 +2354,22 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     // Merge theme into the init context. `currentTheme` (not the install-time
     // `theme`) so a `setTheme` before install, or a re-install after one, seeds
     // BLOCK_INIT with the value the harness last chose.
-    const baseContext: BlockContext = options.context ?? { slotId: 'app.page' };
-    const context: BlockContext = { ...baseContext, theme: currentTheme };
+    // The default is a FAITHFUL `PageSlotContext`, not a `{ slotId }` stub: the
+    // real `PageBlockHost.buildContext()` always sends slug/subPath/viewerUserId/
+    // theme, so a fake that omits them lets a block compile against fields the
+    // host really does provide while the harness silently proves nothing about
+    // them. (It also has to carry `theme` for `withContextTheme` to have a field
+    // to update — which is exactly the fidelity gap that surfaced it.)
+    const baseContext: BlockContext = options.context ?? {
+      slotId: 'app.page',
+      entityType: 'none',
+      slug: 'mock-app',
+      subPath: '',
+      viewerUserId: viewer?.id ?? null,
+      viewerUsername: viewer?.username ?? null,
+      theme: currentTheme,
+    };
+    const context: BlockContext = withContextTheme(baseContext, currentTheme);
 
     // Color-domain maturity (civitai #2670). Resolve the ceiling by precedence:
     // explicit maxBrowsingLevel > maturity convenience > domain-derived. Only
