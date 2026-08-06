@@ -15,8 +15,8 @@ Alert, Loader, Badge`.
 [`MARKUP.md`](./MARKUP.md):
 
 ```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/theme@0.1.1/styles.css" />
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/components@0.1.1/styles.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/theme@0.2.0/styles.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/components@0.3.0/styles.css" />
 
 <button data-civitai-ui="button" data-variant="filled" data-size="md">Generate</button>
 ```

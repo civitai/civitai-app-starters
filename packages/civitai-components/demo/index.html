@@ -10,12 +10,14 @@
       loads the two design-system stylesheets straight from a CDN and uses only
       hand-written HTML following @civitai/components/MARKUP.md. Open it directly
       in a browser, or copy it as the starting point for a no-framework block.
-      (These pinned @0.1.1 URLs resolve once 0.1.1 is published; the literal
-      `/styles.css` path now works on every CDN because the packages ship a real
-      root styles.css file — jsDelivr ignores package.json `exports`.)
+      (The two packages version INDEPENDENTLY — theme is @0.2.0, components is
+      @0.3.0 — so never copy one version across both: an unpublished version
+      404s and a 404'd stylesheet renders an unstyled page with no error. The
+      literal `/styles.css` path works on every CDN because the packages ship a
+      real root styles.css file — jsDelivr ignores package.json `exports`.)
     -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/theme@0.1.1/styles.css" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/components@0.1.1/styles.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/theme@0.2.0/styles.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/components@0.3.0/styles.css" />
 
     <style>
       /* Page theming comes straight from the design-system tokens. */
