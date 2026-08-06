@@ -571,8 +571,10 @@ export interface MockHostOptions {
 /**
  * The mutable slice of {@link MockHostOptions} a harness UI can flip mid-session
  * via {@link MockHost.setScenario}. (Identity/init-only fields like `viewer`,
- * `context`, `theme`, and `appId` are fixed at install time — change them by
- * re-installing.)
+ * `context`, and `appId` are fixed at install time — change them by
+ * re-installing. `theme` is NOT among them: it has its own live control,
+ * {@link MockHost.setTheme}, which pushes a real `THEME_CHANGE` — the mock of
+ * the viewer toggling dark mode with the block already mounted.)
  */
 export type MockHostScenarioPatch = Pick<
   MockHostOptions,

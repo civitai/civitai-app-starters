@@ -123,8 +123,10 @@ The host's CURRENT site theme, and nothing else. Same value as
 `useBlockContext().theme` — reach for this when theme is all you need.
 
 ```tsx
-const theme = useBlockTheme(); // 'light' | 'dark'
-return <div data-theme={theme}>…</div>;
+function ThemedRoot() {
+  const theme = useBlockTheme(); // 'light' | 'dark'
+  return <div data-theme={theme}>…</div>;
+}
 ```
 
 The viewer can toggle light/dark **while your block is mounted**. The host pushes

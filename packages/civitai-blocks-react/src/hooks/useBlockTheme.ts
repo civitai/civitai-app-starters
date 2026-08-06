@@ -4,7 +4,7 @@ import { useTransportSnapshot } from './useBlockContext.js';
 
 /**
  * The host's CURRENT site theme (`'light' | 'dark'`), kept live for the whole
- * life of the block.
+ * life of the block ON THE IFRAME TRANSPORT.
  *
  * Reads the SAME singleton transport snapshot {@link useBlockContext} does, so
  * it re-renders when the value changes. Three things can set it, in increasing
@@ -26,6 +26,12 @@ import { useTransportSnapshot } from './useBlockContext.js';
  * 🔴 OLD HOST: a host that never sends `THEME_CHANGE` simply never moves the
  * value — the hook degrades to today's mount-time-constant behaviour. Nothing
  * here awaits a message, so there is no hang and no timeout.
+ *
+ * 🔴 INLINE TRANSPORT: the value is FROZEN at the bootstrap theme. v1 inline
+ * mode receives no host pushes at all (`InlineTransport.onMessage` is a stub and
+ * `subscribe` is a no-op, so nothing can emit), exactly the way
+ * {@link useBlockResize} is a no-op there. Same degradation as an old host —
+ * correct first paint, no live toggle — and it lifts when v2 inline mode lands.
  *
  * @example
  * // The host cannot reach into your iframe's DOM — put the theme on YOUR root.

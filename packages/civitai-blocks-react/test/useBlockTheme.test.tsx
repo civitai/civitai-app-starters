@@ -71,14 +71,37 @@ describe('useBlockTheme', () => {
     await waitFor(() => expect(result.current).toBe('light'));
   });
 
+  it('mock host `setTheme` BEFORE install seeds the theme BLOCK_INIT carries', async () => {
+    // Nothing is installed, so there is no channel to push down — the value can
+    // only reach the block through BLOCK_INIT, which `createMockHost` promises
+    // ("Also seeds the theme the next `BLOCK_INIT` carries, so it works before
+    // install too"). BLOCK_INIT carries the theme in TWO places (top-level and
+    // inside `context`); assert both, because each is an independent site that
+    // can regress to the install-time option on its own.
+    const host = createMockHost({ theme: 'dark' });
+    host.setTheme('light');
+    uninstall = host.install();
+
+    const { result } = renderHook(() => useBlockContext());
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    expect(result.current.theme).toBe('light');
+    expect(result.current.context?.theme).toBe('light');
+  });
+
   it('useBlockContext().theme tracks the SAME push (one snapshot, two readers)', async () => {
     uninstall = createMockHost({ theme: 'dark' }).install();
     const { result } = renderHook(() => useBlockContext());
     await waitFor(() => expect(result.current.ready).toBe(true));
     expect(result.current.theme).toBe('dark');
+    // The mock host mirrors the real one: BLOCK_INIT.context carries `theme` too.
+    expect(result.current.context?.theme).toBe('dark');
 
     pushTheme('light');
     await waitFor(() => expect(result.current.theme).toBe('light'));
+    // …and the context copy moves WITH it. A block narrowing to
+    // `ModelSlotContext` reads that field, so leaving it frozen would give two
+    // documented readers of one value permanently different answers.
+    expect(result.current.context?.theme).toBe('light');
     // The push must not disturb anything else on the snapshot.
     expect(result.current.ready).toBe(true);
     expect(result.current.viewer?.id).toBe(2);

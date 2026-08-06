@@ -553,10 +553,21 @@ describe('IframeTransport THEME_CHANGE (host-pushed live theme)', () => {
     Object.defineProperty(window, 'parent', { value: originalParent, configurable: true, writable: true });
   });
 
-  function initTransport() {
+  // DELIBERATELY 'dark', not the 'light' of `EMPTY_SNAPSHOT.theme`. With a
+  // 'light' fixture the "dropped" assertions below (`expect(theme).toBe(...)`)
+  // are byte-identical to the never-initialised sentinel, so they cannot tell a
+  // correctly-dropped message from a transport that never applied BLOCK_INIT at
+  // all. Starting off-sentinel makes every drop assertion structurally strict.
+  function initTransport(context?: BlockInitPayload['context']) {
     const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
     window.dispatchEvent(
-      mockParentMessage({ type: 'BLOCK_INIT', payload: buildInitPayload({ theme: 'light' }) }, PARENT_ORIGIN),
+      mockParentMessage(
+        {
+          type: 'BLOCK_INIT',
+          payload: buildInitPayload({ theme: 'dark', ...(context ? { context } : {}) }),
+        },
+        PARENT_ORIGIN,
+      ),
     );
     return transport;
   }
@@ -564,15 +575,15 @@ describe('IframeTransport THEME_CHANGE (host-pushed live theme)', () => {
   it('applies a host-pushed THEME_CHANGE to the snapshot and notifies subscribers', async () => {
     const transport = initTransport();
     await transport.waitForInit();
-    expect(transport.getSnapshot().theme).toBe('light');
+    expect(transport.getSnapshot().theme).toBe('dark');
 
     const listener = vi.fn();
     const unsubscribe = transport.subscribe(listener);
     window.dispatchEvent(
-      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'dark' } }, PARENT_ORIGIN),
+      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'light' } }, PARENT_ORIGIN),
     );
 
-    expect(transport.getSnapshot().theme).toBe('dark');
+    expect(transport.getSnapshot().theme).toBe('light');
     expect(listener).toHaveBeenCalledTimes(1);
     unsubscribe();
     transport.dispose();
@@ -584,16 +595,42 @@ describe('IframeTransport THEME_CHANGE (host-pushed live theme)', () => {
     const before = transport.getSnapshot();
 
     window.dispatchEvent(
-      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'dark' } }, PARENT_ORIGIN),
+      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'light' } }, PARENT_ORIGIN),
     );
 
     const after = transport.getSnapshot();
-    expect(after.theme).toBe('dark');
+    expect(after.theme).toBe('light');
     expect(after.ready).toBe(true);
     expect(after.token).toBe(before.token);
     expect(after.viewer).toBe(before.viewer);
+    // This fixture's context carries NO `theme` key, so it must come through
+    // BY IDENTITY — the push must never INTRODUCE the field (see the
+    // context-mirroring tests below for the case where it IS present).
     expect(after.context).toBe(before.context);
+    expect('theme' in after.context).toBe(false);
     expect(after.blockInstanceId).toBe(before.blockInstanceId);
+    transport.dispose();
+  });
+
+  it('MIRRORS the new theme into context.theme when the host sent that field', async () => {
+    // The host forwards theme twice — top-level and inside BLOCK_INIT.context
+    // (`theme` is on its context allowlist; `ModelSlotContext.theme` is a
+    // documented, exported SDK field). Both readers must move together, or a
+    // block reading `context.theme` silently stays on the mount-time value.
+    const transport = initTransport({ slotId: 'model.sidebar_top', modelId: 42, theme: 'dark' });
+    await transport.waitForInit();
+    expect(transport.getSnapshot().context.theme).toBe('dark');
+
+    window.dispatchEvent(
+      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'light' } }, PARENT_ORIGIN),
+    );
+
+    const after = transport.getSnapshot();
+    expect(after.theme).toBe('light');
+    expect(after.context.theme).toBe('light');
+    // Every OTHER context field survives untouched.
+    expect(after.context.slotId).toBe('model.sidebar_top');
+    expect(after.context.modelId).toBe(42);
     transport.dispose();
   });
 
@@ -606,12 +643,12 @@ describe('IframeTransport THEME_CHANGE (host-pushed live theme)', () => {
     // Same value as the snapshot already holds → no snapshot identity change,
     // so no useSyncExternalStore re-render.
     window.dispatchEvent(
-      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'light' } }, PARENT_ORIGIN),
+      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'dark' } }, PARENT_ORIGIN),
     );
     expect(listener).not.toHaveBeenCalled();
 
     window.dispatchEvent(
-      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'dark' } }, PARENT_ORIGIN),
+      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'light' } }, PARENT_ORIGIN),
     );
     expect(listener).toHaveBeenCalledTimes(1);
     unsubscribe();
@@ -624,7 +661,7 @@ describe('IframeTransport THEME_CHANGE (host-pushed live theme)', () => {
     postMessageMock.mockClear();
 
     window.dispatchEvent(
-      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'dark' } }, PARENT_ORIGIN),
+      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'light' } }, PARENT_ORIGIN),
     );
     expect(postMessageMock).not.toHaveBeenCalled();
     transport.dispose();
@@ -639,7 +676,7 @@ describe('IframeTransport THEME_CHANGE (host-pushed live theme)', () => {
       mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'midnight' } }, PARENT_ORIGIN),
     );
 
-    expect(transport.getSnapshot().theme).toBe('light');
+    expect(transport.getSnapshot().theme).toBe('dark');
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('THEME_CHANGE'));
     warnSpy.mockRestore();
     transport.dispose();
@@ -650,12 +687,12 @@ describe('IframeTransport THEME_CHANGE (host-pushed live theme)', () => {
     await transport.waitForInit();
 
     window.dispatchEvent(
-      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'dark' } }, OTHER_ORIGIN),
+      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'light' } }, OTHER_ORIGIN),
     );
 
     // The origin allowlist runs before anything else in handleMessage; a
     // sibling frame must not be able to repaint another publisher's block.
-    expect(transport.getSnapshot().theme).toBe('light');
+    expect(transport.getSnapshot().theme).toBe('dark');
     transport.dispose();
   });
 
@@ -718,9 +755,9 @@ describe('IframeTransport THEME_CHANGE (host-pushed live theme)', () => {
     );
 
     window.dispatchEvent(
-      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'dark' } }, PARENT_ORIGIN),
+      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'light' } }, PARENT_ORIGIN),
     );
-    expect(transport.getSnapshot().theme).toBe('dark');
+    expect(transport.getSnapshot().theme).toBe('light');
 
     vi.advanceTimersByTime(300);
     await expect(pending).rejects.toThrow(/timed out/);

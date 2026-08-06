@@ -491,10 +491,27 @@ export class IframeTransport implements BlockTransport {
    * an unconditional `{ ...snapshot }` would re-render every subscriber on a
    * redundant push (the host re-sending the same theme, e.g. after a re-mount
    * of its effect) even though nothing changed.
+   *
+   * Updates BOTH readers. The host forwards the theme TWICE — as the top-level
+   * `BLOCK_INIT.theme` and again inside `BLOCK_INIT.context` (`theme` is on the
+   * host's context allowlist, and `ModelSlotContext.theme` is a documented,
+   * publicly exported SDK field: "Host-page color scheme; lets the iframe match
+   * without a flicker"). Moving only the top-level field would leave a block
+   * that reads `context.theme` frozen at its mount-time value while
+   * `useBlockContext().theme` moved — a silent divergence between two fields
+   * the SDK's own types invite you to read interchangeably.
+   *
+   * Only ever UPDATES a context that already carries the key; never INTRODUCES
+   * it. A host/slot that omits `theme` from its context said something by
+   * omitting it, and synthesising the field here would make the SDK assert a
+   * value the host never sent (and needlessly break `context` identity for
+   * every non-model slot).
    */
   private applyThemeChange(theme: BlockSnapshot['theme']): void {
     if (this.snapshot.theme === theme) return;
-    this.snapshot = { ...this.snapshot, theme };
+    const next: BlockSnapshot = { ...this.snapshot, theme };
+    if ('theme' in next.context) next.context = { ...next.context, theme };
+    this.snapshot = next;
     this.emit();
   }
 
