@@ -6,8 +6,10 @@ style is selected entirely by `data-civitai-ui="…"` + `data-variant` /
 `data-size` attributes, themed by [`@civitai/theme`](../civitai-theme)'s
 `--civitai-*` tokens.
 
-Components: `Button, TextInput, Textarea, NumberInput, Card, Stack, Group,
-Alert, Loader, Badge`.
+For the component list — and each one's required markup, attributes and ARIA
+wiring — see [`MARKUP.md`](./MARKUP.md), which ships in this package and is the
+source of truth. It is deliberately not duplicated here: this sentence used to
+carry a hand-written list, and it silently fell ten components behind.
 
 ## Consume
 
@@ -15,8 +17,8 @@ Alert, Loader, Badge`.
 [`MARKUP.md`](./MARKUP.md):
 
 ```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/theme@0.1.1/styles.css" />
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/components@0.1.1/styles.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/theme@0.2.0/styles.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/components@0.3.0/styles.css" />
 
 <button data-civitai-ui="button" data-variant="filled" data-size="md">Generate</button>
 ```
