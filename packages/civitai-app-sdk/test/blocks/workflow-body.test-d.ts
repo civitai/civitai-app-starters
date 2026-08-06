@@ -12,6 +12,13 @@
  *    `{ kind: 'textToImage', … }` body still satisfies it unchanged
  *    (mandatory back-compat), and the new `customComfy` recipe member is a
  *    valid `WorkflowBody`;
+ *  - the `customComfy` member is ITSELF a union on `mode`, mirroring the host's
+ *    `blockCustomComfyMemberSchema`: a recipe arm (`mode` omitted or
+ *    `'recipe'`) and an inline-graph arm (`mode: 'inline'`, carrying
+ *    `workflow`/`resources`/`maxBuzz`). Both directions are pinned — an inline
+ *    body must be assignable, and a recipe body must NOT be able to carry
+ *    inline-only fields (or vice versa) — because a type that merely compiles
+ *    is not a type that matches the wire;
  *  - the `step` member (`kind: 'step'`) mirrors the host's `blockStepBodySchema`
  *    exactly — `{ kind, step, params }` and nothing else, since that schema is
  *    `.strict()` — and is the ONLY way a block can reach the host's step
@@ -28,8 +35,11 @@ import { expectTypeOf } from 'vitest';
 
 import type {
   BlockSourceImage,
+  InlineComfyNode,
   WorkflowBody,
   WorkflowBodyCustomComfy,
+  WorkflowBodyCustomComfyInline,
+  WorkflowBodyCustomComfyRecipe,
   WorkflowBodyStep,
   WorkflowBodyTextToImage,
 } from '../../src/blocks/types.js';
@@ -38,6 +48,10 @@ import type {
 type TextToImage = Extract<WorkflowBody, { kind: 'textToImage' }>;
 /** The `customComfy` member, narrowed out of the union. */
 type CustomComfy = Extract<WorkflowBody, { kind: 'customComfy' }>;
+/** The RECIPE arm of the `customComfy` member. */
+type ComfyRecipe = Extract<CustomComfy, { mode?: 'recipe' }>;
+/** The INLINE arm of the `customComfy` member. */
+type ComfyInline = Extract<CustomComfy, { mode: 'inline' }>;
 /** The `step` member, narrowed out of the union. */
 type Step = Extract<WorkflowBody, { kind: 'step' }>;
 
@@ -172,13 +186,127 @@ const customComfyFull: WorkflowBody = {
 };
 expectTypeOf(customComfyFull).toMatchTypeOf<WorkflowBody>();
 
-// --- customComfy params shape: prompt required; seed/engine/accountType optional ---
-expectTypeOf<CustomComfy['params']>().toEqualTypeOf<{
+// --- customComfy RECIPE params shape: prompt required; seed/engine/accountType optional ---
+expectTypeOf<ComfyRecipe['params']>().toEqualTypeOf<{
   prompt: string;
   seed?: number | null;
   engine?: string;
   accountType?: 'blue' | 'green' | 'yellow';
 }>();
+
+// ── customComfy is ITSELF a union on `mode` (civitai's inline-graph arm) ──────
+//
+// The exported member type IS the two arms and nothing else. Pinning the union
+// (rather than just "an inline body compiles") is what catches a future edit
+// that collapses it back to a single object type — which is exactly the state
+// that produced the false "the iframe never sends a graph" claim.
+expectTypeOf<CustomComfy>().toEqualTypeOf<
+  WorkflowBodyCustomComfyRecipe | WorkflowBodyCustomComfyInline
+>();
+expectTypeOf<WorkflowBodyCustomComfy>().toEqualTypeOf<
+  WorkflowBodyCustomComfyRecipe | WorkflowBodyCustomComfyInline
+>();
+
+// The recipe arm's `mode` is OPTIONAL and only ever `'recipe'`. This is the
+// back-compat property: the host declares it `z.literal('recipe').optional()`
+// so a body that omits `mode` lands on the recipe arm. A required literal here
+// would break every deployed block.
+expectTypeOf<ComfyRecipe['mode']>().toEqualTypeOf<'recipe' | undefined>();
+// The inline arm's `mode` is REQUIRED — you cannot reach the inline path by
+// merely including a `workflow` key.
+expectTypeOf<ComfyInline['mode']>().toEqualTypeOf<'inline'>();
+
+// A recipe body with NO `mode` key still satisfies the union (back-compat).
+const comfyNoMode: WorkflowBody = {
+  kind: 'customComfy',
+  recipe: 'seamless-pano-360',
+  params: { prompt: 'an equirectangular vista' },
+};
+expectTypeOf(comfyNoMode).toMatchTypeOf<WorkflowBody>();
+
+// …and so does one that names it explicitly.
+const comfyExplicitRecipeMode: WorkflowBody = {
+  kind: 'customComfy',
+  mode: 'recipe',
+  recipe: 'seamless-pano-360',
+  params: { prompt: 'an equirectangular vista' },
+};
+expectTypeOf(comfyExplicitRecipeMode).toMatchTypeOf<WorkflowBody>();
+
+// --- an INLINE-GRAPH body is a valid WorkflowBody ---------------------------
+const inlineBody: WorkflowBody = {
+  kind: 'customComfy',
+  mode: 'inline',
+  resources: ['urn:air:sdxl:checkpoint:civitai:101055@128078'],
+  workflow: {
+    '1': {
+      class_type: 'CheckpointLoaderSimple',
+      inputs: { ckpt_name: 'urn:air:sdxl:checkpoint:civitai:101055@128078' },
+    },
+    '2': { class_type: 'CLIPTextEncode', inputs: { text: 'a mountain', clip: ['1', 1] } },
+  },
+  prompt: 'a mountain',
+  maxBuzz: 60,
+};
+expectTypeOf(inlineBody).toMatchTypeOf<WorkflowBody>();
+
+// The inline arm's key set mirrors the host's `.strict()`
+// `blockInlineComfyBodySchema` exactly — nothing more, nothing less. A field
+// this arm does NOT list is rejected at the wire rather than dropped, and
+// several of the names the orchestrator's own `CustomComfyInput` carries
+// (`comfyImage`, `minVramGb`, `sessionOwnerApiToken`) are deliberately
+// unreachable from a block. Pinning the key set is what makes this a mirror.
+expectTypeOf<keyof ComfyInline>().toEqualTypeOf<
+  'kind' | 'mode' | 'workflow' | 'resources' | 'prompt' | 'negativePrompt' | 'maxBuzz'
+>();
+
+// The graph is a node map, and a node is exactly `{ class_type, inputs }` —
+// the host's `inlineComfyNodeSchema` is `.strict()`, so a `_meta` key from a
+// raw ComfyUI export is REJECTED, not ignored.
+expectTypeOf<ComfyInline['workflow']>().toEqualTypeOf<Record<string, InlineComfyNode>>();
+expectTypeOf<keyof InlineComfyNode>().toEqualTypeOf<'class_type' | 'inputs'>();
+expectTypeOf<InlineComfyNode['class_type']>().toEqualTypeOf<string>();
+expectTypeOf<InlineComfyNode['inputs']>().toEqualTypeOf<Record<string, unknown>>();
+
+// `resources` is REQUIRED, not optional: the declared AIR manifest is the whole
+// entitlement surface, and an omitted-but-inferred manifest is precisely the
+// mistake the containment gate rejects. `maxBuzz` is REQUIRED for the same
+// reason — it IS the step timeout, so there is no server default to fall back
+// on.
+expectTypeOf<ComfyInline['resources']>().toEqualTypeOf<string[]>();
+expectTypeOf<ComfyInline['maxBuzz']>().toEqualTypeOf<number>();
+// The declared prompts are optional (the host defaults both to '').
+expectTypeOf<ComfyInline['prompt']>().toEqualTypeOf<string | undefined>();
+expectTypeOf<ComfyInline['negativePrompt']>().toEqualTypeOf<string | undefined>();
+
+// The two arms do not bleed into each other. An inline body has no `recipe`
+// and no `params`; a recipe body has no graph. Both host schemas are
+// `.strict()`, so a body naming fields from both is rejected by BOTH arms.
+expectTypeOf<ComfyInline>().not.toHaveProperty('recipe');
+expectTypeOf<ComfyInline>().not.toHaveProperty('params');
+expectTypeOf<ComfyRecipe>().not.toHaveProperty('workflow');
+expectTypeOf<ComfyRecipe>().not.toHaveProperty('resources');
+expectTypeOf<ComfyRecipe>().not.toHaveProperty('maxBuzz');
+
+// There is no top-level `accountType` on the inline arm — unlike `textToImage`,
+// and unlike the recipe arm's `params.accountType`. The host resolves an inline
+// body's funding to Auto.
+expectTypeOf<ComfyInline>().not.toHaveProperty('accountType');
+
+// --- narrowing INSIDE the customComfy member, on `mode` ---------------------
+// 🔴 The narrow must be on the VALUE (`mode === 'inline'`), never on the
+// presence of the key: the recipe arm sets `mode` as an own key in two of its
+// three legal spellings, so a presence test routes a valid recipe body down the
+// inline path. This block is the compile-time half of that rule.
+declare const comfyBody: WorkflowBodyCustomComfy;
+if (comfyBody.mode === 'inline') {
+  expectTypeOf(comfyBody.workflow).toEqualTypeOf<Record<string, InlineComfyNode>>();
+  expectTypeOf(comfyBody.resources).toEqualTypeOf<string[]>();
+  expectTypeOf(comfyBody.maxBuzz).toEqualTypeOf<number>();
+} else {
+  expectTypeOf(comfyBody.recipe).toEqualTypeOf<string>();
+  expectTypeOf(comfyBody.params.prompt).toEqualTypeOf<string>();
+}
 
 // --- step member: a registered-step body is a valid WorkflowBody ---
 const stepBody: WorkflowBody = {
@@ -210,7 +338,10 @@ declare const someBody: WorkflowBody;
 if (someBody.kind === 'textToImage') {
   expectTypeOf(someBody.modelId).toEqualTypeOf<number>();
 } else if (someBody.kind === 'customComfy') {
-  expectTypeOf(someBody.recipe).toEqualTypeOf<string>();
+  // Narrowing on `kind` alone leaves the `mode` union — `recipe` is NOT
+  // readable here, which is the point: the compiler forces the second narrow
+  // rather than letting a consumer assume every customComfy body is a recipe.
+  expectTypeOf(someBody.mode).toEqualTypeOf<'recipe' | 'inline' | undefined>();
 } else {
   expectTypeOf(someBody.step).toEqualTypeOf<string>();
 }
