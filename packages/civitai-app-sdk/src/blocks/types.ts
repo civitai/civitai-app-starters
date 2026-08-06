@@ -532,20 +532,22 @@ export type WorkflowBodyTextToImage = {
 };
 
 /**
- * The `customComfy` member of the {@link WorkflowBody} discriminated union
- * (`kind: 'customComfy'`) — runs a **server-registered, code-reviewed ComfyUI
- * recipe** end-to-end. This is a bounded, fail-closed primitive: the iframe
- * NEVER sends a Comfy graph. It sends only a registered `recipe` id plus a
- * small, per-recipe-validated `params` object; the civitai server owns the
- * entire graph (built by object construction, so the prompt is a leaf value
- * that cannot perturb graph topology).
+ * The RECIPE arm of {@link WorkflowBodyCustomComfy} — runs a
+ * **server-registered, code-reviewed ComfyUI recipe** end-to-end. The block
+ * sends only a registered `recipe` id plus a small, per-recipe-validated
+ * `params` object; the civitai server owns the entire graph (built by object
+ * construction, so the prompt is a leaf value that cannot perturb graph
+ * topology).
  *
- * Trust / safety model (all SERVER-ENFORCED — mirrors civitai's forthcoming
+ * This is the DEFAULT arm. `mode` is optional here and a body that omits it
+ * lands on this arm, so every body written before the inline arm existed is
+ * unchanged and keeps working byte-for-byte.
+ *
+ * Trust / safety model (all SERVER-ENFORCED — mirrors civitai's
  * `blockCustomComfyBodySchema`):
  *  - `recipe` is a **registered recipe id** resolved against a code-reviewed,
  *    in-repo recipe registry. An unknown id is **rejected server-side, fail-
- *    closed** (the schema enum is derived from the registry keys) — there is
- *    no way for a block to run an arbitrary/unreviewed graph.
+ *    closed** (the schema enum is derived from the registry keys).
  *  - `params` are **bounded and validated per-recipe** by the server's
  *    `.strict()` Zod param schema (extra fields rejected); each recipe pins
  *    its own resources (checkpoint/LoRA/diffusion AIRs) — the block cannot
@@ -561,8 +563,20 @@ export type WorkflowBodyTextToImage = {
  *    the host gates `maxBuzz <= token.buzzBudget` before submit. A single job
  *    therefore cannot exceed the recipe's declared ceiling no matter what.
  */
-export type WorkflowBodyCustomComfy = {
+export type WorkflowBodyCustomComfyRecipe = {
   kind: 'customComfy';
+  /**
+   * The arm discriminator, OPTIONAL on this arm. Omit it (the normal case) or
+   * set it to `'recipe'`; both land here. It exists so the inline arm can be
+   * selected explicitly with `mode: 'inline'`.
+   *
+   * 🔴 The host's schema declares this `z.literal('recipe').optional()` — NOT
+   * `.default('recipe')` — precisely so a body with no `mode` key still parses
+   * as a recipe. Do not "helpfully" send `mode: undefined` as a spread from an
+   * optional variable if you can avoid it; it parses fine today, but omitting
+   * the key entirely is the shape every deployed block sends.
+   */
+  mode?: 'recipe';
   /**
    * A **registered recipe id** (e.g. `'seamless-pano-360'`). Resolved server-
    * side against the code-reviewed recipe registry; an unknown id is rejected
@@ -590,6 +604,189 @@ export type WorkflowBodyCustomComfy = {
     accountType?: BuzzAccountType;
   };
 };
+
+/**
+ * One node of a ComfyUI `/prompt` graph, as it travels on the wire.
+ *
+ * Mirrors the host's `inlineComfyNodeSchema`, which is `.strict()` with exactly
+ * these two fields — so a node carrying anything else (a `_meta` key from a
+ * ComfyUI export, for instance) is REJECTED at the wire, not dropped. Strip
+ * extras before submitting.
+ *
+ * `inputs` values are whatever ComfyUI accepts: literals, or a
+ * `[nodeId, outputIndex]` pair wiring this input to another node's output.
+ */
+export type InlineComfyNode = {
+  /** The ComfyUI node class, e.g. `'KSampler'`, `'CLIPTextEncode'`. */
+  class_type: string;
+  /** The node's inputs, keyed by input name. */
+  inputs: Record<string, unknown>;
+};
+
+/**
+ * The INLINE-GRAPH arm of {@link WorkflowBodyCustomComfy} (`kind:
+ * 'customComfy'`, `mode: 'inline'`) — the block ships **the ComfyUI graph
+ * itself**, so it can run a workflow the server's recipe registry does not
+ * contain.
+ *
+ * 🔴 THIS IS LIVE IN PRODUCTION. An earlier revision of this doc comment
+ * asserted that "there is no way for a block to run an arbitrary/unreviewed
+ * graph". That is FALSE and was removed: it predates the inline arm and cost a
+ * developer a dogfooding session, who trusted it over a working feature.
+ *
+ * WHO CAN USE IT. Narrower than the recipe arm, and both gates are server-side:
+ *  - **App developers only** — the host runs `assertViewerIsAppDeveloper` on
+ *    every `customComfy` estimate AND submit. A non-developer viewer of your
+ *    published block cannot submit one.
+ *  - **Page tokens only** — a model-bound token is rejected.
+ * So treat inline as a build/iterate primitive today. If you need a graph
+ * available to every viewer, get it registered as a recipe.
+ *
+ * WHAT REPLACED CODE REVIEW. A recipe is reviewed in-repo, and that review was
+ * the trust root. An inline graph has none, so the host substitutes three
+ * mechanical, fail-closed gates that all run BEFORE any spend or orchestrator
+ * call (a rejection therefore costs nothing):
+ *  1. **AIR containment.** Every AIR URN appearing anywhere in the graph —
+ *     including as an object KEY — must also appear in {@link resources}. The
+ *     match is whole-string (trimmed, case-insensitive), so an AIR embedded in
+ *     a longer string does not count as declared and the body is rejected.
+ *  2. **Entitlement**, over the declared `resources`. Stricter than the onsite
+ *     generator: early-access `hasAccess` and Private/epoch subscription are
+ *     both folded in, an unresolvable version id is a hard `FORBIDDEN`, and a
+ *     resource the site would silently SUBSTITUTE with a sibling version is
+ *     REJECTED instead — your graph names one specific AIR and nothing rewrites
+ *     it.
+ *  3. **Moderation sweep.** The audit reads the declared `prompt` AND every
+ *     distinct string leaf in the graph, because a real graph carries its
+ *     prompts inside `CLIPTextEncode` nodes. A clean declared `prompt` cannot
+ *     launder a graph prompt.
+ *
+ * @example A minimal inline body.
+ * ```ts
+ * const body: WorkflowBody = {
+ *   kind: 'customComfy',
+ *   mode: 'inline',
+ *   resources: ['urn:air:sdxl:checkpoint:civitai:101055@128078'],
+ *   workflow: {
+ *     '1': {
+ *       class_type: 'CheckpointLoaderSimple',
+ *       inputs: { ckpt_name: 'urn:air:sdxl:checkpoint:civitai:101055@128078' },
+ *     },
+ *     '2': {
+ *       class_type: 'CLIPTextEncode',
+ *       inputs: { text: 'a mountain at dawn', clip: ['1', 1] },
+ *     },
+ *     // …sampler, VAE decode, SaveImage…
+ *   },
+ *   prompt: 'a mountain at dawn',
+ *   maxBuzz: 60,
+ * };
+ * ```
+ */
+export type WorkflowBodyCustomComfyInline = {
+  kind: 'customComfy';
+  /**
+   * The arm discriminator. REQUIRED and exactly `'inline'` — omitting it does
+   * not "default to inline because a `workflow` is present"; it routes the body
+   * to the recipe arm, which then rejects it for a missing `recipe`.
+   */
+  mode: 'inline';
+  /**
+   * The ComfyUI `/prompt` graph, keyed by node id (the same object shape
+   * ComfyUI's "Save (API Format)" export produces).
+   *
+   * Server-enforced bounds — all three REJECT, none truncates:
+   *  - at least **1** node, at most **300**;
+   *  - the serialized graph must be at most **262144 bytes** (256 KB);
+   *  - nesting at most **128** levels deep (the gate walks the graph, and a
+   *    graph it cannot finish walking is one it cannot prove safe).
+   */
+  workflow: Record<string, InlineComfyNode>;
+  /**
+   * The DECLARED DOWNLOAD MANIFEST: every resource the graph needs, as an AIR
+   * URN. This is the array the entitlement gate runs over, and gate 1 above is
+   * what makes gating it sufficient.
+   *
+   * 🔴 **Declaring is not optional and it is not inferred.** Every AIR your
+   * graph names must ALSO be listed here or the submit is rejected — and
+   * anything the graph references that is missing from this list would fail at
+   * load time inside ComfyUI anyway. At most **24** entries, each at most 512
+   * characters.
+   *
+   * A `civitai`-sourced AIR MUST carry a model VERSION id
+   * (`urn:air:<ecosystem>:<type>:civitai:<modelId>@<versionId>`) — without one
+   * there is no version to check entitlement against and the body is rejected.
+   * The AIR grammar is read strictly here: all of
+   * `urn:air:<ecosystem>:<type>:<source>:<id>[@<version>]` is required, unlike
+   * the lenient parser used elsewhere.
+   *
+   * The permitted AIR `type`s are model WEIGHTS — `checkpoint`,
+   * `diffusion_model`, `unet`, `lora`, `lycoris`, `dora`, `embedding`,
+   * `hypernet`, `controlnet`, `vae`, `upscaler`, `clip`, `clipvision`,
+   * `text_encoders`, `motion` and a few siblings. An `oci:image` container AIR
+   * is NOT permitted. Anything the allowlist does not name is rejected rather
+   * than passed through.
+   *
+   * Duplicate entries are rejected, not deduped.
+   */
+  resources: string[];
+  /**
+   * The prompt to surface and to audit alongside the graph sweep. Optional
+   * (defaults to `''` server-side) and at most 1500 characters.
+   *
+   * It is NOT the moderation surface on its own — the graph's own strings are
+   * swept too — and it is NOT what generates: the text that generates is
+   * whatever your `CLIPTextEncode` node carries. Set it to the same text so
+   * what you show the user matches what ran.
+   */
+  prompt?: string;
+  /** Optional declared negative prompt, at most 1500 characters. Same posture as {@link prompt}. */
+  negativePrompt?: string;
+  /**
+   * The per-job Buzz ceiling. Required, an integer in **1…250**.
+   *
+   * 🔴 **IT IS ALSO THE STEP TIMEOUT, IN SECONDS.** The host stamps
+   * `stepTimeoutSeconds = maxBuzz` — there is only one number, which is exactly
+   * what makes the ceiling physically enforceable rather than merely asserted.
+   * So `maxBuzz: 10` does not buy a cheap generation; it buys a job that is
+   * KILLED after 10 seconds and comes back `expired`. Size it to the wall-clock
+   * time your graph actually needs, not to what you hope to pay.
+   *
+   * You are billed the REAL cost. Billing is post-paid against measured GPU
+   * seconds and settles to actual, refunding the unused remainder of the
+   * ceiling — so a generous `maxBuzz` costs nothing extra when the job finishes
+   * early. The only thing a low value guarantees is a timeout.
+   *
+   * `estimate` on an inline body echoes this number back as `cost.total`. That
+   * is an upper bound, not a price — surface it as "up to N Buzz". There is no
+   * honest per-graph estimate: the orchestrator forwards the graph opaquely and
+   * cannot price it.
+   *
+   * The host additionally requires `maxBuzz <= token.buzzBudget` before submit;
+   * over-budget comes back as a `failed` snapshot naming both numbers.
+   */
+  maxBuzz: number;
+};
+
+/**
+ * The `customComfy` member of the {@link WorkflowBody} discriminated union
+ * (`kind: 'customComfy'`) — itself a discriminated union on `mode`, mirroring
+ * the host's `blockCustomComfyMemberSchema`:
+ *
+ *  - {@link WorkflowBodyCustomComfyRecipe} (`mode` omitted, or `'recipe'`) —
+ *    names a server-registered, code-reviewed recipe. The default.
+ *  - {@link WorkflowBodyCustomComfyInline} (`mode: 'inline'`) — ships the
+ *    ComfyUI graph itself. Developer-only, page-tokens-only, and fenced by
+ *    three server-side gates instead of code review.
+ *
+ * Both arms are `.strict()` server-side, so a body naming BOTH `recipe` and
+ * `workflow` is rejected by both rather than resolved to a winner. Narrow on
+ * `body.mode === 'inline'` — NOT on the presence of a `mode` key, and not on
+ * the presence of a `workflow` key.
+ */
+export type WorkflowBodyCustomComfy =
+  | WorkflowBodyCustomComfyRecipe
+  | WorkflowBodyCustomComfyInline;
 
 /**
  * A **registered orchestrator step**, submitted through the host's step
@@ -651,9 +848,11 @@ export type WorkflowBodyStep = {
  * discriminated union keyed by `kind`:
  *  - {@link WorkflowBodyTextToImage} (`kind: 'textToImage'`) — the original
  *    checkpoint/LoRA/img2img generation body (unchanged, back-compatible).
- *  - {@link WorkflowBodyCustomComfy} (`kind: 'customComfy'`) — a bounded,
- *    server-registered ComfyUI recipe (post-paid; the iframe never sends a
- *    graph).
+ *  - {@link WorkflowBodyCustomComfy} (`kind: 'customComfy'`) — post-paid ComfyUI,
+ *    itself a union on `mode`: a bounded, server-registered
+ *    {@link WorkflowBodyCustomComfyRecipe} (the default), or a
+ *    {@link WorkflowBodyCustomComfyInline} graph the block ships itself
+ *    (`mode: 'inline'`; developer-only).
  *  - {@link WorkflowBodyStep} (`kind: 'step'`) — a bounded, server-registered
  *    orchestrator step (the host's step registry; billing mode and moderation
  *    posture are declared per entry).

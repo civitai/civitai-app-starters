@@ -67,11 +67,12 @@ import {
 
 /**
  * The block's preferred Buzz pool. On a `textToImage` {@link WorkflowBody} it's
- * the top-level `accountType`; on a `customComfy` recipe body it lives under
- * `params.accountType`; a `step` body has NO account preference at all — the
- * host's `blockStepBodySchema` is `.strict()` and accepts only
- * `{ kind, step, params }`, so there is no field to read and `undefined` (let
- * the host pick) is the accurate answer rather than a fallback.
+ * the top-level `accountType`; on a `customComfy` RECIPE body it lives under
+ * `params.accountType`; a `step` body and a `customComfy` INLINE body have NO
+ * account preference at all — the host's `blockStepBodySchema` and
+ * `blockInlineComfyBodySchema` are both `.strict()` with no `accountType`
+ * anywhere, so there is no field to read and `undefined` (let the host pick) is
+ * the accurate answer rather than a fallback.
  *
  * 🔴 SWITCH ON EVERY MEMBER, NEVER `kind === 'x' ? … : …`. The previous shape
  * was a two-way ternary whose `else` branch assumed "not customComfy therefore
@@ -81,13 +82,21 @@ import {
  * writing this exhaustively: the next member added to `WorkflowBody` will land
  * on the `default` below and be a compile error naming this function, instead
  * of being silently absorbed by an `else`.
+ *
+ * 🔴 THE SAME THING HAPPENED AGAIN INSIDE `customComfy`, WHICH IS NOW ITSELF A
+ * UNION ON `mode`. `body.params.accountType` stopped compiling the moment the
+ * inline arm landed, because an inline body has no `params`. Narrow on
+ * `mode === 'inline'` — a presence test (`'mode' in body`) is WRONG here and is
+ * a bug the host documents: the recipe arm declares `mode` as an OPTIONAL
+ * literal, so `{ …, mode: 'recipe' }` and `{ …, mode: undefined }` both set the
+ * key while still being recipe bodies.
  */
 const preferredAccountType = (body: WorkflowBody): BuzzAccountType | undefined => {
   switch (body.kind) {
     case 'textToImage':
       return body.accountType;
     case 'customComfy':
-      return body.params.accountType;
+      return body.mode === 'inline' ? undefined : body.params.accountType;
     case 'step':
       return undefined;
     default: {
