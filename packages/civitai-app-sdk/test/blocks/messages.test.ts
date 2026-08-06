@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { isMessage } from '../../src/blocks/messages.js';
 import type {
+  BlockInitPayload,
   BlockToParentMessage,
   ParentToBlockMessage,
   SharedStorageValue,
@@ -316,5 +317,49 @@ describe('WorkflowBody + SharedStorageValue widened fields (type-level)', () => 
     expect(value.data).toEqual({ spec: { steps: 20 }, version: 1 });
     const minimal: SharedStorageValue = { title: 'no data' };
     expect(minimal.data).toBeUndefined();
+  });
+});
+
+describe('THEME_CHANGE (host-pushed live site theme)', () => {
+  it('is a parent→block message carrying only the new theme, with NO requestId', () => {
+    const msg: ParentToBlockMessage = { type: 'THEME_CHANGE', payload: { theme: 'dark' } };
+    expect(isMessage<ParentToBlockMessage, 'THEME_CHANGE'>(msg, 'THEME_CHANGE')).toBe(true);
+    if (isMessage<ParentToBlockMessage, 'THEME_CHANGE'>(msg, 'THEME_CHANGE')) {
+      expect(msg.payload.theme).toBe('dark');
+      // Host-INITIATED, like TOKEN_REFRESH: there is no correlation id, so a
+      // block must never try to match it to a pending request.
+      expect('requestId' in msg.payload).toBe(false);
+    } else {
+      expect.unreachable('msg should narrow to THEME_CHANGE');
+    }
+  });
+
+  it('carries both theme values', () => {
+    for (const theme of ['light', 'dark'] as const) {
+      const msg: ParentToBlockMessage = { type: 'THEME_CHANGE', payload: { theme } };
+      if (!isMessage<ParentToBlockMessage, 'THEME_CHANGE'>(msg, 'THEME_CHANGE')) {
+        expect.unreachable('msg should narrow to THEME_CHANGE');
+      }
+      expect(msg.payload.theme).toBe(theme);
+    }
+  });
+
+  it('is NOT a block→parent message (it never appears in the outbound union)', () => {
+    const msg = { type: 'THEME_CHANGE', payload: { theme: 'light' } };
+    // Discriminator-only guard: asking for any BlockToParentMessage type says no.
+    expect(isMessage<BlockToParentMessage, 'BLOCK_READY'>(msg, 'BLOCK_READY')).toBe(false);
+    expect(isMessage<BlockToParentMessage, 'REQUEST_TOKEN'>(msg, 'REQUEST_TOKEN')).toBe(false);
+  });
+
+  it('mirrors the theme union BLOCK_INIT already carries (same values, same field)', () => {
+    // The push must be assignable from the SAME `Theme` a BlockInitPayload
+    // carries — if the two ever diverge, a host could push a theme a block's
+    // init-seeded state can never hold.
+    const fromInit: BlockInitPayload['theme'] = 'dark';
+    const msg: ParentToBlockMessage = { type: 'THEME_CHANGE', payload: { theme: fromInit } };
+    if (!isMessage<ParentToBlockMessage, 'THEME_CHANGE'>(msg, 'THEME_CHANGE')) {
+      expect.unreachable('msg should narrow to THEME_CHANGE');
+    }
+    expect(msg.payload.theme).toBe(fromInit);
   });
 });

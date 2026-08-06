@@ -406,6 +406,21 @@ export class IframeTransport implements BlockTransport {
       return;
     }
 
+    // Host-pushed SITE-THEME change (viewer toggled light/dark mid-session; no
+    // requestId). Same shape of handling as TOKEN_REFRESH: apply to the snapshot
+    // and emit, never matches a pending request.
+    //
+    // Deliberately NOT gated on `initResolved`. A push that lands before
+    // BLOCK_INIT is still the freshest value the host has, and it cannot
+    // "half-init" anything: `ready` stays false (only BLOCK_INIT flips it) and
+    // `snapshotFromInit` replaces the whole snapshot when init lands, so the
+    // payload remains authoritative exactly as it is for the URL-fragment fast
+    // path seeded in the constructor.
+    if (isMessage<ParentToBlockMessage, 'THEME_CHANGE'>(data, 'THEME_CHANGE')) {
+      this.applyThemeChange(data.payload.theme);
+      return;
+    }
+
     // For request/response replies, look up the pending entry by `requestId`.
     const payload = data.payload as { requestId?: unknown } | undefined;
     let pending: PendingRequest | undefined;
@@ -465,6 +480,38 @@ export class IframeTransport implements BlockTransport {
     // wrapped value end-to-end avoids the bug class where the snapshot's
     // expiresAt updated but scopes stayed stale.
     this.snapshot = { ...this.snapshot, token: tokenFromWrapped(wrapped) };
+    this.emit();
+  }
+
+  /**
+   * Apply a host-pushed `THEME_CHANGE` to the snapshot.
+   *
+   * Emits only when the value actually MOVED. `useSyncExternalStore` re-reads
+   * `getSnapshot()` on every emit and re-renders when the identity differs, so
+   * an unconditional `{ ...snapshot }` would re-render every subscriber on a
+   * redundant push (the host re-sending the same theme, e.g. after a re-mount
+   * of its effect) even though nothing changed.
+   *
+   * Updates BOTH readers. The host forwards the theme TWICE — as the top-level
+   * `BLOCK_INIT.theme` and again inside `BLOCK_INIT.context` (`theme` is on the
+   * host's context allowlist, and `ModelSlotContext.theme` is a documented,
+   * publicly exported SDK field: "Host-page color scheme; lets the iframe match
+   * without a flicker"). Moving only the top-level field would leave a block
+   * that reads `context.theme` frozen at its mount-time value while
+   * `useBlockContext().theme` moved — a silent divergence between two fields
+   * the SDK's own types invite you to read interchangeably.
+   *
+   * Only ever UPDATES a context that already carries the key; never INTRODUCES
+   * it. A host/slot that omits `theme` from its context said something by
+   * omitting it, and synthesising the field here would make the SDK assert a
+   * value the host never sent (and needlessly break `context` identity for
+   * every non-model slot).
+   */
+  private applyThemeChange(theme: BlockSnapshot['theme']): void {
+    if (this.snapshot.theme === theme) return;
+    const next: BlockSnapshot = { ...this.snapshot, theme };
+    if ('theme' in next.context) next.context = { ...next.context, theme };
+    this.snapshot = next;
     this.emit();
   }
 

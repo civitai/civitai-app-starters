@@ -230,6 +230,35 @@ export type ParentToBlockMessage =
       type: 'TOKEN_REFRESH_RESPONSE';
       payload: { requestId?: string; token: WrappedToken };
     }
+  | {
+      // Host-pushed SITE-THEME change. Sent when the viewer toggles light/dark
+      // WHILE the block is mounted. No `requestId` — the host is the initiator,
+      // exactly like `TOKEN_REFRESH`; blocks apply the new theme unconditionally
+      // and there is no reply.
+      //
+      // WHY IT EXISTS: `theme` reaches a block twice at startup — in the
+      // `BLOCK_INIT` payload and (when the host enables the fast path) in the
+      // iframe URL fragment. Neither can change afterwards: `BLOCK_INIT` is
+      // DEDUPED by the SDK transport (only the first is honored) and the
+      // fragment is deliberately FROZEN at mount so a toggle cannot re-navigate
+      // a third-party frame. So before this message a mounted block kept
+      // rendering its mount-time theme until it was reloaded.
+      //
+      // BACK-COMPAT, BOTH DIRECTIONS — purely additive:
+      //   • OLD BLOCK / NEW HOST: an SDK that predates this message has no
+      //     handler for it. The iframe transport's `handleMessage` falls through
+      //     to its no-op tail (it is not a `BLOCK_INIT`, not a `TOKEN_REFRESH`,
+      //     carries no `requestId` so it matches no pending request, and has no
+      //     push listener), so a deployed block is COMPLETELY unaffected — it
+      //     simply keeps today's mount-time theme.
+      //   • NEW BLOCK / OLD HOST: nothing here is ever awaited. A block reads the
+      //     theme from its snapshot, which `BLOCK_INIT` already seeded; a host
+      //     that never sends `THEME_CHANGE` just means the value never moves —
+      //     i.e. today's behaviour. No hook blocks on it and there is no timeout
+      //     to hit.
+      type: 'THEME_CHANGE';
+      payload: { theme: Theme };
+    }
   | { type: 'ESTIMATE_RESULT'; payload: { requestId: string; snapshot: BlockWorkflowSnapshot } }
   | { type: 'WORKFLOW_SUBMITTED'; payload: { requestId: string; snapshot: BlockWorkflowSnapshot } }
   | { type: 'WORKFLOW_STATUS'; payload: { requestId: string; snapshot: BlockWorkflowSnapshot } }

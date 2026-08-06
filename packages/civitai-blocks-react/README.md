@@ -112,7 +112,34 @@ const { ready, context, viewer, theme, settings, blockId, blockInstanceId, appId
   model-page slots.
 - `viewer` — `ViewerInfo | null` (`null` = anonymous).
 - `theme` — `'light' | 'dark'`. **Set `data-theme={theme}` on your root** (gotcha #60).
+  LIVE: it starts at the `BLOCK_INIT` value and then tracks the host's
+  `THEME_CHANGE` push when the viewer toggles dark mode mid-session — see
+  [`useBlockTheme()`](#useblocktheme).
 - `settings` — `{ publisherSettings, userSettings }`.
+
+### `useBlockTheme()`
+
+The host's CURRENT site theme, and nothing else. Same value as
+`useBlockContext().theme` — reach for this when theme is all you need.
+
+```tsx
+function ThemedRoot() {
+  const theme = useBlockTheme(); // 'light' | 'dark'
+  return <div data-theme={theme}>…</div>;
+}
+```
+
+The viewer can toggle light/dark **while your block is mounted**. The host pushes
+a `THEME_CHANGE` message and this hook re-renders. You get that for free as long
+as you *read* the theme on every render — a block that copies it into state once
+at mount, or writes `data-theme` imperatively in a mount-only effect, will stay
+stuck on the old theme.
+
+Against a host that predates `THEME_CHANGE` the value simply never moves (the
+old behaviour). Nothing awaits the message, so there is no hang either way.
+
+Exercise it locally: `createMockHost(...).setTheme('light')` (and the same on the
+`dev:live` host) pushes the real message.
 
 ### `useBlockResize(ref)`
 

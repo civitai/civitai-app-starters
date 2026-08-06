@@ -23,6 +23,7 @@ import {
   isValidSharedUpdateResult,
   isValidSharedWithdrawResult,
   isValidSaveImageResult,
+  isValidThemeChange,
   isValidTokenRefresh,
   isValidTokenRefreshResponse,
   isValidUserCheckpointSetResult,
@@ -837,6 +838,11 @@ describe('payloadValidatorFor', () => {
     expect(payloadValidatorFor('BLOCK_INIT')).toBeTypeOf('function');
     expect(payloadValidatorFor('TOKEN_REFRESH')).toBeTypeOf('function');
     expect(payloadValidatorFor('TOKEN_REFRESH_RESPONSE')).toBeTypeOf('function');
+    // 🔴 The mapping is the whole guard. `payloadValidatorFor`'s `default:` arm
+    // returns null (a STRUCTURAL PASS), so a THEME_CHANGE with no entry here
+    // would reach the snapshot UNVALIDATED — writing the validator and
+    // forgetting the switch is the bug this line exists to catch.
+    expect(payloadValidatorFor('THEME_CHANGE')).toBe(isValidThemeChange);
     expect(payloadValidatorFor('ESTIMATE_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('WORKFLOW_SUBMITTED')).toBeTypeOf('function');
     expect(payloadValidatorFor('WORKFLOW_STATUS')).toBeTypeOf('function');
@@ -879,5 +885,39 @@ describe('payloadValidatorFor', () => {
   it('returns null for payload-less lifecycle messages', () => {
     expect(payloadValidatorFor('SUSPEND')).toBeNull();
     expect(payloadValidatorFor('RESUME')).toBeNull();
+  });
+});
+
+describe('isValidThemeChange', () => {
+  it('accepts both theme values', () => {
+    expect(isValidThemeChange({ theme: 'light' })).toBe(true);
+    expect(isValidThemeChange({ theme: 'dark' })).toBe(true);
+  });
+
+  it('rejects a non-object payload', () => {
+    expect(isValidThemeChange(null)).toBe(false);
+    expect(isValidThemeChange(undefined)).toBe(false);
+    expect(isValidThemeChange('dark')).toBe(false);
+    expect(isValidThemeChange(1)).toBe(false);
+  });
+
+  it('rejects a missing / wrong-typed theme', () => {
+    expect(isValidThemeChange({})).toBe(false);
+    expect(isValidThemeChange({ theme: undefined })).toBe(false);
+    expect(isValidThemeChange({ theme: null })).toBe(false);
+    expect(isValidThemeChange({ theme: 1 })).toBe(false);
+  });
+
+  it('rejects an off-ladder theme string (the value lands on data-theme)', () => {
+    // A block puts this straight onto `data-theme`; an arbitrary string would
+    // silently match no themed selector. Mirrors the enum check
+    // `isValidBlockInitPayload` applies to the SAME field.
+    expect(isValidThemeChange({ theme: 'Dark' })).toBe(false);
+    expect(isValidThemeChange({ theme: 'system' })).toBe(false);
+    expect(isValidThemeChange({ theme: '' })).toBe(false);
+  });
+
+  it('ignores extra fields (a newer host may widen the payload)', () => {
+    expect(isValidThemeChange({ theme: 'dark', requestId: 'r-1' })).toBe(true);
   });
 });

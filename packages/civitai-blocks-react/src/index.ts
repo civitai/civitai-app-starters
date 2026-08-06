@@ -33,6 +33,7 @@ export type {
 
 // Hooks
 export { useBlockContext } from './hooks/useBlockContext.js';
+export { useBlockTheme } from './hooks/useBlockTheme.js';
 export { useBlockSettings } from './hooks/useBlockSettings.js';
 export { useBlockToken } from './hooks/useBlockToken.js';
 export { useHostOrigin } from './hooks/useHostOrigin.js';
