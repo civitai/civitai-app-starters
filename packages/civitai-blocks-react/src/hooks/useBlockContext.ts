@@ -32,6 +32,12 @@ function useTransportSnapshot(): BlockSnapshot {
  * set `data-theme={theme}` on your root, gotcha #60), `blockId`,
  * `blockInstanceId`, and `appId`.
  *
+ * `theme` is LIVE: it starts at the `BLOCK_INIT` (or URL-fragment) value and
+ * then tracks the host's `THEME_CHANGE` push when the viewer toggles light/dark
+ * mid-session. Reading it here is enough — {@link useBlockTheme} is the same
+ * value, narrower. Against a host that never pushes it, the value simply never
+ * moves (today's behaviour).
+ *
  * @example
  * const { ready, context, viewer, theme, settings } = useBlockContext();
  * if (!ready) return <div>Loading…</div>;

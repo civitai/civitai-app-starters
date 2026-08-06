@@ -17,6 +17,7 @@
 import type {
   BlockInitPayload,
   BlockWorkflowSnapshot,
+  Theme,
   WrappedToken,
 } from '@civitai/app-sdk/blocks';
 
@@ -159,6 +160,31 @@ export function isValidTokenRefresh(
 ): p is { token: WrappedToken } {
   if (!isObject(p)) return false;
   if (!isValidWrappedToken(p.token)) return false;
+  return true;
+}
+
+/**
+ * Host-pushed SITE-THEME change (the viewer toggled light/dark while the block
+ * was mounted). No `requestId` field; the host is the initiator, exactly like
+ * `TOKEN_REFRESH`.
+ *
+ * STRICTNESS: the theme is an ENUM, not free text — the snapshot value is what
+ * a block puts on `data-theme`, so an arbitrary string would poison every
+ * themed selector. Mirrors the `p.theme` check `isValidBlockInitPayload` already
+ * applies to the same field. Note this is the SAFE side of the too-strict trap
+ * documented on `isValidViewerResult`: dropping a malformed push costs at most
+ * a stale theme (the block keeps rendering the last good value), never a hang —
+ * nothing awaits this message.
+ *
+ * 🔴 A validator is only reachable once `payloadValidatorFor` maps the type to
+ * it. Its `default:` arm returns `null` — a STRUCTURAL PASS — so a new inbound
+ * type that is not added to that switch reaches state-mutating code entirely
+ * UNVALIDATED. Adding the guard and forgetting the switch entry is the whole
+ * bug; `validate.test.ts` pins the mapping for exactly that reason.
+ */
+export function isValidThemeChange(p: unknown): p is { theme: Theme } {
+  if (!isObject(p)) return false;
+  if (p.theme !== 'light' && p.theme !== 'dark') return false;
   return true;
 }
 
@@ -1037,6 +1063,8 @@ export function payloadValidatorFor(
       return isValidTokenRefresh;
     case 'TOKEN_REFRESH_RESPONSE':
       return isValidTokenRefreshResponse;
+    case 'THEME_CHANGE':
+      return isValidThemeChange;
     case 'ESTIMATE_RESULT':
     case 'WORKFLOW_SUBMITTED':
     case 'WORKFLOW_STATUS':

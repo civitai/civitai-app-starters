@@ -621,6 +621,7 @@ export interface MockBuzzHandle {
  *
  * After install, a harness UI can drive scenarios live:
  *  - `setScenario(patch)` — merge new generation/buzz/storage/failMode controls.
+ *  - `setTheme('light' | 'dark')` — flip the site theme and push `THEME_CHANGE`.
  *  - `buzz.setBalance(n)` / `buzz.getBalance()` — flip the simulated wallet.
  *
  * `install()` is idempotent — calling it twice returns the same teardown;
@@ -629,6 +630,12 @@ export interface MockHost {
   install: () => () => void;
   /** Merge a partial scenario into the live mock host (no re-install). */
   setScenario: (patch: MockHostScenarioPatch) => void;
+  /**
+   * Flip the site theme and push a host-initiated `THEME_CHANGE` to the block
+   * (what a real viewer's dark-mode toggle does). Also seeds the theme the next
+   * `BLOCK_INIT` carries, so it works before install too.
+   */
+  setTheme: (theme: Theme) => void;
   /** Runtime Buzz-balance control for a harness UI. */
   buzz: MockBuzzHandle;
 }
@@ -1281,6 +1288,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   let installed = false;
   let teardown: () => void = () => {};
 
+  // The CURRENT mock theme + a handle on the installed dispatcher, so
+  // `setTheme` can push a host-initiated `THEME_CHANGE` after install. Both live
+  // out here because `dispatchToBlock` is created inside `install()`; before
+  // install (or after teardown) `pushToBlock` is null and `setTheme` only
+  // updates the value the next `BLOCK_INIT` will carry.
+  let currentTheme: Theme = theme;
+  let pushToBlock: ((data: unknown) => void) | null = null;
+
   function install(): () => void {
     if (installed) return teardown;
     installed = true;
@@ -1297,6 +1312,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     const dispatchToBlock = (data: unknown) => {
       win.dispatchEvent(new MessageEvent('message', { data, origin: parentOrigin }));
     };
+    pushToBlock = dispatchToBlock;
     const after = (ms: number, fn: () => void) => {
       const t = setTimeout(() => {
         timers.delete(t);
@@ -2322,9 +2338,11 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       writable: true,
     });
 
-    // Merge theme into the init context.
+    // Merge theme into the init context. `currentTheme` (not the install-time
+    // `theme`) so a `setTheme` before install, or a re-install after one, seeds
+    // BLOCK_INIT with the value the harness last chose.
     const baseContext: BlockContext = options.context ?? { slotId: 'app.page' };
-    const context: BlockContext = { ...baseContext, theme };
+    const context: BlockContext = { ...baseContext, theme: currentTheme };
 
     // Color-domain maturity (civitai #2670). Resolve the ceiling by precedence:
     // explicit maxBrowsingLevel > maturity convenience > domain-derived. Only
@@ -2351,7 +2369,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       context,
       settings: { publisherSettings: {}, userSettings: {} },
       viewer,
-      theme,
+      theme: currentTheme,
       renderMode: 'iframe',
       ...(options.domain !== undefined ? { domain: options.domain } : {}),
       ...(resolvedCeiling !== undefined ? { maxBrowsingLevel: resolvedCeiling } : {}),
@@ -2364,6 +2382,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       if (torn) return;
       torn = true;
       installed = false;
+      pushToBlock = null;
       for (const t of timers) clearTimeout(t);
       timers.clear();
       Object.defineProperty(win, 'parent', {
@@ -2431,7 +2450,27 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     },
   };
 
-  return { install, setScenario, buzz: buzzHandle };
+  /**
+   * Flip the mock host's SITE THEME and push a host-initiated `THEME_CHANGE`,
+   * the way the real host does when a viewer toggles light/dark mid-session.
+   *
+   * This is the ONLY way a block author can exercise their live-theme handling
+   * locally — without it `dev:mock` can only ever deliver a theme once, at
+   * `BLOCK_INIT`, and a block that never re-reads it looks correct locally and
+   * stays stuck in prod (the dev-host fidelity gap `hostHandlerParity` exists
+   * to catch on the other direction).
+   *
+   * No-ops the push when not installed (the value still seeds the next
+   * `BLOCK_INIT`), and skips a redundant push when the theme did not change —
+   * mirroring the real host, whose effect only fires on a changed value.
+   */
+  function setTheme(next: Theme): void {
+    if (currentTheme === next) return;
+    currentTheme = next;
+    pushToBlock?.({ type: 'THEME_CHANGE', payload: { theme: next } });
+  }
+
+  return { install, setScenario, setTheme, buzz: buzzHandle };
 }
 
 /** btoa/atob that work in both browser + node (happy-dom + vitest). */

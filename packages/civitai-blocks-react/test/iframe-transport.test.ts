@@ -532,3 +532,198 @@ describe('IframeTransport', () => {
     });
   });
 });
+
+describe('IframeTransport THEME_CHANGE (host-pushed live theme)', () => {
+  let postMessageMock: ReturnType<typeof vi.fn>;
+  let originalParent: Window;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    postMessageMock = vi.fn();
+    originalParent = window.parent;
+    Object.defineProperty(window, 'parent', {
+      value: { postMessage: postMessageMock },
+      configurable: true,
+      writable: true,
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    Object.defineProperty(window, 'parent', { value: originalParent, configurable: true, writable: true });
+  });
+
+  function initTransport() {
+    const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+    window.dispatchEvent(
+      mockParentMessage({ type: 'BLOCK_INIT', payload: buildInitPayload({ theme: 'light' }) }, PARENT_ORIGIN),
+    );
+    return transport;
+  }
+
+  it('applies a host-pushed THEME_CHANGE to the snapshot and notifies subscribers', async () => {
+    const transport = initTransport();
+    await transport.waitForInit();
+    expect(transport.getSnapshot().theme).toBe('light');
+
+    const listener = vi.fn();
+    const unsubscribe = transport.subscribe(listener);
+    window.dispatchEvent(
+      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'dark' } }, PARENT_ORIGIN),
+    );
+
+    expect(transport.getSnapshot().theme).toBe('dark');
+    expect(listener).toHaveBeenCalledTimes(1);
+    unsubscribe();
+    transport.dispose();
+  });
+
+  it('touches NOTHING but theme (token/viewer/context/ready are untouched)', async () => {
+    const transport = initTransport();
+    await transport.waitForInit();
+    const before = transport.getSnapshot();
+
+    window.dispatchEvent(
+      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'dark' } }, PARENT_ORIGIN),
+    );
+
+    const after = transport.getSnapshot();
+    expect(after.theme).toBe('dark');
+    expect(after.ready).toBe(true);
+    expect(after.token).toBe(before.token);
+    expect(after.viewer).toBe(before.viewer);
+    expect(after.context).toBe(before.context);
+    expect(after.blockInstanceId).toBe(before.blockInstanceId);
+    transport.dispose();
+  });
+
+  it('does NOT re-emit on a redundant push of the same theme', async () => {
+    const transport = initTransport();
+    await transport.waitForInit();
+    const listener = vi.fn();
+    const unsubscribe = transport.subscribe(listener);
+
+    // Same value as the snapshot already holds → no snapshot identity change,
+    // so no useSyncExternalStore re-render.
+    window.dispatchEvent(
+      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'light' } }, PARENT_ORIGIN),
+    );
+    expect(listener).not.toHaveBeenCalled();
+
+    window.dispatchEvent(
+      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'dark' } }, PARENT_ORIGIN),
+    );
+    expect(listener).toHaveBeenCalledTimes(1);
+    unsubscribe();
+    transport.dispose();
+  });
+
+  it('sends NO reply — it is a host-initiated push, not a request', async () => {
+    const transport = initTransport();
+    await transport.waitForInit();
+    postMessageMock.mockClear();
+
+    window.dispatchEvent(
+      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'dark' } }, PARENT_ORIGIN),
+    );
+    expect(postMessageMock).not.toHaveBeenCalled();
+    transport.dispose();
+  });
+
+  it('drops a malformed THEME_CHANGE (off-ladder theme) and leaves the snapshot alone', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const transport = initTransport();
+    await transport.waitForInit();
+
+    window.dispatchEvent(
+      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'midnight' } }, PARENT_ORIGIN),
+    );
+
+    expect(transport.getSnapshot().theme).toBe('light');
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('THEME_CHANGE'));
+    warnSpy.mockRestore();
+    transport.dispose();
+  });
+
+  it('drops a well-formed THEME_CHANGE from a DISALLOWED origin', async () => {
+    const transport = initTransport();
+    await transport.waitForInit();
+
+    window.dispatchEvent(
+      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'dark' } }, OTHER_ORIGIN),
+    );
+
+    // The origin allowlist runs before anything else in handleMessage; a
+    // sibling frame must not be able to repaint another publisher's block.
+    expect(transport.getSnapshot().theme).toBe('light');
+    transport.dispose();
+  });
+
+  it('a pre-init push is applied but NEVER makes the block ready, and BLOCK_INIT still wins', async () => {
+    const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+
+    // Arrives BEFORE BLOCK_INIT: freshest value the host has, so apply it —
+    // but it must not flip `ready` (only BLOCK_INIT does).
+    window.dispatchEvent(
+      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'dark' } }, PARENT_ORIGIN),
+    );
+    expect(transport.getSnapshot().theme).toBe('dark');
+    expect(transport.getSnapshot().ready).toBe(false);
+
+    // BLOCK_INIT replaces the WHOLE snapshot — the payload stays authoritative.
+    window.dispatchEvent(
+      mockParentMessage({ type: 'BLOCK_INIT', payload: buildInitPayload({ theme: 'light' }) }, PARENT_ORIGIN),
+    );
+    await transport.waitForInit();
+    expect(transport.getSnapshot().theme).toBe('light');
+    expect(transport.getSnapshot().ready).toBe(true);
+    transport.dispose();
+  });
+
+  it('OLD SDK back-compat: a parent push with NO handler is a complete no-op', async () => {
+    // A DEPLOYED block runs an SDK that predates THEME_CHANGE, so its
+    // handleMessage has no branch for it: not BLOCK_INIT, not TOKEN_REFRESH, no
+    // requestId to match a pending request, no push listener → it falls through
+    // to the no-op tail. This pins that fall-through with a type the CURRENT
+    // transport also does not know, which is structurally the same position an
+    // old SDK is in for THEME_CHANGE.
+    const transport = initTransport();
+    await transport.waitForInit();
+    const before = transport.getSnapshot();
+    const listener = vi.fn();
+    const unsubscribe = transport.subscribe(listener);
+    postMessageMock.mockClear();
+
+    window.dispatchEvent(
+      mockParentMessage({ type: 'SOME_FUTURE_HOST_PUSH', payload: { anything: 1 } }, PARENT_ORIGIN),
+    );
+
+    expect(transport.getSnapshot()).toBe(before);
+    expect(listener).not.toHaveBeenCalled();
+    expect(postMessageMock).not.toHaveBeenCalled();
+    unsubscribe();
+    transport.dispose();
+  });
+
+  it('does not resolve or disturb an in-flight request', async () => {
+    const transport = initTransport();
+    await transport.waitForInit();
+    postMessageMock.mockClear();
+
+    const pending = sendTypedRequest(
+      transport,
+      { type: 'GET_BUZZ_BALANCE', payload: {} },
+      'BUZZ_BALANCE_RESULT',
+      { timeoutMs: 250 },
+    );
+
+    window.dispatchEvent(
+      mockParentMessage({ type: 'THEME_CHANGE', payload: { theme: 'dark' } }, PARENT_ORIGIN),
+    );
+    expect(transport.getSnapshot().theme).toBe('dark');
+
+    vi.advanceTimersByTime(300);
+    await expect(pending).rejects.toThrow(/timed out/);
+    transport.dispose();
+  });
+});

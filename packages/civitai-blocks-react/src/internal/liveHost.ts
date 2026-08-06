@@ -504,6 +504,14 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
   let installed = false;
   let teardown: () => void = () => {};
 
+  // Current theme + a handle on the installed dispatcher, so `setTheme` can push
+  // a host-initiated `THEME_CHANGE` the way civitai.com does when the viewer
+  // toggles dark mode. Mirrors createMockHost — `dev:live` must be able to
+  // exercise the same push, or a block's live-theme handling is untestable on
+  // the host that is otherwise the closest thing to prod.
+  let currentTheme: Theme = theme;
+  let pushToBlock: ((data: unknown) => void) | null = null;
+
   function install(): () => void {
     if (installed) return teardown;
     installed = true;
@@ -520,6 +528,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
       if (torn) return;
       win.dispatchEvent(new MessageEvent('message', { data, origin: parentOrigin }));
     };
+    pushToBlock = dispatchToBlock;
     const after = (ms: number, fn: () => void) => {
       const t = setTimeout(() => {
         timers.delete(t);
@@ -570,7 +579,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
       const viewer = await resolveViewer();
       if (torn) return;
       const baseContext: BlockContext = options.context ?? { slotId: PAGE_SLOT_ID };
-      const context: BlockContext = { ...baseContext, theme };
+      const context: BlockContext = { ...baseContext, theme: currentTheme };
       const initPayload: BlockInitPayload = {
         blockInstanceId: decoded.blockInstanceId ?? 'page_live',
         blockId: decoded.blockId ?? 'live-block',
@@ -579,7 +588,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
         context,
         settings: { publisherSettings: {}, userSettings: {} },
         viewer,
-        theme,
+        theme: currentTheme,
         renderMode: 'iframe',
         ...(decoded.domain != null ? { domain: decoded.domain } : {}),
         ...(typeof decoded.maxBrowsingLevel === 'number'
@@ -1611,6 +1620,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
       if (torn) return;
       torn = true;
       installed = false;
+      pushToBlock = null;
       for (const t of timers) clearTimeout(t);
       timers.clear();
       // Close any open picker overlay (unmounts its DOM; resolves it `null`).
@@ -1639,6 +1649,15 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
     install,
     setScenario: (_patch: MockHostScenarioPatch) => {
       /* no-op in live mode */
+    },
+    // NOT a no-op (unlike setScenario/buzz): the theme is a real, host-owned
+    // value the live host genuinely controls, so flipping it pushes a real
+    // THEME_CHANGE. Skips a redundant push when the value didn't change,
+    // matching the real host's changed-value-only effect.
+    setTheme: (next: Theme) => {
+      if (currentTheme === next) return;
+      currentTheme = next;
+      pushToBlock?.({ type: 'THEME_CHANGE', payload: { theme: next } });
     },
     buzz: buzzHandle,
   };
