@@ -224,10 +224,25 @@ const SLOT_IDS_CARRYING_THEME = new Set<string>([
  * carries `slotId` and nothing else, so there is no `theme` to set and none is
  * invented.
  *
- * Always returns a FRESH object — never the caller's own. `options.context` is
- * owned by the dev harness that passed it; aliasing it into the block's snapshot
- * would let a later harness mutation reach through a `BlockSnapshot` the block
- * is entitled to treat as immutable.
+ * Always returns a FRESH TOP-LEVEL object — `{ ...ctx }`, never `ctx` itself.
+ * `options.context` is owned by the dev harness that passed it, so re-using the
+ * object would let a later `harness.context.theme = …` reach through a
+ * `BlockSnapshot` the block is entitled to treat as immutable.
+ *
+ * 🔴 It is a SHALLOW copy, and the scope of the guarantee is exactly that. Any
+ * nested value keeps the caller's identity — for a {@link ModelSlotContext} that
+ * is `checkpoint` (an object) and `showcaseImages` (an array). A harness that
+ * mutates `ctx.showcaseImages` IN PLACE after init still reaches the block's
+ * snapshot; only a whole-key reassignment is fenced off.
+ *
+ * 🔴 And nothing downstream deep-copies it for you. `hostContextWithTheme` is
+ * imported by exactly two call sites — the two DEV hosts — and both deliver
+ * host→block messages with `win.dispatchEvent(new MessageEvent('message', …))`
+ * (`mockHost.ts`, `liveHost.ts`) — a same-realm synthetic event that passes
+ * `data` by reference. The real cross-origin `postMessage` in production does
+ * structured-clone, but production never calls this function. If the deeper
+ * guarantee is ever wanted here, it has to be written (a `structuredClone(ctx)`,
+ * or freezing the nested values) — do not assume the transport provides it.
  */
 export function hostContextWithTheme(ctx: BlockContext, theme: Theme): BlockContext {
   if (!SLOT_IDS_CARRYING_THEME.has(ctx.slotId)) return { ...ctx };

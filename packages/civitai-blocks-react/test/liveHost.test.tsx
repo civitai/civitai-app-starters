@@ -219,13 +219,20 @@ describe('createLiveHost — BLOCK_INIT', () => {
     expect(payload.blockId).toBe('block-abc');
     expect(payload.appId).toBe('app_xyz');
     expect(payload.blockInstanceId).toBe('page_apb_123');
-    // EXACTLY the key set the real host puts on the wire: `{ id, username,
-    // signedIn }`. `/api/v1/blocks/me` DID return `status: 'active'` above and it
-    // is deliberately dropped — the platform withholds the viewer's moderation
-    // state from third-party iframes (civitai #2521), so a live dev host that
-    // forwarded it would be more generous than production and would let a block
-    // read a field it will never get. `toEqual` (not `toMatchObject`) is the
-    // assertion that can see the extra key.
+    // EXACTLY `{ id, username, signedIn }` — two halves, two provenances (the
+    // full note is on `anonFallbackViewer` in `liveHost.ts`):
+    //  - NO `status` mirrors production TODAY. `/api/v1/blocks/me` DID return
+    //    `status: 'active'` above and it is deliberately dropped: the platform
+    //    withholds the viewer's moderation state from third-party iframes
+    //    (civitai #2521), so a live dev host that forwarded it would be more
+    //    generous than production and would let a block read a field it will
+    //    never get.
+    //  - `signedIn` runs AHEAD of production. It does not exist under
+    //    `src/components/AppBlocks/` on civitai/civitai `main`; it arrives with
+    //    civitai/civitai#3707 (OPEN, unmerged). Emitted so the field is
+    //    exercisable locally; `viewer !== null` is still the gate to ship.
+    // `toEqual` (not `toMatchObject`) is the assertion that can see the extra
+    // key.
     expect(payload.viewer).toEqual({ id: 42, username: 'dev-mod', signedIn: true });
     expect(payload.context.slotId).toBe('app.page');
     expect(payload.token.raw).toBe(fakeJwt(DEFAULT_CLAIMS));

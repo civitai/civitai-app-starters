@@ -88,21 +88,33 @@ export function isValidBlockInitPayload(p: unknown): p is BlockInitPayload {
     // the gate on the entire init, so returning false here costs the block every
     // field — token, context, settings, theme — over one advisory flag. The host
     // re-posts BLOCK_INIT every 400ms (`INIT_RETRY_INTERVAL_MS`) until
-    // BLOCK_READY, but every retry carries the SAME payload, so a rejecting
-    // validator rejects all of them; at `BLOCK_READY_TIMEOUT_MS` (10s) the host
-    // gives up and settles on its terminal failure state (the model slot
-    // collapses to nothing; the page host shows its fallback). That is a broken
-    // block, where ignoring the flag is merely a degraded one: `viewer?.signedIn
-    // === true` reads false, the block shows a sign-in CTA to someone already
-    // signed in, and the documented `viewer !== null` fallback still answers
-    // correctly. Same principle the `isValidTokenRefreshResponse` comment below
-    // spells out — do not turn a degraded path into a broken one.
+    // BLOCK_READY, ~25 times per `BLOCK_READY_TIMEOUT_MS` (10s) window. Those
+    // re-posts carry the FRESHEST payload rather than a byte-identical copy
+    // (both hosts re-point `buildInitPayloadRef` every render) — but the
+    // freshness varies query-resolved VALUES, never the shape this guard trips
+    // on, so a rejecting validator still rejects every one of them. Then, per
+    // surface: the model slot (`IframeHost`) has no auto-retry and renders
+    // `null`; the page host (`PageBlockHost`) auto-retries the entire handshake
+    // twice more (`MAX_AUTO_RETRIES = 2`, backoff [2s, 5s]) — a fresh controller
+    // and a fresh 10s window each time, ~37s total — and then shows its terminal
+    // fallback. That is a broken block, where ignoring the flag is merely a
+    // degraded one: `viewer?.signedIn === true` reads false, the block shows a
+    // sign-in CTA to someone already signed in, and the documented
+    // `viewer !== null` fallback still answers correctly. Same principle the
+    // `isValidTokenRefreshResponse` comment below spells out — do not turn a
+    // degraded path into a broken one.
     //
-    // It is also unreachable from the real host today (civitai/civitai
-    // `projectBlockInitViewer` writes a literal `true`), so the strict version
-    // bought nothing and cost a fleet-wide brick if that ever stopped holding —
-    // e.g. a future host writing `signedIn: !!user`, which is `false` exactly
-    // when `viewer` should have been `null`.
+    // It is also unreachable from the real host today — but NOT for the reason
+    // an earlier revision of this comment gave. It is not that
+    // `projectBlockInitViewer` writes a literal `true`: on civitai/civitai
+    // `main` that function does not write `signedIn` AT ALL (the identifier
+    // appears zero times under `src/components/AppBlocks/`, and the host's
+    // contract test pins the viewer key set as exactly `['id', 'username']`).
+    // The host that writes the literal `true` is civitai/civitai#3707, which is
+    // OPEN and unmerged. Either way there is no malformed value to reject today,
+    // so the strict version bought nothing and cost a fleet-wide brick the day
+    // that stopped holding — e.g. a future host writing `signedIn: !!user`,
+    // which is `false` exactly when `viewer` should have been `null`.
     // `status` is OPTIONAL. The platform deliberately omits the viewer's coarse
     // ban/mute moderation state from BLOCK_INIT to third-party iframes for
     // privacy (civitai #2521). When present it must be one of the three values;

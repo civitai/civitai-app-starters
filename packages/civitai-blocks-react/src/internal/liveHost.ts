@@ -568,8 +568,10 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
         if (typeof me.id !== 'number') return anonFallbackViewer();
         // `/api/v1/blocks/me` is the AUTHORITATIVE self-read and does carry
         // `status` — but this builds `BLOCK_INIT.viewer`, which the real host
-        // projects down to `{ id, username, signedIn }` and never includes
-        // moderation state in (civitai #2521). Forwarding `me.status` here would
+        // projects down to `{ id, username }` today (civitai/civitai `main`'s
+        // `projectBlockInitViewer`), and to `{ id, username, signedIn }` once
+        // civitai/civitai#3707 (OPEN, unmerged) lands. Never moderation state,
+        // in either version (civitai #2521). Forwarding `me.status` here would
         // make the live dev host more generous than production. A block that
         // wants `status` must ask for it via `GET_VIEWER` / `useViewer()`, which
         // is exactly the scope-gated path this release steers authors to.
@@ -1698,12 +1700,23 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
 /**
  * A minimal anon-ish viewer used when `/api/v1/blocks/me` can't be reached.
  *
- * Carries EXACTLY the key set the real host puts on the wire —
- * `{ id, username, signedIn }` (civitai/civitai `projectBlockInitViewer`, pinned
- * as an exact key set by both host contract tests). NO `status`: the platform
- * withholds the viewer's moderation state from third-party iframes (civitai
- * #2521), so a dev host that sends it invites a block to read a field production
- * never provides. See {@link DEFAULT_VIEWER} in `mockHost` for the same note.
+ * Carries EXACTLY `{ id, username, signedIn }` — the key set the BLOCK_INIT
+ * contract is moving to. The two halves have different provenance:
+ *
+ *  - NO `status` is production TODAY. civitai/civitai `main`'s
+ *    `projectBlockInitViewer` builds `{ id, username }`, pinned as exactly
+ *    `['id', 'username']` by `__tests__/projectBlockInit.test.ts`. The platform
+ *    withholds the viewer's moderation state from third-party iframes (civitai
+ *    #2521), so a dev host that sends it invites a block to read a field
+ *    production never provides.
+ *  - `signedIn` is NOT production yet. It appears zero times under
+ *    `src/components/AppBlocks/` on `main`; it arrives with civitai/civitai#3707
+ *    (OPEN, unmerged), which also moves the host's pinned key set to
+ *    `['id', 'signedIn', 'username']`. Emitted here so the field is exercisable
+ *    locally ahead of the host — `viewer !== null` is still the gate to SHIP.
+ *
+ * See {@link DEFAULT_VIEWER} in `mockHost` for the same note and for what to
+ * unwind if #3707 is abandoned.
  */
 function anonFallbackViewer(): ViewerInfo {
   return { id: 0, username: 'dev-live', signedIn: true };

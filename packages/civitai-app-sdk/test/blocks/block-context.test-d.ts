@@ -42,12 +42,25 @@ import type {
 // ViewerInfo.signedIn — pinned HERE because nothing else in this package does
 // ============================================================
 //
-// 🔴 Deleting `signedIn?: true` from `ViewerInfo` was mutation-tested and
-// SURVIVED both this package's vitest suite AND this type test — it was caught
-// only by `@civitai/blocks-react`'s `tsc`, three packages-worth of indirection
-// away, because that is where the dev hosts assign the field. A contract field
-// whose only gate lives in a DOWNSTREAM package is one refactor from being
-// silently droppable, so the SDK pins its own.
+// 🔴 WHY THE PIN EXISTS. Before this block was written, deleting
+// `signedIn?: true` from `ViewerInfo` was mutation-tested and SURVIVED this
+// package entirely — both its vitest suite and this file. It was caught only by
+// `@civitai/blocks-react`'s `tsc`, a package away, because that is where the dev
+// hosts assign the field. A contract field whose only gate lives in a DOWNSTREAM
+// package is one refactor from being silently droppable, so the SDK pins its
+// own. The assertions below are that pin; deleting the field now fails HERE.
+//
+// 🔴 BUT NOT WHERE A READER WOULD LOOK — `pnpm typecheck` DOES NOT RUN THIS
+// FILE. `tsconfig.json` is `"include": ["src/**/*"]` with `"exclude": [..., "test"]`,
+// and the package's `typecheck` script is `tsc -p tsconfig.json --noEmit`, so
+// this file is invisible to it. The only configs that compile it are
+// `tsconfig.typecheck.json` (`"include": ["src/**/*", "test/**/*.test-d.ts"]`),
+// reachable as `pnpm --filter @civitai/app-sdk test:types` and as the second
+// half of that package's `test` script (`vitest run && tsc -p tsconfig.typecheck.json`).
+// Consequence, and the thing to remember before trusting a green: deleting
+// `signedIn?: true` still passes `pnpm typecheck` AND `vitest run`. Only
+// `pnpm test` (or `test:types`) goes red. Do not read a clean `pnpm typecheck`
+// as evidence about anything asserted in this file.
 {
   const signedIn: ViewerInfo = { id: 1, username: 'alice', signedIn: true };
   expectTypeOf(signedIn.signedIn).toEqualTypeOf<true | undefined>();

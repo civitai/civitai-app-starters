@@ -82,46 +82,107 @@ guard was executed out of 19 of those 20 bundles, unanimously — so this is 19/
 of the compatibility population, not a sample of a handful, and not a claim about
 all 20.
 
-A rejected `BLOCK_INIT` **is** re-sent — the host re-posts it every
-`INIT_RETRY_INTERVAL_MS` (400ms) until the block acks `BLOCK_READY` — but every
-retry carries the same payload, so a validator that rejects one rejects all ~25
-of them, and at `BLOCK_READY_TIMEOUT_MS` (10s) the host gives up and settles on
-its terminal failure state: the model slot collapses to nothing (`IframeHost`
-renders `null` so the slot takes no space), and the page host shows its fallback
-and reports the launch as an error. So the block never works — it just fails in
-10s rather than hanging forever. That is a fleet-wide outage. Separately,
-5 of the 9 approved apps read `viewer.id` at runtime for load-bearing logic
-(ownership filters, optimistic row authorship). Nothing reads `blockId`/`appId`
-off `useBlockContext()` — the type deprecation is safe, the wire removal is not.
+A rejected `BLOCK_INIT` **is** re-sent — one immediately, then one every
+`INIT_RETRY_INTERVAL_MS` (400ms) until the block acks `BLOCK_READY`, about 25 of
+them inside one `BLOCK_READY_TIMEOUT_MS` (10s) window — and it does not help.
+
+🔴 **Two corrections to how that was previously described, because both were
+wrong in ways that matter to anyone reasoning about a wire change.**
+
+*The retries are not byte-identical.* `IframeHost` and `PageBlockHost` both
+re-point `buildInitPayloadRef.current` on **every render**, deliberately, so a
+retry tick posts the freshest data (a checkpoint or showcase query that resolved
+after the controller started). The structural conclusion is unchanged — that
+freshness varies query-resolved **values**, never whether a required **field** is
+present, so a guard rejecting for a missing field rejects every retry too — but
+the reason is "the defect is invariant across retries", not "the payload is".
+
+*"At 10s the host gives up" is true of only one of the two surfaces.*
+
+- **Model slot (`IframeHost`)** — no auto-retry. Status goes `timeout`,
+  `hostRenderDecision` returns `collapse`, and it renders `null` so the slot
+  takes no space. One handshake round, over at ~10s.
+- **Page host (`PageBlockHost`)** — `timeout` is auto-retryable, with
+  `MAX_AUTO_RETRIES = 2` and `AUTO_RETRY_BACKOFF_MS = [2000, 5000]`. Each
+  automatic attempt disposes the controller, remounts the iframe and builds a new
+  one, so it is a **full fresh handshake** — its own ~25 posts, its own 10s
+  window. Three rounds, ~37s of wall clock, then the terminal fallback with a
+  prominent manual Retry, and the launch reported as an error.
+  (`worstReachableLaunchMs()` = 57s bounds the worse path where a token wait is
+  also paid.)
+
+Either way the block never works — it fails in 10s or 37s rather than hanging
+forever. That is a fleet-wide outage. Separately, 5 of the 9 approved apps read
+`viewer.id` at runtime for load-bearing logic (ownership filters, optimistic row
+authorship). Nothing reads `blockId`/`appId` off `useBlockContext()` — the type
+deprecation is safe, the wire removal is not.
 
 One consequence, applied here: `isValidBlockInitPayload` **no longer rejects a
 malformed `viewer.signedIn`**. An earlier revision failed the whole payload when
 the flag was present and not `true`. That is the wrong-sized response by the very
 argument above — this guard gates the ENTIRE init, so a bad advisory flag would
 have cost the block its token, context, settings and theme, and the retry loop
-would replay the same rejection for 10s and then abandon the launch. It is
-unreachable from today's host (which writes a literal `true`), which is exactly
-why the strict version bought nothing and risked a fleet-wide brick the day a
-host wrote `signedIn: !!user`. A block should compare it to `true` and fall back
-to `viewer !== null`.
+would replay the same rejection for the whole window before abandoning the
+launch. It is unreachable from today's host, though **not** because the host
+writes a literal `true`: on `civitai/civitai@main` the identifier `signedIn`
+appears **zero times** under `src/components/AppBlocks/`, so the host sends no
+value at all to be malformed. The host that writes the literal `true` is
+civitai/civitai#3707, which is **open and unmerged**. Either way the strict
+version bought nothing and risked a fleet-wide brick the day a host wrote
+`signedIn: !!user`. A block should compare it to `true` and fall back to
+`viewer !== null`.
+
+🔴 **The host counterpart is civitai/civitai#3707, and it is OPEN and unmerged
+as of this changeset.** That is the PR that adds `signedIn` to
+`projectBlockInitViewer` and to `PageBlockHost`'s prop path, and that moves the
+host's pinned viewer key set from `['id', 'username']` to
+`['id', 'signedIn', 'username']`. On `civitai/civitai@main` today the identifier
+appears zero times under `src/components/AppBlocks/`. Nothing in this release
+depends on it landing — but nothing in this release should be read as evidence
+that it has.
 
 The staged path: ship the deprecations and `signedIn` (this release) → blocks
 migrate off `viewer.id`/`viewer.username` to a `viewer !== null` sign-in gate and
 `useViewer()` for identity, and to their own manifest for `blockId`/`appId` →
-once the host emits `signedIn` in production, `viewer?.signedIn === true` becomes
-the gate to write → once the deployed population is known to run a validator
-tolerant of their absence, drop `id`/`username` from the wire. The SDK starter
-and the `hello-world` example are migrated here as the reference; note they use
-`viewer !== null`, **not** `viewer?.signedIn`, because a block that gates on
-`signedIn` before the host emits it renders its anonymous branch to every
-signed-in user. Both dev hosts do emit it, so it is exercisable locally today.
+once #3707 lands and the host emits `signedIn` in production,
+`viewer?.signedIn === true` becomes the gate to write → once the deployed
+population is known to run a validator tolerant of their absence, drop
+`id`/`username` from the wire. The SDK starter and the `hello-world` example are
+migrated here as the reference; note they use `viewer !== null`, **not**
+`viewer?.signedIn`, because a block that gates on `signedIn` before the host
+emits it renders its anonymous branch to every signed-in user. Both dev hosts do
+emit it, so it is exercisable locally today — which also means a local green is
+NOT evidence the field is on the production wire.
 
-The dev hosts also stop sending `viewer.status`. The platform withholds the
-viewer's moderation state from third-party iframes (civitai #2521) — `status` is
-`@deprecated` for exactly that reason — so a mock that sent it was inviting
-blocks to read a field production never provides, the same fidelity defect this
-release fixed in the seven context harnesses. `GET_VIEWER` / `useViewer()` still
-carries `status`; that read is scope-gated and audited.
+If #3707 is abandoned rather than merged, the unwind is one change: drop
+`signedIn` from `createMockHost`'s `DEFAULT_VIEWER`, from `createLiveHost`'s
+`anonFallbackViewer` and `/blocks/me` projection, and from the key-set fences in
+`blockInitV2.test.ts` / `liveHost.test.tsx`. The type can stay — it is optional,
+and an absent field is exactly what it already models.
+
+The two dev hosts' **default** viewers stop sending `viewer.status`. The platform
+withholds the viewer's moderation state from third-party iframes (civitai #2521)
+— `status` is `@deprecated` for exactly that reason — so a default that sent it
+was inviting blocks to read a field production never provides. `GET_VIEWER` /
+`useViewer()` still carries `status`; that read is scope-gated and audited.
+
+🔴 **Scoped precisely, because "the dev hosts stop sending `status`" would
+overstate it.** What changed is `createMockHost`'s `DEFAULT_VIEWER` and
+`createLiveHost`'s `anonFallbackViewer` + `/api/v1/blocks/me` projection. An
+explicitly caller-supplied viewer is still forwarded **verbatim**, `status` and
+all, by both hosts (`MockHostOptions.viewer`, `LiveHostOptions.viewer`), and
+`mockHost.test.tsx` asserts that round-trip on purpose — an override is a
+deliberate act by a harness author, not a fidelity claim by the host. Around 26
+existing `blocks-react` `BLOCK_INIT` fixtures (grep-counted, so a floor) still
+build `viewer: { id, username, status: 'active' }` and are untouched. That is
+**pre-existing, not a regression**, and it is not claimed to be fixed here.
+
+Separately, the seven starter/example **context** harnesses did have the
+both-wrong-blind defect fixed outright: each was sending `creatorUserId`,
+`viewerUserId`, `viewerNsfwEnabled`, `viewerUsername` and `viewerStatus` in
+`ModelSlotContext`, none of which the host's `CONTEXT_ALLOWLIST` forwards. Those
+lines are deleted. The `viewer.status` change above is the same *shape* of defect
+narrowed to two defaults — not the same *scope* of fix.
 
 **Back-compat, both directions.**
 

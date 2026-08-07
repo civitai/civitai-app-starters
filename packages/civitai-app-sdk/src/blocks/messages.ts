@@ -133,15 +133,39 @@ export interface BlockInitPayload {
    * 🔴 STILL SENT, and it MUST be. This is a type-level deprecation ONLY.
    * `isValidBlockInitPayload` — compiled into every already-built, already-
    * deployed block bundle — rejects a payload whose `blockId` is not a non-empty
-   * string, and a rejected `BLOCK_INIT` is never ACKED. The host does retry: it
-   * re-posts `BLOCK_INIT` every `INIT_RETRY_INTERVAL_MS` (400ms) until
-   * `BLOCK_READY`, but every retry carries the SAME payload, so a validator that
-   * rejects one rejects all of them; at `BLOCK_READY_TIMEOUT_MS` (10s) the host
-   * abandons the handshake and settles on its terminal failure state — a model
-   * slot collapses to nothing, the page host renders its fallback. Removing this
-   * field from the wire is a fleet-wide outage, not a type change. It comes off
-   * the wire only once the deployed population is known to be running a
-   * validator that tolerates its absence.
+   * string, and a rejected `BLOCK_INIT` is never ACKED.
+   *
+   * The host does retry, and retrying does not help. Both hosts drive the
+   * handshake with `IframeInitController`: one BLOCK_INIT immediately, then a
+   * re-post every `INIT_RETRY_INTERVAL_MS` (400ms) until `BLOCK_READY` —
+   * about 25 of them inside one `BLOCK_READY_TIMEOUT_MS` (10s) window.
+   *
+   * 🔴 Those re-posts are NOT byte-identical. `IframeHost` and `PageBlockHost`
+   * both re-point `buildInitPayloadRef.current` on EVERY render, precisely so a
+   * retry tick carries the freshest data (a checkpoint or showcase query that
+   * resolved after the controller started). What that freshness varies is
+   * query-resolved VALUES; it never adds back a field the host stopped putting
+   * on the wire. So a guard rejecting for a MISSING FIELD rejects every retry
+   * for the same reason — the structural conclusion holds, just not via
+   * "identical payload".
+   *
+   * What happens when the window closes is PER-SURFACE:
+   *  - MODEL SLOT (`IframeHost`) — no auto-retry. Status goes `timeout`,
+   *    `hostRenderDecision` returns `collapse`, and the host renders `null`, so
+   *    the slot takes no space. One handshake round; over at ~10s.
+   *  - PAGE HOST (`PageBlockHost`) — `timeout` is auto-retryable, and the budget
+   *    is `MAX_AUTO_RETRIES = 2` with `AUTO_RETRY_BACKOFF_MS = [2000, 5000]`
+   *    (`pageBlockHostLogic.ts`). Each automatic attempt disposes the controller,
+   *    remounts the iframe and builds a NEW controller, so it is a FULL fresh
+   *    handshake — ~25 more re-posts and a fresh 10s window each time. Three
+   *    rounds, ~37s of wall clock, before the terminal fallback with the
+   *    prominent manual Retry. (`worstReachableLaunchMs()` = 57s covers the
+   *    worse path where a token wait is also paid.)
+   *
+   * Either way the block never becomes ready. Removing this field from the wire
+   * is a fleet-wide outage, not a type change. It comes off the wire only once
+   * the deployed population is known to be running a validator that tolerates
+   * its absence.
    */
   blockId: string;
   /**

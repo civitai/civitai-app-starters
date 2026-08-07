@@ -24,9 +24,10 @@ import { isModelSlotContext } from '@civitai/app-sdk/blocks';
  *
  * Deliberately NOT `viewer?.signedIn` yet. That flag is the successor signal and
  * both dev hosts already send it, but the production host does not until its
- * counterpart ships — so a block gating on it today renders its anonymous branch
- * to every signed-in user. `viewer !== null` means exactly the same thing and
- * works against both.
+ * counterpart (civitai/civitai#3707 — open, unmerged) ships — so a block gating
+ * on it today renders its anonymous branch to every signed-in user, and a green
+ * local run proves nothing about that. `viewer !== null` means exactly the same
+ * thing and works against both.
  */
 export function App() {
   const { ready, context, viewer, theme, blockInstanceId } = useBlockContext();

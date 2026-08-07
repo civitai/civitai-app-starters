@@ -20,19 +20,47 @@
  *
  * 🔴 WHY 3 AND 4 ARE "STILL REQUIRED" TESTS RATHER THAN REMOVAL TESTS.
  * This exact `isValidBlockInitPayload` is compiled into every already-built,
- * already-deployed block bundle. Fetching the 9 live bundles served from
- * `<slug>.civit.ai` and executing their copy of it shows that dropping
- * `blockId`, dropping `appId`, or replacing `viewer` with a boolean each makes
- * it return `false`.
+ * already-deployed block bundle.
  *
- * A rejected `BLOCK_INIT` IS re-sent — the host re-posts it every
- * `INIT_RETRY_INTERVAL_MS` (400ms) until `BLOCK_READY` — but every retry carries
- * the same payload, so a rejecting validator rejects all of them, and at
- * `BLOCK_READY_TIMEOUT_MS` (10s) the host settles on its terminal failure state
- * (model slot collapses to nothing; page host renders its fallback). The block
- * never becomes ready either way; it fails in 10s rather than hanging forever.
- * Those are fleet-wide outages, not type changes. The guards below are the
- * regression fence around that finding.
+ * 🔴 THE POPULATION — one story, stated once, here. The changeset
+ * (`.changeset/block-init-payload-v2.md`) is the source; every other comment in
+ * this file defers to it rather than restating a denominator. `app_blocks` has
+ * 21 rows (9 `approved`, 12 `suspended`), of which 20 are deployed and
+ * reachable at `<slug>.civit.ai`. The guard was extracted and EXECUTED out of 19
+ * of those 20 bundles, unanimously: dropping `blockId`, dropping `appId`, or
+ * replacing `viewer` with a boolean each returns `false`. So the measured
+ * denominator is 19/20 of the compatibility population — not "all of them", and
+ * not a handful. The 9 is a DIFFERENT number and answers a different question:
+ * it is the currently-SERVED set (both surfaces gate on `status='approved'`).
+ * It is not the compatibility population, because suspension is reversible, so
+ * a wire change must stay compatible with every deployed bundle.
+ *
+ * A rejected `BLOCK_INIT` IS re-sent — one immediately, then one every
+ * `INIT_RETRY_INTERVAL_MS` (400ms) until `BLOCK_READY`, ~25 inside a
+ * `BLOCK_READY_TIMEOUT_MS` (10s) window.
+ *
+ * 🔴 THE RETRIES ARE NOT BYTE-IDENTICAL, and an earlier revision of these
+ * comments said they were. `IframeHost` and `PageBlockHost` both re-point
+ * `buildInitPayloadRef.current` on EVERY render, so each tick posts the
+ * FRESHEST payload. The structural conclusion survives — the freshness varies
+ * query-resolved VALUES (checkpoint, showcase images, theme), never whether a
+ * required FIELD is present, so a guard rejecting for a missing field rejects
+ * every retry as well — but the mechanism is "the defect is invariant across
+ * retries", not "the payload is".
+ *
+ * What happens when the window closes is PER-SURFACE, and only one of the two
+ * is over at 10s:
+ *  - MODEL SLOT (`IframeHost`): no auto-retry. Status `timeout` →
+ *    `hostRenderDecision` returns `collapse` → renders `null`, so the slot takes
+ *    no space. Done at ~10s.
+ *  - PAGE HOST (`PageBlockHost`): `timeout` is auto-retryable, budget
+ *    `MAX_AUTO_RETRIES = 2`, backoff `[2s, 5s]`. Each attempt disposes the
+ *    controller and remounts the iframe, so it is a FULL fresh handshake with
+ *    its own ~25 posts and its own 10s window. Three rounds, ~37s, then the
+ *    terminal fallback with a prominent manual Retry.
+ *
+ * The block never becomes ready either way. Those are fleet-wide outages, not
+ * type changes. The guards below are the regression fence around that finding.
  *
  * FIXTURES. Values are non-default and pairwise distinct on purpose: a fixture
  * of `0` / `''` / `'test'` collapses distinct implementations into identical
@@ -107,7 +135,11 @@ const HOST_DERIVED_MODEL_CONTEXT = {
   showcaseImages: HOST_DERIVED_SHOWCASE,
 };
 
-/** The host test pins the viewer projection as exactly `{ id: 8888, username: 'alice' }` (+ `signedIn` in v2). */
+/**
+ * civitai/civitai `main`'s own contract test pins the viewer projection as
+ * exactly `{ id: 8888, username: 'alice' }`. `signedIn` is added by
+ * civitai/civitai#3707 (OPEN, unmerged) — see the DEFAULT-viewer fence below.
+ */
 const HOST_DERIVED_VIEWER = { id: 8888, username: 'alice', signedIn: true as const };
 
 /**
@@ -417,13 +449,15 @@ describe('TOKEN_REFRESH_RESPONSE requestId (change 2)', () => {
 
 describe('blockId + appId are deprecated but MUST still be sent (change 3)', () => {
   it('🔴 rejects an init with blockId removed — deployed blocks would never become ready', () => {
-    // Not a preference. This guard is compiled into all 9 live block bundles;
-    // executing their copy against this payload returns false. The host DOES
-    // retry (every 400ms for 10s) but each retry is byte-identical, so it is
-    // rejected too and the launch ends in the host's terminal failure state.
-    // Removing the field from the host is a fleet-wide outage. THIS TEST IS THE
-    // FENCE — if a future change makes it pass, the wire removal it unblocks is
-    // the outage.
+    // Not a preference. This guard is compiled into every deployed block bundle;
+    // executing their own copy against this payload returned false unanimously
+    // (see the population note in this file's header — 19 of the 20 deployed
+    // bundles). The host DOES retry, and it does not help: the missing field is
+    // invariant across every retry, and both surfaces end in a terminal failure
+    // state (model slot at ~10s, page host after three rounds / ~37s). Removing
+    // the field from the host is a fleet-wide outage. THIS TEST IS THE FENCE —
+    // if a future change makes it pass, the wire removal it unblocks is the
+    // outage.
     expect(isValidBlockInitPayload(without(v2Init, 'blockId'))).toBe(false);
   });
 
@@ -513,8 +547,9 @@ describe('viewer thinning (change 4)', () => {
 
   it('🔴 rejects a viewer thinned to a bare boolean — deployed blocks would never become ready', () => {
     // The obvious reading of "thin viewer to a signed-in flag". Executing the
-    // deployed bundles' own copy of this guard against it returns false for all
-    // 9 live apps. THIS TEST IS THE FENCE around that finding.
+    // deployed bundles' own copy of this guard against it returned false
+    // unanimously across the sweep in this file's header (19 of the 20 deployed
+    // bundles). THIS TEST IS THE FENCE around that finding.
     expect(isValidBlockInitPayload({ ...structuredClone(v2Init), viewer: true })).toBe(false);
   });
 
@@ -565,8 +600,14 @@ describe('viewer thinning (change 4)', () => {
   });
 
   it('🔴 rejects a viewer whose `username` is ABSENT, but accepts an explicit null', () => {
-    // Measured against the deployed bundles: an absent `username` is rejected
-    // 16/16, an explicit `null` accepted. `ViewerInfo.username` is `string |
+    // Measured against the deployed bundles: an absent `username` is rejected,
+    // an explicit `null` accepted. 🔴 NO DENOMINATOR IS QUOTED HERE ON PURPOSE.
+    // An earlier revision said "16/16", a third number this file could not
+    // relate to the 21/20/19 sweep in the header or to the 9 served apps, and
+    // nothing recorded which subset it was. Rather than invent a
+    // reconciliation, the count is dropped: the population statement lives in
+    // the header and in the changeset, and only what was actually re-derivable
+    // is stated. `ViewerInfo.username` is `string |
     // null` — REQUIRED-but-nullable, never optional — so a host "tidying" the
     // field away (e.g. `...(username ? { username } : {})`, the same truthiness
     // spread that dropped `requestId`) is a wire removal with the same
@@ -594,8 +635,11 @@ describe('viewer thinning (change 4)', () => {
 // blind bug survives a green suite: the block compiles against the fake, the
 // harness proves nothing, and the divergence only surfaces in production. The
 // wire truth these pin is civitai/civitai's `projectBlockInitViewer` +
-// `PageBlockHost.buildContext()`, whose own contract tests assert the viewer key
-// set EXACTLY.
+// `PageBlockHost.buildContext()`.
+//
+// 🔴 ONE of the viewer assertions below deliberately runs AHEAD of that wire
+// truth rather than mirroring it — see the comment on the DEFAULT-viewer test.
+// Do not read this section as "everything here is asserted host-side today".
 
 describe('createMockHost BLOCK_INIT fidelity', () => {
   const ORIGIN = window.location.origin;
@@ -613,10 +657,38 @@ describe('createMockHost BLOCK_INIT fidelity', () => {
   });
 
   it('🔴 the DEFAULT viewer is exactly { id, username, signedIn } — no `status`', async () => {
-    // `status` is @deprecated precisely because the platform withholds the
-    // viewer's moderation state from third-party iframes (civitai #2521). The
-    // host's own contract test pins `Object.keys(init.viewer).sort()` as
-    // ['id','signedIn','username']; this is the mirror of that assertion.
+    // 🔴 THIS FENCE STAYS — and it is deliberately NOT a mirror of a shipped
+    // host assertion. An earlier revision claimed it was. Its two halves have
+    // different provenance:
+    //
+    //  - `status` ABSENT mirrors production TODAY. civitai/civitai `main`'s
+    //    `projectBlockInitViewer` builds `{ id, username }`, and
+    //    `src/components/AppBlocks/__tests__/projectBlockInit.test.ts:154` pins
+    //    `Object.keys(viewer).sort()` as exactly `['id', 'username']`. `status`
+    //    is @deprecated because the platform withholds the viewer's moderation
+    //    state from third-party iframes (civitai #2521).
+    //  - `signedIn` PRESENT pins the INTENDED post-#3707 contract, not a shipped
+    //    one. `signedIn` appears ZERO times under `src/components/AppBlocks/` on
+    //    `main`. civitai/civitai#3707 (OPEN, unmerged) is what adds it, and what
+    //    moves the host's pinned key set to ['id','signedIn','username'].
+    //
+    // WHY KEEP IT. The mock is what makes `signedIn` exercisable locally ahead
+    // of the host; without a fence the field can be dropped from the mock by an
+    // unrelated edit and nothing goes red. The cost of running ahead — a block
+    // gating on `viewer?.signedIn` that passes here and renders its anonymous
+    // branch to every signed-in user in production — is carried elsewhere, on
+    // purpose: `ViewerInfo.signedIn`'s doc, the changeset, and the migrated
+    // starter + `hello-world`, which all gate on `viewer !== null` instead.
+    //
+    // 🔴 IF #3707 NEVER LANDS, this assertion is what has to change first. Drop
+    // `signedIn` from `DEFAULT_VIEWER` (mockHost), from `anonFallbackViewer`
+    // (liveHost), from the two expectations below, from `HOST_DERIVED_VIEWER`
+    // above, and from the two `payload.viewer` fences in `liveHost.test.tsx`
+    // (~L229 and ~L277) — in ONE change — do not
+    // leave a fence pinning a contract nobody ships, which is the same
+    // both-wrong-blind defect this section exists to prevent, pointed the other
+    // way.
+    //
     // `toEqual` is load-bearing — `toMatchObject` cannot see an extra key.
     uninstall = createMockHost().install();
     const { result } = renderHook(() => useBlockContext());

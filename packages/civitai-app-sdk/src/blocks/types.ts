@@ -499,13 +499,17 @@ export interface BlockSettings {
 /**
  * The signed-in viewer. `null` in `BlockInitPayload.viewer` means anonymous.
  *
- * 🔴 DATA-MINIMISATION IN PROGRESS — read {@link ViewerInfo.signedIn}, not
- * `id`/`username`.
+ * 🔴 DATA-MINIMISATION IN PROGRESS — never read `id`/`username` to answer "is
+ * someone signed in?". WHICH sign-in gate to write depends on which host you are
+ * against, and {@link ViewerInfo.signedIn} states the rule in full. Short
+ * version: gate on `viewer !== null` TODAY (that is what production emits, and
+ * it means exactly the same thing); move to `viewer?.signedIn === true` once the
+ * host counterpart ships.
  *
  * `BLOCK_INIT` discloses the viewer's identity to EVERY block unconditionally
  * on load, before any interaction. Almost every block only needs to know
  * *whether* someone is signed in (to choose between a real UI and a
- * sign-in CTA) — and for that, `signedIn` is sufficient. A block that genuinely
+ * sign-in CTA) — and for that, a boolean is sufficient. A block that genuinely
  * needs the identity should call {@link BlockViewer} via `GET_VIEWER` /
  * `useViewer()`, which is scope-gated and auditable PER CALL rather than
  * broadcast to everyone on mount.
@@ -515,11 +519,17 @@ export interface BlockSettings {
  * OBJECT-OR-NULL on the wire. Both of those are load-bearing: the
  * `isValidBlockInitPayload` guard compiled into every already-deployed block
  * bundle rejects a `viewer` that is not `null` and not an object with a numeric
- * `id`. The host re-posts `BLOCK_INIT` every `INIT_RETRY_INTERVAL_MS` (400ms)
- * until the block acks `BLOCK_READY`, but every retry carries the same payload,
- * so a rejecting validator rejects all ~25 of them; at `BLOCK_READY_TIMEOUT_MS`
- * (10s) the host settles on its terminal failure state and the block never
- * becomes ready. See the migration note in the changeset.
+ * `id`. A rejected `BLOCK_INIT` is re-sent — the host re-posts it every
+ * `INIT_RETRY_INTERVAL_MS` (400ms) until the block acks `BLOCK_READY`, ~25 times
+ * inside one `BLOCK_READY_TIMEOUT_MS` (10s) window — and each re-post carries
+ * the FRESHEST payload, not a byte-identical copy (both hosts re-point
+ * `buildInitPayloadRef` on every render). That freshness only ever varies
+ * query-resolved VALUES, never whether a required FIELD is present, so a guard
+ * rejecting for a missing field rejects every retry too. What happens at the end
+ * of the window is per-surface: `IframeHost` (model slot) has no auto-retry and
+ * renders `null`; `PageBlockHost` auto-retries the whole handshake twice more.
+ * See the `BlockInitPayload.blockId` doc in `messages.ts` for the per-surface
+ * detail, and the migration note in the changeset.
  *
  * `status` is OPTIONAL and a coarse surface — `/api/v1/blocks/me` is the
  * authoritative re-check if the block needs to gate on it. The platform omits
@@ -531,22 +541,35 @@ export interface BlockSettings {
  */
 export interface ViewerInfo {
   /**
-   * Whether a viewer is signed in. The MINIMAL signal, and the one to build
-   * against: it is what replaces `id`/`username` once those are removed.
+   * Whether a viewer is signed in. The MINIMAL signal, and the one this
+   * contract is migrating TO: it is what replaces `id`/`username` once those
+   * are removed. It exists as a field rather than as "non-null means signed in"
+   * so that a block reading it keeps compiling, and keeps meaning the same
+   * thing, after `id`/`username` go away.
    *
-   * Always `true` on a present `ViewerInfo` — `viewer: null` is the anonymous
-   * case — so `viewer?.signedIn === true` and `viewer !== null` agree today.
-   * It exists as a field rather than as "non-null means signed in" so that a
-   * block reading it keeps compiling and keeps meaning the same thing after
-   * `id`/`username` go away.
+   * 🔴 WHICH GATE TO WRITE, AND HOW TO TELL WHICH WORLD YOU ARE IN.
    *
-   * 🔴 OPTIONAL, AND ABSENT IN PRODUCTION UNTIL THE HOST COUNTERPART SHIPS.
-   * `viewer !== null` is the gate to write TODAY — it means exactly the same
-   * thing, and it is what the migrated starter and `hello-world` use for that
-   * reason. A block that gates on `viewer?.signedIn` before the host emits the
-   * field renders its anonymous branch to every signed-in user. Both dev hosts
-   * (`createMockHost` / `createLiveHost`) DO emit it, so the field is
-   * exercisable locally ahead of the host.
+   *  - TODAY, against production: write `viewer !== null`. The field is NOT on
+   *    the wire yet. `signedIn` appears ZERO times under
+   *    `src/components/AppBlocks/` on civitai/civitai `main`, and that repo's
+   *    own contract test (`__tests__/projectBlockInit.test.ts`) pins the
+   *    BLOCK_INIT viewer key set as exactly `['id', 'username']`. The field
+   *    arrives with civitai/civitai#3707, which is OPEN and unmerged. A block
+   *    that gates on `viewer?.signedIn` before that lands reads `undefined` —
+   *    i.e. false — and renders its anonymous branch to every signed-in user.
+   *    This is why the migrated starter and `hello-world` use `viewer !== null`.
+   *  - AFTER #3707 ships: the two gates agree, and `signedIn` becomes the one to
+   *    write. `viewer: null` stays the anonymous case, so the field is only ever
+   *    the literal `true` on a present viewer; #3707 moves the host's pinned key
+   *    set to `['id', 'signedIn', 'username']`.
+   *  - HOW TO TELL, at runtime: `viewer !== null && viewer.signedIn === undefined`
+   *    IS the probe — there is no version handshake. 🔴 Do NOT answer it with the
+   *    dev hosts: `createMockHost` and `createLiveHost` both emit `signedIn`
+   *    deliberately, ahead of the host, so the field is exercisable locally.
+   *    Local presence is not evidence of production presence.
+   *
+   * OPTIONAL for exactly that reason — a host that predates #3707 omits it
+   * entirely, and that must stay assignable.
    *
    * A malformed value is not rejected at the trust boundary — see the note on
    * `isValidBlockInitPayload` in `@civitai/blocks-react`: failing the whole init

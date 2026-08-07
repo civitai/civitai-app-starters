@@ -19,8 +19,8 @@ import { isModelSlotContext, isPageSlotContext } from '@civitai/app-sdk/blocks';
  *    discloses them to every block on load, before any interaction. Need the
  *    identity? Call `useViewer()`: scope-gated, audited per call. (Not
  *    `viewer?.signedIn` yet: the dev hosts send it, production does not until
- *    the host counterpart ships, so gating on it today would show every
- *    signed-in user the anonymous branch.)
+ *    the host counterpart lands (civitai/civitai#3707 — open, unmerged), so
+ *    gating on it today would show every signed-in user the anonymous branch.)
  *  - `useBlockResize(ref)` — tells the host how tall the iframe should be
  *    (emits RESIZE_IFRAME on every height change). Attach to the root.
  *  - The host TRUST FRAME — civitai.com draws a bordered chrome bar with a
