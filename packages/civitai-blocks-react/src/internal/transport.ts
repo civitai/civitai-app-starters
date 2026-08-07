@@ -27,11 +27,23 @@ export interface BlockSnapshot {
   context: BlockContext;
   token: BlockToken;
   settings: BlockSettings;
-  /** `null` for anonymous viewers, matching `BlockInitPayload.viewer`. */
+  /**
+   * `null` for anonymous viewers, matching `BlockInitPayload.viewer`.
+   *
+   * Read `viewer?.signedIn` (or the equivalent `viewer !== null`) for the
+   * sign-in gate; `viewer.id` / `viewer.username` are @deprecated init-time
+   * identity disclosure — use `useViewer()` for identity.
+   */
   viewer: ViewerInfo | null;
   theme: Theme;
   blockInstanceId: string;
+  /**
+   * @deprecated Your block's `blockId` is in its own `block.manifest.json` at
+   * build time; receiving it again at init is parity surface. Still delivered —
+   * see `BlockInitPayload.blockId` for why it cannot simply come off the wire.
+   */
   blockId: string;
+  /** @deprecated Build-time identity. See `BlockInitPayload.appId`. */
   appId: string;
   /**
    * The color-domain the host projected at init (`green`|`blue`|`red`), or
@@ -173,6 +185,69 @@ export const EMPTY_SNAPSHOT: BlockSnapshot = {
   blockId: '',
   appId: '',
 };
+
+/**
+ * The slot ids whose context shape DECLARES a `theme` field — the three
+ * `model.*` slots ({@link ModelSlotContext}) plus `app.page`
+ * ({@link PageSlotContext}). Deliberately keyed on the slot id and not on
+ * whether the caller's object happens to carry the key; see
+ * {@link hostContextWithTheme}.
+ */
+const SLOT_IDS_CARRYING_THEME = new Set<string>([
+  'model.sidebar_top',
+  'model.below_images',
+  'model.actions_extra',
+  'app.page',
+]);
+
+/**
+ * HOST-SIDE: layer the resolved `theme` onto a slot context being put on the
+ * wire, for every slot whose shape has a place for it.
+ *
+ * Both dev hosts (`createMockHost`, `createLiveHost`) forward the theme twice —
+ * top-level on `BLOCK_INIT` and again inside `context` — because that is what
+ * the real host does, on BOTH surfaces and unconditionally: the model-slot
+ * producer (civitai/civitai `ModelVersionDetails.tsx`) always sets
+ * `theme`, `CONTEXT_ALLOWLIST` always forwards it, and
+ * `PageBlockHost.buildContext()` always includes it. This is the second half.
+ *
+ * 🔴 KEYED ON THE SLOT ID, NOT ON `'theme' in ctx`. The presence test is the
+ * right one on the BLOCK side (`IframeTransport.applyThemeChange`), where the
+ * SDK must never fabricate a field the host did not send. It is the WRONG one
+ * here, because here we ARE the host: a dev-supplied `options.context` that
+ * omits `theme` is an incomplete description of a slot, not a host that chose to
+ * withhold it — and honouring the omission silently produced a harness whose
+ * theme toggle could not reach `context.theme` at init OR on a later
+ * `THEME_CHANGE` push (`applyThemeChange` only UPDATES a key that exists, so the
+ * omission propagates for the lifetime of the mount). The slot-id test keeps the
+ * one case the presence test was really protecting: {@link UnknownSlotContext}
+ * carries `slotId` and nothing else, so there is no `theme` to set and none is
+ * invented.
+ *
+ * Always returns a FRESH TOP-LEVEL object — `{ ...ctx }`, never `ctx` itself.
+ * `options.context` is owned by the dev harness that passed it, so re-using the
+ * object would let a later `harness.context.theme = …` reach through a
+ * `BlockSnapshot` the block is entitled to treat as immutable.
+ *
+ * 🔴 It is a SHALLOW copy, and the scope of the guarantee is exactly that. Any
+ * nested value keeps the caller's identity — for a {@link ModelSlotContext} that
+ * is `checkpoint` (an object) and `showcaseImages` (an array). A harness that
+ * mutates `ctx.showcaseImages` IN PLACE after init still reaches the block's
+ * snapshot; only a whole-key reassignment is fenced off.
+ *
+ * 🔴 And nothing downstream deep-copies it for you. `hostContextWithTheme` is
+ * imported by exactly two call sites — the two DEV hosts — and both deliver
+ * host→block messages with `win.dispatchEvent(new MessageEvent('message', …))`
+ * (`mockHost.ts`, `liveHost.ts`) — a same-realm synthetic event that passes
+ * `data` by reference. The real cross-origin `postMessage` in production does
+ * structured-clone, but production never calls this function. If the deeper
+ * guarantee is ever wanted here, it has to be written (a `structuredClone(ctx)`,
+ * or freezing the nested values) — do not assume the transport provides it.
+ */
+export function hostContextWithTheme(ctx: BlockContext, theme: Theme): BlockContext {
+  if (!SLOT_IDS_CARRYING_THEME.has(ctx.slotId)) return { ...ctx };
+  return { ...ctx, theme } as BlockContext;
+}
 
 /** Convert a wire `BlockInitPayload` (ISO string expiresAt) into a `BlockSnapshot`. */
 export function snapshotFromInit(payload: BlockInitPayload): BlockSnapshot {

@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { isPageSlotContext } from '@civitai/app-sdk/blocks';
+
 import { createLiveHost, decodeBlockTokenPayload } from '../src/testing.js';
 import type { PickerOverlayHandle } from '../src/testing.js';
 import type {
@@ -217,7 +219,21 @@ describe('createLiveHost — BLOCK_INIT', () => {
     expect(payload.blockId).toBe('block-abc');
     expect(payload.appId).toBe('app_xyz');
     expect(payload.blockInstanceId).toBe('page_apb_123');
-    expect(payload.viewer).toEqual({ id: 42, username: 'dev-mod', status: 'active' });
+    // EXACTLY `{ id, username, signedIn }` — two halves, two provenances (the
+    // full note is on `anonFallbackViewer` in `liveHost.ts`):
+    //  - NO `status` mirrors production TODAY. `/api/v1/blocks/me` DID return
+    //    `status: 'active'` above and it is deliberately dropped: the platform
+    //    withholds the viewer's moderation state from third-party iframes
+    //    (civitai #2521), so a live dev host that forwarded it would be more
+    //    generous than production and would let a block read a field it will
+    //    never get.
+    //  - `signedIn` runs AHEAD of production. It does not exist under
+    //    `src/components/AppBlocks/` on civitai/civitai `main`; it arrives with
+    //    civitai/civitai#3707 (OPEN, unmerged). Emitted so the field is
+    //    exercisable locally; `viewer !== null` is still the gate to ship.
+    // `toEqual` (not `toMatchObject`) is the assertion that can see the extra
+    // key.
+    expect(payload.viewer).toEqual({ id: 42, username: 'dev-mod', signedIn: true });
     expect(payload.context.slotId).toBe('app.page');
     expect(payload.token.raw).toBe(fakeJwt(DEFAULT_CLAIMS));
     expect(payload.token.scopes).toContain('ai:write:budgeted');
@@ -262,7 +278,59 @@ describe('createLiveHost — BLOCK_INIT', () => {
     const host = createLiveHost({ blockToken: fakeJwt(DEFAULT_CLAIMS), fetchImpl });
     uninstall = host.install();
     const payload = (await waitForMessage(inbound, 'BLOCK_INIT')) as unknown as BlockInitPayload;
-    expect(payload.viewer).toMatchObject({ id: 0 });
+    // The FALLBACK path must carry the same key set as the success path — an
+    // exact `toEqual`, not `toMatchObject({ id: 0 })`, which cannot see a
+    // missing `signedIn` or a smuggled `status`.
+    expect(payload.viewer).toEqual({ id: 0, username: 'dev-live', signedIn: true });
+  });
+
+  it('🔴 the DEFAULT page context is complete, and `slug` is not the blockId', async () => {
+    // `PageBlockHost.buildContext()` always sends slug/subPath/viewerUserId/
+    // viewerUsername/theme, so a `{ slotId }` stub would let a page author
+    // compile against fields the harness never delivers — and would no longer
+    // even narrow through `isPageSlotContext`.
+    //
+    // `slug` is a PLACEHOLDER: the block token carries no slug claim, so the
+    // live host cannot know it. It must NOT be filled from `decoded.blockId`
+    // (here 'block-abc') — a blockId is a different identifier in a different
+    // namespace, and a block that built a URL out of it would build a wrong one.
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url.endsWith('/api/v1/blocks/me')) return meOk({ id: 42, username: 'dev-mod' });
+      throw new Error(`unexpected fetch ${url}`);
+    }) as unknown as typeof fetch;
+    const host = createLiveHost({ blockToken: fakeJwt(DEFAULT_CLAIMS), fetchImpl, theme: 'light' });
+    uninstall = host.install();
+    const payload = (await waitForMessage(inbound, 'BLOCK_INIT')) as unknown as BlockInitPayload;
+
+    const ctx = payload.context;
+    expect(isPageSlotContext(ctx)).toBe(true);
+    if (!isPageSlotContext(ctx)) throw new Error('expected a page slot context');
+    expect(ctx.slug).not.toBe('block-abc');
+    expect(ctx.slug).toBe('live-dev-app');
+    expect(ctx.subPath).toBe('');
+    expect(ctx.entityType).toBe('none');
+    expect(ctx.viewerUserId).toBe(42);
+    expect(ctx.viewerUsername).toBe('dev-mod');
+    expect(ctx.theme).toBe('light');
+  });
+
+  it('a caller-supplied context that omits `theme` still receives the host theme', async () => {
+    // Kills the mutant that drops the `hostContextWithTheme(...)` call: the
+    // DEFAULT context already carries `theme`, so only a caller-supplied one can
+    // observe the difference.
+    const fetchImpl = vi.fn(async () => meOk({ id: 42, username: 'dev-mod' })) as unknown as typeof fetch;
+    const host = createLiveHost({
+      blockToken: fakeJwt(DEFAULT_CLAIMS),
+      fetchImpl,
+      theme: 'light',
+      context: { slotId: 'app.page', slug: 'seed-explorer', subPath: 'compare/42', viewerUserId: 42 },
+    });
+    uninstall = host.install();
+    const payload = (await waitForMessage(inbound, 'BLOCK_INIT')) as unknown as BlockInitPayload;
+    const ctx = payload.context;
+    if (!isPageSlotContext(ctx)) throw new Error('expected a page slot context');
+    expect(ctx.theme).toBe('light');
+    expect(ctx.slug).toBe('seed-explorer');
   });
 
   it('uses an explicit viewer override without fetching /blocks/me', async () => {

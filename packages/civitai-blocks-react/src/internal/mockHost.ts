@@ -65,6 +65,8 @@ import {
   type WrappedToken,
 } from '@civitai/app-sdk/blocks';
 
+import { hostContextWithTheme } from './transport.js';
+
 /**
  * The block's preferred Buzz pool. On a `textToImage` {@link WorkflowBody} it's
  * the top-level `accountType`; on a `customComfy` RECIPE body it lives under
@@ -532,9 +534,15 @@ export interface MockHostOptions {
   /** Host theme delivered in `BLOCK_INIT` + context. Default `'dark'`. */
   theme?: Theme;
   /**
-   * The `BLOCK_INIT` context. Defaults to a PAGE context
-   * (`{ slotId: 'app.page' }`). Pass a `ModelSlotContext` for a model-slot
-   * block. `theme` is merged in from {@link MockHostOptions.theme}.
+   * The `BLOCK_INIT` context. Defaults to a COMPLETE `PageSlotContext` —
+   * `{ slotId, entityType, slug, subPath, viewerUserId, viewerUsername, theme }`
+   * — mirroring what `PageBlockHost.buildContext()` really sends, not a
+   * `{ slotId }` stub. Pass a `ModelSlotContext` for a model-slot block.
+   *
+   * `theme` is layered in from {@link MockHostOptions.theme} for every slot whose
+   * shape carries the field, so a context you pass WITHOUT a `theme` key still
+   * gets the harness theme (and still follows a later `setTheme`). Only a slot
+   * this SDK has no shape for is left alone — there is no `theme` field to set.
    */
   context?: BlockContext;
   /**
@@ -710,7 +718,44 @@ const DEFAULT_GENERATION_SOURCE_UPLOAD: BlockGenerationSourceImageInfo = {
   height: 1024,
 };
 
-const DEFAULT_VIEWER: ViewerInfo = { id: 2, username: 'dev-viewer', status: 'active' };
+/**
+ * The `BLOCK_INIT.viewer` the mock host sends when {@link MockHostOptions.viewer}
+ * is omitted — EXACTLY `{ id, username, signedIn }`.
+ *
+ * 🔴 The two halves of that key set have DIFFERENT provenance. One mirrors
+ * production; one runs ahead of it. Do not read this default as "byte-for-byte
+ * what the real host puts on the wire" — today it is not.
+ *
+ *  - NO `status` — TRUE OF PRODUCTION NOW. On civitai/civitai `main`,
+ *    `projectBlockInitViewer` builds `{ id, username }` and nothing else, and
+ *    `src/components/AppBlocks/__tests__/projectBlockInit.test.ts` pins
+ *    `Object.keys(viewer).sort()` as exactly `['id', 'username']`. The platform
+ *    deliberately withholds the viewer's coarse ban/mute moderation state from
+ *    third-party iframes (civitai #2521) — `ViewerInfo.status` is `@deprecated`
+ *    for precisely that reason. A fake that sends it lets a block read a field
+ *    production never provides and still pass every local test: the same
+ *    both-wrong-blind shape as the over-shared `ModelSlotContext` fields this
+ *    release removed from the seven starter harnesses. The authoritative
+ *    self-read (`GET_VIEWER` → {@link DEFAULT_VIEWER_RESULT}) is where `status`
+ *    belongs, and it still carries it.
+ *  - WITH `signedIn: true` — NOT IN PRODUCTION YET. `signedIn` appears ZERO
+ *    times under `src/components/AppBlocks/` on civitai/civitai `main`; it
+ *    arrives with civitai/civitai#3707, which is OPEN and unmerged and is what
+ *    moves the host's pinned key set to `['id', 'signedIn', 'username']`. The
+ *    mock emits it AHEAD of the host on purpose — the field only means anything
+ *    if a dev can exercise it locally, and a mock that omits it hands every
+ *    local run `undefined` for the field this release tells authors to migrate
+ *    TO. The cost of running ahead (a block that gates on `viewer?.signedIn`
+ *    passing here and rendering its anonymous branch in production) is carried
+ *    by {@link ViewerInfo.signedIn}, which documents `viewer !== null` as the
+ *    gate to SHIP today.
+ *
+ * 🔴 IF #3707 IS ABANDONED: drop `signedIn` from this default, from
+ * `createLiveHost`'s `anonFallbackViewer`, and from the two key-set fences in
+ * `test/blockInitV2.test.ts` — in one change. Leaving it would make both dev
+ * hosts permanently more generous than the host they exist to imitate.
+ */
+const DEFAULT_VIEWER: ViewerInfo = { id: 2, username: 'dev-viewer', signedIn: true };
 
 const INSUFFICIENT_BUZZ_ERROR = 'Insufficient Buzz to run this generation.';
 const GENERIC_GEN_ERROR = 'Generation failed (simulated).';
@@ -2352,8 +2397,22 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     // Merge theme into the init context. `currentTheme` (not the install-time
     // `theme`) so a `setTheme` before install, or a re-install after one, seeds
     // BLOCK_INIT with the value the harness last chose.
-    const baseContext: BlockContext = options.context ?? { slotId: 'app.page' };
-    const context: BlockContext = { ...baseContext, theme: currentTheme };
+    // The default is a FAITHFUL `PageSlotContext`, not a `{ slotId }` stub: the
+    // real `PageBlockHost.buildContext()` always sends slug/subPath/viewerUserId/
+    // theme, so a fake that omits them lets a block compile against fields the
+    // host really does provide while the harness silently proves nothing about
+    // them — and, because the strengthened `isPageSlotContext` checks the fields
+    // it asserts, a `{ slotId }` stub would not even narrow to a page context.
+    const baseContext: BlockContext = options.context ?? {
+      slotId: 'app.page',
+      entityType: 'none',
+      slug: 'mock-app',
+      subPath: '',
+      viewerUserId: viewer?.id ?? null,
+      viewerUsername: viewer?.username ?? null,
+      theme: currentTheme,
+    };
+    const context: BlockContext = hostContextWithTheme(baseContext, currentTheme);
 
     // Color-domain maturity (civitai #2670). Resolve the ceiling by precedence:
     // explicit maxBrowsingLevel > maturity convenience > domain-derived. Only

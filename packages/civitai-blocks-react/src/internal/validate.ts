@@ -64,11 +64,57 @@ export function isValidBlockInitPayload(p: unknown): p is BlockInitPayload {
   if (!isObject(p.settings.publisherSettings)) return false;
   if (!isObject(p.settings.userSettings)) return false;
 
-  // `null` for anonymous viewers; otherwise { id, username, status? }.
+  // `null` for anonymous viewers; otherwise { id, username, status?, signedIn? }.
+  //
+  // 🔴 The object-or-null SHAPE here is a compatibility floor, not a preference.
+  // This exact guard is compiled into every already-built, already-deployed block
+  // bundle, so a host that "thinned" `viewer` to a boolean would be rejected by
+  // the DEPLOYED copy of this function — and a rejected BLOCK_INIT is retried by
+  // the host for ~10s and then abandoned (see the note on `signedIn` below), so
+  // those blocks never become ready.
+  // `id`/`username` are @deprecated on `ViewerInfo` and the platform is migrating
+  // blocks to the scope-gated `GET_VIEWER` read, but the wire shape stays.
   if (p.viewer !== null) {
     if (!isObject(p.viewer)) return false;
     if (typeof p.viewer.id !== 'number') return false;
     if (p.viewer.username !== null && typeof p.viewer.username !== 'string') return false;
+    // `signedIn` is ADDITIVE + OPTIONAL: a host predating it omits the field
+    // (still valid — `viewer !== null` already means signed in), and when a host
+    // does send it, it is the literal `true`.
+    //
+    // 🔴 DELIBERATELY NOT REJECTED WHEN MALFORMED. A `signedIn` that is not
+    // `true` on a non-null viewer is a contradiction, but failing the WHOLE
+    // payload over it is the wrong-sized response: `isValidBlockInitPayload` is
+    // the gate on the entire init, so returning false here costs the block every
+    // field — token, context, settings, theme — over one advisory flag. The host
+    // re-posts BLOCK_INIT every 400ms (`INIT_RETRY_INTERVAL_MS`) until
+    // BLOCK_READY, ~25 times per `BLOCK_READY_TIMEOUT_MS` (10s) window. Those
+    // re-posts carry the FRESHEST payload rather than a byte-identical copy
+    // (both hosts re-point `buildInitPayloadRef` every render) — but the
+    // freshness varies query-resolved VALUES, never the shape this guard trips
+    // on, so a rejecting validator still rejects every one of them. Then, per
+    // surface: the model slot (`IframeHost`) has no auto-retry and renders
+    // `null`; the page host (`PageBlockHost`) auto-retries the entire handshake
+    // twice more (`MAX_AUTO_RETRIES = 2`, backoff [2s, 5s]) — a fresh controller
+    // and a fresh 10s window each time, ~37s total — and then shows its terminal
+    // fallback. That is a broken block, where ignoring the flag is merely a
+    // degraded one: `viewer?.signedIn === true` reads false, the block shows a
+    // sign-in CTA to someone already signed in, and the documented
+    // `viewer !== null` fallback still answers correctly. Same principle the
+    // `isValidTokenRefreshResponse` comment below spells out — do not turn a
+    // degraded path into a broken one.
+    //
+    // It is also unreachable from the real host today — but NOT for the reason
+    // an earlier revision of this comment gave. It is not that
+    // `projectBlockInitViewer` writes a literal `true`: on civitai/civitai
+    // `main` that function does not write `signedIn` AT ALL (the identifier
+    // appears zero times under `src/components/AppBlocks/`, and the host's
+    // contract test pins the viewer key set as exactly `['id', 'username']`).
+    // The host that writes the literal `true` is civitai/civitai#3707, which is
+    // OPEN and unmerged. Either way there is no malformed value to reject today,
+    // so the strict version bought nothing and cost a fleet-wide brick the day
+    // that stopped holding — e.g. a future host writing `signedIn: !!user`,
+    // which is `false` exactly when `viewer` should have been `null`.
     // `status` is OPTIONAL. The platform deliberately omits the viewer's coarse
     // ban/mute moderation state from BLOCK_INIT to third-party iframes for
     // privacy (civitai #2521). When present it must be one of the three values;
@@ -189,8 +235,30 @@ export function isValidThemeChange(p: unknown): p is { theme: Theme } {
 }
 
 /**
- * Reply to a block-initiated `REQUEST_TOKEN`. `requestId` is optional — the
- * platform's IframeHost.tsx echoes it back when supplied, omits it otherwise.
+ * Reply to a block-initiated `REQUEST_TOKEN`.
+ *
+ * 🔴 DELIBERATELY LOOSER THAN THE TYPE. `ParentToBlockMessage` declares
+ * `payload: { requestId: string; token: WrappedToken }` — `requestId` REQUIRED
+ * as of v2 — but this guard still accepts a payload without it. That asymmetry
+ * is the whole back-compat story for a NEW SDK against an OLD host, so do not
+ * "fix" it by tightening:
+ *
+ *  - A pre-v2 host echoes `requestId` only via `...(requestId ? {requestId} : {})`,
+ *    so it OMITS the field whenever the block sent none — and also when the block
+ *    sent an empty string, because that spread is a truthiness test.
+ *  - The transport correlates a reply to a pending request STRICTLY by
+ *    `requestId`, so such a reply has never resolved `useBlockToken().refresh()`;
+ *    it only ever worked through the side effect that applies the token to the
+ *    snapshot regardless of correlation (`iframeTransport.handleMessage`).
+ *  - Requiring `requestId` here would DROP the message before that side effect
+ *    runs. The block would then lose the token update it currently still gets,
+ *    on top of the `refresh()` rejection it already gets — converting a degraded
+ *    path into a broken one, on the exact hosts that need the tolerance.
+ *
+ * So: the TYPE is a contract on the host (enforced by the host's own tests); the
+ * GUARD is a defence against the wire, and stays permissive. `requestId` is
+ * still shape-checked when present — a non-string cannot masquerade as a
+ * correlation id.
  */
 export function isValidTokenRefreshResponse(
   p: unknown,

@@ -27,7 +27,7 @@ your block app and the SDK share a single React tree.
 import { useRef } from 'react';
 import { useBlockContext, useBlockResize, useBuzzWorkflow } from '@civitai/blocks-react';
 import { Button } from '@civitai/blocks-react/ui';
-import type { ModelSlotContext } from '@civitai/app-sdk/blocks';
+import { isModelSlotContext } from '@civitai/app-sdk/blocks';
 
 export function App() {
   const { ready, context, viewer, theme } = useBlockContext();
@@ -36,21 +36,22 @@ export function App() {
   useBlockResize(rootRef);                 // host fits the iframe to content
 
   if (!ready) return <div ref={rootRef}>Loading…</div>;
-  const model = context as ModelSlotContext;
+  // `context` is a union keyed on slotId — narrow with the guard, not a cast.
+  if (!isModelSlotContext(context)) return <div ref={rootRef}>Wrong slot.</div>;
 
   return (
     // GOTCHA #60: set data-theme on YOUR OWN root — the host can't reach into
     // the iframe to set it. Without this any [data-theme="dark"] CSS is dormant.
     <div ref={rootRef} data-theme={theme}>
-      <p>Block for model {model.modelName} ({viewer?.username ?? 'anon'})</p>
+      <p>Block for model {context.modelName} ({viewer ? 'signed in' : 'anon'})</p>
       {/* `/ui` Button — themed by the data-theme above; `loading` disables + shows a spinner */}
       <Button
         loading={status === 'submitting' || status === 'polling'}
         onClick={() =>
           submit({
             kind: 'textToImage',
-            modelId: model.modelId,
-            modelVersionId: model.modelVersionId,
+            modelId: context.modelId,
+            modelVersionId: context.modelVersionId,
             params: { prompt: 'a cat' },
           })
         }
