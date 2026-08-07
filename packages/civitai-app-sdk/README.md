@@ -102,7 +102,22 @@ interface BlockInitPayload {
 | `defineBlock({ manifest })` | Validates a `BlockManifestV1` (subset of the server checks) and returns it. Call at module scope so authoring mistakes throw before mount. Throws `BlockManifestError` (has a `.field` dot-path). |
 | `BLOCK_SCOPES` / `BLOCK_SCOPE_PATTERN` | The 15 known block scope strings (the authoritative enum `defineBlock` validates against) + the `domain:verb:target` format-helper regex. A scope is valid only if it's a member of `BLOCK_SCOPES`, matching the [canonical schema](https://civitai.com/schemas/app-block/v1.json). |
 | `isMessage(data, type)` | Discriminator-only message narrowing (see above). |
-| types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
+| types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `WorkflowBodyCustomComfy` (+ its two arms `WorkflowBodyCustomComfyRecipe` / `WorkflowBodyCustomComfyInline`, and `InlineComfyNode`), `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
+
+`WorkflowBody`'s `customComfy` member is a discriminated union on `mode`, mirroring
+the host's `blockCustomComfyMemberSchema`. Narrow on the VALUE (`body.mode === 'inline'`),
+never on the presence of a `mode` key — the recipe arm may carry `mode: 'recipe'` as an
+own key:
+
+- **`WorkflowBodyCustomComfyRecipe`** (the default; `mode` omitted or `'recipe'`) — names a
+  server-registered, code-reviewed recipe. A body written before the inline arm existed
+  omits `mode` entirely and still lands here, unchanged.
+- **`WorkflowBodyCustomComfyInline`** (`mode: 'inline'`) — the block ships the ComfyUI graph
+  itself as `workflow`, with a declared `resources` AIR manifest and a `maxBuzz` ceiling
+  that is **also the step timeout in seconds**. Server-side this arm is **app-developer-only
+  and page-token-only**, and code review is replaced by three fail-closed gates (AIR
+  containment, entitlement, and a moderation sweep over every string leaf in the graph). A
+  registered recipe remains the way to reach every viewer.
 
 ### `defineBlock` validator rules
 
