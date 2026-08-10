@@ -34,6 +34,30 @@ developer is looking.
 
 `@civitai/blocks-react`
 
+- **New `useConsentUnavailable()` hook** — the typed consumption path, following
+  the house pattern for an unsolicited host push. It returns
+  `{ refusal, reset }`, where `refusal` is a `ConsentUnavailablePayload | null`.
+  Without it the only public route was
+  `getTransport().onMessage('CONSENT_UNAVAILABLE', (p: unknown) => …)` plus a
+  hand-written `as ConsentUnavailablePayload` cast — an UNCHECKED cast, so the
+  message was *nameable* but not safely *consumable*, and a payload shape change
+  would compile straight through it in every block. The hook stores the payload
+  unconditionally (no `scopes.length` gate — see above) and unsubscribes on
+  unmount. `ConsentUnavailablePayload` is re-exported here so a React consumer
+  needs only one import.
+- 🔴 **`requestConsent()` MUST be called with `scopes` for a refusal to arrive.**
+  The argument is optional in the signature and genuinely optional for the GRANT
+  path, but `resolveUngrantableConsentNotice` returns "no notice" whenever the
+  hint is absent or not an array — in the real host and in both dev hosts. A
+  block that calls `requestConsent()` bare therefore gets silence, not a
+  refusal. Now documented on the hook, in `useRequestConsent`'s docstring, and
+  in the README.
+- The dev `<Harness>` consent readout is now THREE-state
+  (`granted` / `withheld` / `ungrantable`, plus `granted+ungrantable`). It was a
+  boolean derived from `consentGranted` alone, so `?consent=ungrantable` — which
+  leaves that flag undefined — rendered **withheld**, i.e. *"not granted yet,
+  try again"*: the exact message this whole change exists to replace, shown next
+  to a block correctly reporting the refusal.
 - `isValidConsentUnavailable` + its `payloadValidatorFor` entry. The mapping is
   the load-bearing half — that switch's `default:` arm returns `null` (a
   STRUCTURAL PASS), so a guard written without the case leaves the push

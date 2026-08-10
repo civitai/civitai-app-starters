@@ -502,40 +502,80 @@ needs `ai:write:budgeted` but the viewer hasn't granted it). Fire-and-forget —
 on grant the host pushes a new token; observe `useBlockToken().scopes` and retry.
 
 ```tsx
+import { useRequestConsent } from '@civitai/blocks-react';
+
 const { requestConsent } = useRequestConsent();
 requestConsent({ scopes: ['ai:write:budgeted', 'buzz:read:self'] });
 ```
 
-**When consent can never be granted.** Some environments withhold a scope at
-mint (a dev-tunnel preview token, a surface that carries no money scope), so no
-consent round-trip can ever add it. The host then pushes an uncorrelated
-`CONSENT_UNAVAILABLE` message — it is *not* a reply, because `REQUEST_CONSENT`
-carries no `requestId`. Subscribe to it and stop telling the user to retry:
+🔴 **Always pass `scopes` — it is optional in the signature but a precondition
+for the refusal path below.** The host grants the missing set it computed at
+mint, so a bare `requestConsent()` still opens the consent dialog. But
+`CONSENT_UNAVAILABLE` is computed *from the hint*: with no explicit scope proven
+un-grantable, the host cannot tell "can never be granted" from "the viewer
+hasn't confirmed yet", so it stays silent rather than guess. A block that calls
+`requestConsent()` bare therefore **never** receives a refusal — not in `pnpm
+dev`, not in production — and looks to its author like the message is broken.
+
+### `useConsentUnavailable()`
+
+Some environments withhold a scope at mint (a dev-tunnel preview token, a surface
+that carries no money scope), so no consent round-trip can ever add it. The host
+then pushes an uncorrelated `CONSENT_UNAVAILABLE` — *not* a reply, because
+`REQUEST_CONSENT` carries no `requestId`. Consume it and stop telling the user to
+retry something that can't succeed:
 
 ```tsx
+import { useConsentUnavailable, useRequestConsent } from '@civitai/blocks-react';
+
 function ConsentAwareGenerate() {
-  const [refused, setRefused] = useState(false);
-  useEffect(
-    () =>
-      getTransport().onMessage('CONSENT_UNAVAILABLE', (payload) => {
-        const { scopes } = payload as ConsentUnavailablePayload;
-        // 🔴 `scopes` can legitimately be EMPTY — the host names only scopes in
-        // the public vocabulary, and the REFUSAL is the signal. Branching on
-        // `scopes.length` here would silently drop the message you subscribed
-        // for. Use the names for copy, never as the trigger.
-        setRefused(true);
-        console.info('permission unavailable', scopes);
-      }),
-    []
-  );
-  return refused ? <p>Not available here.</p> : <GenerateButton />;
+  const { requestConsent } = useRequestConsent();
+  const { refusal, reset } = useConsentUnavailable();
+
+  // 🔴 Branch on `refusal !== null`, NEVER on `refusal.scopes.length`. The host
+  // refuses on its own unfiltered set but names only scopes in the public
+  // vocabulary, so `scopes: []` is a legitimate refusal — gating on the length
+  // silently drops the very message you subscribed for. Use the names for copy.
+  if (refusal) {
+    return (
+      <div>
+        <p>Generating isn't available on this page.</p>
+        <button onClick={reset}>Try again</button>
+      </div>
+    );
+  }
+  // 🔴 `scopes` is REQUIRED for a refusal to ever arrive — see above.
+  return <button onClick={() => requestConsent({ scopes: ['ai:write:budgeted'] })}>Generate</button>;
 }
 ```
 
-To exercise that handler locally, run the mock host with
+`refusal` holds the latest `ConsentUnavailablePayload` (`{ reason, scopes }`) or
+`null`; `reset()` clears it, since a refusal is scoped to the scopes that were
+asked for and shouldn't latch for the life of the block. Against a host that
+never sends the message the hook simply stays `null` — nothing awaits it, so
+there is no timeout to hit.
+
+Without the hook (a non-React consumer, or one wiring the transport directly),
+the same push is available untyped — note the explicit type import, which the
+cast needs and which the hook makes unnecessary:
+
+```tsx
+import { getTransport } from '@civitai/blocks-react';
+import type { ConsentUnavailablePayload } from '@civitai/app-sdk/blocks';
+
+const unsubscribe = getTransport().onMessage('CONSENT_UNAVAILABLE', (payload) => {
+  // `onMessage` hands you `unknown`; this cast is UNCHECKED, which is why
+  // `useConsentUnavailable()` is the preferred path.
+  const { reason, scopes } = payload as ConsentUnavailablePayload;
+  console.info('permission unavailable', reason, scopes);
+});
+```
+
+To exercise the refusal locally, run the mock host with
 `createMockHost({ consentGrantable: false })`, flip it live with
 `host.setScenario({ consentGrantable: false })`, or append `?consent=ungrantable`
-to the dev harness URL. `dev:live` emits it too — live mode can grant nothing, so
+to the dev harness URL — the `<Harness>` chrome then reads `consent=ungrantable`
+rather than `withheld`. `dev:live` emits it too: live mode can grant nothing, so
 any request for a scope your dev token lacks produces one.
 
 ### `useDomainMaturity()`

@@ -271,11 +271,25 @@ export interface SharedStorageItemWire {
 /**
  * Why a `CONSENT_UNAVAILABLE` push was sent.
  *
- * A UNION with one member on purpose, not a bare `'ungrantable'` literal: the
- * host distinguishes several no-grant outcomes internally and only ONE of them
- * reaches the block today. Typing it as a union means a consumer that
- * `switch`es on `reason` keeps compiling when a second reason ships, and a
- * consumer that compares against a specific literal is not silently wrong.
+ * A NAMED ALIAS for the single literal `'ungrantable'` — and it is exactly that,
+ * a bare literal type, not a wider `string` and not (yet) a multi-member union.
+ * `expectTypeOf<ConsentUnavailableReason>().toEqualTypeOf<'ungrantable'>()` in
+ * `test/blocks/consent-unavailable.test-d.ts` pins that.
+ *
+ * WHY THE ALIAS EARNS ITS KEEP, given it is currently just the literal:
+ *  - It gives the value a name consumers can spell in their own signatures
+ *    (`function refusalCopy(reason: ConsentUnavailableReason)`) instead of
+ *    repeating a string literal at every call site, and it is the ONE place a
+ *    future member is added.
+ *  - It is deliberately NOT `string`. `string` would leave a consumer nothing to
+ *    narrow on and no compile-time signal at all when the vocabulary changes.
+ *
+ * 🔴 AND IT DOES NOT MAKE WIDENING SOURCE-COMPATIBLE — do not read it that way.
+ * Adding a second member is a BREAKING change for any consumer with an
+ * exhaustive `switch` (or a `never` default arm): those stop compiling, on
+ * purpose, which is the whole value of a literal union and the reason it is
+ * preferred to `string` here. Ship a second reason as a documented breaking
+ * change, not as a "safe additive" one.
  *
  * `'ungrantable'` — the requested scope was clamped/withheld at mint, so no
  * consent round-trip in THIS environment can ever add it. Distinct from "the
