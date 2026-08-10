@@ -19,6 +19,25 @@
  *     the runner injects `declare const X: any;` + `type X = any;` for each and
  *     re-checks. A genuine API error (wrong args, missing export, bad shape) is
  *     a different code and still fails.
+ *
+ * 🔴 THE `type X = any` SHIM USED TO SWALLOW A WHOLE CLASS OF DOC BUG, AND THIS
+ * IS THE HOLE IT LEFT. The auto-import map was built from VALUE exports only
+ * (`SymbolFlags.Value`), so a TYPE-only export — every `interface` / `type` in
+ * the SDK, e.g. `ConsentUnavailablePayload` — could never resolve to a real
+ * import and always fell through to `type X = any`. A snippet writing
+ * `payload as SomeType` therefore PASSED whether or not `SomeType` was imported,
+ * and passed EVEN IF NO SUCH TYPE EXISTED: substituting a deliberately bogus
+ * `ConsentUnavailablePayloadDOESNOTEXIST` produced a clean `43 passed / 0
+ * failed`. A reader would reasonably cite this gate as proof the snippet
+ * compiles; it proved only that the runner had shimmed the name away.
+ *
+ * A TYPE export map is now built alongside the value map, and a missing name
+ * that resolves in it gets a REAL `import type { X } from '<module>'` instead of
+ * a shim — so a type that does not exist, or one the doc forgot to import from a
+ * subpath it never mentions, now FAILS. Only a name in NEITHER map falls back to
+ * `any` (genuine free identifiers like `modelId`, and types local to the doc's
+ * own narrative). Regression-tested by `scripts/test-readme-snippet-gate.mjs`,
+ * which is the negative control: it asserts a bogus type name FAILS.
  *   - Top-level `await` and hooks-called-as-statements: each snippet body is
  *     wrapped in an `async` function.
  *   - Unused locals/params (relaxed compiler flags).
@@ -69,17 +88,29 @@ const ENTRYPOINTS = [
 ];
 
 /**
- * Build a `identifier -> import-module` map of every VALUE export across the
- * published entrypoints, using the TypeScript compiler API (resolves nested
- * `export * from` re-exports that a regex can't). When a snippet references a
- * known SDK export it didn't import, we inject the real import — so even a
- * one-line per-hook fragment is checked against the genuine type, not `any`.
+ * Build TWO `identifier -> import-module` maps across the published
+ * entrypoints, using the TypeScript compiler API (resolves nested
+ * `export * from` re-exports that a regex can't):
+ *
+ *   `values` — exports usable in VALUE position (functions, consts, classes,
+ *              enums). Injected as `import { X } from '…'`.
+ *   `types`  — exports usable ONLY in TYPE position (`interface`, `type`).
+ *              Injected as `import type { X } from '…'`.
+ *
+ * When a snippet references a known SDK export it didn't import, we inject the
+ * real import — so even a one-line per-hook fragment is checked against the
+ * genuine type, not `any`. The `types` map is what makes a missing/nonexistent
+ * TYPE name a failure instead of a silent `type X = any` shim (see the header).
+ *
+ * A symbol carrying BOTH flags (a class, an enum) lands in `values` only —
+ * a plain value import covers both positions.
  *
  * First-wins on collisions (entry order above), so a bare `@civitai/app-sdk`
  * import is preferred over a subpath.
  */
 function buildExportMap() {
   const map = new Map();
+  const typeMap = new Map();
   let ts;
   try {
     const req = createRequire(join(SDK_PKG, 'package.json'));
@@ -87,7 +118,7 @@ function buildExportMap() {
   } catch {
     // No local typescript — fall back to no auto-import (snippets still get the
     // `any`-shim path, so the runner degrades gracefully rather than crashing).
-    return map;
+    return { values: map, types: typeMap };
   }
   const opts = {
     moduleResolution: ts.ModuleResolutionKind.Bundler,
@@ -116,14 +147,24 @@ function buildExportMap() {
           resolved = exp;
         }
       }
-      // Value exports only (a pure type can be referenced without an import in
-      // many positions, and importing a type as a value would error).
-      if ((resolved.flags & ts.SymbolFlags.Value) === 0) continue;
       const name = exp.getName();
-      if (!map.has(name)) map.set(name, module);
+      if ((resolved.flags & ts.SymbolFlags.Value) !== 0) {
+        // Usable in value position — a plain `import { X }` covers both
+        // positions, so a class/enum never needs a `import type` entry too.
+        if (!map.has(name)) map.set(name, module);
+        continue;
+      }
+      // TYPE-ONLY export (`interface` / `type`). Importing it as a VALUE would
+      // error, so it gets its own map and an `import type { X }` injection.
+      // `SymbolFlags.Type` alone is too narrow here: a type alias resolves with
+      // `TypeAlias`, an interface with `Interface`, so test the composite.
+      const TYPEISH =
+        ts.SymbolFlags.Type | ts.SymbolFlags.TypeAlias | ts.SymbolFlags.Interface;
+      if ((resolved.flags & TYPEISH) === 0) continue;
+      if (!typeMap.has(name)) typeMap.set(name, module);
     }
   }
-  return map;
+  return { values: map, types: typeMap };
 }
 
 // Snippet temp dirs live INSIDE the blocks-react package so Node-style module
@@ -341,11 +382,16 @@ function hardErrorLines(out) {
     });
 }
 
-/** Render `import { a, b } from 'mod';` lines from a name→module map. */
-function renderAutoImports(autoByModule) {
+/**
+ * Render `import { a, b } from 'mod';` lines from a name→module map.
+ * `kind: 'type'` renders `import type { … }` — required for a type-only export,
+ * which cannot legally be imported in value position.
+ */
+function renderAutoImports(autoByModule, kind = 'value') {
   const lines = [];
+  const keyword = kind === 'type' ? 'import type' : 'import';
   for (const [module, names] of autoByModule) {
-    lines.push(`import { ${[...names].join(', ')} } from '${module}';`);
+    lines.push(`${keyword} { ${[...names].join(', ')} } from '${module}';`);
   }
   return lines.join('\n');
 }
@@ -357,6 +403,8 @@ function checkBlock(block, exportMap) {
   // module -> Set<name> of SDK exports the snippet used but didn't import. We
   // inject the REAL import so the fragment is checked against the true type.
   const autoByModule = new Map();
+  // Same, for TYPE-ONLY exports — injected as `import type`.
+  const autoTypeByModule = new Map();
   // Names already imported in the snippet's own import block — never re-import
   // (would be a duplicate-identifier error).
   const alreadyImported = new Set(
@@ -376,7 +424,12 @@ function checkBlock(block, exportMap) {
       const declares = [...declared]
         .map((n) => `declare const ${n}: any;\ntype ${n} = any;`)
         .join('\n');
-      const autoImports = renderAutoImports(autoByModule);
+      const autoImports = [
+        renderAutoImports(autoByModule),
+        renderAutoImports(autoTypeByModule, 'type'),
+      ]
+        .filter(Boolean)
+        .join('\n');
       const src = buildSource({ imports, body }, { autoImports, declares });
       writeFileSync(join(dir, fileName), src);
       const { ok, out } = runTsc(dir);
@@ -386,10 +439,20 @@ function checkBlock(block, exportMap) {
       let added = false;
       for (const n of missing) {
         if (declared.has(n) || alreadyImported.has(n)) continue;
-        const mod = exportMap.get(n);
+        const mod = exportMap.values.get(n);
+        const typeMod = exportMap.types.get(n);
         if (mod) {
           if (!autoByModule.has(mod)) autoByModule.set(mod, new Set());
           const set = autoByModule.get(mod);
+          if (!set.has(n)) {
+            set.add(n);
+            added = true;
+          }
+        } else if (typeMod) {
+          // A TYPE-ONLY export: `import type`, never a `type X = any` shim —
+          // the shim is what let a nonexistent type name pass (see header).
+          if (!autoTypeByModule.has(typeMod)) autoTypeByModule.set(typeMod, new Set());
+          const set = autoTypeByModule.get(typeMod);
           if (!set.has(n)) {
             set.add(n);
             added = true;
@@ -425,7 +488,14 @@ function main() {
   }
 
   const exportMap = buildExportMap();
-  console.log(`Resolved ${exportMap.size} SDK value exports for auto-import.\n`);
+  // 🔴 Print BOTH counts. A zero on either side means that half of the
+  // auto-import resolution is wired to nothing and every name it should have
+  // covered is silently falling back to an `any` shim — which reads as a clean
+  // run. `scripts/test-readme-snippet-gate.mjs` is the negative control.
+  console.log(
+    `Resolved ${exportMap.values.size} SDK value exports and ${exportMap.types.size} ` +
+      `type-only exports for auto-import.\n`,
+  );
 
   let total = 0;
   let checked = 0;

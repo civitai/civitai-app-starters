@@ -234,6 +234,13 @@ jobs:
 
       - run: pnpm typecheck:readme
 
+      # Negative controls for the step above. The snippet runner used to shim
+      # every TYPE-only identifier to `any`, so it reported PASS for a snippet
+      # whose documented type it had never resolved — a green run that was a
+      # claim about the shim, not about the doc. This asserts the runner can go
+      # RED, and prints what it still does not cover.
+      - run: pnpm typecheck:readme:selftest
+
   starter:
     name: Starter
     runs-on: ubuntu-latest
