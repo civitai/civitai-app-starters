@@ -109,6 +109,52 @@ export interface HarnessProps extends MockHostOptions {
   showLog?: boolean;
 }
 
+/** The consent states the harness chrome can report. */
+type HarnessConsentLabel = 'granted' | 'withheld' | 'ungrantable' | 'granted+ungrantable';
+
+/**
+ * What the harness chrome's `consent=` readout says, from the TWO INDEPENDENT
+ * booleans that describe consent in the mock host.
+ *
+ * 🔴 THIS IS NOT A BOOLEAN, AND TREATING IT AS ONE IS THE BUG THIS SDK CHANGE
+ * EXISTS TO FIX. `consentGranted` says whether the token already carries the
+ * gated scope; `consentGrantable` says whether a consent round-trip could EVER
+ * add it here. `?consent=ungrantable` sets only the second one and leaves the
+ * first `undefined`, so a two-state `consentGranted ? 'granted' : 'withheld'`
+ * reports **withheld** — which reads as *"not granted yet, try again"*, the
+ * precise message `CONSENT_UNAVAILABLE` was added to replace. A developer
+ * exercising the new refusal path would then see their block correctly say
+ * "unavailable" while the harness chrome next to it said "withheld", and the
+ * chrome is the surface they trust to describe the fake host.
+ *
+ * All four combinations are named rather than collapsed. `granted+ungrantable`
+ * is a real, tested configuration (`createMockHost({ consentGranted: true,
+ * consentGrantable: false })`) and it behaves differently from both neighbours:
+ * a request for the already-granted scope stays SILENT (nothing is un-grantable
+ * about it), while a request for anything else is refused. Collapsing it into
+ * either `granted` or `ungrantable` mis-describes one of those two paths.
+ */
+function harnessConsentLabel(opts: {
+  consentGranted?: boolean;
+  consentGrantable?: boolean;
+}): HarnessConsentLabel {
+  // Mirrors `createMockHost`'s own default (`options.consentGrantable ?? true`):
+  // absent means "this host can grant", i.e. today's behaviour.
+  const grantable = opts.consentGrantable ?? true;
+  const granted = !!opts.consentGranted;
+  if (grantable) return granted ? 'granted' : 'withheld';
+  return granted ? 'granted+ungrantable' : 'ungrantable';
+}
+
+/**
+ * Chrome colour for the consent readout. An un-grantable host is the state a dev
+ * is least likely to have set on purpose (it can arrive from a URL toggle), so
+ * it is tinted amber rather than sharing the neutral accent of the other values.
+ */
+function consentColor(label: HarnessConsentLabel): string {
+  return label === 'ungrantable' || label === 'granted+ungrantable' ? '#e2c08d' : '#7fd9ff';
+}
+
 /**
  * Thin React wrapper that installs a {@link createMockHost} on mount (and tears
  * it down on unmount) so a block app renders against a fake civitai host for
@@ -161,7 +207,7 @@ export function Harness({
   const opts = optionsRef.current!;
   const anon = opts.viewer === null;
   const theme = opts.theme ?? 'dark';
-  const consent = opts.consentGranted ? 'granted' : 'withheld';
+  const consent = harnessConsentLabel(opts);
 
   return (
     <div data-harness="true" style={{ position: 'relative', width: '100vw', minHeight: '100dvh' }}>
@@ -185,7 +231,12 @@ export function Harness({
             <span style={{ color: '#5b626d' }}>·</span> viewer=
             <span style={{ color: '#7fd9ff' }}>{anon ? 'anon' : 'dev-viewer'}</span>{' '}
             <span style={{ color: '#5b626d' }}>·</span> consent=
-            <span style={{ color: '#7fd9ff' }}>{consent}</span>{' '}
+            {/* `data-harness-consent` carries the SAME string the chrome shows,
+                so a test can assert the exact state instead of substring-matching
+                body text — `ungrantable` is a substring of `granted+ungrantable`. */}
+            <span data-harness-consent={consent} style={{ color: consentColor(consent) }}>
+              {consent}
+            </span>{' '}
             <span style={{ color: '#5b626d' }}>·</span> theme=
             <span style={{ color: '#7fd9ff' }}>{theme}</span>{' '}
             <span style={{ color: '#5b626d' }}>·</span> outbound:
