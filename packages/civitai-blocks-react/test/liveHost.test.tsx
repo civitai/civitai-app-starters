@@ -639,6 +639,12 @@ describe('createLiveHost — token + non-forwarded messages', () => {
     install();
     await waitForMessage(inbound, 'BLOCK_INIT');
     const before = inbound.messages.length;
+    // NOTE (post-CONSENT_UNAVAILABLE): `DEFAULT_CLAIMS` ALREADY carries
+    // `ai:write:budgeted`, so this is the BENIGN re-request — the block asked
+    // for a scope it already holds. That is why nothing is pushed here, and it
+    // is the behaviour we want: a refusal rendered over a permission that works
+    // is worse than silence. The refusal path is covered below with a token that
+    // genuinely lacks the scope.
     post('REQUEST_CONSENT', { scopes: ['ai:write:budgeted'] });
     await new Promise((r) => setTimeout(r, 20));
     // No reply dispatched (can't grant), but a clear warning is logged.
@@ -646,6 +652,68 @@ describe('createLiveHost — token + non-forwarded messages', () => {
     const logged = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
     expect(logged).toMatch(/REQUEST_CONSENT/);
     expect(logged).toMatch(/civitai login --token/);
+  });
+
+  it('REQUEST_CONSENT for a scope the token LACKS pushes CONSENT_UNAVAILABLE', async () => {
+    // 🔴 Live mode can grant NOTHING — there is no consent UI to open and no way
+    // to re-mint a token with a scope it does not carry. So every request for a
+    // scope the token lacks is permanently un-grantable, and before this push the
+    // only trace was a `console.warn` in the DEV's devtools: the block's own UI
+    // went on telling the user to click Generate again. Emitting it here is what
+    // makes a refusal handler written against production reachable in
+    // `pnpm dev:live` at all.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const readOnly = fakeJwt({ ...DEFAULT_CLAIMS, scopes: ['user:read:self'], buzzBudget: undefined });
+    install({ token: readOnly });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('REQUEST_CONSENT', { scopes: ['ai:write:budgeted', 'buzz:read:self'] });
+    const payload = await waitForMessage(inbound, 'CONSENT_UNAVAILABLE');
+    expect(payload).toEqual({
+      reason: 'ungrantable',
+      scopes: ['ai:write:budgeted', 'buzz:read:self'],
+    });
+  });
+
+  it('🔴 REQUEST_CONSENT naming only UNKNOWN scopes still pushes, with scopes: []', async () => {
+    // The trap, at the live host. `notify` is decided on the UNFILTERED set, so
+    // an un-grantable scope outside the platform vocabulary still refuses out
+    // loud — only the NAMES are filtered, because the hint is untrusted block
+    // input and this payload is rendered by block UI.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const readOnly = fakeJwt({ ...DEFAULT_CLAIMS, scopes: ['user:read:self'], buzzBudget: undefined });
+    install({ token: readOnly });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('REQUEST_CONSENT', {
+      scopes: ['<img src=x onerror=alert(1)>', 'not:a:real:scope', 'A'.repeat(5000)],
+    });
+    const payload = await waitForMessage(inbound, 'CONSENT_UNAVAILABLE');
+    expect(payload).toEqual({ reason: 'ungrantable', scopes: [] });
+  });
+
+  it('REQUEST_CONSENT with NO scopes hint pushes nothing (still logs)', async () => {
+    // Without an explicit requested scope proven un-grantable there is no way to
+    // tell "already granted" from "clamped", so the host stays silent rather
+    // than guessing.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const readOnly = fakeJwt({ ...DEFAULT_CLAIMS, scopes: ['user:read:self'], buzzBudget: undefined });
+    install({ token: readOnly });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('REQUEST_CONSENT', {});
+    await new Promise((r) => setTimeout(r, 20));
+    expect(inbound.messages.filter((m) => m.type === 'CONSENT_UNAVAILABLE')).toHaveLength(0);
+    // The log still fires — it is unconditional and unchanged by this PR.
+    expect(warnSpy.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(/REQUEST_CONSENT/);
+
+    // POSITIVE CONTROL for the zero above: the SAME host + SAME collector DOES
+    // deliver a CONSENT_UNAVAILABLE when the hint names an un-grantable scope,
+    // so the empty filter result is a real silence and not a probe wired to
+    // nothing.
+    post('REQUEST_CONSENT', { scopes: ['ai:write:budgeted'] });
+    const payload = await waitForMessage(inbound, 'CONSENT_UNAVAILABLE');
+    expect(payload).toEqual({ reason: 'ungrantable', scopes: ['ai:write:budgeted'] });
   });
 });
 

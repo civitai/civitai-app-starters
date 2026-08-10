@@ -506,6 +506,38 @@ const { requestConsent } = useRequestConsent();
 requestConsent({ scopes: ['ai:write:budgeted', 'buzz:read:self'] });
 ```
 
+**When consent can never be granted.** Some environments withhold a scope at
+mint (a dev-tunnel preview token, a surface that carries no money scope), so no
+consent round-trip can ever add it. The host then pushes an uncorrelated
+`CONSENT_UNAVAILABLE` message — it is *not* a reply, because `REQUEST_CONSENT`
+carries no `requestId`. Subscribe to it and stop telling the user to retry:
+
+```tsx
+function ConsentAwareGenerate() {
+  const [refused, setRefused] = useState(false);
+  useEffect(
+    () =>
+      getTransport().onMessage('CONSENT_UNAVAILABLE', (payload) => {
+        const { scopes } = payload as ConsentUnavailablePayload;
+        // 🔴 `scopes` can legitimately be EMPTY — the host names only scopes in
+        // the public vocabulary, and the REFUSAL is the signal. Branching on
+        // `scopes.length` here would silently drop the message you subscribed
+        // for. Use the names for copy, never as the trigger.
+        setRefused(true);
+        console.info('permission unavailable', scopes);
+      }),
+    []
+  );
+  return refused ? <p>Not available here.</p> : <GenerateButton />;
+}
+```
+
+To exercise that handler locally, run the mock host with
+`createMockHost({ consentGrantable: false })`, flip it live with
+`host.setScenario({ consentGrantable: false })`, or append `?consent=ungrantable`
+to the dev harness URL. `dev:live` emits it too — live mode can grant nothing, so
+any request for a scope your dev token lacks produces one.
+
 ### `useDomainMaturity()`
 
 Read the surrounding color-domain's maturity ceiling (civitai #2670) so a block

@@ -235,6 +235,39 @@ export function isValidThemeChange(p: unknown): p is { theme: Theme } {
 }
 
 /**
+ * Host-pushed refusal of a `REQUEST_CONSENT` that can never be granted. No
+ * `requestId` field; the host is the initiator, exactly like `TOKEN_REFRESH`.
+ *
+ * 🔴 AN EMPTY `scopes` ARRAY IS VALID AND MUST PASS. The host decides to refuse
+ * on its unfiltered un-grantable set but puts only KNOWN block-scope names on
+ * the wire, so a request naming nothing the platform recognises produces a real
+ * refusal carrying `scopes: []`. A guard written as "must be a NON-EMPTY array
+ * of strings" — the obvious way to write it — would drop exactly that message,
+ * and drop it SILENTLY at the trust boundary, restoring the invisible dead end
+ * this whole message exists to remove. `validate.test.ts` pins the empty case
+ * for that reason.
+ *
+ * `reason` is checked as an ENUM rather than free text: it is a discriminator a
+ * block `switch`es on, so an arbitrary string would reach a consumer's default
+ * arm as an unhandled state. Dropping a malformed push is the safe side of the
+ * too-strict trap — nothing awaits this message, so the cost of a drop is at
+ * most a missed hint, never a hang.
+ *
+ * 🔴 A validator is only reachable once `payloadValidatorFor` maps the type to
+ * it — its `default:` arm returns `null`, a STRUCTURAL PASS.
+ */
+export function isValidConsentUnavailable(
+  p: unknown,
+): p is { reason: 'ungrantable'; scopes: string[] } {
+  if (!isObject(p)) return false;
+  if (p.reason !== 'ungrantable') return false;
+  if (!Array.isArray(p.scopes)) return false;
+  // Length is deliberately NOT checked — [] is a legitimate refusal.
+  if (!p.scopes.every((s) => typeof s === 'string')) return false;
+  return true;
+}
+
+/**
  * Reply to a block-initiated `REQUEST_TOKEN`.
  *
  * 🔴 DELIBERATELY LOOSER THAN THE TYPE. `ParentToBlockMessage` declares
@@ -1133,6 +1166,8 @@ export function payloadValidatorFor(
       return isValidTokenRefreshResponse;
     case 'THEME_CHANGE':
       return isValidThemeChange;
+    case 'CONSENT_UNAVAILABLE':
+      return isValidConsentUnavailable;
     case 'ESTIMATE_RESULT':
     case 'WORKFLOW_SUBMITTED':
     case 'WORKFLOW_STATUS':

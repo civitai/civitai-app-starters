@@ -10,6 +10,7 @@ import {
   isValidAppStorageSetResult,
   isValidBlockInitPayload,
   isValidBuzzBalanceResult,
+  isValidConsentUnavailable,
   isValidBuzzPurchaseResult,
   isValidCheckpointPickerResult,
   isValidImageUploadResult,
@@ -843,6 +844,9 @@ describe('payloadValidatorFor', () => {
     // would reach the snapshot UNVALIDATED — writing the validator and
     // forgetting the switch is the bug this line exists to catch.
     expect(payloadValidatorFor('THEME_CHANGE')).toBe(isValidThemeChange);
+    // Same reason, same trap: a CONSENT_UNAVAILABLE with no entry here hits the
+    // `default:` arm and reaches the block's push listener UNVALIDATED.
+    expect(payloadValidatorFor('CONSENT_UNAVAILABLE')).toBe(isValidConsentUnavailable);
     expect(payloadValidatorFor('ESTIMATE_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('WORKFLOW_SUBMITTED')).toBeTypeOf('function');
     expect(payloadValidatorFor('WORKFLOW_STATUS')).toBeTypeOf('function');
@@ -919,5 +923,60 @@ describe('isValidThemeChange', () => {
 
   it('ignores extra fields (a newer host may widen the payload)', () => {
     expect(isValidThemeChange({ theme: 'dark', requestId: 'r-1' })).toBe(true);
+  });
+});
+
+describe('isValidConsentUnavailable', () => {
+  it('accepts a refusal naming known scopes', () => {
+    expect(
+      isValidConsentUnavailable({ reason: 'ungrantable', scopes: ['ai:write:budgeted'] }),
+    ).toBe(true);
+  });
+
+  it('🔴 ACCEPTS an EMPTY scopes array — that is a real refusal, not a malformed one', () => {
+    // The single most important line in this file. The host refuses on its
+    // UNFILTERED un-grantable set but only puts KNOWN scope names on the wire,
+    // so a block asking for scopes outside the vocabulary gets `scopes: []`.
+    // Written the obvious way — "a NON-EMPTY array of strings" — this guard
+    // would DROP that message, silently, at the trust boundary, restoring the
+    // invisible dead end the whole message exists to remove.
+    expect(isValidConsentUnavailable({ reason: 'ungrantable', scopes: [] })).toBe(true);
+  });
+
+  it('rejects a non-object payload', () => {
+    expect(isValidConsentUnavailable(null)).toBe(false);
+    expect(isValidConsentUnavailable(undefined)).toBe(false);
+    expect(isValidConsentUnavailable('ungrantable')).toBe(false);
+    expect(isValidConsentUnavailable(1)).toBe(false);
+    expect(isValidConsentUnavailable([])).toBe(false);
+  });
+
+  it('rejects a missing / off-ladder reason (it is a discriminator a block switches on)', () => {
+    expect(isValidConsentUnavailable({ scopes: [] })).toBe(false);
+    expect(isValidConsentUnavailable({ reason: undefined, scopes: [] })).toBe(false);
+    expect(isValidConsentUnavailable({ reason: 'denied', scopes: [] })).toBe(false);
+    expect(isValidConsentUnavailable({ reason: 'Ungrantable', scopes: [] })).toBe(false);
+    expect(isValidConsentUnavailable({ reason: 1, scopes: [] })).toBe(false);
+  });
+
+  it('rejects a missing / non-array scopes field', () => {
+    expect(isValidConsentUnavailable({ reason: 'ungrantable' })).toBe(false);
+    expect(isValidConsentUnavailable({ reason: 'ungrantable', scopes: null })).toBe(false);
+    expect(isValidConsentUnavailable({ reason: 'ungrantable', scopes: 'a' })).toBe(false);
+    expect(isValidConsentUnavailable({ reason: 'ungrantable', scopes: {} })).toBe(false);
+  });
+
+  it('rejects a scopes array carrying a non-string (block UI renders these)', () => {
+    expect(isValidConsentUnavailable({ reason: 'ungrantable', scopes: ['a', 1] })).toBe(false);
+    expect(isValidConsentUnavailable({ reason: 'ungrantable', scopes: [null] })).toBe(false);
+    expect(isValidConsentUnavailable({ reason: 'ungrantable', scopes: [{ scope: 'a' }] })).toBe(
+      false,
+    );
+  });
+
+  it('ignores extra fields (a newer host may widen the payload)', () => {
+    expect(
+      isValidConsentUnavailable({ reason: 'ungrantable', scopes: [], detail: 'clamped at mint' }),
+    ).toBe(true);
   });
 });

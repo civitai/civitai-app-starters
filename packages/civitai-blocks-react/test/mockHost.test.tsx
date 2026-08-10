@@ -151,6 +151,161 @@ describe('createMockHost', () => {
     expect(tokenHook.result.current.buzzBudget).toBe(200);
   });
 
+  /**
+   * The refusal path. Until `consentGrantable` existed the mock ALWAYS granted,
+   * so a block author could not reach a `CONSENT_UNAVAILABLE` handler in
+   * `pnpm dev` at all — and "untestable locally" is exactly how the
+   * contradictory-messages bug this message fixes reached production.
+   *
+   * Subscribes through the REAL transport (`getTransport().onMessage`), which is
+   * how a block consumes it, so these assert delivery end-to-end and not just
+   * that the host called `dispatchToBlock`.
+   */
+  describe('consentGrantable: false — the un-grantable refusal', () => {
+    it('pushes CONSENT_UNAVAILABLE naming the refused scopes, and grants NO token', async () => {
+      uninstall = createMockHost({ consentGranted: false, consentGrantable: false }).install();
+      const tokenHook = renderHook(() => useBlockToken());
+      const consentHook = renderHook(() => useRequestConsent());
+      await waitFor(() => expect(tokenHook.result.current.raw).toBeTruthy());
+      const rawBefore = tokenHook.result.current.raw;
+
+      const received: unknown[] = [];
+      const off = getTransport().onMessage('CONSENT_UNAVAILABLE', (p) => received.push(p));
+
+      act(() => {
+        consentHook.result.current.requestConsent({
+          scopes: ['ai:write:budgeted', 'buzz:read:self'],
+        });
+      });
+
+      await waitFor(() => expect(received).toHaveLength(1));
+      expect(received[0]).toEqual({
+        reason: 'ungrantable',
+        scopes: ['ai:write:budgeted', 'buzz:read:self'],
+      });
+      // The refusal is not a grant: no scope appeared and no new token was minted.
+      expect(tokenHook.result.current.scopes).not.toContain('ai:write:budgeted');
+      expect(tokenHook.result.current.raw).toBe(rawBefore);
+      off();
+    });
+
+    it('🔴 still refuses — with scopes: [] — when every requested name is unknown', async () => {
+      // The trap. The un-grantable set is the TRIGGER as well as the payload, so
+      // filtering the trigger by the vocabulary would produce NO message here —
+      // the exact silent dead end this whole path removes. The refusal is the
+      // signal; the names are advisory.
+      uninstall = createMockHost({ consentGranted: false, consentGrantable: false }).install();
+      renderHook(() => useBlockContext());
+      const consentHook = renderHook(() => useRequestConsent());
+      await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+      const received: unknown[] = [];
+      const off = getTransport().onMessage('CONSENT_UNAVAILABLE', (p) => received.push(p));
+
+      act(() => {
+        consentHook.result.current.requestConsent({
+          scopes: ['<img src=x onerror=alert(1)>', 'not:a:real:scope', 'A'.repeat(5000)],
+        });
+      });
+
+      await waitFor(() => expect(received).toHaveLength(1));
+      expect(received[0]).toEqual({ reason: 'ungrantable', scopes: [] });
+      off();
+    });
+
+    it('stays SILENT when the block re-requests a scope it ALREADY holds', async () => {
+      // The benign case. A refusal here would render a permission-unavailable
+      // state over a permission that actually works.
+      uninstall = createMockHost({ consentGranted: true, consentGrantable: false }).install();
+      const tokenHook = renderHook(() => useBlockToken());
+      const consentHook = renderHook(() => useRequestConsent());
+      await waitFor(() =>
+        expect(tokenHook.result.current.scopes).toContain('ai:write:budgeted'),
+      );
+
+      const received: unknown[] = [];
+      const off = getTransport().onMessage('CONSENT_UNAVAILABLE', (p) => received.push(p));
+
+      act(() => {
+        consentHook.result.current.requestConsent({ scopes: ['ai:write:budgeted'] });
+      });
+      // POSITIVE CONTROL for the zero below: an un-grantable scope on the SAME
+      // host + SAME listener DOES arrive, so `received.length === 0` above is a
+      // real silence and not a listener wired to nothing.
+      act(() => {
+        consentHook.result.current.requestConsent({ scopes: ['apps:storage:read'] });
+      });
+      await waitFor(() => expect(received).toHaveLength(1));
+      expect(received[0]).toEqual({ reason: 'ungrantable', scopes: ['apps:storage:read'] });
+      off();
+    });
+
+    it('stays SILENT when REQUEST_CONSENT carries no scopes hint', async () => {
+      // With no hint the host cannot tell "already granted" from "clamped", and
+      // guessing is what produced the contradictory two-message screen.
+      uninstall = createMockHost({ consentGranted: false, consentGrantable: false }).install();
+      const consentHook = renderHook(() => useRequestConsent());
+      await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+      const received: unknown[] = [];
+      const off = getTransport().onMessage('CONSENT_UNAVAILABLE', (p) => received.push(p));
+
+      act(() => {
+        consentHook.result.current.requestConsent();
+      });
+      act(() => {
+        consentHook.result.current.requestConsent({});
+      });
+      // Positive control (same reason as above).
+      act(() => {
+        consentHook.result.current.requestConsent({ scopes: ['buzz:read:self'] });
+      });
+      await waitFor(() => expect(received).toHaveLength(1));
+      expect(received[0]).toEqual({ reason: 'ungrantable', scopes: ['buzz:read:self'] });
+      off();
+    });
+
+    it('DEFAULT (consentGrantable omitted) still grants and pushes NO refusal', async () => {
+      // Purely additive: the existing lazy-consent round-trip is untouched for
+      // every caller that does not opt in.
+      uninstall = createMockHost({ consentGranted: false }).install();
+      const tokenHook = renderHook(() => useBlockToken());
+      const consentHook = renderHook(() => useRequestConsent());
+      await waitFor(() => expect(tokenHook.result.current.raw).toBeTruthy());
+
+      const received: unknown[] = [];
+      const off = getTransport().onMessage('CONSENT_UNAVAILABLE', (p) => received.push(p));
+
+      act(() => {
+        consentHook.result.current.requestConsent({ scopes: ['ai:write:budgeted'] });
+      });
+      await waitFor(() => expect(tokenHook.result.current.scopes).toContain('ai:write:budgeted'));
+      expect(received).toEqual([]);
+      off();
+    });
+
+    it('setScenario({ consentGrantable: false }) flips it live, without re-installing', async () => {
+      // A harness UI has to be able to toggle "this preview can never grant"
+      // mid-session — re-installing would tear down the block's mounted state,
+      // which is the state you are trying to observe.
+      const host = createMockHost({ consentGranted: false });
+      uninstall = host.install();
+      const consentHook = renderHook(() => useRequestConsent());
+      await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+      const received: unknown[] = [];
+      const off = getTransport().onMessage('CONSENT_UNAVAILABLE', (p) => received.push(p));
+
+      host.setScenario({ consentGrantable: false });
+      act(() => {
+        consentHook.result.current.requestConsent({ scopes: ['apps:storage:write'] });
+      });
+      await waitFor(() => expect(received).toHaveLength(1));
+      expect(received[0]).toEqual({ reason: 'ungrantable', scopes: ['apps:storage:write'] });
+      off();
+    });
+  });
+
   it('uninstall restores window.parent and is idempotent', async () => {
     const before = window.parent;
     const host = createMockHost();

@@ -65,6 +65,7 @@ import {
   type WrappedToken,
 } from '@civitai/app-sdk/blocks';
 
+import { consentUnavailablePayload, resolveUngrantableConsentNotice } from './consent.js';
 import { hostContextWithTheme } from './transport.js';
 
 /**
@@ -320,6 +321,24 @@ export interface MockHostOptions {
    * grants it + pushes a `TOKEN_REFRESH` (the lazy-consent round-trip).
    */
   consentGranted?: boolean;
+  /**
+   * Whether this host can grant consent AT ALL. Default `true` — today's
+   * behaviour, where `REQUEST_CONSENT` grants the budgeted scope and pushes a
+   * `TOKEN_REFRESH`.
+   *
+   * Set `false` to model the real host's UN-GRANTABLE case: the scope was
+   * clamped/withheld at mint (a dev-tunnel preview token, a surface that carries
+   * no money scope), so no consent round-trip in this environment can ever add
+   * it. The mock then mirrors production and posts a fire-and-forget
+   * `CONSENT_UNAVAILABLE` push instead of granting — which is the ONLY way an
+   * author can exercise a refusal handler in `pnpm dev`. Until this knob existed
+   * the mock always granted, so that branch was unreachable locally and the
+   * developer-visible bug it guards against was untestable before production.
+   *
+   * Live-tunable via {@link MockHost.setScenario}; also settable from the dev
+   * harness URL as `?consent=ungrantable`.
+   */
+  consentGrantable?: boolean;
   /** How submits resolve. Default `'none'` (all succeed). */
   failMode?: MockHostFailMode;
   /**
@@ -595,6 +614,7 @@ export interface MockHostOptions {
  */
 export type MockHostScenarioPatch = Pick<
   MockHostOptions,
+  | 'consentGrantable'
   | 'failMode'
   | 'cost'
   | 'pollsUntilDone'
@@ -1051,6 +1071,11 @@ export function readMockHostUrlOptions(
 
   if (params.get('viewer') === 'anon') out.viewer = null;
   if (params.get('consent') === 'granted') out.consentGranted = true;
+  // `?consent=ungrantable` models the host that can NEVER grant (scope clamped
+  // at mint) — REQUEST_CONSENT then pushes CONSENT_UNAVAILABLE instead of a
+  // token. Deliberately a THIRD value rather than a second parameter: `granted`
+  // and `ungrantable` are mutually exclusive states of the same knob.
+  else if (params.get('consent') === 'ungrantable') out.consentGrantable = false;
 
   const fail = params.get('fail');
   if (fail === 'insufficient' || fail === 'some' || fail === 'all' || fail === 'none') {
@@ -1198,6 +1223,11 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   // Legacy + scenario knobs are merged into one mutable record; `setScenario`
   // rewrites these in place without re-installing.
   let failMode: MockHostFailMode = options.failMode ?? 'none';
+  // Whether a REQUEST_CONSENT can be granted at all. Lives out here (not inside
+  // `install()` next to `consentGranted`) precisely so `setScenario` can flip it
+  // live — a harness UI needs to toggle "this preview can never grant" without
+  // re-installing and losing the block's mounted state.
+  let consentGrantable: boolean = options.consentGrantable ?? true;
   let pollsUntilDone = options.pollsUntilDone ?? 2;
   let gen: MockGenerationScenario = { ...(options.generation ?? {}) };
   let buzz: MockBuzzScenario = { ...(options.buzz ?? {}) };
@@ -1457,6 +1487,45 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             return;
 
           case 'REQUEST_CONSENT': {
+            // TWO OUTCOMES, mirroring the real host's handler exactly (civitai
+            // `PageBlockHost.tsx`): if anything is grantable-via-consent it
+            // grants; otherwise it takes the un-grantable branch.
+            //
+            // 🔴 THE REFUSAL BRANCH IS THE POINT. Before `consentGrantable`
+            // existed this handler ALWAYS granted, so a block author could not
+            // reach a refusal in `pnpm dev` at all — and "the developer cannot
+            // exercise this locally" is precisely how the contradictory-messages
+            // bug reached production and survived there.
+            if (!consentGrantable) {
+              // Grantable set is empty. Distinguish the BENIGN case (the block
+              // re-requested a scope it ALREADY holds → stay silent, in BOTH
+              // channels: a refusal rendered over a permission that works is
+              // worse than no message) from the UN-GRANTABLE case. Shared with
+              // `createLiveHost` via ./consent.js so dev and prod cannot drift
+              // on when this fires or what it names.
+              const notice = resolveUngrantableConsentNotice(
+                (typed.payload as unknown as { scopes?: unknown } | undefined)?.scopes,
+                // The scopes the CURRENT token carries. Computed inline rather
+                // than read off `nextToken()` — that helper MINTS (it bumps
+                // `tokenSerial`), so calling it here would burn a serial on a
+                // path that issues no token.
+                consentGranted ? [BUDGETED_SCOPE] : [],
+                // Nothing is grantable — that is what `consentGrantable:false`
+                // MEANS. Passing the empty set here (rather than short-circuiting)
+                // keeps this call identical in shape to the host's.
+                [],
+              );
+              if (!notice.notify) return;
+              // Fire-and-forget PUSH, not a reply — REQUEST_CONSENT carries no
+              // `requestId`. `scopes` may legitimately be `[]`.
+              after(0, () => {
+                dispatchToBlock({
+                  type: 'CONSENT_UNAVAILABLE',
+                  payload: consentUnavailablePayload(notice),
+                });
+              });
+              return;
+            }
             // Lazy-consent round-trip: grant the scope, then push a
             // host-initiated TOKEN_REFRESH carrying it (the App's auto-resume
             // depends on seeing the new scope on its token).
@@ -2466,6 +2535,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
   function setScenario(patch: MockHostScenarioPatch): void {
     if (patch.failMode !== undefined) failMode = patch.failMode;
+    if (patch.consentGrantable !== undefined) consentGrantable = patch.consentGrantable;
     if (patch.pollsUntilDone !== undefined) pollsUntilDone = patch.pollsUntilDone;
     if (patch.cost !== undefined) legacyCost = patch.cost;
     if (patch.cannedPicks !== undefined) cannedPicks = patch.cannedPicks;

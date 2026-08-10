@@ -645,6 +645,30 @@ describe('createMockHost — setScenario + URL toggles', () => {
     expect(opts.failMode).toBe('insufficient');
   });
 
+  it('readMockHostUrlOptions maps ?consent=granted|ungrantable onto the two consent knobs', () => {
+    // The dev-harness affordance for the refusal path — a third value on the
+    // EXISTING `?consent` knob rather than a second parameter, because "already
+    // granted" and "can never grant" are mutually exclusive states of one thing.
+    const granted = readMockHostUrlOptions({
+      location: { search: '?consent=granted' },
+    } as unknown as Window & typeof globalThis);
+    expect(granted.consentGranted).toBe(true);
+    expect(granted.consentGrantable).toBeUndefined();
+
+    const ungrantable = readMockHostUrlOptions({
+      location: { search: '?consent=ungrantable' },
+    } as unknown as Window & typeof globalThis);
+    expect(ungrantable.consentGrantable).toBe(false);
+    expect(ungrantable.consentGranted).toBeUndefined();
+
+    // An unrelated value touches neither (no silent default flip).
+    const other = readMockHostUrlOptions({
+      location: { search: '?consent=maybe' },
+    } as unknown as Window & typeof globalThis);
+    expect(other.consentGranted).toBeUndefined();
+    expect(other.consentGrantable).toBeUndefined();
+  });
+
   it('readMockHostUrlOptions parses a single-number latency + ?seed JSON', () => {
     const fakeWin = {
       location: { search: '?latency=2000&seed=' + encodeURIComponent('{"k":"v"}') },

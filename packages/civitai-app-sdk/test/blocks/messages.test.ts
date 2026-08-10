@@ -4,6 +4,7 @@ import { isMessage } from '../../src/blocks/messages.js';
 import type {
   BlockInitPayload,
   BlockToParentMessage,
+  ConsentUnavailablePayload,
   ParentToBlockMessage,
   SharedStorageValue,
 } from '../../src/blocks/messages.js';
@@ -361,5 +362,69 @@ describe('THEME_CHANGE (host-pushed live site theme)', () => {
       expect.unreachable('msg should narrow to THEME_CHANGE');
     }
     expect(msg.payload.theme).toBe(fromInit);
+  });
+});
+
+describe('CONSENT_UNAVAILABLE (host-pushed un-grantable consent refusal)', () => {
+  it('is a parent→block message with { reason, scopes } and NO requestId', () => {
+    const msg: ParentToBlockMessage = {
+      type: 'CONSENT_UNAVAILABLE',
+      payload: { reason: 'ungrantable', scopes: ['ai:write:budgeted'] },
+    };
+    expect(isMessage<ParentToBlockMessage, 'CONSENT_UNAVAILABLE'>(msg, 'CONSENT_UNAVAILABLE')).toBe(
+      true,
+    );
+    if (isMessage<ParentToBlockMessage, 'CONSENT_UNAVAILABLE'>(msg, 'CONSENT_UNAVAILABLE')) {
+      expect(msg.payload.reason).toBe('ungrantable');
+      expect(msg.payload.scopes).toEqual(['ai:write:budgeted']);
+      // 🔴 An uncorrelated PUSH, not a `*_RESULT` reply. `REQUEST_CONSENT`
+      // carries no `requestId`, so there is nothing for a reply to correlate
+      // against — shaped like TOKEN_REFRESH / THEME_CHANGE, not like
+      // BUZZ_BALANCE_RESULT. A block must never try to match it to a pending
+      // request.
+      expect('requestId' in msg.payload).toBe(false);
+    } else {
+      expect.unreachable('msg should narrow to CONSENT_UNAVAILABLE');
+    }
+  });
+
+  it('🔴 accepts an EMPTY `scopes` array — a refusal naming nothing is a real refusal', () => {
+    // The host decides to refuse on its UNFILTERED un-grantable set, then puts
+    // only KNOWN block-scope names on the wire. A block that requested scopes
+    // outside the vocabulary therefore gets a genuine refusal carrying
+    // `scopes: []`. This is the shape a consumer is most likely to mishandle:
+    // `if (scopes.length) show(...)` silently drops the very message it
+    // subscribed for. Pinned at the TYPE level so `scopes: []` can never be
+    // narrowed to a non-empty tuple.
+    const msg: ParentToBlockMessage = {
+      type: 'CONSENT_UNAVAILABLE',
+      payload: { reason: 'ungrantable', scopes: [] },
+    };
+    if (!isMessage<ParentToBlockMessage, 'CONSENT_UNAVAILABLE'>(msg, 'CONSENT_UNAVAILABLE')) {
+      expect.unreachable('msg should narrow to CONSENT_UNAVAILABLE');
+    }
+    expect(msg.payload.scopes).toEqual([]);
+    expect(msg.payload.reason).toBe('ungrantable');
+  });
+
+  it('carries the payload type exported for consumers', () => {
+    // A block branching on this message needs a NAME for the payload, not an
+    // inline structural type — `ConsentUnavailablePayload` is exported from
+    // `@civitai/app-sdk/blocks` for exactly that. Assignability in BOTH
+    // directions pins that the union member and the exported alias are the same
+    // shape, so the export cannot drift into a wider/narrower type.
+    const payload: ConsentUnavailablePayload = { reason: 'ungrantable', scopes: [] };
+    const msg: ParentToBlockMessage = { type: 'CONSENT_UNAVAILABLE', payload };
+    if (!isMessage<ParentToBlockMessage, 'CONSENT_UNAVAILABLE'>(msg, 'CONSENT_UNAVAILABLE')) {
+      expect.unreachable('msg should narrow to CONSENT_UNAVAILABLE');
+    }
+    const roundTrip: ConsentUnavailablePayload = msg.payload;
+    expect(roundTrip).toBe(payload);
+  });
+
+  it('is NOT a block→parent message (it never appears in the outbound union)', () => {
+    const msg = { type: 'CONSENT_UNAVAILABLE', payload: { reason: 'ungrantable', scopes: [] } };
+    expect(isMessage<BlockToParentMessage, 'REQUEST_CONSENT'>(msg, 'REQUEST_CONSENT')).toBe(false);
+    expect(isMessage<BlockToParentMessage, 'BLOCK_READY'>(msg, 'BLOCK_READY')).toBe(false);
   });
 });
