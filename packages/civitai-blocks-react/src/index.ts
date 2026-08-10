@@ -89,6 +89,11 @@ export {
 export { useCivitaiNavigate } from './hooks/useCivitaiNavigate.js';
 export { useRequestSignIn } from './hooks/useRequestSignIn.js';
 export { useRequestConsent } from './hooks/useRequestConsent.js';
+export { useConsentUnavailable } from './hooks/useConsentUnavailable.js';
+export type {
+  UseConsentUnavailable,
+  ConsentUnavailablePayload,
+} from './hooks/useConsentUnavailable.js';
 export { useBlockAnalytics } from './hooks/useBlockAnalytics.js';
 export { useDomainMaturity } from './hooks/useDomainMaturity.js';
 export type { DomainMaturity } from './hooks/useDomainMaturity.js';
