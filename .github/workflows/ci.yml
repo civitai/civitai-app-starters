@@ -256,9 +256,22 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
+      # RELEASE-DEADLOCK GUARD. Runs BEFORE the install so a missing override
+      # fails with the actionable message instead of the cryptic
+      # ERR_PNPM_OUTDATED_LOCKFILE the deadlock actually surfaces as.
+      #
+      # The starters pin PUBLISHED caret ranges (not workspace:*) because they
+      # are copied out verbatim by `npx tiged` -- see 2a453e6. `changeset
+      # version` rewrites those carets to versions that are not published yet,
+      # so every first-party @civitai/* package must also be pinned to
+      # workspace:* in the root pnpm.overrides, or the Version Packages PR can
+      # never install and the release deadlocks. Offline; no install needed.
+      - run: node scripts/check-starter-workspace-overrides.mjs
+
       - run: pnpm install --frozen-lockfile
 
-      # Starters consume @civitai/app-sdk via workspace:^ (and the block
+      # Starters consume the first-party packages via published caret ranges
+      # that the root pnpm.overrides redirects to workspace:* (the block
       # starter additionally consumes @civitai/blocks-react). Building all
       # packages up front so each starter's typecheck sees fresh .d.ts files.
       - run: pnpm -r --filter "./packages/*" build

@@ -39,6 +39,45 @@ For any change to a published package — `packages/civitai-app-sdk/src/**` or `
 
 A starter-only change (no SDK touch) does not need a changeset. The starter `package.json` files are `ignore`'d in `.changeset/config.json`.
 
+## 🔴 Why every `@civitai/*` package must be in the root `pnpm.overrides`
+
+The starters pin **published caret ranges** (`"@civitai/theme": "^0.2.1"`), not
+`workspace:*`, because they are copied out of this repo verbatim by
+`npx tiged civitai/civitai-app-starters/starters/<name> my-app`. Nothing
+rewrites the deps on the way out, so a `workspace:` protocol there produces a
+scaffolded project whose `npm install` fails immediately. That was tried and
+reverted in `2a453e6` — **do not re-introduce it.**
+
+`ignore` in `.changeset/config.json` does **not** protect those pins. It only
+suppresses *versioning the starter itself*; changesets still rewrites the
+dependency ranges of every workspace dependent. So the Version Packages PR asks
+the starters for versions that **do not exist on npm yet**, and without an
+override that is a hard deadlock:
+
+- `pnpm install --lockfile-only` → `ERR_PNPM_NO_MATCHING_VERSION` ("The latest
+  release of `@civitai/theme` is 0.2.0") — the lockfile *cannot* be regenerated
+  before publish;
+- so `pnpm-lock.yaml` stays stale and every required check's
+  `pnpm install --frozen-lockfile` → `ERR_PNPM_OUTDATED_LOCKFILE`;
+- so the Version PR can never go green → never merge → never publish → the
+  versions never come into existence.
+
+A `pnpm.overrides` entry breaks the cycle without touching the published pins:
+pnpm applies the override **before** recording the lockfile importer entry, so
+the lockfile reads `specifier: workspace:*` and does **not** churn when
+changesets bumps the caret. The caret in `package.json` is still what a
+`tiged`'d copy sees.
+
+> Note: `linkWorkspacePackages` is *not* a substitute. It changes what a
+> specifier resolves to but leaves the specifier itself as the caret, so the
+> lockfile still churns on every bump. Only an override pins it.
+
+**When adding a new first-party `@civitai/*` package that a starter depends on,
+add it to `pnpm.overrides` in the same PR.** Enforced by
+`scripts/check-starter-workspace-overrides.mjs`, which runs in the required
+`Starter` CI job *before* the install so it fails with an actionable message
+instead of the cryptic `ERR_PNPM_OUTDATED_LOCKFILE`.
+
 ## Previewing what's pending
 
 ```bash

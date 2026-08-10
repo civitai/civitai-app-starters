@@ -3,9 +3,28 @@ packages:
   - 'starters/*'
   - 'starters/examples/*'
 
-# Starters depend on @civitai/app-sdk via a real npm range (^0.1.0) so the
-# tiged'd package.json works out of the box for external devs. Setting this
-# to true tells pnpm to satisfy that range from the local workspace whenever
-# the version matches — so monorepo dev still picks up SDK changes without
-# a publish.
+# Starters depend on the first-party packages via real npm ranges (^0.32.0)
+# so the tiged'd package.json works out of the box for external devs.
+#
+# 🔴 What actually makes those ranges resolve from the LOCAL workspace is the
+# `pnpm.overrides` block in the root package.json (every @civitai/* package ->
+# workspace:*), NOT the setting below. Two measured facts, so nobody re-derives
+# this the hard way:
+#
+#   1. This key is spelled in kebab-case, and pnpm 10 reads pnpm-workspace.yaml
+#      settings in camelCase (`linkWorkspacePackages`). As written it is
+#      silently IGNORED — before @civitai/theme was added to the overrides, the
+#      lockfile resolved it from the REGISTRY (`specifier: ^0.2.0, version:
+#      0.2.0`) even though the local package matched the range exactly.
+#
+#   2. Even spelled correctly it would NOT be enough. It changes what a
+#      specifier RESOLVES to (`link:../../packages/civitai-theme`) but leaves
+#      the specifier itself as the caret, so `changeset version` bumping
+#      ^0.2.0 -> ^0.2.1 still churns the lockfile and still breaks every
+#      `pnpm install --frozen-lockfile` on the Version Packages PR. Only an
+#      override pins the recorded specifier to a constant `workspace:*`.
+#
+# Left as-is deliberately: correcting the spelling would change resolution for
+# packages that are not overridden and churn the lockfile, for no benefit the
+# overrides do not already provide. Do not "fix" it in place of an override.
 link-workspace-packages: true

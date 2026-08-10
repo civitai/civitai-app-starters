@@ -24,8 +24,20 @@
  *     these; CI's `starter` job already builds them against the workspace.)
  *
  * FAILS (exit 1) when:
- *   - a semver-range pin no longer admits the published latest (prints the stale
- *     pin + the one-line fix, `bump to ^<latest>`), OR
+ *   - a semver-range pin is BEHIND the published latest — the range's floor is
+ *     at or below latest but the range excludes it (`^0.2.0` vs published
+ *     `0.3.0`; a 0.x caret locks the minor). Prints the stale pin + the
+ *     one-line fix, `bump to ^<latest>`. OR
+ *
+ * PASSES (reported as `AHEAD`) when a pin is ahead of npm — the range's floor
+ * is ABOVE the published latest. That is not drift: it is the normal state of
+ * the `changeset-release/main` Version Packages PR, where `changeset version`
+ * has already rewritten the starters to the versions that PR is about to
+ * publish. Failing there was noise BY CONSTRUCTION on every single release,
+ * and a check that is red on every release PR trains everyone to ignore it.
+ *   - a definitive 404/410 (below) still fails; "ahead" only relaxes the
+ *     version comparison, never the package-existence check.
+ * OR
  *   - npm returns a DEFINITIVE 404/410 for a pinned package — the package does
  *     not exist (renamed / typo'd / unpublished). A "package not found" is a real
  *     bug in the pin, never a transient outage, so it must NOT be silently skipped.
@@ -134,6 +146,51 @@ function suggestPin(version) {
   return `^${version}`;
 }
 
+/**
+ * Lowest version `range` admits — `^0.32.0` -> [0,32,0]. null = undecidable.
+ * Used to tell the two "range does not admit latest" cases apart (below).
+ */
+function rangeMinVersion(range) {
+  if (semver) {
+    try {
+      const min = semver.minVersion(range);
+      if (min) return [min.major, min.minor, min.patch];
+    } catch {
+      /* invalid range for semver — fall through */
+    }
+  }
+  const r = range.trim();
+  if (r === '*' || r === 'x' || r === '') return [0, 0, 0];
+  return parseVersion(r.replace(/^[\^~><= ]+/, ''));
+}
+
+/**
+ * A pin that does NOT admit the published latest is one of TWO opposite
+ * things, and only one of them is a bug:
+ *
+ *   STALE   — the pin's floor is at or below latest but the range excludes it
+ *             (`^0.2.0` vs published `0.3.0`: a 0.x caret locks the minor).
+ *             The scaffold is BEHIND and births apps missing everything since.
+ *             This is the drift class this checker exists to catch. FAIL.
+ *
+ *   PENDING — the pin's floor is ABOVE latest (`^0.32.0` vs published
+ *             `0.31.0`). The scaffold is AHEAD: `changeset version` has
+ *             rewritten the starters to the versions the Version Packages PR
+ *             is about to publish, and they do not exist on npm YET. This is
+ *             the normal, correct state of every release PR — the check used
+ *             to fail here BY CONSTRUCTION on `changeset-release/main`, which
+ *             is noise, not signal. PASS (reported).
+ *
+ * Returns 'stale' | 'pending' | 'stale' (conservative default when the range
+ * floor cannot be parsed — an undecidable range must not silently pass).
+ */
+function classifyMiss(range, latestVersion) {
+  const min = rangeMinVersion(range);
+  const latest = parseVersion(latestVersion);
+  if (!min || !latest) return 'stale';
+  return cmp(min, latest) > 0 ? 'pending' : 'stale';
+}
+
 // fetchLatest returns exactly one of:
 //   { version }        — resolved published version
 //   { notFound, ... }  — DEFINITIVE 404/410: the package does not exist on npm
@@ -203,6 +260,7 @@ async function main() {
   const notFound = []; // { pin, status } — definitive 404/410, package not on npm
   const skipped = []; // { pin, reason }
   const checked = [];
+  const pending = []; // { pin, latest } — pin is AHEAD of npm: an unpublished release
 
   for (const pin of pins) {
     const latest = await fetchLatest(pin.pkg);
@@ -222,7 +280,12 @@ async function main() {
       continue;
     }
     if (!ok) {
-      failures.push({ pin, latest: latest.version });
+      // Two opposite causes — only "behind" is a bug. See classifyMiss().
+      if (classifyMiss(pin.range, latest.version) === 'pending') {
+        pending.push({ pin, latest: latest.version });
+      } else {
+        failures.push({ pin, latest: latest.version });
+      }
     } else {
       checked.push({ pin, latest: latest.version });
     }
@@ -235,6 +298,11 @@ async function main() {
   }
   for (const s of skipped) {
     console.warn(`SKIP ${s.pin.pkg} ${s.pin.range}  — ${s.reason}  (${rel(s.pin.file)})`);
+  }
+  for (const p of pending) {
+    console.log(
+      `AHEAD ${p.pin.pkg} ${p.pin.range} is ahead of published ${p.latest} — pending release, not stale  (${rel(p.pin.file)})`,
+    );
   }
 
   // A 404/410 is DEFINITIVE (the package isn't on npm) → hard fail, never skip.
@@ -269,13 +337,25 @@ async function main() {
     process.exit(1);
   }
 
+  if (pending.length > 0) {
+    console.log(
+      `\n${pending.length} pin(s) are AHEAD of npm — the versions a pending release will publish. Not a failure.`,
+    );
+  }
+
   // Only-unreachable (nothing verified, nothing stale) → graceful pass.
   if (checked.length === 0 && skipped.some((s) => s.reason.startsWith('npm unreachable'))) {
     console.warn('\nnpm was unreachable for all pins — skipping the currency check (not failing).');
     return;
   }
 
-  console.log(`\nOK: ${checked.length} @civitai/* scaffold pin(s) admit their published version.`);
+  // Report BOTH numbers. A bare "0 admit their published version" is the same
+  // shape as a checker wired to nothing; pairing it with the AHEAD count makes
+  // the zero legible (during a pending release every pin is legitimately ahead).
+  console.log(
+    `\nOK: ${checked.length} @civitai/* scaffold pin(s) admit their published version` +
+      (pending.length > 0 ? `, ${pending.length} ahead pending release.` : '.'),
+  );
 }
 
 main().catch((err) => {
