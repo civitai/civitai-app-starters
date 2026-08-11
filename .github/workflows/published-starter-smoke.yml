@@ -116,9 +116,14 @@ jobs:
           if [ -n "$NUM" ]; then
             gh issue comment "$NUM" --body-file /tmp/smoke-issue-body.md
           else
+            # `|| true` for the already-exists case. stderr is deliberately NOT
+            # silenced: if this fails for any other reason the `issue create`
+            # below fails too (an unknown label is rejected), and a swallowed
+            # error there would make the whole surfacing mechanism silently dead
+            # — the exact failure mode this job exists to prevent elsewhere.
             gh label create published-starter-smoke \
               --description 'Nightly published-vs-workspace starter smoke' \
-              --color B60205 2>/dev/null || true
+              --color B60205 || true
             gh issue create --title 'Published-starter smoke is failing' \
               --label published-starter-smoke --body-file /tmp/smoke-issue-body.md
           fi
