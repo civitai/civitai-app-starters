@@ -2,7 +2,7 @@
 /**
  * test-readme-snippet-gate.mjs
  * ----------------------------
- * The NEGATIVE CONTROLS for `typecheck-readme-snippets.mjs`.
+ * The CONTROLS for `typecheck-readme-snippets.mjs`.
  *
  * 🔴 WHY THIS EXISTS. That runner's whole job is to answer "does this README
  * snippet compile?", and for TYPE-ONLY identifiers it used to answer "yes"
@@ -13,31 +13,51 @@
  * rather than against the type. A verdict nobody has watched go red is a claim
  * about the command line, so the fix ships with the controls that prove it can.
  *
- * Each control mutates a real doc in place, runs the REAL gate, restores the
- * file byte-for-byte, and asserts the verdict.
+ * 🔴 NO TRACKED FILE IS EVER WRITTEN. An earlier revision mutated
+ * `packages/civitai-blocks-react/README.md` in place and restored it in a
+ * `finally`. `finally` does not run on SIGINT, and this suite takes minutes, so
+ * a Ctrl-C left the tracked doc modified with a bogus identifier — measured:
+ * `kill -INT` mid-run left 3 occurrences behind, and the old "could not restore"
+ * guard never printed because it lives in the block that did not run. Each
+ * control now COPIES the doc into an OS temp dir, mutates the copy, and points
+ * the gate at it with `README_SNIPPET_DOCS`. An interrupt can now lose nothing
+ * but a temp file. (A doc's location does not change its verdict — snippets are
+ * compiled in a scratch dir either way — so the copy is a faithful substitute.)
  *
- * WHAT IT ASSERTS
+ * WHAT IT ASSERTS, and WHICH CONTROLS ACTUALLY DISCRIMINATE THE FIX
  *   POSITIVE  the unmodified tree passes AND the runner reports a NON-ZERO count
  *             of BOTH value and type-only exports. A zero on either half means
  *             that half resolved nothing and every name it should have covered
  *             is silently shimmed to `any` again — indistinguishable, from the
  *             "0 failed" line alone, from a healthy run.
- *   NC1       a documented type name that does not exist FAILS, naming the bogus
- *             identifier. This one holds because the snippet carries an explicit
- *             `import type` — an unresolvable IMPORT is a hard error. It is the
- *             mechanised check that the consent snippet's import is real.
- *   NC2       an SDK type used WITHOUT an import, with a value the real type
- *             forbids, FAILS. This is the one the type-export map bought:
- *             measured on this repo, the pre-fix runner reported `43 passed · 0
- *             failed` for exactly this input.
  *
- * WHAT THIS GATE STILL DOES NOT COVER — printed by the run, so nobody over-reads
- * a pass. The runner deliberately AUTO-IMPORTS a known SDK export a snippet
- * references but does not import, so that one-line reference fragments still
- * validate. A MISSING `import` LINE IS THEREFORE NOT A FAILURE, and neither is a
- * nonexistent type name that is also not imported (nothing resolves it, so it
- * still falls back to the `any` shim). The gate proves a name RESOLVES TO A REAL
- * EXPORT AND IS USED CORRECTLY; it does not prove a fenced block is
+ *   NC1       an INVARIANT GUARD, *not* regression coverage. A documented type
+ *             name that does not exist, in a snippet that IMPORTS it, must FAIL
+ *             — but it fails at the PRE-FIX gate too (measured: pre-fix
+ *             `1 failed`, post-fix `1 failed`), because an unresolvable IMPORT
+ *             was always a hard error. It pins that the consent snippet's
+ *             `import type` line is real; it says nothing about the type map.
+ *
+ *   NC2       DISCRIMINATING. A real SDK `interface` used WITHOUT an import,
+ *             with a value the real type forbids. Green at the pre-fix gate
+ *             (`45 found · 44 passed · 0 failed`), red here. This is the one the
+ *             type-export map bought.
+ *
+ *   NC3       DISCRIMINATING, and constructed differently from NC2 on purpose.
+ *             Same shape but on a `type` ALIAS (`ConsentUnavailableReason`)
+ *             rather than an `interface`. `SymbolFlags.Type` covers both, so a
+ *             narrowing that dropped either half would leave the other green —
+ *             NC2 alone cannot see an interface-only regression and NC3 alone
+ *             cannot see an alias-only one.
+ *
+ * WHAT THIS GATE STILL DOES NOT COVER — asserted, not merely narrated, by NC4
+ * and NC5 below, so the non-guarantee cannot silently become a guarantee (or
+ * silently stay one). The runner deliberately AUTO-IMPORTS a known SDK export a
+ * snippet references but does not import, so one-line reference fragments still
+ * validate. A MISSING `import` LINE IS THEREFORE NOT A FAILURE (NC4), and
+ * neither is a nonexistent type name that is ALSO not imported — nothing
+ * resolves it, so it still falls back to the `any` shim (NC5). The gate proves a
+ * name it RESOLVES is used correctly; it does not prove a fenced block is
  * copy-pasteable on its own.
  *
  * USAGE
@@ -46,7 +66,8 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -56,20 +77,46 @@ const GATE = join(repoRoot, 'scripts/typecheck-readme-snippets.mjs');
 
 const TARGET = join(repoRoot, 'packages/civitai-blocks-react/README.md');
 const REL = TARGET.replace(repoRoot + '/', '');
-const REAL_NAME = 'ConsentUnavailablePayload';
+const REAL_INTERFACE = 'ConsentUnavailablePayload';
+const REAL_ALIAS = 'ConsentUnavailableReason';
 const BOGUS_NAME = 'ConsentUnavailablePayloadDOESNOTEXIST';
 
-function runGate() {
+// Every mutated doc lives here — OUTSIDE the repo, so an interrupt cannot leave
+// a tracked file dirty. Best-effort cleanup on the way out; an abandoned temp
+// file is inert either way.
+const scratch = mkdtempSync(join(tmpdir(), 'readme-gate-selftest-'));
+process.on('exit', () => rmSync(scratch, { recursive: true, force: true }));
+
+/**
+ * Run the real gate. `docs` (absolute paths) replaces the gate's default doc
+ * list via `README_SNIPPET_DOCS`; omit it to check the real tree.
+ */
+function runGate(docs) {
+  const env = { ...process.env };
+  if (docs) env.README_SNIPPET_DOCS = docs.join('\n');
+  else delete env.README_SNIPPET_DOCS;
   try {
     const out = execFileSync(process.execPath, [GATE], {
       cwd: repoRoot,
       encoding: 'utf8',
       stdio: 'pipe',
+      env,
     });
     return { ok: true, out };
   } catch (err) {
     return { ok: false, out: (err.stdout ?? '') + (err.stderr ?? '') };
   }
+}
+
+/**
+ * Write `fn(<the real doc>)` to a temp COPY and run the gate against that copy
+ * only. The tracked doc is READ and never written.
+ */
+let copyN = 0;
+function withMutatedCopy(fn) {
+  const copy = join(scratch, `README-${++copyN}.md`);
+  writeFileSync(copy, fn(readFileSync(TARGET, 'utf8')));
+  return runGate([copy]);
 }
 
 const failures = [];
@@ -82,19 +129,16 @@ function check(label, cond, detail = '') {
   }
 }
 
-/** Mutate TARGET with `fn`, run the gate, restore byte-for-byte, return the run. */
-function withMutation(fn) {
-  const original = readFileSync(TARGET, 'utf8');
-  try {
-    writeFileSync(TARGET, fn(original));
-    return runGate();
-  } finally {
-    writeFileSync(TARGET, original);
-    if (readFileSync(TARGET, 'utf8') !== original) {
-      console.error(`FATAL: could not restore ${REL}`);
-      process.exit(2);
-    }
-  }
+/** A self-contained fenced block naming `type` and assigning `value` to it. */
+function probeBlock(type, value) {
+  return [
+    '',
+    '<!-- test-readme-snippet-gate.mjs scratch block -->',
+    '```ts',
+    `const probe: ${type} = ${value};`,
+    '```',
+    '',
+  ].join('\n');
 }
 
 // ---------------------------------------------------------------- positive
@@ -118,12 +162,14 @@ if (counts) {
 }
 
 // ------------------------------------------------------------------- NC1
-console.log(`\nNC1 — a documented type name that does not exist must FAIL`);
+console.log(
+  `\nNC1 (INVARIANT GUARD — also red at the pre-fix gate) — an IMPORTED type name that does not exist must FAIL`,
+);
 const original = readFileSync(TARGET, 'utf8');
-const occurrences = original.split(REAL_NAME).length - 1;
-check(`\`${REAL_NAME}\` appears in ${REL} (${occurrences}×)`, occurrences > 0);
+const occurrences = original.split(REAL_INTERFACE).length - 1;
+check(`\`${REAL_INTERFACE}\` appears in ${REL} (${occurrences}×)`, occurrences > 0);
 if (occurrences > 0) {
-  const nc1 = withMutation((s) => s.split(REAL_NAME).join(BOGUS_NAME));
+  const nc1 = withMutatedCopy((s) => s.split(REAL_INTERFACE).join(BOGUS_NAME));
   check('gate FAILS on the nonexistent type name', !nc1.ok);
   check(
     'the failure NAMES the bogus identifier',
@@ -133,38 +179,61 @@ if (occurrences > 0) {
 }
 
 // ------------------------------------------------------------------- NC2
-// A self-contained fenced block appended to the doc: it names a REAL SDK type it
-// never imports, and assigns a `reason` the real literal union forbids. Against
-// the pre-fix `any` shim this compiled; against the injected `import type` it
-// cannot.
-console.log(`\nNC2 — an un-imported SDK type must be checked against the REAL type`);
-const NC2_BLOCK = [
-  '',
-  '<!-- test-readme-snippet-gate.mjs scratch block -->',
-  '```ts',
-  `const probe: ${REAL_NAME} = { reason: 'NOT_A_REAL_REASON', scopes: [] };`,
-  '```',
-  '',
-].join('\n');
-const nc2 = withMutation((s) => s + NC2_BLOCK);
-check('gate FAILS on a value the real type forbids', !nc2.ok);
+// A real SDK INTERFACE named without an import, assigned a `reason` the real
+// literal union forbids. Against the pre-fix `any` shim this compiled.
+console.log(
+  `\nNC2 (DISCRIMINATING) — an un-imported SDK INTERFACE must be checked against the REAL type`,
+);
+const nc2 = withMutatedCopy(
+  (s) => s + probeBlock(REAL_INTERFACE, `{ reason: 'NOT_A_REAL_REASON', scopes: [] }`),
+);
+check('gate FAILS on a value the real interface forbids', !nc2.ok);
 check(
   'the failure names the forbidden literal',
   nc2.out.includes('NOT_A_REAL_REASON'),
   'went red for an unrelated reason — the control proves nothing',
 );
 
-// ------------------------------------------------------- documented non-gap
-// Informational, NOT an assertion: if someone later tightens the runner so a
-// missing import IS a failure, this line changes and no control breaks.
-const nc3 = withMutation((s) =>
-  s.replace(`import type { ${REAL_NAME} } from '@civitai/app-sdk/blocks';\n`, ''),
-);
+// ------------------------------------------------------------------- NC3
+// Same shape as NC2 but on a `type` ALIAS. Built differently on purpose: a
+// narrowing of the type-map predicate that kept interfaces and dropped aliases
+// (or vice versa) leaves exactly one of NC2/NC3 green.
 console.log(
-  `\nINFO  removing the snippet's own \`import type\` line: gate says ` +
-    `${nc3.ok ? 'PASS' : 'FAIL'} — by design the runner auto-imports a known SDK ` +
-    `export, so a missing import line is NOT gated. Copy-pasteability is a review\n` +
-    `      concern, not a gate concern.`,
+  `\nNC3 (DISCRIMINATING) — an un-imported SDK type ALIAS must be checked against the REAL type`,
+);
+const nc3 = withMutatedCopy((s) => s + probeBlock(REAL_ALIAS, `'NOT_A_REAL_REASON'`));
+check('gate FAILS on a value the real alias forbids', !nc3.ok);
+check(
+  'the failure names the forbidden literal',
+  nc3.out.includes('NOT_A_REAL_REASON'),
+  'went red for an unrelated reason — the control proves nothing',
+);
+
+// ------------------------------------------------- NC4/NC5: the NON-guarantees
+// These two assert what the gate does NOT do. They are here so the boundary is
+// mechanised in both directions: if someone later tightens the runner so a
+// missing import IS a failure, these go red and the header above gets corrected
+// with them, rather than the doc quietly describing a gate that changed.
+console.log(`\nNC4 (NON-guarantee) — removing a snippet's own \`import type\` line must still PASS`);
+const nc4 = withMutatedCopy((s) =>
+  s.replace(`import type { ${REAL_INTERFACE} } from '@civitai/app-sdk/blocks';\n`, ''),
+);
+check(
+  'gate PASSES with the import line removed (auto-import covers it)',
+  nc4.ok,
+  'the runner no longer auto-imports — UPDATE the header of both scripts',
+);
+
+console.log(
+  `\nNC5 (NON-guarantee) — a nonexistent type name that is ALSO not imported must still PASS`,
+);
+const nc5 = withMutatedCopy(
+  (s) => s + probeBlock(BOGUS_NAME, `{ reason: 'ungrantable', scopes: [] }`),
+);
+check(
+  'gate PASSES on an un-imported nonexistent type (falls back to the `any` shim)',
+  nc5.ok,
+  'the `any` fallback is gone — UPDATE the header of both scripts',
 );
 
 console.log(
