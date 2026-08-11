@@ -68,15 +68,26 @@ the lockfile reads `specifier: workspace:*` and does **not** churn when
 changesets bumps the caret. The caret in `package.json` is still what a
 `tiged`'d copy sees.
 
-> Note: `linkWorkspacePackages` is *not* a substitute. It changes what a
-> specifier resolves to but leaves the specifier itself as the caret, so the
-> lockfile still churns on every bump. Only an override pins it.
+> Note: `linkWorkspacePackages` is *not* a substitute — measured, not assumed.
+> Spelled so that pnpm honours it, it changes what a specifier **resolves to**
+> (`version: link:../../packages/civitai-theme`) but leaves the **specifier**
+> itself as the caret (`specifier: ^0.2.0`), so `changeset version` bumping the
+> caret still churns the lockfile and still breaks `--frozen-lockfile` on the
+> Version PR. Only an override pins the recorded specifier. The full four-variant
+> measurement — including which spellings pnpm actually reads — is in the comment
+> block at the top of `pnpm-workspace.yaml`.
 
 **When adding a new first-party `@civitai/*` package that a starter depends on,
 add it to `pnpm.overrides` in the same PR.** Enforced by
 `scripts/check-starter-workspace-overrides.mjs`, which runs in the required
 `Starter` CI job *before* the install so it fails with an actionable message
-instead of the cryptic `ERR_PNPM_OUTDATED_LOCKFILE`.
+instead of the cryptic `ERR_PNPM_OUTDATED_LOCKFILE`. That guard also hard-blocks
+re-introducing the `workspace:` protocol into a tiged-consumed starter (the
+`2a453e6` regression) and asserts a floor on how many pins it covers, so the
+regression cannot come back as a silent drop in coverage.
+
+Both guards are unit-tested — `tests/guards/*.test.mjs`, run by `pnpm
+test:guards` and by the required `Starter` CI job.
 
 ## Previewing what's pending
 

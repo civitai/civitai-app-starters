@@ -8,23 +8,43 @@ packages:
 #
 # 🔴 What actually makes those ranges resolve from the LOCAL workspace is the
 # `pnpm.overrides` block in the root package.json (every @civitai/* package ->
-# workspace:*), NOT the setting below. Two measured facts, so nobody re-derives
-# this the hard way:
+# workspace:*), NOT the setting below.
 #
-#   1. This key is spelled in kebab-case, and pnpm 10 reads pnpm-workspace.yaml
-#      settings in camelCase (`linkWorkspacePackages`). As written it is
-#      silently IGNORED — before @civitai/theme was added to the overrides, the
-#      lockfile resolved it from the REGISTRY (`specifier: ^0.2.0, version:
-#      0.2.0`) even though the local package matched the range exactly.
+# MEASURED on pnpm 10.28.1. Method, so it can be re-run rather than believed:
+# remove @civitai/theme from the root pnpm.overrides (local
+# packages/civitai-theme is 0.2.0, starters/next-app pins ^0.2.0), then for each
+# variant `rm pnpm-lock.yaml && pnpm install --lockfile-only` and read
+# next-app's importer entry:
 #
-#   2. Even spelled correctly it would NOT be enough. It changes what a
-#      specifier RESOLVES to (`link:../../packages/civitai-theme`) but leaves
-#      the specifier itself as the caret, so `changeset version` bumping
-#      ^0.2.0 -> ^0.2.1 still churns the lockfile and still breaks every
-#      `pnpm install --frozen-lockfile` on the Version Packages PR. Only an
-#      override pins the recorded specifier to a constant `workspace:*`.
+#   where the setting lives                            next-app @civitai/theme
+#   -------------------------------------------------  ---------------------------
+#   `link-workspace-packages: true` here (as written)  version: 0.2.0  (registry)
+#   key deleted entirely                               version: 0.2.0  (registry)
+#   `linkWorkspacePackages: true` here                 version: link:../../packages/civitai-theme
+#   `link-workspace-packages=true` in .npmrc           version: link:../../packages/civitai-theme
 #
-# Left as-is deliberately: correcting the spelling would change resolution for
-# packages that are not overridden and churn the lockfile, for no benefit the
-# overrides do not already provide. Do not "fix" it in place of an override.
+#   1. THIS KEY IS INERT. Rows 1 and 2 produce BYTE-IDENTICAL lockfiles — the
+#      kebab spelling in pnpm-workspace.yaml is indistinguishable from deleting
+#      it. pnpm-workspace.yaml settings are camelCase; .npmrc keeps the npm
+#      kebab spelling (row 4), which is why the same words work there.
+#
+#      🔴 `pnpm config get linkWorkspacePackages` is a FALSE ORACLE for this.
+#      With the kebab key present it prints `true`; delete the key and it prints
+#      `undefined` — so the config READER normalizes kebab -> camel while the
+#      INSTALLER does not. Reading it "confirms" a setting that provably has no
+#      effect on resolution. Regenerate a lockfile instead; that is what the
+#      table above does.
+#
+#   2. Spelled so pnpm honours it, it STILL would not fix the release deadlock.
+#      Rows 3 and 4 change what the specifier RESOLVES to, but the recorded
+#      `specifier:` stays `^0.2.0` under ALL FOUR variants. So `changeset
+#      version` bumping ^0.2.0 -> ^0.2.1 still churns the lockfile and still
+#      breaks `pnpm install --frozen-lockfile` on the Version Packages PR. Only
+#      an override pins the recorded specifier to a constant `workspace:*`.
+#
+# Left as-is deliberately. Correcting the spelling buys nothing the overrides do
+# not already provide, and it is not free: on the CURRENT tree (all five
+# @civitai/* packages overridden) switching this key to camelCase still moved 3
+# lockfile lines — eslint-plugin-import's peer-dependency chains, nothing
+# @civitai. Do not "fix" it in place of an override.
 link-workspace-packages: true
