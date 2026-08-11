@@ -61,11 +61,18 @@ export interface UngrantableConsentNotice {
  *    `rawScopesHint` is whatever the block's own frame posted (markup, junk, a
  *    5 KB string) and the resulting payload is handed to block UI to render.
  *
- * Returns `notify: false` when the hint is absent/garbage, or when everything
- * requested is either already granted or still grantable via consent — the
- * caller then keeps the silent no-op. Without an explicit requested scope proven
- * un-grantable there is no way to tell "not confirmed yet" from "never", and
- * guessing is what produced the contradictory two-message screen.
+ * Returns `notify: false` in three cases, and the second is wider than "absent
+ * or not an array" — the phrasing the SDK docs used to carry:
+ *
+ *  1. the hint is absent or not an array;
+ *  2. the hint IS an array but holds no non-empty string — `[]`, `['']`,
+ *     `[1, 2]` all fall here, so a caller that dutifully passes `scopes: []`
+ *     gets the same silence as one that passes nothing;
+ *  3. everything requested is already granted or still grantable via consent.
+ *
+ * The caller then keeps the silent no-op. Without an explicit requested scope
+ * proven un-grantable there is no way to tell "not confirmed yet" from "never",
+ * and guessing is what produced the contradictory two-message screen.
  *
  * @param rawScopesHint the block's advisory `REQUEST_CONSENT` `payload.scopes` —
  *   UNTRUSTED, arbitrary `unknown`.
