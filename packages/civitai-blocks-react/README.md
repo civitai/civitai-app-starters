@@ -508,14 +508,19 @@ const { requestConsent } = useRequestConsent();
 requestConsent({ scopes: ['ai:write:budgeted', 'buzz:read:self'] });
 ```
 
-🔴 **Always pass `scopes` — it is optional in the signature but a precondition
-for the refusal path below.** The host grants the missing set it computed at
-mint, so a bare `requestConsent()` still opens the consent dialog. But
-`CONSENT_UNAVAILABLE` is computed *from the hint*: with no explicit scope proven
-un-grantable, the host cannot tell "can never be granted" from "the viewer
-hasn't confirmed yet", so it stays silent rather than guess. A block that calls
-`requestConsent()` bare therefore **never** receives a refusal — not in `pnpm
-dev`, not in production — and looks to its author like the message is broken.
+🔴 **Always pass `scopes`, with a real scope name in it — it is optional in the
+signature but a precondition for the refusal path below.** The host grants the
+missing set it computed at mint, so a bare `requestConsent()` still opens the
+consent dialog. But `CONSENT_UNAVAILABLE` is computed *from the hint*: with no
+explicit scope proven un-grantable, the host cannot tell "can never be granted"
+from "the viewer hasn't confirmed yet", so it stays silent rather than guess.
+
+The bar is an array holding **at least one non-empty string** — not merely "an
+array is present". `undefined`, a non-array, `[]`, `['']` and `[1, 2]` all
+produce silence, in `pnpm dev` and in production alike, so
+`requestConsent({ scopes: [] })` follows the instruction and still receives
+nothing. To its author that reads as a broken message rather than a thin
+argument.
 
 ### `useConsentUnavailable()`
 
@@ -554,6 +559,28 @@ function ConsentAwareGenerate() {
 asked for and shouldn't latch for the life of the block. Against a host that
 never sends the message the hook simply stays `null` — nothing awaits it, so
 there is no timeout to hit.
+
+🔴 **The push is UNCORRELATED, and that is the permanent shape of this API.**
+`REQUEST_CONSENT` carries no `requestId`, so a refusal cannot be matched to the
+request that provoked it. Two consequences to design around:
+
+- **Every mounted `useConsentUnavailable()` sees every refusal.** There is no
+  reliable filter: `scopes` is advisory and may legitimately be `[]`, so it
+  cannot serve as a correlation key. If two independent parts of your block
+  request different scopes, both will see both refusals. Keep a request and its
+  refusal UI in one component, or track the outstanding request yourself.
+- **A refusal is buffered across mounts, so one that arrives while the consumer
+  is unmounted is not lost.** The transport hands an unsolicited push only to
+  handlers registered at the instant it arrives, so without this a refusal that
+  landed before the consumer mounted — the requester and the consumer being
+  different components, or the consumer being conditionally rendered — vanished,
+  and the block went back to showing "click Generate again" beside the host's
+  "unavailable". `requestConsent()` arms the buffer as it sends. It keeps only
+  the latest refusal, is dropped when the block token changes (a refusal is a
+  claim about *that* token's scopes, and the grant path re-mints), and is cleared
+  by `reset()` — so the "Try again" button above genuinely resets, rather than
+  having the refusal reappear on the next mount. A `REQUEST_CONSENT` you post
+  through the raw transport instead of the hook does not arm it.
 
 Without the hook (a non-React consumer, or one wiring the transport directly),
 the same push is available untyped — note the explicit type import, which the

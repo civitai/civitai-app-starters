@@ -45,13 +45,33 @@ developer is looking.
   unconditionally (no `scopes.length` gate — see above) and unsubscribes on
   unmount. `ConsentUnavailablePayload` is re-exported here so a React consumer
   needs only one import.
-- 🔴 **`requestConsent()` MUST be called with `scopes` for a refusal to arrive.**
-  The argument is optional in the signature and genuinely optional for the GRANT
-  path, but `resolveUngrantableConsentNotice` returns "no notice" whenever the
-  hint is absent or not an array — in the real host and in both dev hosts. A
-  block that calls `requestConsent()` bare therefore gets silence, not a
-  refusal. Now documented on the hook, in `useRequestConsent`'s docstring, and
-  in the README.
+- 🔴 **A refusal is BUFFERED across mounts, so one that arrives while no
+  consumer is mounted is not dropped.** The transport hands an unsolicited push
+  only to handlers registered at the instant it arrives, so a refusal that landed
+  before `useConsentUnavailable()` mounted — the requester and the consumer being
+  different components, or the consumer conditionally rendered — was gone, and a
+  dropped refusal puts back the two-message screen this change exists to remove.
+  `requestConsent()` arms the buffer as it sends (a refusal can only follow a
+  request), and a mounting hook seeds from it. The buffer holds at most the
+  latest refusal, is discarded once the block token changes — a refusal is a
+  claim about *that* token's scopes, and the grant path re-mints — and is cleared
+  by `reset()`, so the documented "Try again" button is not undone by the next
+  mount. A `REQUEST_CONSENT` posted through the raw transport does not arm it.
+- 🔴 **The push is UNCORRELATED and stays that way.** `REQUEST_CONSENT` carries
+  no `requestId`, so every mounted `useConsentUnavailable()` observes every
+  refusal and there is no reliable filter — `scopes` is advisory and may
+  legitimately be `[]`, so it cannot serve as a correlation key. Blocks with two
+  independent requesters should keep a request and its refusal UI in one
+  component. Now stated on the hook and in the README.
+- 🔴 **`requestConsent()` MUST be called with `scopes` CONTAINING A REAL SCOPE
+  NAME for a refusal to arrive.** The argument is optional in the signature and
+  genuinely optional for the GRANT path, but `resolveUngrantableConsentNotice`
+  returns "no notice" unless the hint is an array holding at least one non-empty
+  string — `undefined`, a non-array, `[]`, `['']` and `[1, 2]` all produce
+  silence, in the real host and in both dev hosts. So even
+  `requestConsent({ scopes: [] })` gets nothing back. Earlier drafts of this doc
+  said "absent or not an array", which is narrower than the code. Now documented
+  accurately on the hook, in `useRequestConsent`'s docstring, and in the README.
 - The dev `<Harness>` consent readout is now THREE-state
   (`granted` / `withheld` / `ungrantable`, plus `granted+ungrantable`). It was a
   boolean derived from `consentGranted` alone, so `?consent=ungrantable` — which
