@@ -42,22 +42,61 @@
  * churn when changesets bumps the caret. The caret in package.json is still
  * what a tiged'd copy sees.
  *
- * FAILS (exit 1) when a starter declares a semver-range `@civitai/*` dep with
- * no `workspace:` override -- i.e. the next release would deadlock. Prints the
- * exact line to add.
+ * FAILS (exit 1) on any of THREE conditions:
+ *
+ *   1. MISSING OVERRIDE -- a starter declares a semver-range `@civitai/*` dep
+ *      with no `workspace:` override, i.e. the next release would deadlock.
+ *      Prints the exact line to add.
+ *
+ *   2. WORKSPACE-PROTOCOL PIN in a tiged-consumed starter -- a
+ *      `starters/<name>/package.json` (anything NOT under `starters/examples/`)
+ *      declares an `@civitai/*` dep with the `workspace:` protocol. This is the
+ *      shape `2a453e6` (#192) reverted, and until this rule existed it was the
+ *      guard's blind spot: rule 1 only sees PUBLISHED ranges, so flipping the
+ *      starters to `workspace:*` and deleting the override made every pin
+ *      invisible to both this checker and check-starter-pins.mjs -- exit 0 on
+ *      both, coverage silently 15 -> 11. The remediation text below said "do
+ *      NOT do this" and nothing enforced it.
+ *
+ *      SCOPED to the tiged-consumed starters on purpose: `starters/examples/*`
+ *      are in-repo illustrations, not scaffolding templates, and legitimately
+ *      use `workspace:^`.
+ *
+ *   3. COVERAGE FLOOR -- the number of covered (published-range + overridden)
+ *      pins fell below MIN_COVERED_PINS. Rule 2 catches the protocol swap;
+ *      this catches the same coverage loss arriving any other way (a pin
+ *      deleted, a starter directory renamed out of the scan). An unasserted
+ *      count is indistinguishable from a checker wired to nothing.
  *
  * USAGE
  *   node scripts/check-starter-workspace-overrides.mjs   # or: pnpm check:starter-overrides
+ *
+ * TESTS
+ *   tests/guards/check-starter-workspace-overrides.test.mjs  (node --test)
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..');
 const STARTERS_DIR = join(REPO_ROOT, 'starters');
+// In-repo illustrations, NOT `npx tiged` scaffolding targets. These are the
+// only starters allowed to use the `workspace:` protocol.
+const EXAMPLES_DIR = join(STARTERS_DIR, 'examples');
 const SCOPE = '@civitai/';
 const DEP_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'];
+
+/**
+ * Floor for the number of published-range `@civitai/*` starter pins that must
+ * be workspace-overridden. The tree carries 15 (next-app 4, react-pwa 3,
+ * svelte-pwa 3, sveltekit-app 3, civitai-block-starter 2).
+ *
+ * GROWTH always passes -- this is a floor, not an equality. Only DELIBERATELY
+ * removing a starter or one of its first-party deps should move it, and then
+ * lower it in the SAME commit so the drop is reviewed rather than silent.
+ */
+const MIN_COVERED_PINS = 15;
 
 /** Recursively collect package.json paths under `dir`, skipping node_modules/.git/dist. */
 function findPackageJsons(dir, out = []) {
@@ -110,15 +149,24 @@ function main() {
 
   const missing = []; // { file, field, pkg, range }
   const covered = [];
+  const workspacePinned = []; // { file, field, pkg, range } -- rule 2 violations
 
   for (const file of files) {
     const json = readJson(file);
+    // Tiged-consumed starter, or an in-repo example? Only the examples may use
+    // the `workspace:` protocol. A NEW top-level starter is covered by default.
+    const isExample = file === EXAMPLES_DIR || file.startsWith(EXAMPLES_DIR + sep);
     for (const field of DEP_FIELDS) {
       for (const [pkg, range] of Object.entries(json[field] ?? {})) {
         if (!pkg.startsWith(SCOPE)) continue;
-        // A `workspace:` pin resolves locally by construction -- it never hits
-        // the registry, so it cannot deadlock. (The examples use these.)
-        if (typeof range === 'string' && range.startsWith('workspace:')) continue;
+        if (typeof range === 'string' && range.startsWith('workspace:')) {
+          // A `workspace:` pin resolves locally by construction -- it never hits
+          // the registry, so it cannot deadlock. But in a starter that is copied
+          // out verbatim it BREAKS the scaffolded project, and it removes the
+          // pin from this guard's coverage entirely. Legal only in examples/.
+          if (!isExample) workspacePinned.push({ file, field, pkg, range });
+          continue;
+        }
         if (workspaceOverridden.has(pkg)) covered.push({ file, field, pkg, range });
         else missing.push({ file, field, pkg, range });
       }
@@ -127,6 +175,38 @@ function main() {
 
   for (const c of covered) {
     console.log(`OK   ${c.pkg} "${c.range}" is workspace-overridden  (${rel(c.file)})`);
+  }
+
+  let failed = false;
+
+  if (workspacePinned.length > 0) {
+    failed = true;
+    console.error('');
+    console.error('ERROR: WORKSPACE-PROTOCOL PIN IN A TIGED-CONSUMED STARTER.');
+    console.error('');
+    console.error('       A starter outside starters/examples/ declares a first-party');
+    console.error('       @civitai/* dependency with the `workspace:` protocol. Starters are');
+    console.error('       copied out verbatim by `npx tiged`, so the scaffolded project gets');
+    console.error('       a package.json npm cannot install. This exact change was made once');
+    console.error('       and reverted: 2a453e6 "fix(block-starter): pin @civitai deps to');
+    console.error('       published carets (not workspace:^) (#192)".');
+    console.error('');
+    console.error('       It also DEFEATS both release guards: a `workspace:` pin is not a');
+    console.error('       published range, so it drops out of this checker\'s coverage and out');
+    console.error('       of check-starter-pins.mjs -- the regression exits 0 on both.');
+    console.error('');
+    for (const w of workspacePinned) {
+      console.error(`  ${rel(w.file)} [${w.field}]\n    ${w.pkg}: "${w.range}"`);
+    }
+    console.error('');
+    console.error('  fix: restore the PUBLISHED caret range in the starter, e.g.');
+    console.error('    "@civitai/app-sdk": "^0.31.0"');
+    console.error('  and keep the bare-key workspace override in the root package.json');
+    console.error('  "pnpm" -> "overrides". The override is what makes it resolve locally.');
+    console.error('');
+    console.error('  starters/examples/* are exempt -- they are in-repo illustrations, not');
+    console.error('  `npx tiged` scaffolding targets.');
+    console.error('');
   }
 
   if (missing.length > 0) {
@@ -160,12 +240,36 @@ function main() {
     console.error('  Do NOT "fix" this by changing the starter pin to workspace:* -- the');
     console.error("  starters are copied out verbatim by `npx tiged` and a workspace:");
     console.error('  protocol breaks `npm install` in the scaffolded project (see 2a453e6).');
+    console.error('  That shape is separately blocked above.');
     console.error('');
-    process.exit(1);
+    failed = true;
   }
 
+  // The count assertion. Everything above is a rule about pins the scan FOUND;
+  // this is the rule about pins that stopped being found at all.
+  if (covered.length < MIN_COVERED_PINS) {
+    failed = true;
+    console.error('');
+    console.error('ERROR: COVERAGE FLOOR — workspace-override coverage dropped.');
+    console.error('');
+    console.error(
+      `       ${covered.length} covered published-range @civitai/* starter pin(s) < floor ${MIN_COVERED_PINS}.`,
+    );
+    console.error('');
+    console.error('       Every pin this guard protects is one the next `changeset version`');
+    console.error('       will rewrite. A pin that leaves the scan is a pin nothing checks,');
+    console.error('       and the drop is invisible without an asserted count.');
+    console.error('');
+    console.error('  If a starter or one of its first-party deps was removed ON PURPOSE,');
+    console.error(`  lower MIN_COVERED_PINS in ${rel(join(HERE, 'check-starter-workspace-overrides.mjs'))}`);
+    console.error('  in the SAME commit, so the drop is reviewed instead of silent.');
+    console.error('');
+  }
+
+  if (failed) process.exit(1);
+
   console.log(
-    `\nOK: ${covered.length} published-range @civitai/* starter pin(s) are all workspace-overridden — a version bump cannot deadlock the release.`,
+    `\nOK: ${covered.length} published-range @civitai/* starter pin(s) are all workspace-overridden — a version bump cannot deadlock the release. (floor ${MIN_COVERED_PINS})`,
   );
 }
 

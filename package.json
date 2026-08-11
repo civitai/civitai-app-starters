@@ -18,6 +18,7 @@
     "check:starter-pins": "node scripts/check-starter-pins.mjs",
     "check:starter-overrides": "node scripts/check-starter-workspace-overrides.mjs",
     "check:catalogs": "node scripts/check-orchestrator-catalogs.mjs",
+    "test:guards": "node --test \"tests/guards/*.test.mjs\"",
     "changeset": "changeset",
     "release": "pnpm -r --filter \"./packages/*\" build && changeset publish",
     "release:check": "changeset status --verbose"
