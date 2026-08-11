@@ -16,7 +16,9 @@
     "typecheck:readme": "node scripts/typecheck-readme-snippets.mjs",
     "check:schema": "bash scripts/check-canonical-schema.sh",
     "check:starter-pins": "node scripts/check-starter-pins.mjs",
+    "check:starter-overrides": "node scripts/check-starter-workspace-overrides.mjs",
     "check:catalogs": "node scripts/check-orchestrator-catalogs.mjs",
+    "test:guards": "node --test \"tests/guards/*.test.mjs\"",
     "changeset": "changeset",
     "release": "pnpm -r --filter \"./packages/*\" build && changeset publish",
     "release:check": "changeset status --verbose"
@@ -42,11 +44,27 @@
     "@changesets/cli": "^2.27.10"
   },
   "pnpm": {
+    "comment-overrides": [
+      "Every FIRST-PARTY @civitai/* package MUST be listed here as workspace:*.",
+      "This is what makes a release possible at all. The starters pin published",
+      "caret ranges (^0.32.0) on purpose so a `tiged`'d copy installs from npm",
+      "for external devs -- but inside this workspace those ranges must never",
+      "reach the registry, because `changeset version` rewrites them to versions",
+      "that are not published YET. An override rewrites the specifier BEFORE it",
+      "is recorded in pnpm-lock.yaml, so the lockfile importer entry reads",
+      "`specifier: workspace:*` and does NOT churn when changesets bumps the",
+      "caret -- which is the only reason `pnpm install --frozen-lockfile` can",
+      "pass on the Version Packages PR. Omit a package here and the release",
+      "deadlocks: the lockfile can only be regenerated after publish, publish",
+      "needs the merge, the merge needs a green frozen-lockfile install.",
+      "Enforced by scripts/check-starter-workspace-overrides.mjs (CI: Starter)."
+    ],
     "overrides": {
       "@civitai/app-sdk": "workspace:*",
       "@civitai/blocks-react": "workspace:*",
       "@civitai/components": "workspace:*",
       "@civitai/components-react": "workspace:*",
+      "@civitai/theme": "workspace:*",
       "cookie@<0.7.0": "^0.7.0",
       "postcss@<8.5.10": ">=8.5.10"
     }

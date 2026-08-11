@@ -24,11 +24,36 @@
  *     these; CI's `starter` job already builds them against the workspace.)
  *
  * FAILS (exit 1) when:
- *   - a semver-range pin no longer admits the published latest (prints the stale
- *     pin + the one-line fix, `bump to ^<latest>`), OR
+ *   - a semver-range pin is BEHIND the published latest — the range's floor is
+ *     at or below latest but the range excludes it (`^0.2.0` vs published
+ *     `0.3.0`; a 0.x caret locks the minor). Prints the stale pin + the
+ *     one-line fix, `bump to ^<latest>`. OR
+ *   - a pin is UNPUBLISHABLE — ahead of the published latest AND not admitted
+ *     by the LOCAL workspace version (or naming a package that is not in this
+ *     workspace at all). No release this repo can cut will make it resolve. OR
  *   - npm returns a DEFINITIVE 404/410 for a pinned package — the package does
  *     not exist (renamed / typo'd / unpublished). A "package not found" is a real
  *     bug in the pin, never a transient outage, so it must NOT be silently skipped.
+ *
+ * PASSES (reported as `AHEAD`) when a pin is ahead of npm AND the pin admits
+ * the LOCAL workspace package's version. That is not drift: it is the normal
+ * state of the `changeset-release/main` Version Packages PR, where `changeset
+ * version` has already rewritten the starters to the versions that PR is about
+ * to publish. Failing there was noise BY CONSTRUCTION on every single release,
+ * and a check that is red on every release PR trains everyone to ignore it.
+ *   - a definitive 404/410 still fails; "ahead" only relaxes the version
+ *     comparison, never the package-existence check.
+ *   - 🔴 "ahead" is BOUNDED BY THE LOCAL VERSION, not open-ended. `changeset
+ *     version` writes the starter pin and the package's own `version` in the
+ *     SAME commit, so a genuine pending-release pin always admits the local
+ *     workspace version. Accepting anything above npm made the whole forward
+ *     direction unbounded — `^99.0.0` passed forever, and so did any pin for a
+ *     package this workspace does not even contain.
+ *   - KNOWN GAP, stated so nobody reads more into this than it carries: a pin
+ *     that MATCHES the local version but was never published (the Version PR
+ *     merged and the publish job then failed) still reads as AHEAD and passes.
+ *     Bounding the forward direction is what this arm buys; detecting a failed
+ *     publish needs the release workflow's own signal, not a static check.
  *
  * SKIPS GRACEFULLY (exit 0 + warning) only on genuine unreachability — a
  * transport error (DNS/timeout/connection-refused/offline) or a 5xx/429
@@ -40,6 +65,10 @@
  *
  * USAGE
  *   node scripts/check-starter-pins.mjs      # or: pnpm check:starter-pins
+ *
+ * TESTS
+ *   tests/guards/check-starter-pins.test.mjs (node --test; `NPM_REGISTRY`
+ *   points the suite at a stand-in registry so it runs offline)
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -49,6 +78,7 @@ import { createRequire } from 'node:module';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..');
 const STARTERS_DIR = join(REPO_ROOT, 'starters');
+const PACKAGES_DIR = join(REPO_ROOT, 'packages');
 const SCOPE = '@civitai/';
 const REGISTRY = process.env.NPM_REGISTRY || 'https://registry.npmjs.org';
 const DEP_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'];
@@ -77,6 +107,39 @@ function findPackageJsons(dir, out = []) {
     else if (e.isFile() && e.name === 'package.json') out.push(full);
   }
   return out;
+}
+
+/**
+ * name -> version for every first-party package in `packages/`.
+ *
+ * This is the oracle that BOUNDS the "ahead of npm" case: `changeset version`
+ * rewrites a starter's caret and the package's own `version` in one commit, so
+ * during a pending release the pin and the local version agree. A pin ahead of
+ * npm that the LOCAL version does not satisfy is not a pending release — it is
+ * a range no release this repo can cut will ever resolve.
+ */
+function readLocalPackageVersions() {
+  const map = new Map();
+  let entries;
+  try {
+    entries = readdirSync(PACKAGES_DIR, { withFileTypes: true });
+  } catch {
+    return map; // no packages/ dir — every forward pin is then unjustifiable
+  }
+  for (const e of entries) {
+    if (!e.isDirectory() || e.name === 'node_modules') continue;
+    const file = join(PACKAGES_DIR, e.name, 'package.json');
+    let json;
+    try {
+      json = JSON.parse(readFileSync(file, 'utf8'));
+    } catch {
+      continue; // no manifest here (or unreadable) — not a workspace package
+    }
+    if (typeof json?.name === 'string' && typeof json?.version === 'string') {
+      map.set(json.name, { version: json.version, dir: relative(REPO_ROOT, join(PACKAGES_DIR, e.name)) });
+    }
+  }
+  return map;
 }
 
 /** Parse "a.b.c" (leading operator already stripped) → [maj, min, pat] | null. */
@@ -132,6 +195,68 @@ function satisfies(range, version) {
 /** Suggest a caret range that pins the published minor. */
 function suggestPin(version) {
   return `^${version}`;
+}
+
+/**
+ * Lowest version `range` admits — `^0.32.0` -> [0,32,0]. null = undecidable.
+ * Used to tell the two "range does not admit latest" cases apart (below).
+ */
+function rangeMinVersion(range) {
+  if (semver) {
+    try {
+      const min = semver.minVersion(range);
+      if (min) return [min.major, min.minor, min.patch];
+    } catch {
+      /* invalid range for semver — fall through */
+    }
+  }
+  const r = range.trim();
+  if (r === '*' || r === 'x' || r === '') return [0, 0, 0];
+  return parseVersion(r.replace(/^[\^~><= ]+/, ''));
+}
+
+/**
+ * A pin that does NOT admit the published latest is one of TWO opposite
+ * things, and only one of them is a bug:
+ *
+ *   STALE   — the pin's floor is at or below latest but the range excludes it
+ *             (`^0.2.0` vs published `0.3.0`: a 0.x caret locks the minor).
+ *             The scaffold is BEHIND and births apps missing everything since.
+ *             This is the drift class this checker exists to catch. FAIL.
+ *
+ *   PENDING — the pin's floor is ABOVE latest (`^0.32.0` vs published
+ *             `0.31.0`) AND the pin admits the LOCAL workspace version. The
+ *             scaffold is AHEAD: `changeset version` has rewritten the
+ *             starters to the versions the Version Packages PR is about to
+ *             publish, and they do not exist on npm YET. This is the normal,
+ *             correct state of every release PR — the check used to fail here
+ *             BY CONSTRUCTION on `changeset-release/main`, which is noise, not
+ *             signal. PASS (reported).
+ *
+ *   UNPUBLISHABLE — the pin's floor is ABOVE latest but the LOCAL workspace
+ *             version does not satisfy it (or the package is not in this
+ *             workspace at all). `^99.0.0`, or a caret hand-bumped past what
+ *             changesets wrote. Nothing this repo can publish will make it
+ *             resolve, so it is not "pending" anything. FAIL.
+ *             🔴 Without this arm, "ahead" was unbounded in the forward
+ *             direction and the whole check was satisfiable by any large
+ *             enough number.
+ *
+ * @param {string} range
+ * @param {string} latestVersion  npm `latest`
+ * @param {string|undefined} localVersion  the workspace package's own version
+ * Returns 'stale' | 'pending' | 'unpublishable'. 'stale' is the conservative
+ * default when the range floor cannot be parsed — an undecidable range must
+ * not silently pass.
+ */
+function classifyMiss(range, latestVersion, localVersion) {
+  const min = rangeMinVersion(range);
+  const latest = parseVersion(latestVersion);
+  if (!min || !latest) return 'stale';
+  if (cmp(min, latest) <= 0) return 'stale';
+  // Ahead of npm. Legitimate ONLY as this repo's own pending release.
+  if (!localVersion) return 'unpublishable';
+  return satisfies(range, localVersion) === true ? 'pending' : 'unpublishable';
 }
 
 // fetchLatest returns exactly one of:
@@ -199,10 +324,14 @@ async function main() {
     return;
   }
 
+  const local = readLocalPackageVersions();
+
   const failures = [];
   const notFound = []; // { pin, status } — definitive 404/410, package not on npm
   const skipped = []; // { pin, reason }
   const checked = [];
+  const pending = []; // { pin, latest, local } — AHEAD of npm: this repo's pending release
+  const unpublishable = []; // { pin, latest, local } — AHEAD of npm AND of the local package
 
   for (const pin of pins) {
     const latest = await fetchLatest(pin.pkg);
@@ -222,7 +351,12 @@ async function main() {
       continue;
     }
     if (!ok) {
-      failures.push({ pin, latest: latest.version });
+      // Three causes, two of them bugs. See classifyMiss().
+      const localPkg = local.get(pin.pkg);
+      const verdict = classifyMiss(pin.range, latest.version, localPkg?.version);
+      if (verdict === 'pending') pending.push({ pin, latest: latest.version, local: localPkg });
+      else if (verdict === 'unpublishable') unpublishable.push({ pin, latest: latest.version, local: localPkg });
+      else failures.push({ pin, latest: latest.version });
     } else {
       checked.push({ pin, latest: latest.version });
     }
@@ -235,6 +369,37 @@ async function main() {
   }
   for (const s of skipped) {
     console.warn(`SKIP ${s.pin.pkg} ${s.pin.range}  — ${s.reason}  (${rel(s.pin.file)})`);
+  }
+  for (const p of pending) {
+    console.log(
+      `AHEAD ${p.pin.pkg} ${p.pin.range} is ahead of published ${p.latest}, and admits local workspace version ${p.local.version} — pending release, not stale  (${rel(p.pin.file)})`,
+    );
+  }
+
+  // A forward pin no release can satisfy. Reported BEFORE the stale block: it
+  // is the same "range does not admit latest" observation, but it means the
+  // opposite thing and its fix is different.
+  if (unpublishable.length > 0) {
+    console.error('');
+    console.error('ERROR: UNPUBLISHABLE PIN — a starter pins a version that will never exist.');
+    console.error('');
+    console.error('       The pin is AHEAD of npm, which is legitimate only while THIS repo');
+    console.error('       has a release pending: `changeset version` writes the starter pin');
+    console.error("       and the package's own version in the same commit, so a pending pin");
+    console.error('       always admits the local workspace version. These do not.');
+    console.error('');
+    for (const u of unpublishable) {
+      const where = u.local
+        ? `local workspace version ${u.local.version} (${u.local.dir}) does NOT satisfy it`
+        : 'no such package in this workspace — nothing here will ever publish it';
+      console.error(
+        `  ${rel(u.pin.file)} [${u.pin.field}]\n` +
+          `    ${u.pin.pkg}: "${u.pin.range}"  is ahead of published ${u.latest}, and\n` +
+          `    ${where}\n` +
+          `    fix: pin the version this repo actually ships${u.local ? ` — "${suggestPin(u.local.version)}"` : ''}`,
+      );
+    }
+    console.error('');
   }
 
   // A 404/410 is DEFINITIVE (the package isn't on npm) → hard fail, never skip.
@@ -269,13 +434,29 @@ async function main() {
     process.exit(1);
   }
 
+  // Reported above; exits here so a tree with BOTH stale and unpublishable pins
+  // shows both blocks before failing.
+  if (unpublishable.length > 0) process.exit(1);
+
+  if (pending.length > 0) {
+    console.log(
+      `\n${pending.length} pin(s) are AHEAD of npm — the versions a pending release will publish. Not a failure.`,
+    );
+  }
+
   // Only-unreachable (nothing verified, nothing stale) → graceful pass.
   if (checked.length === 0 && skipped.some((s) => s.reason.startsWith('npm unreachable'))) {
     console.warn('\nnpm was unreachable for all pins — skipping the currency check (not failing).');
     return;
   }
 
-  console.log(`\nOK: ${checked.length} @civitai/* scaffold pin(s) admit their published version.`);
+  // Report BOTH numbers. A bare "0 admit their published version" is the same
+  // shape as a checker wired to nothing; pairing it with the AHEAD count makes
+  // the zero legible (during a pending release every pin is legitimately ahead).
+  console.log(
+    `\nOK: ${checked.length} @civitai/* scaffold pin(s) admit their published version` +
+      (pending.length > 0 ? `, ${pending.length} ahead pending release.` : '.'),
+  );
 }
 
 main().catch((err) => {

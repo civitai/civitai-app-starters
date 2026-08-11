@@ -256,9 +256,33 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
+      # Unit tests for BOTH release guards (node:test; no install, no network --
+      # check-starter-pins' suite runs against a stand-in registry). They live in
+      # this REQUIRED matrix job on purpose: it is the only required context that
+      # runs before the install, so the guards' own coverage is enforced rather
+      # than advisory. Deliberately run in every matrix leg rather than under an
+      # `if:` -- a conditional here would silently stop running the moment its
+      # matrix entry was renamed.
+      - run: node --test "tests/guards/*.test.mjs"
+
+      # RELEASE-DEADLOCK GUARD. Runs BEFORE the install so a missing override
+      # fails with the actionable message instead of the cryptic
+      # ERR_PNPM_OUTDATED_LOCKFILE the deadlock actually surfaces as.
+      #
+      # The starters pin PUBLISHED caret ranges (not workspace:*) because they
+      # are copied out verbatim by `npx tiged` -- see 2a453e6. `changeset
+      # version` rewrites those carets to versions that are not published yet,
+      # so every first-party @civitai/* package must also be pinned to
+      # workspace:* in the root pnpm.overrides, or the Version Packages PR can
+      # never install and the release deadlocks. Offline; no install needed.
+      # The same guard also blocks re-introducing workspace: into a starter and
+      # asserts a floor on how many pins it covers.
+      - run: node scripts/check-starter-workspace-overrides.mjs
+
       - run: pnpm install --frozen-lockfile
 
-      # Starters consume @civitai/app-sdk via workspace:^ (and the block
+      # Starters consume the first-party packages via published caret ranges
+      # that the root pnpm.overrides redirects to workspace:* (the block
       # starter additionally consumes @civitai/blocks-react). Building all
       # packages up front so each starter's typecheck sees fresh .d.ts files.
       - run: pnpm -r --filter "./packages/*" build
