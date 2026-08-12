@@ -73,6 +73,7 @@ import {
   type WrappedToken,
 } from '@civitai/app-sdk/blocks';
 
+import { consentUnavailablePayload, resolveUngrantableConsentNotice } from './consent.js';
 import { hostContextWithTheme } from './transport.js';
 import type { MockHost, MockHostScenarioPatch, MockBuzzHandle } from './mockHost.js';
 import {
@@ -1620,6 +1621,36 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
                 'API key: `civitai login --token <key>` (https://civitai.com/user/account), then ' +
                 'update VITE_LIVE_BLOCK_TOKEN and restart.',
             );
+            // 🔴 TELL THE BLOCK, not only the console. The `logOnce` above lands
+            // in the DEV's devtools; the block's own UI sees nothing and goes on
+            // rendering "confirm in the Civitai dialog" for a grant that can
+            // never arrive. That is the exact contradiction the production host
+            // now closes with `CONSENT_UNAVAILABLE` (civitai #3733), so live mode
+            // sends it too — otherwise a refusal handler written against prod is
+            // unreachable in `pnpm dev:live` and only observable in production.
+            //
+            // ADDITIVE: the log is unchanged and still unconditional (live mode
+            // genuinely cannot grant, whatever was asked for). Only the PUSH is
+            // gated, on the same rule the host applies — so a block that merely
+            // re-requests a scope its token ALREADY carries gets silence, not a
+            // permission-unavailable state over a permission that works.
+            //
+            // The grantable set is `[]`: there is no consent UI to open and no
+            // way to re-mint a token with a scope it does not carry, so NOTHING
+            // is grantable here, ever.
+            {
+              const notice = resolveUngrantableConsentNotice(
+                (typed.payload as unknown as { scopes?: unknown } | undefined)?.scopes,
+                Array.isArray(decoded.scopes) ? decoded.scopes : [],
+                [],
+              );
+              if (notice.notify) {
+                dispatchToBlock({
+                  type: 'CONSENT_UNAVAILABLE',
+                  payload: consentUnavailablePayload(notice),
+                });
+              }
+            }
             return;
           }
 

@@ -155,6 +155,112 @@ describe('IframeTransport', () => {
     transport.dispose();
   });
 
+  it('delivers a CONSENT_UNAVAILABLE push to a subscribed block', async () => {
+    // The consumer-facing half of the contract: a block that subscribes with
+    // `onMessage('CONSENT_UNAVAILABLE', …)` actually RECEIVES the refusal. It
+    // routes through the generic unsolicited-push tail (no `requestId`, so it
+    // matches no pending request), exactly like IMAGE_SCAN_RESOLVED.
+    const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+    const initPromise = transport.waitForInit();
+    window.dispatchEvent(
+      mockParentMessage({ type: 'BLOCK_INIT', payload: buildInitPayload() }, PARENT_ORIGIN),
+    );
+    await initPromise;
+
+    const received: unknown[] = [];
+    const off = transport.onMessage('CONSENT_UNAVAILABLE', (payload) => received.push(payload));
+
+    const push: ParentToBlockMessage = {
+      type: 'CONSENT_UNAVAILABLE',
+      payload: { reason: 'ungrantable', scopes: ['ai:write:budgeted'] },
+    };
+    window.dispatchEvent(mockParentMessage(push, PARENT_ORIGIN));
+    expect(received).toEqual([push.payload]);
+
+    off();
+    transport.dispose();
+  });
+
+  it('🔴 delivers a CONSENT_UNAVAILABLE carrying an EMPTY scopes array', async () => {
+    // The shape a consumer is most likely to mishandle, checked at the layer
+    // most likely to swallow it. `scopes: []` is a REAL refusal ("none of the
+    // names you asked for are in the public vocabulary"), so it must clear the
+    // payload validator and reach the handler exactly like a named one. If the
+    // guard is ever tightened to "non-empty array", this goes red here rather
+    // than in production, where it would present as the block never learning it
+    // was refused.
+    const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+    const initPromise = transport.waitForInit();
+    window.dispatchEvent(
+      mockParentMessage({ type: 'BLOCK_INIT', payload: buildInitPayload() }, PARENT_ORIGIN),
+    );
+    await initPromise;
+
+    const received: unknown[] = [];
+    const off = transport.onMessage('CONSENT_UNAVAILABLE', (payload) => received.push(payload));
+
+    window.dispatchEvent(
+      mockParentMessage(
+        { type: 'CONSENT_UNAVAILABLE', payload: { reason: 'ungrantable', scopes: [] } },
+        PARENT_ORIGIN,
+      ),
+    );
+    expect(received).toEqual([{ reason: 'ungrantable', scopes: [] }]);
+
+    off();
+    transport.dispose();
+  });
+
+  it('drops a MALFORMED CONSENT_UNAVAILABLE, and one from a disallowed origin', async () => {
+    // Both trust gates, on the new type. The payload is rendered by block UI, so
+    // a forged refusal from another origin — or one whose `scopes` carries a
+    // non-string — must never reach a handler. The positive control at the end
+    // proves the listener was live the whole time, so the two zeros above are
+    // drops and not a probe wired to nothing.
+    const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+    const initPromise = transport.waitForInit();
+    window.dispatchEvent(
+      mockParentMessage({ type: 'BLOCK_INIT', payload: buildInitPayload() }, PARENT_ORIGIN),
+    );
+    await initPromise;
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const received: unknown[] = [];
+    const off = transport.onMessage('CONSENT_UNAVAILABLE', (payload) => received.push(payload));
+
+    // Right origin, malformed payload → dropped by the validator.
+    window.dispatchEvent(
+      mockParentMessage(
+        { type: 'CONSENT_UNAVAILABLE', payload: { reason: 'ungrantable', scopes: [42] } },
+        PARENT_ORIGIN,
+      ),
+    );
+    expect(received).toEqual([]);
+    expect(warn).toHaveBeenCalled();
+
+    // Well-formed payload, wrong origin → dropped at the allowlist gate.
+    window.dispatchEvent(
+      mockParentMessage(
+        { type: 'CONSENT_UNAVAILABLE', payload: { reason: 'ungrantable', scopes: [] } },
+        OTHER_ORIGIN,
+      ),
+    );
+    expect(received).toEqual([]);
+
+    // Positive control.
+    window.dispatchEvent(
+      mockParentMessage(
+        { type: 'CONSENT_UNAVAILABLE', payload: { reason: 'ungrantable', scopes: [] } },
+        PARENT_ORIGIN,
+      ),
+    );
+    expect(received).toHaveLength(1);
+
+    warn.mockRestore();
+    off();
+    transport.dispose();
+  });
+
   it('accepts BLOCK_INIT from a wildcard-matched preview subdomain', async () => {
     const transport = new IframeTransport({
       allowedParentOrigins: ['https://civitai.com', 'https://*.civitaic.com'],

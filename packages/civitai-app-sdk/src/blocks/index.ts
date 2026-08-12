@@ -53,6 +53,8 @@ export type {
   BlockInitPayload,
   BlockToParentMessage,
   BlockToParentMessageType,
+  ConsentUnavailablePayload,
+  ConsentUnavailableReason,
   ParentToBlockMessage,
   ParentToBlockMessageType,
   SharedStorageItemWire,

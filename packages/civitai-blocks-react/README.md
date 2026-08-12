@@ -502,9 +502,108 @@ needs `ai:write:budgeted` but the viewer hasn't granted it). Fire-and-forget —
 on grant the host pushes a new token; observe `useBlockToken().scopes` and retry.
 
 ```tsx
+import { useRequestConsent } from '@civitai/blocks-react';
+
 const { requestConsent } = useRequestConsent();
 requestConsent({ scopes: ['ai:write:budgeted', 'buzz:read:self'] });
 ```
+
+🔴 **Always pass `scopes`, with a real scope name in it — it is optional in the
+signature but a precondition for the refusal path below.** The host grants the
+missing set it computed at mint, so a bare `requestConsent()` still opens the
+consent dialog. But `CONSENT_UNAVAILABLE` is computed *from the hint*: with no
+explicit scope proven un-grantable, the host cannot tell "can never be granted"
+from "the viewer hasn't confirmed yet", so it stays silent rather than guess.
+
+The bar is an array holding **at least one non-empty string** — not merely "an
+array is present". `undefined`, a non-array, `[]`, `['']` and `[1, 2]` all
+produce silence, in `pnpm dev` and in production alike, so
+`requestConsent({ scopes: [] })` follows the instruction and still receives
+nothing. To its author that reads as a broken message rather than a thin
+argument.
+
+### `useConsentUnavailable()`
+
+Some environments withhold a scope at mint (a dev-tunnel preview token, a surface
+that carries no money scope), so no consent round-trip can ever add it. The host
+then pushes an uncorrelated `CONSENT_UNAVAILABLE` — *not* a reply, because
+`REQUEST_CONSENT` carries no `requestId`. Consume it and stop telling the user to
+retry something that can't succeed:
+
+```tsx
+import { useConsentUnavailable, useRequestConsent } from '@civitai/blocks-react';
+
+function ConsentAwareGenerate() {
+  const { requestConsent } = useRequestConsent();
+  const { refusal, reset } = useConsentUnavailable();
+
+  // 🔴 Branch on `refusal !== null`, NEVER on `refusal.scopes.length`. The host
+  // refuses on its own unfiltered set but names only scopes in the public
+  // vocabulary, so `scopes: []` is a legitimate refusal — gating on the length
+  // silently drops the very message you subscribed for. Use the names for copy.
+  if (refusal) {
+    return (
+      <div>
+        <p>Generating isn't available on this page.</p>
+        <button onClick={reset}>Try again</button>
+      </div>
+    );
+  }
+  // 🔴 `scopes` is REQUIRED for a refusal to ever arrive — see above.
+  return <button onClick={() => requestConsent({ scopes: ['ai:write:budgeted'] })}>Generate</button>;
+}
+```
+
+`refusal` holds the latest `ConsentUnavailablePayload` (`{ reason, scopes }`) or
+`null`; `reset()` clears it, since a refusal is scoped to the scopes that were
+asked for and shouldn't latch for the life of the block. Against a host that
+never sends the message the hook simply stays `null` — nothing awaits it, so
+there is no timeout to hit.
+
+🔴 **The push is UNCORRELATED, and that is the permanent shape of this API.**
+`REQUEST_CONSENT` carries no `requestId`, so a refusal cannot be matched to the
+request that provoked it. Two consequences to design around:
+
+- **Every mounted `useConsentUnavailable()` sees every refusal.** There is no
+  reliable filter: `scopes` is advisory and may legitimately be `[]`, so it
+  cannot serve as a correlation key. If two independent parts of your block
+  request different scopes, both will see both refusals. Keep a request and its
+  refusal UI in one component, or track the outstanding request yourself.
+- **A refusal is buffered across mounts, so one that arrives while the consumer
+  is unmounted is not lost.** The transport hands an unsolicited push only to
+  handlers registered at the instant it arrives, so without this a refusal that
+  landed before the consumer mounted — the requester and the consumer being
+  different components, or the consumer being conditionally rendered — vanished,
+  and the block went back to showing "click Generate again" beside the host's
+  "unavailable". `requestConsent()` arms the buffer as it sends. It keeps only
+  the latest refusal, is dropped when the block token changes (a refusal is a
+  claim about *that* token's scopes, and the grant path re-mints), and is cleared
+  by `reset()` — so the "Try again" button above genuinely resets, rather than
+  having the refusal reappear on the next mount. A `REQUEST_CONSENT` you post
+  through the raw transport instead of the hook does not arm it.
+
+Without the hook (a non-React consumer, or one wiring the transport directly),
+the same push is available untyped — note the explicit type import, which the
+cast needs and which the hook makes unnecessary:
+
+```tsx
+import { getTransport } from '@civitai/blocks-react';
+import type { ConsentUnavailablePayload } from '@civitai/app-sdk/blocks';
+
+const unsubscribe = getTransport().onMessage('CONSENT_UNAVAILABLE', (payload) => {
+  // `onMessage` hands you `unknown`; this cast is UNCHECKED, which is why
+  // `useConsentUnavailable()` is the preferred path.
+  const { reason, scopes } = payload as ConsentUnavailablePayload;
+  console.info('permission unavailable', reason, scopes);
+});
+```
+
+To exercise the refusal locally, run the mock host with
+`createMockHost({ consentGrantable: false })`, flip it live with
+`host.setScenario({ consentGrantable: false })`, or append `?consent=ungrantable`
+to the dev harness URL — the `<Harness>` chrome then reads `consent=ungrantable`
+rather than `withheld`. `dev:live` emits it too: live mode can grant nothing, so
+any request for a scope your dev token lacks produces one.
 
 ### `useDomainMaturity()`
 

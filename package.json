@@ -14,6 +14,7 @@
     "lint": "pnpm -r --filter \"./packages/*\" lint",
     "e2e:all": "node scripts/run-all-e2e.mjs",
     "typecheck:readme": "node scripts/typecheck-readme-snippets.mjs",
+    "typecheck:readme:selftest": "node scripts/test-readme-snippet-gate.mjs",
     "check:schema": "bash scripts/check-canonical-schema.sh",
     "check:starter-pins": "node scripts/check-starter-pins.mjs",
     "check:starter-overrides": "node scripts/check-starter-workspace-overrides.mjs",

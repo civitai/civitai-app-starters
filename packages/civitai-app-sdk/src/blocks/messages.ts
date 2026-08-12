@@ -268,6 +268,54 @@ export interface SharedStorageItemWire {
 // Parent → block
 // ============================================================
 
+/**
+ * Why a `CONSENT_UNAVAILABLE` push was sent.
+ *
+ * A NAMED ALIAS for the single literal `'ungrantable'` — and it is exactly that,
+ * a bare literal type, not a wider `string` and not (yet) a multi-member union.
+ * `expectTypeOf<ConsentUnavailableReason>().toEqualTypeOf<'ungrantable'>()` in
+ * `test/blocks/consent-unavailable.test-d.ts` pins that.
+ *
+ * WHY THE ALIAS EARNS ITS KEEP, given it is currently just the literal:
+ *  - It gives the value a name consumers can spell in their own signatures
+ *    (`function refusalCopy(reason: ConsentUnavailableReason)`) instead of
+ *    repeating a string literal at every call site, and it is the ONE place a
+ *    future member is added.
+ *  - It is deliberately NOT `string`. `string` would leave a consumer nothing to
+ *    narrow on and no compile-time signal at all when the vocabulary changes.
+ *
+ * 🔴 AND IT DOES NOT MAKE WIDENING SOURCE-COMPATIBLE — do not read it that way.
+ * Adding a second member is a BREAKING change for any consumer with an
+ * exhaustive `switch` (or a `never` default arm): those stop compiling, on
+ * purpose, which is the whole value of a literal union and the reason it is
+ * preferred to `string` here. Ship a second reason as a documented breaking
+ * change, not as a "safe additive" one.
+ *
+ * `'ungrantable'` — the requested scope was clamped/withheld at mint, so no
+ * consent round-trip in THIS environment can ever add it. Distinct from "the
+ * viewer has not confirmed the dialog yet", which produces no message at all.
+ */
+export type ConsentUnavailableReason = 'ungrantable';
+
+/**
+ * Payload of the host→block {@link ParentToBlockMessage} `CONSENT_UNAVAILABLE`
+ * push — the host telling a block that a `REQUEST_CONSENT` it sent can NEVER be
+ * granted here, so the block can stop telling the user to retry.
+ *
+ * 🔴 `scopes` MAY BE EMPTY. It is the host's own refused set filtered to the
+ * known block-scope vocabulary ({@link BLOCK_SCOPES}) — the request's `scopes`
+ * hint is untrusted block input, and this payload is rendered by block UI, so
+ * nothing outside that fixed vocabulary is echoed back out of the host. The
+ * decision to refuse is taken on the UNFILTERED set, so a request naming only
+ * unrecognised scopes still refuses out loud, with `scopes: []`. Treat the
+ * message itself as the signal and `scopes` as an advisory detail for copy.
+ */
+export interface ConsentUnavailablePayload {
+  reason: ConsentUnavailableReason;
+  /** Refused scopes safe to NAME back to the block. MAY be empty — see above. */
+  scopes: string[];
+}
+
 export type ParentToBlockMessage =
   | { type: 'BLOCK_INIT'; payload: BlockInitPayload }
   | {
@@ -341,6 +389,46 @@ export type ParentToBlockMessage =
       //     to hit.
       type: 'THEME_CHANGE';
       payload: { theme: Theme };
+    }
+  | {
+      // Host-pushed REFUSAL of a `REQUEST_CONSENT` that can NEVER be granted.
+      // No `requestId` — this is an uncorrelated host→block PUSH, exactly like
+      // `TOKEN_REFRESH` / `THEME_CHANGE`, NOT a `*_RESULT` reply. It cannot be
+      // one: `REQUEST_CONSENT` is fire-and-forget and carries no `requestId`, so
+      // there is nothing for a reply to correlate against.
+      //
+      // WHY IT EXISTS: a block asks for a consent-gated scope with
+      // `REQUEST_CONSENT`. The host has two very different reasons to grant
+      // nothing — the viewer simply has not confirmed the dialog YET, or the
+      // scope was clamped/withheld at mint and consent here can never add it.
+      // Before this message the second case produced only a toast in the HOST
+      // frame and nothing at all over the bridge, so the block could not tell
+      // them apart: its own UI went on telling the user to click Generate again
+      // for a permission that could never arrive, directly contradicting the
+      // host toast on the same screen.
+      //
+      // 🔴 `scopes` CAN LEGITIMATELY BE EMPTY, and that is NOT an error. The host
+      // decides to refuse on its own UNFILTERED un-grantable set, then filters
+      // the NAMES it puts on the wire to the known block-scope vocabulary
+      // ({@link BLOCK_SCOPES}) — the block's `scopes` hint is untrusted input and
+      // this payload is rendered by block UI. When nothing the block asked for is
+      // in that vocabulary the message is still sent, with `scopes: []`, meaning
+      // "refused, and none of the requested names are ones I will repeat back".
+      // The REFUSAL is the signal; the names are advisory. A consumer that
+      // branches on `scopes.length > 0` and ignores the empty case silently drops
+      // the very refusal it subscribed for.
+      //
+      // BACK-COMPAT, BOTH DIRECTIONS — purely additive:
+      //   • OLD BLOCK / NEW HOST: an SDK that predates this message has no
+      //     handler for it — not `BLOCK_INIT`, not `TOKEN_REFRESH`, no
+      //     `requestId` to match a pending request, no push listener — so it
+      //     falls through the transport's no-op tail. Deployed blocks are
+      //     unaffected; they keep today's (silent) behaviour.
+      //   • NEW BLOCK / OLD HOST: nothing awaits this message. A host that never
+      //     sends it just means the refusal stays invisible — i.e. today. No hook
+      //     blocks on it and there is no timeout to hit.
+      type: 'CONSENT_UNAVAILABLE';
+      payload: ConsentUnavailablePayload;
     }
   | { type: 'ESTIMATE_RESULT'; payload: { requestId: string; snapshot: BlockWorkflowSnapshot } }
   | { type: 'WORKFLOW_SUBMITTED'; payload: { requestId: string; snapshot: BlockWorkflowSnapshot } }
