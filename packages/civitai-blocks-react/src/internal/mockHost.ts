@@ -1150,13 +1150,24 @@ export function readMockHostUrlOptions(
  * from a node/jsdom/happy-dom test OR a browser dev harness.
  *
  * GENERATION KINDS: the estimate → submit → poll money path is kind-agnostic —
- * it drives BOTH `WorkflowBody` arms, `{ kind:'textToImage', … }` and
- * `{ kind:'customComfy', recipe, params }`, with the identical lifecycle,
- * `generation`/`buzz` scenario config, and `spentAccountType` stamping (a
- * customComfy body's preferred pool lives under `params.accountType`). The
- * server-only recipe registry is NOT consulted — any `recipe` id is accepted
- * (fail-open) since the mock stands in for the server. So a scaffold can test a
- * customComfy sample generation with no backend, exactly like textToImage.
+ * it drives EVERY `WorkflowBody` member with the identical lifecycle and
+ * `generation`/`buzz` scenario config: `{ kind:'textToImage', … }`,
+ * `{ kind:'step', … }`, and BOTH arms of `{ kind:'customComfy', … }` — the
+ * RECIPE arm (`mode` omitted or `'recipe'`; names a server-registered recipe)
+ * and the INLINE arm (`mode:'inline'`; the block ships the ComfyUI graph
+ * itself, with its declared AIR `resources` and a `maxBuzz` bound). The inline
+ * arm is live in production; this docblock used to name customComfy as a
+ * recipe-only `{ recipe, params }` shape, which `preferredAccountType` 1000
+ * lines above already contradicts.
+ *
+ * `spentAccountType` stamping follows the same split: the preferred pool lives
+ * under `params.accountType` on a customComfy RECIPE body, and an INLINE body
+ * has no `accountType` at all (the host's `blockInlineComfyBodySchema` is
+ * `.strict()` without one — it resolves to Auto host-side), so the mock stamps
+ * its largest-wallet fallback there. The server-only recipe registry is NOT
+ * consulted — any `recipe` id is accepted (fail-open) since the mock stands in
+ * for the server. So a scaffold can test a customComfy sample generation with
+ * no backend, exactly like textToImage.
  *
  * FIDELITY CAVEAT — `spentAccountType`: on a successful gen the mock stamps the
  * PICKED pool (`body.accountType`), which equals the real backend's primary
@@ -1472,15 +1483,17 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             return;
 
           case 'ESTIMATE_WORKFLOW': {
-            // KIND-AGNOSTIC money path: both WorkflowBody arms — `textToImage`
-            // AND `customComfy` ({ recipe, params }) — are handled by the SAME
+            // KIND-AGNOSTIC money path: EVERY WorkflowBody member — `textToImage`,
+            // `step`, and both arms of `customComfy` (the RECIPE arm naming a
+            // server-registered recipe AND the INLINE arm carrying the block's own
+            // ComfyUI graph, `mode:'inline'`) — is handled by the SAME
             // estimate/submit/poll code, exactly as the real host forwards
-            // either body to the orchestrator uniformly. `costFor` /
+            // any body to the orchestrator uniformly. `costFor` /
             // `preferredAccountType` normalize across the union, so NOTHING here
             // may narrow on `body.kind` or touch textToImage-only fields
             // (`modelId`/`params.prompt`) — a customComfy body must flow through
-            // unchanged. The recipe id is NEVER validated against a registry
-            // (that's server-only); the mock accepts any id, fail-open. The
+            // unchanged, graph included. The recipe id is NEVER validated against
+            // a registry (that's server-only); the mock accepts any id, fail-open. The
             // sentinel `workflowId` is non-empty so the snapshot survives the
             // SDK inbound validator (which drops empty-workflowId snapshots).
             const body = typed.payload?.body ?? ({} as WorkflowBody);
@@ -1499,11 +1512,13 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           }
 
           case 'SUBMIT_WORKFLOW': {
-            // Kind-agnostic (see ESTIMATE_WORKFLOW): a `customComfy` recipe body
-            // drives the identical submit → poll → terminal lifecycle, honors the
-            // same generation/buzz scenario config (failRate/failNext/insufficient/
-            // latencyMs), and stamps spentAccountType from `params.accountType`
-            // (via preferredAccountType). No recipe-registry validation.
+            // Kind-agnostic (see ESTIMATE_WORKFLOW): a `customComfy` body drives
+            // the identical submit → poll → terminal lifecycle on EITHER arm, and
+            // honors the same generation/buzz scenario config (failRate/failNext/
+            // insufficient/latencyMs). spentAccountType comes from
+            // `params.accountType` on a RECIPE body; an INLINE body carries no
+            // account preference (see `preferredAccountType`), so it falls back to
+            // the largest-wallet stamp. No recipe-registry validation.
             submitCount += 1;
             const body = typed.payload?.body ?? ({} as WorkflowBody);
             const cost = costFor(body);

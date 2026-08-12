@@ -223,11 +223,23 @@ interface UseBuzzWorkflowReturn {
  * `estimate`/`submit` take a full {@link WorkflowBody} — the discriminated
  * union keyed by `kind`, with THREE members as of `@civitai/app-sdk@0.30.0`:
  * a `textToImage` body (`{ kind, modelId, modelVersionId, params }`), a
- * `customComfy` recipe body (`{ kind, recipe, params }`), or a `step` body
+ * `customComfy` body (`kind: 'customComfy'`), or a `step` body
  * (`{ kind: 'step', step, params }` — a server-registered orchestrator step
  * such as `'chat-completion'`), never a bare `{ prompt }`. The hook forwards
  * the body to the host verbatim and never reads variant-specific fields, so
  * every member flows through unchanged, including any member added later.
+ *
+ * 🔴 `customComfy` IS ITSELF A UNION, on `mode` — an app CAN ship its own
+ * ComfyUI graph. `WorkflowBodyCustomComfyRecipe` (`mode` omitted or `'recipe'`)
+ * names a server-registered recipe; `WorkflowBodyCustomComfyInline`
+ * (`mode: 'inline'`) carries the graph itself, plus its declared AIR
+ * `resources` and a `maxBuzz` bound. The inline arm is LIVE in production
+ * (developer-only) and this comment used to describe `customComfy` as a
+ * recipe-only `{ kind, recipe, params }` shape — written when that was true and
+ * never revisited once the arm shipped. A developer working against the live
+ * feature read the equivalent claim on the type, believed it over their own
+ * instinct, and concluded the capability did not exist. `@civitai/app-sdk`
+ * 0.30.0 predates the inline arm; the union above is otherwise unchanged.
  *
  * @returns `{ estimate, submit, poll, watch, cancel, status, result, error }`.
  *
