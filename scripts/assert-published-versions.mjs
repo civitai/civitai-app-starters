@@ -96,6 +96,14 @@
  * `concurrency` lane has no `cancel-in-progress`, so an unbounded step here
  * would park it.
  *
+ * 🔴 PREMISE RISK: everything above about WHERE the bump lands is a claim about
+ * `changesets/action@v1`, and `v1` is a moving BRANCH, not a tag — there is no
+ * `refs/tags/v1`. The behaviour this step depends on can therefore change with
+ * no diff in this repo (v2.0.0 shipped 2026-08-11). If a release run starts
+ * failing here for no local reason, re-read the action's `prepareBranch()` /
+ * `pushChanges()` before believing the guard. Pinning the action to a SHA would
+ * close this, and is a separate decision.
+ *
  * KNOWN LIMITS (measured, not guessed — do not read past them):
  *   - It enumerates `packages/*` ONLY. `changeset publish` operates over the
  *     whole workspace minus the changesets `ignore` list; today those coincide
@@ -120,11 +128,20 @@
  *                         packages pass (see the FLOOR). For a genuine
  *                         first-ever release of every package; any other value,
  *                         "true" included, does nothing.
+ *   PUBLISH_CHECK_FROM_DISK
+ *                         set to "1" to read the WORKING TREE instead of
+ *                         $GITHUB_SHA. This is the pre-fix behaviour and exists
+ *                         so a test/live control can reproduce it deliberately;
+ *                         it can only make the guard stricter, never laxer. Do
+ *                         not set it in CI.
+ *   GITHUB_SHA            set by GitHub Actions; the commit whose manifests are
+ *                         checked. Falls back to HEAD when unset (local runs).
  *
  * TESTS
  *   tests/guards/assert-published-versions.test.mjs (node --test; NPM_REGISTRY
  *   points the suite at a stand-in registry so it runs offline)
  */
+import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
@@ -143,8 +160,132 @@ const TIMEOUT_MS = Math.max(1, Number(process.env.PUBLISH_CHECK_TIMEOUT ?? 15000
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Publishable first-party packages: { name, version, dir }. */
-function readPublishablePackages() {
+/** Shape a parsed manifest into a pin, or null if it is not a publish target. */
+function toPublishable(json, dir) {
+  if (json?.private === true) return null; // never published
+  if (typeof json?.name !== 'string' || typeof json?.version !== 'string') return null;
+  return { name: json.name, version: json.version, dir };
+}
+
+/**
+ * 🔴 Read the commit that TRIGGERED this run (`$GITHUB_SHA`), not the working
+ * tree and NOT `HEAD`.
+ *
+ * `changesets/action` has two modes through the same job. In CREATE-VERSION-PR
+ * mode it runs `changeset version`, which rewrites every package.json to the
+ * versions the Version PR proposes. Those versions are unpublished BY DESIGN —
+ * they are what merging that PR will publish. Reading them and demanding npm
+ * already have them failed EVERY release run with a pending changeset.
+ *
+ * 🔴 AND `HEAD` DOES NOT AVOID THAT — a first attempt at this fix assumed the
+ * rewrite was left uncommitted, and was completely inert. The action's
+ * `prepareBranch()` + `pushChanges()` (changesets/action@v1, commitMode
+ * `git-cli`, this repo's default) do, in order:
+ *
+ *     git checkout -b changeset-release/main
+ *     git reset --hard $GITHUB_SHA
+ *     pnpm changeset version          # rewrites package.json
+ *     git add . && git commit -m "chore(release): version packages"
+ *     git push origin HEAD:changeset-release/main --force
+ *
+ * and never restore the previous HEAD. Measured on run 31665922710: by the time
+ * this step ran, HEAD was b18d787 on `changeset-release/main` holding app-sdk
+ * 0.34.0 — byte-identical to the working tree. `main` held 0.33.0, which is
+ * what npm had, and Version PR #231 carried 0.34.0.
+ *
+ * `$GITHUB_SHA` is the ref the invariant is actually about, and it is available
+ * locally in every mode because `actions/checkout` checks out the event's SHA —
+ * that is what puts it in the object store under the depth-1 default. (The
+ * `git reset --hard $GITHUB_SHA` above reinforces it, but only in create-PR
+ * mode with commitMode `git-cli`: `runPublish` never touches git, and
+ * `prepareBranch` early-returns under commitMode `github-api`. Do not cite the
+ * reset as the reason — it covers one of three modes.)
+ *
+ *   create-PR mode  $GITHUB_SHA is the main commit, whose versions are the ones
+ *                   already published. The action's branch + commit are off to
+ *                   the side and correctly invisible.
+ *   publish  mode   $GITHUB_SHA IS the merged Version PR commit, whose versions
+ *                   are exactly what `changeset publish` just pushed to npm.
+ *                   (`pnpm release` = build && changeset publish; neither
+ *                   rewrites a manifest or moves the branch.)
+ *
+ * Falls back to `HEAD` when $GITHUB_SHA is unset (a local run), and the caller
+ * falls back to the filesystem when this returns null — the test fixtures are
+ * plain temp dirs with no git.
+ */
+const TARGET_REF = process.env.GITHUB_SHA || 'HEAD';
+
+function git(args) {
+  return execFileSync('git', ['-C', REPO_ROOT, ...args], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+}
+
+/**
+ * Returns a DISCRIMINATED result, because the three ways this can come back
+ * empty mean opposite things and an earlier revision collapsed them into one
+ * falsy return:
+ *
+ *   { unreadable: true }  the ref could genuinely not be read (no git, not a
+ *                         checkout, ref absent). We were told which commit to
+ *                         check and cannot -> indeterminate.
+ *   { pkgs: [] }          the ref READ FINE and legitimately has no publishable
+ *                         package. That is the zero-packages FLOOR's case and
+ *                         must reach it — it is a documented hard failure.
+ *   { pkgs: [...] }       normal.
+ *
+ * Collapsing the second into the first sent "packages/ is absent at the ref"
+ * and "every packages/* is private" down the indeterminate path, so in CI
+ * (where $GITHUB_SHA is always set) they exited 0 with the message "could not
+ * be read" — a false cause, and a documented fail-loud invariant silently
+ * disarmed in the only environment that runs it.
+ */
+function readPublishablePackagesFromGit() {
+  let listing;
+  try {
+    listing = git(['ls-tree', '-r', '--name-only', TARGET_REF, 'packages/']);
+  } catch {
+    return { unreadable: true }; // no git, not a checkout, or the ref is absent
+  }
+  const manifests = listing
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => /^packages\/[^/]+\/package\.json$/.test(l));
+  // Read fine, nothing publishable there: NOT indeterminate. Let the floor see it.
+  if (manifests.length === 0) return { pkgs: [] };
+
+  const out = [];
+  const dropped = [];
+  for (const path of manifests) {
+    let json;
+    try {
+      json = JSON.parse(git(['show', `${TARGET_REF}:${path}`]));
+    } catch (err) {
+      // A manifest listed at the ref that cannot be read is NOT nothing —
+      // silently dropping it shrinks the population the same way a checker
+      // wired to nothing does. Say so.
+      dropped.push(`${path} (${err?.message?.split('\n')[0] || err})`);
+      continue;
+    }
+    const pin = toPublishable(json, dirname(path));
+    if (pin) out.push(pin);
+  }
+  for (const d of dropped) console.warn(`WARN could not read ${d} at ${TARGET_REF} — not counted`);
+  return { pkgs: out };
+}
+
+/** Short sha for a ref, for the run log. '' if unresolvable / not a repo. */
+function describeRef(ref = TARGET_REF) {
+  try {
+    return git(['rev-parse', '--short', ref]).trim();
+  } catch {
+    return '';
+  }
+}
+
+/** Filesystem reader — the fallback when this is not a git checkout. */
+function readPublishablePackagesFromDisk() {
   const out = [];
   let entries;
   try {
@@ -161,11 +302,75 @@ function readPublishablePackages() {
     } catch {
       continue; // not a workspace package
     }
-    if (json?.private === true) continue; // never published
-    if (typeof json?.name !== 'string' || typeof json?.version !== 'string') continue;
-    out.push({ name: json.name, version: json.version, dir: relative(REPO_ROOT, join(PACKAGES_DIR, e.name)) });
+    const pin = toPublishable(json, relative(REPO_ROOT, join(PACKAGES_DIR, e.name)));
+    if (pin) out.push(pin);
   }
   return out;
+}
+
+/**
+ * Publishable first-party packages: { name, version, dir }. The triggering
+ * commit wins over the working tree.
+ *
+ * The `source` string is not decoration — it is the ONLY thing distinguishing
+ * "read the right ref" from "silently fell back to the working tree", which is
+ * the exact state that broke the release. It names the ref AND its sha, and a
+ * test asserts it in the fallback arm too.
+ */
+function readPublishablePackages() {
+  if (process.env.PUBLISH_CHECK_FROM_DISK === '1') {
+    return { source: 'working tree (PUBLISH_CHECK_FROM_DISK=1)', pkgs: readPublishablePackagesFromDisk() };
+  }
+  const fromGit = readPublishablePackagesFromGit();
+
+  // The ref READ FINE. That includes reading it and finding nothing publishable
+  // — which is the FLOOR's case, a documented hard failure, and must NOT be
+  // diverted into the indeterminate skip below.
+  if (!fromGit.unreadable) {
+    const sha = describeRef();
+    const label = process.env.GITHUB_SHA ? `$GITHUB_SHA` : 'HEAD';
+    return { source: `${label}${sha ? ` (${sha})` : ''}`, pkgs: fromGit.pkgs };
+  }
+
+  const isRepo = describeRef('HEAD') !== '';
+
+  // 🔴 We were TOLD which commit to check and genuinely could not read it. Do
+  // NOT fall back to the working tree: in create-PR mode that tree holds the
+  // Version PR's unpublished versions, so falling back would hard-FAIL a
+  // healthy release — restoring the exact #232 bug under a different trigger.
+  // Every other "cannot determine" path here is a graceful skip; so is this.
+  //
+  // No publish-mode exemption here: an earlier revision added one for "ref
+  // unreadable but HEAD === $GITHUB_SHA, so the tree is provably the ref's".
+  //
+  // That state IS constructible — delete a commit's root tree object and
+  // `rev-parse HEAD` still succeeds while `ls-tree` exits 128; a `--filter=tree:0`
+  // partial clone with an unreachable promisor is a second route. (An earlier
+  // version of this comment claimed it could not be constructed. It was wrong,
+  // and it is recorded here because a maintainer might otherwise build on it.)
+  //
+  // It is still correct to have no exemption: every route to that state is a
+  // damaged or partial object store, where "we cannot determine this" is the
+  // honest answer. The exemption would only have added a working-tree assertion
+  // in a broken-git state — it costs a detection opportunity, never a false
+  // failure. No test can kill its mutant, which is the tell that it was buying
+  // nothing.
+  if (process.env.GITHUB_SHA && isRepo) {
+    return {
+      source: `$GITHUB_SHA (${process.env.GITHUB_SHA.slice(0, 9)}) could not be read`,
+      pkgs: [],
+      indeterminate: true,
+    };
+  }
+
+  // Distinguish the two remaining fallbacks: "no git here" is fine, "git is
+  // here but the read failed" is the pre-fix behaviour returning.
+  return {
+    source: isRepo
+      ? `working tree — FALLBACK, the git read at ${TARGET_REF} failed`
+      : 'working tree (not a git checkout)',
+    pkgs: readPublishablePackagesFromDisk(),
+  };
 }
 
 /**
@@ -273,7 +478,17 @@ async function resolvePackage(pkg) {
 }
 
 async function main() {
-  const pkgs = readPublishablePackages();
+  const { source, pkgs, indeterminate } = readPublishablePackages();
+
+  // Told which commit to check, could not read it -> cannot determine anything.
+  // Skip loudly rather than assert against the wrong tree. See the note in
+  // readPublishablePackages().
+  if (indeterminate) {
+    console.warn(`SKIP the publish assertion — ${source}.`);
+    console.warn('     Refusing to fall back to the working tree: in create-PR mode it holds the');
+    console.warn('     Version PR\'s unpublished versions, so that fallback would fail a healthy release.');
+    return;
+  }
 
   // A zero here reads exactly like a checker wired to nothing. Fail loud.
   if (pkgs.length === 0) {
@@ -283,8 +498,12 @@ async function main() {
     process.exit(1);
   }
 
+  // Naming the SOURCE is load-bearing, not decoration: reading the working tree
+  // instead of the committed one is what made this step fail every release run
+  // with a pending changeset, and the log gave no way to see which it had read.
   console.log(
-    `registry ${REGISTRY} · ${TRIES} attempt(s) x ${DELAY_MS}ms · ${TIMEOUT_MS}ms timeout · ${pkgs.length} package(s)`,
+    `registry ${REGISTRY} · ${TRIES} attempt(s) x ${DELAY_MS}ms · ${TIMEOUT_MS}ms timeout · ` +
+      `${pkgs.length} package(s) from ${source}`,
   );
 
   const published = [];

@@ -10,6 +10,9 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { execFileSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createFixture, destroyFixture, runGuard, startFakeRegistry, DEFAULT_PACKAGES } from './fixture.mjs';
 
 const SCRIPT = 'assert-published-versions.mjs';
@@ -172,6 +175,218 @@ describe('assert-published-versions', () => {
     } finally {
       destroyFixture(dir);
       await down.close();
+    }
+  });
+
+  // ---- create-PR mode vs publish mode (live failure, run 31665922710) -----
+
+  /**
+   * Replay what `changesets/action@v1` (commitMode `git-cli`) ACTUALLY does in
+   * create-Version-PR mode, taken from run 31665922710's own log:
+   *
+   *     git checkout -b changeset-release/main
+   *     git reset --hard $GITHUB_SHA
+   *     pnpm changeset version            # rewrites package.json
+   *     git add . && git commit           # <-- IT COMMITS
+   *     git push origin HEAD:changeset-release/main --force
+   *
+   * The commit is the part a first attempt at this fix got wrong: it assumed
+   * the rewrite was left uncommitted, so reading HEAD would step around it.
+   * HEAD ends up ON the bumped commit, so that fix was inert.
+   *
+   * Returns the sha of the pre-bump commit — i.e. what $GITHUB_SHA holds.
+   */
+  function replayCreatePrMode(dir, bumped) {
+    const g = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: ['ignore', 'pipe', 'ignore'] });
+    g('init', '-q');
+    g('config', 'user.email', 'test@example.invalid');
+    g('config', 'user.name', 'test');
+    g('add', '-A');
+    g('commit', '-qm', 'published state');
+    const triggeringSha = g('rev-parse', 'HEAD').toString().trim();
+
+    g('checkout', '-q', '-b', 'changeset-release/main');
+    g('reset', '-q', '--hard', triggeringSha);
+    for (const [d, meta] of Object.entries(DEFAULT_PACKAGES)) {
+      if (!bumped[meta.name]) continue;
+      const f = join(dir, 'packages', d, 'package.json');
+      const j = JSON.parse(readFileSync(f, 'utf8'));
+      j.version = bumped[meta.name];
+      writeFileSync(f, JSON.stringify(j, null, 2) + '\n');
+    }
+    g('add', '.');
+    g('commit', '-qm', 'chore(release): version packages');
+    return triggeringSha;
+  }
+
+  test('create-PR mode: reads $GITHUB_SHA, so the Version PR bump cannot fail the release', async () => {
+    // THE REGRESSION, modelled on the real sequence rather than an imagined one.
+    const dir = createFixture({ scripts: [SCRIPT] });
+    try {
+      const sha = replayCreatePrMode(dir, { '@civitai/app-sdk': '0.99.0', '@civitai/blocks-react': '0.98.0' });
+      // The registry knows only the versions at the TRIGGERING commit.
+      const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST, GITHUB_SHA: sha });
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /from \$GITHUB_SHA/);
+      assert.match(r.out, /5\/5 publishable package version\(s\) confirmed/);
+      assert.doesNotMatch(r.out, /0\.99\.0/);
+      assert.doesNotMatch(r.out, /PUBLISH DID NOT HAPPEN/);
+    } finally {
+      destroyFixture(dir);
+    }
+  });
+
+  test('CONTROL: the SAME replay without $GITHUB_SHA falls back to HEAD and FAILS — HEAD is on the bumped commit', async () => {
+    // This is the control that the first attempt at this fix lacked, and it is
+    // why that attempt shipped inert: reading HEAD is NOT equivalent to reading
+    // the triggering commit, because the action commits and leaves HEAD there.
+    const dir = createFixture({ scripts: [SCRIPT] });
+    try {
+      replayCreatePrMode(dir, { '@civitai/app-sdk': '0.99.0' });
+      const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST }); // no GITHUB_SHA
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /from HEAD/);
+      assert.match(r.out, /PUBLISH DID NOT HAPPEN/);
+      assert.match(r.out, /@civitai\/app-sdk@0\.99\.0/);
+    } finally {
+      destroyFixture(dir);
+    }
+  });
+
+  test('publish mode: $GITHUB_SHA IS the bumped commit, so a genuine failed publish is still caught', async () => {
+    // The guard must not be weakened into never failing. In publish mode the
+    // triggering commit carries the new versions, and if the publish did not
+    // land them this must still be a hard failure.
+    const dir = createFixture({ scripts: [SCRIPT] });
+    const g = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: ['ignore', 'pipe', 'ignore'] });
+    try {
+      g('init', '-q');
+      g('config', 'user.email', 'test@example.invalid');
+      g('config', 'user.name', 'test');
+      const f = join(dir, 'packages', 'civitai-app-sdk', 'package.json');
+      const j = JSON.parse(readFileSync(f, 'utf8'));
+      j.version = '0.99.0'; // the merged Version PR's version
+      writeFileSync(f, JSON.stringify(j, null, 2) + '\n');
+      g('add', '-A');
+      g('commit', '-qm', 'chore(release): version packages');
+      const sha = g('rev-parse', 'HEAD').toString().trim();
+
+      // registry never got 0.99.0 -> the publish silently did not happen
+      const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST, GITHUB_SHA: sha });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /PUBLISH DID NOT HAPPEN/);
+      assert.match(r.out, /@civitai\/app-sdk@0\.99\.0/);
+    } finally {
+      destroyFixture(dir);
+    }
+  });
+
+  test('an UNREADABLE $GITHUB_SHA skips loudly — it must NOT fall back to the working tree', async () => {
+    // Falling back to the working tree here would hard-FAIL a healthy release,
+    // because in create-PR mode that tree holds the Version PR's unpublished
+    // versions — the #232 bug under a different trigger.
+    const dir = createFixture({ scripts: [SCRIPT] });
+    try {
+      const sha = replayCreatePrMode(dir, { '@civitai/app-sdk': '0.99.0' });
+      const bogus = `${sha.slice(0, 39)}${sha[39] === 'a' ? 'b' : 'a'}`;
+      const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST, GITHUB_SHA: bogus });
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /could not be read/);
+      assert.match(r.out, /SKIP the publish assertion/);
+      // the working tree's unpublished 0.99.0 must never have been asserted
+      assert.doesNotMatch(r.out, /PUBLISH DID NOT HAPPEN/);
+      assert.doesNotMatch(r.out, /0\.99\.0/);
+    } finally {
+      destroyFixture(dir);
+    }
+  });
+
+  test('a READABLE ref with nothing publishable still hits the FLOOR — even with $GITHUB_SHA set', async () => {
+    // The regression this pins: collapsing "ref unreadable" and "ref read fine,
+    // nothing publishable" into one empty return sent the second down the
+    // indeterminate skip. Since CI ALWAYS sets $GITHUB_SHA, the documented
+    // fail-loud floor became unreachable in the only environment that runs it —
+    // and it reported "could not be read" about a ref it had read perfectly.
+    const dir = createFixture({
+      scripts: [SCRIPT],
+      packages: { priv: { name: '@civitai/priv', version: '1.0.0', private: true } },
+    });
+    const g = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: ['ignore', 'pipe', 'ignore'] });
+    try {
+      g('init', '-q');
+      g('config', 'user.email', 'test@example.invalid');
+      g('config', 'user.name', 'test');
+      g('add', 'scripts', 'packages');
+      g('commit', '-qm', 'only private packages');
+      const sha = g('rev-parse', 'HEAD').toString().trim();
+
+      const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST, GITHUB_SHA: sha });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /no publishable package found/);
+      // and it must NOT misreport a ref it read fine as unreadable
+      assert.doesNotMatch(r.out, /could not be read/);
+      assert.doesNotMatch(r.out, /SKIP the publish assertion/);
+    } finally {
+      destroyFixture(dir);
+    }
+  });
+
+  test('packages/ ABSENT at a READABLE ref floors — it must not be called "unreadable"', async () => {
+    // The second entry point into the same regression, and the one the test
+    // above cannot reach: `ls-tree` succeeds but lists no manifests. Conflating
+    // that with "the ref could not be read" routed it to a silent exit 0.
+    //
+    // $GITHUB_SHA is deliberately an EARLIER commit than HEAD, so the
+    // indeterminate arm is genuinely available if the code takes it — without
+    // that, this could pass for the wrong reason.
+    const dir = createFixture({ scripts: [SCRIPT] });
+    const g = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: ['ignore', 'pipe', 'ignore'] });
+    try {
+      g('init', '-q');
+      g('config', 'user.email', 'test@example.invalid');
+      g('config', 'user.name', 'test');
+      g('add', 'scripts'); // packages/ NOT committed here
+      g('commit', '-qm', 'scripts only');
+      const refSha = g('rev-parse', 'HEAD').toString().trim();
+      g('add', 'packages'); // now packages/ exists, so HEAD !== refSha
+      g('commit', '-qm', 'add packages');
+      assert.notEqual(g('rev-parse', 'HEAD').toString().trim(), refSha);
+
+      const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST, GITHUB_SHA: refSha });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /no publishable package found/);
+      assert.doesNotMatch(r.out, /could not be read/);
+      assert.doesNotMatch(r.out, /SKIP the publish assertion/);
+    } finally {
+      destroyFixture(dir);
+    }
+  });
+
+  test('the source label names the EXACT ref read — asserted per-arm, not by an alternation', async () => {
+    // An alternation like /FALLBACK|not a git checkout/ is satisfied by EITHER
+    // label, so swapping the two survives it. Each arm is pinned separately,
+    // and each must NOT print the other's label.
+    const noGit = createFixture({ scripts: [SCRIPT] }); // plain temp dir, no git
+    try {
+      const r = await runGuard(noGit, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST });
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /from working tree \(not a git checkout\)/);
+      assert.doesNotMatch(r.out, /FALLBACK/);
+      assert.doesNotMatch(r.out, /\$GITHUB_SHA/);
+    } finally {
+      destroyFixture(noGit);
+    }
+
+    const gitDir = createFixture({ scripts: [SCRIPT] });
+    try {
+      const sha = replayCreatePrMode(gitDir, { '@civitai/app-sdk': '0.99.0' });
+      const r = await runGuard(gitDir, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST, GITHUB_SHA: sha });
+      // names the ref AND a resolved short sha, so "which commit" is legible
+      assert.match(r.out, /from \$GITHUB_SHA \([0-9a-f]{7,}\)/);
+      assert.doesNotMatch(r.out, /not a git checkout/);
+      assert.doesNotMatch(r.out, /FALLBACK/);
+    } finally {
+      destroyFixture(gitDir);
     }
   });
 

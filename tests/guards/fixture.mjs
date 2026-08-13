@@ -168,10 +168,22 @@ export function destroyFixture(dir) {
  * fetches from — the child waits for a response the parent cannot serve.
  */
 export async function runGuard(dir, script, env = {}) {
+  // 🔴 STRIP the ambient CI variables the guards READ before layering the
+  // caller's env on top. GitHub Actions sets GITHUB_SHA to the CI commit, which
+  // does not exist inside a temp fixture repo — so a test that deliberately
+  // omits GITHUB_SHA silently got the runner's instead, and behaved differently
+  // in CI than locally. That made the one control proving `$GITHUB_SHA` is
+  // load-bearing die in CI before it could discriminate: 45/45 green locally,
+  // 5 required checks red on the PR.
+  //
+  // A test that WANTS one of these sets it explicitly in `env`, which still
+  // wins — the strip only removes what the runner injected behind our back.
+  const base = { ...process.env };
+  for (const k of ['GITHUB_SHA', 'NPM_REGISTRY', 'PUBLISH_CHECK_FROM_DISK']) delete base[k];
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [join(dir, 'scripts', script)], {
       encoding: 'utf8',
-      env: { ...process.env, ...env },
+      env: { ...base, ...env },
     });
     return { code: 0, stdout, stderr, out: stdout + stderr };
   } catch (err) {
