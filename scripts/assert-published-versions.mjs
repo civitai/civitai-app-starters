@@ -59,9 +59,22 @@
  *     indistinguishable from a checker wired to nothing, so it is an error, not
  *     a pass. (Same reason the success line reports a PAIR of counts.)
  *
- * SKIPS GRACEFULLY (exit 0 + warning) ONLY on genuine unreachability — a
- * transport error (DNS/timeout/offline) or a 5xx/429 — matching
- * `check-starter-pins.mjs`. A release must not go red because npm had a blip.
+ * SKIPS GRACEFULLY (exit 0 + warning) ONLY on genuine unreachability. The
+ * complete trigger list, kept exhaustive because an earlier revision of this
+ * very block was false in both directions:
+ *   - a transport error before the status line (DNS, connection refused,
+ *     offline, or the request timeout firing early), OR
+ *   - a body-read failure AFTER a 2xx status line (timeout mid-body, reset,
+ *     truncated JSON) — see `get`, which deliberately does NOT fold this into
+ *     a null body, OR
+ *   - a 5xx/429, OR
+ *   - the exact version 404s AND the follow-up name probe cannot be completed,
+ *     so "publish failed" and "new package" cannot be told apart.
+ * Matching `check-starter-pins.mjs`: a release must not go red on a blip.
+ *
+ * But NOT when nothing at all could be confirmed — see the FLOOR near the end
+ * of main(). A run that confirms zero packages is indistinguishable from a
+ * check wired to nothing, whatever the reason.
  *
  * SKIPS (not a publish target): `private: true` packages.
  *
@@ -70,7 +83,8 @@
  * so an immediate GET of a just-published version can 404 for a few seconds.
  * Failing on the first 404 would make this red on exactly the releases that
  * SUCCEEDED. Note the real budget: TRIES attempts means TRIES-1 sleeps, so the
- * default 5/3000 waits at most 12s, not 15s.
+ * default 5/3000 waits at most 12s, not 15s. The loop sleeps at the TOP of
+ * attempts 2..N precisely so that number cannot drift from the code.
  *
  * KNOWN LIMITS (measured, not guessed — do not read past them):
  *   - It enumerates `packages/*` ONLY. `changeset publish` operates over the
@@ -139,16 +153,33 @@ function readPublishablePackages() {
   return out;
 }
 
-/** GET a registry path. Returns { ok, body } | { notFound } | { error }. */
-async function get(path) {
+/**
+ * GET a registry path. Returns { ok, body } | { notFound } | { error }.
+ *
+ * 🔴 A BODY-READ failure is an `error`, never an `ok` with a null body. The
+ * request can fail AFTER the status line — a timeout mid-body, a reset, a
+ * truncated response — and swallowing that into `body = null` mislabels a
+ * transport transient as a registry CONTRACT violation, which this script fails
+ * closed on and refuses to retry. It also made the name probe answer "the
+ * package exists" for a request the registry never completed, producing
+ * "PUBLISH DID NOT HAPPEN" for a brand-new package on a network hiccup. Both
+ * were reproduced; keep the two failure kinds separate.
+ */
+async function get(path, accept = 'application/json') {
   try {
     const res = await fetch(`${REGISTRY}${path}`, {
-      headers: { accept: 'application/json' },
+      headers: { accept },
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
     if (res.status === 404 || res.status === 410) return { notFound: true, status: res.status };
     if (!res.ok) return { error: `HTTP ${res.status}` };
-    return { ok: true, body: await res.json().catch(() => null) };
+    let body;
+    try {
+      body = await res.json();
+    } catch (err) {
+      return { error: `body read failed: ${err?.message || String(err)}` };
+    }
+    return { ok: true, body };
   } catch (err) {
     return { error: err?.message || String(err) };
   }
@@ -181,24 +212,47 @@ async function fetchExactVersion(name, version) {
  * Does the registry know this package NAME at all?
  * Returns { exists } | { unknown } | { error }. See the header: this is what
  * separates "publish failed" from "package being introduced".
+ *
+ * Asks for npm's ABBREVIATED packument: the full document lists every version
+ * ever published and can be megabytes, and this request is the one most exposed
+ * to the timeout budget — a needless large body here widens exactly the
+ * mid-body-failure window handled in `get`.
+ *
+ * RETRIED on the same budget as the version probe. It decides between "publish
+ * failed" (hard fail) and "new package" (warn), so letting a single 429/503
+ * settle it would demote a genuine failed publish to a skip — and this round
+ * doubles request volume on a mass-failure run, which is precisely when a rate
+ * limit trips.
  */
 async function packageNameExists(name) {
-  const res = await get(`/${name}`);
-  if (res.notFound) return { unknown: true };
-  if (res.error) return { error: res.error };
-  return { exists: true };
+  let last = { error: 'no attempt made' };
+  for (let attempt = 1; attempt <= TRIES; attempt++) {
+    if (attempt > 1) await sleep(DELAY_MS);
+    const res = await get(`/${name}`, 'application/vnd.npm.install-v1+json, application/json');
+    if (res.notFound) return { unknown: true };
+    if (res.ok) return { exists: true };
+    last = res;
+  }
+  return { error: last.error };
 }
 
-/** Retry wrapper — see the RETRIES note in the header. */
+/**
+ * Retry wrapper — see the RETRIES note in the header.
+ *
+ * The sleep is at the TOP of attempts 2..N rather than the bottom of 1..N-1.
+ * Both give TRIES-1 sleeps, but this shape makes a trailing sleep after the
+ * final attempt unrepresentable, so the header's stated budget cannot drift
+ * from the code by a one-character edit.
+ */
 async function resolvePackage(pkg) {
   let last = { error: 'no attempt made' };
   for (let attempt = 1; attempt <= TRIES; attempt++) {
+    if (attempt > 1) await sleep(DELAY_MS);
     last = await fetchExactVersion(pkg.name, pkg.version);
     // Short-circuit on success: without this every run burns the full backoff.
     if (last.published) return { ...last, attempts: attempt };
     // A contract violation will not fix itself by waiting.
     if (last.unexpected) return { ...last, attempts: attempt };
-    if (attempt < TRIES) await sleep(DELAY_MS);
   }
   return { ...last, attempts: TRIES };
 }
@@ -300,6 +354,25 @@ async function main() {
   if (published.length === 0 && unreachable.length > 0 && neverPublished.length === 0) {
     console.warn('\nThe registry was unreachable for every package — skipping the publish assertion (not failing).');
     return;
+  }
+
+  // 🔴 FLOOR: nothing confirmed, and every package unknown to the registry.
+  // The never-published arm would otherwise report this as success — a wrong
+  // NPM_REGISTRY, a registry answering 404 fleet-wide, or an access change on
+  // every package all land here, and "0 confirmed" reads exactly like a checker
+  // wired to nothing. That is the same reasoning as the empty-packages guard
+  // above, which this arm had quietly punched a hole in.
+  if (published.length === 0 && neverPublished.length === pkgs.length) {
+    console.error('');
+    console.error('ERROR: the registry has never heard of ANY of these packages.');
+    console.error('       Confirmed 0 — which is indistinguishable from a check wired to nothing.');
+    console.error(`       Registry asked: ${REGISTRY}`);
+    console.error('       Likely a wrong NPM_REGISTRY, a registry-wide outage answering 404, or an');
+    console.error('       access change. If this really is a first-ever release of every package,');
+    console.error('       set PUBLISH_CHECK_ALLOW_NONE_PUBLISHED=1 for that one run.');
+    console.error('');
+    if (process.env.PUBLISH_CHECK_ALLOW_NONE_PUBLISHED !== '1') process.exit(1);
+    console.warn('PUBLISH_CHECK_ALLOW_NONE_PUBLISHED=1 — proceeding anyway.');
   }
 
   // Report BOTH numbers: a bare "0 missing" is the same shape as a check that

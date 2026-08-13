@@ -338,6 +338,128 @@ describe('assert-published-versions', () => {
     }
   });
 
+  // ---- transients must not masquerade as verdicts (delta-audit round 2) ---
+
+  test('a body-read failure after a 2xx is UNREACHABLE, not a contract violation', async () => {
+    // The request can fail AFTER the status line. Folding that into a null body
+    // mislabelled a transport transient as a registry contract violation, which
+    // fails closed and is not retried. Server sends 200 + a truncated body and
+    // never finishes it.
+    const stall = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json', 'content-length': '100' });
+      res.write('{"name":"x","ver');
+      // never end -> body read fails once the request times out
+    });
+    await new Promise((r) => stall.listen(0, '127.0.0.1', r));
+    const origin = `http://127.0.0.1:${stall.address().port}`;
+    const dir = createFixture({ scripts: [SCRIPT] });
+    try {
+      const r = await runGuard(dir, SCRIPT, {
+        NPM_REGISTRY: origin,
+        PUBLISH_CHECK_TRIES: '1',
+        PUBLISH_CHECK_DELAY: '0',
+        PUBLISH_CHECK_TIMEOUT: '300',
+      });
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /body read failed/);
+      assert.doesNotMatch(r.out, /contract violation/);
+      assert.doesNotMatch(r.out, /PUBLISH DID NOT HAPPEN/);
+    } finally {
+      destroyFixture(dir);
+      stall.closeAllConnections();
+      await new Promise((r) => stall.close(r));
+    }
+  });
+
+  test('honours PUBLISH_CHECK_TIMEOUT — a server that never answers is unreachable, not a failure', async () => {
+    // Pins the timeout itself: deleting the `signal:` option previously passed
+    // every test, and without it a hung connection falls back to ~300s.
+    const blackhole = createServer(() => {
+      /* never respond */
+    });
+    await new Promise((r) => blackhole.listen(0, '127.0.0.1', r));
+    const origin = `http://127.0.0.1:${blackhole.address().port}`;
+    const dir = createFixture({ scripts: [SCRIPT] });
+    try {
+      const started = Date.now();
+      const r = await runGuard(dir, SCRIPT, {
+        NPM_REGISTRY: origin,
+        PUBLISH_CHECK_TRIES: '1',
+        PUBLISH_CHECK_DELAY: '0',
+        PUBLISH_CHECK_TIMEOUT: '250',
+      });
+      const elapsed = Date.now() - started;
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /skipping the publish assertion/);
+      // It must have given up on the configured budget, not undici's ~300s.
+      assert.ok(elapsed < 20000, `took ${elapsed}ms — the timeout did not fire`);
+    } finally {
+      destroyFixture(dir);
+      blackhole.closeAllConnections();
+      await new Promise((r) => blackhole.close(r));
+    }
+  });
+
+  test('an unreachable NAME PROBE does not settle the verdict — it skips, and it retries', async () => {
+    // The version 404s (looks absent) but the name probe 503s, so "publish
+    // failed" and "new package" cannot be told apart. Answering either way
+    // would be a guess.
+    const flaky = await startScriptedRegistry((url) =>
+      url === '/@civitai/app-sdk' ? { status: 503, body: { error: 'rate limited' } } : { status: 404, body: { error: 'nope' } },
+    );
+    const dir = createFixture({ scripts: [SCRIPT], packages: { 'civitai-app-sdk': DEFAULT_PACKAGES['civitai-app-sdk'] } });
+    try {
+      const r = await runGuard(dir, SCRIPT, {
+        NPM_REGISTRY: flaky.origin,
+        PUBLISH_CHECK_TRIES: '2',
+        PUBLISH_CHECK_DELAY: '0',
+      });
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /name probe failed/);
+      assert.doesNotMatch(r.out, /PUBLISH DID NOT HAPPEN/);
+      assert.doesNotMatch(r.out, /^NEW /m);
+      // retried rather than being settled by a single 503
+      assert.equal(flaky.hits.filter((h) => h === '/@civitai/app-sdk').length, 2, JSON.stringify(flaky.hits));
+    } finally {
+      destroyFixture(dir);
+      await flaky.close();
+    }
+  });
+
+  test('FLOOR: confirming ZERO packages fails, even when every one looks merely "new"', async () => {
+    // A wrong NPM_REGISTRY / fleet-wide 404 would otherwise report success via
+    // the never-published arm. "0 confirmed" reads exactly like a check wired
+    // to nothing.
+    const empty = await startFakeRegistry({});
+    const dir = createFixture({ scripts: [SCRIPT] });
+    try {
+      const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: empty.origin, ...FAST });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /never heard of ANY of these packages/);
+      assert.doesNotMatch(r.out, /^OK: /m);
+    } finally {
+      destroyFixture(dir);
+      await empty.close();
+    }
+  });
+
+  test('FLOOR has an explicit escape hatch for a genuine first-ever release', async () => {
+    const empty = await startFakeRegistry({});
+    const dir = createFixture({ scripts: [SCRIPT] });
+    try {
+      const r = await runGuard(dir, SCRIPT, {
+        NPM_REGISTRY: empty.origin,
+        ...FAST,
+        PUBLISH_CHECK_ALLOW_NONE_PUBLISHED: '1',
+      });
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /proceeding anyway/);
+    } finally {
+      destroyFixture(dir);
+      await empty.close();
+    }
+  });
+
   test('RETRIES a 404 before failing — publish propagation must not read as a failed publish', async () => {
     // Same missing-version tree as the failure case, but with 3 attempts. The
     // guard must issue 3 requests for the missing package and SAY so, proving
