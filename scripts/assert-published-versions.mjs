@@ -574,27 +574,33 @@ async function main() {
         `       ${dropped.length} of the ${listed} manifest(s) listed at that ref are UNUSABLE` +
           ` (see the WARN line(s) above — each carries its own cause).`,
       );
-      // 🔴 THIS PARAGRAPH IS CONDITIONAL, and that is the third time this message
-      // has had to learn the same lesson. A universal sentence ("the population is
-      // there and this guard could not use it") is FALSE whenever
-      // `dropped.length < listed`: the remainder read perfectly well and simply
-      // declared nothing publishable. Worse, it is operationally misleading —
-      // repairing only the unusable manifests still floors, because the readable
-      // ones are a co-cause the diagnosis never mentioned.
+      // 🔴 SAY ONLY WHAT WAS MEASURED. This message has now been wrong three
+      // times, each time by asserting something about manifests it had NOT read:
+      //   v1  "every one is UNREADABLE"          — false of the ones it read fine
+      //   v2  "the population … could not be used" — same claim, moved to prose
+      //   v3  "repairing the unusable ones ALONE will floor again"
+      // v3 is the subtlest and the worst, because it is ADVICE. Whether an
+      // unusable manifest is publishable is UNKNOWABLE here — that is the entire
+      // reason this floored — so "repairing them is not enough" asserts the
+      // pessimistic branch of an unknown as fact. Measured on the mixed fixture:
+      // restore just the two damaged blobs and the run exits 0.
+      //
+      // So the conditional states the KNOWN counts and marks the unknown as
+      // unknown. It does not tell the operator what repairing will achieve.
       if (dropped.length === listed) {
         console.error('       So packages/ is NOT empty at that ref: every manifest it lists is one');
         console.error('       this guard could not use.');
       } else {
         console.error(
-          `       So packages/ is NOT empty at that ref — but the unusable ones are only PART of` +
-            ` why this floored:`,
+          `       So packages/ is NOT empty at that ref: the other ${listed - dropped.length} manifest(s)` +
+            ` read fine and`,
         );
-        console.error(
-          `       the other ${listed - dropped.length} manifest(s) read fine and declared nothing` +
-            ` publishable (private, or no`,
-        );
-        console.error('       name/version). Repairing the unusable ones ALONE will floor again.');
+        console.error('       declared nothing publishable (private, or no name/version).');
       }
+      console.error('       Whether any UNUSABLE manifest is publishable cannot be known from here —');
+      console.error('       that is precisely why this floored rather than passing. Repair them and');
+      console.error('       re-run: that either clears this, or proves the remaining ones really are');
+      console.error('       all non-publishable.');
       console.error('       A manifest becomes unusable when the object store cannot produce the blob');
       console.error('       (a corrupt object, or a blob-filtered clone whose promisor is unreachable —');
       console.error('       a REACHABLE one would have fetched it and this would not have fired), or');

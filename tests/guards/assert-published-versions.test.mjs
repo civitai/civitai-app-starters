@@ -11,7 +11,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createFixture, destroyFixture, runGuard, startFakeRegistry, DEFAULT_PACKAGES } from './fixture.mjs';
 
@@ -375,9 +375,15 @@ describe('assert-published-versions', () => {
   /**
    * 🔴 `exit 1` DOES NOT PROVE THE FLOOR RAN. An uncaught throw inside main()
    * also exits 1, so `assert.equal(r.code, 1)` scores a floor that crashed
-   * halfway through identically to one that completed. Measured: removing the
-   * `dropped = []` / `listed = 0` destructure defaults makes the floor TypeError
-   * mid-message and the whole suite still reported green.
+   * halfway through identically to one that completed. Measured: a throw injected
+   * mid-floor is caught by this and by nothing else.
+   *
+   * (An earlier version of this comment said removing the `dropped = []` /
+   * `listed = 0` destructure defaults produces that crash. At HEAD it does not —
+   * removing them alone is green, because the one arm omitting both returns
+   * before either is read. See the note above the destructure in the script,
+   * which is the accurate one. Removing them TOGETHER with a reader arm's fields
+   * does crash, and that pair is what this catches.)
    *
    * The trailing line is the floor's last statement before `process.exit(1)`, so
    * its presence is what distinguishes "ran to the end" from "died inside", and
@@ -392,22 +398,47 @@ describe('assert-published-versions', () => {
     assert.match(r.out, /Refusing to report success for a check that inspected nothing\./);
   }
 
+  /** The exact floor header, built once — it is asserted from two tests. */
+  const floorHeader = (dir, sha) =>
+    `ERROR: no publishable package found in $GITHUB_SHA (${shortSha(dir, sha)}) under packages/.`;
+
   /**
-   * The floor's message, as an exact array of lines.
+   * The floor's message, from its header to the END OF OUTPUT.
    *
    * 🔴 Pin the WHOLE BLOCK, not features of it. A `doesNotMatch(/every one/i)`
    * only forbids the synonym you happened to think of — a mutant phrasing the
    * same false universal as "Each and all of the manifests … is unusable"
-   * survived it. An exact comparison cannot be talked around: any rewording,
-   * including a correct one, must be restated here deliberately.
+   * survived it.
+   *
+   * 🔴 And the window runs to the END, not to the trailing line. An earlier
+   * version stopped at "Refusing to report success", which left the most natural
+   * place to add a summary sentence — immediately AFTER it, before the exit —
+   * completely unpinned: a mutant appending "In short: every manifest listed at
+   * that ref is unusable." there passed 55/55.
+   *
+   * 🔴 Output BEFORE the header is constrained too, rather than waved off: the
+   * only thing legitimately printed there is the per-entry WARN block, so
+   * anything else is a claim nobody pinned. A mutant printing the same false
+   * universal above the header survived while this only checked forwards.
    */
   function floorBlock(r) {
     const lines = r.out.split('\n');
     const start = lines.findIndex((l) => l.startsWith('ERROR: no publishable package'));
     assert.ok(start >= 0, `no floor block in:\n${r.out}`);
-    const end = lines.findIndex((l, i) => i >= start && l.includes('Refusing to report success'));
-    assert.ok(end >= start, `floor block never terminated in:\n${r.out}`);
-    return lines.slice(start, end + 1);
+    assert.ok(
+      lines.some((l) => l.includes('Refusing to report success')),
+      `floor block never terminated in:\n${r.out}`,
+    );
+    for (const [i, l] of lines.slice(0, start).entries()) {
+      assert.ok(
+        l === '' || l.startsWith('WARN '),
+        `line ${i} precedes the floor header and is neither blank nor a WARN: ${JSON.stringify(l)}`,
+      );
+    }
+    // trailing blank lines are an artefact of the final newline, not content
+    const out = lines.slice(start);
+    while (out.length && out[out.length - 1] === '') out.pop();
+    return out;
   }
 
   /**
@@ -478,17 +509,27 @@ describe('assert-published-versions', () => {
       // satisfied by the WARN lines, which print `at <ref>` independently — so a
       // floor printing a WRONG sha (or a hardcoded one) passes it while the
       // property under test is gone. Assert the whole line as one unit instead.
-      const floorLine = r.out.split('\n').find((l) => l.startsWith('ERROR: no publishable package'));
-      assert.ok(floorLine, `no floor line in:\n${r.out}`);
-      assert.equal(
-        floorLine,
-        `ERROR: no publishable package found in $GITHUB_SHA (${shortSha(dir, sha)}) under packages/.`,
-      );
 
-      // 2. it reports the population it could not use — BOTH counts, and it must
-      //    not overclaim: here all 5 listed are unusable, so 5 of 5.
-      assert.match(r.out, /5 of the 5 manifest\(s\) listed at that ref are UNUSABLE/);
-      assert.match(r.out, /packages\/ is NOT empty at that ref/);
+      // 2. the ALL-unusable branch, pinned as a whole block for the same reason
+      //    the mixed one is: two mutants reworded this arm (and one routed the
+      //    MIXED prose through it, re-emitting "the other 0 manifest(s) …") and
+      //    survived while only spelled regexes guarded it.
+      assert.deepEqual(floorBlock(r), [
+        floorHeader(dir, sha),
+        '       5 of the 5 manifest(s) listed at that ref are UNUSABLE (see the WARN line(s) above — each carries its own cause).',
+        '       So packages/ is NOT empty at that ref: every manifest it lists is one',
+        '       this guard could not use.',
+        '       Whether any UNUSABLE manifest is publishable cannot be known from here —',
+        '       that is precisely why this floored rather than passing. Repair them and',
+        '       re-run: that either clears this, or proves the remaining ones really are',
+        '       all non-publishable.',
+        '       A manifest becomes unusable when the object store cannot produce the blob',
+        '       (a corrupt object, or a blob-filtered clone whose promisor is unreachable —',
+        '       a REACHABLE one would have fetched it and this would not have fired), or',
+        '       when the committed JSON does not parse. The WARN line above names which.',
+        '       The working copy on disk is irrelevant here: this guard reads the ref.',
+        '       Refusing to report success for a check that inspected nothing.',
+      ]);
       // 3. and it must not have taken the indeterminate SKIP path — the ref read fine
       assert.doesNotMatch(r.out, /could not be read/);
       assert.doesNotMatch(r.out, /SKIP the publish assertion/);
@@ -575,11 +616,14 @@ describe('assert-published-versions', () => {
       // rather than folded into a universal claim; and no rephrasing can slip a
       // new universal past this.
       assert.deepEqual(floorBlock(r), [
-        `ERROR: no publishable package found in $GITHUB_SHA (${shortSha(dir, sha)}) under packages/.`,
+        floorHeader(dir, sha),
         '       2 of the 5 manifest(s) listed at that ref are UNUSABLE (see the WARN line(s) above — each carries its own cause).',
-        '       So packages/ is NOT empty at that ref — but the unusable ones are only PART of why this floored:',
-        '       the other 3 manifest(s) read fine and declared nothing publishable (private, or no',
-        '       name/version). Repairing the unusable ones ALONE will floor again.',
+        '       So packages/ is NOT empty at that ref: the other 3 manifest(s) read fine and',
+        '       declared nothing publishable (private, or no name/version).',
+        '       Whether any UNUSABLE manifest is publishable cannot be known from here —',
+        '       that is precisely why this floored rather than passing. Repair them and',
+        '       re-run: that either clears this, or proves the remaining ones really are',
+        '       all non-publishable.',
         '       A manifest becomes unusable when the object store cannot produce the blob',
         '       (a corrupt object, or a blob-filtered clone whose promisor is unreachable —',
         '       a REACHABLE one would have fetched it and this would not have fired), or',
@@ -587,6 +631,65 @@ describe('assert-published-versions', () => {
         '       The working copy on disk is irrelevant here: this guard reads the ref.',
         '       Refusing to report success for a check that inspected nothing.',
       ]);
+    } finally {
+      destroyFixture(dir);
+    }
+  });
+
+  test('REPAIRING the unusable manifests ALONE can clear the floor — the message must not claim otherwise', async () => {
+    // 🔴 The fact behind the third rewrite of this message. A round of this PR
+    // shipped the advice "Repairing the unusable ones ALONE will floor again."
+    // It is FALSE: whether an unusable manifest is publishable is exactly what
+    // the guard could not determine, so the pessimistic branch of that unknown
+    // is not a fact to state. Here the two damaged manifests ARE publishable, so
+    // restoring only their blobs — touching nothing else — clears the floor.
+    //
+    // This test exists so that claim cannot be reintroduced: any message
+    // asserting repair is insufficient is contradicted by this run.
+    const dir = createFixture({
+      scripts: [SCRIPT],
+      packages: {
+        broken1: { name: '@civitai/app-sdk', version: '0.31.0' },
+        broken2: { name: '@civitai/theme', version: '0.2.0' },
+        priv1: { name: '@civitai/priv1', version: '1.0.0', private: true },
+        priv2: { name: '@civitai/priv2', version: '1.0.0', private: true },
+        priv3: { name: '@civitai/priv3', version: '1.0.0', private: true },
+      },
+    });
+    const g = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: ['ignore', 'pipe', 'ignore'] });
+    try {
+      g('init', '-q');
+      g('config', 'user.email', 'test@example.invalid');
+      g('config', 'user.name', 'test');
+      g('add', 'packages', 'scripts');
+      g('commit', '-qm', 'mixed');
+      const sha = g('rev-parse', 'HEAD').toString().trim();
+      const objPath = (d) => {
+        const b = g('rev-parse', `${sha}:packages/${d}/package.json`).toString().trim();
+        return join(dir, '.git', 'objects', b.slice(0, 2), b.slice(2));
+      };
+      const damaged = [objPath('broken1'), objPath('broken2')];
+      for (const o of damaged) unlinkSync(o);
+
+      // BEFORE: floors, and says nothing about what repair will achieve
+      const before = await runGuard(dir, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST, GITHUB_SHA: sha });
+      assert.equal(before.code, 1, before.out);
+      assert.match(before.out, /2 of the 5 manifest\(s\)/);
+      assert.doesNotMatch(before.out, /will floor again/);
+      assert.doesNotMatch(before.out, /only PART of why/);
+
+      // AFTER: restore ONLY the two blobs — the three private manifests are
+      // untouched, so if they were the co-cause an earlier message claimed, this
+      // would still floor. It does not.
+      g('hash-object', '-w', join(dir, 'packages', 'broken1', 'package.json'));
+      g('hash-object', '-w', join(dir, 'packages', 'broken2', 'package.json'));
+      for (const o of damaged) assert.ok(existsSync(o), 'blob was not actually restored');
+
+      const after = await runGuard(dir, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST, GITHUB_SHA: sha });
+      assert.equal(after.code, 0, after.out);
+      assert.match(after.out, /2\/2 publishable package version\(s\) confirmed/);
+      assert.doesNotMatch(after.out, /no publishable package found/);
+      assert.doesNotMatch(after.out, /UNUSABLE/);
     } finally {
       destroyFixture(dir);
     }
