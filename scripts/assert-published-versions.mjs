@@ -235,6 +235,12 @@ function git(args) {
  *                         must reach it — it is a documented hard failure.
  *   { pkgs: [...] }       normal.
  *
+ * `dropped` rides alongside `pkgs` on both readable arms and carries the
+ * manifests that WERE listed at the ref and could not be read. It is what lets
+ * the floor tell "packages/ is empty at this ref" from "packages/ is populated
+ * at this ref and the object store is damaged" — two states that produce an
+ * identical `pkgs: []` and want opposite fixes.
+ *
  * Collapsing the second into the first sent "packages/ is absent at the ref"
  * and "every packages/* is private" down the indeterminate path, so in CI
  * (where $GITHUB_SHA is always set) they exited 0 with the message "could not
@@ -253,7 +259,7 @@ function readPublishablePackagesFromGit() {
     .map((l) => l.trim())
     .filter((l) => /^packages\/[^/]+\/package\.json$/.test(l));
   // Read fine, nothing publishable there: NOT indeterminate. Let the floor see it.
-  if (manifests.length === 0) return { pkgs: [] };
+  if (manifests.length === 0) return { pkgs: [], dropped: [] };
 
   const out = [];
   const dropped = [];
@@ -272,7 +278,17 @@ function readPublishablePackagesFromGit() {
     if (pin) out.push(pin);
   }
   for (const d of dropped) console.warn(`WARN could not read ${d} at ${TARGET_REF} — not counted`);
-  return { pkgs: out };
+  // 🔴 `dropped` LEAVES this function, and that is the whole point. Warning per
+  // entry and returning only `pkgs` made the two states below indistinguishable
+  // to the caller, so the FLOOR reported the first when it was looking at the
+  // second:
+  //   pkgs:[] dropped:[]     the ref genuinely has no publishable package
+  //   pkgs:[] dropped:[...]  the ref LISTED manifests and every one was
+  //                          unreadable — a damaged/partial object store
+  // The verdict is the same (exit 1, correctly), the diagnosis is not: the
+  // second is not an empty `packages/`, and pointing an operator there sends
+  // them to look at files that are sitting readable on disk.
+  return { pkgs: out, dropped };
 }
 
 /** Short sha for a ref, for the run log. '' if unresolvable / not a repo. */
@@ -318,8 +334,17 @@ function readPublishablePackagesFromDisk() {
  * test asserts it in the fallback arm too.
  */
 function readPublishablePackages() {
+  // `dropped: []` on every DISK arm is a statement about the reader, not a
+  // claim that nothing was skipped: readPublishablePackagesFromDisk() treats an
+  // unparseable package.json as "not a workspace package" and drops it silently.
+  // Only the git reader distinguishes "listed at the ref but unreadable", which
+  // is the state the floor's diagnosis is about.
   if (process.env.PUBLISH_CHECK_FROM_DISK === '1') {
-    return { source: 'working tree (PUBLISH_CHECK_FROM_DISK=1)', pkgs: readPublishablePackagesFromDisk() };
+    return {
+      source: 'working tree (PUBLISH_CHECK_FROM_DISK=1)',
+      pkgs: readPublishablePackagesFromDisk(),
+      dropped: [],
+    };
   }
   const fromGit = readPublishablePackagesFromGit();
 
@@ -329,7 +354,7 @@ function readPublishablePackages() {
   if (!fromGit.unreadable) {
     const sha = describeRef();
     const label = process.env.GITHUB_SHA ? `$GITHUB_SHA` : 'HEAD';
-    return { source: `${label}${sha ? ` (${sha})` : ''}`, pkgs: fromGit.pkgs };
+    return { source: `${label}${sha ? ` (${sha})` : ''}`, pkgs: fromGit.pkgs, dropped: fromGit.dropped };
   }
 
   const isRepo = describeRef('HEAD') !== '';
@@ -370,6 +395,7 @@ function readPublishablePackages() {
       ? `working tree — FALLBACK, the git read at ${TARGET_REF} failed`
       : 'working tree (not a git checkout)',
     pkgs: readPublishablePackagesFromDisk(),
+    dropped: [],
   };
 }
 
@@ -478,7 +504,7 @@ async function resolvePackage(pkg) {
 }
 
 async function main() {
-  const { source, pkgs, indeterminate } = readPublishablePackages();
+  const { source, pkgs, indeterminate, dropped = [] } = readPublishablePackages();
 
   // Told which commit to check, could not read it -> cannot determine anything.
   // Skip loudly rather than assert against the wrong tree. See the note in
@@ -491,9 +517,31 @@ async function main() {
   }
 
   // A zero here reads exactly like a checker wired to nothing. Fail loud.
+  //
+  // 🔴 NAME THE SOURCE HERE TOO. This message was written when the only reader
+  // was the filesystem one, and kept its wording when the script moved to
+  // reading a git ref — so on the git path it described a place it had not
+  // looked. An operator reading "no publishable package found under packages/"
+  // goes and finds the packages sitting there, readable, and concludes the
+  // guard is broken. `source` is the same value the success line prints, and it
+  // is the only thing that says WHICH ref produced this verdict.
   if (pkgs.length === 0) {
-    console.error(`ERROR: no publishable package found under ${relative(REPO_ROOT, PACKAGES_DIR)}/.`);
-    console.error('       Expected at least one non-private packages/*/package.json.');
+    console.error(
+      `ERROR: no publishable package found in ${source} under ${relative(REPO_ROOT, PACKAGES_DIR)}/.`,
+    );
+    if (dropped.length > 0) {
+      // 🔴 The population was NOT empty — it was unreadable. Opposite cause,
+      // opposite fix, and the verdict alone cannot tell them apart.
+      console.error(
+        `       ${dropped.length} manifest(s) ARE listed at that ref and every one is UNREADABLE`,
+      );
+      console.error('       (see the WARN line(s) above). That is a damaged or partial object store,');
+      console.error('       NOT an empty packages/ — the working copy on disk is irrelevant here,');
+      console.error('       this guard reads the ref. Check for a blob-filtered clone (an');
+      console.error('       `actions/checkout` `filter:`) or a corrupt object, re-fetch, and re-run.');
+    } else {
+      console.error('       Expected at least one non-private packages/*/package.json.');
+    }
     console.error('       Refusing to report success for a check that inspected nothing.');
     process.exit(1);
   }

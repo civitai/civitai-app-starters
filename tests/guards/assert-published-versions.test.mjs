@@ -11,7 +11,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createFixture, destroyFixture, runGuard, startFakeRegistry, DEFAULT_PACKAGES } from './fixture.mjs';
 
@@ -357,6 +357,114 @@ describe('assert-published-versions', () => {
       assert.match(r.out, /no publishable package found/);
       assert.doesNotMatch(r.out, /could not be read/);
       assert.doesNotMatch(r.out, /SKIP the publish assertion/);
+    } finally {
+      destroyFixture(dir);
+    }
+  });
+
+  /**
+   * Damage the object store the way F1 was observed: commit `packages/`, then
+   * DELETE the loose blob object behind every manifest. `ls-tree` still lists
+   * them (the tree object is intact) and `git show <ref>:<path>` then fails per
+   * manifest — which is exactly the shape a `--filter=blob:none` partial clone
+   * with an unreachable promisor produces, without needing a promisor remote.
+   *
+   * `git gc`/repack would fold these into a packfile; a fresh `git init` +
+   * single commit leaves them loose, and the assertion below on `unlinkSync`
+   * having something to unlink is what keeps this test from silently becoming a
+   * no-op if that ever changes.
+   *
+   * Returns the sha whose manifests are now unreadable.
+   */
+  function replayDamagedObjectStore(dir) {
+    const g = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: ['ignore', 'pipe', 'ignore'] });
+    g('init', '-q');
+    g('config', 'user.email', 'test@example.invalid');
+    g('config', 'user.name', 'test');
+    g('add', '-A');
+    g('commit', '-qm', 'published state');
+    const sha = g('rev-parse', 'HEAD').toString().trim();
+
+    const listed = g('ls-tree', '-r', '--name-only', sha, 'packages/')
+      .toString()
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => /^packages\/[^/]+\/package\.json$/.test(l));
+    assert.ok(listed.length > 0, 'fixture must commit at least one packages/*/package.json');
+
+    for (const path of listed) {
+      const blob = g('rev-parse', `${sha}:${path}`).toString().trim();
+      const obj = join(dir, '.git', 'objects', blob.slice(0, 2), blob.slice(2));
+      unlinkSync(obj); // throws if the object was packed — a silent no-op here would gut the test
+    }
+    // POSITIVE CONTROL on the damage itself: the ref must still LIST them and
+    // must no longer be able to READ them. Without this the test could pass
+    // because the store is fine and packages/ is simply empty — the very
+    // conflation it exists to pin.
+    assert.equal(
+      g('ls-tree', '-r', '--name-only', sha, 'packages/').toString().trim().split('\n').length,
+      listed.length,
+      'ls-tree must still list the manifests',
+    );
+    assert.throws(() => g('show', `${sha}:${listed[0]}`), 'the blob must now be unreadable');
+    return sha;
+  }
+
+  test('DAMAGED object store: the floor names the ref and says UNREADABLE, not "packages/ is empty"', async () => {
+    // F1. The verdict (exit 1) was always right; the DIAGNOSIS was written for
+    // the filesystem reader and survived the move to reading a git ref, so it
+    // sent an operator to look at files that are sitting readable on disk and
+    // named no ref at all. The line that would have named it
+    // (`… N package(s) from <source>`) prints AFTER the floor and is
+    // unreachable on this path.
+    const dir = createFixture({ scripts: [SCRIPT] });
+    try {
+      const sha = replayDamagedObjectStore(dir);
+      const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST, GITHUB_SHA: sha });
+
+      assert.equal(r.code, 1, r.out); // unchanged: a zero must still fail loud
+      // 1. it names the ref it inspected — the whole point of the fix
+      assert.match(r.out, /no publishable package found in \$GITHUB_SHA \(/);
+      assert.match(r.out, new RegExp(sha.slice(0, 7)));
+      // 2. it reports the population it COULD NOT read, rather than implying none existed
+      assert.match(r.out, /5 manifest\(s\) ARE listed at that ref and every one is UNREADABLE/);
+      assert.match(r.out, /damaged or partial object store/);
+      // 3. and it must not have taken the indeterminate SKIP path — the ref read fine
+      assert.doesNotMatch(r.out, /could not be read/);
+      assert.doesNotMatch(r.out, /SKIP the publish assertion/);
+      // 4. the stale wording must be GONE on this path, not merely joined
+      assert.doesNotMatch(r.out, /Expected at least one non-private/);
+    } finally {
+      destroyFixture(dir);
+    }
+  });
+
+  test('CONTROL: a genuinely empty packages/ must NOT claim a damaged object store', async () => {
+    // The other arm of the same branch. Without this, a floor that printed the
+    // damage text unconditionally would pass the test above while being just as
+    // wrong as the message it replaced — the new diagnosis has to DISCRIMINATE,
+    // not merely exist.
+    const dir = createFixture({
+      scripts: [SCRIPT],
+      packages: { priv: { name: '@civitai/priv', version: '1.0.0', private: true } },
+    });
+    const g = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: ['ignore', 'pipe', 'ignore'] });
+    try {
+      g('init', '-q');
+      g('config', 'user.email', 'test@example.invalid');
+      g('config', 'user.name', 'test');
+      g('add', 'scripts', 'packages');
+      g('commit', '-qm', 'only private packages');
+      const sha = g('rev-parse', 'HEAD').toString().trim();
+
+      const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST, GITHUB_SHA: sha });
+      assert.equal(r.code, 1, r.out);
+      // it still names the ref …
+      assert.match(r.out, /no publishable package found in \$GITHUB_SHA \(/);
+      // … but nothing was dropped, so the damage diagnosis must stay silent
+      assert.doesNotMatch(r.out, /UNREADABLE/);
+      assert.doesNotMatch(r.out, /damaged or partial object store/);
+      assert.match(r.out, /Expected at least one non-private/);
     } finally {
       destroyFixture(dir);
     }
