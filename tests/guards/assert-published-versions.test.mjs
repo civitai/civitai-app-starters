@@ -10,6 +10,9 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { execFileSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createFixture, destroyFixture, runGuard, startFakeRegistry, DEFAULT_PACKAGES } from './fixture.mjs';
 
 const SCRIPT = 'assert-published-versions.mjs';
@@ -172,6 +175,76 @@ describe('assert-published-versions', () => {
     } finally {
       destroyFixture(dir);
       await down.close();
+    }
+  });
+
+  // ---- create-PR mode vs publish mode (live failure, run 31665922710) -----
+
+  test('reads the COMMITTED tree, so `changeset version`\'s working-tree rewrite cannot fail the release', async () => {
+    // THE REGRESSION. `changesets/action` in create-Version-PR mode runs
+    // `changeset version`, which rewrites every package.json ON DISK to the
+    // versions the Version PR proposes — unpublished BY DESIGN. This step runs
+    // after it, so reading the working tree made the guard demand npm already
+    // hold versions that cannot exist yet, and it failed EVERY release run with
+    // a pending changeset.
+    //
+    // Fixture reproduces exactly that: commit the published versions, then
+    // rewrite the working tree to the next minor, as changesets does.
+    const dir = createFixture({ scripts: [SCRIPT] });
+    const git = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: 'ignore' });
+    try {
+      git('init', '-q');
+      git('config', 'user.email', 'test@example.invalid');
+      git('config', 'user.name', 'test');
+      git('add', '-A');
+      git('commit', '-qm', 'published state');
+
+      // `changeset version` rewrites the working tree, leaving it dirty.
+      const bumped = { '@civitai/app-sdk': '0.99.0', '@civitai/blocks-react': '0.98.0' };
+      for (const [d, meta] of Object.entries(DEFAULT_PACKAGES)) {
+        if (!bumped[meta.name]) continue;
+        const f = join(dir, 'packages', d, 'package.json');
+        const j = JSON.parse(readFileSync(f, 'utf8'));
+        j.version = bumped[meta.name];
+        writeFileSync(f, JSON.stringify(j, null, 2) + '\n');
+      }
+
+      // The registry knows only the COMMITTED versions — the real situation.
+      const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST });
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /from the committed tree \(git HEAD\)/);
+      assert.match(r.out, /5\/5 publishable package version\(s\) confirmed/);
+      // the uncommitted bump must be invisible
+      assert.doesNotMatch(r.out, /0\.99\.0/);
+      assert.doesNotMatch(r.out, /PUBLISH DID NOT HAPPEN/);
+    } finally {
+      destroyFixture(dir);
+    }
+  });
+
+  test('CONTROL: forced to the working tree, the same fixture DOES fail — proving the test is not vacuous', async () => {
+    // Without this, the test above would pass just as happily if the guard
+    // ignored the bump for some unrelated reason. PUBLISH_CHECK_FROM_DISK
+    // restores the old behaviour and must reproduce the live failure.
+    const dir = createFixture({ scripts: [SCRIPT] });
+    const git = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: 'ignore' });
+    try {
+      git('init', '-q');
+      git('config', 'user.email', 'test@example.invalid');
+      git('config', 'user.name', 'test');
+      git('add', '-A');
+      git('commit', '-qm', 'published state');
+      const f = join(dir, 'packages', 'civitai-app-sdk', 'package.json');
+      const j = JSON.parse(readFileSync(f, 'utf8'));
+      j.version = '0.99.0';
+      writeFileSync(f, JSON.stringify(j, null, 2) + '\n');
+
+      const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST, PUBLISH_CHECK_FROM_DISK: '1' });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /PUBLISH DID NOT HAPPEN/);
+      assert.match(r.out, /@civitai\/app-sdk@0\.99\.0/);
+    } finally {
+      destroyFixture(dir);
     }
   });
 

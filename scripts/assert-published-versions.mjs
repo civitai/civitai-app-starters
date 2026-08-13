@@ -125,6 +125,7 @@
  *   tests/guards/assert-published-versions.test.mjs (node --test; NPM_REGISTRY
  *   points the suite at a stand-in registry so it runs offline)
  */
+import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
@@ -143,8 +144,74 @@ const TIMEOUT_MS = Math.max(1, Number(process.env.PUBLISH_CHECK_TIMEOUT ?? 15000
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Publishable first-party packages: { name, version, dir }. */
-function readPublishablePackages() {
+/** Shape a parsed manifest into a pin, or null if it is not a publish target. */
+function toPublishable(json, dir) {
+  if (json?.private === true) return null; // never published
+  if (typeof json?.name !== 'string' || typeof json?.version !== 'string') return null;
+  return { name: json.name, version: json.version, dir };
+}
+
+/**
+ * 🔴 Read the COMMITTED tree (`git show HEAD:…`), not the working tree.
+ *
+ * `changesets/action` has two modes through the same job, and in the
+ * CREATE-VERSION-PR mode it runs `changeset version`, which REWRITES every
+ * package.json on disk to the versions the Version PR proposes and pushes them
+ * to `changeset-release/main`. Those versions are unpublished BY DESIGN — they
+ * are what merging that PR will publish.
+ *
+ * This step runs after that action, so reading the working tree made the guard
+ * demand npm already contain versions that cannot exist yet, and it failed on
+ * EVERY release run with a pending changeset. Measured on run 31665922710: the
+ * tree on `main` held app-sdk 0.33.0 (published), the working tree held 0.34.0,
+ * and Version PR #231 carried exactly 0.34.0.
+ *
+ * HEAD is correct in BOTH modes:
+ *   create-PR mode  HEAD is the main commit, whose versions are the ones
+ *                   already published. `changeset version`'s scratch edit is
+ *                   uncommitted and correctly invisible here.
+ *   publish  mode   HEAD is the merged Version PR commit, whose versions are
+ *                   exactly what `changeset publish` just pushed to npm.
+ *
+ * Returns null when this is not a git checkout (the test fixtures are plain
+ * temp dirs), so the filesystem reader below stays the fallback.
+ */
+function readPublishablePackagesFromGit() {
+  let listing;
+  try {
+    listing = execFileSync('git', ['-C', REPO_ROOT, 'ls-tree', '-r', '--name-only', 'HEAD', 'packages/'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    return null; // not a git checkout, no git, or no commits
+  }
+  const manifests = listing
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => /^packages\/[^/]+\/package\.json$/.test(l));
+  if (manifests.length === 0) return null;
+
+  const out = [];
+  for (const path of manifests) {
+    let json;
+    try {
+      const raw = execFileSync('git', ['-C', REPO_ROOT, 'show', `HEAD:${path}`], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      json = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    const pin = toPublishable(json, dirname(path));
+    if (pin) out.push(pin);
+  }
+  return out;
+}
+
+/** Filesystem reader — the fallback when this is not a git checkout. */
+function readPublishablePackagesFromDisk() {
   const out = [];
   let entries;
   try {
@@ -161,11 +228,18 @@ function readPublishablePackages() {
     } catch {
       continue; // not a workspace package
     }
-    if (json?.private === true) continue; // never published
-    if (typeof json?.name !== 'string' || typeof json?.version !== 'string') continue;
-    out.push({ name: json.name, version: json.version, dir: relative(REPO_ROOT, join(PACKAGES_DIR, e.name)) });
+    const pin = toPublishable(json, relative(REPO_ROOT, join(PACKAGES_DIR, e.name)));
+    if (pin) out.push(pin);
   }
   return out;
+}
+
+/** Publishable first-party packages: { name, version, dir }. Committed tree wins. */
+function readPublishablePackages() {
+  if (process.env.PUBLISH_CHECK_FROM_DISK === '1') return { source: 'working tree (forced)', pkgs: readPublishablePackagesFromDisk() };
+  const fromGit = readPublishablePackagesFromGit();
+  if (fromGit && fromGit.length > 0) return { source: 'committed tree (git HEAD)', pkgs: fromGit };
+  return { source: 'working tree (no git checkout)', pkgs: readPublishablePackagesFromDisk() };
 }
 
 /**
@@ -273,7 +347,7 @@ async function resolvePackage(pkg) {
 }
 
 async function main() {
-  const pkgs = readPublishablePackages();
+  const { source, pkgs } = readPublishablePackages();
 
   // A zero here reads exactly like a checker wired to nothing. Fail loud.
   if (pkgs.length === 0) {
@@ -283,8 +357,12 @@ async function main() {
     process.exit(1);
   }
 
+  // Naming the SOURCE is load-bearing, not decoration: reading the working tree
+  // instead of the committed one is what made this step fail every release run
+  // with a pending changeset, and the log gave no way to see which it had read.
   console.log(
-    `registry ${REGISTRY} · ${TRIES} attempt(s) x ${DELAY_MS}ms · ${TIMEOUT_MS}ms timeout · ${pkgs.length} package(s)`,
+    `registry ${REGISTRY} · ${TRIES} attempt(s) x ${DELAY_MS}ms · ${TIMEOUT_MS}ms timeout · ` +
+      `${pkgs.length} package(s) from the ${source}`,
   );
 
   const published = [];
