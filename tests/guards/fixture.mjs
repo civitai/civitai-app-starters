@@ -198,13 +198,32 @@ export async function runGuard(dir, script, env = {}) {
  */
 export async function startFakeRegistry(versions) {
   const hits = [];
+  // `versions` is caller-supplied data, so membership MUST be an own-property
+  // test: a bare `versions[pkg]` would resolve inherited keys ('constructor',
+  // 'toString') to truthy junk and serve a 200 for a package nobody declared.
+  const has = (k) => Object.prototype.hasOwnProperty.call(versions, k);
   const server = createServer((req, res) => {
     const url = decodeURIComponent(req.url || '');
     hits.push(url);
-    const m = /^\/(.+)\/([^/]+)$/.exec(url);
-    const pkg = m?.[1];
-    const requested = m?.[2];
-    const v = pkg ? versions[pkg] : undefined;
+    const path = url.replace(/^\//, '');
+
+    // Three shapes, and a SCOPED name contains a '/', so they cannot be told
+    // apart by counting segments:
+    //   /@scope/name            -> name probe (does the package exist at all)
+    //   /@scope/name/latest     -> dist-tag read
+    //   /@scope/name/<version>  -> exact-version read
+    // A declared package name always wins, so the probe is unambiguous.
+    let pkg;
+    let requested = null;
+    if (has(path)) {
+      pkg = path;
+    } else {
+      const i = path.lastIndexOf('/');
+      pkg = i > 0 ? path.slice(0, i) : path;
+      requested = i > 0 ? path.slice(i + 1) : null;
+    }
+
+    const v = has(pkg) ? versions[pkg] : undefined;
     if (v === undefined || v === 'notfound') {
       res.writeHead(404, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: 'Not found' }));
@@ -213,6 +232,12 @@ export async function startFakeRegistry(versions) {
     if (v === 'error') {
       res.writeHead(503, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: 'unavailable' }));
+      return;
+    }
+    // Name probe: the package EXISTS, whatever versions it may have.
+    if (requested === null) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ name: pkg, 'dist-tags': { latest: v } }));
       return;
     }
     // Exact-version request for a version this registry does not have.
