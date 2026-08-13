@@ -384,8 +384,30 @@ describe('assert-published-versions', () => {
    * a stack trace is what a crash leaves behind.
    */
   function assertFloorIsIntact(r) {
+    // The trailing line is the floor's LAST statement before `process.exit(1)`,
+    // so its absence is what a crash mid-floor looks like. (A `doesNotMatch` on
+    // TypeError/ReferenceError was tried here and is strictly dead weight: any
+    // crash removes this line, so this assertion always fires first. Kept as one
+    // assertion rather than two so nothing reads as load-bearing when it isn't.)
     assert.match(r.out, /Refusing to report success for a check that inspected nothing\./);
-    assert.doesNotMatch(r.out, /TypeError|ReferenceError|at main \(/);
+  }
+
+  /**
+   * The floor's message, as an exact array of lines.
+   *
+   * 🔴 Pin the WHOLE BLOCK, not features of it. A `doesNotMatch(/every one/i)`
+   * only forbids the synonym you happened to think of — a mutant phrasing the
+   * same false universal as "Each and all of the manifests … is unusable"
+   * survived it. An exact comparison cannot be talked around: any rewording,
+   * including a correct one, must be restated here deliberately.
+   */
+  function floorBlock(r) {
+    const lines = r.out.split('\n');
+    const start = lines.findIndex((l) => l.startsWith('ERROR: no publishable package'));
+    assert.ok(start >= 0, `no floor block in:\n${r.out}`);
+    const end = lines.findIndex((l, i) => i >= start && l.includes('Refusing to report success'));
+    assert.ok(end >= start, `floor block never terminated in:\n${r.out}`);
+    return lines.slice(start, end + 1);
   }
 
   /**
@@ -548,11 +570,23 @@ describe('assert-published-versions', () => {
 
       const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST, GITHUB_SHA: sha });
       assert.equal(r.code, 1, r.out);
-      // 2 dropped OF 5 listed — both numbers, neither standing in for the other
-      assert.match(r.out, /2 of the 5 manifest\(s\) listed at that ref are UNUSABLE/);
-      // and no claim about the three it read perfectly well
-      assert.doesNotMatch(r.out, /every one/i);
-      assertFloorIsIntact(r);
+      // The WHOLE block, verbatim. Both counts appear and neither stands in for
+      // the other; the three manifests it read fine are named as a CO-CAUSE
+      // rather than folded into a universal claim; and no rephrasing can slip a
+      // new universal past this.
+      assert.deepEqual(floorBlock(r), [
+        `ERROR: no publishable package found in $GITHUB_SHA (${shortSha(dir, sha)}) under packages/.`,
+        '       2 of the 5 manifest(s) listed at that ref are UNUSABLE (see the WARN line(s) above — each carries its own cause).',
+        '       So packages/ is NOT empty at that ref — but the unusable ones are only PART of why this floored:',
+        '       the other 3 manifest(s) read fine and declared nothing publishable (private, or no',
+        '       name/version). Repairing the unusable ones ALONE will floor again.',
+        '       A manifest becomes unusable when the object store cannot produce the blob',
+        '       (a corrupt object, or a blob-filtered clone whose promisor is unreachable —',
+        '       a REACHABLE one would have fetched it and this would not have fired), or',
+        '       when the committed JSON does not parse. The WARN line above names which.',
+        '       The working copy on disk is irrelevant here: this guard reads the ref.',
+        '       Refusing to report success for a check that inspected nothing.',
+      ]);
     } finally {
       destroyFixture(dir);
     }
@@ -680,14 +714,60 @@ describe('assert-published-versions', () => {
         NPM_REGISTRY: reg.origin,
         ...FAST,
         PUBLISH_CHECK_FROM_DISK: '1',
-        GITHUB_SHA: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef', // must be IGNORED
       });
       assert.equal(r.code, 0, r.out);
       assert.match(r.out, /5 package\(s\) from working tree \(PUBLISH_CHECK_FROM_DISK=1\)/);
-      // the env var wins over $GITHUB_SHA — the label must not name the ref
-      assert.doesNotMatch(r.out, /\$GITHUB_SHA/);
       assert.doesNotMatch(r.out, /population above is INCOMPLETE/);
       assert.doesNotMatch(r.out, /UNUSABLE/);
+    } finally {
+      destroyFixture(dir);
+    }
+  });
+
+  test('PUBLISH_CHECK_FROM_DISK BEATS a perfectly readable $GITHUB_SHA — proven by opposite verdicts', async () => {
+    // 🔴 The precedence claim needs the two readers to DISAGREE. A fixture with
+    // no git cannot test it: the git arm is unreadable either way, so
+    // `doesNotMatch(/$GITHUB_SHA/)` passes for a reason that has nothing to do
+    // with precedence. Measured: moving the FROM_DISK branch below the git read
+    // and gating it on `fromGit.unreadable` — i.e. a readable ref WINS, the
+    // opposite of the documented contract — survived the whole suite.
+    //
+    // Here the ref holds published versions and the working tree holds
+    // unpublished ones, so the two readers give OPPOSITE verdicts and the flag's
+    // precedence is the only thing that decides which.
+    const dir = createFixture({ scripts: [SCRIPT] });
+    const g = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: ['ignore', 'pipe', 'ignore'] });
+    try {
+      g('init', '-q');
+      g('config', 'user.email', 'test@example.invalid');
+      g('config', 'user.name', 'test');
+      g('add', '-A');
+      g('commit', '-qm', 'published versions');
+      const sha = g('rev-parse', 'HEAD').toString().trim();
+      // rewrite the WORKING TREE only — never committed, so the ref still holds 0.31.0
+      const f = join(dir, 'packages', 'civitai-app-sdk', 'package.json');
+      const j = JSON.parse(readFileSync(f, 'utf8'));
+      j.version = '0.99.0'; // never published
+      writeFileSync(f, JSON.stringify(j, null, 2) + '\n');
+
+      // CONTROL: without the flag, the ref wins and the run is CLEAN.
+      const viaRef = await runGuard(dir, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST, GITHUB_SHA: sha });
+      assert.equal(viaRef.code, 0, viaRef.out);
+      assert.match(viaRef.out, /from \$GITHUB_SHA/);
+      assert.doesNotMatch(viaRef.out, /0\.99\.0/);
+
+      // WITH the flag and the SAME readable ref: the disk wins, so the
+      // uncommitted 0.99.0 is asserted and fails.
+      const viaDisk = await runGuard(dir, SCRIPT, {
+        NPM_REGISTRY: reg.origin,
+        ...FAST,
+        GITHUB_SHA: sha,
+        PUBLISH_CHECK_FROM_DISK: '1',
+      });
+      assert.equal(viaDisk.code, 1, viaDisk.out);
+      assert.match(viaDisk.out, /from working tree \(PUBLISH_CHECK_FROM_DISK=1\)/);
+      assert.match(viaDisk.out, /@civitai\/app-sdk@0\.99\.0/);
+      assert.doesNotMatch(viaDisk.out, /from \$GITHUB_SHA/);
     } finally {
       destroyFixture(dir);
     }

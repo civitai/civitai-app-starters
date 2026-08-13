@@ -574,11 +574,31 @@ async function main() {
         `       ${dropped.length} of the ${listed} manifest(s) listed at that ref are UNUSABLE` +
           ` (see the WARN line(s) above — each carries its own cause).`,
       );
-      console.error('       So packages/ is NOT empty at that ref: the population is there and this');
-      console.error('       guard could not use it. A manifest lands there when the object store');
-      console.error('       cannot produce the blob (a corrupt object, or a blob-filtered clone whose');
-      console.error('       promisor is unreachable — a REACHABLE one would have fetched it and this');
-      console.error('       would not have fired), or when the committed JSON does not parse.');
+      // 🔴 THIS PARAGRAPH IS CONDITIONAL, and that is the third time this message
+      // has had to learn the same lesson. A universal sentence ("the population is
+      // there and this guard could not use it") is FALSE whenever
+      // `dropped.length < listed`: the remainder read perfectly well and simply
+      // declared nothing publishable. Worse, it is operationally misleading —
+      // repairing only the unusable manifests still floors, because the readable
+      // ones are a co-cause the diagnosis never mentioned.
+      if (dropped.length === listed) {
+        console.error('       So packages/ is NOT empty at that ref: every manifest it lists is one');
+        console.error('       this guard could not use.');
+      } else {
+        console.error(
+          `       So packages/ is NOT empty at that ref — but the unusable ones are only PART of` +
+            ` why this floored:`,
+        );
+        console.error(
+          `       the other ${listed - dropped.length} manifest(s) read fine and declared nothing` +
+            ` publishable (private, or no`,
+        );
+        console.error('       name/version). Repairing the unusable ones ALONE will floor again.');
+      }
+      console.error('       A manifest becomes unusable when the object store cannot produce the blob');
+      console.error('       (a corrupt object, or a blob-filtered clone whose promisor is unreachable —');
+      console.error('       a REACHABLE one would have fetched it and this would not have fired), or');
+      console.error('       when the committed JSON does not parse. The WARN line above names which.');
       console.error('       The working copy on disk is irrelevant here: this guard reads the ref.');
     } else {
       console.error('       Expected at least one non-private packages/*/package.json.');
