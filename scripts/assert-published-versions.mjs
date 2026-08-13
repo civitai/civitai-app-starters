@@ -96,6 +96,14 @@
  * `concurrency` lane has no `cancel-in-progress`, so an unbounded step here
  * would park it.
  *
+ * 🔴 PREMISE RISK: everything above about WHERE the bump lands is a claim about
+ * `changesets/action@v1`, and `v1` is a moving BRANCH, not a tag — there is no
+ * `refs/tags/v1`. The behaviour this step depends on can therefore change with
+ * no diff in this repo (v2.0.0 shipped 2026-08-11). If a release run starts
+ * failing here for no local reason, re-read the action's `prepareBranch()` /
+ * `pushChanges()` before believing the guard. Pinning the action to a SHA would
+ * close this, and is a separate decision.
+ *
  * KNOWN LIMITS (measured, not guessed — do not read past them):
  *   - It enumerates `packages/*` ONLY. `changeset publish` operates over the
  *     whole workspace minus the changesets `ignore` list; today those coincide
@@ -120,6 +128,14 @@
  *                         packages pass (see the FLOOR). For a genuine
  *                         first-ever release of every package; any other value,
  *                         "true" included, does nothing.
+ *   PUBLISH_CHECK_FROM_DISK
+ *                         set to "1" to read the WORKING TREE instead of
+ *                         $GITHUB_SHA. This is the pre-fix behaviour and exists
+ *                         so a test/live control can reproduce it deliberately;
+ *                         it can only make the guard stricter, never laxer. Do
+ *                         not set it in CI.
+ *   GITHUB_SHA            set by GitHub Actions; the commit whose manifests are
+ *                         checked. Falls back to HEAD when unset (local runs).
  *
  * TESTS
  *   tests/guards/assert-published-versions.test.mjs (node --test; NPM_REGISTRY
@@ -177,9 +193,13 @@ function toPublishable(json, dir) {
  * 0.34.0 — byte-identical to the working tree. `main` held 0.33.0, which is
  * what npm had, and Version PR #231 carried 0.34.0.
  *
- * `$GITHUB_SHA` is the ref the invariant is actually about, and it is always
- * available locally: the `git reset --hard` above targets exactly that commit,
- * so it is in the object store even under `actions/checkout`'s depth-1 default.
+ * `$GITHUB_SHA` is the ref the invariant is actually about, and it is available
+ * locally in every mode because `actions/checkout` checks out the event's SHA —
+ * that is what puts it in the object store under the depth-1 default. (The
+ * `git reset --hard $GITHUB_SHA` above reinforces it, but only in create-PR
+ * mode with commitMode `git-cli`: `runPublish` never touches git, and
+ * `prepareBranch` early-returns under commitMode `github-api`. Do not cite the
+ * reset as the reason — it covers one of three modes.)
  *
  *   create-PR mode  $GITHUB_SHA is the main commit, whose versions are the ones
  *                   already published. The action's branch + commit are off to
@@ -235,10 +255,10 @@ function readPublishablePackagesFromGit() {
   return out;
 }
 
-/** Short sha for the ref actually read, for the run log. '' if unresolvable. */
-function describeRef() {
+/** Short sha for a ref, for the run log. '' if unresolvable / not a repo. */
+function describeRef(ref = TARGET_REF) {
   try {
-    return git(['rev-parse', '--short', TARGET_REF]).trim();
+    return git(['rev-parse', '--short', ref]).trim();
   } catch {
     return '';
   }
@@ -287,9 +307,24 @@ function readPublishablePackages() {
     const label = process.env.GITHUB_SHA ? `$GITHUB_SHA` : 'HEAD';
     return { source: `${label}${sha ? ` (${sha})` : ''}`, pkgs: fromGit };
   }
-  // Distinguish the two fallbacks: "no git here" is fine, "git is here but the
-  // read failed" is the pre-fix behaviour returning, and must not be mislabelled.
-  const isRepo = describeRef() !== '';
+
+  const isRepo = describeRef('HEAD') !== '';
+
+  // 🔴 We were TOLD which commit to check and could not read it. Do NOT fall
+  // back to the working tree: in create-PR mode that tree holds the Version
+  // PR's unpublished versions, so falling back would hard-FAIL a healthy
+  // release — restoring the exact #232 bug under a different trigger. Every
+  // other "cannot determine" path here is a graceful skip; so is this one.
+  if (process.env.GITHUB_SHA && isRepo) {
+    return {
+      source: `$GITHUB_SHA (${process.env.GITHUB_SHA.slice(0, 9)}) could not be read`,
+      pkgs: [],
+      indeterminate: true,
+    };
+  }
+
+  // Distinguish the two remaining fallbacks: "no git here" is fine, "git is
+  // here but the read failed" is the pre-fix behaviour returning.
   return {
     source: isRepo
       ? `working tree — FALLBACK, the git read at ${TARGET_REF} failed`
@@ -403,7 +438,17 @@ async function resolvePackage(pkg) {
 }
 
 async function main() {
-  const { source, pkgs } = readPublishablePackages();
+  const { source, pkgs, indeterminate } = readPublishablePackages();
+
+  // Told which commit to check, could not read it -> cannot determine anything.
+  // Skip loudly rather than assert against the wrong tree. See the note in
+  // readPublishablePackages().
+  if (indeterminate) {
+    console.warn(`SKIP the publish assertion — ${source}.`);
+    console.warn('     Refusing to fall back to the working tree: in create-PR mode it holds the');
+    console.warn('     Version PR\'s unpublished versions, so that fallback would fail a healthy release.');
+    return;
+  }
 
   // A zero here reads exactly like a checker wired to nothing. Fail loud.
   if (pkgs.length === 0) {

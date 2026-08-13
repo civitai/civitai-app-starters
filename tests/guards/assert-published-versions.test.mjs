@@ -281,22 +281,51 @@ describe('assert-published-versions', () => {
     }
   });
 
-  test('a git-read failure is LABELLED as a fallback, not passed off as a clean read', async () => {
-    // The silent fallback is the pre-fix behaviour returning. The source label
-    // is the only observable that distinguishes them, so it must not lie.
+  test('an UNREADABLE $GITHUB_SHA skips loudly — it must NOT fall back to the working tree', async () => {
+    // Falling back to the working tree here would hard-FAIL a healthy release,
+    // because in create-PR mode that tree holds the Version PR's unpublished
+    // versions — the #232 bug under a different trigger.
     const dir = createFixture({ scripts: [SCRIPT] });
     try {
       const sha = replayCreatePrMode(dir, { '@civitai/app-sdk': '0.99.0' });
-      // A ref that resolves for rev-parse but names no tree -> ls-tree fails.
-      const r = await runGuard(dir, SCRIPT, {
-        NPM_REGISTRY: reg.origin,
-        ...FAST,
-        GITHUB_SHA: `${sha.slice(0, 39)}${sha[39] === 'a' ? 'b' : 'a'}`,
-      });
-      assert.match(r.out, /FALLBACK|not a git checkout/);
-      assert.doesNotMatch(r.out, /from \$GITHUB_SHA \(/);
+      const bogus = `${sha.slice(0, 39)}${sha[39] === 'a' ? 'b' : 'a'}`;
+      const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST, GITHUB_SHA: bogus });
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /could not be read/);
+      assert.match(r.out, /SKIP the publish assertion/);
+      // the working tree's unpublished 0.99.0 must never have been asserted
+      assert.doesNotMatch(r.out, /PUBLISH DID NOT HAPPEN/);
+      assert.doesNotMatch(r.out, /0\.99\.0/);
     } finally {
       destroyFixture(dir);
+    }
+  });
+
+  test('the source label names the EXACT ref read — asserted per-arm, not by an alternation', async () => {
+    // An alternation like /FALLBACK|not a git checkout/ is satisfied by EITHER
+    // label, so swapping the two survives it. Each arm is pinned separately,
+    // and each must NOT print the other's label.
+    const noGit = createFixture({ scripts: [SCRIPT] }); // plain temp dir, no git
+    try {
+      const r = await runGuard(noGit, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST });
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /from working tree \(not a git checkout\)/);
+      assert.doesNotMatch(r.out, /FALLBACK/);
+      assert.doesNotMatch(r.out, /\$GITHUB_SHA/);
+    } finally {
+      destroyFixture(noGit);
+    }
+
+    const gitDir = createFixture({ scripts: [SCRIPT] });
+    try {
+      const sha = replayCreatePrMode(gitDir, { '@civitai/app-sdk': '0.99.0' });
+      const r = await runGuard(gitDir, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST, GITHUB_SHA: sha });
+      // names the ref AND a resolved short sha, so "which commit" is legible
+      assert.match(r.out, /from \$GITHUB_SHA \([0-9a-f]{7,}\)/);
+      assert.doesNotMatch(r.out, /not a git checkout/);
+      assert.doesNotMatch(r.out, /FALLBACK/);
+    } finally {
+      destroyFixture(gitDir);
     }
   });
 

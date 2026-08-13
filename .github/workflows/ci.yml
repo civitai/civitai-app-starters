@@ -270,7 +270,10 @@ jobs:
       # than advisory. Deliberately run in every matrix leg rather than under an
       # `if:` -- a conditional here would silently stop running the moment its
       # matrix entry was renamed.
-      - run: node --test "tests/guards/*.test.mjs"
+      # Call the npm script, not a bare `node --test`: the script carries
+      # `--test-timeout`, without which a guard that hangs (a removed request
+      # timeout falls back to undici's ~300s) burns the job instead of failing.
+      - run: pnpm test:guards
 
       # RELEASE-DEADLOCK GUARD. Runs BEFORE the install so a missing override
       # fails with the actionable message instead of the cryptic
