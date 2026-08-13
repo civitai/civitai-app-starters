@@ -152,39 +152,62 @@ function toPublishable(json, dir) {
 }
 
 /**
- * 🔴 Read the COMMITTED tree (`git show HEAD:…`), not the working tree.
+ * 🔴 Read the commit that TRIGGERED this run (`$GITHUB_SHA`), not the working
+ * tree and NOT `HEAD`.
  *
- * `changesets/action` has two modes through the same job, and in the
- * CREATE-VERSION-PR mode it runs `changeset version`, which REWRITES every
- * package.json on disk to the versions the Version PR proposes and pushes them
- * to `changeset-release/main`. Those versions are unpublished BY DESIGN — they
- * are what merging that PR will publish.
+ * `changesets/action` has two modes through the same job. In CREATE-VERSION-PR
+ * mode it runs `changeset version`, which rewrites every package.json to the
+ * versions the Version PR proposes. Those versions are unpublished BY DESIGN —
+ * they are what merging that PR will publish. Reading them and demanding npm
+ * already have them failed EVERY release run with a pending changeset.
  *
- * This step runs after that action, so reading the working tree made the guard
- * demand npm already contain versions that cannot exist yet, and it failed on
- * EVERY release run with a pending changeset. Measured on run 31665922710: the
- * tree on `main` held app-sdk 0.33.0 (published), the working tree held 0.34.0,
- * and Version PR #231 carried exactly 0.34.0.
+ * 🔴 AND `HEAD` DOES NOT AVOID THAT — a first attempt at this fix assumed the
+ * rewrite was left uncommitted, and was completely inert. The action's
+ * `prepareBranch()` + `pushChanges()` (changesets/action@v1, commitMode
+ * `git-cli`, this repo's default) do, in order:
  *
- * HEAD is correct in BOTH modes:
- *   create-PR mode  HEAD is the main commit, whose versions are the ones
- *                   already published. `changeset version`'s scratch edit is
- *                   uncommitted and correctly invisible here.
- *   publish  mode   HEAD is the merged Version PR commit, whose versions are
- *                   exactly what `changeset publish` just pushed to npm.
+ *     git checkout -b changeset-release/main
+ *     git reset --hard $GITHUB_SHA
+ *     pnpm changeset version          # rewrites package.json
+ *     git add . && git commit -m "chore(release): version packages"
+ *     git push origin HEAD:changeset-release/main --force
  *
- * Returns null when this is not a git checkout (the test fixtures are plain
- * temp dirs), so the filesystem reader below stays the fallback.
+ * and never restore the previous HEAD. Measured on run 31665922710: by the time
+ * this step ran, HEAD was b18d787 on `changeset-release/main` holding app-sdk
+ * 0.34.0 — byte-identical to the working tree. `main` held 0.33.0, which is
+ * what npm had, and Version PR #231 carried 0.34.0.
+ *
+ * `$GITHUB_SHA` is the ref the invariant is actually about, and it is always
+ * available locally: the `git reset --hard` above targets exactly that commit,
+ * so it is in the object store even under `actions/checkout`'s depth-1 default.
+ *
+ *   create-PR mode  $GITHUB_SHA is the main commit, whose versions are the ones
+ *                   already published. The action's branch + commit are off to
+ *                   the side and correctly invisible.
+ *   publish  mode   $GITHUB_SHA IS the merged Version PR commit, whose versions
+ *                   are exactly what `changeset publish` just pushed to npm.
+ *                   (`pnpm release` = build && changeset publish; neither
+ *                   rewrites a manifest or moves the branch.)
+ *
+ * Falls back to `HEAD` when $GITHUB_SHA is unset (a local run), and the caller
+ * falls back to the filesystem when this returns null — the test fixtures are
+ * plain temp dirs with no git.
  */
+const TARGET_REF = process.env.GITHUB_SHA || 'HEAD';
+
+function git(args) {
+  return execFileSync('git', ['-C', REPO_ROOT, ...args], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+}
+
 function readPublishablePackagesFromGit() {
   let listing;
   try {
-    listing = execFileSync('git', ['-C', REPO_ROOT, 'ls-tree', '-r', '--name-only', 'HEAD', 'packages/'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
+    listing = git(['ls-tree', '-r', '--name-only', TARGET_REF, 'packages/']);
   } catch {
-    return null; // not a git checkout, no git, or no commits
+    return null; // no git, not a checkout, or the ref is not present
   }
   const manifests = listing
     .split('\n')
@@ -193,21 +216,32 @@ function readPublishablePackagesFromGit() {
   if (manifests.length === 0) return null;
 
   const out = [];
+  const dropped = [];
   for (const path of manifests) {
     let json;
     try {
-      const raw = execFileSync('git', ['-C', REPO_ROOT, 'show', `HEAD:${path}`], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-      });
-      json = JSON.parse(raw);
-    } catch {
+      json = JSON.parse(git(['show', `${TARGET_REF}:${path}`]));
+    } catch (err) {
+      // A manifest listed at the ref that cannot be read is NOT nothing —
+      // silently dropping it shrinks the population the same way a checker
+      // wired to nothing does. Say so.
+      dropped.push(`${path} (${err?.message?.split('\n')[0] || err})`);
       continue;
     }
     const pin = toPublishable(json, dirname(path));
     if (pin) out.push(pin);
   }
+  for (const d of dropped) console.warn(`WARN could not read ${d} at ${TARGET_REF} — not counted`);
   return out;
+}
+
+/** Short sha for the ref actually read, for the run log. '' if unresolvable. */
+function describeRef() {
+  try {
+    return git(['rev-parse', '--short', TARGET_REF]).trim();
+  } catch {
+    return '';
+  }
 }
 
 /** Filesystem reader — the fallback when this is not a git checkout. */
@@ -234,12 +268,34 @@ function readPublishablePackagesFromDisk() {
   return out;
 }
 
-/** Publishable first-party packages: { name, version, dir }. Committed tree wins. */
+/**
+ * Publishable first-party packages: { name, version, dir }. The triggering
+ * commit wins over the working tree.
+ *
+ * The `source` string is not decoration — it is the ONLY thing distinguishing
+ * "read the right ref" from "silently fell back to the working tree", which is
+ * the exact state that broke the release. It names the ref AND its sha, and a
+ * test asserts it in the fallback arm too.
+ */
 function readPublishablePackages() {
-  if (process.env.PUBLISH_CHECK_FROM_DISK === '1') return { source: 'working tree (forced)', pkgs: readPublishablePackagesFromDisk() };
+  if (process.env.PUBLISH_CHECK_FROM_DISK === '1') {
+    return { source: 'working tree (PUBLISH_CHECK_FROM_DISK=1)', pkgs: readPublishablePackagesFromDisk() };
+  }
   const fromGit = readPublishablePackagesFromGit();
-  if (fromGit && fromGit.length > 0) return { source: 'committed tree (git HEAD)', pkgs: fromGit };
-  return { source: 'working tree (no git checkout)', pkgs: readPublishablePackagesFromDisk() };
+  if (fromGit && fromGit.length > 0) {
+    const sha = describeRef();
+    const label = process.env.GITHUB_SHA ? `$GITHUB_SHA` : 'HEAD';
+    return { source: `${label}${sha ? ` (${sha})` : ''}`, pkgs: fromGit };
+  }
+  // Distinguish the two fallbacks: "no git here" is fine, "git is here but the
+  // read failed" is the pre-fix behaviour returning, and must not be mislabelled.
+  const isRepo = describeRef() !== '';
+  return {
+    source: isRepo
+      ? `working tree — FALLBACK, the git read at ${TARGET_REF} failed`
+      : 'working tree (not a git checkout)',
+    pkgs: readPublishablePackagesFromDisk(),
+  };
 }
 
 /**
@@ -362,7 +418,7 @@ async function main() {
   // with a pending changeset, and the log gave no way to see which it had read.
   console.log(
     `registry ${REGISTRY} · ${TRIES} attempt(s) x ${DELAY_MS}ms · ${TIMEOUT_MS}ms timeout · ` +
-      `${pkgs.length} package(s) from the ${source}`,
+      `${pkgs.length} package(s) from ${source}`,
   );
 
   const published = [];
