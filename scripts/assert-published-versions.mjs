@@ -259,7 +259,7 @@ function readPublishablePackagesFromGit() {
     .map((l) => l.trim())
     .filter((l) => /^packages\/[^/]+\/package\.json$/.test(l));
   // Read fine, nothing publishable there: NOT indeterminate. Let the floor see it.
-  if (manifests.length === 0) return { pkgs: [], dropped: [] };
+  if (manifests.length === 0) return { pkgs: [], dropped: [], listed: 0 };
 
   const out = [];
   const dropped = [];
@@ -268,9 +268,16 @@ function readPublishablePackagesFromGit() {
     try {
       json = JSON.parse(git(['show', `${TARGET_REF}:${path}`]));
     } catch (err) {
-      // A manifest listed at the ref that cannot be read is NOT nothing —
+      // A manifest listed at the ref that cannot be USED is NOT nothing —
       // silently dropping it shrinks the population the same way a checker
       // wired to nothing does. Say so.
+      //
+      // 🔴 TWO producers land here and they have different causes: `git show`
+      // failing (the object store cannot produce the blob) and `JSON.parse`
+      // failing (the blob came back fine and is malformed). Anything that
+      // reports on `dropped` must not assert ONE of those as the cause — the
+      // per-entry WARN below carries git's or the parser's own message, which
+      // is the only thing that actually distinguishes them.
       dropped.push(`${path} (${err?.message?.split('\n')[0] || err})`);
       continue;
     }
@@ -283,12 +290,17 @@ function readPublishablePackagesFromGit() {
   // to the caller, so the FLOOR reported the first when it was looking at the
   // second:
   //   pkgs:[] dropped:[]     the ref genuinely has no publishable package
-  //   pkgs:[] dropped:[...]  the ref LISTED manifests and every one was
-  //                          unreadable — a damaged/partial object store
+  //   pkgs:[] dropped:[...]  the ref LISTED manifests and could not use them
   // The verdict is the same (exit 1, correctly), the diagnosis is not: the
   // second is not an empty `packages/`, and pointing an operator there sends
   // them to look at files that are sitting readable on disk.
-  return { pkgs: out, dropped };
+  //
+  // `listed` rides along because `dropped.length` alone CANNOT support a
+  // sentence about the whole population: a ref can list 5 manifests, drop 2,
+  // and have the other 3 read fine and declare nothing publishable. Reporting
+  // "2 manifests, every one unusable" there is a fresh instance of exactly the
+  // defect this floor message was fixed for.
+  return { pkgs: out, dropped, listed: manifests.length };
 }
 
 /** Short sha for a ref, for the run log. '' if unresolvable / not a repo. */
@@ -344,6 +356,7 @@ function readPublishablePackages() {
       source: 'working tree (PUBLISH_CHECK_FROM_DISK=1)',
       pkgs: readPublishablePackagesFromDisk(),
       dropped: [],
+      listed: 0,
     };
   }
   const fromGit = readPublishablePackagesFromGit();
@@ -354,7 +367,12 @@ function readPublishablePackages() {
   if (!fromGit.unreadable) {
     const sha = describeRef();
     const label = process.env.GITHUB_SHA ? `$GITHUB_SHA` : 'HEAD';
-    return { source: `${label}${sha ? ` (${sha})` : ''}`, pkgs: fromGit.pkgs, dropped: fromGit.dropped };
+    return {
+      source: `${label}${sha ? ` (${sha})` : ''}`,
+      pkgs: fromGit.pkgs,
+      dropped: fromGit.dropped,
+      listed: fromGit.listed,
+    };
   }
 
   const isRepo = describeRef('HEAD') !== '';
@@ -396,6 +414,7 @@ function readPublishablePackages() {
       : 'working tree (not a git checkout)',
     pkgs: readPublishablePackagesFromDisk(),
     dropped: [],
+    listed: 0,
   };
 }
 
@@ -504,7 +523,15 @@ async function resolvePackage(pkg) {
 }
 
 async function main() {
-  const { source, pkgs, indeterminate, dropped = [] } = readPublishablePackages();
+  // The `= []` / `= 0` defaults are REDUNDANT against every arm that currently
+  // reaches the floor, and that is stated rather than dressed up as coverage:
+  // removing them alone survives the whole suite, because the one arm that omits
+  // both fields (`indeterminate`) returns before either is read. They are kept
+  // for the next arm somebody adds. Removing them TOGETHER with a reader arm's
+  // fields is caught — that pair TypeErrors mid-floor, and `assertFloorIsIntact`
+  // in the tests is what sees it, since exit 1 alone cannot tell a completed
+  // floor from a crashed one.
+  const { source, pkgs, indeterminate, dropped = [], listed = 0 } = readPublishablePackages();
 
   // Told which commit to check, could not read it -> cannot determine anything.
   // Skip loudly rather than assert against the wrong tree. See the note in
@@ -530,15 +557,29 @@ async function main() {
       `ERROR: no publishable package found in ${source} under ${relative(REPO_ROOT, PACKAGES_DIR)}/.`,
     );
     if (dropped.length > 0) {
-      // 🔴 The population was NOT empty — it was unreadable. Opposite cause,
-      // opposite fix, and the verdict alone cannot tell them apart.
+      // 🔴 The population was NOT empty — this guard could not USE it. Opposite
+      // cause, opposite fix, and the verdict alone cannot tell them apart.
+      //
+      // Report BOTH counts and claim nothing about the difference. `dropped` is
+      // the only thing measured here; the remaining `listed - dropped` manifests
+      // read fine and simply declared nothing publishable, and asserting "every
+      // one is unusable" over them would re-commit, in a new place, the exact
+      // error this message was rewritten to fix.
+      //
+      // The CAUSE is likewise left to the per-entry WARN: two different failures
+      // land in `dropped` (the object store cannot produce the blob; the blob is
+      // fine and the JSON does not parse) and only git's/the parser's own message
+      // separates them. Naming one of them here would misdirect on the other.
       console.error(
-        `       ${dropped.length} manifest(s) ARE listed at that ref and every one is UNREADABLE`,
+        `       ${dropped.length} of the ${listed} manifest(s) listed at that ref are UNUSABLE` +
+          ` (see the WARN line(s) above — each carries its own cause).`,
       );
-      console.error('       (see the WARN line(s) above). That is a damaged or partial object store,');
-      console.error('       NOT an empty packages/ — the working copy on disk is irrelevant here,');
-      console.error('       this guard reads the ref. Check for a blob-filtered clone (an');
-      console.error('       `actions/checkout` `filter:`) or a corrupt object, re-fetch, and re-run.');
+      console.error('       So packages/ is NOT empty at that ref: the population is there and this');
+      console.error('       guard could not use it. A manifest lands there when the object store');
+      console.error('       cannot produce the blob (a corrupt object, or a blob-filtered clone whose');
+      console.error('       promisor is unreachable — a REACHABLE one would have fetched it and this');
+      console.error('       would not have fired), or when the committed JSON does not parse.');
+      console.error('       The working copy on disk is irrelevant here: this guard reads the ref.');
     } else {
       console.error('       Expected at least one non-private packages/*/package.json.');
     }
@@ -553,6 +594,23 @@ async function main() {
     `registry ${REGISTRY} · ${TRIES} attempt(s) x ${DELAY_MS}ms · ${TIMEOUT_MS}ms timeout · ` +
       `${pkgs.length} package(s) from ${source}`,
   );
+
+  // 🔴 PARTIAL damage — some manifests unusable, others fine — reaches HERE, not
+  // the floor, because `pkgs` is non-empty. Every check below then runs against a
+  // SILENTLY SHRUNK population and reports `OK: 2/2 … 0 missing`, which is a true
+  // sentence about a set nobody chose. The per-entry WARNs are emitted way back in
+  // the reader, far above this line and easily lost in a long run log, so restate
+  // it adjacent to the count it qualifies.
+  //
+  // Deliberately NOT a failure: this is a diagnostics change, and turning a
+  // partially-damaged store into a red release is a verdict change that wants its
+  // own decision. The gap is now VISIBLE rather than closed.
+  if (dropped.length > 0) {
+    console.warn(
+      `WARN the population above is INCOMPLETE — ${dropped.length} of ${listed} manifest(s) at` +
+        ` ${source} were unusable and are NOT checked below.`,
+    );
+  }
 
   const published = [];
   const missing = []; // known package, version absent -> FAIL

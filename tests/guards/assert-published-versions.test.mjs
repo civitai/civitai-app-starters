@@ -326,6 +326,7 @@ describe('assert-published-versions', () => {
       // and it must NOT misreport a ref it read fine as unreadable
       assert.doesNotMatch(r.out, /could not be read/);
       assert.doesNotMatch(r.out, /SKIP the publish assertion/);
+      assertFloorIsIntact(r);
     } finally {
       destroyFixture(dir);
     }
@@ -357,10 +358,35 @@ describe('assert-published-versions', () => {
       assert.match(r.out, /no publishable package found/);
       assert.doesNotMatch(r.out, /could not be read/);
       assert.doesNotMatch(r.out, /SKIP the publish assertion/);
+      assertFloorIsIntact(r);
     } finally {
       destroyFixture(dir);
     }
   });
+
+  /** The short sha git itself would print for `ref`, so the expected floor line
+   *  is derived from git rather than from a hardcoded slice length. */
+  function shortSha(dir, ref) {
+    return execFileSync('git', ['-C', dir, 'rev-parse', '--short', ref], { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString()
+      .trim();
+  }
+
+  /**
+   * 🔴 `exit 1` DOES NOT PROVE THE FLOOR RAN. An uncaught throw inside main()
+   * also exits 1, so `assert.equal(r.code, 1)` scores a floor that crashed
+   * halfway through identically to one that completed. Measured: removing the
+   * `dropped = []` / `listed = 0` destructure defaults makes the floor TypeError
+   * mid-message and the whole suite still reported green.
+   *
+   * The trailing line is the floor's last statement before `process.exit(1)`, so
+   * its presence is what distinguishes "ran to the end" from "died inside", and
+   * a stack trace is what a crash leaves behind.
+   */
+  function assertFloorIsIntact(r) {
+    assert.match(r.out, /Refusing to report success for a check that inspected nothing\./);
+    assert.doesNotMatch(r.out, /TypeError|ReferenceError|at main \(/);
+  }
 
   /**
    * Damage the object store the way F1 was observed: commit `packages/`, then
@@ -410,7 +436,7 @@ describe('assert-published-versions', () => {
     return sha;
   }
 
-  test('DAMAGED object store: the floor names the ref and says UNREADABLE, not "packages/ is empty"', async () => {
+  test('DAMAGED object store: the floor names the ref and says UNUSABLE, not "packages/ is empty"', async () => {
     // F1. The verdict (exit 1) was always right; the DIAGNOSIS was written for
     // the filesystem reader and survived the move to reading a git ref, so it
     // sent an operator to look at files that are sitting readable on disk and
@@ -423,17 +449,31 @@ describe('assert-published-versions', () => {
       const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST, GITHUB_SHA: sha });
 
       assert.equal(r.code, 1, r.out); // unchanged: a zero must still fail loud
-      // 1. it names the ref it inspected — the whole point of the fix
-      assert.match(r.out, /no publishable package found in \$GITHUB_SHA \(/);
-      assert.match(r.out, new RegExp(sha.slice(0, 7)));
-      // 2. it reports the population it COULD NOT read, rather than implying none existed
-      assert.match(r.out, /5 manifest\(s\) ARE listed at that ref and every one is UNREADABLE/);
-      assert.match(r.out, /damaged or partial object store/);
+
+      // 1. it names the ref it inspected — the whole point of the fix.
+      //
+      // 🔴 Pin the sha ON THE FLOOR LINE ITSELF. A bare `match(r.out, <sha>)` is
+      // satisfied by the WARN lines, which print `at <ref>` independently — so a
+      // floor printing a WRONG sha (or a hardcoded one) passes it while the
+      // property under test is gone. Assert the whole line as one unit instead.
+      const floorLine = r.out.split('\n').find((l) => l.startsWith('ERROR: no publishable package'));
+      assert.ok(floorLine, `no floor line in:\n${r.out}`);
+      assert.equal(
+        floorLine,
+        `ERROR: no publishable package found in $GITHUB_SHA (${shortSha(dir, sha)}) under packages/.`,
+      );
+
+      // 2. it reports the population it could not use — BOTH counts, and it must
+      //    not overclaim: here all 5 listed are unusable, so 5 of 5.
+      assert.match(r.out, /5 of the 5 manifest\(s\) listed at that ref are UNUSABLE/);
+      assert.match(r.out, /packages\/ is NOT empty at that ref/);
       // 3. and it must not have taken the indeterminate SKIP path — the ref read fine
       assert.doesNotMatch(r.out, /could not be read/);
       assert.doesNotMatch(r.out, /SKIP the publish assertion/);
       // 4. the stale wording must be GONE on this path, not merely joined
       assert.doesNotMatch(r.out, /Expected at least one non-private/);
+      // 5. the floor must run to completion — see the note on `assertFloorIsIntact`
+      assertFloorIsIntact(r);
     } finally {
       destroyFixture(dir);
     }
@@ -462,9 +502,134 @@ describe('assert-published-versions', () => {
       // it still names the ref …
       assert.match(r.out, /no publishable package found in \$GITHUB_SHA \(/);
       // … but nothing was dropped, so the damage diagnosis must stay silent
-      assert.doesNotMatch(r.out, /UNREADABLE/);
-      assert.doesNotMatch(r.out, /damaged or partial object store/);
+      assert.doesNotMatch(r.out, /UNUSABLE/);
+      assert.doesNotMatch(r.out, /packages\/ is NOT empty at that ref/);
       assert.match(r.out, /Expected at least one non-private/);
+      assertFloorIsIntact(r);
+    } finally {
+      destroyFixture(dir);
+    }
+  });
+
+  test('MIXED population: the floor reports dropped-of-listed, and does not overclaim', async () => {
+    // The first version of this message said "N manifest(s) ARE listed at that
+    // ref and every one is UNREADABLE" with N = dropped.length. When the ref
+    // holds BOTH unusable and readable-but-private manifests, both halves of
+    // that sentence are false: the count is the dropped count (not the listed
+    // count), and "every one" is untrue of the ones that read fine. Which is a
+    // fresh instance of the very defect this floor was rewritten to fix.
+    const dir = createFixture({
+      scripts: [SCRIPT],
+      packages: {
+        broken1: { name: '@civitai/broken1', version: '1.0.0' },
+        broken2: { name: '@civitai/broken2', version: '1.0.0' },
+        priv1: { name: '@civitai/priv1', version: '1.0.0', private: true },
+        priv2: { name: '@civitai/priv2', version: '1.0.0', private: true },
+        priv3: { name: '@civitai/priv3', version: '1.0.0', private: true },
+      },
+    });
+    const g = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: ['ignore', 'pipe', 'ignore'] });
+    try {
+      g('init', '-q');
+      g('config', 'user.email', 'test@example.invalid');
+      g('config', 'user.name', 'test');
+      g('add', '-A');
+      g('commit', '-qm', 'mixed');
+      const sha = g('rev-parse', 'HEAD').toString().trim();
+      // damage ONLY the two publishable ones; the three private ones read fine
+      for (const d of ['broken1', 'broken2']) {
+        const blob = g('rev-parse', `${sha}:packages/${d}/package.json`).toString().trim();
+        unlinkSync(join(dir, '.git', 'objects', blob.slice(0, 2), blob.slice(2)));
+      }
+      // control on the fixture: 5 listed, exactly 2 unreadable
+      assert.equal(g('ls-tree', '-r', '--name-only', sha, 'packages/').toString().trim().split('\n').length, 5);
+      assert.throws(() => g('show', `${sha}:packages/broken1/package.json`));
+      assert.doesNotThrow(() => g('show', `${sha}:packages/priv1/package.json`));
+
+      const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST, GITHUB_SHA: sha });
+      assert.equal(r.code, 1, r.out);
+      // 2 dropped OF 5 listed — both numbers, neither standing in for the other
+      assert.match(r.out, /2 of the 5 manifest\(s\) listed at that ref are UNUSABLE/);
+      // and no claim about the three it read perfectly well
+      assert.doesNotMatch(r.out, /every one/i);
+      assertFloorIsIntact(r);
+    } finally {
+      destroyFixture(dir);
+    }
+  });
+
+  test('BOTH producers reach `dropped` — a malformed manifest is not blamed on the object store', async () => {
+    // `dropped` is fed by two different failures: `git show` failing (the store
+    // cannot produce the blob) and `JSON.parse` failing (the blob is fine and
+    // the JSON is malformed). An earlier message asserted the first as THE
+    // cause, so a committed syntax error on a `git fsck`-clean store was
+    // diagnosed as "a damaged or partial object store … re-fetch and re-run" —
+    // advice that cannot work, for a repo that is not damaged.
+    const dir = createFixture({ scripts: [SCRIPT], packages: { bad: { name: '@civitai/bad', version: '1.0.0' } } });
+    const g = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: ['ignore', 'pipe', 'ignore'] });
+    try {
+      writeFileSync(join(dir, 'packages', 'bad', 'package.json'), '{ "name": "@civitai/bad", ');
+      g('init', '-q');
+      g('config', 'user.email', 'test@example.invalid');
+      g('config', 'user.name', 'test');
+      g('add', '-A');
+      g('commit', '-qm', 'malformed manifest');
+      const sha = g('rev-parse', 'HEAD').toString().trim();
+      // the store is HEALTHY — this is the whole point of the case
+      assert.doesNotThrow(() => g('show', `${sha}:packages/bad/package.json`));
+      assert.doesNotThrow(() => g('fsck', '--no-progress'));
+
+      const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST, GITHUB_SHA: sha });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /1 of the 1 manifest\(s\) listed at that ref are UNUSABLE/);
+      // it may OFFER the store as one cause, but must not assert it as THE cause
+      assert.doesNotMatch(r.out, /That is a damaged or partial object store/);
+      // and the parser's own message must survive into the WARN, since that is
+      // the only thing that tells the two producers apart
+      assert.match(r.out, /WARN could not read packages\/bad\/package\.json/);
+      assert.match(r.out, /JSON|Unexpected end|token/i);
+      assertFloorIsIntact(r);
+    } finally {
+      destroyFixture(dir);
+    }
+  });
+
+  test('PARTIAL damage does not reach the floor — the shrunk population must be stated, not hidden', async () => {
+    // pkgs is NON-empty here, so every check runs and reports `OK: N/N … 0
+    // missing` — a true sentence about a set nobody chose. The reader's WARNs
+    // are emitted far above the summary and are easy to lose in a run log.
+    // Exit 0 is deliberate (this is diagnostics, not a new verdict), so the
+    // ONLY thing standing between an operator and a silently-shrunk population
+    // is that the incompleteness is restated next to the count it qualifies.
+    const dir = createFixture({
+      scripts: [SCRIPT],
+      // versions MUST match what the stand-in registry publishes, or this test
+      // fails on a missing version and never reaches the property under test
+      packages: {
+        ok1: { name: '@civitai/app-sdk', version: '0.31.0' },
+        ok2: { name: '@civitai/theme', version: '0.2.0' },
+        gone: { name: '@civitai/blocks-react', version: '0.39.0' },
+      },
+    });
+    const g = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: ['ignore', 'pipe', 'ignore'] });
+    try {
+      g('init', '-q');
+      g('config', 'user.email', 'test@example.invalid');
+      g('config', 'user.name', 'test');
+      g('add', '-A');
+      g('commit', '-qm', 'three publishable');
+      const sha = g('rev-parse', 'HEAD').toString().trim();
+      const blob = g('rev-parse', `${sha}:packages/gone/package.json`).toString().trim();
+      unlinkSync(join(dir, '.git', 'objects', blob.slice(0, 2), blob.slice(2)));
+
+      const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST, GITHUB_SHA: sha });
+      assert.equal(r.code, 0, r.out); // unchanged verdict — 2 of 2 survivors are published
+      assert.match(r.out, /2 package\(s\) from \$GITHUB_SHA/);
+      // the count above is INCOMPLETE and must say so, adjacent to itself
+      assert.match(r.out, /population above is INCOMPLETE — 1 of 3 manifest\(s\)/);
+      assert.match(r.out, /NOT checked below/);
+      // the floor must NOT have fired: this is not a zero
+      assert.doesNotMatch(r.out, /no publishable package found/);
     } finally {
       destroyFixture(dir);
     }
@@ -481,6 +646,11 @@ describe('assert-published-versions', () => {
       assert.match(r.out, /from working tree \(not a git checkout\)/);
       assert.doesNotMatch(r.out, /FALLBACK/);
       assert.doesNotMatch(r.out, /\$GITHUB_SHA/);
+      // A DISK arm cannot observe an unusable manifest — it treats an unparseable
+      // package.json as "not a workspace package" and skips it silently. So it must
+      // never claim one, or the incompleteness warning becomes noise nobody trusts.
+      assert.doesNotMatch(r.out, /population above is INCOMPLETE/);
+      assert.doesNotMatch(r.out, /UNUSABLE/);
     } finally {
       destroyFixture(noGit);
     }
@@ -495,6 +665,31 @@ describe('assert-published-versions', () => {
       assert.doesNotMatch(r.out, /FALLBACK/);
     } finally {
       destroyFixture(gitDir);
+    }
+  });
+
+  test('PUBLISH_CHECK_FROM_DISK=1 reads the working tree, and claims no damage it cannot observe', async () => {
+    // This arm had NO test at all, which is why a mutant returning a bogus
+    // `dropped` from it survived the whole suite. It is the deliberate
+    // reproduce-the-pre-fix-behaviour control, so it must stay reachable AND
+    // stay honest: the disk reader cannot distinguish an unusable manifest from
+    // a non-workspace directory, so it must never report one.
+    const dir = createFixture({ scripts: [SCRIPT] }); // no git at all
+    try {
+      const r = await runGuard(dir, SCRIPT, {
+        NPM_REGISTRY: reg.origin,
+        ...FAST,
+        PUBLISH_CHECK_FROM_DISK: '1',
+        GITHUB_SHA: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef', // must be IGNORED
+      });
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /5 package\(s\) from working tree \(PUBLISH_CHECK_FROM_DISK=1\)/);
+      // the env var wins over $GITHUB_SHA — the label must not name the ref
+      assert.doesNotMatch(r.out, /\$GITHUB_SHA/);
+      assert.doesNotMatch(r.out, /population above is INCOMPLETE/);
+      assert.doesNotMatch(r.out, /UNUSABLE/);
+    } finally {
+      destroyFixture(dir);
     }
   });
 
