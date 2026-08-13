@@ -342,10 +342,19 @@ function readPublishablePackages() {
   //
   // No publish-mode exemption here: an earlier revision added one for "ref
   // unreadable but HEAD === $GITHUB_SHA, so the tree is provably the ref's".
-  // That state cannot be constructed — if HEAD resolves to that sha and the
-  // tree is readable, then the ref is readable and we never reach this arm. It
-  // was unreachable code whose mutant no test could kill, so it is gone rather
-  // than kept as an unprovable guard.
+  //
+  // That state IS constructible — delete a commit's root tree object and
+  // `rev-parse HEAD` still succeeds while `ls-tree` exits 128; a `--filter=tree:0`
+  // partial clone with an unreachable promisor is a second route. (An earlier
+  // version of this comment claimed it could not be constructed. It was wrong,
+  // and it is recorded here because a maintainer might otherwise build on it.)
+  //
+  // It is still correct to have no exemption: every route to that state is a
+  // damaged or partial object store, where "we cannot determine this" is the
+  // honest answer. The exemption would only have added a working-tree assertion
+  // in a broken-git state — it costs a detection opportunity, never a false
+  // failure. No test can kill its mutant, which is the tell that it was buying
+  // nothing.
   if (process.env.GITHUB_SHA && isRepo) {
     return {
       source: `$GITHUB_SHA (${process.env.GITHUB_SHA.slice(0, 9)}) could not be read`,
