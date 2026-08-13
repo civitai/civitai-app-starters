@@ -224,29 +224,65 @@ const SLOT_IDS_CARRYING_THEME = new Set<string>([
  * carries `slotId` and nothing else, so there is no `theme` to set and none is
  * invented.
  *
- * Always returns a FRESH TOP-LEVEL object — `{ ...ctx }`, never `ctx` itself.
- * `options.context` is owned by the dev harness that passed it, so re-using the
- * object would let a later `harness.context.theme = …` reach through a
- * `BlockSnapshot` the block is entitled to treat as immutable.
+ * Always returns a FRESH OBJECT GRAPH — `structuredClone(ctx)`, never `ctx`
+ * itself and never anything nested inside it. `options.context` is owned by the
+ * dev harness that passed it, so sharing any part of it would let a later
+ * `harness.context.theme = …` — or a `harness.context.showcaseImages.push(…)` —
+ * reach through a `BlockSnapshot` the block is entitled to treat as immutable.
  *
- * 🔴 It is a SHALLOW copy, and the scope of the guarantee is exactly that. Any
- * nested value keeps the caller's identity — for a {@link ModelSlotContext} that
- * is `checkpoint` (an object) and `showcaseImages` (an array). A harness that
- * mutates `ctx.showcaseImages` IN PLACE after init still reaches the block's
- * snapshot; only a whole-key reassignment is fenced off.
+ * 🔴 THE DEEP COPY IS PRODUCTION PARITY, NOT DEFENSIVENESS — do not "simplify"
+ * it back to `{ ...ctx }` as redundant. `hostContextWithTheme` is imported by
+ * exactly two call sites — the two DEV hosts — and both deliver host→block
+ * messages with `win.dispatchEvent(new MessageEvent('message', …))`
+ * (`mockHost.ts`, `liveHost.ts`): a same-realm synthetic event that passes
+ * `data` BY REFERENCE. There is no structured clone anywhere on that path. The
+ * real cross-origin `postMessage` in production DOES structured-clone, but
+ * production never calls this function — so cloning here is precisely what makes
+ * the dev harness behave like the boundary it stands in for, which is the whole
+ * point of a dev harness. The previous shallow `{ ...ctx }` left every nested
+ * value aliased to the caller's — for a {@link ModelSlotContext} that is
+ * `checkpoint` (an object) and `showcaseImages` (an array) — so a harness that
+ * mutated `ctx.showcaseImages` IN PLACE after init still reached the block's
+ * snapshot, and only a whole-key reassignment was fenced off.
  *
- * 🔴 And nothing downstream deep-copies it for you. `hostContextWithTheme` is
- * imported by exactly two call sites — the two DEV hosts — and both deliver
- * host→block messages with `win.dispatchEvent(new MessageEvent('message', …))`
- * (`mockHost.ts`, `liveHost.ts`) — a same-realm synthetic event that passes
- * `data` by reference. The real cross-origin `postMessage` in production does
- * structured-clone, but production never calls this function. If the deeper
- * guarantee is ever wanted here, it has to be written (a `structuredClone(ctx)`,
- * or freezing the nested values) — do not assume the transport provides it.
+ * 🔴 IT THROWS ON A NON-CLONEABLE CONTEXT, AND THAT IS THE POINT. A function,
+ * class instance, proxy or DOM node in `options.context` makes `structuredClone`
+ * raise `DataCloneError` — and production's `postMessage` would raise on exactly
+ * the same input, so a silent shallow fallback would re-open the divergence this
+ * clone exists to close. A raw `DataCloneError` surfacing from this depth names
+ * nothing useful, so it is re-thrown by {@link cloneHostContext} as an error that
+ * names this function, the offending slot and the likely cause, with the
+ * original attached as `cause`.
  */
 export function hostContextWithTheme(ctx: BlockContext, theme: Theme): BlockContext {
-  if (!SLOT_IDS_CARRYING_THEME.has(ctx.slotId)) return { ...ctx };
-  return { ...ctx, theme } as BlockContext;
+  const copy = cloneHostContext(ctx);
+  if (!SLOT_IDS_CARRYING_THEME.has(copy.slotId)) return copy;
+  return { ...copy, theme } as BlockContext;
+}
+
+/**
+ * `structuredClone(ctx)` with its `DataCloneError` re-thrown as something that
+ * says where it came from and what to do about it. Split out of
+ * {@link hostContextWithTheme} so the parity rationale there is not interrupted
+ * by error plumbing.
+ *
+ * Deliberately NOT a fallback: it re-throws rather than degrading to `{ ...ctx }`.
+ * A non-cloneable `options.context` is a harness bug that production's real
+ * `postMessage` boundary would reject too, and swallowing it here would put the
+ * dev host back out of step with the thing it simulates.
+ */
+function cloneHostContext(ctx: BlockContext): BlockContext {
+  try {
+    return structuredClone(ctx);
+  } catch (cause) {
+    throw new Error(
+      `hostContextWithTheme: the context for slot "${ctx.slotId}" is not structured-cloneable, ` +
+        `so it cannot cross a host→block boundary. A dev-supplied \`options.context\` most ` +
+        `likely carries a function, a class instance, a proxy or a DOM node; production's ` +
+        `cross-origin postMessage would reject the same value. Pass plain JSON-shaped data.`,
+      { cause },
+    );
+  }
 }
 
 /** Convert a wire `BlockInitPayload` (ISO string expiresAt) into a `BlockSnapshot`. */

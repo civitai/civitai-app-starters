@@ -391,6 +391,156 @@ describe('BlockContext union (change 1)', () => {
       expect(hostContextWithTheme(unknown, 'dark')).not.toBe(unknown);
       expect(hostContextWithTheme(unknown, 'dark')).toEqual(unknown);
     });
+
+    // ----------------------------------------------------------
+    // DEEP copy — production parity, not defensiveness.
+    //
+    // Both call sites are DEV hosts, and both deliver host→block messages with
+    // `win.dispatchEvent(new MessageEvent('message', …))` — a same-realm
+    // synthetic event that passes `data` BY REFERENCE, with no structured clone
+    // anywhere on the path. Production's cross-origin `postMessage` DOES
+    // structured-clone, but production never calls this function. So the clone
+    // here is what makes the harness behave like the boundary it simulates.
+    //
+    // The shallow `{ ...ctx }` these replace fenced off only whole-KEY
+    // reassignment; every nested value stayed the caller's.
+    // ----------------------------------------------------------
+
+    /**
+     * A realistic `ModelSlotContext` carrying the two nested values the function's
+     * doc comment names: `checkpoint` (an object) and `showcaseImages` (an array).
+     *
+     * Built FRESH per test, because these tests mutate it. Every value is
+     * pairwise-distinct from every other so an assertion that reads the wrong
+     * field cannot pass by coincidence.
+     */
+    const makeNestedModelContext = () => ({
+      slotId: 'model.below_images' as const,
+      modelId: 8801,
+      modelVersionId: 4417,
+      modelName: 'Aurora Mix',
+      modelType: 'LORA',
+      modelNsfwLevel: 6,
+      checkpoint: {
+        versionId: 2093,
+        modelId: 7712,
+        modelName: 'Pony Realism',
+        versionName: 'v3.2-turbo',
+        baseModel: 'SDXL 1.0',
+      },
+      showcaseImages: [
+        {
+          id: 5501,
+          url: 'https://image.civitai.com/showcase-first.jpeg',
+          width: 1216,
+          height: 832,
+          prompt: 'a lighthouse at dusk',
+          negativePrompt: 'blurry, watermark',
+          cfgScale: 3.5,
+          steps: 28,
+          seed: 190347,
+          sampler: 'DPM++ 2M Karras',
+          clipSkip: 1,
+        },
+      ],
+    });
+
+    it('🔴 HARNESS→BLOCK: an IN-PLACE mutation of the caller’s nested values after the call does not reach the returned context', () => {
+      const mine = makeNestedModelContext();
+      const out = hostContextWithTheme(mine, 'dark');
+      if (!isModelSlotContext(out)) throw new Error('expected a model slot context');
+
+      // All IN PLACE — no whole-key reassignment anywhere. This is exactly the
+      // class the shallow copy let through: the block's `BlockSnapshot` is
+      // something a block is entitled to treat as immutable, and under
+      // `{ ...ctx }` a harness could still rewrite it after init.
+      mine.showcaseImages.push({
+        ...mine.showcaseImages[0]!,
+        id: 5502,
+        prompt: 'a second image the block never received',
+      });
+      mine.showcaseImages[0]!.seed = 777777;
+      mine.checkpoint.modelName = 'Swapped Checkpoint';
+      mine.checkpoint.baseModel = 'Flux.1 D';
+
+      expect(out.showcaseImages).toHaveLength(1);
+      expect(out.showcaseImages![0]!.seed).toBe(190347);
+      expect(out.showcaseImages![0]!.prompt).toBe('a lighthouse at dusk');
+      expect(out.checkpoint!.modelName).toBe('Pony Realism');
+      expect(out.checkpoint!.baseModel).toBe('SDXL 1.0');
+      // Identity, not just value: nothing nested is shared with the caller.
+      expect(out.checkpoint).not.toBe(mine.checkpoint);
+      expect(out.showcaseImages).not.toBe(mine.showcaseImages);
+    });
+
+    it('🔴 BLOCK→HARNESS: mutating the RETURNED context’s nested values does not reach the caller’s object', () => {
+      const mine = makeNestedModelContext();
+      const out = hostContextWithTheme(mine, 'dark');
+      if (!isModelSlotContext(out)) throw new Error('expected a model slot context');
+
+      // The other direction, and a genuinely different bug: under a shallow copy
+      // a block (or anything downstream of the snapshot) writing through its own
+      // context corrupted the harness's fixture, so a second `install()` in the
+      // same test file would replay the first block's writes.
+      out.showcaseImages!.push({ ...out.showcaseImages![0]!, id: 9903, prompt: 'block-authored' });
+      out.showcaseImages![0]!.steps = 4;
+      out.checkpoint!.versionName = 'v0-block-authored';
+
+      expect(mine.showcaseImages).toHaveLength(1);
+      expect(mine.showcaseImages[0]!.steps).toBe(28);
+      expect(mine.checkpoint.versionName).toBe('v3.2-turbo');
+      // The caller's object is byte-for-byte what it was built as.
+      expect(mine).toEqual(makeNestedModelContext());
+    });
+
+    it('🔴 deep-copies on the NO-THEME-FIELD path too — that early return is its own `return`', () => {
+      // `UnknownSlotContext` declares `slotId` only, but a harness can hand the
+      // host an object carrying more, and a clone that lived only in the
+      // theme-carrying branch would alias it. Keyed on the slot id, so this
+      // takes the early return.
+      const mine = { slotId: 'image.below_actions', extras: { tags: ['alpha'] } };
+      const out = hostContextWithTheme(mine as never, 'dark') as unknown as typeof mine;
+
+      mine.extras.tags.push('beta');
+      expect(out.extras.tags).toEqual(['alpha']);
+      expect(out.extras).not.toBe(mine.extras);
+      // And it still does not invent a `theme` on a slot with no place for it.
+      expect('theme' in out).toBe(false);
+    });
+
+    it('🔴 THROWS on a non-cloneable context rather than falling back to a shallow copy', () => {
+      // Fidelity, not a regression: production's cross-origin `postMessage`
+      // raises `DataCloneError` on the same input. A silent shallow fallback
+      // would re-open the very dev-host/production divergence the clone closes,
+      // so the throw is load-bearing and pinned here.
+      const withFn = {
+        slotId: 'model.sidebar_top',
+        modelId: 4471,
+        modelVersionId: 90233,
+        modelName: 'Nocturne XL',
+        modelType: 'LORA',
+        modelNsfwLevel: 2,
+        onPick: () => 'not cloneable',
+      };
+
+      expect(() => hostContextWithTheme(withFn as never, 'dark')).toThrow(
+        /hostContextWithTheme: the context for slot "model\.sidebar_top" is not structured-cloneable/,
+      );
+
+      // The original `DataCloneError` is preserved as `cause` — the wrapper adds
+      // provenance, it does not hide the platform error.
+      let caught: unknown;
+      try {
+        hostContextWithTheme(withFn as never, 'dark');
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).cause).toBeDefined();
+      expect((caught as Error).cause).not.toBe(caught);
+      // And it names the likely cause, so a harness author knows what to remove.
+      expect((caught as Error).message).toMatch(/function, a class instance, a proxy or a DOM node/);
+    });
   });
 });
 
@@ -766,9 +916,11 @@ describe('createMockHost BLOCK_INIT fidelity', () => {
     uninstall = createMockHost({ context: mine }).install();
     const { result } = renderHook(() => useBlockContext());
     await waitFor(() => expect(result.current.ready).toBe(true));
-    // structuredClone across the postMessage boundary already breaks identity;
-    // the assertion that matters is that the harness's object was not MUTATED by
-    // the host layering `theme` onto it.
+    // Identity is already broken by `hostContextWithTheme`'s `structuredClone` —
+    // NOT by the transport: the mock host dispatches a same-realm synthetic
+    // `MessageEvent`, which passes `data` by reference and clones nothing. The
+    // assertion that matters here is that the harness's object was not MUTATED
+    // by the host layering `theme` onto it.
     expect(mine).toEqual({
       slotId: 'app.page',
       slug: 'notepad',
