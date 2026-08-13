@@ -217,6 +217,8 @@ export const IMAGE_GEN_ENGINES = {
   grok: 'Grok',
   /** Wan image generation. */
   wan: 'Wan',
+  /** Qwen image models hosted by Alibaba Model Studio (DashScope). */
+  qwen: 'Qwen (Alibaba Model Studio)',
   /** Self-hosted SDCpp (stable-diffusion.cpp) gen. */
   sdcpp: 'SDCpp (self-hosted diffusion)',
   /** fal.ai routed gen. */

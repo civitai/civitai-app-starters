@@ -394,7 +394,7 @@ describe('WORKFLOW_STEP_TYPES + IMAGE_GEN_ENGINES catalogs', () => {
     // asserted non-zero, so a truncated fixture is a failure and not a smaller
     // vacuous pass.
     expect(SPEC_WORKFLOW_STEP_TYPES).toHaveLength(44);
-    expect(SPEC_IMAGE_GEN_ENGINES).toHaveLength(11);
+    expect(SPEC_IMAGE_GEN_ENGINES).toHaveLength(12);
     expect(new Set(SPEC_WORKFLOW_STEP_TYPES).size).toBe(SPEC_WORKFLOW_STEP_TYPES.length);
   });
 });
