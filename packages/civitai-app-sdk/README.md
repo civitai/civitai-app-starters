@@ -311,7 +311,7 @@ Find the step you want, then pick a builder:
 | Step type | Builder | When |
 |---|---|---|
 | `textToImage` | `buildTextToImageBody` | Diffusion checkpoints (SDXL / Flux.1 / Pony / SD1.5) via AIR URN |
-| `imageGen` | `buildImageGenBody` | Closed-source image-gen APIs — Nano Banana, Gemini, GPT-Image, Flux.1 Kontext, Flux.2, Seedream, Grok, fal. `IMAGE_GEN_ENGINES` lists the engines. |
+| `imageGen` | `buildImageGenBody` | Engine-routed image gen — hosted third-party APIs (e.g. Nano Banana, Gemini, GPT-Image, Flux.1 Kontext, Seedream) and self-hosted engines (e.g. SDCpp, Comfy graphs). `IMAGE_GEN_ENGINES` is the authoritative list; this row is illustrative and deliberately not exhaustive. |
 | Any other (`videoGen`, `comfy`, `textToSpeech`, `transcription`, …) | `buildWorkflowBody` | Generic single-step envelope — pass `{ $type, input }`, the SDK adds `name`/`timeout` defaults. |
 
 For multi-step workflows, hand-build `{ tags?, steps: [step1, step2, ...] }` — no special envelope work beyond a JSON array.

@@ -44,9 +44,17 @@
  *   node scripts/check-orchestrator-catalogs.mjs     # or: pnpm check:catalogs
  *   FIXTURE=... SPEC_URL=... node scripts/check-orchestrator-catalogs.mjs
  *
- * The two env overrides exist so `tests/` can drive this script against a known
- * -bad spec and a known-bad fixture — an unvalidated guard is a claim about the
- * guard, not about the catalogs. See `scripts/__tests__/`.
+ * The two env overrides exist so a self-test can drive this script against a
+ * known-bad spec and a known-bad fixture — an unvalidated guard is a claim about
+ * the guard, not about the catalogs.
+ *
+ * 🔴 NO SUCH SELF-TEST EXISTS YET. Nothing in this repo sets `SPEC_URL` or
+ * `FIXTURE`, so every FAILS-when clause above is currently unexercised. The
+ * convention to follow when adding one: the sibling release guards
+ * (`scripts/check-starter-pins.mjs`, `scripts/check-starter-workspace-overrides.mjs`)
+ * are self-tested by `tests/guards/*.test.mjs` — `node --test`, driven through
+ * the synthetic-tree harness in `tests/guards/fixture.mjs`, run in CI and via
+ * `pnpm test:guards`. That directory is where a test for this script belongs.
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
