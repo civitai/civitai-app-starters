@@ -17,7 +17,31 @@ jobs:
     name: Version + publish packages
     runs-on: ubuntu-latest
     steps:
+      # Check out with the SAME non-Actions token the changesets step uses below.
+      #
+      # `actions/checkout` persists its token as the git credential for the rest
+      # of the job, and that credential — NOT the `GITHUB_TOKEN` env var on the
+      # changesets step — is what actually pushes `changeset-release/main`. The
+      # env var only authenticates the Octokit calls, which is why the Version PR
+      # is authored by the PAT owner while every push to its branch was attributed
+      # to `github-actions[bot]`.
+      #
+      # That split is what stalls releases. This repo's Actions approval policy is
+      # `first_time_contributors`, and `github-actions[bot]` can never stop being
+      # one — so the `synchronize` run triggered by that push parks as
+      # `action_required`. Every first-attempt run on `changeset-release/main` with
+      # that actor has parked; the only ones that ever executed were manual re-runs.
+      # The Version PR is then left without its required checks and reads BLOCKED,
+      # with an unclicked approval button as the real cause. (On the 2026-08-12
+      # release the parked run also cancelled the healthy PAT-authored `opened` run
+      # via `cancel-in-progress`, leaving the branch with nothing but the parked one.)
+      #
+      # Pushing as the PAT owner (a contributor, not the bot) removes the approval
+      # requirement entirely. No policy is weakened: fork PRs still require
+      # approval, which on a public repo is the setting worth keeping.
       - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.CHANGESETS_TOKEN || secrets.GITHUB_TOKEN }}
 
       - uses: pnpm/action-setup@v6
 
