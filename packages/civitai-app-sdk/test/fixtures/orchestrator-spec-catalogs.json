@@ -18,7 +18,7 @@
     ".discriminator.mapping."
   ],
   "specUrl": "https://orchestration.civitai.com/openapi/v2-consumers.json",
-  "readOn": "2026-08-06",
+  "readOn": "2026-08-12",
   "workflowStepTypes": [
     "aceStepAudio",
     "ageClassification",
@@ -74,6 +74,7 @@
     "google",
     "grok",
     "openai",
+    "qwen",
     "sdcpp",
     "seedream",
     "wan"

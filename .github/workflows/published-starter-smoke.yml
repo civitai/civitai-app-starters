@@ -1,0 +1,143 @@
+name: Published-starter smoke
+
+# NIGHTLY, ADVISORY smoke test of the user-scaffolded starters against their
+# PUBLISHED @civitai/* versions.
+#
+# WHY IT EXISTS
+#   The root `pnpm.overrides` maps the first-party `@civitai/*` packages to
+#   `workspace:*`, so every job in ci.yml — including the REQUIRED
+#   `Starter (<name>)` matrix — builds the starters against the LOCAL workspace
+#   copies, never against the published versions their own package.json pins
+#   actually admit. That was demonstrated with a controlled pair: a local-only
+#   export added to a workspace package and imported from `starters/next-app` is
+#   RED against the published version and GREEN once the override swaps in the
+#   workspace copy. Since the starters are copied out VERBATIM by
+#   `npx tiged civitai/civitai-app-starters/starters/<name> my-app` (documented in
+#   README.md, AGENTS.md, CLAUDE.md and every starter README), a starter that is
+#   broken against its published pins is a broken scaffold for every developer
+#   who runs that command — with nothing red anywhere.
+#
+# 🔴 DO NOT MAKE THIS A REQUIRED CHECK ON `main`.
+#   It installs from the public npm registry, so it can go red for reasons
+#   nobody in this repo controls (registry outage, an upstream transitive
+#   package yanked, a rate limit). A required check with a live third-party
+#   dependency re-creates exactly the release deadlock that motivated moving the
+#   other live-dependent guards out of the required set — see the ADVISORY notes
+#   on `Canonical schema drift-check` and `design-system drift guard` in ci.yml,
+#   which this job deliberately mirrors. It is intentionally in its OWN file, not
+#   in ci.yml, so it can never be picked up by a required-check rule that names
+#   the CI workflow, and so it does not collide with in-flight PRs editing ci.yml.
+#
+# HOW A FAILURE SURFACES (a scheduled job nobody watches is a dead gate):
+#   1. The job summary — the script always writes a `$GITHUB_STEP_SUMMARY` table
+#      (per-starter result, files copied, the exact resolved @civitai/* versions,
+#      and the failing tool output). Visible on the run page with no extra perms.
+#   2. A single de-duplicated tracking ISSUE, opened on failure and commented on
+#      for each subsequent failing night, auto-closed on the first green night.
+#      Issues are the right surface here because there is no PR to annotate — the
+#      break is usually in a PUBLISHED package, not in the commit being tested.
+#      This follows the repo's existing "automation opens a thing for a human"
+#      precedent (revendor-canonical-schema.yml opens a PR) and reuses the same
+#      CHANGESETS_TOKEN, since the org blocks the default GITHUB_TOKEN from
+#      creating PRs; issue creation falls back to GITHUB_TOKEN if that secret is
+#      absent. The issue step is `continue-on-error` so a token problem can never
+#      mask the smoke result itself.
+
+on:
+  schedule:
+    # 04:23 UTC nightly (off the hour — the top of the hour is the busiest
+    # Actions slot and scheduled runs get queued behind it).
+    - cron: '23 4 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: published-starter-smoke
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  smoke:
+    name: Published-starter smoke (advisory — do NOT require)
+    runs-on: ubuntu-latest
+    # Five starters, each a full `npm install` + typecheck + build from the
+    # registry. Generous but bounded, so a hung install cannot burn an hour.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      # No pnpm here ON PURPOSE. pnpm would bring the workspace back into play
+      # (pnpm-workspace.yaml, link-workspace-packages, pnpm.overrides) — the very
+      # thing this job exists to bypass. The script copies each starter's tracked
+      # files to a temp dir OUTSIDE the repo and runs plain `npm install` there.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Smoke published starters
+        id: smoke
+        run: node scripts/smoke-published-starters.mjs
+
+      # ---- failure surfacing -------------------------------------------------
+      - name: Open or update the tracking issue
+        if: failure() && github.event_name == 'schedule'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.CHANGESETS_TOKEN || secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # Body via a heredoc + --body-file, NOT an indented shell string:
+          # markdown renders a 4-space-indented line as a code block, which
+          # would mangle the whole issue. The YAML block scalar strips this
+          # step's base indentation, so these lines reach the file at column 0.
+          cat > /tmp/smoke-issue-body.md <<EOF
+          The nightly published-starter smoke failed.
+
+          A starter builds in this monorepo (\`pnpm.overrides\` swaps in the workspace
+          \`@civitai/*\` copies) but does NOT build against the published versions its
+          own \`package.json\` admits — so \`npx tiged\` produces a broken scaffold for
+          users.
+
+          Per-starter table, resolved versions and the failing tool output:
+          ${RUN_URL}
+
+          This is an ADVISORY job — it is not a required check and never blocks a
+          merge. If the cause is a registry/network condition rather than a real
+          break, close this issue; the next green night closes it automatically.
+          EOF
+          NUM="$(gh issue list --state open --label published-starter-smoke \
+                   --json number --jq '.[0].number // empty')"
+          if [ -n "$NUM" ]; then
+            gh issue comment "$NUM" --body-file /tmp/smoke-issue-body.md
+          else
+            # `|| true` for the already-exists case. stderr is deliberately NOT
+            # silenced: if this fails for any other reason the `issue create`
+            # below fails too (an unknown label is rejected), and a swallowed
+            # error there would make the whole surfacing mechanism silently dead
+            # — the exact failure mode this job exists to prevent elsewhere.
+            gh label create published-starter-smoke \
+              --description 'Nightly published-vs-workspace starter smoke' \
+              --color B60205 || true
+            gh issue create --title 'Published-starter smoke is failing' \
+              --label published-starter-smoke --body-file /tmp/smoke-issue-body.md
+          fi
+
+      - name: Close the tracking issue on a green night
+        if: success() && github.event_name == 'schedule'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.CHANGESETS_TOKEN || secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          NUM="$(gh issue list --state open --label published-starter-smoke \
+                   --json number --jq '.[0].number // empty')"
+          if [ -n "$NUM" ]; then
+            gh issue close "$NUM" --comment "Green again — every starter built against its published \`@civitai/*\` versions. ${RUN_URL}"
+          fi
