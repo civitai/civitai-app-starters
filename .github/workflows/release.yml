@@ -119,5 +119,11 @@ jobs:
       # that broke. Retries internally (npm's read path lags a publish), and
       # degrades to a warning if the registry is unreachable — a blip must not
       # red a release that succeeded.
+      # timeout-minutes is not belt-and-braces: this step retries BOTH probes on
+      # the same budget, so a package that 404s sleeps 2x(TRIES-1)xDELAY plus
+      # per-request timeouts. The release `concurrency` lane above has no
+      # cancel-in-progress, so an unbounded step here would park every
+      # subsequent release rather than just failing this one.
       - name: Assert the published versions actually exist on npm
+        timeout-minutes: 10
         run: pnpm assert:published

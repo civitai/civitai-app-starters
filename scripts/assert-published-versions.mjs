@@ -67,14 +67,17 @@
  *   - a body-read failure AFTER a 2xx status line (timeout mid-body, reset,
  *     truncated JSON) — see `get`, which deliberately does NOT fold this into
  *     a null body, OR
- *   - a 5xx/429, OR
+ *   - ANY non-2xx status other than 404/410. Not just 5xx/429: 400/401/402/403
+ *     /451 all land here too (proxy-registry auth, private-org billing, an IP
+ *     block). Stated precisely because two earlier revisions of this list said
+ *     "5xx/429" and were wrong about their own code, OR
  *   - the exact version 404s AND the follow-up name probe cannot be completed,
  *     so "publish failed" and "new package" cannot be told apart.
  * Matching `check-starter-pins.mjs`: a release must not go red on a blip.
  *
- * But NOT when nothing at all could be confirmed — see the FLOOR near the end
- * of main(). A run that confirms zero packages is indistinguishable from a
- * check wired to nothing, whatever the reason.
+ * But NOT when nothing at all could be CONFIRMED — see the FLOOR near the end
+ * of main(). A run that confirms zero packages while any package looked merely
+ * "new" is indistinguishable from a check wired to nothing.
  *
  * SKIPS (not a publish target): `private: true` packages.
  *
@@ -82,9 +85,16 @@
  * `npm publish` returns before the registry's read path is globally consistent,
  * so an immediate GET of a just-published version can 404 for a few seconds.
  * Failing on the first 404 would make this red on exactly the releases that
- * SUCCEEDED. Note the real budget: TRIES attempts means TRIES-1 sleeps, so the
- * default 5/3000 waits at most 12s, not 15s. The loop sleeps at the TOP of
- * attempts 2..N precisely so that number cannot drift from the code.
+ * SUCCEEDED. The loop sleeps at the TOP of attempts 2..N, giving exactly
+ * TRIES-1 sleeps with none before the first attempt or after the last.
+ *
+ * BUDGET, measured rather than assumed — a PACKAGE THAT 404s PAYS TWICE, since
+ * the name probe retries on the same budget: 2 x (TRIES-1) x DELAY = 24s of
+ * sleeping per failing package at the 5/3000 defaults, not 12s. Add TIMEOUT per
+ * request and the worst case over 5 packages runs to several minutes, which is
+ * why `release.yml` caps this step with `timeout-minutes` — the release
+ * `concurrency` lane has no `cancel-in-progress`, so an unbounded step here
+ * would park it.
  *
  * KNOWN LIMITS (measured, not guessed — do not read past them):
  *   - It enumerates `packages/*` ONLY. `changeset publish` operates over the
@@ -105,6 +115,11 @@
  *   PUBLISH_CHECK_TRIES   attempts per package (default 5)
  *   PUBLISH_CHECK_DELAY   ms between attempts (default 3000)
  *   PUBLISH_CHECK_TIMEOUT ms per HTTP request (default 15000)
+ *   PUBLISH_CHECK_ALLOW_NONE_PUBLISHED
+ *                         set to exactly "1" to let a run that confirmed ZERO
+ *                         packages pass (see the FLOOR). For a genuine
+ *                         first-ever release of every package; any other value,
+ *                         "true" included, does nothing.
  *
  * TESTS
  *   tests/guards/assert-published-versions.test.mjs (node --test; NPM_REGISTRY
@@ -356,23 +371,35 @@ async function main() {
     return;
   }
 
-  // 🔴 FLOOR: nothing confirmed, and every package unknown to the registry.
-  // The never-published arm would otherwise report this as success — a wrong
-  // NPM_REGISTRY, a registry answering 404 fleet-wide, or an access change on
-  // every package all land here, and "0 confirmed" reads exactly like a checker
-  // wired to nothing. That is the same reasoning as the empty-packages guard
-  // above, which this arm had quietly punched a hole in.
-  if (published.length === 0 && neverPublished.length === pkgs.length) {
-    console.error('');
-    console.error('ERROR: the registry has never heard of ANY of these packages.');
-    console.error('       Confirmed 0 — which is indistinguishable from a check wired to nothing.');
-    console.error(`       Registry asked: ${REGISTRY}`);
-    console.error('       Likely a wrong NPM_REGISTRY, a registry-wide outage answering 404, or an');
-    console.error('       access change. If this really is a first-ever release of every package,');
-    console.error('       set PUBLISH_CHECK_ALLOW_NONE_PUBLISHED=1 for that one run.');
-    console.error('');
-    if (process.env.PUBLISH_CHECK_ALLOW_NONE_PUBLISHED !== '1') process.exit(1);
-    console.warn('PUBLISH_CHECK_ALLOW_NONE_PUBLISHED=1 — proceeding anyway.');
+  // 🔴 FLOOR: nothing was CONFIRMED, and at least one package looked merely
+  // "new". The never-published arm would otherwise report that as success — a
+  // wrong NPM_REGISTRY, a registry answering 404 fleet-wide, or an access
+  // change all land here, and "0 confirmed" reads exactly like a checker wired
+  // to nothing. Same reasoning as the empty-packages guard above, which this
+  // arm had quietly punched a hole in.
+  //
+  // Keyed on `> 0`, NOT on `=== pkgs.length`: an earlier revision only fired
+  // when EVERY package was unknown, so a MIXED run (some new, some
+  // unreachable — exactly what a partial rate-limit produces, and this script
+  // doubles request volume on a failing run) still printed a green `OK: 0/5`.
+  // The rule is "confirmed nothing", not "every single one was unknown".
+  if (published.length === 0 && neverPublished.length > 0) {
+    // The hatch is consulted BEFORE printing, so a deliberate first-ever
+    // release does not emit a six-line ERROR block on a run that then passes.
+    if (process.env.PUBLISH_CHECK_ALLOW_NONE_PUBLISHED === '1') {
+      console.warn('\nConfirmed 0 packages, but PUBLISH_CHECK_ALLOW_NONE_PUBLISHED=1 — proceeding anyway.');
+    } else {
+      console.error('');
+      console.error('ERROR: confirmed ZERO published packages.');
+      console.error('       That is indistinguishable from a check wired to nothing, so it fails');
+      console.error('       rather than reporting the never-published packages as a success.');
+      console.error(`       Registry asked: ${REGISTRY}`);
+      console.error('       Likely a wrong NPM_REGISTRY, a registry-wide outage answering 404, or');
+      console.error('       an access change. If this really is a first-ever release of every');
+      console.error('       package, set PUBLISH_CHECK_ALLOW_NONE_PUBLISHED=1 for that one run.');
+      console.error('');
+      process.exit(1);
+    }
   }
 
   // Report BOTH numbers: a bare "0 missing" is the same shape as a check that

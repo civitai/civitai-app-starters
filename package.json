@@ -21,7 +21,7 @@
     "check:catalogs": "node scripts/check-orchestrator-catalogs.mjs",
     "assert:published": "node scripts/assert-published-versions.mjs",
     "smoke:published-starters": "node scripts/smoke-published-starters.mjs",
-    "test:guards": "node --test \"tests/guards/*.test.mjs\"",
+    "test:guards": "node --test --test-timeout=60000 \"tests/guards/*.test.mjs\"",
     "changeset": "changeset",
     "release": "pnpm -r --filter \"./packages/*\" build && changeset publish",
     "release:check": "changeset status --verbose"

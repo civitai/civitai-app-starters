@@ -435,11 +435,66 @@ describe('assert-published-versions', () => {
     try {
       const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: empty.origin, ...FAST });
       assert.equal(r.code, 1, r.out);
-      assert.match(r.out, /never heard of ANY of these packages/);
+      assert.match(r.out, /confirmed ZERO published packages/);
       assert.doesNotMatch(r.out, /^OK: /m);
     } finally {
       destroyFixture(dir);
       await empty.close();
+    }
+  });
+
+  test('FLOOR also fires in a MIXED state — some "new", some unreachable, none confirmed', async () => {
+    // The rule is "confirmed nothing", not "every single one was unknown". An
+    // earlier revision keyed on `=== pkgs.length`, so this mixed shape — which
+    // is exactly what a PARTIAL rate-limit produces, and this script doubles
+    // request volume on a failing run — printed a green `OK: 0/5`.
+    const mixed = await startFakeRegistry({
+      // 2 unreachable, 3 absent entirely (=> "new"), 0 confirmable
+      '@civitai/app-sdk': 'error',
+      '@civitai/blocks-react': 'error',
+    });
+    const dir = createFixture({ scripts: [SCRIPT] });
+    try {
+      const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: mixed.origin, ...FAST });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /confirmed ZERO published packages/);
+      assert.doesNotMatch(r.out, /^OK: /m);
+    } finally {
+      destroyFixture(dir);
+      await mixed.close();
+    }
+  });
+
+  test('asks for the ABBREVIATED packument on the name probe, not the full document', async () => {
+    // The full packument lists every version ever published and can be
+    // megabytes; this is also the request most exposed to the timeout budget.
+    // Nothing pinned the header before, so dropping it was a silent mutation.
+    const seen = [];
+    const srv = createServer((req, res) => {
+      seen.push({ url: decodeURIComponent(req.url || ''), accept: req.headers.accept || '' });
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'nope' }));
+    });
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const dir = createFixture({ scripts: [SCRIPT], packages: { 'civitai-app-sdk': DEFAULT_PACKAGES['civitai-app-sdk'] } });
+    try {
+      await runGuard(dir, SCRIPT, {
+        NPM_REGISTRY: `http://127.0.0.1:${srv.address().port}`,
+        ...FAST,
+        PUBLISH_CHECK_ALLOW_NONE_PUBLISHED: '1',
+      });
+      const probe = seen.find((s) => s.url === '/@civitai/app-sdk');
+      assert.ok(probe, `no name probe issued: ${JSON.stringify(seen)}`);
+      assert.match(probe.accept, /application\/vnd\.npm\.install-v1\+json/);
+      // and the plain-JSON fallback is still offered
+      assert.match(probe.accept, /application\/json/);
+      // the VERSION probe is a different request and does not need the abbreviated type
+      const ver = seen.find((s) => s.url === '/@civitai/app-sdk/0.31.0');
+      assert.ok(ver, `no version probe issued: ${JSON.stringify(seen)}`);
+    } finally {
+      destroyFixture(dir);
+      srv.closeAllConnections();
+      await new Promise((r) => srv.close(r));
     }
   });
 
