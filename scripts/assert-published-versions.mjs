@@ -222,18 +222,38 @@ function git(args) {
   });
 }
 
+/**
+ * Returns a DISCRIMINATED result, because the three ways this can come back
+ * empty mean opposite things and an earlier revision collapsed them into one
+ * falsy return:
+ *
+ *   { unreadable: true }  the ref could genuinely not be read (no git, not a
+ *                         checkout, ref absent). We were told which commit to
+ *                         check and cannot -> indeterminate.
+ *   { pkgs: [] }          the ref READ FINE and legitimately has no publishable
+ *                         package. That is the zero-packages FLOOR's case and
+ *                         must reach it — it is a documented hard failure.
+ *   { pkgs: [...] }       normal.
+ *
+ * Collapsing the second into the first sent "packages/ is absent at the ref"
+ * and "every packages/* is private" down the indeterminate path, so in CI
+ * (where $GITHUB_SHA is always set) they exited 0 with the message "could not
+ * be read" — a false cause, and a documented fail-loud invariant silently
+ * disarmed in the only environment that runs it.
+ */
 function readPublishablePackagesFromGit() {
   let listing;
   try {
     listing = git(['ls-tree', '-r', '--name-only', TARGET_REF, 'packages/']);
   } catch {
-    return null; // no git, not a checkout, or the ref is not present
+    return { unreadable: true }; // no git, not a checkout, or the ref is absent
   }
   const manifests = listing
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => /^packages\/[^/]+\/package\.json$/.test(l));
-  if (manifests.length === 0) return null;
+  // Read fine, nothing publishable there: NOT indeterminate. Let the floor see it.
+  if (manifests.length === 0) return { pkgs: [] };
 
   const out = [];
   const dropped = [];
@@ -252,7 +272,7 @@ function readPublishablePackagesFromGit() {
     if (pin) out.push(pin);
   }
   for (const d of dropped) console.warn(`WARN could not read ${d} at ${TARGET_REF} — not counted`);
-  return out;
+  return { pkgs: out };
 }
 
 /** Short sha for a ref, for the run log. '' if unresolvable / not a repo. */
@@ -302,19 +322,30 @@ function readPublishablePackages() {
     return { source: 'working tree (PUBLISH_CHECK_FROM_DISK=1)', pkgs: readPublishablePackagesFromDisk() };
   }
   const fromGit = readPublishablePackagesFromGit();
-  if (fromGit && fromGit.length > 0) {
+
+  // The ref READ FINE. That includes reading it and finding nothing publishable
+  // — which is the FLOOR's case, a documented hard failure, and must NOT be
+  // diverted into the indeterminate skip below.
+  if (!fromGit.unreadable) {
     const sha = describeRef();
     const label = process.env.GITHUB_SHA ? `$GITHUB_SHA` : 'HEAD';
-    return { source: `${label}${sha ? ` (${sha})` : ''}`, pkgs: fromGit };
+    return { source: `${label}${sha ? ` (${sha})` : ''}`, pkgs: fromGit.pkgs };
   }
 
   const isRepo = describeRef('HEAD') !== '';
 
-  // 🔴 We were TOLD which commit to check and could not read it. Do NOT fall
-  // back to the working tree: in create-PR mode that tree holds the Version
-  // PR's unpublished versions, so falling back would hard-FAIL a healthy
-  // release — restoring the exact #232 bug under a different trigger. Every
-  // other "cannot determine" path here is a graceful skip; so is this one.
+  // 🔴 We were TOLD which commit to check and genuinely could not read it. Do
+  // NOT fall back to the working tree: in create-PR mode that tree holds the
+  // Version PR's unpublished versions, so falling back would hard-FAIL a
+  // healthy release — restoring the exact #232 bug under a different trigger.
+  // Every other "cannot determine" path here is a graceful skip; so is this.
+  //
+  // No publish-mode exemption here: an earlier revision added one for "ref
+  // unreadable but HEAD === $GITHUB_SHA, so the tree is provably the ref's".
+  // That state cannot be constructed — if HEAD resolves to that sha and the
+  // tree is readable, then the ref is readable and we never reach this arm. It
+  // was unreachable code whose mutant no test could kill, so it is gone rather
+  // than kept as an unprovable guard.
   if (process.env.GITHUB_SHA && isRepo) {
     return {
       source: `$GITHUB_SHA (${process.env.GITHUB_SHA.slice(0, 9)}) could not be read`,

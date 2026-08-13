@@ -301,6 +301,67 @@ describe('assert-published-versions', () => {
     }
   });
 
+  test('a READABLE ref with nothing publishable still hits the FLOOR — even with $GITHUB_SHA set', async () => {
+    // The regression this pins: collapsing "ref unreadable" and "ref read fine,
+    // nothing publishable" into one empty return sent the second down the
+    // indeterminate skip. Since CI ALWAYS sets $GITHUB_SHA, the documented
+    // fail-loud floor became unreachable in the only environment that runs it —
+    // and it reported "could not be read" about a ref it had read perfectly.
+    const dir = createFixture({
+      scripts: [SCRIPT],
+      packages: { priv: { name: '@civitai/priv', version: '1.0.0', private: true } },
+    });
+    const g = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: ['ignore', 'pipe', 'ignore'] });
+    try {
+      g('init', '-q');
+      g('config', 'user.email', 'test@example.invalid');
+      g('config', 'user.name', 'test');
+      g('add', 'scripts', 'packages');
+      g('commit', '-qm', 'only private packages');
+      const sha = g('rev-parse', 'HEAD').toString().trim();
+
+      const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST, GITHUB_SHA: sha });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /no publishable package found/);
+      // and it must NOT misreport a ref it read fine as unreadable
+      assert.doesNotMatch(r.out, /could not be read/);
+      assert.doesNotMatch(r.out, /SKIP the publish assertion/);
+    } finally {
+      destroyFixture(dir);
+    }
+  });
+
+  test('packages/ ABSENT at a READABLE ref floors — it must not be called "unreadable"', async () => {
+    // The second entry point into the same regression, and the one the test
+    // above cannot reach: `ls-tree` succeeds but lists no manifests. Conflating
+    // that with "the ref could not be read" routed it to a silent exit 0.
+    //
+    // $GITHUB_SHA is deliberately an EARLIER commit than HEAD, so the
+    // indeterminate arm is genuinely available if the code takes it — without
+    // that, this could pass for the wrong reason.
+    const dir = createFixture({ scripts: [SCRIPT] });
+    const g = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: ['ignore', 'pipe', 'ignore'] });
+    try {
+      g('init', '-q');
+      g('config', 'user.email', 'test@example.invalid');
+      g('config', 'user.name', 'test');
+      g('add', 'scripts'); // packages/ NOT committed here
+      g('commit', '-qm', 'scripts only');
+      const refSha = g('rev-parse', 'HEAD').toString().trim();
+      g('add', 'packages'); // now packages/ exists, so HEAD !== refSha
+      g('commit', '-qm', 'add packages');
+      assert.notEqual(g('rev-parse', 'HEAD').toString().trim(), refSha);
+
+      const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: reg.origin, ...FAST, GITHUB_SHA: refSha });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /no publishable package found/);
+      assert.doesNotMatch(r.out, /could not be read/);
+      assert.doesNotMatch(r.out, /SKIP the publish assertion/);
+    } finally {
+      destroyFixture(dir);
+    }
+  });
+
   test('the source label names the EXACT ref read — asserted per-arm, not by an alternation', async () => {
     // An alternation like /FALLBACK|not a git checkout/ is satisfied by EITHER
     // label, so swapping the two survives it. Each arm is pinned separately,
