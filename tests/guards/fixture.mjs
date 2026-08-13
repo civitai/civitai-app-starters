@@ -144,7 +144,13 @@ export function createFixture(opts = {}) {
   for (const [d0, meta] of Object.entries(packages ?? {})) {
     const d = join(dir, 'packages', d0);
     mkdirSync(d, { recursive: true });
-    writeFileSync(join(d, 'package.json'), JSON.stringify({ ...meta, private: false }, null, 2) + '\n');
+    // `private` defaults to false (a publishable first-party package) but is
+    // honoured when a test sets it — assert-published-versions.mjs must SKIP a
+    // private package, and that arm needs a fixture that can express one.
+    writeFileSync(
+      join(d, 'package.json'),
+      JSON.stringify({ ...meta, private: meta.private === true }, null, 2) + '\n',
+    );
   }
 
   return dir;
@@ -178,13 +184,46 @@ export async function runGuard(dir, script, env = {}) {
 /**
  * A stand-in npm registry. `versions` maps package name -> published version,
  * the literal string 'notfound' (404) or 'error' (503).
- * Returns { origin, close }.
+ *
+ * Serves TWO endpoint shapes, because the two guards ask different questions:
+ *   GET /<pkg>/latest     -> check-starter-pins.mjs (what is published NOW)
+ *   GET /<pkg>/<version>  -> assert-published-versions.mjs (does THIS exact
+ *                            version exist). A request for a version other than
+ *                            the mapped one 404s, which is exactly the
+ *                            failed-publish state that guard must catch.
+ *
+ * Returns { origin, close, hits } — `hits` records every path served so a test
+ * can assert the guard actually issued the requests it claims to (a guard that
+ * silently makes no request would otherwise look identical to a passing one).
  */
 export async function startFakeRegistry(versions) {
+  const hits = [];
+  // `versions` is caller-supplied data, so membership MUST be an own-property
+  // test: a bare `versions[pkg]` would resolve inherited keys ('constructor',
+  // 'toString') to truthy junk and serve a 200 for a package nobody declared.
+  const has = (k) => Object.prototype.hasOwnProperty.call(versions, k);
   const server = createServer((req, res) => {
-    const m = /^\/(.+)\/latest$/.exec(decodeURIComponent(req.url || ''));
-    const pkg = m?.[1];
-    const v = pkg ? versions[pkg] : undefined;
+    const url = decodeURIComponent(req.url || '');
+    hits.push(url);
+    const path = url.replace(/^\//, '');
+
+    // Three shapes, and a SCOPED name contains a '/', so they cannot be told
+    // apart by counting segments:
+    //   /@scope/name            -> name probe (does the package exist at all)
+    //   /@scope/name/latest     -> dist-tag read
+    //   /@scope/name/<version>  -> exact-version read
+    // A declared package name always wins, so the probe is unambiguous.
+    let pkg;
+    let requested = null;
+    if (has(path)) {
+      pkg = path;
+    } else {
+      const i = path.lastIndexOf('/');
+      pkg = i > 0 ? path.slice(0, i) : path;
+      requested = i > 0 ? path.slice(i + 1) : null;
+    }
+
+    const v = has(pkg) ? versions[pkg] : undefined;
     if (v === undefined || v === 'notfound') {
       res.writeHead(404, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: 'Not found' }));
@@ -195,6 +234,18 @@ export async function startFakeRegistry(versions) {
       res.end(JSON.stringify({ error: 'unavailable' }));
       return;
     }
+    // Name probe: the package EXISTS, whatever versions it may have.
+    if (requested === null) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ name: pkg, 'dist-tags': { latest: v } }));
+      return;
+    }
+    // Exact-version request for a version this registry does not have.
+    if (requested !== 'latest' && requested !== v) {
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'version not found' }));
+      return;
+    }
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ name: pkg, version: v }));
   });
@@ -202,6 +253,7 @@ export async function startFakeRegistry(versions) {
   const { port } = server.address();
   return {
     origin: `http://127.0.0.1:${port}`,
+    hits,
     close: () =>
       new Promise((resolve) => {
         // undici keeps connections alive, so a bare close() never resolves.
