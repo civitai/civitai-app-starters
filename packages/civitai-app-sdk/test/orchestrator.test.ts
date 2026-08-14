@@ -393,7 +393,13 @@ describe('WORKFLOW_STEP_TYPES + IMAGE_GEN_ENGINES catalogs', () => {
     // prove the expectation had content — and the counts are pinned, not merely
     // asserted non-zero, so a truncated fixture is a failure and not a smaller
     // vacuous pass.
-    expect(SPEC_WORKFLOW_STEP_TYPES).toHaveLength(44);
+    // 🔴 These literals are meant to be bumped BY HAND when the orchestrator
+    // genuinely gains a step type — that is the point, not friction. 44 -> 45 on
+    // 2026-08-14 for `miniMaxMusic3`. If you are here because this failed,
+    // confirm the new entry is in the LIVE spec first
+    // (`node scripts/check-orchestrator-catalogs.mjs`), then bump; never bump to
+    // whatever the fixture happens to hold, which would make this assert nothing.
+    expect(SPEC_WORKFLOW_STEP_TYPES).toHaveLength(45);
     expect(SPEC_IMAGE_GEN_ENGINES).toHaveLength(12);
     expect(new Set(SPEC_WORKFLOW_STEP_TYPES).size).toBe(SPEC_WORKFLOW_STEP_TYPES.length);
   });

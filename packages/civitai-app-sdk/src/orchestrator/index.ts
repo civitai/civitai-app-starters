@@ -116,6 +116,18 @@ export const WORKFLOW_STEP_TYPES = {
   textToSpeech: 'Text-to-speech synthesis',
   /** Music generation via ACE Step 1.5 (lyrics + style → song). */
   aceStepAudio: 'Music generation (ACE Step 1.5)',
+  /**
+   * Music generation via MiniMax Music 3 — a complete song from a structured
+   * `caption` plus `lyrics`. The second music engine alongside
+   * {@link WORKFLOW_STEP_TYPES.aceStepAudio}; they are separate `$type`s, not
+   * variants of one.
+   *
+   * `caption`, `lyrics` and `seed` are all REQUIRED (the spec marks seed
+   * required here, unlike most steps where it is optional). Lyrics take section
+   * markers — `[Intro]`, `[Verse]`, `[Chorus]`, `[Outro]`. `maxDuration` is an
+   * upper bound, not a target: the model may end the song earlier.
+   */
+  miniMaxMusic3: 'Music generation from a caption + lyrics (MiniMax Music 3)',
   /** Speech-to-text transcription. */
   transcription: 'Speech-to-text transcription',
   /** Generate captions from audio. */
