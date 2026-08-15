@@ -34,7 +34,7 @@
     "test:e2e:install": "playwright install --with-deps chromium"
   },
   "dependencies": {
-    "@civitai/app-sdk": "^0.34.0",
+    "@civitai/app-sdk": "^0.35.0",
     "@civitai/components": "^0.3.1",
     "@civitai/theme": "^0.2.1",
     "@t3-oss/env-core": "^0.13.0",
