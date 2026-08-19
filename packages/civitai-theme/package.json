@@ -33,7 +33,7 @@
   },
   "devDependencies": {
     "@mantine/core": "^7.17.7",
-    "@types/node": "^25.9.1",
+    "@types/node": "^26.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tsx": "^4.19.2",
