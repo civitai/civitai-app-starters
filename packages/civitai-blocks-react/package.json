@@ -50,14 +50,14 @@
     "@testing-library/react": "^16.0.0",
     "@types/node": "^25.9.1",
     "@types/react": "^19.2.15",
-    "@vitest/browser": "4.1.7",
-    "@vitest/browser-playwright": "4.1.7",
+    "@vitest/browser": "4.1.11",
+    "@vitest/browser-playwright": "4.1.11",
     "happy-dom": "^20.9.0",
     "playwright": "^1.57.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "typescript": "^5.9.2",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.11"
   },
   "publishConfig": {
     "access": "public"
