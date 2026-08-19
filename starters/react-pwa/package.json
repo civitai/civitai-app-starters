@@ -50,7 +50,7 @@
   },
   "devDependencies": {
     "@hono/vite-dev-server": "^0.26.0",
-    "@playwright/test": "^1.57.0",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^25.9.1",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.0.0",
