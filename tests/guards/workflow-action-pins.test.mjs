@@ -172,11 +172,14 @@ test('this suite is actually wired into a PR-triggered CI job (guard the guard)'
   );
 
   // (b) That step must be unconditional. An `if:` on it re-opens the gap silently.
+  // Comment lines are SKIPPED, not treated as terminators: YAML ignores comment
+  // indentation, so a `# note` at the step's own indent would otherwise end the walk
+  // early and hide an `if:` on the line after it — valid YAML, invisible to the guard.
   const indent = ciLines[stepIdx].match(/^\s*/)[0].length;
   const sameStep = [];
   for (let i = stepIdx + 1; i < ciLines.length; i++) {
     const l = ciLines[i];
-    if (!l.trim()) continue;
+    if (!l.trim() || /^\s*#/.test(l)) continue;
     if (l.match(/^\s*/)[0].length <= indent) break; // next step / dedent ends this one
     sameStep.push(l);
   }
@@ -185,6 +188,29 @@ test('this suite is actually wired into a PR-triggered CI job (guard the guard)'
     [],
     'the `pnpm test:guards` step in ci.yml has an `if:` condition. A guard that can be ' +
       'skipped per-event is not a guard — it would let a bump merge green on a PR.',
+  );
+
+  // (b2) ...and so must the JOB containing it. An `if:` one level up disarms the step
+  // just as completely, and this test's name promises a PR-triggered JOB.
+  let jobIdx = -1;
+  for (let i = stepIdx; i >= 0; i--) {
+    if (/^  [A-Za-z0-9_-]+:\s*$/.test(ciLines[i])) {
+      jobIdx = i;
+      break;
+    }
+  }
+  assert.ok(jobIdx !== -1, 'could not locate the job containing the `pnpm test:guards` step');
+  const jobBody = [];
+  for (let i = jobIdx + 1; i < ciLines.length; i++) {
+    if (/^  [A-Za-z0-9_-]+:\s*$/.test(ciLines[i])) break; // next job
+    jobBody.push(ciLines[i]);
+  }
+  assert.deepEqual(
+    jobBody.filter((l) => /^    if\s*:/.test(l)),
+    [],
+    `the \`${ciLines[jobIdx].trim().replace(/:$/, '')}\` job in ci.yml (which runs ` +
+      '`pnpm test:guards`) has a job-level `if:`. That disarms this suite exactly as ' +
+      'completely as an `if:` on the step itself.',
   );
 
   // (c) The npm script must still reach THIS file. Narrowing the glob in package.json
@@ -209,11 +235,17 @@ test('this suite is actually wired into a PR-triggered CI job (guard the guard)'
     if (/^\S/.test(ciLines[i])) break; // next top-level key
     onBlock.push(ciLines[i]);
   }
+  // 🔴 Strip comment lines FIRST. `[\s[,]` matches the space in `  # pull_request:`,
+  // so without this a commented-out trigger satisfies the assertion — measured, 6/6
+  // green. The regex this replaced (`/^on:\n(?:.*\n)*?\s*pull_request:/m`) rejected
+  // that by construction, so dropping it was a capability REGRESSION, in the very
+  // check whose comment above declares the comment-out disarm closed.
+  const onLive = onBlock.filter((l) => !/^\s*#/.test(l));
   assert.ok(
-    onBlock.some((l) => /(^|[\s[,])pull_request\s*(:|,|\]|$)/.test(l)),
+    onLive.some((l) => /(^|[\s[,])pull_request\s*(:|,|\]|$)/.test(l)),
     'ci.yml lost its `pull_request` trigger — this suite would then only run ' +
       'post-merge, which is the exact gap PINNED exists to close. (Checked inside the ' +
-      `\`on:\` block only; block read was: ${JSON.stringify(onBlock.join('\n'))})`,
+      `\`on:\` block only, comments excluded; live lines read: ${JSON.stringify(onLive.join('\n'))})`,
   );
 });
 
@@ -297,7 +329,9 @@ for (const [action, { sha, version, why }] of Object.entries(PINNED)) {
     if (action === 'changesets/action') {
       const releasing = readFileSync(join(REPO_ROOT, 'RELEASING.md'), 'utf8');
       assert.ok(
-        new RegExp(`${sha.slice(0, 7)}[^\\n]*${version.replace('.', '\\.')}`).test(releasing),
+        // replaceAll, not replace: a string pattern replaces only the FIRST match, so
+        // `v1.9.0` escaped to `v1\.9.0` and the second dot stayed a wildcard.
+        new RegExp(`${sha.slice(0, 7)}[^\\n]*${version.replaceAll('.', '\\.')}`).test(releasing),
         `RELEASING.md no longer names this pin as \`${sha.slice(0, 7)}\` (${version}) on one ` +
           `line. Update the runbook in the same commit as the bump — a stale sha there is ` +
           `read by a human doing a release, which is the worst place for it.`,
