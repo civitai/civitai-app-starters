@@ -75,7 +75,34 @@ jobs:
       - run: pnpm -r --filter "./packages/*" build
 
       - name: Create release PR or publish
-        uses: changesets/action@v1
+        # PINNED TO A SHA, deliberately. This ref USED to be `@v1`, and `v1` was the
+        # only ref in this repo's workflows resolving to a BRANCH rather than a tag —
+        # measured 2026-08-20: `refs/heads/v1` exists, `refs/tags/v1` does NOT
+        # (every other action here is tag=1 branch=0). So `@v1` meant "whatever
+        # was last pushed to that branch", and `scripts/assert-published-versions.mjs`
+        # depends on this action's INTERNALS — that `prepareBranch()` + `pushChanges()`
+        # commit the version bump and leave HEAD on it. An upstream push could
+        # invalidate the publish guard with no diff in this repo.
+        #
+        # a45c4d5 == refs/tags/v1.9.0^{} == the v1 branch head at pin time, so the pin
+        # was a NO-OP on the day it landed; it freezes behaviour rather than changing it.
+        #
+        # 🔴 release.yml has NO `pull_request` trigger, so nothing in a PR exercises this
+        # job — a bump to this line is green on every PR check and only breaks after
+        # merge, on the next push to main. That gap is closed by an exact-sha assertion
+        # in `tests/guards/workflow-action-pins.test.mjs` (PINNED), which runs in ci.yml's
+        # `Starter` job — PR-triggered and a required context. Change this line without
+        # updating PINNED and the PR goes red, whoever opened it.
+        #
+        # To bump: read the action's `src/git.ts` `prepareBranch()`/`pushChanges()`
+        # first, confirm the bump still lands as a commit with HEAD left on it, then
+        # move the SHA, update PINNED.sha/.version, update the `🔴 PREMISE` block in
+        # assert-published-versions.mjs, and move the `# vX.Y.Z` label below.
+        # ⚠️ A MINOR bump can change those internals as freely as a major — which is why
+        # PINNED asserts the exact commit rather than just "is it 40 hex".
+        # (Same convention as `peter-evans/create-pull-request` in
+        # `.github/workflows/revendor-canonical-schema.yml`.)
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
         with:
           publish: pnpm release
           version: pnpm changeset version

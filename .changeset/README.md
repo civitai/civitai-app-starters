@@ -23,7 +23,7 @@ breaking changes (renames, removals, signature changes).
 ## Release flow
 
 On push to `main`, the `.github/workflows/release.yml` workflow runs
-`changesets/action@v1`, which either:
+`changesets/action` (SHA-pinned, see `.github/workflows/release.yml`), which either:
 
 - opens / updates a "Version Packages" PR that consumes pending
   changeset files and bumps the SDK version + `CHANGELOG.md`, or

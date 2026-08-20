@@ -181,7 +181,7 @@ describe('assert-published-versions', () => {
   // ---- create-PR mode vs publish mode (live failure, run 31665922710) -----
 
   /**
-   * Replay what `changesets/action@v1` (commitMode `git-cli`) ACTUALLY does in
+   * Replay what `changesets/action` a45c4d5 / v1.9.0 (commitMode `git-cli`) ACTUALLY does in
    * create-Version-PR mode, taken from run 31665922710's own log:
    *
    *     git checkout -b changeset-release/main

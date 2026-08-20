@@ -99,7 +99,7 @@ Lists every `.changeset/*.md` waiting to be consumed, plus the bump each implies
 
 ## What the release workflow actually does
 
-On every push to `main`, [`changesets/action@v1`](https://github.com/changesets/changesets-action) does one of two things:
+On every push to `main`, [`changesets/action`](https://github.com/changesets/changesets-action) — SHA-pinned to `a45c4d5` (v1.9.0); see `.github/workflows/release.yml` — does one of two things:
 
 1. **Pending changesets exist** → open / refresh a PR titled `chore(release): version @civitai/app-sdk`. The PR's diff applies the version bumps + CHANGELOG entries that `changeset version` produces.
 
@@ -140,7 +140,7 @@ Prefer the workflow path — it's the documented one and won't drift the CHANGEL
 - `.github/workflows/ci.yml` — runs typecheck + build per starter + SDK vitest on every PR + push.
 - `.github/workflows/release.yml` — opens Version Packages PR / publishes on push to main.
 
-If you change the workflow, do it in a separate PR — `changesets/action@v1` reads the file from `main`, so a workflow change paired with a changeset can race itself.
+If you change the workflow, do it in a separate PR — `changesets/action` reads the file from `main`, so a workflow change paired with a changeset can race itself.
 
 ## See also
 

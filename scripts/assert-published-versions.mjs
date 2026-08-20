@@ -96,13 +96,36 @@
  * `concurrency` lane has no `cancel-in-progress`, so an unbounded step here
  * would park it.
  *
- * 🔴 PREMISE RISK: everything above about WHERE the bump lands is a claim about
- * `changesets/action@v1`, and `v1` is a moving BRANCH, not a tag — there is no
- * `refs/tags/v1`. The behaviour this step depends on can therefore change with
- * no diff in this repo (v2.0.0 shipped 2026-08-11). If a release run starts
- * failing here for no local reason, re-read the action's `prepareBranch()` /
- * `pushChanges()` before believing the guard. Pinning the action to a SHA would
- * close this, and is a separate decision.
+ * 🔴 PREMISE: everything above about WHERE the bump lands is a claim about
+ * `changesets/action`'s internals — that `prepareBranch()` + `pushChanges()`
+ * commit the version bump and leave HEAD on it. Verified by reading the action
+ * at `a45c4d5` (v1.9.0).
+ *
+ * That premise USED to be able to change with no diff in this repo: `release.yml`
+ * referenced `@v1`, and `v1` is a moving BRANCH, not a tag — measured 2026-08-20,
+ * `refs/heads/v1` exists and `refs/tags/v1` does not. CLOSED 2026-08-20 by pinning
+ * `release.yml` to `a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d` (== `refs/tags/v1.9.0^{}`
+ * == the v1 head at pin time, so the pin changed no behaviour). The premise is now
+ * frozen against the exact commit it was read from.
+ *
+ * This does NOT make the premise permanently true — it makes a change to it
+ * VISIBLE as a diff here. Whoever moves that SHA owns re-reading `src/git.ts`
+ * `prepareBranch()`/`pushChanges()` and re-confirming the bump still lands as a
+ * commit with HEAD left on it. Upstream has since shipped v2.x (v2.1.1 as of
+ * 2026-08-20), whose behaviour here is UNVERIFIED — and v2 renames the very inputs
+ * release.yml passes, so it fails loudly rather than subtly.
+ *
+ * A 40-hex SHA cannot move on its own, so the diagnostic question is no longer
+ * "did upstream change?" but "did someone change the pin?":
+ *     git log -p --follow -- .github/workflows/release.yml \
+ *       | grep -E '^[+-].*uses: changesets/action'
+ * (anchor it — an unanchored grep also matches commit-message and comment prose
+ * that merely mentions the action, which is most of the hits.)
+ *
+ * That question has a gate, not just a recipe: `tests/guards/workflow-action-pins.test.mjs`
+ * asserts the EXACT pinned sha, and runs in ci.yml's `Starter` job — PR-triggered and
+ * a required context. release.yml itself has no `pull_request` trigger, so that
+ * assertion is the only thing a bump PR runs against this pin.
  *
  * KNOWN LIMITS (measured, not guessed — do not read past them):
  *   - It enumerates `packages/*` ONLY. `changeset publish` operates over the
@@ -179,7 +202,7 @@ function toPublishable(json, dir) {
  *
  * 🔴 AND `HEAD` DOES NOT AVOID THAT — a first attempt at this fix assumed the
  * rewrite was left uncommitted, and was completely inert. The action's
- * `prepareBranch()` + `pushChanges()` (changesets/action@v1, commitMode
+ * `prepareBranch()` + `pushChanges()` (changesets/action a45c4d5 / v1.9.0, commitMode
  * `git-cli`, this repo's default) do, in order:
  *
  *     git checkout -b changeset-release/main
