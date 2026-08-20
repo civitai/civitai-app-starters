@@ -58,16 +58,20 @@ jobs:
 
       - name: Open PR if schema changed
         if: steps.changed.outputs.changed == 'true'
-        # SHA-pinned. The version label sits on the `uses:` line because Dependabot
-        # REWRITES that line when it bumps the SHA, and does not touch a comment on
-        # the line above — which is exactly how this pin came to be labelled
-        # "v6.1.0" while the pinned commit was v8.1.1 (`7be170e` bumped it across a
-        # major and left the old line; v6.1.0 is c5a7806, verified 2026-08-20).
+        # SHA-pinned to an EXACT commit, asserted by
+        # `tests/guards/workflow-action-pins.test.mjs` (PINNED), which runs in ci.yml's
+        # `Starter` job — `pull_request`-triggered and a required context. This
+        # workflow is schedule-only, so that assertion is the ONLY thing a bump PR
+        # runs against it. Changing this line without updating PINNED turns the PR red.
         #
-        # ⚠️ That is a CONVENTION, not a guarantee: nothing verifies the label
-        # matches the SHA, and no offline test can — resolving a SHA to a tag needs
-        # the network. `tests/guards/workflow-action-pins.test.mjs` enforces only
-        # that a label is PRESENT. If you move the SHA by hand, move the label too.
+        # The label lives on the `uses:` line, not above it: `7be170e` bumped this pin
+        # v6.1.0 -> v8.1.1 (a major) and left the full-line comment above untouched,
+        # which is how it stayed mislabelled until 2026-08-20 (v6.1.0 is c5a7806).
+        # ⚠️ That commit shows Dependabot ignores the line ABOVE; it does not show it
+        # rewrites a trailing label — the old line had no trailing label to rewrite.
+        # Dependabot's trailing-comment rewrite is known-flaky (dependabot-core #7912,
+        # #8011, #14716), so treat the label as documentation, not as verified truth.
+        # PINNED is what actually holds the sha; keep the two in step by hand.
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           # Reuse CHANGESETS_TOKEN: the org blocks the default GITHUB_TOKEN from

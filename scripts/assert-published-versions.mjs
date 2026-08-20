@@ -117,10 +117,15 @@
  *
  * A 40-hex SHA cannot move on its own, so the diagnostic question is no longer
  * "did upstream change?" but "did someone change the pin?":
- *     git log -p --follow -- .github/workflows/release.yml | grep changesets/action
- * `.github/dependabot.yml` ignores MAJOR bumps for this action precisely because
- * release.yml has no `pull_request` trigger, so such a bump would be green on every
- * PR check and only break after merge.
+ *     git log -p --follow -- .github/workflows/release.yml \
+ *       | grep -E '^[+-].*uses: changesets/action'
+ * (anchor it — an unanchored grep also matches commit-message and comment prose
+ * that merely mentions the action, which is most of the hits.)
+ *
+ * That question has a gate, not just a recipe: `tests/guards/workflow-action-pins.test.mjs`
+ * asserts the EXACT pinned sha, and runs in ci.yml's `Starter` job — PR-triggered and
+ * a required context. release.yml itself has no `pull_request` trigger, so that
+ * assertion is the only thing a bump PR runs against this pin.
  *
  * KNOWN LIMITS (measured, not guessed — do not read past them):
  *   - It enumerates `packages/*` ONLY. `changeset publish` operates over the
