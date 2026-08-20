@@ -13,23 +13,37 @@
  * `pull_request` trigger cannot be validated by a bump PR's own checks, so a bad
  * version merges green and breaks after the fact. Measured 2026-08-20, exactly two
  * actions here qualify — `changesets/action` (release.yml, `push: main` only) and
- * `peter-evans/create-pull-request` (revendor-canonical-schema.yml, schedule only).
+ * `peter-evans/create-pull-request` (revendor-canonical-schema.yml, schedule +
+ * workflow_dispatch — no `pull_request` either way).
  * `actions/checkout`, `actions/setup-node` and `pnpm/action-setup` also appear in
  * `ci.yml`, so a PR does exercise them; they stay on tags on purpose.
  *
- * Read as a regression test: at b335c0e (pre-pin) the `changesets/action` case
- * FAILS with `pins changesets/action@v1 / expected exactly a45c4d5…`.
+ * Read as a regression test: at b335c0e (pre-pin) three of these fail. The
+ * `changesets/action` case fails on a line containing the literal substring
+ * `pins changesets/action@v1` — quoted as a substring on purpose, because a
+ * paraphrase of a multi-line assertion message is not checkable, and two earlier
+ * drafts of this line quoted strings that occurred zero times in the real output.
+ * Re-derive rather than trust it:
+ *   git worktree add --detach /tmp/vp b335c0e
+ *   cp tests/guards/workflow-action-pins.test.mjs /tmp/vp/tests/guards/
+ *   (cd /tmp/vp && node --test tests/guards/workflow-action-pins.test.mjs)
+ *   git worktree remove --force /tmp/vp
  *
  * 🔴 KNOWN LIMITS — do not read past them:
  *   - 🔴 NO CHECK HERE PROVES A LABEL NAMES THE RELEASE ITS SHA ACTUALLY BELONGS TO.
- *     That needs the network; this suite is offline by design. What IS enforced:
- *     for a PINNED action, the workflow's `# vX.Y.Z` must equal `PINNED.version`
- *     (so a label edited alone is caught, and so is a `PINNED.version` edited
- *     alone); for any other SHA-pinned action, only that SOME label is present.
- *     Editing the label and `PINNED.version` together still lies successfully.
- *     An earlier draft of this block claimed a wrong label "is caught" full stop —
- *     it was false, two mutants survived it, and it was the same overclaim this
- *     file exists to prevent.
+ *     That needs the network; this suite is offline by design. What IS enforced, and
+ *     the residue, measured per action rather than asserted in general:
+ *       · a label edited alone, or a `PINNED.version` edited alone → caught, both
+ *         actions (they must agree).
+ *       · label AND `PINNED.version` edited together → for `changesets/action`,
+ *         caught, because `RELEASING.md` carries a third copy this file cross-checks.
+ *         For `peter-evans/create-pull-request` there is no third copy, so it
+ *         SURVIVES — verified, 6/6 green under exactly that mutation.
+ *       · any other SHA-pinned action (none today): only that SOME label is present.
+ *     Two earlier drafts of this block were wrong in BOTH directions — one claimed a
+ *     wrong label "is caught" full stop (two mutants survived it), the next claimed
+ *     the both-together case always lies (it does not, for changesets/action). An
+ *     overstated LIMIT is still a false claim; that is why this is enumerated.
  *   - It is a LINE regex, not a YAML parse, so a `uses:`-shaped line inside a
  *     `run: |` block scalar is collected too. That direction is safe — it fails
  *     loudly with a wrong file:line rather than passing silently — but if it ever
@@ -139,30 +153,80 @@ test('this suite is actually wired into a PR-triggered CI job (guard the guard)'
   // — deleting the `pnpm test:guards` step from ci.yml leaves all five Starter legs
   // reporting and green, so the pin assertion silently stops running. Nothing else
   // reads ci.yml, so nothing else would notice.
-  const ci = readFileSync(join(WORKFLOW_DIR, 'ci.yml'), 'utf8');
-  assert.match(
-    ci,
-    /pnpm test:guards/,
-    'ci.yml no longer runs `pnpm test:guards`. If that step moved, point this ' +
-      'assertion at its new home — do not delete it: the exact-sha pins in this file ' +
-      'are only enforced because this suite runs on pull_request.',
+  // 🔴 Assert STATE, not spelling. An earlier version matched `/pnpm test:guards/`
+  // anywhere in the file and a `pull_request` anywhere in the file. Three ordinary
+  // disarms walked straight past it, each passing a full green suite:
+  //   - commenting the step out (`# - run: pnpm test:guards`) — the string is still there
+  //   - adding `if: github.event_name == 'push'` to the step — both matches still hold
+  //   - narrowing the `test:guards` npm script so it no longer globs this file at all
+  const ciLines = readFileSync(join(WORKFLOW_DIR, 'ci.yml'), 'utf8').split(/\r?\n/);
+
+  // (a) A LIVE run step — not a comment — invoking the script.
+  const stepIdx = ciLines.findIndex((l) => /^\s*-\s*run:\s*pnpm\s+test:guards\s*$/.test(l));
+  assert.ok(
+    stepIdx !== -1,
+    'ci.yml has no live `- run: pnpm test:guards` step (a commented-out one does not ' +
+      'count). The exact-sha pins in this file are only enforced because this suite ' +
+      'runs on pull_request. If the step moved, point this assertion at its new home — ' +
+      'do not delete it.',
   );
-  // ...and in a job that a PR actually triggers.
-  const parsed = readFileSync(join(WORKFLOW_DIR, 'ci.yml'), 'utf8');
-  assert.match(
-    parsed,
-    /^on:\n(?:.*\n)*?\s*pull_request:/m,
+
+  // (b) That step must be unconditional. An `if:` on it re-opens the gap silently.
+  const indent = ciLines[stepIdx].match(/^\s*/)[0].length;
+  const sameStep = [];
+  for (let i = stepIdx + 1; i < ciLines.length; i++) {
+    const l = ciLines[i];
+    if (!l.trim()) continue;
+    if (l.match(/^\s*/)[0].length <= indent) break; // next step / dedent ends this one
+    sameStep.push(l);
+  }
+  assert.deepEqual(
+    sameStep.filter((l) => /^\s*if\s*:/.test(l)),
+    [],
+    'the `pnpm test:guards` step in ci.yml has an `if:` condition. A guard that can be ' +
+      'skipped per-event is not a guard — it would let a bump merge green on a PR.',
+  );
+
+  // (c) The npm script must still reach THIS file. Narrowing the glob in package.json
+  // disables the pins without touching any workflow.
+  const script = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')).scripts?.[
+    'test:guards'
+  ];
+  assert.ok(
+    script && /tests\/guards\/\*/.test(script),
+    `package.json \`test:guards\` is ${JSON.stringify(script)} — it must glob ` +
+      '`tests/guards/*` so this file is actually executed. Narrowing it to named files ' +
+      'silently drops the pin assertions while ci.yml still looks correct.',
+  );
+
+  // (d) `pull_request` must be in the `on:` BLOCK, not merely somewhere in the file.
+  // Scoped to the block so a `pull_request:` inside a `run: |` heredoc cannot satisfy
+  // it, and written to accept the legal spellings (`"on":`, flow-style sequence).
+  const onIdx = ciLines.findIndex((l) => /^["']?on["']?\s*:/.test(l));
+  assert.ok(onIdx !== -1, 'ci.yml has no top-level `on:` key');
+  const onBlock = [ciLines[onIdx]];
+  for (let i = onIdx + 1; i < ciLines.length; i++) {
+    if (/^\S/.test(ciLines[i])) break; // next top-level key
+    onBlock.push(ciLines[i]);
+  }
+  assert.ok(
+    onBlock.some((l) => /(^|[\s[,])pull_request\s*(:|,|\]|$)/.test(l)),
     'ci.yml lost its `pull_request` trigger — this suite would then only run ' +
-      'post-merge, which is the exact gap PINNED exists to close.',
+      'post-merge, which is the exact gap PINNED exists to close. (Checked inside the ' +
+      `\`on:\` block only; block read was: ${JSON.stringify(onBlock.join('\n'))})`,
   );
 });
 
 test('PINNED is non-empty (positive control on the allowlist itself)', () => {
   // The per-action tests below are GENERATED from PINNED, so emptying it does not
-  // fail anything — it silently removes the tests. Measured: `PINNED = {}` drops
-  // the suite from 5 tests to 3 and leaves `pass 2 / fail 1` — this floor test is
-  // the survivor, and it is the only thing that fails. The parser control
-  // above cannot see this, because the parser is still fine.
+  // fail anything — it silently REMOVES those tests, and a suite that runs fewer tests
+  // still reports green. This floor is the only thing that then fails.
+  //
+  // 🔴 Deliberately no test-count numbers here. Two successive rounds wrote a
+  // "measured: N tests -> M" figure into this comment and both were stale by the time
+  // they landed, because the same commit that cited them also added a test. A count is
+  // a fact about a tree, not about the mechanism; the mechanism is what this documents.
+  // The parser control above cannot see this failure — the parser is still fine.
   assert.ok(
     Object.keys(PINNED).length >= 2,
     `PINNED has ${Object.keys(PINNED).length} entries; expected at least the two ` +
@@ -191,6 +255,26 @@ for (const [action, { sha, version, why }] of Object.entries(PINNED)) {
     );
 
     for (const u of found) {
+      // ORDER MATTERS: sha first. A real bump moves the sha AND the label together, so
+      // whichever assertion runs first is the one whose message the bumper actually
+      // reads — and the sha message is the one carrying `why` and the read-the-upstream
+      // -diff instruction. Label-first also made the base-tree failure the LABEL message
+      // (no label existed at b335c0e), so the sha message was unreachable at base and a
+      // docblock quoting it was wrong twice running.
+      assert.equal(
+        u.ref,
+        sha,
+        `${u.file}:${u.line} pins ${action}@${u.ref}\n` +
+          `  expected exactly ${sha} (${version})\n` +
+          `  Why this action is pinned to an exact commit: ${why}\n` +
+          `  The workflow this lives in has no \`pull_request\` trigger, so NOTHING ELSE in a\n` +
+          `  PR exercises it — this assertion is that PR's only coverage. A shape-only check\n` +
+          `  ("is it 40 hex?") would pass a bump to a breaking version.\n` +
+          `  If this bump is intended: read the upstream diff for the behaviour named above,\n` +
+          `  confirm it still holds, then update PINNED.sha + PINNED.version in\n` +
+          `  tests/guards/workflow-action-pins.test.mjs and the \`# ${version}\` label on the\n` +
+          `  \`uses:\` line. Editing this file is the acknowledgement.`,
+      );
       // The label must match the version recorded beside the sha in PINNED. Without
       // this, a wrong `# vX.Y.Z` on a correct sha passes — measured, and exactly the
       // two-majors-stale state `7be170e` left this repo in for months.
@@ -205,19 +289,18 @@ for (const [action, { sha, version, why }] of Object.entries(PINNED)) {
           `names the release that sha actually belongs to — that needs the network. ` +
           `Changing PINNED.version and the label together still lies successfully.`,
       );
-      assert.equal(
-        u.ref,
-        sha,
-        `${u.file}:${u.line} pins ${action}@${u.ref}\n` +
-          `  expected exactly ${sha} (${version})\n` +
-          `  Why this action is pinned to an exact commit: ${why}\n` +
-          `  The workflow this lives in has no \`pull_request\` trigger, so NOTHING ELSE in a\n` +
-          `  PR exercises it — this assertion is that PR's only coverage. A shape-only check\n` +
-          `  ("is it 40 hex?") would pass a bump to a breaking version.\n` +
-          `  If this bump is intended: read the upstream diff for the behaviour named above,\n` +
-          `  confirm it still holds, then update PINNED.sha + PINNED.version in\n` +
-          `  tests/guards/workflow-action-pins.test.mjs and the \`# ${version}\` label on the\n` +
-          `  \`uses:\` line. Editing this file is the acknowledgement.`,
+    }
+
+    // The runbook repeats the pin. Nothing else asserts that copy, so it rots silently
+    // on the next bump — the same citation-rot this PR swept out of RELEASING.md and
+    // .changeset/README.md. Keep it checkable rather than trusting a future bumper.
+    if (action === 'changesets/action') {
+      const releasing = readFileSync(join(REPO_ROOT, 'RELEASING.md'), 'utf8');
+      assert.ok(
+        new RegExp(`${sha.slice(0, 7)}[^\\n]*${version.replace('.', '\\.')}`).test(releasing),
+        `RELEASING.md no longer names this pin as \`${sha.slice(0, 7)}\` (${version}) on one ` +
+          `line. Update the runbook in the same commit as the bump — a stale sha there is ` +
+          `read by a human doing a release, which is the worst place for it.`,
       );
     }
   });
