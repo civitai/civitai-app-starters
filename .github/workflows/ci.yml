@@ -115,7 +115,21 @@ jobs:
       # Chromium. Install Playwright's bundled Chromium + its OS deps first.
       # (CI uses the bundled binary; NixOS local runs set
       # PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=$(command -v chromium) instead.)
+      #
+      # 🔴 timeout-minutes is NOT belt-and-braces here. `--with-deps` shells out
+      # to apt-get, and a wedge there is INDISTINGUISHABLE from a slow install:
+      # the job just renders "in progress" until GitHub's 6-hour cap. Measured
+      # 2026-08-19 on one PR — this exact step ran 22-33s on four branches that
+      # morning, then HUNG FOR 2h13m on a commit whose lockfile did not move
+      # playwright at all, and a plain re-run of the same commit completed in
+      # 3m48s. So the hazard is real, unrelated to any diff, and silent.
+      #
+      # 15, not 10: the slowest SUCCESSFUL run observed was 3m48s, so this is
+      # ~4x headroom against a false red (a timeout that fires on healthy runs
+      # trains everyone to click re-run, which is worse than no timeout) while
+      # still cutting a wedge from 6h to 15m.
       - run: pnpm --filter @civitai/blocks-react exec playwright install --with-deps chromium
+        timeout-minutes: 15
       - run: pnpm --filter @civitai/blocks-react test:browser
 
   # SELF-CONTAINED design-system job. Everything here builds/typechecks/tests
@@ -161,7 +175,12 @@ jobs:
 
       # HTML-vs-React computed-style parity + axe a11y in real headless Chromium
       # (happy-dom has no layout / getComputedStyle). Bundled Chromium in CI.
+      # Same apt/network wedge hazard as the blocks-react job above — see the
+      # measurement recorded there. This is the step that actually hung; both
+      # sites get the guard, because fixing only the one that bit us leaves the
+      # identical bug armed at the other.
       - run: pnpm --filter @civitai/components-react exec playwright install --with-deps chromium
+        timeout-minutes: 15
       - run: pnpm --filter @civitai/components-react test:browser
 
   # ADVISORY drift guard — depends on a LIVE external checkout of civitai/civitai
