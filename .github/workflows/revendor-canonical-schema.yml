@@ -58,8 +58,10 @@ jobs:
 
       - name: Open PR if schema changed
         if: steps.changed.outputs.changed == 'true'
-        # SHA-pinned peter-evans/create-pull-request v6.1.0.
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1
+        # SHA-pinned. The version is on the `uses:` line itself so it cannot drift
+        # away from the SHA it labels — this comment previously read "v6.1.0" while
+        # the pinned commit was v8.1.1 (v6.1.0 is c5a7806, verified 2026-08-20).
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           # Reuse CHANGESETS_TOKEN: the org blocks the default GITHUB_TOKEN from
           # opening PRs, and this secret already carries PR-creation perms for the
