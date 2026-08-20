@@ -112,8 +112,15 @@
  * VISIBLE as a diff here. Whoever moves that SHA owns re-reading `src/git.ts`
  * `prepareBranch()`/`pushChanges()` and re-confirming the bump still lands as a
  * commit with HEAD left on it. Upstream has since shipped v2.x (v2.1.1 as of
- * 2026-08-20), whose behaviour here is UNVERIFIED. If a release run starts failing
- * here for no local reason, check whether that SHA moved before believing the guard.
+ * 2026-08-20), whose behaviour here is UNVERIFIED — and v2 renames the very inputs
+ * release.yml passes, so it fails loudly rather than subtly.
+ *
+ * A 40-hex SHA cannot move on its own, so the diagnostic question is no longer
+ * "did upstream change?" but "did someone change the pin?":
+ *     git log -p --follow -- .github/workflows/release.yml | grep changesets/action
+ * `.github/dependabot.yml` ignores MAJOR bumps for this action precisely because
+ * release.yml has no `pull_request` trigger, so such a bump would be green on every
+ * PR check and only break after merge.
  *
  * KNOWN LIMITS (measured, not guessed — do not read past them):
  *   - It enumerates `packages/*` ONLY. `changeset publish` operates over the
@@ -190,7 +197,7 @@ function toPublishable(json, dir) {
  *
  * 🔴 AND `HEAD` DOES NOT AVOID THAT — a first attempt at this fix assumed the
  * rewrite was left uncommitted, and was completely inert. The action's
- * `prepareBranch()` + `pushChanges()` (changesets/action@v1, commitMode
+ * `prepareBranch()` + `pushChanges()` (changesets/action a45c4d5 / v1.9.0, commitMode
  * `git-cli`, this repo's default) do, in order:
  *
  *     git checkout -b changeset-release/main

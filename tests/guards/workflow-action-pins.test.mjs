@@ -8,13 +8,31 @@
  * `refs/heads/v1` exists and `refs/tags/v1` does not — so an upstream push could
  * invalidate the publish guard with no diff in this repo and nothing to review.
  *
- * The rule is deliberately an ALLOWLIST, not "pin everything": `actions/checkout`,
- * `actions/setup-node` and `pnpm/action-setup` are referenced by tag here on
- * purpose (all measured tag=1 branch=0), and this repo does not depend on their
- * internals. Only actions on MUST_PIN below are load-bearing in that sense.
+ * The rule is deliberately an ALLOWLIST, not "pin everything". The criterion is
+ * BLAST RADIUS WITHOUT PR COVERAGE: an action used only in workflows that have no
+ * `pull_request` trigger cannot be validated by a bump PR's own checks, so a bad
+ * version merges green and breaks after the fact. Measured 2026-08-20, exactly two
+ * actions here qualify — `changesets/action` (release.yml, `push: main` only) and
+ * `peter-evans/create-pull-request` (revendor-canonical-schema.yml, schedule only).
+ * `actions/checkout`, `actions/setup-node` and `pnpm/action-setup` also appear in
+ * `ci.yml`, so a PR does exercise them; they stay on tags on purpose.
+ * `.github/dependabot.yml` carries the matching major-version ignores.
  *
  * Read as a regression test: at b335c0e (pre-pin) the `changesets/action` case
  * FAILS with `pinned by tag/branch ref "v1"`.
+ *
+ * 🔴 KNOWN LIMITS — do not read past them:
+ *   - It checks that a version label is PRESENT, never that it is ACCURATE. A
+ *     correct SHA carrying a wrong `# vX.Y.Z` passes. Resolving a SHA to a tag
+ *     needs the network and this suite is offline by design. Accuracy rests on
+ *     Dependabot rewriting the `uses:` line it bumps; see the note in
+ *     revendor-canonical-schema.yml.
+ *   - It is a LINE regex, not a YAML parse, so a `uses:`-shaped line inside a
+ *     `run: |` block scalar is collected too. That direction is safe — it fails
+ *     loudly with a wrong file:line rather than passing silently — but if it ever
+ *     fires on a heredoc, that is why.
+ *   - `SHA` requires LOWERCASE hex. Git accepts uppercase; this repo does not, so
+ *     the pin has one canonical spelling.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,16 +44,19 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const WORKFLOW_DIR = join(REPO_ROOT, '.github', 'workflows');
 
 /**
- * Actions whose behaviour this repo REASONS ABOUT and therefore must pin to a
- * commit. Each entry names why, so a future reader can judge whether to remove it
- * rather than deleting a rule whose purpose is unrecorded.
+ * Actions reachable ONLY from workflows with no `pull_request` trigger, so no bump
+ * PR's own checks can validate them. Each entry names why, so a future reader can
+ * judge whether to remove it rather than deleting a rule whose purpose is
+ * unrecorded. Keep in sync with the ignores in `.github/dependabot.yml`.
  */
 const MUST_PIN = {
   'changesets/action':
+    'only in release.yml (`push: main`), so no PR exercises it; and ' +
     'scripts/assert-published-versions.mjs depends on prepareBranch()/pushChanges() ' +
-    'committing the version bump and leaving HEAD on it; `v1` is a moving branch',
+    'committing the version bump and leaving HEAD on it',
   'peter-evans/create-pull-request':
-    'opens PRs with repo write credentials from a scheduled workflow',
+    'only in revendor-canonical-schema.yml (schedule + workflow_dispatch), so no PR ' +
+    'exercises it; it also opens PRs with repo write credentials',
 };
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -59,8 +80,11 @@ test('the parser finds workflow `uses:` refs at all (positive control)', () => {
   const uses = collectUses();
   // Without this, a regex that matches nothing would make every assertion below
   // pass vacuously over an empty set — the reassuring-zero failure mode.
+  // Floor is set just under the real population (34 as of 2026-08-20) rather than
+  // at a token value: at `>= 10`, three of the four workflows could vanish and
+  // this control would still report green.
   assert.ok(
-    uses.length >= 10,
+    uses.length >= 25,
     `expected the workflow dir to yield many \`uses:\` refs, got ${uses.length}. ` +
       `The parser or the workflow layout changed; fix this before trusting the pin checks.`,
   );
@@ -68,6 +92,22 @@ test('the parser finds workflow `uses:` refs at all (positive control)', () => {
     uses.some((u) => u.action === 'actions/checkout'),
     'expected actions/checkout among the parsed refs — the parser is not seeing real lines',
   );
+});
+
+test('MUST_PIN is non-empty (positive control on the allowlist itself)', () => {
+  // The per-action tests below are GENERATED from MUST_PIN, so emptying it does not
+  // fail anything — it silently removes the tests. Measured: `MUST_PIN = {}` drops
+  // the suite from 4 tests to 2 and reports `pass 2 / fail 0`. The parser control
+  // above cannot see this, because the parser is still fine.
+  assert.ok(
+    Object.keys(MUST_PIN).length >= 2,
+    `MUST_PIN has ${Object.keys(MUST_PIN).length} entries; expected at least the two ` +
+      `actions with no PR coverage (changesets/action, peter-evans/create-pull-request). ` +
+      `Removing an entry must be a deliberate edit here, not a silent loss of coverage.`,
+  );
+  for (const reason of Object.values(MUST_PIN)) {
+    assert.ok(reason && reason.length > 20, 'every MUST_PIN entry must record WHY it is listed');
+  }
 });
 
 for (const [action, why] of Object.entries(MUST_PIN)) {
@@ -95,7 +135,10 @@ for (const [action, why] of Object.entries(MUST_PIN)) {
   });
 }
 
-test('SHA-pinned actions carry a version comment so the pin is readable', () => {
+// NOTE the name: PRESENT, not correct. This asserts a label exists, never that it
+// matches the SHA — a correct SHA with a wrong `# vX.Y.Z` passes here. See KNOWN
+// LIMITS at the top of this file.
+test('SHA-pinned actions carry a version label on the `uses:` line (present, not verified)', () => {
   const dir = readdirSync(WORKFLOW_DIR).filter((f) => /\.ya?ml$/.test(f));
   const offenders = [];
   for (const name of dir) {

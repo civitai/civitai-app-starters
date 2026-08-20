@@ -7,6 +7,34 @@ updates:
     groups:
       actions:
         patterns: ['*']
+    ignore:
+      # 🔴 These two actions are used ONLY in workflows that have no
+      # `pull_request` trigger — `changesets/action` in release.yml (push: main)
+      # and `peter-evans/create-pull-request` in revendor-canonical-schema.yml
+      # (schedule + workflow_dispatch). So a Dependabot PR bumping either one is
+      # GREEN on every PR check, because nothing in `ci.yml` exercises the
+      # workflow it lives in. The breakage only appears after merge, on the next
+      # push to main (release wedged) or the next scheduled run.
+      #
+      # This is not hypothetical: `7be170e` ("bump the actions group across 1
+      # directory with 3 updates", #175) took create-pull-request from v6.1.0 to
+      # v8.1.1 — a MAJOR — and merged, leaving its version comment two majors
+      # stale until 2026-08-20. changesets/action v2 is worse than stale: it
+      # `throwOnRenamedInputs` for publish/version/commit/title, all four of
+      # which release.yml passes, and throws when env.GITHUB_TOKEN is set
+      # alongside the github-token input, which release.yml also does.
+      #
+      # Minor/patch bumps still flow. Majors for these two land via a dedicated
+      # PR where a human reads the upstream changelog first — same policy the
+      # npm ecosystem below already applies to typescript/vitest/eslint.
+      #
+      # The other three actions here (checkout, setup-node, pnpm/action-setup)
+      # are deliberately NOT listed: they also appear in ci.yml, so a PR's own
+      # checks do exercise them.
+      - dependency-name: 'changesets/action'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'peter-evans/create-pull-request'
+        update-types: ['version-update:semver-major']
 
   - package-ecosystem: npm
     directory: /

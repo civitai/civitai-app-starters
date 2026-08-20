@@ -89,7 +89,11 @@ jobs:
         #
         # To bump: read the action's `src/git.ts` `prepareBranch()`/`pushChanges()`
         # first, confirm the bump still lands as a commit with HEAD left on it, then
-        # move the SHA and update the KNOWN-GOOD note in assert-published-versions.mjs.
+        # move the SHA, update the `🔴 PREMISE` block in assert-published-versions.mjs,
+        # and move the `# vX.Y.Z` label on the line below (nothing verifies it matches).
+        # Dependabot is blocked from bumping this across a major — see
+        # `.github/dependabot.yml`; release.yml has no `pull_request` trigger, so such
+        # a bump would pass every PR check and only break after merge.
         # (Same convention as `peter-evans/create-pull-request` in
         # `.github/workflows/revendor-canonical-schema.yml`.)
         uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
