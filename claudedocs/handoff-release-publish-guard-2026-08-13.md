@@ -9,39 +9,42 @@ arc is the substance of this doc.
 
 ## State now
 
-- **Branch/PR:** nothing of mine open on this work. `origin/main` = `aef91b3`. Base clone re-synced
-  (`merge --ff-only`); every worktree from this session and its audit agents removed.
-- **`main`: GREEN.** All three runs on `dd7a426` and all three on `aef91b3` (Release, CI, Push on main).
+- **Branch/PR:** nothing of mine open on this work. `origin/main` = `b335c0e`. Base clone re-synced
+  (`merge --ff-only`); every worktree this session created is removed.
+  ⚠️ `git worktree list` still shows 4 under `/tmp/wt-*` — `batchd-contract-sdk`, `consentfix`,
+  `longpoll-sdk`, `sdk-inline-docs`. Those are **other sessions'**, predate this work, and must not be
+  removed (broad-glob worktree cleanup has destroyed other agents' running jobs before).
+- **`main`: GREEN.** All runs green on every merge below.
 
-### Merged 2026-08-13 (evening session)
+### Merged 2026-08-13 → 2026-08-20
 
 | PR | sha | what |
 |---|---|---|
-| #236 | `dd7a426` | F1 fix — the FLOOR names the ref and can see unusable manifests. **3 audit rounds.** |
-| #231 | `aef91b3` | the Version PR — **published `@civitai/app-sdk@0.34.0` + `@civitai/blocks-react@0.42.0`** |
+| #236 | `dd7a426` | F1 — the FLOOR names the ref and sees unusable manifests. **3 audit rounds** |
+| #231 | `aef91b3` | published `app-sdk@0.34.0` + `blocks-react@0.42.0` |
+| #237 | `18446ad` | this handoff doc — landed as a tracked file (`claudedocs/` had been untracked) |
+| #238 | `da3a9dd` | `WORKFLOW_STEP_TYPES` was missing `miniMaxMusic3` |
+| #239 | `ec8084d` | published `app-sdk@0.35.0` |
+| #240 | `0121810` | `@vitest/browser` 4.1.7 → 4.1.11 — **4 criticals → 0** |
+| #242 | `b335c0e` | bounded `playwright install --with-deps` (see the wedge below) |
 
-- **Issue #235** (F1) filed, then auto-closed `COMPLETED` at `21:00:18Z` — one second after #236 merged.
+Issues: **#235** filed → auto-closed by #236. **#106** closed → **#241** (rewritten Dependabot triage).
 
-### Verified — and the distinction still matters
+### Verified — independently, not from the tooling's own report
 
-- **PUBLISH MODE IS NOW EXERCISED.** This was the gap the previous handoff left open: every prior run
-  confirmed versions *already* on the registry. On `aef91b3` the guard asserted versions the job had
-  just published, from the merged Version PR commit:
-  ```
-  21:09:56  🦋 New tag: @civitai/app-sdk@0.34.0
-  21:10:01  registry … 5 package(s) from $GITHUB_SHA (aef91b3)
-  21:10:02  OK @civitai/app-sdk@0.34.0 is on the registry  …  5/5 confirmed, 0 missing
-  ```
-  Confirmed INDEPENDENTLY against npm (not the guard's own report): both 200 with matching
-  `.version`, and a negative control `@civitai/app-sdk@99.99.99` → 404.
-- **#230 IS VERIFIED — the previous handoff was wrong to say it could not be.** It claimed
-  verification needed a *new* Version PR; a **push** to the existing branch exercises the same path.
-  The discriminator, over all 79 runs on `changeset-release/main`:
-  - pre-#230: every `github-actions[bot]` first-attempt run parked `action_required`; only manual
-    `attempt=2` re-runs ever executed.
-  - post-#230 (00:25Z on): 5 runs, all `attempt=1`, `actor=ZacxDev`, all `success`, none parked.
-  What is proven is the `synchronize` (push) path — the failure mode #230 named. The `opened` run was
-  already PAT-authored pre-fix.
+- **npm:** `app-sdk@0.35.0` and `blocks-react@0.42.0` both HTTP 200 with matching `.version`;
+  negative control `app-sdk@99.99.99` → 404. The **published tarball** for 0.35.0 was unpacked and
+  contains `readonly miniMaxMusic3: "Music generation from a caption + lyrics (MiniMax Music 3)"` —
+  with `aceStepAudio` present (2) and a nonsense string absent (0) as controls, because a first
+  attempt at that grep returned 0 for BOTH target and control (wrong nested path).
+- **Dependabot:** 44 → 40 open, critical tier **empty**, confirmed by re-scan, not inferred from a
+  version string.
+- **#230 fully verified, on BOTH paths.** The push path came from the actor split across 79 runs on
+  `changeset-release/main` (pre-fix every `github-actions[bot]` first-attempt parked
+  `action_required`; post-fix 5/5 `actor=ZacxDev`, none parked). The `opened` path was then exercised
+  for real: #238's changeset created a **brand-new** Version PR (#239) whose first run was
+  `attempt=1 actor=ZacxDev event=pull_request in_progress` — a parked run never reaches
+  `in_progress`. That was the case the original doc said could not be verified.
 
 ## Open investigations — live diagnosis state
 
@@ -102,29 +105,51 @@ message now says so, since a REACHABLE promisor would have fetched the blob and 
 have fired. Partial damage (`pkgs` non-empty AND `dropped` non-empty) still exits 0 and WARNs; failing
 there is a verdict change and wants its own decision.
 
+### The CI wedge is BOUNDED, not diagnosed — root cause still unknown
+
+- **Symptom:** `pnpm --filter <pkg> exec playwright install --with-deps chromium` hangs with no
+  output. The job renders `in_progress` until GitHub's 6-hour cap, so a wedge is indistinguishable
+  from a slow install and nothing reports a problem.
+- **Observed (values):** same step, same day —
+  - four other branches 09:45–09:47Z: **22s, 23s, 26s, 33s**
+  - PR #240 attempt 1, 16:45:48Z: **hung 2h13m**, cancelled by hand
+  - PR #240 attempt 2 (SAME COMMIT), 19:01:15Z: **3m48s, success**
+  - after #242, on its own CI: blocks-react **28s**, design-system **25s**
+- **Ruled out — my diff.** Attempts 1 and 2 are the same commit and lockfile with opposite outcomes.
+  And the bump does not move Playwright: `playwright@1.60.0` / `playwright-core@1.60.0` are identical
+  on both sides. 🔴 The `playwright@4.1.11` vs `4.1.7` strings in `pnpm-lock.yaml` are **peer-dep
+  annotations on `@vitest/browser-playwright`, not a playwright version** — reading them as a bump is
+  the trap here.
+- **Leading hypothesis:** transient apt/network stall inside `--with-deps` (that flag shells out to
+  `apt-get`). Unproven — no logs were captured from the hung run before cancelling.
+- **Next probe if it recurs:** the step now dies at 15m instead of 6h, so grab the log while it is
+  failing rather than re-running: `gh run view --repo civitai/civitai-app-starters --job <id> --log`
+  on the timed-out attempt, and look for whether apt or the CDN download is the stall. Consider
+  splitting `--with-deps` (apt) from the browser download so the two failures are distinguishable.
+
 ## Next steps (ranked)
 
-1. **`@vitest/browser` bump + re-file issue #106.** RECOMMENDED, not started — awaiting go-ahead.
-   #106's title says "12 open alerts (2 critical)"; live is **44 open, 4 critical** (measured
-   2026-08-13). That title is what people triage from, which is why it has sat. Substance is narrower
-   than the count: all 4 criticals are 2 advisories × 2 manifests, both `@vitest/browser`, a
-   **devDependency of `civitai-blocks-react`** — nothing ships to consumers; the real exposure is a CI
-   runner executing browser-mode tests on PR branches. Close #106 and re-file with live counts and an
-   explicit shipped-vs-dev-only split rather than editing it. Leave the 19 high / 20 moderate until
-   there is a policy — 6 open Dependabot PRs, nothing gating them.
-2. **Decide on pinning `changesets/action` to a SHA.** Unchanged, still the operator's call. `v1` is a
-   moving BRANCH (no `refs/tags/v1`; `v2.0.0` shipped 2026-08-11), so the guard's whole premise can
-   change with no diff here.
-3. **Make `Starter pins vs published` blocking.** Confirmed as predicted: it PASSES on every PR but is
-   not among the 8 required contexts (`gh api repos/…/branches/main/protection`). A branch-protection
-   change under `enforce_admins: true`, not a code change. ⚠️ Also observed: `strict: false`, so PRs
-   are not required to be current with `main` — a green PR is not a claim about the merged tree.
-4. **Not mine:** `civitai-orchestration#305` (cross-user write/delete/spend) still **OPEN**, now
-   `MERGEABLE/CLEAN`. 🔴 It reported `UNKNOWN/UNKNOWN` on one poll and `MERGEABLE/CLEAN` on the next
-   ~30s later — GitHub had simply not computed it; **poll twice before drawing any conclusion.**
-   Blocker still looks like the 11 breaking `getWorkflow` call sites in `civitai/civitai`; a PR-title
-   search surfaced no companion PR (that is "none surfaced", not "none exists" — it searched titles
-   and bodies, not code).
+1. **Fix #241's own title — it is already stale, exactly like #106's was.** It reads
+   "44 open alerts (4 critical…)"; live is **40 open, 0 critical** (measured 2026-08-19, after #240).
+   🔴 This is my error and worth stating plainly: I closed #106 *for having volatile counts in the
+   title* and then filed its replacement with volatile counts in the title. Retitle to something
+   durable — e.g. "Dependabot: triage policy + current alert split (counts in body, re-measure before
+   acting)". The body already says to re-measure; the title does not.
+2. **Decide the Dependabot policy** — the actual ask of #241. 5 open Dependabot PRs, nothing gating
+   them, no auto-merge: #200 happy-dom, #199 eslint, #125 sveltekit group, **#111 playwright group**,
+   #110 @types/node. #111 touches the very step that wedged (below). Options in #241.
+3. **Make `Starter pins vs published` a required context.** Confirmed still absent: 8 contexts,
+   `strict=false`. 🔴 **Caveat that has NOT been resolved, only stated:** protection runs
+   `enforce_admins: true`, and this check compares pins against *published* npm. A failed publish —
+   precisely what it detects — would red it and block **every merge in the repo, including the fix**.
+   Correct-as-a-gate, but it converts a publish outage into a total merge lockout. Decide knowingly.
+4. **Pin `changesets/action` to a SHA** — de-prioritised on measurement, not dropped. `refs/heads/v1`
+   is still `a45c4d5`, the exact sha the guard's premise was audited against; no `refs/tags/v1`
+   exists; a `v2` branch now exists at `198f833`. Re-check the sha before assuming the risk is live.
+5. **Not mine:** `civitai-orchestration#305` (cross-user write/delete/spend) still **OPEN**. Blocker
+   still looks like the 11 breaking `getWorkflow` call sites in `civitai/civitai`; a PR title/body
+   search surfaced no companion PR — that is "none surfaced", not "none exists" (it did not search
+   code).
 
 ## Gotchas / decisions / dead-ends
 
@@ -196,19 +221,65 @@ has never fired in production.
 - **Dead end, unchanged:** `gh pr checks` green is worthless as evidence on this file. #234 was 16/16
   green while completely inert; #236 was 16/16 green while carrying the v2 overclaim.
 
+🔴 **The recurring shape this session, in five costumes: a query defect that renders identically to a
+real finding.** Every one produced a confident wrong reading that a control caught:
+
+| # | the reassuring output | what it actually was |
+|---|---|---|
+| 1 | `grep -c 'found in ${source}'` → **0** | `$` mid-pattern + `{}` breaks GNU BRE; `grep -cF` → 1 |
+| 2 | `pnpm … ` → **rc=127** | pnpm not on PATH; a `rc==0?clean:dirty` reader scores it as "0 errors" |
+| 3 | `git push … \| grep -v '^remote:'` → **rc=1** | grep's status, not git's — the push had SUCCEEDED |
+| 4 | tarball grep → **0 for target AND control** | glob missed the nested `dist/orchestrator/` path |
+| 5 | job step timings → **blank** | `test("design-system")` matched `design-system drift guard` first |
+
+**The cure held every time and is always the same: a POSITIVE CONTROL.** #4 and #5 were caught only
+because the control also came back empty/wrong, which is the whole reason to run one.
+
+- 🔴 **An audit's own harness is an instrument.** The first auditor's mutation script computed a pass
+  count it never read (an editor diagnostic caught it) — every mutant it had scored was unproven **in
+  both directions**, since a killed and a surviving mutant render identically. Ask what an agent's
+  verdict was COUNTED from before believing its table.
+- 🔴 **A mutant that never APPLIED reads exactly like a survivor.** A `perl -0pi` died on
+  `${relative(...)}` and reported clean; re-run with a sha check proving the edit landed, it killed
+  two tests. Batteries here now prove landing three ways: single-occurrence, sha256 delta, literal
+  `str.find`.
+- 🔴 **A guard can be SPELLED rather than structural.** `doesNotMatch(/every one/i)` was survived by
+  "Each and all of the manifests … is unusable" — same false universal, new words. Cure was
+  `deepEqual` on the whole message block. Accepted cost: a cosmetic reflow now fails the test.
+- 🔴 **A window that stops early leaves the natural place to add text unpinned.** `floorBlock` ran
+  header→terminator, so a line appended *after* the terminator — and one printed *before* the header
+  — both survived. It now runs header→EOF and constrains what may precede the header.
+- 🔴 **`exit 1` cannot distinguish a completed floor from one that crashed inside it** (`main().catch`
+  also exits 1). A floor that TypeErrored mid-message reported green.
+- **`scope: runtime` in the Dependabot API is not a shipped-vs-dev signal** — it says `runtime` for
+  every `pnpm-lock.yaml` row, including packages that are devDependencies in their own manifest. Sort
+  by it and `hono` looks like a runtime risk. Use where the package is *declared*.
+- **"`private: true`" ≠ "nobody gets it."** The starters are private but distributed by
+  `npx tiged` (README:46). What actually makes them safe is **caret** pins (`hono: ^4.12.23`) that a
+  user's own install resolves to a patched version. That property dies if a starter moves to an exact
+  pin.
+- **A Dependabot alert's manifest list UNDER-REPORTS scope.** It named only `civitai-blocks-react`;
+  enumerating every `package.json` found `civitai-components-react` also carried `@vitest/browser`.
+- **`gh pr view <n> --json mergeable` flaps.** `orch#305` read `UNKNOWN/UNKNOWN` then `MERGEABLE/CLEAN`
+  ~3s later, twice on different days. **Poll twice before concluding anything.**
+- **Squash merges:** `git merge-base --is-ancestor` is always false afterwards. Every merge here was
+  verified by CONTENT (`git show origin/main:<path> | grep -F`).
+- **Dead end, unchanged:** `gh pr checks` green is worthless as evidence on the guard file. #234 was
+  16/16 green while inert; #236 was 16/16 green while carrying the v2 overclaim.
+
 ## How to verify
 
 ```bash
 R=civitai/civitai-app-starters
 # 1. the guard ran in PUBLISH mode and asserted just-published versions
-RUN=$(gh api "repos/$R/actions/runs?branch=main&per_page=6" \
-  --jq '[.workflow_runs[]|select(.head_sha|startswith("aef91b3"))|select(.name=="Release")][0].id')
+RUN=$(gh api "repos/$R/actions/runs?branch=main&per_page=8" \
+  --jq '[.workflow_runs[]|select(.head_sha|startswith("ec8084d"))|select(.name=="Release")][0].id')
 gh run view --repo $R --job "$(gh api repos/$R/actions/runs/$RUN/jobs --jq '.jobs[0].id')" --log \
   | grep -aE "New tag|package\(s\) from|confirmed"
-# expect: New tag 0.34.0/0.42.0, then "5 package(s) from $GITHUB_SHA (aef91b3)", 5/5 confirmed
+# expect: New tag app-sdk@0.35.0, "5 package(s) from $GITHUB_SHA (ec8084d)", 5/5 confirmed
 
-# 2. INDEPENDENT of the guard — ask npm directly, with a negative control
-curl -s -o /dev/null -w '%{http_code}\n' https://registry.npmjs.org/@civitai/app-sdk/0.34.0   # 200
+# 2. INDEPENDENT of the guard — npm directly, with a negative control
+curl -s -o /dev/null -w '%{http_code}\n' https://registry.npmjs.org/@civitai/app-sdk/0.35.0   # 200
 curl -s -o /dev/null -w '%{http_code}\n' https://registry.npmjs.org/@civitai/app-sdk/99.99.99 # 404
 
 # 3. the guard suite, in BOTH environments — a green run in only one is how defect 3 shipped
@@ -217,8 +288,14 @@ pnpm --dir "$WT" test:guards                                   # expect 56/56
 GITHUB_SHA=deadbeef NPM_REGISTRY=http://127.0.0.1:9 PUBLISH_CHECK_FROM_DISK=1 \
   pnpm --dir "$WT" test:guards                                 # expect 56/56
 
-# 4. #230 — now verifiable; first-attempt runs must not park
-gh api "repos/$R/actions/runs?branch=changeset-release/main&per_page=20" \
-  --jq '.workflow_runs[]|"\(.created_at) attempt=\(.run_attempt) actor=\(.actor.login) \(.conclusion)"'
-# expect recent first-attempt runs: actor=ZacxDev, NOT action_required
+# 4. catalog drift is closed (run from a CLEAN tree — this reads the LIVE spec)
+(cd "$WT" && node scripts/check-orchestrator-catalogs.mjs)     # expect: No drift, 45 + 12
+
+# 5. the CI wedge is bounded at both sites
+git -C "$WT" show origin/main:.github/workflows/ci.yml | grep -c "timeout-minutes: 15"   # expect 2
+
+# 6. criticals are gone
+gh api "repos/$R/dependabot/alerts?state=open&per_page=100" \
+  --jq 'group_by(.security_advisory.severity)[]|"\(.[0].security_advisory.severity): \(length)"'
+# expect NO critical row
 ```
