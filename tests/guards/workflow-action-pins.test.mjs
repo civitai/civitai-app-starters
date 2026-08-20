@@ -18,14 +18,18 @@
  * `ci.yml`, so a PR does exercise them; they stay on tags on purpose.
  *
  * Read as a regression test: at b335c0e (pre-pin) the `changesets/action` case
- * FAILS with `pinned by tag/branch ref "v1"`.
+ * FAILS with `pins changesets/action@v1 / expected exactly a45c4d5…`.
  *
  * 🔴 KNOWN LIMITS — do not read past them:
- *   - The version-label check asserts the label is PRESENT, never that it is
- *     ACCURATE — resolving a SHA to a tag needs the network and this suite is
- *     offline by design. For the two PINNED actions this does not matter: their
- *     `version` is asserted against an exact `sha` above, so a wrong label there is
- *     caught. It matters only for any future SHA-pinned action NOT in PINNED.
+ *   - 🔴 NO CHECK HERE PROVES A LABEL NAMES THE RELEASE ITS SHA ACTUALLY BELONGS TO.
+ *     That needs the network; this suite is offline by design. What IS enforced:
+ *     for a PINNED action, the workflow's `# vX.Y.Z` must equal `PINNED.version`
+ *     (so a label edited alone is caught, and so is a `PINNED.version` edited
+ *     alone); for any other SHA-pinned action, only that SOME label is present.
+ *     Editing the label and `PINNED.version` together still lies successfully.
+ *     An earlier draft of this block claimed a wrong label "is caught" full stop —
+ *     it was false, two mutants survived it, and it was the same overclaim this
+ *     file exists to prevent.
  *   - It is a LINE regex, not a YAML parse, so a `uses:`-shaped line inside a
  *     `run: |` block scalar is collected too. That direction is safe — it fails
  *     loudly with a wrong file:line rather than passing silently — but if it ever
@@ -51,7 +55,7 @@ const WORKFLOW_DIR = join(REPO_ROOT, '.github', 'workflows');
  *
  * 🔴 This is deliberately an exact-value assertion, not a shape check. A shape check
  * (`is it 40 hex?`) passes a bump to a BREAKING version — measured: swapping the pin
- * to changesets/action v2.1.1 satisfied a shape-only guard 4/4, while v2 renames
+ * to changesets/action v2.1.1 satisfied a shape-only guard 5/5, while v2 renames
  * every input release.yml passes and would wedge the release lane after merge.
  *
  * Deliberately NOT solved with a `.github/dependabot.yml` ignore. That was the first
@@ -87,14 +91,23 @@ const SHA = /^[0-9a-f]{40}$/;
 // `uses: owner/repo@ref` — tolerates quotes and a trailing `# comment`.
 const USES = /^\s*(?:-\s*)?uses:\s*['"]?([^@'"\s]+)@([^'"\s]+)['"]?/;
 
-/** Every `uses:` occurrence across the workflow dir, as {action, ref, file, line}. */
+/**
+ * Every `uses:` occurrence across the workflow dir, as
+ * {action, ref, label, file, line}. `label` is the trailing `# …` token on the same
+ * line (the version annotation), or null when there is none.
+ */
 function collectUses() {
   const out = [];
   for (const name of readdirSync(WORKFLOW_DIR).filter((f) => /\.ya?ml$/.test(f))) {
     const lines = readFileSync(join(WORKFLOW_DIR, name), 'utf8').split('\n');
     lines.forEach((line, i) => {
       const m = USES.exec(line);
-      if (m && !m[1].startsWith('./')) out.push({ action: m[1], ref: m[2], file: name, line: i + 1 });
+      if (!m || m[1].startsWith('./')) return;
+      // Only the text AFTER the ref, so a `#` inside the ref itself cannot be read
+      // as a label.
+      const after = line.slice(line.indexOf(m[2]) + m[2].length);
+      const c = /#\s*(\S+)/.exec(after);
+      out.push({ action: m[1], ref: m[2], label: c ? c[1] : null, file: name, line: i + 1 });
     });
   }
   return out;
@@ -118,10 +131,37 @@ test('the parser finds workflow `uses:` refs at all (positive control)', () => {
   );
 });
 
+// INVARIANT GUARD, not regression coverage: this passes at b335c0e too (ci.yml already
+// ran test:guards there). It pins a property no bug has yet violated. Counted as such.
+test('this suite is actually wired into a PR-triggered CI job (guard the guard)', () => {
+  // Removing the dependabot `ignore` made THIS FILE the sole control on the pins.
+  // The `ignore` lived server-side and could not be disarmed from the repo; this can
+  // — deleting the `pnpm test:guards` step from ci.yml leaves all five Starter legs
+  // reporting and green, so the pin assertion silently stops running. Nothing else
+  // reads ci.yml, so nothing else would notice.
+  const ci = readFileSync(join(WORKFLOW_DIR, 'ci.yml'), 'utf8');
+  assert.match(
+    ci,
+    /pnpm test:guards/,
+    'ci.yml no longer runs `pnpm test:guards`. If that step moved, point this ' +
+      'assertion at its new home — do not delete it: the exact-sha pins in this file ' +
+      'are only enforced because this suite runs on pull_request.',
+  );
+  // ...and in a job that a PR actually triggers.
+  const parsed = readFileSync(join(WORKFLOW_DIR, 'ci.yml'), 'utf8');
+  assert.match(
+    parsed,
+    /^on:\n(?:.*\n)*?\s*pull_request:/m,
+    'ci.yml lost its `pull_request` trigger — this suite would then only run ' +
+      'post-merge, which is the exact gap PINNED exists to close.',
+  );
+});
+
 test('PINNED is non-empty (positive control on the allowlist itself)', () => {
   // The per-action tests below are GENERATED from PINNED, so emptying it does not
   // fail anything — it silently removes the tests. Measured: `PINNED = {}` drops
-  // the suite from 5 tests to 2 and reports `pass 2 / fail 0`. The parser control
+  // the suite from 5 tests to 3 and leaves `pass 2 / fail 1` — this floor test is
+  // the survivor, and it is the only thing that fails. The parser control
   // above cannot see this, because the parser is still fine.
   assert.ok(
     Object.keys(PINNED).length >= 2,
@@ -151,6 +191,20 @@ for (const [action, { sha, version, why }] of Object.entries(PINNED)) {
     );
 
     for (const u of found) {
+      // The label must match the version recorded beside the sha in PINNED. Without
+      // this, a wrong `# vX.Y.Z` on a correct sha passes — measured, and exactly the
+      // two-majors-stale state `7be170e` left this repo in for months.
+      assert.equal(
+        u.label,
+        version,
+        `${u.file}:${u.line} labels ${action} as "${u.label}" but PINNED records ` +
+          `${version} for sha ${sha.slice(0, 7)}.\n` +
+          `  The label and PINNED.version must agree. If you are bumping, change BOTH ` +
+          `(and PINNED.sha); if only the label is wrong, fix the label.\n` +
+          `  NOTE: this ties the label to PINNED, offline. It does NOT prove either one ` +
+          `names the release that sha actually belongs to — that needs the network. ` +
+          `Changing PINNED.version and the label together still lies successfully.`,
+      );
       assert.equal(
         u.ref,
         sha,

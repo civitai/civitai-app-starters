@@ -61,7 +61,8 @@ jobs:
         # SHA-pinned to an EXACT commit, asserted by
         # `tests/guards/workflow-action-pins.test.mjs` (PINNED), which runs in ci.yml's
         # `Starter` job — `pull_request`-triggered and a required context. This
-        # workflow is schedule-only, so that assertion is the ONLY thing a bump PR
+        # workflow runs on schedule + workflow_dispatch only — no `pull_request`
+        # trigger — so that assertion is the ONLY thing a bump PR
         # runs against it. Changing this line without updating PINNED turns the PR red.
         #
         # The label lives on the `uses:` line, not above it: `7be170e` bumped this pin
