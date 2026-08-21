@@ -122,22 +122,62 @@ const REQUEST_TIMEOUT_CLASS = {
   SHARED_WITHDRAW: 'protocol',
 } satisfies Record<BlockToParentMessageType, RequestTimeoutClass>;
 
-/** The `'human'`-bucketed keys of {@link REQUEST_TIMEOUT_CLASS}, at the type level. */
-type HumanGatedRequestType = {
-  [K in keyof typeof REQUEST_TIMEOUT_CLASS]: (typeof REQUEST_TIMEOUT_CLASS)[K] extends 'human'
+/** The keys of {@link REQUEST_TIMEOUT_CLASS} bucketed as `C`, at the type level. */
+type KeysBucketed<C extends RequestTimeoutClass> = {
+  [K in keyof typeof REQUEST_TIMEOUT_CLASS]: (typeof REQUEST_TIMEOUT_CLASS)[K] extends C
     ? K
     : never;
 }[keyof typeof REQUEST_TIMEOUT_CLASS];
 
+type HumanGatedRequestType = KeysBucketed<'human'>;
+type NoReplyMessageType = KeysBucketed<'no-reply'>;
+
+/** `true` when `T` is `never` — used to reject a VACUOUSLY-satisfied assertion below. */
+type IsNever<T> = [T] extends [never] ? true : false;
+
 /**
- * Compile-time only: anything bucketed `'human'` must be a REQUEST type — one
- * that carries a `requestId` and therefore has a timeout to set. Bucketing a
- * fire-and-forget message as `'human'` would produce a ledger entry the guard
- * test cannot drive, and this assignment fails `tsc` instead.
+ * 🔴 THE BUCKETING IS CHECKED IN BOTH DIRECTIONS, AND ONE DIRECTION ALONE IS NOT
+ * ENOUGH. `OutboundRequest['type']` is exactly the set of message types carrying
+ * a `requestId` — i.e. the ones with a timeout to set — so:
+ *
+ *  (a) every `'human'` key MUST be in it. Bucketing a fire-and-forget message as
+ *      `'human'` would put an entry in the ledger that the guard test cannot
+ *      drive, and this fails `tsc` instead.
+ *
+ *  (b) NO `'no-reply'` key may be in it — the converse, and the one whose absence
+ *      left this bug's own shape reachable one level down. Without (b), a FUTURE
+ *      request type (one that does carry a `requestId`) bucketed `'no-reply'`
+ *      compiles clean, is excluded from the derived ledger, never gets a
+ *      `timeoutMs`, and silently inherits the 30s default — civitai/civitai#4158
+ *      all over again, arriving through the hole next to the one that was closed.
+ *      Zero instances today; this keeps it that way.
+ *
+ * Both are `undefined as unknown as …` assignments: erased at build, checked by
+ * `tsc`, no runtime cost.
  */
 const _humanGatedAreRequests: OutboundRequest['type'] =
   undefined as unknown as HumanGatedRequestType;
 void _humanGatedAreRequests;
+
+const _noReplyAreNotRequests: never = undefined as unknown as Extract<
+  NoReplyMessageType,
+  OutboundRequest['type']
+>;
+void _noReplyAreNotRequests;
+
+/**
+ * 🔴 NON-VACUITY GUARDS — without these, BOTH assertions above pass in the one
+ * state that matters. `never` is assignable to everything, so if every `'human'`
+ * bucket were removed `HumanGatedRequestType` degenerates to `never` and (a)
+ * succeeds while asserting nothing; the same is true of (b) for `'no-reply'`.
+ * A check that goes green precisely when its subject has been deleted is not
+ * load-bearing, so pin both buckets non-empty.
+ */
+const _humanBucketIsNonEmpty: false = undefined as unknown as IsNever<HumanGatedRequestType>;
+void _humanBucketIsNonEmpty;
+
+const _noReplyBucketIsNonEmpty: false = undefined as unknown as IsNever<NoReplyMessageType>;
+void _noReplyBucketIsNonEmpty;
 
 /**
  * THE RUNTIME LEDGER: every request whose reply waits on a human action, and
