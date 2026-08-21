@@ -136,6 +136,133 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+/**
+ * Thrown by {@link UseBuzzWorkflowReturn.estimate} when the host's reply does not
+ * carry a usable price — either because the estimate ERRORED, or because it came
+ * back without a numeric `cost.total`.
+ *
+ * 🔴 WHY THIS EXISTS — civitai/civitai#4159. A host-side `blocks.estimateWorkflow`
+ * throw is not propagated to the block as a rejection; it CANNOT be, because the
+ * reply crosses `postMessage`. The host instead posts a well-formed
+ * `ESTIMATE_RESULT` carrying its `failureSnapshot(err)` —
+ * `{ workflowId: 'failed', status: 'failed', error: '<server message>' }`, with
+ * **no `cost`** (see the host's `failureSnapshot.ts`, whose own comment states
+ * the block is expected to read `status`/`error`).
+ *
+ * Until this guard, `estimate()` resolved that snapshot as a SUCCESS and moved
+ * the hook to `'confirming'`. A correctly fail-closed block — one that gates
+ * Confirm on `typeof snapshot.cost?.total === 'number'` — then rendered a
+ * confirm dialog reading "Cost unavailable" with Confirm permanently disabled,
+ * and the server's own explanation (already present on `snapshot.error`) was
+ * discarded on the floor. The control was dead AND undiagnosable: a caller
+ * could not tell "priced at 0" from "the estimate errored".
+ *
+ * 🔴 TWO PRODUCERS, ONE OBSERVABLE — which is why {@link WorkflowEstimateError.code}
+ * exists and why the guard is not keyed on `status` alone. The server's
+ * `snapshotFromWorkflow` omits `cost` from an otherwise-SUCCESSFUL snapshot
+ * whenever the whatIf reply has no numeric total, so a `{status:'pending'}` reply
+ * with no `error` at all produces the identical dead control. A `status`-only
+ * guard would be INERT for that half. The two are distinguishable only by
+ * `snapshot.error` / `workflowId === 'failed'` — exactly the fields the original
+ * incident discarded, which is why it is still unknown which producer caused it.
+ *
+ * So an unusable estimate now REJECTS, which is what every caller's existing
+ * `try/catch` around `estimate()` is already shaped for. The snapshot is carried
+ * on the error rather than dropped, so nothing that was reachable before is lost
+ * — a caller that wants the raw reply reads `err.snapshot`.
+ *
+ * 🔴 WHERE THE REASON IS — READ `.snapshot.error`, NOT `message`. Recovering that
+ * string is the entire point of this class, so getting this the wrong way round
+ * reproduces the bug one layer down: a caller who logs `message` expecting the
+ * server's words gets a constant and is exactly as stuck as before.
+ *
+ *   - {@link WorkflowEstimateError.snapshot}`.error` — the server's own words,
+ *     verbatim. **Server-authored and UNSANITISED**: civitai's `errorHandling.ts`
+ *     documents that raw upstream text — Prisma/`pg` column and constraint names
+ *     among it — can reach this field. Log it, or show it in a developer-facing
+ *     error surface; do NOT render it as trusted copy.
+ *   - {@link WorkflowEstimateError.message} — a CONSTANT template with only
+ *     `code` interpolated. It contains no server text and nothing to sanitise, so
+ *     it is safe to print. That is deliberate: `message` is what an uncaught
+ *     rejection prints and what a third-party block's error reporter ships
+ *     upstream by default, and this is a package consumed by third-party code.
+ *     Its exact wording is NOT a contract.
+ *   - {@link WorkflowEstimateError.code} — the only stable branch target.
+ *
+ * 🔴 DO NOT "SIMPLIFY" THIS BY PUTTING `snapshot.error` BACK ON `message`. The
+ * two fields are split on purpose and the split is what keeps database internals
+ * off a third party's default-printed surface. `test/useBuzzWorkflow.test.tsx`
+ * pins it with a realistic `Unique constraint failed: Key (email)=(…)` fixture.
+ *
+ * 🔴 NOT APPLIED TO `submit`, and the reason is narrower than it looks. On
+ * `WORKFLOW_SUBMITTED` there are likewise TWO producers, indistinguishable by
+ * `status`: budget/cap REJECTIONS, which are a documented outcome the block
+ * recovers from (open a top-up flow) and which carry a `cost`; and caught server
+ * exceptions posted via the SAME `failureSnapshot(err)` used above, which do not.
+ * The `#4159` defect is therefore live on `submit` too, discriminated by `cost`
+ * presence rather than by `status`. Fixing it there is a separate change with its
+ * own blast radius on the recovery path (a fix MUST keep the budget-rejection arm
+ * RESOLVING, or the top-up flow breaks) and is deliberately NOT attempted here —
+ * so `submit` is left resolving BOTH, and the accompanying test pins only the
+ * budget-rejection producer, not a claim that submit is correct.
+ *
+ * 🔴 TRACKED, NOT FORGOTTEN: civitai/civitai-app-starters#251. Read it before
+ * touching `submit`'s failure handling.
+ */
+export class WorkflowEstimateError extends Error {
+  /**
+   * WHICH PRODUCER this was, structurally — so a caller branches on an enum
+   * rather than on prose. It is the ONLY stable branch target here:
+   * `snapshot.error` is server-authored and can change without notice, and
+   * {@link WorkflowEstimateError.message} is a generic summary whose exact
+   * wording is not a contract either.
+   *
+   * - `'failed'`  — the reply's `status` is `'failed'`. USUALLY that means
+   *   `blocks.estimateWorkflow` threw server-side and the host posted its
+   *   `failureSnapshot(err)` (so `snapshot.error` carries the server's reason and
+   *   there is no `cost`) — but it is NOT only that: a whatIf the orchestrator
+   *   itself reports as failed maps to `'failed'` through the server's own
+   *   `ORCH_STATUS_MAP`, and such a reply CAN carry a numeric `cost`. Both are
+   *   rejected: a failed estimate is not a quote you may spend against, whether
+   *   or not a number came back with it. Do not read this code as "the host
+   *   threw" — read it as "the estimate did not succeed".
+   * - `'no-cost'` — a NON-failed reply with no numeric `cost.total`. There is
+   *   usually no `snapshot.error` to explain it, which makes it the harder of the
+   *   two to diagnose from the block side.
+   */
+  readonly code: 'failed' | 'no-cost';
+
+  /**
+   * The snapshot the host replied with, VERBATIM — including `snapshot.error`,
+   * the server's own words, when there are any.
+   *
+   * 🔴 `snapshot.error` IS SERVER-AUTHORED AND UNSANITISED. It is where the
+   * reason lives (reading it is the documented way to diagnose an estimate that
+   * will not price — the whole point of civitai/civitai#4159), but civitai's
+   * `errorHandling.ts` documents that raw upstream text — Prisma/`pg` column and
+   * constraint names among it — can reach that field. Log it, show it in a
+   * developer-facing error surface, do NOT render it as trusted copy and do not
+   * ship it to a third-party error tracker without thinking about it.
+   */
+  readonly snapshot: BlockWorkflowSnapshot;
+
+  constructor(snapshot: BlockWorkflowSnapshot, code: 'failed' | 'no-cost') {
+    // 🔴 GENERIC, AND DELIBERATELY NOT `snapshot.error`. `message` is the field an
+    // uncaught rejection PRINTS and the field a third-party block's error
+    // reporter ships upstream by default — so putting the raw server string here
+    // would put database internals (constraint names, `Key (email)=(…) already
+    // exists.`) on the default-printed surface of somebody else's code. Exposure
+    // to the block is identical either way (`snapshot.error` was always on the
+    // wire), so routing the raw text to `.snapshot.error` alone costs a
+    // deliberate debugger nothing and changes only the DISPOSITION. `code` is
+    // carried IN the message so an uncaught rejection is still self-describing.
+    super(`estimate did not return a usable price (${code}) — reason on .snapshot.error`);
+    this.name = 'WorkflowEstimateError';
+    this.code = code;
+    this.snapshot = snapshot;
+  }
+}
+
 /** Optional per-submit controls. */
 export interface SubmitWorkflowOptions {
   /**
@@ -149,6 +276,28 @@ export interface SubmitWorkflowOptions {
 }
 
 interface UseBuzzWorkflowReturn {
+  /**
+   * Price a workflow without queueing it. Resolves ONLY with a snapshot that
+   * carries a numeric `cost.total`.
+   *
+   * 🔴 REJECTS with {@link WorkflowEstimateError} when the reply is unusable —
+   * the estimate errored server-side, or it came back with no numeric cost.
+   * Wrap every call in `try/catch`; see that class for why resolving such a
+   * reply was civitai/civitai#4159.
+   *
+   * 🔴 THIS INCLUDES MODERATOR REVIEW PREVIEW, a behaviour change worth knowing
+   * before you ship. While an app is under review the host short-circuits every
+   * workflow request with `failureSnapshot('not available in review preview')`,
+   * so `estimate()` now rejects there where it used to resolve. That is the
+   * correct reading — no estimate happened — and it is why the catch is not
+   * optional: a block without one turns the reviewer's first click into an
+   * unhandled rejection, at exactly the moment it is meant to look healthy. A
+   * block that catches shows the reviewer the reason instead.
+   *
+   * `result` is updated to the returned snapshot BEFORE any rejection, so a
+   * failed estimate can never leave a previous, differently-configured
+   * estimate's price sitting in `result` for a Confirm gate to read.
+   */
   estimate: (body: WorkflowBody) => Promise<BlockWorkflowSnapshot>;
   submit: (
     body: WorkflowBody,
@@ -251,7 +400,19 @@ interface UseBuzzWorkflowReturn {
  *   modelVersionId,
  *   params: { prompt: 'a cat' },
  * };
- * await estimate(body);            // status 'estimating' → 'confirming' (cost in result.cost.total)
+ * // 🔴 estimate() REJECTS when the reply carries no usable price — an errored
+ * // estimate, or one that came back with no numeric cost. ALWAYS catch it.
+ * try {
+ *   await estimate(body);          // status 'estimating' → 'confirming' (cost in result.cost.total)
+ * } catch (err) {
+ *   // status is now 'error'; `result` holds the unusable snapshot, never a
+ *   // STALE priced one. Branch on err.code ('failed' | 'no-cost'); the server's
+ *   // reason is on err.snapshot.error (unsanitised — log it, don't render it as
+ *   // trusted copy). See WorkflowEstimateError.
+ *   if (!(err instanceof WorkflowEstimateError)) throw err;
+ *   logForDebugging(err.snapshot.error);
+ *   showError('This configuration cannot be priced right now.');
+ * }
  * const snap = await submit(body); // status 'submitting' → 'polling'; returns a workflowId
  * const done = await watch(snap.workflowId, { onUpdate: render }); // → terminal
  */
@@ -270,7 +431,42 @@ export function useBuzzWorkflow(): UseBuzzWorkflowReturn {
         'ESTIMATE_RESULT',
         { timeoutMs: WORKFLOW_REQUEST_TIMEOUT_MS },
       );
+      // 🔴 PUBLISH THE SNAPSHOT BEFORE ANY REJECTION BELOW. `result` is what the
+      // README documents as where the cost lives, so a block may gate its Confirm
+      // on `typeof result.cost?.total === 'number'` rather than on the returned
+      // value. If the throw jumped over this line, a FAILED estimate would leave
+      // the PREVIOUS estimate's snapshot in place and that gate would read the
+      // OLD config's price — a live control quoting the wrong number on a money
+      // path, which is strictly worse than the dead control this PR exists to
+      // fix. Assigning first preserves the pre-fix fail-CLOSED property (the
+      // cost-less snapshot overwrites the priced one) and merely adds the
+      // rejection on top.
       setResult(snapshot);
+      // 🔴 AN UNUSABLE ESTIMATE MUST REJECT — and there are TWO producers of the
+      // identical observable "resolved, but no `cost.total`", distinguishable
+      // only by fields the incident in civitai/civitai#4159 discarded:
+      //
+      //   (a) status:'failed'  — `blocks.estimateWorkflow` threw server-side. The
+      //       host cannot reject across postMessage, so it posts
+      //       `failureSnapshot(err)`: a VALID snapshot with `status:'failed'`,
+      //       an `error` string, and no `cost`.
+      //   (b) no numeric cost on an otherwise-successful snapshot — the server's
+      //       `snapshotFromWorkflow` OMITS `cost` entirely when the whatIf reply
+      //       has no numeric total (`...(typeof total === 'number' ? … : {})`),
+      //       which yields e.g. `{status:'pending'}` with no `error` at all.
+      //
+      // Keying on `status` ALONE would leave (b) resolving — the same dead
+      // "Cost unavailable" control, still undiagnosable. So the rule is the one
+      // the caller actually needs: an estimate that did not yield a usable price
+      // does not resolve. `canceled`/`expired` are covered by the same clause
+      // (they carry no cost), which is why they need no arm of their own.
+      const usableCost = typeof snapshot.cost?.total === 'number';
+      if (snapshot.status === 'failed') {
+        throw new WorkflowEstimateError(snapshot, 'failed');
+      }
+      if (!usableCost) {
+        throw new WorkflowEstimateError(snapshot, 'no-cost');
+      }
       setStatus('confirming');
       return snapshot;
     } catch (err) {

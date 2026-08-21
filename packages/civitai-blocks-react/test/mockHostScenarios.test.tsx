@@ -1,7 +1,7 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useBuzzWorkflow } from '../src/hooks/useBuzzWorkflow.js';
+import { useBuzzWorkflow, WorkflowEstimateError } from '../src/hooks/useBuzzWorkflow.js';
 import { useBuzzBalance } from '../src/hooks/useBuzzBalance.js';
 import { useAppStorage } from '../src/hooks/useAppStorage.js';
 import { getTransport } from '../src/internal/singleton.js';
@@ -85,6 +85,68 @@ describe('createMockHost — generation scenario', () => {
 
     const snap = await runGen(result, 1);
     expect(snap.cost?.total).toBe(5);
+  });
+
+  // 🔴 THE POINT OF THIS KNOB IS THAT IT DID NOT EXIST. Until civitai/civitai#4159
+  // the mock host could not produce a failed estimate at all — the fail knobs
+  // drove SUBMIT only — so a block author had no way to reach their own `catch`
+  // around `estimate()` locally, and the dead "Cost unavailable" control was
+  // unreproducible in every harness until a real user hit it. These two tests
+  // run the knob through the REAL hook + transport, so they also serve as the
+  // end-to-end proof that the guard and the mock agree.
+  it("failEstimate: 'failed' makes estimate reject with the server-message producer", async () => {
+    uninstall = createMockHost({
+      generation: { failEstimate: 'failed', failEstimateMessage: 'resource not generatable' },
+    }).install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    let caught: unknown;
+    await act(async () => {
+      caught = await result.current.estimate(BODY).then(
+        () => null,
+        (e) => e,
+      );
+    });
+    expect(caught).toBeInstanceOf(WorkflowEstimateError);
+    expect((caught as WorkflowEstimateError).code).toBe('failed');
+    // The server's words live on `.snapshot.error`; `message` stays generic so
+    // an uncaught rejection cannot print server text (see the leak test in
+    // useBuzzWorkflow.test.tsx).
+    expect((caught as WorkflowEstimateError).snapshot.error).toBe('resource not generatable');
+    expect((caught as Error).message).not.toContain('resource not generatable');
+    await waitFor(() => expect(result.current.status).toBe('error'));
+  });
+
+  it("failEstimate: 'no-cost' makes estimate reject on a SUCCESSFUL cost-less reply", async () => {
+    uninstall = createMockHost({ generation: { failEstimate: 'no-cost' } }).install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    let caught: unknown;
+    await act(async () => {
+      caught = await result.current.estimate(BODY).then(
+        () => null,
+        (e) => e,
+      );
+    });
+    expect(caught).toBeInstanceOf(WorkflowEstimateError);
+    // The harder producer: no `error` on the wire, and the snapshot is NOT
+    // 'failed' — a status-only guard would let this one through.
+    expect((caught as WorkflowEstimateError).code).toBe('no-cost');
+    expect((caught as WorkflowEstimateError).snapshot.status).toBe('pending');
+  });
+
+  it('the estimate path still prices normally when failEstimate is unset (control)', async () => {
+    uninstall = createMockHost({ generation: { costPerGen: 42 } }).install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    await act(async () => {
+      await result.current.estimate(BODY);
+    });
+    expect(result.current.result?.cost?.total).toBe(42);
+    expect(result.current.status).toBe('confirming');
   });
 
   it('failNext fails the first N submits then succeeds', async () => {
