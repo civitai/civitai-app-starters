@@ -8,9 +8,9 @@ import type {
   BlockUploadPurpose,
 } from '@civitai/app-sdk/blocks';
 
+import { HUMAN_INTERACTION_TIMEOUT_MS } from '../internal/requestTimeouts.js';
 import { getTransport } from '../internal/singleton.js';
 import { sendTypedRequest, subscribeTyped } from '../internal/transport.js';
-import { PICKER_REQUEST_TIMEOUT_MS } from './useCheckpointPicker.js';
 
 /**
  * Generous hook-side backstop for {@link BlockImageScanResult} delivery. The
@@ -19,7 +19,7 @@ import { PICKER_REQUEST_TIMEOUT_MS } from './useCheckpointPicker.js';
  * resolving RETRYABLE so a later re-call can still pick up a late verdict from
  * the buffer.
  */
-const SCAN_STATUS_TIMEOUT_MS = PICKER_REQUEST_TIMEOUT_MS;
+const SCAN_STATUS_TIMEOUT_MS = HUMAN_INTERACTION_TIMEOUT_MS;
 
 /** Options for {@link useImageUpload}. */
 export interface UseImageUploadOptions {
@@ -94,7 +94,7 @@ function isTerminalVerdict(v: BlockImageScanResult): boolean {
  *    the orchestrator scans it at gen time), or `null` on dismiss. Feed it
  *    straight into a `WorkflowBody.sourceImage` for an img2img graph.
  *
- * Human-interactive, so it uses the same generous {@link PICKER_REQUEST_TIMEOUT_MS}
+ * Human-interactive, so it uses the same generous {@link HUMAN_INTERACTION_TIMEOUT_MS}
  * as the pickers (the host still resolves earlier on upload/dismiss/close).
  * Host-mediated, same trust model as `useResourcePicker` / `useBuzzWorkflow`.
  *
@@ -206,7 +206,7 @@ export function useImageUpload(options?: UseImageUploadOptions): {
         getTransport(),
         { type: 'OPEN_IMAGE_UPLOAD', payload: { asyncScan: true } },
         'IMAGE_UPLOAD_RESULT',
-        { timeoutMs: PICKER_REQUEST_TIMEOUT_MS },
+        { timeoutMs: HUMAN_INTERACTION_TIMEOUT_MS },
       );
       if (!selected) return null; // dismissed
 
@@ -252,7 +252,7 @@ export function useImageUpload(options?: UseImageUploadOptions): {
       getTransport(),
       { type: 'OPEN_IMAGE_UPLOAD', payload },
       'IMAGE_UPLOAD_RESULT',
-      { timeoutMs: PICKER_REQUEST_TIMEOUT_MS },
+      { timeoutMs: HUMAN_INTERACTION_TIMEOUT_MS },
     );
     // Normalize the "dismissed" case to an explicit null so callers can
     // `if (!img) return;` without an `undefined` ambiguity.

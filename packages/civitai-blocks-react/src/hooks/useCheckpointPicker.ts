@@ -2,16 +2,9 @@ import { useCallback } from 'react';
 
 import type { BlockCheckpointInfo } from '@civitai/app-sdk/blocks';
 
+import { HUMAN_INTERACTION_TIMEOUT_MS } from '../internal/requestTimeouts.js';
 import { getTransport } from '../internal/singleton.js';
 import { sendTypedRequest } from '../internal/transport.js';
-
-/**
- * A resource picker is HUMAN-interactive — the user browses the catalog and may
- * take a while to choose. The default request timeout (~30s) is for fast
- * protocol round-trips and would reject a slow browse mid-pick. Use a generous
- * bound instead; the host still resolves earlier on pick/dismiss/close.
- */
-export const PICKER_REQUEST_TIMEOUT_MS = 10 * 60_000;
 
 /**
  * Drives the platform-side Checkpoint picker and the persist-override flow.
@@ -62,7 +55,7 @@ export function useCheckpointPicker(): {
           },
         },
         'CHECKPOINT_PICKER_RESULT',
-        { timeoutMs: PICKER_REQUEST_TIMEOUT_MS },
+        { timeoutMs: HUMAN_INTERACTION_TIMEOUT_MS },
       );
       return { selected };
     },

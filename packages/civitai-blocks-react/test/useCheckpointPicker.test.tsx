@@ -3,10 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BlockInitPayload } from '@civitai/app-sdk/blocks';
 
-import {
-  useCheckpointPicker,
-  PICKER_REQUEST_TIMEOUT_MS,
-} from '../src/hooks/useCheckpointPicker.js';
+import { useCheckpointPicker } from '../src/hooks/useCheckpointPicker.js';
+import { HUMAN_INTERACTION_TIMEOUT_MS } from '../src/internal/requestTimeouts.js';
 import { getTransport } from '../src/internal/singleton.js';
 import { resetTransport } from '../src/testing.js';
 
@@ -166,8 +164,8 @@ describe('useCheckpointPicker', () => {
       }
     });
 
-    it('exports a picker timeout well above the default request timeout', () => {
-      expect(PICKER_REQUEST_TIMEOUT_MS).toBe(10 * 60_000);
+    it('exports a human-interaction timeout well above the default request timeout', () => {
+      expect(HUMAN_INTERACTION_TIMEOUT_MS).toBe(10 * 60_000);
     });
   });
 

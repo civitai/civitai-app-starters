@@ -114,4 +114,59 @@ describe('usePublishGenerationOutputs', () => {
     await waitFor(() => expect(caught).not.toBeNull());
     expect((caught as unknown as Error).message).toBe('block lacks ai:write:budgeted scope');
   });
+
+  /**
+   * REGRESSION — civitai/civitai#4158. `PUBLISH_GENERATION_OUTPUTS` is
+   * CONSENT-GATED: the host opens its own "publish to the shared grid?" confirm
+   * and replies only on an explicit human click or dismiss. On the default ~30s
+   * request timeout the promise rejected out from under a viewer who had not
+   * clicked yet — and because the generation had ALREADY been billed and no
+   * refund path exists for a dead publish bridge, the viewer paid for outputs
+   * that reached nothing.
+   *
+   * Asserted BEHAVIOURALLY (survive the default window, still resolve on the
+   * host's late reply) rather than by reading the constant back, so the test
+   * fails on any regression that reintroduces a ~30s ceiling regardless of how
+   * it is spelled.
+   */
+  it('does NOT reject at the default ~30s timeout (publishing waits on a HUMAN consent confirm)', async () => {
+    vi.useFakeTimers();
+    try {
+      const { result } = renderHook(() => usePublishGenerationOutputs());
+
+      let publishing!: Promise<number[]>;
+      act(() => {
+        publishing = result.current.publish({ workflowId: 'wf_app_2', imageIndexes: [0] });
+      });
+      const sent = lastPublish(postMessageMock);
+
+      let settled: 'resolved' | 'rejected' | null = null;
+      void publishing.then(
+        () => {
+          settled = 'resolved';
+        },
+        () => {
+          settled = 'rejected';
+        },
+      );
+
+      // Well past DEFAULT_REQUEST_TIMEOUT_MS (30s) — a human reading a modal.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000);
+      });
+      expect(settled).toBeNull();
+
+      // …and the late human click still lands.
+      dispatch('PUBLISH_RESULT', {
+        requestId: sent.payload.requestId,
+        result: { imageIds: [9101] },
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      await expect(publishing).resolves.toEqual([9101]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
