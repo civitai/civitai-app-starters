@@ -187,9 +187,13 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
  * exceptions posted via the SAME `failureSnapshot(err)` used above, which do not.
  * The `#4159` defect is therefore live on `submit` too, discriminated by `cost`
  * presence rather than by `status`. Fixing it there is a separate change with its
- * own blast radius on the recovery path and is deliberately NOT attempted here —
+ * own blast radius on the recovery path (a fix MUST keep the budget-rejection arm
+ * RESOLVING, or the top-up flow breaks) and is deliberately NOT attempted here —
  * so `submit` is left resolving BOTH, and the accompanying test pins only the
  * budget-rejection producer, not a claim that submit is correct.
+ *
+ * 🔴 TRACKED, NOT FORGOTTEN: civitai/civitai-app-starters#251. Read it before
+ * touching `submit`'s failure handling.
  */
 export class WorkflowEstimateError extends Error {
   /**

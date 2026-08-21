@@ -347,6 +347,7 @@ describe('useBuzzWorkflow', () => {
   // fixing it is a separate change with its own blast radius on the recovery
   // path. This test exists so that change cannot be mistaken for a tidy-up of
   // the estimate guard — it must keep the budget-rejection arm resolving.
+  // Tracked at civitai/civitai-app-starters#251.
   it('submit() still RESOLVES a budget rejection (a documented outcome, cost present)', async () => {
     const { result } = renderHook(() => useBuzzWorkflow());
 
