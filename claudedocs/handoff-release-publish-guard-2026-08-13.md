@@ -444,6 +444,27 @@ always the same: feed the instrument a case that MUST move the number, and repor
   not only what must stop moving.** (Fixed mid-session; the corrected watch also exits on
   `CLOSED`/`MERGED`, because a bot closing the PR is a terminal outcome a checks-only poll cannot
   see and would have burned the full timeout on.)
+- 🔴 **A closing keyword is NOT scoped by the words after it — `Resolves #245 item 3` closes ALL of
+  #245.** GitHub's linked-issue parser reads `<keyword> #<number>` and discards the qualifying text,
+  so a deliberately-narrow phrasing closes the whole issue on merge. Measured 2026-08-21: #254
+  merged at `21:20:46Z`, #245 closed at `21:20:47Z` — five items, one of which (item 1) had not been
+  decided yet. The end state happened to be right because that item was independently concluded
+  "accept and close" ten minutes later; **had it concluded "build it", the issue would have sat
+  wrongly closed and the work would have been lost, with nothing in the timeline reading as an
+  error.** The tell is a later `gh issue close` replying `already closed`. **Do not rely on
+  remembering the rule — it is CHECKABLE**, and the check is the authority rather than reading the
+  body yourself:
+  ```
+  gh pr view <pr> --json closingIssuesReferences --jq '.closingIssuesReferences[].number'
+  ```
+  Empty output = the PR closes nothing. Run it before merging any PR that *mentions* an issue it does
+  not intend to close. 🔴 **Two traps in the check itself, both hit here.** (a) **Quoting a keyword is
+  still writing it** — the PR that documented this trap reproduced it, because its body quoted the
+  offending phrases; even inside italics and a blockquote they parsed, so illustrations must use a
+  placeholder number. (b) 🔴 **The field LAGS a body edit.** Queried immediately after `gh pr edit`
+  it still reported the link; re-queried moments later it was empty. A single read straight after an
+  edit is a stale read, and here it reads as "my fix did not work" — **re-poll before concluding
+  anything.** Per-item progress belongs in an issue COMMENT, which closes nothing.
 - 🔴 **A `gh pr list` count can disagree with `gh pr view` on the same PR, and the LIST is the stale
   one.** Seconds after #200 was closed, `gh pr view` said `CLOSED` while the search-backed
   `gh pr list --state open` still returned 1. `repos/…/pulls?state=open` (direct, not search-backed)
