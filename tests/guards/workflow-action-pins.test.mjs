@@ -72,11 +72,32 @@ const WORKFLOW_DIR = join(REPO_ROOT, '.github', 'workflows');
  * to changesets/action v2.1.1 satisfied a shape-only guard 5/5, while v2 renames
  * every input release.yml passes and would wedge the release lane after merge.
  *
- * Deliberately NOT solved with a `.github/dependabot.yml` ignore. That was the first
- * attempt and it is blunter than it looks: `v1.9.0` is the LAST v1.x tag upstream
- * (next is v2.0.0), so ignoring majors means zero bump PRs for this action ever; and
- * per GitHub's options reference `ignore` also suppresses Dependabot SECURITY update
- * PRs. Blocking the merge is what we want; blocking the notification is not.
+ * Deliberately NOT solved with a `.github/dependabot.yml` ignore. The reason is
+ * ARCHITECTURAL and it is the only one that matters: `ignore` blocks the
+ * NOTIFICATION, not the MERGE. Blocking the merge is what we want. A secondary
+ * reason also holds: `v1.9.0` is the LAST v1.x tag upstream (next is v2.0.0), so
+ * ignoring majors would mean zero bump PRs for this action ever.
+ *
+ * 🔴 CORRECTION (2026-08-21). An earlier version of this comment added a third
+ * reason — "per GitHub's options reference `ignore` also suppresses Dependabot
+ * SECURITY update PRs" — and it is FALSE for the ignore that was actually proposed.
+ * GitHub's options reference and the "Controlling which dependencies are updated"
+ * how-to BOTH state verbatim: "`update-types` only affects *version* updates, not
+ * *security updates*." The ignore under discussion was `update-types:
+ * ['version-update:semver-major']`, i.e. exactly the scoped form the note exempts,
+ * so it would NOT have suppressed a single security PR.
+ *
+ * The distinction that survives, because it is what a future maintainer needs:
+ * an `update-types`-scoped ignore leaves security PRs flowing; a `dependency-name`-
+ * only or `versions`-scoped ignore is undocumented on this point and the how-to's
+ * general wording ("...for version updates and security updates") reads as
+ * suppressing both. So do not generalise EITHER way from this note — check the
+ * scope of the ignore you are actually writing.
+ *
+ * The decision to pin is UNCHANGED; only one of its three supporting arguments was
+ * wrong. Recorded rather than quietly deleted because this repo's own `.github/
+ * dependabot.yml` carries three `update-types`-scoped npm ignores (typescript,
+ * vitest, eslint) that the false claim would have condemned by implication.
  *
  * To bump one of these: read the upstream diff for the behaviour named in `why`,
  * confirm it still holds, then update `sha` + `version` here and the `uses:` line.
