@@ -60,10 +60,12 @@ Three things to know:
 - **The raw server string is on `err.snapshot.error`, never on `err.message`.**
   Exposure to the block is unchanged (`snapshot.error` was always on the wire),
   but `message` is what an uncaught rejection prints and what a third-party
-  block's error reporter ships upstream, and raw upstream text — database
-  constraint names among it — can reach that field. So `message` is a generic
-  summary carrying the code, and `snapshot.error` is documented as
-  server-authored and unsanitised. Branch on `err.code`.
+  block's error reporter ships upstream — and raw upstream text (database
+  constraint names among it) can reach **`snapshot.error`**. So `message` is a
+  constant template carrying only the `code`, with no server text in it at all,
+  while **`snapshot.error`** holds the server's words and is documented as
+  server-authored and unsanitised. Read `err.snapshot.error` to diagnose; print
+  `err.message`; branch on `err.code`.
 - **`result` is updated before the rejection**, so a failed estimate can never
   leave a previous config's price in `result` for a Confirm gate to read.
 

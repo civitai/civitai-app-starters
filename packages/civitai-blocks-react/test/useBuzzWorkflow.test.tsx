@@ -91,11 +91,20 @@ describe('useBuzzWorkflow', () => {
   // ──────────────────────────────────────────────────────────────────────────
   // civitai/civitai#4159 — an estimate with no usable price must not RESOLVE
   //
-  // 🔴 EVERY FIXTURE BELOW IS A REAL HOST REPLY, NOT A HAND-ROLLED SENTINEL, and
-  // that is the load-bearing property. The replies are all VALID snapshots —
-  // `isValidWorkflowSnapshot` accepts each one — which is precisely why they used
-  // to sail through as resolved estimates. A hand-rolled `{ status: 'failed' }`
-  // would go red on the guard while missing that.
+  // 🔴 THE FIXTURES ARE REAL HOST REPLY *SHAPES*, NOT HAND-ROLLED SENTINELS, and
+  // that is the load-bearing property. Each is a VALID snapshot —
+  // `isValidWorkflowSnapshot` accepts every one — which is precisely why they
+  // used to sail through as resolved estimates. A hand-rolled `{ status:
+  // 'failed' }` would go red on the guard while missing that.
+  //
+  // Precisely, since "real" is a claim worth being exact about: the `workflowId`
+  // values below are the server's actual sentinels — `'failed'` from the host's
+  // `failureSnapshot`, and `'whatif'` from `snapshotFromWorkflow`'s
+  // `workflow.id ?? 'whatif'` on the textToImage estimate path. (`'wf_estimate'`,
+  // used by the mock host, is the third real one — emitted by the router's
+  // `customComfy` / `step` estimate handlers.) The guard never READS the id, so
+  // no assertion here depends on which sentinel is used; they are chosen to match
+  // production so the fixtures cannot drift into a shape the server never sends.
   //
   // 🔴 THERE ARE TWO PRODUCERS of the identical observable, and a guard keyed on
   // `status` alone is INERT for the second:
@@ -193,6 +202,36 @@ describe('useBuzzWorkflow', () => {
     expect(result.current.error).toBeInstanceOf(WorkflowEstimateError);
   });
 
+  // 🔴 THE ONLY INPUT THAT MAKES THE `'failed'` ARM NON-REDUNDANT — without it,
+  // every other fixture in this file has NO cost, so `!usableCost` would reject
+  // them all on its own and the `status==='failed'` arm is never the clause that
+  // actually fires. That is the "prove the guard is REACHABLE, not merely
+  // breakable" trap: a mutation that deletes the arm still dies, to the other
+  // guard, and the arm's own necessity goes untested.
+  //
+  // The shape is real: a whatIf the ORCHESTRATOR reports as failed maps to
+  // `status:'failed'` through the server's `ORCH_STATUS_MAP` and can carry a
+  // numeric cost — unlike `failureSnapshot(err)`, which never does. Rejecting is
+  // correct: a failed estimate is not a quote you may spend against, and a block
+  // must not confirm a charge on the strength of a number attached to it.
+  it("estimate() REJECTS a 'failed' snapshot even when it DOES carry a cost (#4159)", async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const { settled, reply } = driveEstimate(result.current.estimate as never);
+
+    reply({ workflowId: 'whatif', status: 'failed', cost: { total: 7 }, error: 'orchestrator whatIf failed' });
+
+    const outcome = await settled;
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    const err = outcome.e as WorkflowEstimateError;
+    expect(err.code).toBe('failed');
+    // The number IS present and IS preserved — it is simply not a quote.
+    expect(err.snapshot.cost?.total).toBe(7);
+    // And the hook must not advertise it as confirmable.
+    await waitFor(() => expect(result.current.status).toBe('error'));
+    expect(result.current.status).not.toBe('confirming');
+  });
+
   // 🔴 PRODUCER (b). A `status`-only guard passes every assertion in the test
   // above and is still INERT here — same dead control, and harder to diagnose
   // because there is no `error` string to show.
@@ -200,7 +239,7 @@ describe('useBuzzWorkflow', () => {
     const { result } = renderHook(() => useBuzzWorkflow());
     const { settled, reply } = driveEstimate(result.current.estimate as never);
 
-    reply({ workflowId: 'wf_estimate', status: 'pending' });
+    reply({ workflowId: 'whatif', status: 'pending' });
 
     const outcome = await settled;
     expect(outcome.ok).toBe(false);
@@ -280,7 +319,7 @@ describe('useBuzzWorkflow', () => {
     it(`estimate() REJECTS a cost-less '${status}' snapshot (#4159)`, async () => {
       const { result } = renderHook(() => useBuzzWorkflow());
       const { settled, reply } = driveEstimate(result.current.estimate as never);
-      reply({ workflowId: 'wf_estimate', status });
+      reply({ workflowId: 'whatif', status });
       const outcome = await settled;
       expect(outcome.ok).toBe(false);
       if (outcome.ok) return;
@@ -298,7 +337,7 @@ describe('useBuzzWorkflow', () => {
     const { result } = renderHook(() => useBuzzWorkflow());
     const { settled, reply } = driveEstimate(result.current.estimate as never);
 
-    reply({ workflowId: 'wf_estimate', status: 'pending', cost: { total: 0 } });
+    reply({ workflowId: 'whatif', status: 'pending', cost: { total: 0 } });
 
     const outcome = await settled;
     expect(outcome.ok).toBe(true);

@@ -171,14 +171,28 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
  * on the error rather than dropped, so nothing that was reachable before is lost
  * — a caller that wants the raw reply reads `err.snapshot`.
  *
- * 🔴 `message` IS SERVER-AUTHORED AND UNSANITISED — do not render it verbatim into
- * markup, and be aware that an uncaught rejection prints it and a block's error
- * reporter will ship it. It is `snapshot.error` promoted, which the host already
- * sends into the iframe (so this changes DISPOSITION, not exposure), but civitai's
- * own `errorHandling.ts` documents that raw upstream text — Prisma/`pg` column and
- * constraint names among it — can reach that field. Branch on
- * {@link WorkflowEstimateError.code}, not on this string; treat the string as a
- * diagnostic to log or show in an error surface, not as trusted copy.
+ * 🔴 WHERE THE REASON IS — READ `.snapshot.error`, NOT `message`. Recovering that
+ * string is the entire point of this class, so getting this the wrong way round
+ * reproduces the bug one layer down: a caller who logs `message` expecting the
+ * server's words gets a constant and is exactly as stuck as before.
+ *
+ *   - {@link WorkflowEstimateError.snapshot}`.error` — the server's own words,
+ *     verbatim. **Server-authored and UNSANITISED**: civitai's `errorHandling.ts`
+ *     documents that raw upstream text — Prisma/`pg` column and constraint names
+ *     among it — can reach this field. Log it, or show it in a developer-facing
+ *     error surface; do NOT render it as trusted copy.
+ *   - {@link WorkflowEstimateError.message} — a CONSTANT template with only
+ *     `code` interpolated. It contains no server text and nothing to sanitise, so
+ *     it is safe to print. That is deliberate: `message` is what an uncaught
+ *     rejection prints and what a third-party block's error reporter ships
+ *     upstream by default, and this is a package consumed by third-party code.
+ *     Its exact wording is NOT a contract.
+ *   - {@link WorkflowEstimateError.code} — the only stable branch target.
+ *
+ * 🔴 DO NOT "SIMPLIFY" THIS BY PUTTING `snapshot.error` BACK ON `message`. The
+ * two fields are split on purpose and the split is what keeps database internals
+ * off a third party's default-printed surface. `test/useBuzzWorkflow.test.tsx`
+ * pins it with a realistic `Unique constraint failed: Key (email)=(…)` fixture.
  *
  * 🔴 NOT APPLIED TO `submit`, and the reason is narrower than it looks. On
  * `WORKFLOW_SUBMITTED` there are likewise TWO producers, indistinguishable by
@@ -203,11 +217,18 @@ export class WorkflowEstimateError extends Error {
    * {@link WorkflowEstimateError.message} is a generic summary whose exact
    * wording is not a contract either.
    *
-   * - `'failed'`  — the host replied with a failure snapshot (`status:'failed'`),
-   *   i.e. `blocks.estimateWorkflow` threw server-side. `snapshot.error` carries
-   *   the server's reason.
-   * - `'no-cost'` — the host replied with a NON-failed snapshot that carries no
-   *   numeric `cost.total`. There is usually no `snapshot.error` to explain it.
+   * - `'failed'`  — the reply's `status` is `'failed'`. USUALLY that means
+   *   `blocks.estimateWorkflow` threw server-side and the host posted its
+   *   `failureSnapshot(err)` (so `snapshot.error` carries the server's reason and
+   *   there is no `cost`) — but it is NOT only that: a whatIf the orchestrator
+   *   itself reports as failed maps to `'failed'` through the server's own
+   *   `ORCH_STATUS_MAP`, and such a reply CAN carry a numeric `cost`. Both are
+   *   rejected: a failed estimate is not a quote you may spend against, whether
+   *   or not a number came back with it. Do not read this code as "the host
+   *   threw" — read it as "the estimate did not succeed".
+   * - `'no-cost'` — a NON-failed reply with no numeric `cost.total`. There is
+   *   usually no `snapshot.error` to explain it, which makes it the harder of the
+   *   two to diagnose from the block side.
    */
   readonly code: 'failed' | 'no-cost';
 
