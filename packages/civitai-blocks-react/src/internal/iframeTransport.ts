@@ -18,12 +18,12 @@ import {
   type OutboundRequest,
 } from './transport.js';
 import { OriginMatcher } from './originMatcher.js';
+import { DEFAULT_REQUEST_TIMEOUT_MS } from './requestTimeouts.js';
 import { payloadValidatorFor } from './validate.js';
 
 import type { WrappedToken } from '@civitai/app-sdk/blocks';
 
 const INIT_TIMEOUT_MS = 10_000;
-const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 export interface IframeTransportOptions {
   /**

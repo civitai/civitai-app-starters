@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 
+import { HUMAN_INTERACTION_TIMEOUT_MS } from '../internal/requestTimeouts.js';
 import { getTransport } from '../internal/singleton.js';
 import { sendTypedRequest } from '../internal/transport.js';
 
@@ -24,9 +25,15 @@ export interface UsePublishGenerationOutputs {
    * `imageIndexes` to publish all available outputs; `title` is an optional
    * advisory label the host MAY ignore.
    *
+   * 🔴 CONSENT-GATED, SO IT WAITS ON A PERSON. Host-chrome shows a confirm
+   * before publishing and replies only on an explicit click or dismiss, so this
+   * call passes {@link HUMAN_INTERACTION_TIMEOUT_MS} (10 min) instead of
+   * inheriting the ~30s default. It does NOT hang: the host resolves the instant
+   * the viewer acts, and the 10-minute ceiling still bounds an abandoned dialog.
+   *
    * Rejects with the host's free-text error on failure (anon viewer / missing
-   * scope / not-owned workflow / rate-limit / upload or scan failure) or the
-   * transport timeout — the hook never hangs.
+   * scope / not-owned workflow / rate-limit / upload or scan failure), or at the
+   * consent-length timeout if the viewer never answers the confirm at all.
    */
   publish: (args: { workflowId: string; imageIndexes?: number[]; title?: string }) => Promise<number[]>;
 }
@@ -41,7 +48,9 @@ export interface UsePublishGenerationOutputs {
  * re-uploads + FULL-scans each selected output server-side (no url ever crosses
  * from the iframe). The result is a set of bare (post-less) scanned `Image` row
  * ids — no Post, no gallery attach, no rewards/notifications. Host-chrome shows a
- * consent confirm before anything is published.
+ * consent confirm before anything is published, and because that confirm waits on
+ * a human the request carries {@link HUMAN_INTERACTION_TIMEOUT_MS}, not the
+ * default protocol timeout.
  *
  * @example
  * const { publish } = usePublishGenerationOutputs();
@@ -62,6 +71,14 @@ export function usePublishGenerationOutputs(): UsePublishGenerationOutputs {
           },
         },
         'PUBLISH_RESULT',
+        // 🔴 civitai/civitai#4158 — WITHOUT THIS THE VIEWER PAYS FOR NOTHING.
+        // The host opens a consent confirm and answers only when the viewer
+        // clicks; at the ~30s default this rejected while the dialog was still
+        // on screen. The generation was already billed and a dead publish
+        // bridge has no refund path, so the charge stood and the outputs were
+        // lost. Every human-gated request opts out the same way — the ledger is
+        // `HUMAN_GATED_REQUEST_TYPES` in `internal/requestTimeouts.ts`.
+        { timeoutMs: HUMAN_INTERACTION_TIMEOUT_MS },
       );
       if (reply.error || !reply.result) {
         throw new Error(reply.error ?? 'failed to publish generation outputs');
