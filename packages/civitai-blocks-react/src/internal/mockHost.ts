@@ -195,6 +195,37 @@ export interface MockGenerationScenario {
    * {@link failRate} — handy for "first try fails, retry succeeds" UX tests.
    */
   failNext?: number;
+  /**
+   * Force every ESTIMATE to come back unusable, so a block author can exercise
+   * their `catch` around `estimate()` locally.
+   *
+   * 🔴 THE SIBLING KNOBS ABOVE DRIVE SUBMIT ONLY. Until this existed there was no
+   * way to reproduce a failed estimate against the mock host at all — which is
+   * how civitai/civitai#4159 reached production: the dead "Cost unavailable"
+   * control was unreachable in every local harness, so nobody could have hit it
+   * before a real user did.
+   *
+   * The two values are the two REAL producers of an unusable estimate, and they
+   * are deliberately separate because a block may want to render them
+   * differently (one has a server reason to show, the other does not):
+   *
+   * - `'failed'`  — replies with the host's real `failureSnapshot` shape:
+   *   `{ workflowId:'failed', status:'failed', error }`, no `cost`. This is what
+   *   a server-side `blocks.estimateWorkflow` throw looks like on the wire.
+   * - `'no-cost'` — replies with an otherwise-SUCCESSFUL snapshot that simply
+   *   carries no `cost` (`{ workflowId:'wf_estimate', status:'pending' }`), which
+   *   is what the server produces when the whatIf reply has no numeric total.
+   *
+   * Both make `useBuzzWorkflow().estimate()` reject with a `WorkflowEstimateError`
+   * whose `code` matches this value. Default: unset (estimates price normally).
+   */
+  failEstimate?: 'failed' | 'no-cost';
+  /**
+   * Error message returned with `failEstimate: 'failed'`. Default
+   * `'mock: estimate failed'`. Set it to a realistic server message (e.g. a
+   * resource-compatibility rejection) to check how your block renders one.
+   */
+  failEstimateMessage?: string;
   /** A single result image url (or `(body) => url`). */
   image?: ImageSpec;
   /**
@@ -1566,6 +1597,37 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // sentinel `workflowId` is non-empty so the snapshot survives the
             // SDK inbound validator (which drops empty-workflowId snapshots).
             const body = typed.payload?.body ?? ({} as WorkflowBody);
+            // UNUSABLE-ESTIMATE simulation (`generation.failEstimate`). Reproduces
+            // the two real producers byte-for-byte so a block's `catch` around
+            // `estimate()` is exercisable locally — see the knob's docs for why
+            // that was previously impossible (civitai/civitai#4159).
+            if (gen.failEstimate === 'failed') {
+              dispatchToBlock({
+                type: 'ESTIMATE_RESULT',
+                payload: {
+                  requestId,
+                  // Mirrors the host's `failureSnapshot(err)` exactly: the
+                  // 'failed' sentinel id (a real one would be empty and get
+                  // dropped by the inbound validator), no `cost`.
+                  snapshot: {
+                    workflowId: 'failed',
+                    status: 'failed',
+                    error: gen.failEstimateMessage ?? 'mock: estimate failed',
+                  },
+                },
+              });
+              return;
+            }
+            if (gen.failEstimate === 'no-cost') {
+              dispatchToBlock({
+                type: 'ESTIMATE_RESULT',
+                // A SUCCESSFUL snapshot that simply has no price — no `error` to
+                // explain it, which is what makes this producer the harder of the
+                // two to diagnose from the block side.
+                payload: { requestId, snapshot: { workflowId: 'wf_estimate', status: 'pending' } },
+              });
+              return;
+            }
             dispatchToBlock({
               type: 'ESTIMATE_RESULT',
               payload: {

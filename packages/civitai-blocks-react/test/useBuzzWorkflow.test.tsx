@@ -88,58 +88,75 @@ describe('useBuzzWorkflow', () => {
     expect(result.current.result?.cost?.total).toBe(5);
   });
 
-  // ── civitai/civitai#4159 — an ERRORED estimate must not resolve as a success ──
+  // ──────────────────────────────────────────────────────────────────────────
+  // civitai/civitai#4159 — an estimate with no usable price must not RESOLVE
   //
-  // 🔴 THE FIXTURE IS THE HOST'S REAL FAILURE REPLY, BYTE-FOR-BYTE. When
-  // `blocks.estimateWorkflow` throws server-side, the host cannot reject across
-  // postMessage; it posts a well-formed ESTIMATE_RESULT carrying
-  // `failureSnapshot(err)` — `{ workflowId: 'failed', status: 'failed', error }`
-  // and NO `cost` (civitai `src/components/AppBlocks/failureSnapshot.ts`, and the
-  // identical arm in `PageBlockHost.tsx` / `IframeHost.tsx`). Reproducing that
-  // exact shape is the point: a hand-rolled `{ status: 'failed' }` would still go
-  // red on the guard while missing that the real reply is otherwise VALID —
-  // `isValidWorkflowSnapshot` accepts it, which is precisely why it used to sail
-  // through as a resolved estimate.
-  it('estimate() REJECTS on the host failure snapshot instead of resolving a cost-less success (#4159)', async () => {
-    const { result } = renderHook(() => useBuzzWorkflow());
+  // 🔴 EVERY FIXTURE BELOW IS A REAL HOST REPLY, NOT A HAND-ROLLED SENTINEL, and
+  // that is the load-bearing property. The replies are all VALID snapshots —
+  // `isValidWorkflowSnapshot` accepts each one — which is precisely why they used
+  // to sail through as resolved estimates. A hand-rolled `{ status: 'failed' }`
+  // would go red on the guard while missing that.
+  //
+  // 🔴 THERE ARE TWO PRODUCERS of the identical observable, and a guard keyed on
+  // `status` alone is INERT for the second:
+  //   (a) `failureSnapshot(err)` — `{ workflowId:'failed', status:'failed', error }`
+  //       (civitai `src/components/AppBlocks/failureSnapshot.ts`, posted from the
+  //       catch arms of `PageBlockHost.tsx` / `IframeHost.tsx`).
+  //   (b) a SUCCESSFUL snapshot with `cost` omitted — civitai
+  //       `src/server/services/blocks/workflow.service.ts:175` drops the key
+  //       entirely when the whatIf reply has no numeric total, so the block sees
+  //       `{ status:'pending' }` with no `error` at all.
+  // Which of the two caused the reported incident is NOT known — the fields that
+  // would distinguish them are exactly what the bug discarded.
+  // ──────────────────────────────────────────────────────────────────────────
 
-    let estimatePromise!: Promise<unknown>;
+  /** Fire an estimate and hand back a settle-observer + the reply function. */
+  function driveEstimate(estimate: (body: never) => Promise<unknown>) {
+    let promise!: Promise<unknown>;
     act(() => {
-      estimatePromise = result.current.estimate({
+      promise = estimate({
         kind: 'textToImage',
         modelId: 4384,
         modelVersionId: 128713,
         additionalResources: [{ modelVersionId: 87153, strength: 1 }],
         params: { prompt: 'cat' },
-      });
+      } as never);
     });
-    // Own the rejection immediately so the assertion below, not an unhandled
-    // rejection, is what reports a regression.
-    const settled = estimatePromise.then(
+    // Own the outcome immediately so a regression is reported by the assertion
+    // below rather than as an unhandled rejection.
+    const settled = promise.then(
       (v) => ({ ok: true as const, v }),
       (e) => ({ ok: false as const, e }),
     );
-
-    const sent = postMessageMock.mock.calls[0][0] as { type: string; payload: { requestId: string } };
+    const sent = postMessageMock.mock.calls.at(-1)![0] as {
+      type: string;
+      payload: { requestId: string };
+    };
     expect(sent.type).toBe('ESTIMATE_WORKFLOW');
-
-    act(() => {
-      window.dispatchEvent(
-        new MessageEvent('message', {
-          data: {
-            type: 'ESTIMATE_RESULT',
-            payload: {
-              requestId: sent.payload.requestId,
-              snapshot: {
-                workflowId: 'failed',
-                status: 'failed',
-                error: 'a selected LoRA is not compatible with the checkpoint base model',
-              },
+    const reply = (snapshot: unknown) => {
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              type: 'ESTIMATE_RESULT',
+              payload: { requestId: sent.payload.requestId, snapshot },
             },
-          },
-          origin: PARENT_ORIGIN,
-        }),
-      );
+            origin: PARENT_ORIGIN,
+          }),
+        );
+      });
+    };
+    return { settled, reply };
+  }
+
+  it('estimate() REJECTS on producer (a), the host failure snapshot (#4159)', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const { settled, reply } = driveEstimate(result.current.estimate as never);
+
+    reply({
+      workflowId: 'failed',
+      status: 'failed',
+      error: 'a selected LoRA is not compatible with the checkpoint base model',
     });
 
     const outcome = await settled;
@@ -147,16 +164,21 @@ describe('useBuzzWorkflow', () => {
     //    from that one fact.
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
-    expect(outcome.e).toBeInstanceOf(WorkflowEstimateError);
-    // 2. The server's own explanation reaches the caller. It was already on the
+    const err = outcome.e as WorkflowEstimateError;
+    expect(err).toBeInstanceOf(WorkflowEstimateError);
+    // `name` is asserted separately from `instanceof`: it is what survives a
+    // dual-module load (two copies of the package ⇒ `instanceof` is false while
+    // the error is the right one), so a caller may legitimately branch on it.
+    expect(err.name).toBe('WorkflowEstimateError');
+    // 2. Structural discriminator, so callers never pattern-match the prose.
+    expect(err.code).toBe('failed');
+    // 3. The server's own explanation reaches the caller. It was already on the
     //    wire and was being discarded — that is what made the dead control
     //    undiagnosable, not merely unusable.
-    expect((outcome.e as Error).message).toBe(
-      'a selected LoRA is not compatible with the checkpoint base model',
-    );
-    // 3. Nothing reachable before is lost: the raw reply rides on the error.
-    expect((outcome.e as WorkflowEstimateError).snapshot.status).toBe('failed');
-    // 4. The hook does NOT advertise a confirmable estimate. `'confirming'` is
+    expect(err.message).toBe('a selected LoRA is not compatible with the checkpoint base model');
+    // 4. Nothing reachable before is lost: the raw reply rides on the error.
+    expect(err.snapshot.status).toBe('failed');
+    // 5. The hook does NOT advertise a confirmable estimate. `'confirming'` is
     //    what a block gates its Confirm button on, and reaching it with no cost
     //    is the "Cost unavailable" dead control in the issue.
     await waitFor(() => expect(result.current.status).toBe('error'));
@@ -164,23 +186,134 @@ describe('useBuzzWorkflow', () => {
     expect(result.current.error).toBeInstanceOf(WorkflowEstimateError);
   });
 
-  // 🔴 THE ASYMMETRY IS LOAD-BEARING, NOT AN OVERSIGHT — pin it. A failure-shaped
-  // snapshot from `submit` is a documented OUTCOME the block recovers from (an
-  // over-budget submit returns `status:'failed'` so the block can open a top-up
-  // flow) rather than an error. Widening the #4159 guard to `submit` would turn
-  // every budget rejection into a thrown error and break that recovery, so this
-  // test fails if someone "tidies up" the two paths into one.
-  it('submit() still RESOLVES a failure snapshot (budget rejection stays an outcome)', async () => {
+  // 🔴 PRODUCER (b). A `status`-only guard passes every assertion in the test
+  // above and is still INERT here — same dead control, and harder to diagnose
+  // because there is no `error` string to show.
+  it('estimate() REJECTS a SUCCESSFUL snapshot that carries no cost — producer (b) (#4159)', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const { settled, reply } = driveEstimate(result.current.estimate as never);
+
+    reply({ workflowId: 'wf_estimate', status: 'pending' });
+
+    const outcome = await settled;
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    const err = outcome.e as WorkflowEstimateError;
+    expect(err).toBeInstanceOf(WorkflowEstimateError);
+    expect(err.code).toBe('no-cost');
+    // No server `error` to promote, so the fallback message must be non-empty and
+    // must say what actually happened rather than claiming a failure.
+    expect(err.message).toBe('workflow estimate returned no cost');
+    expect(err.snapshot.status).toBe('pending');
+    await waitFor(() => expect(result.current.status).toBe('error'));
+  });
+
+  // 🔴 `''` IS REACHABLE, AND `??` WOULD PASS IT THROUGH. The host builds its
+  // message as `err instanceof Error ? err.message : …`, and `new Error().message`
+  // is the empty string — so a server throw with no message yields
+  // `error: ''`. With `??` the caller gets an Error whose message is `''`, which
+  // renders as a blank error line: the undiagnosable state again, one layer down.
+  // This fixture is the only thing separating `||` from `??`.
+  it('estimate() falls back to a non-empty message when the host sends error: "" (#4159)', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const { settled, reply } = driveEstimate(result.current.estimate as never);
+
+    reply({ workflowId: 'failed', status: 'failed', error: '' });
+
+    const outcome = await settled;
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    const err = outcome.e as WorkflowEstimateError;
+    expect(err.code).toBe('failed');
+    expect(err.message).toBe('workflow estimate failed');
+    expect(err.message).not.toBe('');
+  });
+
+  // The other two cost-less terminal statuses. They are in this file's own
+  // TERMINAL_STATUSES and are reachable replies; the widened clause covers them
+  // without needing an arm each, and this pins that it actually does.
+  for (const status of ['canceled', 'expired'] as const) {
+    it(`estimate() REJECTS a cost-less '${status}' snapshot (#4159)`, async () => {
+      const { result } = renderHook(() => useBuzzWorkflow());
+      const { settled, reply } = driveEstimate(result.current.estimate as never);
+      reply({ workflowId: 'wf_estimate', status });
+      const outcome = await settled;
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) return;
+      expect((outcome.e as WorkflowEstimateError).code).toBe('no-cost');
+    });
+  }
+
+  // 🔴 THE NEGATIVE CONTROL, and it is not decorative: `0` is FALSY. An
+  // implementation written as `if (!snapshot.cost?.total)` passes every rejection
+  // test above and then rejects a legitimately FREE estimate — a cache-hit prices
+  // at 0 on the real host, and the buzz-workflow starter harness returns exactly
+  // that for a repeated seed. Only a fixture whose cost is 0 can catch it, so the
+  // value here must stay 0 and must not be "tidied" to a round non-zero number.
+  it('estimate() RESOLVES a cost of 0 — free is priced, not unpriceable (#4159)', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const { settled, reply } = driveEstimate(result.current.estimate as never);
+
+    reply({ workflowId: 'wf_estimate', status: 'pending', cost: { total: 0 } });
+
+    const outcome = await settled;
+    expect(outcome.ok).toBe(true);
+    await waitFor(() => expect(result.current.status).toBe('confirming'));
+    expect(result.current.result?.cost?.total).toBe(0);
+  });
+
+  // 🔴 THE FIX MUST NOT FAIL OPEN ON `result`. Rejecting BEFORE publishing the
+  // snapshot would leave the PREVIOUS estimate's priced snapshot in place, so a
+  // block gating Confirm on `typeof result.cost?.total === 'number'` — which this
+  // package's own README documents as where the cost lives — would read the OLD
+  // config's price for a config that could not be estimated. That is a live
+  // control quoting a wrong number on a money path: strictly WORSE than the dead
+  // control this PR fixes, and it is what the first draft of this change shipped.
+  // Two estimates in one test is the only shape that can see it.
+  it('estimate() does not leave a STALE price in `result` after a failed estimate (#4159)', async () => {
     const { result } = renderHook(() => useBuzzWorkflow());
 
-    let submitPromise!: Promise<{ status: string; error?: string }>;
+    // A — prices normally at 5.
+    const a = driveEstimate(result.current.estimate as never);
+    a.reply({ workflowId: 'wf-a', status: 'pending', cost: { total: 5 } });
+    await a.settled;
+    await waitFor(() => expect(result.current.result?.cost?.total).toBe(5));
+
+    // B — a DIFFERENT config whose estimate fails.
+    const b = driveEstimate(result.current.estimate as never);
+    b.reply({ workflowId: 'failed', status: 'failed', error: 'nope' });
+    expect((await b.settled).ok).toBe(false);
+
+    await waitFor(() => expect(result.current.status).toBe('error'));
+    // The stale-price read, stated the way a block's Confirm gate would make it.
+    expect(typeof result.current.result?.cost?.total).not.toBe('number');
+    expect(result.current.result?.cost?.total).not.toBe(5);
+    // And `result` is B's snapshot, not A's — the positive half, so this cannot
+    // pass merely because `result` was cleared to null by some other path.
+    expect(result.current.result?.workflowId).toBe('failed');
+  });
+
+  // 🔴 SCOPE PIN, NOT A CORRECTNESS CLAIM ABOUT `submit`. Read the assertion
+  // narrowly: it says a BUDGET REJECTION — which carries a `cost` and is a
+  // documented outcome the block recovers from by opening a top-up flow — still
+  // resolves. It does NOT say submit is free of the #4159 defect. It is not:
+  // `WORKFLOW_SUBMITTED` has the same two producers, indistinguishable by
+  // `status`, since caught server exceptions are posted through the very same
+  // `failureSnapshot(err)`. The discriminator there is `cost` presence, and
+  // fixing it is a separate change with its own blast radius on the recovery
+  // path. This test exists so that change cannot be mistaken for a tidy-up of
+  // the estimate guard — it must keep the budget-rejection arm resolving.
+  it('submit() still RESOLVES a budget rejection (a documented outcome, cost present)', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+
+    let submitPromise!: Promise<{ status: string; error?: string; cost?: { total: number } }>;
     act(() => {
       submitPromise = result.current.submit({
         kind: 'textToImage',
         modelId: 7,
         modelVersionId: 99,
         params: { prompt: 'cat' },
-      }) as Promise<{ status: string; error?: string }>;
+      }) as Promise<{ status: string; error?: string; cost?: { total: number } }>;
     });
 
     const sent = postMessageMock.mock.calls[0][0] as { type: string; payload: { requestId: string } };
@@ -191,7 +324,14 @@ describe('useBuzzWorkflow', () => {
             type: 'WORKFLOW_SUBMITTED',
             payload: {
               requestId: sent.payload.requestId,
-              snapshot: { workflowId: 'failed', status: 'failed', error: 'insufficient buzz budget' },
+              // The budget-rejection producer carries a cost — that is what
+              // separates it from the `failureSnapshot(err)` producer.
+              snapshot: {
+                workflowId: 'failed',
+                status: 'failed',
+                error: 'insufficient buzz budget',
+                cost: { total: 120 },
+              },
             },
           },
           origin: PARENT_ORIGIN,
@@ -202,6 +342,7 @@ describe('useBuzzWorkflow', () => {
     const snap = await submitPromise;
     expect(snap.status).toBe('failed');
     expect(snap.error).toBe('insufficient buzz budget');
+    expect(snap.cost?.total).toBe(120);
   });
 
   it('submit() sends SUBMIT_WORKFLOW and transitions to polling for in-flight workflows', async () => {

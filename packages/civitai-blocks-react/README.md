@@ -216,9 +216,21 @@ const body: WorkflowBody = {
   modelVersionId,
   params: { prompt: userPrompt },
 };
-await estimate(body);            // status 'estimating' → 'confirming' (cost in result.cost.total)
-const snap = await submit(body); // status 'submitting' → 'polling'; returns a workflowId
-await poll(snap.workflowId);     // you loop this on a backoff until terminal
+// 🔴 estimate() REJECTS when the reply carries no usable price. ALWAYS catch it.
+let priced = false;
+try {
+  await estimate(body);          // status 'estimating' → 'confirming' (cost in result.cost.total)
+  priced = true;
+} catch (err) {
+  if (!(err instanceof WorkflowEstimateError)) throw err;
+  // status is now 'error'. Branch on err.code ('failed' | 'no-cost'), not on the
+  // message; err.snapshot is the host's raw reply.
+  showError(err.code === 'failed' ? err.message : 'This configuration cannot be priced.');
+}
+if (priced) {
+  const snap = await submit(body); // status 'submitting' → 'polling'; returns a workflowId
+  await poll(snap.workflowId);     // you loop this on a backoff until terminal
+}
 ```
 
 **Status semantics** (gotcha #8/#9/#10):
@@ -231,9 +243,29 @@ await poll(snap.workflowId);     // you loop this on a backoff until terminal
 - The hook does **not** auto-poll. After `submit` flips status to `'polling'`,
   the **caller** runs a `useEffect` that calls `poll(workflowId)` on a backoff
   until the snapshot is terminal (`succeeded | failed | canceled | expired`).
-- An over-budget / rejected submit comes back as a **resolved** snapshot with
+- An over-budget / rejected **submit** comes back as a **resolved** snapshot with
   `status: 'failed'` + an `error` string — the transport resolves the reply, it
   doesn't throw. Check `snap.status`, not just `try/catch`.
+- **`estimate` is the exception to that rule** (`@civitai/blocks-react@0.43.0+`).
+  It **rejects** with a `WorkflowEstimateError` when the reply carries no usable
+  price, rather than resolving a snapshot with no `cost`. Two things produce
+  that, and `err.code` tells them apart: `'failed'` (the estimate errored
+  server-side; `err.message` is the server's reason) and `'no-cost'` (an
+  otherwise-successful reply that simply has no price). `err.snapshot` is the raw
+  reply.
+  Before that version both cases resolved, so a block that correctly gates
+  Confirm on `typeof cost === 'number'` rendered a dialog it could never confirm
+  ("Cost unavailable") and the server's reason was discarded — civitai/civitai#4159.
+  Note this also fires in **moderator review preview**, where the host answers
+  every workflow request with `'not available in review preview'`: without a
+  `catch`, a reviewer's first click becomes an unhandled rejection.
+  `err.message` is **server-authored and unsanitised** — log it or show it in an
+  error surface, but don't treat it as trusted copy, and branch on `err.code`.
+  To exercise your `catch` locally, set the mock host's
+  `generation.failEstimate: 'failed' | 'no-cost'`.
+- A cost of **`0` is a real price**, not a missing one (the orchestrator whatif
+  prices a cache hit at 0). `estimate` resolves it; only a non-numeric
+  `cost.total` rejects.
 
 > **Estimate must mirror submit** (gotcha #59): build the params for `estimate`
 > with the *exact* same logic as `submit` — same seed decision especially. The
