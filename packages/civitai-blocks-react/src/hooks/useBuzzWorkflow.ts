@@ -198,8 +198,10 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 export class WorkflowEstimateError extends Error {
   /**
    * WHICH PRODUCER this was, structurally — so a caller branches on an enum
-   * instead of pattern-matching {@link WorkflowEstimateError.message}, which is
-   * server-authored prose that can change without notice.
+   * rather than on prose. It is the ONLY stable branch target here:
+   * `snapshot.error` is server-authored and can change without notice, and
+   * {@link WorkflowEstimateError.message} is a generic summary whose exact
+   * wording is not a contract either.
    *
    * - `'failed'`  — the host replied with a failure snapshot (`status:'failed'`),
    *   i.e. `blocks.estimateWorkflow` threw server-side. `snapshot.error` carries
@@ -383,10 +385,12 @@ interface UseBuzzWorkflowReturn {
  *   await estimate(body);          // status 'estimating' → 'confirming' (cost in result.cost.total)
  * } catch (err) {
  *   // status is now 'error'; `result` holds the unusable snapshot, never a
- *   // STALE priced one. Branch on err.code ('failed' | 'no-cost'), not on the
- *   // message — see WorkflowEstimateError.
- *   if (err instanceof WorkflowEstimateError) showEstimateError(err);
- *   else throw err;
+ *   // STALE priced one. Branch on err.code ('failed' | 'no-cost'); the server's
+ *   // reason is on err.snapshot.error (unsanitised — log it, don't render it as
+ *   // trusted copy). See WorkflowEstimateError.
+ *   if (!(err instanceof WorkflowEstimateError)) throw err;
+ *   logForDebugging(err.snapshot.error);
+ *   showError('This configuration cannot be priced right now.');
  * }
  * const snap = await submit(body); // status 'submitting' → 'polling'; returns a workflowId
  * const done = await watch(snap.workflowId, { onUpdate: render }); // → terminal
