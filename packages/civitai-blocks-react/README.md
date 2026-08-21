@@ -216,6 +216,15 @@ const body: WorkflowBody = {
   modelVersionId,
   params: { prompt: userPrompt },
 };
+// The viewer-facing copy is a string YOUR APP owns, chosen by `err.code`.
+// Nothing on the error may be rendered: `err.message` is developer-facing and
+// its wording is not a contract; `err.snapshot.error` is server-authored and
+// unsanitised.
+const estimateFailureMessage = (err: WorkflowEstimateError) =>
+  err.code === 'no-cost'
+    ? 'We could not get a price for this configuration. Try adjusting it.'
+    : 'Pricing is unavailable right now. Please try again shortly.';
+
 // 🔴 estimate() REJECTS when the reply carries no usable price. ALWAYS catch it.
 let priced = false;
 try {
@@ -223,12 +232,9 @@ try {
   priced = true;
 } catch (err) {
   if (!(err instanceof WorkflowEstimateError)) throw err;
-  // status is now 'error'. Branch on err.code ('failed' | 'no-cost'). The
-  // server's reason is on err.snapshot.error — server-authored and unsanitised,
-  // so log it / show it in a dev-facing surface rather than as trusted copy.
-  // err.message is a generic summary safe to print.
-  logForDebugging(err.snapshot.error);
-  showError('This configuration cannot be priced right now.');
+  // status is now 'error'. Log both for the developer; render neither.
+  logForDebugging(err.message, err.snapshot.error);
+  showError(estimateFailureMessage(err));
 }
 if (priced) {
   const snap = await submit(body); // status 'submitting' → 'polling'; returns a workflowId
@@ -263,16 +269,23 @@ if (priced) {
   `catch`, a reviewer's first click becomes an unhandled rejection.
   To exercise your `catch` locally, set the mock host's
   `generation.failEstimate: 'failed' | 'no-cost'`.
-- **Where to read the reason:** `err.snapshot.error` — that is the diagnostic
-  read, and recovering it is the whole point of the fix. It is
-  **server-authored and unsanitised** (raw upstream text, including database
-  constraint names, can reach it), so log it or show it in a developer-facing
-  surface; don't render it as trusted copy.
-  `err.message` is deliberately **generic** and names the code
-  (`estimate did not return a usable price (no-cost) — reason on .snapshot.error`)
-  because `message` is what an uncaught rejection prints and what an error
-  reporter ships by default. Branch on `err.code`; print `err.message`; read
-  `err.snapshot.error` when you are debugging.
+- **Three fields, three audiences — and none of them is viewer-facing copy.**
+  The string a viewer sees is one **your app owns**; nothing on this error may
+  be rendered as-is.
+  - `err.code` (`'failed' | 'no-cost'`) — **the branch target**, and the only
+    stable one. Switch on it to pick your own localised message.
+  - `err.snapshot.error` — **the diagnostic read**, and recovering it is the
+    whole point of the fix. **Server-authored and unsanitised** (raw upstream
+    text, including database constraint names, can reach it): log it or show it
+    in a developer-facing surface, and **never render it verbatim into markup**.
+  - `err.message` — **developer-facing**. A generic constant naming only the code
+    (`estimate did not return a usable price (no-cost) — reason on .snapshot.error`),
+    because `message` is what an uncaught rejection prints and what an error
+    reporter ships by default. Safe to log and to let a stack trace print;
+    **not intended for display to viewers** — it names an internal field path,
+    it is not localised, and **its exact wording is not a contract**, so a UI
+    built on it silently rots. Two apps migrating to `0.43.0` piped it into
+    rendered UI and would have shipped that sentence to end users.
 - A cost of **`0` is a real price**, not a missing one (the orchestrator whatif
   prices a cache hit at 0). `estimate` resolves it; only a non-numeric
   `cost.total` rejects.

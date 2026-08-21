@@ -176,18 +176,32 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
  * reproduces the bug one layer down: a caller who logs `message` expecting the
  * server's words gets a constant and is exactly as stuck as before.
  *
- *   - {@link WorkflowEstimateError.snapshot}`.error` — the server's own words,
- *     verbatim. **Server-authored and UNSANITISED**: civitai's `errorHandling.ts`
- *     documents that raw upstream text — Prisma/`pg` column and constraint names
- *     among it — can reach this field. Log it, or show it in a developer-facing
- *     error surface; do NOT render it as trusted copy.
- *   - {@link WorkflowEstimateError.message} — a CONSTANT template with only
- *     `code` interpolated. It contains no server text and nothing to sanitise, so
- *     it is safe to print. That is deliberate: `message` is what an uncaught
+ * 🔴 THREE FIELDS, THREE AUDIENCES — AND **NONE OF THEM IS VIEWER-FACING COPY**.
+ * The viewer-facing string is one the APP owns; this error carries nothing you
+ * may render as-is. Two apps migrating to `0.43.0` each had a `catch` that piped
+ * `err.message` straight into rendered UI, and each would have shipped
+ * `estimate did not return a usable price (failed) — reason on .snapshot.error`
+ * to end users; both were caught only by a test asserting that exact string.
+ *
+ *   - {@link WorkflowEstimateError.snapshot}`.error` — **the DIAGNOSTIC read.**
+ *     The server's own words, verbatim. **Server-authored and UNSANITISED**:
+ *     civitai's `errorHandling.ts` documents that raw upstream text —
+ *     Prisma/`pg` column and constraint names among it — can reach this field.
+ *     Log it, or show it in a developer-facing error surface. **NEVER render it
+ *     verbatim into markup**, and think before shipping it to a third-party
+ *     error tracker.
+ *   - {@link WorkflowEstimateError.message} — **DEVELOPER-FACING.** A CONSTANT
+ *     template with only `code` interpolated. It contains no server text and
+ *     nothing to sanitise, so it is safe to LOG and safe to let a stack trace
+ *     print — that is deliberate, because `message` is what an uncaught
  *     rejection prints and what a third-party block's error reporter ships
  *     upstream by default, and this is a package consumed by third-party code.
- *     Its exact wording is NOT a contract.
- *   - {@link WorkflowEstimateError.code} — the only stable branch target.
+ *     **It is NOT intended for display to viewers**: it names an internal field
+ *     path, it is not localised, and **its exact wording is NOT a contract** —
+ *     it can change in any release, so a UI built on it silently rots.
+ *   - {@link WorkflowEstimateError.code} — **the BRANCH TARGET**, and the only
+ *     stable one. Switch on it to pick a viewer-facing string YOUR APP owns
+ *     (see the mapper in the `@example` on {@link useBuzzWorkflow}).
  *
  * 🔴 DO NOT "SIMPLIFY" THIS BY PUTTING `snapshot.error` BACK ON `message`. The
  * two fields are split on purpose and the split is what keeps database internals
@@ -214,8 +228,12 @@ export class WorkflowEstimateError extends Error {
    * WHICH PRODUCER this was, structurally — so a caller branches on an enum
    * rather than on prose. It is the ONLY stable branch target here:
    * `snapshot.error` is server-authored and can change without notice, and
-   * {@link WorkflowEstimateError.message} is a generic summary whose exact
-   * wording is not a contract either.
+   * {@link WorkflowEstimateError.message} is a generic developer-facing summary
+   * whose exact wording is not a contract either.
+   *
+   * 🔴 THIS IS WHAT A VIEWER-FACING MESSAGE MUST BE DERIVED FROM. Branch on
+   * `code` and return a string your app owns and localises; never render
+   * `message` or `snapshot.error` to a viewer.
    *
    * - `'failed'`  — the reply's `status` is `'failed'`. USUALLY that means
    *   `blocks.estimateWorkflow` threw server-side and the host posted its
@@ -241,8 +259,8 @@ export class WorkflowEstimateError extends Error {
    * will not price — the whole point of civitai/civitai#4159), but civitai's
    * `errorHandling.ts` documents that raw upstream text — Prisma/`pg` column and
    * constraint names among it — can reach that field. Log it, show it in a
-   * developer-facing error surface, do NOT render it as trusted copy and do not
-   * ship it to a third-party error tracker without thinking about it.
+   * developer-facing error surface, **NEVER render it verbatim into markup**,
+   * and do not ship it to a third-party error tracker without thinking about it.
    */
   readonly snapshot: BlockWorkflowSnapshot;
 
@@ -256,6 +274,11 @@ export class WorkflowEstimateError extends Error {
     // wire), so routing the raw text to `.snapshot.error` alone costs a
     // deliberate debugger nothing and changes only the DISPOSITION. `code` is
     // carried IN the message so an uncaught rejection is still self-describing.
+    //
+    // 🔴 IT IS DEVELOPER-FACING, NOT VIEWER-FACING — it names an internal field
+    // path and is not localised, so it must not reach rendered UI. Its exact
+    // wording is NOT a contract: it may change in any release. A viewer-facing
+    // string is derived from `code` by the app (see the class docs).
     super(`estimate did not return a usable price (${code}) — reason on .snapshot.error`);
     this.name = 'WorkflowEstimateError';
     this.code = code;
@@ -400,18 +423,24 @@ interface UseBuzzWorkflowReturn {
  *   modelVersionId,
  *   params: { prompt: 'a cat' },
  * };
+ * // A viewer-facing string YOUR APP owns, chosen by `code`. Neither
+ * // `err.message` (developer-facing, wording not a contract) nor
+ * // `err.snapshot.error` (server-authored, unsanitised) may be rendered.
+ * const estimateFailureMessage = (err: WorkflowEstimateError) =>
+ *   err.code === 'no-cost'
+ *     ? 'We could not get a price for this configuration. Try adjusting it.'
+ *     : 'Pricing is unavailable right now. Please try again shortly.';
+ *
  * // 🔴 estimate() REJECTS when the reply carries no usable price — an errored
  * // estimate, or one that came back with no numeric cost. ALWAYS catch it.
  * try {
  *   await estimate(body);          // status 'estimating' → 'confirming' (cost in result.cost.total)
  * } catch (err) {
  *   // status is now 'error'; `result` holds the unusable snapshot, never a
- *   // STALE priced one. Branch on err.code ('failed' | 'no-cost'); the server's
- *   // reason is on err.snapshot.error (unsanitised — log it, don't render it as
- *   // trusted copy). See WorkflowEstimateError.
+ *   // STALE priced one. See WorkflowEstimateError for the three-audience split.
  *   if (!(err instanceof WorkflowEstimateError)) throw err;
- *   logForDebugging(err.snapshot.error);
- *   showError('This configuration cannot be priced right now.');
+ *   logForDebugging(err.message, err.snapshot.error); // developer-facing: LOG only
+ *   showError(estimateFailureMessage(err));           // viewer-facing: app-owned
  * }
  * const snap = await submit(body); // status 'submitting' → 'polling'; returns a workflowId
  * const done = await watch(snap.workflowId, { onUpdate: render }); // → terminal

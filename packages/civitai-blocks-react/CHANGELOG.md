@@ -34,7 +34,7 @@
 
   The server's reason is on **`err.snapshot.error`** — that is the diagnostic read,
   and recovering it is the point of the fix. `err.message` is deliberately generic
-  and names the code instead.
+  and names the code instead; it is developer-facing, not viewer-facing copy.
 
   A cost of `0` is a real price (a whatif cache hit prices at 0) and still
   resolves; only a non-numeric `cost.total` rejects.
@@ -45,12 +45,18 @@
   docs and every starter use — need no change. Others must add one:
 
   ```ts
+  // Viewer-facing copy is a string YOUR APP owns, chosen by `code`.
+  const estimateFailureMessage = (err: WorkflowEstimateError) =>
+    err.code === 'no-cost'
+      ? 'We could not get a price for this configuration. Try adjusting it.'
+      : 'Pricing is unavailable right now. Please try again shortly.';
+
   try {
     await estimate(body);
   } catch (err) {
     if (!(err instanceof WorkflowEstimateError)) throw err;
-    logForDebugging(err.snapshot.error); // the server's reason
-    showError("This configuration cannot be priced right now.");
+    logForDebugging(err.message, err.snapshot.error); // developer-facing: LOG only
+    showError(estimateFailureMessage(err)); // viewer-facing: app-owned
   }
   ```
 
@@ -66,8 +72,18 @@
     constraint names among it) can reach **`snapshot.error`**. So `message` is a
     constant template carrying only the `code`, with no server text in it at all,
     while **`snapshot.error`** holds the server's words and is documented as
-    server-authored and unsanitised. Read `err.snapshot.error` to diagnose; print
-    `err.message`; branch on `err.code`.
+    server-authored and unsanitised.
+
+    🔴 **Neither field is viewer-facing copy.** `err.message` is
+    **developer-facing** — safe to log and to let a stack trace print, but it
+    names an internal field path, it is not localised, and its exact wording is
+    **not a contract**. `err.snapshot.error` is the **diagnostic** read and must
+    never be rendered verbatim into markup. **`err.code` is the branch target**:
+    switch on it to pick a viewer-facing string your app owns. _(Corrected
+    after publish — this bullet originally read "print `err.message`", which two
+    migrating apps reasonably took as viewer-facing and piped straight into
+    rendered UI. The wording above is the only thing that changed; no behaviour
+    did.)_
   - **`result` is updated before the rejection**, so a failed estimate can never
     leave a previous config's price in `result` for a Confirm gate to read.
 
