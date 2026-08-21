@@ -205,29 +205,36 @@ export class WorkflowEstimateError extends Error {
    */
   readonly code: 'failed' | 'no-cost';
 
-  /** The snapshot the host replied with, verbatim. */
+  /**
+   * The snapshot the host replied with, VERBATIM — including `snapshot.error`,
+   * the server's own words, when there are any.
+   *
+   * 🔴 `snapshot.error` IS SERVER-AUTHORED AND UNSANITISED. It is where the
+   * reason lives (reading it is the documented way to diagnose an estimate that
+   * will not price — the whole point of civitai/civitai#4159), but civitai's
+   * `errorHandling.ts` documents that raw upstream text — Prisma/`pg` column and
+   * constraint names among it — can reach that field. Log it, show it in a
+   * developer-facing error surface, do NOT render it as trusted copy and do not
+   * ship it to a third-party error tracker without thinking about it.
+   */
   readonly snapshot: BlockWorkflowSnapshot;
 
   constructor(snapshot: BlockWorkflowSnapshot, code: 'failed' | 'no-cost') {
-    // 🔴 `||`, NOT `??`. `new Error().message` is `''` — a reachable value that
-    // `??` passes through, producing an error whose message is the empty string.
-    super(snapshot.error || FALLBACK_ESTIMATE_MESSAGE[code]);
+    // 🔴 GENERIC, AND DELIBERATELY NOT `snapshot.error`. `message` is the field an
+    // uncaught rejection PRINTS and the field a third-party block's error
+    // reporter ships upstream by default — so putting the raw server string here
+    // would put database internals (constraint names, `Key (email)=(…) already
+    // exists.`) on the default-printed surface of somebody else's code. Exposure
+    // to the block is identical either way (`snapshot.error` was always on the
+    // wire), so routing the raw text to `.snapshot.error` alone costs a
+    // deliberate debugger nothing and changes only the DISPOSITION. `code` is
+    // carried IN the message so an uncaught rejection is still self-describing.
+    super(`estimate did not return a usable price (${code}) — reason on .snapshot.error`);
     this.name = 'WorkflowEstimateError';
     this.code = code;
     this.snapshot = snapshot;
   }
 }
-
-/**
- * Used when the snapshot carries no usable `error` string of its own — always
- * the case for `'no-cost'`, and reachable for `'failed'` (the host builds its
- * message from `err instanceof Error ? err.message : …`, and an `Error` with an
- * empty message is legal).
- */
-const FALLBACK_ESTIMATE_MESSAGE: Record<'failed' | 'no-cost', string> = {
-  failed: 'workflow estimate failed',
-  'no-cost': 'workflow estimate returned no cost',
-};
 
 /** Optional per-submit controls. */
 export interface SubmitWorkflowOptions {

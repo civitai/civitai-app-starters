@@ -110,7 +110,11 @@ describe('createMockHost — generation scenario', () => {
     });
     expect(caught).toBeInstanceOf(WorkflowEstimateError);
     expect((caught as WorkflowEstimateError).code).toBe('failed');
-    expect((caught as Error).message).toBe('resource not generatable');
+    // The server's words live on `.snapshot.error`; `message` stays generic so
+    // an uncaught rejection cannot print server text (see the leak test in
+    // useBuzzWorkflow.test.tsx).
+    expect((caught as WorkflowEstimateError).snapshot.error).toBe('resource not generatable');
+    expect((caught as Error).message).not.toContain('resource not generatable');
     await waitFor(() => expect(result.current.status).toBe('error'));
   });
 

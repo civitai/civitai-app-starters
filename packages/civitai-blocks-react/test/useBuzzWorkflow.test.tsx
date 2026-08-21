@@ -172,13 +172,20 @@ describe('useBuzzWorkflow', () => {
     expect(err.name).toBe('WorkflowEstimateError');
     // 2. Structural discriminator, so callers never pattern-match the prose.
     expect(err.code).toBe('failed');
-    // 3. The server's own explanation reaches the caller. It was already on the
-    //    wire and was being discarded — that is what made the dead control
-    //    undiagnosable, not merely unusable.
-    expect(err.message).toBe('a selected LoRA is not compatible with the checkpoint base model');
-    // 4. Nothing reachable before is lost: the raw reply rides on the error.
+    // 3. The server's own explanation reaches the caller — on `.snapshot.error`.
+    //    It was already on the wire and was being discarded, and that is what
+    //    made the dead control undiagnosable rather than merely unusable. THIS
+    //    is the documented #4159 reproduction read.
+    expect(err.snapshot.error).toBe(
+      'a selected LoRA is not compatible with the checkpoint base model',
+    );
+    // 4. `message` is GENERIC and carries the code — see the leak test below.
+    expect(err.message).toBe(
+      'estimate did not return a usable price (failed) — reason on .snapshot.error',
+    );
+    // 5. Nothing reachable before is lost: the raw reply rides on the error.
     expect(err.snapshot.status).toBe('failed');
-    // 5. The hook does NOT advertise a confirmable estimate. `'confirming'` is
+    // 6. The hook does NOT advertise a confirmable estimate. `'confirming'` is
     //    what a block gates its Confirm button on, and reaching it with no cost
     //    is the "Cost unavailable" dead control in the issue.
     await waitFor(() => expect(result.current.status).toBe('error'));
@@ -201,20 +208,56 @@ describe('useBuzzWorkflow', () => {
     const err = outcome.e as WorkflowEstimateError;
     expect(err).toBeInstanceOf(WorkflowEstimateError);
     expect(err.code).toBe('no-cost');
-    // No server `error` to promote, so the fallback message must be non-empty and
-    // must say what actually happened rather than claiming a failure.
-    expect(err.message).toBe('workflow estimate returned no cost');
+    // The generic message names the CODE, so an uncaught rejection is still
+    // self-describing without carrying server text (there is none here anyway).
+    expect(err.message).toBe(
+      'estimate did not return a usable price (no-cost) — reason on .snapshot.error',
+    );
     expect(err.snapshot.status).toBe('pending');
     await waitFor(() => expect(result.current.status).toBe('error'));
   });
 
-  // 🔴 `''` IS REACHABLE, AND `??` WOULD PASS IT THROUGH. The host builds its
-  // message as `err instanceof Error ? err.message : …`, and `new Error().message`
-  // is the empty string — so a server throw with no message yields
-  // `error: ''`. With `??` the caller gets an Error whose message is `''`, which
-  // renders as a blank error line: the undiagnosable state again, one layer down.
-  // This fixture is the only thing separating `||` from `??`.
-  it('estimate() falls back to a non-empty message when the host sends error: "" (#4159)', async () => {
+  // 🔴 `message` MUST NOT CARRY THE SERVER STRING. `Error.message` is what an
+  // uncaught rejection prints and what a third-party block's error reporter ships
+  // upstream by default; civitai's `errorHandling.ts` documents that raw
+  // Prisma/`pg` text — constraint names, `Key (email)=(…) already exists.` —
+  // can reach `snapshot.error`. Blocks are third-party code, so database
+  // internals must not land on their default-printed surface.
+  //
+  // 🔴 THE FIXTURE IS A REALISTIC LEAK, NOT A TOKEN. A scanner-style test using
+  // `'secret'` proves only that the literal `'secret'` is absent; this asserts
+  // against the actual shape `errorHandling.ts` warns about, and checks each
+  // distinctive fragment separately so a partial interpolation cannot pass.
+  it('estimate() keeps the raw server text OFF `message` and ON `.snapshot.error` (#4159)', async () => {
+    const RAW = 'Unique constraint failed: Key (email)=(a@b.example) already exists.';
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const { settled, reply } = driveEstimate(result.current.estimate as never);
+
+    reply({ workflowId: 'failed', status: 'failed', error: RAW });
+
+    const outcome = await settled;
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    const err = outcome.e as WorkflowEstimateError;
+    // Still fully recoverable — this is the documented diagnostic read.
+    expect(err.snapshot.error).toBe(RAW);
+    // …and absent from the default-printed field, fragment by fragment.
+    expect(err.message).not.toContain(RAW);
+    for (const fragment of ['email', 'a@b.example', 'Unique constraint', 'Key (']) {
+      expect(err.message).not.toContain(fragment);
+    }
+    expect(err.message).toBe(
+      'estimate did not return a usable price (failed) — reason on .snapshot.error',
+    );
+  });
+
+  // `error: ''` is reachable — the host builds its string as
+  // `err instanceof Error ? err.message : …` and `new Error().message` is `''`.
+  // It used to be the case that separated `||` from `??` in the message
+  // fallback; now that `message` never reads `snapshot.error` at all, what
+  // matters is that the empty value is preserved VERBATIM rather than
+  // normalised away, and that `message` is non-empty regardless.
+  it('estimate() preserves error: "" verbatim and still yields a non-empty message', async () => {
     const { result } = renderHook(() => useBuzzWorkflow());
     const { settled, reply } = driveEstimate(result.current.estimate as never);
 
@@ -225,8 +268,9 @@ describe('useBuzzWorkflow', () => {
     if (outcome.ok) return;
     const err = outcome.e as WorkflowEstimateError;
     expect(err.code).toBe('failed');
-    expect(err.message).toBe('workflow estimate failed');
+    expect(err.snapshot.error).toBe('');
     expect(err.message).not.toBe('');
+    expect(err.message).toContain('(failed)');
   });
 
   // The other two cost-less terminal statuses. They are in this file's own

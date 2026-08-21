@@ -223,9 +223,12 @@ try {
   priced = true;
 } catch (err) {
   if (!(err instanceof WorkflowEstimateError)) throw err;
-  // status is now 'error'. Branch on err.code ('failed' | 'no-cost'), not on the
-  // message; err.snapshot is the host's raw reply.
-  showError(err.code === 'failed' ? err.message : 'This configuration cannot be priced.');
+  // status is now 'error'. Branch on err.code ('failed' | 'no-cost'). The
+  // server's reason is on err.snapshot.error — server-authored and unsanitised,
+  // so log it / show it in a dev-facing surface rather than as trusted copy.
+  // err.message is a generic summary safe to print.
+  logForDebugging(err.snapshot.error);
+  showError('This configuration cannot be priced right now.');
 }
 if (priced) {
   const snap = await submit(body); // status 'submitting' → 'polling'; returns a workflowId
@@ -250,19 +253,26 @@ if (priced) {
   It **rejects** with a `WorkflowEstimateError` when the reply carries no usable
   price, rather than resolving a snapshot with no `cost`. Two things produce
   that, and `err.code` tells them apart: `'failed'` (the estimate errored
-  server-side; `err.message` is the server's reason) and `'no-cost'` (an
-  otherwise-successful reply that simply has no price). `err.snapshot` is the raw
-  reply.
+  server-side) and `'no-cost'` (an otherwise-successful reply that simply has no
+  price).
   Before that version both cases resolved, so a block that correctly gates
   Confirm on `typeof cost === 'number'` rendered a dialog it could never confirm
   ("Cost unavailable") and the server's reason was discarded — civitai/civitai#4159.
   Note this also fires in **moderator review preview**, where the host answers
   every workflow request with `'not available in review preview'`: without a
   `catch`, a reviewer's first click becomes an unhandled rejection.
-  `err.message` is **server-authored and unsanitised** — log it or show it in an
-  error surface, but don't treat it as trusted copy, and branch on `err.code`.
   To exercise your `catch` locally, set the mock host's
   `generation.failEstimate: 'failed' | 'no-cost'`.
+- **Where to read the reason:** `err.snapshot.error` — that is the diagnostic
+  read, and recovering it is the whole point of the fix. It is
+  **server-authored and unsanitised** (raw upstream text, including database
+  constraint names, can reach it), so log it or show it in a developer-facing
+  surface; don't render it as trusted copy.
+  `err.message` is deliberately **generic** and names the code
+  (`estimate did not return a usable price (no-cost) — reason on .snapshot.error`)
+  because `message` is what an uncaught rejection prints and what an error
+  reporter ships by default. Branch on `err.code`; print `err.message`; read
+  `err.snapshot.error` when you are debugging.
 - A cost of **`0` is a real price**, not a missing one (the orchestrator whatif
   prices a cache hit at 0). `estimate` resolves it; only a non-numeric
   `cost.total` rejects.

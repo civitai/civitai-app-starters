@@ -26,10 +26,13 @@ present on `snapshot.error` — was discarded.
 
 There are **two** producers of that observable, and the guard covers both:
 
-- `code: 'failed'` — the estimate errored server-side; `message` is the server's
-  own reason.
+- `code: 'failed'` — the estimate errored server-side.
 - `code: 'no-cost'` — an otherwise-successful snapshot whose `cost` the server
   omitted because the whatIf reply had no numeric total.
+
+The server's reason is on **`err.snapshot.error`** — that is the diagnostic read,
+and recovering it is the point of the fix. `err.message` is deliberately generic
+and names the code instead.
 
 A cost of `0` is a real price (a whatif cache hit prices at 0) and still
 resolves; only a non-numeric `cost.total` rejects.
@@ -43,8 +46,9 @@ docs and every starter use — need no change. Others must add one:
 try {
   await estimate(body);
 } catch (err) {
-  if (err instanceof WorkflowEstimateError) showError(err.message);
-  else throw err;
+  if (!(err instanceof WorkflowEstimateError)) throw err;
+  logForDebugging(err.snapshot.error); // the server's reason
+  showError('This configuration cannot be priced right now.');
 }
 ```
 
@@ -53,10 +57,13 @@ Three things to know:
 - **Moderator review preview now rejects too.** The host answers every workflow
   request there with `'not available in review preview'`, so a block without a
   `catch` turns a reviewer's first click into an unhandled rejection.
-- **`err.message` is server-authored and unsanitised.** It is `snapshot.error`
-  promoted, which the host already sends into the iframe (so this changes
-  disposition, not exposure), but an uncaught rejection prints it and an error
-  reporter will ship it. Branch on `err.code`, not the string.
+- **The raw server string is on `err.snapshot.error`, never on `err.message`.**
+  Exposure to the block is unchanged (`snapshot.error` was always on the wire),
+  but `message` is what an uncaught rejection prints and what a third-party
+  block's error reporter ships upstream, and raw upstream text — database
+  constraint names among it — can reach that field. So `message` is a generic
+  summary carrying the code, and `snapshot.error` is documented as
+  server-authored and unsanitised. Branch on `err.code`.
 - **`result` is updated before the rejection**, so a failed estimate can never
   leave a previous config's price in `result` for a Confirm gate to read.
 
