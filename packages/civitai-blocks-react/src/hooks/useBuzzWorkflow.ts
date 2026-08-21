@@ -136,6 +136,48 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+/**
+ * Thrown by {@link UseBuzzWorkflowReturn.estimate} when the host answers with a
+ * FAILURE snapshot instead of a priced one.
+ *
+ * 🔴 WHY THIS EXISTS — civitai/civitai#4159. A host-side `blocks.estimateWorkflow`
+ * throw is not propagated to the block as a rejection; it CANNOT be, because the
+ * reply crosses `postMessage`. The host instead posts a well-formed
+ * `ESTIMATE_RESULT` carrying its `failureSnapshot(err)` —
+ * `{ workflowId: 'failed', status: 'failed', error: '<server message>' }`, with
+ * **no `cost`** (see the host's `failureSnapshot.ts`, whose own comment states
+ * the block is expected to read `status`/`error`).
+ *
+ * Until this guard, `estimate()` resolved that snapshot as a SUCCESS and moved
+ * the hook to `'confirming'`. A correctly fail-closed block — one that gates
+ * Confirm on `typeof snapshot.cost?.total === 'number'` — then rendered a
+ * confirm dialog reading "Cost unavailable" with Confirm permanently disabled,
+ * and the server's own explanation (already present on `snapshot.error`) was
+ * discarded on the floor. The control was dead AND undiagnosable: a caller
+ * could not tell "priced at 0" from "the estimate errored".
+ *
+ * So an errored estimate now REJECTS, which is what every caller's existing
+ * `try/catch` around `estimate()` is already shaped for. The snapshot is carried
+ * on the error rather than dropped, so nothing that was reachable before is lost
+ * — a caller that wants the raw reply reads `err.snapshot`.
+ *
+ * 🔴 DELIBERATELY NOT APPLIED TO `submit`. There, a failure-shaped snapshot is a
+ * documented OUTCOME the block is meant to recover from (an over-budget submit
+ * returns `status:'failed'` so the block can open a top-up flow) rather than an
+ * error — see `submitWorkflow` in the host router. `estimate` has no such
+ * outcome: it either quotes a cost or it did not run.
+ */
+export class WorkflowEstimateError extends Error {
+  /** The failure snapshot the host replied with. Carries `status` and `error`. */
+  readonly snapshot: BlockWorkflowSnapshot;
+
+  constructor(snapshot: BlockWorkflowSnapshot) {
+    super(snapshot.error ?? 'workflow estimate failed');
+    this.name = 'WorkflowEstimateError';
+    this.snapshot = snapshot;
+  }
+}
+
 /** Optional per-submit controls. */
 export interface SubmitWorkflowOptions {
   /**
@@ -270,6 +312,13 @@ export function useBuzzWorkflow(): UseBuzzWorkflowReturn {
         'ESTIMATE_RESULT',
         { timeoutMs: WORKFLOW_REQUEST_TIMEOUT_MS },
       );
+      // 🔴 An ERRORED estimate arrives as a well-formed reply, not a rejection —
+      // the host cannot throw across postMessage, so it posts
+      // `failureSnapshot(err)` (`status:'failed'`, no `cost`). Resolving that as
+      // a success is civitai/civitai#4159: a fail-closed caller gets a dialog it
+      // can never confirm and the server's message is dropped. Reject instead,
+      // carrying the snapshot. See {@link WorkflowEstimateError}.
+      if (snapshot.status === 'failed') throw new WorkflowEstimateError(snapshot);
       setResult(snapshot);
       setStatus('confirming');
       return snapshot;

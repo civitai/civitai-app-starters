@@ -37,7 +37,11 @@ export { useBlockTheme } from './hooks/useBlockTheme.js';
 export { useBlockSettings } from './hooks/useBlockSettings.js';
 export { useBlockToken } from './hooks/useBlockToken.js';
 export { useHostOrigin } from './hooks/useHostOrigin.js';
-export { DEFAULT_WATCH_WAIT_SECONDS, useBuzzWorkflow } from './hooks/useBuzzWorkflow.js';
+export {
+  DEFAULT_WATCH_WAIT_SECONDS,
+  useBuzzWorkflow,
+  WorkflowEstimateError,
+} from './hooks/useBuzzWorkflow.js';
 export type { SubmitWorkflowOptions, WatchWorkflowOptions } from './hooks/useBuzzWorkflow.js';
 export { useTip } from './hooks/useTip.js';
 export type { TipParams, TipOptions, TipResult, UseTip } from './hooks/useTip.js';

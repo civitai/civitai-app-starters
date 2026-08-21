@@ -3,7 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BlockInitPayload } from '@civitai/app-sdk/blocks';
 
-import { DEFAULT_WATCH_WAIT_SECONDS, useBuzzWorkflow } from '../src/hooks/useBuzzWorkflow.js';
+import {
+  DEFAULT_WATCH_WAIT_SECONDS,
+  useBuzzWorkflow,
+  WorkflowEstimateError,
+} from '../src/hooks/useBuzzWorkflow.js';
 import { getTransport } from '../src/internal/singleton.js';
 import { resetTransport } from '../src/testing.js';
 
@@ -82,6 +86,122 @@ describe('useBuzzWorkflow', () => {
     await estimatePromise;
     await waitFor(() => expect(result.current.status).toBe('confirming'));
     expect(result.current.result?.cost?.total).toBe(5);
+  });
+
+  // ── civitai/civitai#4159 — an ERRORED estimate must not resolve as a success ──
+  //
+  // 🔴 THE FIXTURE IS THE HOST'S REAL FAILURE REPLY, BYTE-FOR-BYTE. When
+  // `blocks.estimateWorkflow` throws server-side, the host cannot reject across
+  // postMessage; it posts a well-formed ESTIMATE_RESULT carrying
+  // `failureSnapshot(err)` — `{ workflowId: 'failed', status: 'failed', error }`
+  // and NO `cost` (civitai `src/components/AppBlocks/failureSnapshot.ts`, and the
+  // identical arm in `PageBlockHost.tsx` / `IframeHost.tsx`). Reproducing that
+  // exact shape is the point: a hand-rolled `{ status: 'failed' }` would still go
+  // red on the guard while missing that the real reply is otherwise VALID —
+  // `isValidWorkflowSnapshot` accepts it, which is precisely why it used to sail
+  // through as a resolved estimate.
+  it('estimate() REJECTS on the host failure snapshot instead of resolving a cost-less success (#4159)', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+
+    let estimatePromise!: Promise<unknown>;
+    act(() => {
+      estimatePromise = result.current.estimate({
+        kind: 'textToImage',
+        modelId: 4384,
+        modelVersionId: 128713,
+        additionalResources: [{ modelVersionId: 87153, strength: 1 }],
+        params: { prompt: 'cat' },
+      });
+    });
+    // Own the rejection immediately so the assertion below, not an unhandled
+    // rejection, is what reports a regression.
+    const settled = estimatePromise.then(
+      (v) => ({ ok: true as const, v }),
+      (e) => ({ ok: false as const, e }),
+    );
+
+    const sent = postMessageMock.mock.calls[0][0] as { type: string; payload: { requestId: string } };
+    expect(sent.type).toBe('ESTIMATE_WORKFLOW');
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'ESTIMATE_RESULT',
+            payload: {
+              requestId: sent.payload.requestId,
+              snapshot: {
+                workflowId: 'failed',
+                status: 'failed',
+                error: 'a selected LoRA is not compatible with the checkpoint base model',
+              },
+            },
+          },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+
+    const outcome = await settled;
+    // 1. It rejects. Before the fix this RESOLVED, and the whole defect follows
+    //    from that one fact.
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.e).toBeInstanceOf(WorkflowEstimateError);
+    // 2. The server's own explanation reaches the caller. It was already on the
+    //    wire and was being discarded — that is what made the dead control
+    //    undiagnosable, not merely unusable.
+    expect((outcome.e as Error).message).toBe(
+      'a selected LoRA is not compatible with the checkpoint base model',
+    );
+    // 3. Nothing reachable before is lost: the raw reply rides on the error.
+    expect((outcome.e as WorkflowEstimateError).snapshot.status).toBe('failed');
+    // 4. The hook does NOT advertise a confirmable estimate. `'confirming'` is
+    //    what a block gates its Confirm button on, and reaching it with no cost
+    //    is the "Cost unavailable" dead control in the issue.
+    await waitFor(() => expect(result.current.status).toBe('error'));
+    expect(result.current.status).not.toBe('confirming');
+    expect(result.current.error).toBeInstanceOf(WorkflowEstimateError);
+  });
+
+  // 🔴 THE ASYMMETRY IS LOAD-BEARING, NOT AN OVERSIGHT — pin it. A failure-shaped
+  // snapshot from `submit` is a documented OUTCOME the block recovers from (an
+  // over-budget submit returns `status:'failed'` so the block can open a top-up
+  // flow) rather than an error. Widening the #4159 guard to `submit` would turn
+  // every budget rejection into a thrown error and break that recovery, so this
+  // test fails if someone "tidies up" the two paths into one.
+  it('submit() still RESOLVES a failure snapshot (budget rejection stays an outcome)', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+
+    let submitPromise!: Promise<{ status: string; error?: string }>;
+    act(() => {
+      submitPromise = result.current.submit({
+        kind: 'textToImage',
+        modelId: 7,
+        modelVersionId: 99,
+        params: { prompt: 'cat' },
+      }) as Promise<{ status: string; error?: string }>;
+    });
+
+    const sent = postMessageMock.mock.calls[0][0] as { type: string; payload: { requestId: string } };
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'WORKFLOW_SUBMITTED',
+            payload: {
+              requestId: sent.payload.requestId,
+              snapshot: { workflowId: 'failed', status: 'failed', error: 'insufficient buzz budget' },
+            },
+          },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+
+    const snap = await submitPromise;
+    expect(snap.status).toBe('failed');
+    expect(snap.error).toBe('insufficient buzz budget');
   });
 
   it('submit() sends SUBMIT_WORKFLOW and transitions to polling for in-flight workflows', async () => {
