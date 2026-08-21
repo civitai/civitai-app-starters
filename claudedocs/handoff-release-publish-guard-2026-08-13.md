@@ -92,6 +92,15 @@ already stranded. All 4 Dependabot PRs report `design-system=SUCCESS`.
 
 ## Open investigations — live diagnosis state
 
+🔴 **READ THIS BEFORE TREATING ANYTHING BELOW AS OPEN WORK.** This section mixes *diagnosis kept for
+the record* with *work still to do*, and on 2026-08-21 two entries that had shipped were still
+phrased as open — a "Next probe / fix" (landed in #236) and a "Decision pending … Not done" (decided
+and landed in #244). Both were re-proposed as ranked next steps in a later session and one cheap
+`grep` against `origin/main` refuted each in seconds. Every closed item now carries ~~strikethrough~~
+plus the PR that closed it and the verification command; anything still genuinely live says so
+explicitly. **Re-measure against `origin/main` before working any item here — a ranked backlog decays,
+and a superseded section reads exactly like a live one.**
+
 ### F1 — the FLOOR is reachable from the git-ref reader, but its message was written for the disk reader
 
 - **Symptom:** on a damaged/partial object store, a run hard-fails with `ERROR: no publishable package
@@ -105,11 +114,15 @@ already stranded. All 4 Dependabot PRs report `design-system=SUCCESS`.
 - **Ruled out:** not a correctness hole — the guard's verdict is defensible, only its *diagnosis* is
   wrong. Not exposed by default config: `actions/checkout@v7` in `release.yml` sets no `filter`, so a
   blob-filtered partial clone isn't in play.
-- **Leading hypothesis:** `readPublishablePackagesFromGit()` drops unreadable manifests into `dropped`
-  and returns `{pkgs: []}`, which the floor then reports as "nothing found".
-- **Next probe / fix:** carry `dropped.length` out of the reader and name `source` in the floor message
-  (`scripts/assert-published-versions.mjs:485-490`, `:260-274`). Diagnostics-only. Deliberately booked
-  as a follow-up rather than a seventh round, on the auditor's recommendation.
+- **Leading hypothesis (CONFIRMED, then fixed):** `readPublishablePackagesFromGit()` dropped
+  unreadable manifests into `dropped` and returned `{pkgs: []}`, which the floor reported as
+  "nothing found".
+- ✅ ~~**Next probe / fix:** carry `dropped.length` out of the reader and name `source` in the floor
+  message.~~ **SHIPPED in #236 (`dd7a426`) — this section is retained for the diagnosis, NOT as open
+  work. See "F1 — RESOLVED 2026-08-13" below for what landed.** Verified on `origin/main`
+  2026-08-21: `assert-published-versions.mjs:580` prints
+  ``no publishable package found in ${source} under …`` and `:597` reports
+  ``${dropped.length} of the ${listed} manifest(s)``.
 
 ### `changesets/action@v1` is a moving branch — the guard's whole premise can change with no diff here
 
@@ -118,10 +131,16 @@ already stranded. All 4 Dependabot PRs report `design-system=SUCCESS`.
 - **Why it matters:** everything the guard assumes about *where the version bump lands* — that
   `prepareBranch()` + `pushChanges()` commit it and leave HEAD there — is a claim about that action's
   internals, verified by reading `a45c4d5` (v1.9.0). An upstream change silently invalidates it.
-- **Next probe:** if a release run starts failing here for no local reason, re-read the action's
-  `src/git.ts` `prepareBranch()`/`pushChanges()` **before** believing the guard. Recorded as a PREMISE
-  RISK in the script header. **Decision pending: pin the action to a SHA?** Not done — it has its own
-  upgrade cost and is the operator's call.
+- **Next probe (still live):** if a release run starts failing here for no local reason, re-read the
+  action's `src/git.ts` `prepareBranch()`/`pushChanges()` **before** believing the guard. Recorded as
+  a PREMISE RISK in the script header.
+- ✅ ~~**Decision pending: pin the action to a SHA?** Not done — it has its own upgrade cost and is
+  the operator's call.~~ **DECIDED AND SHIPPED in #244 (`729f328`), after six audit rounds.**
+  `release.yml` pins `changesets/action@a45c4d5… # v1.9.0`, enforced by an exact-sha assertion in
+  `tests/guards/workflow-action-pins.test.mjs` running in the required, `pull_request`-triggered
+  `Starter` job. Verified on `origin/main` 2026-08-21 (1 hit, `grep -F`). **The moving-`v1` premise
+  is CLOSED** — the pin itself changed nothing at the time, since `a45c4d5` *was* the `v1` head, but
+  the ref can no longer move underneath the guard.
 
 ### F1 — RESOLVED 2026-08-13, and the fix took three audit rounds
 
