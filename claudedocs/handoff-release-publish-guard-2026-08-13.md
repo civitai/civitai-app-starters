@@ -220,8 +220,9 @@ probing the first. Kept because the *diagnostic* shape recurs, even though the P
    *after* merge — closed for `changesets/action` by the exact-sha guard, but #245 records the
    `peter-evans` residue, so the class is not fully closed; if ever revisited it must exclude the
    `github-actions` ecosystem); a **`dependabot.yml` ignore** (blocks the notification, not the
-   merge, and suppresses security PRs — #244 round 2); a **monthly batch** (a recurring slot spent
-   maintaining a number with no user-facing meaning).
+   merge — #244 round 2; ⚠️ the "and suppresses security PRs" half of that argument is **FALSE**
+   for a scoped ignore, corrected 2026-08-21, see below); a **monthly batch** (a recurring slot
+   spent maintaining a number with no user-facing meaning).
 2. **🔴 DO NOT make `Starter pins vs published` a required context.** Previously ranked as a next
    step; investigated 2026-08-20 and the answer is no. Two independent reasons:
    - `ci.yml` carries an explicit in-repo policy on the sibling `design-system-drift-guard` job:
@@ -325,7 +326,7 @@ before touching `tests/guards/workflow-action-pins.test.mjs` or the release work
 | round | what it found |
 |---|---|
 | 1 | 🔴 **Architectural miss.** SHA-pinning *hands the ref to Dependabot*. `@v1` was a branch it never touched; a 40-hex sha is exactly what it bumps. `release.yml` has no `pull_request` trigger, so that bump is green on every PR check, merges, then wedges the release lane on v2's renamed inputs. |
-| 2 | 🔴 The fix (a `dependabot.yml` major-`ignore`) was blunter than its own comment claimed — `v1.9.0` is the LAST v1.x tag, so it meant *zero* PRs forever; and `ignore` also suppresses **security** PRs. |
+| 2 | 🔴 The fix (a `dependabot.yml` major-`ignore`) was blunter than its own comment claimed — `v1.9.0` is the LAST v1.x tag, so it meant *zero* PRs forever. ~~and `ignore` also suppresses **security** PRs~~ — **that second half is FALSE, corrected 2026-08-21** (see the correction section below). |
 | 3 | 🔴 The replacement KNOWN LIMITS claimed a wrong version label "is caught". It was not — two mutants survived 5/5, and the file contradicted itself 150 lines down. |
 | 4 | Two false measurements + the guard-the-guard was a *spelled* guard (three one-line disarms survived). |
 | 5 | 🔴 The "more structural" rewrite **lost a property the crude regex had** — `[\s[,]` matches the space in `  # pull_request:`, so a commented-out trigger satisfied it, 6/6 green. |
@@ -336,7 +337,10 @@ group across 1 directory with 3 updates", #175) was Dependabot bumping it across
 the full-line comment above untouched. **The mislabel and the 🔴 are the same mechanism.**
 
 - 🔴 **A Dependabot `ignore` is the wrong instrument for "don't let this bump silently".** It blocks
-  the *notification*, not the *merge*, and it suppresses security PRs. The right shape here was an
+  the *notification*, not the *merge*. (⚠️ This bullet also used to say "and it suppresses security
+  PRs". **That is false for a scoped ignore** — corrected 2026-08-21, see the correction section
+  below. The notification-vs-merge argument is the load-bearing one and is unaffected.) The right
+  shape here was an
   **exact-sha assertion in a test that already runs in a required, `pull_request`-triggered context**
   (`ci.yml`'s `Starter` job runs `pnpm test:guards`). That supplies the PR coverage a `push`-only or
   `schedule`-only workflow structurally lacks. Blocking the merge is what you want; blocking the
@@ -354,6 +358,43 @@ the full-line comment above untouched. **The mislabel and the 🔴 are the same 
   a tree; the comment is about a mechanism.
 - **`enforce_admins: true` + `required_pull_request_reviews: none`** — an audit round asserted
   `required_approving_review_count: 1`; the live read says none. Re-derive protection, don't quote it.
+
+### 🔴 CORRECTION 2026-08-21 — "a Dependabot `ignore` suppresses security PRs" is FALSE for a scoped ignore
+
+This claim was asserted in #244 round 2, repeated in the `PINNED` docblock of
+`tests/guards/workflow-action-pins.test.mjs` **citing GitHub's options reference by name**, carried
+into #241's policy comment, and written into this doc in three places. It is wrong, and the page it
+cited says the opposite.
+
+**Both** GitHub's options reference and the "Controlling which dependencies are updated by
+Dependabot" how-to state verbatim:
+
+> `update-types` only affects *version* updates, not *security updates*.
+
+The ignore proposed in #244 was `update-types: ['version-update:semver-major']` — exactly the scoped
+form that note exempts. It would not have suppressed a single security PR.
+
+**What survives, and what a future maintainer actually needs:**
+
+- An **`update-types`-scoped** ignore leaves security PRs flowing. Safe on this axis.
+- A **`dependency-name`-only or `versions`-scoped** ignore is undocumented on this point, and the
+  how-to's general wording ("…for version updates and security updates") reads as suppressing both.
+- So **do not generalise in either direction — check the scope of the ignore you are writing.**
+
+**The #244 decision is UNCHANGED.** Only one of three supporting arguments was wrong; the two that
+carried it are untouched: `ignore` blocks the *notification* not the *merge* (the architectural
+reason, and the only one that ever mattered), and `v1.9.0` is the last v1.x tag so a major-ignore
+means zero bump PRs for `changesets/action` forever.
+
+🔴 **This also resolves #245 item 3, and refutes its premise.** That item asked whether the npm
+`ignore` entries (`typescript`, `vitest`, `eslint`) should be revisited because "the argument used
+against an actions-ecosystem ignore — that it also suppresses security-update PRs — applies to these
+too." It does not apply, because the argument was never true: **all three are `update-types`-scoped**,
+so they have never suppressed a security PR. There is no asymmetry to resolve. **No change needed.**
+
+**The shape worth keeping:** a claim that cites a source by name reads as *already verified*, and
+that is exactly what stopped anyone re-reading it — through six audit rounds, a PR body, an issue
+comment and three doc revisions. **A citation is a claim too. Open the page.**
 
 ### 🔴 The recurring shape: a query defect that renders identically to a real finding
 
