@@ -9,8 +9,8 @@ arc is the substance of this doc.
 
 ## State now
 
-- **Branch/PR:** nothing of mine open. `origin/main` = `729f328`. Base clone re-synced
-  (`merge --ff-only`); every worktree this session created is removed.
+- **Branch/PR:** nothing of mine open. `origin/main` = `8568f8d` (this doc, via #246). Base clone
+  re-synced (`merge --ff-only`); every worktree this session created is removed.
   ⚠️ `git worktree list` still shows several under `/tmp/wt-*` and `civitai-app-starters-*` —
   `batchd-contract-sdk`, `consentfix`, `longpoll-sdk`, `sdk-inline-docs`, `handoff2`, and ~30 named
   siblings. Those are **other sessions'**, predate this work, and must not be removed (broad-glob
@@ -34,7 +34,23 @@ arc is the substance of this doc.
 | #244 | `729f328` | **`changesets/action` SHA-pinned + exact-sha guard. SIX audit rounds** |
 
 Issues: **#235** filed → auto-closed by #236. **#106** closed → **#241** (rewritten Dependabot
-triage, retitled 2026-08-20). **#245** filed — deferred observations from #244's audit rounds.
+triage, retitled 2026-08-20, **CLOSED 2026-08-21 with the policy decided** — see below). **#245**
+filed — deferred observations from #244's audit rounds, **still open and now the top remaining item**.
+
+### 2026-08-21 — the Dependabot queue is EMPTY, and not one of the four merged
+
+| PR | outcome | how |
+|---|---|---|
+| #110 `@types/node` | **CLOSED by Dependabot** | rebase requested → *"no longer updatable, so this is no longer needed"* |
+| #111 playwright group | **CLOSED by Dependabot** | same |
+| #125 sveltekit group | **CLOSED by Dependabot** | same |
+| #200 happy-dom | **CLOSED by hand** | Dependabot's update path failed on it 3× (auto 08-19T19:18Z, then `rebase`, then `recreate`), identical *"something went wrong"* each time |
+
+Zero open Dependabot PRs remain (confirmed against `repos/…/pulls?state=open` directly — the
+search-backed `gh pr list` still returned `1` for a few seconds after the close, and it was the
+stale one). **Alert counts did not move**: 40 open / 0 critical, unchanged before and after, because
+these PRs never covered the transitive lockfile entries that make up most of the count. That is
+itself the argument for the policy below.
 
 ### Verified — independently, not from the tooling's own report
 
@@ -133,6 +149,36 @@ message now says so, since a REACHABLE promisor would have fetched the blob and 
 have fired. Partial damage (`pkgs` non-empty AND `dropped` non-empty) still exits 0 and WARNs; failing
 there is a verdict change and wants its own decision.
 
+### 🔴 RESOLVED 2026-08-21 — the four Dependabot PRs were never rebased, and "nothing gating them" was wrong
+
+The 2026-08-13 doc said the 4 open Dependabot PRs had "nothing gating them, no auto-merge". **Both
+halves of that were wrong by 2026-08-20**, in two layers, and the second only became visible after
+probing the first. Kept because the *diagnostic* shape recurs, even though the PRs are now gone.
+
+- **All four conflicted.** `gh pr view --json mergeable` said `CONFLICTING/DIRTY` for all of them
+  (polled twice, ~2 min apart — it can return `UNKNOWN` before GitHub computes it).
+  `git merge-tree --write-tree` against `origin/main`, **branching on exit code rather than grepping
+  for `<<<<<<<` markers**, named the conflict on every one: `pnpm-lock.yaml` on all four, plus
+  `packages/civitai-blocks-react/package.json` on #200. Cause was #240's `@vitest/browser` lockfile
+  rewrite (`0121810`), the only lockfile-touching commit on `main` since they were opened.
+- 🔴 **None of them had ever been rebased, so every one of their 13/13-green runs was a claim about
+  a PRE-#240 tree.** Their `updatedAt` bumps at 19:07–19:18Z read exactly like successful rebases
+  and were not — they were GitHub recomputing mergeability after #240 landed. **The discriminator
+  is the bot's own comment history, not `updatedAt`**: #200 carried a `Dependabot tried to update
+  this pull request, but something went wrong` comment, and #110/#111/#125 carried *no bot comments
+  at all*, i.e. no attempt had ever been made.
+- 🔴 **`@dependabot rebase` and `@dependabot recreate` on #200 both reproduced the same bot-side
+  error**, so it was never a conflict Dependabot could resolve. Three failures total.
+- **The control that separated the two hypotheses:** rebasing a *sibling* (#111) distinguished
+  "Dependabot is broken for this repo" from "#200 specifically is stuck". #111 answered within a
+  minute — Dependabot closed it as *"no longer updatable"* — proving the bot path was healthy and
+  #200 was individually wedged. Without that control, three failures on one PR read equally well as
+  a repo-wide outage.
+- **The operational fact that constrained every policy option:** all four contended for one
+  `pnpm-lock.yaml`, so merging any one would have invalidated the other three. There was no batch
+  merge available; it was N sequential recreate-and-wait cycles regardless of policy. (Moot in the
+  end — three were obsolete and closed themselves.)
+
 ### The CI wedge is BOUNDED, not diagnosed — root cause still unknown
 
 - **Symptom:** `pnpm --filter <pkg> exec playwright install --with-deps chromium` hangs with no
@@ -154,17 +200,28 @@ there is a verdict change and wants its own decision.
   failing rather than re-running: `gh run view --repo civitai/civitai-app-starters --job <id> --log`
   on the timed-out attempt, and look for whether apt or the CDN download is the stall. Consider
   splitting `--with-deps` (apt) from the browser download so the two failures are distinguishable.
-  ⚠️ Dependabot **#111 (playwright group)** touches this exact step — expect it to re-roll the dice.
+  ⚠️ ~~Dependabot **#111 (playwright group)** touches this exact step — expect it to re-roll the
+  dice.~~ **Retired 2026-08-21: #111 was closed by Dependabot as no longer updatable**, so that
+  re-roll will not happen. The wedge remains un-diagnosed and the 15m bound is still the only
+  mitigation — the next Playwright bump, whenever it is filed, is the next chance to catch it live.
 
 ## Next steps (ranked)
 
-1. **Decide the Dependabot policy** — the sole remaining substance of **#241**, and it is a decision,
-   not work. 4 open Dependabot PRs (#200 happy-dom, #125 sveltekit group, #111 playwright group,
-   #110 @types/node), nothing gating them, no auto-merge. Options are written into #241: auto-merge
-   patch-level devDependency bumps once CI is green; batch monthly; or declare dev-only alerts
-   accepted risk and stop tracking the count. 🔴 **Re-measure before acting** — #241's title is now
-   deliberately count-free for exactly this reason; the counts live in its body, dated, with a
-   positive control.
+1. ✅ **DONE 2026-08-21 — the Dependabot policy is decided and #241 is CLOSED.**
+   Policy, written into #241 as a comment before closing: **dev-only alerts are accepted risk and
+   the aggregate count is no longer tracked.** Act on an alert only when it is `critical`/`high`
+   AND either (a) it affects one of the five published packages, or (b) it is in tooling that
+   executes PR-branch code in CI (the `@vitest/browser` case, #240). Everything else — transitive
+   lockfile entries, build tooling, starter devDependencies — merges opportunistically or not at
+   all. **No sweep is scheduled and no backlog is owed.**
+
+   Rejected, with reasons recorded in the issue: **auto-merge** (a SHA-pinned action bump is green
+   on every required check because `release.yml` has no `pull_request` trigger, and only wedges
+   *after* merge — closed for `changesets/action` by the exact-sha guard, but #245 records the
+   `peter-evans` residue, so the class is not fully closed; if ever revisited it must exclude the
+   `github-actions` ecosystem); a **`dependabot.yml` ignore** (blocks the notification, not the
+   merge, and suppresses security PRs — #244 round 2); a **monthly batch** (a recurring slot spent
+   maintaining a number with no user-facing meaning).
 2. **🔴 DO NOT make `Starter pins vs published` a required context.** Previously ranked as a next
    step; investigated 2026-08-20 and the answer is no. Two independent reasons:
    - `ci.yml` carries an explicit in-repo policy on the sibling `design-system-drift-guard` job:
@@ -314,6 +371,24 @@ always the same: feed the instrument a case that MUST move the number, and repor
 - A `cd ""`-class trap in a mutation harness: `$$` differs per Bash tool call, so a
   `worktree remove /tmp/wt-$$` cleanup targeted a path that never existed and reported failure while
   the real worktree survived. Resolve the exact path from `worktree list`, never rebuild it.
+- 🔴 **A field that moves for an unrelated reason reads exactly like the event you wanted.** Four
+  PRs' `updatedAt` moved at the moment #240 merged, which was read as "Dependabot rebased them".
+  It had not — GitHub had recomputed mergeability. The discriminator was a *different surface*
+  entirely (the bot's own comment history) and it said the opposite. **Ask which surface would
+  DIFFER between the two mechanisms** before believing the one that is convenient.
+- 🔴 **A settle-poll needs a predicate for the thing you ASKED FOR, not just for terminal state.**
+  A monitor requiring "≥13 checks, none pending" settled on its FIRST poll against the stale
+  pre-rebase run — every check was terminal because they had all finished days earlier. The missing
+  predicate was `head sha != the sha recorded before requesting the rebase`. This is the
+  empty-conclusion false-settle trap with a different field missing: **enumerate what MUST CHANGE,
+  not only what must stop moving.** (Fixed mid-session; the corrected watch also exits on
+  `CLOSED`/`MERGED`, because a bot closing the PR is a terminal outcome a checks-only poll cannot
+  see and would have burned the full timeout on.)
+- 🔴 **A `gh pr list` count can disagree with `gh pr view` on the same PR, and the LIST is the stale
+  one.** Seconds after #200 was closed, `gh pr view` said `CLOSED` while the search-backed
+  `gh pr list --state open` still returned 1. `repos/…/pulls?state=open` (direct, not search-backed)
+  agreed with `pr view`. **When two GitHub reads disagree, prefer the direct object read** — the
+  search index lags writes.
 
 ## How to verify
 
@@ -341,5 +416,13 @@ gh api "repos/$R/branches/main/protection" \
 gh api "repos/$R/dependabot/alerts?state=open&per_page=100" \
   --jq 'group_by(.security_advisory.severity)[]|"\(.[0].security_advisory.severity): \(length)"'
 gh api "repos/$R/dependabot/alerts?per_page=100&severity=critical" \
-  --jq '.[]|"\(.number) \(.state) \(.dependency.package.name)"'   # must list 4 state=fixed rows
+  --jq '.[]|"\(.number) \(.state) \(.dependency.package.name)"'
+#   Expect SIX state=fixed rows: 4x @vitest/browser (closed by #240) + 2x happy-dom (closed
+#   earlier). An empty result means the QUERY is wrong, not the repo clean. Do not expect "4" —
+#   the 2026-08-13 revision of this doc said 4 because its control was scoped to the @vitest
+#   ones only, and a reader checking for exactly 4 would misread a correct control as a failure.
+
+# 5. the Dependabot queue is empty — direct read, NOT the search-backed `gh pr list`
+gh api "repos/$R/pulls?state=open&per_page=100" \
+  --jq '[.[]|select(.user.login=="dependabot[bot]")]|length'      # 0
 ```
