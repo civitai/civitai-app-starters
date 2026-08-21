@@ -16,7 +16,27 @@ import type { ModelSlotContext, WorkflowBody } from '@civitai/app-sdk/blocks';
  * (`{ purchased, newBalance }`). The canonical use is the insufficient-budget
  * path: when `useBuzzWorkflow().submit()` rejects because the cost exceeds the
  * viewer's balance / the token's `buzzBudget`, offer a top-up and retry.
+ *
+ * 🔴 THE PATTERN TO COPY IS THE GUARDING AROUND THAT RETRY, NOT JUST THE CALL.
+ * `openPurchaseModal` is human-gated: it resolves whenever the viewer closes the
+ * modal, which may be many minutes later. So the retry it feeds is a PAID submit
+ * triggered by an event you do not control the timing of. Three consequences,
+ * all handled below and all worth keeping in your own app:
+ *   1. guard re-entry — a second click while the modal is open starts a second
+ *      purchase and a second queued retry;
+ *   2. catch the rejection — an abandoned modal eventually times out, and an
+ *      uncaught rejection leaves your UI stuck in a pending state;
+ *   3. don't auto-spend on stale intent — past a short grace window, ask again
+ *      rather than submitting a paid workflow at nobody in particular.
  */
+/**
+ * How long after opening the purchase modal an AUTOMATIC paid retry still
+ * plainly reflects what the viewer asked for. Past this, the app asks again
+ * instead of spending on their behalf. Tune it for your own flow — the point is
+ * that some bound exists, not this particular number.
+ */
+const AUTO_RETRY_GRACE_MS = 60_000;
+
 export function App() {
   const { ready, context, theme, token } = useBlockContext();
   const { submit } = useBuzzWorkflow();
@@ -26,6 +46,7 @@ export function App() {
 
   const [status, setStatus] = useState<string | null>(null);
   const [needsTopUp, setNeedsTopUp] = useState<{ shortfall?: number } | null>(null);
+  const [topUpPending, setTopUpPending] = useState(false);
 
   const model = ready ? (context as ModelSlotContext) : null;
   const cost = 120; // pretend this is the quoted cost from an estimate
@@ -59,19 +80,45 @@ export function App() {
   }, [model, submit, token.buzzBudget]);
 
   const topUpAndRetry = useCallback(async () => {
+    // IN-FLIGHT GUARD: the modal can stay open for minutes, and every click
+    // during that window would open another one and queue another paid retry.
+    if (topUpPending) return;
     // Suggest at least the shortfall so the modal pre-fills a useful amount.
     const suggested = Math.max(needsTopUp?.shortfall ?? cost, cost);
-    const { purchased, newBalance } = await openPurchaseModal(suggested);
-    if (purchased) {
-      setStatus(
-        `purchased${newBalance != null ? ` (new balance ${newBalance})` : ''} — retrying…`,
-      );
+    const openedAt = Date.now();
+    setTopUpPending(true);
+    try {
+      const { purchased, newBalance } = await openPurchaseModal(suggested);
+      if (!purchased) {
+        setStatus('purchase canceled');
+        return;
+      }
       setNeedsTopUp(null);
+      const bought = `purchased${newBalance != null ? ` (new balance ${newBalance})` : ''}`;
+
+      // 🔴 DON'T AUTO-SPEND ON STALE INTENT. `openPurchaseModal` is human-gated
+      // and waits up to 10 minutes for the viewer to close the modal, so a
+      // resolved promise says the purchase finished — NOT that the viewer is
+      // still at the keyboard expecting a generation. Auto-submitting a paid
+      // workflow after a long-open modal charges someone who wandered off.
+      // Inside the grace window the retry is plainly what they asked for;
+      // outside it, hand the decision back and let them press Generate.
+      if (Date.now() - openedAt > AUTO_RETRY_GRACE_MS) {
+        setStatus(`${bought} — press Generate when you're ready`);
+        return;
+      }
+
+      setStatus(`${bought} — retrying…`);
       await tryGenerate();
-    } else {
-      setStatus('purchase canceled');
+    } catch (err) {
+      // A rejection is reachable (an abandoned modal eventually hits the
+      // human-interaction timeout). Uncaught, it would surface as an unhandled
+      // rejection and leave the button stuck pending.
+      setStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTopUpPending(false);
     }
-  }, [needsTopUp, openPurchaseModal, tryGenerate]);
+  }, [needsTopUp, openPurchaseModal, topUpPending, tryGenerate]);
 
   if (!ready) {
     return (
@@ -100,8 +147,8 @@ export function App() {
             You're {needsTopUp.shortfall && needsTopUp.shortfall > 0 ? `${needsTopUp.shortfall} ` : ''}
             Buzz short. Top up to generate.
           </div>
-          <button onClick={topUpAndRetry} style={buttonStyle}>
-            Buy Buzz & retry
+          <button onClick={topUpAndRetry} disabled={topUpPending} style={buttonStyle}>
+            {topUpPending ? 'Purchase window open…' : 'Buy Buzz & retry'}
           </button>
         </div>
       ) : null}

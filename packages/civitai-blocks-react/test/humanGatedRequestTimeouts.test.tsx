@@ -139,7 +139,17 @@ describe('human-gated requests never inherit the default protocol timeout', () =
     expect(Object.keys(REPLIES).sort()).toEqual([...HUMAN_GATED_REQUEST_TYPES].sort());
   });
 
-  it('keeps the human-interaction bound far above the default', () => {
+  /**
+   * PINNED TO THE EXACT VALUE, not just "bigger than the default". The
+   * behavioural cases below only advance 4x the default (120s), so a mutant that
+   * weakened the bound to, say, 45s or 100s would survive every one of them —
+   * larger, still far too short for a person, and invisible to a floor check.
+   * The identical pin also lives in `useCheckpointPicker.test.tsx`; it is
+   * duplicated here deliberately so the ledger's own suite carries it.
+   */
+  it('pins the human-interaction bound to its exact value', () => {
+    expect(HUMAN_INTERACTION_TIMEOUT_MS).toBe(10 * 60_000);
+    expect(DEFAULT_REQUEST_TIMEOUT_MS).toBe(30_000);
     expect(HUMAN_INTERACTION_TIMEOUT_MS).toBeGreaterThan(DEFAULT_REQUEST_TIMEOUT_MS * 4);
   });
 

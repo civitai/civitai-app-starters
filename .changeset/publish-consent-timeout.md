@@ -26,9 +26,11 @@ Two more changes ride along, both internal:
   rejected mid-checkout, reading to the block as "purchase failed" for a purchase
   that may have succeeded.
 - `PICKER_REQUEST_TIMEOUT_MS` is renamed `HUMAN_INTERACTION_TIMEOUT_MS` and moved
-  to `internal/requestTimeouts.ts` alongside a ledger of every human-gated request
-  type. The old name described the first caller rather than the property that
-  selects the timeout, which is how a consent confirm failed to read as "a
-  picker" to the author who omitted it. **No public API changes** — the constant
-  was never re-exported from the package entry point and the `exports` map has no
-  deep hook paths, so it was unreachable by consumers.
+  to `internal/requestTimeouts.ts`, alongside a TOTAL bucketing of every
+  block→parent message type into `human` / `protocol` / `no-reply`. The old name
+  described the first caller rather than the property that selects the timeout,
+  which is how a consent confirm failed to read as "a picker" to the author who
+  omitted it. **No public API changes** — the constant is not reachable by
+  consumers: it was never re-exported from the package entry point, and the
+  `exports` map declares no deep subpath, so a deep import fails at resolution
+  with `ERR_PACKAGE_PATH_NOT_EXPORTED`.

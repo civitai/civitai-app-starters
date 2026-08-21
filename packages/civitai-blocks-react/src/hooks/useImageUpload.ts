@@ -18,8 +18,15 @@ import { sendTypedRequest, subscribeTyped } from '../internal/transport.js';
  * own (shorter) timeout; this only guards against a verdict that never arrives,
  * resolving RETRYABLE so a later re-call can still pick up a late verdict from
  * the buffer.
+ *
+ * 🔴 ITS OWN LITERAL, DELIBERATELY NOT `HUMAN_INTERACTION_TIMEOUT_MS`, despite
+ * the two being equal today. Nothing about this wait is gated on a person — the
+ * verdict comes from the server-side scan pipeline, and the viewer may well have
+ * closed the upload chrome long before it lands. Aliasing the human-interaction
+ * constant would assert a reason that is not this one, and would couple two
+ * independent bounds so that tuning either silently retunes the other.
  */
-const SCAN_STATUS_TIMEOUT_MS = HUMAN_INTERACTION_TIMEOUT_MS;
+const SCAN_STATUS_TIMEOUT_MS = 10 * 60_000;
 
 /** Options for {@link useImageUpload}. */
 export interface UseImageUploadOptions {
