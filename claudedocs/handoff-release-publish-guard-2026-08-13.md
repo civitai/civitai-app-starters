@@ -9,8 +9,15 @@ arc is the substance of this doc.
 
 ## State now
 
-- **Branch/PR:** nothing of mine open. `origin/main` = `8568f8d` (this doc, via #246). Base clone
-  re-synced (`merge --ff-only`); every worktree this session created is removed.
+- **Branch/PR:** nothing of mine open. Base clone re-synced (`merge --ff-only`); every worktree
+  each session created is removed.
+  🔴 **A pinned `origin/main` sha used to live on this line and it re-rotted on the very next merge**
+  — twice, including once *in the same session that wrote it*. A sha is a fact about a tree, not
+  about this document. **Derive it instead** — and treat the PR table below as the index of what
+  landed, which is the thing that does not go stale:
+  ```
+  git -C <clone> fetch origin && git -C <clone> log --oneline -1 origin/main
+  ```
   ⚠️ `git worktree list` still shows several under `/tmp/wt-*` and `civitai-app-starters-*` —
   `batchd-contract-sdk`, `consentfix`, `longpoll-sdk`, `sdk-inline-docs`, `handoff2`, and ~30 named
   siblings. Those are **other sessions'**, predate this work, and must not be removed (broad-glob
@@ -32,6 +39,24 @@ arc is the substance of this doc.
 | #240 | `0121810` | `@vitest/browser` 4.1.7 → 4.1.11 — **4 criticals → 0** |
 | #242 | `b335c0e` | bounded `playwright install --with-deps` (see the wedge below) |
 | #244 | `729f328` | **`changesets/action` SHA-pinned + exact-sha guard. SIX audit rounds** |
+| #246 | `8568f8d` | this doc — the 2026-08-20 refresh |
+
+### Merged 2026-08-21 — the Dependabot policy session
+
+| PR | sha | what |
+|---|---|---|
+| #248 | `0c071ff` | the policy decision + the queue outcome + 3 traps (`updatedAt` ≠ rebase; a settle-poll needs a predicate for what you ASKED for; `gh pr list` is staler than `gh pr view`) |
+| #254 | `cc5ba78` | 🔴 **corrects a FALSE claim** — a `dependabot.yml` `ignore` does NOT suppress security PRs when `update-types`-scoped. Resolves #245 item 3 by refuting its premise |
+| #255 | `a1e8cba` | retires two sections that had SHIPPED but still read as open (#236's fix, #244's pin decision) — both had been re-proposed as ranked next steps |
+| #256 | `fe160ea` | a closing keyword is not scoped by the words after it — `Resolves #<n> item 3` closed all five items of #245 |
+
+Issues this session: **#241 CLOSED** — Dependabot policy decided (dev-only alerts are accepted risk,
+the aggregate count is no longer tracked; act only on `critical`/`high` affecting a published package
+or CI tooling that executes PR-branch code). **#245 CLOSED** — all five items resolved or accepted,
+item 1 (`peter-evans` label residue) accepted after mutation testing showed the surviving mutation
+only makes a *comment* wrong while the executing sha is exactly asserted. **Dependabot queue: 0 open**
+— #110/#111/#125 self-closed as "no longer updatable", #200 closed by hand after its bot-side update
+failed three times.
 
 Issues: **#235** filed → auto-closed by #236. **#106** closed → **#241** (rewritten Dependabot
 triage, retitled 2026-08-20, **CLOSED 2026-08-21 with the policy decided** — see below). **#245**
