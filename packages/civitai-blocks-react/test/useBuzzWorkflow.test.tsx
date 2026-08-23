@@ -634,6 +634,14 @@ describe('useBuzzWorkflow', () => {
   // near-miss fixture only covers the direction it extends, and the comment
   // claiming "NEVER A PREFIX TEST" read as coverage it did not provide.
   //
+  // 🔴 ONE WIDENING DIRECTION IS DELIBERATELY LEFT UNPINNED: NORMALISATION.
+  // `.trim()` and `.replace(/[^A-Za-z]/g,'')` both SURVIVE this suite, and that
+  // is a considered omission, not a gap someone missed. Neither producer can emit
+  // a padded or punctuated id — the host side is a hardcoded `'failed'` literal
+  // and the server side is an orchestrator GUID — so no reachable input
+  // distinguishes them, and a fixture pinning them would assert against a value
+  // the wire cannot carry. If a producer ever starts normalising ids, pin it then.
+  //
   // 🔴 THE RECURRING BLIND SPOT IN THIS CHANGE IS *WIDENING*. A mutation sweep
   // that only DELETES clauses cannot see a guard made more PERMISSIVE, and this
   // guard has now been widened three distinct ways in review: `status ===

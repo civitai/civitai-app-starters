@@ -59,10 +59,14 @@ what you may say about money**:
   workflow to report**, which is *usually* "nothing was queued, nothing was
   charged" — but a lost response, an in-progress idempotency conflict or a
   transient 5xx also land here, and those may have created and charged a
-  workflow. Retry with the **same** `idempotencyKey`, and don't promise a refund.
-  `src/App.tsx` demonstrates this: it holds one key per logical generation in a
-  ref, re-minting it only on a user-initiated Generate, so the top-up retry
-  collapses onto the same charge instead of reserving twice.
+  workflow. If you retry THIS attempt, reuse the **same** `idempotencyKey` so the
+  retry cannot double-reserve — and don't promise a refund.
+  🔴 **`src/App.tsx` does not demonstrate that**, deliberately: it performs no
+  retry on this arm, and its only retry — after a top-up — is a NEW attempt under
+  preconditions the viewer just paid to change, not a repeat of the old one.
+  Reusing a key there would ask the server to collapse the retry onto the refusal
+  it already returned. Pass a stable key when *your* app retries the same
+  attempt; see `SubmitWorkflowOptions.idempotencyKey`.
 - `'workflow-failed'` — the id was not the host's sentinel, so a workflow
   probably exists. **Buzz may already be committed** (server-side, any resolved
   submit keeps its reservation regardless of snapshot status). Do not tell the

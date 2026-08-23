@@ -551,8 +551,9 @@ interface UseBuzzWorkflowReturn {
    * NEITHER code guarantees nothing was spent. `'exception'` usually means
    * nothing was queued or charged, but a lost response or an in-progress
    * idempotency conflict reaches it too; `'workflow-failed'` means a workflow
-   * exists and its spend may already be committed. Do not tell the viewer it was
-   * free, and on either code prefer reusing the same
+   * PROBABLY exists (the `'whatif'` sentinel lands here too and has nothing to
+   * poll — guard before polling) and its spend may already be committed. Do not
+   * tell the viewer it was free, and on either code prefer reusing the same
    * {@link SubmitWorkflowOptions.idempotencyKey}.
    *
    * 🔴 A BUDGET / SPEND-CAP REJECTION STILL RESOLVES, and that is deliberate. It

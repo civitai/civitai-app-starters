@@ -61,17 +61,6 @@ export function App() {
   // module doc — conflating the two is the bug this pattern exists to avoid.
   const [topUpPending, setTopUpPending] = useState(false);
   const topUpInFlight = useRef(false);
-  // 🔴 ONE IDEMPOTENCY KEY PER LOGICAL GENERATION, REUSED ACROSS ITS RETRIES.
-  // `submit()` mints a FRESH key on every call by default, so the top-up retry
-  // below would be a second logical submit — and on the failure shapes that may
-  // already have reserved Buzz server-side, that is a SECOND reservation. A
-  // stable key collapses a retry onto the same charge.
-  //
-  // It is a REF, and it is re-minted per user-initiated Generate, not once for
-  // the component's lifetime: a single constant key would make the second
-  // Generate click replay the FIRST generation's cached result instead of
-  // running a new one.
-  const genKey = useRef<string>(crypto.randomUUID());
 
   const model = ready ? (context as ModelSlotContext) : null;
   const cost = 120; // pretend this is the quoted cost from an estimate
@@ -87,9 +76,29 @@ export function App() {
       params: { prompt: 'a cozy reading nook', steps: 25 },
     };
     try {
-      // Reuses `genKey.current` — minted fresh by the Generate handler, held
-      // steady across the top-up retry. See the ref's note above.
-      const snap = await submit(body, { idempotencyKey: genKey.current });
+      // 🔴 NO `idempotencyKey` HERE, DELIBERATELY — `submit()` mints a fresh one
+      // per call and that is the SAFE default for this flow.
+      //
+      // Reusing a key exists to stop a RETRY OF THE SAME ATTEMPT double-reserving
+      // after a lost response. The only retry in this example is the post-top-up
+      // one, and that is a NEW attempt under preconditions the viewer just PAID
+      // to change — not a repeat of the old one. Reusing the key there would ask
+      // the server to collapse the retry onto the refusal it already returned;
+      // this package's own docs describe the contract as "a retry with the same
+      // key is collapsed server-side to the first result", with no carve-out for
+      // a priced refusal. If that reading held, the viewer would buy Buzz and the
+      // generation would never run.
+      //
+      // (Measured against the current server, the refusal returns BEFORE the
+      // idempotency claim is taken, so reuse would in fact re-run. We do not
+      // build on that: it is an undocumented ordering, no harness here reads
+      // `idempotencyKey` at all, and this example has no tests — so a change to
+      // that ordering would break the headline flow silently.)
+      //
+      // Where reuse DOES belong: a retry after an `'exception'` /
+      // `'workflow-failed'` / transport failure, none of which this example
+      // retries. See the README.
+      const snap = await submit(body);
       // The host surfaces an under-budget submit as a RESOLVED snapshot with
       // `status: 'failed'`, an `error` string, and the `cost` it declined to
       // charge. That is a workflow OUTCOME — the branch the top-up flow lives on.
@@ -225,15 +234,7 @@ export function App() {
         <strong>{token.buzzBudget ?? 0} Buzz</strong>
       </div>
 
-      <button
-        onClick={() => {
-          // A user-initiated Generate is a NEW logical submit → new key. The
-          // top-up retry deliberately does NOT do this.
-          genKey.current = crypto.randomUUID();
-          void tryGenerate();
-        }}
-        style={buttonStyle}
-      >
+      <button onClick={() => void tryGenerate()} style={buttonStyle}>
         Generate ({cost} Buzz)
       </button>
 

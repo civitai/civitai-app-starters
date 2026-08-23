@@ -84,7 +84,9 @@ asserts the raw string is preserved verbatim on `.snapshot.error` and absent fro
   an **in-progress idempotency CONFLICT**, or a **transient 5xx/408/429/401** on
   `dev:live` all land here. Retry with the SAME `idempotencyKey`, and never
   render "nothing was charged" as a certainty.
-- `'workflow-failed'` — a REAL orchestrator id came back failed and unpriced
+- `'workflow-failed'` — an id that was NOT that sentinel came back failed and
+  unpriced (normally a real orchestrator id; the `'whatif'` sentinel lands here
+  too, and has nothing to poll)
   (`snapshotFromWorkflow` omits `cost` on any non-numeric total). 🔴 **Buzz may
   already be committed**: server-side, *any* resolved submit keeps its
   reservation "regardless of snapshot status", with no refund on a non-throwing
@@ -135,8 +137,8 @@ false for the second arm.
   model a thrown error, which is a different thing.
 - **Mock-host failure snapshots now carry the real `workflowId: 'failed'`
   sentinel** instead of a synthetic `wf_fail_N`. Required for correctness, not
-  tidiness: a made-up id classifies as `'workflow-failed'`, i.e. as a real
-  workflow with possibly-committed spend.
+  tidiness: a made-up id classifies as `'workflow-failed'`, i.e. as a workflow
+  that probably exists, with possibly-committed spend.
 - **Balance / `insufficient` mock paths still RESOLVE** — they model a priced
   refusal, and they now carry the `cost` the real server sends (see the fixture
   fix below).
