@@ -29,12 +29,18 @@ before forwarding.
 🔴 **A budget refusal does NOT reject — it RESOLVES**, as a snapshot with
 `status: 'failed'`, an `error` string, and the `cost` the server declined to
 charge. That resolved shape is your cue to call
-`useBuzzPurchase().openPurchaseModal()` — see the `buzz-purchase` example. What
-DOES reject (since `@civitai/blocks-react@0.44.0`) is a submit that **errored**:
-a failure-shaped reply with **no `cost`**, meaning nothing was queued and nothing
-was charged. `cost` presence is the discriminator — `status` is `'failed'` for
-both. Handle both: a top-up cannot fix an errored submit, and a retry cannot fix
-an empty wallet. See civitai/civitai-app-starters#251.
+`useBuzzPurchase().openPurchaseModal()` — see the `buzz-purchase` example. Note
+that affordability is only *some* of the priced refusals: the per-app velocity
+limit, the per-app aggregate daily cap, a transient "unavailable" deny and a
+missing price quote all resolve the same way and buying Buzz fixes none of them.
+
+What DOES reject (since `@civitai/blocks-react@0.44.0`) is a failure-shaped reply
+with **no `cost`** — `cost` presence is the discriminator, since `status` is
+`'failed'` for all of them. `err.code` then says whether money moved:
+`'exception'` means nothing was queued or charged (retry is safe);
+`'workflow-failed'` means a real workflow exists and **spend may already be
+committed** — poll `err.snapshot.workflowId` rather than retrying blindly. See
+civitai/civitai-app-starters#251.
 
 ## GOTCHA #59 — the estimate must match submit exactly
 

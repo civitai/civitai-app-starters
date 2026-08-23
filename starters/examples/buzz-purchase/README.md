@@ -37,18 +37,33 @@ if (snap.status === 'failed' && /insufficient|budget|not enough/i.test(snap.erro
 }
 ```
 
-The exact error wording isn't a stable contract — match loosely and fall back to
-showing the raw message.
+The exact error wording isn't a stable contract — match loosely. 🔴 **But do not
+render `snap.error` to a viewer**: it is server-authored and unsanitised (raw
+upstream text, database constraint names among it, can reach it). Log it and show
+copy your app owns, as `src/App.tsx` does.
 
-🔴 **That is not the only failure shape, and the other one throws.** A submit
-that ERRORED server-side arrives as a failure-shaped reply with **no `cost`**,
-and since `@civitai/blocks-react@0.44.0` `submit()` **rejects** it with a
-`WorkflowSubmitError` rather than resolving a workflow that was never queued
-(civitai/civitai-app-starters#251). `cost` presence is what tells the two apart —
-`status` cannot, since both are `'failed'`. Keep both paths: a top-up cannot fix
-an errored submit, and a retry cannot fix an empty wallet. See `src/App.tsx`,
-which handles the priced refusal on the resolved branch and the errored submit in
-its `catch`.
+🔴 **Not every resolved `'failed'` is about the wallet.** Only the per-call
+`buzzBudget` gate and the per-user daily Buzz cap are affordability. The per-app
+**velocity** limit, the per-app **aggregate daily** cap, a fail-closed
+**"temporarily unavailable"** deny and a **missing price quote** are priced,
+resolving outcomes too — and buying Buzz fixes none of them. That is what the
+`isInsufficientFunds` match is for: it keeps the top-up CTA off the others.
+
+🔴 **And failure-shaped replies with no `cost` throw.** Since
+`@civitai/blocks-react@0.44.0` `submit()` **rejects** those with a
+`WorkflowSubmitError` (civitai/civitai-app-starters#251), and **`err.code` decides
+what you may say about money**:
+
+- `'exception'` — the host synthesised the reply in a `catch`. Nothing was queued,
+  nothing was charged; a retry is safe.
+- `'workflow-failed'` — a real workflow id came back failed and unpriced. **Buzz
+  may already be committed** (server-side, any resolved submit keeps its
+  reservation regardless of snapshot status). Do not tell the viewer it was free,
+  and do not auto-retry — that mints a fresh idempotency key and reserves a second
+  time. Poll `err.snapshot.workflowId` instead.
+
+Keep all three paths. See `src/App.tsx`, which handles the priced refusal on the
+resolved branch and branches on `err.code` in its `catch`.
 
 > After a purchase the host pushes a fresh `TOKEN_REFRESH` with the updated
 > `buzzBudget`, so the retry sees the new headroom. The harness simulates this.

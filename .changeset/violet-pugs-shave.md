@@ -29,7 +29,12 @@ fixed for `estimate`.
 not incidental: **every** budget/cap exit on the server's submit path attaches
 the quote it refused (the per-call `buzzBudget` gate, the per-user daily Buzz
 cap, the per-app aggregate and velocity caps, the dev-tunnel session cap — on all
-three body kinds, 14 sites in total), while `failureSnapshot(err)` never does.
+three body kinds, **13 sites** in total), while `failureSnapshot(err)` never does.
+
+🔴 **Not every priced refusal is affordability.** The per-app velocity limit, the
+per-app aggregate daily cap, a fail-closed "temporarily unavailable" deny and a
+missing price quote are priced, resolving outcomes that buying Buzz cannot fix.
+Docs and examples branch before offering a top-up.
 
 ## The change
 
@@ -64,6 +69,30 @@ built from a realistic `Unique constraint failed: Key (email)=(…)` fixture
 asserts the raw string is preserved verbatim on `.snapshot.error` and absent from
 `message` fragment by fragment.
 
+## Two codes, because they differ on whether MONEY MOVED
+
+`err.code` is the branch target and it is **not** a formality:
+
+- `'exception'` — the host synthesised the reply in a `catch`
+  (`failureSnapshot(err)`, which hardcodes `workflowId: 'failed'`). Nothing was
+  queued, nothing was charged; a retry is safe.
+- `'workflow-failed'` — a REAL orchestrator id came back failed and unpriced
+  (`snapshotFromWorkflow` omits `cost` on any non-numeric total). 🔴 **Buzz may
+  already be committed**: server-side, *any* resolved submit keeps its
+  reservation "regardless of snapshot status", with no refund on a non-throwing
+  failed snapshot, and `finalizeGenIdempotency` runs on that path. So this arm
+  must not tell the viewer it was free, and must not auto-retry — `submit()`
+  mints a fresh `idempotencyKey` per call, so a blind retry is a SECOND
+  reservation. Read `err.snapshot.workflowId` and poll it.
+
+Classification is **fail-safe**: any id that is not the host's `'failed'`
+sentinel falls to `'workflow-failed'`, so an unrecognised shape never buys the
+reassuring "nothing was charged" reading.
+
+`err.message` is one template for both codes and deliberately makes **no claim
+about money** — an earlier draft read "submit did not queue a workflow", which is
+false for the second arm.
+
 ## Behaviour changes to know before upgrading
 
 - **Moderator review preview now rejects on submit**, as it already does on
@@ -71,13 +100,22 @@ asserts the raw string is preserved verbatim on `.snapshot.error` and absent fro
   `failureSnapshot('not available in review preview')`. A block without a `catch`
   turns a reviewer's first click into an unhandled rejection.
 - **Mock-host submit knobs that simulate a THROWN server error now reject** —
-  `generation.failNext`, `generation.failRate`, `failMode: 'some' | 'all'`, and
-  `disallowedAccountTypes`. They emit the `failureSnapshot(err)` shape (no
-  `cost`) because that is what the real backend produces: it has no generic
-  submit-time failure *outcome*; every priced refusal is a budget/cap exit.
-  Adding a cost to keep them resolving would make the mock simulate a reply the
-  server never sends. The reason is unchanged and still fully recoverable, on
+  `generation.failNext`, `generation.failRate`, `failMode: 'some'`, and
+  `disallowedAccountTypes`. They emit the host's `failureSnapshot(err)` shape
+  (the `'failed'` sentinel id, no `cost`), so they reject with
+  `code: 'exception'`. The reason is unchanged and still fully recoverable, on
   `err.snapshot.error`.
+  (`failMode: 'all'` / `'insufficient'` are the *priced* arm and still RESOLVE.)
+  🔴 **Correction to an earlier draft of these notes**: the claim that "the real
+  backend has no generic submit-time failure outcome" was **wrong**. It does have
+  generic transient failures — a fail-closed `unavailable` deny and a
+  missing-price-quote exit — but it returns them as **priced, resolving**
+  snapshots. That is a shape the mock does not yet simulate; the knobs above
+  model a thrown error, which is a different thing.
+- **Mock-host failure snapshots now carry the real `workflowId: 'failed'`
+  sentinel** instead of a synthetic `wf_fail_N`. Required for correctness, not
+  tidiness: a made-up id classifies as `'workflow-failed'`, i.e. as a real
+  workflow with possibly-committed spend.
 - **Balance / `insufficient` mock paths still RESOLVE** — they model a priced
   refusal, and they now carry the `cost` the real server sends (see the fixture
   fix below).
@@ -109,11 +147,12 @@ asserts the raw string is preserved verbatim on `.snapshot.error` and absent fro
 The budget-rejection arm. It resolves, exactly as before, and the recovery flow
 blocks depend on is untouched.
 
-## Known residual case, stated honestly
+## Correction to an earlier draft
 
-A **real** orchestrator workflow that comes back already `'failed'` at submit
-time with no price also rejects. Its id is not lost — it rides on
-`err.snapshot.workflowId`, so a caller that wants to `watch()` it still can.
-There is no field on the wire that separates that from a `failureSnapshot(err)`,
-and treating an unpriced failure as an error is the fail-closed reading on a
-money path.
+An earlier draft of these notes said a real failed workflow was indistinguishable
+from a `failureSnapshot(err)` and called it an accepted residual. **That was
+wrong.** The wire does separate them: every host-synthesised failure goes through
+`failureSnapshot()`, which hardcodes `workflowId: 'failed'`, while
+`snapshotFromWorkflow` returns the real `workflow.id`. That is what
+`'workflow-failed'` is keyed on, and it is why the money language can now be
+correct per code instead of uniformly optimistic.

@@ -5,6 +5,7 @@ import {
   useBlockResize,
   useBuzzPurchase,
   useBuzzWorkflow,
+  WorkflowSubmitError,
 } from '@civitai/blocks-react';
 import type { ModelSlotContext, WorkflowBody } from '@civitai/app-sdk/blocks';
 
@@ -14,8 +15,20 @@ import type { ModelSlotContext, WorkflowBody } from '@civitai/app-sdk/blocks';
  * `useBuzzPurchase().openPurchaseModal()` asks the host to open the Civitai
  * Buzz purchase modal and resolves when the user closes it
  * (`{ purchased, newBalance }`). The canonical use is the insufficient-budget
- * path: when `useBuzzWorkflow().submit()` rejects because the cost exceeds the
- * viewer's balance / the token's `buzzBudget`, offer a top-up and retry.
+ * path.
+ *
+ * 🔴 THAT PATH DOES **NOT** REJECT — IT RESOLVES. When the cost exceeds the
+ * viewer's balance / the token's `buzzBudget`, `useBuzzWorkflow().submit()`
+ * RESOLVES a snapshot with `status: 'failed'`, an `error` string and the `cost`
+ * the server declined to charge. That resolved shape is the cue to offer a
+ * top-up and retry. A `catch` is the WRONG place to sell Buzz: since
+ * `@civitai/blocks-react@0.44.0` a rejection means the submit had no usable
+ * outcome, which buying Buzz cannot fix (civitai/civitai-app-starters#251).
+ *
+ * 🔴 AND NOT EVERY RESOLVED `'failed'` IS ABOUT THE WALLET — the per-app velocity
+ * limit, the per-app aggregate daily cap, a transient "unavailable" deny and a
+ * missing price quote all arrive priced and resolving too. `isInsufficientFunds`
+ * below is what keeps the top-up CTA off those.
  *
  * 🔴 THE PATTERN TO COPY IS THE GUARDING AROUND THAT RETRY, NOT JUST THE CALL.
  * `openPurchaseModal` is human-gated — it waits up to 10 minutes for the viewer
@@ -68,23 +81,48 @@ export function App() {
       // `status: 'failed'`, an `error` string, and the `cost` it declined to
       // charge. That is a workflow OUTCOME — the branch the top-up flow lives on.
       //
-      // 🔴 IT IS NOT THE ONLY FAILURE SHAPE, AND THE OTHER ONE THROWS. A submit
-      // that ERRORED server-side arrives as a failure-shaped reply with NO
-      // `cost`, and since @civitai/blocks-react 0.44.0 `submit()` REJECTS that
-      // with a `WorkflowSubmitError` rather than resolving a workflow that was
-      // never queued (civitai/civitai-app-starters#251). It lands in the `catch`
-      // below, alongside transport-level failures (timeout, malformed reply).
-      // Keep both paths: a top-up cannot fix an errored submit, and a retry
-      // cannot fix an empty wallet.
+      // 🔴 IT IS NOT THE ONLY FAILURE SHAPE, AND THE OTHERS THROW. A
+      // failure-shaped reply with NO `cost` is not a usable outcome, and since
+      // @civitai/blocks-react 0.44.0 `submit()` REJECTS it with a
+      // `WorkflowSubmitError` (civitai/civitai-app-starters#251). It lands in the
+      // `catch` below, alongside transport-level failures (timeout, malformed
+      // reply) — and there `err.code` decides the copy, because `'exception'`
+      // charged nothing while `'workflow-failed'` may already have.
+      // Keep both paths: a top-up cannot fix a failed submit, and a retry cannot
+      // fix an empty wallet.
       if (snap.status === 'failed' && isInsufficientFunds(snap.error ?? '')) {
         setNeedsTopUp({ shortfall: cost - (token.buzzBudget ?? 0) });
       } else if (snap.status === 'failed') {
-        setStatus(snap.error ?? 'generation failed');
+        // 🔴 A PRICED OUTCOME THAT IS *NOT* AFFORDABILITY — an app velocity or
+        // aggregate-spend cap, a transient deny, a missing quote. No top-up CTA,
+        // and NO raw server text on screen: `snap.error` is server-authored and
+        // unsanitised (raw upstream text, database constraint names among it,
+        // can reach it). Log it; render copy this app owns.
+        console.warn('[buzz-purchase] submit refused:', snap.error);
+        setStatus('This generation could not be run right now. Please try again shortly.');
       } else {
         setStatus(`submitted: ${snap.workflowId} (${snap.status})`);
       }
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : String(err));
+      // 🔴 NEVER RENDER `err.message` — it is DEVELOPER-facing, not localised,
+      // and its wording is not a contract. Two apps shipped that sentence to end
+      // users on the estimate path (civitai/civitai-app-starters#253); this is
+      // the same mistake one path over. Branch on `err.code` for viewer copy.
+      if (err instanceof WorkflowSubmitError) {
+        console.warn('[buzz-purchase] submit failed:', err.code, err.message, err.snapshot.error);
+        setStatus(
+          err.code === 'workflow-failed'
+            ? // A real workflow exists and Buzz may ALREADY be committed. Do not
+              // claim it was free, and do not auto-retry — that would mint a new
+              // idempotency key and reserve a second time.
+              'The generation was submitted but failed. Check your generation history before retrying.'
+            : // 'exception' — nothing queued, nothing charged. Retrying is safe.
+              'Could not start the generation. Please try again.',
+        );
+        return;
+      }
+      console.warn('[buzz-purchase] submit error:', err);
+      setStatus('Could not start the generation. Please try again.');
     }
   }, [model, submit, token.buzzBudget]);
 
@@ -131,7 +169,12 @@ export function App() {
       // A rejection is reachable (an abandoned modal eventually hits the
       // human-interaction timeout). Uncaught, it would surface as an unhandled
       // rejection and leave the button stuck pending.
-      setStatus(err instanceof Error ? err.message : String(err));
+      //
+      // 🔴 SAME RULE AS `tryGenerate` — log the developer-facing text, render
+      // copy this app owns. `err.message` here is an SDK/transport string, not
+      // localised viewer copy (civitai/civitai-app-starters#253).
+      console.warn('[buzz-purchase] top-up flow error:', err);
+      setStatus('The purchase could not be completed. Please try again.');
     } finally {
       topUpInFlight.current = false;
       setTopUpPending(false);

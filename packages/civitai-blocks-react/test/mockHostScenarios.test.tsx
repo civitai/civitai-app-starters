@@ -220,6 +220,10 @@ describe('createMockHost — generation scenario', () => {
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
     const err = await submitExpectingRejection(result);
+    // 🔴 `'exception'`, NOT `'workflow-failed'` — the knob emits the host's
+    // `'failed'` sentinel id, so the SDK correctly reports that nothing was
+    // queued and nothing was charged. A synthetic id here would flip this to the
+    // possibly-charged arm and teach the opposite lesson.
     expect(err.code).toBe('exception');
     expect(err.snapshot.error).toBe('prompt audit down');
     // The real `failureSnapshot(err)` shape: the 'failed' sentinel id and NO
