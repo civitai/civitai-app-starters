@@ -24,8 +24,26 @@ poll(workflowId)→ status 'polling' → 'done'             (CALLER loops on a b
 
 All three go through the host's postMessage bridge — the block never holds an
 orchestrator token. The host enforces the budget (`cost ≤ token.buzzBudget`)
-before forwarding; `submit` rejects if the host refuses (that's your cue to call
-`useBuzzPurchase().openPurchaseModal()` — see the `buzz-purchase` example).
+before forwarding.
+
+🔴 **A budget refusal does NOT reject — it RESOLVES**, as a snapshot with
+`status: 'failed'`, an `error` string, and the `cost` the server declined to
+charge. That resolved shape is your cue to call
+`useBuzzPurchase().openPurchaseModal()` — see the `buzz-purchase` example. Note
+that affordability is only *some* of the priced refusals: the per-app velocity
+limit, the per-app aggregate daily cap, a transient "unavailable" deny and a
+missing price quote all resolve the same way and buying Buzz fixes none of them.
+
+What DOES reject (since `@civitai/blocks-react@0.44.0`) is a failure-shaped reply
+with **no `cost`** — `cost` presence is the discriminator, since `status` is
+`'failed'` for all of them. `err.code` then says how much you may assume about money — and **neither code
+guarantees nothing was spent**. `'exception'` means the host had no workflow to
+report (usually nothing queued, but a lost response or an in-progress idempotency
+conflict also lands there, so retry with the SAME `idempotencyKey`);
+`'workflow-failed'` means a workflow probably exists and **spend may already be
+committed** — poll `err.snapshot.workflowId` rather than retrying blindly, after
+checking it is not the `'whatif'` non-workflow sentinel (there is nothing behind
+that one to poll). See civitai/civitai-app-starters#251.
 
 ## GOTCHA #59 — the estimate must match submit exactly
 

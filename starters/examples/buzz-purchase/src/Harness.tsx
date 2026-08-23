@@ -71,13 +71,31 @@ export function Harness({ children }: { children: ReactNode }) {
 
         if (typed.type === 'SUBMIT_WORKFLOW') {
           if (buzzBudget < 120) {
-            // The host rejects under-budget submits. The hook surfaces the
-            // ESTIMATE_RESULT/WORKFLOW_SUBMITTED `error` as a thrown Error.
+            // The host refuses an over-budget submit as a RESOLVED failure-shaped
+            // snapshot — a workflow OUTCOME the block recovers from, not a throw.
+            //
+            // 🔴 TWO FIELDS HERE ARE LOAD-BEARING; THIS FIXTURE HAD BOTH WRONG.
+            //   - `workflowId` MUST be non-empty. The SDK's inbound validator
+            //     DROPS any snapshot with an empty id, so the reply never
+            //     resolved the pending request and this demo's insufficient path
+            //     hung to the transport's 120s timeout instead of showing the
+            //     top-up CTA. `'failed'` is the sentinel the real host uses.
+            //   - `cost` MUST be present. A budget refusal quotes the price it
+            //     declined to charge, and since
+            //     civitai/civitai-app-starters#251 that is exactly what tells a
+            //     priced REFUSAL apart from an errored submit: a failure-shaped
+            //     reply with no price makes `submit()` REJECT, which would route
+            //     this demo into its `catch` and never show the top-up CTA.
             dispatchToBlock({
               type: 'WORKFLOW_SUBMITTED',
               payload: {
                 requestId,
-                snapshot: { workflowId: '', status: 'failed', error: 'insufficient Buzz budget' },
+                snapshot: {
+                  workflowId: 'failed',
+                  status: 'failed',
+                  cost: { total: 120 },
+                  error: 'insufficient Buzz budget',
+                },
               },
             });
           } else {

@@ -237,8 +237,44 @@ try {
   showError(estimateFailureMessage(err));
 }
 if (priced) {
-  const snap = await submit(body); // status 'submitting' → 'polling'; returns a workflowId
-  await poll(snap.workflowId);     // you loop this on a backoff until terminal
+  // 🔴 submit() REJECTS when the reply carries no usable workflow outcome. A
+  // priced refusal is different — it RESOLVES.
+  try {
+    const snap = await submit(body); // status 'submitting' → 'polling'
+    if (snap.status === 'failed') {
+      // 🔴 A RESOLVED `failed` IS A PRICED SERVER OUTCOME — and only SOME of
+      // them are about the viewer's wallet. Affordability (per-call budget, the
+      // per-user daily Buzz cap) IS fixable by buying Buzz; the per-app velocity
+      // limit, the per-app aggregate daily cap, a fail-closed "temporarily
+      // unavailable" deny and a missing price quote are NOT. Selling Buzz for
+      // one of those takes money and fixes nothing, so branch before you offer.
+      showError(submitOutcomeMessage(snap)); // YOUR app owns this copy
+    } else {
+      await poll(snap.workflowId);   // you loop this on a backoff until terminal
+    }
+  } catch (err) {
+    if (!(err instanceof WorkflowSubmitError)) throw err;
+    // Log both for the developer; render neither.
+    logForDebugging(err.message, err.snapshot.error);
+    // 🔴 TWO SEPARATE QUESTIONS — DO NOT CONJOIN THEM. `code` decides what you may
+    // say about MONEY; the id decides only whether there is something to POLL.
+    // Folding the id test into the `code` test sends a 'workflow-failed' reply
+    // whose id is 'whatif' into the reassuring arm — the exact blind-retry
+    // invitation this whole guard exists to remove.
+    if (err.code === 'workflow-failed') {
+      // 🔴 Spend MAY ALREADY BE COMMITTED. Do not tell the viewer it was free,
+      // and do not retry blindly — a retry mints a fresh idempotency key, i.e. a
+      // SECOND reservation.
+      showError('The generation may have started but did not complete. Check your history.');
+      // Only NOW ask about pollability: 'whatif' is a non-workflow sentinel.
+      if (err.snapshot.workflowId !== 'whatif') await poll(err.snapshot.workflowId);
+    } else {
+      // 🔴 'exception' means the host had no workflow to report — USUALLY nothing
+      // was queued, but a lost response or an in-progress idempotency conflict
+      // reaches this arm too. Retry with the SAME idempotencyKey, not a fresh one.
+      showError('Could not start the generation. Please try again.');
+    }
+  }
 }
 ```
 
@@ -252,10 +288,55 @@ if (priced) {
 - The hook does **not** auto-poll. After `submit` flips status to `'polling'`,
   the **caller** runs a `useEffect` that calls `poll(workflowId)` on a backoff
   until the snapshot is terminal (`succeeded | failed | canceled | expired`).
-- An over-budget / rejected **submit** comes back as a **resolved** snapshot with
-  `status: 'failed'` + an `error` string — the transport resolves the reply, it
-  doesn't throw. Check `snap.status`, not just `try/catch`.
-- **`estimate` is the exception to that rule** (`@civitai/blocks-react@0.43.0+`).
+- A **priced** submit refusal comes back as a **resolved** snapshot with
+  `status: 'failed'`, an `error` string, **and a numeric `cost.total`** — the
+  price the server refused to charge. That is a workflow *outcome*, not an error.
+  Check `snap.status`, not just `try/catch`.
+  🔴 **Not all of them are affordability.** Only the per-call `buzzBudget` gate
+  and the per-user daily Buzz cap are about the wallet. The per-app **velocity**
+  limit, the per-app **aggregate daily** cap, a fail-closed **"temporarily
+  unavailable"** deny and a **missing price quote** are priced outcomes too, and
+  buying Buzz fixes none of them. Branch before you offer a top-up.
+- **`submit` REJECTS when the reply carries no usable workflow outcome**
+  (`@civitai/blocks-react@0.44.0+`). Every failure-shaped reply reports
+  `status: 'failed'`, so `status` cannot tell them apart — **`cost` presence
+  decides resolve-vs-reject, and `workflowId` decides which rejection**:
+  - **priced refusal** → carries `cost`. **Resolves**, as above.
+  - **a reply the host built itself** (`failureSnapshot(err)`, which stamps the
+    literal `workflowId: 'failed'` — from a `catch` or a short-circuit such as
+    the moderator-review nack) → no `cost`. **Rejects** with
+    `err.code === 'exception'`, which means *the host had no workflow to report*.
+    🔴 **Not the same as "nothing happened."** Usually nothing was queued or
+    charged and a retry is fine, but a **lost response**, an **in-progress
+    idempotency conflict**, or a **transient 5xx/408/429/401** also land here,
+    and a workflow may have been created and charged. Prefer reusing the same
+    `idempotencyKey` on retry, and don't render "nothing was charged" as fact.
+  - **a failed, unpriced reply whose id is NOT that sentinel** (normally a
+    genuine orchestrator id) → no `cost`. **Rejects** with
+    `err.code === 'workflow-failed'`.
+    🔴 **Money may already be committed.** Server-side, *any* resolved submit
+    keeps its Buzz reservation "regardless of snapshot status", with no refund on
+    a non-throwing failed snapshot. So do not tell the viewer it was free, and do
+    not retry blindly — `submit()` mints a fresh `idempotencyKey` per call, so an
+    automatic retry is a second reservation. Read `err.snapshot.workflowId` (a
+    usually-pollable id) and `watch`/`poll` it to learn the workflow's actual
+    fate — guarding with `err.snapshot.workflowId !== 'whatif'` first, since the
+    server treats both `'failed'` and `'whatif'` as non-workflow sentinels.
+
+  Before that version everything resolved, so a block branching on
+  `snap.status === 'failed'` could not tell "you can't afford this" from "the
+  request failed", and one gating a money control on
+  `typeof snap.cost?.total === 'number'` saw the same dead-control shape
+  civitai/civitai#4159 describes. An ordinary in-flight reply
+  (`{ status: 'pending' }`) is cost-less too and still resolves — and so are
+  cost-less `succeeded` / `canceled` / `expired` replies. Only a *failure-shaped*
+  reply with no price rejects. `err.message` is a generic developer-facing
+  constant that makes **no claim about money** (the two codes differ on that) and
+  the server's words stay on `err.snapshot.error`, exactly as on
+  `WorkflowEstimateError` below. Note this also fires in **moderator review
+  preview**. To exercise your `catch` locally, set the mock host's
+  `generation.failSubmitException: true`.
+- **`estimate` follows the same rule for a different question** (`@civitai/blocks-react@0.43.0+`).
   It **rejects** with a `WorkflowEstimateError` when the reply carries no usable
   price, rather than resolving a snapshot with no `cost`. Two things produce
   that, and `err.code` tells them apart: `'failed'` (the estimate errored

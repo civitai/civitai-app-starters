@@ -1,7 +1,11 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useBuzzWorkflow, WorkflowEstimateError } from '../src/hooks/useBuzzWorkflow.js';
+import {
+  useBuzzWorkflow,
+  WorkflowEstimateError,
+  WorkflowSubmitError,
+} from '../src/hooks/useBuzzWorkflow.js';
 import { useBuzzBalance } from '../src/hooks/useBuzzBalance.js';
 import { useAppStorage } from '../src/hooks/useAppStorage.js';
 import { getTransport } from '../src/internal/singleton.js';
@@ -44,6 +48,30 @@ async function runGen(
     if (snap.status === 'succeeded' || snap.status === 'failed') break;
   }
   return snap;
+}
+
+/**
+ * Submit once and expect a REJECTION — the civitai/civitai-app-starters#251 arm.
+ * A failure-shaped reply with NO price means the submit ERRORED (the host's
+ * `failureSnapshot(err)`), so `submit()` rejects rather than handing back a
+ * "workflow" that was never queued. Returns the error so the caller can read
+ * `.code` / `.snapshot.error`.
+ *
+ * A RESOLVE is caught here too, and surfaces as the `toBeInstanceOf` assertion
+ * failing rather than as a silent pass on the wrong shape.
+ */
+async function submitExpectingRejection(result: {
+  current: ReturnType<typeof useBuzzWorkflow>;
+}): Promise<WorkflowSubmitError> {
+  let outcome: unknown;
+  await act(async () => {
+    outcome = await result.current.submit(BODY).then(
+      (snap) => ({ unexpectedlyResolved: snap }),
+      (err) => err,
+    );
+  });
+  expect(outcome).toBeInstanceOf(WorkflowSubmitError);
+  return outcome as WorkflowSubmitError;
 }
 
 describe('createMockHost — generation scenario', () => {
@@ -149,25 +177,86 @@ describe('createMockHost — generation scenario', () => {
     expect(result.current.status).toBe('confirming');
   });
 
-  it('failNext fails the first N submits then succeeds', async () => {
+  // 🔴 `failNext` / `failRate` / `failMode:'some'` simulate an ERRORED submit,
+  // not a priced refusal — the mock emits the host's `failureSnapshot(err)`
+  // shape (no `cost`), because the real backend has no generic submit-time
+  // failure OUTCOME. Since civitai/civitai-app-starters#251 that arm REJECTS.
+  // The reason is unchanged and fully recoverable, on `.snapshot.error`.
+  it('failNext rejects the first N submits then succeeds', async () => {
     uninstall = createMockHost({ generation: { failNext: 1 }, pollsUntilDone: 1 }).install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
-    const first = await runGen(result, 1);
-    expect(first.status).toBe('failed');
-    expect(first.error).toMatch(/simulated/i);
+    const err = await submitExpectingRejection(result);
+    expect(err.code).toBe('exception');
+    expect(err.snapshot.error).toMatch(/simulated/i);
+    // The reason is on the snapshot, never on the developer-facing message.
+    expect(err.message).not.toMatch(/simulated/i);
 
     const second = await runGen(result, 1);
     expect(second.status).toBe('succeeded');
   });
 
-  it('failRate 1 always fails; 0 never fails', async () => {
+  it('failRate 1 always rejects; 0 never fails', async () => {
     uninstall = createMockHost({ generation: { failRate: 1 }, pollsUntilDone: 1 }).install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+    const err = await submitExpectingRejection(result);
+    expect(err.code).toBe('exception');
+  });
+
+  // 🔴 THE PRODUCER THE OTHER SUBMIT KNOBS DO NOT SIMULATE (#251). Until this
+  // knob existed, an errored submit was unreachable in every local harness —
+  // the balance / `insufficient` knobs model a priced budget REJECTION, which
+  // resolves — so a block author testing "what if submit goes wrong" only ever
+  // exercised the arm that never throws. Driven end-to-end through the real hook
+  // + transport, not stubbed.
+  it('failSubmitException rejects with the host failureSnapshot shape (#251)', async () => {
+    uninstall = createMockHost({
+      generation: { failSubmitException: true, failSubmitExceptionMessage: 'prompt audit down' },
+      pollsUntilDone: 1,
+    }).install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    const err = await submitExpectingRejection(result);
+    // 🔴 `'exception'`, NOT `'workflow-failed'` — the knob emits the host's
+    // `'failed'` sentinel id, so the SDK correctly reports that the host had no
+    // workflow to report. (That code does not prove nothing was charged in
+    // production, but in THIS mock nothing was: the knob short-circuits before
+    // any simulated spend.) A synthetic id here would flip this to the
+    // possibly-charged arm and teach the opposite lesson.
+    expect(err.code).toBe('exception');
+    expect(err.snapshot.error).toBe('prompt audit down');
+    // The real `failureSnapshot(err)` shape: the 'failed' sentinel id and NO
+    // price. The missing cost is the whole discriminator — assert it directly so
+    // a mock that starts emitting one cannot pass.
+    expect(err.snapshot.workflowId).toBe('failed');
+    expect(err.snapshot.cost).toBeUndefined();
+    expect(result.current.status).toBe('error');
+  });
+
+  it('failSubmitException defaults its message and pre-empts a sufficient balance (#251)', async () => {
+    uninstall = createMockHost({
+      generation: { failSubmitException: true },
+      buzz: { balance: 100_000 },
+      pollsUntilDone: 1,
+    }).install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    const err = await submitExpectingRejection(result);
+    expect(err.snapshot.error).toBe('mock: submit failed');
+  });
+
+  // The negative control for the knob: unset, submits behave normally. Without
+  // it, a mock wired to reject unconditionally would pass every test above.
+  it('submits price and queue normally when failSubmitException is unset (control)', async () => {
+    uninstall = createMockHost({ generation: {}, pollsUntilDone: 1 }).install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
     const snap = await runGen(result, 1);
-    expect(snap.status).toBe('failed');
+    expect(snap.status).toBe('succeeded');
   });
 
   it('custom image/images appear on the succeeded snapshot', async () => {
@@ -498,15 +587,38 @@ describe('createMockHost — disallowed account (content-rating clamp)', () => {
     return snap;
   }
 
+  /**
+   * The disallowed-pool arm REJECTS since civitai/civitai-app-starters#251: the
+   * real backend raises a tRPC BAD_REQUEST at the currency-resolution boundary,
+   * which the host catches into `failureSnapshot(err)` — an errored submit with
+   * no quote, not a priced refusal. The reason is unchanged, on
+   * `.snapshot.error`.
+   */
+  async function submitWithExpectingRejection(
+    result: { current: ReturnType<typeof useBuzzWorkflow> },
+    accountType: 'blue' | 'green' | 'yellow',
+  ): Promise<WorkflowSubmitError> {
+    let outcome: unknown;
+    await act(async () => {
+      outcome = await result.current.submit({ ...BODY, accountType }).then(
+        (snap) => ({ unexpectedlyResolved: snap }),
+        (err) => err,
+      );
+    });
+    expect(outcome).toBeInstanceOf(WorkflowSubmitError);
+    return outcome as WorkflowSubmitError;
+  }
+
   it('rejects a submit whose accountType is disallowed with the real backend message', async () => {
     host = createMockHost({ disallowedAccountTypes: ['yellow'], pollsUntilDone: 1 });
     uninstall = host.install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
-    const snap = await submitWith(result, 'yellow');
-    expect(snap.status).toBe('failed');
-    expect(snap.error).toBe(disallowedAccountError('yellow'));
+    const err = await submitWithExpectingRejection(result, 'yellow');
+    expect(err.code).toBe('exception');
+    expect(err.snapshot.status).toBe('failed');
+    expect(err.snapshot.error).toBe(disallowedAccountError('yellow'));
   });
 
   it('accepts a submit whose accountType is NOT in the disallowed set', async () => {
@@ -537,9 +649,11 @@ describe('createMockHost — disallowed account (content-rating clamp)', () => {
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
-    const snap = await submitWith(result, 'yellow');
-    expect(snap.status).toBe('failed');
-    expect(snap.error).toBe(disallowedAccountError('yellow'));
+    const err = await submitWithExpectingRejection(result, 'yellow');
+    // The content-rating message, NOT insufficient-Buzz — that is the ordering
+    // this test exists to pin, and it survives the #251 rejection unchanged.
+    expect(err.snapshot.error).toBe(disallowedAccountError('yellow'));
+    expect(err.snapshot.error).not.toMatch(/insufficient/i);
   });
 
   it('setScenario can add a disallowed pool mid-session', async () => {
@@ -553,9 +667,8 @@ describe('createMockHost — disallowed account (content-rating clamp)', () => {
     expect(snap.status).not.toBe('failed');
 
     act(() => host!.setScenario({ disallowedAccountTypes: ['yellow'] }));
-    snap = await submitWith(result, 'yellow');
-    expect(snap.status).toBe('failed');
-    expect(snap.error).toBe(disallowedAccountError('yellow'));
+    const err = await submitWithExpectingRejection(result, 'yellow');
+    expect(err.snapshot.error).toBe(disallowedAccountError('yellow'));
   });
 });
 
@@ -691,8 +804,9 @@ describe('createMockHost — setScenario + URL toggles', () => {
     expect(snap.status).toBe('succeeded');
 
     act(() => host!.setScenario({ generation: { failRate: 1 } }));
-    snap = await runGen(result, 1);
-    expect(snap.status).toBe('failed');
+    // `failRate` is the errored-submit producer, so it REJECTS (#251).
+    const err = await submitExpectingRejection(result);
+    expect(err.code).toBe('exception');
   });
 
   it('readMockHostUrlOptions maps the new query params onto scenarios', () => {

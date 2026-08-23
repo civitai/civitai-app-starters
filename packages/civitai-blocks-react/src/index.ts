@@ -41,8 +41,13 @@ export {
   DEFAULT_WATCH_WAIT_SECONDS,
   useBuzzWorkflow,
   WorkflowEstimateError,
+  WorkflowSubmitError,
 } from './hooks/useBuzzWorkflow.js';
-export type { SubmitWorkflowOptions, WatchWorkflowOptions } from './hooks/useBuzzWorkflow.js';
+export type {
+  SubmitWorkflowOptions,
+  WatchWorkflowOptions,
+  WorkflowSubmitErrorCode,
+} from './hooks/useBuzzWorkflow.js';
 export { useTip } from './hooks/useTip.js';
 export type { TipParams, TipOptions, TipResult, UseTip } from './hooks/useTip.js';
 export { useTipAllowance } from './hooks/useTipAllowance.js';

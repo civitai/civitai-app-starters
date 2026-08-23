@@ -1,7 +1,7 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useBuzzWorkflow } from '../src/hooks/useBuzzWorkflow.js';
+import { useBuzzWorkflow, WorkflowSubmitError } from '../src/hooks/useBuzzWorkflow.js';
 import { getTransport } from '../src/internal/singleton.js';
 import { createMockHost, resetTransport, disallowedAccountError } from '../src/testing.js';
 
@@ -56,6 +56,28 @@ async function runComfyGen(
     if (snap.status === 'succeeded' || snap.status === 'failed') break;
   }
   return snap;
+}
+
+/**
+ * Submit a customComfy body and expect a REJECTION — the
+ * civitai/civitai-app-starters#251 arm. A failure-shaped reply with NO price
+ * means the submit ERRORED (the host's `failureSnapshot(err)`), so `submit()`
+ * rejects instead of handing back a workflow that was never queued. The kind
+ * -agnostic contract this file exists to pin extends to that arm too.
+ */
+async function comfySubmitExpectingRejection(
+  result: { current: ReturnType<typeof useBuzzWorkflow> },
+  body: typeof COMFY_BODY = COMFY_BODY,
+): Promise<WorkflowSubmitError> {
+  let outcome: unknown;
+  await act(async () => {
+    outcome = await result.current.submit(body).then(
+      (snap) => ({ unexpectedlyResolved: snap }),
+      (err) => err,
+    );
+  });
+  expect(outcome).toBeInstanceOf(WorkflowSubmitError);
+  return outcome as WorkflowSubmitError;
 }
 
 describe('createMockHost — customComfy generation', () => {
@@ -159,26 +181,41 @@ describe('createMockHost — customComfy generation', () => {
 
   // ---- scenario config applies identically to customComfy ----
 
-  it('failNext fails the first customComfy submit then succeeds', async () => {
+  it('failNext rejects the first customComfy submit then succeeds', async () => {
     uninstall = createMockHost({ generation: { failNext: 1 }, pollsUntilDone: 1 }).install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
-    const first = await runComfyGen(result);
-    expect(first.status).toBe('failed');
-    expect(first.error).toMatch(/simulated/i);
+    const err = await comfySubmitExpectingRejection(result);
+    expect(err.code).toBe('exception');
+    expect(err.snapshot.error).toMatch(/simulated/i);
 
     const second = await runComfyGen(result);
     expect(second.status).toBe('succeeded');
   });
 
-  it('failRate 1 always fails a customComfy submit', async () => {
+  it('failRate 1 always rejects a customComfy submit', async () => {
     uninstall = createMockHost({ generation: { failRate: 1 }, pollsUntilDone: 1 }).install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
-    const snap = await runComfyGen(result);
-    expect(snap.status).toBe('failed');
+    const err = await comfySubmitExpectingRejection(result);
+    expect(err.code).toBe('exception');
+  });
+
+  // The errored-submit producer is kind-agnostic too (#251).
+  it('failSubmitException rejects a customComfy submit with the failureSnapshot shape', async () => {
+    uninstall = createMockHost({
+      generation: { failSubmitException: true, failSubmitExceptionMessage: 'graph rejected' },
+      pollsUntilDone: 1,
+    }).install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    const err = await comfySubmitExpectingRejection(result);
+    expect(err.code).toBe('exception');
+    expect(err.snapshot.error).toBe('graph rejected');
+    expect(err.snapshot.cost).toBeUndefined();
   });
 
   it('a simulated balance that cannot cover the gen fails customComfy with insufficient-Buzz', async () => {
@@ -240,12 +277,12 @@ describe('createMockHost — customComfy generation', () => {
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
-    const snap = await runComfyGen(result, {
+    const err = await comfySubmitExpectingRejection(result, {
       kind: 'customComfy' as const,
       recipe: 'seamless-pano-360',
       params: { prompt: 'a misty forest', accountType: 'yellow' },
     });
-    expect(snap.status).toBe('failed');
-    expect(snap.error).toBe(disallowedAccountError('yellow'));
+    expect(err.code).toBe('exception');
+    expect(err.snapshot.error).toBe(disallowedAccountError('yellow'));
   });
 });

@@ -5,6 +5,7 @@ import {
   useBlockResize,
   useBuzzPurchase,
   useBuzzWorkflow,
+  WorkflowSubmitError,
 } from '@civitai/blocks-react';
 import type { ModelSlotContext, WorkflowBody } from '@civitai/app-sdk/blocks';
 
@@ -14,8 +15,20 @@ import type { ModelSlotContext, WorkflowBody } from '@civitai/app-sdk/blocks';
  * `useBuzzPurchase().openPurchaseModal()` asks the host to open the Civitai
  * Buzz purchase modal and resolves when the user closes it
  * (`{ purchased, newBalance }`). The canonical use is the insufficient-budget
- * path: when `useBuzzWorkflow().submit()` rejects because the cost exceeds the
- * viewer's balance / the token's `buzzBudget`, offer a top-up and retry.
+ * path.
+ *
+ * 🔴 THAT PATH DOES **NOT** REJECT — IT RESOLVES. When the cost exceeds the
+ * viewer's balance / the token's `buzzBudget`, `useBuzzWorkflow().submit()`
+ * RESOLVES a snapshot with `status: 'failed'`, an `error` string and the `cost`
+ * the server declined to charge. That resolved shape is the cue to offer a
+ * top-up and retry. A `catch` is the WRONG place to sell Buzz: since
+ * `@civitai/blocks-react@0.44.0` a rejection means the submit had no usable
+ * outcome, which buying Buzz cannot fix (civitai/civitai-app-starters#251).
+ *
+ * 🔴 AND NOT EVERY RESOLVED `'failed'` IS ABOUT THE WALLET — the per-app velocity
+ * limit, the per-app aggregate daily cap, a transient "unavailable" deny and a
+ * missing price quote all arrive priced and resolving too. `isInsufficientFunds`
+ * below is what keeps the top-up CTA off those.
  *
  * 🔴 THE PATTERN TO COPY IS THE GUARDING AROUND THAT RETRY, NOT JUST THE CALL.
  * `openPurchaseModal` is human-gated — it waits up to 10 minutes for the viewer
@@ -63,20 +76,90 @@ export function App() {
       params: { prompt: 'a cozy reading nook', steps: 25 },
     };
     try {
+      // 🔴 NO `idempotencyKey` HERE, DELIBERATELY — `submit()` mints a fresh one
+      // per call and that is the SAFE default for this flow.
+      //
+      // Reusing a key exists to stop a RETRY OF THE SAME ATTEMPT double-reserving
+      // after a lost response. The only retry in this example is the post-top-up
+      // one, and that is a NEW attempt under preconditions the viewer just PAID
+      // to change — not a repeat of the old one. Reusing the key there would ask
+      // the server to collapse the retry onto the refusal it already returned;
+      // this package's own docs describe the contract as "a retry with the same
+      // key is collapsed server-side to the first result", with no carve-out for
+      // a priced refusal. If that reading held, the viewer would buy Buzz and the
+      // generation would never run.
+      //
+      // (Measured against the current server, the refusal returns BEFORE the
+      // idempotency claim is taken, so reuse would in fact re-run. We do not
+      // build on that: it is an undocumented ordering, no harness here reads
+      // `idempotencyKey` at all, and this example has no tests — so a change to
+      // that ordering would break the headline flow silently.)
+      //
+      // Where reuse DOES belong: a retry after an `'exception'` /
+      // `'workflow-failed'` / transport failure, none of which this example
+      // retries. See the README.
       const snap = await submit(body);
       // The host surfaces an under-budget submit as a RESOLVED snapshot with
-      // `status: 'failed'` + an `error` string (the transport resolves the
-      // reply; it doesn't throw on a failed snapshot). A throw happens only on
-      // transport-level failures (timeout, malformed reply).
+      // `status: 'failed'`, an `error` string, and the `cost` it declined to
+      // charge. That is a workflow OUTCOME — the branch the top-up flow lives on.
+      //
+      // 🔴 IT IS NOT THE ONLY FAILURE SHAPE, AND THE OTHERS THROW. A
+      // failure-shaped reply with NO `cost` is not a usable outcome, and since
+      // @civitai/blocks-react 0.44.0 `submit()` REJECTS it with a
+      // `WorkflowSubmitError` (civitai/civitai-app-starters#251). It lands in the
+      // `catch` below, alongside transport-level failures (timeout, malformed
+      // reply) — and there `err.code` decides the copy. 🔴 NEITHER code proves
+      // nothing was spent: `'workflow-failed'` may already have charged, and
+      // `'exception'` only means the host had no workflow to report (a lost
+      // response or an in-progress idempotency conflict reach it too).
+      // Keep both paths: a top-up cannot fix a failed submit, and a retry cannot
+      // fix an empty wallet.
       if (snap.status === 'failed' && isInsufficientFunds(snap.error ?? '')) {
         setNeedsTopUp({ shortfall: cost - (token.buzzBudget ?? 0) });
       } else if (snap.status === 'failed') {
-        setStatus(snap.error ?? 'generation failed');
+        // 🔴 A PRICED OUTCOME THAT IS *NOT* AFFORDABILITY — an app velocity or
+        // aggregate-spend cap, a transient deny, a missing quote. No top-up CTA,
+        // and NO raw server text on screen: `snap.error` is server-authored and
+        // unsanitised (raw upstream text, database constraint names among it,
+        // can reach it). Log it; render copy this app owns.
+        console.warn('[buzz-purchase] submit refused:', snap.error);
+        // Deliberately does NOT say "shortly": this arm also covers the per-app
+        // DAILY aggregate cap, which does not clear for hours.
+        setStatus('This generation could not be run right now. Please try again later.');
       } else {
         setStatus(`submitted: ${snap.workflowId} (${snap.status})`);
       }
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : String(err));
+      // 🔴 NEVER RENDER `err.message` — it is DEVELOPER-facing, not localised,
+      // and its wording is not a contract. Two apps shipped that sentence to end
+      // users on the estimate path (civitai/civitai-app-starters#253); this is
+      // the same mistake one path over. Branch on `err.code` for viewer copy.
+      if (err instanceof WorkflowSubmitError) {
+        console.warn('[buzz-purchase] submit failed:', err.code, err.message, err.snapshot.error);
+        setStatus(
+          err.code === 'workflow-failed'
+            ? // A workflow probably exists and Buzz may ALREADY be committed. Do
+              // not claim it was free, and do not auto-retry — that would mint a
+              // new idempotency key and reserve a second time.
+              'The generation was submitted but failed. Check your generation history before retrying.'
+            : // 'exception' — the host had no workflow to report. USUALLY nothing
+              // was queued, but a lost response or an in-progress idempotency
+              // conflict lands here too, so the copy stays non-committal about
+              // spend. A production app retrying automatically should reuse the
+              // same idempotencyKey rather than minting a fresh one.
+              'Could not start the generation. Please try again.',
+        );
+        return;
+      }
+      // 🔴 NOT A WorkflowSubmitError — a transport-level failure, and the most
+      // likely one is the 120s request TIMEOUT. A submit that times out may well
+      // have been queued and charged server-side, so this must NOT claim the
+      // generation did not start and must NOT invite a blind retry. It is the
+      // least-known case, so it gets the most cautious copy.
+      console.warn('[buzz-purchase] submit transport error:', err);
+      setStatus(
+        'We lost contact before the generation was confirmed. Check your generation history before trying again.',
+      );
     }
   }, [model, submit, token.buzzBudget]);
 
@@ -123,7 +206,12 @@ export function App() {
       // A rejection is reachable (an abandoned modal eventually hits the
       // human-interaction timeout). Uncaught, it would surface as an unhandled
       // rejection and leave the button stuck pending.
-      setStatus(err instanceof Error ? err.message : String(err));
+      //
+      // 🔴 SAME RULE AS `tryGenerate` — log the developer-facing text, render
+      // copy this app owns. `err.message` here is an SDK/transport string, not
+      // localised viewer copy (civitai/civitai-app-starters#253).
+      console.warn('[buzz-purchase] top-up flow error:', err);
+      setStatus('The purchase could not be completed. Please try again.');
     } finally {
       topUpInFlight.current = false;
       setTopUpPending(false);
@@ -146,7 +234,7 @@ export function App() {
         <strong>{token.buzzBudget ?? 0} Buzz</strong>
       </div>
 
-      <button onClick={tryGenerate} style={buttonStyle}>
+      <button onClick={() => void tryGenerate()} style={buttonStyle}>
         Generate ({cost} Buzz)
       </button>
 

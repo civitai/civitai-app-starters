@@ -128,10 +128,15 @@ const DEFAULT_STORAGE_VALUE_CAP_BYTES = 64 * 1024; // 64 KB per value
 const DEFAULT_STORAGE_LIMIT_ROWS = 1_000_000;
 
 /**
- * How submits resolve. `'none'` = everything succeeds; `'all'` /
- * `'insufficient'` = every submit returns an insufficient-Buzz `failed`
- * snapshot (exercises the per-cell Top-Up CTA); `'some'` = ~1 in 3 submits
- * fail (a mixed grid).
+ * How submits behave. `'none'` = everything succeeds; `'all'` / `'insufficient'`
+ * = every submit RESOLVES an insufficient-Buzz `failed` snapshot, priced
+ * (exercises the per-cell Top-Up CTA); `'some'` = ~1 in 3 submits fail.
+ *
+ * 🔴 THE TWO OUTCOMES ARE NO LONGER THE SAME SHAPE (civitai/civitai-app-starters#251).
+ * `'all'`/`'insufficient'` RESOLVE — they carry a `cost`, so they are a budget
+ * OUTCOME. `'some'` **REJECTS** with `code: 'exception'` — it emits the host's
+ * cost-less `failureSnapshot(err)`. A mixed grid therefore needs both a
+ * `snap.status` branch and a `catch`.
  */
 export type MockHostFailMode = 'none' | 'some' | 'all' | 'insufficient';
 
@@ -188,11 +193,20 @@ export interface MockGenerationScenario {
   /**
    * Probability (0..1) that any given submit fails with a generic generation
    * error. Independent of {@link failRate}'s sibling controls. Default `0`.
+   *
+   * 🔴 SINCE civitai/civitai-app-starters#251 THIS MAKES `submit()` **REJECT**,
+   * not resolve a `failed` snapshot. It emits the host's `failureSnapshot(err)`
+   * shape (the `'failed'` sentinel id, no `cost`), so the rejection carries
+   * `code: 'exception'` and the reason stays on `err.snapshot.error`. Your test
+   * needs a `catch`, not a `snap.status` check.
    */
   failRate?: number;
   /**
    * Force the next N submits to fail (counts down). Deterministic companion to
    * {@link failRate} — handy for "first try fails, retry succeeds" UX tests.
+   *
+   * 🔴 SINCE #251 a forced failure **REJECTS** (`code: 'exception'`) rather than
+   * resolving a `failed` snapshot — see {@link MockGenerationScenario.failRate}.
    */
   failNext?: number;
   /**
@@ -226,6 +240,31 @@ export interface MockGenerationScenario {
    * resource-compatibility rejection) to check how your block renders one.
    */
   failEstimateMessage?: string;
+  /**
+   * Force every SUBMIT to come back as a caught server EXCEPTION — the host's
+   * real `failureSnapshot(err)` shape: `{ workflowId:'failed', status:'failed',
+   * error }` with **no `cost`**. `useBuzzWorkflow().submit()` rejects with a
+   * `WorkflowSubmitError` whose `code` is `'exception'`.
+   *
+   * 🔴 THIS IS THE PRODUCER THE OTHER SUBMIT KNOBS DO NOT SIMULATE, and that gap
+   * is how civitai/civitai-app-starters#251 stayed invisible: the balance /
+   * `insufficient` knobs model a budget REJECTION (a priced outcome the block
+   * recovers from with a top-up), so a block author testing "what if submit goes
+   * wrong" only ever saw the arm that resolves. The `failEstimate` knob is the
+   * estimate-side twin of this one.
+   *
+   * Checked FIRST, before the disallowed-account / insufficient-Buzz / generic
+   * paths: a host-side throw pre-empts every server-side decision.
+   *
+   * Default: unset (submits behave normally).
+   */
+  failSubmitException?: boolean;
+  /**
+   * Error message returned with {@link MockGenerationScenario.failSubmitException}.
+   * Default `'mock: submit failed'`. Set it to a realistic server message to
+   * check how your block's developer-facing error surface renders one.
+   */
+  failSubmitExceptionMessage?: string;
   /** A single result image url (or `(body) => url`). */
   image?: ImageSpec;
   /**
@@ -370,7 +409,11 @@ export interface MockHostOptions {
    * harness URL as `?consent=ungrantable`.
    */
   consentGrantable?: boolean;
-  /** How submits resolve. Default `'none'` (all succeed). */
+  /**
+   * How submits behave. Default `'none'` (all succeed). See
+   * {@link MockHostFailMode} — `'some'` REJECTS while `'all'`/`'insufficient'`
+   * RESOLVE, since #251.
+   */
   failMode?: MockHostFailMode;
   /**
    * Canned picks keyed by requested resource type, returned from
@@ -1654,6 +1697,27 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             const body = typed.payload?.body ?? ({} as WorkflowBody);
             const cost = costFor(body);
 
+            // CAUGHT-SERVER-EXCEPTION simulation (`generation.failSubmitException`).
+            // Reproduces the host's `failureSnapshot(err)` byte-for-byte: the
+            // 'failed' sentinel id and NO `cost`, which is what separates an
+            // errored submit from a priced budget rejection
+            // (civitai/civitai-app-starters#251). Checked FIRST — a host-side
+            // throw pre-empts every server-side decision below.
+            if (gen.failSubmitException === true) {
+              dispatchToBlock({
+                type: 'WORKFLOW_SUBMITTED',
+                payload: {
+                  requestId,
+                  snapshot: {
+                    workflowId: 'failed',
+                    status: 'failed',
+                    error: gen.failSubmitExceptionMessage ?? 'mock: submit failed',
+                  },
+                },
+              });
+              return;
+            }
+
             // Disallowed-account path (content-rating clamp): the real backend
             // rejects a picked pool outside the app's maturity policy at the
             // currency-resolution boundary — BEFORE any Buzz spend — so this is
@@ -1666,8 +1730,16 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                 payload: {
                   requestId,
                   snapshot: {
-                    workflowId: `wf_fail_${submitCount}`,
+                    workflowId: 'failed',
                     status: 'failed',
+                    // 🔴 DELIBERATELY NO `cost`, and the `'failed'` sentinel id —
+                    // the host's `failureSnapshot(err)` shape exactly, so
+                    // `submit()` rejects with code `'exception'`
+                    // (civitai/civitai-app-starters#251). The real backend raises
+                    // a tRPC BAD_REQUEST at the currency-resolution boundary,
+                    // which the host catches into `failureSnapshot(err)` — an
+                    // errored submit with no quote, not a priced refusal. A block
+                    // reads the reason from `err.snapshot.error`.
                     error: disallowedAccountError(pickedAccount),
                   },
                 },
@@ -1704,8 +1776,27 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                 payload: {
                   requestId,
                   snapshot: {
-                    workflowId: `wf_fail_${submitCount}`,
+                    workflowId: 'failed',
                     status: 'failed',
+                    // The `'failed'` id above matches the server, which stamps
+                    // that same sentinel on every budget/cap refusal (a refused
+                    // submit has no orchestrator id). Nothing here depends on the
+                    // id — the price below is what makes this arm RESOLVE — but
+                    // the mock must not teach a shape the wire never carries.
+                    //
+                    // 🔴 THE PRICE IS LOAD-BEARING, NOT COSMETIC. The real server
+                    // quotes the cost it refused to charge at EVERY budget/cap
+                    // exit on the submit path — the per-call `buzzBudget` gate,
+                    // the per-user daily cap, the per-app aggregate/velocity cap
+                    // and the dev-tunnel session cap, on all three body kinds —
+                    // and `cost` presence is exactly what tells a priced
+                    // REJECTION apart from an errored submit
+                    // (civitai/civitai-app-starters#251). Omitting it here made
+                    // the mock's top-up path indistinguishable from a server
+                    // exception, so `submit()` would reject it and the top-up UX
+                    // would be unreachable in the harness that exists to
+                    // exercise it. Do not drop this field.
+                    cost: { total: cost },
                     error: INSUFFICIENT_BUZZ_ERROR,
                   },
                 },
@@ -1718,8 +1809,23 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                 payload: {
                   requestId,
                   snapshot: {
-                    workflowId: `wf_fail_${submitCount}`,
+                    workflowId: 'failed',
                     status: 'failed',
+                    // 🔴 DELIBERATELY NO `cost`, and the `'failed'` sentinel id —
+                    // together they are the host's `failureSnapshot(err)` shape
+                    // exactly, so `submit()` rejects with code `'exception'`
+                    // (civitai/civitai-app-starters#251). The id matters as much
+                    // as the missing cost: a made-up id like `wf_fail_3` would
+                    // classify as `'workflow-failed'`, i.e. as a workflow that
+                    // probably exists with possibly-committed spend — a
+                    // materially different thing to teach a block author.
+                    //
+                    // 🔴 THIS KNOB MODELS A THROWN SERVER ERROR, NOT "generation
+                    // failed". The backend DOES have generic transient submit
+                    // failures — a fail-closed `unavailable` deny and a
+                    // missing-price-quote exit — but it returns those as PRICED,
+                    // RESOLVING snapshots, which is a shape this mock does not
+                    // yet simulate. Do not read this branch as covering them.
                     error: GENERIC_GEN_ERROR,
                   },
                 },
