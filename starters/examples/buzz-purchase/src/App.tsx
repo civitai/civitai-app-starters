@@ -65,9 +65,17 @@ export function App() {
     try {
       const snap = await submit(body);
       // The host surfaces an under-budget submit as a RESOLVED snapshot with
-      // `status: 'failed'` + an `error` string (the transport resolves the
-      // reply; it doesn't throw on a failed snapshot). A throw happens only on
-      // transport-level failures (timeout, malformed reply).
+      // `status: 'failed'`, an `error` string, and the `cost` it declined to
+      // charge. That is a workflow OUTCOME — the branch the top-up flow lives on.
+      //
+      // 🔴 IT IS NOT THE ONLY FAILURE SHAPE, AND THE OTHER ONE THROWS. A submit
+      // that ERRORED server-side arrives as a failure-shaped reply with NO
+      // `cost`, and since @civitai/blocks-react 0.44.0 `submit()` REJECTS that
+      // with a `WorkflowSubmitError` rather than resolving a workflow that was
+      // never queued (civitai/civitai-app-starters#251). It lands in the `catch`
+      // below, alongside transport-level failures (timeout, malformed reply).
+      // Keep both paths: a top-up cannot fix an errored submit, and a retry
+      // cannot fix an empty wallet.
       if (snap.status === 'failed' && isInsufficientFunds(snap.error ?? '')) {
         setNeedsTopUp({ shortfall: cost - (token.buzzBudget ?? 0) });
       } else if (snap.status === 'failed') {

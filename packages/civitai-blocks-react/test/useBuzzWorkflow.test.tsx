@@ -7,6 +7,7 @@ import {
   DEFAULT_WATCH_WAIT_SECONDS,
   useBuzzWorkflow,
   WorkflowEstimateError,
+  WorkflowSubmitError,
 } from '../src/hooks/useBuzzWorkflow.js';
 import { getTransport } from '../src/internal/singleton.js';
 import { resetTransport } from '../src/testing.js';
@@ -376,17 +377,25 @@ describe('useBuzzWorkflow', () => {
     expect(result.current.result?.workflowId).toBe('failed');
   });
 
-  // 🔴 SCOPE PIN, NOT A CORRECTNESS CLAIM ABOUT `submit`. Read the assertion
-  // narrowly: it says a BUDGET REJECTION — which carries a `cost` and is a
-  // documented outcome the block recovers from by opening a top-up flow — still
-  // resolves. It does NOT say submit is free of the #4159 defect. It is not:
-  // `WORKFLOW_SUBMITTED` has the same two producers, indistinguishable by
-  // `status`, since caught server exceptions are posted through the very same
-  // `failureSnapshot(err)`. The discriminator there is `cost` presence, and
-  // fixing it is a separate change with its own blast radius on the recovery
-  // path. This test exists so that change cannot be mistaken for a tidy-up of
-  // the estimate guard — it must keep the budget-rejection arm resolving.
-  // Tracked at civitai/civitai-app-starters#251.
+  // ──────────────────────────────────────────────────────────────────────────
+  // civitai/civitai-app-starters#251 — the `submit` half of civitai/civitai#4159
+  //
+  // 🔴 THIS TEST WAS WRITTEN BEFORE THE FIX, AS A SCOPE PIN, AND IT SURVIVES THE
+  // FIX UNCHANGED — that is the whole point of it. The budget-rejection arm MUST
+  // KEEP RESOLVING: a block recovers from it by opening a top-up flow, and
+  // turning it into a throw would break that recovery. The guard added for #251
+  // rejects only the OTHER producer (a caught server exception posted as
+  // `failureSnapshot(err)`, which carries NO `cost`), so this arm is untouched.
+  //
+  // 🔴 IT IS ALSO THE KILLING TEST FOR THE GUARD'S `cost`-PRESENCE CLAUSE. Drop
+  // that clause and every failure-shaped submit reply rejects, this one first.
+  // Do not "tidy" it away or relax it to `expect(...).resolves`.
+  //
+  // The fixture's `cost` is not decoration: the server attaches one at EVERY
+  // budget/cap exit on the submit path (the per-call `buzzBudget` gate, the
+  // per-user daily cap, the per-app aggregate/velocity cap and the dev-tunnel
+  // session cap, on all three body kinds). `failureSnapshot(err)` never does.
+  // That asymmetry is the discriminator the fix keys on.
   it('submit() still RESOLVES a budget rejection (a documented outcome, cost present)', async () => {
     const { result } = renderHook(() => useBuzzWorkflow());
 
@@ -427,6 +436,228 @@ describe('useBuzzWorkflow', () => {
     expect(snap.status).toBe('failed');
     expect(snap.error).toBe('insufficient buzz budget');
     expect(snap.cost?.total).toBe(120);
+  });
+
+  /**
+   * Fire a submit and hand back a settle-observer + the reply function — the
+   * `submit` twin of {@link driveEstimate}. Owning the outcome immediately means
+   * a regression is reported by the assertion that cares rather than as an
+   * unhandled rejection somewhere else in the file.
+   */
+  function driveSubmit(submit: (body: never) => Promise<unknown>) {
+    let promise!: Promise<unknown>;
+    act(() => {
+      promise = submit({
+        kind: 'textToImage',
+        modelId: 7,
+        modelVersionId: 99,
+        params: { prompt: 'cat' },
+      } as never);
+    });
+    const settled = promise.then(
+      (v) => ({ ok: true as const, v }),
+      (e) => ({ ok: false as const, e }),
+    );
+    const sent = postMessageMock.mock.calls.at(-1)![0] as {
+      type: string;
+      payload: { requestId: string };
+    };
+    expect(sent.type).toBe('SUBMIT_WORKFLOW');
+    const reply = (snapshot: unknown) => {
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              type: 'WORKFLOW_SUBMITTED',
+              payload: { requestId: sent.payload.requestId, snapshot },
+            },
+            origin: PARENT_ORIGIN,
+          }),
+        );
+      });
+    };
+    return { settled, reply };
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // #251 — a submit that ERRORED must not resolve as a workflow outcome
+  //
+  // 🔴 TWO PRODUCERS, ONE `status`, exactly as on the estimate path — but the
+  // discriminator here is `cost`, NOT `status`, because BOTH are `'failed'`:
+  //   (a) a budget / spend-cap REJECTION — a documented outcome, carries `cost`.
+  //       Pinned above; it must keep RESOLVING.
+  //   (b) a caught server exception posted as the host's `failureSnapshot(err)`
+  //       — `{ workflowId:'failed', status:'failed', error:'<server message>' }`
+  //       with NO `cost`. Nothing was queued and nothing was charged, so this is
+  //       an ERROR, not an outcome, and it must REJECT.
+  //
+  // 🔴 THE FIXTURES ARE REAL HOST REPLY SHAPES, NOT SENTINELS. Every one is a
+  // VALID snapshot that `isValidWorkflowSnapshot` accepts — which is precisely
+  // why they used to sail through as resolved submits. The `'failed'` workflowId
+  // is the host's real sentinel (a failed request has no orchestrator id, and an
+  // EMPTY id would be dropped by the inbound validator instead).
+  // ──────────────────────────────────────────────────────────────────────────
+
+  it('submit() REJECTS a caught-server-exception snapshot — no cost (#251)', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const { settled, reply } = driveSubmit(result.current.submit as never);
+
+    reply({
+      workflowId: 'failed',
+      status: 'failed',
+      error: 'prompt audit service unavailable',
+    });
+
+    const outcome = await settled;
+    // 1. It rejects. Before the fix this RESOLVED, and the whole defect follows
+    //    from that one fact: a block branching on `snap.status === 'failed'`
+    //    could not tell "you can't afford this" from "the request failed".
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    const err = outcome.e as WorkflowSubmitError;
+    expect(err).toBeInstanceOf(WorkflowSubmitError);
+    // `name` is asserted separately from `instanceof`: it is what survives a
+    // dual-module load (two copies of the package ⇒ `instanceof` is false while
+    // the error is the right one), so a caller may legitimately branch on it.
+    expect(err.name).toBe('WorkflowSubmitError');
+    // 2. Structural discriminator, so callers never pattern-match the prose.
+    expect(err.code).toBe('exception');
+    // 3. The server's own explanation reaches the caller — on `.snapshot.error`.
+    expect(err.snapshot.error).toBe('prompt audit service unavailable');
+    // 4. Nothing reachable before is lost: the raw reply rides on the error.
+    expect(err.snapshot.status).toBe('failed');
+    expect(err.snapshot.workflowId).toBe('failed');
+    // 5. `message` is GENERIC and carries the code — see the leak test below.
+    expect(err.message).toBe(
+      'submit did not queue a workflow (exception) — reason on .snapshot.error',
+    );
+    // 6. The hook must NOT advertise a workflow to poll. `'polling'` is what a
+    //    block starts a `watch()` loop on, and there is nothing to watch.
+    await waitFor(() => expect(result.current.status).toBe('error'));
+    expect(result.current.status).not.toBe('polling');
+    expect(result.current.status).not.toBe('done');
+    expect(result.current.error).toBeInstanceOf(WorkflowSubmitError);
+  });
+
+  // 🔴 THE CONTROL THAT MAKES THE `status === 'failed'` CLAUSE NON-REDUNDANT.
+  // The ordinary in-flight submit reply carries NO cost either — the server only
+  // attaches one where it quotes a price. A guard keyed on cost ALONE would
+  // reject every healthy submit, so this is the input that proves the clause is
+  // load-bearing rather than decorative. It must RESOLVE and reach `'polling'`.
+  it('submit() RESOLVES an ordinary cost-less in-flight reply — not every cost-less snapshot is an error (#251)', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const { settled, reply } = driveSubmit(result.current.submit as never);
+
+    reply({ workflowId: 'wf_real_1', status: 'pending' });
+
+    const outcome = await settled;
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect((outcome.v as { workflowId: string }).workflowId).toBe('wf_real_1');
+    await waitFor(() => expect(result.current.status).toBe('polling'));
+    expect(result.current.error).toBeNull();
+  });
+
+  // 🔴 THE FALSY-ZERO NEGATIVE CONTROL. `0` is falsy, so an implementation
+  // written as `if (!snapshot.cost?.total)` passes the rejection test above and
+  // then rejects a failure-shaped reply that IS priced — collapsing the outcome
+  // arm for any cap exit whose quote rounds to 0. Only a fixture whose cost is 0
+  // can catch it, so this value must stay 0 and must not be "tidied" upward.
+  it('submit() RESOLVES a failed snapshot whose cost is 0 — priced is priced (#251)', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const { settled, reply } = driveSubmit(result.current.submit as never);
+
+    reply({
+      workflowId: 'failed',
+      status: 'failed',
+      cost: { total: 0 },
+      error: 'app daily spend cap reached',
+    });
+
+    const outcome = await settled;
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect((outcome.v as { cost?: { total: number } }).cost?.total).toBe(0);
+    await waitFor(() => expect(result.current.status).toBe('done'));
+  });
+
+  // 🔴 `message` MUST NOT CARRY THE SERVER STRING — the lesson from
+  // civitai/civitai-app-starters#253, where two real apps rendered `err.message`
+  // straight into their UI. `Error.message` is what an uncaught rejection prints
+  // and what a third-party block's error reporter ships upstream by default, and
+  // civitai's `errorHandling.ts` documents that raw Prisma/`pg` text can reach
+  // `snapshot.error`. THE FIXTURE IS A REALISTIC LEAK, NOT A TOKEN, and each
+  // distinctive fragment is checked separately so a partial interpolation cannot
+  // pass.
+  it('submit() keeps the raw server text OFF `message` and ON `.snapshot.error` (#251)', async () => {
+    const RAW = 'Unique constraint failed: Key (email)=(a@b.example) already exists.';
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const { settled, reply } = driveSubmit(result.current.submit as never);
+
+    reply({ workflowId: 'failed', status: 'failed', error: RAW });
+
+    const outcome = await settled;
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    const err = outcome.e as WorkflowSubmitError;
+    // Still fully recoverable — this is the documented diagnostic read.
+    expect(err.snapshot.error).toBe(RAW);
+    // …and absent from the default-printed field, fragment by fragment.
+    expect(err.message).not.toContain(RAW);
+    for (const fragment of ['email', 'a@b.example', 'Unique constraint', 'Key (']) {
+      expect(err.message).not.toContain(fragment);
+    }
+    expect(err.message).toBe(
+      'submit did not queue a workflow (exception) — reason on .snapshot.error',
+    );
+  });
+
+  // `error: ''` is reachable — the host builds its string as
+  // `err instanceof Error ? err.message : …` and `new Error().message` is `''`.
+  // The empty value must survive VERBATIM rather than being normalised away, and
+  // `message` must stay non-empty regardless.
+  it('submit() preserves error: "" verbatim and still yields a non-empty message (#251)', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const { settled, reply } = driveSubmit(result.current.submit as never);
+
+    reply({ workflowId: 'failed', status: 'failed', error: '' });
+
+    const outcome = await settled;
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    const err = outcome.e as WorkflowSubmitError;
+    expect(err.code).toBe('exception');
+    expect(err.snapshot.error).toBe('');
+    expect(err.message).not.toBe('');
+    expect(err.message).toContain('(exception)');
+  });
+
+  // 🔴 THE FIX MUST NOT FAIL OPEN ON `result`. Rejecting BEFORE publishing the
+  // snapshot would leave the PREVIOUS submit's snapshot in place, so a block
+  // rendering from `result` would keep showing a workflow that this submit did
+  // NOT queue — a live control pointing at the wrong workflow on a money path,
+  // strictly worse than the dead one being fixed. Two submits in one test is the
+  // only shape that can see it.
+  it('submit() does not leave a STALE workflow in `result` after a failed submit (#251)', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+
+    // A — queues normally.
+    const a = driveSubmit(result.current.submit as never);
+    a.reply({ workflowId: 'wf_real_1', status: 'pending' });
+    expect((await a.settled).ok).toBe(true);
+    await waitFor(() => expect(result.current.result?.workflowId).toBe('wf_real_1'));
+
+    // B — a submit that errors server-side.
+    const b = driveSubmit(result.current.submit as never);
+    b.reply({ workflowId: 'failed', status: 'failed', error: 'boom' });
+    expect((await b.settled).ok).toBe(false);
+
+    await waitFor(() => expect(result.current.status).toBe('error'));
+    // `result` is B's snapshot, not A's — asserted from both sides so this
+    // cannot pass merely because `result` was cleared to null by some other path.
+    expect(result.current.result?.workflowId).not.toBe('wf_real_1');
+    expect(result.current.result?.workflowId).toBe('failed');
+    expect(result.current.result?.status).toBe('failed');
   });
 
   it('submit() sends SUBMIT_WORKFLOW and transitions to polling for in-flight workflows', async () => {

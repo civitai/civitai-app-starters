@@ -226,6 +226,31 @@ export interface MockGenerationScenario {
    * resource-compatibility rejection) to check how your block renders one.
    */
   failEstimateMessage?: string;
+  /**
+   * Force every SUBMIT to come back as a caught server EXCEPTION — the host's
+   * real `failureSnapshot(err)` shape: `{ workflowId:'failed', status:'failed',
+   * error }` with **no `cost`**. `useBuzzWorkflow().submit()` rejects with a
+   * `WorkflowSubmitError` whose `code` is `'exception'`.
+   *
+   * 🔴 THIS IS THE PRODUCER THE OTHER SUBMIT KNOBS DO NOT SIMULATE, and that gap
+   * is how civitai/civitai-app-starters#251 stayed invisible: the balance /
+   * `insufficient` knobs model a budget REJECTION (a priced outcome the block
+   * recovers from with a top-up), so a block author testing "what if submit goes
+   * wrong" only ever saw the arm that resolves. The `failEstimate` knob is the
+   * estimate-side twin of this one.
+   *
+   * Checked FIRST, before the disallowed-account / insufficient-Buzz / generic
+   * paths: a host-side throw pre-empts every server-side decision.
+   *
+   * Default: unset (submits behave normally).
+   */
+  failSubmitException?: boolean;
+  /**
+   * Error message returned with {@link MockGenerationScenario.failSubmitException}.
+   * Default `'mock: submit failed'`. Set it to a realistic server message to
+   * check how your block's developer-facing error surface renders one.
+   */
+  failSubmitExceptionMessage?: string;
   /** A single result image url (or `(body) => url`). */
   image?: ImageSpec;
   /**
@@ -1654,6 +1679,27 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             const body = typed.payload?.body ?? ({} as WorkflowBody);
             const cost = costFor(body);
 
+            // CAUGHT-SERVER-EXCEPTION simulation (`generation.failSubmitException`).
+            // Reproduces the host's `failureSnapshot(err)` byte-for-byte: the
+            // 'failed' sentinel id and NO `cost`, which is what separates an
+            // errored submit from a priced budget rejection
+            // (civitai/civitai-app-starters#251). Checked FIRST — a host-side
+            // throw pre-empts every server-side decision below.
+            if (gen.failSubmitException === true) {
+              dispatchToBlock({
+                type: 'WORKFLOW_SUBMITTED',
+                payload: {
+                  requestId,
+                  snapshot: {
+                    workflowId: 'failed',
+                    status: 'failed',
+                    error: gen.failSubmitExceptionMessage ?? 'mock: submit failed',
+                  },
+                },
+              });
+              return;
+            }
+
             // Disallowed-account path (content-rating clamp): the real backend
             // rejects a picked pool outside the app's maturity policy at the
             // currency-resolution boundary — BEFORE any Buzz spend — so this is
@@ -1668,6 +1714,12 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                   snapshot: {
                     workflowId: `wf_fail_${submitCount}`,
                     status: 'failed',
+                    // 🔴 DELIBERATELY NO `cost`, and therefore `submit()` REJECTS
+                    // this (civitai/civitai-app-starters#251). The real backend
+                    // raises a tRPC BAD_REQUEST at the currency-resolution
+                    // boundary, which the host catches into `failureSnapshot(err)`
+                    // — an errored submit with no quote, not a priced refusal. A
+                    // block reads the reason from `err.snapshot.error`.
                     error: disallowedAccountError(pickedAccount),
                   },
                 },
@@ -1706,6 +1758,19 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                   snapshot: {
                     workflowId: `wf_fail_${submitCount}`,
                     status: 'failed',
+                    // 🔴 THE PRICE IS LOAD-BEARING, NOT COSMETIC. The real server
+                    // quotes the cost it refused to charge at EVERY budget/cap
+                    // exit on the submit path — the per-call `buzzBudget` gate,
+                    // the per-user daily cap, the per-app aggregate/velocity cap
+                    // and the dev-tunnel session cap, on all three body kinds —
+                    // and `cost` presence is exactly what tells a priced
+                    // REJECTION apart from an errored submit
+                    // (civitai/civitai-app-starters#251). Omitting it here made
+                    // the mock's top-up path indistinguishable from a server
+                    // exception, so `submit()` would reject it and the top-up UX
+                    // would be unreachable in the harness that exists to
+                    // exercise it. Do not drop this field.
+                    cost: { total: cost },
                     error: INSUFFICIENT_BUZZ_ERROR,
                   },
                 },
@@ -1720,6 +1785,15 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                   snapshot: {
                     workflowId: `wf_fail_${submitCount}`,
                     status: 'failed',
+                    // 🔴 DELIBERATELY NO `cost`, and therefore `submit()` REJECTS
+                    // this (civitai/civitai-app-starters#251). That is the
+                    // faithful reading: the real backend has no "generic
+                    // submit-time failure" OUTCOME — every priced refusal is a
+                    // budget/cap exit and carries a quote. Anything else that
+                    // goes wrong at submit is a THROW, which the host posts as
+                    // `failureSnapshot(err)` with no cost. Adding a cost here to
+                    // keep the pre-#251 resolve behaviour would make the mock
+                    // simulate a reply the server never sends.
                     error: GENERIC_GEN_ERROR,
                   },
                 },

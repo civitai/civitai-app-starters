@@ -208,20 +208,13 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
  * off a third party's default-printed surface. `test/useBuzzWorkflow.test.tsx`
  * pins it with a realistic `Unique constraint failed: Key (email)=(…)` fixture.
  *
- * 🔴 NOT APPLIED TO `submit`, and the reason is narrower than it looks. On
- * `WORKFLOW_SUBMITTED` there are likewise TWO producers, indistinguishable by
- * `status`: budget/cap REJECTIONS, which are a documented outcome the block
- * recovers from (open a top-up flow) and which carry a `cost`; and caught server
- * exceptions posted via the SAME `failureSnapshot(err)` used above, which do not.
- * The `#4159` defect is therefore live on `submit` too, discriminated by `cost`
- * presence rather than by `status`. Fixing it there is a separate change with its
- * own blast radius on the recovery path (a fix MUST keep the budget-rejection arm
- * RESOLVING, or the top-up flow breaks) and is deliberately NOT attempted here —
- * so `submit` is left resolving BOTH, and the accompanying test pins only the
- * budget-rejection producer, not a claim that submit is correct.
- *
- * 🔴 TRACKED, NOT FORGOTTEN: civitai/civitai-app-starters#251. Read it before
- * touching `submit`'s failure handling.
+ * 🔴 `submit` HAS ITS OWN CLASS — {@link WorkflowSubmitError} — BECAUSE ITS
+ * DISCRIMINATOR IS DIFFERENT. On `WORKFLOW_SUBMITTED` both producers report
+ * `status:'failed'`, so `status` separates nothing there and `cost` presence is
+ * what does. Do not merge the two classes or reuse this one for submit: the
+ * question each answers is different ("was a usable price returned?" vs "was a
+ * workflow actually queued?") and so is the arm that must keep resolving.
+ * (civitai/civitai-app-starters#251, the `submit` half of civitai/civitai#4159.)
  */
 export class WorkflowEstimateError extends Error {
   /**
@@ -286,6 +279,119 @@ export class WorkflowEstimateError extends Error {
   }
 }
 
+/**
+ * Thrown by {@link UseBuzzWorkflowReturn.submit} when the host's reply says the
+ * submit ERRORED — nothing was queued and nothing was charged.
+ *
+ * 🔴 WHY THIS EXISTS — civitai/civitai-app-starters#251, the `submit` half of
+ * civitai/civitai#4159. A server-side `blocks.submitWorkflow` throw cannot reach
+ * the block as a rejection; the reply crosses `postMessage`. The host instead
+ * posts a well-formed `WORKFLOW_SUBMITTED` carrying its `failureSnapshot(err)` —
+ * `{ workflowId: 'failed', status: 'failed', error: '<server message>' }`, with
+ * **no `cost`**. That snapshot is perfectly legal, so `submit()` resolved it and
+ * moved the hook to `'done'`, handing the caller a "workflow" that does not
+ * exist.
+ *
+ * 🔴 TWO PRODUCERS, ONE `status` — AND HERE `status` DISCRIMINATES NOTHING. This
+ * is what makes submit's version of the defect different from estimate's, and
+ * why {@link WorkflowEstimateError}'s guard could not simply be copied:
+ *
+ *   - **budget / spend-cap REJECTION** — a legitimate OUTCOME. The server quotes
+ *     the price it refused to charge, so the snapshot carries a numeric
+ *     `cost.total`. Blocks recover from it (open a top-up flow), so it MUST keep
+ *     RESOLVING. Every such exit on the server attaches a cost: the per-call
+ *     `buzzBudget` gate, the per-user daily Buzz cap, the per-app aggregate and
+ *     velocity caps, and the dev-tunnel session cap — on all three body kinds.
+ *   - **caught server EXCEPTION** — `failureSnapshot(err)`, no `cost`. The
+ *     submit errored. This is the arm that now rejects.
+ *
+ * So the rule is `cost` presence, and ONLY among failure-shaped replies: an
+ * ordinary in-flight submit (`{ workflowId:'wf_…', status:'pending' }`) is
+ * cost-less too and must keep resolving, which is why the guard is not keyed on
+ * `cost` alone either. Both clauses are load-bearing; each has its own control
+ * in `test/useBuzzWorkflow.test.tsx`.
+ *
+ * 🔴 THE RESIDUAL CASE, STATED HONESTLY: a REAL orchestrator workflow that comes
+ * back already `'failed'` at submit time with no price also rejects. Its id is
+ * not lost — it rides on `err.snapshot.workflowId`, so a caller that wants to
+ * `watch()` it still can. There is no field on the wire that separates that from
+ * a `failureSnapshot(err)`, and treating an unpriced failure as an error is the
+ * fail-closed reading on a money path.
+ *
+ * 🔴 THREE FIELDS, THREE AUDIENCES — AND **NONE OF THEM IS VIEWER-FACING COPY**,
+ * exactly as on {@link WorkflowEstimateError}. Two apps migrating to `0.43.0`
+ * piped that class's `err.message` straight into rendered UI
+ * (civitai/civitai-app-starters#253); the same split applies here so the same
+ * mistake is not re-enabled on the submit path.
+ *
+ *   - {@link WorkflowSubmitError.snapshot}`.error` — **the DIAGNOSTIC read.** The
+ *     server's own words, verbatim. **Server-authored and UNSANITISED**:
+ *     civitai's `errorHandling.ts` documents that raw upstream text —
+ *     Prisma/`pg` column and constraint names among it — can reach this field.
+ *     Log it, or show it in a developer-facing error surface. **NEVER render it
+ *     verbatim into markup**, and think before shipping it to a third-party
+ *     error tracker.
+ *   - {@link WorkflowSubmitError.message} — **DEVELOPER-FACING.** A CONSTANT
+ *     template with only `code` interpolated. It contains no server text, so it
+ *     is safe to LOG and safe to let a stack trace print — deliberate, because
+ *     `message` is what an uncaught rejection prints and what a third-party
+ *     block's error reporter ships upstream by default. **It is NOT intended for
+ *     display to viewers** and **its exact wording is NOT a contract.**
+ *   - {@link WorkflowSubmitError.code} — **the BRANCH TARGET**, and the only
+ *     stable one.
+ *
+ * 🔴 DO NOT "SIMPLIFY" THIS BY PUTTING `snapshot.error` BACK ON `message`, and do
+ * not widen the guard to reject a budget rejection. The first re-opens #253; the
+ * second breaks the top-up recovery flow, which is the one thing #251 says must
+ * not break.
+ */
+export class WorkflowSubmitError extends Error {
+  /**
+   * WHICH PRODUCER this was, structurally — so a caller branches on an enum
+   * rather than on prose. It is the ONLY stable branch target here:
+   * `snapshot.error` is server-authored and can change without notice, and
+   * {@link WorkflowSubmitError.message} is a generic developer-facing summary
+   * whose exact wording is not a contract either.
+   *
+   * - `'exception'` — the reply was failure-shaped and carried NO price, i.e.
+   *   the host's `failureSnapshot(err)`. Nothing was queued and nothing was
+   *   charged; a retry is the sensible recovery, not a top-up.
+   *
+   * A single-member union today, and deliberately a union rather than a boolean:
+   * a future producer gets its own code without breaking a caller's `switch`.
+   *
+   * 🔴 A BUDGET REJECTION NEVER ARRIVES HERE. It resolves, and is read off the
+   * returned snapshot as `status === 'failed'` with a numeric `cost.total`.
+   */
+  readonly code: 'exception';
+
+  /**
+   * The snapshot the host replied with, VERBATIM — including `snapshot.error`,
+   * the server's own words, when there are any.
+   *
+   * 🔴 `snapshot.error` IS SERVER-AUTHORED AND UNSANITISED. It is where the
+   * reason lives, but raw upstream text — Prisma/`pg` column and constraint
+   * names among it — can reach that field. Log it, show it in a developer-facing
+   * error surface, **NEVER render it verbatim into markup**.
+   */
+  readonly snapshot: BlockWorkflowSnapshot;
+
+  constructor(snapshot: BlockWorkflowSnapshot, code: 'exception') {
+    // 🔴 GENERIC, AND DELIBERATELY NOT `snapshot.error` — see the class docs and
+    // civitai/civitai-app-starters#253. `message` is the field an uncaught
+    // rejection PRINTS and the field a third-party block's error reporter ships
+    // upstream by default, so putting the raw server string here would put
+    // database internals on the default-printed surface of somebody else's code.
+    // Exposure to the block is identical either way (`snapshot.error` was always
+    // on the wire); only the DISPOSITION changes. `code` is carried IN the
+    // message so an uncaught rejection is still self-describing.
+    super(`submit did not queue a workflow (${code}) — reason on .snapshot.error`);
+    this.name = 'WorkflowSubmitError';
+    this.code = code;
+    this.snapshot = snapshot;
+  }
+}
+
 /** Optional per-submit controls. */
 export interface SubmitWorkflowOptions {
   /**
@@ -322,6 +428,31 @@ interface UseBuzzWorkflowReturn {
    * estimate's price sitting in `result` for a Confirm gate to read.
    */
   estimate: (body: WorkflowBody) => Promise<BlockWorkflowSnapshot>;
+  /**
+   * Queue a workflow. Resolves ONLY with a reply that represents a real workflow
+   * OUTCOME — one that was queued, or one the server priced and then refused.
+   *
+   * 🔴 REJECTS with {@link WorkflowSubmitError} when the submit ERRORED — a
+   * failure-shaped reply carrying no price, i.e. the host's
+   * `failureSnapshot(err)`. Nothing was queued and nothing was charged. Wrap
+   * every call in `try/catch`; see that class for why resolving such a reply was
+   * the `submit` half of civitai/civitai#4159.
+   *
+   * 🔴 A BUDGET / SPEND-CAP REJECTION STILL RESOLVES, and that is deliberate. It
+   * is a documented outcome, not an error: the server quotes what it refused to
+   * charge, so the resolved snapshot has `status === 'failed'` AND a numeric
+   * `cost.total`. THAT is the shape to branch on when offering a top-up —
+   * `useBuzzPurchase().openPurchaseModal()` — not a `catch`.
+   *
+   * 🔴 THIS ALSO INCLUDES MODERATOR REVIEW PREVIEW. While an app is under review
+   * the host short-circuits every workflow request with
+   * `failureSnapshot('not available in review preview')`, so `submit()` rejects
+   * there where it used to resolve — the correct reading (no workflow was
+   * queued), and why the catch is not optional.
+   *
+   * `result` is updated to the returned snapshot BEFORE any rejection, so a
+   * failed submit can never leave a previous submit's workflow in `result`.
+   */
   submit: (
     body: WorkflowBody,
     options?: SubmitWorkflowOptions,
@@ -518,7 +649,32 @@ export function useBuzzWorkflow(): UseBuzzWorkflowReturn {
         'WORKFLOW_SUBMITTED',
         { timeoutMs: WORKFLOW_REQUEST_TIMEOUT_MS },
       );
+      // 🔴 PUBLISH THE SNAPSHOT BEFORE THE REJECTION BELOW, for the same reason
+      // `estimate` does: a block may render from `result` rather than from the
+      // returned value, and jumping over this line would leave the PREVIOUS
+      // submit's snapshot in place — a live control pointing at a workflow THIS
+      // submit did not queue.
       setResult(snapshot);
+      // 🔴 AN ERRORED SUBMIT MUST REJECT (civitai/civitai-app-starters#251, the
+      // `submit` half of civitai/civitai#4159). Two producers report
+      // `status:'failed'` and `status` separates neither:
+      //
+      //   - a budget / spend-cap REJECTION is an OUTCOME the block recovers from
+      //     (open a top-up flow). The server quotes the price it refused to
+      //     charge, so `cost.total` is present. It RESOLVES — turning this arm
+      //     into a throw is the one change that would break the recovery path.
+      //   - a caught server EXCEPTION posted as `failureSnapshot(err)` carries no
+      //     `cost`. Nothing was queued; there is no workflow to poll and no
+      //     top-up that would help. It REJECTS.
+      //
+      // BOTH clauses are load-bearing. Dropping `status === 'failed'` would
+      // reject every ordinary in-flight reply (`{status:'pending'}` is cost-less
+      // too); dropping the cost test would reject the budget rejection. And the
+      // test is `typeof … !== 'number'`, never `!snapshot.cost?.total`: `0` is a
+      // real price and falsy.
+      if (snapshot.status === 'failed' && typeof snapshot.cost?.total !== 'number') {
+        throw new WorkflowSubmitError(snapshot, 'exception');
+      }
       setStatus(TERMINAL_STATUSES.has(snapshot.status) ? 'done' : 'polling');
       return snapshot;
     } catch (err) {

@@ -237,8 +237,23 @@ try {
   showError(estimateFailureMessage(err));
 }
 if (priced) {
-  const snap = await submit(body); // status 'submitting' → 'polling'; returns a workflowId
-  await poll(snap.workflowId);     // you loop this on a backoff until terminal
+  // 🔴 submit() REJECTS when the submit ERRORED (no workflow queued, nothing
+  // charged). A budget / spend-cap refusal is different — it RESOLVES, priced.
+  try {
+    const snap = await submit(body); // status 'submitting' → 'polling'
+    if (snap.status === 'failed') {
+      // Priced refusal: `snap.cost.total` is what the server declined to charge.
+      // This is the top-up branch — offer useBuzzPurchase(), don't just retry.
+      showError('Not enough Buzz for this generation.');
+    } else {
+      await poll(snap.workflowId);   // you loop this on a backoff until terminal
+    }
+  } catch (err) {
+    if (!(err instanceof WorkflowSubmitError)) throw err;
+    // Log both for the developer; render neither. Retrying is the sane recovery.
+    logForDebugging(err.message, err.snapshot.error);
+    showError('Could not start the generation. Please try again.');
+  }
 }
 ```
 
@@ -252,10 +267,32 @@ if (priced) {
 - The hook does **not** auto-poll. After `submit` flips status to `'polling'`,
   the **caller** runs a `useEffect` that calls `poll(workflowId)` on a backoff
   until the snapshot is terminal (`succeeded | failed | canceled | expired`).
-- An over-budget / rejected **submit** comes back as a **resolved** snapshot with
-  `status: 'failed'` + an `error` string — the transport resolves the reply, it
-  doesn't throw. Check `snap.status`, not just `try/catch`.
-- **`estimate` is the exception to that rule** (`@civitai/blocks-react@0.43.0+`).
+- An over-budget / spend-cap-rejected **submit** comes back as a **resolved**
+  snapshot with `status: 'failed'`, an `error` string, **and a numeric
+  `cost.total`** — the price the server refused to charge. That is a workflow
+  *outcome*, not an error: it is what you branch on to offer a top-up. Check
+  `snap.status`, not just `try/catch`.
+- **`submit` REJECTS when the submit itself ERRORED** (`@civitai/blocks-react@0.44.0+`).
+  Both producers report `status: 'failed'`, so `status` cannot tell them apart —
+  **`cost` presence is the discriminator**:
+  - **budget / spend-cap rejection** → carries `cost`. **Resolves**, as above.
+  - **a caught server exception** (the host posts its `failureSnapshot(err)`) →
+    **no `cost`**. Nothing was queued and nothing was charged, so `submit()`
+    now rejects with a `WorkflowSubmitError` (`err.code === 'exception'`,
+    `err.snapshot` = the host's raw reply).
+
+  Before that version both resolved, so a block branching on
+  `snap.status === 'failed'` could not tell "you can't afford this" from "the
+  request failed", and one gating a money control on
+  `typeof snap.cost?.total === 'number'` saw the same dead-control shape
+  civitai/civitai#4159 describes. An ordinary in-flight reply
+  (`{ status: 'pending' }`) is cost-less too and still resolves — only a
+  *failure-shaped* reply with no price rejects. `err.message` is a generic
+  developer-facing constant and the server's words stay on `err.snapshot.error`,
+  exactly as on `WorkflowEstimateError` below. Note this also fires in
+  **moderator review preview**. To exercise your `catch` locally, set the mock
+  host's `generation.failSubmitException: true`.
+- **`estimate` follows the same rule for a different question** (`@civitai/blocks-react@0.43.0+`).
   It **rejects** with a `WorkflowEstimateError` when the reply carries no usable
   price, rather than resolving a snapshot with no `cost`. Two things produce
   that, and `err.code` tells them apart: `'failed'` (the estimate errored
