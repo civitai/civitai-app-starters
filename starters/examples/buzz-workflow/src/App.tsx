@@ -104,13 +104,31 @@ export function App() {
       setQueue((q) =>
         q.map((it) =>
           it.localId === localId
-            ? { ...it, workflowId: snap.workflowId, snapshot: snap, status: mapStatus(snap) }
+            ? {
+                ...it,
+                workflowId: snap.workflowId,
+                snapshot: snap,
+                status: mapStatus(snap),
+                // Resolve the viewer copy HERE, where the snapshot is in hand.
+                ...(snap.status === 'failed' ||
+                snap.status === 'canceled' ||
+                snap.status === 'expired'
+                  ? { viewerMessage: describeFailure(snap) }
+                  : {}),
+              }
             : it,
         ),
       );
-    } catch {
+    } catch (err) {
+      // 🔴 THE ERROR IS NO LONGER SWALLOWED. This used to be a bare `catch {}`,
+      // which threw away the only diagnostic a failed submit produces — so the
+      // card said "generation failed" and nothing, anywhere, said why.
       setQueue((q) =>
-        q.map((it) => (it.localId === localId ? { ...it, status: 'error' } : it)),
+        q.map((it) =>
+          it.localId === localId
+            ? { ...it, status: 'error', viewerMessage: describeFailure(null, err) }
+            : it,
+        ),
       );
     }
     // The first gen is done → the next one is a re-gen (gotcha #59).
@@ -129,7 +147,16 @@ export function App() {
           setQueue((q) =>
             q.map((q2) =>
               q2.localId === it.localId
-                ? { ...q2, snapshot: snap, status: mapStatus(snap) }
+                ? {
+                    ...q2,
+                    snapshot: snap,
+                    status: mapStatus(snap),
+                    ...(snap.status === 'failed' ||
+                    snap.status === 'canceled' ||
+                    snap.status === 'expired'
+                      ? { viewerMessage: describeFailure(snap) }
+                      : {}),
+                  }
                 : q2,
             ),
           );
@@ -212,8 +239,12 @@ export function App() {
               </div>
             ) : null}
             {it.status === 'error' || it.snapshot?.status === 'failed' ? (
+              // 🔴 APP-OWNED COPY ONLY. This used to render `it.snapshot?.error`
+              // — a server-authored, unsanitised string — straight into markup.
+              // The server's own words are logged for the developer by
+              // `describeFailure`; they must not reach a viewer.
               <div style={{ color: '#e03131', fontSize: 12, marginTop: 4 }}>
-                {it.snapshot?.error ?? 'generation failed'}
+                {it.viewerMessage ?? 'The generation failed. Please try again.'}
               </div>
             ) : null}
           </div>
@@ -228,9 +259,53 @@ interface QueueItem {
   workflowId: string | null;
   snapshot: BlockWorkflowSnapshot | null;
   status: QueueStatus;
+  /**
+   * Viewer-facing copy THIS APP owns, chosen by {@link describeFailure}.
+   *
+   * 🔴 IT EXISTS SO `snapshot.error` NEVER REACHES THE SCREEN. That field is
+   * server-authored and UNSANITISED — civitai's own error handling documents
+   * that raw upstream text, database constraint and column names among it, can
+   * reach it. This card used to render it directly.
+   */
+  viewerMessage?: string;
 }
 type QueueStatus = 'submitting' | 'processing' | 'succeeded' | 'failed' | 'canceled' | 'expired' | 'error';
 const TERMINAL = new Set<QueueStatus>(['succeeded', 'failed', 'canceled', 'expired', 'error']);
+
+/**
+ * Turn a failure into copy THIS APP owns, and log the server's own words for the
+ * developer. Two audiences, two destinations — never one string for both.
+ *
+ * 🔴 THE RAW TEXT IS LOGGED, NOT DISCARDED. Deleting it would trade a leak for a
+ * blind spot: the server's reason is the only thing that explains WHY a specific
+ * config will not run, so it has to stay reachable in a developer surface.
+ *
+ * 🔴 A REFUSAL IS NOT A CRASH, AND THE COPY SAYS SO PER CASE. A priced refusal —
+ * `status:'failed'` carrying a `cost` — is a documented OUTCOME the host returns
+ * when it declines to spend (per-call budget, a daily or per-app cap, a velocity
+ * limit). Telling the viewer "something went wrong" there would be wrong, and so
+ * would offering a top-up for a cap that Buzz cannot lift. Only a failure with no
+ * price is an actual error.
+ */
+function describeFailure(snap: BlockWorkflowSnapshot | null, thrown?: unknown): string {
+  // Developer surface: the server's verbatim words, plus any thrown error.
+  // Never rendered.
+  if (snap?.error) console.warn('[buzz-workflow] server reason:', snap.error);
+  if (thrown) console.warn('[buzz-workflow] submit/poll threw:', thrown);
+
+  if (snap?.status === 'canceled') return 'Canceled.';
+  if (snap?.status === 'expired') return 'This generation expired before it ran.';
+
+  if (snap?.status === 'failed' && typeof snap.cost?.total === 'number') {
+    // A PRICED refusal — the server quoted what it declined to charge. Match
+    // loosely: the wording is not a stable contract, and only SOME of these are
+    // about the viewer's wallet.
+    return /insufficient|not enough|budget/i.test(snap.error ?? '')
+      ? 'Not enough Buzz for this generation.'
+      : 'This generation could not be run right now — a spending limit was reached.';
+  }
+  return 'The generation failed. Please try again.';
+}
 
 function mapStatus(snap: BlockWorkflowSnapshot): QueueStatus {
   if (snap.status === 'pending') return 'processing';
