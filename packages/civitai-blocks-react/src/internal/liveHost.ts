@@ -758,6 +758,23 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
 
           case 'SUBMIT_WORKFLOW': {
             const body = typed.payload?.body;
+            // 🔴 KNOWN GAP, DELIBERATELY NOT CHANGED HERE — see below before
+            // "fixing" it. Every tRPC failure collapses into `errorSnapshot()`,
+            // i.e. the `'failed'` sentinel with no cost, which the SDK reports as
+            // `WorkflowSubmitError` code `'exception'`. That code's docs are now
+            // careful to say "the host had no workflow to report", NOT "nothing
+            // was charged" — precisely because a TRANSIENT failure (the ≥500 /
+            // 408 / 429 / 401 class this file already models in
+            // `isTransientHttpStatus`) can arrive AFTER the orchestrator created
+            // and charged a workflow.
+            //
+            // `r.transient` is available on this result and is deliberately
+            // unread. The POLL path below refuses to synthesize a terminal
+            // `failed` for exactly this reason — but poll has a workflowId to
+            // keep polling with and submit does not, so the same remedy does not
+            // transfer, and inventing one is a behaviour change on a path where
+            // `dev:live` spends REAL Buzz. Threading it through is tracked
+            // separately rather than bolted on here.
             void callTrpcMutation('blocks.submitWorkflow', { blockToken: rawToken, body }).then(
               (r) => {
                 dispatchToBlock({

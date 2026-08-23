@@ -535,8 +535,14 @@ describe('useBuzzWorkflow', () => {
     //    workflow", which is false for the 'workflow-failed' arm below. One
     //    template must be true for BOTH codes, so a developer reading a stack
     //    trace is never told spend did not happen when it may have.
+    //
+    //    ⚠️ THIS LINE IS A README FOR HUMANS, NOT THE MACHINE-ENFORCED GUARANTEE.
+    //    The exact-string `toBe` above pins every character, so ANY mutation of
+    //    the template is killed by that assertion first and this regex can never
+    //    fail on its own. It is kept because it states the INTENT that the exact
+    //    string encodes — do not cite it as independent coverage.
     expect(err.message).not.toMatch(/charged|queued|refund|free/i);
-    // 6. The hook must NOT advertise a workflow to poll. `'polling'` is what a
+    // 7. The hook must NOT advertise a workflow to poll. `'polling'` is what a
     //    block starts a `watch()` loop on, and there is nothing to watch.
     await waitFor(() => expect(result.current.status).toBe('error'));
     expect(result.current.status).not.toBe('polling');
@@ -588,10 +594,16 @@ describe('useBuzzWorkflow', () => {
     await waitFor(() => expect(result.current.status).toBe('error'));
   });
 
-  // 🔴 FAIL-SAFE CLASSIFICATION. An id the SDK does not recognise must fall to
-  // the possibly-charged arm, never to the reassuring one. `'whatif'` is a real
-  // sentinel the server uses elsewhere, so it is the honest fixture for "not the
-  // host's failure sentinel, not obviously a workflow either".
+  // 🔴 FAIL-SAFE CLASSIFICATION — IN ONE DIRECTION ONLY. An id the SDK does not
+  // recognise must fall to the possibly-charged arm, never to the reassuring one.
+  //
+  // `'whatif'` is not a hypothetical: the server emits `workflow.id ?? 'whatif'`
+  // and treats BOTH `'failed'` and `'whatif'` as non-workflow sentinels, skipping
+  // its own persistence and settle steps on either. So this fixture is the exact
+  // case where the money reading ('workflow-failed', be cautious) is RIGHT while
+  // the pollability reading would be WRONG — there is no workflow behind
+  // `'whatif'` to poll. The code docs carry that caveat; this test pins the
+  // classification, not a promise that the id is pollable.
   it("submit() classifies an UNRECOGNISED id as 'workflow-failed' (fail-safe) (#251)", async () => {
     const { result } = renderHook(() => useBuzzWorkflow());
     const { settled, reply } = driveSubmit(result.current.submit as never);
@@ -602,6 +614,33 @@ describe('useBuzzWorkflow', () => {
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
     expect((outcome.e as WorkflowSubmitError).code).toBe('workflow-failed');
+  });
+
+  // 🔴 THE SENTINEL IS AN EXACT MATCH, NOT A PREFIX — and this fixture is the
+  // ONLY thing that says so. Relaxing `===` to `.startsWith(...)` passed the
+  // ENTIRE suite (76 files / 1192 tests) before this test existed, because no
+  // other fixture has an id that begins with `failed` without equalling it.
+  // A real workflow whose id merely started with those six characters would be
+  // reclassified into the "host had no workflow" arm — the reassuring one.
+  //
+  // 🔴 THIRD INSTANCE OF THE SAME BLIND SPOT IN THIS CHANGE. A mutation sweep
+  // that only DELETES clauses cannot see a guard being made more PERMISSIVE:
+  // first `status === 'failed'` → `TERMINAL_STATUSES.has(...)`, now `===` →
+  // `.startsWith(...)`. If you add another sentinel or identity check here, pin
+  // its exactness with a near-miss fixture like this one.
+  it("submit() matches the host sentinel EXACTLY — 'failed-x' is not 'failed' (#251)", async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const { settled, reply } = driveSubmit(result.current.submit as never);
+
+    reply({ workflowId: 'failed-x', status: 'failed', error: 'near-miss id' });
+
+    const outcome = await settled;
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    // A prefix match would report 'exception' here — i.e. "the host had no
+    // workflow", for an id the host did not synthesise.
+    expect((outcome.e as WorkflowSubmitError).code).toBe('workflow-failed');
+    expect((outcome.e as WorkflowSubmitError).snapshot.workflowId).toBe('failed-x');
   });
 
   // ──────────────────────────────────────────────────────────────────────────

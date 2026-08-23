@@ -256,13 +256,16 @@ if (priced) {
     if (!(err instanceof WorkflowSubmitError)) throw err;
     // Log both for the developer; render neither.
     logForDebugging(err.message, err.snapshot.error);
-    if (err.code === 'workflow-failed') {
-      // 🔴 A REAL workflow exists and its spend MAY ALREADY BE COMMITTED. Do not
-      // tell the viewer it was free, and do not retry blindly — a retry mints a
-      // fresh idempotency key, i.e. a SECOND reservation. Poll the real id.
+    if (err.code === 'workflow-failed' && err.snapshot.workflowId !== 'whatif') {
+      // 🔴 A workflow exists and its spend MAY ALREADY BE COMMITTED. Do not tell
+      // the viewer it was free, and do not retry blindly — a retry mints a fresh
+      // idempotency key, i.e. a SECOND reservation. Poll the real id instead.
+      // ('whatif' is a non-workflow sentinel, so it is excluded — nothing to poll.)
       await poll(err.snapshot.workflowId);
     } else {
-      // 'exception' — nothing queued, nothing charged. A retry is safe.
+      // 🔴 'exception' means the host had no workflow to report — USUALLY nothing
+      // was queued, but a lost response or an in-progress idempotency conflict
+      // reaches this arm too. Retry with the SAME idempotencyKey, not a fresh one.
       showError('Could not start the generation. Please try again.');
     }
   }
@@ -293,10 +296,15 @@ if (priced) {
   `status: 'failed'`, so `status` cannot tell them apart — **`cost` presence
   decides resolve-vs-reject, and `workflowId` decides which rejection**:
   - **priced refusal** → carries `cost`. **Resolves**, as above.
-  - **a caught server exception** (the host posts its `failureSnapshot(err)`,
-    which stamps the literal `workflowId: 'failed'`) → no `cost`. **Rejects**
-    with `err.code === 'exception'`. Nothing was queued, nothing was charged, so
-    a retry is safe.
+  - **a reply the host built itself** (`failureSnapshot(err)`, which stamps the
+    literal `workflowId: 'failed'` — from a `catch` or a short-circuit such as
+    the moderator-review nack) → no `cost`. **Rejects** with
+    `err.code === 'exception'`, which means *the host had no workflow to report*.
+    🔴 **Not the same as "nothing happened."** Usually nothing was queued or
+    charged and a retry is fine, but a **lost response**, an **in-progress
+    idempotency conflict**, or a **transient 5xx/408/429/401** also land here,
+    and a workflow may have been created and charged. Prefer reusing the same
+    `idempotencyKey` on retry, and don't render "nothing was charged" as fact.
   - **a real workflow that came back failed and unpriced** (a genuine
     orchestrator id) → no `cost`. **Rejects** with `err.code === 'workflow-failed'`.
     🔴 **Money may already be committed.** Server-side, *any* resolved submit
@@ -304,7 +312,9 @@ if (priced) {
     a non-throwing failed snapshot. So do not tell the viewer it was free, and do
     not retry blindly — `submit()` mints a fresh `idempotencyKey` per call, so an
     automatic retry is a second reservation. Read `err.snapshot.workflowId` (a
-    real, pollable id) and `watch`/`poll` it to learn the workflow's actual fate.
+    usually-pollable id) and `watch`/`poll` it to learn the workflow's actual
+    fate — guarding with `err.snapshot.workflowId !== 'whatif'` first, since the
+    server treats both `'failed'` and `'whatif'` as non-workflow sentinels.
 
   Before that version everything resolved, so a block branching on
   `snap.status === 'failed'` could not tell "you can't afford this" from "the

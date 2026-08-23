@@ -54,13 +54,21 @@ resolving outcomes too — and buying Buzz fixes none of them. That is what the
 `WorkflowSubmitError` (civitai/civitai-app-starters#251), and **`err.code` decides
 what you may say about money**:
 
-- `'exception'` — the host synthesised the reply in a `catch`. Nothing was queued,
-  nothing was charged; a retry is safe.
-- `'workflow-failed'` — a real workflow id came back failed and unpriced. **Buzz
-  may already be committed** (server-side, any resolved submit keeps its
-  reservation regardless of snapshot status). Do not tell the viewer it was free,
-  and do not auto-retry — that mints a fresh idempotency key and reserves a second
-  time. Poll `err.snapshot.workflowId` instead.
+- `'exception'` — the host built the reply itself (from a `catch`, or a
+  short-circuit like the moderator-review nack). It means **the host had no
+  workflow to report**, which is *usually* "nothing was queued, nothing was
+  charged" — but a lost response, an in-progress idempotency conflict or a
+  transient 5xx also land here, and those may have created and charged a
+  workflow. Retry with the **same** `idempotencyKey`, and don't promise a refund.
+- `'workflow-failed'` — the id was not the host's sentinel, so a workflow
+  probably exists. **Buzz may already be committed** (server-side, any resolved
+  submit keeps its reservation regardless of snapshot status). Do not tell the
+  viewer it was free, and do not auto-retry — that mints a fresh idempotency key
+  and reserves a second time. Poll `err.snapshot.workflowId` instead, after
+  checking it is not the `'whatif'` non-workflow sentinel.
+- **Anything that is not a `WorkflowSubmitError`** — a transport failure, most
+  likely the 120s timeout. A timed-out submit may well have been queued and
+  charged, so give it the most cautious copy of all.
 
 Keep all three paths. See `src/App.tsx`, which handles the priced refusal on the
 resolved branch and branches on `err.code` in its `catch`.

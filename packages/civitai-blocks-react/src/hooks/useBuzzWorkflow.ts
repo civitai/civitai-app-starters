@@ -283,16 +283,26 @@ export class WorkflowEstimateError extends Error {
  * The `workflowId` the host stamps on a snapshot it SYNTHESISED itself, rather
  * than one derived from a real orchestrator workflow.
  *
- * 🔴 THIS IS A REAL WIRE INVARIANT, NOT A HEURISTIC — and it is what lets
- * {@link WorkflowSubmitError.code} tell "nothing was queued" from "a workflow
- * exists and money may already be committed". Every host-side catch arm posts
- * `failureSnapshot(err)` (civitai `src/components/AppBlocks/failureSnapshot.ts`),
- * which hardcodes this exact literal; the server's `snapshotFromWorkflow` returns
- * `workflow.id`. A failed workflow has no real id, so the host stamps a sentinel.
+ * 🔴 THIS IS A REAL WIRE INVARIANT, NOT A HEURISTIC. Every reply the host builds
+ * itself goes through `failureSnapshot()` (civitai
+ * `src/components/AppBlocks/failureSnapshot.ts`), which hardcodes this exact
+ * literal — from its `catch` arms AND from non-catch short-circuits such as the
+ * moderator-review nack. The server's `snapshotFromWorkflow` instead returns
+ * `workflow.id ?? 'whatif'`.
  *
- * 🔴 CLASSIFICATION IS DELIBERATELY FAIL-SAFE: anything that is NOT this literal
- * is treated as a REAL workflow, i.e. as possibly-charged. An unrecognised id
- * therefore errs toward "money may have moved", never toward the reassuring arm.
+ * 🔴 IT MUST BE COMPARED WITH `===`, NEVER A PREFIX TEST. `.startsWith()` here
+ * would quietly reclassify a real workflow whose id merely BEGINS with `failed`
+ * into the "nothing happened" arm — a WIDENING that survives a delete-only
+ * mutation sweep. Pinned by a `workflowId: 'failed-x'` fixture in the test file.
+ *
+ * 🔴 THE FAIL-SAFETY IS ONE-DIRECTIONAL, AND SAYING OTHERWISE WAS A BUG IN AN
+ * EARLIER REVISION OF THIS COMMENT. An id that is NOT this literal is treated as
+ * possibly-charged, so an unrecognised id never buys the reassuring reading —
+ * that direction holds. The converse does NOT: this sentinel is also what the
+ * host stamps when a submit threw for reasons that may still have created and
+ * charged a workflow (a lost response, an in-progress idempotency conflict). So
+ * the sentinel arm means "the host had no workflow to report", never "nothing
+ * happened". See {@link WorkflowSubmitError.code}.
  */
 const HOST_SYNTHESISED_WORKFLOW_ID = 'failed';
 
@@ -331,7 +341,9 @@ export type WorkflowSubmitErrorCode = 'exception' | 'workflow-failed';
  *     `buzzBudget` gate, the per-user daily Buzz cap, the per-app aggregate and
  *     velocity caps, and the dev-tunnel session cap — on all three body kinds.
  *   - **caught server EXCEPTION** — `failureSnapshot(err)`, no `cost`, and the
- *     `'failed'` sentinel id. Nothing was queued. Rejects as `'exception'`.
+ *     `'failed'` sentinel id. The host had no workflow to report — usually
+ *     nothing was queued, but a lost response or an in-progress idempotency
+ *     conflict lands here too. Rejects as `'exception'`.
  *   - **a REAL workflow that came back failed and unpriced** — a genuine
  *     orchestrator id, no `cost` (the server's `snapshotFromWorkflow` omits the
  *     key whenever `workflow.cost?.total` is not numeric). Rejects as
@@ -389,14 +401,35 @@ export class WorkflowSubmitError extends Error {
    * 🔴 THE TWO CODES DIFFER ON WHETHER MONEY MOVED. Do not collapse them, and do
    * not write recovery copy that ignores the distinction.
    *
-   * - `'exception'` — the host synthesised this reply in a `catch`
-   *   (`failureSnapshot(err)`, id {@link HOST_SYNTHESISED_WORKFLOW_ID}). The
-   *   submit threw before a workflow existed: **nothing was queued and nothing
-   *   was charged**, so a retry is the sensible recovery. There is no workflow id
-   *   to poll.
+   * - `'exception'` — the host built this reply itself
+   *   (`failureSnapshot(err)`, id {@link HOST_SYNTHESISED_WORKFLOW_ID}), from a
+   *   `catch` OR from a non-catch short-circuit such as the moderator-review
+   *   nack. **It means the host had no workflow to report — NOT that nothing
+   *   happened.**
    *
-   * - `'workflow-failed'` — a REAL workflow id came back, already `'failed'` and
-   *   with no price.
+   *   🔴 USUALLY nothing was queued and nothing was charged, and a retry is the
+   *   sensible recovery. But the same shape is reachable when a workflow MAY have
+   *   been created and charged, because the failure happened after the request
+   *   left the block:
+   *     - a **lost response** — the server's own catch concedes that "the
+   *       orchestrator externalId dedupe still protects a retry that DID create a
+   *       workflow server-side despite a lost response". What that path refunds
+   *       is its own reservation and cap counters; the Buzz debit happens inside
+   *       the orchestrator's submit.
+   *     - an **in-progress idempotency CONFLICT** — a concurrent first attempt is
+   *       still in flight and may be committing right now. Retrying blind is the
+   *       worst option there.
+   *     - a **transient transport failure** (5xx / 408 / 429 / 401), which the
+   *       `dev:live` host collapses into this same shape.
+   *
+   *   So prefer **reusing the same {@link SubmitWorkflowOptions.idempotencyKey}**
+   *   on retry rather than letting a fresh one be minted, and do not render
+   *   "nothing was charged" to a viewer as a certainty. There is no workflow id
+   *   on this arm to poll.
+   *
+   * - `'workflow-failed'` — the id was NOT the host's sentinel, so the reply came
+   *   from the server's `snapshotFromWorkflow`: normally a real orchestrator id,
+   *   already `'failed'` and with no price.
    *
    *   🔴 **DO NOT TELL THE VIEWER NOTHING WAS CHARGED, AND DO NOT BLIND-RETRY.**
    *   Server-side, `blocks.submitWorkflow` treats *any resolved* submit as
@@ -407,8 +440,15 @@ export class WorkflowSubmitError extends Error {
    *
    *   A retry is a SECOND reservation unless you reuse the same
    *   {@link SubmitWorkflowOptions.idempotencyKey} — `submit()` mints a fresh key
-   *   per call by default, so an automatic retry double-reserves. Read
-   *   `err.snapshot.workflowId` (a real, pollable id) and use
+   *   per call by default, so an automatic retry double-reserves.
+   *
+   *   🔴 `err.snapshot.workflowId` IS USUALLY POLLABLE, BUT CHECK IT FIRST — this
+   *   arm is defined by what the id is NOT. The server emits `workflow.id ??
+   *   'whatif'`, and it treats **both** `'failed'` and `'whatif'` as non-workflow
+   *   sentinels (it skips its own persistence and settle steps on either). So
+   *   `'whatif'` lands here — correctly, because the cautious money reading still
+   *   applies — but there is nothing to poll. Guard with
+   *   `err.snapshot.workflowId !== 'whatif'` before calling
    *   {@link UseBuzzWorkflowReturn.watch} / {@link UseBuzzWorkflowReturn.poll} to
    *   learn the workflow's actual fate before spending again.
    *
@@ -501,10 +541,12 @@ interface UseBuzzWorkflowReturn {
    * 🔴 REJECTS with {@link WorkflowSubmitError} when the reply is failure-shaped
    * and carries no price. Wrap every call in `try/catch`; see that class for why
    * resolving such a reply was the `submit` half of civitai/civitai#4159.
-   * **Check `err.code` before saying anything about money**: `'exception'` means
-   * nothing was queued or charged, but `'workflow-failed'` means a real workflow
-   * exists and its spend may already be committed — do not tell the viewer it was
-   * free, and do not retry without reusing the same
+   * **Check `err.code` before saying anything about money** — and note that
+   * NEITHER code guarantees nothing was spent. `'exception'` usually means
+   * nothing was queued or charged, but a lost response or an in-progress
+   * idempotency conflict reaches it too; `'workflow-failed'` means a workflow
+   * exists and its spend may already be committed. Do not tell the viewer it was
+   * free, and on either code prefer reusing the same
    * {@link SubmitWorkflowOptions.idempotencyKey}.
    *
    * 🔴 A BUDGET / SPEND-CAP REJECTION STILL RESOLVES, and that is deliberate. It
@@ -679,7 +721,8 @@ interface UseBuzzWorkflowReturn {
  *     // NOT claim nothing was charged — poll the id to learn its real fate.
  *     await watch(err.snapshot.workflowId, { onUpdate: render });
  *   } else {
- *     // 'exception' — nothing queued, nothing charged. A retry is safe.
+ *     // 'exception' — usually nothing was queued. Retry, but reuse the SAME
+ *     // idempotencyKey: a lost response can also land here.
  *     showError('Could not start the generation. Please try again.');
  *   }
  * }

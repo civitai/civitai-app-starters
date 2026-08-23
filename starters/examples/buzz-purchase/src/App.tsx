@@ -99,7 +99,9 @@ export function App() {
         // unsanitised (raw upstream text, database constraint names among it,
         // can reach it). Log it; render copy this app owns.
         console.warn('[buzz-purchase] submit refused:', snap.error);
-        setStatus('This generation could not be run right now. Please try again shortly.');
+        // Deliberately does NOT say "shortly": this arm also covers the per-app
+        // DAILY aggregate cap, which does not clear for hours.
+        setStatus('This generation could not be run right now. Please try again later.');
       } else {
         setStatus(`submitted: ${snap.workflowId} (${snap.status})`);
       }
@@ -116,13 +118,24 @@ export function App() {
               // claim it was free, and do not auto-retry — that would mint a new
               // idempotency key and reserve a second time.
               'The generation was submitted but failed. Check your generation history before retrying.'
-            : // 'exception' — nothing queued, nothing charged. Retrying is safe.
+            : // 'exception' — the host had no workflow to report. USUALLY nothing
+              // was queued, but a lost response or an in-progress idempotency
+              // conflict lands here too, so the copy stays non-committal about
+              // spend. A production app retrying automatically should reuse the
+              // same idempotencyKey rather than minting a fresh one.
               'Could not start the generation. Please try again.',
         );
         return;
       }
-      console.warn('[buzz-purchase] submit error:', err);
-      setStatus('Could not start the generation. Please try again.');
+      // 🔴 NOT A WorkflowSubmitError — a transport-level failure, and the most
+      // likely one is the 120s request TIMEOUT. A submit that times out may well
+      // have been queued and charged server-side, so this must NOT claim the
+      // generation did not start and must NOT invite a blind retry. It is the
+      // least-known case, so it gets the most cautious copy.
+      console.warn('[buzz-purchase] submit transport error:', err);
+      setStatus(
+        'We lost contact before the generation was confirmed. Check your generation history before trying again.',
+      );
     }
   }, [model, submit, token.buzzBudget]);
 

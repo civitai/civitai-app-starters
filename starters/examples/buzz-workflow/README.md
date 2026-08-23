@@ -36,9 +36,11 @@ missing price quote all resolve the same way and buying Buzz fixes none of them.
 
 What DOES reject (since `@civitai/blocks-react@0.44.0`) is a failure-shaped reply
 with **no `cost`** — `cost` presence is the discriminator, since `status` is
-`'failed'` for all of them. `err.code` then says whether money moved:
-`'exception'` means nothing was queued or charged (retry is safe);
-`'workflow-failed'` means a real workflow exists and **spend may already be
+`'failed'` for all of them. `err.code` then says how much you may assume about money — and **neither code
+guarantees nothing was spent**. `'exception'` means the host had no workflow to
+report (usually nothing queued, but a lost response or an in-progress idempotency
+conflict also lands there, so retry with the SAME `idempotencyKey`);
+`'workflow-failed'` means a workflow probably exists and **spend may already be
 committed** — poll `err.snapshot.workflowId` rather than retrying blindly. See
 civitai/civitai-app-starters#251.
 

@@ -26,10 +26,12 @@ fixed for `estimate`.
 ## The discriminator
 
 `cost` presence, and it was already on the wire — no new field. The asymmetry is
-not incidental: **every** budget/cap exit on the server's submit path attaches
-the quote it refused (the per-call `buzzBudget` gate, the per-user daily Buzz
-cap, the per-app aggregate and velocity caps, the dev-tunnel session cap — on all
-three body kinds, **13 sites** in total), while `failureSnapshot(err)` never does.
+not incidental: **all 13** `status: 'failed'` sites on the server's submit path
+attach a price. Twelve are budget/cap exits (the per-call `buzzBudget` gate, the
+per-user daily Buzz cap, the per-app aggregate and velocity caps, the dev-tunnel
+session cap — across all three body kinds); the thirteenth is the
+**missing-price-quote** exit, which is not a cap at all but is priced just the
+same. `failureSnapshot(err)` never carries a price.
 
 🔴 **Not every priced refusal is affordability.** The per-app velocity limit, the
 per-app aggregate daily cap, a fail-closed "temporarily unavailable" deny and a
@@ -73,9 +75,15 @@ asserts the raw string is preserved verbatim on `.snapshot.error` and absent fro
 
 `err.code` is the branch target and it is **not** a formality:
 
-- `'exception'` — the host synthesised the reply in a `catch`
-  (`failureSnapshot(err)`, which hardcodes `workflowId: 'failed'`). Nothing was
-  queued, nothing was charged; a retry is safe.
+- `'exception'` — the host built the reply itself (`failureSnapshot(err)`, which
+  hardcodes `workflowId: 'failed'`), from a `catch` **or** a non-catch
+  short-circuit such as the moderator-review nack. It means **the host had no
+  workflow to report — not that nothing happened**. Usually nothing was queued or
+  charged and a retry is fine, but a **lost response** (the server's own catch
+  concedes a retry "DID create a workflow server-side despite a lost response"),
+  an **in-progress idempotency CONFLICT**, or a **transient 5xx/408/429/401** on
+  `dev:live` all land here. Retry with the SAME `idempotencyKey`, and never
+  render "nothing was charged" as a certainty.
 - `'workflow-failed'` — a REAL orchestrator id came back failed and unpriced
   (`snapshotFromWorkflow` omits `cost` on any non-numeric total). 🔴 **Buzz may
   already be committed**: server-side, *any* resolved submit keeps its
@@ -83,11 +91,21 @@ asserts the raw string is preserved verbatim on `.snapshot.error` and absent fro
   failed snapshot, and `finalizeGenIdempotency` runs on that path. So this arm
   must not tell the viewer it was free, and must not auto-retry — `submit()`
   mints a fresh `idempotencyKey` per call, so a blind retry is a SECOND
-  reservation. Read `err.snapshot.workflowId` and poll it.
+  reservation. Read `err.snapshot.workflowId` and poll it — after checking it is
+  not `'whatif'`, which the server also treats as a non-workflow sentinel (it
+  emits `workflow.id ?? 'whatif'` and skips persistence/settle on either).
 
-Classification is **fail-safe**: any id that is not the host's `'failed'`
-sentinel falls to `'workflow-failed'`, so an unrecognised shape never buys the
-reassuring "nothing was charged" reading.
+Classification is **fail-safe in ONE direction only**, and an earlier draft
+overstated it: an id that is not the host's `'failed'` sentinel falls to
+`'workflow-failed'`, so an unrecognised shape never buys the reassuring reading.
+The converse does not hold — the sentinel arm is itself reachable by cases where
+money may have moved, which is why its copy is now hedged rather than absolute.
+
+The sentinel is matched with `===`, never a prefix test: relaxing it to
+`.startsWith(...)` would reclassify a real workflow whose id merely begins with
+`failed`, and that WIDENING survived the whole suite until a `'failed-x'` fixture
+was added. Three widening mutants were found in this PR by looking for the shape
+deliberately — a delete-only mutation sweep sees none of them.
 
 `err.message` is one template for both codes and deliberately makes **no claim
 about money** — an earlier draft read "submit did not queue a workflow", which is
