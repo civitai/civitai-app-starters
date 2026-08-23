@@ -16,7 +16,7 @@ both report `'failed'`:
 | producer | what it means | carries `cost`? |
 | --- | --- | --- |
 | budget / spend-cap rejection | a legitimate **outcome** the block recovers from (open a top-up flow) | **yes** — the price the server declined to charge |
-| a caught server exception, posted as the host's `failureSnapshot(err)` | the submit **errored**; nothing was queued, nothing was charged | **no** |
+| a reply the host built itself (`failureSnapshot(err)`) | the host had **no workflow to report** — usually nothing was queued, but see the money note below | **no** |
 
 So a block branching on `snap.status === 'failed'` could not tell "you can't
 afford this" from "the request failed", and one gating a money control on
@@ -101,11 +101,14 @@ overstated it: an id that is not the host's `'failed'` sentinel falls to
 The converse does not hold — the sentinel arm is itself reachable by cases where
 money may have moved, which is why its copy is now hedged rather than absolute.
 
-The sentinel is matched with `===`, never a prefix test: relaxing it to
-`.startsWith(...)` would reclassify a real workflow whose id merely begins with
-`failed`, and that WIDENING survived the whole suite until a `'failed-x'` fixture
-was added. Three widening mutants were found in this PR by looking for the shape
-deliberately — a delete-only mutation sweep sees none of them.
+The sentinel is matched with `===` — exact and case-sensitive. Every looser
+comparison reclassifies a reply the host did not synthesise into the reassuring
+arm, and each direction needs its own near-miss fixture: `.startsWith()` accepts
+`failed-x`, `.endsWith()` accepts `x-failed`, a case-folding compare accepts
+`FAILED`. All are WIDENINGS, and a mutation sweep that only DELETES clauses sees
+none of them — three distinct widenings were found in review this way, each after
+the previous fix, including one where the source comment said "never a prefix
+test" while the tests pinned only that single direction.
 
 `err.message` is one template for both codes and deliberately makes **no claim
 about money** — an earlier draft read "submit did not queue a workflow", which is

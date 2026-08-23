@@ -1816,9 +1816,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                     // exactly, so `submit()` rejects with code `'exception'`
                     // (civitai/civitai-app-starters#251). The id matters as much
                     // as the missing cost: a made-up id like `wf_fail_3` would
-                    // classify as `'workflow-failed'`, i.e. as a REAL workflow
-                    // with possibly-committed spend — a materially different
-                    // thing to teach a block author.
+                    // classify as `'workflow-failed'`, i.e. as a workflow that
+                    // probably exists with possibly-committed spend — a
+                    // materially different thing to teach a block author.
                     //
                     // 🔴 THIS KNOB MODELS A THROWN SERVER ERROR, NOT "generation
                     // failed". The backend DOES have generic transient submit

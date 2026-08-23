@@ -60,6 +60,9 @@ what you may say about money**:
   charged" — but a lost response, an in-progress idempotency conflict or a
   transient 5xx also land here, and those may have created and charged a
   workflow. Retry with the **same** `idempotencyKey`, and don't promise a refund.
+  `src/App.tsx` demonstrates this: it holds one key per logical generation in a
+  ref, re-minting it only on a user-initiated Generate, so the top-up retry
+  collapses onto the same charge instead of reserving twice.
 - `'workflow-failed'` — the id was not the host's sentinel, so a workflow
   probably exists. **Buzz may already be committed** (server-side, any resolved
   submit keeps its reservation regardless of snapshot status). Do not tell the

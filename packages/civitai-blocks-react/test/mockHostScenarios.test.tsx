@@ -221,8 +221,10 @@ describe('createMockHost — generation scenario', () => {
 
     const err = await submitExpectingRejection(result);
     // 🔴 `'exception'`, NOT `'workflow-failed'` — the knob emits the host's
-    // `'failed'` sentinel id, so the SDK correctly reports that nothing was
-    // queued and nothing was charged. A synthetic id here would flip this to the
+    // `'failed'` sentinel id, so the SDK correctly reports that the host had no
+    // workflow to report. (That code does not prove nothing was charged in
+    // production, but in THIS mock nothing was: the knob short-circuits before
+    // any simulated spend.) A synthetic id here would flip this to the
     // possibly-charged arm and teach the opposite lesson.
     expect(err.code).toBe('exception');
     expect(err.snapshot.error).toBe('prompt audit down');

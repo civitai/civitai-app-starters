@@ -256,12 +256,18 @@ if (priced) {
     if (!(err instanceof WorkflowSubmitError)) throw err;
     // Log both for the developer; render neither.
     logForDebugging(err.message, err.snapshot.error);
-    if (err.code === 'workflow-failed' && err.snapshot.workflowId !== 'whatif') {
-      // 🔴 A workflow exists and its spend MAY ALREADY BE COMMITTED. Do not tell
-      // the viewer it was free, and do not retry blindly — a retry mints a fresh
-      // idempotency key, i.e. a SECOND reservation. Poll the real id instead.
-      // ('whatif' is a non-workflow sentinel, so it is excluded — nothing to poll.)
-      await poll(err.snapshot.workflowId);
+    // 🔴 TWO SEPARATE QUESTIONS — DO NOT CONJOIN THEM. `code` decides what you may
+    // say about MONEY; the id decides only whether there is something to POLL.
+    // Folding the id test into the `code` test sends a 'workflow-failed' reply
+    // whose id is 'whatif' into the reassuring arm — the exact blind-retry
+    // invitation this whole guard exists to remove.
+    if (err.code === 'workflow-failed') {
+      // 🔴 Spend MAY ALREADY BE COMMITTED. Do not tell the viewer it was free,
+      // and do not retry blindly — a retry mints a fresh idempotency key, i.e. a
+      // SECOND reservation.
+      showError('The generation may have started but did not complete. Check your history.');
+      // Only NOW ask about pollability: 'whatif' is a non-workflow sentinel.
+      if (err.snapshot.workflowId !== 'whatif') await poll(err.snapshot.workflowId);
     } else {
       // 🔴 'exception' means the host had no workflow to report — USUALLY nothing
       // was queued, but a lost response or an in-progress idempotency conflict
@@ -305,8 +311,9 @@ if (priced) {
     idempotency conflict**, or a **transient 5xx/408/429/401** also land here,
     and a workflow may have been created and charged. Prefer reusing the same
     `idempotencyKey` on retry, and don't render "nothing was charged" as fact.
-  - **a real workflow that came back failed and unpriced** (a genuine
-    orchestrator id) → no `cost`. **Rejects** with `err.code === 'workflow-failed'`.
+  - **a failed, unpriced reply whose id is NOT that sentinel** (normally a
+    genuine orchestrator id) → no `cost`. **Rejects** with
+    `err.code === 'workflow-failed'`.
     🔴 **Money may already be committed.** Server-side, *any* resolved submit
     keeps its Buzz reservation "regardless of snapshot status", with no refund on
     a non-throwing failed snapshot. So do not tell the viewer it was free, and do

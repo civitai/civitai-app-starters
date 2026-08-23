@@ -61,6 +61,17 @@ export function App() {
   // module doc — conflating the two is the bug this pattern exists to avoid.
   const [topUpPending, setTopUpPending] = useState(false);
   const topUpInFlight = useRef(false);
+  // 🔴 ONE IDEMPOTENCY KEY PER LOGICAL GENERATION, REUSED ACROSS ITS RETRIES.
+  // `submit()` mints a FRESH key on every call by default, so the top-up retry
+  // below would be a second logical submit — and on the failure shapes that may
+  // already have reserved Buzz server-side, that is a SECOND reservation. A
+  // stable key collapses a retry onto the same charge.
+  //
+  // It is a REF, and it is re-minted per user-initiated Generate, not once for
+  // the component's lifetime: a single constant key would make the second
+  // Generate click replay the FIRST generation's cached result instead of
+  // running a new one.
+  const genKey = useRef<string>(crypto.randomUUID());
 
   const model = ready ? (context as ModelSlotContext) : null;
   const cost = 120; // pretend this is the quoted cost from an estimate
@@ -76,7 +87,9 @@ export function App() {
       params: { prompt: 'a cozy reading nook', steps: 25 },
     };
     try {
-      const snap = await submit(body);
+      // Reuses `genKey.current` — minted fresh by the Generate handler, held
+      // steady across the top-up retry. See the ref's note above.
+      const snap = await submit(body, { idempotencyKey: genKey.current });
       // The host surfaces an under-budget submit as a RESOLVED snapshot with
       // `status: 'failed'`, an `error` string, and the `cost` it declined to
       // charge. That is a workflow OUTCOME — the branch the top-up flow lives on.
@@ -86,8 +99,10 @@ export function App() {
       // @civitai/blocks-react 0.44.0 `submit()` REJECTS it with a
       // `WorkflowSubmitError` (civitai/civitai-app-starters#251). It lands in the
       // `catch` below, alongside transport-level failures (timeout, malformed
-      // reply) — and there `err.code` decides the copy, because `'exception'`
-      // charged nothing while `'workflow-failed'` may already have.
+      // reply) — and there `err.code` decides the copy. 🔴 NEITHER code proves
+      // nothing was spent: `'workflow-failed'` may already have charged, and
+      // `'exception'` only means the host had no workflow to report (a lost
+      // response or an in-progress idempotency conflict reach it too).
       // Keep both paths: a top-up cannot fix a failed submit, and a retry cannot
       // fix an empty wallet.
       if (snap.status === 'failed' && isInsufficientFunds(snap.error ?? '')) {
@@ -114,9 +129,9 @@ export function App() {
         console.warn('[buzz-purchase] submit failed:', err.code, err.message, err.snapshot.error);
         setStatus(
           err.code === 'workflow-failed'
-            ? // A real workflow exists and Buzz may ALREADY be committed. Do not
-              // claim it was free, and do not auto-retry — that would mint a new
-              // idempotency key and reserve a second time.
+            ? // A workflow probably exists and Buzz may ALREADY be committed. Do
+              // not claim it was free, and do not auto-retry — that would mint a
+              // new idempotency key and reserve a second time.
               'The generation was submitted but failed. Check your generation history before retrying.'
             : // 'exception' — the host had no workflow to report. USUALLY nothing
               // was queued, but a lost response or an in-progress idempotency
@@ -210,7 +225,15 @@ export function App() {
         <strong>{token.buzzBudget ?? 0} Buzz</strong>
       </div>
 
-      <button onClick={tryGenerate} style={buttonStyle}>
+      <button
+        onClick={() => {
+          // A user-initiated Generate is a NEW logical submit → new key. The
+          // top-up retry deliberately does NOT do this.
+          genKey.current = crypto.randomUUID();
+          void tryGenerate();
+        }}
+        style={buttonStyle}
+      >
         Generate ({cost} Buzz)
       </button>
 

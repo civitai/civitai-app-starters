@@ -486,10 +486,12 @@ describe('useBuzzWorkflow', () => {
   // discriminator here is `cost`, NOT `status`, because BOTH are `'failed'`:
   //   (a) a budget / spend-cap REJECTION — a documented outcome, carries `cost`.
   //       Pinned above; it must keep RESOLVING.
-  //   (b) a caught server exception posted as the host's `failureSnapshot(err)`
-  //       — `{ workflowId:'failed', status:'failed', error:'<server message>' }`
-  //       with NO `cost`. Nothing was queued and nothing was charged, so this is
-  //       an ERROR, not an outcome, and it must REJECT.
+  //   (b) a reply the host built itself — `failureSnapshot(err)`,
+  //       `{ workflowId:'failed', status:'failed', error:'<server message>' }`
+  //       with NO `cost`. The host had no workflow to report, so this is an
+  //       ERROR, not an outcome, and it must REJECT. 🔴 It does NOT prove
+  //       nothing was charged — a lost response or an in-progress idempotency
+  //       conflict reach this same shape; see WorkflowSubmitError.code.
   //
   // 🔴 THE FIXTURES ARE REAL HOST REPLY SHAPES, NOT SENTINELS. Every one is a
   // VALID snapshot that `isValidWorkflowSnapshot` accepts — which is precisely
@@ -616,32 +618,50 @@ describe('useBuzzWorkflow', () => {
     expect((outcome.e as WorkflowSubmitError).code).toBe('workflow-failed');
   });
 
-  // 🔴 THE SENTINEL IS AN EXACT MATCH, NOT A PREFIX — and this fixture is the
-  // ONLY thing that says so. Relaxing `===` to `.startsWith(...)` passed the
-  // ENTIRE suite (76 files / 1192 tests) before this test existed, because no
-  // other fixture has an id that begins with `failed` without equalling it.
-  // A real workflow whose id merely started with those six characters would be
-  // reclassified into the "host had no workflow" arm — the reassuring one.
+  // ──────────────────────────────────────────────────────────────────────────
+  // 🔴 THE SENTINEL IS AN EXACT, CASE-SENSITIVE MATCH — and these three fixtures
+  // are the ONLY things that say so. Each is a NEAR MISS that a different sloppy
+  // comparison would wrongly accept, sending a reply the host did NOT synthesise
+  // into the reassuring "nothing to report" arm:
   //
-  // 🔴 THIRD INSTANCE OF THE SAME BLIND SPOT IN THIS CHANGE. A mutation sweep
-  // that only DELETES clauses cannot see a guard being made more PERMISSIVE:
-  // first `status === 'failed'` → `TERMINAL_STATUSES.has(...)`, now `===` →
-  // `.startsWith(...)`. If you add another sentinel or identity check here, pin
-  // its exactness with a near-miss fixture like this one.
-  it("submit() matches the host sentinel EXACTLY — 'failed-x' is not 'failed' (#251)", async () => {
-    const { result } = renderHook(() => useBuzzWorkflow());
-    const { settled, reply } = driveSubmit(result.current.submit as never);
+  //   'failed-x'  kills  .startsWith(...)          (left-extension)
+  //   'x-failed'  kills  .endsWith(...)            (right-extension)
+  //   'FAILED'    kills  .toLowerCase() === ...    (case-folding)
+  //
+  // 🔴 EACH IS LOAD-BEARING — DO NOT PRUNE ONE AS "REDUNDANT". Measured at
+  // 38a8fe3, with ONLY 'failed-x' present: both `.endsWith(...)` and
+  // `.toLowerCase() === ` passed the ENTIRE suite (76 files / 1193 tests). A
+  // near-miss fixture only covers the direction it extends, and the comment
+  // claiming "NEVER A PREFIX TEST" read as coverage it did not provide.
+  //
+  // 🔴 THE RECURRING BLIND SPOT IN THIS CHANGE IS *WIDENING*. A mutation sweep
+  // that only DELETES clauses cannot see a guard made more PERMISSIVE, and this
+  // guard has now been widened three distinct ways in review: `status ===
+  // 'failed'` -> `TERMINAL_STATUSES.has(...)`; `===` -> a substring family
+  // (`.startsWith` / `.includes`); `===` -> `.endsWith` and case-folding. If you
+  // add another sentinel or identity check anywhere here, pin it with near-miss
+  // fixtures on EVERY side, not just one.
+  // ──────────────────────────────────────────────────────────────────────────
+  for (const { id, widening } of [
+    { id: 'failed-x', widening: '.startsWith()' },
+    { id: 'x-failed', widening: '.endsWith()' },
+    { id: 'FAILED', widening: 'case-folding' },
+  ] as const) {
+    it(`submit() matches the host sentinel EXACTLY — '${id}' is not 'failed' (kills ${widening}) (#251)`, async () => {
+      const { result } = renderHook(() => useBuzzWorkflow());
+      const { settled, reply } = driveSubmit(result.current.submit as never);
 
-    reply({ workflowId: 'failed-x', status: 'failed', error: 'near-miss id' });
+      reply({ workflowId: id, status: 'failed', error: 'near-miss id' });
 
-    const outcome = await settled;
-    expect(outcome.ok).toBe(false);
-    if (outcome.ok) return;
-    // A prefix match would report 'exception' here — i.e. "the host had no
-    // workflow", for an id the host did not synthesise.
-    expect((outcome.e as WorkflowSubmitError).code).toBe('workflow-failed');
-    expect((outcome.e as WorkflowSubmitError).snapshot.workflowId).toBe('failed-x');
-  });
+      const outcome = await settled;
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) return;
+      // A sloppy comparison would report 'exception' here — "the host had no
+      // workflow to report" — for an id the host never synthesised.
+      expect((outcome.e as WorkflowSubmitError).code).toBe('workflow-failed');
+      expect((outcome.e as WorkflowSubmitError).snapshot.workflowId).toBe(id);
+    });
+  }
 
   // ──────────────────────────────────────────────────────────────────────────
   // 🔴 THE ANTI-WIDENING FIXTURES — the gap a delete-only mutation sweep cannot

@@ -290,10 +290,15 @@ export class WorkflowEstimateError extends Error {
  * moderator-review nack. The server's `snapshotFromWorkflow` instead returns
  * `workflow.id ?? 'whatif'`.
  *
- * 🔴 IT MUST BE COMPARED WITH `===`, NEVER A PREFIX TEST. `.startsWith()` here
- * would quietly reclassify a real workflow whose id merely BEGINS with `failed`
- * into the "nothing happened" arm — a WIDENING that survives a delete-only
- * mutation sweep. Pinned by a `workflowId: 'failed-x'` fixture in the test file.
+ * 🔴 COMPARE IT WITH `===` — EXACT AND CASE-SENSITIVE. Every looser comparison
+ * quietly reclassifies a reply the host did NOT synthesise into the reassuring
+ * "nothing to report" arm, and each direction has to be pinned separately:
+ * `.startsWith()` accepts `failed-x`, `.endsWith()` accepts `x-failed`, and a
+ * case-folding compare accepts `FAILED`. All three are WIDENINGS, which a
+ * delete-only mutation sweep cannot see. Pinned by three near-miss fixtures in
+ * `test/useBuzzWorkflow.test.tsx`; an earlier version of this comment said only
+ * "never a prefix test" while the tests pinned only that one direction — a
+ * description wider than its coverage.
  *
  * 🔴 THE FAIL-SAFETY IS ONE-DIRECTIONAL, AND SAYING OTHERWISE WAS A BUG IN AN
  * EARLIER REVISION OF THIS COMMENT. An id that is NOT this literal is treated as
@@ -315,7 +320,7 @@ export type WorkflowSubmitErrorCode = 'exception' | 'workflow-failed';
 /**
  * Thrown by {@link UseBuzzWorkflowReturn.submit} when the host's reply carries no
  * usable workflow outcome — either the submit ERRORED before anything was queued,
- * or a real workflow came back already failed with no price.
+ * or a workflow-shaped reply came back already failed with no price.
  *
  * 🔴 READ {@link WorkflowSubmitError.code} BEFORE SAYING ANYTHING ABOUT MONEY.
  * The two codes differ on exactly that, and getting it wrong is expensive in both
@@ -344,11 +349,11 @@ export type WorkflowSubmitErrorCode = 'exception' | 'workflow-failed';
  *     `'failed'` sentinel id. The host had no workflow to report — usually
  *     nothing was queued, but a lost response or an in-progress idempotency
  *     conflict lands here too. Rejects as `'exception'`.
- *   - **a REAL workflow that came back failed and unpriced** — a genuine
- *     orchestrator id, no `cost` (the server's `snapshotFromWorkflow` omits the
- *     key whenever `workflow.cost?.total` is not numeric). Rejects as
- *     `'workflow-failed'`, and **money may already be committed** — see that
- *     code's note.
+ *   - **a reply that came back failed and unpriced with a NON-sentinel id** —
+ *     normally a genuine orchestrator id, no `cost` (the server's
+ *     `snapshotFromWorkflow` omits the key whenever `workflow.cost?.total` is not
+ *     numeric). Rejects as `'workflow-failed'`, and **money may already be
+ *     committed** — see that code's note.
  *
  * So the rule is `cost` presence, and ONLY among failure-shaped replies: an
  * ordinary in-flight submit (`{ workflowId:'wf_…', status:'pending' }`) is
@@ -483,7 +488,8 @@ export class WorkflowSubmitError extends Error {
     //
     // 🔴 IT MAKES NO CLAIM ABOUT MONEY, AND THAT IS THE POINT. An earlier draft
     // read "submit did not queue a workflow", which is FALSE for
-    // `'workflow-failed'` — that arm has a real workflow and possibly-committed
+    // `'workflow-failed'` — that arm has a workflow-shaped reply and
+    // possibly-committed
     // spend. A single template that is true for BOTH codes cannot mislead a
     // developer reading a stack trace; the money semantics live on `code`.
     super(`submit did not return a usable workflow (${code}) — reason on .snapshot.error`);
@@ -503,9 +509,9 @@ export interface SubmitWorkflowOptions {
    * logical submit); pass a stable id (e.g. a grid-cell id) to make a retry safe.
    *
    * 🔴 THIS IS THE FIELD THAT MAKES A RETRY AFTER A `'workflow-failed'` REJECTION
-   * SAFE. That code means a real workflow exists and its spend may already be
-   * committed server-side; retrying WITHOUT reusing the key mints a fresh one and
-   * therefore a SECOND reservation. See {@link WorkflowSubmitError.code}.
+   * SAFE. That code means a workflow probably exists and its spend may already
+   * be committed server-side; retrying WITHOUT reusing the key mints a fresh one
+   * and therefore a SECOND reservation. See {@link WorkflowSubmitError.code}.
    */
   idempotencyKey?: string;
 }
@@ -715,11 +721,18 @@ interface UseBuzzWorkflowReturn {
  * } catch (err) {
  *   if (!(err instanceof WorkflowSubmitError)) throw err;
  *   logForDebugging(err.message, err.snapshot.error); // developer-facing: LOG only
+ *   // 🔴 TWO SEPARATE QUESTIONS: `code` decides what you may say about MONEY,
+ *   // the id decides only whether there is anything to POLL. Conjoining them
+ *   // sends a 'whatif' id into the reassuring arm.
  *   if (err.code === 'workflow-failed') {
- *     // A REAL workflow exists and spend may already be committed. Do NOT retry
- *     // blindly (that mints a new idempotency key = a second reservation) and do
- *     // NOT claim nothing was charged — poll the id to learn its real fate.
- *     await watch(err.snapshot.workflowId, { onUpdate: render });
+ *     // Spend may already be committed. Do NOT retry blindly (that mints a new
+ *     // idempotency key = a second reservation) and do NOT claim nothing was
+ *     // charged.
+ *     showError('The generation may have started but did not complete.');
+ *     // 'whatif' is a non-workflow sentinel — nothing behind it to poll.
+ *     if (err.snapshot.workflowId !== 'whatif') {
+ *       await watch(err.snapshot.workflowId, { onUpdate: render });
+ *     }
  *   } else {
  *     // 'exception' — usually nothing was queued. Retry, but reuse the SAME
  *     // idempotencyKey: a lost response can also land here.
@@ -832,7 +845,8 @@ export function useBuzzWorkflow(): UseBuzzWorkflowReturn {
       // all three statuses are pinned by their own fixtures in the test file.
       if (snapshot.status === 'failed' && typeof snapshot.cost?.total !== 'number') {
         // 🔴 WHICH ARM: the host stamps its own synthesised failures with the
-        // `'failed'` sentinel, while a real workflow carries its orchestrator id.
+        // `'failed'` sentinel, while a server-built reply carries `workflow.id`
+        // (or the `'whatif'` sentinel).
         // Anything unrecognised falls to `'workflow-failed'`, the arm that assumes
         // money MAY be committed — an unknown id must never buy the reassuring
         // "nothing was charged" reading.
