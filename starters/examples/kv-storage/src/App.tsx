@@ -163,10 +163,13 @@ export function App() {
 function storageFailureMessage(err: unknown, attempted: string): string {
   const raw = err instanceof Error ? err.message : String(err);
   console.warn(`[kv-storage] could not ${attempted}:`, raw);
+  // ONE branch, deliberately: the host answers `PAYLOAD_TOO_LARGE` for BOTH the
+  // per-value cap and the total quota without saying which tripped, so there is
+  // no second string to select and the copy names both possibilities. (An
+  // additional `/quota/` arm would be dead code — the docblock above says why.)
   if (/payload_too_large/i.test(raw)) {
     return 'That note is too large, or your storage is full. Try a shorter note or delete one.';
   }
-  if (/quota/i.test(raw)) return 'Your storage is full. Delete a note and try again.';
   return `Could not ${attempted}. Please try again.`;
 }
 
