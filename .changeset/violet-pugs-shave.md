@@ -2,7 +2,7 @@
 '@civitai/blocks-react': minor
 ---
 
-fix(blocks-react): an ERRORED submit must reject, not resolve a workflow that was never queued (civitai/civitai-app-starters#251)
+fix(blocks-react): an ERRORED submit must reject, not resolve a reply it cannot report a workflow for (civitai/civitai-app-starters#251)
 
 The `submit` half of civitai/civitai#4159. PR #250 fixed `estimate`; this closes
 the same information loss on `submit`.

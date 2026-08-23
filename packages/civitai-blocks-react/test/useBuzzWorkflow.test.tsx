@@ -636,11 +636,16 @@ describe('useBuzzWorkflow', () => {
   //
   // 🔴 ONE WIDENING DIRECTION IS DELIBERATELY LEFT UNPINNED: NORMALISATION.
   // `.trim()` and `.replace(/[^A-Za-z]/g,'')` both SURVIVE this suite, and that
-  // is a considered omission, not a gap someone missed. Neither producer can emit
-  // a padded or punctuated id — the host side is a hardcoded `'failed'` literal
-  // and the server side is an orchestrator GUID — so no reachable input
-  // distinguishes them, and a fixture pinning them would assert against a value
-  // the wire cannot carry. If a producer ever starts normalising ids, pin it then.
+  // is a considered omission, not a gap someone missed.
+  //
+  // The reason is NOT "ids are unpunctuated" — they plainly are punctuated (the
+  // fixture above is `wf_9f2c41ab`, and an orchestrator GUID has dashes). It is
+  // that no producer can emit an id which NORMALISES TO `'failed'`: the host side
+  // is the hardcoded literal itself, and the server side is an orchestrator id
+  // that would have to strip down to exactly those six letters. So no reachable
+  // input separates `===` from a normalising compare, and a fixture pinning one
+  // would assert against a value the wire cannot carry. If a producer ever starts
+  // normalising ids, pin it then.
   //
   // 🔴 THE RECURRING BLIND SPOT IN THIS CHANGE IS *WIDENING*. A mutation sweep
   // that only DELETES clauses cannot see a guard made more PERMISSIVE, and this

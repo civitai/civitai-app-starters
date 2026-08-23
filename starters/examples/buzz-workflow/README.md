@@ -41,8 +41,9 @@ guarantees nothing was spent**. `'exception'` means the host had no workflow to
 report (usually nothing queued, but a lost response or an in-progress idempotency
 conflict also lands there, so retry with the SAME `idempotencyKey`);
 `'workflow-failed'` means a workflow probably exists and **spend may already be
-committed** — poll `err.snapshot.workflowId` rather than retrying blindly. See
-civitai/civitai-app-starters#251.
+committed** — poll `err.snapshot.workflowId` rather than retrying blindly, after
+checking it is not the `'whatif'` non-workflow sentinel (there is nothing behind
+that one to poll). See civitai/civitai-app-starters#251.
 
 ## GOTCHA #59 — the estimate must match submit exactly
 
