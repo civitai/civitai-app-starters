@@ -1,6 +1,6 @@
 name: Re-vendor canonical schema
 
-# Weekly WRITE twin of the check-canonical-schema CI guard: pulls the
+# Scheduled WRITE twin of the check-canonical-schema CI guard: pulls the
 # server-published canonical App Block manifest schema, re-vendors the byte-exact
 # mirror at packages/civitai-app-sdk/schemas/app-block/v1.json when it drifts, and
 # opens a PR. Keeps the mirror in parity without a human noticing the guard went red.
@@ -8,7 +8,39 @@ name: Re-vendor canonical schema
 
 on:
   schedule:
-    - cron: "37 7 * * 1"
+    # Every 6 hours at :37 past the hour — 00:37, 06:37, 12:37, 18:37 UTC.
+    #
+    # WHY THIS CADENCE IS LOAD-BEARING, and why it is no longer weekly. This
+    # number is not a politeness setting; it IS the bound on how long this
+    # repo's CI stays red after a canonical schema change.
+    #
+    # The chain: `check-canonical-schema.sh` byte-compares the vendored mirror
+    # (packages/civitai-app-sdk/schemas/app-block/v1.json) against the schema
+    # published LIVE at the canonical URL, with `diff -u`. That publish happens
+    # on a civitai `release` cut — an event this repo cannot observe. There is
+    # no webhook from civitai, no repository_dispatch, nothing to subscribe to.
+    # So the ONLY thing that closes the gap between "the canonical changed" and
+    # "the mirror was re-vendored" is this cron firing. Until it does, the guard
+    # is red on every PR in this repo and nothing clears it but a human noticing
+    # and dispatching this workflow by hand.
+    #
+    # The concrete case this was raised for: civitai PR #4314 added an optional
+    # `repository` property to the canonical manifest schema and merged to
+    # civitai `main` on 2026-08-23. dp-prod deploys from `release`, not `main`,
+    # so the published schema does not carry it yet and this mirror is still
+    # green. It goes red the moment a `main` -> `release` cut publishes the new
+    # bytes — and that cut is invisible from here. On the old weekly cron
+    # ("37 7 * * 1", Mondays) that was up to SEVEN DAYS of red CI; at 6-hourly
+    # it is at most ~6 hours.
+    #
+    # The minute is deliberately :37 and NOT :00 — GitHub delays cron jobs
+    # scheduled on the hour, because everyone schedules on the hour. :37 also
+    # keeps this off the minute of the sibling scheduled workflow in this repo
+    # (published-starter-smoke :23), so the two never open PRs in the same
+    # minute.
+    #
+    # Cron literal quoted so the `*` isn't parsed as a YAML alias.
+    - cron: "37 */6 * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -92,7 +124,8 @@ jobs:
 
             The vendored copy MUST stay byte-identical to the canonical — the
             `check-canonical-schema.sh` CI guard enforces that with `diff -u`.
-            This PR was opened because the weekly re-vendor job detected drift.
+            This PR was opened because the scheduled re-vendor job (every 6
+            hours) detected drift.
 
             Validated in-job before opening this PR: `@civitai/app-sdk`
             typecheck + test + build all passed against the re-vendored schema
