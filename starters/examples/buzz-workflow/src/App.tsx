@@ -85,7 +85,18 @@ export function App() {
       .then((snap) => {
         if (!cancelled) setQuotedCost(snap.cost?.total ?? null);
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        // 🔴 SAME RULE AS THE OTHER TWO ARMS. Since blocks-react 0.43 `estimate()`
+        // REJECTS with a `WorkflowEstimateError` carrying `.snapshot.error` — the
+        // server's reason, and the exact diagnostic civitai/civitai#4159 exists to
+        // preserve. Swallowing it left the CTA on a permanent "…" with nothing
+        // anywhere saying why. Logged for the developer; the CTA still just shows
+        // no price, because a missing quote is not viewer-actionable copy.
+        const snapshotError = (err as { snapshot?: { error?: string } })?.snapshot?.error;
+        console.warn(
+          '[buzz-workflow] estimate failed — no price shown:',
+          snapshotError ?? err,
+        );
         if (!cancelled) setQuotedCost(null);
       });
     return () => {
@@ -101,16 +112,40 @@ export function App() {
     setQueue((q) => [{ localId, workflowId: null, snapshot: null, status: 'submitting' }, ...q]);
     try {
       const snap = await submit(body);
+      // 🔴 LOG AND CLASSIFY BEFORE `setQueue`, NOT INSIDE IT. A state updater must
+      // be PURE: React double-invokes it in StrictMode, so a `console.warn` in
+      // there prints every developer diagnostic twice in dev — and example code
+      // is exactly where an impure updater gets copied from.
+      if (snap.status === 'failed') logServerReason('submit', snap);
+      const viewerMessage = snap.status === 'failed' ? submitFailureMessage(snap) : undefined;
       setQueue((q) =>
         q.map((it) =>
           it.localId === localId
-            ? { ...it, workflowId: snap.workflowId, snapshot: snap, status: mapStatus(snap) }
+            ? {
+                ...it,
+                workflowId: snap.workflowId,
+                snapshot: snap,
+                status: mapStatus(snap),
+                ...(viewerMessage ? { viewerMessage } : {}),
+              }
             : it,
         ),
       );
-    } catch {
+    } catch (err) {
+      // 🔴 THE ERROR IS NO LONGER SWALLOWED. This used to be a bare `catch {}`,
+      // which threw away the only diagnostic a failed submit produces — so the
+      // card said "generation failed" and nothing, anywhere, said why.
+      logServerReason('submit', null, err);
       setQueue((q) =>
-        q.map((it) => (it.localId === localId ? { ...it, status: 'error' } : it)),
+        q.map((it) =>
+          it.localId === localId
+            ? {
+                ...it,
+                status: 'error',
+                viewerMessage: 'The generation could not be started. Please try again.',
+              }
+            : it,
+        ),
       );
     }
     // The first gen is done → the next one is a re-gen (gotcha #59).
@@ -126,10 +161,19 @@ export function App() {
       window.setTimeout(async () => {
         try {
           const snap = await poll(it.workflowId!);
+          // Classify + log OUTSIDE the updater (see the submit arm), and use the
+          // POLL message — the submit discriminator does not hold here.
+          if (snap.status === 'failed') logServerReason('poll', snap);
+          const viewerMessage = snap.status === 'failed' ? pollFailureMessage() : undefined;
           setQueue((q) =>
             q.map((q2) =>
               q2.localId === it.localId
-                ? { ...q2, snapshot: snap, status: mapStatus(snap) }
+                ? {
+                    ...q2,
+                    snapshot: snap,
+                    status: mapStatus(snap),
+                    ...(viewerMessage ? { viewerMessage } : {}),
+                  }
                 : q2,
             ),
           );
@@ -212,8 +256,12 @@ export function App() {
               </div>
             ) : null}
             {it.status === 'error' || it.snapshot?.status === 'failed' ? (
+              // 🔴 APP-OWNED COPY ONLY. This used to render `it.snapshot?.error`
+              // — a server-authored, unsanitised string — straight into markup.
+              // The server's own words are logged for the developer by
+              // `logServerReason`; they must not reach a viewer.
               <div style={{ color: '#e03131', fontSize: 12, marginTop: 4 }}>
-                {it.snapshot?.error ?? 'generation failed'}
+                {it.viewerMessage ?? 'The generation failed. Please try again.'}
               </div>
             ) : null}
           </div>
@@ -228,9 +276,73 @@ interface QueueItem {
   workflowId: string | null;
   snapshot: BlockWorkflowSnapshot | null;
   status: QueueStatus;
+  /**
+   * Viewer-facing copy THIS APP owns, chosen by {@link submitFailureMessage}
+   * or {@link pollFailureMessage} depending on which phase observed the failure.
+   *
+   * 🔴 IT EXISTS SO `snapshot.error` NEVER REACHES THE SCREEN. That field is
+   * server-authored and UNSANITISED — civitai's own error handling documents
+   * that raw upstream text, database constraint and column names among it, can
+   * reach it. This card used to render it directly.
+   */
+  viewerMessage?: string;
 }
 type QueueStatus = 'submitting' | 'processing' | 'succeeded' | 'failed' | 'canceled' | 'expired' | 'error';
 const TERMINAL = new Set<QueueStatus>(['succeeded', 'failed', 'canceled', 'expired', 'error']);
+
+/**
+ * Log the server's own words for the developer. Never rendered.
+ *
+ * 🔴 THE RAW TEXT IS LOGGED, NOT DISCARDED. Deleting it would trade a leak for a
+ * blind spot: the server's reason is the only thing that explains WHY a specific
+ * config will not run, so it has to stay reachable in a developer surface.
+ */
+function logServerReason(where: string, snap: BlockWorkflowSnapshot | null, thrown?: unknown) {
+  if (snap?.error) console.warn(`[buzz-workflow] ${where} — server reason:`, snap.error);
+  if (thrown) console.warn(`[buzz-workflow] ${where} threw:`, thrown);
+}
+
+/**
+ * Viewer copy THIS APP owns for a failed SUBMIT reply.
+ *
+ * 🔴 THE `cost` TEST IS ONLY MEANINGFUL ON THE SUBMIT REPLY — see
+ * {@link pollFailureMessage} for why it must not be reused on a poll. The host
+ * enforces budget and cap rules BEFORE forwarding to the orchestrator, so a
+ * `failed` submit carrying a price is the host declining to spend: a documented
+ * OUTCOME, not a crash.
+ *
+ * 🔴 CAUSE-NEUTRAL ON PURPOSE. A priced refusal is not only "you can't afford
+ * it" — it also covers a per-app or daily cap, a velocity limit, a transient
+ * "temporarily unavailable" deny, and a missing price quote. Naming one of those
+ * would be wrong four times out of five, so only the affordability case (which
+ * the message identifies) gets a specific string; everything else says what is
+ * true of all of them.
+ */
+function submitFailureMessage(snap: BlockWorkflowSnapshot): string {
+  if (typeof snap.cost?.total === 'number') {
+    return /insufficient|not enough|budget/i.test(snap.error ?? '')
+      ? 'Not enough Buzz for this generation.'
+      : 'This generation was not started. Please try again later.';
+  }
+  return 'The generation could not be started. Please try again.';
+}
+
+/**
+ * Viewer copy for a failure observed while POLLING.
+ *
+ * 🔴 DO NOT APPLY THE PRICED-REFUSAL TEST HERE. Budget and cap enforcement
+ * happens before the workflow is ever forwarded, so a `failed` on a POLL is the
+ * orchestrator reporting that the generation itself failed — a model error, a
+ * node crash, a step timeout. And a submitted workflow IS priced, so its
+ * snapshot carries a `cost` (the server reads exactly that field as the
+ * workflow's realized spend when it settles). Reusing the submit discriminator
+ * here therefore renders "a spending limit was reached" for a crash — a false
+ * cause, implying nothing was spent, for a workflow that may well have been
+ * charged.
+ */
+function pollFailureMessage(): string {
+  return 'The generation failed. Please try again.';
+}
 
 function mapStatus(snap: BlockWorkflowSnapshot): QueueStatus {
   if (snap.status === 'pending') return 'processing';

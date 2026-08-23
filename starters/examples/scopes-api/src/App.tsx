@@ -54,6 +54,15 @@ export function App() {
         await refresh();
         res = await doFetch(raw);
       }
+      // 🔴 DELIBERATE, AND DELIBERATELY NOT A PRODUCT PATTERN. Showing the raw
+      // status + response body IS this example's whole point — it is a developer
+      // probe for "what does /blocks/me actually answer for my token", rendered
+      // into a <pre> for a developer to read.
+      //
+      // DO NOT copy this shape into a block that ships to viewers. An API body is
+      // server-authored and unsanitised; every other example here routes server
+      // text to `console` and shows copy the app owns (see `buzz-workflow`'s
+      // `describeFailure` and `kv-storage`'s `storageFailureMessage`).
       const body = await res.text();
       setResult(`${res.status} ${res.statusText}\n${body}`);
     } catch (err) {

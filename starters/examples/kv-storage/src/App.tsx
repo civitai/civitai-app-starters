@@ -40,7 +40,7 @@ export function App() {
       setKeys(list.keys);
       setQuota(q);
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : String(err));
+      setStatus(storageFailureMessage(err, 'load your notes'));
     }
   }, [storage, isAnon]);
 
@@ -56,9 +56,7 @@ export function App() {
       setDraftValue('');
       await refresh();
     } catch (err) {
-      // The host returns "PAYLOAD_TOO_LARGE" for both the 64KB per-value cap
-      // and the 50MB quota — it doesn't leak which one tripped.
-      setStatus(err instanceof Error ? err.message : String(err));
+      setStatus(storageFailureMessage(err, 'save that note'));
     }
   }, [storage, draftKey, draftValue, refresh]);
 
@@ -145,6 +143,34 @@ export function App() {
       {status ? <div style={{ fontSize: 12, opacity: 0.8 }}>{status}</div> : null}
     </div>
   );
+}
+
+/**
+ * Viewer copy THIS APP owns for a storage failure, with the host's own words
+ * logged for the developer.
+ *
+ * 🔴 `err.message` HERE IS HOST-AUTHORED, NOT A LOCAL LITERAL. `useAppStorage`
+ * builds its rejections as `new Error(result.error)`, so the message is whatever
+ * string the host put on the wire — the same class of value as a workflow
+ * `snapshot.error`, and the same reason not to render it. These lines used to
+ * put it straight into the status line.
+ *
+ * The one distinction worth surfacing is expressed as OUR copy: the host answers
+ * `PAYLOAD_TOO_LARGE` for both the per-value cap and the total quota without
+ * saying which tripped, so the message names both possibilities rather than
+ * guessing.
+ */
+function storageFailureMessage(err: unknown, attempted: string): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  console.warn(`[kv-storage] could not ${attempted}:`, raw);
+  // ONE branch, deliberately: the host answers `PAYLOAD_TOO_LARGE` for BOTH the
+  // per-value cap and the total quota without saying which tripped, so there is
+  // no second string to select and the copy names both possibilities. (An
+  // additional `/quota/` arm would be dead code — the docblock above says why.)
+  if (/payload_too_large/i.test(raw)) {
+    return 'That note is too large, or your storage is full. Try a shorter note or delete one.';
+  }
+  return `Could not ${attempted}. Please try again.`;
 }
 
 function fmtBytes(n: number): string {
