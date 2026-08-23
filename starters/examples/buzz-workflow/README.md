@@ -24,8 +24,17 @@ poll(workflowId)→ status 'polling' → 'done'             (CALLER loops on a b
 
 All three go through the host's postMessage bridge — the block never holds an
 orchestrator token. The host enforces the budget (`cost ≤ token.buzzBudget`)
-before forwarding; `submit` rejects if the host refuses (that's your cue to call
-`useBuzzPurchase().openPurchaseModal()` — see the `buzz-purchase` example).
+before forwarding.
+
+🔴 **A budget refusal does NOT reject — it RESOLVES**, as a snapshot with
+`status: 'failed'`, an `error` string, and the `cost` the server declined to
+charge. That resolved shape is your cue to call
+`useBuzzPurchase().openPurchaseModal()` — see the `buzz-purchase` example. What
+DOES reject (since `@civitai/blocks-react@0.44.0`) is a submit that **errored**:
+a failure-shaped reply with **no `cost`**, meaning nothing was queued and nothing
+was charged. `cost` presence is the discriminator — `status` is `'failed'` for
+both. Handle both: a top-up cannot fix an errored submit, and a retry cannot fix
+an empty wallet. See civitai/civitai-app-starters#251.
 
 ## GOTCHA #59 — the estimate must match submit exactly
 
