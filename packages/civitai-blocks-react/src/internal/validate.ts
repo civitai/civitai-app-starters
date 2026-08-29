@@ -1190,7 +1190,8 @@ export function isValidResourcePickerResult(p: unknown): boolean {
 
 /**
  * Reply to `SET_USER_CHECKPOINT`. `ok` is required on the success path; the
- * hook throws the `error` string on `!ok`. Uniform `{ ok, error }` contract
+ * hook throws on `!ok || error !== undefined` — presence, not truthiness, so an
+ * `error: ''` cannot read as success. Uniform `{ ok, error }` contract
  * (module header) — mirrors `isValidSharedUpdateResult`.
  */
 export function isValidUserCheckpointSetResult(p: unknown): boolean {

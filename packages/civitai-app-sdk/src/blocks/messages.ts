@@ -754,9 +754,10 @@ export type ParentToBlockMessage =
       // Reply to SHARED_UPDATE. `ok: true` when the author's entry was updated
       // in place (key/votes/reports preserved). `error` on failure — `NOT_FOUND`
       // (missing/hidden), `FORBIDDEN` (viewer isn't the author), or a
-      // belt/size/serialization rejection. Consumers treat a non-empty `error`
-      // (or `ok: false`) as the promise-reject signal (mirrors
-      // `SHARED_WITHDRAW_RESULT`).
+      // belt/size/serialization rejection. Consumers treat a PRESENT `error`
+      // (or `ok: false`) as the promise-reject signal — presence, not
+      // truthiness, so an `error: ''` cannot read as success (mirrors
+      // `SHARED_WITHDRAW_RESULT`; see the union's header note).
       type: 'SHARED_UPDATE_RESULT';
       payload: { requestId: string; ok?: boolean; error?: string };
     }
@@ -773,8 +774,9 @@ export type ParentToBlockMessage =
   | {
       // Reply to SHARED_REPORT. `ok: true` when the report was filed for mod
       // review. `error` on host-side failure — NOT_FOUND (missing key), a
-      // trust/scope rejection, or rate-limit. Consumers treat a non-empty
-      // `error` (or `ok: false`) as the reject signal (mirrors
+      // trust/scope rejection, or rate-limit. Consumers treat a PRESENT
+      // `error` (or `ok: false`) as the reject signal — presence, not
+      // truthiness, so an `error: ''` cannot read as success (mirrors
       // `SHARED_WITHDRAW_RESULT`). Filing a report does NOT hide the row — a
       // moderator decides.
       type: 'SHARED_REPORT_RESULT';
@@ -786,8 +788,9 @@ export type ParentToBlockMessage =
       // `error` on host-side failure — a URL whose origin isn't on the civitai
       // image/blob allowlist, an `imageId` the requesting viewer isn't allowed
       // to see (gated read returned `hidden`/omitted), an over-size blob, or a
-      // fetch failure. Consumers treat a non-empty `error` (or `ok: false`) as
-      // the reject signal.
+      // fetch failure. Consumers treat a PRESENT `error` (or `ok: false`) as
+      // the reject signal — presence, not truthiness, so an `error: ''` cannot
+      // read as success (see the union's header note).
       type: 'SAVE_IMAGE_RESULT';
       payload: { requestId: string; ok?: boolean; error?: string };
     }
