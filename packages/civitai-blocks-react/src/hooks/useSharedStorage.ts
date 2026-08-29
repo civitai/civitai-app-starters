@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import type { SharedStorageValue, SharedStorageItemWire } from '@civitai/app-sdk/blocks';
 
 import { getTransport } from '../internal/singleton.js';
+import { throwOnFailedReply, throwOnReplyError } from '../internal/replyError.js';
 import { sendTypedRequest } from '../internal/transport.js';
 
 /**
@@ -175,7 +176,7 @@ export function useSharedStorage(): UseSharedStorage {
           },
           'SHARED_LIST_RESULT',
         );
-        if (result.error) throw new Error(result.error);
+        throwOnReplyError(result, 'shared list failed');
         return {
           items: result.items.map(rehydrateSharedItem),
           nextCursor: result.nextCursor,
@@ -187,7 +188,7 @@ export function useSharedStorage(): UseSharedStorage {
           { type: 'SHARED_GET', payload: { key } },
           'SHARED_GET_RESULT',
         );
-        if (result.error) throw new Error(result.error);
+        throwOnReplyError(result, 'shared get failed');
         return result.item ? rehydrateSharedItem(result.item) : null;
       },
       async report(key, reason) {
@@ -196,13 +197,7 @@ export function useSharedStorage(): UseSharedStorage {
           { type: 'SHARED_REPORT', payload: { key, reason } },
           'SHARED_REPORT_RESULT',
         );
-        // A PRESENT `error` is the reject signal, not a TRUTHY one: the reply
-        // validator early-accepts anything carrying an `error` key, so
-        // `error: ''` reaches here having skipped the success-field checks.
-        // `||` (not `??`) so an empty error string still yields readable copy.
-        if (!result.ok || result.error !== undefined) {
-          throw new Error(result.error || 'shared report failed');
-        }
+        throwOnFailedReply(result, 'shared report failed');
       },
       async getCount(key) {
         const result = await sendTypedRequest(
@@ -210,7 +205,7 @@ export function useSharedStorage(): UseSharedStorage {
           { type: 'SHARED_GET_COUNT', payload: { key } },
           'SHARED_GET_COUNT_RESULT',
         );
-        if (result.error) throw new Error(result.error);
+        throwOnReplyError(result, 'shared getCount failed');
         return result.count;
       },
       async getCounts(keys) {
@@ -219,7 +214,7 @@ export function useSharedStorage(): UseSharedStorage {
           { type: 'SHARED_GET_COUNTS', payload: { keys } },
           'SHARED_GET_COUNTS_RESULT',
         );
-        if (result.error) throw new Error(result.error);
+        throwOnReplyError(result, 'shared getCounts failed');
         return result.counts;
       },
       async append(value) {
@@ -228,7 +223,7 @@ export function useSharedStorage(): UseSharedStorage {
           { type: 'SHARED_APPEND', payload: { value } },
           'SHARED_APPEND_RESULT',
         );
-        if (result.error) throw new Error(result.error);
+        throwOnReplyError(result, 'shared append failed');
         return { key: result.key };
       },
       async update(key, value) {
@@ -237,10 +232,7 @@ export function useSharedStorage(): UseSharedStorage {
           { type: 'SHARED_UPDATE', payload: { key, value } },
           'SHARED_UPDATE_RESULT',
         );
-        // PRESENT, not truthy — see `report()` above.
-        if (!result.ok || result.error !== undefined) {
-          throw new Error(result.error || 'shared update failed');
-        }
+        throwOnFailedReply(result, 'shared update failed');
       },
       async vote(key) {
         const result = await sendTypedRequest(
@@ -248,7 +240,7 @@ export function useSharedStorage(): UseSharedStorage {
           { type: 'SHARED_VOTE', payload: { key } },
           'SHARED_VOTE_RESULT',
         );
-        if (result.error) throw new Error(result.error);
+        throwOnReplyError(result, 'shared vote failed');
         return result.count;
       },
       async unvote(key) {
@@ -257,7 +249,7 @@ export function useSharedStorage(): UseSharedStorage {
           { type: 'SHARED_UNVOTE', payload: { key } },
           'SHARED_UNVOTE_RESULT',
         );
-        if (result.error) throw new Error(result.error);
+        throwOnReplyError(result, 'shared unvote failed');
         return result.count;
       },
       async withdraw(key) {
@@ -266,17 +258,12 @@ export function useSharedStorage(): UseSharedStorage {
           { type: 'SHARED_WITHDRAW', payload: { key } },
           'SHARED_WITHDRAW_RESULT',
         );
-        if (!result.ok || result.error) {
-          throw new Error(result.error ?? 'shared withdraw failed');
-        }
+        throwOnFailedReply(result, 'shared withdraw failed');
         // `deleted` is optional on the wire type because an error reply omits
         // it. On the success path the validator requires a boolean, so this is
         // defence in depth rather than a reachable branch through the real
         // transport — but it is what makes the `boolean` we return honest,
         // instead of a cast asserting a guarantee this function cannot see.
-        // NOTE: this site still tests `error` for TRUTHINESS. It is not one of
-        // the six this change normalized (it early-accepted before PR #273);
-        // the remaining truthiness sites are a tracked follow-up.
         if (typeof result.deleted !== 'boolean') {
           throw new Error('shared withdraw failed: reply carried no `deleted` flag');
         }

@@ -42,14 +42,16 @@
  * require a NON-EMPTY error either: that puts `{ requestId, error: '' }` back
  * on the drop-and-hang path this contract exists to close.
  *
- * 🔴 KNOWN GAP, tracked as a follow-up: only the six validators normalized by
- * PR #273 (`isValidSharedUpdateResult`, `isValidAppStorageSetResult`,
- * `isValidAppStorageDeleteResult`, `isValidSharedReportResult`,
- * `isValidSaveImageResult`, `isValidUserCheckpointSetResult`) have hooks that
- * test PRESENCE. The other early-accepting validators in this module — incl.
- * `isValidSharedWithdrawResult` and the `{ count, error? }` / list / get
- * family — still have hooks testing `error` for TRUTHINESS, so `error: ''` can
- * still skip their success-field checks. Fixing those is a separate change.
+ * ✅ GAP CLOSED. Every hook consuming an early-accepting validator now tests
+ * PRESENCE, via the single-sourced `throwOnReplyError` / `throwOnFailedReply`
+ * in `./replyError.ts`. The six normalized by PR #273 were joined by the
+ * eleven that still tested TRUTHINESS (`isValidSharedWithdrawResult` and the
+ * `{ count, error? }` / list / get / quota family), and all seventeen call the
+ * same helper — so a future divergence is one edit, not seventeen.
+ *
+ * 🔴 If you add an `{ ok, error }` validator, its hook MUST call one of those
+ * helpers. Do not open-code the test again: the two spellings coexisted in one
+ * file for a release precisely because it was inline at every call site.
  */
 
 import type {

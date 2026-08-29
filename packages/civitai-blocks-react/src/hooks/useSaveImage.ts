@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 
 import { getTransport } from '../internal/singleton.js';
+import { throwOnFailedReply } from '../internal/replyError.js';
 import { sendTypedRequest } from '../internal/transport.js';
 
 /**
@@ -55,13 +56,7 @@ export function useSaveImage(): UseSaveImage {
       { type: 'SAVE_IMAGE', payload },
       'SAVE_IMAGE_RESULT',
     );
-    // A PRESENT `error` is the reject signal, not a TRUTHY one: the reply
-    // validator early-accepts anything carrying an `error` key, so `error: ''`
-    // reaches here having skipped the success-field checks. `||` (not `??`) so
-    // an empty error string still yields readable copy.
-    if (!reply.ok || reply.error !== undefined) {
-      throw new Error(reply.error || 'failed to save image');
-    }
+    throwOnFailedReply(reply, 'failed to save image');
   }, []);
 
   return { saveImage };

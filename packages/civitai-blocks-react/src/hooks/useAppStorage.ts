@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 
 import { getTransport } from '../internal/singleton.js';
+import { throwOnFailedReply, throwOnReplyError } from '../internal/replyError.js';
 import { sendTypedRequest } from '../internal/transport.js';
 
 /**
@@ -94,7 +95,11 @@ export function useAppStorage(): UseAppStorage {
           { type: 'APP_STORAGE_GET', payload: { key } },
           'APP_STORAGE_GET_RESULT',
         );
-        if (result.error) throw new Error(result.error);
+        // Its validator does not early-accept, but it DOES admit a reply that
+        // carries an `error` and no `value` key. Under a truthiness test
+        // `error: ''` then fell through and resolved `null` — reporting "key
+        // not set" for what the host reported as a failure.
+        throwOnReplyError(result, 'storage get failed');
         return (result.value ?? null) as T | null;
       },
       async set<T = unknown>(key: string, value: T) {
@@ -103,13 +108,7 @@ export function useAppStorage(): UseAppStorage {
           { type: 'APP_STORAGE_SET', payload: { key, value } },
           'APP_STORAGE_SET_RESULT',
         );
-        // A PRESENT `error` is the reject signal, not a TRUTHY one: the reply
-        // validator early-accepts anything carrying an `error` key, so
-        // `error: ''` reaches here having skipped the success-field checks.
-        // `||` (not `??`) so an empty error string still yields readable copy.
-        if (!result.ok || result.error !== undefined) {
-          throw new Error(result.error || 'storage set failed');
-        }
+        throwOnFailedReply(result, 'storage set failed');
         return { ok: true as const, sizeBytes: result.sizeBytes };
       },
       async delete(key: string) {
@@ -118,10 +117,7 @@ export function useAppStorage(): UseAppStorage {
           { type: 'APP_STORAGE_DELETE', payload: { key } },
           'APP_STORAGE_DELETE_RESULT',
         );
-        // PRESENT, not truthy — see `set()` above.
-        if (!result.ok || result.error !== undefined) {
-          throw new Error(result.error || 'storage delete failed');
-        }
+        throwOnFailedReply(result, 'storage delete failed');
         // `deleted` is optional on the wire type because an error reply omits
         // it. On the success path the validator requires a boolean, so this is
         // defence in depth rather than a reachable branch through the real
@@ -145,7 +141,7 @@ export function useAppStorage(): UseAppStorage {
           },
           'APP_STORAGE_LIST_RESULT',
         );
-        if (result.error) throw new Error(result.error);
+        throwOnReplyError(result, 'storage list failed');
         return {
           keys: result.keys.map((k) => ({
             key: k.key,
@@ -160,7 +156,7 @@ export function useAppStorage(): UseAppStorage {
           { type: 'APP_STORAGE_QUOTA', payload: {} },
           'APP_STORAGE_QUOTA_RESULT',
         );
-        if (result.error) throw new Error(result.error);
+        throwOnReplyError(result, 'storage getQuota failed');
         return {
           usedBytes: result.usedBytes,
           rowCount: result.rowCount,

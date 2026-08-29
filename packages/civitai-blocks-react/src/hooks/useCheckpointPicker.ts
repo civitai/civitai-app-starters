@@ -3,6 +3,7 @@ import { useCallback } from 'react';
 import type { BlockCheckpointInfo } from '@civitai/app-sdk/blocks';
 
 import { HUMAN_INTERACTION_TIMEOUT_MS } from '../internal/requestTimeouts.js';
+import { throwOnFailedReply } from '../internal/replyError.js';
 import { getTransport } from '../internal/singleton.js';
 import { sendTypedRequest } from '../internal/transport.js';
 
@@ -63,19 +64,14 @@ export function useCheckpointPicker(): {
   );
 
   const persist = useCallback(async (versionId: number | null) => {
-    const { ok, error } = await sendTypedRequest(
+    const reply = await sendTypedRequest(
       getTransport(),
       { type: 'SET_USER_CHECKPOINT', payload: { versionId } },
       'USER_CHECKPOINT_SET',
     );
-    // A PRESENT `error` is the reject signal, not a TRUTHY one: the reply
-    // validator early-accepts anything carrying an `error` key, so `error: ''`
-    // reaches here having skipped the success-field checks. This site tested
-    // `!ok` ALONE before, so the `error` clause is new, not merely retyped.
-    // `||` (not `??`) so an empty error string still yields readable copy.
-    if (!ok || error !== undefined) {
-      throw new Error(error || 'failed to persist checkpoint');
-    }
+    // This site tested `!ok` ALONE before PR #273, so the `error` clause is
+    // new here, not merely retyped.
+    throwOnFailedReply(reply, 'failed to persist checkpoint');
   }, []);
 
   return { open, persist };
