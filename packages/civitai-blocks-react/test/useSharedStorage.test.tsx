@@ -859,14 +859,60 @@ describe('useSharedStorage', () => {
     await expect(p).rejects.toThrow('shared report failed');
   });
 
-  // `withdraw()` is NOT one of the six sites this change normalized — it still
-  // tests `error` for TRUTHINESS (it early-accepted before PR #273; the
-  // remaining truthiness sites are a tracked follow-up). But making `deleted`
-  // OPTIONAL on the wire type forced an explicit narrowing here, and that
-  // narrowing is what now stops a falsy-but-present error reply from resolving
+  // `withdraw()` tested `error` for TRUTHINESS until this change; it now tests
+  // PRESENCE via `throwOnFailedReply`, like every other `{ ok, error }` site.
+  // The `deleted` narrowing (forced by making `deleted` OPTIONAL on the wire
+  // type in PR #273) is still the thing that stops a reply resolving
   // `deleted: 'yes'` as a `boolean`. Pin it: the guard must be reachable and
   // must fire.
-  it('withdraw() rejects rather than resolving a non-boolean `deleted` (ok:true, error:"")', async () => {
+  // 🔴 The hook's `typeof result.deleted !== 'boolean'` narrowing is NOW
+  // UNREACHABLE through the real transport, and this test says so instead of
+  // pretending to cover it.
+  //
+  // It used to be reached with `{ ok: true, error: '', deleted: 'yes' }` — but
+  // ONLY because the site tested `error` for TRUTHINESS, so an empty error slid
+  // past the reject and into the narrowing. Now that the site tests PRESENCE,
+  // that fixture rejects on `error` first (pinned in the test below).
+  //
+  // The remaining route would be a non-boolean `deleted` with NO error — and
+  // `isValidSharedWithdrawResult` DROPS that before the hook ever sees it, which
+  // is what this test asserts. So the narrowing is defence-in-depth with no
+  // transport-reachable killing test, exactly as its own comment in the hook
+  // claims. Measured, not assumed: written as a reject assertion first, it timed
+  // out at 5s because the reply never settled.
+  it('withdraw() — a non-boolean `deleted` with no error is DROPPED by the validator', async () => {
+    const { result } = renderHook(() => useSharedStorage());
+    let p!: Promise<unknown>;
+    act(() => {
+      p = result.current.withdraw('k');
+    });
+    const sent = lastSent<{ payload: { requestId: string } }>();
+    const settled = vi.fn();
+    p.then(settled, settled);
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      act(() => {
+        reply({
+          type: 'SHARED_WITHDRAW_RESULT',
+          payload: { requestId: sent.payload.requestId, ok: true, deleted: 'yes' },
+        });
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      // Dropped at the trust boundary: the request never settles, so the hook's
+      // own `deleted` guard is never consulted.
+      expect(settled).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('SHARED_WITHDRAW_RESULT'));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  // Falsy-but-PRESENT error on the site that tested truthiness until this
+  // change. Distinct from the case above: here the reject must come from the
+  // `error` clause, BEFORE the `deleted` narrowing is consulted at all.
+  it('withdraw() rejects on a falsy-but-PRESENT error (ok:true, error:"")', async () => {
     const { result } = renderHook(() => useSharedStorage());
     let p!: Promise<unknown>;
     act(() => {
@@ -879,7 +925,14 @@ describe('useSharedStorage', () => {
         payload: { requestId: sent.payload.requestId, ok: true, error: '', deleted: 'yes' },
       });
     });
-    await expect(p).rejects.toThrow('reply carried no `deleted` flag');
+    // 🔴 ANCHORED, and that is the whole point. `toThrow(string)` is a
+    // SUBSTRING match, and this site's OTHER throw — 'shared withdraw failed:
+    // reply carried no `deleted` flag' — is a SUPERSTRING of this fallback.
+    // Unanchored, this assertion PASSES on the pre-fix code: `error: ''` is
+    // falsy there, so it falls through to the `deleted` narrowing and throws
+    // the superstring. Measured: unanchored it was NOT among the base
+    // failures; anchored it is. vitest matches a regex against `.message`.
+    await expect(p).rejects.toThrow(/^shared withdraw failed$/);
   });
 
   // Falsy-but-PRESENT error — see the matching `update()` case above.
@@ -989,5 +1042,171 @@ describe('useSharedStorage', () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  // ---- falsy-but-PRESENT error on the sites that tested TRUTHINESS ----
+  //
+  // Each validator below early-accepts a reply carrying an `error`, so it skips
+  // the success-field checks. Under the old `if (result.error)` test, `error: ''`
+  // was falsy and sailed straight past into a success-field read.
+  //
+  // 🔴 Every assertion here pins the MESSAGE, not merely "it rejects". Three of
+  // these sites (`list`, and any site dereferencing a missing field) ALREADY
+  // threw a TypeError at the base commit, so `.rejects.toThrow()` with no
+  // argument passes on the BROKEN code and proves nothing. The message is what
+  // separates "rejected for the right reason" from "crashed".
+  describe('falsy-but-present error rejects (was: truthiness)', () => {
+    // Resolved `{ items: undefined }.map` → TypeError at base, not a clean reject.
+    it('list() rejects on error:""', async () => {
+      const { result } = renderHook(() => useSharedStorage());
+      let p!: Promise<unknown>;
+      act(() => {
+        p = result.current.list();
+      });
+      const sent = lastSent<{ payload: { requestId: string } }>();
+      act(() => {
+        reply({
+          type: 'SHARED_LIST_RESULT',
+          payload: { requestId: sent.payload.requestId, error: '' },
+        });
+      });
+      await expect(p).rejects.toThrow('shared list failed');
+    });
+
+    // Resolved `null` at base — indistinguishable from "no such key".
+    it('get() rejects on error:"" instead of resolving null', async () => {
+      const { result } = renderHook(() => useSharedStorage());
+      let p!: Promise<unknown>;
+      act(() => {
+        p = result.current.get('k');
+      });
+      const sent = lastSent<{ payload: { requestId: string } }>();
+      act(() => {
+        reply({
+          type: 'SHARED_GET_RESULT',
+          payload: { requestId: sent.payload.requestId, error: '' },
+        });
+      });
+      await expect(p).rejects.toThrow('shared get failed');
+    });
+
+    // Resolved `undefined` typed `number` at base.
+    it('getCount() rejects on error:"" instead of resolving undefined', async () => {
+      const { result } = renderHook(() => useSharedStorage());
+      let p!: Promise<unknown>;
+      act(() => {
+        p = result.current.getCount('k');
+      });
+      const sent = lastSent<{ payload: { requestId: string } }>();
+      act(() => {
+        reply({
+          type: 'SHARED_GET_COUNT_RESULT',
+          payload: { requestId: sent.payload.requestId, error: '' },
+        });
+      });
+      await expect(p).rejects.toThrow('shared getCount failed');
+    });
+
+    it('getCounts() rejects on error:"" instead of resolving undefined', async () => {
+      const { result } = renderHook(() => useSharedStorage());
+      let p!: Promise<unknown>;
+      act(() => {
+        p = result.current.getCounts(['k']);
+      });
+      const sent = lastSent<{ payload: { requestId: string } }>();
+      act(() => {
+        reply({
+          type: 'SHARED_GET_COUNTS_RESULT',
+          payload: { requestId: sent.payload.requestId, error: '' },
+        });
+      });
+      await expect(p).rejects.toThrow('shared getCounts failed');
+    });
+
+    // Resolved `{ key: undefined }` typed `{ key: string }` at base.
+    it('append() rejects on error:"" instead of resolving {key: undefined}', async () => {
+      const { result } = renderHook(() => useSharedStorage());
+      let p!: Promise<unknown>;
+      act(() => {
+        p = result.current.append({ title: 't' });
+      });
+      const sent = lastSent<{ payload: { requestId: string } }>();
+      act(() => {
+        reply({
+          type: 'SHARED_APPEND_RESULT',
+          payload: { requestId: sent.payload.requestId, error: '' },
+        });
+      });
+      await expect(p).rejects.toThrow('shared append failed');
+    });
+
+    it('vote() rejects on error:"" instead of resolving undefined', async () => {
+      const { result } = renderHook(() => useSharedStorage());
+      let p!: Promise<unknown>;
+      act(() => {
+        p = result.current.vote('k');
+      });
+      const sent = lastSent<{ payload: { requestId: string } }>();
+      act(() => {
+        reply({
+          type: 'SHARED_VOTE_RESULT',
+          payload: { requestId: sent.payload.requestId, error: '' },
+        });
+      });
+      await expect(p).rejects.toThrow('shared vote failed');
+    });
+
+    it('unvote() rejects on error:"" instead of resolving undefined', async () => {
+      const { result } = renderHook(() => useSharedStorage());
+      let p!: Promise<unknown>;
+      act(() => {
+        p = result.current.unvote('k');
+      });
+      const sent = lastSent<{ payload: { requestId: string } }>();
+      act(() => {
+        reply({
+          type: 'SHARED_UNVOTE_RESULT',
+          payload: { requestId: sent.payload.requestId, error: '' },
+        });
+      });
+      await expect(p).rejects.toThrow('shared unvote failed');
+    });
+
+    // NEGATIVE CONTROL: a NON-empty error must still surface its own text, not
+    // the fallback. Without this, replacing `error || fallback` with a bare
+    // `fallback` would pass every assertion above.
+    it('surfaces the host error text when it is non-empty', async () => {
+      const { result } = renderHook(() => useSharedStorage());
+      let p!: Promise<unknown>;
+      act(() => {
+        p = result.current.getCount('k');
+      });
+      const sent = lastSent<{ payload: { requestId: string } }>();
+      act(() => {
+        reply({
+          type: 'SHARED_GET_COUNT_RESULT',
+          payload: { requestId: sent.payload.requestId, error: 'RATE_LIMITED' },
+        });
+      });
+      await expect(p).rejects.toThrow('RATE_LIMITED');
+    });
+
+    // NEGATIVE CONTROL: the ordinary success path must still resolve. Without
+    // this, a mutant rejecting unconditionally would pass everything above.
+    it('still resolves a clean success reply', async () => {
+      const { result } = renderHook(() => useSharedStorage());
+      let p!: Promise<unknown>;
+      act(() => {
+        p = result.current.getCount('k');
+      });
+      const sent = lastSent<{ payload: { requestId: string } }>();
+      act(() => {
+        reply({
+          type: 'SHARED_GET_COUNT_RESULT',
+          payload: { requestId: sent.payload.requestId, count: 7 },
+        });
+      });
+      await expect(p).resolves.toBe(7);
+    });
   });
 });

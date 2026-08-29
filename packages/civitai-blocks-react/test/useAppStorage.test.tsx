@@ -247,7 +247,12 @@ describe('useAppStorage', () => {
       );
     });
 
-    await expect(deletePromise).rejects.toThrow('storage delete failed');
+    // ANCHORED for the same reason as `withdraw` in useSharedStorage.test.tsx:
+    // this site's other throw ('storage delete failed: reply carried no
+    // `deleted` flag') is a SUPERSTRING of this fallback, so an unanchored
+    // substring match cannot tell the two apart — and passes on code where the
+    // `error` clause never fired.
+    await expect(deletePromise).rejects.toThrow(/^storage delete failed$/);
   });
 
   it('list() rehydrates updatedAt to Date + carries the cursor through', async () => {
@@ -398,5 +403,134 @@ describe('useAppStorage', () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  // ---- falsy-but-PRESENT error on the sites that tested TRUTHINESS ----
+  //
+  // 🔴 Every assertion pins the MESSAGE. `list()` already threw a TypeError at
+  // the base commit (`{ keys: undefined }.map`), so a bare `.rejects.toThrow()`
+  // passes on the BROKEN code and proves nothing.
+  describe('falsy-but-present error rejects (was: truthiness)', () => {
+    // `isValidAppStorageGetResult` does NOT early-accept, but it DOES admit a
+    // reply carrying an `error` and no `value` key. At base this resolved
+    // `null` — reporting "key not set" for what the host called a failure.
+    it('get() rejects on error:"" instead of resolving null', async () => {
+      const { result } = renderHook(() => useAppStorage());
+      let p!: Promise<unknown>;
+      act(() => {
+        p = result.current.get('k');
+      });
+      const sent = postMessageMock.mock.calls[0][0] as { payload: { requestId: string } };
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              type: 'APP_STORAGE_GET_RESULT',
+              payload: { requestId: sent.payload.requestId, error: '' },
+            },
+            origin: PARENT_ORIGIN,
+          }),
+        );
+      });
+      await expect(p).rejects.toThrow('storage get failed');
+    });
+
+    it('list() rejects on error:"" instead of crashing on undefined keys', async () => {
+      const { result } = renderHook(() => useAppStorage());
+      let p!: Promise<unknown>;
+      act(() => {
+        p = result.current.list();
+      });
+      const sent = postMessageMock.mock.calls[0][0] as { payload: { requestId: string } };
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              type: 'APP_STORAGE_LIST_RESULT',
+              payload: { requestId: sent.payload.requestId, error: '' },
+            },
+            origin: PARENT_ORIGIN,
+          }),
+        );
+      });
+      await expect(p).rejects.toThrow('storage list failed');
+    });
+
+    // At base this resolved an object of four `undefined`s typed `number`.
+    it('getQuota() rejects on error:"" instead of resolving undefined counters', async () => {
+      const { result } = renderHook(() => useAppStorage());
+      let p!: Promise<unknown>;
+      act(() => {
+        p = result.current.getQuota();
+      });
+      const sent = postMessageMock.mock.calls[0][0] as { payload: { requestId: string } };
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              type: 'APP_STORAGE_QUOTA_RESULT',
+              payload: { requestId: sent.payload.requestId, error: '' },
+            },
+            origin: PARENT_ORIGIN,
+          }),
+        );
+      });
+      await expect(p).rejects.toThrow('storage getQuota failed');
+    });
+
+    // NEGATIVE CONTROL: a non-empty error keeps its own text.
+    it('surfaces the host error text when it is non-empty', async () => {
+      const { result } = renderHook(() => useAppStorage());
+      let p!: Promise<unknown>;
+      act(() => {
+        p = result.current.getQuota();
+      });
+      const sent = postMessageMock.mock.calls[0][0] as { payload: { requestId: string } };
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              type: 'APP_STORAGE_QUOTA_RESULT',
+              payload: { requestId: sent.payload.requestId, error: 'QUOTA_BACKEND_DOWN' },
+            },
+            origin: PARENT_ORIGIN,
+          }),
+        );
+      });
+      await expect(p).rejects.toThrow('QUOTA_BACKEND_DOWN');
+    });
+
+    // NEGATIVE CONTROL: the ordinary success path still resolves.
+    it('still resolves a clean getQuota success reply', async () => {
+      const { result } = renderHook(() => useAppStorage());
+      let p!: Promise<unknown>;
+      act(() => {
+        p = result.current.getQuota();
+      });
+      const sent = postMessageMock.mock.calls[0][0] as { payload: { requestId: string } };
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              type: 'APP_STORAGE_QUOTA_RESULT',
+              payload: {
+                requestId: sent.payload.requestId,
+                usedBytes: 1,
+                rowCount: 2,
+                limitBytes: 3,
+                limitRows: 4,
+              },
+            },
+            origin: PARENT_ORIGIN,
+          }),
+        );
+      });
+      await expect(p).resolves.toEqual({
+        usedBytes: 1,
+        rowCount: 2,
+        limitBytes: 3,
+        limitRows: 4,
+      });
+    });
   });
 });
