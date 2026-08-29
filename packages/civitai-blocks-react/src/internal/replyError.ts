@@ -45,10 +45,14 @@
  *     the wrong function.
  *
  * So choose by a rule, not by the compiler: **does the reply carry `ok`?**
- * Yes → `throwOnFailedReply`. No → `throwOnReplyError`. The truth-table test in
- * `test/replyError.test.ts` pins both helpers' behaviour independently of any
- * call site, because two call sites' own assertions cannot see it (their
- * fallback strings are prefixes of a second throw at the same site).
+ * Yes → `throwOnFailedReply`. No → `throwOnReplyError`. Measured across all 17
+ * sites at the time of writing: 7 payloads carry `ok?` and all 7 use
+ * `throwOnFailedReply`; the other 10 lack it and all use `throwOnReplyError`.
+ *
+ * The truth-table test in `test/replyError.test.ts` pins both helpers'
+ * behaviour independently of any call site — necessary because dropping
+ * `!result.ok` survives at three call sites (`withdraw`, `delete`, `set`),
+ * whose own assertions cannot reach that clause.
  *
  * 🔴 Do NOT "fix" the hazard by tightening the VALIDATOR to require a non-empty
  * error. That puts `{ requestId, error: '' }` back on the drop-and-hang path

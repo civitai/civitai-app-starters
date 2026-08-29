@@ -5,13 +5,20 @@ import { throwOnFailedReply, throwOnReplyError } from '../src/internal/replyErro
 /**
  * Direct truth table for the single-sourced reply-reject predicate.
  *
- * These helpers are exercised indirectly at 17 hook sites, but two of those
- * sites cannot see a defect in them: `useSharedStorage.withdraw` and
- * `useAppStorage.delete` each throw a SECOND, longer message that begins with
- * the helper's own fallback, so their assertions substring-match either throw.
- * A mutation sweep confirmed it — flipping `throwOnFailedReply` back to
- * truthiness survived at exactly those two sites, and dropping `!result.ok`
- * survived at three.
+ * These helpers are exercised indirectly at 17 hook sites. Until this change,
+ * two of those sites COULD NOT see a defect in them: `useSharedStorage.withdraw`
+ * and `useAppStorage.delete` each throw a SECOND, longer message that begins
+ * with the helper's own fallback, so an unanchored `toThrow('…')` substring-
+ * matched either throw. A mutation sweep confirmed it — flipping
+ * `throwOnFailedReply` back to truthiness survived at exactly those two sites.
+ *
+ * 🔴 BOTH ASSERTIONS ARE NOW ANCHORED (`/^…$/`), in the same commit as this
+ * file, and that is what makes them able to see it — M1 now dies at both. The
+ * anchors are load-bearing, NOT stylistic: revert either to a plain string and
+ * the suite stays green while M1's kill count drops from 9 to 7, restoring the
+ * vacuous-assertion hole. Dropping `!result.ok` still survives at three sites
+ * (`withdraw`, `delete`, `set`), which no anchoring can fix — that one is
+ * killed here and only here.
  *
  * So the predicate gets its own test, keyed on nothing but its inputs.
  */

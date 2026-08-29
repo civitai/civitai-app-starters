@@ -29,21 +29,28 @@ What each did at the base commit on `{ requestId, error: '' }`:
 
 ## Reachability — this is PROPHYLACTIC, not a live bug fix
 
-No currently-shipping host can trigger any of the above — but the mechanism is
-**two** sources, not one, and an earlier draft of this note named only the first:
+No currently-shipping host can trigger any of the above. Two earlier drafts of
+this note got the *mechanism* wrong while reaching the right conclusion, so here
+it is enumerated rather than characterised. Error strings on these reply types
+come from at least **five** distinct sources across the two hosts:
 
-1. `storageErrorMessage()`, which guards `message.length > 0` and otherwise
-   returns the constant `'storage request failed'`; and
-2. `REVIEW_NACK_MESSAGE`, a non-empty constant used on ten of these reply types
-   in `PageBlockHost.tsx`, which bypasses `storageErrorMessage()` entirely.
+1. `storageErrorMessage()` — guards `message.length > 0`, else the constant
+   `'storage request failed'`;
+2. `REVIEW_NACK_MESSAGE` — a non-empty constant, reaching **eleven of the
+   seventeen** reply types (seven of the eleven this PR fixes), bypassing
+   `storageErrorMessage()` entirely;
+3. the bare `err instanceof Error ? err.message : 'unknown'` path — the one
+   source that CAN yield `''`, see below;
+4. bare non-empty literals on `SAVE_IMAGE_RESULT` (`'busy'`,
+   `'image is not available'`, …);
+5. bare non-empty literals on `USER_CHECKPOINT_SET`.
 
-Both are incapable of producing `''`; there are exactly two hosts and no
-`send()` takes a dynamic type, so the enumeration is complete. The conclusion
-stands — the change closes the contract, it does not repair an observed failure
-— but "everything goes through `storageErrorMessage()`" would have let a future
-reviewer verify one function and believe the whole family was covered.
+Every source but (3) is non-empty by construction, so the conclusion holds for
+the eleven sites this PR fixes. **Do not read the list as closed** — it is what
+an enumeration at `civitai@94a564a` found, and the honest claim is "these five,
+checked", not "these are all there can be".
 
-🔴 **One reply type in the seventeen IS fed by an empty-capable source.**
+🔴 **One reply type in the seventeen IS fed by source (3).**
 `IframeHost.tsx` emits `USER_CHECKPOINT_SET` with
 `err instanceof Error ? err.message : 'unknown'`, and `err.message` is `''` for
 `new Error()`. That site is safe only because PR #273 already moved
