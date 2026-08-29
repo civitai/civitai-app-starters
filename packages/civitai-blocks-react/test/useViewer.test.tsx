@@ -129,6 +129,25 @@ describe('useViewer', () => {
     expect(result.current.viewer).toBeNull();
   });
 
+  /**
+   * REGRESSION — an EMPTY host error must not surface as an EMPTY Error message.
+   * `isValidViewerResult` gates `error` on SHAPE only (`typeof p.error !== 'string'`
+   * → reject), so `{ error: '' }` is a VALID reply that reaches the hook. `??`
+   * replaces only null/undefined, so it PRESERVES `''` and the block gets an
+   * exception carrying no message at all — the whole failure is undebuggable.
+   * `||` falls through to the readable fallback.
+   */
+  it('falls back to readable copy when the host error is an EMPTY string', async () => {
+    const { result } = renderHook(() => useViewer());
+
+    dispatchResult({ requestId: lastRequestId(postMessageMock), error: '' });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error).toBeInstanceOf(Error);
+    expect(result.current.error?.message).toBe('failed to fetch viewer');
+    expect(result.current.viewer).toBeNull();
+  });
+
   it('ignores a response whose requestId does not match the in-flight request', async () => {
     const { result } = renderHook(() => useViewer());
     const realRequestId = lastRequestId(postMessageMock);

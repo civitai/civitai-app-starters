@@ -106,6 +106,27 @@ describe('useGatedImages', () => {
     await waitFor(() => expect(caught).not.toBeNull());
     expect((caught as unknown as Error).message).toBe('viewer is banned');
   });
+
+  /**
+   * REGRESSION — an EMPTY host error must not surface as an EMPTY Error message.
+   * `isValidImagesResult` gates `error` on SHAPE only (`typeof p.error !== 'string'`
+   * → reject), so `{ error: '' }` is a VALID reply that reaches the hook. `??`
+   * replaces only null/undefined, so it PRESERVES `''` and getImages() rejects with
+   * a messageless Error. The matcher is ANCHORED — `toThrow('<string>')`
+   * substring-matches, so an unanchored assertion can pass on broken code.
+   */
+  it('rejects with readable copy when the host error is an EMPTY string', async () => {
+    const { result } = renderHook(() => useGatedImages());
+
+    let p!: Promise<BlockGatedImage[]>;
+    act(() => {
+      p = result.current.getImages([1, 2]);
+      p.catch(() => {});
+    });
+    dispatch('IMAGES_RESULT', { requestId: lastGet(postMessageMock).payload.requestId, error: '' });
+
+    await expect(p).rejects.toThrow(/^failed to fetch gated images$/);
+  });
 });
 
 describe('isValidImagesResult (defense-in-depth)', () => {

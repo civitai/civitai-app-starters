@@ -57,7 +57,10 @@ export function useGatedImages(): UseGatedImages {
       'IMAGES_RESULT',
     );
     if (reply.error || !reply.result) {
-      throw new Error(reply.error ?? 'failed to fetch gated images');
+      // `||`, not `??`: `isValidImagesResult` gates `error` on SHAPE only, so a host
+      // `error: ''` is a VALID reply that reaches here. `??` replaces only
+      // null/undefined, so it would throw an Error with an EMPTY message.
+      throw new Error(reply.error || 'failed to fetch gated images');
     }
     return reply.result.images;
   }, []);

@@ -102,6 +102,21 @@ describe('useBuzzAccounts', () => {
     expect(result.current.accounts).toBeNull();
   });
 
+  /**
+   * REGRESSION — an EMPTY host error must not surface as an EMPTY Error message.
+   * `isValidBuzzAccountsResult` gates `error` on SHAPE only, so `{ error: '' }` is a
+   * VALID reply that reaches the hook. `??` preserves `''`; `||` falls through.
+   */
+  it('falls back to readable copy when the host error is an EMPTY string', async () => {
+    const { result } = renderHook(() => useBuzzAccounts());
+    dispatchResult({ requestId: lastRequestId(postMessageMock), error: '' });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error).toBeInstanceOf(Error);
+    expect(result.current.error?.message).toBe('failed to fetch buzz accounts');
+    expect(result.current.accounts).toBeNull();
+  });
+
   it('ignores a mismatched requestId', async () => {
     const { result } = renderHook(() => useBuzzAccounts());
     const realId = lastRequestId(postMessageMock);

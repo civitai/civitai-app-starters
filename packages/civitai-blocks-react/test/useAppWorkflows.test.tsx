@@ -132,6 +132,23 @@ describe('useAppWorkflows', () => {
     expect(result.current.workflows).toEqual([]);
   });
 
+  /**
+   * REGRESSION — an EMPTY host error must not surface as an EMPTY Error message.
+   * `isValidAppWorkflowsResult` gates `error` on SHAPE only, so `{ error: '' }` is a
+   * VALID reply that reaches the hook. `??` preserves `''`; `||` falls through.
+   */
+  it('falls back to readable copy when the host error is an EMPTY string', async () => {
+    const { result } = renderHook(() => useAppWorkflows());
+    dispatch('APP_WORKFLOWS_RESULT', {
+      requestId: lastQuery(postMessageMock).payload.requestId,
+      error: '',
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error).toBeInstanceOf(Error);
+    expect(result.current.error?.message).toBe('failed to fetch app workflows');
+    expect(result.current.workflows).toEqual([]);
+  });
+
   it('ignores a response whose requestId does not match', async () => {
     const { result } = renderHook(() => useAppWorkflows());
     const realId = lastQuery(postMessageMock).payload.requestId;
@@ -213,6 +230,35 @@ describe('useAppWorkflows', () => {
 
     await waitFor(() => expect(caught).not.toBeNull());
     expect((caught as unknown as Error).message).toBe('workflow is not in this app subqueue');
+    expect(result.current.workflows).toEqual([DONE, PENDING]);
+  });
+
+  /**
+   * REGRESSION — cancel()'s EMPTY-error path. `isValidCancelAppWorkflowResult` gates
+   * `error` on SHAPE only, so `{ error: '' }` is a VALID reply that reaches the hook.
+   * `??` preserves `''` and cancel() rejects with a messageless Error; `||` falls
+   * through. The matcher is ANCHORED — `toThrow('<string>')` substring-matches, so an
+   * unanchored assertion can pass on broken code.
+   */
+  it('cancel() falls back to readable copy when the host error is an EMPTY string', async () => {
+    const { result } = renderHook(() => useAppWorkflows());
+    dispatch('APP_WORKFLOWS_RESULT', {
+      requestId: lastQuery(postMessageMock).payload.requestId,
+      result: { workflows: [DONE, PENDING], cursor: null },
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let p!: Promise<void>;
+    act(() => {
+      p = result.current.cancel('wf_1');
+      p.catch(() => {});
+    });
+    dispatch('CANCEL_APP_WORKFLOW_RESULT', {
+      requestId: lastCancel(postMessageMock).payload.requestId,
+      error: '',
+    });
+
+    await expect(p).rejects.toThrow(/^failed to cancel workflow$/);
     expect(result.current.workflows).toEqual([DONE, PENDING]);
   });
 

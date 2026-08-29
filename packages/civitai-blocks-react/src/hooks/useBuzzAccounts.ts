@@ -66,7 +66,10 @@ export function useBuzzAccounts(): UseBuzzAccounts {
       .then((result) => {
         if (!mountedRef.current) return;
         if (result.error || !result.result) {
-          setError(new Error(result.error ?? 'failed to fetch buzz accounts'));
+          // `||`, not `??`: the reply validator gates `error` on SHAPE only, so a
+          // host `error: ''` is a VALID reply that reaches here. `??` replaces only
+          // null/undefined, so it would surface an Error with an EMPTY message.
+          setError(new Error(result.error || 'failed to fetch buzz accounts'));
           setLoading(false);
           return;
         }
