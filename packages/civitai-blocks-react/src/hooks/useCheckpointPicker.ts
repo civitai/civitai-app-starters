@@ -68,8 +68,13 @@ export function useCheckpointPicker(): {
       { type: 'SET_USER_CHECKPOINT', payload: { versionId } },
       'USER_CHECKPOINT_SET',
     );
-    if (!ok) {
-      throw new Error(error ?? 'failed to persist checkpoint');
+    // A PRESENT `error` is the reject signal, not a TRUTHY one: the reply
+    // validator early-accepts anything carrying an `error` key, so `error: ''`
+    // reaches here having skipped the success-field checks. This site tested
+    // `!ok` ALONE before, so the `error` clause is new, not merely retyped.
+    // `||` (not `??`) so an empty error string still yields readable copy.
+    if (!ok || error !== undefined) {
+      throw new Error(error || 'failed to persist checkpoint');
     }
   }, []);
 

@@ -219,5 +219,20 @@ describe('useCheckpointPicker', () => {
       reply('USER_CHECKPOINT_SET', sent.payload.requestId, { ok: false });
       await expect(done).rejects.toThrow('failed to persist checkpoint');
     });
+
+    // `error: ''` is FALSY but PRESENT. The reply validator early-accepts on
+    // presence and therefore SKIPS the `ok` check, so a hook testing only
+    // `!ok` — which this one did — would sail past and RESOLVE a failed
+    // persist. This site tested `!ok` ALONE; the `error` clause is new.
+    it('throws on a falsy-but-PRESENT error (ok:true, error:"")', async () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      let done!: Promise<void>;
+      act(() => {
+        done = result.current.persist(7);
+      });
+      const sent = lastSent();
+      reply('USER_CHECKPOINT_SET', sent.payload.requestId, { ok: true, error: '' });
+      await expect(done).rejects.toThrow('failed to persist checkpoint');
+    });
   });
 });

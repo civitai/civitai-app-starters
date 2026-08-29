@@ -365,6 +365,21 @@ describe('isValidSharedUpdateResult', () => {
     expect(isValidSharedUpdateResult({ requestId: 'r', ok: false, error: 'FORBIDDEN' })).toBe(true);
     expect(isValidSharedUpdateResult({ requestId: 'r', ok: false, error: 'NOT_FOUND' })).toBe(true);
   });
+  it('accepts an error-only reply (uniform {ok,error} contract)', () => {
+    expect(isValidSharedUpdateResult({ requestId: 'r1', error: 'boom' })).toBe(true);
+  });
+  // The early-accept keys on PRESENCE, so an EMPTY error string is accepted too
+  // — deliberately. Tightening it to require a non-empty string would put
+  // `{ requestId, error: '' }` back on the drop-and-hang path this contract
+  // closes. Catching `error: ''` is the consuming HOOK's job (it throws on a
+  // PRESENT error); this asserts the validator does not take that job back.
+  it('still ACCEPTS an empty-string error reply (early-accept keys on presence)', () => {
+    expect(isValidSharedUpdateResult({ requestId: 'r1', error: '' })).toBe(true);
+    expect(isValidSharedUpdateResult({ requestId: 'r1', ok: true, error: '' })).toBe(true);
+  });
+  it('still requires a boolean ok when there is NO error', () => {
+    expect(isValidSharedUpdateResult({ requestId: 'r1' })).toBe(false);
+  });
   it('rejects a malformed reply', () => {
     expect(isValidSharedUpdateResult(null)).toBe(false);
     expect(isValidSharedUpdateResult({})).toBe(false); // missing ok
@@ -404,6 +419,16 @@ describe('isValidAppStorageSetResult', () => {
   it('accepts ok:false with error (no sizeBytes)', () => {
     expect(isValidAppStorageSetResult({ requestId: 'r', ok: false, error: 'PAYLOAD_TOO_LARGE' })).toBe(true);
   });
+  it('accepts an error-only reply (uniform {ok,error} contract)', () => {
+    expect(isValidAppStorageSetResult({ requestId: 'r1', error: 'boom' })).toBe(true);
+  });
+  // Presence, not truthiness — and the success-field checks are SKIPPED, so a
+  // garbage `sizeBytes` rides along. The hook is what rejects it. See the
+  // matching note on `isValidSharedUpdateResult`.
+  it('still ACCEPTS an empty-string error reply (early-accept keys on presence)', () => {
+    expect(isValidAppStorageSetResult({ requestId: 'r1', error: '' })).toBe(true);
+    expect(isValidAppStorageSetResult({ requestId: 'r1', ok: true, error: '', sizeBytes: 'huge' })).toBe(true);
+  });
   it.each([
     ['missing ok', { requestId: 'r' }],
     ['ok not boolean', { requestId: 'r', ok: 'yes' }],
@@ -419,6 +444,15 @@ describe('isValidAppStorageDeleteResult', () => {
     expect(isValidAppStorageDeleteResult({ requestId: 'r', ok: true, deleted: true })).toBe(true);
     expect(isValidAppStorageDeleteResult({ requestId: 'r', ok: true, deleted: false })).toBe(true);
     expect(isValidAppStorageDeleteResult({ requestId: 'r', ok: false, deleted: false, error: 'X' })).toBe(true);
+  });
+  it('accepts an error-only reply (uniform {ok,error} contract)', () => {
+    expect(isValidAppStorageDeleteResult({ requestId: 'r1', error: 'boom' })).toBe(true);
+  });
+  // Presence, not truthiness — `deleted` is NOT checked on the early-accept
+  // path. The hook is what rejects it.
+  it('still ACCEPTS an empty-string error reply (early-accept keys on presence)', () => {
+    expect(isValidAppStorageDeleteResult({ requestId: 'r1', error: '' })).toBe(true);
+    expect(isValidAppStorageDeleteResult({ requestId: 'r1', ok: true, error: '', deleted: 'yes' })).toBe(true);
   });
   it.each([
     ['missing ok', { requestId: 'r', deleted: true }],
@@ -561,6 +595,14 @@ describe('isValidSharedReportResult (SHARED_REPORT)', () => {
     expect(isValidSharedReportResult({ requestId: 'r', ok: true })).toBe(true);
     expect(isValidSharedReportResult({ requestId: 'r', ok: false, error: 'NOT_FOUND' })).toBe(true);
   });
+  it('accepts an error-only reply (uniform {ok,error} contract)', () => {
+    expect(isValidSharedReportResult({ requestId: 'r1', error: 'boom' })).toBe(true);
+  });
+  // Presence, not truthiness. The hook is what rejects an empty error string.
+  it('still ACCEPTS an empty-string error reply (early-accept keys on presence)', () => {
+    expect(isValidSharedReportResult({ requestId: 'r1', error: '' })).toBe(true);
+    expect(isValidSharedReportResult({ requestId: 'r1', ok: true, error: '' })).toBe(true);
+  });
   it.each([
     ['ok missing', { requestId: 'r' }],
     ['ok not boolean', { requestId: 'r', ok: 'yes' }],
@@ -574,6 +616,14 @@ describe('isValidSaveImageResult (SAVE_IMAGE)', () => {
   it('accepts ok true/false', () => {
     expect(isValidSaveImageResult({ requestId: 'r', ok: true })).toBe(true);
     expect(isValidSaveImageResult({ requestId: 'r', ok: false, error: 'image url is not allowed' })).toBe(true);
+  });
+  it('accepts an error-only reply (uniform {ok,error} contract)', () => {
+    expect(isValidSaveImageResult({ requestId: 'r1', error: 'boom' })).toBe(true);
+  });
+  // Presence, not truthiness. The hook is what rejects an empty error string.
+  it('still ACCEPTS an empty-string error reply (early-accept keys on presence)', () => {
+    expect(isValidSaveImageResult({ requestId: 'r1', error: '' })).toBe(true);
+    expect(isValidSaveImageResult({ requestId: 'r1', ok: true, error: '' })).toBe(true);
   });
   it.each([
     ['ok missing', { requestId: 'r' }],
@@ -724,6 +774,14 @@ describe('isValidUserCheckpointSetResult', () => {
   it('accepts ok:true and ok:false+error', () => {
     expect(isValidUserCheckpointSetResult({ requestId: 'r', ok: true })).toBe(true);
     expect(isValidUserCheckpointSetResult({ requestId: 'r', ok: false, error: 'wrong-ecosystem' })).toBe(true);
+  });
+  it('accepts an error-only reply (uniform {ok,error} contract)', () => {
+    expect(isValidUserCheckpointSetResult({ requestId: 'r1', error: 'boom' })).toBe(true);
+  });
+  // Presence, not truthiness. The hook is what rejects an empty error string.
+  it('still ACCEPTS an empty-string error reply (early-accept keys on presence)', () => {
+    expect(isValidUserCheckpointSetResult({ requestId: 'r1', error: '' })).toBe(true);
+    expect(isValidUserCheckpointSetResult({ requestId: 'r1', ok: true, error: '' })).toBe(true);
   });
   it.each([
     ['missing ok', { requestId: 'r' }],
