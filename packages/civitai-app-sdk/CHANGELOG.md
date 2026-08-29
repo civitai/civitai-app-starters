@@ -1,5 +1,15 @@
 # @civitai/app-sdk
 
+## 0.36.0
+
+### Minor Changes
+
+- 5871331: fix(sdk): make `ok` (and `deleted`) optional on the seven `{ok, error}` `ParentToBlockMessage` reply payloads — the block-side reply validators early-accept an error reply that omits `ok`, so the type guaranteed a field the guard admits without
+
+### Patch Changes
+
+- 4dca38a: chore(sdk): add the `krea` image-gen engine to `IMAGE_GEN_ENGINES` and the transcribed spec fixture — the live orchestrator spec gained `KreaImageGenInput`, so the catalog drift-check was red on every PR
+
 ## 0.35.0
 
 ### Minor Changes
