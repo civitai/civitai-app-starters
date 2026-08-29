@@ -316,6 +316,22 @@ export interface ConsentUnavailablePayload {
   scopes: string[];
 }
 
+/**
+ * Host→block messages.
+ *
+ * ## The `{ ok, error }` reply contract
+ *
+ * On every reply payload below that carries an `ok` boolean, `ok` — and any
+ * success-only sibling such as `deleted` — is OPTIONAL, because an error reply
+ * is `{ requestId, error }` on its own: the host is not obliged to also send
+ * `ok: false`. This mirrors the block-side guards in `@civitai/blocks-react`'s
+ * `src/internal/validate.ts`, which early-accept any reply carrying an `error`
+ * and only then require `ok`. Keep the two in lockstep: a guard that admits a
+ * payload the type declares as guaranteed hands the consuming hook a lie.
+ *
+ * Consumers must therefore treat a PRESENT `error` (not a truthy one) as the
+ * reject signal before reading any success-only field.
+ */
 export type ParentToBlockMessage =
   | { type: 'BLOCK_INIT'; payload: BlockInitPayload }
   | {
@@ -633,7 +649,7 @@ export type ParentToBlockMessage =
       // `error` string (e.g. "wrong-ecosystem"), distinct from the block
       // lifecycle error class.
       type: 'USER_CHECKPOINT_SET';
-      payload: { requestId: string; ok: boolean; error?: string };
+      payload: { requestId: string; ok?: boolean; error?: string };
     }
   | {
       // Reply to APP_STORAGE_GET. `value` is `null` when the key isn't
@@ -650,7 +666,7 @@ export type ParentToBlockMessage =
       // size the row landed at, so the block can update its own quota
       // estimate without another round-trip to `getQuota`.
       type: 'APP_STORAGE_SET_RESULT';
-      payload: { requestId: string; ok: boolean; error?: string; sizeBytes?: number };
+      payload: { requestId: string; ok?: boolean; error?: string; sizeBytes?: number };
     }
   | {
       // Reply to APP_STORAGE_DELETE. `deleted: false` indicates the
@@ -658,7 +674,7 @@ export type ParentToBlockMessage =
       // callers can distinguish "I cleared it" from "it was already
       // gone."
       type: 'APP_STORAGE_DELETE_RESULT';
-      payload: { requestId: string; ok: boolean; deleted: boolean; error?: string };
+      payload: { requestId: string; ok?: boolean; deleted?: boolean; error?: string };
     }
   | {
       // Reply to APP_STORAGE_LIST. `keys` carries the key + a
@@ -732,7 +748,7 @@ export type ParentToBlockMessage =
       // Reply to SHARED_WITHDRAW. `deleted: false` means the viewer's entry
       // wasn't present (still treated as success — idempotent withdraw).
       type: 'SHARED_WITHDRAW_RESULT';
-      payload: { requestId: string; ok: boolean; deleted: boolean; error?: string };
+      payload: { requestId: string; ok?: boolean; deleted?: boolean; error?: string };
     }
   | {
       // Reply to SHARED_UPDATE. `ok: true` when the author's entry was updated
@@ -742,7 +758,7 @@ export type ParentToBlockMessage =
       // (or `ok: false`) as the promise-reject signal (mirrors
       // `SHARED_WITHDRAW_RESULT`).
       type: 'SHARED_UPDATE_RESULT';
-      payload: { requestId: string; ok: boolean; error?: string };
+      payload: { requestId: string; ok?: boolean; error?: string };
     }
   | {
       // Reply to SHARED_GET (single-row fetch-by-key). On success `item` is the
@@ -762,7 +778,7 @@ export type ParentToBlockMessage =
       // `SHARED_WITHDRAW_RESULT`). Filing a report does NOT hide the row — a
       // moderator decides.
       type: 'SHARED_REPORT_RESULT';
-      payload: { requestId: string; ok: boolean; error?: string };
+      payload: { requestId: string; ok?: boolean; error?: string };
     }
   | {
       // Reply to SAVE_IMAGE (host-mediated download bridge). `ok: true` once the
@@ -773,7 +789,7 @@ export type ParentToBlockMessage =
       // fetch failure. Consumers treat a non-empty `error` (or `ok: false`) as
       // the reject signal.
       type: 'SAVE_IMAGE_RESULT';
-      payload: { requestId: string; ok: boolean; error?: string };
+      payload: { requestId: string; ok?: boolean; error?: string };
     }
   | { type: 'SUSPEND'; payload?: undefined }
   | { type: 'RESUME'; payload?: undefined };

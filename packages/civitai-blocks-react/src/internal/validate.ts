@@ -29,11 +29,27 @@
  * NO `error`. A failing validator drops the message with nothing but a
  * `console.warn`, so the block's pending request never settles and the UI hangs
  * to the request timeout with no network call and no host-visible error — the
- * exact class this uniformity removes. The early-accept is only sound because
- * the consuming hook throws on a non-empty `error` BEFORE reading any other
- * payload field; each one below names the field it would otherwise read. If you
- * add an `{ ok, error }` validator whose hook reads a field on the error path,
- * fix the hook — do not drop the early-accept.
+ * exact class this uniformity removes.
+ *
+ * The early-accept is only sound because the consuming hook throws on a
+ * PRESENT `error` — `error !== undefined`, not a truthy one — BEFORE reading
+ * any other payload field; each one below names the field it would otherwise
+ * read. Presence, not truthiness, is the load-bearing word: `error: ''` is
+ * falsy, so a hook testing truthiness would sail past the early-accepted reply
+ * and read a success field the validator never checked. If you add an
+ * `{ ok, error }` validator whose hook reads a field on the error path, fix the
+ * hook — do not drop the early-accept, and do not tighten the early-accept to
+ * require a NON-EMPTY error either: that puts `{ requestId, error: '' }` back
+ * on the drop-and-hang path this contract exists to close.
+ *
+ * 🔴 KNOWN GAP, tracked as a follow-up: only the six validators normalized by
+ * PR #273 (`isValidSharedUpdateResult`, `isValidAppStorageSetResult`,
+ * `isValidAppStorageDeleteResult`, `isValidSharedReportResult`,
+ * `isValidSaveImageResult`, `isValidUserCheckpointSetResult`) have hooks that
+ * test PRESENCE. The other early-accepting validators in this module — incl.
+ * `isValidSharedWithdrawResult` and the `{ count, error? }` / list / get
+ * family — still have hooks testing `error` for TRUTHINESS, so `error: ''` can
+ * still skip their success-field checks. Fixing those is a separate change.
  */
 
 import type {
@@ -530,7 +546,7 @@ export function isValidImageScanResolved(
  * boolean `ok`, OR an `error` string on its own (set on `NOT_FOUND` /
  * `FORBIDDEN` / a belt/size rejection). Follows the uniform `{ ok, error }`
  * reply contract in this module's header — the block's hook treats
- * `!ok || error` as the reject signal.
+ * `!ok || error !== undefined` as the reject signal.
  */
 export function isValidSharedUpdateResult(
   p: unknown,
@@ -1020,7 +1036,7 @@ export function isValidSharedGetResult(p: unknown): boolean {
 /**
  * Reply to `SHARED_REPORT`. On success `ok` is a boolean; the error path is
  * `{ error }`, with or without `ok: false`. Uniform `{ ok, error }` contract
- * (module header) — the SDK hook rejects on `!ok || error`.
+ * (module header) — the SDK hook rejects on `!ok || error !== undefined`.
  */
 export function isValidSharedReportResult(p: unknown): boolean {
   if (!isObject(p)) return false;

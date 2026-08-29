@@ -160,6 +160,38 @@ describe('useAppStorage', () => {
     await expect(setPromise).rejects.toThrow('PAYLOAD_TOO_LARGE');
   });
 
+  // `error: ''` is FALSY but PRESENT. The reply validator early-accepts on
+  // presence and therefore SKIPS the success-field checks (here `sizeBytes`),
+  // so a hook testing `error` for truthiness would sail past and resolve with
+  // whatever garbage rode along. Presence is the test.
+  it('set() rejects on a falsy-but-PRESENT error (ok:true, error:"")', async () => {
+    const { result } = renderHook(() => useAppStorage());
+
+    let setPromise!: Promise<unknown>;
+    act(() => {
+      setPromise = result.current.set('k', { a: 1 });
+    });
+    const sent = postMessageMock.mock.calls[0][0] as {
+      type: string;
+      payload: { requestId: string };
+    };
+    expect(sent.type).toBe('APP_STORAGE_SET');
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'APP_STORAGE_SET_RESULT',
+            payload: { requestId: sent.payload.requestId, ok: true, error: '', sizeBytes: 'huge' },
+          },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+
+    await expect(setPromise).rejects.toThrow('storage set failed');
+  });
+
   it('delete() reports whether a row was present', async () => {
     const { result } = renderHook(() => useAppStorage());
 
@@ -186,6 +218,36 @@ describe('useAppStorage', () => {
     });
 
     await expect(deletePromise).resolves.toEqual({ ok: true, deleted: true });
+  });
+
+  // Falsy-but-PRESENT error — see the matching `set()` case above. Without the
+  // presence test this resolved with `deleted: 'yes'` typed `boolean`.
+  it('delete() rejects on a falsy-but-PRESENT error (ok:true, error:"")', async () => {
+    const { result } = renderHook(() => useAppStorage());
+
+    let deletePromise!: Promise<unknown>;
+    act(() => {
+      deletePromise = result.current.delete('k');
+    });
+    const sent = postMessageMock.mock.calls[0][0] as {
+      type: string;
+      payload: { requestId: string };
+    };
+    expect(sent.type).toBe('APP_STORAGE_DELETE');
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'APP_STORAGE_DELETE_RESULT',
+            payload: { requestId: sent.payload.requestId, ok: true, error: '', deleted: 'yes' },
+          },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+
+    await expect(deletePromise).rejects.toThrow('storage delete failed');
   });
 
   it('list() rehydrates updatedAt to Date + carries the cursor through', async () => {

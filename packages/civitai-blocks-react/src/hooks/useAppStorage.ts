@@ -103,8 +103,12 @@ export function useAppStorage(): UseAppStorage {
           { type: 'APP_STORAGE_SET', payload: { key, value } },
           'APP_STORAGE_SET_RESULT',
         );
-        if (!result.ok || result.error) {
-          throw new Error(result.error ?? 'storage set failed');
+        // A PRESENT `error` is the reject signal, not a TRUTHY one: the reply
+        // validator early-accepts anything carrying an `error` key, so
+        // `error: ''` reaches here having skipped the success-field checks.
+        // `||` (not `??`) so an empty error string still yields readable copy.
+        if (!result.ok || result.error !== undefined) {
+          throw new Error(result.error || 'storage set failed');
         }
         return { ok: true as const, sizeBytes: result.sizeBytes };
       },
@@ -114,8 +118,17 @@ export function useAppStorage(): UseAppStorage {
           { type: 'APP_STORAGE_DELETE', payload: { key } },
           'APP_STORAGE_DELETE_RESULT',
         );
-        if (!result.ok || result.error) {
-          throw new Error(result.error ?? 'storage delete failed');
+        // PRESENT, not truthy — see `set()` above.
+        if (!result.ok || result.error !== undefined) {
+          throw new Error(result.error || 'storage delete failed');
+        }
+        // `deleted` is optional on the wire type because an error reply omits
+        // it. On the success path the validator requires a boolean, so this is
+        // defence in depth rather than a reachable branch through the real
+        // transport — but it is what makes the `boolean` we return honest,
+        // instead of a cast asserting a guarantee this function cannot see.
+        if (typeof result.deleted !== 'boolean') {
+          throw new Error('storage delete failed: reply carried no `deleted` flag');
         }
         return { ok: true as const, deleted: result.deleted };
       },

@@ -196,8 +196,12 @@ export function useSharedStorage(): UseSharedStorage {
           { type: 'SHARED_REPORT', payload: { key, reason } },
           'SHARED_REPORT_RESULT',
         );
-        if (!result.ok || result.error) {
-          throw new Error(result.error ?? 'shared report failed');
+        // A PRESENT `error` is the reject signal, not a TRUTHY one: the reply
+        // validator early-accepts anything carrying an `error` key, so
+        // `error: ''` reaches here having skipped the success-field checks.
+        // `||` (not `??`) so an empty error string still yields readable copy.
+        if (!result.ok || result.error !== undefined) {
+          throw new Error(result.error || 'shared report failed');
         }
       },
       async getCount(key) {
@@ -233,8 +237,9 @@ export function useSharedStorage(): UseSharedStorage {
           { type: 'SHARED_UPDATE', payload: { key, value } },
           'SHARED_UPDATE_RESULT',
         );
-        if (!result.ok || result.error) {
-          throw new Error(result.error ?? 'shared update failed');
+        // PRESENT, not truthy — see `report()` above.
+        if (!result.ok || result.error !== undefined) {
+          throw new Error(result.error || 'shared update failed');
         }
       },
       async vote(key) {
@@ -263,6 +268,17 @@ export function useSharedStorage(): UseSharedStorage {
         );
         if (!result.ok || result.error) {
           throw new Error(result.error ?? 'shared withdraw failed');
+        }
+        // `deleted` is optional on the wire type because an error reply omits
+        // it. On the success path the validator requires a boolean, so this is
+        // defence in depth rather than a reachable branch through the real
+        // transport — but it is what makes the `boolean` we return honest,
+        // instead of a cast asserting a guarantee this function cannot see.
+        // NOTE: this site still tests `error` for TRUTHINESS. It is not one of
+        // the six this change normalized (it early-accepted before PR #273);
+        // the remaining truthiness sites are a tracked follow-up.
+        if (typeof result.deleted !== 'boolean') {
+          throw new Error('shared withdraw failed: reply carried no `deleted` flag');
         }
         return { ok: true as const, deleted: result.deleted };
       },

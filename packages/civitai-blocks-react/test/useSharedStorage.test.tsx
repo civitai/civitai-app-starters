@@ -438,6 +438,25 @@ describe('useSharedStorage', () => {
     await expect(p).rejects.toThrow('shared update failed');
   });
 
+  // `error: ''` is FALSY but PRESENT. The reply validator early-accepts on
+  // presence and therefore SKIPS the success-field checks, so a hook testing
+  // `error` for truthiness would sail past and resolve. Presence is the test.
+  it('update() rejects on a falsy-but-PRESENT error (ok:true, error:"")', async () => {
+    const { result } = renderHook(() => useSharedStorage());
+    let p!: Promise<unknown>;
+    act(() => {
+      p = result.current.update('k', { title: 't' });
+    });
+    const sent = lastSent<{ payload: { requestId: string } }>();
+    act(() => {
+      reply({
+        type: 'SHARED_UPDATE_RESULT',
+        payload: { requestId: sent.payload.requestId, ok: true, error: '' },
+      });
+    });
+    await expect(p).rejects.toThrow('shared update failed');
+  });
+
   it('update() ignores a mismatched requestId, resolves on the right one', async () => {
     const { result } = renderHook(() => useSharedStorage());
     let p!: Promise<unknown>;
@@ -836,6 +855,46 @@ describe('useSharedStorage', () => {
     const sent = lastSent<{ payload: { requestId: string } }>();
     act(() => {
       reply({ type: 'SHARED_REPORT_RESULT', payload: { requestId: sent.payload.requestId, ok: false } });
+    });
+    await expect(p).rejects.toThrow('shared report failed');
+  });
+
+  // `withdraw()` is NOT one of the six sites this change normalized — it still
+  // tests `error` for TRUTHINESS (it early-accepted before PR #273; the
+  // remaining truthiness sites are a tracked follow-up). But making `deleted`
+  // OPTIONAL on the wire type forced an explicit narrowing here, and that
+  // narrowing is what now stops a falsy-but-present error reply from resolving
+  // `deleted: 'yes'` as a `boolean`. Pin it: the guard must be reachable and
+  // must fire.
+  it('withdraw() rejects rather than resolving a non-boolean `deleted` (ok:true, error:"")', async () => {
+    const { result } = renderHook(() => useSharedStorage());
+    let p!: Promise<unknown>;
+    act(() => {
+      p = result.current.withdraw('k');
+    });
+    const sent = lastSent<{ payload: { requestId: string } }>();
+    act(() => {
+      reply({
+        type: 'SHARED_WITHDRAW_RESULT',
+        payload: { requestId: sent.payload.requestId, ok: true, error: '', deleted: 'yes' },
+      });
+    });
+    await expect(p).rejects.toThrow('reply carried no `deleted` flag');
+  });
+
+  // Falsy-but-PRESENT error — see the matching `update()` case above.
+  it('report() rejects on a falsy-but-PRESENT error (ok:true, error:"")', async () => {
+    const { result } = renderHook(() => useSharedStorage());
+    let p!: Promise<unknown>;
+    act(() => {
+      p = result.current.report('k');
+    });
+    const sent = lastSent<{ payload: { requestId: string } }>();
+    act(() => {
+      reply({
+        type: 'SHARED_REPORT_RESULT',
+        payload: { requestId: sent.payload.requestId, ok: true, error: '' },
+      });
     });
     await expect(p).rejects.toThrow('shared report failed');
   });

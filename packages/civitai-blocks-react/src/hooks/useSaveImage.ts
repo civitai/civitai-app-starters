@@ -55,8 +55,12 @@ export function useSaveImage(): UseSaveImage {
       { type: 'SAVE_IMAGE', payload },
       'SAVE_IMAGE_RESULT',
     );
-    if (!reply.ok || reply.error) {
-      throw new Error(reply.error ?? 'failed to save image');
+    // A PRESENT `error` is the reject signal, not a TRUTHY one: the reply
+    // validator early-accepts anything carrying an `error` key, so `error: ''`
+    // reaches here having skipped the success-field checks. `||` (not `??`) so
+    // an empty error string still yields readable copy.
+    if (!reply.ok || reply.error !== undefined) {
+      throw new Error(reply.error || 'failed to save image');
     }
   }, []);
 
