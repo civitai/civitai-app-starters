@@ -925,7 +925,14 @@ describe('useSharedStorage', () => {
         payload: { requestId: sent.payload.requestId, ok: true, error: '', deleted: 'yes' },
       });
     });
-    await expect(p).rejects.toThrow('shared withdraw failed');
+    // 🔴 ANCHORED, and that is the whole point. `toThrow(string)` is a
+    // SUBSTRING match, and this site's OTHER throw — 'shared withdraw failed:
+    // reply carried no `deleted` flag' — is a SUPERSTRING of this fallback.
+    // Unanchored, this assertion PASSES on the pre-fix code: `error: ''` is
+    // falsy there, so it falls through to the `deleted` narrowing and throws
+    // the superstring. Measured: unanchored it was NOT among the base
+    // failures; anchored it is. vitest matches a regex against `.message`.
+    await expect(p).rejects.toThrow(/^shared withdraw failed$/);
   });
 
   // Falsy-but-PRESENT error — see the matching `update()` case above.

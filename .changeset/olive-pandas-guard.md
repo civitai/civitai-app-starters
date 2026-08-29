@@ -29,17 +29,30 @@ What each did at the base commit on `{ requestId, error: '' }`:
 
 ## Reachability — this is PROPHYLACTIC, not a live bug fix
 
-Both shipping hosts build every `SHARED_*` / `APP_STORAGE_*` error through
-`storageErrorMessage()`, which guards `message.length > 0` and otherwise returns
-the constant `'storage request failed'`. **It cannot return `''`**, so no
-currently-shipping host can trigger any of the above. The change closes the
-contract, it does not repair an observed failure.
+No currently-shipping host can trigger any of the above — but the mechanism is
+**two** sources, not one, and an earlier draft of this note named only the first:
 
-(Separately: the NON-storage reply types are built from a bare
-`err instanceof Error ? err.message : 'unknown'`, and `err.message` IS `''` for
-`new Error()`. Those hooks pair truthiness with a `|| !result.<field>` clause so
-they still reject — but they use `error ?? fallback`, and `??` does not replace
-`''`, so they can raise an Error with an EMPTY message. Untouched here.)
+1. `storageErrorMessage()`, which guards `message.length > 0` and otherwise
+   returns the constant `'storage request failed'`; and
+2. `REVIEW_NACK_MESSAGE`, a non-empty constant used on ten of these reply types
+   in `PageBlockHost.tsx`, which bypasses `storageErrorMessage()` entirely.
+
+Both are incapable of producing `''`; there are exactly two hosts and no
+`send()` takes a dynamic type, so the enumeration is complete. The conclusion
+stands — the change closes the contract, it does not repair an observed failure
+— but "everything goes through `storageErrorMessage()`" would have let a future
+reviewer verify one function and believe the whole family was covered.
+
+🔴 **One reply type in the seventeen IS fed by an empty-capable source.**
+`IframeHost.tsx` emits `USER_CHECKPOINT_SET` with
+`err instanceof Error ? err.message : 'unknown'`, and `err.message` is `''` for
+`new Error()`. That site is safe only because PR #273 already moved
+`useCheckpointPicker.persist` to presence — i.e. the guard is load-bearing
+there today, not prophylactic.
+
+(Separately, and untouched here: the other non-storage reply types use
+`error ?? fallback`. `??` does not replace `''`, so they can raise an Error with
+an EMPTY message. They still reject, via a `|| !result.<field>` clause.)
 
 ## Single-sourcing
 

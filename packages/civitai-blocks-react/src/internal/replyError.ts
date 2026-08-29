@@ -27,8 +27,28 @@
  * It was a line at each call site. PR #273 fixed six of them; eleven more kept
  * the truthiness test, and the two spellings sat side by side in one file for a
  * release. A predicate open-coded at N sites is typically wrong at N-1 of them
- * in the same direction — single-sourcing it is what makes a future divergence
- * a compile error instead of a silent hole.
+ * in the same direction — single-sourcing it makes a future divergence ONE
+ * edit instead of seventeen.
+ *
+ * 🔴 It does NOT make picking the WRONG helper a compile error, and an earlier
+ * draft of this header claimed it did. Both parameter types are weak (all
+ * properties optional) and every reply payload carries `error?: string`, so the
+ * weak-type check never fires. Measured with `tsc --noEmit`, BOTH of these
+ * compile clean:
+ *
+ *   - `throwOnFailedReply` on a reply with NO `ok` field (e.g.
+ *     `SHARED_GET_COUNT_RESULT`) — `!result.ok` is `!undefined`, so EVERY
+ *     successful reply throws. Loud, but invisible to the type checker.
+ *   - `throwOnReplyError` on a reply that HAS `ok` — the `!ok` check is
+ *     silently skipped, so `{ ok: false }` with no error resolves as SUCCESS.
+ *     That is exactly the hole this arc exists to close, re-opened by choosing
+ *     the wrong function.
+ *
+ * So choose by a rule, not by the compiler: **does the reply carry `ok`?**
+ * Yes → `throwOnFailedReply`. No → `throwOnReplyError`. The truth-table test in
+ * `test/replyError.test.ts` pins both helpers' behaviour independently of any
+ * call site, because two call sites' own assertions cannot see it (their
+ * fallback strings are prefixes of a second throw at the same site).
  *
  * 🔴 Do NOT "fix" the hazard by tightening the VALIDATOR to require a non-empty
  * error. That puts `{ requestId, error: '' }` back on the drop-and-hang path

@@ -247,7 +247,12 @@ describe('useAppStorage', () => {
       );
     });
 
-    await expect(deletePromise).rejects.toThrow('storage delete failed');
+    // ANCHORED for the same reason as `withdraw` in useSharedStorage.test.tsx:
+    // this site's other throw ('storage delete failed: reply carried no
+    // `deleted` flag') is a SUPERSTRING of this fallback, so an unanchored
+    // substring match cannot tell the two apart — and passes on code where the
+    // `error` clause never fired.
+    await expect(deletePromise).rejects.toThrow(/^storage delete failed$/);
   });
 
   it('list() rehydrates updatedAt to Date + carries the cursor through', async () => {
