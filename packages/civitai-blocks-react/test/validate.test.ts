@@ -365,6 +365,12 @@ describe('isValidSharedUpdateResult', () => {
     expect(isValidSharedUpdateResult({ requestId: 'r', ok: false, error: 'FORBIDDEN' })).toBe(true);
     expect(isValidSharedUpdateResult({ requestId: 'r', ok: false, error: 'NOT_FOUND' })).toBe(true);
   });
+  it('accepts an error-only reply (uniform {ok,error} contract)', () => {
+    expect(isValidSharedUpdateResult({ requestId: 'r1', error: 'boom' })).toBe(true);
+  });
+  it('still requires a boolean ok when there is NO error', () => {
+    expect(isValidSharedUpdateResult({ requestId: 'r1' })).toBe(false);
+  });
   it('rejects a malformed reply', () => {
     expect(isValidSharedUpdateResult(null)).toBe(false);
     expect(isValidSharedUpdateResult({})).toBe(false); // missing ok
@@ -404,6 +410,9 @@ describe('isValidAppStorageSetResult', () => {
   it('accepts ok:false with error (no sizeBytes)', () => {
     expect(isValidAppStorageSetResult({ requestId: 'r', ok: false, error: 'PAYLOAD_TOO_LARGE' })).toBe(true);
   });
+  it('accepts an error-only reply (uniform {ok,error} contract)', () => {
+    expect(isValidAppStorageSetResult({ requestId: 'r1', error: 'boom' })).toBe(true);
+  });
   it.each([
     ['missing ok', { requestId: 'r' }],
     ['ok not boolean', { requestId: 'r', ok: 'yes' }],
@@ -419,6 +428,9 @@ describe('isValidAppStorageDeleteResult', () => {
     expect(isValidAppStorageDeleteResult({ requestId: 'r', ok: true, deleted: true })).toBe(true);
     expect(isValidAppStorageDeleteResult({ requestId: 'r', ok: true, deleted: false })).toBe(true);
     expect(isValidAppStorageDeleteResult({ requestId: 'r', ok: false, deleted: false, error: 'X' })).toBe(true);
+  });
+  it('accepts an error-only reply (uniform {ok,error} contract)', () => {
+    expect(isValidAppStorageDeleteResult({ requestId: 'r1', error: 'boom' })).toBe(true);
   });
   it.each([
     ['missing ok', { requestId: 'r', deleted: true }],
@@ -561,6 +573,9 @@ describe('isValidSharedReportResult (SHARED_REPORT)', () => {
     expect(isValidSharedReportResult({ requestId: 'r', ok: true })).toBe(true);
     expect(isValidSharedReportResult({ requestId: 'r', ok: false, error: 'NOT_FOUND' })).toBe(true);
   });
+  it('accepts an error-only reply (uniform {ok,error} contract)', () => {
+    expect(isValidSharedReportResult({ requestId: 'r1', error: 'boom' })).toBe(true);
+  });
   it.each([
     ['ok missing', { requestId: 'r' }],
     ['ok not boolean', { requestId: 'r', ok: 'yes' }],
@@ -574,6 +589,9 @@ describe('isValidSaveImageResult (SAVE_IMAGE)', () => {
   it('accepts ok true/false', () => {
     expect(isValidSaveImageResult({ requestId: 'r', ok: true })).toBe(true);
     expect(isValidSaveImageResult({ requestId: 'r', ok: false, error: 'image url is not allowed' })).toBe(true);
+  });
+  it('accepts an error-only reply (uniform {ok,error} contract)', () => {
+    expect(isValidSaveImageResult({ requestId: 'r1', error: 'boom' })).toBe(true);
   });
   it.each([
     ['ok missing', { requestId: 'r' }],
@@ -724,6 +742,9 @@ describe('isValidUserCheckpointSetResult', () => {
   it('accepts ok:true and ok:false+error', () => {
     expect(isValidUserCheckpointSetResult({ requestId: 'r', ok: true })).toBe(true);
     expect(isValidUserCheckpointSetResult({ requestId: 'r', ok: false, error: 'wrong-ecosystem' })).toBe(true);
+  });
+  it('accepts an error-only reply (uniform {ok,error} contract)', () => {
+    expect(isValidUserCheckpointSetResult({ requestId: 'r1', error: 'boom' })).toBe(true);
   });
   it.each([
     ['missing ok', { requestId: 'r' }],

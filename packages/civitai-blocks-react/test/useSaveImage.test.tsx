@@ -140,8 +140,14 @@ describe('isValidSaveImageResult (defense-in-depth)', () => {
   it('ACCEPTS the ok:false + error variant', () => {
     expect(isValidSaveImageResult({ requestId: 'r', ok: false, error: 'nope' })).toBe(true);
   });
-  it('REJECTS a reply missing the boolean ok', () => {
-    expect(isValidSaveImageResult({ requestId: 'r', error: 'nope' })).toBe(false);
+  // Uniform `{ ok, error }` reply contract: an error reply is ALWAYS valid, so
+  // a host that omits `ok` on the error path no longer hangs the block. `ok`
+  // stays required when there is no `error`.
+  it('ACCEPTS an error-only reply (no ok)', () => {
+    expect(isValidSaveImageResult({ requestId: 'r', error: 'nope' })).toBe(true);
+  });
+  it('REJECTS a reply with neither ok nor error', () => {
+    expect(isValidSaveImageResult({ requestId: 'r' })).toBe(false);
   });
   it('REJECTS a non-string error', () => {
     expect(isValidSaveImageResult({ requestId: 'r', ok: false, error: 5 })).toBe(false);

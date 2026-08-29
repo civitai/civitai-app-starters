@@ -12,6 +12,28 @@
  * in `@civitai/app-sdk/blocks` AND with the host implementation in
  * civitai/civitai's `src/components/AppBlocks/IframeHost.tsx`. A new field
  * downstream code reads → a new check here.
+ *
+ * ## The uniform `{ ok, error }` reply contract
+ *
+ * Every reply validator for an `{ ok, error }`-shaped result MUST early-accept
+ * a reply that carries an `error`:
+ *
+ * ```
+ * if (p.error !== undefined && typeof p.error !== 'string') return false;
+ * if (p.error !== undefined) return true; // hook throws before reading `<field>`
+ * if (typeof p.ok !== 'boolean') return false;
+ * ```
+ *
+ * i.e. **an error reply carrying `{ requestId, error }` is always valid**, and
+ * an `ok` boolean (plus any success-only field) is required only when there is
+ * NO `error`. A failing validator drops the message with nothing but a
+ * `console.warn`, so the block's pending request never settles and the UI hangs
+ * to the request timeout with no network call and no host-visible error — the
+ * exact class this uniformity removes. The early-accept is only sound because
+ * the consuming hook throws on a non-empty `error` BEFORE reading any other
+ * payload field; each one below names the field it would otherwise read. If you
+ * add an `{ ok, error }` validator whose hook reads a field on the error path,
+ * fix the hook — do not drop the early-accept.
  */
 
 import type {
@@ -505,17 +527,19 @@ export function isValidImageScanResolved(
 
 /**
  * Reply to a block-initiated `SHARED_UPDATE`. A well-formed reply carries a
- * boolean `ok` and an optional `error` string (set on `NOT_FOUND` / `FORBIDDEN`
- * / a belt/size rejection). Mirrors the `SHARED_WITHDRAW_RESULT` ok/error
- * convention — the block's hook treats `!ok || error` as the reject signal.
+ * boolean `ok`, OR an `error` string on its own (set on `NOT_FOUND` /
+ * `FORBIDDEN` / a belt/size rejection). Follows the uniform `{ ok, error }`
+ * reply contract in this module's header — the block's hook treats
+ * `!ok || error` as the reject signal.
  */
 export function isValidSharedUpdateResult(
   p: unknown,
-): p is { ok: boolean; error?: string; requestId?: string } {
+): p is { ok?: boolean; error?: string; requestId?: string } {
   if (!isObject(p)) return false;
-  if (typeof p.ok !== 'boolean') return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading `ok`
+  if (typeof p.ok !== 'boolean') return false;
   return true;
 }
 
@@ -854,23 +878,31 @@ export function isValidAppStorageGetResult(p: unknown): boolean {
   return true;
 }
 
-/** Reply to `APP_STORAGE_SET`. `ok` required; `sizeBytes` present only on success. */
+/**
+ * Reply to `APP_STORAGE_SET`. `ok` required on the success path; `sizeBytes`
+ * present only on success. Uniform `{ ok, error }` contract (module header).
+ */
 export function isValidAppStorageSetResult(p: unknown): boolean {
   if (!isObject(p)) return false;
   if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
-  if (typeof p.ok !== 'boolean') return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading `sizeBytes`
+  if (typeof p.ok !== 'boolean') return false;
   if (p.sizeBytes !== undefined && !isFiniteNumber(p.sizeBytes)) return false;
   return true;
 }
 
-/** Reply to `APP_STORAGE_DELETE`. `ok` + `deleted` are always present (both success and error paths). */
+/**
+ * Reply to `APP_STORAGE_DELETE`. `ok` + `deleted` are required on the success
+ * path. Uniform `{ ok, error }` contract (module header).
+ */
 export function isValidAppStorageDeleteResult(p: unknown): boolean {
   if (!isObject(p)) return false;
   if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading `deleted`
   if (typeof p.ok !== 'boolean') return false;
   if (typeof p.deleted !== 'boolean') return false;
-  if (p.error !== undefined && typeof p.error !== 'string') return false;
   return true;
 }
 
@@ -986,29 +1018,31 @@ export function isValidSharedGetResult(p: unknown): boolean {
 }
 
 /**
- * Reply to `SHARED_REPORT`. On success `ok` is a boolean; error path is
- * `{ error }` (with `ok: false`). Mirrors `isValidSharedUpdateResult`'s
- * ok/error shape — the SDK hook rejects on `!ok || error`, so the error path
- * MUST carry `ok: false` or the reply is dropped and the block hangs.
+ * Reply to `SHARED_REPORT`. On success `ok` is a boolean; the error path is
+ * `{ error }`, with or without `ok: false`. Uniform `{ ok, error }` contract
+ * (module header) — the SDK hook rejects on `!ok || error`.
  */
 export function isValidSharedReportResult(p: unknown): boolean {
   if (!isObject(p)) return false;
   if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
-  if (typeof p.ok !== 'boolean') return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading `ok`
+  if (typeof p.ok !== 'boolean') return false;
   return true;
 }
 
 /**
- * Reply to `SAVE_IMAGE` (host download bridge). `ok` is a boolean; `error` is a
- * free-text host-side failure (disallowed origin / withheld image / over-size /
- * fetch failure). Same ok/error shape as `isValidSharedReportResult`.
+ * Reply to `SAVE_IMAGE` (host download bridge). On success `ok` is a boolean;
+ * `error` is a free-text host-side failure (disallowed origin / withheld image
+ * / over-size / fetch failure). Uniform `{ ok, error }` contract (module
+ * header) — same shape as `isValidSharedReportResult`.
  */
 export function isValidSaveImageResult(p: unknown): boolean {
   if (!isObject(p)) return false;
   if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
-  if (typeof p.ok !== 'boolean') return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading `ok`
+  if (typeof p.ok !== 'boolean') return false;
   return true;
 }
 
@@ -1049,7 +1083,10 @@ export function isValidSharedAppendResult(p: unknown): boolean {
   return true;
 }
 
-/** Reply to `SHARED_WITHDRAW`. On success `ok` + `deleted` are booleans (error path is `{ error }`). */
+/**
+ * Reply to `SHARED_WITHDRAW`. On success `ok` + `deleted` are booleans; the
+ * error path is `{ error }`. Uniform `{ ok, error }` contract (module header).
+ */
 export function isValidSharedWithdrawResult(p: unknown): boolean {
   if (!isObject(p)) return false;
   if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
@@ -1136,14 +1173,16 @@ export function isValidResourcePickerResult(p: unknown): boolean {
 }
 
 /**
- * Reply to `SET_USER_CHECKPOINT`. `ok` is required; the hook throws the `error`
- * string on `ok: false`. Mirrors `isValidSharedUpdateResult`.
+ * Reply to `SET_USER_CHECKPOINT`. `ok` is required on the success path; the
+ * hook throws the `error` string on `!ok`. Uniform `{ ok, error }` contract
+ * (module header) — mirrors `isValidSharedUpdateResult`.
  */
 export function isValidUserCheckpointSetResult(p: unknown): boolean {
   if (!isObject(p)) return false;
   if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
-  if (typeof p.ok !== 'boolean') return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading `ok`
+  if (typeof p.ok !== 'boolean') return false;
   return true;
 }
 
