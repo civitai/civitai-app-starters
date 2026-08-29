@@ -231,6 +231,12 @@ export const IMAGE_GEN_ENGINES = {
   wan: 'Wan',
   /** Qwen image models hosted by Alibaba Model Studio (DashScope). */
   qwen: 'Qwen (Alibaba Model Studio)',
+  /**
+   * Krea 2 served by Krea's own API. Distinct from `fal` (the same models
+   * routed via fal) and from `comfy` (the open weights run on our own
+   * workers) — picking this engine pins the first-party vendor path.
+   */
+  krea: 'Krea (Krea 2, first-party API)',
   /** Self-hosted SDCpp (stable-diffusion.cpp) gen. */
   sdcpp: 'SDCpp (self-hosted diffusion)',
   /** fal.ai routed gen. */
