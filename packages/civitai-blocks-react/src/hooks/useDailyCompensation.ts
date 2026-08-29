@@ -80,7 +80,10 @@ export function useDailyCompensation(params: BlockDailyCompensationParams): UseD
       .then((result) => {
         if (!mountedRef.current) return;
         if (result.error || !result.result) {
-          setError(new Error(result.error ?? 'failed to fetch daily compensation'));
+          // `||`, not `??`: the reply validator gates `error` on SHAPE only, so a
+          // host `error: ''` is a VALID reply that reaches here. `??` replaces only
+          // null/undefined, so it would surface an Error with an EMPTY message.
+          setError(new Error(result.error || 'failed to fetch daily compensation'));
           setLoading(false);
           return;
         }

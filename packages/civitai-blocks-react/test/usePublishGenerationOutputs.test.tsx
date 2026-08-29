@@ -116,6 +116,27 @@ describe('usePublishGenerationOutputs', () => {
   });
 
   /**
+   * REGRESSION — an EMPTY host error must not surface as an EMPTY Error message.
+   * `isValidPublishResult` gates `error` on SHAPE only, so `{ error: '' }` is a VALID
+   * reply that reaches the hook. `??` preserves `''` and publish() rejects with a
+   * messageless Error — the worst place for one, since the generation is already
+   * billed. The matcher is ANCHORED — `toThrow('<string>')` substring-matches, so an
+   * unanchored assertion can pass on broken code.
+   */
+  it('rejects with readable copy when the host error is an EMPTY string', async () => {
+    const { result } = renderHook(() => usePublishGenerationOutputs());
+
+    let p!: Promise<number[]>;
+    act(() => {
+      p = result.current.publish({ workflowId: 'wf_app_2' });
+      p.catch(() => {});
+    });
+    dispatch('PUBLISH_RESULT', { requestId: lastPublish(postMessageMock).payload.requestId, error: '' });
+
+    await expect(p).rejects.toThrow(/^failed to publish generation outputs$/);
+  });
+
+  /**
    * REGRESSION — civitai/civitai#4158. `PUBLISH_GENERATION_OUTPUTS` is
    * CONSENT-GATED: the host opens its own "publish to the shared grid?" confirm
    * and replies only on an explicit human click or dismiss. On the default ~30s

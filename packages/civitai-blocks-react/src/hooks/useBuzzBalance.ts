@@ -78,7 +78,10 @@ export function useBuzzBalance(): UseBuzzBalance {
       .then((result) => {
         if (!mountedRef.current) return;
         if (result.error || !result.balance) {
-          setError(new Error(result.error ?? 'failed to fetch buzz balance'));
+          // `||`, not `??`: the reply validator gates `error` on SHAPE only, so a
+          // host `error: ''` is a VALID reply that reaches here. `??` replaces only
+          // null/undefined, so it would surface an Error with an EMPTY message.
+          setError(new Error(result.error || 'failed to fetch buzz balance'));
           setLoading(false);
           return;
         }

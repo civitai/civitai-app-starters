@@ -71,7 +71,10 @@ export function useViewer(): UseViewer {
       .then((result) => {
         if (!mountedRef.current) return;
         if (result.error || !result.viewer) {
-          setError(new Error(result.error ?? 'failed to fetch viewer'));
+          // `||`, not `??`: `isValidViewerResult` gates `error` on SHAPE only, so a
+          // host `error: ''` is a VALID reply that reaches here. `??` replaces only
+          // null/undefined, so it would surface an Error with an EMPTY message.
+          setError(new Error(result.error || 'failed to fetch viewer'));
           setLoading(false);
           return;
         }

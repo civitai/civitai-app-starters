@@ -90,7 +90,10 @@ export function useAppWorkflows(params?: AppWorkflowsParams): UseAppWorkflows {
       .then((result) => {
         if (!mountedRef.current) return;
         if (result.error || !result.result) {
-          setError(new Error(result.error ?? 'failed to fetch app workflows'));
+          // `||`, not `??`: the reply validator gates `error` on SHAPE only, so a
+          // host `error: ''` is a VALID reply that reaches here. `??` replaces only
+          // null/undefined, so it would surface an Error with an EMPTY message.
+          setError(new Error(result.error || 'failed to fetch app workflows'));
           setLoading(false);
           return;
         }
@@ -116,7 +119,10 @@ export function useAppWorkflows(params?: AppWorkflowsParams): UseAppWorkflows {
       'CANCEL_APP_WORKFLOW_RESULT',
     );
     if (reply.error || !reply.result) {
-      throw new Error(reply.error ?? 'failed to cancel workflow');
+      // `||`, not `??`: the reply validator gates `error` on SHAPE only, so a host
+      // `error: ''` is a VALID reply that reaches here. `??` replaces only
+      // null/undefined, so it would throw an Error with an EMPTY message.
+      throw new Error(reply.error || 'failed to cancel workflow');
     }
     const canceled = reply.result.workflow;
     // Optimistically splice the terminal (canceled) projection into the current

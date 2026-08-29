@@ -90,6 +90,12 @@ export function useWildcardPack(modelVersionId: number): UseWildcardPack {
       .then((result) => {
         if (!mountedRef.current) return;
         if (result.error || !result.pack) {
+          // 🔴 KEEP `??` HERE — do NOT "fix" this to `||` like the sibling hooks.
+          // Unlike every other reply guard, `isValidWildcardPackResult` constrains
+          // `error` to the CLOSED `WILDCARD_PACK_ERROR_CODES` set, so `error: ''` is
+          // rejected upstream and can never reach this line. The only value `??`
+          // replaces here is a genuinely absent `error` (the `!result.pack` arm),
+          // which is exactly what the `'parse-failed'` code is for.
           setError(new WildcardPackError(result.error ?? 'parse-failed'));
           setLoading(false);
           return;

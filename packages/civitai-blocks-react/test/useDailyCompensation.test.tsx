@@ -129,6 +129,21 @@ describe('useDailyCompensation', () => {
     expect(result.current.resources).toBeNull();
   });
 
+  /**
+   * REGRESSION — an EMPTY host error must not surface as an EMPTY Error message.
+   * `isValidDailyCompensationResult` gates `error` on SHAPE only, so `{ error: '' }`
+   * is a VALID reply that reaches the hook. `??` preserves `''`; `||` falls through.
+   */
+  it('falls back to readable copy when the host error is an EMPTY string', async () => {
+    const { result } = renderHook(() => useDailyCompensation({ date: '2026-07-01' }));
+    dispatchResult({ requestId: lastRequest(postMessageMock).payload.requestId, error: '' });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error).toBeInstanceOf(Error);
+    expect(result.current.error?.message).toBe('failed to fetch daily compensation');
+    expect(result.current.resources).toBeNull();
+  });
+
   it('ignores a mismatched requestId', async () => {
     const { result } = renderHook(() => useDailyCompensation({ date: '2026-07-01' }));
     const realId = lastRequest(postMessageMock).payload.requestId;

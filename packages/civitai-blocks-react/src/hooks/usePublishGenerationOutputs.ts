@@ -81,7 +81,11 @@ export function usePublishGenerationOutputs(): UsePublishGenerationOutputs {
         { timeoutMs: HUMAN_INTERACTION_TIMEOUT_MS },
       );
       if (reply.error || !reply.result) {
-        throw new Error(reply.error ?? 'failed to publish generation outputs');
+        // `||`, not `??`: `isValidPublishResult` gates `error` on SHAPE only, so a
+        // host `error: ''` is a VALID reply that reaches here. `??` replaces only
+        // null/undefined, so it would throw an Error with an EMPTY message — the
+        // worst place for one, since the generation is already billed.
+        throw new Error(reply.error || 'failed to publish generation outputs');
       }
       return reply.result.imageIds;
     },
