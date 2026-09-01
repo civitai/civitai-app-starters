@@ -1,0 +1,250 @@
+name: Sync orchestrator catalogs
+
+# Scheduled WRITE twin of the `Orchestrator catalog drift-check` CI job: re-reads
+# the LIVE orchestrator spec, catches the SDK's hand-maintained
+# WORKFLOW_STEP_TYPES / IMAGE_GEN_ENGINES catalogs up to it, and opens a PR.
+# Same shape and same argument as revendor-canonical-schema.yml.
+#
+# 🔴 WHAT THIS DOES NOT DO, AND WHY THAT IS THE DESIGN. It never writes a
+# description it had to invent. `WORKFLOW_STEP_TYPES` is a
+# `Record<stepType, one-line description>` shipped to developers as the catalog
+# they browse to pick a step, so a fabricated line is worse than an absent one.
+# The script takes the spec's own `<X>StepTemplate.description` only when it says
+# something the key does not already say, and otherwise writes a placeholder that
+# states plainly there is no description yet. `pnpm check:catalogs` then NAMES
+# every surviving placeholder. So the PR this opens is mechanically complete and
+# needs a human to write one sentence per new step — that is the judgement half,
+# and it is the only half left.
+#
+# 🔴 THAT IS A CONVENTION, NOT A GATE — do not write it up as one. `Orchestrator
+# catalog drift-check` is ADVISORY: measured 2026-09-02, `main` has 9 required
+# contexts and it is not among them, and ci.yml says in as many words not to add
+# it (a required check against a LIVE external spec freezes the repo every time
+# upstream ships a step type). A `TODO(catalog)` line CAN reach `main` and npm
+# with every required check green. What keeps drift short-lived is this job
+# re-opening the PR, not an enforcement mechanism.
+#
+# Measured 2026-09-01 against the live spec, both branches of that rule:
+#   - `MiniMaxMusic3StepTemplate.description` = "Generate a complete song from a
+#     structured caption and lyrics with MiniMax Music 3." — usable, taken.
+#   - `WebScrapeStepTemplate.description` = "WebScrape" — the generator's default
+#     when nobody wrote a doc comment, i.e. a restatement of the key. Rejected.
+# Re-measured 2026-09-02 after the rejection rule was widened past exact-match:
+# it now also rejects `imageGen` → "Image Generation", `transcode` →
+# "Transcoding" and `videoGen` → "Video generation". Those three, and only those
+# three, moved out of 60 live keys.
+
+on:
+  schedule:
+    # 06:41 UTC daily.
+    #
+    # WHY DAILY AND NOT 6-HOURLY. Unlike the canonical schema mirror — whose
+    # cadence IS the bound on how long every PR in this repo stays red, because
+    # `check-canonical-schema` failing blocks work — this drift check is
+    # ADVISORY by design (ci.yml says so, and says not to add it to branch
+    # protection). Nothing is blocked while it is red; what is at stake is that
+    # a permanently-red advisory gate trains people to ignore it, and a PR
+    # sitting in the review queue is the notification that fixes that. A day is
+    # a fine bound for that, and it keeps a repeatedly-opened PR from churning.
+    #
+    # Distinct minute on purpose. Both sibling scheduled workflows here avoid the
+    # top of the hour (GitHub delays crons scheduled on :00, because everyone
+    # schedules on :00) and each other's minute: revendor-canonical-schema is
+    # :37, published-starter-smoke is :23, this is :41. Two of these opening PRs
+    # in the same minute is not a failure, just noise nobody needs.
+    #
+    # Cron literal quoted so the `*` isn't parsed as a YAML alias.
+    - cron: "41 6 * * *"
+  workflow_dispatch: {}
+
+# Least privilege: the sync script only reads the network and writes files in the
+# checkout. `contents: write` + `pull-requests: write` are what
+# create-pull-request needs; nothing here touches issues, packages or actions.
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  NODE_VERSION: '24'
+  # Single-sourced: the guard below queries this branch and create-pull-request
+  # writes it. Two spellings of it would make the guard silently inert.
+  SYNC_BRANCH: automation/sync-orchestrator-catalogs
+
+jobs:
+  sync:
+    name: Sync catalogs + open PR on drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # 🔴 DO NOT TOUCH A BRANCH A HUMAN MAY BE CURATING.
+      #
+      # `peter-evans/create-pull-request` REBASES AND FORCE-PUSHES its branch on
+      # every run — upstream documents this as deliberate, and it is fine for the
+      # sibling `revendor-canonical-schema.yml`, whose PR is mergeable as-is and
+      # which nobody commits to. This workflow is the first here whose PR body
+      # asks a reviewer to COMMIT to that branch: write the descriptions, move the
+      # entries into the right sections, rewrite the changeset. A maintainer who
+      # curates and does not merge before tomorrow's 06:41 UTC run would have that
+      # work force-pushed away, with no notification and no reflog they can see.
+      #
+      # Considered and rejected: a per-run branch suffix (a new PR every day for
+      # the same drift), and a slower cadence (widens the window, does not close
+      # it). The fix has to be that the bot does not write the branch while a PR
+      # on it is open — so it checks, and skips the whole run.
+      #
+      # THE COST, stated because it is real: while a sync PR sits open, newly
+      # drifted keys are NOT added to it. That is the right trade — the open PR is
+      # already the notification, the advisory drift-check on `main` still reports
+      # the new drift, and the next run after it merges or closes picks up
+      # everything at once. If a sync PR goes stale, close it.
+      #
+      # `github.token` rather than CHANGESETS_TOKEN: this is a read, and the
+      # `pull-requests: write` grant above already covers it. A `gh` failure
+      # (rate limit, outage) fails the step and therefore the job, which is the
+      # safe direction — an unanswered "is a PR open?" must never be read as "no".
+      - name: Refuse to clobber an open sync PR
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          n="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$SYNC_BRANCH" \
+                 --state open --json number --jq '.[0].number // empty')"
+          echo "open=$n" >> "$GITHUB_OUTPUT"
+          if [[ -n "$n" ]]; then
+            echo "::notice::PR #${n} is already open on ${SYNC_BRANCH}. Skipping this run so a reviewer's commits on that branch are not force-pushed away. Merge or close it and the next run will re-sync."
+          fi
+
+      - uses: pnpm/action-setup@v6
+        if: steps.guard.outputs.open == ''
+
+      - uses: actions/setup-node@v7
+        if: steps.guard.outputs.open == ''
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      # Exits 0 having written nothing when there is no drift; 2 WITHOUT writing
+      # when the orchestrator has WITHDRAWN a key (a removal is a breaking change
+      # to an exported union and a human decides it); 1 on an unreachable spec or
+      # a file whose shape it does not recognise. Every non-zero fails the job,
+      # which is the intended signal — a silent skip on an unreachable spec reads
+      # exactly like a clean run.
+      - name: Sync orchestrator catalogs
+        if: steps.guard.outputs.open == ''
+        run: node scripts/sync-orchestrator-catalogs.mjs
+
+      - name: Detect changes
+        id: changed
+        if: steps.guard.outputs.open == ''
+        run: |
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Validate the FULL SDK suite, not a subset. `test/orchestrator.test.ts`
+      # pins the catalogs to the transcribed fixture in BOTH directions and pins
+      # the entry counts, so a bad edit by the sync script fails HERE and no PR
+      # opens. This is also what proves the script's text surgery on index.ts
+      # landed inside the right object literal — a set-equality test over the
+      # catalog's keys is exactly the check that a misplaced insert fails.
+      #
+      # NOTE it deliberately does NOT run `pnpm check:catalogs`. That check fails
+      # by design while a placeholder description is unwritten, which is the
+      # normal state of the PR this job opens.
+      - name: Validate SDK against the synced catalogs
+        if: steps.guard.outputs.open == '' && steps.changed.outputs.changed == 'true'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @civitai/app-sdk typecheck
+          pnpm --filter @civitai/app-sdk test
+          pnpm --filter @civitai/app-sdk build
+
+      - name: Open PR if the catalogs drifted
+        if: steps.guard.outputs.open == '' && steps.changed.outputs.changed == 'true'
+        # SHA-pinned to an EXACT commit, asserted by
+        # `tests/guards/workflow-action-pins.test.mjs` (PINNED), which runs in ci.yml's
+        # `Starter` job — `pull_request`-triggered and a required context. This
+        # workflow runs on schedule + workflow_dispatch only — no `pull_request`
+        # trigger — so that assertion is the ONLY thing a bump PR runs against it.
+        # Changing this line without updating PINNED turns the PR red. Keep it
+        # equal to the pin in revendor-canonical-schema.yml: PINNED asserts a
+        # single sha for this action across the whole workflow dir, so the two
+        # cannot diverge.
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          # Reuse CHANGESETS_TOKEN, as revendor-canonical-schema.yml does and for
+          # the same reason: the org blocks the default GITHUB_TOKEN from opening
+          # PRs, and this secret already carries PR-creation perms.
+          token: ${{ secrets.CHANGESETS_TOKEN }}
+          branch: ${{ env.SYNC_BRANCH }}
+          delete-branch: true
+          commit-message: "chore(sdk): sync the orchestrator catalogs with the live spec"
+          title: "chore(sdk): sync the orchestrator catalogs with the live spec"
+          body: |
+            The orchestrator's OpenAPI spec accepts step types or `imageGen`
+            engines that the SDK's hand-maintained catalogs did not list, so
+            `Orchestrator catalog drift-check` is red on `main`. This PR does the
+            mechanical half of catching them up.
+
+            **Files touched** — the same four a human touches by hand (see
+            `da3a9dd`, the `miniMaxMusic3` precedent):
+
+            - `packages/civitai-app-sdk/test/fixtures/orchestrator-spec-catalogs.json`
+              — the transcribed lists, re-read from the live `discriminator.mapping`s.
+            - `packages/civitai-app-sdk/src/orchestrator/index.ts` — the new keys.
+            - `packages/civitai-app-sdk/test/orchestrator.test.ts` — the pinned
+              `toHaveLength` counts.
+            - `.changeset/orchestrator-catalog-sync-*.md` — `minor`, per
+              `RELEASING.md`: a new key widens the exported `WorkflowStepType` /
+              `ImageGenEngine` union, which is additive API.
+
+            Validated in-job before this PR opened: `@civitai/app-sdk` typecheck +
+            test + build all passed. The unit suite pins the catalogs to the
+            fixture in both directions and pins the counts, so a misplaced insert
+            would have failed the job and no PR would have opened.
+
+            ---
+
+            🔴 **PLEASE DO NOT MERGE THIS AS-IS IF IT ADDED A PLACEHOLDER.** The
+            bot writes a description only when the spec carries one that says
+            something the key does not already say. When it does not — the
+            common case, because the generator emits the C# type name as the
+            `description` when nobody wrote a doc comment — it writes a
+            `TODO(catalog)` line instead of guessing. `pnpm check:catalogs`
+            names every one that is left, so the drift-check job on this PR is
+            red on purpose.
+
+            **That job is ADVISORY and nothing will stop you merging past it.**
+            It is not a required context on `main` and it deliberately never will
+            be — it depends on a live external spec, so making it required would
+            freeze every PR in the repo each time the orchestrator ships a step
+            type. The `TODO(catalog)` string reaching npm is prevented by a human
+            reading this paragraph, not by a gate.
+
+            **What a reviewer does:**
+
+            1. For each `TODO(catalog)` entry, open the step's schemas in the
+               spec (`<Name>Input` / `<Name>Output` carry the real prose — the
+               `<Name>StepTemplate` usually does not) and write one line saying
+               what the step does.
+            2. Move the entry out of the `Auto-added …` block into the right
+               semantic section (`// ----- Audio ---`, `// ----- Web ---`, …).
+               The bot appends rather than guessing a section.
+            3. Rewrite the changeset's last paragraph to say what the new
+               entries actually are.
+
+            Then `pnpm check:catalogs` goes green and this is a normal SDK PR.
+
+            ✅ **Push those commits straight onto this branch.** While this PR is
+            open the scheduled job skips itself entirely rather than re-running
+            and force-pushing over you (`peter-evans/create-pull-request` rebases
+            and force-pushes its branch on every run — that is why the guard
+            exists). The flip side: newly-drifted keys will NOT be appended to
+            this PR while it is open. Merge it or close it and the next run
+            re-syncs from scratch.
+
+            _Scheduled twin of the advisory `Orchestrator catalog drift-check` CI job._
