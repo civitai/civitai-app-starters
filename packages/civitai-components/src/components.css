@@ -319,6 +319,38 @@
     align-items: center;
     gap: 8px;
 
+    /*
+     * RESPONSIVE BASE. A group is a ROW, and a row of three or more controls
+     * has no escape at phone widths — a block's slot is ~360px there, so the
+     * row simply ran off the edge.
+     *
+     * 🔴 This value is NOT a new opinion — it makes the CSS agree with the
+     * React default that was already shipping. `<Group>` defaults `wrap = true`
+     * and writes `flex-wrap` as an INLINE style, so React consumers have always
+     * wrapped; bare `data-civitai-ui="group"` markup — the framework-agnostic
+     * contract this package exists to serve, and the one non-React consumers
+     * use — silently did not. Same component, two surfaces, opposite defaults.
+     * The parity test pins them together so they cannot drift apart again.
+     *
+     * Opt out with `data-nowrap="true"` (the bare-markup spelling of
+     * `<Group wrap={false}>`). An inline `flex-wrap` also still outranks this
+     * layer, so existing markup that already sets it is untouched.
+     */
+    flex-wrap: wrap;
+
+    /*
+     * A flex item defaults to `min-width: auto`, which refuses to shrink below
+     * its CONTENT width — so one long label (a model name, a prompt) pushes the
+     * row past the slot even WITH wrap, and `text-overflow: ellipsis` on a child
+     * can never engage. `min-width: 0` is the precondition for both.
+     *
+     * `:where()` keeps this at ZERO specificity, so a child's own rule — or a
+     * nested component's min-width — wins without an !important fight.
+     */
+    & > :where(*) { min-width: 0; }
+
+    &[data-nowrap='true'] { flex-wrap: nowrap; }
+
     &[data-gap='sm'] { gap: 6px; }
     &[data-gap='md'] { gap: 16px; }
     &[data-gap='lg'] { gap: 24px; }

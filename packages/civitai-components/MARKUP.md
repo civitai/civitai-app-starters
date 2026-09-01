@@ -171,6 +171,15 @@ Vertical flex. `data-gap`: `sm` · `md` · `lg` (default ~12px). Presentational
 ### Group — `data-civitai-ui="group"`
 Horizontal flex, items center-aligned. `data-gap`: `sm` · `md` · `lg`.
 
+**Wraps by default** — a row of several controls reflows onto more rows rather
+than overflowing a narrow slot, and children may shrink below their content
+width (so a long label can ellipsize instead of pushing the row wide). This
+matches `<Group>`'s `wrap` prop, which has always defaulted to `true`.
+
+`data-nowrap="true"` keeps the row on one line — the bare-markup spelling of
+`<Group wrap={false}>`. Use it only where a single line is load-bearing, and
+expect overflow at phone widths.
+
 ### Alert — `data-civitai-ui="alert"`
 - **`role="alert"`** (or `role="status"` for non-urgent).
 - `data-color`: `info` (default intent) · `success` · `warning` · `error`.

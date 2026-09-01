@@ -220,6 +220,14 @@ export interface BlockGateProps {
  *
  * The embedded happy path and the dev harness are untouched — see
  * {@link useDirectLoad} for exactly why the trigger can't fire in either.
+ *
+ * It also injects the design-system stylesheets, on BOTH branches. Every `/ui`
+ * component calls {@link useBlocksStyles} itself, so styling used to arrive as a
+ * side effect of rendering one — which means a block that wraps its root in
+ * `BlockGate` but renders NO `/ui` component (its own markup, another UI
+ * library, a canvas) got the tokens on the direct-load fallback and ZERO
+ * design-system CSS on the happy path. Wrapping the root is the one thing every
+ * block is told to do, so that is the right place to make it unconditional.
  */
 export function BlockGate({
   children,
@@ -228,6 +236,9 @@ export function BlockGate({
   hostname,
   autoRedirectMs,
 }: BlockGateProps): React.JSX.Element {
+  // BEFORE the branch, and unconditional: hook order must not depend on
+  // `directLoad`, and the happy path is the branch that was missing styles.
+  useBlocksStyles();
   const directLoad = useDirectLoad({ timeoutMs });
   if (directLoad) {
     return (
