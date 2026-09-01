@@ -6,6 +6,14 @@
 
 Responsive base layer: `group` wraps by default, and `BlockGate` always injects the design-system styles.
 
+⚠️ **Upgrading — one visible layout change.** A `group` row now **wraps** instead of overflowing, and its children may shrink. If you relied on a group staying on one line — a deliberately horizontal-scrolling toolbar, for example — add `data-nowrap="true"` to restore the previous behaviour:
+
+```html
+<div data-civitai-ui="group" data-nowrap="true">…</div>
+```
+
+This affects bare markup and `@civitai/components-react`'s `<Group>`. `@civitai/blocks-react`'s `<Group>` is unchanged — it already wrapped.
+
 **`@civitai/components` — `[data-civitai-ui='group']` now sets `flex-wrap: wrap` and lets children shrink (`min-width: 0`), with `data-nowrap="true"` to opt out.**
 
 There are **three** `group` surfaces, and they did not agree:
@@ -26,6 +34,8 @@ Styling used to arrive as a side effect of rendering a `/ui` component, since ea
 
 ---
 
-**Reviewer note on the bump level — an adversarial audit recommends `major` for `@civitai/components`.** All three are currently marked `minor`. `RELEASING.md`'s table reserves `major` for "a behavior change that existing callers will notice", and this PR's entire justification is that bare-markup callers *do* notice it (436px of overflow becomes two rows). The counter-argument — that it is a fix aligning CSS to a shipping default — only holds for `blocks-react`, not for the other two surfaces. The audit's own note: a published App Block rendering bare `data-civitai-ui="group"` as a deliberately horizontal-scrolling toolbar would start wrapping with no opt-in.
+**Bump level: `minor`, decided — not an open question.**
 
-Left at `minor` because publishing `@civitai/components@1.0.0` off `0.3.1` is a product call, not a correctness one. **Flip all three to `major` before release if that is the intent.**
+An adversarial audit recommended `major` for `@civitai/components`, on the grounds that `RELEASING.md` reserves it for "a behavior change that existing callers will notice" and this change is justified precisely by the fact that they do notice (436px of overflow becomes two rows). That reading is sound; it was considered and **the maintainer chose `minor`**, since publishing `@civitai/components@1.0.0` off `0.3.1` is a product decision rather than a correctness one.
+
+Recorded so a later reader knows this was weighed rather than missed, and so the trade-off is visible: shipping as `minor` means **this changelog entry is the only warning consumers get**, which is why the upgrade note is at the top rather than buried here. The concrete case it exists for is a published App Block rendering bare `data-civitai-ui="group"` as a deliberately horizontal-scrolling toolbar — that starts wrapping, and `data-nowrap="true"` is the one-attribute fix.
