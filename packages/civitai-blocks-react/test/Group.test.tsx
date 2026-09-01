@@ -62,15 +62,22 @@ describe('Group', () => {
   });
 
   /*
-   * A SEAM guard, not a spelling one. `group` has two surfaces that must agree:
-   * this React component (which writes `flex-wrap` as an inline style) and the
-   * `@civitai/components` CSS rule that bare `data-civitai-ui="group"` markup —
-   * every non-React consumer — resolves against.
+   * A SEAM guard, not a spelling one. It pins THIS package's `<Group>` (which
+   * writes `flex-wrap` as an inline style) against the `@civitai/components`
+   * CSS rule.
    *
-   * They DID disagree: React defaulted to `wrap`, the CSS shipped no
-   * `flex-wrap` at all, so identical-looking markup wrapped in React and
-   * overflowed everywhere else. Nothing could see it, because each surface was
-   * only ever tested against itself.
+   * 🔴 Those are two of THREE surfaces, and this guard only reaches two of
+   * them. The third is `@civitai/components-react`'s `<Group>`, which writes no
+   * inline style and has no `wrap` prop — a React consumer that resolves
+   * against the CSS exactly as bare markup does. It is guarded separately, by
+   * the absolute `styling anchors — Group` case in that package's
+   * `html-vs-react-parity.browser.test.tsx`. Do not read "non-React consumer"
+   * here as the whole population resolving against the stylesheet; it is not.
+   *
+   * They DID disagree: this package's React default was `wrap`, the CSS shipped
+   * no `flex-wrap` at all, so identical-looking markup wrapped here and
+   * overflowed on the other two surfaces. Nothing could see it, because each
+   * surface was only ever tested against itself.
    *
    * So assert the RELATIONSHIP. Reading the default off the rendered component
    * rather than restating 'wrap' is what makes it a relationship: flip either
@@ -135,12 +142,42 @@ describe('Group', () => {
       expect(optOut).toBe(reactOptOut);
     });
 
+    /*
+     * The rule body with anything nested TWO or more levels deep removed, so a
+     * DIRECT child block survives intact while a doubly-nested one is gutted.
+     *
+     * Not `topLevelDecls()` — that keeps only depth-0 text, which would strip
+     * `& > * { min-width: 0; }` itself (it is a nested block) and make the
+     * assertion below unsatisfiable. The two helpers answer different questions:
+     * that one asks "which DECLARATIONS does the rule set directly", this one
+     * asks "which nested BLOCKS are direct children".
+     */
+    function withoutDeeperNesting(body: string): string {
+      let depth = 0;
+      let out = '';
+      for (const ch of body) {
+        if (ch === '{') {
+          depth += 1;
+          if (depth <= 1) out += ch;
+        } else if (ch === '}') {
+          if (depth <= 1) out += ch;
+          depth -= 1;
+        } else if (depth <= 1) out += ch;
+      }
+      return out;
+    }
+
     it('children may shrink below their content width', () => {
       // What makes wrap actually help when one item is a long unbroken label.
       // This is a TEXT assertion and therefore weak on its own; the behavioural
       // guard is in responsive-group.browser.test.tsx, which measures it in a
       // real engine. Keep both — this one localises a regression to the CSS.
-      expect(groupRule()).toMatch(/&\s*>\s*\*\s*\{\s*min-width:\s*0\s*;/);
+      //
+      // Depth-limited so the declaration must be a DIRECT child of the group
+      // rule: a raw scan would also match it nested inside the opt-out block,
+      // i.e. `&[data-nowrap='true'] { & > * { min-width: 0; } }` would satisfy
+      // the guard while the top-level default was gone.
+      expect(withoutDeeperNesting(groupRule())).toMatch(/&\s*>\s*\*\s*\{\s*min-width:\s*0\s*;/);
     });
   });
 });

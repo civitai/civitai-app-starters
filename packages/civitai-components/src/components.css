@@ -324,17 +324,27 @@
      * has no escape at phone widths — a block's slot is ~360px there, so the
      * row simply ran off the edge.
      *
-     * 🔴 This value is NOT a new opinion — it makes the CSS agree with the
-     * React default that was already shipping. `<Group>` defaults `wrap = true`
-     * and writes `flex-wrap` as an INLINE style, so React consumers have always
-     * wrapped; bare `data-civitai-ui="group"` markup — the framework-agnostic
-     * contract this package exists to serve, and the one non-React consumers
-     * use — silently did not. Same component, two surfaces, opposite defaults.
-     * The parity test pins them together so they cannot drift apart again.
+     * 🔴 There are THREE `group` surfaces, and for TWO of them this is a NEW
+     * DEFAULT — do not read it as the CSS merely catching up:
+     *   - `@civitai/blocks-react`'s `<Group>` defaults `wrap = true` and writes
+     *     `flex-wrap` as an INLINE style, so its consumers already wrapped.
+     *     For that one, and only that one, this is the CSS agreeing with a
+     *     default that was already shipping.
+     *   - `@civitai/components-react`'s `<Group>` writes NO inline style and has
+     *     NO `wrap` prop, so it resolves against this rule — a React consumer
+     *     that did NOT wrap before.
+     *   - bare `data-civitai-ui="group"` markup, the framework-agnostic contract
+     *     this package exists to serve — likewise.
+     * Nothing could see the disagreement, because each surface was only ever
+     * tested against itself. The parity test pins the CSS default against the
+     * rendered React default so they cannot drift apart again.
      *
-     * Opt out with `data-nowrap="true"` (the bare-markup spelling of
-     * `<Group wrap={false}>`). An inline `flex-wrap` also still outranks this
-     * layer, so existing markup that already sets it is untouched.
+     * 🔴 That distinction is load-bearing for the RELEASE, not just the prose:
+     * "existing callers notice" is what `RELEASING.md` reserves `major` for, and
+     * it is true for two of the three surfaces.
+     *
+     * Opt out with `data-nowrap="true"`. An inline `flex-wrap` also still
+     * outranks this layer, so existing markup that already sets it is untouched.
      */
     flex-wrap: wrap;
 

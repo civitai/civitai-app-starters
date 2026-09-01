@@ -669,12 +669,13 @@ describe('styling anchors — Stack / Group / Loader', () => {
   });
 
   /*
-   * An ANCHOR, deliberately not a `compare:` entry. This package's job is the
-   * one that owns components.css, yet deleting `flex-wrap` from that file left
-   * the entire design-system job green — measured, 245/291 — because the
-   * equality half renders the same markup twice and a deleted rule moves BOTH
-   * arms identically. Only an absolute assertion can see it, which is exactly
-   * what this block's header says anchors are for.
+   * An ANCHOR, deliberately not a `compare:` entry. `components.css` is owned
+   * by `@civitai/components`, but the CI job that BUILDS AND TESTS it is the
+   * `design-system` job, which this package's suites run inside — and deleting
+   * `flex-wrap` from that file left the entire job green (measured, 245/291),
+   * because the equality half renders the same markup twice and a deleted rule
+   * moves BOTH arms identically. Only an absolute assertion can see it, which
+   * is exactly what this block's header says anchors are for.
    */
   it('Group: wraps by default, and data-nowrap="true" opts out', () => {
     both(

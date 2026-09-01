@@ -13,7 +13,9 @@
  *    `<Group>` writes `flex-wrap` as an INLINE style, so testing through it
  *    would pass whether or not the stylesheet contains the rule — it would
  *    measure the component and call the result a fact about the CSS. Bare
- *    markup is the surface every non-React consumer actually gets.
+ *    markup is what a non-React consumer gets, and it is also what
+ *    `@civitai/components-react`'s `<Group>` renders (no inline style, no
+ *    `wrap` prop), so this case covers that surface too.
  *
  *  - Width comes from an explicit fixed-width CONTAINER, never the viewport.
  *    The browser project pins `viewport: { width: 800 }`, and a suite whose
@@ -122,9 +124,15 @@ describe('bare group markup is responsive', () => {
     const long = host.querySelector('[data-testid="long"]') as HTMLElement;
     void long.getBoundingClientRect();
     const width = long.getBoundingClientRect().width;
-    // WITHOUT the rule the item keeps its full content width (width ===
-    // scrollWidth, ~1461px) and pushes the row far past the slot. WITH it the
-    // box is narrower than its content and fits.
+    // WITHOUT the rule the item keeps its full content width and pushes the row
+    // far past the slot; WITH it the box is narrower than its content and fits.
+    // No absolute pixel figure here on purpose — the content width is
+    // font-dependent and differs between environments (~1461 and ~1547 measured
+    // on two machines), so quoting one would be a number nothing asserts on.
+    //
+    // The `<= CONTAINER_PX` line is the one carrying the guard: under the mutant
+    // it fails by roughly 4.8x, whereas `< scrollWidth` fails by a sub-pixel
+    // margin. Keep both, but do not let the strict inequality be the only one.
     expect(width).toBeLessThan(long.scrollWidth);
     expect(width).toBeLessThanOrEqual(CONTAINER_PX);
   });
