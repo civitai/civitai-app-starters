@@ -151,6 +151,28 @@ describe('Group', () => {
      * assertion below unsatisfiable. The two helpers answer different questions:
      * that one asks "which DECLARATIONS does the rule set directly", this one
      * asks "which nested BLOCKS are direct children".
+     *
+     * It also gates on NESTING, not just on the opt-out block: a declaration
+     * inside a direct-child at-rule (`@media (…) { & > * { min-width: 0; } }`)
+     * is stripped too and fails the guard. That is intended — the base default
+     * must be unconditional — but it is not obvious from the rationale above,
+     * so it is stated rather than discovered.
+     *
+     * Throws on an unbalanced body rather than returning something: without the
+     * check, `depth` going negative makes `depth <= 1` true for everything after
+     * it, so the helper would degrade to the identity function and the guard
+     * would silently revert to the weak scan it replaced.
+     *
+     * 🔴 That throw is an INVARIANT ASSERTION, not a reachable guard, and the
+     * distinction is deliberate — do not cite it as protection. Measured: it
+     * cannot fire through this file's call path, because `groupRule()` walks the
+     * same braces FIRST and desyncs before an unbalanced body ever reaches here.
+     * A brace inside a CSS string (`&[data-x='}']`) makes `groupRule()` return a
+     * TRUNCATED body — silently, since its own throw only covers the
+     * never-closes case — and the truncation is balanced, so this helper sees
+     * nothing wrong. The residual hazard therefore lives upstream in
+     * `groupRule()`, not here; neither helper tokenises CSS strings, and the
+     * stylesheet contains no braces inside strings today (checked).
      */
     function withoutDeeperNesting(body: string): string {
       let depth = 0;
@@ -162,8 +184,10 @@ describe('Group', () => {
         } else if (ch === '}') {
           if (depth <= 1) out += ch;
           depth -= 1;
+          if (depth < 0) throw new Error('unbalanced braces: more } than { in the rule body');
         } else if (depth <= 1) out += ch;
       }
+      if (depth !== 0) throw new Error('unbalanced braces: unclosed { in the rule body');
       return out;
     }
 

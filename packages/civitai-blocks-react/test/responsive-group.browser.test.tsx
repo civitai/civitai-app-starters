@@ -130,10 +130,17 @@ describe('bare group markup is responsive', () => {
     // font-dependent and differs between environments (~1461 and ~1547 measured
     // on two machines), so quoting one would be a number nothing asserts on.
     //
-    // The `<= CONTAINER_PX` line is the one carrying the guard: under the mutant
-    // it fails by roughly 4.8x, whereas `< scrollWidth` fails by a sub-pixel
-    // margin. Keep both, but do not let the strict inequality be the only one.
-    expect(width).toBeLessThan(long.scrollWidth);
+    // 🔴 ORDER IS LOAD-BEARING — `expect` throws, so the FIRST failing assertion
+    // is the only one that ever reports. `<= CONTAINER_PX` goes first because it
+    // is the robust one: under the mutant it fails by ~4.8x (1547 vs 320), and
+    // its message names the actual defect — the item did not fit its slot.
+    //
+    // `< scrollWidth` second, as corroboration only. It fails by a SUB-PIXEL
+    // margin (1547.25 vs 1547, because scrollWidth rounds), so leading with it
+    // reports `expected 1547.25 to be less than 1547` — which reads like a
+    // rounding bug rather than a layout one, and on a machine whose fraction
+    // rounds the other way it could pass under the mutant entirely.
     expect(width).toBeLessThanOrEqual(CONTAINER_PX);
+    expect(width).toBeLessThan(long.scrollWidth);
   });
 });

@@ -336,12 +336,22 @@
      *   - bare `data-civitai-ui="group"` markup, the framework-agnostic contract
      *     this package exists to serve — likewise.
      * Nothing could see the disagreement, because each surface was only ever
-     * tested against itself. The parity test pins the CSS default against the
-     * rendered React default so they cannot drift apart again.
+     * tested against itself. TWO tests now pin it, one per React surface — there
+     * is no single "the parity test":
+     *   - `civitai-blocks-react/test/Group.test.tsx` reads the wrap default off
+     *     ITS `<Group>` and compares it to this rule, so flipping either alone
+     *     fails;
+     *   - `civitai-components-react/test/html-vs-react-parity.browser.test.tsx`
+     *     ("styling anchors — Group") asserts the COMPUTED value on both the
+     *     React and the bare-markup render, which is what covers the other two
+     *     surfaces. A parity check alone cannot: deleting this rule moves both
+     *     of its arms identically, so only the absolute anchor sees it.
      *
-     * 🔴 That distinction is load-bearing for the RELEASE, not just the prose:
-     * "existing callers notice" is what `RELEASING.md` reserves `major` for, and
-     * it is true for two of the three surfaces.
+     * 🔴 The three-surface distinction is load-bearing for the RELEASE, not just
+     * the prose: "existing callers notice" is what `RELEASING.md` reserves
+     * `major` for, and it is true for two of the three surfaces. Shipped as a
+     * MINOR by maintainer decision — see the changeset for the reasoning and for
+     * the upgrade note that decision makes load-bearing.
      *
      * Opt out with `data-nowrap="true"`. An inline `flex-wrap` also still
      * outranks this layer, so existing markup that already sets it is untouched.
