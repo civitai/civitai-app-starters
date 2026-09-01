@@ -668,6 +668,39 @@ describe('styling anchors — Stack / Group / Loader', () => {
     );
   });
 
+  /*
+   * An ANCHOR, deliberately not a `compare:` entry. This package's job is the
+   * one that owns components.css, yet deleting `flex-wrap` from that file left
+   * the entire design-system job green — measured, 245/291 — because the
+   * equality half renders the same markup twice and a deleted rule moves BOTH
+   * arms identically. Only an absolute assertion can see it, which is exactly
+   * what this block's header says anchors are for.
+   */
+  it('Group: wraps by default, and data-nowrap="true" opts out', () => {
+    both(
+      pair(
+        'light',
+        <Group>
+          <span>a</span>
+        </Group>,
+        `<div data-civitai-ui="group"><span>a</span></div>`,
+        '[data-civitai-ui="group"]'
+      ),
+      (cs, who) => expect(cs.flexWrap, who).toBe('wrap')
+    );
+    both(
+      pair(
+        'light',
+        <Group data-nowrap="true">
+          <span>a</span>
+        </Group>,
+        `<div data-civitai-ui="group" data-nowrap="true"><span>a</span></div>`,
+        '[data-civitai-ui="group"]'
+      ),
+      (cs, who) => expect(cs.flexWrap, who).toBe('nowrap')
+    );
+  });
+
   it('Loader: md size=22px×22px, color=primary', () => {
     both(
       pair(

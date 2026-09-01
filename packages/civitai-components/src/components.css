@@ -341,13 +341,28 @@
     /*
      * A flex item defaults to `min-width: auto`, which refuses to shrink below
      * its CONTENT width — so one long label (a model name, a prompt) pushes the
-     * row past the slot even WITH wrap, and `text-overflow: ellipsis` on a child
-     * can never engage. `min-width: 0` is the precondition for both.
+     * row past the slot even WITH wrap. `min-width: 0` lets it shrink.
      *
-     * `:where()` keeps this at ZERO specificity, so a child's own rule — or a
-     * nested component's min-width — wins without an !important fight.
+     * 🔴 SCOPE, measured: this only matters for a child whose computed
+     * `overflow` is `visible`. Per CSS Flexbox §4.5 an item with any other
+     * `overflow` ALREADY has an automatic minimum size of 0 — so a child that
+     * sets `overflow: hidden`, as any `text-overflow: ellipsis` child must, is
+     * unaffected by this line. An earlier version of this comment claimed
+     * ellipsis "can never engage" without it, which was exactly backwards; the
+     * browser guard built on that belief used an ellipsis fixture and therefore
+     * passed with this rule DELETED. Both are fixed — see
+     * `civitai-blocks-react/test/responsive-group.browser.test.tsx`.
+     *
+     * Specificity is (0,1,0), not zero: `&` carries the parent selector's, and
+     * `:where(*)` is specificity-identical to `*`, so that wrapper bought
+     * nothing and has been dropped. What actually lets a CONSUMER's own rule
+     * win is `@layer civitai.components`, which every rule in this file sits
+     * inside — unlayered author CSS beats it regardless of specificity. Note
+     * the limit: another rule INSIDE this layer does not get that protection,
+     * so a future non-zero `min-width` on a nested component here must be more
+     * specific or come later.
      */
-    & > :where(*) { min-width: 0; }
+    & > * { min-width: 0; }
 
     &[data-nowrap='true'] { flex-wrap: nowrap; }
 

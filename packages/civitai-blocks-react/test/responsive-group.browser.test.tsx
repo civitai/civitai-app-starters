@@ -96,20 +96,36 @@ describe('bare group markup is responsive', () => {
     expect(group.scrollWidth).toBeGreaterThan(group.clientWidth);
   });
 
+  /*
+   * 🔴 THE CHILD MUST NOT SET `overflow: hidden` — that is what made the first
+   * version of this test VACUOUS, and it passed with the rule deleted.
+   *
+   * Per CSS Flexbox §4.5 a flex item whose computed `overflow` is anything but
+   * `visible` ALREADY has an automatic minimum size of 0. The obvious fixture
+   * for "a long label ellipsizes" needs `overflow: hidden` to ellipsize at all
+   * — and thereby supplies the exact effect `min-width: 0` provides, so the
+   * assertion cannot see the rule removed. Measured, with the artifact rebuilt:
+   * 42/42 still green.
+   *
+   * `white-space: nowrap` alone is what makes the item unshrinkable, so that is
+   * all the fixture sets. If you ever add `overflow` to this child, this guard
+   * silently stops guarding.
+   */
   it('a long unbroken label shrinks below its content width (min-width: 0 is live)', () => {
     host = document.createElement('div');
     host.style.width = `${CONTAINER_PX}px`;
     host.innerHTML = `
       <div data-civitai-ui="group">
-        <span data-testid="long" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${'Supercalifragilistic'.repeat(12)}</span>
+        <span data-testid="long" style="white-space:nowrap;">${'Supercalifragilistic'.repeat(12)}</span>
       </div>`;
     document.body.appendChild(host);
     const long = host.querySelector('[data-testid="long"]') as HTMLElement;
     void long.getBoundingClientRect();
-    // Without `min-width: 0` the item keeps its full content width and pushes
-    // the row wide; with it, the box is narrower than its content and the
-    // ellipsis can engage.
-    expect(long.getBoundingClientRect().width).toBeLessThan(long.scrollWidth);
-    expect(long.getBoundingClientRect().width).toBeLessThanOrEqual(CONTAINER_PX);
+    const width = long.getBoundingClientRect().width;
+    // WITHOUT the rule the item keeps its full content width (width ===
+    // scrollWidth, ~1461px) and pushes the row far past the slot. WITH it the
+    // box is narrower than its content and fits.
+    expect(width).toBeLessThan(long.scrollWidth);
+    expect(width).toBeLessThanOrEqual(CONTAINER_PX);
   });
 });

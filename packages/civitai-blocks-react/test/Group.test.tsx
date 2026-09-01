@@ -77,17 +77,26 @@ describe('Group', () => {
    * side alone and this fails.
    */
   describe('wrap default agrees with the @civitai/components CSS', () => {
-    /** The `[data-civitai-ui='group']` rule body, from the shipped stylesheet. */
+    /**
+     * The `[data-civitai-ui='group']` rule body, from the shipped stylesheet.
+     *
+     * Comments are stripped FIRST, before the brace walk: a `{` or `}` inside a
+     * comment would otherwise unbalance the walk and return a silently wrong
+     * slice — a guard that degrades without erroring. The rule's comments do
+     * currently contain braces (`<Group wrap={false}>`); they happen to balance,
+     * which is luck, not a property to rely on.
+     */
     function groupRule(): string {
-      const start = componentsCss.indexOf("[data-civitai-ui='group']");
+      const css = componentsCss.replace(/\/\*[\s\S]*?\*\//g, '');
+      const start = css.indexOf("[data-civitai-ui='group']");
       expect(start).toBeGreaterThan(-1);
-      const open = componentsCss.indexOf('{', start);
+      const open = css.indexOf('{', start);
       let depth = 0;
-      for (let i = open; i < componentsCss.length; i += 1) {
-        if (componentsCss[i] === '{') depth += 1;
-        else if (componentsCss[i] === '}') {
+      for (let i = open; i < css.length; i += 1) {
+        if (css[i] === '{') depth += 1;
+        else if (css[i] === '}') {
           depth -= 1;
-          if (depth === 0) return componentsCss.slice(open + 1, i);
+          if (depth === 0) return css.slice(open + 1, i);
         }
       }
       throw new Error('unbalanced braces in the group rule');
@@ -127,9 +136,11 @@ describe('Group', () => {
     });
 
     it('children may shrink below their content width', () => {
-      // The precondition for ellipsis on a child, and for wrap to actually help
-      // when one item is a long unbroken label.
-      expect(groupRule()).toMatch(/&\s*>\s*:where\(\*\)\s*\{\s*min-width:\s*0\s*;/);
+      // What makes wrap actually help when one item is a long unbroken label.
+      // This is a TEXT assertion and therefore weak on its own; the behavioural
+      // guard is in responsive-group.browser.test.tsx, which measures it in a
+      // real engine. Keep both — this one localises a regression to the CSS.
+      expect(groupRule()).toMatch(/&\s*>\s*\*\s*\{\s*min-width:\s*0\s*;/);
     });
   });
 });
