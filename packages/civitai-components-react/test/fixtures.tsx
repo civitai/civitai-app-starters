@@ -348,7 +348,12 @@ export const CASES: Case[] = [
     ),
     html: `<div data-civitai-ui="group"><span>a</span><span>b</span></div>`,
     selector: '[data-civitai-ui="group"]',
-    compare: ['display', 'flexDirection', 'alignItems', 'gap'],
+    // `flexWrap` here widens PARITY only — it catches React and HTML diverging
+    // on wrap. It canNOT catch the rule being deleted from components.css,
+    // because that moves both arms identically and they still match (measured:
+    // 245/291 still green with `flex-wrap` gone). The absolute guard is the
+    // `styling anchors — Group` block in html-vs-react-parity.browser.test.tsx.
+    compare: ['display', 'flexDirection', 'alignItems', 'gap', 'flexWrap'],
   },
 
   // ---- Slider (new primitive) — themed native <input type="range"> ----

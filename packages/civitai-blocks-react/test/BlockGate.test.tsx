@@ -212,4 +212,77 @@ describe('<BlockGate> / <DirectLoadFallback>', () => {
       expect(screen.queryByRole('link')).toBeNull();
     });
   });
+
+  /*
+   * Styling used to arrive as a SIDE EFFECT of rendering a `/ui` component —
+   * each one calls `useBlocksStyles()` itself. So a block that wraps its root in
+   * <BlockGate> but renders none of them got the design-system CSS on the
+   * direct-load fallback (which renders Card/Stack) and NOTHING on the happy
+   * path. <Child> below is exactly that block: plain markup, no `/ui` import.
+   *
+   * These assert BOTH branches, because a guard on one is what let this through.
+   */
+  describe('design-system styles are injected on BOTH branches', () => {
+    const MARKERS = [
+      'style[data-civitai-theme]',
+      'style[data-civitai-components]',
+      'style[data-civitai-blocks-ui]',
+    ];
+    const injected = () => MARKERS.filter((s) => document.querySelector(s) != null);
+
+    // The suite-level afterEach does not clear these, and injection is idempotent
+    // per document — so without this a leaked <style> from an earlier test would
+    // make every assertion below pass vacuously.
+    beforeEach(() => {
+      for (const sel of MARKERS) document.querySelectorAll(sel).forEach((el) => el.remove());
+    });
+
+    it('starts from a document with none of them (the assertions are not vacuous)', () => {
+      expect(injected()).toEqual([]);
+    });
+
+    it('EMBEDDED happy path: a block rendering NO /ui component still gets all three', () => {
+      setFrame('embedded');
+      render(
+        <BlockGate hostname="model-benchmarking.civit.ai">
+          <Child />
+        </BlockGate>,
+      );
+      // The child really did render, and really is plain markup.
+      expect(screen.getByTestId('app-content')).toBeTruthy();
+      expect(fallbackShowing()).toBe(false);
+      expect(injected()).toEqual(MARKERS);
+    });
+
+    it('DIRECT-LOAD branch: still gets all three (no regression)', () => {
+      setFrame('top-level');
+      render(
+        <BlockGate hostname="model-benchmarking.civit.ai">
+          <Child />
+        </BlockGate>,
+      );
+      act(() => {
+        vi.advanceTimersByTime(TIMEOUT + 1000);
+      });
+      expect(fallbackShowing()).toBe(true);
+      expect(injected()).toEqual(MARKERS);
+    });
+
+    it('a custom fallback that renders no /ui component is styled too', () => {
+      setFrame('top-level');
+      render(
+        <BlockGate
+          hostname="model-benchmarking.civit.ai"
+          fallback={<div data-testid="custom-bare">bare</div>}
+        >
+          <Child />
+        </BlockGate>,
+      );
+      act(() => {
+        vi.advanceTimersByTime(TIMEOUT + 1000);
+      });
+      expect(screen.getByTestId('custom-bare')).toBeTruthy();
+      expect(injected()).toEqual(MARKERS);
+    });
+  });
 });

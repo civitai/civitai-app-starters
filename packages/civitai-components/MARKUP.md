@@ -171,6 +171,20 @@ Vertical flex. `data-gap`: `sm` · `md` · `lg` (default ~12px). Presentational
 ### Group — `data-civitai-ui="group"`
 Horizontal flex, items center-aligned. `data-gap`: `sm` · `md` · `lg`.
 
+**Wraps by default** — a row of several controls reflows onto more rows rather
+than overflowing a narrow slot. Children may also shrink below their content
+width, so one long unbroken label narrows instead of pushing the whole row past
+the container. (That shrink applies to a child with the default
+`overflow: visible`; a child that sets any other `overflow` already gets it from
+the flexbox spec.)
+
+`data-nowrap="true"` keeps the row on one line. Use it only where a single line
+is load-bearing, and expect overflow at narrow widths.
+
+Both are plain attributes, so `@civitai/components-react`'s `<Group>` — which
+renders exactly this markup and sets no inline `flex-wrap` — inherits the
+default and accepts `data-nowrap` as a passed-through prop.
+
 ### Alert — `data-civitai-ui="alert"`
 - **`role="alert"`** (or `role="status"` for non-urgent).
 - `data-color`: `info` (default intent) · `success` · `warning` · `error`.

@@ -319,6 +319,73 @@
     align-items: center;
     gap: 8px;
 
+    /*
+     * RESPONSIVE BASE. A group is a ROW, and a row of three or more controls
+     * has no escape at phone widths — a block's slot is ~360px there, so the
+     * row simply ran off the edge.
+     *
+     * 🔴 There are THREE `group` surfaces, and for TWO of them this is a NEW
+     * DEFAULT — do not read it as the CSS merely catching up:
+     *   - `@civitai/blocks-react`'s `<Group>` defaults `wrap = true` and writes
+     *     `flex-wrap` as an INLINE style, so its consumers already wrapped.
+     *     For that one, and only that one, this is the CSS agreeing with a
+     *     default that was already shipping.
+     *   - `@civitai/components-react`'s `<Group>` writes NO inline style and has
+     *     NO `wrap` prop, so it resolves against this rule — a React consumer
+     *     that did NOT wrap before.
+     *   - bare `data-civitai-ui="group"` markup, the framework-agnostic contract
+     *     this package exists to serve — likewise.
+     * Nothing could see the disagreement, because each surface was only ever
+     * tested against itself. TWO tests now pin it, one per React surface — there
+     * is no single "the parity test":
+     *   - `civitai-blocks-react/test/Group.test.tsx` reads the wrap default off
+     *     ITS `<Group>` and compares it to this rule, so flipping either alone
+     *     fails;
+     *   - `civitai-components-react/test/html-vs-react-parity.browser.test.tsx`
+     *     ("styling anchors — Group") asserts the COMPUTED value on both the
+     *     React and the bare-markup render, which is what covers the other two
+     *     surfaces. A parity check alone cannot: deleting this rule moves both
+     *     of its arms identically, so only the absolute anchor sees it.
+     *
+     * 🔴 The three-surface distinction is load-bearing for the RELEASE, not just
+     * the prose: "existing callers notice" is what `RELEASING.md` reserves
+     * `major` for, and it is true for two of the three surfaces. Shipped as a
+     * MINOR by maintainer decision — see the changeset for the reasoning and for
+     * the upgrade note that decision makes load-bearing.
+     *
+     * Opt out with `data-nowrap="true"`. An inline `flex-wrap` also still
+     * outranks this layer, so existing markup that already sets it is untouched.
+     */
+    flex-wrap: wrap;
+
+    /*
+     * A flex item defaults to `min-width: auto`, which refuses to shrink below
+     * its CONTENT width — so one long label (a model name, a prompt) pushes the
+     * row past the slot even WITH wrap. `min-width: 0` lets it shrink.
+     *
+     * 🔴 SCOPE, measured: this only matters for a child whose computed
+     * `overflow` is `visible`. Per CSS Flexbox §4.5 an item with any other
+     * `overflow` ALREADY has an automatic minimum size of 0 — so a child that
+     * sets `overflow: hidden`, as any `text-overflow: ellipsis` child must, is
+     * unaffected by this line. An earlier version of this comment claimed
+     * ellipsis "can never engage" without it, which was exactly backwards; the
+     * browser guard built on that belief used an ellipsis fixture and therefore
+     * passed with this rule DELETED. Both are fixed — see
+     * `civitai-blocks-react/test/responsive-group.browser.test.tsx`.
+     *
+     * Specificity is (0,1,0), not zero: `&` carries the parent selector's, and
+     * `:where(*)` is specificity-identical to `*`, so that wrapper bought
+     * nothing and has been dropped. What actually lets a CONSUMER's own rule
+     * win is `@layer civitai.components`, which every rule in this file sits
+     * inside — unlayered author CSS beats it regardless of specificity. Note
+     * the limit: another rule INSIDE this layer does not get that protection,
+     * so a future non-zero `min-width` on a nested component here must be more
+     * specific or come later.
+     */
+    & > * { min-width: 0; }
+
+    &[data-nowrap='true'] { flex-wrap: nowrap; }
+
     &[data-gap='sm'] { gap: 6px; }
     &[data-gap='md'] { gap: 16px; }
     &[data-gap='lg'] { gap: 24px; }
