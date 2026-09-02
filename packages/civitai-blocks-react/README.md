@@ -157,6 +157,41 @@ useBlockResize(rootRef);
 > height — a too-small minHeight makes the iframe seed short and grow-jump on
 > `BLOCK_READY` (CLS). Measure it in the dev harness (gotcha #53).
 
+### `useBlockBreakpoint(ref?)`
+
+Reports the block's **own** width tier, so you can branch on "am I narrow?"
+without hand-rolling a `ResizeObserver` or hard-coding pixel numbers.
+
+```tsx
+const bp = useBlockBreakpoint();
+<div style={{ display: 'flex', flexDirection: bp.below('sm') ? 'column' : 'row' }}>
+  {bp.atLeast('md') && <aside>…</aside>}
+</div>
+```
+
+- `tier` — `'base' | 'xs' | 'sm' | 'md' | 'lg' | 'xl'` on civitai's **px** scale
+  (480 / 768 / 1024 / 1184 / 1440 — *not* Mantine's em scale, which agrees only
+  on `sm`). Tailwind semantics: a tier applies at its breakpoint and above.
+  `'base'` is narrower than `xs`, where both a 360px phone and the desktop
+  `model.sidebar_top` slot land.
+- `atLeast(key)` / `below(key)` — the comparators you actually want at a call site.
+- `measured` — `false` until the first measurement lands. An unmeasured width
+  resolves to `'base'`, so gate a *structural* narrow branch on
+  `measured && below('sm')` if a one-frame swap would be jarring.
+
+> **Container query, not a media query.** It observes an element — by default
+> `document.documentElement`, which inside the block's sandbox iframe *is* the
+> slot the host gave you. Slot width is not monotonic in viewport width (the
+> `model.sidebar_top` slot is ~360px at a 360px viewport and only ~430px at a
+> 1440px one), so a `matchMedia` inside the frame answers the wrong question.
+> Pass a `ref` to measure a nested container instead.
+
+> **No re-render storm.** A `ResizeObserver` fires on every pixel; this hook
+> stores the resolved *tier* and returns a referentially stable object while the
+> tier is unchanged, so a 200px drag inside one tier re-renders zero times. That
+> is also why the raw width is not returned — it would either cost a render per
+> pixel or be stale.
+
 ### `useBlockToken()`
 
 Current block-scoped JWT, auto-refreshing ~2 min before expiry. Returns the token

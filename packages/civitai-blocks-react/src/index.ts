@@ -53,6 +53,8 @@ export type { TipParams, TipOptions, TipResult, UseTip } from './hooks/useTip.js
 export { useTipAllowance } from './hooks/useTipAllowance.js';
 export type { TipAllowance, UseTipAllowance } from './hooks/useTipAllowance.js';
 export { useBlockResize } from './hooks/useBlockResize.js';
+export { useBlockBreakpoint, resolveBlockTier } from './hooks/useBlockBreakpoint.js';
+export type { BlockBreakpoint, BlockSizeTier } from './hooks/useBlockBreakpoint.js';
 export { useBuzzPurchase } from './hooks/useBuzzPurchase.js';
 export { useBuzzBalance } from './hooks/useBuzzBalance.js';
 export type { BuzzBalance, UseBuzzBalance } from './hooks/useBuzzBalance.js';

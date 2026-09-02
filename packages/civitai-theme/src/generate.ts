@@ -26,14 +26,28 @@ import {
   type MantineThemeOverride,
 } from '@mantine/core';
 
+import { BREAKPOINT_KEYS, civitaiBreakpointsSource } from './breakpoints.source.js';
 import { civitaiThemeSource } from './theme.source.js';
 
 /** A single public token, mapped to the Mantine variable it derives from. */
 interface TokenSpec {
   /** Public name WITHOUT the `--civitai-` prefix, e.g. `color-primary`. */
   name: string;
-  /** Source Mantine variable name (with `--mantine-` prefix). */
-  source: string;
+  /**
+   * Source Mantine variable name (with `--mantine-` prefix). Mutually exclusive
+   * with `literal` — exactly one of the two must be set.
+   */
+  source?: string;
+  /**
+   * Concrete literal value for a token that deliberately does NOT derive from
+   * Mantine. Only the breakpoint scale uses this, and the reason is load-bearing:
+   * civitai's px breakpoints are NOT part of its Mantine theme, and Mantine's own
+   * stock EM scale disagrees with them on four of five keys (see
+   * `breakpoints.source.ts`). Routing them through `mergeMantineTheme` would
+   * silently resolve any un-overridden key to the wrong number, so they bypass
+   * the Mantine pipeline entirely. Scheme-independent by construction.
+   */
+  literal?: string;
   /** Typed-syntax category — drives `@property` registration + DTCG `$type`. */
   type: 'color' | 'length' | 'font';
   description: string;
@@ -179,6 +193,22 @@ const TOKEN_SPEC: readonly TokenSpec[] = [
     type: 'color',
     description: `Neutral ramp step ${i} (Mantine gray[${i}]); 0 = lightest … 9 = darkest.`,
   })),
+  // --- Responsive breakpoint scale (issue #279 R2) ---
+  // 🔴 THE PX SCALE (civitai `src/utils/breakpoints.json`), NOT Mantine's stock em
+  // scale. The two agree only on `sm` (768). These are `literal` specs precisely so
+  // they cannot pick up an em value from the Mantine resolver — see TokenSpec.literal
+  // and the header of `breakpoints.source.ts`. Appended LAST so the pre-existing
+  // token order (and therefore every existing artifact byte) is unchanged.
+  ...BREAKPOINT_KEYS.map(
+    (key): TokenSpec => ({
+      name: `bp-${key}`,
+      literal: civitaiBreakpointsSource[key],
+      type: 'length',
+      description:
+        `Responsive breakpoint \`${key}\` from civitai's px scale ` +
+        `(src/utils/breakpoints.json) — NOT Mantine's em scale.`,
+    })
+  ),
 ] as const;
 
 type VarDict = Record<string, string>;
@@ -245,8 +275,16 @@ export function resolveTokens(themeOverride: MantineThemeOverride = civitaiTheme
 
   for (const spec of TOKEN_SPEC) {
     const varName = `--civitai-${spec.name}`;
-    const lightVal = resolveValue(`var(${spec.source})`, lightDict);
-    const darkVal = resolveValue(`var(${spec.source})`, darkDict);
+    if ((spec.source == null) === (spec.literal == null)) {
+      throw new Error(
+        `Token ${varName}: exactly one of \`source\` (Mantine-derived) or \`literal\` must be set.`
+      );
+    }
+    // A `literal` spec is scheme-independent by construction and NEVER touches the
+    // Mantine dicts — that bypass is the whole point for the breakpoint scale.
+    const lightVal =
+      spec.literal ?? resolveValue(`var(${spec.source})`, lightDict);
+    const darkVal = spec.literal ?? resolveValue(`var(${spec.source})`, darkDict);
     root[varName] = lightVal;
     if (darkVal !== lightVal || spec.alwaysDark) dark[varName] = darkVal;
     meta.push({ varName, camel: camel(spec.name), type: spec.type, description: spec.description });
