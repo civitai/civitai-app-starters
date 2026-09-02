@@ -61,6 +61,45 @@ Don't try to "make this a real OAuth app." That's what `react-pwa` is for.
 - **Narrow `context` per slot.** `BlockContext` is intentionally loose (`{ slotId, [key]: unknown }`). When you know your manifest targets model-page slots, cast to `ModelSlotContext` (from `@civitai/app-sdk/blocks`) to get `modelId`, `modelVersionId`, `modelName`, etc. typed. Other slot families get their own narrowing types as they ship.
 - **Treat `viewer === null` as anonymous.** The platform sends `viewer: null` for signed-out users, not an object with everything nulled out.
 
+## Boot skeleton
+
+`block.manifest.json` declares `"bootSkeleton": true` and `index.html` paints a
+matching skeleton inside `#root`. **They are ONE change — never keep one and drop
+the other.** The key tells the App Blocks full-page run host to stand down its
+own loading UI (no branded veil, iframe at `opacity: 1` from mount, no reveal
+transition; it publishes `aria-busy` on the iframe instead). Over an empty
+`#root` that is strictly *worse* than not opting in: the viewer stares at a blank
+iframe for the whole load, precisely because the covering veil was removed at the
+app's request. Deleting the skeleton markup while tidying `index.html` looks like
+removing dead scaffolding, which is why
+`tests/guards/boot-skeleton.test.mjs` in this monorepo blocks it.
+
+Two things worth knowing before you edit either half:
+
+- **The theme is a GUESS.** The host sends no `BLOCK_INIT` URL fragment, so the
+  skeleton paints from `prefers-color-scheme` and is corrected the moment
+  `BLOCK_INIT` lands. We bet **dark**, because Civitai is dark by default: the
+  base (unconditioned) CSS rules carry the dark values, light is applied *only*
+  inside `@media (prefers-color-scheme: light)`, and there is deliberately **no**
+  `@media (prefers-color-scheme: dark)` block — that would hand `no-preference`
+  and query-less UAs the light theme. `<meta name="color-scheme">` and
+  `src/index.css`'s `color-scheme` both list `dark` first for the same reason (a
+  CSS `color-scheme` declaration overrides the meta tag, and Vite emits
+  `index.css` as a render-blocking `<link>` in the built document).
+- **Nothing removes the skeleton, and that is React-specific.**
+  `createRoot(container).render(...)` clears the container's children before its
+  first commit — measured, see
+  `packages/civitai-blocks-react/test/bootSkeletonRemoval.test.tsx`. Svelte 5's
+  `mount(App, { target })` **appends** and needs an explicit
+  `document.querySelector('[data-boot-skeleton]')?.remove()`. Assume append for
+  anything unmeasured. And keep the skeleton a *descendant* of `#root`: React
+  only clears what it mounts into, so a sibling stays on screen forever.
+
+`bootSkeleton` is honoured by the **full-page run host only** — this starter
+targets `model.sidebar_top` and has no `page` surface, so the key changes nothing
+today. It ships as the scaffolded default, correct the moment the app gains a
+page surface, with the markup already in place so the two can never separate.
+
 ## Patterns to avoid
 
 - ❌ Storing tokens in `localStorage` / `sessionStorage` / `IndexedDB`. The transport caches the JWT and rotates it via `TOKEN_REFRESH` from the host every ~13 minutes; manual storage adds nothing and is one more thing to leak.

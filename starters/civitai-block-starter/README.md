@@ -55,6 +55,28 @@ Other hooks ship with `@civitai/blocks-react`:
 but the host-side handlers ship in Phase 2 of civitai.com's Civitai Apps
 substrate — calls will reject on the per-request timeout until then.
 
+## Boot skeleton
+
+`block.manifest.json` sets `"bootSkeleton": true` and `index.html` paints a
+matching skeleton inside `#root`, styled by an inline `<style>` so it appears
+before any script runs. **Ship them together.** The key makes the full-page run
+host stand down its own loading UI (no veil, iframe visible from mount); declared
+over an empty `#root` it is *worse* than not opting in — a blank iframe for the
+whole load, with the veil that used to cover it deliberately removed.
+
+The boot theme is a **guess** from `prefers-color-scheme`, corrected when
+`BLOCK_INIT` arrives. It defaults to **dark**: the base CSS rules carry the dark
+values and light lives only in `@media (prefers-color-scheme: light)` — never the
+other way round, or `no-preference` viewers get light.
+
+Nothing removes the skeleton because React's `createRoot` clears the container on
+its first render. That is React-specific — Svelte 5's `mount` appends and needs
+an explicit `document.querySelector('[data-boot-skeleton]')?.remove()`.
+
+Note: this starter targets `model.sidebar_top` and declares no `page` surface, so
+the key is inert until the app gains one. It is the scaffolded default so the
+markup and the declaration are never introduced separately.
+
 ## Environment
 
 | Variable | When | Purpose |

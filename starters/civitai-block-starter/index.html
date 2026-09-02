@@ -3,11 +3,101 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="light dark" />
+    <!--
+      DARK FIRST, deliberately. The host sends no BLOCK_INIT URL fragment, so the
+      boot theme is a GUESS from `prefers-color-scheme` that is corrected the
+      moment BLOCK_INIT lands. Civitai is dark by default, so dark is the better
+      bet for the `no-preference` / unknown case — and `content="light dark"`
+      (the Vite default this replaces) bets the other way.
+    -->
+    <meta name="color-scheme" content="dark light" />
     <title>Civitai App Block</title>
+    <style>
+      /*
+        BOOT SKELETON — see AGENTS.md § "Boot skeleton".
+        Inline on purpose: no external stylesheet, no JS, so it paints before
+        anything is fetched or executed. It is the counterpart to
+        `"bootSkeleton": true` in block.manifest.json — the run host stands down
+        its own loading veil for a block that declares the key, so this markup is
+        the ONLY thing on screen for the whole load. Ship the two together.
+
+        THEME RULE: the base (unconditioned) rules carry the DARK values; light
+        is applied ONLY inside `@media (prefers-color-scheme: light)`. There is
+        deliberately NO `@media (prefers-color-scheme: dark)` block — that would
+        hand `no-preference` and query-less UAs the light theme.
+      */
+      html {
+        background: #1a1b1e;
+      }
+
+      [data-boot-skeleton] {
+        /* Matches App.tsx's own first render: padding 16, column, gap 8. */
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      [data-boot-skeleton] > span {
+        display: block;
+        border-radius: 4px;
+        background: #2c2e33;
+      }
+
+      /* Title line — mirrors the <strong>Civitai App starter</strong> row. */
+      [data-boot-skeleton] > span[data-line='title'] {
+        width: 160px;
+        height: 16px;
+      }
+
+      /* Meta line — mirrors the dimmed <small>slot: …</small> row. */
+      [data-boot-skeleton] > span[data-line='meta'] {
+        width: 120px;
+        height: 12px;
+        opacity: 0.7;
+      }
+
+      /* Body lines — mirror the two <p> rows. */
+      [data-boot-skeleton] > span[data-line='body'] {
+        width: 90%;
+        height: 14px;
+      }
+
+      [data-boot-skeleton] > span[data-line='body-short'] {
+        width: 60%;
+        height: 14px;
+      }
+
+      @media (prefers-color-scheme: light) {
+        html {
+          background: #ffffff;
+        }
+
+        [data-boot-skeleton] > span {
+          background: #e9ecef;
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!--
+        Decorative only (aria-hidden). The run host publishes `aria-busy` on the
+        iframe element itself while the block is loading, so an in-frame live
+        region would announce the same state twice.
+
+        This element MUST stay a descendant of #root: React's
+        createRoot(#root).render() clears #root's children on its first commit,
+        which is what removes the skeleton. A skeleton painted as a SIBLING of
+        #root is never replaced and stays on screen forever.
+      -->
+      <div data-boot-skeleton aria-hidden="true">
+        <span data-line="title"></span>
+        <span data-line="meta"></span>
+        <span data-line="body"></span>
+        <span data-line="body-short"></span>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

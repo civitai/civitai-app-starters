@@ -1,7 +1,12 @@
 :root {
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   line-height: 1.5;
-  color-scheme: light dark;
+  /* DARK FIRST — must stay in the same order as index.html's
+     <meta name="color-scheme">. A CSS `color-scheme` declaration OVERRIDES the
+     meta tag, and in a production build Vite emits this file as a
+     render-blocking <link> in <head>, so `light dark` here would silently
+     re-invert the dark-default bet the meta makes. */
+  color-scheme: dark light;
 }
 
 * {

@@ -49,6 +49,19 @@ function Root() {
   );
 }
 
+// No boot-skeleton cleanup code here, on purpose. `createRoot(container)` CLEARS
+// the container's existing children before its first commit, so the
+// `[data-boot-skeleton]` markup in index.html removes itself.
+//
+// 🔴 That is REACT-SPECIFIC — do not carry the omission to another framework.
+// Measured on this repo's own dependencies: React 19.2.6 + happy-dom leaves a
+// prefilled #root holding only the app's output (guarded by
+// `packages/civitai-blocks-react/test/bootSkeletonRemoval.test.tsx`), while
+// Svelte 5.55.10's `mount(App, { target })` APPENDS next to the existing
+// children — `_mount` does `target.appendChild(create_text())` and never clears
+// — so a Svelte block needs an explicit
+// `document.querySelector('[data-boot-skeleton]')?.remove()` after mount.
+// Assume APPEND for anything not measured.
 createRoot(container).render(
   <StrictMode>
     <Root />
