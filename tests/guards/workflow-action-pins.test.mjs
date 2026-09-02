@@ -13,8 +13,9 @@
  * `pull_request` trigger cannot be validated by a bump PR's own checks, so a bad
  * version merges green and breaks after the fact. Measured 2026-08-20, exactly two
  * actions here qualify — `changesets/action` (release.yml, `push: main` only) and
- * `peter-evans/create-pull-request` (revendor-canonical-schema.yml, schedule +
- * workflow_dispatch — no `pull_request` either way).
+ * `peter-evans/create-pull-request` (schedule + workflow_dispatch only, in
+ * `revendor-canonical-schema.yml` and, since 2026-09-02,
+ * `sync-orchestrator-catalogs.yml` — no `pull_request` either way).
  * `actions/checkout`, `actions/setup-node` and `pnpm/action-setup` also appear in
  * `ci.yml`, so a PR does exercise them; they stay on tags on purpose.
  *
@@ -117,8 +118,11 @@ const PINNED = {
     sha: '5f6978faf089d4d20b00c7766989d076bb2fc7f1',
     version: 'v8.1.1',
     why:
-      'only in revendor-canonical-schema.yml (schedule + workflow_dispatch), so no PR ' +
-      'exercises it; it also opens PRs with repo write credentials',
+      'only in schedule + workflow_dispatch workflows (revendor-canonical-schema.yml ' +
+      'and sync-orchestrator-catalogs.yml), so no PR exercises it; it also opens PRs ' +
+      'with repo write credentials. Note sync-orchestrator-catalogs.yml depends on its ' +
+      'documented force-push behaviour NOT changing shape: that workflow guards against ' +
+      'the force-push by skipping its own run while a PR is open on the branch',
   },
 };
 
