@@ -49,3 +49,7 @@ Thumbs.db
 
 # Vitest browser-mode screenshot attachments (transient)
 .vitest-attachments/
+# Vitest browser-mode FAILURE screenshots, written next to the failing spec
+# (`test/__screenshots__/<spec>/<test-name>.png`). Transient debug output — the
+# sibling of the attachments dir above, which was ignored while this one was not.
+**/test/__screenshots__/
