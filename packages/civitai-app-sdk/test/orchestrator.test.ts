@@ -395,12 +395,13 @@ describe('WORKFLOW_STEP_TYPES + IMAGE_GEN_ENGINES catalogs', () => {
     // vacuous pass.
     // 🔴 These literals are meant to be bumped BY HAND when the orchestrator
     // genuinely gains a step type — that is the point, not friction. 44 -> 45 on
-    // 2026-08-14 for `miniMaxMusic3`; engines 12 -> 13 on 2026-08-28 for `krea`.
+    // 2026-08-14 for `miniMaxMusic3`; engines 12 -> 13 on 2026-08-28 for `krea`;
+    // 45 -> 47 on 2026-09-01 for `webScrape` + `webSearch`.
     // If you are here because this failed, confirm the new entry is in the LIVE
     // spec first (`node scripts/check-orchestrator-catalogs.mjs`), then bump;
     // never bump to whatever the fixture happens to hold, which would make this
     // assert nothing.
-    expect(SPEC_WORKFLOW_STEP_TYPES).toHaveLength(45);
+    expect(SPEC_WORKFLOW_STEP_TYPES).toHaveLength(47);
     expect(SPEC_IMAGE_GEN_ENGINES).toHaveLength(13);
     expect(new Set(SPEC_WORKFLOW_STEP_TYPES).size).toBe(SPEC_WORKFLOW_STEP_TYPES.length);
   });

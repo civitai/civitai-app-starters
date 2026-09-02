@@ -188,6 +188,24 @@ export const WORKFLOW_STEP_TYPES = {
   /** Generate a richer prompt from a short seed prompt. */
   promptEnhancement: 'Prompt expansion via LLM',
 
+  // ----- Web ---------------------------------------------------------------
+  /**
+   * Fetch one page and return its content. `url` and `formats` are both
+   * REQUIRED; `formats` selects which representations come back — the spec
+   * names `markdown`, `html` and `links`. The output carries the requested
+   * representations plus the page `title`, `description` and `statusCode`,
+   * each null when it was not requested or not available.
+   */
+  webScrape: 'Fetch one URL and return its content as markdown / HTML / links',
+  /**
+   * Run a web search. `query` and `limit` (1–10) are both REQUIRED. Results
+   * come back in relevance order carrying `url`, `title` and the engine's
+   * snippet `description`. Pass the optional `scrapeFormats` (e.g.
+   * `['markdown']`) to also scrape each result page — omit it and only the
+   * titles, URLs and snippets are returned.
+   */
+  webSearch: 'Web search — ranked results, optionally scraping each result page',
+
   // ----- Utility -----------------------------------------------------------
   /** Echo the input back. Useful for testing the round-trip. */
   echo: 'Echo step — round-trip the input for testing',
