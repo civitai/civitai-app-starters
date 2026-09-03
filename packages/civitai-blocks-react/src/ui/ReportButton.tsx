@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { Button } from './Button.js';
 import { Group } from './Group.js';
+import { useBlocksStyles } from './styles.js';
 
 /** Shared by the two text renders so they cannot drift apart. */
 const NOTE_STYLE = {
@@ -44,7 +45,7 @@ const NOTE_STYLE = {
  *   <ReportButton
  *     key={item.key}
  *     noun="generator"
- *     reported={item.viewerReported}
+ *     reported={myReports.has(item.key)}
  *     onReport={() => shared.report(item.key)}
  *     data-testid={`gen-${item.key}-report`}
  *   />
@@ -69,14 +70,22 @@ export interface ReportButtonProps {
    */
   onReport: () => Promise<void>;
   /**
-   * Server truth: this viewer has ALREADY reported this row. Renders the settled
-   * state directly and skips the handshake.
+   * This viewer has ALREADY reported this row. Renders the settled state
+   * directly and skips the handshake.
    *
-   * 🔴 Supply it if your host can tell you. Without it the settled state is
-   * local-only, so any remount — a `list()` refresh, a tab switch, virtualized
-   * scroll — resets the control to "Report" and the same viewer can file the
-   * same row again. `report()` is NOT documented idempotent (unlike `vote`),
-   * so that is a duplicate report rather than a no-op.
+   * 🔴 THE SHARED STORE CANNOT TELL YOU THIS. `SharedListItem` carries
+   * `viewerVoted` and has no report equivalent, so unlike a vote there is no
+   * server field to read — the only source is your own app's per-viewer
+   * storage, recorded when `onReport` resolves. Supply it if you keep that
+   * record: without it the settled state is local-only, so any remount (a
+   * `list()` refresh, a tab switch, virtualized scroll) resets the control to
+   * "Report" and the same viewer can file the same row again. `report()` is NOT
+   * documented idempotent the way `vote` is, so that is a duplicate report
+   * rather than a no-op.
+   *
+   * Flipping this to `true` settles the control silently — no focus move — which
+   * is correct for the load-time case it is meant for; stealing focus on mount
+   * would be wrong.
    */
   reported?: boolean;
   /**
@@ -105,8 +114,13 @@ export function ReportButton({
   const [done, setDone] = useState(false);
   const [failed, setFailed] = useState(false);
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
   const doneRef = useRef<HTMLSpanElement>(null);
+  /** Set when the viewer backs out mid-flight; the in-flight settle then no-ops.
+   *  This is what lets Cancel stay ENABLED while a request runs — see below. */
+  const abandonedRef = useRef(false);
   const settled = done || reported;
+  useBlocksStyles();
 
   const ids = testId
     ? {
@@ -134,12 +148,36 @@ export function ReportButton({
   // carrying its text, and a live region generally has to exist before its
   // content changes to be announced. Moving focus to it is what makes the
   // outcome reach a screen-reader user rather than hoping.
+  //
+  // 🔴 Keyed on `confirming` ALONE, deliberately. Keying it on `busy` too meant
+  // the effect re-fired when a request finished, so a viewer who pressed Confirm
+  // and then moved focus elsewhere had it YANKED BACK on rejection. `busy` is a
+  // request-lifecycle flag, not a "the control moved" transition.
   useEffect(() => {
-    if (confirming && !busy) confirmRef.current?.focus();
-  }, [confirming, busy]);
+    if (confirming) confirmRef.current?.focus();
+  }, [confirming]);
   useEffect(() => {
     if (done) doneRef.current?.focus();
   }, [done]);
+  // 🔴 Confirm carries `loading`, which sets the native `disabled`, so the
+  // browser BLURS it the moment a request starts. Move focus to Cancel — which
+  // stays enabled precisely so the in-flight state has a live control — or the
+  // viewer is dropped to <body> with nothing tabbable, which is the failure this
+  // component's own focus handling exists to prevent.
+  useEffect(() => {
+    if (busy) cancelRef.current?.focus();
+  }, [busy]);
+  // 🔴 Server truth ENDS the handshake rather than hiding it. Without this the
+  // strip stays mounted underneath: a later `reported: false` resurrected a
+  // stale "Could not send" against a control the viewer had seen settle, and a
+  // rejection arriving after the flip landed behind an unmounted strip — the
+  // same dropped-error state the Cancel handling above exists to prevent.
+  useEffect(() => {
+    if (reported) {
+      setConfirming(false);
+      setFailed(false);
+    }
+  }, [reported]);
 
   if (settled) {
     return (
@@ -170,17 +208,24 @@ export function ReportButton({
   }
 
   const confirm = async () => {
+    abandonedRef.current = false;
     setBusy(true);
     setFailed(false);
     try {
       await onReport();
+      // 🔴 The viewer backed out while this was in flight, so do NOT settle: a
+      // control that reports "Reported for review" after Cancel is describing
+      // an action its user withdrew from.
+      if (abandonedRef.current) return;
       setDone(true);
       setConfirming(false);
     } catch {
-      // Stay armed so the viewer can retry.
+      // Same on the failure side — a rejection for an abandoned request must not
+      // resurrect the strip the viewer just closed.
+      if (abandonedRef.current) return;
       setFailed(true);
     } finally {
-      setBusy(false);
+      if (!abandonedRef.current) setBusy(false);
     }
   };
 
@@ -205,15 +250,19 @@ export function ReportButton({
         Report
       </Button>
       <Button
+        ref={cancelRef}
         size="sm"
         variant="subtle"
-        // Disabled in flight. Cancel used to stay live while the request ran, so
-        // cancelling mid-flight and then having the promise resolve settled the
-        // control to "Reported for review" AFTER the viewer backed out — and a
-        // rejection instead set `failed` behind an unmounted strip, dropping the
-        // error silently.
-        disabled={busy}
+        // 🔴 DELIBERATELY NOT disabled in flight. It was, briefly, to stop a late
+        // resolve settling a cancelled report — but `onReport` here is
+        // `shared.report()` over a postMessage bridge with no timeout, so a
+        // reply that never arrives left BOTH buttons disabled and the control
+        // wedged with no way back short of a remount. Trading a rare race for a
+        // permanent dead end is the wrong side of that trade; `abandonedRef`
+        // closes the race without taking the escape hatch away.
         onClick={() => {
+          abandonedRef.current = true;
+          setBusy(false);
           setFailed(false);
           setConfirming(false);
         }}

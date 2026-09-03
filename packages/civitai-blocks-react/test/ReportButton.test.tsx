@@ -57,6 +57,18 @@ describe('ReportButton', () => {
   describe('the visible copy is pinned whole — no branch may imply a deletion', () => {
     const DELETION = /remov|delet|hidden|hid|gone|erase/i;
 
+    it('the ACCESSIBLE NAMES too — for a screen-reader user the name IS the wording', () => {
+      // The visible notes were swept from the start; the three aria-labels were
+      // not, so "Cancel the report" -> "Delete this row" passed a green suite.
+      render(<ReportButton noun="prompt" onReport={async () => {}} />);
+      expect(screen.getByTestId('report-button').getAttribute('aria-label')).not.toMatch(DELETION);
+
+      fireEvent.click(screen.getByTestId('report-button'));
+      for (const id of ['report-confirm', 'report-cancel']) {
+        expect(screen.getByTestId(id).getAttribute('aria-label')).not.toMatch(DELETION);
+      }
+    });
+
     it('the CONFIRM question', () => {
       render(<ReportButton noun="combination" onReport={async () => {}} />);
       fireEvent.click(screen.getByTestId('report-button'));
@@ -120,6 +132,13 @@ describe('ReportButton', () => {
     expect(onReport).toHaveBeenCalledTimes(1);
   });
 
+  it('the alert role is ABSENT before a failure — presence alone is half a guard', () => {
+    render(<ReportButton noun="prompt" onReport={async () => {}} />);
+    fireEvent.click(screen.getByTestId('report-button'));
+    const note = screen.getByTestId('report-confirm-prompt').querySelector('span')!;
+    expect(note.getAttribute('role')).toBeNull();
+  });
+
   it('POSITIVE CONTROL: the settled state IS reachable when the call resolves', async () => {
     // Without this, the rejection case above cannot distinguish "stayed armed
     // because it was refused" from "can never settle at all".
@@ -148,7 +167,15 @@ describe('ReportButton', () => {
       expect(await screen.findByTestId('report-done')).toBeTruthy();
     });
 
-    it('🔴 CANCEL is disabled, so a late resolve cannot settle a cancelled report', async () => {
+    // 🔴 REPOINTED, not deleted. This case used to assert that Cancel was
+    // DISABLED in flight. That was the fix for a late-resolve race, and an audit
+    // showed it bought that by removing the only escape from a far more likely
+    // one: `onReport` is a postMessage round-trip with no timeout, so a reply
+    // that never arrives left both buttons disabled and the control wedged
+    // permanently. The race is now closed by `abandonedRef` instead, which
+    // costs no escape hatch — so what this case pins is the opposite: Cancel
+    // stays live, and the late settle is what must be inert.
+    it('🔴 CANCEL stays live in flight, and the late settle is inert instead', async () => {
       const d = deferred();
       render(<ReportButton noun="prompt" onReport={() => d.promise} />);
 
@@ -156,14 +183,80 @@ describe('ReportButton', () => {
       fireEvent.click(screen.getByTestId('report-confirm'));
 
       const cancel = screen.getByTestId('report-cancel') as HTMLButtonElement;
-      expect(cancel.disabled).toBe(true);
-      // The click is inert, so the strip is still mounted when the promise lands
-      // and the outcome is the one the viewer actually caused.
+      expect(cancel.disabled).toBe(false);
       fireEvent.click(cancel);
-      expect(screen.getByTestId('report-confirm-prompt')).toBeTruthy();
+      expect(await screen.findByTestId('report-button')).toBeTruthy();
 
       d.resolve();
-      expect(await screen.findByTestId('report-done')).toBeTruthy();
+      await Promise.resolve();
+      await waitFor(() => expect(screen.getByTestId('report-button')).toBeTruthy());
+      expect(screen.queryByTestId('report-done')).toBeNull();
+    });
+  });
+
+  describe('in flight, the viewer can always get out', () => {
+    it('🔴 CANCEL stays enabled, so a never-settling report cannot wedge the control', async () => {
+      // `onReport` here is a postMessage round-trip with no timeout. A reply that
+      // never arrives must not leave both buttons disabled and no way back.
+      const never = new Promise<void>(() => {});
+      render(<ReportButton noun="prompt" onReport={() => never} />);
+
+      fireEvent.click(screen.getByTestId('report-button'));
+      fireEvent.click(screen.getByTestId('report-confirm'));
+
+      const cancel = screen.getByTestId('report-cancel') as HTMLButtonElement;
+      expect(cancel.disabled).toBe(false);
+      fireEvent.click(cancel);
+      // Back to the start, with the request still outstanding.
+      expect(await screen.findByTestId('report-button')).toBeTruthy();
+    });
+
+    it('🔴 a late RESOLVE after Cancel does not settle the control', async () => {
+      const d = deferred();
+      render(<ReportButton noun="prompt" onReport={() => d.promise} />);
+      fireEvent.click(screen.getByTestId('report-button'));
+      fireEvent.click(screen.getByTestId('report-confirm'));
+      fireEvent.click(screen.getByTestId('report-cancel'));
+
+      d.resolve();
+      await Promise.resolve();
+      await waitFor(() => expect(screen.getByTestId('report-button')).toBeTruthy());
+      // Settling here would claim a report the viewer withdrew from.
+      expect(screen.queryByTestId('report-done')).toBeNull();
+    });
+
+    it('🔴 a late REJECT after Cancel does not resurrect the failure strip', async () => {
+      const d = deferred();
+      render(<ReportButton noun="prompt" onReport={() => d.promise} />);
+      fireEvent.click(screen.getByTestId('report-button'));
+      fireEvent.click(screen.getByTestId('report-confirm'));
+      fireEvent.click(screen.getByTestId('report-cancel'));
+
+      d.reject(new Error('late'));
+      await Promise.resolve();
+      await waitFor(() => expect(screen.getByTestId('report-button')).toBeTruthy());
+      expect(screen.queryByTestId('report-confirm-prompt')).toBeNull();
+    });
+  });
+
+  describe('`reported` ends the handshake rather than hiding it', () => {
+    it('🔴 clears a failure strip, and un-setting it does not resurrect one', async () => {
+      const onReport = async () => {
+        throw new Error('nope');
+      };
+      const { rerender } = render(<ReportButton noun="prompt" onReport={onReport} />);
+      fireEvent.click(screen.getByTestId('report-button'));
+      fireEvent.click(screen.getByTestId('report-confirm'));
+      await waitFor(() => expect(screen.getByTestId('report-confirm-prompt')).toBeTruthy());
+
+      rerender(<ReportButton noun="prompt" reported onReport={onReport} />);
+      expect(screen.getByTestId('report-done')).toBeTruthy();
+
+      // Server truth withdrawn: the viewer must land back at the trigger, not on
+      // a stale "Could not send" for a control they saw settle.
+      rerender(<ReportButton noun="prompt" onReport={onReport} />);
+      expect(screen.getByTestId('report-button')).toBeTruthy();
+      expect(screen.queryByTestId('report-confirm-prompt')).toBeNull();
     });
   });
 
@@ -175,6 +268,25 @@ describe('ReportButton', () => {
       render(<ReportButton noun="generator" onReport={async () => {}} />);
       fireEvent.click(screen.getByTestId('report-button'));
       await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('report-confirm')));
+    });
+
+    it('🔴 a REJECTION does not yank focus back to Confirm', async () => {
+      // The effect used to key on `busy` as well, so finishing a request re-fired
+      // it and stole focus from wherever the viewer had moved.
+      const d = deferred();
+      render(
+        <>
+          <button data-testid="elsewhere">elsewhere</button>
+          <ReportButton noun="prompt" onReport={() => d.promise} />
+        </>,
+      );
+      fireEvent.click(screen.getByTestId('report-button'));
+      fireEvent.click(screen.getByTestId('report-confirm'));
+      (screen.getByTestId('elsewhere') as HTMLButtonElement).focus();
+
+      d.reject(new Error('nope'));
+      await waitFor(() => expect(screen.getByTestId('report-confirm-prompt').textContent).toMatch(/could not send/i));
+      expect(document.activeElement).toBe(screen.getByTestId('elsewhere'));
     });
 
     it('settling focuses the outcome, which is what actually announces it', async () => {
