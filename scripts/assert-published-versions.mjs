@@ -727,13 +727,68 @@ async function main() {
     console.error('       `check-starter-pins.mjs` CANNOT see this (a pin matching the local');
     console.error('       version reads as AHEAD/pending and passes).');
     console.error('');
+    // 🔴 THE REMEDY IS NOT ALWAYS "RE-RUN", AND GETTING THAT WRONG COSTS A DAY.
+    //
+    // Two different causes land in `missing`, and this guard cannot tell them
+    // apart from the outside — an anonymous GET 404s identically for both:
+    //
+    //   (a) the publish genuinely failed          -> re-running fixes it
+    //   (b) npm STAGED the version instead of      -> re-running can NEVER fix it
+    //       publishing it (staged publishing)
+    //
+    // (b) is not hypothetical and is not rare here. Staged publishing is enabled
+    // on at least `@civitai/components`, and the divert is SILENT AND SUCCESSFUL:
+    // measured on run 33785932215 attempt 1 (2026-09-03), `changeset publish`
+    // printed `success packages published successfully` for all four packages and
+    // the action pushed all four git tags, while the registry only ever held two
+    // of them (theme + components-react, 17:41:28Z). components@0.4.1 sat staged
+    // and INVISIBLE. `pnpm publish` returned 2xx; changesets has no way to know.
+    //
+    // A staged version then DEADLOCKS the pipeline, because staged and published
+    // versions share one semver index: attempt 2 of that same run got
+    //   `E409 Cannot publish over previously staged version "0.4.1"`
+    // and every subsequent re-run gets the same. `npm publish` by hand gets it
+    // too. The ONLY exits are a human with 2FA running `npm stage approve` or
+    // `npm stage reject` — components@0.4.1 finally appeared at 17:45:38Z, four
+    // minutes later, when a human approved it.
+    //
+    // The consumer-facing damage in between is the whole reason this matters:
+    // the dependents ship EXACT pins (pnpm rewrites `workspace:*` at pack time —
+    // blocks-react@0.45.1 requires components@0.4.1 to the digit), so a dependent
+    // going live while its dependency is staged makes `npm install
+    // @civitai/blocks-react` fail with ETARGET for every block author. That has
+    // happened twice: 2026-09-02 and 2026-09-03.
+    //
+    // So: name BOTH causes and BOTH remedies. Telling an operator to "re-run"
+    // against a staged version sends them into an E409 loop with a correct-looking
+    // instruction. `npm stage list` needs auth, which is why it is a human step
+    // and not something this guard can resolve for you — an OIDC short-lived
+    // token cannot run `npm stage` subcommands at all.
     for (const m of missing) {
       console.error(
         `  ${m.pkg.dir}\n` +
-          `    ${m.pkg.name}@${m.pkg.version} -> HTTP ${m.status} after ${m.attempts} attempt(s)\n` +
-          `    fix: re-run the release workflow, or publish this package manually.`,
+          `    ${m.pkg.name}@${m.pkg.version} -> HTTP ${m.status} after ${m.attempts} attempt(s)`,
       );
     }
+    console.error('');
+    console.error('       TWO causes produce this, and they need OPPOSITE fixes:');
+    console.error('');
+    console.error('       1. the publish failed  -> re-run the release workflow.');
+    console.error('       2. npm STAGED the version instead of publishing it. A staged version is');
+    console.error('          invisible to anonymous reads and OCCUPIES ITS SEMVER SLOT, so every');
+    console.error('          re-run (and a manual `npm publish`) returns');
+    console.error('          `E409 Cannot publish over previously staged version`. Re-running is a');
+    console.error('          DEAD END. Only a human with 2FA can finish it:');
+    console.error('');
+    console.error('            npm stage list <package>       # find the stage id');
+    console.error('            npm stage approve <stage-id>   # publish it   (2FA)');
+    console.error('            npm stage reject  <stage-id>   # free the slot (2FA)');
+    console.error('');
+    console.error('       CHECK 2 FIRST when some packages above published and others did not —');
+    console.error('       that asymmetry IS the staged-publishing signature, and it is the state');
+    console.error('       that breaks consumers (a live dependent exact-pins a staged dependency');
+    console.error('       -> ETARGET on install). Approve in DEPENDENCY ORDER; see RELEASING.md');
+    console.error('       § "Staged publishing".');
     console.error('');
   }
 
