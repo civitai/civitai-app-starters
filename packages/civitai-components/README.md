@@ -17,11 +17,15 @@ carry a hand-written list, and it silently fell ten components behind.
 [`MARKUP.md`](./MARKUP.md):
 
 ```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/theme@0.2.0/styles.css" />
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/components@0.3.0/styles.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/theme/styles.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/components/styles.css" />
 
 <button data-civitai-ui="button" data-variant="filled" data-size="md">Generate</button>
 ```
+
+Unversioned on purpose — see the note in [`MARKUP.md`](./MARKUP.md#setup). A
+pinned CDN URL keeps returning 200 with an old stylesheet, so newly documented
+attributes silently render unstyled.
 
 **From JS** — `injectStyles()` injects both the tokens and the component CSS,
 idempotently:
