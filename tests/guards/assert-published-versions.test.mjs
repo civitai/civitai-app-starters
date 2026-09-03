@@ -968,12 +968,14 @@ describe('assert-published-versions', () => {
 
       // And the per-package identity line must still be there — the remedy is
       // useless if you cannot see WHICH package to run `npm stage list` on.
-      assert.match(
-        r.out,
-        new RegExp(
-          `${DEFAULT_PACKAGES['civitai-app-sdk'].name}@${DEFAULT_PACKAGES['civitai-app-sdk'].version.replace(/\./g, '\\.')} -> HTTP 404 after 1 attempt\\(s\\)`,
-        ),
-      );
+      //
+      // A literal substring, NOT a built `new RegExp`: escaping the fixture's
+      // version with `.replace(/\./g, '\\.')` handles dots and silently leaves
+      // backslashes unescaped (CodeQL js/incomplete-sanitization, high). There
+      // is nothing to pattern-match here anyway — the line is fully determined.
+      const sdk = DEFAULT_PACKAGES['civitai-app-sdk'];
+      const identityLine = `${sdk.name}@${sdk.version} -> HTTP 404 after 1 attempt(s)`;
+      assert.ok(r.out.includes(identityLine), `missing ${JSON.stringify(identityLine)} in:\n${r.out}`);
     } finally {
       destroyFixture(dir);
       await behind.close();
