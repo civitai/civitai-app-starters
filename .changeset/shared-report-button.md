@@ -6,8 +6,18 @@ Add `ReportButton` to `/ui` — a shared, two-step control that files a shared-b
 
 Three first-party blocks reached for this control independently (app-requests inline, model-benchmarking as a local component, custom-generators now needing a third), and each time the risk was the same one: wording that lets a viewer believe they deleted something. `report()` files a row and explicitly does **not** hide it — a moderator decides — and an app owner has no server-side hide to offer instead, because `update` and `withdraw` are author-scoped.
 
-So the settled copy ("Reported for review") and the confirm copy are **deliberately not props**. Only `noun` varies. Making the strings configurable would hand that risk back to every consumer and defeat the reason this was promoted out of app code.
+So the three visible strings — the confirm question, the failure line and the settled line — are **not props**, and each is pinned whole by a test. Only `noun` varies.
 
-Behaviour: nothing is filed from the trigger — only from an armed confirm. A rejected report keeps the control armed with "Could not send — try again?" rather than settling, because a failed report that closes quietly reads as a filed one.
+🔴 **What that guarantee is, precisely:** the wording *this component renders* cannot drift across blocks by accident. It does **not** constrain what `onReport` does — a consumer can wire a real delete behind it and the control will still settle to "Reported for review" — and it cannot stop a host page restyling the settled text out of view. "Cannot drift by accident" is the claim; "unforgeable" would be wrong.
 
-The caller decides who sees it: render it only for a signed-in viewer who does not own the row, since `report` rejects for an anonymous viewer and an author has a real Remove.
+Behaviour:
+
+- Nothing is filed from the trigger — only from an armed confirm, and the confirm is inert while a request is in flight, so one row cannot be filed twice (`report()` is not documented idempotent the way `vote`/`unvote` are).
+- A rejected report keeps the control armed with "Could not send — try again?" rather than settling, and that line carries `role="alert"` — success is announced by a focus move, so without it a rejection is silent to exactly the users the fixed wording protects.
+- Focus moves with the control at both transitions. Each step replaces the element the viewer just activated, so otherwise a keyboard user is dropped to `<body>` mid-handshake.
+- `reported` lets server truth drive the settled state. Without it the settled state is local-only, so any remount resets the control and the same viewer can file again.
+- The four secondary test hooks are derived from `data-testid` by suffix, so two rows in one list stay distinguishable once armed or settled.
+
+The caller decides who sees it: render only for a signed-in viewer who does not own the row, since `report` rejects anonymous viewers and an author has a real Remove.
+
+Not covered: there is no way to supply `report()`'s optional `reason` — a block needing one would have to abandon the component, so that is worth deciding before wide adoption.
