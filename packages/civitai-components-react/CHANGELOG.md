@@ -1,5 +1,13 @@
 # @civitai/components-react
 
+## 0.4.1
+
+### Patch Changes
+
+- Updated dependencies [ee25ac9]
+  - @civitai/components@0.4.1
+  - @civitai/theme@0.3.1
+
 ## 0.4.0
 
 ### Minor Changes
