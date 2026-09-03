@@ -920,6 +920,66 @@ describe('assert-published-versions', () => {
     }
   });
 
+  test('the missing-version remedy names STAGED publishing, not just "re-run" — re-running a staged version is an E409 loop', async () => {
+    // The artifact under test here is PROSE, and prose guards are walkable by
+    // rewording — so pin the whole normalised block rather than a keyword.
+    //
+    // What it protects: `missing` has two causes with OPPOSITE fixes, and an
+    // anonymous 404 cannot tell them apart. Until 2026-09-03 this block said
+    // only "re-run the release workflow, or publish this package manually",
+    // which is correct for a failed publish and a DEAD END for a staged one —
+    // staged and published versions share one semver index, so every re-run
+    // returns `E409 Cannot publish over previously staged version` and only a
+    // 2FA human running `npm stage approve`/`reject` can clear it. Measured on
+    // release run 33785932215 (2026-09-03), where `changeset publish` reported
+    // all four packages published, two actually were, and the wrong remedy was
+    // the one on screen. See RELEASING.md § "Staged publishing".
+    const behind = await startFakeRegistry({ ...V(), '@civitai/app-sdk': '0.30.0' });
+    const dir = createFixture({ scripts: [SCRIPT] });
+    try {
+      const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: behind.origin, ...FAST });
+      assert.equal(r.code, 1, r.out);
+
+      const lines = r.out.split('\n').map((l) => l.trimEnd());
+      const start = lines.findIndex((l) => l.includes('TWO causes produce this'));
+      assert.ok(start >= 0, `no two-causes block in:\n${r.out}`);
+      assert.deepEqual(lines.slice(start, start + 15), [
+        '       TWO causes produce this, and they need OPPOSITE fixes:',
+        '',
+        '       1. the publish failed  -> re-run the release workflow.',
+        '       2. npm STAGED the version instead of publishing it. A staged version is',
+        '          invisible to anonymous reads and OCCUPIES ITS SEMVER SLOT, so every',
+        '          re-run (and a manual `npm publish`) returns',
+        '          `E409 Cannot publish over previously staged version`. Re-running is a',
+        '          DEAD END. Only a human with 2FA can finish it:',
+        '',
+        '            npm stage list <package>       # find the stage id',
+        '            npm stage approve <stage-id>   # publish it   (2FA)',
+        '            npm stage reject  <stage-id>   # free the slot (2FA)',
+        '',
+        '       CHECK 2 FIRST when some packages above published and others did not —',
+        '       that asymmetry IS the staged-publishing signature, and it is the state',
+      ]);
+
+      // The old advice must not survive alongside the new: an operator reading
+      // "publish this package manually" against a staged version walks into the
+      // same E409 the block above exists to warn them off.
+      assert.doesNotMatch(r.out, /publish this package manually/);
+
+      // And the per-package identity line must still be there — the remedy is
+      // useless if you cannot see WHICH package to run `npm stage list` on.
+      assert.match(
+        r.out,
+        new RegExp(
+          `${DEFAULT_PACKAGES['civitai-app-sdk'].name}@${DEFAULT_PACKAGES['civitai-app-sdk'].version.replace(/\./g, '\\.')} -> HTTP 404 after 1 attempt\\(s\\)`,
+        ),
+      );
+    } finally {
+      destroyFixture(dir);
+      await behind.close();
+    }
+  });
+
   // ---- fail-closed on a 2xx contract violation (audit finding 2) ----------
 
   test('FAILS (not "unreachable") when the registry answers 200 with no version field', async () => {
