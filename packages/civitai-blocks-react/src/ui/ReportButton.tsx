@@ -116,9 +116,21 @@ export function ReportButton({
   const confirmRef = useRef<HTMLButtonElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const doneRef = useRef<HTMLSpanElement>(null);
-  /** Set when the viewer backs out mid-flight; the in-flight settle then no-ops.
-   *  This is what lets Cancel stay ENABLED while a request runs — see below. */
-  const abandonedRef = useRef(false);
+  /**
+   * Monotonic id of the CURRENT attempt. Every settle compares against it and
+   * no-ops if it has moved on.
+   *
+   * 🔴 A single "abandoned" BOOLEAN is not enough, and the difference is not
+   * theoretical — it was measured. A boolean reset at the top of each attempt
+   * protects exactly one abandoned request and only until the next confirm, so
+   * cancel → re-arm → confirm let the FIRST request settle the control
+   * ("Reported for review" for a report the viewer withdrew from, while a second
+   * was still in flight) and, on the rejecting path, clear the shared `busy` so
+   * Confirm re-enabled mid-flight — three `onReport` calls for one row, against
+   * a `report()` that is not idempotent. An id per attempt cannot do that:
+   * anything that ends an attempt bumps it, and a superseded settle is inert.
+   */
+  const attemptRef = useRef(0);
   const settled = done || reported;
   useBlocksStyles();
 
@@ -174,8 +186,15 @@ export function ReportButton({
   // same dropped-error state the Cancel handling above exists to prevent.
   useEffect(() => {
     if (reported) {
+      // 🔴 Bump the attempt too, or an in-flight request keeps writing into a
+      // control that has already settled: measured, a rejection arriving after
+      // this flip set `failed` behind the settled note, and withdrawing
+      // `reported` then surfaced "Could not send — try again?" for a report that
+      // was never submitted.
+      attemptRef.current += 1;
       setConfirming(false);
       setFailed(false);
+      setBusy(false);
     }
   }, [reported]);
 
@@ -208,24 +227,30 @@ export function ReportButton({
   }
 
   const confirm = async () => {
-    abandonedRef.current = false;
+    const attempt = (attemptRef.current += 1);
+    /** This attempt is still the one on screen. */
+    const current = () => attemptRef.current === attempt;
     setBusy(true);
     setFailed(false);
     try {
       await onReport();
-      // 🔴 The viewer backed out while this was in flight, so do NOT settle: a
-      // control that reports "Reported for review" after Cancel is describing
-      // an action its user withdrew from.
-      if (abandonedRef.current) return;
+      // 🔴 Superseded — the viewer cancelled, the parent settled us, or a newer
+      // attempt is in flight. Settling here would report an action this viewer
+      // withdrew from, or overwrite a newer one.
+      if (!current()) return;
       setDone(true);
       setConfirming(false);
     } catch {
-      // Same on the failure side — a rejection for an abandoned request must not
-      // resurrect the strip the viewer just closed.
-      if (abandonedRef.current) return;
+      // Same on the failure side: a rejection belonging to an abandoned or
+      // superseded attempt must not resurrect a strip, nor mark a live attempt
+      // failed.
+      if (!current()) return;
       setFailed(true);
     } finally {
-      if (!abandonedRef.current) setBusy(false);
+      // 🔴 Load-bearing, not defensive. A superseded attempt clearing the shared
+      // `busy` is what re-enabled Confirm while a newer request was still
+      // running, which is how one row got filed three times.
+      if (current()) setBusy(false);
     }
   };
 
@@ -258,10 +283,10 @@ export function ReportButton({
         // `shared.report()` over a postMessage bridge with no timeout, so a
         // reply that never arrives left BOTH buttons disabled and the control
         // wedged with no way back short of a remount. Trading a rare race for a
-        // permanent dead end is the wrong side of that trade; `abandonedRef`
+        // permanent dead end is the wrong side of that trade; the attempt token
         // closes the race without taking the escape hatch away.
         onClick={() => {
-          abandonedRef.current = true;
+          attemptRef.current += 1;
           setBusy(false);
           setFailed(false);
           setConfirming(false);

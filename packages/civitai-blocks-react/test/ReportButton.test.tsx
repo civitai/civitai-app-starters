@@ -67,6 +67,12 @@ describe('ReportButton', () => {
       for (const id of ['report-confirm', 'report-cancel']) {
         expect(screen.getByTestId(id).getAttribute('aria-label')).not.toMatch(DELETION);
       }
+      // 🔴 Pinned WHOLE, like the visible copy. The keyword sweep above is the
+      // weaker half and the Cancel name is the one it solely owns: an audit
+      // showed "Take this row down permanently" — deletion-implying with no
+      // keyword — passing a green suite. The other two names are already pinned
+      // whole by the getByRole({ name }) queries below.
+      expect(screen.getByTestId('report-cancel').getAttribute('aria-label')).toBe('Cancel the report');
     });
 
     it('the CONFIRM question', () => {
@@ -239,6 +245,86 @@ describe('ReportButton', () => {
     });
   });
 
+  describe('one attempt cannot settle another', () => {
+    // 🔴 These are the states a single "abandoned" boolean could not express.
+    // Measured on that version: the first request settled the control after the
+    // viewer had withdrawn from it, and cleared the shared `busy` so Confirm
+    // re-enabled while a second was still in flight — three files for one row.
+
+    it('🔴 a SUPERSEDED resolve does not settle the control', async () => {
+      const p1 = deferred();
+      const p2 = deferred();
+      let n = 0;
+      const onReport = vi.fn(() => (++n === 1 ? p1.promise : p2.promise));
+      render(<ReportButton noun="prompt" onReport={onReport} />);
+
+      fireEvent.click(screen.getByTestId('report-button'));
+      fireEvent.click(screen.getByTestId('report-confirm'));   // attempt 1
+      fireEvent.click(screen.getByTestId('report-cancel'));    // withdrawn
+      fireEvent.click(screen.getByTestId('report-button'));
+      fireEvent.click(screen.getByTestId('report-confirm'));   // attempt 2, in flight
+
+      p1.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      // Attempt 1 was withdrawn; settling on it would report an action the
+      // viewer backed out of, while a newer one is still outstanding.
+      expect(screen.queryByTestId('report-done')).toBeNull();
+      expect(screen.getByTestId('report-confirm-prompt')).toBeTruthy();
+    });
+
+    it('🔴 a SUPERSEDED reject cannot re-enable Confirm and let the row be filed again', async () => {
+      const p1 = deferred();
+      const p2 = deferred();
+      let n = 0;
+      const onReport = vi.fn(() => (++n === 1 ? p1.promise : p2.promise));
+      render(<ReportButton noun="prompt" onReport={onReport} />);
+
+      fireEvent.click(screen.getByTestId('report-button'));
+      fireEvent.click(screen.getByTestId('report-confirm'));
+      fireEvent.click(screen.getByTestId('report-cancel'));
+      fireEvent.click(screen.getByTestId('report-button'));
+      fireEvent.click(screen.getByTestId('report-confirm'));   // attempt 2 in flight
+
+      p1.reject(new Error('stale'));
+      // 🔴 A MACROTASK, not two microtasks. With only microtask flushes React had
+      // not re-rendered yet, so `disabled` still read `true` from attempt 2 and
+      // the assertion passed no matter what — a mutant clearing the shared
+      // `busy` in `finally` SURVIVED. The flush is what makes this observe
+      // anything.
+      await new Promise((r) => setTimeout(r, 0));
+
+      // Attempt 2 is still running, so Confirm must stay inert and no failure
+      // may be shown for the abandoned attempt.
+      expect((screen.getByTestId('report-confirm') as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.getByTestId('report-confirm-prompt').textContent).not.toMatch(/could not send/i);
+      fireEvent.click(screen.getByTestId('report-confirm'));
+      expect(onReport).toHaveBeenCalledTimes(2);
+    });
+
+    it('🔴 a stale rejection does not surface when the viewer re-arms', async () => {
+      // The behaviour the catch-side guard really prevents. The previous test
+      // for it asserted the strip was absent — but the strip is unmounted by
+      // `confirming` regardless, so it could not observe the guard at all.
+      const d = deferred();
+      render(<ReportButton noun="prompt" onReport={() => d.promise} />);
+      fireEvent.click(screen.getByTestId('report-button'));
+      fireEvent.click(screen.getByTestId('report-confirm'));
+      fireEvent.click(screen.getByTestId('report-cancel'));
+
+      d.reject(new Error('stale'));
+      await Promise.resolve();
+      await Promise.resolve();
+
+      fireEvent.click(screen.getByTestId('report-button'));
+      // The prompt testid is the whole Group (note + both buttons), so read the
+      // note itself — its textContent would otherwise carry "ReportCancel".
+      expect(
+        screen.getByTestId('report-confirm-prompt').querySelector('span')!.textContent,
+      ).toBe('Send this prompt to moderators for review?');
+    });
+  });
+
   describe('`reported` ends the handshake rather than hiding it', () => {
     it('🔴 clears a failure strip, and un-setting it does not resurrect one', async () => {
       const onReport = async () => {
@@ -258,6 +344,41 @@ describe('ReportButton', () => {
       expect(screen.getByTestId('report-button')).toBeTruthy();
       expect(screen.queryByTestId('report-confirm-prompt')).toBeNull();
     });
+
+    it('🔴 a rejection arriving AFTER the parent settles us is discarded', async () => {
+      // Measured on the previous version: the effect cleared `confirming`/`failed`
+      // but left the in-flight attempt live, so its rejection set `failed` behind
+      // the settled note — and withdrawing `reported` then surfaced "Could not
+      // send" for a report that was never submitted.
+      const d = deferred();
+      const props = { noun: 'prompt' as const, onReport: () => d.promise };
+      const { rerender } = render(<ReportButton {...props} />);
+      fireEvent.click(screen.getByTestId('report-button'));
+      fireEvent.click(screen.getByTestId('report-confirm'));
+
+      rerender(<ReportButton {...props} reported />);
+      expect(screen.getByTestId('report-done')).toBeTruthy();
+
+      d.reject(new Error('late'));
+      await Promise.resolve();
+      await Promise.resolve();
+
+      rerender(<ReportButton {...props} />);
+      fireEvent.click(screen.getByTestId('report-button'));
+      // The prompt testid is the whole Group (note + both buttons), so read the
+      // note itself — its textContent would otherwise carry "ReportCancel".
+      expect(
+        screen.getByTestId('report-confirm-prompt').querySelector('span')!.textContent,
+      ).toBe('Send this prompt to moderators for review?');
+    });
+  });
+
+  it('🔴 the theme tokens are injected even when it mounts straight into the settled branch', () => {
+    // That branch renders a bare <span> — no Button, no Group — so nothing else
+    // injects the stylesheet for it. Deleting the `useBlocksStyles()` call
+    // survived BOTH tiers before this.
+    render(<ReportButton noun="prompt" reported onReport={async () => {}} />);
+    expect(document.querySelector('style[data-civitai-blocks-ui]')).not.toBeNull();
   });
 
   describe('focus moves with the control', () => {
