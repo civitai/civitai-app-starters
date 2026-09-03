@@ -191,6 +191,13 @@ export function ReportButton({
       // this flip set `failed` behind the settled note, and withdrawing
       // `reported` then surfaced "Could not send — try again?" for a report that
       // was never submitted.
+      //
+      // 🔴 `setBusy(false)` is NOT redundant beside `setFailed(false)`, and
+      // deleting it passes both tiers. The attempt is now superseded, so its
+      // `finally` will never clear the shared `busy` — withdraw `reported` and
+      // Confirm renders permanently disabled with a spinner, escapable only via
+      // Cancel. Clearing it here is what ends the attempt completely rather than
+      // half-way.
       attemptRef.current += 1;
       setConfirming(false);
       setFailed(false);
@@ -234,9 +241,11 @@ export function ReportButton({
     setFailed(false);
     try {
       await onReport();
-      // 🔴 Superseded — the viewer cancelled, the parent settled us, or a newer
-      // attempt is in flight. Settling here would report an action this viewer
-      // withdrew from, or overwrite a newer one.
+      // 🔴 Superseded — the viewer cancelled, or the parent settled us. (A
+      // newer attempt cannot be started without one of those first, since
+      // Confirm is natively disabled while busy; the check is depth, not a
+      // reachable third case.) Settling here would report an action this viewer
+      // withdrew from.
       if (!current()) return;
       setDone(true);
       setConfirming(false);

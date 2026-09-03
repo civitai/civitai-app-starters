@@ -265,8 +265,13 @@ describe('ReportButton', () => {
       fireEvent.click(screen.getByTestId('report-confirm'));   // attempt 2, in flight
 
       p1.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
+      // 🔴 A MACROTASK. Two microtask flushes are not enough for React to
+      // COMMIT, so both assertions below would read the pre-settle DOM and pass
+      // no matter what the code did — measured: with the source reverted to the
+      // broken version this test names, it still passed. Its sibling on the
+      // reject side had the same defect and was fixed; this one was missed,
+      // which left the headline case of that round with no working guard.
+      await new Promise((r) => setTimeout(r, 0));
       // Attempt 1 was withdrawn; settling on it would report an action the
       // viewer backed out of, while a newer one is still outstanding.
       expect(screen.queryByTestId('report-done')).toBeNull();
@@ -371,6 +376,26 @@ describe('ReportButton', () => {
         screen.getByTestId('report-confirm-prompt').querySelector('span')!.textContent,
       ).toBe('Send this prompt to moderators for review?');
     });
+  });
+
+  it('🔴 a withdrawn `reported` leaves Confirm USABLE, not stuck spinning', async () => {
+    // 🔴 The `reported` effect's `setBusy(false)` is load-bearing and had zero
+    // coverage on either tier. Without it: an attempt is in flight, the parent
+    // settles the control, the parent then withdraws that — and the superseded
+    // attempt's `finally` will never clear the SHARED `busy`, so Confirm renders
+    // permanently disabled with a spinner and only Cancel gets the viewer out.
+    // That is the wedge class this component's comments exist to prevent.
+    const d = deferred();
+    const props = { noun: 'prompt' as const, onReport: () => d.promise };
+    const { rerender } = render(<ReportButton {...props} />);
+    fireEvent.click(screen.getByTestId('report-button'));
+    fireEvent.click(screen.getByTestId('report-confirm'));
+
+    rerender(<ReportButton {...props} reported />);
+    rerender(<ReportButton {...props} />);
+    fireEvent.click(screen.getByTestId('report-button'));
+
+    expect((screen.getByTestId('report-confirm') as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('🔴 the theme tokens are injected even when it mounts straight into the settled branch', () => {

@@ -20,4 +20,6 @@ Behaviour:
 
 The caller decides who sees it: render only for a signed-in viewer who does not own the row, since `report` rejects anonymous viewers and an author has a real Remove.
 
+🔴 One consequence worth stating, since it is a deliberate trade rather than an oversight: a parent that sets `reported` and then withdraws it while a request is still outstanding leaves the control usable again, so that viewer can file the same row a second time. The alternative — keeping the superseded attempt's in-flight state — wedges Confirm permanently, which is worse, and it is the same trade the Cancel path makes. Supply `reported` from a durable per-viewer record rather than toggling it, and this does not arise.
+
 Not covered: there is no way to supply `report()`'s optional `reason` — a block needing one would have to abandon the component, so that is worth deciding before wide adoption.
