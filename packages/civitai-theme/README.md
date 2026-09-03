@@ -65,8 +65,15 @@ resolves the block's own measured width against this scale.
 ## Usage
 
 ```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/theme@0.2.0/styles.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/theme/styles.css" />
 ```
+
+Unversioned on purpose: it tracks the `latest` dist-tag, so the tokens you load
+always include the ones documented above. A pinned URL keeps returning **200
+with an old stylesheet** — `@0.2.0`, the version this README shipped until now,
+carries **zero** `--civitai-bp-*` tokens, so every `var(--civitai-bp-md)` on
+this page resolved to nothing. Pin only if you need a reproducible build, and
+re-check the pin when you upgrade.
 
 ```ts
 import { injectTokens, tokens } from '@civitai/theme';

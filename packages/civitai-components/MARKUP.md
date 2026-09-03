@@ -10,9 +10,21 @@ is the source of truth for external HTML authors.
 Load the tokens **and** the component CSS (order-independent, but load both):
 
 ```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/theme@0.2.0/styles.css" />
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/components@0.3.0/styles.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/theme/styles.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/components/styles.css" />
 ```
+
+These URLs are **deliberately unversioned** — they track each package's `latest`
+dist-tag, so the CSS you load always matches the contract documented below. A
+pinned URL is the failure mode this document has already shipped twice: jsDelivr
+serves every published version forever, so a stale pin returns **200 with an old
+stylesheet** and every attribute documented since renders as an unstyled bare
+element — no console error, no failed request. To pin anyway (reproducible
+builds), append the version **you read from each package's own npm page** —
+`…/npm/@civitai/theme@<theme-version>/styles.css` — and re-check it when you
+upgrade. The two packages version **independently**: never copy one version
+across both links, because a version a package never published is a hard 404,
+and a 404'd stylesheet renders unstyled with no error either.
 
 Or, from JS: `import { injectStyles } from '@civitai/components'; injectStyles();`
 (injects both tokens and component CSS, idempotently).

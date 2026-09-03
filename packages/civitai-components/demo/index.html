@@ -10,15 +10,25 @@
       loads the two design-system stylesheets straight from a CDN and uses only
       hand-written HTML following @civitai/components/MARKUP.md. Open it directly
       in a browser, or copy it as the starting point for a no-framework block.
-      (These two packages version INDEPENDENTLY — never copy one version across
-      both. Take each version from the link below it rather than from this
-      comment: a version one package never published 404s, and a 404'd
-      stylesheet renders an unstyled page with no error. The
-      literal `/styles.css` path works on every CDN because the packages ship a
-      real root styles.css file — jsDelivr ignores package.json `exports`.)
+
+      The two <link>s below are UNVERSIONED on purpose: they track each
+      package's `latest` dist-tag, so this page always demos the current design
+      system and can never drift from MARKUP.md. It drifted twice while pinned —
+      jsDelivr serves every published version forever, so a stale pin returns
+      200 with an OLD stylesheet and newly documented attributes render as
+      unstyled bare elements, with no console error and no failed request.
+
+      If you pin in your own copy: these two packages version INDEPENDENTLY, so
+      never copy one version across both — a version a package never published
+      is a hard 404, and a 404'd stylesheet renders an unstyled page with no
+      error either. Read each version from that package's npm page.
+
+      The literal `/styles.css` path works on every CDN because the packages
+      ship a real root styles.css file — jsDelivr ignores package.json
+      `exports`.
     -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/theme@0.2.0/styles.css" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/components@0.3.0/styles.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/theme/styles.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/components/styles.css" />
 
     <style>
       /* Page theming comes straight from the design-system tokens. */
