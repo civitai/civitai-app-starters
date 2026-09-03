@@ -107,6 +107,116 @@ On every push to `main`, [`changesets/action`](https://github.com/changesets/cha
 
 No `NPM_TOKEN`. No 2FA prompt. The deploy completes in ~90 seconds.
 
+## 🔴 Staged publishing — how a release goes half-live, and why re-running is a dead end
+
+**npm staged publishing is enabled on at least `@civitai/components`.** It exists so an
+automated workflow can put a version into the registry without a 2FA prompt, leaving a
+human to supply proof-of-presence later. `npm help stage`: a staged version sits in the
+registry *"in a state where it's not available for public access"*.
+
+**The divert is silent and it reports success.** Measured on release run `33785932215`
+attempt 1 (2026-09-03): `changeset publish` printed
+
+```
+🦋  success packages published successfully:
+🦋  @civitai/blocks-react@0.45.1
+🦋  @civitai/components@0.4.1
+🦋  @civitai/components-react@0.4.1
+🦋  @civitai/theme@0.3.1
+```
+
+and `changesets/action` pushed all four git tags — while the registry only ever held two
+of them (`theme@0.3.1` and `components-react@0.4.1`, both at `17:41:28Z`). `pnpm publish`
+got a 2xx for `@civitai/components@0.4.1`; the registry staged it. Nothing in the tool
+chain can see the difference. **`pnpm assert:published` is the only thing that caught it**,
+on both 2026-09-02 and 2026-09-03.
+
+**Then it deadlocks.** Staged and published versions share one semver index, so the slot
+is taken. Attempt 2 of the same run:
+
+```
+npm error 409 Conflict - PUT https://registry.npmjs.org/@civitai%2fcomponents
+  - Cannot publish over previously staged version "0.4.1".
+```
+
+Every later re-run gets the same, and so does a manual `npm publish`. **Re-running the
+release workflow cannot fix a staged version** — only a human with 2FA can:
+
+```bash
+npm stage list @civitai/components      # find the stage id   (needs auth, no 2FA)
+npm stage approve <stage-id>            # publish it          (2FA)
+npm stage reject  <stage-id>            # free the slot       (2FA)
+```
+
+On 2026-09-03 `components@0.4.1` appeared at `17:45:38Z` — four minutes after the E409 —
+when a human approved it.
+
+### Why the half-live window breaks consumers
+
+`pnpm` rewrites `workspace:*` to an **exact** version when it packs, so the published
+`@civitai/blocks-react@0.45.1` requires `@civitai/components@0.4.1` to the digit (confirm
+with `npm view @civitai/blocks-react@0.45.1 dependencies`). A dependent going live while
+its dependency is staged therefore makes
+
+```
+npm install @civitai/blocks-react     # ETARGET — no matching version for @civitai/components@0.4.1
+```
+
+fail for every block author, with `latest` already moved. That happened twice, 2026-09-02
+and 2026-09-03, ~15 minutes each time.
+
+### 🔴 Approve in DEPENDENCY ORDER
+
+`npm stage approve` takes **one stage id at a time** and each approval publishes
+immediately, so there is no atomic batch — approval is inherently sequential. What removes
+the consumer-facing window is not speed, it is **order**: approve a package only after
+everything it depends on is live. Then every package that is visible at any instant has
+all of its dependencies visible too.
+
+```
+1. @civitai/theme             (no first-party deps)
+2. @civitai/components        (-> theme)
+3. @civitai/components-react  (-> theme, components)
+4. @civitai/blocks-react      (-> theme, components)
+—  @civitai/app-sdk           independent; app-sdk is a PEER dep of blocks-react, any order
+```
+
+Re-derive rather than trusting this list — it is the `dependencies` block of each
+`packages/*/package.json`, and a new package will not be in it.
+
+### Making a release stage ALL five instead of some
+
+The goal — *stage everything, publish nothing, approve as one batch* — **cannot be reached
+from this repo.** Two measured reasons:
+
+- `@changesets/cli` (2.31.0, the pinned version) has **no stage mode**: `changeset publish`
+  hardcodes `pnpm publish` with `--access`/`--tag`/`--no-git-checks`/`--json`, and the
+  string `stage` does not appear in its dist at all. `changesets/action`'s `publish:` input
+  runs whatever command you give it, so a stage-only flow means replacing `changeset
+  publish` wholesale — its already-published skipping, its git tags, and the `New tag:`
+  stdout lines the action parses to create GitHub Releases.
+- `npm stage publish` is `npm publish` with a flag (`lib/commands/stage/publish.js` extends
+  `Publish` with `static stage = true`), and **npm does not rewrite the `workspace:`
+  protocol** — this is a pnpm workspace, invisible to npm. Measured: `npm pack` on
+  `packages/civitai-components` produces a tarball whose manifest still reads
+  `"@civitai/theme": "workspace:*"`, which no consumer can install. Staging correctly would
+  mean `pnpm pack` → `npm stage publish <tarball>` per package, by hand.
+
+**The lever is on npmjs.com, not here.** Uniform staging is a per-package registry
+setting: give every one of the five packages the same trusted-publisher / package-access
+configuration that `@civitai/components` already has (see `npm help stage` → *Trust
+Relationship Permissions*, `npm trust <provider> --allow-stage-publish` /
+`--allow-publish`). `changeset publish` then stages all five with no code change at all —
+it already does exactly that for `components`, transparently.
+
+⚠️ **Doing that has a CI consequence, decide it deliberately.** `pnpm assert:published`
+asserts every version in the tree is *published*. If a release stages all five, that step
+fails by design until a human approves the batch, and it **cannot** verify the staged half
+itself: an OIDC short-lived token cannot run `npm stage` subcommands (only `npm stage
+publish` and `npm publish`). So the choice is between a release run that is red-until-
+approved (honest: the release genuinely is not finished) and loosening the guard that is
+currently the only thing detecting a partial release. Do not loosen it by accident.
+
 ## Bootstrapping the OIDC trust (one-time, per package)
 
 Done for `@civitai/app-sdk` as of `0.1.0`. **Must be repeated for every newly-published package** — including `@civitai/blocks-react` before its first OIDC publish. For reference / disaster recovery:
