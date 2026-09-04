@@ -763,13 +763,24 @@ async function main() {
     // against a staged version sends them into an E409 loop with a correct-looking
     // instruction. `npm stage list` needs auth, which is why it is a human step
     // and not something this guard can resolve for you — an OIDC short-lived
-    // token cannot run `npm stage` subcommands at all.
+    // token cannot run `npm stage` subcommands at all. It also E401s from a
+    // developer machine that is not npm-logged-in (measured 2026-09-03), so the
+    // remedy below names the npmjs.com Staged Packages page as the surface that
+    // answers "is it staged?" with an ordinary browser session.
     for (const m of missing) {
       console.error(
         `  ${m.pkg.dir}\n` +
           `    ${m.pkg.name}@${m.pkg.version} -> HTTP ${m.status} after ${m.attempts} attempt(s)`,
       );
     }
+    console.error('');
+    console.error('       🔴 CHECK FOR STAGED VERSIONS BEFORE YOU RE-RUN ANYTHING:');
+    console.error('');
+    console.error('            https://www.npmjs.com/settings/civitai/staged-packages');
+    console.error('');
+    console.error('       (`npm stage list <package>` needs an npm login and returns E401 from a');
+    console.error('       machine that is not logged in — measured 2026-09-03 — so the web page is');
+    console.error('       the route that reliably answers this.)');
     console.error('');
     console.error('       TWO causes produce this, and they need OPPOSITE fixes:');
     console.error('');
@@ -780,15 +791,15 @@ async function main() {
     console.error('          `E409 Cannot publish over previously staged version`. Re-running is a');
     console.error('          DEAD END. Only a human with 2FA can finish it:');
     console.error('');
-    console.error('            npm stage list <package>       # find the stage id');
     console.error('            npm stage approve <stage-id>   # publish it   (2FA)');
     console.error('            npm stage reject  <stage-id>   # free the slot (2FA)');
     console.error('');
-    console.error('       CHECK 2 FIRST when some packages above published and others did not —');
-    console.error('       that asymmetry IS the staged-publishing signature, and it is the state');
-    console.error('       that breaks consumers (a live dependent exact-pins a staged dependency');
-    console.error('       -> ETARGET on install). Approve in DEPENDENCY ORDER; see RELEASING.md');
-    console.error('       § "Staged publishing".');
+    console.error('       A BLIND RE-RUN OVER A PARTLY-STAGED RELEASE IS WHAT BREAKS CONSUMERS: it');
+    console.error('       publishes whichever half is not staged and strands the other, so a live');
+    console.error('       dependent exact-pins a staged dependency -> ETARGET on install for');
+    console.error('       everyone. That is not a risk, it is what happened on 2026-09-03.');
+    console.error('       Some packages above published and others did not IS the staged signature.');
+    console.error('       Approve in DEPENDENCY ORDER; see RELEASING.md § "Staged publishing".');
     console.error('');
   }
 
