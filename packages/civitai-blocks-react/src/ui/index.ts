@@ -61,6 +61,9 @@ export type { LoaderProps, LoaderSize } from './Loader.js';
 export { Badge } from './Badge.js';
 export type { BadgeProps, BadgeVariant, BadgeSize } from './Badge.js';
 
+export { ReportButton } from './ReportButton.js';
+export type { ReportButtonProps } from './ReportButton.js';
+
 export { Modal } from './Modal.js';
 export type { ModalProps, ModalSize } from './Modal.js';
 
