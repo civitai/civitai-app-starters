@@ -220,6 +220,15 @@ export const WORKFLOW_STEP_TYPES = {
   comfyNodepackSnapshot: 'Snapshot a worker’s installed ComfyUI node packs (internal)',
   /** Qwen image benchmarking harness. */
   qwenImageBench: 'Qwen image benchmarking (internal)',
+  // ----- Auto-added 2026-09-04 from the orchestrator spec ----------------------
+  // Added by scripts/sync-orchestrator-catalogs.mjs: the live spec accepts
+  // these and this catalog did not list them. MOVE each entry into the right
+  // section above, and replace any TODO(catalog) line with a real one-line
+  // description — `pnpm check:catalogs` names every placeholder that is left.
+  // (That check is advisory, so it will not stop this merging. It is a
+  // reminder, not a gate.)
+  /** 🔴 PLACEHOLDER — the spec carries no usable description for this one. Write it. */
+  preprocessVideo: "TODO(catalog): no description yet — auto-added from the orchestrator spec; a maintainer must replace this line before merging",
 } as const;
 
 export type WorkflowStepType = keyof typeof WORKFLOW_STEP_TYPES;
