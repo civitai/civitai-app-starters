@@ -941,9 +941,39 @@ describe('assert-published-versions', () => {
       assert.equal(r.code, 1, r.out);
 
       const lines = r.out.split('\n').map((l) => l.trimEnd());
+
+      // 🔴 The CHECK-FIRST block, pinned whole and pinned SEPARATELY, because it
+      // is an ORDERING claim: it must reach the operator BEFORE the two-causes
+      // block offers "re-run the release workflow" as cause 1. A blind re-run
+      // over a partly-staged release is what published `blocks-react@0.45.1`
+      // while `components@0.4.1` sat staged, and that is the state that ETARGETs
+      // every consumer. It also names the npmjs.com Staged Packages page rather
+      // than `npm stage list`: measured 2026-09-03, that command returns
+      // `E401 Unable to authenticate` from a machine that is not npm-logged-in,
+      // so it is not the surface to send someone to mid-incident.
+      const checkFirst = lines.findIndex((l) => l.includes('CHECK FOR STAGED VERSIONS BEFORE'));
+      assert.ok(checkFirst >= 0, `no check-staged-first block in:\n${r.out}`);
+      assert.deepEqual(lines.slice(checkFirst, checkFirst + 7), [
+        '       🔴 CHECK FOR STAGED VERSIONS BEFORE YOU RE-RUN ANYTHING:',
+        '',
+        '            https://www.npmjs.com/settings/civitai/staged-packages',
+        '',
+        '       (`npm stage list <package>` needs an npm login and returns E401 from a',
+        '       machine that is not logged in — measured 2026-09-03 — so the web page is',
+        '       the route that reliably answers this.)',
+      ]);
+
       const start = lines.findIndex((l) => l.includes('TWO causes produce this'));
       assert.ok(start >= 0, `no two-causes block in:\n${r.out}`);
-      assert.deepEqual(lines.slice(start, start + 15), [
+      // ORDER, asserted rather than assumed: the two blocks are pinned
+      // independently above, so nothing else would notice if they swapped.
+      assert.ok(
+        checkFirst < start,
+        `the check-for-staged block (line ${checkFirst}) must come BEFORE the two-causes ` +
+          `block (line ${start}) — cause 1 there is "re-run", which is the move that breaks ` +
+          `consumers when a version is staged.`,
+      );
+      assert.deepEqual(lines.slice(start, start + 18), [
         '       TWO causes produce this, and they need OPPOSITE fixes:',
         '',
         '       1. the publish failed  -> re-run the release workflow.',
@@ -953,12 +983,15 @@ describe('assert-published-versions', () => {
         '          `E409 Cannot publish over previously staged version`. Re-running is a',
         '          DEAD END. Only a human with 2FA can finish it:',
         '',
-        '            npm stage list <package>       # find the stage id',
         '            npm stage approve <stage-id>   # publish it   (2FA)',
         '            npm stage reject  <stage-id>   # free the slot (2FA)',
         '',
-        '       CHECK 2 FIRST when some packages above published and others did not —',
-        '       that asymmetry IS the staged-publishing signature, and it is the state',
+        '       A BLIND RE-RUN OVER A PARTLY-STAGED RELEASE IS WHAT BREAKS CONSUMERS: it',
+        '       publishes whichever half is not staged and strands the other, so a live',
+        '       dependent exact-pins a staged dependency -> ETARGET on install for',
+        '       everyone. That is not a risk, it is what happened on 2026-09-03.',
+        '       Some packages above published and others did not IS the staged signature.',
+        '       Approve in DEPENDENCY ORDER; see RELEASING.md § "Staged publishing".',
       ]);
 
       // The old advice must not survive alongside the new: an operator reading
@@ -967,7 +1000,8 @@ describe('assert-published-versions', () => {
       assert.doesNotMatch(r.out, /publish this package manually/);
 
       // And the per-package identity line must still be there — the remedy is
-      // useless if you cannot see WHICH package to run `npm stage list` on.
+      // useless if you cannot see WHICH package to look up on the Staged
+      // Packages page (or to `npm stage approve`).
       //
       // A literal substring, NOT a built `new RegExp`: escaping the fixture's
       // version with `.replace(/\./g, '\\.')` handles dots and silently leaves

@@ -143,10 +143,17 @@ Every later re-run gets the same, and so does a manual `npm publish`. **Re-runni
 release workflow cannot fix a staged version** — only a human with 2FA can:
 
 ```bash
-npm stage list @civitai/components      # find the stage id   (needs auth, no 2FA)
+npm stage list @civitai/components      # find the stage id   (needs an npm login; E401 without one)
 npm stage approve <stage-id>            # publish it          (2FA)
 npm stage reject  <stage-id>            # free the slot       (2FA)
 ```
+
+**To find out WHETHER something is staged, look here first —
+<https://www.npmjs.com/settings/civitai/staged-packages>.** That page is the authoritative
+list, and an ordinary npmjs.com session is enough to read it. `npm stage list` needs an npm
+login and returns `E401 Unable to authenticate` from a machine that is not logged in
+(measured 2026-09-03), so it is not the route to reach for mid-incident when the only
+question is "is this version staged?".
 
 On 2026-09-03 `components@0.4.1` appeared at `17:45:38Z` — four minutes after the E409 —
 when a human approved it.

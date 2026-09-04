@@ -151,6 +151,33 @@ jobs:
       # per-request timeouts. The release `concurrency` lane above has no
       # cancel-in-progress, so an unbounded step here would park every
       # subsequent release rather than just failing this one.
+      #
+      # 🔴 MUST RUN AFTER A FAILED PUBLISH — that is the whole point of this
+      # condition, and its absence is a measured defect, not a theoretical one.
+      #
+      # A step with no `if:` defaults to `if: success()`, so when the changesets
+      # step exits non-zero this one is SKIPPED — precisely when the registry
+      # state is unknown and possibly inconsistent. Measured on release run
+      # 33785932215: attempt 1 published 2 of 4 packages, this step ran and
+      # correctly failed with `PUBLISH DID NOT HAPPEN` (35 log lines). Attempt 2
+      # published `blocks-react@0.45.1` and got `E409 Cannot publish over
+      # previously staged version "0.4.1"` for `components@0.4.1` — the publish
+      # step failed, so this step contributed **0 lines** and did not appear in
+      # the run's step list at all. That is the exact moment consumers broke: a
+      # live dependent exact-pinning a staged dependency -> ETARGET on install.
+      # A failed publish is the state that most needs a registry read.
+      #
+      # `!cancelled()` rather than `always()`, deliberately. `always()` also runs
+      # through a CANCELLATION, and this step can sleep for minutes (see the
+      # budget note above) under a 10-minute cap. The release `concurrency` lane
+      # has no `cancel-in-progress`, so a run is only ever cancelled by a human
+      # or a timeout, and subsequent releases QUEUE behind it — holding the lane
+      # for up to 10 more minutes to assert against a release someone deliberately
+      # stopped is the wrong trade. `!cancelled()` covers success and failure,
+      # which is the invariant; it stops covering the case nobody asked for.
+      # (The `${{ }}` wrapper is required, not cosmetic: a bare `if: !cancelled()`
+      # is invalid YAML — `!` opens a tag.)
       - name: Assert the published versions actually exist on npm
+        if: ${{ !cancelled() }}
         timeout-minutes: 10
         run: pnpm assert:published
