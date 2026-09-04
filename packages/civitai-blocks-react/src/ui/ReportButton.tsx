@@ -192,12 +192,19 @@ export function ReportButton({
       // `reported` then surfaced "Could not send — try again?" for a report that
       // was never submitted.
       //
-      // 🔴 `setBusy(false)` is NOT redundant beside `setFailed(false)`, and
-      // deleting it passes both tiers. The attempt is now superseded, so its
-      // `finally` will never clear the shared `busy` — withdraw `reported` and
-      // Confirm renders permanently disabled with a spinner, escapable only via
-      // Cancel. Clearing it here is what ends the attempt completely rather than
-      // half-way.
+      // 🔴 Neither `setBusy(false)` nor `setFailed(false)` is redundant here, and
+      // each went a full round with NO coverage on either tier before a case was
+      // written for it — see "a withdrawn `reported` leaves Confirm USABLE" and
+      // "does not leave a stale FAILURE behind either". Both now fail on the
+      // unit tier if their line is deleted.
+      //
+      // What they prevent, and note it surfaces on the NEXT ARM, not on the
+      // withdraw itself (this effect has already cleared `confirming`, so the
+      // viewer lands on the trigger): the attempt is superseded, so its
+      // `finally` never clears the shared `busy` and its rejection never clears
+      // `failed`. Re-arm and you get Confirm disabled with a spinner, or "Could
+      // not send" for a report never submitted in that attempt. Clearing both
+      // here is what ends the attempt completely rather than half-way.
       attemptRef.current += 1;
       setConfirming(false);
       setFailed(false);

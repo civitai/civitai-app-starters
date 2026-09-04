@@ -231,7 +231,14 @@ describe('ReportButton', () => {
       expect(screen.queryByTestId('report-done')).toBeNull();
     });
 
-    it('🔴 a late REJECT after Cancel does not resurrect the failure strip', async () => {
+    // 🔴 NOTE: this asserts the strip is UNMOUNTED, which `confirming === false`
+    // guarantees on its own — so it cannot observe the reject-side guard, and no
+    // mutant reddens it. Its sibling above (late RESOLVE) IS observant, so the
+    // pair reads as symmetric coverage while this half provides none. The real
+    // guard for the reject side is "a stale rejection does not surface when the
+    // viewer re-arms" below. Kept as a cheap smoke check, labelled so nobody
+    // mistakes it for the guard.
+    it('a late REJECT after Cancel leaves the strip closed (smoke — see the re-arm case for the guard)', async () => {
       const d = deferred();
       render(<ReportButton noun="prompt" onReport={() => d.promise} />);
       fireEvent.click(screen.getByTestId('report-button'));
@@ -396,6 +403,41 @@ describe('ReportButton', () => {
     fireEvent.click(screen.getByTestId('report-button'));
 
     expect((screen.getByTestId('report-confirm') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('🔴 a withdrawn `reported` does not leave a stale FAILURE behind either', async () => {
+    // 🔴 The exact twin of the `setBusy(false)` case above — same four-line
+    // effect body, one line up — and it had zero coverage on either tier.
+    // Deleting `setFailed(false)` left 1306/80 unit and 48/6 browser green.
+    //
+    // What it prevents: arm, Confirm, the request REJECTS (failed = true), the
+    // parent then settles us via `reported` and withdraws it again. Without the
+    // clear, re-arming shows "Could not send — try again?" for a report never
+    // submitted in that attempt — verbatim what the effect's own comment says it
+    // exists to prevent.
+    //
+    // The two existing cases each miss it for a different reason: one withdraws
+    // but never re-arms (so `failed` is unobservable behind an unmounted strip),
+    // and the other re-arms but its rejection lands AFTER the flip and is
+    // discarded by the attempt bump, so `failed` is never set at all.
+    const d = deferred();
+    const props = { noun: 'prompt' as const, onReport: () => d.promise };
+    const { rerender } = render(<ReportButton {...props} />);
+    fireEvent.click(screen.getByTestId('report-button'));
+    fireEvent.click(screen.getByTestId('report-confirm'));
+
+    d.reject(new Error('nope'));
+    await waitFor(() =>
+      expect(screen.getByTestId('report-confirm-prompt').textContent).toMatch(/could not send/i),
+    );
+
+    rerender(<ReportButton {...props} reported />);
+    rerender(<ReportButton {...props} />);
+    fireEvent.click(screen.getByTestId('report-button'));
+
+    expect(
+      screen.getByTestId('report-confirm-prompt').querySelector('span')!.textContent,
+    ).toBe('Send this prompt to moderators for review?');
   });
 
   it('🔴 the theme tokens are injected even when it mounts straight into the settled branch', () => {
