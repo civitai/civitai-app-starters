@@ -1,3 +1,5 @@
+import { forwardRef, useState } from 'react';
+
 import type { BlockResourceInfo } from '@civitai/app-sdk/blocks';
 
 import { Badge } from './Badge.js';
@@ -24,11 +26,23 @@ const TYPE_LABELS: Readonly<Record<string, string>> = {
 };
 
 /**
- * 🔴 FROZEN — shown in the `card` variant's thumbnail frame when the caller has
- * no image. Not a prop, and not blank: see {@link ResourceCardProps.thumbnailUrl}
- * for why this state is the COMMON one rather than an edge case. "No preview"
- * says the picture is missing; an empty grey box reads as an image that failed
- * to load, and "Loading…" would be an outright lie.
+ * 🔴 FROZEN — shown in the `card` variant's thumbnail frame when there is no
+ * usable image. Not a prop, and not blank: see
+ * {@link ResourceCardProps.thumbnailUrl} for why this state is the COMMON one
+ * rather than an edge case. "No preview" says the picture is missing; an empty
+ * grey box reads as an image that failed to load, and "Loading…" would be an
+ * outright lie.
+ *
+ * 🔴 "No usable image" covers TWO cases, and an audit found the second one
+ * missing: a caller who supplied no `thumbnailUrl`, AND a caller who supplied
+ * one that FAILED TO LOAD (a CDN 404/403, an ad-blocked host, an offline
+ * viewer). Keying only on the URL being absent produced exactly the empty grey
+ * box this constant's own comment exists to prevent — measured at
+ * `naturalWidth: 0`, a 206x206 frame and `textContent: ""`, with `alt=""` +
+ * `aria-hidden` leaving assistive tech nothing either. The `onError` handler
+ * below is what closes it; gen-matrix, the one consumer that supplies
+ * thumbnails, sources them from a live catalog fetch and is the likeliest to
+ * hit it.
  */
 const NO_THUMBNAIL_LABEL = 'No preview';
 
@@ -39,6 +53,22 @@ const NO_THUMBNAIL_LABEL = 'No preview';
  * alternative is rendering the literal string "#undefined" at people.
  */
 const UNKNOWN_NAME = 'Unknown resource';
+
+/**
+ * 🔴 FROZEN — the non-colour half of the selected affordance, and it is not a
+ * prop for the same reason the type label is text rather than a colour swatch:
+ * colour alone is not an accessible distinction (WCAG 1.4.1).
+ *
+ * An audit caught this component asserting that principle for `modelType` two
+ * paragraphs above while conveying SELECTION by border hue alone. `aria-pressed`
+ * covered assistive tech and nothing covered a sighted viewer who cannot
+ * separate the border tokens. This glyph is that cover; the border-colour change
+ * stays as reinforcement, not as the only signal.
+ *
+ * `aria-hidden` on purpose: `selected` exists only on the interactive arm, which
+ * always carries `aria-pressed`, so announcing it again would say it twice.
+ */
+const SELECTED_MARK = '✓';
 
 /**
  * 🔴 FROZEN — the name a resource renders under, and the single most important
@@ -103,23 +133,51 @@ interface ResourceCardBaseProps {
    * {@link NO_THUMBNAIL_LABEL} in a frame that keeps its aspect ratio rather
    * than collapsing the tile. Two of the three known consumers have no
    * thumbnail at all.
+   *
+   * A URL that FAILS to load falls back to the same placeholder, so a dead CDN
+   * link is never an empty grey square. The image is also `loading="lazy"` —
+   * load-bearing for the `card` variant, which is built for grids of dozens.
    */
   thumbnailUrl?: string;
   /**
-   * Trailing slot — a weight slider, a Remove button, a "Change" link, an
-   * "Added" pill.
+   * Trailing slot — a weight slider, a Remove button, a "Change" link.
    *
    * 🔴 Rendered as a SIBLING of the interactive hit area, never inside it. A
    * `<button>` nested in a `<button>` is invalid HTML: browsers reparent it, so
    * the inner control is unreachable by keyboard and its click is eaten by the
    * outer one. That is why this slot exists at all rather than callers wrapping
    * their own controls around the card.
+   *
+   * This is the FLOW slot — its content sits after the card body. For a badge
+   * that must sit ON the thumbnail, use {@link ResourceCardProps.overlay}.
    */
   actions?: React.ReactNode;
   /**
+   * Corner slot INSIDE the thumbnail frame — the "Added" / "In your queue" pill
+   * every picker ends up wanting.
+   *
+   * 🔴 It exists because the component makes it impossible to do from outside.
+   * The root sets `overflow: hidden` and no `position`, so a consumer's own
+   * absolutely-positioned child in {@link ResourceCardProps.actions} escapes the
+   * card AND is clipped (measured: card bottom 51, child bottom 120). The
+   * component owns the stacking context and the clip, so it owns this
+   * placement; leaving it to consumers means every one of them re-derives a fix
+   * for our CSS.
+   *
+   * Rendered only where a thumbnail frame exists — i.e. every `card`, and a
+   * `row` that has a `thumbnailUrl`. A `row` without one has no frame and
+   * ignores this; that is why the frozen selected mark does NOT live here.
+   */
+  overlay?: React.ReactNode;
+  /** Forwarded to the root, per the pack convention for every `/ui` primitive. */
+  className?: string;
+  /** Forwarded to the root, per the pack convention for every `/ui` primitive. */
+  style?: React.CSSProperties;
+  /**
    * Test hook for the ROOT. Every inner hook is DERIVED from it by suffix, so
    * two cards in one grid stay distinguishable: `<id>-hit`, `<id>-thumb`,
-   * `<id>-placeholder`, `<id>-name`, `<id>-meta`, `<id>-type`, `<id>-actions`.
+   * `<id>-placeholder`, `<id>-image`, `<id>-overlay`, `<id>-name`,
+   * `<id>-selected`, `<id>-meta`, `<id>-type`, `<id>-actions`.
    *
    * 🔴 Grep for the SUFFIX, never for the composed value — a composed testid
    * appears nowhere in source as a literal, so a search for `foo-name` returns
@@ -144,12 +202,21 @@ interface ResourceCardInteractiveProps extends ResourceCardBaseProps {
   /** Fires on activation (click, Enter, Space). Required — see `interactive`. */
   onSelect: () => void;
   /**
-   * This resource is already picked. Sets `aria-pressed`, so assistive tech
-   * announces the toggle state rather than the caller having to spell it into
-   * visible text.
+   * This resource is already picked. Sets `aria-pressed` for assistive tech AND
+   * renders the frozen {@link SELECTED_MARK} for everyone else, so the state is
+   * never carried by colour alone.
    */
   selected?: boolean;
-  /** Cannot be activated. Sets the native `disabled`. */
+  /**
+   * Cannot be activated. Sets the native `disabled`.
+   *
+   * 🔴 Do NOT wire this to the same expression as `selected` just because a
+   * picked card should not be re-picked. A disabled button leaves the tab order
+   * and can never show a focus ring, so a keyboard user tabbing a grid of 24
+   * silently skips every resource they have already chosen — and `aria-pressed`
+   * is exactly the affordance that makes re-pressing a selected card meaningful
+   * (it deselects). Reserve `disabled` for genuinely unavailable resources.
+   */
   disabled?: boolean;
 }
 
@@ -163,6 +230,14 @@ interface ResourceCardInteractiveProps extends ResourceCardBaseProps {
  * practice — an `onSelect` passed to something rendered as static is a handler
  * that silently never fires, and an interactive card without one is a tab stop
  * that does nothing. Under the union each is a type error.
+ *
+ * 🔴 CONSEQUENCE, because TypeScript's diagnostic for it is opaque: pass a
+ * LITERAL (`interactive` / `interactive={false}`) or branch on your condition.
+ * A `boolean` VARIABLE narrows to neither arm and fails with
+ * `TS2322: … not assignable to 'IntrinsicAttributes & ResourceCardProps'`,
+ * which names nothing useful. That is the correct behaviour — a `boolean`
+ * cannot carry a sound "then `onSelect` is required" — but it costs you a round
+ * if nobody says so. Spreading an `as const` prop bag compiles.
  */
 export type ResourceCardProps = ResourceCardStaticProps | ResourceCardInteractiveProps;
 
@@ -170,10 +245,11 @@ export type ResourceCardProps = ResourceCardStaticProps | ResourceCardInteractiv
  * 🔴 FROZEN — the accessible name of an interactive card, composed in ONE fixed
  * order everywhere.
  *
- * The visible tile is a name, a muted meta row and a pill; read as raw content
- * that is `"Juggernaut XLv9Checkpoint SDXL 1.0"`. So the button carries an
- * explicit label instead — and because it LEADS with the same string the tile
- * shows, it satisfies WCAG 2.5.3 (Label in Name) rather than diverging from it.
+ * The visible tile is a name, a type pill and a muted meta row; read as raw
+ * content that is `"Juggernaut XLCheckpointv9SD 1.5"` — and `"✓Juggernaut XL…"`
+ * once selected. So the button carries an explicit label instead — and because
+ * it LEADS with the same string the tile shows, it satisfies WCAG 2.5.3 (Label
+ * in Name) rather than diverging from it.
  *
  * Absent segments are dropped, never rendered as an empty gap. The selected
  * state is NOT spelled here: `aria-pressed` already carries it, and duplicating
@@ -205,8 +281,10 @@ function typeLabelOf(resource: BlockResourceInfo): string {
  * grid tile (`variant="card"`) or a compact list line (`variant="row"`).
  *
  * PRESENTATIONAL AND STATELESS by construction. It does not fetch, it calls no
- * host hook, and it owns no selection state: callbacks in, markup out. Whoever
- * owns the picked-resource list owns the state; this renders it.
+ * host hook, and it owns no selection state: callbacks in, markup out. (Its one
+ * piece of internal state is which thumbnail URL has failed to load, which is
+ * about the image element, not about your data.) Whoever owns the
+ * picked-resource list owns the state; this renders it.
  *
  * Derived from three first-party blocks that each built one:
  * `civitai-app-gen-matrix` (a thumbnail tile in a browse grid, `aria-pressed`,
@@ -218,12 +296,13 @@ function typeLabelOf(resource: BlockResourceInfo): string {
  * 🔴 WHAT IS FROZEN, and why that is the point rather than the markup: the
  * name fallback ({@link resourceDisplayName}), the type label
  * ({@link TYPE_LABELS}), the missing-thumbnail copy
- * ({@link NO_THUMBNAIL_LABEL}) and the accessible-name composition
+ * ({@link NO_THUMBNAIL_LABEL}), the non-colour selected mark
+ * ({@link SELECTED_MARK}) and the accessible-name composition
  * ({@link accessibleName}) are NOT props. Each is a statement about what a
  * resource IS, and three apps disagreeing about it is three apps telling a
  * viewer different things about the same model. What legitimately varies —
- * variant, thumbnail, selected/disabled, the actions slot, the surrounding
- * grid — is a prop.
+ * variant, thumbnail, selected/disabled, the two content slots, className,
+ * style, the surrounding grid — is a prop.
  *
  * 🔴 NOT A LINK, on purpose. It has `modelId`/`versionId` and could build a
  * civitai.com URL, but a block renders inside a sandboxed iframe where a
@@ -232,15 +311,18 @@ function typeLabelOf(resource: BlockResourceInfo): string {
  * mid-task. A card that navigates is a different component.
  *
  * @example
- * // Browse grid — the card IS the control.
+ * // Browse grid — the card IS the control. Note `selected` WITHOUT `disabled`:
+ * // a picked card stays focusable and re-pressing it deselects, which is what
+ * // `aria-pressed` promises. Disabling it instead drops every already-picked
+ * // resource out of the tab order.
  * <ResourceCard
  *   variant="card"
  *   interactive
  *   resource={r}
  *   thumbnailUrl={catalog.get(r.versionId)?.thumbnailUrl}
  *   selected={picked.has(r.versionId)}
- *   disabled={picked.has(r.versionId)}
- *   onSelect={() => add(r)}
+ *   onSelect={() => toggle(r)}
+ *   overlay={picked.has(r.versionId) ? <span>Added</span> : null}
  *   data-testid={`browse-${r.versionId}`}
  * />
  *
@@ -248,25 +330,39 @@ function typeLabelOf(resource: BlockResourceInfo): string {
  * // Selected list — static, with the per-row controls in `actions`.
  * <ResourceCard variant="row" resource={lora} actions={<RemoveButton … />} />
  */
-export function ResourceCard(props: ResourceCardProps): React.JSX.Element {
+export const ResourceCard = forwardRef<HTMLDivElement, ResourceCardProps>(function ResourceCard(
+  props,
+  ref
+): React.JSX.Element {
   const {
     resource,
     variant,
     thumbnailUrl,
     actions,
+    overlay,
+    className,
+    style,
     'data-testid': testId,
   } = props;
   const interactive = props.interactive === true;
   const selected = interactive ? props.selected === true : false;
   const disabled = interactive ? props.disabled === true : false;
+  // 🔴 Keyed by URL rather than a bare boolean, so it RESETS when the caller
+  // supplies a different thumbnail. A `useState(false)` + `onError` pair would
+  // latch: one dead URL and every later image for this card renders as the
+  // placeholder, in a grid whose cards are recycled as the viewer pages.
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
   useBlocksStyles();
 
   const id = testId ?? 'resource-card';
   const ids = {
     hit: `${id}-hit`,
     thumb: `${id}-thumb`,
+    image: `${id}-image`,
     placeholder: `${id}-placeholder`,
+    overlay: `${id}-overlay`,
     name: `${id}-name`,
+    selected: `${id}-selected`,
     meta: `${id}-meta`,
     type: `${id}-type`,
     actions: `${id}-actions`,
@@ -277,33 +373,64 @@ export function ResourceCard(props: ResourceCardProps): React.JSX.Element {
   const versionName =
     typeof resource.versionName === 'string' ? resource.versionName.trim() : '';
   const baseModel = typeof resource.baseModel === 'string' ? resource.baseModel.trim() : '';
+  const showImage = thumbnailUrl != null && failedUrl !== thumbnailUrl;
+  const hasFrame = variant === 'card' || thumbnailUrl != null;
 
   // 🔴 The frame is rendered in BOTH states, with the SAME wrapper element and
   // the same CSS box. Only its CONTENT differs. Rendering nothing when there is
   // no image collapses the tile — and since `BlockResourceInfo` has no image
   // field, "no image" is the common case, not the edge one.
-  const thumb =
-    variant === 'card' || thumbnailUrl != null ? (
-      <span data-civitai-ui-resource-thumb="" data-testid={ids.thumb}>
-        {thumbnailUrl != null ? (
-          // `alt=""` + aria-hidden: DECORATIVE. The name is carried by the
-          // visible text and, when interactive, by the button's own label — an
-          // alt here would make a screen reader read the resource twice.
-          <img src={thumbnailUrl} alt="" aria-hidden="true" loading="lazy" />
-        ) : (
-          <span data-civitai-ui-resource-placeholder="" data-testid={ids.placeholder}>
-            {NO_THUMBNAIL_LABEL}
-          </span>
-        )}
-      </span>
-    ) : null;
+  const thumb = hasFrame ? (
+    <span data-civitai-ui-resource-thumb="" data-testid={ids.thumb}>
+      {showImage ? (
+        // `alt=""` + aria-hidden: DECORATIVE. The name is carried by the
+        // visible text and, when interactive, by the button's own label — an
+        // alt here would make a screen reader read the resource twice.
+        <img
+          src={thumbnailUrl}
+          alt=""
+          aria-hidden="true"
+          // 🔴 Load-bearing, not hygiene: the `card` variant exists for grids
+          // of dozens of tiles, and eager-loading a full page of thumbnails is
+          // the class of regression this package already keeps
+          // `pickerOverlay.perf.browser.test.ts` for.
+          loading="lazy"
+          data-testid={ids.image}
+          // 🔴 A dead URL must reach the SAME placeholder as a missing one. See
+          // NO_THUMBNAIL_LABEL: without this a CDN 404 renders an empty grey
+          // square with no copy and nothing for assistive tech.
+          onError={() => setFailedUrl(thumbnailUrl)}
+        />
+      ) : (
+        <span data-civitai-ui-resource-placeholder="" data-testid={ids.placeholder}>
+          {NO_THUMBNAIL_LABEL}
+        </span>
+      )}
+      {overlay != null ? (
+        <span data-civitai-ui-resource-overlay="" data-testid={ids.overlay}>
+          {overlay}
+        </span>
+      ) : null}
+    </span>
+  ) : null;
 
   const body = (
     <>
       {thumb}
       <span data-civitai-ui-resource-text="">
-        <span data-civitai-ui-resource-name="" data-testid={ids.name}>
-          {name}
+        <span data-civitai-ui-resource-nameline="">
+          {selected ? (
+            <span
+              data-civitai-ui-resource-selected=""
+              data-testid={ids.selected}
+              aria-hidden="true"
+            >
+              {SELECTED_MARK}
+            </span>
+          ) : null}
+          <span data-civitai-ui-resource-name="" data-testid={ids.name}>
+            {name}
+          </span>
         </span>
         <span data-civitai-ui-resource-meta="" data-testid={ids.meta}>
           {typeLabel !== '' ? (
@@ -320,6 +447,9 @@ export function ResourceCard(props: ResourceCardProps): React.JSX.Element {
 
   return (
     <div
+      ref={ref}
+      className={className}
+      style={style}
       data-civitai-ui="resource-card"
       data-variant={variant}
       data-interactive={interactive ? 'true' : undefined}
@@ -356,4 +486,4 @@ export function ResourceCard(props: ResourceCardProps): React.JSX.Element {
       ) : null}
     </div>
   );
-}
+});

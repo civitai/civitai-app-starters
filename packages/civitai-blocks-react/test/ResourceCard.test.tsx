@@ -1,5 +1,6 @@
 import type { BlockResourceInfo } from '@civitai/app-sdk/blocks';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { createRef } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ResourceCard, resourceDisplayName } from '../src/ui/ResourceCard.js';
@@ -222,6 +223,78 @@ describe('ResourceCard', () => {
       expect(img.getAttribute('aria-hidden')).toBe('true');
     });
 
+    it('🔴 a thumbnail that FAILS to load falls back to the SAME placeholder', () => {
+      // 🔴 Found by audit. The branch used to key on `thumbnailUrl != null` —
+      // on the URL being ABSENT — with no `onError`, so a CDN 404/403, an
+      // ad-blocked host or an offline viewer rendered an empty grey square with
+      // no copy: measured `naturalWidth: 0`, a 206x206 frame and
+      // `textContent: ""`. That is verbatim the failure NO_THUMBNAIL_LABEL's
+      // own comment exists to prevent, and `alt="" + aria-hidden` left
+      // assistive tech nothing either.
+      render(
+        <ResourceCard
+          variant="card"
+          resource={LORA}
+          thumbnailUrl="https://image.example/gone.jpg"
+          data-testid="rc"
+        />,
+      );
+      expect(screen.queryByTestId('rc-placeholder'), 'precondition: the image renders first').toBeNull();
+
+      fireEvent.error(screen.getByTestId('rc-image'));
+
+      expect(
+        screen.getByTestId('rc-placeholder').textContent,
+        'a dead thumbnail URL must reach the same "No preview" placeholder as a missing one',
+      ).toBe('No preview');
+      expect(screen.queryByTestId('rc-image')).toBeNull();
+      expect(screen.getByTestId('rc-thumb'), 'the frame itself must survive').toBeTruthy();
+    });
+
+    it('🔴 the failure is keyed by URL, so a NEW thumbnail is tried rather than latched off', () => {
+      // A bare `useState(false)` would latch: one dead URL and every later image
+      // for this card renders as the placeholder — and grid cards are recycled
+      // as the viewer pages.
+      const { rerender } = render(
+        <ResourceCard
+          variant="card"
+          resource={LORA}
+          thumbnailUrl="https://image.example/gone.jpg"
+          data-testid="rc"
+        />,
+      );
+      fireEvent.error(screen.getByTestId('rc-image'));
+      expect(screen.getByTestId('rc-placeholder')).toBeTruthy();
+
+      rerender(
+        <ResourceCard
+          variant="card"
+          resource={LORA}
+          thumbnailUrl="https://image.example/fresh.jpg"
+          data-testid="rc"
+        />,
+      );
+      expect(
+        screen.getByTestId('rc-image').getAttribute('src'),
+        'a different thumbnail URL must be attempted, not suppressed by the previous failure',
+      ).toBe('https://image.example/fresh.jpg');
+    });
+
+    it('🔴 the thumbnail is LAZY — the card variant is built for grids of dozens', () => {
+      render(
+        <ResourceCard
+          variant="card"
+          resource={LORA}
+          thumbnailUrl="https://image.example/preview.jpg"
+          data-testid="rc"
+        />,
+      );
+      expect(
+        screen.getByTestId('rc-image').getAttribute('loading'),
+        'eager-loading a page of grid thumbnails is the regression class this package keeps a perf tier for',
+      ).toBe('lazy');
+    });
+
     it('variant="row" omits the frame when there is no thumbnail, and shows it when there is', () => {
       // The row is a compact line; an empty 36px "No preview" tile on every row
       // of a selected-resources list is noise, not information.
@@ -321,6 +394,75 @@ describe('ResourceCard', () => {
         screen.getByTestId('rc-hit').getAttribute('aria-pressed'),
         'a selected interactive card must be aria-pressed="true"',
       ).toBe('true');
+    });
+
+    it('🔴 selection is ALSO carried by a non-colour mark, not by border hue alone', () => {
+      // 🔴 Found by audit, and it is this component contradicting its own stated
+      // principle: TYPE_LABELS is frozen as text rather than colour because
+      // "colour alone is not an accessible distinction", while SELECTION was a
+      // 1px border-colour swap and nothing else (WCAG 1.4.1). `aria-pressed`
+      // covered assistive tech; a sighted viewer who cannot separate the border
+      // tokens had nothing.
+      const { rerender } = render(
+        <ResourceCard variant="card" interactive resource={LORA} onSelect={() => {}} data-testid="rc" />,
+      );
+      expect(screen.queryByTestId('rc-selected'), 'absent when not selected').toBeNull();
+
+      rerender(
+        <ResourceCard
+          variant="card"
+          interactive
+          selected
+          resource={LORA}
+          onSelect={() => {}}
+          data-testid="rc"
+        />,
+      );
+      const mark = screen.getByTestId('rc-selected');
+      expect(mark.textContent, 'the selected mark is a frozen glyph, not a colour').toBe('✓');
+      // Hidden from assistive tech on purpose: `aria-pressed` already says it,
+      // and announcing both makes the control read its state twice.
+      expect(mark.getAttribute('aria-hidden')).toBe('true');
+      // It must NOT land inside the name, or every name assertion and the
+      // truncation box would inherit it.
+      expect(screen.getByTestId('rc-name').textContent).toBe('Detail Tweaker');
+    });
+
+    it('🔴 the three STATE ATTRIBUTES reach the root — they are what the stylesheet reads', () => {
+      // 🔴 Found by audit: `data-selected` was the only visual selection cue and
+      // deleting it left unit 1342/1342 and browser 56/56 green, because nothing
+      // referenced any of the three. The failure it permitted: someone renames
+      // the attribute on the root but not in the stylesheet, all three consuming
+      // apps stop showing which resources are picked, and CI is green.
+      // The COMPUTED-STYLE half of this guard lives in the browser tier; this
+      // half pins the contract between the component and the selector.
+      const { rerender } = render(
+        <ResourceCard variant="card" interactive resource={LORA} onSelect={() => {}} data-testid="rc" />,
+      );
+      const root = () => screen.getByTestId('rc');
+      expect(root().getAttribute('data-interactive'), 'data-interactive').toBe('true');
+      expect(root().getAttribute('data-selected'), 'unselected must not carry data-selected').toBeNull();
+      expect(root().getAttribute('data-disabled'), 'enabled must not carry data-disabled').toBeNull();
+
+      rerender(
+        <ResourceCard
+          variant="card"
+          interactive
+          selected
+          disabled
+          resource={LORA}
+          onSelect={() => {}}
+          data-testid="rc"
+        />,
+      );
+      expect(root().getAttribute('data-selected'), 'data-selected').toBe('true');
+      expect(root().getAttribute('data-disabled'), 'data-disabled').toBe('true');
+
+      rerender(<ResourceCard variant="card" resource={LORA} data-testid="rc" />);
+      expect(
+        root().getAttribute('data-interactive'),
+        'a static card must not carry data-interactive',
+      ).toBeNull();
     });
   });
 
@@ -444,6 +586,56 @@ describe('ResourceCard', () => {
   });
 
   // -------------------------------------------------------------------------
+  // The `overlay` slot — the corner pill every picker wants.
+  // -------------------------------------------------------------------------
+  describe('the overlay slot', () => {
+    it('🔴 renders INSIDE the thumbnail frame, which is the box that owns the clip', () => {
+      // 🔴 Found by audit: the documented composition (gen-matrix's "Added"
+      // badge over the thumbnail) could not be built from outside. The root sets
+      // `overflow: hidden` and no `position`, so a consumer's absolutely-
+      // positioned child in `actions` both escaped the card and was clipped
+      // (measured: card bottom 51, child bottom 120). The component owns the
+      // stacking context, so it owns the placement.
+      render(
+        <ResourceCard
+          variant="card"
+          resource={LORA}
+          overlay={<span data-testid="pill">Added</span>}
+          data-testid="rc"
+        />,
+      );
+      const frame = screen.getByTestId('rc-thumb');
+      expect(
+        frame.contains(screen.getByTestId('pill')),
+        'the overlay must live inside the thumbnail frame, not beside the card',
+      ).toBe(true);
+      expect(screen.getByTestId('rc-overlay').textContent).toBe('Added');
+    });
+
+    it('coexists with the placeholder — a picker badge does not need a thumbnail', () => {
+      render(
+        <ResourceCard variant="card" resource={LORA} overlay={<span>Added</span>} data-testid="rc" />,
+      );
+      expect(screen.getByTestId('rc-placeholder').textContent).toBe('No preview');
+      expect(screen.getByTestId('rc-overlay')).toBeTruthy();
+    });
+
+    it('is absent when not passed, and on a row that has no frame to hang it in', () => {
+      render(<ResourceCard variant="card" resource={LORA} data-testid="rc" />);
+      expect(screen.queryByTestId('rc-overlay')).toBeNull();
+
+      cleanup();
+      // A row without a thumbnail has no frame at all — documented, and the
+      // reason the frozen selected mark lives in the name line instead.
+      render(
+        <ResourceCard variant="row" resource={LORA} overlay={<span>Added</span>} data-testid="rc" />,
+      );
+      expect(screen.queryByTestId('rc-thumb')).toBeNull();
+      expect(screen.queryByTestId('rc-overlay')).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Wiring.
   // -------------------------------------------------------------------------
   describe('wiring', () => {
@@ -490,6 +682,27 @@ describe('ResourceCard', () => {
         document.querySelector('style[data-civitai-blocks-ui]'),
         'useBlocksStyles() must run or a bare card renders with no pack CSS at all',
       ).not.toBeNull();
+    });
+
+    it('🔴 forwards className, style and ref to the root, per the pack convention', () => {
+      // The README states this for all 12 primitives ("Each component forwards
+      // className + style, forwards a ref to its DOM node"), and without it a
+      // consumer has no escape hatch at all for the card's own layout.
+      const ref = createRef<HTMLDivElement>();
+      render(
+        <ResourceCard
+          ref={ref}
+          className="my-tile"
+          style={{ marginTop: 7 }}
+          variant="card"
+          resource={LORA}
+          data-testid="rc"
+        />,
+      );
+      const root = screen.getByTestId('rc');
+      expect(root.getAttribute('class'), 'className must reach the root').toBe('my-tile');
+      expect((root as HTMLElement).style.marginTop, 'style must reach the root').toBe('7px');
+      expect(ref.current, 'the ref must resolve to the root element').toBe(root);
     });
 
     it('renders the version and base model as visible meta, not only in the aria-label', () => {

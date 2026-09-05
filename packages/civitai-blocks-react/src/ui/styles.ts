@@ -271,6 +271,10 @@ const INTERACTIVE_STYLES = `
   align-items: center;
   justify-content: center;
   flex: none;
+  /* The stacking context and clip for the overlay slot. The component owns
+     both, which is exactly why it owns the slot: a consumer positioning its own
+     badge from outside escapes the card AND gets clipped by the root. */
+  position: relative;
   overflow: hidden;
   background: var(--civitai-color-surface-2);
   border-radius: calc(var(--civitai-radius) - 1px);
@@ -300,6 +304,33 @@ const INTERACTIVE_STYLES = `
   text-align: center;
   line-height: 1.2;
 }
+[data-civitai-ui='resource-card'] [data-civitai-ui-resource-overlay] {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100% - 8px);
+  font-size: 11px;
+  line-height: 1;
+}
+[data-civitai-ui='resource-card'] [data-civitai-ui-resource-nameline] {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+/* The non-colour half of the selected affordance (WCAG 1.4.1). The border-hue
+   change on the root is reinforcement; this glyph is what carries it. */
+[data-civitai-ui='resource-card'] [data-civitai-ui-resource-selected] {
+  flex: none;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--civitai-color-primary);
+}
 [data-civitai-ui='resource-card'] [data-civitai-ui-resource-text] {
   display: flex;
   flex-direction: column;
@@ -312,6 +343,7 @@ const INTERACTIVE_STYLES = `
   font-size: 13px;
   font-weight: 600;
   line-height: 1.3;
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

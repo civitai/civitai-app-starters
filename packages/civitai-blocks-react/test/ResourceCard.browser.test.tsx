@@ -1,5 +1,5 @@
 import type { BlockResourceInfo } from '@civitai/app-sdk/blocks';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ResourceCard } from '../src/ui/ResourceCard.js';
@@ -18,6 +18,14 @@ import { ResourceCard } from '../src/ui/ResourceCard.js';
 //      one line of 11px text and the tile is a sliver. That line matters more
 //      here than in most components: `BlockResourceInfo` has NO image field, so
 //      "no thumbnail" is the COMMON case, not the edge one.
+//
+//   1b. The three STATE ATTRIBUTES on the root (`data-selected`,
+//      `data-disabled`, `data-interactive`). They are inert markup on their own;
+//      what makes them mean anything is a stylesheet rule matching them, and
+//      only a real browser computes that. An audit measured `data-selected`
+//      deleted → unit 1342/1342 and browser 56/56 GREEN, with the selected-state
+//      rule silently dead. `aria-pressed` has its own unit guard, so the state
+//      stayed correct for assistive tech and vanished for everyone with eyes.
 //
 //   2. `min-width: 0` on the hit area and text column. A flex item defaults to
 //      `min-width: auto`, which refuses to shrink below its content, so without
@@ -95,6 +103,166 @@ describe('ResourceCard — geometry, in a real browser', () => {
       );
       const frame = screen.getByTestId('rc-thumb').getBoundingClientRect();
       expect(Math.abs(frame.height - frame.width)).toBeLessThanOrEqual(1);
+    });
+  });
+
+  describe('the state attributes actually drive the stylesheet', () => {
+    // 🔴 Each of these pairs an attribute the component emits with the rule that
+    // reads it. Deleting the attribute leaves both tiers green without them —
+    // measured — because the unit tier cannot compute a cascade and no test
+    // referenced any of the three.
+    it('🔴 data-selected changes the border, and the unselected card is the control', () => {
+      render(
+        <Cell>
+          <ResourceCard variant="card" interactive resource={LORA} onSelect={() => {}} data-testid="off" />
+          <ResourceCard
+            variant="card"
+            interactive
+            selected
+            resource={LORA}
+            onSelect={() => {}}
+            data-testid="on"
+          />
+        </Cell>,
+      );
+      const off = getComputedStyle(screen.getByTestId('off')).borderTopColor;
+      const on = getComputedStyle(screen.getByTestId('on')).borderTopColor;
+      expect(off, 'precondition: an unselected card resolves a border colour at all').not.toBe('');
+      expect(
+        on,
+        'data-selected must reach the stylesheet — a selected card cannot look identical to an unselected one',
+      ).not.toBe(off);
+    });
+
+    it('🔴 data-disabled dims the card', () => {
+      render(
+        <Cell>
+          <ResourceCard variant="card" interactive resource={LORA} onSelect={() => {}} data-testid="off" />
+          <ResourceCard
+            variant="card"
+            interactive
+            disabled
+            resource={LORA}
+            onSelect={() => {}}
+            data-testid="on"
+          />
+        </Cell>,
+      );
+      expect(getComputedStyle(screen.getByTestId('off')).opacity).toBe('1');
+      expect(
+        Number(getComputedStyle(screen.getByTestId('on')).opacity),
+        'data-disabled must reach the stylesheet',
+      ).toBeLessThan(1);
+    });
+
+    it('🔴 data-interactive is what the button-only affordances hang off', () => {
+      render(
+        <Cell>
+          <ResourceCard variant="row" resource={LORA} data-testid="static" />
+          <ResourceCard variant="row" interactive resource={LORA} onSelect={() => {}} data-testid="live" />
+        </Cell>,
+      );
+      // The attribute is emitted only for the interactive arm, and the hit area
+      // it wraps is the element the cursor rule matches.
+      expect(screen.getByTestId('static').getAttribute('data-interactive')).toBeNull();
+      expect(screen.getByTestId('live').getAttribute('data-interactive')).toBe('true');
+      expect(
+        getComputedStyle(screen.getByTestId('live-hit')).cursor,
+        'an interactive card must present as clickable',
+      ).toBe('pointer');
+      expect(getComputedStyle(screen.getByTestId('static-hit')).cursor).not.toBe('pointer');
+    });
+
+    it('🔴 the selected mark is a GLYPH, so selection survives a viewer who cannot use the hue', () => {
+      // The non-colour half of WCAG 1.4.1. The border test above only proves
+      // the two states differ; this proves they differ by something other than
+      // colour.
+      render(
+        <Cell>
+          <ResourceCard
+            variant="card"
+            interactive
+            selected
+            resource={LORA}
+            onSelect={() => {}}
+            data-testid="rc"
+          />
+        </Cell>,
+      );
+      const mark = screen.getByTestId('rc-selected').getBoundingClientRect();
+      expect(mark.width, 'the mark must occupy real space, not be a zero-size node').toBeGreaterThan(0);
+      expect(mark.height).toBeGreaterThan(0);
+    });
+  });
+
+  describe('a thumbnail that fails to load', () => {
+    it('🔴 a REAL 404 reaches the placeholder, not an empty grey square', () => {
+      // The unit tier fires a synthetic `error` event; only a browser proves the
+      // handler is reached by an actual failed fetch.
+      render(
+        <Cell>
+          <ResourceCard
+            variant="card"
+            resource={LORA}
+            thumbnailUrl="/__resource_card_no_such_image_404.png"
+            data-testid="rc"
+          />
+        </Cell>,
+      );
+      return waitFor(() => {
+        expect(
+          screen.getByTestId('rc-placeholder').textContent,
+          'a dead CDN link must render "No preview", not a blank frame',
+        ).toBe('No preview');
+      });
+    });
+  });
+
+  describe('the overlay slot is positioned by the component', () => {
+    it('🔴 sits inside the thumbnail frame and inside the card — the placement consumers could not build', () => {
+      // Measured before this slot existed: a consumer's own absolutely-
+      // positioned child escaped the card (card bottom 51, child bottom 120) and
+      // was clipped by the root's `overflow: hidden`, because the root sets no
+      // `position`. The frame now establishes the containing block.
+      render(
+        <Cell>
+          <ResourceCard
+            variant="card"
+            resource={LORA}
+            overlay={<span data-testid="pill">Added</span>}
+            data-testid="rc"
+          />
+        </Cell>,
+      );
+      const card = screen.getByTestId('rc').getBoundingClientRect();
+      const frame = screen.getByTestId('rc-thumb').getBoundingClientRect();
+      const pill = screen.getByTestId('rc-overlay').getBoundingClientRect();
+
+      expect(pill.width, 'the overlay must be laid out, not collapsed').toBeGreaterThan(0);
+      expect(pill.top, 'inside the frame vertically').toBeGreaterThanOrEqual(frame.top - 1);
+      expect(pill.bottom).toBeLessThanOrEqual(frame.bottom + 1);
+      expect(pill.right, 'inside the card horizontally').toBeLessThanOrEqual(card.right + 1);
+      expect(pill.bottom, 'inside the card vertically — this is what used to fail').toBeLessThanOrEqual(
+        card.bottom + 1,
+      );
+    });
+
+    it('POSITIVE CONTROL: the same pill in `actions` is NOT overlaid on the frame', () => {
+      // Proves the assertions above are a property of the overlay slot rather
+      // than of any child anywhere in the card.
+      render(
+        <Cell>
+          <ResourceCard
+            variant="card"
+            resource={LORA}
+            actions={<span data-testid="pill">Added</span>}
+            data-testid="rc"
+          />
+        </Cell>,
+      );
+      const frame = screen.getByTestId('rc-thumb').getBoundingClientRect();
+      const pill = screen.getByTestId('pill').getBoundingClientRect();
+      expect(pill.top, 'a flow-slot pill sits BELOW the frame, not on it').toBeGreaterThan(frame.bottom);
     });
   });
 
