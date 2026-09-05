@@ -155,22 +155,36 @@ describe('ResourceCard — geometry, in a real browser', () => {
       ).toBeLessThan(1);
     });
 
-    it('🔴 data-interactive is what the button-only affordances hang off', () => {
+    it('🔴 the interactive arm presents as clickable — a rule keyed on the ELEMENT, not on data-interactive', () => {
+      // 🔴 RENAMED AND RE-SCOPED after an audit found the previous title
+      // ("data-interactive is what the button-only affordances hang off") wider
+      // than what the body pins. It is not true: `grep data-interactive
+      // src/ui/styles.ts` returns ZERO — the cursor and focus rules key on
+      // `button[data-civitai-ui-resource-hit]`, i.e. the element TYPE. Measured
+      // both arms: delete the attribute from the component and drop the
+      // attribute assertions, leaving only the cursor ones, and this tier stays
+      // 68/68 green; mutate `cursor: pointer` -> `default` and it reddens with
+      // its own message. So the two halves observe DIFFERENT things and the old
+      // title claimed one covered the other.
+      //
+      // `data-interactive` is a CONSUMER hook — nothing in this package's own
+      // stylesheet reads it — and the guard that pins it is the unit case "the
+      // three STATE ATTRIBUTES reach the root". What this case pins is the
+      // affordance, and it says so.
       render(
         <Cell>
           <ResourceCard variant="row" resource={LORA} data-testid="static" />
           <ResourceCard variant="row" interactive resource={LORA} onSelect={() => {}} data-testid="live" />
         </Cell>,
       );
-      // The attribute is emitted only for the interactive arm, and the hit area
-      // it wraps is the element the cursor rule matches.
-      expect(screen.getByTestId('static').getAttribute('data-interactive')).toBeNull();
-      expect(screen.getByTestId('live').getAttribute('data-interactive')).toBe('true');
       expect(
         getComputedStyle(screen.getByTestId('live-hit')).cursor,
         'an interactive card must present as clickable',
       ).toBe('pointer');
-      expect(getComputedStyle(screen.getByTestId('static-hit')).cursor).not.toBe('pointer');
+      expect(
+        getComputedStyle(screen.getByTestId('static-hit')).cursor,
+        'and a static one must not',
+      ).not.toBe('pointer');
     });
 
     it('🔴 the selected mark is a GLYPH, so selection survives a viewer who cannot use the hue', () => {
@@ -219,16 +233,21 @@ describe('ResourceCard — geometry, in a real browser', () => {
   });
 
   describe('the overlay slot is positioned by the component', () => {
-    it('🔴 sits inside the thumbnail frame and inside the card — the placement consumers could not build', () => {
-      // Measured before this slot existed: a consumer's own absolutely-
-      // positioned child escaped the card (card bottom 51, child bottom 120) and
-      // was clipped by the root's `overflow: hidden`, because the root sets no
-      // `position`. The frame now establishes the containing block.
+    it('🔴 lands over the thumbnail corner while being a SIBLING of the hit button', () => {
+      // The slot's whole value is this combination, and neither half is visible
+      // to the unit tier: it must sit ON the frame (a browser-only fact, since
+      // the offsets are arithmetic over the hit's padding) while living OUTSIDE
+      // the <button> (so it can neither nest a control nor be swallowed by the
+      // explicit aria-label). Measured before the slot existed: a consumer's own
+      // absolutely-positioned child escaped the card entirely — card bottom 51,
+      // child bottom 120 — because the root set no `position`.
       render(
         <Cell>
           <ResourceCard
             variant="card"
+            interactive
             resource={LORA}
+            onSelect={() => {}}
             overlay={<span data-testid="pill">Added</span>}
             data-testid="rc"
           />
@@ -236,15 +255,59 @@ describe('ResourceCard — geometry, in a real browser', () => {
       );
       const card = screen.getByTestId('rc').getBoundingClientRect();
       const frame = screen.getByTestId('rc-thumb').getBoundingClientRect();
-      const pill = screen.getByTestId('rc-overlay').getBoundingClientRect();
+      const el = screen.getByTestId('rc-overlay');
+      const pill = el.getBoundingClientRect();
 
+      expect(
+        screen.getByTestId('rc-hit').contains(el),
+        'the overlay must be a sibling of the hit button, never a descendant',
+      ).toBe(false);
       expect(pill.width, 'the overlay must be laid out, not collapsed').toBeGreaterThan(0);
       expect(pill.top, 'inside the frame vertically').toBeGreaterThanOrEqual(frame.top - 1);
-      expect(pill.bottom).toBeLessThanOrEqual(frame.bottom + 1);
-      expect(pill.right, 'inside the card horizontally').toBeLessThanOrEqual(card.right + 1);
-      expect(pill.bottom, 'inside the card vertically — this is what used to fail').toBeLessThanOrEqual(
+      expect(pill.bottom, 'inside the frame vertically').toBeLessThanOrEqual(frame.bottom + 1);
+      expect(pill.left, 'inside the frame horizontally').toBeGreaterThanOrEqual(frame.left - 1);
+      expect(pill.right, 'inside the frame horizontally').toBeLessThanOrEqual(frame.right + 1);
+      expect(pill.bottom, 'inside the card — this is what used to fail').toBeLessThanOrEqual(
         card.bottom + 1,
       );
+    });
+
+    it('🔴 is INERT to pointers, so it cannot swallow a click meant for the card', () => {
+      // `pointer-events: none` — the other half of "status, not controls".
+      // Asserted as a computed style AND behaviourally, because only a real
+      // browser does hit-testing: jsdom dispatches to whatever element you name,
+      // so the unit tier cannot see this at all.
+      let hits = 0;
+      render(
+        <Cell>
+          <ResourceCard
+            variant="card"
+            interactive
+            resource={LORA}
+            onSelect={() => {
+              hits += 1;
+            }}
+            overlay={<span data-testid="pill">Added</span>}
+            data-testid="rc"
+          />
+        </Cell>,
+      );
+      const el = screen.getByTestId('rc-overlay');
+      expect(
+        getComputedStyle(el).pointerEvents,
+        'a status pill must not intercept pointer events',
+      ).toBe('none');
+
+      // Click at the pill's own centre: the element under the cursor must be
+      // the card's button, not the pill.
+      const r = el.getBoundingClientRect();
+      const under = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      expect(
+        screen.getByTestId('rc-hit').contains(under as Node),
+        'the element under the pill must be the card hit area',
+      ).toBe(true);
+      (under as HTMLElement).click();
+      expect(hits, 'the card still receives the click through the pill').toBe(1);
     });
 
     it('POSITIVE CONTROL: the same pill in `actions` is NOT overlaid on the frame', () => {
@@ -312,6 +375,37 @@ describe('ResourceCard — geometry, in a real browser', () => {
         screen.getByTestId('plain').getBoundingClientRect().height,
         'the fixture must be wrappable, or the nowrap assertion is vacuous',
       ).toBeGreaterThan(30);
+    });
+
+    it('🔴 and on the SELECTED path too, where the name shares its line with the mark', () => {
+      // Every other truncation guard runs on the UNSELECTED path, so the flex
+      // wrapper the selected mark introduced was geometrically unguarded.
+      // Measured: selecting narrows the name box 206px -> 192px, the name stays
+      // on ONE line (16.89px, unchanged) and the card stays at 220px.
+      render(
+        <Cell>
+          <ResourceCard
+            variant="card"
+            interactive
+            selected
+            resource={{ ...LORA, modelName: LONG }}
+            onSelect={() => {}}
+            data-testid="rc"
+          />
+        </Cell>,
+      );
+      const name = screen.getByTestId('rc-name');
+      const mark = screen.getByTestId('rc-selected').getBoundingClientRect();
+      expect(mark.width, 'the mark takes real width off the name line').toBeGreaterThan(0);
+      expect(
+        name.getBoundingClientRect().height,
+        'the name must stay on one line beside the mark, not wrap under it',
+      ).toBeLessThan(26);
+      expect(name.scrollWidth, 'and still be clipped').toBeGreaterThan(name.clientWidth);
+      expect(
+        screen.getByTestId('rc').getBoundingClientRect().width,
+        'the extra flex wrapper must not blow the card out of its cell',
+      ).toBeLessThanOrEqual(CELL + 1);
     });
 
     it('POSITIVE CONTROL: a SHORT name is not clipped', () => {

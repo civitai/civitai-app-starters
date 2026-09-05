@@ -589,27 +589,95 @@ describe('ResourceCard', () => {
   // The `overlay` slot — the corner pill every picker wants.
   // -------------------------------------------------------------------------
   describe('the overlay slot', () => {
-    it('🔴 renders INSIDE the thumbnail frame, which is the box that owns the clip', () => {
-      // 🔴 Found by audit: the documented composition (gen-matrix's "Added"
-      // badge over the thumbnail) could not be built from outside. The root sets
-      // `overflow: hidden` and no `position`, so a consumer's absolutely-
-      // positioned child in `actions` both escaped the card and was clipped
-      // (measured: card bottom 51, child bottom 120). The component owns the
-      // stacking context, so it owns the placement.
+    // 🔴 THE HAZARD THIS SLOT ONCE RECREATED. Round 1 added `overlay` INSIDE the
+    // thumbnail frame, which is inside `body`, which is inside the hit
+    // `<button>` — i.e. exactly the nested-control hazard `actions` exists to
+    // prevent, in a slot advertised for "the 'Added' pill every picker wants",
+    // which is precisely the badge someone later puts an × on. Measured on that
+    // version, with the control arm below beside it:
+    //
+    //   overlay (nested)  -> inner-in-hit=true   onRemove=1  onSelect=1
+    //   actions (control) -> inner-in-hit=false  onRemove=1  onSelect=0
+    //
+    // So a consumer's "remove" pill removed AND toggled selection, and the
+    // parser reparents the inner button so hydration disagrees with the server
+    // HTML. `overlay` is now a SIBLING of the hit, positioned from the root.
+    it('🔴 a control in `overlay` is NOT nested in the hit button, and does not toggle selection', () => {
+      const onSelect = vi.fn();
+      const onRemove = vi.fn();
       render(
         <ResourceCard
           variant="card"
+          interactive
           resource={LORA}
-          overlay={<span data-testid="pill">Added</span>}
+          onSelect={onSelect}
+          overlay={<button data-testid="inner" onClick={onRemove}>x</button>}
           data-testid="rc"
         />,
       );
-      const frame = screen.getByTestId('rc-thumb');
+      const hit = screen.getByTestId('rc-hit');
       expect(
-        frame.contains(screen.getByTestId('pill')),
-        'the overlay must live inside the thumbnail frame, not beside the card',
-      ).toBe(true);
-      expect(screen.getByTestId('rc-overlay').textContent).toBe('Added');
+        hit.contains(screen.getByTestId('inner')),
+        'an overlay control must NOT be nested inside the card button',
+      ).toBe(false);
+      expect(hit.querySelectorAll('button').length, 'the hit area contains no nested button').toBe(0);
+
+      fireEvent.click(screen.getByTestId('inner'));
+      expect(onRemove).toHaveBeenCalledTimes(1);
+      expect(onSelect, 'the outer card must not also fire').not.toHaveBeenCalled();
+    });
+
+    it('CONTROL ARM: the same control in `actions` behaves identically', () => {
+      // The measurement that makes the claim above checkable: both slots are
+      // siblings of the hit, so neither nests nor double-fires. Before the fix
+      // these two arms disagreed.
+      const onSelect = vi.fn();
+      const onRemove = vi.fn();
+      render(
+        <ResourceCard
+          variant="card"
+          interactive
+          resource={LORA}
+          onSelect={onSelect}
+          actions={<button data-testid="inner" onClick={onRemove}>x</button>}
+          data-testid="rc"
+        />,
+      );
+      expect(screen.getByTestId('rc-hit').contains(screen.getByTestId('inner'))).toBe(false);
+      fireEvent.click(screen.getByTestId('inner'));
+      expect(onRemove).toHaveBeenCalledTimes(1);
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it('🔴 overlay text is NOT swallowed by the button\'s explicit aria-label', () => {
+      // 🔴 The inverse of the WCAG 1.4.1 fix in the same range. The hit button
+      // carries an explicit `aria-label`, which by ARIA name computation
+      // overrides its CONTENTS — that is exactly why SELECTED_MARK is
+      // aria-hidden. Measured on the nested version: with
+      // `overlay={<span>Added to queue</span>}` the accessible name was
+      // "Detail Tweaker, Rev2, LoRA, SDXL 1.0" and the pill appeared nowhere.
+      // As a sibling of the button its text is ordinary content again.
+      render(
+        <ResourceCard
+          variant="card"
+          interactive
+          resource={LORA}
+          onSelect={() => {}}
+          overlay={<span>Added to queue</span>}
+          data-testid="rc"
+        />,
+      );
+      const hit = screen.getByTestId('rc-hit');
+      expect(hit.getAttribute('aria-label')).toBe('Detail Tweaker, Rev2, LoRA, SDXL 1.0');
+      expect(
+        hit.textContent,
+        'anything inside the labelled button is unreachable to AT, so the pill must not be there',
+      ).not.toContain('Added to queue');
+      expect(
+        screen.getByTestId('rc').textContent,
+        'and it must still be present in the card, as sibling content',
+      ).toContain('Added to queue');
+      expect(screen.getByTestId('rc-overlay').textContent).toBe('Added to queue');
     });
 
     it('coexists with the placeholder — a picker badge does not need a thumbnail', () => {
@@ -620,18 +688,27 @@ describe('ResourceCard', () => {
       expect(screen.getByTestId('rc-overlay')).toBeTruthy();
     });
 
-    it('is absent when not passed, and on a row that has no frame to hang it in', () => {
+    it('is absent when not passed, and on a row, which has no thumbnail corner', () => {
       render(<ResourceCard variant="card" resource={LORA} data-testid="rc" />);
       expect(screen.queryByTestId('rc-overlay')).toBeNull();
 
       cleanup();
-      // A row without a thumbnail has no frame at all — documented, and the
-      // reason the frozen selected mark lives in the name line instead.
+      // Documented as `card`-only, and the reason the frozen selected mark
+      // lives in the name line rather than here.
       render(
-        <ResourceCard variant="row" resource={LORA} overlay={<span>Added</span>} data-testid="rc" />,
+        <ResourceCard
+          variant="row"
+          resource={LORA}
+          thumbnailUrl="https://image.example/preview.jpg"
+          overlay={<span>Added</span>}
+          data-testid="rc"
+        />,
       );
-      expect(screen.queryByTestId('rc-thumb')).toBeNull();
-      expect(screen.queryByTestId('rc-overlay')).toBeNull();
+      expect(screen.getByTestId('rc-thumb'), 'the row DOES have a frame here').toBeTruthy();
+      expect(
+        screen.queryByTestId('rc-overlay'),
+        'and it is still ignored — the slot is card-only, not frame-conditional',
+      ).toBeNull();
     });
   });
 

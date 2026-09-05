@@ -201,6 +201,11 @@ const INTERACTIVE_STYLES = `
 [data-civitai-ui='resource-card'] {
   display: flex;
   box-sizing: border-box;
+  /* The positioned ancestor for the overlay slot. It lives on the ROOT, not on
+     the thumbnail frame, so the overlay can be a SIBLING of the hit <button>
+     rather than a descendant of it — see the overlay prop's doc for why that
+     distinction is the whole point of the slot. */
+  position: relative;
   font-family: var(--civitai-font);
   color: var(--civitai-color-text);
   background: var(--civitai-color-surface);
@@ -271,10 +276,6 @@ const INTERACTIVE_STYLES = `
   align-items: center;
   justify-content: center;
   flex: none;
-  /* The stacking context and clip for the overlay slot. The component owns
-     both, which is exactly why it owns the slot: a consumer positioning its own
-     badge from outside escapes the card AND gets clipped by the root. */
-  position: relative;
   overflow: hidden;
   background: var(--civitai-color-surface-2);
   border-radius: calc(var(--civitai-radius) - 1px);
@@ -304,15 +305,24 @@ const INTERACTIVE_STYLES = `
   text-align: center;
   line-height: 1.2;
 }
+/* Positioned from the ROOT, over the thumbnail corner. 10px = the hit area's
+   6px padding plus a 4px inset inside the frame; the three move together, and
+   the browser tier asserts the result lands inside the frame's own rect rather
+   than trusting the arithmetic.
+   pointer-events: none is load-bearing, not polish: this slot is STATUS, and a
+   pill that can swallow a click meant for the card is the same class of bug as
+   nesting a control inside the hit <button>. A consumer who really wants an
+   interactive badge opts back in with pointer-events: auto on their own node. */
 [data-civitai-ui='resource-card'] [data-civitai-ui-resource-overlay] {
   position: absolute;
-  top: 4px;
-  right: 4px;
+  top: 10px;
+  right: 10px;
   z-index: 1;
+  pointer-events: none;
   display: flex;
   align-items: center;
   gap: 4px;
-  max-width: calc(100% - 8px);
+  max-width: calc(100% - 20px);
   font-size: 11px;
   line-height: 1;
 }

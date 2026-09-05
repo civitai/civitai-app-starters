@@ -153,20 +153,34 @@ interface ResourceCardBaseProps {
    */
   actions?: React.ReactNode;
   /**
-   * Corner slot INSIDE the thumbnail frame — the "Added" / "In your queue" pill
-   * every picker ends up wanting.
+   * Decorative status pill drawn over the thumbnail corner — the "Added" /
+   * "In your queue" badge every picker ends up wanting. **`card` variant only.**
    *
    * 🔴 It exists because the component makes it impossible to do from outside.
-   * The root sets `overflow: hidden` and no `position`, so a consumer's own
-   * absolutely-positioned child in {@link ResourceCardProps.actions} escapes the
-   * card AND is clipped (measured: card bottom 51, child bottom 120). The
-   * component owns the stacking context and the clip, so it owns this
-   * placement; leaving it to consumers means every one of them re-derives a fix
-   * for our CSS.
+   * The root owns the stacking context and an `overflow: hidden` clip, so a
+   * consumer's own absolutely-positioned child in
+   * {@link ResourceCardProps.actions} both escapes the card and is clipped by it
+   * (measured: card bottom 51, child bottom 120). Leaving it to consumers means
+   * every one of them re-derives a fix for our CSS.
    *
-   * Rendered only where a thumbnail frame exists — i.e. every `card`, and a
-   * `row` that has a `thumbnailUrl`. A `row` without one has no frame and
-   * ignores this; that is why the frozen selected mark does NOT live here.
+   * 🔴 STATUS, NOT CONTROLS — and the structure enforces that rather than
+   * asking you to remember it. It renders as a SIBLING of the hit area, never
+   * inside it, so a `<button>` here is not nested in the card's `<button>`;
+   * and it carries `pointer-events: none`, so it cannot swallow a click meant
+   * for the card. An earlier version rendered it inside the thumbnail frame —
+   * i.e. inside the hit `<button>` — which recreated exactly the hazard
+   * {@link ResourceCardProps.actions} exists to prevent: measured, an `onClick`
+   * pill there fired the consumer's handler AND toggled selection, and the
+   * parser reparents the inner button so hydration disagrees with the server
+   * HTML. Put anything clickable in `actions`.
+   *
+   * Because it is a sibling of the labelled `<button>`, its text IS reachable
+   * to assistive tech — content inside the button is not, since the explicit
+   * `aria-label` overrides it (that is why {@link SELECTED_MARK} is
+   * `aria-hidden`). If you need a control here anyway, opt back in with your own
+   * `pointer-events: auto`, and accept that you are on your own for focus order.
+   *
+   * A `row` has no thumbnail corner to hang this on, and ignores it.
    */
   overlay?: React.ReactNode;
   /** Forwarded to the root, per the pack convention for every `/ui` primitive. */
@@ -406,11 +420,6 @@ export const ResourceCard = forwardRef<HTMLDivElement, ResourceCardProps>(functi
           {NO_THUMBNAIL_LABEL}
         </span>
       )}
-      {overlay != null ? (
-        <span data-civitai-ui-resource-overlay="" data-testid={ids.overlay}>
-          {overlay}
-        </span>
-      ) : null}
     </span>
   ) : null;
 
@@ -479,6 +488,16 @@ export const ResourceCard = forwardRef<HTMLDivElement, ResourceCardProps>(functi
           {body}
         </div>
       )}
+      {/* 🔴 A SIBLING of the hit area, exactly like `actions` and for exactly
+          the same reason — see the `overlay` prop doc. It is positioned over the
+          thumbnail corner from the ROOT, which is the positioned ancestor, so
+          nothing about it has to live inside the button. `card` only: a row has
+          no corner to hang it on. */}
+      {overlay != null && variant === 'card' ? (
+        <span data-civitai-ui-resource-overlay="" data-testid={ids.overlay}>
+          {overlay}
+        </span>
+      ) : null}
       {actions != null ? (
         <div data-civitai-ui-resource-actions="" data-testid={ids.actions}>
           {actions}
