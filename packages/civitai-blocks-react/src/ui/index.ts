@@ -64,6 +64,9 @@ export type { BadgeProps, BadgeVariant, BadgeSize } from './Badge.js';
 export { ReportButton } from './ReportButton.js';
 export type { ReportButtonProps } from './ReportButton.js';
 
+export { ResourceCard, resourceDisplayName } from './ResourceCard.js';
+export type { ResourceCardProps, ResourceCardVariant } from './ResourceCard.js';
+
 export { Modal } from './Modal.js';
 export type { ModalProps, ModalSize } from './Modal.js';
 

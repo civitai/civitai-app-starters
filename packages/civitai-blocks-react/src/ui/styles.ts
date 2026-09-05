@@ -22,10 +22,11 @@ import { tokensCss } from '@civitai/theme';
  *       presentational components (Button, TextInput, Textarea, NumberInput,
  *       Card, Stack, Group, Alert, Loader, Badge), wrapped in
  *       `@layer civitai.components`.
- *   Only the 5 INTERACTIVE components that live entirely in this package
- *   (Modal, Select, Slider, Collapse, SegmentedControl) keep their CSS here,
- *   repointed onto the `--civitai-*` tokens. This is a VISIBLE repaint — the
- *   design-system tokens differ from the pack's retired `--ci-*` palette
+ *   Only the components that live entirely in this package keep their CSS here,
+ *   repointed onto the `--civitai-*` tokens: the original interactive-5
+ *   (Modal, Select, Slider, Collapse, SegmentedControl) plus ResourceCard,
+ *   which has no `@civitai/components` counterpart. This is a VISIBLE repaint —
+ *   the design-system tokens differ from the pack's retired `--ci-*` palette
  *   (radius 8px→4px, teal success, dark primary `#1971C2`, etc.).
  *
  * `injectBlocksStyles()` injects THREE `<style>` elements, each with its own
@@ -46,9 +47,14 @@ import { tokensCss } from '@civitai/theme';
 const STYLE_MARKER = 'data-civitai-blocks-ui';
 
 /**
- * Interactive-5 component CSS — the styles that live ONLY in this package
- * (Modal / Select / Slider / Collapse / SegmentedControl). Repointed onto the
- * `--civitai-*` tokens supplied by `@civitai/theme`.
+ * Package-local component CSS — the styles that live ONLY in this package
+ * (Modal / Select / Slider / Collapse / SegmentedControl, plus ResourceCard).
+ * Repointed onto the `--civitai-*` tokens supplied by `@civitai/theme`.
+ *
+ * (The name `INTERACTIVE_STYLES` and the `interactive-5` label elsewhere are
+ * historical: ResourceCard is only sometimes interactive, and joined the block
+ * because `@civitai/components` has no counterpart for it, not because it is a
+ * sixth control.)
  *
  * These rules are intentionally UNLAYERED (unlike @civitai/components' rules,
  * which live in `@layer civitai.components`). Their selectors are DISJOINT from
@@ -181,6 +187,195 @@ const INTERACTIVE_STYLES = `
 }
 [data-civitai-ui='collapse'] [data-civitai-ui-collapse-region] {
   padding-top: 4px;
+}
+
+/* ----- ResourceCard -----
+   Two variants off ONE box. data-variant='card' stacks (grid tile),
+   data-variant='row' runs inline (compact list line). Every selector is
+   double-qualified with [data-civitai-ui='resource-card'] on purpose:
+   data-variant is also emitted by Button and Badge, so a bare
+   [data-variant='card'] would reach across the whole pack.
+   NOTE: this block lives inside a JS TEMPLATE LITERAL. No backticks, and no
+   dollar-brace, or the string ends here and the file stops parsing as
+   TypeScript (backticks in this comment did exactly that once). */
+[data-civitai-ui='resource-card'] {
+  display: flex;
+  box-sizing: border-box;
+  /* The positioned ancestor for the overlay slot. It lives on the ROOT, not on
+     the thumbnail frame, so the overlay can be a SIBLING of the hit <button>
+     rather than a descendant of it — see the overlay prop's doc for why that
+     distinction is the whole point of the slot. */
+  position: relative;
+  font-family: var(--civitai-font);
+  color: var(--civitai-color-text);
+  background: var(--civitai-color-surface);
+  border: 1px solid var(--civitai-color-border);
+  border-radius: var(--civitai-radius);
+  overflow: hidden;
+}
+[data-civitai-ui='resource-card'][data-variant='card'] {
+  flex-direction: column;
+  align-items: stretch;
+}
+[data-civitai-ui='resource-card'][data-variant='row'] {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+}
+[data-civitai-ui='resource-card'][data-selected='true'] {
+  border-color: var(--civitai-color-primary);
+}
+[data-civitai-ui='resource-card'][data-disabled='true'] {
+  opacity: 0.6;
+}
+/* The hit area. A <button> when interactive, a <div> when not — both are reset
+   to the same box so the two variants lay out identically either way. */
+[data-civitai-ui='resource-card'] [data-civitai-ui-resource-hit] {
+  display: flex;
+  /* 🔴 A flex ITEM defaults to min-width:auto, which refuses to shrink below its
+     content — so without this the name's nowrap+ellipsis never engages and a
+     long model name blows the card out of its grid cell instead of truncating. */
+  min-width: 0;
+  box-sizing: border-box;
+  margin: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+[data-civitai-ui='resource-card'][data-variant='card'] [data-civitai-ui-resource-hit] {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 6px;
+}
+[data-civitai-ui='resource-card'][data-variant='row'] [data-civitai-ui-resource-hit] {
+  flex: 1 1 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+}
+[data-civitai-ui='resource-card'] button[data-civitai-ui-resource-hit] {
+  cursor: pointer;
+}
+[data-civitai-ui='resource-card'] button[data-civitai-ui-resource-hit]:disabled {
+  cursor: not-allowed;
+}
+[data-civitai-ui='resource-card'] button[data-civitai-ui-resource-hit]:focus-visible {
+  outline: 2px solid var(--civitai-color-primary);
+  outline-offset: -2px;
+}
+/* The thumbnail frame. Rendered whether or not there is an image — see the
+   component's thumbnailUrl doc: BlockResourceInfo has no image field, so "no
+   image" is the COMMON case and the frame must keep its box regardless. */
+[data-civitai-ui='resource-card'] [data-civitai-ui-resource-thumb] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  overflow: hidden;
+  background: var(--civitai-color-surface-2);
+  border-radius: calc(var(--civitai-radius) - 1px);
+  color: var(--civitai-color-text-dimmed);
+}
+[data-civitai-ui='resource-card'][data-variant='card'] [data-civitai-ui-resource-thumb] {
+  /* 🔴 aspect-ratio, not a fixed height: the tile is grid-sized by the caller,
+     and this is the line that stops a thumbnail-less card collapsing to a
+     text-height sliver. */
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  font-size: 11px;
+}
+[data-civitai-ui='resource-card'][data-variant='row'] [data-civitai-ui-resource-thumb] {
+  width: 36px;
+  height: 36px;
+  font-size: 9px;
+}
+[data-civitai-ui='resource-card'] [data-civitai-ui-resource-thumb] img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+[data-civitai-ui='resource-card'] [data-civitai-ui-resource-placeholder] {
+  padding: 0 4px;
+  text-align: center;
+  line-height: 1.2;
+}
+/* Positioned from the ROOT, over the thumbnail corner. 10px = the hit area's
+   6px padding plus a 4px inset inside the frame; the three move together, and
+   the browser tier asserts the result lands inside the frame's own rect rather
+   than trusting the arithmetic.
+   pointer-events: none is load-bearing, not polish: this slot is STATUS, and a
+   pill that can swallow a click meant for the card is the same class of bug as
+   nesting a control inside the hit <button>. A consumer who really wants an
+   interactive badge opts back in with pointer-events: auto on their own node. */
+[data-civitai-ui='resource-card'] [data-civitai-ui-resource-overlay] {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100% - 20px);
+  font-size: 11px;
+  line-height: 1;
+}
+[data-civitai-ui='resource-card'] [data-civitai-ui-resource-nameline] {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+/* The non-colour half of the selected affordance (WCAG 1.4.1). The border-hue
+   change on the root is reinforcement; this glyph is what carries it. */
+[data-civitai-ui='resource-card'] [data-civitai-ui-resource-selected] {
+  flex: none;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--civitai-color-primary);
+}
+[data-civitai-ui='resource-card'] [data-civitai-ui-resource-text] {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+[data-civitai-ui='resource-card'] [data-civitai-ui-resource-name] {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-civitai-ui='resource-card'] [data-civitai-ui-resource-meta] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--civitai-color-text-dimmed);
+}
+[data-civitai-ui='resource-card'] [data-civitai-ui-resource-actions] {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 6px;
+}
+[data-civitai-ui='resource-card'][data-variant='card'] [data-civitai-ui-resource-actions] {
+  padding: 0 6px 6px;
 }
 
 /* ----- SegmentedControl ----- */

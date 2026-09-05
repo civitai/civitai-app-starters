@@ -4,9 +4,9 @@
  * After migrating the /ui pack off its private `--ci-*` palette onto
  * `@civitai/theme` + `@civitai/components`, this test PINS the resulting
  * computed styles to the design-system's token-derived values — for BOTH the
- * presentational-10 (now delegated to `@civitai/components`) AND the
- * interactive-5 that stay in this package (Modal / Select / Slider / Collapse /
- * SegmentedControl), in light AND dark.
+ * presentational-10 (now delegated to `@civitai/components`) AND the components
+ * whose CSS stays in this package (Modal / Select / Slider / Collapse /
+ * SegmentedControl, plus ResourceCard), in light AND dark.
  *
  * Mirrors `@civitai/components-react`'s `html-vs-react-parity` anchor approach:
  * a browser PROBE oracle evaluates the same color expression from the LITERAL
@@ -38,6 +38,7 @@ import {
   Group,
   Loader,
   Modal,
+  ResourceCard,
   SegmentedControl,
   Select,
   Slider,
@@ -363,6 +364,150 @@ describe('parity — Select wrapper (interactive-5) + delegated -control', () =>
       (cs) => {
         expect(cs.borderTopColor).toBe(solid(tokens.colorBorder));
         expect(cs.borderTopLeftRadius).toBe('4px');
+      }
+    );
+  });
+});
+
+describe('parity — ResourceCard (package-local; no @civitai/components counterpart)', () => {
+  const RESOURCE = {
+    versionId: 987654,
+    modelId: 55521,
+    modelName: 'Detail Tweaker',
+    versionName: 'Rev2',
+    baseModel: 'SDXL 1.0',
+    modelType: 'LORA',
+  };
+
+  // 🔴 Added because ResourceCard's EIGHT token references (font, radius,
+  // surface, surface-2, border, text, text-dimmed, primary) were reachable by
+  // no anchor in this file, so a design-system token move would have surfaced
+  // nowhere for it. All eight are asserted in LIGHT; the six colour tokens are
+  // asserted in DARK as well (font and radius are palette-independent, so they
+  // have no dark counterpart to drift).
+  it('light: root bg=surface, border=colorBorder, fg=colorText, radius=4px, font token', () => {
+    anchor(
+      'light',
+      <ResourceCard variant="card" resource={RESOURCE} />,
+      '[data-civitai-ui="resource-card"]',
+      (cs) => {
+        expect(cs.backgroundColor).toBe(solid(tokens.colorSurface));
+        expect(cs.borderTopColor).toBe(solid(tokens.colorBorder));
+        expect(cs.color).toBe(solid(tokens.colorText));
+        expect(cs.borderTopLeftRadius).toBe('4px'); // --civitai-radius
+        expect(cs.fontFamily).toContain('-apple-system'); // --civitai-font
+      }
+    );
+  });
+
+  it('light: the thumbnail frame is surface-2 with dimmed placeholder text', () => {
+    anchor(
+      'light',
+      <ResourceCard variant="card" resource={RESOURCE} />,
+      '[data-civitai-ui-resource-thumb]',
+      (cs) => {
+        expect(cs.backgroundColor).toBe(solid(tokens.colorSurface2));
+        expect(cs.color).toBe(solid(tokens.colorTextDimmed));
+      }
+    );
+  });
+
+  it('light: the meta row is dimmed text', () => {
+    anchor(
+      'light',
+      <ResourceCard variant="row" resource={RESOURCE} />,
+      '[data-civitai-ui-resource-meta]',
+      (cs) => {
+        expect(cs.color).toBe(solid(tokens.colorTextDimmed));
+      }
+    );
+  });
+
+  it('light: a SELECTED card borders on primary, and its mark is the primary token too', () => {
+    anchor(
+      'light',
+      <ResourceCard variant="card" interactive selected resource={RESOURCE} onSelect={() => {}} />,
+      '[data-civitai-ui="resource-card"]',
+      (cs) => {
+        expect(cs.borderTopColor).toBe(solid(tokens.colorPrimary));
+        expect(cs.borderTopColor).not.toBe(solid(tokens.colorBorder));
+      }
+    );
+    anchor(
+      'light',
+      <ResourceCard variant="card" interactive selected resource={RESOURCE} onSelect={() => {}} />,
+      '[data-civitai-ui-resource-selected]',
+      (cs) => {
+        expect(cs.color).toBe(solid(tokens.colorPrimary));
+      }
+    );
+  });
+
+  // 🔴 The dark block below anchors ALL SIX remaining colour tokens, not just
+  // the two backgrounds. An audit caught the earlier version anchoring eight in
+  // light and only `surface`/`surface-2` in dark while the commit message and PR
+  // claimed "light and dark" — so a dark-palette move on `border`, `text`,
+  // `text-dimmed` or `primary` would have surfaced nowhere for this component
+  // while the PR recorded it as covered.
+  it('dark: root bg + border + text track the dark palette (theme-tracked, not baked)', () => {
+    anchor(
+      'dark',
+      <ResourceCard variant="card" resource={RESOURCE} />,
+      '[data-civitai-ui="resource-card"]',
+      (cs) => {
+        expect(cs.backgroundColor).toBe(solid(darkTokens.colorSurface));
+        expect(cs.backgroundColor).not.toBe(solid(tokens.colorSurface));
+        expect(cs.borderTopColor).toBe(solid(darkTokens.colorBorder));
+        expect(cs.borderTopColor).not.toBe(solid(tokens.colorBorder));
+        expect(cs.color).toBe(solid(darkTokens.colorText));
+        expect(cs.color).not.toBe(solid(tokens.colorText));
+      }
+    );
+  });
+
+  it('dark: the frame is dark surface-2 with dark dimmed text', () => {
+    anchor(
+      'dark',
+      <ResourceCard variant="card" resource={RESOURCE} />,
+      '[data-civitai-ui-resource-thumb]',
+      (cs) => {
+        expect(cs.backgroundColor).toBe(solid(darkTokens.colorSurface2));
+        expect(cs.backgroundColor).not.toBe(solid(tokens.colorSurface2));
+        expect(cs.color).toBe(solid(darkTokens.colorTextDimmed));
+        expect(cs.color).not.toBe(solid(tokens.colorTextDimmed));
+      }
+    );
+  });
+
+  it('dark: the meta row is dark dimmed text', () => {
+    anchor(
+      'dark',
+      <ResourceCard variant="row" resource={RESOURCE} />,
+      '[data-civitai-ui-resource-meta]',
+      (cs) => {
+        expect(cs.color).toBe(solid(darkTokens.colorTextDimmed));
+        expect(cs.color).not.toBe(solid(tokens.colorTextDimmed));
+      }
+    );
+  });
+
+  it('dark: a SELECTED card borders on the dark primary, and so does its mark', () => {
+    anchor(
+      'dark',
+      <ResourceCard variant="card" interactive selected resource={RESOURCE} onSelect={() => {}} />,
+      '[data-civitai-ui="resource-card"]',
+      (cs) => {
+        expect(cs.borderTopColor).toBe(solid(darkTokens.colorPrimary));
+        expect(cs.borderTopColor).not.toBe(solid(tokens.colorPrimary));
+      }
+    );
+    anchor(
+      'dark',
+      <ResourceCard variant="card" interactive selected resource={RESOURCE} onSelect={() => {}} />,
+      '[data-civitai-ui-resource-selected]',
+      (cs) => {
+        expect(cs.color).toBe(solid(darkTokens.colorPrimary));
+        expect(cs.color).not.toBe(solid(tokens.colorPrimary));
       }
     );
   });

@@ -922,9 +922,16 @@ export function App() {
 | `NumberInput` | controlled numeric (`value: number \| null`, `onChange`, `min`/`max`/`step`). Rejects non-numeric (never emits `NaN`), clamps to `[min,max]` on blur, empty → `null`. Same label/description/error wiring. |
 | `Select` | controlled dropdown (`value: string`, `onChange`, `options: {value,label,disabled}[]` **or** `<option>` children, `placeholder`). Native `<select>`, `role="combobox"`. Same label/description/error wiring. |
 | `Collapse` | controlled disclosure (`open` + `onOpenChange`, `title`, `disabled`) for the "advanced params reveal". `aria-expanded` + `aria-controls`; content region `role="region"`, `hidden` when closed. |
+| `SegmentedControl` | controlled view/tab switcher (`value` + `onChange`, `data: {value,label,disabled}[]`, `fullWidth`, `size`). `role="tablist"` of `role="tab"` buttons; ArrowLeft/ArrowRight rove selection. |
+| `ReportButton` | two-step control that files a shared-board row for platform moderator review via `useSharedStorage().report()`. `noun` + `onReport` (+ `reported` for server truth). 🔴 Its visible copy is deliberately **not** overridable — see the component's JSDoc. |
+| `ResourceCard` | a picked generation resource (`BlockResourceInfo`) as a grid tile (`variant="card"`) or a compact line (`variant="row"`). `interactive` is an explicit discriminant that requires `onSelect` (+ `selected`/`disabled`); `thumbnailUrl` is optional because **`BlockResourceInfo` carries no image field**, and a missing *or failed* image falls back to a frozen "No preview" frame. `actions` is the trailing flow slot on both variants; `overlay` is the decorative corner badge over the thumbnail and is **`card`-only — a type error on a `row`**. Both render as siblings of the hit area, never inside it. The name fallback, type label, placeholder copy, selected mark and accessible-name order are frozen, not props. |
 
-Each component forwards `className` + `style`, forwards a `ref` to its DOM
-node (where it wraps one), and carries a `data-civitai-ui="<name>"` hook. Need
+Every component carries a `data-civitai-ui="<name>"` hook. Most also forward
+`className` + `style` and forward a `ref` to their DOM node. **Two do not:**
+`ReportButton` renders a different element per handshake state and forwards none
+of the three (only its `data-testid`, from which the other four hooks are derived
+by suffix); `Modal` forwards `className` + `style` but takes no `ref` — it holds
+its panel node internally, so `<Modal ref={…}>` is a type error. Need
 to inject the CSS yourself (SSR, or a non-React shell)? Call
 `injectBlocksStyles(doc?)` once, or read the raw `BLOCKS_UI_STYLES` string.
 `useBlocksStyles()` is the hook the components call internally.
