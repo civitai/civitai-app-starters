@@ -28,9 +28,25 @@
  *    which is a different thing from SURVIVED. This script resolves the chromium
  *    path itself, once, in its own process, so (b) cannot recur here.
  *
- * 2. 🔴 RUN THE POSITIVE CONTROL, REPEATEDLY. A pristine run before the batch,
- *    after every fourth mutant, and after it. Failure (a) above was only caught
- *    because the control failed the same way the mutants did.
+ *    🔴 AND THE `Tests` LINE ALONE IS NOT ENOUGH. A test FILE that fails to
+ *    transform or import contributes nothing to it, so a run where a whole file
+ *    never collected still yields a clean `N passed` — measured on this suite:
+ *    `Test Files 1 failed | 7 passed (8)` beside `Tests 73 passed (73)`, which
+ *    an earlier version of this parser called usable and OK. The same blindness
+ *    covers a suite that silently SHRINKS (a glob change, a `describe.skip`, a
+ *    dropped file): fewer tests, still green, every mutant that file guarded
+ *    scored SURVIVED. So the pre-batch control now records the file and test
+ *    TOTALS, and every later run must match both — a deviation is VOID, not a
+ *    verdict.
+ *
+ * 2. 🔴 RUN THE POSITIVE CONTROL, REPEATEDLY, AND MAKE A BAD ONE FATAL. A
+ *    pristine run before the batch, after every fourth mutant, and after it.
+ *    Failure (a) above was only caught because the control failed the same way
+ *    the mutants did — but for a while a BAD control was merely PRINTED and the
+ *    sweep carried on. That is worse than useless: with one unrelated failing
+ *    test in the tree, every mutant satisfies "the tally contains `failed`" and
+ *    all of them score KILLED without catching anything, exit 0. A bad control
+ *    now aborts.
  *
  * 3. 🔴 ANCHOR ON A FULL LITERAL, AND PROVE IT UNIQUE. Every edit must match
  *    exactly once or the mutant is SKIPped — never silently applied to the wrong
@@ -58,8 +74,13 @@
  *     'node packages/civitai-blocks-react/scripts/mutation-sweep.mjs'
  *
  * Override the runners with SWEEP_UNIT_CMD / SWEEP_BROWSER_CMD if needed.
+ *
+ * 🔴 EXIT CODE: this script exits non-zero only when it could not restore the
+ * tree or a control went bad. SURVIVED and VOID verdicts exit 0, because they
+ * are findings to READ, not build failures. Do not wire it into CI expecting
+ * `$?` to mean "all mutants died" — parse the verdicts.
  */
-import { spawnSync, execSync } from 'node:child_process';
+import { spawn, execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -218,8 +239,20 @@ const rel = (p) => p.slice(REPO.length + 1);
  * killed run leaves a MUTATED SOURCE FILE in the working tree. That happened —
  * the run was stopped between mutants and `ref={ref}` stayed deleted from the
  * component, which would have been committed as a real regression if the tree
- * had not been diffed afterwards. Diff the tree after any interrupted sweep
- * regardless: a signal you cannot trap (SIGKILL) still gets past this.
+ * had not been diffed afterwards.
+ *
+ * 🔴 THIS ONLY WORKS BECAUSE THE SWEEP IS ASYNC. Node dispatches signal
+ * callbacks from the event loop. The first version of these handlers sat over a
+ * fully synchronous body driven by `spawnSync`, so the loop was never reached
+ * until the sweep had already finished and `finally` had already restored —
+ * the handlers could not fire, and registering them made a 40-minute sweep
+ * UN-INTERRUPTIBLE (measured: two SIGINTs, still running, file still mutated),
+ * forcing a SIGKILL that bypasses restore entirely. Strictly worse than not
+ * having them. The runner is `spawn` + `await` now, so the loop yields between
+ * every run and the handlers are real.
+ *
+ * Diff the tree after any interrupted sweep regardless: SIGKILL still gets past
+ * this, and no handler can change that.
  */
 function restoreAll() {
   for (const f of [SRC, STY]) {
@@ -257,92 +290,165 @@ if (args.includes('--list')) {
   process.exit(0);
 }
 
+/** `1 failed | 80 passed (81)` -> `{ failed: 1, total: 81 }`. */
+function parseSummary(line) {
+  if (!line) return null;
+  const total = line.match(/\((\d+)\)\s*$/);
+  if (!total) return null;
+  return { failed: /\bfailed\b/.test(line), total: Number(total[1]), text: line };
+}
+
+/**
+ * 🔴 ASYNC, so the event loop is reached between runs and the signal handlers
+ * above can actually fire. `spawnSync` here made them unreachable — see
+ * `restoreAll`.
+ */
 function runTier(tier) {
   const cmd = tier === 'unit' ? UNIT_CMD : BROWSER_CMD;
   const env = { ...process.env };
   if (tier === 'browser' && CHROMIUM) env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = CHROMIUM;
-  const p = spawnSync('bash', ['-c', cmd], { cwd: REPO, env, encoding: 'utf8', timeout: 30 * 60_000 });
-  const out = `${p.stdout ?? ''}${p.stderr ?? ''}`;
-  const tally = (out.match(/^ +Tests +(.+)$/gm) ?? []).pop()?.replace(/^ +Tests +/, '').trim() ?? '';
-  // 🔴 RULE 1: the tally decides, not `p.status`.
-  const usable = /\d+ (passed|failed)/.test(tally);
-  return {
-    usable,
-    tally,
-    rc: p.status,
-    failing: [...new Set((out.match(/^ *[×✗] .+$/gm) ?? []).map((l) => l.replace(/^ *[×✗] /, '').replace(/ \d+ms$/, '')))].slice(0, 8),
-    messages: [...new Set((out.match(/AssertionError: .+$/gm) ?? []).map((l) => l.replace(/^AssertionError: /, '')))].slice(0, 8),
-  };
+  return new Promise((done) => {
+    const p = spawn('bash', ['-c', cmd], { cwd: REPO, env });
+    let out = '';
+    const soak = (b) => { out += b.toString(); };
+    p.stdout.on('data', soak);
+    p.stderr.on('data', soak);
+    const timer = setTimeout(() => p.kill('SIGKILL'), 30 * 60_000);
+    p.on('close', (rc) => {
+      clearTimeout(timer);
+      const grab = (label) =>
+        (out.match(new RegExp(`^ +${label} +(.+)$`, 'gm')) ?? [])
+          .pop()
+          ?.replace(new RegExp(`^ +${label} +`), '')
+          .trim() ?? '';
+      const tests = parseSummary(grab('Tests'));
+      const files = parseSummary(grab('Test Files'));
+      done({
+        rc,
+        tests,
+        files,
+        tally: tests?.text ?? '(no Tests summary)',
+        filesTally: files?.text ?? '(no Test Files summary)',
+        failing: [...new Set((out.match(/^ *[×✗] .+$/gm) ?? []).map((l) => l.replace(/^ *[×✗] /, '').replace(/ \d+ms$/, '')))].slice(0, 8),
+        messages: [...new Set((out.match(/AssertionError: .+$/gm) ?? []).map((l) => l.replace(/^AssertionError: /, '')))].slice(0, 8),
+      });
+    });
+  });
 }
 
-function runChecked(tier, label) {
+/**
+ * Baselines recorded by the pre-batch control. 🔴 RULE 1's second half: every
+ * later run must collect the SAME number of files and the SAME number of tests.
+ * A file that failed to import, or a suite that silently shrank, changes one of
+ * those totals while the `Tests` line still reads green.
+ */
+const BASELINE = {};
+
+function usable(tier, r) {
+  if (!r.tests || !r.files) return { ok: false, why: 'no summary line (the run collected nothing)' };
+  const b = BASELINE[tier];
+  if (!b) return { ok: true };
+  if (r.files.total !== b.files) {
+    return { ok: false, why: `file count ${r.files.total} != baseline ${b.files} — a file did not collect` };
+  }
+  if (r.tests.total !== b.tests) {
+    return { ok: false, why: `test count ${r.tests.total} != baseline ${b.tests} — the suite changed size` };
+  }
+  return { ok: true };
+}
+
+async function runChecked(tier, label) {
   let r;
   for (let attempt = 1; attempt <= 3; attempt++) {
-    r = runTier(tier);
-    if (r.usable) return r;
-    console.log(`         [${label}/${tier}] attempt ${attempt}: NO TALLY (rc=${r.rc}) — instrument, not code; retrying`);
+    r = await runTier(tier);
+    const u = usable(tier, r);
+    if (u.ok) return r;
+    console.log(`         [${label}/${tier}] attempt ${attempt}: UNUSABLE (rc=${r.rc}) — ${u.why}; retrying`);
   }
   return r;
 }
 
-/** 🔴 RULE 2. */
-function control(tag, tiers) {
+/** 🔴 RULE 2 — and a BAD control ABORTS rather than scrolling past. */
+async function control(tag, tiers) {
   for (const tier of tiers) {
-    const r = runChecked(tier, `control ${tag}`);
-    const ok = r.usable && !r.tally.includes('failed');
-    console.log(`CONTROL  ${tag} [${tier}]: ${ok ? 'OK  ' : '🔴 BAD'} ${r.tally || '(none)'}`);
-  }
-}
-
-const selected = MUTANTS.filter(
-  (m) => (!only || only.includes(m.id)) && (!tierFilter || m.tiers.includes(tierFilter))
-);
-const tiersUsed = [...new Set(selected.flatMap((m) => m.tiers))].filter(
-  (t) => !tierFilter || t === tierFilter
-);
-
-console.log(`sweep: ${selected.length} mutants, tiers ${tiersUsed.join('+')}`);
-console.log(`chromium: ${CHROMIUM ?? '(bundled / CI)'}`);
-control('pre', tiersUsed);
-
-let n = 0;
-for (const m of selected) {
-  const locs = m.edits.map((e) => locate(m.file, e.find));
-  const bad = locs.find((l) => l.count !== 1);
-  // 🔴 RULE 3: a non-unique anchor is SKIP, which is not SURVIVED.
-  if (bad) {
-    console.log(`SKIP     ${m.id} :: anchor matched ${bad.count}x at ${bad.where} — NOT a verdict`);
-    continue;
-  }
-  let s = PRISTINE[m.file];
-  for (const e of m.edits) s = s.replace(e.find, e.replace);
-  writeFileSync(m.file, s);
-  const per = {};
-  try {
-    for (const tier of m.tiers) {
-      if (tierFilter && tier !== tierFilter) continue;
-      per[tier] = runChecked(tier, m.id);
+    const r = await runChecked(tier, `control ${tag}`);
+    const u = usable(tier, r);
+    const clean = u.ok && r.tests && !r.tests.failed && r.files && !r.files.failed;
+    console.log(
+      `CONTROL  ${tag} [${tier}]: ${clean ? 'OK  ' : '🔴 BAD'} ${r.tally}  |  ${r.filesTally}`
+    );
+    if (!clean) {
+      restoreAll();
+      console.log(
+        '\n🔴 ABORTING. A pristine tree that is not green makes every verdict in this\n' +
+          '   window meaningless: with an unrelated failure present, EVERY mutant\n' +
+          `   satisfies "the tally contains failed" and scores KILLED without catching\n` +
+          `   anything. Reason: ${u.ok ? 'the control tree is red' : u.why}.`
+      );
+      process.exit(2);
     }
-  } finally {
-    writeFileSync(m.file, PRISTINE[m.file]);
+    if (!BASELINE[tier]) {
+      BASELINE[tier] = { files: r.files.total, tests: r.tests.total };
+      console.log(`         baseline [${tier}]: ${r.files.total} files, ${r.tests.total} tests`);
+    }
   }
-  const entries = Object.entries(per);
-  const verdict = entries.some(([, r]) => !r.usable)
-    ? 'VOID'
-    : entries.some(([, r]) => r.tally.includes('failed'))
-      ? 'KILLED'
-      : 'SURVIVED';
-  console.log(`${verdict.padEnd(8)} ${m.id} :: ${m.guard}`);
-  console.log(`         anchors: ${locs.map((l) => l.where).join(', ')}`);
-  for (const [tier, r] of entries) {
-    console.log(`         [${tier}] ${r.tally}`);
-    for (const f of r.failing) console.log(`            x ${f}`);
-    for (const msg of r.messages) console.log(`            ! ${msg}`);
-  }
-  if (++n % 4 === 0) control(`after ${m.id}`, tiersUsed);
 }
 
-control('post', tiersUsed);
-const restored = sha(SRC) === BASE[SRC] && sha(STY) === BASE[STY];
-console.log(`\nPRISTINE RESTORED: ${restored}`);
-process.exit(restored ? 0 : 1);
+async function main() {
+  const selected = MUTANTS.filter(
+    (m) => (!only || only.includes(m.id)) && (!tierFilter || m.tiers.includes(tierFilter))
+  );
+  const tiersUsed = [...new Set(selected.flatMap((m) => m.tiers))].filter(
+    (t) => !tierFilter || t === tierFilter
+  );
+
+  console.log(`sweep: ${selected.length} mutants, tiers ${tiersUsed.join('+')}`);
+  console.log(`chromium: ${CHROMIUM ?? '(bundled / CI)'}`);
+  await control('pre', tiersUsed);
+
+  let n = 0;
+  for (const m of selected) {
+    const locs = m.edits.map((e) => locate(m.file, e.find));
+    const bad = locs.find((l) => l.count !== 1);
+    // 🔴 RULE 3: a non-unique anchor is SKIP, which is not SURVIVED.
+    if (bad) {
+      console.log(`SKIP     ${m.id} :: anchor matched ${bad.count}x at ${bad.where} — NOT a verdict`);
+      continue;
+    }
+    let s = PRISTINE[m.file];
+    for (const e of m.edits) s = s.replace(e.find, e.replace);
+    writeFileSync(m.file, s);
+    const per = {};
+    try {
+      for (const tier of m.tiers) {
+        if (tierFilter && tier !== tierFilter) continue;
+        per[tier] = await runChecked(tier, m.id);
+      }
+    } finally {
+      writeFileSync(m.file, PRISTINE[m.file]);
+    }
+    const entries = Object.entries(per);
+    const verdict = entries.some(([t, r]) => !usable(t, r).ok)
+      ? 'VOID'
+      : entries.some(([, r]) => r.tests.failed)
+        ? 'KILLED'
+        : 'SURVIVED';
+    console.log(`${verdict.padEnd(8)} ${m.id} :: ${m.guard}`);
+    console.log(`         anchors: ${locs.map((l) => l.where).join(', ')}`);
+    for (const [tier, r] of entries) {
+      console.log(`         [${tier}] ${r.tally}  |  ${r.filesTally}`);
+      for (const f of r.failing) console.log(`            x ${f}`);
+      for (const msg of r.messages) console.log(`            ! ${msg}`);
+    }
+    if (++n % 4 === 0) await control(`after ${m.id}`, tiersUsed);
+  }
+
+  await control('post', tiersUsed);
+  const restored = sha(SRC) === BASE[SRC] && sha(STY) === BASE[STY];
+  console.log(`\nPRISTINE RESTORED: ${restored}`);
+  // See the EXIT CODE note in the header: verdicts are findings to read, not
+  // build failures. Only an unrestored tree is an error here.
+  process.exit(restored ? 0 : 1);
+}
+
+main();

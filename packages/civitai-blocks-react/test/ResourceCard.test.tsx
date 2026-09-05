@@ -688,26 +688,37 @@ describe('ResourceCard', () => {
       expect(screen.getByTestId('rc-overlay')).toBeTruthy();
     });
 
-    it('is absent when not passed, and on a row, which has no thumbnail corner', () => {
+    it('is absent when not passed', () => {
       render(<ResourceCard variant="card" resource={LORA} data-testid="rc" />);
       expect(screen.queryByTestId('rc-overlay')).toBeNull();
+    });
 
-      cleanup();
-      // Documented as `card`-only, and the reason the frozen selected mark
-      // lives in the name line rather than here.
-      render(
-        <ResourceCard
-          variant="row"
-          resource={LORA}
-          thumbnailUrl="https://image.example/preview.jpg"
-          overlay={<span>Added</span>}
-          data-testid="rc"
-        />,
-      );
+    it('🔴 on a ROW it is a TYPE ERROR, and the runtime still drops it', () => {
+      // 🔴 `overlay` lives on the `card` arm of the props union, so the cast
+      // below is what a consumer would have to write to get here at all —
+      // measured, the uncast form is `TS2322` on both the static and the
+      // interactive row arm (negative control under `src/**`, since
+      // `tsconfig.json` excludes `test/` from typecheck).
+      //
+      // Before that move it merely compiled and rendered nothing: an author
+      // writing `<ResourceCard variant="row" … overlay={<Badge>Added</Badge>} />`
+      // got a clean typecheck and no badge, with no diagnostic anywhere. That is
+      // the failure class this component argues against twice in its own words.
+      //
+      // The runtime guard is KEPT alongside the type, because a type is not a
+      // runtime guard: this package ships to JS consumers and to anyone casting.
+      const rowWithOverlay = {
+        variant: 'row',
+        resource: LORA,
+        thumbnailUrl: 'https://image.example/preview.jpg',
+        overlay: <span>Added</span>,
+        'data-testid': 'rc',
+      } as unknown as React.ComponentProps<typeof ResourceCard>;
+      render(<ResourceCard {...rowWithOverlay} />);
       expect(screen.getByTestId('rc-thumb'), 'the row DOES have a frame here').toBeTruthy();
       expect(
         screen.queryByTestId('rc-overlay'),
-        'and it is still ignored — the slot is card-only, not frame-conditional',
+        'and the overlay is still dropped — the slot is card-only, not frame-conditional',
       ).toBeNull();
     });
   });

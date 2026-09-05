@@ -24,7 +24,12 @@ Derived from three first-party blocks that each built one independently: `civita
 
 What legitimately varies is a prop: `variant`, `thumbnailUrl`, `selected`, `disabled`, the two content slots, `className`, `style`, `ref`, `data-testid`, and the surrounding grid or list.
 
-**Two slots, because one is impossible to build from outside.** `actions` is the trailing flow slot (a weight slider, Remove, a Change link), rendered as a sibling of the hit area — a `<button>` nested in a `<button>` is reparented by the browser and becomes unreachable by keyboard. `overlay` is the corner slot *inside the thumbnail frame*, for the "Added" pill every picker wants: the card's root sets `overflow: hidden` and no `position`, so a consumer's own absolutely-positioned child both escapes the card and is clipped by it. The component owns the stacking context and the clip, so it owns the placement rather than making every consumer defeat its CSS.
+**Two content slots, and both render as SIBLINGS of the hit area.** That is the load-bearing detail: a `<button>` nested inside the card's `<button>` is reparented by the browser, so the inner control becomes unreachable by keyboard and its click is eaten by the outer one — and content inside the hit button is also invisible to assistive tech, because the button carries an explicit `aria-label` that overrides its contents.
+
+- `actions` — the trailing FLOW slot: a weight slider, a Remove button, a "Change" link. Available on both variants. Put anything clickable here.
+- `overlay` — 🔴 **`card` variant only, and a type error on a `row`**, which has no thumbnail corner to hang a pill in. It is the decorative status badge over the thumbnail corner ("Added", "In your queue"), positioned from the root, and it carries `pointer-events: none` so it cannot swallow a click meant for the card. Because it is a sibling of the labelled button its text IS announced — so mark an "Added" pill `aria-hidden` if `selected` is already set, or `aria-pressed` says it twice.
+
+What the `overlay` slot buys you, stated accurately: it owns the corner OFFSETS (arithmetic over the hit area's padding, which move together), the `pointer-events` decision, and the sibling-of-the-button placement. The card's root is `position: relative`, so a hand-rolled corner badge in `actions` would now land where you put it — the slot exists to stop three non-obvious decisions being re-derived per app, not because the placement is impossible. The root's `position` is load-bearing for both.
 
 `className`, `style` and `ref` are forwarded to the root, matching the convention the README states for the rest of the pack.
 

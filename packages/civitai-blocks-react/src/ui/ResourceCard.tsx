@@ -98,7 +98,8 @@ export function resourceDisplayName(resource: BlockResourceInfo): string {
 /** Which shape to render. See {@link ResourceCardProps.variant}. */
 export type ResourceCardVariant = 'card' | 'row';
 
-interface ResourceCardBaseProps {
+/** Props that do not depend on either discriminant. */
+interface ResourceCardCommonProps {
   /**
    * The picked resource, exactly as the host handed it over
    * (`RESOURCE_PICKER_RESULT.selected`, `useResourcePicker`, or the
@@ -106,16 +107,6 @@ interface ResourceCardBaseProps {
    * pre-format it, and do not re-type it locally.
    */
   resource: BlockResourceInfo;
-  /**
-   * `'card'` — thumbnail-first tile for a picker or browse GRID.
-   * `'row'` — compact line for a list of already-selected resources.
-   *
-   * REQUIRED on purpose. There is no defensible default: the two exist because
-   * three first-party blocks split evenly-ish between them, and a component
-   * that silently picks one renders the wrong shape for half its callers with
-   * no diagnostic.
-   */
-  variant: ResourceCardVariant;
   /**
    * Thumbnail image URL. OPTIONAL, and its absence is the NORMAL case.
    *
@@ -149,40 +140,9 @@ interface ResourceCardBaseProps {
    * their own controls around the card.
    *
    * This is the FLOW slot — its content sits after the card body. For a badge
-   * that must sit ON the thumbnail, use {@link ResourceCardProps.overlay}.
+   * that must sit ON the thumbnail, use `overlay` (card variant only).
    */
   actions?: React.ReactNode;
-  /**
-   * Decorative status pill drawn over the thumbnail corner — the "Added" /
-   * "In your queue" badge every picker ends up wanting. **`card` variant only.**
-   *
-   * 🔴 It exists because the component makes it impossible to do from outside.
-   * The root owns the stacking context and an `overflow: hidden` clip, so a
-   * consumer's own absolutely-positioned child in
-   * {@link ResourceCardProps.actions} both escapes the card and is clipped by it
-   * (measured: card bottom 51, child bottom 120). Leaving it to consumers means
-   * every one of them re-derives a fix for our CSS.
-   *
-   * 🔴 STATUS, NOT CONTROLS — and the structure enforces that rather than
-   * asking you to remember it. It renders as a SIBLING of the hit area, never
-   * inside it, so a `<button>` here is not nested in the card's `<button>`;
-   * and it carries `pointer-events: none`, so it cannot swallow a click meant
-   * for the card. An earlier version rendered it inside the thumbnail frame —
-   * i.e. inside the hit `<button>` — which recreated exactly the hazard
-   * {@link ResourceCardProps.actions} exists to prevent: measured, an `onClick`
-   * pill there fired the consumer's handler AND toggled selection, and the
-   * parser reparents the inner button so hydration disagrees with the server
-   * HTML. Put anything clickable in `actions`.
-   *
-   * Because it is a sibling of the labelled `<button>`, its text IS reachable
-   * to assistive tech — content inside the button is not, since the explicit
-   * `aria-label` overrides it (that is why {@link SELECTED_MARK} is
-   * `aria-hidden`). If you need a control here anyway, opt back in with your own
-   * `pointer-events: auto`, and accept that you are on your own for focus order.
-   *
-   * A `row` has no thumbnail corner to hang this on, and ignores it.
-   */
-  overlay?: React.ReactNode;
   /** Forwarded to the root, per the pack convention for every `/ui` primitive. */
   className?: string;
   /** Forwarded to the root, per the pack convention for every `/ui` primitive. */
@@ -202,8 +162,79 @@ interface ResourceCardBaseProps {
   'data-testid'?: string;
 }
 
+/**
+ * `variant="card"` — thumbnail-first tile for a picker or browse GRID, and the
+ * only shape with a thumbnail corner for {@link ResourceCardCardProps.overlay}
+ * to sit in.
+ *
+ * `variant` is REQUIRED on purpose. There is no defensible default: the two
+ * shapes exist because three first-party blocks split evenly-ish between them,
+ * and a component that silently picks one renders the wrong shape for half its
+ * callers with no diagnostic.
+ */
+interface ResourceCardCardProps extends ResourceCardCommonProps {
+  variant: 'card';
+  /**
+   * Decorative status pill drawn over the thumbnail corner — the "Added" /
+   * "In your queue" badge every picker ends up wanting.
+   *
+   * 🔴 STATUS, NOT CONTROLS — and the structure enforces that rather than
+   * asking you to remember it. It renders as a SIBLING of the hit area, never
+   * inside it, so a `<button>` here is not nested in the card's `<button>`; and
+   * it carries `pointer-events: none`, so it cannot swallow a click meant for
+   * the card. An earlier version rendered it inside the thumbnail frame — i.e.
+   * inside the hit `<button>` — which recreated exactly the hazard
+   * {@link ResourceCardCommonProps.actions} exists to prevent: measured, an
+   * `onClick` pill there fired the consumer's handler AND toggled selection, and
+   * the parser reparents the inner button so hydration disagrees with the server
+   * HTML. Put anything clickable in `actions`.
+   *
+   * 🔴 WHAT THIS SLOT IS FOR, stated accurately — an earlier version of this
+   * paragraph justified it with a comparison that its own CSS change had made
+   * false. It said a consumer's absolutely-positioned child in `actions` would
+   * "escape the card and be clipped by it (card bottom 51, child bottom 120)".
+   * That measurement was taken when the root had NO `position`; the root is now
+   * `position: relative`, so it IS the containing block and a hand-rolled corner
+   * badge lands where the consumer asked. The honest claim is narrower: this
+   * slot owns the corner OFFSETS (which are arithmetic over the hit area's
+   * padding and move with it), the `pointer-events` decision, and the
+   * sibling-of-the-button placement — three things every consumer would
+   * otherwise re-derive, and two of which are not obvious. It is also why the
+   * root's `position: relative` is now load-bearing rather than cosmetic.
+   *
+   * Because it is a sibling of the labelled `<button>`, its text IS reachable to
+   * assistive tech — content inside the button is not, since the explicit
+   * `aria-label` overrides it (that is why {@link SELECTED_MARK} is
+   * `aria-hidden`). 🔴 So do NOT put the selection state here as well: with
+   * `aria-pressed` already carrying it, an "Added" pill announces it a second
+   * time. Mark such a pill `aria-hidden`, or use this slot for something
+   * `aria-pressed` does not say.
+   *
+   * If you need a control here anyway, opt back in with your own
+   * `pointer-events: auto`, and accept that you are on your own for focus order.
+   */
+  overlay?: React.ReactNode;
+}
+
+/**
+ * `variant="row"` — compact line for a list of already-selected resources.
+ *
+ * 🔴 `overlay` is FORBIDDEN here rather than silently dropped. A row has no
+ * thumbnail corner to hang a pill on, and this component argues twice in its own
+ * words against exactly this shape of failure: `variant` is required because "a
+ * component that silently picks one renders the wrong shape for half its callers
+ * with no diagnostic", and `interactive` is a discriminated union because a
+ * handler on the wrong arm "silently never fires". An `overlay` on a row is
+ * content that silently never renders — the same class — so it is a type error,
+ * using the same `?: never` machinery the static arm already uses.
+ */
+interface ResourceCardRowProps extends ResourceCardCommonProps {
+  variant: 'row';
+  overlay?: never;
+}
+
 /** A card nobody can activate: no button, no tab stop, no toggle semantics. */
-interface ResourceCardStaticProps extends ResourceCardBaseProps {
+interface ResourceCardStaticArm {
   interactive?: false;
   onSelect?: never;
   selected?: never;
@@ -211,7 +242,7 @@ interface ResourceCardStaticProps extends ResourceCardBaseProps {
 }
 
 /** A card that IS the control: one `<button>`, with toggle semantics. */
-interface ResourceCardInteractiveProps extends ResourceCardBaseProps {
+interface ResourceCardInteractiveArm {
   interactive: true;
   /** Fires on activation (click, Enter, Space). Required — see `interactive`. */
   onSelect: () => void;
@@ -237,23 +268,33 @@ interface ResourceCardInteractiveProps extends ResourceCardBaseProps {
 /**
  * @see ResourceCard
  *
- * 🔴 A UNION, not a flat prop bag, and that is the load-bearing half of design
- * decision 4. `interactive` is an explicit DISCRIMINANT: a caller states
- * whether this card is a control, rather than the component inferring it from
- * whether `onSelect` happens to be defined. Inference gets both halves wrong in
- * practice — an `onSelect` passed to something rendered as static is a handler
- * that silently never fires, and an interactive card without one is a tab stop
- * that does nothing. Under the union each is a type error.
+ * 🔴 A UNION OVER TWO DISCRIMINANTS, not a flat prop bag — the four arms below
+ * are `{card, row} × {static, interactive}`.
+ *
+ * `interactive` states whether this card is a control, rather than the component
+ * inferring it from whether `onSelect` happens to be defined. Inference gets
+ * both halves wrong in practice — an `onSelect` passed to something rendered as
+ * static is a handler that silently never fires, and an interactive card without
+ * one is a tab stop that does nothing.
+ *
+ * `variant` gates `overlay` for the same reason: a row has no thumbnail corner,
+ * so an `overlay` there is content that silently never renders. Both are type
+ * errors rather than diagnostics nobody sees.
  *
  * 🔴 CONSEQUENCE, because TypeScript's diagnostic for it is opaque: pass a
- * LITERAL (`interactive` / `interactive={false}`) or branch on your condition.
- * A `boolean` VARIABLE narrows to neither arm and fails with
- * `TS2322: … not assignable to 'IntrinsicAttributes & ResourceCardProps'`,
- * which names nothing useful. That is the correct behaviour — a `boolean`
- * cannot carry a sound "then `onSelect` is required" — but it costs you a round
- * if nobody says so. Spreading an `as const` prop bag compiles.
+ * LITERAL (`variant="card"`, `interactive` / `interactive={false}`) or branch on
+ * your condition. A `boolean` or a widened `string` VARIABLE narrows to no arm
+ * and fails with `TS2322: … not assignable to 'IntrinsicAttributes &
+ * ResourceCardProps'`, which names nothing useful. That is the correct behaviour
+ * — a `boolean` cannot carry a sound "then `onSelect` is required" — but it
+ * costs you a round if nobody says so. Spreading an `as const` prop bag
+ * compiles.
  */
-export type ResourceCardProps = ResourceCardStaticProps | ResourceCardInteractiveProps;
+export type ResourceCardProps =
+  | (ResourceCardCardProps & ResourceCardStaticArm)
+  | (ResourceCardCardProps & ResourceCardInteractiveArm)
+  | (ResourceCardRowProps & ResourceCardStaticArm)
+  | (ResourceCardRowProps & ResourceCardInteractiveArm);
 
 /**
  * 🔴 FROZEN — the accessible name of an interactive card, composed in ONE fixed
@@ -336,7 +377,11 @@ function typeLabelOf(resource: BlockResourceInfo): string {
  *   thumbnailUrl={catalog.get(r.versionId)?.thumbnailUrl}
  *   selected={picked.has(r.versionId)}
  *   onSelect={() => toggle(r)}
- *   overlay={picked.has(r.versionId) ? <span>Added</span> : null}
+ *   // 🔴 aria-hidden, because `selected` already sets `aria-pressed`. The
+ *   // overlay is a SIBLING of the button, so its text IS announced — an
+ *   // un-hidden "Added" here states the selection a second time, which is the
+ *   // duplication `SELECTED_MARK`'s own aria-hidden exists to prevent.
+ *   overlay={picked.has(r.versionId) ? <span aria-hidden="true">Added</span> : null}
  *   data-testid={`browse-${r.versionId}`}
  * />
  *
@@ -353,11 +398,13 @@ export const ResourceCard = forwardRef<HTMLDivElement, ResourceCardProps>(functi
     variant,
     thumbnailUrl,
     actions,
-    overlay,
     className,
     style,
     'data-testid': testId,
   } = props;
+  // `overlay` lives only on the `card` arm, so it is read through the
+  // discriminant rather than destructured off the union.
+  const overlay = props.variant === 'card' ? props.overlay : undefined;
   const interactive = props.interactive === true;
   const selected = interactive ? props.selected === true : false;
   const disabled = interactive ? props.disabled === true : false;
@@ -457,6 +504,7 @@ export const ResourceCard = forwardRef<HTMLDivElement, ResourceCardProps>(functi
   return (
     <div
       ref={ref}
+
       className={className}
       style={style}
       data-civitai-ui="resource-card"
@@ -491,8 +539,10 @@ export const ResourceCard = forwardRef<HTMLDivElement, ResourceCardProps>(functi
       {/* 🔴 A SIBLING of the hit area, exactly like `actions` and for exactly
           the same reason — see the `overlay` prop doc. It is positioned over the
           thumbnail corner from the ROOT, which is the positioned ancestor, so
-          nothing about it has to live inside the button. `card` only: a row has
-          no corner to hang it on. */}
+          nothing about it has to live inside the button.
+          🔴 The `variant === 'card'` half is KEPT even though the prop type now
+          forbids `overlay` on a row: a type is not a runtime guard, and this
+          package ships to JS consumers and to anyone who casts. */}
       {overlay != null && variant === 'card' ? (
         <span data-civitai-ui-resource-overlay="" data-testid={ids.overlay}>
           {overlay}
