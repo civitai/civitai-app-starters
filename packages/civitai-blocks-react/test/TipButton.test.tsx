@@ -295,7 +295,12 @@ describe('TipButton', () => {
     await waitFor(() => expect(screen.getByTestId('tip-done')).toBeTruthy());
   });
 
-  it('a cancel mid-flight does not let the late result settle the control', async () => {
+  // 🔴 THIS CASE REPLACES ONE THAT PINNED THE OPPOSITE, AND THE OLD ONE WAS
+  // WRONG. It asserted that a cancel mid-flight left `onTipped` UNCALLED — but
+  // Cancel resets this control's UI and does NOT abort the POST, so the Buzz had
+  // already moved. The app then never refetched the allowance, never wrote its
+  // `tipped` record, and the control re-armed over money that was gone.
+  it('reports a LANDED transfer even if the viewer cancelled mid-flight', async () => {
     const d = deferredResponse();
     fetchMock.mockReturnValueOnce(d.promise);
     const onTipped = vi.fn();
@@ -310,11 +315,102 @@ describe('TipButton', () => {
       d.resolve(okBody(50));
       await d.promise;
     });
-    // The attempt was superseded: no settled note, and the app is not told a tip
-    // it saw withdrawn from succeeded.
-    expect(screen.queryByTestId('tip-done')).toBeNull();
-    expect(onTipped).not.toHaveBeenCalled();
+    // Money moved ⇒ the app is told, and the control shows it. Re-arming here is
+    // what invites a second transfer.
+    expect(onTipped).toHaveBeenCalledWith(50);
+    expect(screen.getByTestId('tip-done')).toBeTruthy();
+    expect(screen.queryByTestId('tip')).toBeNull();
+  });
+
+  it('reports a LANDED transfer even if the parent flipped `tipped` mid-flight', async () => {
+    // The audit's probe D. The `tipped` effect bumps the attempt for its own
+    // reasons; suppressing the settle on that basis swallowed a real transfer.
+    const d = deferredResponse();
+    fetchMock.mockReturnValueOnce(d.promise);
+    const onTipped = vi.fn();
+    const { rerender } = render(
+      <TipButton noun="curator" toUserId={99} amount={50} onTipped={onTipped} data-testid="tip" />,
+    );
+    fireEvent.click(screen.getByTestId('tip'));
+    fireEvent.click(screen.getByTestId('tip-confirm'));
+    rerender(
+      <TipButton noun="curator" toUserId={99} amount={50} tipped onTipped={onTipped} data-testid="tip" />,
+    );
+
+    await act(async () => {
+      d.resolve(okBody(50));
+      await d.promise;
+    });
+    expect(onTipped).toHaveBeenCalledWith(50);
+    // And `done` is now set, so withdrawing `tipped` cannot re-arm it — which is
+    // the property that licenses the idempotency key not rotating.
+    rerender(
+      <TipButton noun="curator" toUserId={99} amount={50} tipped={false} onTipped={onTipped} data-testid="tip" />,
+    );
+    expect(screen.getByTestId('tip-done')).toBeTruthy();
+    expect(screen.queryByTestId('tip')).toBeNull();
+  });
+
+  it('a superseded FAILURE is still discarded — only success reports unconditionally', async () => {
+    // The other half of the pair, and the control that stops the fix above from
+    // being read as "ignore supersession everywhere". Nothing moved on a
+    // rejection, so an abandoned attempt has nothing to report.
+    const d = deferredResponse();
+    fetchMock.mockReturnValueOnce(d.promise);
+    render(<TipButton noun="curator" toUserId={99} amount={50} data-testid="tip" />);
+    fireEvent.click(screen.getByTestId('tip'));
+    fireEvent.click(screen.getByTestId('tip-confirm'));
+    fireEvent.click(screen.getByTestId('tip-cancel'));
+
+    await act(async () => {
+      d.reject(new Error('Insufficient funds'));
+      await d.promise.catch(() => {});
+    });
+    expect(screen.queryByTestId('tip-prompt')).toBeNull();
     expect(screen.getByTestId('tip')).toBeTruthy();
+  });
+
+  it('folds the ENTITY into the idempotency key — two objects are two tips', async () => {
+    // 🔴 entityType/entityId are sent in the body and recorded on the
+    // transaction, so they are part of WHICH tip this is. Omitting them meant a
+    // deliberate tip to a different object reused the failed one's key and was
+    // collapsed server-side into it — under-charge, but wrong.
+    fetchMock.mockRejectedValueOnce(new Error('network'));
+    const { rerender } = render(
+      <TipButton noun="curator" toUserId={99} amount={50} entityType="Collection" entityId={7} data-testid="tip" />,
+    );
+    fireEvent.click(screen.getByTestId('tip'));
+    fireEvent.click(screen.getByTestId('tip-confirm'));
+    await waitFor(() => expect(screen.getByTestId('tip-prompt').textContent).toContain('network'));
+
+    rerender(
+      <TipButton noun="curator" toUserId={99} amount={50} entityType="Collection" entityId={8} data-testid="tip" />,
+    );
+    fireEvent.click(screen.getByTestId('tip-confirm'));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    expect(body(0).entityId).toBe(7);
+    expect(body(1).entityId).toBe(8);
+    expect(body(1).idempotencyKey).not.toBe(body(0).idempotencyKey);
+  });
+
+  it('refuses a non-positive or non-finite amount', () => {
+    // A money control that renders "Tip 0" and posts it.
+    for (const amount of [0, -5, Number.NaN]) {
+      cleanup();
+      render(<TipButton noun="curator" toUserId={99} amount={amount} data-testid="tip" />);
+      expect((screen.getByTestId('tip') as HTMLButtonElement).disabled, `amount=${amount}`).toBe(
+        true,
+      );
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('a NaN allowance BLOCKS rather than silently removing the ceiling', () => {
+    // `amount > NaN` is false, so an unusable allowance used to read as "plenty
+    // left" — the wrong direction for a value that cannot be compared.
+    render(<TipButton noun="curator" toUserId={99} amount={50} remaining={Number.NaN} data-testid="tip" />);
+    expect((screen.getByTestId('tip') as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('defaults its testids when none is given', () => {

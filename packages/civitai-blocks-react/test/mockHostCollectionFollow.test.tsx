@@ -35,7 +35,7 @@ describe('createMockHost — collection follow', () => {
     vi.restoreAllMocks();
   });
 
-  it('echoes the write, and reads its own write back on the next toggle', async () => {
+  it('echoes each write, and a second toggle echoes the second request', async () => {
     uninstall = createMockHost({}).install();
     const { result } = renderHook(() => useCollectionFollow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
@@ -107,17 +107,12 @@ describe('createMockHost — collection follow', () => {
     }
   });
 
-  it('seeds from `collectionFollows` and MERGES a setScenario patch', async () => {
-    const host = createMockHost({ collectionFollows: { 1: true, 2: true } });
+  it('arms a refusal live via setScenario', async () => {
+    const host = createMockHost({});
     uninstall = host.install();
     const { result } = renderHook(() => useCollectionFollow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
-    host.setScenario({ collectionFollows: { 1: false } });
-    // The merge is observable through the WRITE path: collection 2's seeded
-    // state must survive a patch that names only collection 1. (A replacing
-    // patch would silently unfollow every other collection the block has
-    // toggled.)
     let r: unknown;
     await act(async () => {
       r = await result.current.setFollow({ collectionId: 2, follow: false });
@@ -132,5 +127,27 @@ describe('createMockHost — collection follow', () => {
       });
     });
     expect((caught as CollectionFollowError).code).toBe('review-mode');
+  });
+
+  it('echoes the REQUEST, not any stored state — the reply is stateless', async () => {
+    // 🔴 Pins WHY there is no follow-state map in the mock. An earlier version
+    // carried one that nothing read; this asserts the property that made it
+    // unreachable, so re-adding a map has to contend with a test rather than
+    // with a comment. Both real hosts reply `{collectionId, followed: follow}`.
+    uninstall = createMockHost({}).install();
+    const { result } = renderHook(() => useCollectionFollow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    let r: unknown;
+    await act(async () => {
+      r = await result.current.setFollow({ collectionId: 5, follow: true });
+    });
+    expect(r).toEqual({ collectionId: 5, followed: true });
+    // Re-following an already-followed collection still echoes the request —
+    // there is no accumulated state to disagree with it.
+    await act(async () => {
+      r = await result.current.setFollow({ collectionId: 5, follow: true });
+    });
+    expect(r).toEqual({ collectionId: 5, followed: true });
   });
 });

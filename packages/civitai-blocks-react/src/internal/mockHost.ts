@@ -615,13 +615,6 @@ export interface MockHostOptions {
    */
   collectionFollowError?: BlockCollectionFollowErrorCode | string;
   /**
-   * Seed the mock's per-collection follow state, `collectionId` → followed.
-   * `SET_COLLECTION_FOLLOW` writes into this map and the reply echoes it, so a
-   * block that toggles twice sees the state come back. Absent → every collection
-   * starts unfollowed. Live-tunable via {@link MockHost.setScenario}.
-   */
-  collectionFollows?: Record<number, boolean>;
-  /**
    * Buzz pools a `SUBMIT_WORKFLOW` must REJECT when named in `body.accountType`
    * — simulates the real backend's content-rating clamp. The real host throws a
    * `BAD_REQUEST` at the currency-resolution boundary (before any spend) when a
@@ -733,7 +726,6 @@ export type MockHostScenarioPatch = Pick<
   | 'wildcardPack'
   | 'wildcardPackError'
   | 'collectionFollowError'
-  | 'collectionFollows'
   | 'appWorkflows'
   | 'appWorkflowsError'
   | 'publishImageIds'
@@ -1372,14 +1364,18 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   // Wildcard-pack bridge data + forced discriminated-error knob.
   let wildcardPack: BlockWildcardPack = options.wildcardPack ?? DEFAULT_WILDCARD_PACK;
   let wildcardPackError: BlockWildcardPackErrorCode | undefined = options.wildcardPackError;
-  // Collection-follow bridge. `collectionFollows` is MUTABLE — a successful
-  // SET_COLLECTION_FOLLOW records the new state so a block that toggles twice
-  // reads its own write back, which is what makes an optimistic-update bug
-  // reproducible in `dev:mock` rather than only against the real host.
+  // Collection-follow bridge.
+  //
+  // 🔴 THERE IS DELIBERATELY NO FOLLOW-STATE MAP HERE, and an earlier version's
+  // was removed rather than fixed. It held a per-collection `followed` map that
+  // `SET_COLLECTION_FOLLOW` wrote to and NOTHING EVER READ — the reply echoes the
+  // REQUEST (`{collectionId, followed: follow}`), exactly as both real hosts do,
+  // so the map could not reach any observable. Seeding it, mutating it and
+  // merging it on `setScenario` were all no-ops; deleting the whole thing left
+  // the entire unit suite green, which is how three false claims about it
+  // survived review. There is no READ op on this bridge for such a map to feed,
+  // so the honest shape is not to offer one.
   let collectionFollowError: string | undefined = options.collectionFollowError;
-  const collectionFollows = new Map<number, boolean>(
-    Object.entries(options.collectionFollows ?? {}).map(([id, f]) => [Number(id), f]),
-  );
   // App-subqueue bridge data + forced free-text-error knob. `appWorkflows` is
   // MUTABLE — CANCEL_APP_WORKFLOW marks the matching row canceled in place so a
   // follow-up QUERY reflects it.
@@ -2150,7 +2146,6 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               });
               return;
             }
-            collectionFollows.set(collectionId, follow);
             dispatchToBlock({
               type: 'COLLECTION_FOLLOW_RESULT',
               payload: { requestId, result: { collectionId, followed: follow } },
@@ -2814,14 +2809,6 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     if (patch.wildcardPackError !== undefined) wildcardPackError = patch.wildcardPackError;
     if (patch.collectionFollowError !== undefined)
       collectionFollowError = patch.collectionFollowError;
-    if (patch.collectionFollows !== undefined) {
-      // MERGE, not replace — matching `buzz` above. A scenario that flips one
-      // collection must not silently unfollow every other one the block has
-      // already toggled.
-      for (const [id, f] of Object.entries(patch.collectionFollows)) {
-        collectionFollows.set(Number(id), f);
-      }
-    }
     if (patch.appWorkflows !== undefined) {
       appWorkflows = {
         workflows: patch.appWorkflows.workflows,

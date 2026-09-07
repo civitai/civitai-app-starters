@@ -199,6 +199,93 @@ describe('useCollectionFollow', () => {
     await waitFor(() => expect(result.current.error).toBeNull());
   });
 
+  it('flags a TRANSPORT TIMEOUT distinctly from a server message', async () => {
+    // 🔴 Both have `code === undefined`, so "no code ⇒ a server message worth
+    // rendering" is false — and the README instructs blocks to show `.message`
+    // on that branch, which would put an SDK-internal string in front of a
+    // viewer. The flag is set from the transport's TYPED error, not by matching
+    // its wording.
+    vi.useFakeTimers();
+    try {
+      const { result } = renderHook(() => useCollectionFollow());
+      let caught: unknown;
+      act(() => {
+        void result.current.setFollow({ collectionId: 9, follow: true }).catch((e: unknown) => {
+          caught = e;
+        });
+      });
+      // Past the 10-minute human bound; nothing ever replies.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10 * 60_000 + 1000);
+      });
+      expect(caught).toBeInstanceOf(CollectionFollowError);
+      const err = caught as CollectionFollowError;
+      expect(err.timedOut).toBe(true);
+      expect(err.code).toBeUndefined();
+      expect(err.declined).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does NOT flag a NON-TIMEOUT transport rejection as a timeout', async () => {
+    // 🔴 THE CONTROL THAT MAKES `timedOut` MEAN SOMETHING. The two cases below
+    // never reach the wrapping branch at all — a host reply is already a
+    // `CollectionFollowError` and is passed through — so without this case a
+    // hardcoded `timedOut: true` SURVIVES, which was measured. It is not an
+    // equivalent mutant: the transport has two other rejection paths
+    // (`IframeTransport disposed`, and the inline transport's "not implemented
+    // in v1"), and on both, `timedOut: true` would tell a block "the write may
+    // have landed, re-read your state" about a request that was never sent.
+    const { result } = renderHook(() => useCollectionFollow());
+    let caught: unknown;
+    act(() => {
+      void result.current.setFollow({ collectionId: 9, follow: true }).catch((e: unknown) => {
+        caught = e;
+      });
+    });
+    // Dispose with the request still pending — rejects with a plain Error.
+    act(() => {
+      resetTransport();
+    });
+    await waitFor(() => expect(caught).toBeInstanceOf(CollectionFollowError));
+    const err = caught as CollectionFollowError;
+    expect(err.timedOut).toBe(false);
+    expect(err.code).toBeUndefined();
+  });
+
+  it('does NOT flag a real server message as a timeout', async () => {
+    // The positive control: a flag that was always true would pass the case
+    // above and destroy the distinction it exists to make.
+    const { result } = renderHook(() => useCollectionFollow());
+    let caught: unknown;
+    act(() => {
+      void result.current.setFollow({ collectionId: 9, follow: true }).catch((e: unknown) => {
+        caught = e;
+      });
+    });
+    dispatchResult({
+      requestId: lastRequest(postMessageMock).payload.requestId,
+      error: 'You do not have permission to follow this collection',
+    });
+    await waitFor(() => expect(caught).toBeInstanceOf(CollectionFollowError));
+    expect((caught as CollectionFollowError).timedOut).toBe(false);
+  });
+
+  it('does NOT flag a host REFUSAL as a timeout either', async () => {
+    const { result } = renderHook(() => useCollectionFollow());
+    let caught: unknown;
+    act(() => {
+      void result.current.setFollow({ collectionId: 9, follow: true }).catch((e: unknown) => {
+        caught = e;
+      });
+    });
+    dispatchResult({ requestId: lastRequest(postMessageMock).payload.requestId, error: 'declined' });
+    await waitFor(() => expect(caught).toBeInstanceOf(CollectionFollowError));
+    expect((caught as CollectionFollowError).timedOut).toBe(false);
+    expect((caught as CollectionFollowError).declined).toBe(true);
+  });
+
   describe('isCollectionFollowErrorCode', () => {
     it('accepts every member of the closed set', () => {
       for (const code of COLLECTION_FOLLOW_ERROR_CODES) {

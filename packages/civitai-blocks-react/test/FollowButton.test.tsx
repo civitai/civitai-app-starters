@@ -204,6 +204,78 @@ describe('FollowButton', () => {
     expect(screen.getByTestId('follow-button')).toBeTruthy();
   });
 
+  // ── Audit round 1, finding 1+2: correlation on the echoed collectionId ──────
+  //
+  // The control used to carry an attempt COUNTER whose comment claimed to close
+  // exactly this, and did not: deleting all three of its lines left this file
+  // 12/12 green. These cases are what the counter could never fail on.
+
+  it('IGNORES a reply for a collection it has moved off, and does not report it', async () => {
+    // 🔴 One mounted instance whose `collectionId` prop CHANGES mid-flight — a
+    // rail showing "the currently selected collection", or an unkeyed recycled
+    // list row. Adopting the old collection's reply records a follow the viewer
+    // never made, against whatever row is on screen now.
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <FollowButton collectionId={1} followed={false} onChange={onChange} data-testid="fb" />,
+    );
+    fireEvent.click(screen.getByTestId('fb'));
+    const req = sent('SET_COLLECTION_FOLLOW')!;
+    expect(req.payload.collectionId).toBe(1);
+
+    rerender(<FollowButton collectionId={2} followed={false} onChange={onChange} data-testid="fb" />);
+    reply({ requestId: req.payload.requestId, result: { collectionId: 1, followed: true } });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByTestId('fb').textContent).toBe('Follow');
+    expect(screen.getByTestId('fb').getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('drops the optimistic flip when the collection changes, with no reply at all', () => {
+    // The same wrong-row bug with no network involved: the optimistic value
+    // belongs to the id it was made for.
+    const { rerender } = render(
+      <FollowButton collectionId={1} followed={false} data-testid="fb" />,
+    );
+    fireEvent.click(screen.getByTestId('fb'));
+    expect(screen.getByTestId('fb').textContent).toBe('Following');
+
+    rerender(<FollowButton collectionId={2} followed={false} data-testid="fb" />);
+    expect(screen.getByTestId('fb').textContent).toBe('Follow');
+  });
+
+  it('does not paint a FAILURE from one collection onto the next', async () => {
+    const { rerender } = render(
+      <FollowButton collectionId={1} followed={false} data-testid="fb" />,
+    );
+    fireEvent.click(screen.getByTestId('fb'));
+    const req = sent('SET_COLLECTION_FOLLOW')!;
+    rerender(<FollowButton collectionId={2} followed={false} data-testid="fb" />);
+    reply({ requestId: req.payload.requestId, error: 'Collection is private' });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByTestId('fb-note')).toBeNull();
+  });
+
+  it('STILL adopts a reply whose echoed id matches the collection on screen', async () => {
+    // The positive control for the three cases above: a correlation guard that
+    // rejected everything would pass all of them and break the feature.
+    const onChange = vi.fn();
+    render(<FollowButton collectionId={3} followed={false} onChange={onChange} data-testid="fb" />);
+    fireEvent.click(screen.getByTestId('fb'));
+    reply({
+      requestId: sent('SET_COLLECTION_FOLLOW')!.payload.requestId,
+      result: { collectionId: 3, followed: true },
+    });
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith(true));
+    expect(screen.getByTestId('fb').textContent).toBe('Following');
+  });
+
   it('unfollows from the following state', () => {
     render(<FollowButton collectionId={7} followed data-testid="fb" />);
     fireEvent.click(screen.getByTestId('fb'));

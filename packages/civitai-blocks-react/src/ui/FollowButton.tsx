@@ -112,15 +112,42 @@ export function FollowButton({
   const [optimistic, setOptimistic] = useState<boolean | null>(null);
   const [failed, setFailed] = useState(false);
   /**
-   * Monotonic id of the CURRENT attempt — the same device as `ReportButton`'s.
-   * The trigger is natively disabled while `pending`, so two overlapping writes
-   * are not reachable from a click; what this closes is a settle arriving after
-   * the PARENT moved `followed` (a list refresh landing mid-confirm), which
-   * would otherwise re-assert a value the app has already superseded.
+   * The `collectionId` the in-flight write is FOR.
+   *
+   * 🔴 THIS IS THE CORRELATION GUARD, AND IT REPLACES AN ATTEMPT COUNTER THAT
+   * GUARDED NOTHING. A counter incremented only inside `toggle()` cannot see the
+   * parent change anything, so the case its comment claimed to close — a settle
+   * arriving after the parent moved the row — went straight through it; deleting
+   * all three of its lines left this file's suite fully green, which is how the
+   * false claim survived review.
+   *
+   * The reachable bug it was pretending to cover: a single mounted instance whose
+   * `collectionId` prop CHANGES mid-flight (a rail showing "the currently
+   * selected collection", or an unkeyed recycled list row). The host's reply for
+   * the OLD collection then lands, and without this the control adopts it as the
+   * NEW one's state and reports it through `onChange` — so the app records a
+   * follow the viewer never made, on an account-write control.
+   *
+   * Correlating on the id is possible because the host ECHOES it:
+   * `BlockCollectionFollowResult.collectionId` exists for exactly this, and
+   * `isValidCollectionFollowResult` already pins it to a positive integer so a
+   * malformed echo cannot reach this comparison.
    */
-  const attemptRef = useRef(0);
+  const inFlightForRef = useRef<number | null>(null);
 
   const shown = optimistic ?? followed;
+
+  // 🔴 THE OPTIMISTIC VALUE BELONGS TO A COLLECTION, NOT TO THIS COMPONENT.
+  // When the prop moves, whatever this control was asserting is about the id it
+  // has just stopped showing — keeping it paints the OLD collection's state onto
+  // the NEW one, which is the same wrong-row bug as an uncorrelated settle and
+  // needs no network round trip to happen. Drop it, drop any failure note, and
+  // release the in-flight marker so a reply for the old id can never re-adopt.
+  useEffect(() => {
+    setOptimistic(null);
+    setFailed(false);
+    inFlightForRef.current = null;
+  }, [collectionId]);
 
   // The parent has caught up — stop asserting. Kept as an effect rather than
   // clearing on success, because clearing there is only correct if the parent
@@ -134,21 +161,36 @@ export function FollowButton({
     : { trigger: 'follow-button', note: 'follow-button-note' };
 
   const toggle = useCallback(async () => {
-    const attempt = (attemptRef.current += 1);
-    const current = () => attemptRef.current === attempt;
+    const target = collectionId;
+    inFlightForRef.current = target;
+    /**
+     * This settle still belongs to the collection on screen. Both halves are
+     * load-bearing: the ECHO comparison catches a reply for a collection this
+     * control has moved off, and the REF comparison catches the case where the
+     * prop moved away and back again while a write was in flight.
+     */
+    const stillOurs = (echoedId: number) =>
+      echoedId === target && inFlightForRef.current === target;
     const next = !shown;
     setOptimistic(next);
     setFailed(false);
     try {
-      const result = await setFollow({ collectionId, follow: next });
-      if (!current()) return;
+      const result = await setFollow({ collectionId: target, follow: next });
+      // 🔴 Correlate on the HOST'S echoed id, not on a counter. A reply for a
+      // collection this control no longer shows must change nothing and must
+      // NOT be reported through `onChange` — adopting it records a follow the
+      // viewer never made against whatever row is on screen now.
+      if (!stillOurs(result.collectionId)) return;
       // 🔴 Adopt the ECHO, not `next`. They agree today; reading the host's
       // answer is what keeps this correct if one ever settles differently, and
       // it costs nothing.
       setOptimistic(result.followed);
       onChange?.(result.followed);
     } catch (err: unknown) {
-      if (!current()) return;
+      // A rejection carries no echoed id, so correlate on the ref alone: a
+      // failure belonging to a collection this control has moved off must not
+      // revert or announce anything about the one now on screen.
+      if (inFlightForRef.current !== target) return;
       // Revert first, unconditionally: every path below this line is one where
       // no write occurred.
       setOptimistic(null);

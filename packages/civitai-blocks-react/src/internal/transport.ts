@@ -345,3 +345,28 @@ export function generateIdempotencyKey(): string {
     .toString(36)
     .slice(2, 12)}`;
 }
+
+/**
+ * A request that got NO REPLY before its timeout elapsed.
+ *
+ * 🔴 A TYPE, NOT A MESSAGE SHAPE. Consumers need to distinguish "the host never
+ * answered" from "the host answered with an error", and the only other way to do
+ * that is to match on the thrown `Error`'s wording — a guard that is SPELLED
+ * rather than structural, and that passes silently while meaning nothing the
+ * moment the message is reworded. The message is deliberately unchanged, so
+ * anything already reading `.message` keeps working.
+ *
+ * 🔴 IT DOES NOT MEAN THE OPERATION DID NOT HAPPEN. The reply is what was lost,
+ * not necessarily the work: a host can complete a write and fail to deliver the
+ * answer. Treat it as UNKNOWN and re-read state — never as "nothing occurred".
+ */
+export class RequestTimeoutError extends Error {
+  readonly requestType: string;
+  readonly timeoutMs: number;
+  constructor(requestType: string, timeoutMs: number, message: string) {
+    super(message);
+    this.name = 'RequestTimeoutError';
+    this.requestType = requestType;
+    this.timeoutMs = timeoutMs;
+  }
+}

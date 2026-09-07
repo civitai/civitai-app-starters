@@ -158,19 +158,39 @@ export function TipButton({
    * amount preset switcher) correctly starts a NEW logical tip rather than
    * colliding with the abandoned one.
    *
-   * 🔴 DELIBERATELY NOT ROTATED AFTER A SUCCESS, and that is safe only because
-   * a settled control is TERMINAL: `done` is never cleared, so it renders the
-   * settled note and can never send again from this mount. If a future change
-   * makes the settled state re-armable, this becomes a bug — the second,
-   * deliberate tip would carry the first one's key and be collapsed server-side
-   * into it, so the viewer would press twice and pay once. Rotate it there.
+   * 🔴 EVERY FIELD OF THE TIP'S IDENTITY IS IN THE KEY, and the earlier version
+   * omitted two. `entityType`/`entityId` are sent in the POST body and recorded
+   * on the transaction, so they are part of WHICH tip this is — leaving them out
+   * meant that changing the entity after a failed attempt reused the same key,
+   * and if the first attempt had actually landed (the lost-response case this
+   * mechanism exists for) the second, deliberate tip to a DIFFERENT object was
+   * collapsed into it and the block was told it succeeded. Under-charge rather
+   * than double-charge, but wrong either way.
+   *
+   * 🔴 NOT ROTATED AFTER A SUCCESS, and what licenses that is narrower than it
+   * first appears. `done` is never cleared, so a control that has settled
+   * THROUGH ITS OWN SUCCESS PATH cannot send again from this mount. `settled` is
+   * `done || tipped`, and the `tipped` half is a PROP — a parent can withdraw it
+   * — so terminality is a property of `done`, not of `settled`. That distinction
+   * is why the success path above reports unconditionally: it is what guarantees
+   * `done` is set whenever money actually moved, which is in turn what makes this
+   * key safe to keep. Change either and rotate the key.
    */
   const keySeed = useId();
-  const idempotencyKey = `${keySeed}:${toUserId}:${amount}`;
+  const idempotencyKey = `${keySeed}:${toUserId}:${amount}:${entityType ?? '-'}:${entityId ?? '-'}`;
 
   const settled = done || tipped;
-  const overAllowance = remaining !== undefined && amount > remaining;
-  const blocked = disabled || disabledReason !== undefined;
+  // 🔴 Both guards are about a NUMBER reaching a money path, and both were
+  // missing. `amount` is documented a positive integer and was unchecked, so
+  // `amount={0}` rendered "Tip 0" and posted it. And `remaining={NaN}` makes
+  // `amount > remaining` FALSE, so a NaN allowance did not merely fail to
+  // block — it silently REMOVED the ceiling, which is the wrong direction for
+  // an unusable value. `Number.isFinite` first, so a non-number can never
+  // decide a comparison.
+  const amountValid = Number.isFinite(amount) && amount > 0;
+  const overAllowance =
+    remaining !== undefined && (!Number.isFinite(remaining) || amount > remaining);
+  const blocked = disabled || disabledReason !== undefined || !amountValid;
 
   const ids = testId
     ? {
@@ -220,9 +240,25 @@ export function TipButton({
     setFailure(null);
     try {
       await tip({ toUserId, amount, ...(entityType ? { entityType } : {}), ...(entityId !== undefined ? { entityId } : {}) }, { idempotencyKey });
-      if (!current()) return;
+      // 🔴 A LANDED TRANSFER IS REPORTED UNCONDITIONALLY — no `current()` check
+      // on this path, deliberately, and the earlier version's check here was the
+      // defect rather than the safety.
+      //
+      // Buzz has MOVED by the time this line runs. Nothing the viewer or the
+      // parent did in the meantime can un-send it: Cancel resets this control's
+      // UI but does not abort the POST, and a parent flipping `tipped` mid-flight
+      // bumps the attempt for its own reasons. Suppressing the settle in either
+      // case left the app never learning the transfer succeeded — so `onTipped`
+      // never fired, the allowance was never refetched, and no `tipped` record
+      // was written, which re-armed the control over money that was already gone.
+      //
+      // Showing "Tipped" for a transfer that happened is correct even if the
+      // viewer pressed Cancel a moment earlier; showing "Tip 50" again is what
+      // invites the second one. Only the FAILURE path below respects supersession
+      // — there, nothing moved, so an abandoned attempt has nothing to report.
       setDone(true);
       setConfirming(false);
+      setFailure(null);
       onTipped?.(amount);
     } catch (err: unknown) {
       if (!current()) return;

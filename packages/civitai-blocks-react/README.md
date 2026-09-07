@@ -544,8 +544,9 @@ of those are not failures to render:
 |---|---|---|
 | `err.declined` | the viewer dismissed the confirm — **no write occurred** | revert, say nothing |
 | `err.signInRequired` | no session | route into `useRequestSignIn()` |
+| `err.timedOut` | no reply arrived within the 10-min consent bound | 🔴 **check this BEFORE `.message`** — it also has no `.code`, and its message is an SDK-internal string. It does **not** mean no write occurred; re-read your state |
 | `err.code` set otherwise | a host refusal (`invalid-request` / `review-mode` / `not-ready` / `collection-unavailable`) | show or ignore per case |
-| `err.code === undefined` | a **server** message the host forwarded verbatim | show `err.message` |
+| `err.code === undefined` **and** `!err.timedOut` | a **server** message the host forwarded verbatim | show `err.message` |
 
 ```tsx
 const { setFollow, pending } = useCollectionFollow();
@@ -559,7 +560,8 @@ async function toggle() {
     if (err instanceof CollectionFollowError) {
       if (err.signInRequired) return requestSignIn();
       if (err.declined) return; // the viewer said no — say nothing
-      showToast(err.message);
+      if (err.timedOut) return showToast('Still working — check back in a moment.');
+      showToast(err.message); // a real server message, safe to render
     }
   }
 }

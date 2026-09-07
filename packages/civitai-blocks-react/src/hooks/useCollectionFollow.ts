@@ -7,7 +7,7 @@ import type {
 
 import { HUMAN_INTERACTION_TIMEOUT_MS } from '../internal/requestTimeouts.js';
 import { getTransport } from '../internal/singleton.js';
-import { sendTypedRequest } from '../internal/transport.js';
+import { RequestTimeoutError, sendTypedRequest } from '../internal/transport.js';
 
 export type { BlockCollectionFollowErrorCode, BlockCollectionFollowResult };
 
@@ -58,6 +58,18 @@ export class CollectionFollowError extends Error {
   /** The closed host refusal code, or `undefined` for a server/transport error. */
   readonly code?: BlockCollectionFollowErrorCode;
   /**
+   * The SDK transport gave up waiting — no reply ever arrived.
+   *
+   * 🔴 CHECK THIS BEFORE SHOWING `.message`. A timeout also has
+   * `code === undefined`, so "no code ⇒ a server message worth rendering" is
+   * false, and acting on it puts an SDK-internal string
+   * (`IframeTransport: request "SET_COLLECTION_FOLLOW" timed out after 600000ms`)
+   * in front of a viewer. 🔴 It also does NOT mean no write occurred: the host
+   * may have completed the follow and failed only to deliver the reply, so do
+   * not present a timeout as "nothing happened" — re-read your own state.
+   */
+  readonly timedOut: boolean;
+  /**
    * The viewer DISMISSED the host's consent confirm, so NO WRITE OCCURRED.
    *
    * 🔴 Not an error condition to shout about, and it is trustworthy in the one
@@ -72,9 +84,10 @@ export class CollectionFollowError extends Error {
    */
   readonly signInRequired: boolean;
 
-  constructor(error: string) {
+  constructor(error: string, opts?: { timedOut?: boolean }) {
     super(error);
     this.name = 'CollectionFollowError';
+    this.timedOut = opts?.timedOut === true;
     if (isCollectionFollowErrorCode(error)) this.code = error;
     this.declined = error === 'declined';
     this.signInRequired = error === 'sign-in-required';
@@ -209,7 +222,10 @@ export function useCollectionFollow(): UseCollectionFollow {
         const wrapped =
           err instanceof CollectionFollowError
             ? err
-            : new CollectionFollowError(err instanceof Error ? err.message : String(err));
+            : new CollectionFollowError(err instanceof Error ? err.message : String(err), {
+                // Structural, not a message match — see `RequestTimeoutError`.
+                timedOut: err instanceof RequestTimeoutError,
+              });
         if (mountedRef.current) setError(wrapped);
         // 🔴 THROWN UNCONDITIONALLY, even when unmounted. The caller's `await`
         // is not the component — an app that persists the result (a toast queue,
