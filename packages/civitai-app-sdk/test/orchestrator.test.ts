@@ -401,7 +401,7 @@ describe('WORKFLOW_STEP_TYPES + IMAGE_GEN_ENGINES catalogs', () => {
     // spec first (`node scripts/check-orchestrator-catalogs.mjs`), then bump;
     // never bump to whatever the fixture happens to hold, which would make this
     // assert nothing.
-    expect(SPEC_WORKFLOW_STEP_TYPES).toHaveLength(47);
+    expect(SPEC_WORKFLOW_STEP_TYPES).toHaveLength(48);
     expect(SPEC_IMAGE_GEN_ENGINES).toHaveLength(13);
     expect(new Set(SPEC_WORKFLOW_STEP_TYPES).size).toBe(SPEC_WORKFLOW_STEP_TYPES.length);
   });
