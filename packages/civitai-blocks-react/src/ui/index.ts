@@ -64,6 +64,12 @@ export type { BadgeProps, BadgeVariant, BadgeSize } from './Badge.js';
 export { ReportButton } from './ReportButton.js';
 export type { ReportButtonProps } from './ReportButton.js';
 
+export { FollowButton } from './FollowButton.js';
+export type { FollowButtonProps } from './FollowButton.js';
+
+export { TipButton } from './TipButton.js';
+export type { TipButtonProps } from './TipButton.js';
+
 export { ResourceCard, resourceDisplayName } from './ResourceCard.js';
 export type { ResourceCardProps, ResourceCardVariant } from './ResourceCard.js';
 

@@ -977,6 +977,42 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             return;
           }
 
+          case 'SET_COLLECTION_FOLLOW': {
+            // UNSUPPORTED in live v1, for the SAME reason as GET_WILDCARD_PACK
+            // directly below: the real host calls the SESSION-authed
+            // `collection.follow` / `collection.unfollow` tRPC procedures and
+            // resolves the collection's identity through an authenticated read
+            // before opening its own chrome confirm. A liveHost holds a BLOCK
+            // token, not a session, and has no civitai chrome to confirm in.
+            //
+            // 🔴 REFUSING IS THE POINT, NOT A LIMITATION TO ROUTE AROUND. The
+            // HTTP endpoint this bridge replaces is still live and this harness
+            // COULD call it with the block token — and doing so would exercise a
+            // path with NO consent confirm, i.e. dev would prove out a flow the
+            // production bridge does not have. A block would then ship having
+            // never once handled `declined`.
+            //
+            // `collection-unavailable`, not `sign-in-required`: the honest
+            // statement is that this host could not resolve the collection, and
+            // it is the code that already covers "the lookup itself failed".
+            // `sign-in-required` would send the block into a REQUEST_SIGN_IN
+            // loop against a harness that has no sign-in. Use dev:mock (its
+            // `collectionFollowError` knob covers `declined` and the rest) to
+            // exercise the real refusal set.
+            if (typeof requestId !== 'string') return;
+            logOnce(
+              'collection-follow',
+              'SET_COLLECTION_FOLLOW is not supported in dev:live (it needs the session-authed ' +
+                'follow procedures plus host-chrome consent). Replying `collection-unavailable`. ' +
+                'Use dev:mock to exercise the follow bridge, including the `declined` path.',
+            );
+            dispatchToBlock({
+              type: 'COLLECTION_FOLLOW_RESULT',
+              payload: { requestId, error: 'collection-unavailable' },
+            });
+            return;
+          }
+
           case 'GET_WILDCARD_PACK': {
             // UNSUPPORTED in live v1 (honest-by-design, like OPEN_BUZZ_PURCHASE):
             // the real host resolves the pack via a SESSION-authed proc and does

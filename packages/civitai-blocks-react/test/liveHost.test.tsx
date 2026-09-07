@@ -570,14 +570,16 @@ describe('createLiveHost — token + non-forwarded messages', () => {
   let inbound: ReturnType<typeof collectInbound>;
   const TOKEN = fakeJwt(DEFAULT_CLAIMS);
 
+  /** Returned so a case can assert that NO HTTP was attempted for its message. */
   function install(extra?: { token?: string }) {
-    const fetchImpl = vi.fn(async () => meOk({ id: 42, username: 'm' })) as unknown as typeof fetch;
+    const fetchImpl = vi.fn(async () => meOk({ id: 42, username: 'm' }));
     const host = createLiveHost({
       blockToken: extra?.token ?? TOKEN,
       viewer: { id: 42, username: 'm' },
-      fetchImpl,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
     });
     uninstall = host.install();
+    return fetchImpl;
   }
 
   beforeEach(() => {
@@ -620,6 +622,27 @@ describe('createLiveHost — token + non-forwarded messages', () => {
     expect(payload.requestId).toBe('r-buy');
     expect(payload.purchased).toBe(false);
     expect(openSpy).toHaveBeenCalledWith('https://civitai.com/purchase/buzz', '_blank');
+  });
+
+  it('SET_COLLECTION_FOLLOW is REFUSED, never routed to the scoped HTTP endpoint', async () => {
+    // 🔴 The refusal is the point. This harness holds a block token and COULD
+    // call the legacy `collections:write:self` HTTP endpoint — a path with NO
+    // consent confirm. Doing so would let dev prove out a flow production does
+    // not have, and a block would ship having never handled `declined`.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchImpl = install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    const fetchCallsBefore = fetchImpl.mock.calls.length;
+
+    post('SET_COLLECTION_FOLLOW', { requestId: 'r-follow', collectionId: 7, follow: true });
+    const payload = await waitForMessage(inbound, 'COLLECTION_FOLLOW_RESULT');
+
+    expect(payload.requestId).toBe('r-follow');
+    expect(payload.error).toBe('collection-unavailable');
+    expect(payload.result).toBeUndefined();
+    // No HTTP was attempted for it at all.
+    expect(fetchImpl.mock.calls.length).toBe(fetchCallsBefore);
+    expect(warnSpy).toHaveBeenCalled();
   });
 
   it('TRACK_EVENT / REQUEST_SIGN_IN / BLOCK_ERROR are no-op (no reply, no throw)', async () => {

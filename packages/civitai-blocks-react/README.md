@@ -518,6 +518,56 @@ if (error instanceof WildcardPackError && error.code === 'busy') void refetch();
 if (!loading && pack) console.log(Object.keys(pack.lists));
 ```
 
+### `useCollectionFollow()`
+
+Follow / unfollow a collection **for the viewer**, host-mediated over
+`SET_COLLECTION_FOLLOW`. Returns `{ setFollow, pending, error }`.
+
+**No block scope, and no token on the wire.** The host calls the session-authed
+`collection.follow` / `collection.unfollow` procedures, which self-bind to the
+viewer server-side — `collectionId` is the only thing a block influences.
+
+🔴 **Every call opens a host-chrome consent confirm naming the collection**, and
+that click is the *only* consent this path has ever had: the HTTP predecessor's
+`collections:write:self` scope is consent-exempt server-side and prompted nobody.
+Moving to this bridge **tightens** the flow; what it gives up is the manifest
+`scopes` declaration a moderator reads before install. The host resolves the
+collection's name itself (there is no `name` field on the wire, deliberately) and
+bounds that to **20 distinct ids per block instance** — past the cap it refuses
+with `collection-unavailable`, the same code a collection the viewer cannot see
+gets.
+
+`setFollow` **rejects** with a `CollectionFollowError` on every non-success. Two
+of those are not failures to render:
+
+| | meaning | what to do |
+|---|---|---|
+| `err.declined` | the viewer dismissed the confirm — **no write occurred** | revert, say nothing |
+| `err.signInRequired` | no session | route into `useRequestSignIn()` |
+| `err.code` set otherwise | a host refusal (`invalid-request` / `review-mode` / `not-ready` / `collection-unavailable`) | show or ignore per case |
+| `err.code === undefined` | a **server** message the host forwarded verbatim | show `err.message` |
+
+```tsx
+const { setFollow, pending } = useCollectionFollow();
+const { requestSignIn } = useRequestSignIn();
+
+async function toggle() {
+  try {
+    const result = await setFollow({ collectionId, follow: !followed });
+    setFollowed(result.followed); // adopt the host's echo, not the guess
+  } catch (err) {
+    if (err instanceof CollectionFollowError) {
+      if (err.signInRequired) return requestSignIn();
+      if (err.declined) return; // the viewer said no — say nothing
+      showToast(err.message);
+    }
+  }
+}
+```
+
+Most blocks want `<FollowButton>` from `@civitai/blocks-react/ui` instead, which
+wires all of the above.
+
 ### `useAppWorkflows(params?)`
 
 The calling app's **own** generator subqueue — the tag-scoped list of generations
@@ -924,6 +974,8 @@ export function App() {
 | `Collapse` | controlled disclosure (`open` + `onOpenChange`, `title`, `disabled`) for the "advanced params reveal". `aria-expanded` + `aria-controls`; content region `role="region"`, `hidden` when closed. |
 | `SegmentedControl` | controlled view/tab switcher (`value` + `onChange`, `data: {value,label,disabled}[]`, `fullWidth`, `size`). `role="tablist"` of `role="tab"` buttons; ArrowLeft/ArrowRight rove selection. |
 | `ReportButton` | two-step control that files a shared-board row for platform moderator review via `useSharedStorage().report()`. `noun` + `onReport` (+ `reported` for server truth). 🔴 Its visible copy is deliberately **not** overridable — see the component's JSDoc. |
+| `FollowButton` | follow/unfollow a collection over the host bridge. `collectionId` + `followed` (+ `onChange`, `collectionName`). Flips optimistically, then adopts the **host's echo**; reverts on failure. 🔴 It exists because three outcomes are easy to get wrong: `declined` reverts **silently** (the viewer dismissed the host's confirm — nothing was written), `sign-in-required` routes into `REQUEST_SIGN_IN` rather than an error line, and every other rejection reverts with a `role="alert"` note. |
+| `TipButton` | two-step Buzz tip via `useTip()`. `toUserId` + `amount` + `noun` (+ `entityType`/`entityId`, `tipped`, `remaining`, `disabledReason`, `onTipped`). 🔴 **The confirm is the component's, not host chrome** — `useTip` posts directly with the block token, so a one-press money spend is reachable without it. It mints **one idempotency key per logical tip and reuses it on retry**, so a retry after a *lost* response cannot become a second transfer. Pass `remaining` from ONE `useTipAllowance()` held by the view — it deliberately does not fetch, or a screen of cards becomes N HTTP reads. |
 | `ResourceCard` | a picked generation resource (`BlockResourceInfo`) as a grid tile (`variant="card"`) or a compact line (`variant="row"`). `interactive` is an explicit discriminant that requires `onSelect` (+ `selected`/`disabled`); `thumbnailUrl` is optional because **`BlockResourceInfo` carries no image field**, and a missing *or failed* image falls back to a frozen "No preview" frame. `actions` is the trailing flow slot on both variants; `overlay` is the decorative corner badge over the thumbnail and is **`card`-only — a type error on a `row`**. Both render as siblings of the hit area, never inside it. The name fallback, type label, placeholder copy, selected mark and accessible-name order are frozen, not props. |
 
 Every component carries a `data-civitai-ui="<name>"` hook. Most also forward
@@ -985,6 +1037,7 @@ Runnable, minimal blocks — one per feature, each with its own README:
 
 | `@civitai/blocks-react` | pairs with `@civitai/app-sdk` | adds |
 |---|---|---|
+| `0.48.x` | `^0.38.0` | `useCollectionFollow()` + `<FollowButton>` / `<TipButton>` (`SET_COLLECTION_FOLLOW`). 🔴 The `peerDependencies` floor stays the deliberately-wide `>=0.29.0 <1.0.0` (#206 — a per-minor floor forced a major on consumers), so **npm will not warn you**: pairing this with an SDK below `0.38.0` fails at `tsc` with `Cannot find name 'BlockCollectionFollowErrorCode'`, not at install. |
 | `0.36.x` | `^0.27.0` | auto-installs the SDK's opaque-origin web-storage shim (`@civitai/app-sdk/safe-storage`) on import |
 | `0.29.x` | `^0.24.0` | `useAppWorkflows()` — app generator subqueue read + cancel (`QUERY_APP_WORKFLOWS` / `CANCEL_APP_WORKFLOW`) |
 | `0.27.x`–`0.28.x` | `^0.23.0` | async-scan image upload; transport validators for all `SHARED_*` / `APP_STORAGE_*` / picker replies |

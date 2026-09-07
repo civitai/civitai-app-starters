@@ -866,6 +866,40 @@ export function isValidImagesResult(p: unknown): boolean {
   return true;
 }
 
+/**
+ * Reply to a block-initiated `SET_COLLECTION_FOLLOW`. A well-formed reply carries
+ * EITHER a `result` (`{ collectionId: positive int, followed: boolean }`) OR an
+ * `error`; one with neither is malformed and dropped.
+ *
+ * 🔴 `error` IS SHAPE-CHECKED ONLY, NOT MEMBERSHIP-CHECKED — deliberately, and
+ * the opposite choice from {@link isValidWildcardPackResult}. The host's error
+ * channel is a UNION of the closed `BlockCollectionFollowErrorCode` refusals AND
+ * a free-text server message it forwards verbatim from the collection service
+ * (`err.message`, e.g. a FORBIDDEN on a private collection). Constraining it to
+ * the enum would DROP every server failure, and a dropped reply on a REQUEST-
+ * style message hangs the block to its 10-minute consent timeout — turning a
+ * legible "you may not follow that" into a wedged button. An empty-string
+ * `error` is likewise a valid reply here (the hook maps it to a code); the same
+ * `||`-not-`??` reasoning as `isValidPublishResult`'s consumer.
+ *
+ * `collectionId` is pinned to a positive integer so a malformed echo cannot
+ * reach a consumer keying UI state by id.
+ */
+export function isValidCollectionFollowResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (typeof r.collectionId !== 'number' || !Number.isInteger(r.collectionId)) return false;
+    if (r.collectionId <= 0) return false;
+    if (typeof r.followed !== 'boolean') return false;
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
 // ============================================================
 // App-storage (per-viewer KV) reply validators
 // ============================================================
@@ -1253,6 +1287,8 @@ export function payloadValidatorFor(
       return isValidPublishResult;
     case 'IMAGES_RESULT':
       return isValidImagesResult;
+    case 'COLLECTION_FOLLOW_RESULT':
+      return isValidCollectionFollowResult;
     case 'IMAGE_UPLOAD_RESULT':
       return isValidImageUploadResult;
     case 'IMAGE_SCAN_RESOLVED':

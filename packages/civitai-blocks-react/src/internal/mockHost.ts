@@ -57,6 +57,7 @@ import {
   type BlockWildcardPackErrorCode,
   type AppWorkflow,
   type BlockGatedImage,
+  type BlockCollectionFollowErrorCode,
   type ColorDomain,
   type SharedStorageValue,
   type Theme,
@@ -599,6 +600,28 @@ export interface MockHostOptions {
    */
   wildcardPackError?: BlockWildcardPackErrorCode;
   /**
+   * Force `SET_COLLECTION_FOLLOW` to reply with an `error` instead of writing —
+   * exercises `useCollectionFollow`'s refusal handling. Pass a
+   * {@link BlockCollectionFollowErrorCode} for a HOST refusal (`'declined'` is
+   * the one every block must handle: the viewer dismissed the confirm and
+   * NOTHING was written) or any other string for the FREE-TEXT server-error
+   * variant the real host forwards from the collection service. Absent → the
+   * follow succeeds. Live-tunable via {@link MockHost.setScenario}.
+   *
+   * 🔴 There is no "the mock shows a confirm" option, and that is a real gap in
+   * what this mock can prove: the consent dialog is HOST chrome, so the mock
+   * settles immediately where the real host waits on a click. A block's confirm
+   * handling is only exercised by `declined`, never by the timing.
+   */
+  collectionFollowError?: BlockCollectionFollowErrorCode | string;
+  /**
+   * Seed the mock's per-collection follow state, `collectionId` → followed.
+   * `SET_COLLECTION_FOLLOW` writes into this map and the reply echoes it, so a
+   * block that toggles twice sees the state come back. Absent → every collection
+   * starts unfollowed. Live-tunable via {@link MockHost.setScenario}.
+   */
+  collectionFollows?: Record<number, boolean>;
+  /**
    * Buzz pools a `SUBMIT_WORKFLOW` must REJECT when named in `body.accountType`
    * — simulates the real backend's content-rating clamp. The real host throws a
    * `BAD_REQUEST` at the currency-resolution boundary (before any spend) when a
@@ -709,6 +732,8 @@ export type MockHostScenarioPatch = Pick<
   | 'buzzReadError'
   | 'wildcardPack'
   | 'wildcardPackError'
+  | 'collectionFollowError'
+  | 'collectionFollows'
   | 'appWorkflows'
   | 'appWorkflowsError'
   | 'publishImageIds'
@@ -1347,6 +1372,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   // Wildcard-pack bridge data + forced discriminated-error knob.
   let wildcardPack: BlockWildcardPack = options.wildcardPack ?? DEFAULT_WILDCARD_PACK;
   let wildcardPackError: BlockWildcardPackErrorCode | undefined = options.wildcardPackError;
+  // Collection-follow bridge. `collectionFollows` is MUTABLE — a successful
+  // SET_COLLECTION_FOLLOW records the new state so a block that toggles twice
+  // reads its own write back, which is what makes an optimistic-update bug
+  // reproducible in `dev:mock` rather than only against the real host.
+  let collectionFollowError: string | undefined = options.collectionFollowError;
+  const collectionFollows = new Map<number, boolean>(
+    Object.entries(options.collectionFollows ?? {}).map(([id, f]) => [Number(id), f]),
+  );
   // App-subqueue bridge data + forced free-text-error knob. `appWorkflows` is
   // MUTABLE — CANCEL_APP_WORKFLOW marks the matching row canceled in place so a
   // follow-up QUERY reflects it.
@@ -1556,6 +1589,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             reason?: string;
             url?: string;
             imageId?: number;
+            collectionId?: number;
+            follow?: boolean;
           };
         };
 
@@ -2081,6 +2116,44 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             dispatchToBlock({
               type: 'CANCEL_APP_WORKFLOW_RESULT',
               payload: { requestId, result: { workflow: canceled } },
+            });
+            return;
+          }
+
+          case 'SET_COLLECTION_FOLLOW': {
+            // Follow / unfollow a collection for the viewer. Drop a request with
+            // no requestId (unroutable) — same as every REQUEST-style handler.
+            if (typeof requestId !== 'string') return;
+            if (collectionFollowError !== undefined) {
+              dispatchToBlock({
+                type: 'COLLECTION_FOLLOW_RESULT',
+                payload: { requestId, error: collectionFollowError },
+              });
+              return;
+            }
+            // Mirror the real host's payload gate (`resolveCollectionFollowRequest`):
+            // a positive-integer `collectionId` and a boolean `follow`, refused
+            // as `invalid-request` rather than coerced. Without this a block bug
+            // (a numeric string id, say) would WORK in dev:mock and be refused
+            // in production — the exact drift a mock exists to prevent.
+            const collectionId = typed.payload?.collectionId;
+            const follow = typed.payload?.follow;
+            if (
+              typeof collectionId !== 'number' ||
+              !Number.isInteger(collectionId) ||
+              collectionId <= 0 ||
+              typeof follow !== 'boolean'
+            ) {
+              dispatchToBlock({
+                type: 'COLLECTION_FOLLOW_RESULT',
+                payload: { requestId, error: 'invalid-request' },
+              });
+              return;
+            }
+            collectionFollows.set(collectionId, follow);
+            dispatchToBlock({
+              type: 'COLLECTION_FOLLOW_RESULT',
+              payload: { requestId, result: { collectionId, followed: follow } },
             });
             return;
           }
@@ -2739,6 +2812,16 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     if (patch.buzzReadError !== undefined) buzzReadError = normalizeReadError(patch.buzzReadError);
     if (patch.wildcardPack !== undefined) wildcardPack = patch.wildcardPack;
     if (patch.wildcardPackError !== undefined) wildcardPackError = patch.wildcardPackError;
+    if (patch.collectionFollowError !== undefined)
+      collectionFollowError = patch.collectionFollowError;
+    if (patch.collectionFollows !== undefined) {
+      // MERGE, not replace — matching `buzz` above. A scenario that flips one
+      // collection must not silently unfollow every other one the block has
+      // already toggled.
+      for (const [id, f] of Object.entries(patch.collectionFollows)) {
+        collectionFollows.set(Number(id), f);
+      }
+    }
     if (patch.appWorkflows !== undefined) {
       appWorkflows = {
         workflows: patch.appWorkflows.workflows,

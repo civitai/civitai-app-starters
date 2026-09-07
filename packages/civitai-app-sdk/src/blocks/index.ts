@@ -128,4 +128,6 @@ export type {
   AppWorkflow,
   AppWorkflowImage,
   BlockGatedImage,
+  BlockCollectionFollowErrorCode,
+  BlockCollectionFollowResult,
 } from './types.js';

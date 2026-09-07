@@ -17,6 +17,7 @@ import {
   isValidResourcePickerResult,
   isValidSharedAppendResult,
   isValidSharedCountResult,
+  isValidCollectionFollowResult,
   isValidSharedCountsResult,
   isValidSharedGetResult,
   isValidSharedListResult,
@@ -920,6 +921,11 @@ describe('payloadValidatorFor', () => {
     expect(payloadValidatorFor('CANCEL_APP_WORKFLOW_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('IMAGE_UPLOAD_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('SHARED_UPDATE_RESULT')).toBeTypeOf('function');
+    // 🔴 Identity, not `toBeTypeOf`. The `default:` arm is a STRUCTURAL PASS, so
+    // an unmapped COLLECTION_FOLLOW_RESULT reaches the pending-request table
+    // unvalidated — and this reply settles an ACCOUNT WRITE, so a malformed one
+    // would resolve a follow toggle against a shape nothing checked.
+    expect(payloadValidatorFor('COLLECTION_FOLLOW_RESULT')).toBe(isValidCollectionFollowResult);
     // The 15 reply types added in this PR (previously `default: null`).
     for (const t of [
       'APP_STORAGE_GET_RESULT',
@@ -1036,5 +1042,79 @@ describe('isValidConsentUnavailable', () => {
     expect(
       isValidConsentUnavailable({ reason: 'ungrantable', scopes: [], detail: 'clamped at mint' }),
     ).toBe(true);
+  });
+});
+
+describe('isValidCollectionFollowResult', () => {
+  it('accepts a success echo', () => {
+    expect(
+      isValidCollectionFollowResult({ requestId: 'r', result: { collectionId: 7, followed: true } }),
+    ).toBe(true);
+    expect(
+      isValidCollectionFollowResult({ requestId: 'r', result: { collectionId: 7, followed: false } }),
+    ).toBe(true);
+  });
+
+  it('accepts a CODED host refusal', () => {
+    expect(isValidCollectionFollowResult({ requestId: 'r', error: 'declined' })).toBe(true);
+    expect(isValidCollectionFollowResult({ requestId: 'r', error: 'collection-unavailable' })).toBe(
+      true,
+    );
+  });
+
+  // 🔴 THE LOAD-BEARING ASYMMETRY vs `isValidWildcardPackResult`. The host's
+  // error channel is a UNION of closed codes and a free-text server message it
+  // forwards verbatim. Constraining it to the enum would DROP every server
+  // failure, and a dropped reply on a REQUEST-style message hangs the block to
+  // its 10-minute consent bound — turning "you may not follow that" into a
+  // wedged button. A membership check here would fail this case.
+  it('accepts a FREE-TEXT server error, and an EMPTY one', () => {
+    expect(
+      isValidCollectionFollowResult({
+        requestId: 'r',
+        error: 'You do not have permission to follow this collection',
+      }),
+    ).toBe(true);
+    expect(isValidCollectionFollowResult({ requestId: 'r', error: '' })).toBe(true);
+  });
+
+  it('rejects a reply carrying NEITHER result nor error', () => {
+    expect(isValidCollectionFollowResult({ requestId: 'r' })).toBe(false);
+  });
+
+  it('rejects a non-object payload', () => {
+    expect(isValidCollectionFollowResult(null)).toBe(false);
+    expect(isValidCollectionFollowResult('declined')).toBe(false);
+    expect(isValidCollectionFollowResult(undefined)).toBe(false);
+  });
+
+  it('rejects a non-string requestId and a non-string error', () => {
+    expect(isValidCollectionFollowResult({ requestId: 5, error: 'declined' })).toBe(false);
+    expect(isValidCollectionFollowResult({ requestId: 'r', error: 5 })).toBe(false);
+  });
+
+  it('rejects a malformed result — the id must be a POSITIVE INTEGER', () => {
+    const bad = [0, -1, 1.5, '7', null];
+    for (const collectionId of bad) {
+      expect(
+        isValidCollectionFollowResult({ requestId: 'r', result: { collectionId, followed: true } }),
+      ).toBe(false);
+    }
+  });
+
+  it('rejects a result whose `followed` is not a boolean', () => {
+    // Not merely shape hygiene: a truthy non-boolean here would be adopted by
+    // `FollowButton` as the host's echo and pin the control to a value the host
+    // never sent.
+    expect(
+      isValidCollectionFollowResult({ requestId: 'r', result: { collectionId: 7, followed: 'yes' } }),
+    ).toBe(false);
+    expect(
+      isValidCollectionFollowResult({ requestId: 'r', result: { collectionId: 7 } }),
+    ).toBe(false);
+  });
+
+  it('rejects a non-object result', () => {
+    expect(isValidCollectionFollowResult({ requestId: 'r', result: 'ok' })).toBe(false);
   });
 });

@@ -32,6 +32,8 @@ import type {
   BlockWildcardPackErrorCode,
   AppWorkflow,
   BlockGatedImage,
+  BlockCollectionFollowErrorCode,
+  BlockCollectionFollowResult,
 } from './types.js';
 
 // ============================================================
@@ -565,6 +567,30 @@ export type ParentToBlockMessage =
       // side failure `error` is a FREE-TEXT string and `result` is absent.
       type: 'IMAGES_RESULT';
       payload: { requestId: string; result?: { images: BlockGatedImage[] }; error?: string };
+    }
+  | {
+      // Reply to SET_COLLECTION_FOLLOW. Exactly ONE of `result` / `error` is
+      // present, and the host replies EXACTLY ONCE on every terminal path
+      // (refusal / lookup failure / cancel / success / server error) — a
+      // REQUEST-style message that gets no reply hangs the block to its SDK
+      // timeout.
+      //
+      // On success `result` echoes what the host wrote. On failure `error` is
+      // EITHER one of the closed {@link BlockCollectionFollowErrorCode} host
+      // refusals OR a FREE-TEXT server message (the host forwards `err.message`
+      // from the collection service — e.g. a FORBIDDEN on a private collection).
+      // 🔴 So `error` is NOT a discriminated enum the way `WILDCARD_PACK_RESULT`'s
+      // is: test for a code by equality and treat anything else as opaque.
+      //
+      // 🔴 `error: 'declined'` MEANS NO WRITE OCCURRED. The host takes its
+      // consent latch synchronously, before any await, precisely so a dismissal
+      // arriving mid-flight cannot claim `declined` for a follow that landed.
+      type: 'COLLECTION_FOLLOW_RESULT';
+      payload: {
+        requestId: string;
+        result?: BlockCollectionFollowResult;
+        error?: BlockCollectionFollowErrorCode | string;
+      };
     }
   | {
       // Reply to CANCEL_APP_WORKFLOW — the terminal (canceled) projection of the
@@ -1162,6 +1188,44 @@ export type BlockToParentMessage =
         imageId?: number;
         /** Optional download filename (host-sanitized). */
         filename?: string;
+      };
+    }
+  | {
+      // Ask the host to FOLLOW / UNFOLLOW a collection for the viewer, replying
+      // with `COLLECTION_FOLLOW_RESULT`. TOKEN-INDEPENDENT — the block sends NO
+      // token and needs NO block scope: the host calls the SESSION-authed
+      // `collection.follow` / `collection.unfollow` tRPC procedures, whose
+      // handlers pass `ctx.user.id` as BOTH actor and target. There is no field
+      // for a user id on this wire and the host's resolver would drop one.
+      //
+      // 🔴 THE CONSENT BOUNDARY IS A HOST-CHROME CONFIRM, AND IT IS THE ONLY
+      // CONSENT THIS PATH HAS. The HTTP predecessor
+      // (`POST /api/v1/blocks/collections/[id]/follow`, scope
+      // `collections:write:self`) prompted NOBODY — that scope is consent-exempt
+      // server-side — so this bridge TIGHTENS a zero-prompt path into one prompt
+      // per action. What it gives up is the manifest `scopes` declaration, i.e.
+      // the ex-ante signal a moderator reads before install. The trade is
+      // "reviewable before install" → "consented at the moment of action".
+      //
+      // 🔴 THE HOST NAMES THE COLLECTION IN THAT CONFIRM, AND IT RESOLVES THE
+      // NAME ITSELF from this `collectionId`. There is deliberately no `name`
+      // field here: a block-supplied one would let a card reading "Follow ⭐ Cute
+      // Cats" post a different id with the host's own chrome vouching for it.
+      //
+      // 🔴 THE REPLY WAITS ON A PERSON — bucketed `'human'` in
+      // `@civitai/blocks-react`'s `requestTimeouts.ts`, so it carries the
+      // 10-minute consent bound, never the ~30s protocol default.
+      //
+      // The host resolves that identity with ONE authenticated read per DISTINCT
+      // id and bounds it at 20 per block instance; past the cap it refuses with
+      // `collection-unavailable`, the SAME code a not-visible collection gets.
+      type: 'SET_COLLECTION_FOLLOW';
+      payload: {
+        requestId: string;
+        /** Positive integer. A numeric STRING is refused, never coerced. */
+        collectionId: number;
+        /** `true` ⇒ follow, `false` ⇒ unfollow. */
+        follow: boolean;
       };
     };
 
