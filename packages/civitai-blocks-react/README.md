@@ -830,20 +830,48 @@ any request for a scope your dev token lacks produces one.
 
 ### `useDomainMaturity()`
 
-Read the surrounding color-domain's maturity ceiling (civitai #2670) so a block
-can hide/blur mature affordances on a SFW domain. **Fail-closed SFW** until
-`BLOCK_INIT` lands or against a host that predates the field.
+Read the maturity ceiling in force for the current viewer, so a block can
+hide/blur mature affordances. **Fail-closed SFW** until `BLOCK_INIT` lands or
+against a host that projects no ceiling.
 
 ```tsx
 const { isSfw, isLevelAllowed } = useDomainMaturity();
 const showRSlider = isLevelAllowed(BrowsingLevel.R);   // false on a SFW domain
 ```
 
+The gates account for **two** things, and the distinction matters:
+
+| field | answers |
+| --- | --- |
+| `maxBrowsingLevel` | what this **domain** permits anybody (identical for every viewer on it) |
+| `effectiveBrowsingLevel` | what **this viewer** may be shown here — the domain ceiling narrowed by their own NSFW setting |
+
+`isSfw` / `isLevelAllowed` gate on the second, so a viewer who turned NSFW off
+sees SFW affordances even on a mature domain. `effectiveBrowsingLevel` is always
+a subset of `maxBrowsingLevel`, so reading these can only ever show the viewer
+**less** — never more. Compare the two when you want to explain *why* something
+is hidden:
+
+```tsx
+const { maxBrowsingLevel, effectiveBrowsingLevel } = useDomainMaturity();
+const hiddenByYourSettings = effectiveBrowsingLevel !== maxBrowsingLevel;
+```
+
+The hook's name is historic — it shipped when the domain ceiling was the only
+signal. There is deliberately no separate viewer-maturity hook: two hooks would
+mean two answers to "may I show this", and the one named for the domain would be
+the wider of the pair.
+
+Drive it locally with `createMockHost({ domain: 'red', viewerBrowsingLevel: BrowsingLevel.PG })`.
+The mock clamps that option to its own ceiling exactly as the real host does, so
+you cannot test against a viewer wider than the domain — production cannot
+produce one either.
+
 ### `SfwGate`
 
-Convenience component that renders `children` only when the domain permits the
-maturity — no `level` prop gates on the SFW ceiling, a `level` prop gates on that
-browsing-level bit. Fail-closed SFW.
+Convenience component that renders `children` only when the current viewer may be
+shown them — no `level` prop gates on `isSfw`, a `level` prop gates on that
+browsing-level bit. Both account for the domain **and** the viewer. Fail-closed SFW.
 
 ```tsx
 function MatureSection() {
