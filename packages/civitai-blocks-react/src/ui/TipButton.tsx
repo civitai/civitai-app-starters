@@ -152,15 +152,24 @@ export function TipButton({
   /** Monotonic id of the current attempt — see `ReportButton` for the measured why. */
   const attemptRef = useRef(0);
   /**
-   * This mount has already reported a landed transfer.
+   * The idempotency keys this mount has already reported a landed transfer for.
    *
-   * 🔴 A REF, NOT `done`, and the difference is the whole point. `done` is state:
-   * the success path reads it in the same tick it would set it, so two promises
-   * resolving in one turn both see `false` and both report. The ref is written
-   * synchronously, so the second one sees the first's write. Cancel-then-retry
-   * reuses ONE idempotency key, so two resolved POSTs can mean one transfer.
+   * 🔴 KEYED, NOT A BOOLEAN — and the boolean it replaces was wrong in the
+   * OPPOSITE direction from the bug it fixed. "At most once per mount" collapses
+   * two transfers that are genuinely distinct: Cancel does not abort POST #1, so
+   * if the parent then moves `amount` or the entity a NEW key is minted, the
+   * server does NOT collapse them, and 150 Buzz moves while the app is told 50.
+   * `onTipped` is where a caller refetches the allowance and records its
+   * `tipped` flag, so the second transfer left no record — re-creating on
+   * remount the very harm the previous round cited. The correct scope is once
+   * per KEY: same key ⇒ the server saw one transfer ⇒ report once; different
+   * key ⇒ two transfers ⇒ report both.
+   *
+   * 🔴 A REF, NOT STATE. The success path reads it in the same tick it would
+   * write it, so two promises resolving in one turn both see stale state and
+   * both report; a ref is written synchronously, so the second sees the first.
    */
-  const reportedRef = useRef(false);
+  const reportedKeysRef = useRef<Set<string>>(new Set());
   /**
    * The idempotency key for THIS logical tip. Stable across retries, which is
    * the point; `useId()` seeds it so two TipButtons mounted in one tree never
@@ -181,33 +190,40 @@ export function TipButton({
    * first appears. `done` is never cleared, so a control that has settled
    * THROUGH ITS OWN SUCCESS PATH cannot send again from this mount. `settled` is
    * `done || tipped`, and the `tipped` half is a PROP — a parent can withdraw it
-   * — so terminality is a property of `done`, not of `settled`. That distinction
-   * is why the success path above reports unconditionally: it is what guarantees
-   * `done` is set whenever money actually moved, which is in turn what makes this
-   * key safe to keep. Change either and rotate the key.
+   * — so terminality is a property of `done`, not of `settled`.
+   *
+   * ⚠️ An earlier revision continued "…which is why the success path reports
+   * UNCONDITIONALLY". It no longer does — it reports once per KEY — and the
+   * sentence is corrected rather than deleted because it was load-bearing. The
+   * invariant that actually licenses keeping the key is unchanged: `done` is set
+   * on the first landed transfer for a given key, and a repeat under the SAME
+   * key is that same transfer. Change either and rotate.
    */
   const keySeed = useId();
   const idempotencyKey = `${keySeed}:${toUserId}:${amount}:${entityType ?? '-'}:${entityId ?? '-'}`;
 
   const settled = done || tipped;
-  // 🔴 Both guards are about a NUMBER reaching a money path, and both were
-  // missing. `amount` is documented a positive integer and was unchecked, so
-  // `amount={0}` rendered "Tip 0" and posted it. And `remaining={NaN}` makes
-  // `amount > remaining` FALSE, so a NaN allowance did not merely fail to
-  // block — it silently REMOVED the ceiling, which is the wrong direction for
-  // an unusable value. `Number.isFinite` first, so a non-number can never
-  // decide a comparison.
-  // `amount` must be a real, positive number — `Infinity` is not a tippable
-  // quantity, so `isFinite` here is load-bearing on its own and not merely a
-  // longer spelling of `> 0`.
+  // Both guards are about a NUMBER reaching a money path, and both were once
+  // missing: `amount={0}` rendered "Tip 0" and posted it, and an unusable
+  // `remaining` silently REMOVED the ceiling rather than blocking.
+  //
+  // `amount` must be a real, positive number. `Infinity` is not a tippable
+  // quantity, so `isFinite` is load-bearing on its own rather than a longer
+  // spelling of `> 0` — and it does not coerce, so a non-number is rejected too.
   const amountValid = Number.isFinite(amount) && amount > 0;
-  // 🔴 NaN and Infinity are OPPOSITE cases and the previous revision swept them
-  // together with `!Number.isFinite`. `NaN` is an UNUSABLE reading — every
-  // comparison against it is false, so it silently REMOVED the ceiling and must
-  // block. `Infinity` is a meaningful reading — an unlimited allowance — and
-  // blocking it refuses a viewer who has no limit at all.
+  // 🔴 THREE cases for `remaining`, not two, and a previous revision lost one
+  // while fixing another. `NaN` is an UNUSABLE reading — every comparison
+  // against it is false — so it must BLOCK. `Infinity` is a MEANINGFUL reading,
+  // an unlimited allowance, so blocking it refuses a viewer who is allowed
+  // everything; sweeping the two together under `!Number.isFinite` got that
+  // wrong. And a NON-NUMBER must block for the same reason as `NaN`: 🔴
+  // `Number.isNaN` does NOT coerce, so the `!isFinite` → `isNaN` fix silently
+  // dropped the type check and let `remaining: 'abc'` through — removing the
+  // ceiling, the wrong direction, and precisely what the comment it replaced
+  // claimed could not happen.
   const overAllowance =
-    remaining !== undefined && (Number.isNaN(remaining) || amount > remaining);
+    remaining !== undefined &&
+    (typeof remaining !== 'number' || Number.isNaN(remaining) || amount > remaining);
   const blocked = disabled || disabledReason !== undefined || !amountValid;
 
   const ids = testId
@@ -292,8 +308,8 @@ export function TipButton({
       // handed the amount precisely so a caller can decrement an allowance with
       // it, so double-firing double-counts. The answer is "once per mount",
       // which is neither the old "never after supersession" nor a bare "always".
-      if (!reportedRef.current) {
-        reportedRef.current = true;
+      if (!reportedKeysRef.current.has(idempotencyKey)) {
+        reportedKeysRef.current.add(idempotencyKey);
         setDone(true);
         setConfirming(false);
         setFailure(null);
@@ -309,7 +325,39 @@ export function TipButton({
     } finally {
       if (current()) setBusy(false);
     }
-  }, [amount, entityId, entityType, idempotencyKey, onTipped, tip, toUserId]);
+    // 🔴 `amountValid`, `overAllowance` and `blocked` MUST be here. The gate at
+    // the top of this callback reads all three, and the previous revision listed
+    // none of them — so they were frozen at whatever render last recreated the
+    // callback, and the gate decided a SPEND on stale values. It failed in both
+    // directions and there is no eslint in this repo to catch it:
+    //
+    //   • STALE-RESTRICTIVE, and permanent: a parent that tops up `remaining`,
+    //     or clears `disabled` / `disabledReason` (the "view still loading"
+    //     usage this component's own JSDoc names), left Send refusing a
+    //     perfectly good tip with a message that is false about the amount —
+    //     for the life of the mount, since nothing else moved a dep.
+    //   • STALE-PERMISSIVE: the mirror case the gate's own comment claims to
+    //     cover — `remaining` dropping, or `disabledReason` appearing, AFTER
+    //     arming — sailed straight through.
+    //
+    // 🔴 IT WAS ALSO CONSUMER-DEPENDENT, which is why no test caught it: an
+    // INLINE `onTipped={() => {}}` (the shape the @example uses) recreates the
+    // callback every render and hides the whole thing, while a consumer doing
+    // the idiomatic `useCallback` gets the wedge. Listing the derived booleans
+    // rather than the raw props keeps this honest — add an input to the gate and
+    // the dep is already named.
+  }, [
+    amount,
+    amountValid,
+    blocked,
+    entityId,
+    entityType,
+    idempotencyKey,
+    onTipped,
+    overAllowance,
+    tip,
+    toUserId,
+  ]);
 
   if (settled) {
     return (

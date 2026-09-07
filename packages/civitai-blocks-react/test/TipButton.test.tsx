@@ -409,6 +409,117 @@ describe('TipButton', () => {
     expect(onTipped).toHaveBeenCalledTimes(1);
   });
 
+  // ── Audit round 3: the spend gate read STALE props through a frozen closure ──
+  //
+  // 🔴 EVERY CASE BELOW USES A **STABLE** `onTipped`. That is the whole point:
+  // an inline `onTipped={() => {}}` recreates the callback every render and
+  // hides the bug completely, which is why round 2's own tests passed over it.
+  // A consumer doing the idiomatic `useCallback` is the one that breaks.
+  const STABLE_ON_TIPPED = () => {};
+
+  it('does NOT wedge when the parent TOPS UP the allowance after arming', async () => {
+    // Stale-restrictive, and it was permanent: nothing else moved a dep, so Send
+    // refused a perfectly good tip for the life of the mount — with a message
+    // that is false about the amount.
+    const { rerender } = render(
+      <TipButton noun="curator" toUserId={99} amount={50} remaining={10} onTipped={STABLE_ON_TIPPED} data-testid="tip" />,
+    );
+    rerender(
+      <TipButton noun="curator" toUserId={99} amount={50} remaining={1000} onTipped={STABLE_ON_TIPPED} data-testid="tip" />,
+    );
+    fireEvent.click(screen.getByTestId('tip'));
+    fireEvent.click(screen.getByTestId('tip-confirm'));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+  });
+
+  it('does NOT wedge when a CLEARED `disabled` is followed by a Send', async () => {
+    // The "view still loading, no target resolved yet" usage this component's
+    // own JSDoc names.
+    const { rerender } = render(
+      <TipButton noun="curator" toUserId={99} amount={50} disabled onTipped={STABLE_ON_TIPPED} data-testid="tip" />,
+    );
+    rerender(
+      <TipButton noun="curator" toUserId={99} amount={50} onTipped={STABLE_ON_TIPPED} data-testid="tip" />,
+    );
+    fireEvent.click(screen.getByTestId('tip'));
+    fireEvent.click(screen.getByTestId('tip-confirm'));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+  });
+
+  it('DOES refuse when the allowance DROPS after arming', async () => {
+    // Stale-permissive: the mirror case the gate's own comment claims to cover,
+    // and which sailed straight through while the deps were incomplete.
+    const { rerender } = render(
+      <TipButton noun="curator" toUserId={99} amount={50} remaining={1000} onTipped={STABLE_ON_TIPPED} data-testid="tip" />,
+    );
+    fireEvent.click(screen.getByTestId('tip'));
+    rerender(
+      <TipButton noun="curator" toUserId={99} amount={50} remaining={10} onTipped={STABLE_ON_TIPPED} data-testid="tip" />,
+    );
+    fireEvent.click(screen.getByTestId('tip-confirm'));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('DOES refuse when a `disabledReason` APPEARS after arming', async () => {
+    const { rerender } = render(
+      <TipButton noun="curator" toUserId={99} amount={50} onTipped={STABLE_ON_TIPPED} data-testid="tip" />,
+    );
+    fireEvent.click(screen.getByTestId('tip'));
+    rerender(
+      <TipButton noun="curator" toUserId={99} amount={50} disabledReason="You can't tip yourself." onTipped={STABLE_ON_TIPPED} data-testid="tip" />,
+    );
+    fireEvent.click(screen.getByTestId('tip-confirm'));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('reports BOTH transfers when the key CHANGES — two keys are two tips', async () => {
+    // 🔴 The mirror of the double-report round 2 fixed, and round 2's own fix
+    // caused it. Cancel does not abort POST #1; moving the amount mints a NEW
+    // key, so the server does NOT collapse them — 150 Buzz moves. A per-MOUNT
+    // guard told the app about 50.
+    const first = deferredResponse();
+    const second = deferredResponse();
+    fetchMock.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const onTipped = vi.fn();
+    const { rerender } = render(
+      <TipButton noun="curator" toUserId={99} amount={50} onTipped={onTipped} data-testid="tip" />,
+    );
+    fireEvent.click(screen.getByTestId('tip'));
+    fireEvent.click(screen.getByTestId('tip-confirm'));
+    fireEvent.click(screen.getByTestId('tip-cancel'));
+
+    rerender(<TipButton noun="curator" toUserId={99} amount={100} onTipped={onTipped} data-testid="tip" />);
+    fireEvent.click(screen.getByTestId('tip'));
+    fireEvent.click(screen.getByTestId('tip-confirm'));
+
+    // Distinct keys ⇒ the server saw TWO transfers.
+    expect(body(1).idempotencyKey).not.toBe(body(0).idempotencyKey);
+
+    await act(async () => {
+      first.resolve(okBody(50));
+      second.resolve(okBody(100));
+      await Promise.all([first.promise, second.promise]);
+    });
+    expect(onTipped).toHaveBeenCalledTimes(2);
+    expect(onTipped).toHaveBeenNthCalledWith(1, 50);
+    expect(onTipped).toHaveBeenNthCalledWith(2, 100);
+  });
+
+  it('BLOCKS a non-number allowance — `Number.isNaN` does not coerce', () => {
+    // The type check the `!isFinite` → `isNaN` fix silently dropped; without it
+    // `remaining: 'abc'` removes the ceiling instead of blocking.
+    render(
+      <TipButton noun="curator" toUserId={99} amount={50} remaining={'abc' as unknown as number} data-testid="tip" />,
+    );
+    expect((screen.getByTestId('tip') as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('refuses at the SPEND when the amount goes bad AFTER arming', async () => {
     // 🔴 The guard used to sit only on the trigger, but the prompt stays mounted
     // across a re-render — so a parent moving `amount` to 0 mid-handshake left an
