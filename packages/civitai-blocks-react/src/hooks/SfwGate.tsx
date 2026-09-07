@@ -11,7 +11,8 @@ export interface SfwGateProps {
   /**
    * When set, gate on `isLevelAllowed(level)` (a single `BrowsingLevel` bit)
    * instead of the coarse `isSfw`. Lets a block reveal a level-specific
-   * affordance (e.g. an R-rated toggle) only when the domain permits that level.
+   * affordance (e.g. an R-rated toggle) only when that level is permitted —
+   * by the domain AND by the viewer's own browsing-level setting.
    */
   level?: number;
   /** Rendered when the gate is closed. Defaults to `null` (render nothing). */
@@ -19,18 +20,24 @@ export interface SfwGateProps {
 }
 
 /**
- * Convenience wrapper that renders `children` only when the surrounding
- * color-domain permits it, else `fallback` — so a block can hide/blur mature
- * affordances on a SFW domain without wiring {@link useDomainMaturity} by hand.
+ * Convenience wrapper that renders `children` only when the current viewer may
+ * be shown them here, else `fallback` — so a block can hide/blur mature
+ * affordances without wiring {@link useDomainMaturity} by hand.
  *
- * Gating:
- *  - no `level` prop → renders `children` when the domain is SFW (`isSfw`).
+ * Gating (both delegate to the hook, so both account for the DOMAIN's ceiling
+ * AND the VIEWER's own browsing level — see `effectiveBrowsingLevel`):
+ *  - no `level` prop → renders `children` when nothing mature may be shown
+ *    (`isSfw`).
  *  - `level` prop set → renders `children` when that browsing-level bit is
- *    allowed by the domain ceiling (`isLevelAllowed(level)`).
+ *    permitted (`isLevelAllowed(level)`).
+ *
+ * 🔴 A red-domain viewer who turned NSFW off closes this gate. That is the
+ * point: before the per-viewer ceiling existed, the gate opened for everyone on
+ * a mature domain regardless of their own setting.
  *
  * **Fail-closed SFW**: before `BLOCK_INIT` lands, and against a host that
- * predates civitai #2670 (no ceiling field), the gate is treated as SFW —
- * `children` show only for SFW content, mature content shows `fallback`.
+ * projects no ceiling at all, the gate is treated as SFW — `children` show only
+ * for SFW content, mature content shows `fallback`.
  *
  * @example
  * // Hide a mature-only carousel on a SFW domain:

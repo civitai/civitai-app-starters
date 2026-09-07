@@ -72,8 +72,43 @@ describe('isValidBlockInitPayload', () => {
     ['maxBrowsingLevel non-finite', { ...validInit, maxBrowsingLevel: Infinity }],
     ['maxBrowsingLevel NaN', { ...validInit, maxBrowsingLevel: NaN }],
     ['maxBrowsingLevel wrong type', { ...validInit, maxBrowsingLevel: '4' }],
+    // `effectiveBrowsingLevel` — the domain ceiling ∩ the viewer's own level.
+    ['effectiveBrowsingLevel non-finite', { ...validInit, effectiveBrowsingLevel: Infinity }],
+    ['effectiveBrowsingLevel NaN', { ...validInit, effectiveBrowsingLevel: NaN }],
+    ['effectiveBrowsingLevel wrong type', { ...validInit, effectiveBrowsingLevel: '4' }],
+    ['effectiveBrowsingLevel null', { ...validInit, effectiveBrowsingLevel: null }],
+    // 🔴 NEGATIVE is rejected, not merely tolerated: this value is bit-ANDed
+    // with the domain ceiling downstream, and a two's-complement negative has
+    // every bit set, so `-1 & ceiling === ceiling` would resolve junk to the
+    // WIDEST possible viewer — the exact inversion of what the field means.
+    ['effectiveBrowsingLevel negative', { ...validInit, effectiveBrowsingLevel: -1 }],
+    ['effectiveBrowsingLevel large negative', { ...validInit, effectiveBrowsingLevel: -31 }],
   ])('rejects %s', (_, payload) => {
     expect(isValidBlockInitPayload(payload)).toBe(false);
+  });
+
+  it('accepts the per-viewer effectiveBrowsingLevel when present and well-formed', () => {
+    expect(
+      isValidBlockInitPayload({
+        ...validInit,
+        domain: 'red',
+        maxBrowsingLevel: 31,
+        effectiveBrowsingLevel: 3,
+      })
+    ).toBe(true);
+    // 0 is a legitimate value — "show this viewer nothing here" — and must not
+    // be rejected as falsy.
+    expect(isValidBlockInitPayload({ ...validInit, maxBrowsingLevel: 31, effectiveBrowsingLevel: 0 })).toBe(
+      true
+    );
+  });
+
+  it('accepts a payload WITHOUT effectiveBrowsingLevel (host predating the field)', () => {
+    // Additive + optional: an older host omits it and its blocks keep working.
+    expect(isValidBlockInitPayload({ ...validInit, domain: 'red', maxBrowsingLevel: 31 })).toBe(true);
+    expect(
+      isValidBlockInitPayload({ ...validInit, effectiveBrowsingLevel: undefined })
+    ).toBe(true);
   });
 
   it.each([

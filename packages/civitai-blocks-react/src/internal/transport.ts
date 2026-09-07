@@ -55,9 +55,17 @@ export interface BlockSnapshot {
   /**
    * Authoritative domain browsing-level ceiling bitmask from `BLOCK_INIT`.
    * `undefined` before init / when the host doesn't send it → consumers
-   * fail-closed to SFW.
+   * fail-closed to SFW. A property of the DOMAIN — identical for every viewer
+   * on it; see `effectiveBrowsingLevel` for the per-viewer narrowing.
    */
   maxBrowsingLevel?: number;
+  /**
+   * `maxBrowsingLevel` intersected with the VIEWER's own browsing level — what
+   * THIS person may be shown here. Always a subset of `maxBrowsingLevel`.
+   * `undefined` before init / against a host that predates the field, in which
+   * case `useDomainMaturity` falls back to the domain ceiling.
+   */
+  effectiveBrowsingLevel?: number;
 }
 
 /**
@@ -300,6 +308,7 @@ export function snapshotFromInit(payload: BlockInitPayload): BlockSnapshot {
     appId: payload.appId,
     domain: payload.domain,
     maxBrowsingLevel: payload.maxBrowsingLevel,
+    effectiveBrowsingLevel: payload.effectiveBrowsingLevel,
   };
 }
 

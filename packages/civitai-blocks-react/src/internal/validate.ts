@@ -191,6 +191,25 @@ export function isValidBlockInitPayload(p: unknown): p is BlockInitPayload {
   ) {
     return false;
   }
+  // `effectiveBrowsingLevel` (the domain ceiling ∩ the viewer's own level).
+  // OPTIONAL + additive on the same terms: a host that predates it omits the
+  // field and the init stays valid — `useDomainMaturity` then falls back to
+  // `maxBrowsingLevel`. When present it must be a finite, NON-NEGATIVE number.
+  //
+  // 🔴 The `< 0` half is not cosmetic. This value is bit-ANDed with the domain
+  // ceiling downstream, and a negative has every bit set in two's complement,
+  // so `-1 & ceiling === ceiling`: a junk value would resolve to the FULL
+  // domain ceiling — the widest possible viewer — which is the exact inversion
+  // of what the field means. `effectiveBrowsingCeiling` rejects it too; this
+  // drops the whole malformed payload rather than letting it reach the hook.
+  if (
+    p.effectiveBrowsingLevel !== undefined &&
+    (typeof p.effectiveBrowsingLevel !== 'number' ||
+      !Number.isFinite(p.effectiveBrowsingLevel) ||
+      p.effectiveBrowsingLevel < 0)
+  ) {
+    return false;
+  }
 
   return true;
 }
