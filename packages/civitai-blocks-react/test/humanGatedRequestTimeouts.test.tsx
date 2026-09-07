@@ -5,6 +5,7 @@ import type { BlockInitPayload, BlockToParentMessageType } from '@civitai/app-sd
 
 import { useBuzzPurchase } from '../src/hooks/useBuzzPurchase.js';
 import { useCheckpointPicker } from '../src/hooks/useCheckpointPicker.js';
+import { useCollectionFollow } from '../src/hooks/useCollectionFollow.js';
 import { useImageUpload } from '../src/hooks/useImageUpload.js';
 import { usePublishGenerationOutputs } from '../src/hooks/usePublishGenerationOutputs.js';
 import { useResourcePicker } from '../src/hooks/useResourcePicker.js';
@@ -84,6 +85,10 @@ const DRIVERS: Record<string, () => () => Promise<unknown>> = {
     const { result } = renderHook(() => usePublishGenerationOutputs());
     return () => result.current.publish({ workflowId: 'wf_app_1' });
   },
+  SET_COLLECTION_FOLLOW: () => {
+    const { result } = renderHook(() => useCollectionFollow());
+    return () => result.current.setFollow({ collectionId: 42, follow: true });
+  },
 };
 
 /** The reply message each request type is answered with, plus a minimal body. */
@@ -95,6 +100,10 @@ const REPLIES: Record<string, { type: string; extra: Record<string, unknown> }> 
   PUBLISH_GENERATION_OUTPUTS: {
     type: 'PUBLISH_RESULT',
     extra: { result: { imageIds: [1] } },
+  },
+  SET_COLLECTION_FOLLOW: {
+    type: 'COLLECTION_FOLLOW_RESULT',
+    extra: { result: { collectionId: 42, followed: true } },
   },
 };
 
@@ -131,6 +140,11 @@ describe('human-gated requests never inherit the default protocol timeout', () =
       'OPEN_IMAGE_UPLOAD',
       'OPEN_RESOURCE_PICKER',
       'PUBLISH_GENERATION_OUTPUTS',
+      // The host opens its OWN consent confirm naming the collection and replies
+      // only on the viewer's click or dismiss. At the 30s default the request
+      // would reject with the dialog still open, so a viewer who then confirmed
+      // would get a followed collection and a block showing a failure.
+      'SET_COLLECTION_FOLLOW',
     ] satisfies BlockToParentMessageType[]);
   });
 

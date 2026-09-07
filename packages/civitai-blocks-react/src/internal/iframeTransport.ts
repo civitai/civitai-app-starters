@@ -11,6 +11,7 @@ import {
 import {
   EMPTY_SNAPSHOT,
   nextRequestId,
+  RequestTimeoutError,
   snapshotFromInit,
   tokenFromWrapped,
   type BlockSnapshot,
@@ -288,7 +289,10 @@ export class IframeTransport implements BlockTransport {
     return new Promise<unknown>((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         if (this.pending.delete(requestId)) {
-          reject(new Error(`IframeTransport: request "${request.type}" timed out after ${timeoutMs}ms`));
+          // Typed, so a consumer can tell "no reply" from "the host said no"
+          // without matching on this string. The MESSAGE is unchanged.
+          const msg = `IframeTransport: request "${request.type}" timed out after ${timeoutMs}ms`;
+          reject(new RequestTimeoutError(request.type, timeoutMs, msg));
         }
       }, timeoutMs);
       this.pending.set(requestId, {

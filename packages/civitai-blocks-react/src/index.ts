@@ -76,6 +76,17 @@ export { useGatedImages } from './hooks/useGatedImages.js';
 export type { UseGatedImages } from './hooks/useGatedImages.js';
 export { useSaveImage } from './hooks/useSaveImage.js';
 export type { UseSaveImage, SaveImageInput } from './hooks/useSaveImage.js';
+// Exported because `sendTypedRequest` (also exported) can throw it, and its own
+// JSDoc says consumers need to distinguish "no reply" from "the host said no" —
+// which they cannot do if they cannot name the type.
+export { RequestTimeoutError } from './internal/transport.js';
+export {
+  useCollectionFollow,
+  CollectionFollowError,
+  COLLECTION_FOLLOW_ERROR_CODES,
+  isCollectionFollowErrorCode,
+} from './hooks/useCollectionFollow.js';
+export type { UseCollectionFollow } from './hooks/useCollectionFollow.js';
 export type {
   BlockBuzzTransaction,
   BlockBuzzAccount,
@@ -86,6 +97,8 @@ export type {
   AppWorkflowImage,
   AppWorkflowsParams,
   BlockGatedImage,
+  BlockCollectionFollowErrorCode,
+  BlockCollectionFollowResult,
 } from '@civitai/app-sdk/blocks';
 export { useCheckpointPicker } from './hooks/useCheckpointPicker.js';
 export { useResourcePicker } from './hooks/useResourcePicker.js';

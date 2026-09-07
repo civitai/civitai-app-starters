@@ -67,6 +67,14 @@ const REQUEST_TIMEOUT_CLASS = {
   OPEN_IMAGE_UPLOAD: 'human', //           viewer chooses a file
   OPEN_RESOURCE_PICKER: 'human', //        viewer browses + picks
   PUBLISH_GENERATION_OUTPUTS: 'human', //  viewer answers a consent confirm (#4158)
+  // 🔴 `'human'` for the SAME reason as PUBLISH_GENERATION_OUTPUTS, and the
+  // wrong bucket here is not merely slow: the host opens a chrome confirm and
+  // replies only on the viewer's click or dismiss. At the 30s default the
+  // request would reject WHILE THE DIALOG IS STILL OPEN, so a viewer who then
+  // clicked Follow would get a followed collection and a block showing a
+  // failure — the two disagreeing about an account write, with nothing to
+  // reconcile them. See `SET_COLLECTION_FOLLOW` in the SDK message union.
+  SET_COLLECTION_FOLLOW: 'human',
 
   // ── Fire-and-forget: no requestId, so no pending promise to time out ────
   BLOCK_ERROR: 'no-reply',

@@ -1584,3 +1584,63 @@ export type BlockGatedImage =
       imageId: number;
       status: 'hidden';
     };
+
+// ============================================================
+// Collection follow bridge (SET_COLLECTION_FOLLOW)
+// ============================================================
+
+/**
+ * The CLOSED set of HOST-side refusal codes a `COLLECTION_FOLLOW_RESULT` carries
+ * on `error`. Mirror civitai/civitai's `CollectionFollowRefusal`
+ * (`src/components/AppBlocks/collectionFollowGate.ts`) EXACTLY — the host's gate
+ * is the definition and this is the copy.
+ *
+ * 🔴 A SERVER failure is NOT in this set. The host forwards the thrown error's
+ * own message verbatim (e.g. a `FORBIDDEN` from the collection service for a
+ * private collection), so `error` is a union of these codes and arbitrary
+ * free-text. Consumers must therefore test for a code by EQUALITY against a
+ * member of this set and treat anything else as an opaque server message —
+ * never assume the string is one of these.
+ *
+ * - `invalid-request` — the payload was malformed (non-integer / non-positive
+ *   `collectionId`, non-boolean `follow`). A block bug, not a viewer outcome.
+ * - `sign-in-required` — no session. The parity with the HTTP endpoint's 403 for
+ *   an anonymous block token; route it into `useRequestSignIn()`.
+ * - `review-mode` — a PENDING app under moderator review with "run for real" off.
+ *   The op is session-authed, so it must not drive the reviewing mod's account.
+ * - `not-ready` — the host has not finished the block handshake, so there has
+ *   been no interaction this prompt could belong to. Retry after `ready`.
+ * - `declined` — the viewer DISMISSED the host's consent confirm. 🔴 NOT an
+ *   error: it means no write occurred, and the host takes a consent latch
+ *   synchronously before the write so this can never be reported for a follow
+ *   that did happen. Render nothing, or a quiet revert.
+ * - `collection-unavailable` — the host could not resolve the collection's
+ *   identity: it does not exist, the viewer may not see it, the lookup failed,
+ *   OR the block exhausted its per-instance distinct-id lookup budget (20).
+ *   🔴 ONE code for all four, DELIBERATELY — a distinct "not found" or "rate
+ *   limited" would let a block enumerate private collection ids by asking the
+ *   host to name them. Do not branch on it for anything but "we cannot act on
+ *   this id".
+ */
+export type BlockCollectionFollowErrorCode =
+  | 'invalid-request'
+  | 'sign-in-required'
+  | 'review-mode'
+  | 'not-ready'
+  | 'declined'
+  | 'collection-unavailable';
+
+/**
+ * The success payload of a `COLLECTION_FOLLOW_RESULT` — the host's echo of what
+ * it actually wrote.
+ *
+ * `followed` is the state AFTER the write, echoed from the request's `follow`,
+ * so a block should adopt this value rather than assuming its own optimistic
+ * one held: the two agree today, and reading the echo is what keeps the block
+ * correct if a host ever settles differently.
+ */
+export interface BlockCollectionFollowResult {
+  collectionId: number;
+  /** `true` ⇒ the viewer now follows the collection; `false` ⇒ no longer does. */
+  followed: boolean;
+}
