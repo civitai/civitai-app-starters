@@ -368,6 +368,83 @@ describe('TipButton', () => {
     });
     expect(screen.queryByTestId('tip-prompt')).toBeNull();
     expect(screen.getByTestId('tip')).toBeTruthy();
+    // 🔴 RE-ARM AND READ THE COPY — without this the case cannot fail. Round 2
+    // measured that deleting the guard left the whole suite green: `confirming`
+    // is already false after Cancel, so a stored failure is simply invisible at
+    // that instant. It only surfaces on the NEXT arm, as a stale `role="alert"`
+    // about an attempt the viewer withdrew from.
+    fireEvent.click(screen.getByTestId('tip'));
+    expect(screen.getByTestId('tip-prompt').textContent).toContain('Send 50 Buzz');
+    expect(screen.getByTestId('tip-prompt').textContent).not.toContain('Insufficient funds');
+  });
+
+  it('reports a landed transfer AT MOST ONCE — cancel, retry, both POSTs resolve', async () => {
+    // 🔴 A REGRESSION THE PREVIOUS FIX ROUND INTRODUCED. Cancel does not abort
+    // POST #1; the retry sends POST #2 with the SAME idempotency key, so the
+    // server collapses them into ONE transfer — while both promises resolve.
+    // Reporting on both called `onTipped(50)` twice for money that moved once,
+    // and `onTipped` is handed the amount precisely so a caller can decrement an
+    // allowance with it.
+    const first = deferredResponse();
+    const second = deferredResponse();
+    fetchMock.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const onTipped = vi.fn();
+    render(
+      <TipButton noun="curator" toUserId={99} amount={50} onTipped={onTipped} data-testid="tip" />,
+    );
+    fireEvent.click(screen.getByTestId('tip'));
+    fireEvent.click(screen.getByTestId('tip-confirm'));
+    fireEvent.click(screen.getByTestId('tip-cancel'));
+    fireEvent.click(screen.getByTestId('tip'));
+    fireEvent.click(screen.getByTestId('tip-confirm'));
+
+    // Same key ⇒ the server saw one transfer.
+    expect(body(1).idempotencyKey).toBe(body(0).idempotencyKey);
+
+    await act(async () => {
+      first.resolve(okBody(50));
+      second.resolve(okBody(50));
+      await Promise.all([first.promise, second.promise]);
+    });
+    expect(onTipped).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses at the SPEND when the amount goes bad AFTER arming', async () => {
+    // 🔴 The guard used to sit only on the trigger, but the prompt stays mounted
+    // across a re-render — so a parent moving `amount` to 0 mid-handshake left an
+    // enabled Send that posted it. An amount switcher is a flow this component's
+    // own JSDoc contemplates.
+    const { rerender } = render(
+      <TipButton noun="curator" toUserId={99} amount={50} data-testid="tip" />,
+    );
+    fireEvent.click(screen.getByTestId('tip'));
+    rerender(<TipButton noun="curator" toUserId={99} amount={0} data-testid="tip" />);
+    fireEvent.click(screen.getByTestId('tip-confirm'));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('treats an INFINITE allowance as unlimited, not as unusable', () => {
+    // 🔴 NaN and Infinity are OPPOSITE readings and a previous revision swept
+    // them together with `!Number.isFinite`. NaN cannot be compared, so it must
+    // block; Infinity means the viewer has no limit, so blocking it refuses
+    // someone who is allowed everything.
+    render(
+      <TipButton noun="curator" toUserId={99} amount={50} remaining={Number.POSITIVE_INFINITY} data-testid="tip" />,
+    );
+    expect((screen.getByTestId('tip') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('refuses an INFINITE amount', () => {
+    // Makes `Number.isFinite(amount)` load-bearing rather than a longer spelling
+    // of `> 0` — `NaN > 0` is already false, so only this value discriminates.
+    render(
+      <TipButton noun="curator" toUserId={99} amount={Number.POSITIVE_INFINITY} data-testid="tip" />,
+    );
+    expect((screen.getByTestId('tip') as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('folds the ENTITY into the idempotency key — two objects are two tips', async () => {

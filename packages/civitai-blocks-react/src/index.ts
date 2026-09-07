@@ -76,6 +76,10 @@ export { useGatedImages } from './hooks/useGatedImages.js';
 export type { UseGatedImages } from './hooks/useGatedImages.js';
 export { useSaveImage } from './hooks/useSaveImage.js';
 export type { UseSaveImage, SaveImageInput } from './hooks/useSaveImage.js';
+// Exported because `sendTypedRequest` (also exported) can throw it, and its own
+// JSDoc says consumers need to distinguish "no reply" from "the host said no" —
+// which they cannot do if they cannot name the type.
+export { RequestTimeoutError } from './internal/transport.js';
 export {
   useCollectionFollow,
   CollectionFollowError,

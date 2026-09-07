@@ -234,6 +234,27 @@ describe('FollowButton', () => {
     expect(screen.getByTestId('fb').getAttribute('aria-pressed')).toBe('false');
   });
 
+  it('IGNORES a reply whose ECHOED id is not the one it asked about', async () => {
+    // 🔴 THE ECHO HALF, PINNED SEPARATELY. Round 2 measured that mutating
+    // `stillOurs` to `true && inFlightForRef.current === target` — i.e. deleting
+    // the echo comparison — left the FULL 1427-test suite green, because the
+    // sibling case above is killed by the REF half. The prop never moves here,
+    // so only the echo comparison can reject this reply.
+    const onChange = vi.fn();
+    render(<FollowButton collectionId={1} followed={false} onChange={onChange} data-testid="fb" />);
+    fireEvent.click(screen.getByTestId('fb'));
+
+    reply({
+      requestId: sent('SET_COLLECTION_FOLLOW')!.payload.requestId,
+      result: { collectionId: 999, followed: true },
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it('drops the optimistic flip when the collection changes, with no reply at all', () => {
     // The same wrong-row bug with no network involved: the optimistic value
     // belongs to the id it was made for.

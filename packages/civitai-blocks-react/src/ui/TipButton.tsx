@@ -152,6 +152,16 @@ export function TipButton({
   /** Monotonic id of the current attempt — see `ReportButton` for the measured why. */
   const attemptRef = useRef(0);
   /**
+   * This mount has already reported a landed transfer.
+   *
+   * 🔴 A REF, NOT `done`, and the difference is the whole point. `done` is state:
+   * the success path reads it in the same tick it would set it, so two promises
+   * resolving in one turn both see `false` and both report. The ref is written
+   * synchronously, so the second one sees the first's write. Cancel-then-retry
+   * reuses ONE idempotency key, so two resolved POSTs can mean one transfer.
+   */
+  const reportedRef = useRef(false);
+  /**
    * The idempotency key for THIS logical tip. Stable across retries, which is
    * the point; `useId()` seeds it so two TipButtons mounted in one tree never
    * collide, and the target + amount are folded in so that changing either (an
@@ -187,9 +197,17 @@ export function TipButton({
   // block — it silently REMOVED the ceiling, which is the wrong direction for
   // an unusable value. `Number.isFinite` first, so a non-number can never
   // decide a comparison.
+  // `amount` must be a real, positive number — `Infinity` is not a tippable
+  // quantity, so `isFinite` here is load-bearing on its own and not merely a
+  // longer spelling of `> 0`.
   const amountValid = Number.isFinite(amount) && amount > 0;
+  // 🔴 NaN and Infinity are OPPOSITE cases and the previous revision swept them
+  // together with `!Number.isFinite`. `NaN` is an UNUSABLE reading — every
+  // comparison against it is false, so it silently REMOVED the ceiling and must
+  // block. `Infinity` is a meaningful reading — an unlimited allowance — and
+  // blocking it refuses a viewer who has no limit at all.
   const overAllowance =
-    remaining !== undefined && (!Number.isFinite(remaining) || amount > remaining);
+    remaining !== undefined && (Number.isNaN(remaining) || amount > remaining);
   const blocked = disabled || disabledReason !== undefined || !amountValid;
 
   const ids = testId
@@ -234,6 +252,15 @@ export function TipButton({
   }, [tipped]);
 
   const confirm = useCallback(async () => {
+    // 🔴 RE-CHECK AT THE SPEND, NOT ONLY AT THE ARM. `blocked` gates the trigger,
+    // but the prompt stays mounted across a re-render — so a parent moving
+    // `amount` to 0 (or NaN) AFTER the viewer armed the control left an enabled
+    // Send that posted it. An amount switcher mid-handshake is a flow this
+    // component's own JSDoc contemplates, so this is reachable, not theoretical.
+    if (!amountValid || overAllowance || blocked) {
+      setFailure('That amount cannot be sent.');
+      return;
+    }
     const attempt = (attemptRef.current += 1);
     const current = () => attemptRef.current === attempt;
     setBusy(true);
@@ -256,10 +283,22 @@ export function TipButton({
       // viewer pressed Cancel a moment earlier; showing "Tip 50" again is what
       // invites the second one. Only the FAILURE path below respects supersession
       // — there, nothing moved, so an abandoned attempt has nothing to report.
-      setDone(true);
-      setConfirming(false);
-      setFailure(null);
-      onTipped?.(amount);
+      //
+      // 🔴 BUT AT MOST ONCE, and "unconditionally" without this was a REGRESSION
+      // the previous revision introduced. Cancel-then-retry sends a SECOND POST
+      // carrying the SAME idempotency key, so the server collapses the pair into
+      // ONE transfer while both promises resolve — and an unguarded report then
+      // called `onTipped(amount)` twice for money that moved once. `onTipped` is
+      // handed the amount precisely so a caller can decrement an allowance with
+      // it, so double-firing double-counts. The answer is "once per mount",
+      // which is neither the old "never after supersession" nor a bare "always".
+      if (!reportedRef.current) {
+        reportedRef.current = true;
+        setDone(true);
+        setConfirming(false);
+        setFailure(null);
+        onTipped?.(amount);
+      }
     } catch (err: unknown) {
       if (!current()) return;
       // Show the SERVER's message. Unlike a report, a failed tip has real and

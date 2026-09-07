@@ -48,11 +48,16 @@ export function isCollectionFollowErrorCode(
 /**
  * A collection follow/unfollow failure.
  *
- * `.code` is the host's refusal code when the host refused, and `undefined` when
- * the failure was a SERVER error the host forwarded verbatim (or a transport
- * timeout) — in that case read `.message`. 🔴 Do not treat `.code === undefined`
- * as "unknown refusal": it is the positive signal that the string in `.message`
- * came from the collection service and is meant to be shown.
+ * `.code` is the host's refusal code when the host refused, and `undefined`
+ * otherwise.
+ *
+ * 🔴 `.code === undefined` IS NOT BY ITSELF "A SERVER MESSAGE WORTH SHOWING" —
+ * that reading is why {@link CollectionFollowError.timedOut} exists, and this
+ * paragraph asserted it until an audit caught it. TWO different failures land
+ * here: a server message the host forwarded verbatim, and a TRANSPORT TIMEOUT
+ * whose `.message` is an SDK-internal string. **Check `.timedOut` first**;
+ * `.code === undefined && !timedOut` is the branch whose `.message` is meant to
+ * be rendered.
  */
 export class CollectionFollowError extends Error {
   /** The closed host refusal code, or `undefined` for a server/transport error. */
@@ -160,7 +165,8 @@ export interface UseCollectionFollow {
  *     if (e instanceof CollectionFollowError) {
  *       if (e.signInRequired) return requestSignIn();
  *       if (e.declined) return; // the viewer said no — say nothing
- *       showToast(e.message);
+ *       if (e.timedOut) return showToast('Still working — check back in a moment.');
+ *       showToast(e.message); // a real server message, safe to render
  *     }
  *   }
  * };
