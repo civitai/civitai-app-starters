@@ -463,6 +463,62 @@ describe('TipButton', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('names the ACTUAL reason when it refuses at the spend', async () => {
+    // 🔴 A fixed "That amount cannot be sent." is FALSE when the amount is fine
+    // and the block is a `disabledReason` — and this file's own comment about
+    // the stale-closure bug calls that message out as false while an earlier
+    // revision shipped it on a path it pins.
+    const STABLE = () => {};
+    const { rerender } = render(
+      <TipButton noun="curator" toUserId={99} amount={50} onTipped={STABLE} data-testid="tip" />,
+    );
+    fireEvent.click(screen.getByTestId('tip'));
+    rerender(
+      <TipButton noun="curator" toUserId={99} amount={50} disabledReason="You can't tip yourself." onTipped={STABLE} data-testid="tip" />,
+    );
+    fireEvent.click(screen.getByTestId('tip-confirm'));
+    await waitFor(() =>
+      expect(screen.getByTestId('tip-prompt').textContent).toContain("You can't tip yourself."),
+    );
+    expect(screen.getByTestId('tip-prompt').textContent).not.toContain('That amount cannot be sent');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('never renders a BLANK refusal for an empty-string disabledReason', async () => {
+    // 🔴 `blocked` tests `disabledReason !== undefined`, so `''` blocks — and
+    // `??` would have set an empty failure message. A blank alert on a money
+    // control is the worst outcome, and a mutation is what surfaced it.
+    const STABLE = () => {};
+    const { rerender } = render(
+      <TipButton noun="curator" toUserId={99} amount={50} onTipped={STABLE} data-testid="tip" />,
+    );
+    fireEvent.click(screen.getByTestId('tip'));
+    rerender(
+      <TipButton noun="curator" toUserId={99} amount={50} disabledReason="" onTipped={STABLE} data-testid="tip" />,
+    );
+    fireEvent.click(screen.getByTestId('tip-confirm'));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId('tip-prompt').textContent).toContain('Tipping is unavailable');
+  });
+
+  it('still names the AMOUNT when the amount is what is wrong', async () => {
+    // The control that stops the fix above collapsing into "always show the
+    // disabledReason" — with no reason supplied, the amount message is correct.
+    const STABLE = () => {};
+    const { rerender } = render(
+      <TipButton noun="curator" toUserId={99} amount={50} onTipped={STABLE} data-testid="tip" />,
+    );
+    fireEvent.click(screen.getByTestId('tip'));
+    rerender(<TipButton noun="curator" toUserId={99} amount={0} onTipped={STABLE} data-testid="tip" />);
+    fireEvent.click(screen.getByTestId('tip-confirm'));
+    await waitFor(() =>
+      expect(screen.getByTestId('tip-prompt').textContent).toContain('That amount cannot be sent'),
+    );
+  });
+
   it('DOES refuse when a `disabledReason` APPEARS after arming', async () => {
     const { rerender } = render(
       <TipButton noun="curator" toUserId={99} amount={50} onTipped={STABLE_ON_TIPPED} data-testid="tip" />,

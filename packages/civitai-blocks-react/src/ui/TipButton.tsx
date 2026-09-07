@@ -274,7 +274,25 @@ export function TipButton({
     // Send that posted it. An amount switcher mid-handshake is a flow this
     // component's own JSDoc contemplates, so this is reachable, not theoretical.
     if (!amountValid || overAllowance || blocked) {
-      setFailure('That amount cannot be sent.');
+      // 🔴 NAME THE ACTUAL REASON. A fixed "That amount cannot be sent." is
+      // FALSE when the block is a `disabledReason` (the amount is fine, and a
+      // real reason string is in hand) — and this file's own comment about the
+      // stale-closure bug calls that message out as "false about the amount"
+      // while shipping it on a path it pins. Order matches the gate.
+      // 🔴 `||`, NOT `??` — a mutation found this, and it is the same distinction
+      // as the error channel's. `blocked` tests `disabledReason !== undefined`,
+      // so an EMPTY-STRING reason (a consumer writing
+      // `disabledReason={bad ? reason : ''}`) blocks — and `??` would then set an
+      // EMPTY failure message, rendering a blank refusal, which is the worst
+      // outcome on a money control. `||` falls through to a real sentence.
+      setFailure(
+        disabledReason ||
+          (!amountValid
+            ? 'That amount cannot be sent.'
+            : overAllowance
+              ? 'Over your remaining daily tip allowance.'
+              : 'Tipping is unavailable right now.'),
+      );
       return;
     }
     const attempt = (attemptRef.current += 1);
@@ -300,14 +318,16 @@ export function TipButton({
       // invites the second one. Only the FAILURE path below respects supersession
       // — there, nothing moved, so an abandoned attempt has nothing to report.
       //
-      // 🔴 BUT AT MOST ONCE, and "unconditionally" without this was a REGRESSION
-      // the previous revision introduced. Cancel-then-retry sends a SECOND POST
+      // 🔴 BUT AT MOST ONCE PER KEY, and "unconditionally" without this was a
+      // REGRESSION the previous revision introduced. Cancel-then-retry sends a SECOND POST
       // carrying the SAME idempotency key, so the server collapses the pair into
       // ONE transfer while both promises resolve — and an unguarded report then
       // called `onTipped(amount)` twice for money that moved once. `onTipped` is
       // handed the amount precisely so a caller can decrement an allowance with
-      // it, so double-firing double-counts. The answer is "once per mount",
-      // which is neither the old "never after supersession" nor a bare "always".
+      // it, so double-firing double-counts. The answer is "once per KEY" — not
+      // the old "never after supersession", not a bare "always", and not the
+      // "once per mount" an intermediate revision used, which collapsed two
+      // GENUINELY DISTINCT transfers (see `reportedKeysRef`).
       if (!reportedKeysRef.current.has(idempotencyKey)) {
         reportedKeysRef.current.add(idempotencyKey);
         setDone(true);
