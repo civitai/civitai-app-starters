@@ -677,6 +677,28 @@ export interface MockHostOptions {
    * {@link MockHostOptions.domain}-derived default.
    */
   maturity?: 'sfw' | 'mature';
+  /**
+   * The VIEWER's own browsing level, emitted on `BLOCK_INIT` as
+   * `effectiveBrowsingLevel` — what THIS person may be shown, as opposed to
+   * what the domain permits anybody. Drives `useDomainMaturity().isSfw` /
+   * `isLevelAllowed` and `<SfwGate>`, so this is the knob for testing a block
+   * against a viewer who is narrower than the domain (e.g. a PG-only viewer on
+   * a `red` host).
+   *
+   * 🔴 MIRRORS THE REAL HOST'S GATE RATHER THAN BEING MORE PERMISSIVE: the
+   * emitted value is INTERSECTED with the resolved ceiling, exactly as
+   * civitai's `projectBlockInitMaturity` does, so a value WIDER than the
+   * ceiling cannot be driven here either. That is deliberate — a mock that let
+   * you test a block against a viewer wider than the domain would be testing a
+   * state production can never produce, which is the drift a mock exists to
+   * prevent. Set {@link MockHostOptions.maxBrowsingLevel} if you want a wider
+   * ceiling.
+   *
+   * Only emitted when set, and only alongside a resolved ceiling — omit it to
+   * model a host that predates the field (the hook then falls back to the
+   * domain ceiling).
+   */
+  viewerBrowsingLevel?: number;
   /** Identity fields delivered in `BLOCK_INIT`. Sensible dev defaults. */
   blockInstanceId?: string;
   blockId?: string;
@@ -2751,6 +2773,17 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                 : SFW_LEVELS
               : undefined;
 
+    // The per-VIEWER narrowing. Clamped to the resolved ceiling (never wider),
+    // and dropped entirely when there is no ceiling to clamp against — the same
+    // two rules the real host's `projectBlockInitMaturity` applies.
+    const resolvedViewerLevel: number | undefined =
+      resolvedCeiling !== undefined &&
+      typeof options.viewerBrowsingLevel === 'number' &&
+      Number.isFinite(options.viewerBrowsingLevel) &&
+      options.viewerBrowsingLevel >= 0
+        ? resolvedCeiling & options.viewerBrowsingLevel
+        : undefined;
+
     const initPayload: BlockInitPayload = {
       blockInstanceId,
       blockId,
@@ -2763,6 +2796,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       renderMode: 'iframe',
       ...(options.domain !== undefined ? { domain: options.domain } : {}),
       ...(resolvedCeiling !== undefined ? { maxBrowsingLevel: resolvedCeiling } : {}),
+      ...(resolvedViewerLevel !== undefined
+        ? { effectiveBrowsingLevel: resolvedViewerLevel }
+        : {}),
     };
 
     after(0, () => dispatchToBlock({ type: 'BLOCK_INIT', payload: initPayload }));

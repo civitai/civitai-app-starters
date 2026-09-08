@@ -35,6 +35,7 @@ export {
   NSFW_LEVELS,
   isSfwCeiling,
   isLevelAllowed,
+  effectiveBrowsingCeiling,
 } from './browsingLevel.js';
 export type { BrowsingLevelKey, BrowsingLevelBit, ColorDomain } from './browsingLevel.js';
 

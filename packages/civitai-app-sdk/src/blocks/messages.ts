@@ -209,8 +209,38 @@ export interface BlockInitPayload {
    *
    * Sent by civitai/civitai PR #2670. A host that predates it omits this field
    * (reads `undefined`); the SDK fail-closes to SFW when it is absent.
+   *
+   * 🔴 THIS IS A PROPERTY OF THE DOMAIN, NOT OF THE PERSON LOOKING. Every
+   * viewer on `civitai.red` receives the same maximally-wide value, including
+   * one whose own NSFW setting is off — so this cannot answer "may I show THIS
+   * viewer mature content". {@link effectiveBrowsingLevel} can.
    */
   maxBrowsingLevel?: number;
+  /**
+   * {@link maxBrowsingLevel} intersected with the VIEWER's own browsing-level
+   * setting — the one they choose with the NSFW control in the civitai site
+   * header. This is what a block should render mature affordances against:
+   * `maxBrowsingLevel` says what the DOMAIN permits anybody, this says what
+   * THIS person may be shown here.
+   *
+   * 🔴 ALWAYS A SUBSET OF {@link maxBrowsingLevel} — never a superset, and the
+   * platform enforces that twice (at the token mint, and again in the host's
+   * `projectBlockInitMaturity` projection). Two consequences worth internalising:
+   *
+   *   1. A block cannot widen its own ceiling by reading this instead. If you
+   *      were gating on `maxBrowsingLevel`, switching to this can only ever show
+   *      the viewer LESS.
+   *   2. The viewer's RAW level is deliberately never sent, and you should not
+   *      try to reconstruct it. On `blue` the App-Blocks domain ceiling is SFW
+   *      while a viewer's saved level may carry R/X/XXX — so the raw value is
+   *      WIDER than the domain permits and is not permission for anything.
+   *
+   * ADDITIVE + OPTIONAL. A host that predates it omits the field, in which case
+   * `useDomainMaturity()` falls back to `maxBrowsingLevel` — i.e. exactly the
+   * behaviour that host already had. Read it through the hook rather than
+   * directly, so the fallback and the fail-closed defaults are applied for you.
+   */
+  effectiveBrowsingLevel?: number;
 }
 
 // ============================================================
