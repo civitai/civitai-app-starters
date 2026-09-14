@@ -570,6 +570,80 @@ async function toggle() {
 Most blocks want `<FollowButton>` from `@civitai/blocks-react/ui` instead, which
 wires all of the above.
 
+### `useCreatePostFromApp()`
+
+Publish a **real, published Post on the viewer's profile** from this app's own
+outputs, host-mediated over `CREATE_POST_FROM_APP`. Returns
+`{ createPost, pending, error }`.
+
+The strictly-more-consequential sibling of `usePublishGenerationOutputs()`: that
+one makes a bare `Image` row with no post, no feed presence, no reward and no
+notification; this one makes **public, feed-visible, reward-earning content under
+the viewer's byline**.
+
+🔴 **Requires the `posts:write:self` scope**, which is **sensitive** and
+**consent-gated**. Declare it in your manifest *with* a `scopeJustifications`
+entry — the server rejects the manifest at submit without one — and expect the
+viewer to be prompted to grant it before the first call succeeds.
+
+🔴 **The grant is not the consent.** Every call opens a host-chrome confirm, and
+what it shows is the **server's** resolution of your request, never your strings:
+the tag names that will *actually* be applied, host-fetched model and version
+names for a gallery attach, and real thumbnails. A block cannot show one post and
+publish another.
+
+🔴 **No arm of `sources` takes a URL.** Name a workflow from this app's own
+subqueue plus indexes into its outputs, or `Image` ids from a previous
+`usePublishGenerationOutputs()` publish. The server re-verifies both — ownership,
+this app's provenance marker, and that the image is not already in a post.
+
+⚠️ **Posting a published image removes it from this app's own grid.** The
+app-scoped read behind `useGatedImages()` is conjoined with `postId IS NULL`, so
+an image that joins a post stops resolving there. An app cannot both keep an
+image in its shared grid and let the viewer post it — design around it.
+
+Text is advisory: the server bounds `title`/`detail`, screens them, refuses a
+`detail` containing a link, and resolves `tags` against **existing** tags only (a
+name matching no tag is dropped, never minted, and is shown to the viewer on the
+confirm).
+
+`createPost` **rejects** with a `CreatePostError` on every non-success:
+
+| | meaning | what to do |
+|---|---|---|
+| `err.declined` | the viewer dismissed the confirm — **no post was created** | revert, say nothing |
+| `err.signInRequired` | no session | route into `useRequestSignIn()` |
+| `err.timedOut` | no reply arrived within the 10-min consent bound | 🔴 **check this BEFORE `.message`** — it also has no `.code`, and its message is an SDK-internal string. It does **not** mean nothing happened; tell the viewer to check their profile and never retry automatically |
+| `err.code` set otherwise | a host refusal (`review-mode` / `block is not ready` / `no images to post` / `no block token`) | show or ignore per case |
+| `err.code === undefined` **and** `!err.timedOut` | a **server** message the host forwarded verbatim (rate limit, blocked title, refused gallery attach) | show `err.message` |
+
+```tsx
+const { createPost, pending } = useCreatePostFromApp();
+const { requestSignIn } = useRequestSignIn();
+
+async function share() {
+  try {
+    const post = await createPost({
+      sources: [{ kind: 'workflow', workflowId: w.workflowId, imageIndexes: [0, 2] }],
+      title: 'Made with Sticker Studio',
+    });
+    showToast(`Posted! ${post.url}`);
+  } catch (err) {
+    if (err instanceof CreatePostError) {
+      if (err.signInRequired) return requestSignIn();
+      if (err.declined) return; // the viewer said no — say nothing
+      if (err.timedOut) return showToast('Still working — check your profile.');
+      showToast(err.message); // a real server message, safe to render
+    }
+  }
+}
+```
+
+In `dev:mock` the `createPostResult` / `createPostError` scenario knobs drive
+both arms (including `declined`). **`dev:live` refuses this bridge on purpose** —
+it has no civitai chrome to render the server-resolved confirm in, and driving
+the write without it would let dev prove out a flow production does not have.
+
 ### `useAppWorkflows(params?)`
 
 The calling app's **own** generator subqueue — the tag-scoped list of generations
@@ -1067,6 +1141,7 @@ Runnable, minimal blocks — one per feature, each with its own README:
 
 | `@civitai/blocks-react` | pairs with `@civitai/app-sdk` | adds |
 |---|---|---|
+| `0.50.x` | `^0.40.0` | `useCreatePostFromApp()` (`CREATE_POST_FROM_APP`) + the `posts:write:self` scope. 🔴 Same wide `peerDependencies` floor as the row below, so **npm will not warn you**: pairing this with an SDK below `0.40.0` fails at `tsc` with `Cannot find name 'BlockCreatePostHostError'`, not at install. |
 | `0.48.x` | `^0.38.0` | `useCollectionFollow()` + `<FollowButton>` / `<TipButton>` (`SET_COLLECTION_FOLLOW`). 🔴 The `peerDependencies` floor stays the deliberately-wide `>=0.29.0 <1.0.0` (#206 — a per-minor floor forced a major on consumers), so **npm will not warn you**: pairing this with an SDK below `0.38.0` fails at `tsc` with `Cannot find name 'BlockCollectionFollowErrorCode'`, not at install. |
 | `0.36.x` | `^0.27.0` | auto-installs the SDK's opaque-origin web-storage shim (`@civitai/app-sdk/safe-storage`) on import |
 | `0.29.x` | `^0.24.0` | `useAppWorkflows()` — app generator subqueue read + cancel (`QUERY_APP_WORKFLOWS` / `CANCEL_APP_WORKFLOW`) |

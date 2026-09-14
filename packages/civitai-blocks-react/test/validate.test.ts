@@ -18,6 +18,7 @@ import {
   isValidSharedAppendResult,
   isValidSharedCountResult,
   isValidCollectionFollowResult,
+  isValidCreatePostResult,
   isValidSharedCountsResult,
   isValidSharedGetResult,
   isValidSharedListResult,
@@ -928,6 +929,69 @@ describe('isValidCancelAppWorkflowResult', () => {
   });
 });
 
+describe('isValidCreatePostResult', () => {
+  const ok = { requestId: 'r1', result: { postId: 42, url: 'https://civitai.com/posts/42', imageIds: [1, 2] } };
+
+  it('accepts a well-formed success reply', () => {
+    expect(isValidCreatePostResult(ok)).toBe(true);
+  });
+
+  it('accepts an empty imageIds array', () => {
+    expect(isValidCreatePostResult({ ...ok, result: { ...ok.result, imageIds: [] } })).toBe(true);
+  });
+
+  it('accepts an error reply, and does NOT constrain the error to the host codes', () => {
+    // 🔴 THE LOAD-BEARING ASSERTION IN THIS FILE FOR THIS BRIDGE. `error` is a
+    // union of the host's closed codes and any server message the host
+    // forwards. Membership-checking it would DROP every server failure at the
+    // transport, and a dropped reply on a REQUEST-style message does not
+    // reject — it hangs the block for the full ten-minute consent timeout. A
+    // future edit that narrows `error` to an enum turns these two cases red.
+    expect(isValidCreatePostResult({ requestId: 'r1', error: 'declined' })).toBe(true);
+    expect(
+      isValidCreatePostResult({
+        requestId: 'r1',
+        error: 'this app may not attach posts to its own publisher’s models',
+      }),
+    ).toBe(true);
+    // An empty-string error is a VALID reply — the hook maps it to a code with
+    // `||`, not `??`. If this ever returns false the hook's fallback is dead.
+    expect(isValidCreatePostResult({ requestId: 'r1', error: '' })).toBe(true);
+  });
+
+  it('rejects a reply with NEITHER result nor error (totality)', () => {
+    expect(isValidCreatePostResult({ requestId: 'r1' })).toBe(false);
+    expect(isValidCreatePostResult({})).toBe(false);
+  });
+
+  it('rejects a non-object payload', () => {
+    expect(isValidCreatePostResult(null)).toBe(false);
+    expect(isValidCreatePostResult('nope')).toBe(false);
+    expect(isValidCreatePostResult(7)).toBe(false);
+  });
+
+  it('rejects a non-string requestId / non-string error', () => {
+    expect(isValidCreatePostResult({ ...ok, requestId: 7 })).toBe(false);
+    expect(isValidCreatePostResult({ requestId: 'r1', error: 500 })).toBe(false);
+  });
+
+  it('rejects a malformed result', () => {
+    const bad = (result: unknown) => isValidCreatePostResult({ requestId: 'r1', result });
+    expect(bad('nope')).toBe(false);
+    expect(bad({ url: 'u', imageIds: [] })).toBe(false); // no postId
+    expect(bad({ postId: 0, url: 'u', imageIds: [] })).toBe(false); // not positive
+    expect(bad({ postId: -1, url: 'u', imageIds: [] })).toBe(false);
+    expect(bad({ postId: 1.5, url: 'u', imageIds: [] })).toBe(false); // not an integer
+    expect(bad({ postId: '42', url: 'u', imageIds: [] })).toBe(false);
+    expect(bad({ postId: 42, imageIds: [] })).toBe(false); // no url
+    expect(bad({ postId: 42, url: '', imageIds: [] })).toBe(false); // empty url
+    expect(bad({ postId: 42, url: 'u' })).toBe(false); // no imageIds
+    expect(bad({ postId: 42, url: 'u', imageIds: 'no' })).toBe(false);
+    expect(bad({ postId: 42, url: 'u', imageIds: [1, 'two'] })).toBe(false);
+    expect(bad({ postId: 42, url: 'u', imageIds: [1, NaN] })).toBe(false);
+  });
+});
+
 describe('payloadValidatorFor', () => {
   it('returns a validator for each documented inbound type', () => {
     expect(payloadValidatorFor('BLOCK_INIT')).toBeTypeOf('function');
@@ -961,6 +1025,14 @@ describe('payloadValidatorFor', () => {
     // unvalidated — and this reply settles an ACCOUNT WRITE, so a malformed one
     // would resolve a follow toggle against a shape nothing checked.
     expect(payloadValidatorFor('COLLECTION_FOLLOW_RESULT')).toBe(isValidCollectionFollowResult);
+    // 🔴 Identity, and the highest-stakes entry in this list. The `default:` arm
+    // is a STRUCTURAL PASS, so omitting the switch case is NOT a build error and
+    // NOT a typecheck error — the compiler-enforced ledger is the timeout
+    // bucket, not this. An unmapped CREATE_POST_RESULT reaches the pending-
+    // request table unvalidated and settles a PUBLIC POST against a shape
+    // nothing checked. See `iframe-transport.test.ts` for the behavioural half
+    // (a well-formed reply RESOLVES, a malformed one is DROPPED).
+    expect(payloadValidatorFor('CREATE_POST_RESULT')).toBe(isValidCreatePostResult);
     // The 15 reply types added in this PR (previously `default: null`).
     for (const t of [
       'APP_STORAGE_GET_RESULT',

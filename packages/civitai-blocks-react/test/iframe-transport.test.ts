@@ -636,6 +636,132 @@ describe('IframeTransport', () => {
       await expect(pending).rejects.toThrow(/timed out/);
       transport.dispose();
     });
+
+    // ── CREATE_POST_RESULT: BOTH ARMS, because only the pair proves anything ──
+    //
+    // 🔴 A HAPPY-PATH-ONLY TEST HERE PROVES NOTHING, and this is the exact shape
+    // that makes it so. `payloadValidatorFor`'s `default:` arm returns `null` —
+    // a STRUCTURAL PASS — so a reply type with NO switch entry sails through
+    // unvalidated and the resolve arm goes green anyway. The drop arm is what
+    // distinguishes "the validator is wired" from "there is no validator". And a
+    // drop is not a rejection: the transport `return`s BEFORE the pending-map
+    // lookup, so the promise is left untouched and only its own timer ends it —
+    // in production, for this consent-gated message, TEN MINUTES later.
+    //
+    // The two fixtures differ in ONE field (`postId: 42` vs `postId: 0`), so the
+    // drop cannot be explained by anything else about the payload.
+    const sendCreatePost = (transport: IframeTransport) =>
+      sendTypedRequest(
+        transport,
+        {
+          type: 'CREATE_POST_FROM_APP',
+          payload: { sources: [{ kind: 'workflow', workflowId: 'w1' }] },
+        },
+        'CREATE_POST_RESULT',
+        { timeoutMs: 250 },
+      );
+
+    it('RESOLVES a well-formed CREATE_POST_RESULT', async () => {
+      const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+      window.dispatchEvent(
+        mockParentMessage({ type: 'BLOCK_INIT', payload: buildInitPayload() }, PARENT_ORIGIN),
+      );
+      await transport.waitForInit();
+      postMessageMock.mockClear();
+
+      const pending = sendCreatePost(transport);
+      const sent = postMessageMock.mock.calls[0][0] as { payload: { requestId: string } };
+
+      window.dispatchEvent(
+        mockParentMessage(
+          {
+            type: 'CREATE_POST_RESULT',
+            payload: {
+              requestId: sent.payload.requestId,
+              result: { postId: 42, url: 'https://civitai.com/posts/42', imageIds: [7] },
+            },
+          },
+          PARENT_ORIGIN,
+        ),
+      );
+
+      await expect(pending).resolves.toMatchObject({
+        result: { postId: 42, url: 'https://civitai.com/posts/42', imageIds: [7] },
+      });
+      // The resolve arm must not have warned — a warn here would mean the reply
+      // was dropped and something else settled the promise.
+      expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('CREATE_POST_RESULT'));
+      transport.dispose();
+    });
+
+    it('DROPS a malformed CREATE_POST_RESULT without resolving pending', async () => {
+      const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+      window.dispatchEvent(
+        mockParentMessage({ type: 'BLOCK_INIT', payload: buildInitPayload() }, PARENT_ORIGIN),
+      );
+      await transport.waitForInit();
+      postMessageMock.mockClear();
+
+      const pending = sendCreatePost(transport);
+      const sent = postMessageMock.mock.calls[0][0] as { payload: { requestId: string } };
+
+      // Matching requestId, matching type — and a non-positive `postId`, which
+      // is the ONE difference from the fixture above.
+      window.dispatchEvent(
+        mockParentMessage(
+          {
+            type: 'CREATE_POST_RESULT',
+            payload: {
+              requestId: sent.payload.requestId,
+              result: { postId: 0, url: 'https://civitai.com/posts/0', imageIds: [7] },
+            },
+          },
+          PARENT_ORIGIN,
+        ),
+      );
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('CREATE_POST_RESULT'));
+      // NOT a rejection at validation time — the promise is still pending here
+      // and dies only on its own timer. That IS the hazard, pinned.
+      vi.advanceTimersByTime(300);
+      await expect(pending).rejects.toThrow(/timed out/);
+      transport.dispose();
+    });
+
+    it('RESOLVES a free-text-error CREATE_POST_RESULT (error is shape-checked, not membership-checked)', async () => {
+      // 🔴 THE REGRESSION THIS PINS IS THE TEMPTING EDIT: constraining `error`
+      // to the host's closed code set, the way `isValidWildcardPackResult` does.
+      // That would drop every SERVER failure — a rate limit, a blocked title, a
+      // refused gallery attach — and wedge the block for ten minutes instead of
+      // rejecting with a legible message. This arm goes red if anyone makes it.
+      const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+      window.dispatchEvent(
+        mockParentMessage({ type: 'BLOCK_INIT', payload: buildInitPayload() }, PARENT_ORIGIN),
+      );
+      await transport.waitForInit();
+      postMessageMock.mockClear();
+
+      const pending = sendCreatePost(transport);
+      const sent = postMessageMock.mock.calls[0][0] as { payload: { requestId: string } };
+
+      window.dispatchEvent(
+        mockParentMessage(
+          {
+            type: 'CREATE_POST_RESULT',
+            payload: {
+              requestId: sent.payload.requestId,
+              error: 'Rate limit exceeded, please retry shortly.',
+            },
+          },
+          PARENT_ORIGIN,
+        ),
+      );
+
+      await expect(pending).resolves.toMatchObject({
+        error: 'Rate limit exceeded, please retry shortly.',
+      });
+      transport.dispose();
+    });
   });
 });
 

@@ -58,6 +58,8 @@ import {
   type AppWorkflow,
   type BlockGatedImage,
   type BlockCollectionFollowErrorCode,
+  type BlockCreatePostHostError,
+  type BlockCreatePostResult,
   type ColorDomain,
   type SharedStorageValue,
   type Theme,
@@ -615,6 +617,30 @@ export interface MockHostOptions {
    */
   collectionFollowError?: BlockCollectionFollowErrorCode | string;
   /**
+   * The post reported on `CREATE_POST_FROM_APP` (what
+   * `useCreatePostFromApp().createPost()` resolves with). Absent →
+   * {@link DEFAULT_CREATE_POST_RESULT}. Ignored when {@link createPostError} is
+   * set. Live-tunable via {@link MockHost.setScenario}.
+   */
+  createPostResult?: BlockCreatePostResult;
+  /**
+   * Force `CREATE_POST_FROM_APP` to reply with an `error` instead of posting —
+   * exercises `useCreatePostFromApp`'s refusal handling. Pass a
+   * {@link BlockCreatePostHostError} for a HOST refusal (`'declined'` is the one
+   * every block must handle: the viewer dismissed the confirm and NO POST
+   * EXISTS) or any other string for the FREE-TEXT server-error variant the real
+   * host forwards. Absent → the post succeeds. Live-tunable via
+   * {@link MockHost.setScenario}.
+   *
+   * 🔴 Same real gap as {@link collectionFollowError}, and it binds harder here:
+   * the consent dialog is HOST chrome, so the mock settles immediately where the
+   * real host waits on a click, and what that dialog SHOWS (the server's
+   * resolution of the request — resolved tags, host-fetched model names, real
+   * thumbnails) has no mock analogue at all. A block's confirm handling is only
+   * exercised by `declined`, never by the timing or the content.
+   */
+  createPostError?: BlockCreatePostHostError | string;
+  /**
    * Buzz pools a `SUBMIT_WORKFLOW` must REJECT when named in `body.accountType`
    * — simulates the real backend's content-rating clamp. The real host throws a
    * `BAD_REQUEST` at the currency-resolution boundary (before any spend) when a
@@ -748,6 +774,8 @@ export type MockHostScenarioPatch = Pick<
   | 'wildcardPack'
   | 'wildcardPackError'
   | 'collectionFollowError'
+  | 'createPostResult'
+  | 'createPostError'
   | 'appWorkflows'
   | 'appWorkflowsError'
   | 'publishImageIds'
@@ -1101,6 +1129,22 @@ const DEFAULT_PUBLISH_IMAGE_IDS: number[] = [9001, 9002];
 /** Default message for a simulated publish failure ({@link MockHostOptions.publishError}). */
 const DEFAULT_PUBLISH_ERROR = 'publish unavailable';
 
+/**
+ * Default post reported on `CREATE_POST_FROM_APP` when
+ * {@link MockHostOptions.createPostResult} is omitted.
+ *
+ * `imageIds` deliberately differs from {@link DEFAULT_PUBLISH_IMAGE_IDS}: a
+ * block that conflates "the ids I published" with "the ids in the post" is
+ * making an assumption the real host does not honour (a post can mix fresh
+ * workflow outputs, whose rows are created by the post call itself, with
+ * previously-published ids), and identical defaults would hide that.
+ */
+const DEFAULT_CREATE_POST_RESULT: BlockCreatePostResult = {
+  postId: 4242,
+  url: 'https://civitai.com/posts/4242',
+  imageIds: [9101, 9102],
+};
+
 /** Normalize a {@link MockHostOptions.publishError} value to an error string (or `undefined`). */
 function normalizePublishError(e: boolean | string | Error | undefined): string | undefined {
   if (e === undefined || e === false) return undefined;
@@ -1398,6 +1442,10 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   // survived review. There is no READ op on this bridge for such a map to feed,
   // so the honest shape is not to offer one.
   let collectionFollowError: string | undefined = options.collectionFollowError;
+  // App Blocks → Post bridge: the canned post + a forced-refusal knob.
+  let createPostResult: BlockCreatePostResult =
+    options.createPostResult ?? DEFAULT_CREATE_POST_RESULT;
+  let createPostError: string | undefined = options.createPostError;
   // App-subqueue bridge data + forced free-text-error knob. `appWorkflows` is
   // MUTABLE — CANCEL_APP_WORKFLOW marks the matching row canceled in place so a
   // follow-up QUERY reflects it.
@@ -1609,6 +1657,11 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             imageId?: number;
             collectionId?: number;
             follow?: boolean;
+            // CREATE_POST_FROM_APP. Typed `unknown` deliberately: this is an
+            // UNTRUSTED inbound payload, and the handler's job is to refuse a
+            // non-array exactly as the real host's gate does. Declaring it as
+            // `BlockPostSource[]` here would assert the thing under test.
+            sources?: unknown;
           };
         };
 
@@ -2171,6 +2224,39 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             dispatchToBlock({
               type: 'COLLECTION_FOLLOW_RESULT',
               payload: { requestId, result: { collectionId, followed: follow } },
+            });
+            return;
+          }
+
+          case 'CREATE_POST_FROM_APP': {
+            // Publish a REAL Post on the viewer's profile from the app's own
+            // outputs. Drop a request with no requestId (unroutable) — same as
+            // every REQUEST-style handler, and the ONLY safe drop: after the id
+            // is known, every path must reply or the block hangs TEN MINUTES.
+            if (typeof requestId !== 'string') return;
+            if (createPostError !== undefined) {
+              dispatchToBlock({
+                type: 'CREATE_POST_RESULT',
+                payload: { requestId, error: createPostError },
+              });
+              return;
+            }
+            // Mirror the real host's payload gate (`resolveCreatePostRequest`):
+            // `sources` must be a NON-EMPTY array, refused as `no images to
+            // post` rather than coerced. Without this a block bug (an empty
+            // selection, say) would WORK in the mock and be refused in
+            // production — the exact drift a mock exists to prevent.
+            const sources = typed.payload?.sources;
+            if (!Array.isArray(sources) || sources.length === 0) {
+              dispatchToBlock({
+                type: 'CREATE_POST_RESULT',
+                payload: { requestId, error: 'no images to post' },
+              });
+              return;
+            }
+            dispatchToBlock({
+              type: 'CREATE_POST_RESULT',
+              payload: { requestId, result: { ...createPostResult } },
             });
             return;
           }
@@ -2845,6 +2931,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     if (patch.wildcardPackError !== undefined) wildcardPackError = patch.wildcardPackError;
     if (patch.collectionFollowError !== undefined)
       collectionFollowError = patch.collectionFollowError;
+    if (patch.createPostResult !== undefined) createPostResult = patch.createPostResult;
+    if (patch.createPostError !== undefined) createPostError = patch.createPostError;
     if (patch.appWorkflows !== undefined) {
       appWorkflows = {
         workflows: patch.appWorkflows.workflows,

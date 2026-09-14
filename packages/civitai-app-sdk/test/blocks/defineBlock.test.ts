@@ -181,6 +181,15 @@ describe('defineBlock', () => {
       expect(() => defineBlock({ manifest })).not.toThrow();
     });
 
+    it('accepts the posts:write:self scope (the App Blocks → Post bridge)', () => {
+      // `defineBlock` gates on MEMBERSHIP in BLOCK_SCOPES, so this is the check
+      // that the SDK's scope map and the vendored schema enum actually agree at
+      // runtime — the schema-parity test asserts set equality, this asserts the
+      // value is usable.
+      const manifest = validManifest({ scopes: ['posts:write:self'] });
+      expect(() => defineBlock({ manifest })).not.toThrow();
+    });
+
     it('rejects empty scopes array', () => {
       const manifest = validManifest({ scopes: [] });
       expect(() => defineBlock({ manifest })).toThrow(/scopes must be a non-empty array/);

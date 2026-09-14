@@ -131,4 +131,8 @@ export type {
   BlockGatedImage,
   BlockCollectionFollowErrorCode,
   BlockCollectionFollowResult,
+  BlockPostSource,
+  BlockCreatePostRequest,
+  BlockCreatePostResult,
+  BlockCreatePostHostError,
 } from './types.js';

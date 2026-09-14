@@ -37,6 +37,17 @@ export const BLOCK_SCOPES = {
   COLLECTIONS_READ_SELF: 'collections:read:self',
   COLLECTIONS_WRITE_SELF: 'collections:write:self',
   COLLECTIONS_READ_PRIVATE: 'collections:read:private',
+  // posts:write:self — publish a REAL, PUBLISHED Post on the VIEWER'S profile
+  // from the app's OWN outputs (`CREATE_POST_FROM_APP`). SENSITIVE and
+  // CONSENT-GATED: it writes public, feed-visible, reward-earning content under
+  // the viewer's byline, so a declaring manifest MUST carry a
+  // `scopeJustifications` entry or the server rejects it at submit. Distinct
+  // from `ai:write:budgeted` on purpose — an app authorised to spend the
+  // viewer's Buzz on a generation has NOT thereby been authorised to publish
+  // under their name. Granting it is not sufficient either: host chrome shows a
+  // per-post confirm rendering the SERVER'S resolution of the request, and the
+  // server re-runs every guard.
+  POSTS_WRITE_SELF: 'posts:write:self',
 } as const;
 
 export type BlockScopeKey = keyof typeof BLOCK_SCOPES;

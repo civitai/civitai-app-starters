@@ -1013,6 +1013,45 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             return;
           }
 
+          case 'CREATE_POST_FROM_APP': {
+            // UNSUPPORTED in live v1, for a STRONGER version of the
+            // SET_COLLECTION_FOLLOW reason directly above. The real host makes
+            // TWO server calls: a read-only preview that resolves — server-side
+            // — the copy, the tag names that will actually be applied, the
+            // host-fetched model/version names and real thumbnails; and only
+            // then, after the viewer confirms in CIVITAI CHROME, the write. This
+            // harness has no civitai chrome to render that dialog in.
+            //
+            // 🔴 REFUSING IS THE POINT. A dev token minted for this harness
+            // cannot carry `posts:write:self` anyway, but even if it could,
+            // driving the write without the preview+confirm would let dev prove
+            // out a flow production does not have — and here the thing dev would
+            // be proving out is a PUBLIC POST under someone's name. A block
+            // would ship having never once handled `declined`.
+            //
+            // FREE TEXT, not a host code: none of the closed codes is honest
+            // about "this harness cannot do it", and the error channel is
+            // explicitly a union of codes and server messages. `useCreatePostFromApp`
+            // surfaces it as `.code === undefined`, i.e. a message worth showing.
+            // Use dev:mock (its `createPostError` knob covers `declined` and the
+            // rest) to exercise the refusal set.
+            if (typeof requestId !== 'string') return;
+            logOnce(
+              'create-post',
+              'CREATE_POST_FROM_APP is not supported in dev:live (it needs the server-resolved ' +
+                'preview plus host-chrome consent). Replying with a refusal. Use dev:mock to ' +
+                'exercise the post bridge, including the `declined` path.',
+            );
+            dispatchToBlock({
+              type: 'CREATE_POST_RESULT',
+              payload: {
+                requestId,
+                error: 'creating posts is not supported in dev:live — use dev:mock',
+              },
+            });
+            return;
+          }
+
           case 'GET_WILDCARD_PACK': {
             // UNSUPPORTED in live v1 (honest-by-design, like OPEN_BUZZ_PURCHASE):
             // the real host resolves the pack via a SESSION-authed proc and does

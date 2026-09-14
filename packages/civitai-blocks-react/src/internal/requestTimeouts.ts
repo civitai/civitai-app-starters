@@ -75,6 +75,15 @@ const REQUEST_TIMEOUT_CLASS = {
   // failure — the two disagreeing about an account write, with nothing to
   // reconcile them. See `SET_COLLECTION_FOLLOW` in the SDK message union.
   SET_COLLECTION_FOLLOW: 'human',
+  // 🔴 `'human'` and the consequence of getting it wrong is the worst in this
+  // ledger. The host opens a consent confirm that names the copy, the resolved
+  // tags, the thumbnails and the destination, and replies only on the viewer's
+  // click or dismiss. At the 30s default the request would reject WHILE THE
+  // DIALOG IS STILL OPEN — and the viewer who then clicked Publish would get a
+  // real, public post under their own byline while the block reported a
+  // failure, with nothing to reconcile the two. Unlike the publish bridge there
+  // is no "outputs were lost" framing available here: the post exists.
+  CREATE_POST_FROM_APP: 'human',
 
   // ── Fire-and-forget: no requestId, so no pending promise to time out ────
   BLOCK_ERROR: 'no-reply',

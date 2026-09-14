@@ -919,6 +919,47 @@ export function isValidCollectionFollowResult(p: unknown): boolean {
   return true;
 }
 
+/**
+ * Reply to a block-initiated `CREATE_POST_FROM_APP`. A well-formed reply carries
+ * EITHER a `result` (`{ postId: positive int, url: non-empty string, imageIds:
+ * number[] }`) OR an `error`; one with neither is malformed and dropped.
+ *
+ * 🔴 `error` IS SHAPE-CHECKED ONLY, NOT MEMBERSHIP-CHECKED — the same decision
+ * as {@link isValidCollectionFollowResult} and the OPPOSITE of
+ * {@link isValidWildcardPackResult}, deliberately. The host's error channel is a
+ * union of its own closed refusal codes (`BlockCreatePostHostError`) AND any
+ * server message it forwards verbatim — a rate limit, a blocked title, a refused
+ * gallery attach, a write-trust refusal. Constraining it to the closed set would
+ * DROP every server failure at the top of the transport, before correlation, so
+ * the pending request would never reject: it would sit until its own timer
+ * fired, and for this consent-gated message that is TEN MINUTES. A legible "this
+ * app may not attach posts to its own publisher's models" would become a wedged
+ * button with no network call and no console error for the author to find.
+ *
+ * `postId` is pinned to a positive integer and `url` to a non-empty string: both
+ * are what a consumer navigates to or keys UI state by, and a malformed echo
+ * reaching that code is worse than a dropped reply — the write already happened,
+ * so a drop at least times out visibly.
+ */
+export function isValidCreatePostResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (typeof r.postId !== 'number' || !Number.isInteger(r.postId)) return false;
+    if (r.postId <= 0) return false;
+    if (!isNonEmptyString(r.url)) return false;
+    if (!Array.isArray(r.imageIds)) return false;
+    for (const id of r.imageIds) {
+      if (!isFiniteNumber(id)) return false;
+    }
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
 // ============================================================
 // App-storage (per-viewer KV) reply validators
 // ============================================================
@@ -1308,6 +1349,13 @@ export function payloadValidatorFor(
       return isValidImagesResult;
     case 'COLLECTION_FOLLOW_RESULT':
       return isValidCollectionFollowResult;
+    // 🔴 THIS ENTRY IS NOT COMPILER-ENFORCED — the `default:` arm below returns
+    // `null`, which is a STRUCTURAL PASS. Omitting it would not fail the build
+    // and would not fail typecheck; it would ship an UNVALIDATED path, and
+    // there is a test (`payloadValidatorFor` mapping pin) that exists only
+    // because that failure is otherwise invisible.
+    case 'CREATE_POST_RESULT':
+      return isValidCreatePostResult;
     case 'IMAGE_UPLOAD_RESULT':
       return isValidImageUploadResult;
     case 'IMAGE_SCAN_RESOLVED':

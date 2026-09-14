@@ -27,7 +27,7 @@ The known set (see `BLOCK_SCOPES` in `@civitai/app-sdk/blocks`): `models:read:se
 `user:read:self`, `ai:write:budgeted`, `buzz:read:self`, `social:tip:self`,
 `apps:storage:read`, `apps:storage:write`, `apps:storage:shared:read`,
 `apps:storage:shared:write`, `collections:read:self`, `collections:write:self`,
-`collections:read:private`.
+`collections:read:private`, `posts:write:self`.
 
 A moderator sees your declared scopes at review. The issued JWT carries the
 **granted intersection** of what you declared and what the user consented to —
