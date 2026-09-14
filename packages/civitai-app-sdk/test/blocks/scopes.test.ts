@@ -27,6 +27,8 @@ const CANONICAL_BLOCK_SCOPES = [
   'collections:read:self',
   'collections:write:self',
   'collections:read:private',
+  // App Blocks → Post bridge. SENSITIVE + consent-gated.
+  'posts:write:self',
 ] as const;
 
 describe('BLOCK_SCOPES', () => {

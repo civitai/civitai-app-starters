@@ -6,6 +6,7 @@ import type { BlockInitPayload, BlockToParentMessageType } from '@civitai/app-sd
 import { useBuzzPurchase } from '../src/hooks/useBuzzPurchase.js';
 import { useCheckpointPicker } from '../src/hooks/useCheckpointPicker.js';
 import { useCollectionFollow } from '../src/hooks/useCollectionFollow.js';
+import { useCreatePostFromApp } from '../src/hooks/useCreatePostFromApp.js';
 import { useImageUpload } from '../src/hooks/useImageUpload.js';
 import { usePublishGenerationOutputs } from '../src/hooks/usePublishGenerationOutputs.js';
 import { useResourcePicker } from '../src/hooks/useResourcePicker.js';
@@ -89,6 +90,13 @@ const DRIVERS: Record<string, () => () => Promise<unknown>> = {
     const { result } = renderHook(() => useCollectionFollow());
     return () => result.current.setFollow({ collectionId: 42, follow: true });
   },
+  CREATE_POST_FROM_APP: () => {
+    const { result } = renderHook(() => useCreatePostFromApp());
+    return () =>
+      result.current.createPost({
+        sources: [{ kind: 'workflow', workflowId: 'wf_app_1', imageIndexes: [0] }],
+      });
+  },
 };
 
 /** The reply message each request type is answered with, plus a minimal body. */
@@ -104,6 +112,10 @@ const REPLIES: Record<string, { type: string; extra: Record<string, unknown> }> 
   SET_COLLECTION_FOLLOW: {
     type: 'COLLECTION_FOLLOW_RESULT',
     extra: { result: { collectionId: 42, followed: true } },
+  },
+  CREATE_POST_FROM_APP: {
+    type: 'CREATE_POST_RESULT',
+    extra: { result: { postId: 42, url: 'https://civitai.com/posts/42', imageIds: [1] } },
   },
 };
 
@@ -135,6 +147,12 @@ describe('human-gated requests never inherit the default protocol timeout', () =
 
   it('pins the human-gated ledger EXACTLY (fails when it grows or shrinks)', () => {
     expect([...HUMAN_GATED_REQUEST_TYPES].sort()).toEqual([
+      // The host resolves the post server-side, renders THAT in its own confirm,
+      // and writes only on the viewer's click. At the 30s default the request
+      // would reject with the dialog still open — and a viewer who then clicked
+      // Publish would get a real, public post under their own byline while the
+      // block reported a failure.
+      'CREATE_POST_FROM_APP',
       'OPEN_BUZZ_PURCHASE',
       'OPEN_CHECKPOINT_PICKER',
       'OPEN_IMAGE_UPLOAD',

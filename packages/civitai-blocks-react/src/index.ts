@@ -87,6 +87,19 @@ export {
   isCollectionFollowErrorCode,
 } from './hooks/useCollectionFollow.js';
 export type { UseCollectionFollow } from './hooks/useCollectionFollow.js';
+export {
+  useCreatePostFromApp,
+  CreatePostError,
+  CREATE_POST_ERROR_CODES,
+  isCreatePostErrorCode,
+} from './hooks/useCreatePostFromApp.js';
+export type {
+  UseCreatePostFromApp,
+  BlockPostSource,
+  BlockCreatePostRequest,
+  BlockCreatePostResult,
+  BlockCreatePostHostError,
+} from './hooks/useCreatePostFromApp.js';
 export type {
   BlockBuzzTransaction,
   BlockBuzzAccount,

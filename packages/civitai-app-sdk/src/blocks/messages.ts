@@ -34,6 +34,8 @@ import type {
   BlockGatedImage,
   BlockCollectionFollowErrorCode,
   BlockCollectionFollowResult,
+  BlockPostSource,
+  BlockCreatePostResult,
 } from './types.js';
 
 // ============================================================
@@ -592,6 +594,35 @@ export type ParentToBlockMessage =
       payload: { requestId: string; result?: { imageIds: number[] }; error?: string };
     }
   | {
+      // Reply to CREATE_POST_FROM_APP. On success `result` carries the created
+      // Post's `postId`, its `url` on civitai, and `imageIds` — the ids of the
+      // images the post is made of, in post order (a `published` source
+      // contributes the id it named; a `workflow` source contributes the id of
+      // the Image row this call created for it).
+      //
+      // 🔴 `error` IS A FREE-TEXT STRING AND THE VALIDATOR MUST STAY SHAPE-ONLY.
+      // The host emits its OWN refusal codes here (`review-mode`, `block is not
+      // ready`, `sign in to post`, `no images to post`, `no block token`,
+      // `declined`) AND forwards any server message verbatim — a rate limit, a
+      // blocked title, a refused gallery attach. Constraining this to a set
+      // would DROP every server failure at the transport, before correlation,
+      // and a dropped reply on a REQUEST-style message does not reject: it
+      // leaves the promise pending until its own timer fires, which for this
+      // consent-gated message is TEN MINUTES. See
+      // `isValidCollectionFollowResult` in @civitai/blocks-react for the same
+      // decision and the counter-precedent it is taken against.
+      //
+      // `error: 'declined'` specifically GUARANTEES no post was created — the
+      // host's settlement latch is what makes that true even when the viewer
+      // dismisses the dialog mid-write.
+      type: 'CREATE_POST_RESULT';
+      payload: {
+        requestId: string;
+        result?: BlockCreatePostResult;
+        error?: string;
+      };
+    }
+  | {
       // Reply to GET_IMAGES_BY_IDS. On success `result.images` is the per-viewer
       // gated projection (`BlockGatedImage[]`; unresolvable ids omitted). On host-
       // side failure `error` is a FREE-TEXT string and `result` is absent.
@@ -980,6 +1011,48 @@ export type BlockToParentMessage =
       // outputs. `title` is an optional advisory label (host MAY ignore it).
       type: 'PUBLISH_GENERATION_OUTPUTS';
       payload: { requestId: string; workflowId: string; imageIndexes?: number[]; title?: string };
+    }
+  | {
+      // Ask the host to create a REAL, PUBLISHED Post on the VIEWER'S profile
+      // from the calling app's OWN outputs. The strictly-more-consequential
+      // SIBLING of PUBLISH_GENERATION_OUTPUTS: that one makes a bare Image row
+      // with no post, no feed presence, no reward and no notification; this one
+      // makes public, feed-visible, reward-earning content under the viewer's
+      // byline. Scope `posts:write:self` (NOT `ai:write:budgeted`), which is
+      // SENSITIVE and CONSENT-GATED. Host reads via `blocks.createPostFromApp`
+      // → `CREATE_POST_RESULT`.
+      //
+      // 🔴 NO ARM OF `sources` ACCEPTS A URL, AND THAT IS THE SECURITY SHAPE. A
+      // `workflow` source carries INDEXES into the host's own ordered
+      // projection of an ownership-verified workflow; a `published` source
+      // carries `Image` ids the server re-verifies for owner + this app's
+      // provenance marker + `postId IS NULL`. So a sandboxed iframe can never
+      // name the bytes that get published — only choose among bytes the server
+      // already attributed to it. Two kinds rather than one because an app that
+      // publishes to its grid first and lets the viewer post the one they like
+      // cannot be built on fresh outputs alone.
+      //
+      // 🔴 THE HOST NEVER RENDERS THESE STRINGS AS THE CONSENT SCREEN. Before
+      // asking the viewer it resolves the request server-side and shows THAT —
+      // the tag names that will ACTUALLY be applied (unmatched names are
+      // dropped, never minted), host-fetched model/version names for a gallery
+      // attach, and real thumbnails. `title`/`detail` are bounded and screened
+      // server-side and a `detail` containing a link is refused.
+      //
+      // Consent-gated ⇒ `'human'` timeout bucket: the reply waits on a click or
+      // a dismiss, so it must NOT inherit the ~30s protocol default.
+      type: 'CREATE_POST_FROM_APP';
+      payload: {
+        requestId: string;
+        /** Image sources, in POST ORDER. At least one; the host caps the total. */
+        sources: BlockPostSource[];
+        title?: string;
+        detail?: string;
+        /** Requested tag NAMES. Resolved against EXISTING tags only. */
+        tags?: string[];
+        /** Optional model-version gallery attach. Gated hard server-side. */
+        modelVersionId?: number;
+      };
     }
   | {
       // Ask the host for per-VIEWER gated display data for a set of image ids

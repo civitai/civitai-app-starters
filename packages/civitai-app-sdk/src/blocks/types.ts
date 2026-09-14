@@ -1644,3 +1644,124 @@ export interface BlockCollectionFollowResult {
   /** `true` ⇒ the viewer now follows the collection; `false` ⇒ no longer does. */
   followed: boolean;
 }
+
+// ============================================================
+// App Blocks → Post bridge (CREATE_POST_FROM_APP)
+// ============================================================
+
+/**
+ * ONE image source for {@link BlockCreatePostRequest}.
+ *
+ * 🔴 NEITHER ARM CARRIES A URL, AND THAT IS THE POINT. A block is a sandboxed
+ * iframe; if it could name the bytes, "post the app's own outputs" would mean
+ * "post anything". So a source names either an INDEX into the host's own ordered
+ * projection of a workflow it already proved the app owns, or an `Image` id the
+ * server re-verifies (owner + this app's provenance marker + not already in a
+ * post). Both resolve server-side; a block can only choose among bytes the
+ * platform already attributed to it.
+ *
+ * Two kinds rather than one, by operator decision: an app that publishes to its
+ * shared grid first and then lets the viewer post the one they like cannot be
+ * built on fresh workflow outputs alone.
+ *
+ * ⚠️ POSTING A PUBLISHED IMAGE REMOVES IT FROM THE APP'S OWN GRID. The app-scoped
+ * read of previously-published images is conjoined with `postId IS NULL`, so an
+ * image that joins a post stops resolving through `useGatedImages()`. An app
+ * cannot both keep an image in its shared grid and let the viewer post it; plan
+ * the UI for that rather than being surprised by it.
+ */
+export type BlockPostSource =
+  | {
+      kind: 'workflow';
+      /** A workflow from this app's OWN subqueue (see `useAppWorkflows()`). */
+      workflowId: string;
+      /**
+       * Indexes into that workflow's `images`, as seen via `useAppWorkflows()`.
+       * Omit to take every available output.
+       */
+      imageIndexes?: number[];
+    }
+  | {
+      kind: 'published';
+      /** Ids returned by a previous `usePublishGenerationOutputs()` publish. */
+      imageIds: number[];
+    };
+
+/**
+ * The request a block makes of the host in `CREATE_POST_FROM_APP`, minus the
+ * transport's own `requestId`.
+ *
+ * Every text field here is ADVISORY. The server bounds `title`/`detail`, screens
+ * them against the blocked-content list, refuses a `detail` containing a link,
+ * and resolves `tags` against EXISTING tags only — a name matching no tag is
+ * dropped, never minted, and is reported back to the VIEWER on the consent
+ * screen rather than silently discarded. The host's confirm renders the server's
+ * resolution of this request, never these strings.
+ */
+export interface BlockCreatePostRequest {
+  /** Image sources, in POST ORDER. At least one. */
+  sources: BlockPostSource[];
+  title?: string;
+  detail?: string;
+  /** Requested tag NAMES. Existing tags only; unmatched names are dropped. */
+  tags?: string[];
+  /**
+   * Optional model-version gallery attach. Gated hard server-side (the version
+   * must be published and public, and an app may not attach to its own
+   * publisher's models). The viewer is told about the attach explicitly.
+   */
+  modelVersionId?: number;
+}
+
+/**
+ * The success payload of a `CREATE_POST_RESULT` — the post the host actually
+ * created.
+ */
+export interface BlockCreatePostResult {
+  postId: number;
+  /** The post's URL on civitai. */
+  url: string;
+  /**
+   * The ids of the images the post is made of, in post order. A `published`
+   * source contributes the id it named; a `workflow` source contributes the id
+   * of the `Image` row this call created for it.
+   */
+  imageIds: number[];
+}
+
+/**
+ * The HOST'S OWN refusal codes on a `CREATE_POST_RESULT`'s `error`.
+ *
+ * 🔴 THIS IS THE SET A BLOCK MAY RELY ON, NOT THE SET IT MAY RECEIVE. `error` is
+ * a UNION of these codes and arbitrary free text: the host forwards any server
+ * message verbatim (a rate limit, a blocked title, a refused gallery attach, a
+ * write-trust refusal). Test for a code by EQUALITY against a member of this set
+ * and treat anything else as an opaque server message. The SDK's inbound
+ * validator shape-checks `error` and deliberately does NOT constrain it to this
+ * set — doing so would drop every server failure at the transport and wedge the
+ * block for the full ten-minute consent timeout.
+ *
+ * Mirrors civitai/civitai's `CREATE_POST_HOST_ERRORS`
+ * (`src/components/AppBlocks/createPostFromAppGate.ts`) — the host's gate is the
+ * definition and this is the copy.
+ *
+ * - `review-mode` — a mod-review sandbox with "run for real" off. A review token
+ *   can never carry `posts:write:self`, so the post could not happen anyway.
+ * - `block is not ready` — the host handshake has not completed. Retry after
+ *   `ready`.
+ * - `sign in to post` — anonymous viewer; there is no profile to post to. Route
+ *   into `useRequestSignIn()`.
+ * - `no images to post` — the payload named no sources, or the server resolved
+ *   none of them.
+ * - `no block token` — the host holds no block token yet.
+ * - `declined` — the viewer dismissed the consent confirm. 🔴 GUARANTEED to mean
+ *   NO POST WAS CREATED: the host takes a consent latch synchronously before the
+ *   write, so a dismissal mid-write can never claim this code.
+ */
+export type BlockCreatePostHostError =
+  | 'review-mode'
+  | 'block is not ready'
+  | 'sign in to post'
+  | 'no images to post'
+  | 'no block token'
+  | 'declined';
