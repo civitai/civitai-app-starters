@@ -19,7 +19,14 @@
  * const step: WorkflowStepTemplateFor<'textToImage'> = {
  *   $type: 'textToImage',
  *   name: 'step_0',
- *   input: { prompt: 'a fox', model: 'urn:air:sdxl:checkpoint:civitai:101055@128078' },
+ *   input: {
+ *     prompt: 'a fox',
+ *     model: 'urn:air:sdxl:checkpoint:civitai:101055@128078',
+ *     // REQUIRED on textToImage — easy to miss when hand-writing the body,
+ *     // and the kind of thing these types exist to catch.
+ *     cfgScale: 5,
+ *     seed: 1234,
+ *   },
  * };
  * const body: TypedWorkflowTemplate = { steps: [step], tags: ['my-app'] };
  * await submitWorkflow(createOrchestratorClient({ accessToken }), body);
