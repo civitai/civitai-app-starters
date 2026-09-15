@@ -49,7 +49,12 @@
   },
   "pnpm": {
     "comment-overrides": [
-      "Every FIRST-PARTY @civitai/* package MUST be listed here as workspace:*.",
+      "Every @civitai/* package that LIVES IN THIS WORKSPACE must be listed",
+      "here as workspace:*. Scope note: @civitai/client is first-party but is",
+      "NOT a workspace package -- it is published from civitai-client-javascript",
+      "and consumed by @civitai/app-sdk as an OPTIONAL PEER (types only). Do NOT",
+      "add it here: workspace:* would point at a package that does not exist in",
+      "this repo and break every install.",
       "This is what makes a release possible at all. The starters pin published",
       "caret ranges (^0.32.0) on purpose so a `tiged`'d copy installs from npm",
       "for external devs -- but inside this workspace those ranges must never",
