@@ -1,6 +1,6 @@
 /**
- * Orchestrator workflow-step TYPES, re-exported from the orchestrator's own
- * generated client (`@civitai/client`).
+ * Orchestrator workflow-step TYPES, keyed by wire `$type` over the orchestrator's
+ * own generated client (`@civitai/client`).
  *
  * The sibling `@civitai/app-sdk/orchestrator` module gives you the *catalog*
  * (`WORKFLOW_STEP_TYPES` — 47 `$type` names and what each one does) and the
@@ -8,6 +8,22 @@
  * builders take `input: unknown`. This module is the missing half: the actual
  * per-step input shapes, tracked against the orchestrator's OpenAPI spec by
  * codegen instead of by hand.
+ *
+ * What this module adds on top of `@civitai/client` is the `$type` → template
+ * MAP (`WorkflowStepTemplates`) and the lookups derived from it. The generated
+ * template types themselves are `@civitai/client`'s, and since that package is
+ * a required install for this subpath anyway (its names appear in this module's
+ * emitted declarations), import them straight from it when you need one by
+ * name:
+ *
+ * ```ts
+ * import type { TextToImageStepTemplate } from '@civitai/client';
+ * ```
+ *
+ * Reaching for `WorkflowStepTemplateFor<'textToImage'>` is usually better: the
+ * generated name is not always the one you would guess from the wire name
+ * (`model3DPreview` → `Model3dPreviewStepTemplate`), and looking it up is the
+ * discoverability tax the map exists to remove.
  *
  * ```ts
  * import { createOrchestratorClient, submitWorkflow } from '@civitai/app-sdk/orchestrator';
@@ -59,7 +75,7 @@
  *
  * `@civitai/client` is an **optional peer**, not a dependency (see the
  * `comment-peerDependencies` block in this package's package.json). Keeping
- * these re-exports out of `./orchestrator` and `.` means an app that never
+ * this module out of `./orchestrator` and `.` means an app that never
  * imports `@civitai/app-sdk/orchestrator/steps` never needs the peer installed
  * and never sees a resolution error. If you DO import this module, install it:
  *
@@ -84,7 +100,6 @@
 
 import type {
   // ----- Base shapes -------------------------------------------------------
-  WorkflowStepTemplate,
   WorkflowTemplate,
 
   // ----- Image gen ---------------------------------------------------------
@@ -156,68 +171,6 @@ import type {
   ComfyNodepackSnapshotStepTemplate,
   QwenImageBenchStepTemplate,
 } from '@civitai/client';
-
-export type {
-  /**
-   * The fields every step template shares (`name`, `priority`, `timeout`,
-   * `retries`, `metadata`), with `$type` left as a bare `string`. Prefer
-   * {@link AnyWorkflowStepTemplate}, which narrows `$type` to the real union.
-   */
-  WorkflowStepTemplate,
-  /**
-   * The submit envelope: `{ metadata?, tags?, steps }`. Its `steps` is the
-   * LOOSE `WorkflowStepTemplate[]`; {@link TypedWorkflowTemplate} narrows it.
-   */
-  WorkflowTemplate,
-  TextToImageStepTemplate,
-  ImageGenStepTemplate,
-  ComfyStepTemplate,
-  CustomComfyStepTemplate,
-  ImageUpscalerStepTemplate,
-  ImageBackgroundRemovalStepTemplate,
-  ImageToSvgStepTemplate,
-  ImageResourceTrainingStepTemplate,
-  PreprocessImageStepTemplate,
-  ConvertImageStepTemplate,
-  ImageUploadStepTemplate,
-  VideoGenStepTemplate,
-  VideoUpscalerStepTemplate,
-  VideoInterpolationStepTemplate,
-  VideoEnhancementStepTemplate,
-  VideoFrameExtractionStepTemplate,
-  VideoBackgroundRemovalStepTemplate,
-  VideoMetadataStepTemplate,
-  TranscodeStepTemplate,
-  TextToSpeechStepTemplate,
-  AceStepAudioStepTemplate,
-  MiniMaxMusic3StepTemplate,
-  TranscriptionStepTemplate,
-  AudioCaptioningStepTemplate,
-  ComposeMediaStepTemplate,
-  PolyGenStepTemplate,
-  /** Note the lowercase `d` — the generator emits `Model3d`, not `Model3D`. */
-  Model3dPreviewStepTemplate,
-  TrainingStepTemplate,
-  MediaHashStepTemplate,
-  ModelHashStepTemplate,
-  MediaRatingStepTemplate,
-  MediaCaptioningStepTemplate,
-  WdTaggingStepTemplate,
-  AgeClassificationStepTemplate,
-  XGuardModerationStepTemplate,
-  ShieldstralModerationStepTemplate,
-  ModelClamScanStepTemplate,
-  ModelPickleScanStepTemplate,
-  ModelParseMetadataStepTemplate,
-  ChatCompletionStepTemplate,
-  PromptEnhancementStepTemplate,
-  WebScrapeStepTemplate,
-  WebSearchStepTemplate,
-  EchoStepTemplate,
-  BlobArchiveStepTemplate,
-  ComfyNodepackSnapshotStepTemplate,
-  QwenImageBenchStepTemplate,
-};
 
 // ---------------------------------------------------------------------------
 // Keyed map + derived helpers
@@ -311,8 +264,10 @@ export type WorkflowStepTemplateFor<T extends keyof WorkflowStepTemplates> =
 
 /**
  * The `input` shape for one `$type` — the per-step payload, without having to
- * know or import the generated `*Input` name. This is why the 47 `*Input`
- * types are deliberately NOT re-exported one by one.
+ * know or import the generated `*Input` name. This is why neither the 47
+ * `*Input` types nor the 47 `*StepTemplate` types are re-exported one by one:
+ * the lookup is keyed by the wire `$type` you already have, and the generated
+ * names remain importable from `@civitai/client` for anyone who wants them.
  *
  * @example
  * function buildVideo(input: WorkflowStepInputFor<'videoGen'>) { … }
@@ -323,16 +278,16 @@ export type WorkflowStepInputFor<T extends keyof WorkflowStepTemplates> =
 /**
  * Discriminated union of every step template — discriminate on `$type`.
  *
- * The base `WorkflowStepTemplate.$type` is a bare `string`, so the base type
- * narrows nothing. This union is what makes `Extract<…, { $type: 'comfy' }>`
- * and an exhaustive `switch` work.
+ * `@civitai/client`'s base `WorkflowStepTemplate` has `$type` as a bare
+ * `string`, so it narrows nothing. This union is what makes
+ * `Extract<…, { $type: 'comfy' }>` and an exhaustive `switch` work.
  */
 export type AnyWorkflowStepTemplate =
   WorkflowStepTemplates[keyof WorkflowStepTemplates];
 
 /**
- * A submit body whose `steps` are the narrowed union rather than the base
- * `WorkflowStepTemplate[]`.
+ * A submit body whose `steps` are the narrowed union rather than
+ * `@civitai/client`'s base `WorkflowStepTemplate[]`.
  *
  * Assignable straight into `submitWorkflow` / `estimateWorkflow` from
  * `@civitai/app-sdk/orchestrator`, whose `body` parameter is `unknown`. Those

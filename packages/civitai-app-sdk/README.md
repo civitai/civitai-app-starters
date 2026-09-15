@@ -18,7 +18,7 @@ pnpm add @civitai/app-sdk
 | `scopes/*` — `TokenScope`, `TokenScopePresets`, `bitmaskFromScopes`, `scopesFromBitmask`, `hasScope`, `getScopeLabel` | Civitai scopes are stored as bitmasks. These helpers let you compose scope sets from named flags rather than magic numbers. |
 | `cookies/*` — `sealCookie`, `unsealCookie`, `buildSetCookieHeader`, `readCookie` | AES-256-CTR encrypted cookie crypto. Use to seal a session blob (refresh token, expiry, scope) into an `httpOnly` cookie with zero external session store. |
 | `orchestrator/*` — `createOrchestratorClient`, `estimateWorkflow`, `submitWorkflow`, `getWorkflow`, `pollWorkflow`, `buildTextToImageBody`, `buildImageGenBody`, `buildWorkflowBody`, `WORKFLOW_STEP_TYPES`, `IMAGE_GEN_ENGINES`, `isTerminal`, `extractImageUrls`, `OrchestratorError`, `WorkflowSnapshot`, `GenerateInput`, `ImageGenInput`, `WorkflowStepType`, `ImageGenEngine`, `DEFAULT_MODEL_AIR` | Orchestrator workflow glue — types, body builders, raw HTTP, and long-poll helper. Client + server safe (fetch-only). `estimateWorkflow` calls `?whatif=true` to preview Buzz cost without spending. `pollWorkflow` long-polls to terminal status. `WORKFLOW_STEP_TYPES` is the catalog of every step `$type` the orchestrator accepts. |
-| `orchestrator/steps` — `WorkflowStepTemplates`, `WorkflowStepTemplateFor`, `WorkflowStepInputFor`, `AnyWorkflowStepTemplate`, `TypedWorkflowTemplate`, and all 47 `*StepTemplate` types | **Type-only** subpath (0 runtime bytes) re-exporting the orchestrator's generated workflow-step shapes from `@civitai/client`, so apps compose real step bodies against types that track the spec instead of hand-maintained copies. Requires the optional peer `@civitai/client@beta`. Type surface only — it grants no submit permission; see "Typed step shapes" below. |
+| `orchestrator/steps` — `WorkflowStepTemplates`, `WorkflowStepTemplateFor`, `WorkflowStepInputFor`, `AnyWorkflowStepTemplate`, `TypedWorkflowTemplate` | **Type-only** subpath (0 runtime bytes) keying the orchestrator's generated workflow-step shapes from `@civitai/client` by wire `$type`, so apps compose real step bodies against types that track the spec instead of hand-maintained copies. Requires the optional peer `@civitai/client@beta`. Type surface only — it grants no submit permission; see "Typed step shapes" below. |
 | `blocks/*` — `defineBlock`, `BlockManifestError`, `BLOCK_SCOPES`, `BLOCK_SCOPE_PATTERN`, `isMessage`, types (`BlockManifestV1`, `BlockContext`, `BlockToken`, `BlockSettings`, `ViewerInfo`, `ThemeInfo`, `BlockWorkflowSnapshot`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`, …) | Framework-agnostic contract for [Civitai Apps](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md). `defineBlock(config)` validates a `BlockManifestV1` at startup so authoring mistakes surface in `pnpm dev` instead of at `civitai app validate`/submit. Ships a byte-identical copy of the server-published canonical JSON Schema (draft 2020-12, https://civitai.com/schemas/app-block/v1.json) at the `./schemas/app-block/v1.json` subpath for offline validation; a CI drift-check keeps it in sync. Runtime-agnostic — no React or DOM types. Hooks and the iframe transport live in a separate package. |
 
 ## Subpath imports
@@ -344,7 +344,7 @@ Per-engine input shapes (`aspectRatio`, `resolution`, `numImages`, etc.) come fr
 
 ## Typed step shapes (`@civitai/app-sdk/orchestrator/steps`)
 
-`WORKFLOW_STEP_TYPES` tells you which `$type`s exist; the body builders above take `input: unknown`. This subpath is the other half: the real per-step input shapes, re-exported from the orchestrator's own generated client (`@civitai/client`) so they track the spec by codegen rather than by hand.
+`WORKFLOW_STEP_TYPES` tells you which `$type`s exist; the body builders above take `input: unknown`. This subpath is the other half: the real per-step input shapes, keyed by wire `$type` over the orchestrator's own generated client (`@civitai/client`) so they track the spec by codegen rather than by hand.
 
 It is **type-only** — every export is a `type`, the built `dist/orchestrator/steps.js` is an empty module, and bundling it yields 0 bytes. Nothing is added to your runtime.
 
@@ -384,11 +384,12 @@ What it exports:
 | `WorkflowStepTemplates` | `$type` → template type, for all 47 step types. Keyed by the WIRE name, which the generated type names don't always match (`model3DPreview` → `Model3dPreviewStepTemplate`). |
 | `WorkflowStepTemplateFor<'videoGen'>` | One step's template. |
 | `WorkflowStepInputFor<'videoGen'>` | One step's `input` shape, without needing the generated `*Input` name. |
-| `AnyWorkflowStepTemplate` | Discriminated union of all 47 — `Extract<…, { $type: 'comfy' }>` and exhaustive `switch` work. The base `WorkflowStepTemplate.$type` is a bare `string`, so it narrows nothing. |
+| `AnyWorkflowStepTemplate` | Discriminated union of all 47 — `Extract<…, { $type: 'comfy' }>` and exhaustive `switch` work. `@civitai/client`'s base `WorkflowStepTemplate` has `$type` as a bare `string`, so it narrows nothing. |
 | `TypedWorkflowTemplate` | The submit envelope with `steps` narrowed to that union. Pass it straight to `submitWorkflow` / `estimateWorkflow`. |
-| The 47 `*StepTemplate` names | Re-exported individually too, plus the base `WorkflowStepTemplate` / `WorkflowTemplate`. |
 
-The 47 `*Input` types are deliberately **not** re-exported one by one — `WorkflowStepInputFor<T>` covers that case without doubling the export surface.
+The generated `*StepTemplate` and `*Input` types are **not** re-exported individually. Using this subpath already requires `@civitai/client` installed, so if you want one by name, import it straight from there — `import type { TextToImageStepTemplate } from '@civitai/client'`.
+
+In practice `WorkflowStepTemplateFor<T>` and `WorkflowStepInputFor<T>` are the better route: they take the wire `$type` you already have, rather than the generated name you would otherwise have to go look up (`model3DPreview` → `Model3dPreviewStepTemplate`).
 
 ### Installing the peer
 

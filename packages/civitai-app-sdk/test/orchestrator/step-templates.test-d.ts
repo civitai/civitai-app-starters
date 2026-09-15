@@ -1,6 +1,6 @@
 /**
- * Compile-time coverage for `src/orchestrator/steps.ts` — the type-only
- * re-export of the orchestrator's generated workflow-step templates.
+ * Compile-time coverage for `src/orchestrator/steps.ts` — the type-only map
+ * from wire `$type` to the orchestrator's generated workflow-step templates.
  *
  * This is a TYPE test: it is compiled by `tsc -p tsconfig.typecheck.json` (the
  * `test:types` script, run by `pnpm test`). There is nothing to execute.
@@ -9,8 +9,9 @@
  * because a type test that passes whether or not the feature exists proves
  * nothing:
  *
- *  1. A step template that stops being exported (or is renamed by a
- *     `@civitai/client` bump) → TS2305 on the import at the top of this file.
+ *  1. A step template renamed or dropped by a `@civitai/client` bump → TS2305,
+ *     both on the import at the top of this file and inside
+ *     `src/orchestrator/steps.ts`, whose map names the same generated types.
  *  2. `WorkflowStepTemplates` losing a key, or the orchestrator spec gaining a
  *     step type the catalog does not know → the key-parity assertion fails.
  *  3. The exports degrading to the LOOSE base `WorkflowStepTemplate` (whose
@@ -25,19 +26,27 @@
  */
 import { expectTypeOf } from 'vitest';
 
-import type { WorkflowStepType } from '../../src/orchestrator/index.js';
+// The generated template types come from the peer itself — this subpath's
+// contribution is the map and the lookups derived from it, not a second copy of
+// these names. Importing them from their source is also the stricter check:
+// a `@civitai/client` bump that renames one fails HERE, on the package that
+// actually defines it.
 import type {
-  AnyWorkflowStepTemplate,
   ComfyStepTemplate,
   Model3dPreviewStepTemplate,
   TextToImageStepTemplate,
-  TypedWorkflowTemplate,
   VideoGenStepTemplate,
-  WorkflowStepInputFor,
   WorkflowStepTemplate,
+  WorkflowTemplate,
+} from '@civitai/client';
+
+import type { WorkflowStepType } from '../../src/orchestrator/index.js';
+import type {
+  AnyWorkflowStepTemplate,
+  TypedWorkflowTemplate,
+  WorkflowStepInputFor,
   WorkflowStepTemplateFor,
   WorkflowStepTemplates,
-  WorkflowTemplate,
 } from '../../src/orchestrator/steps.js';
 
 // ---------------------------------------------------------------------------
