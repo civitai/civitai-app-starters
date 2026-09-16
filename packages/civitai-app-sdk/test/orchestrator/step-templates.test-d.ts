@@ -23,6 +23,10 @@
  *  4. The `input` shape drifting from the spec → the literal-valued
  *     construction below fails (it pins `prompt` / `cfgScale` / `seed` as
  *     REQUIRED, which is what the spec says and is easy to get wrong by hand).
+ *  5. A key paired with the WRONG template — two same-shaped templates swapped
+ *     between two keys, which leaves the key set identical and so is invisible
+ *     to (2) → the total pairing assertion in section 3 fails. Measured: the
+ *     `mediaHash`/`modelHash` swap passes the whole suite without it.
  */
 import { expectTypeOf } from 'vitest';
 
@@ -142,6 +146,19 @@ expectTypeOf<Exclude<keyof WorkflowStepTemplates, WorkflowStepType>>().toEqualTy
  * indistinguishable from no gap — and spelled as a `never` rather than as a
  * hard equality, because coupling a REQUIRED check to an external package's
  * republish cadence is how a gate becomes permanently red.
+ *
+ * 🔴 THE ADDING HALF IS AUTOMATED; THE REMOVING HALF IS NOT.
+ * `scripts/sync-orchestrator-catalogs.mjs` (and therefore the daily
+ * `Sync orchestrator catalogs` workflow) rewrites the line below whenever it
+ * adds a step type to the catalog — it has to, because widening
+ * `WorkflowStepType` staled this assertion in the same edit, and the workflow
+ * runs `pnpm --filter @civitai/app-sdk test` as the gate in front of opening
+ * its PR. It only ever GROWS the list: clearing an entry means reading a
+ * republished `@civitai/client`, which the script never looks at. So delete an
+ * entry by hand, in the same commit that adds the key to
+ * `WorkflowStepTemplates`. Keep the declaration on one line as
+ * `type … = never;` or a union of quoted literals — the script refuses to
+ * guess at any other shape and writes nothing.
  */
 type CatalogStepTypesWithoutAGeneratedType = never;
 expectTypeOf<Exclude<WorkflowStepType, keyof WorkflowStepTemplates>>().toEqualTypeOf<
@@ -154,6 +171,31 @@ expectTypeOf<WorkflowStepTemplates['videoGen']>().toEqualTypeOf<VideoGenStepTemp
 // The wire name and the generated type name disagree on case here — the map is
 // what papers over it, so pin it.
 expectTypeOf<WorkflowStepTemplates['model3DPreview']>().toEqualTypeOf<Model3dPreviewStepTemplate>();
+
+/**
+ * Every key is paired with the template whose OWN `$type` is that key — all 47,
+ * not the three spot-checks above.
+ *
+ * Key parity is a claim about the key SET; it says nothing about which template
+ * sits under each key. Two same-shaped templates swapped between two keys keeps
+ * the set identical, keeps every assertion above green (they name three other
+ * keys), and silently hands callers the wrong `input` type for both. Measured on
+ * this map: swapping the `mediaHash` and `modelHash` values passes the whole SDK
+ * suite without this assertion, and fails on the line below with it.
+ *
+ * It works because each generated `<X>StepTemplate` carries its own wire name as
+ * a literal `$type`, so the map does not have to be trusted to state the pairing
+ * — the templates state it, and this checks the map agrees. A mapped type
+ * collects every key whose template disagrees; `never` means none do.
+ *
+ * `extends K` rather than `toEqualTypeOf<K>`: a template whose `$type` is a
+ * union that INCLUDES `K` and something else should fail too, and `extends`
+ * rejects that where an equality on the whole union would need unpacking.
+ */
+type MisPairedStepTypes = {
+  [K in keyof WorkflowStepTemplates]: WorkflowStepTemplates[K]['$type'] extends K ? never : K;
+}[keyof WorkflowStepTemplates];
+expectTypeOf<MisPairedStepTypes>().toEqualTypeOf<never>();
 
 // ---------------------------------------------------------------------------
 // 4. Derived helpers.

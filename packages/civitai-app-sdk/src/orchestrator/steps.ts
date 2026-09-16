@@ -63,25 +63,66 @@
  *    user's OAuth token, and the orchestrator applies its own authorization.
  *    A body that compiles can still come back 400 or 403.
  *
- * The practical consequence: roughly 13 of the 47 step types below are platform
- * internals (`modelPickleScan`, `xGuardModeration`, `webScrape`, `training`,
- * `comfyNodepackSnapshot`, `qwenImageBench`, the `model*` / `media*` hashing
- * and classification steps, …). They are in the consumer spec, so they are
- * typed here for completeness and for key parity with `WORKFLOW_STEP_TYPES` —
- * which already lists them, under an explicit "Platform internals" heading.
- * They are not an invitation.
+ * The practical consequence: a number of the 47 step types below exist to serve
+ * Civitai's own pipelines rather than third-party apps — `modelPickleScan`,
+ * `xGuardModeration`, `training`, `comfyNodepackSnapshot`, `qwenImageBench`,
+ * the `model*` / `media*` hashing and classification steps. They are in the
+ * consumer spec, so they are typed here. They are not an invitation.
+ *
+ * ⚠️ `WORKFLOW_STEP_TYPES` does NOT mark most of them. Counted at this commit:
+ * of its 47 entries, exactly TWO sit under its "Platform internals" heading —
+ * `comfyNodepackSnapshot` and `qwenImageBench`. `training`, `webScrape`,
+ * `xGuardModeration`, `modelPickleScan` and the `model*` / `media*` steps are
+ * ordinary documented entries under ordinary headings, and `webScrape` carries
+ * consumer-facing usage notes. So "the catalog already flags these as internal"
+ * is not a reason this map covers all 47, and an earlier version of this
+ * docblock claiming it was is wrong. What IS true, and is the reason: the
+ * catalog DOCUMENTS all 47, and a lookup keyed by `$type` is only sound as a
+ * lookup if it is total over `WorkflowStepType` — a partial map makes
+ * `WorkflowStepTemplateFor<'training'>` a compile error for a step type the
+ * SDK documents, and makes the key-parity assertion below impossible.
  *
  * ## Why this is a separate deep entry point
  *
  * `@civitai/client` is an **optional peer**, not a dependency (see the
  * `comment-peerDependencies` block in this package's package.json). Keeping
- * this module out of `./orchestrator` and `.` means an app that never
- * imports `@civitai/app-sdk/orchestrator/steps` never needs the peer installed
- * and never sees a resolution error. If you DO import this module, install it:
+ * this module out of `./orchestrator` and `.` means an app that never imports
+ * `@civitai/app-sdk/orchestrator/steps` never needs the peer installed. If you
+ * DO import this module, install it:
  *
  * ```sh
  * pnpm add -D @civitai/client@beta
  * ```
+ *
+ * 🔴 **FORGETTING THE PEER IS SILENT UNDER `skipLibCheck: true`, WHICH IS THE
+ * DEFAULT.** The unresolved `@civitai/client` import lands in the emitted
+ * `steps.d.ts`, so `skipLibCheck` — which every starter in this repo sets, as
+ * does `tsc --init` — suppresses its `TS2307` along with every other
+ * declaration-file diagnostic. Every export here then resolves to `any`: the
+ * code below still compiles, and checks NOTHING.
+ *
+ * Measured against a built copy of this package, in a consumer resolving
+ * through the exports map with the peer uninstalled:
+ *
+ *  - `skipLibCheck: true` — **0 diagnostics**, on a file annotating
+ *    `WorkflowStepTemplateFor<'textToImage'>` with a bogus `$type`, an
+ *    unknown `input` field AND an unknown envelope field. A planted
+ *    `const x: number = 's'` in the same project DID error, so that zero is a
+ *    real zero. Reinstalling the peer turns those three into errors.
+ *  - `skipLibCheck: false` — one error,
+ *    `TS2307: Cannot find module '@civitai/client'`, reported against
+ *    `node_modules/@civitai/app-sdk/dist/orchestrator/steps.d.ts` rather than
+ *    against your own file.
+ *
+ * 🔴 There is no type-level guard that can close this, and that was measured
+ * rather than assumed. A sentinel conditional (`0 extends 1 & WorkflowTemplate
+ * ? …`) does not fire: TypeScript gives an unresolved import an ERROR type
+ * which propagates as `any` through any type-level computation over it, so the
+ * detector itself resolves to `any`. Verified in an isolated two-package repro
+ * against a working control — with the module resolvable the probe reports
+ * correctly and a deliberate mismatch errors; with it unresolvable every
+ * assertion, including the positive control, passes. So the mitigation is
+ * documentation, and the containment is that only THIS subpath is affected.
  *
  * 🔴 **Install from the `beta` tag, not `latest`.** `@civitai/client`'s npm
  * `latest` dist-tag points at `0.1.1-beta.0`, ~97 betas behind the `beta` tag
@@ -307,9 +348,21 @@ export type AnyWorkflowStepTemplate =
  * `currencies: undefined` on several paths and read it back with `?.`.
  *
  * Taking the generated type literally would therefore produce a type that
- * contradicts this package's own working helpers, and would push callers into
- * sending a payment-currency restriction they never intended. Relaxing it is
- * the conservative direction: it forbids nothing and requires nothing new.
+ * contradicts this package's own working helpers, and would make every existing
+ * caller stop compiling.
+ *
+ * ⚠️ BE HONEST ABOUT WHICH DIRECTION THIS IS. The spec's own description of the
+ * field is "Limit the currencies that can be used to pay for this workflow."
+ * (read from `WorkflowTemplate.properties.currencies.description` in the live
+ * spec) — it is a LIMITER, so omitting it is the PERMISSIVE choice, not the
+ * safe one, and it sits on a spend-scoping field. (An earlier version of this
+ * comment called omitting it "conservative". That was backwards, in the one
+ * direction that matters.) What the relaxation is conservative ABOUT is this
+ * package's API: it forbids nothing that compiled before, requires nothing new
+ * of callers, and matches what the helpers have always sent. If you want a
+ * workflow's payment scoped to particular currencies, pass `currencies`
+ * explicitly — the field is still here and still the generated element type.
+ *
  * Pinned by `test/orchestrator/step-templates.test-d.ts` so the divergence
  * cannot widen unnoticed.
  *

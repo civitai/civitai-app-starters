@@ -401,6 +401,16 @@ pnpm add -D @civitai/client@beta
 
 > 🔴 **Use the `beta` tag, not `latest`.** `@civitai/client`'s npm `latest` dist-tag points at `0.1.1-beta.0`, roughly 97 betas behind the `beta` tag the orchestrator is actually generated against — and missing most of the step types above. A plain `pnpm add @civitai/client` installs the stale one with no error; the first symptom is `TextToImageStepTemplate` not existing.
 
+> 🔴 **If you forget the peer entirely, nothing tells you — it just stops checking.** The unresolved `@civitai/client` import is in the SDK's shipped `steps.d.ts`, so `skipLibCheck: true` — the default for a TypeScript app, and set by every starter in this repo — suppresses the `TS2307` along with every other declaration-file diagnostic. Every type in the table above then resolves to `any`, your code still compiles, and none of the checking this subpath exists to give you happens. Measured on a consumer with the peer uninstalled: **0 diagnostics** on a file whose `$type`, `input` field and envelope field were all deliberately wrong, against a planted `const x: number = 's'` in the same project that did error. With `skipLibCheck: false` you get one `TS2307` pointing at `node_modules`, not at your file.
+>
+> There is no type-level guard that can close this: TypeScript gives an unresolved import an *error type* that propagates as `any` through any type-level computation, so a detector for it resolves to `any` too. If the step types look like they are not catching anything, check the peer is installed before anything else — `ls node_modules/@civitai/client`.
+
+### `currencies` is optional here, and required in the spec
+
+`TypedWorkflowTemplate` makes `currencies` optional where the generated `WorkflowTemplate` has it required. The helpers in `@civitai/app-sdk/orchestrator` have never emitted it and every starter submits through them, so requiring it would break every existing caller for a field none of them sends.
+
+Be clear about the direction, though: the spec describes `currencies` as *"Limit the currencies that can be used to pay for this workflow."* It is a **limiter**, so leaving it out is the permissive choice on a spend-scoping field, not the cautious one. Pass it explicitly if you want a workflow's payment scoped to particular currencies. This divergence is reasoned from the spec, this package's helpers and civitai's call sites — not from a live submit, which costs real Buzz.
+
 ### These are types, not permissions
 
 A `$type` having a type here says nothing about whether you may submit it.
@@ -408,7 +418,9 @@ A `$type` having a type here says nothing about whether you may submit it.
 - **App Blocks** don't reach the orchestrator at all. A block posts a `WorkflowBody` to the host, which validates it server-side against its own schema. That contract is `@civitai/app-sdk/blocks` and is completely unaffected by this subpath.
 - **Standalone apps / BFFs** submit directly with the user's OAuth token, and the orchestrator applies its own authorization. A body that compiles can still come back 400 or 403.
 
-About 13 of the 47 are platform internals (`modelPickleScan`, `xGuardModeration`, `webScrape`, `training`, `comfyNodepackSnapshot`, `qwenImageBench`, the `model*`/`media*` hashing and classification steps, …). They're typed for completeness and to stay in lockstep with `WORKFLOW_STEP_TYPES`, which already lists them under "Platform internals". They are not an invitation.
+Several of the 47 exist to serve Civitai's own pipelines rather than third-party apps — `modelPickleScan`, `xGuardModeration`, `training`, `comfyNodepackSnapshot`, `qwenImageBench`, the `model*`/`media*` hashing and classification steps. They're in the consumer spec, so they're typed here. They are not an invitation.
+
+Note that `WORKFLOW_STEP_TYPES` does **not** mark most of them: of its 47 entries exactly two — `comfyNodepackSnapshot` and `qwenImageBench` — sit under its "Platform internals" heading, and the rest are ordinary documented entries (`webScrape` even carries usage notes). The reason all 47 are typed is not that the catalog flags the internals; it's that the catalog *documents* all 47 and a `$type`-keyed lookup is only sound as a lookup if it's total — a partial map would make `WorkflowStepTemplateFor<'training'>` a compile error for a step type the SDK documents, and would make the key-parity assertion impossible.
 
 ## Public vs. confidential clients
 

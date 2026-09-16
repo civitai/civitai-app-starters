@@ -17,8 +17,8 @@
  * upstream some time after the 2026-08-28 fixture read. Same argument as the
  * sibling `revendor-canonical-schema.yml`, whose cron comment spells it out.
  *
- * WHAT IT WRITES (4 files, the same 4 a human touches by hand — see
- * `da3a9dd`, the `miniMaxMusic3` precedent):
+ * WHAT IT WRITES (up to 5 files — see `da3a9dd`, the `miniMaxMusic3` precedent,
+ * for the first three):
  *   1. packages/civitai-app-sdk/test/fixtures/orchestrator-spec-catalogs.json
  *      — the transcribed lists, re-read from the live mapping, plus `readOn`.
  *   2. packages/civitai-app-sdk/src/orchestrator/index.ts — the new keys,
@@ -26,9 +26,34 @@
  *   3. packages/civitai-app-sdk/test/orchestrator.test.ts — the pinned
  *      `toHaveLength` counts, which are a positive control on the fixture and
  *      exist to be bumped deliberately.
- *   4. .changeset/orchestrator-catalog-sync-<date>.md — `minor`, per
+ *   4. packages/civitai-app-sdk/test/orchestrator/step-templates.test-d.ts —
+ *      the `CatalogStepTypesWithoutAGeneratedType` ledger, ONLY when this run
+ *      adds step types (an `imageGen` engine does not touch it). See the
+ *      block below.
+ *   5. .changeset/orchestrator-catalog-sync-<date>.md — `minor`, per
  *      RELEASING.md: `WorkflowStepType` is `keyof typeof WORKFLOW_STEP_TYPES`,
  *      so a new key widens an exported union. Purely additive.
+ *
+ * 🔴 WHY THE LEDGER IS FILE 4, AND WHY SKIPPING IT KILLS THIS JOB RATHER THAN
+ * MERELY ANNOYING A REVIEWER. `test/orchestrator/step-templates.test-d.ts`
+ * asserts, at compile time, that `Exclude<WorkflowStepType, keyof
+ * WorkflowStepTemplates>` equals a hand-written ledger type — the catalog keys
+ * that `@civitai/client` has no generated step template for yet. Adding a step
+ * type to `WORKFLOW_STEP_TYPES` widens `WorkflowStepType` and therefore that
+ * `Exclude`, so the ledger goes stale in the same edit. Measured 2026-09-15 by
+ * running this script against the live spec (which was 3 step types ahead) and
+ * then the SDK suite: `step-templates.test-d.ts(147,72): error TS2554`. That is
+ * `pnpm --filter @civitai/app-sdk test`, which the workflow runs in
+ * `Validate SDK against the synced catalogs` — a step that gates
+ * `create-pull-request`. So without this edit the job fails and NO PR OPENS AT
+ * ALL; the drift is never reported and nobody is told why.
+ *
+ * A newly-added catalog key is always a correct ledger entry, and that is not a
+ * guess: the same file's Direction A assertion pins `keyof
+ * WorkflowStepTemplates` as a SUBSET of `WorkflowStepType`, so a key that was
+ * absent from the catalog until this run cannot have been in the map either.
+ * Clearing an entry, by contrast, is a human's job — it means reading a
+ * republished `@civitai/client`, which this script never looks at.
  *
  * 🔴 IT NEVER INVENTS A DESCRIPTION. The catalog's whole job is the one-line
  * description a developer reads when picking a step, so a fabricated one is
@@ -101,7 +126,14 @@ const FIXTURE = join(
 );
 const SDK_SRC = join(REPO_ROOT, 'packages/civitai-app-sdk/src/orchestrator/index.ts');
 const TEST_SRC = join(REPO_ROOT, 'packages/civitai-app-sdk/test/orchestrator.test.ts');
+const TYPE_TEST_SRC = join(
+  REPO_ROOT,
+  'packages/civitai-app-sdk/test/orchestrator/step-templates.test-d.ts',
+);
 const CHANGESET_DIR = join(REPO_ROOT, '.changeset');
+
+/** The ledger type alias this script extends. Single-sourced: the regex below is built from it. */
+const LEDGER_TYPE = 'CatalogStepTypesWithoutAGeneratedType';
 
 /**
  * The catalogs under sync. `fixtureKey` / `schema` / `sdkName` are the same
@@ -377,6 +409,51 @@ function appendToCatalog(src, constName, entries, date) {
 }
 
 /**
+ * Add `keys` to the `type <LEDGER_TYPE> = …;` alias in the type test.
+ *
+ * The alias is either `never` (no gap) or a union of single-quoted step-type
+ * literals. Both are parsed, merged with `keys`, de-duplicated and re-emitted
+ * sorted, so a run that adds a key the ledger already names is a no-op rather
+ * than a duplicate — and so the emitted order does not depend on run order.
+ *
+ * 🔴 IT ONLY EVER GROWS. Removing an entry means `@civitai/client` has
+ * republished with that step template, which this script does not read and
+ * cannot check. The type test itself catches a ledger that has grown stale in
+ * that direction: the `Exclude` shrinks, the assertion fails, and a human
+ * deletes the line.
+ *
+ * Throws (exit 1, nothing written) unless the alias is present exactly once and
+ * has one of those two recognised shapes — same contract as `bumpCount`. A
+ * ledger this cannot parse is a ledger it must not guess at.
+ */
+function extendLedger(src, keys) {
+  const re = new RegExp(`^type ${LEDGER_TYPE} = ([^;]*);$`, 'gm');
+  const hits = [...src.matchAll(re)];
+  if (hits.length !== 1) {
+    throw new Fatal(
+      `expected exactly 1 \`type ${LEDGER_TYPE} = …;\` declaration in ${TYPE_TEST_SRC}, found ${hits.length}`,
+    );
+  }
+  const rhs = hits[0][1].trim();
+  let existing = [];
+  if (rhs !== 'never') {
+    existing = rhs.split('|').map((part) => part.trim());
+    const bad = existing.filter((part) => !/^'[A-Za-z][A-Za-z0-9]*'$/.test(part));
+    if (bad.length) {
+      throw new Fatal(
+        `\`type ${LEDGER_TYPE}\` in ${TYPE_TEST_SRC} is neither \`never\` nor a union of quoted step-type\n` +
+          `  literals — this script will not guess at it. Unrecognised: ${bad.join(', ')}\n` +
+          `  Nothing was written.`,
+      );
+    }
+    existing = existing.map((part) => part.slice(1, -1));
+  }
+  const merged = [...new Set([...existing, ...keys])].sort();
+  const value = merged.length ? merged.map((k) => `'${k}'`).join(' | ') : 'never';
+  return src.replace(re, `type ${LEDGER_TYPE} = ${value};`);
+}
+
+/**
  * Bump `expect(<countVar>).toHaveLength(<n>)` to the live count.
  *
  * Asserts the pattern occurs EXACTLY once before replacing. A `count=1`
@@ -503,7 +580,19 @@ async function main() {
   for (const p of plans) test = bumpCount(test, p.countVar, p.live.length);
   pending.push({ path: TEST_SRC, content: test });
 
-  // ---- 4. the changeset ----------------------------------------------------
+  // ---- 4. the not-yet-typed ledger ----------------------------------------
+  // Only when this run adds STEP TYPES. An `imageGen` engine does not widen
+  // `WorkflowStepType`, so it cannot stale the ledger, and rewriting the file to
+  // its own contents would put a no-op diff in the PR.
+  const newStepTypes = plans.find((p) => p.fixtureKey === 'workflowStepTypes')?.missing ?? [];
+  if (newStepTypes.length) {
+    pending.push({
+      path: TYPE_TEST_SRC,
+      content: extendLedger(readFileSync(TYPE_TEST_SRC, 'utf8'), newStepTypes),
+    });
+  }
+
+  // ---- 5. the changeset ----------------------------------------------------
   const bullets = added.flatMap(({ sdkName, label, entries }) =>
     entries.map(
       ({ key, derived }) =>
@@ -545,6 +634,14 @@ async function main() {
         : `PLACEHOLDER description${rejected ? ` (the spec's own ${rejected})` : ' (the spec carried none)'}`;
       console.log(`  + ${sdkName}.${key} — ${how}`);
     }
+  }
+  if (newStepTypes.length) {
+    console.log(
+      `\n  ${LEDGER_TYPE} (test/orchestrator/step-templates.test-d.ts) now names ` +
+        `${newStepTypes.map((k) => `\`${k}\``).join(', ')} — the catalog lists them and ` +
+        `@civitai/client has no generated step template for them yet. Delete each one when ` +
+        `the client republishes with it.`,
+    );
   }
   console.log(
     `\nWrote ${pending.length} files. ${

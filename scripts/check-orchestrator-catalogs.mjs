@@ -277,11 +277,16 @@ async function main() {
 
   if (drifted) {
     console.error(
-      `\nFix: update BOTH\n` +
+      `\nFix: update ALL THREE\n` +
         `  ${FIXTURE}\n` +
         `  packages/civitai-app-sdk/src/orchestrator/index.ts\n` +
+        `  packages/civitai-app-sdk/test/orchestrator/step-templates.test-d.ts\n` +
         `in the same PR (a new step type also needs a one-line description in the\n` +
-        `catalog). \`pnpm --filter @civitai/app-sdk test\` pins the two to each other.`,
+        `catalog). \`pnpm --filter @civitai/app-sdk test\` pins the first two to each\n` +
+        `other. The third is the \`CatalogStepTypesWithoutAGeneratedType\` ledger: a new\n` +
+        `step type widens \`WorkflowStepType\`, and until \`@civitai/client\` republishes\n` +
+        `with a generated template for it, it belongs in that ledger or the SDK type\n` +
+        `test fails. \`pnpm sync:catalogs\` does all three for you.`,
     );
     process.exitCode = 1;
     return;

@@ -79,9 +79,10 @@ async function serveSpec(spec) {
  * the script does text surgery against — so a change to those anchors upstream
  * fails here rather than in production.
  */
-function makeTree({ stepTypes, engines }) {
+function makeTree({ stepTypes, engines, ledger = 'never' }) {
   const dir = mkdtempSync(join(tmpdir(), 'catalog-sync-'));
   mkdirSync(join(dir, 'packages/civitai-app-sdk/test/fixtures'), { recursive: true });
+  mkdirSync(join(dir, 'packages/civitai-app-sdk/test/orchestrator'), { recursive: true });
   mkdirSync(join(dir, 'packages/civitai-app-sdk/src/orchestrator'), { recursive: true });
   mkdirSync(join(dir, '.changeset'), { recursive: true });
 
@@ -117,6 +118,17 @@ function makeTree({ stepTypes, engines }) {
       '',
     ].join('\n'),
   );
+  writeFileSync(
+    join(dir, 'packages/civitai-app-sdk/test/orchestrator/step-templates.test-d.ts'),
+    [
+      '// A real excerpt: the alias the sync script rewrites, with a line on each',
+      '// side so a replacement that swallowed its neighbours would be visible.',
+      'const before = 1;',
+      `type CatalogStepTypesWithoutAGeneratedType = ${ledger};`,
+      'const after = 2;',
+      '',
+    ].join('\n'),
+  );
   return dir;
 }
 
@@ -124,6 +136,7 @@ const read = (dir, p) => readFileSync(join(dir, p), 'utf8');
 const SDK = 'packages/civitai-app-sdk/src/orchestrator/index.ts';
 const FIXTURE = 'packages/civitai-app-sdk/test/fixtures/orchestrator-spec-catalogs.json';
 const TEST = 'packages/civitai-app-sdk/test/orchestrator.test.ts';
+const TYPE_TEST = 'packages/civitai-app-sdk/test/orchestrator/step-templates.test-d.ts';
 
 async function run(script, env) {
   try {
@@ -220,6 +233,105 @@ test('a spec description that merely RESTATES the key becomes a placeholder, a r
   const changesets = readdirSync(join(dir, '.changeset'));
   assert.equal(changesets.length, 1, `expected exactly 1 changeset, got ${changesets.join(', ')}`);
   assert.match(read(dir, join('.changeset', changesets[0])), /'@civitai\/app-sdk': minor/);
+});
+
+test('a new STEP TYPE extends the not-yet-typed ledger; a new ENGINE leaves it alone', async (t) => {
+  // 🔴 WHAT BREAKS WITHOUT THIS. `step-templates.test-d.ts` asserts
+  // `Exclude<WorkflowStepType, keyof WorkflowStepTemplates>` equals this ledger.
+  // A new catalog key widens `WorkflowStepType`, so the ledger goes stale in the
+  // same edit and `pnpm --filter @civitai/app-sdk test` fails — which is the
+  // workflow's `Validate SDK` step, the gate in front of `create-pull-request`.
+  // The job would fail and NO PR would open. Measured against the live spec on
+  // 2026-09-15: `step-templates.test-d.ts(147,72): error TS2554`.
+  //
+  // PAIRED, because "always rewrite the file" would pass the first half alone:
+  // an `imageGen` engine does not widen `WorkflowStepType` and must therefore
+  // leave the ledger byte-identical.
+  const server = await serveSpec(
+    makeSpec(
+      { echo: 'Echo the input back.', songGen: 'Generate a song.' },
+      { comfy: 'A ComfyUI graph.', flux: 'Flux image generation.' },
+    ),
+  );
+  const dir = makeTree({ stepTypes: ['echo'], engines: ['comfy', 'flux'] });
+  // The engine-only arm's ledger is deliberately UNSORTED, which is a shape a
+  // human editing it by hand produces and the emitter never would. Without
+  // that, "write the ledger unconditionally" is an equivalent mutant: an
+  // engine-only run re-emits `never` byte-for-byte and the assertion below
+  // cannot see it. Measured — with a `never` ledger that mutant SURVIVED.
+  const engineOnly = makeTree({
+    stepTypes: ['echo', 'songGen'],
+    engines: ['comfy'],
+    ledger: "'yuE2' | 'imageScanning'",
+  });
+  t.after(async () => {
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(engineOnly, { recursive: true, force: true });
+  });
+
+  const stepRun = await runSync(dir, server.url);
+  assert.equal(stepRun.code, 0, `sync should succeed; got ${stepRun.code}\n${stepRun.out}`);
+  assert.match(
+    read(dir, TYPE_TEST),
+    /^type CatalogStepTypesWithoutAGeneratedType = 'songGen';$/m,
+    'a catalog key with no generated template yet must land in the ledger',
+  );
+  assert.match(read(dir, TYPE_TEST), /^const before = 1;$/m, 'the lines around it must survive');
+  assert.match(read(dir, TYPE_TEST), /^const after = 2;$/m, 'the lines around it must survive');
+  assert.match(stepRun.out, /songGen/, 'the run must say what it added to the ledger');
+
+  const engineBefore = read(engineOnly, TYPE_TEST);
+  const engineRun = await runSync(engineOnly, server.url);
+  assert.equal(engineRun.code, 0, `sync should succeed; got ${engineRun.code}\n${engineRun.out}`);
+  assert.match(
+    read(engineOnly, SDK),
+    /flux: "Flux image generation\."/,
+    'positive control: the engine really was added, so the ledger claim below is about the ledger',
+  );
+  assert.equal(
+    read(engineOnly, TYPE_TEST),
+    engineBefore,
+    'an imageGen engine does not widen WorkflowStepType, so it must not touch the ledger',
+  );
+});
+
+test('an existing ledger GROWS rather than being replaced, and an unparseable one is refused', async (t) => {
+  const server = await serveSpec(
+    makeSpec({ echo: 'Echo the input back.', songGen: 'Generate a song.' }),
+  );
+  const grow = makeTree({ stepTypes: ['echo'], engines: ['comfy'], ledger: "'yuE2'" });
+  const refuse = makeTree({
+    stepTypes: ['echo'],
+    engines: ['comfy'],
+    ledger: 'Exclude<WorkflowStepType, never>',
+  });
+  t.after(async () => {
+    await server.close();
+    rmSync(grow, { recursive: true, force: true });
+    rmSync(refuse, { recursive: true, force: true });
+  });
+
+  const growRun = await runSync(grow, server.url);
+  assert.equal(growRun.code, 0, `sync should succeed; got ${growRun.code}\n${growRun.out}`);
+  assert.match(
+    read(grow, TYPE_TEST),
+    /^type CatalogStepTypesWithoutAGeneratedType = 'songGen' \| 'yuE2';$/m,
+    'an entry a human is still waiting on must not be dropped, and the union is emitted sorted',
+  );
+
+  // A shape this script cannot parse is one it must not guess at — same
+  // contract as `bumpCount`, and the same "nothing written" promise.
+  const refuseBefore = [SDK, FIXTURE, TEST, TYPE_TEST].map((p) => read(refuse, p));
+  const refuseRun = await runSync(refuse, server.url);
+  assert.equal(refuseRun.code, 1, `an unparseable ledger must exit 1, got ${refuseRun.code}\n${refuseRun.out}`);
+  assert.match(refuseRun.out, /CatalogStepTypesWithoutAGeneratedType/, 'the refusal must name the alias');
+  assert.deepEqual(
+    [SDK, FIXTURE, TEST, TYPE_TEST].map((p) => read(refuse, p)),
+    refuseBefore,
+    'exit 1 must mean NOTHING was written',
+  );
+  assert.deepEqual(readdirSync(join(refuse, '.changeset')), [], 'and no changeset');
 });
 
 test('a WITHDRAWN key is refused with exit 2 and NOTHING is written', async (t) => {
@@ -516,13 +628,13 @@ test('a failure PART WAY THROUGH leaves every file byte-identical', async (t) =>
 
   // Remove the assertion `bumpCount` requires — the LAST of the three edits.
   writeFileSync(join(dir, TEST), '    expect(body.steps).toHaveLength(1);\n');
-  const before = [SDK, FIXTURE, TEST].map((p) => read(dir, p));
+  const before = [SDK, FIXTURE, TEST, TYPE_TEST].map((p) => read(dir, p));
 
   const { code, out } = await runSync(dir, server.url);
   assert.equal(code, 1, `an unrecognised file shape must exit 1, got ${code}\n${out}`);
   assert.match(out, /toHaveLength/, 'the failure must name what it could not edit');
   assert.deepEqual(
-    [SDK, FIXTURE, TEST].map((p) => read(dir, p)),
+    [SDK, FIXTURE, TEST, TYPE_TEST].map((p) => read(dir, p)),
     before,
     'exit 1 must mean NOTHING was written — including the fixture and the SDK source, which are computed first',
   );
