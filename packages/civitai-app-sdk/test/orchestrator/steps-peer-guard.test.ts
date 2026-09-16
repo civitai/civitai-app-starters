@@ -12,7 +12,7 @@
  * `GuardPeer<…>` from an export, and every other check in the repo would stay
  * green.
  *
- * THREE THINGS ARE PINNED HERE, and each one is a separate failure:
+ * FOUR THINGS ARE PINNED HERE, and each one is a separate failure:
  *
  *  1. Every guarded export reports IN THE CONSUMER'S OWN FILE when the peer is
  *     missing — asserted as a set of export names, so unwrapping the guard from
@@ -24,11 +24,16 @@
  *  3. `NodeNext` resolution degrades the peer EVEN WHEN IT IS INSTALLED, and
  *     the guard reports there too — with the same directory compiled under
  *     `Bundler` as the control that says the installed copy is fine.
+ *  4. Each export carries EXACTLY ONE guard on the way to the step map, walked
+ *     over `steps.ts`'s own AST. (1) is blind to a second guard, because a
+ *     doubly-guarded export keeps reporting when either guard is removed — so
+ *     without (4), (1)'s mutants can die for the wrong reason.
  *
  * WATCHED RED, not assumed. Unwrapping `GuardPeer<…>` from each export in turn —
  * five mutants, one per export, each applied to an otherwise pristine tree —
- * fails (1) and (3), with that export's own name missing from the reported set
- * and no other test moving. Adding a sixth guarded export with no consumer file
+ * fails (1), (3) and (4): three of the eight tests, every time. That export's
+ * own name is the one missing from the reported set in (1) and (3), and the one
+ * standing at 0 in (4). Adding a sixth guarded export with no consumer file
  * fails (2) alone, naming it under `unledgeredExports`; that same mutant left
  * the whole suite green before (2) existed, which is why the claim it replaces
  * ("a new guarded export without an entry moves this number") was wrong — the
@@ -84,7 +89,11 @@ const BASE_OPTIONS: ts.CompilerOptions = {
  * The export list comes from the type checker rather than a regex over the
  * source, so it cannot be fooled by how an export happens to be spelled.
  */
-function emitStepsModule(): { declaration: string; exportedNames: string[] } {
+function emitStepsModule(): {
+  declaration: string;
+  exportedNames: string[];
+  source: ts.SourceFile;
+} {
   const program = ts.createProgram([STEPS_SRC], {
     ...BASE_OPTIONS,
     noEmit: false,
@@ -108,7 +117,40 @@ function emitStepsModule(): { declaration: string; exportedNames: string[] } {
     .map((s) => s.getName())
     .sort();
 
-  return { declaration: text, exportedNames };
+  return { declaration: text, exportedNames, source };
+}
+
+/** The guard's type name, as written in `steps.ts`. */
+const GUARD_TYPE = 'GuardPeer';
+
+/**
+ * Count the `GuardPeer<…>` references reachable from `node`, following type
+ * references into declarations made IN THIS FILE and stopping at anything
+ * imported. Each local declaration is entered at most once, so this is a count
+ * over the reachable declaration graph rather than over syntactic paths.
+ */
+function reachableGuards(node: ts.Node, locals: Map<string, ts.Node>): number {
+  const entered = new Set<string>();
+  let count = 0;
+  const walk = (n: ts.Node): void => {
+    if (ts.isTypeReferenceNode(n) && ts.isIdentifier(n.typeName)) {
+      const name = n.typeName.text;
+      if (name === GUARD_TYPE) {
+        count += 1;
+      } else {
+        const declaration = locals.get(name);
+        if (declaration && !entered.has(name)) {
+          entered.add(name);
+          walk(declaration);
+        }
+      }
+    }
+    // Keep descending regardless: a `GuardPeer<…>` node still has type
+    // arguments to look inside, and that is where the map lookups live.
+    ts.forEachChild(n, walk);
+  };
+  walk(node);
+  return count;
 }
 
 /** Compile `files` in a throwaway directory and return every diagnostic as `file(line): message`. */
@@ -199,9 +241,23 @@ const GUARDED_EXPORT_CONSUMERS: Record<string, { file: string; source: string }>
     file: 'uses-envelope.ts',
     source: [
       "import type { TypedWorkflowTemplate } from './steps.js';",
-      "const body: TypedWorkflowTemplate = { steps: [], tags: ['t'] };",
+      'const body: TypedWorkflowTemplate = {',
+      '  steps: [',
+      "    { $type: 'textToImage', input: { prompt: 'a fox', cfgScale: 5, seed: 1234 } },",
+      '  ],',
+      "  tags: ['t'],",
+      '};',
       'void body;',
     ].join('\n'),
+    // 🔴 THE STEP HAS TO BE REAL. This file used to read `steps: []`, and an
+    // empty array is `never[]` — vacuously assignable to any element type, so
+    // the annotation was the only thing that could ever report. That made the
+    // arms below pass for a reason unrelated to what they test: with the
+    // envelope's own `GuardPeer<…>` deleted, the empty-array version reported
+    // nothing and the mutant read as killed, while the same file carrying one
+    // real step still reported — from the guard on the union its `steps`
+    // element used to be spelled with. Measured on this file's own emitted
+    // declarations, peer absent, Bundler.
   },
 };
 
@@ -285,7 +341,7 @@ afterAll(() => {
 });
 
 describe('the missing-peer guard on @civitai/app-sdk/orchestrator/steps', () => {
-  const { declaration: stepsDeclaration, exportedNames } = emitStepsModule();
+  const { declaration: stepsDeclaration, exportedNames, source: stepsSource } = emitStepsModule();
 
   it('emits declarations that really do depend on the peer', () => {
     // Without this, every assertion below could be passing against an empty or
@@ -305,6 +361,51 @@ describe('the missing-peer guard on @civitai/app-sdk/orchestrator/steps', () => 
       unledgeredExports: [],
       staleLedgerEntries: [],
     });
+  });
+
+  it('every export is guarded EXACTLY ONCE, counting through this file’s own types', () => {
+    // 🔴 WHY EXACTLY ONE, AND WHY THE ARMS BELOW CANNOT SEE THIS.
+    //
+    // Those arms detect an unwrapped export by the consumer file that stops
+    // reporting. That works only while each export has exactly one guard on the
+    // way to the map. At TWO, deleting either one leaves the other reporting,
+    // so the export keeps its diagnostic and the deletion is invisible — the
+    // export could later lose the remaining guard and ship unchecked. At ZERO
+    // it is unguarded already.
+    //
+    // This is not hypothetical: `TypedWorkflowTemplate` spelled its `steps`
+    // element as `AnyWorkflowStepTemplate`, which is itself a guarded export,
+    // so it carried two. Every check in the repo was green.
+    //
+    // `reachableGuards` was watched returning all three values on this file, so
+    // the count below is not a constant dressed as a measurement: 2 for the
+    // doubly-guarded spelling above, 1 as it stands now, and 0 with the
+    // envelope's `GuardPeer<…>` deleted.
+    const locals = new Map<string, ts.Node>();
+    for (const statement of stepsSource.statements) {
+      if (ts.isTypeAliasDeclaration(statement) || ts.isInterfaceDeclaration(statement)) {
+        locals.set(statement.name.text, statement);
+      }
+    }
+    // Positive control: a walk wired to the wrong file, or to a file whose
+    // shape changed out from under it, would find none of these.
+    expect([...locals.keys()]).toEqual(expect.arrayContaining([GUARD_TYPE, 'StepTemplateMap']));
+
+    const exportedAliases = stepsSource.statements.filter(
+      (statement): statement is ts.TypeAliasDeclaration =>
+        ts.isTypeAliasDeclaration(statement) &&
+        statement.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) === true,
+    );
+    // Ties this arm to the same export list the ledger above is checked against,
+    // so an export that is not a type alias cannot slip past unexamined.
+    expect(exportedAliases.map((a) => a.name.text).sort()).toEqual(exportedNames);
+
+    const guardsPerExport = Object.fromEntries(
+      exportedAliases.map((alias) => [alias.name.text, reachableGuards(alias.type, locals)]),
+    );
+    expect(guardsPerExport).toEqual(
+      Object.fromEntries(exportedNames.map((name) => [name, 1])),
+    );
   });
 
   it('PEER ABSENT: every guarded export reports in the CONSUMER’s own file', () => {
@@ -362,6 +463,23 @@ describe('the missing-peer guard on @civitai/app-sdk/orchestrator/steps', () => 
     // exactly like a healthy build: measured at the pre-guard commit be503a9d,
     // the NodeNext arm reported ONE diagnostic — the planted control — with the
     // peer correctly installed.
+    //
+    // 🔴 THIS ARM ASSERTS A DEFECT IN A PACKAGE WE DO NOT OWN, SO IT CAN GO RED
+    // WITHOUT ANYTHING HERE CHANGING. If `@civitai/client` republishes with an
+    // `exports` map (or with extensions on those relative re-exports), Node's
+    // ESM resolution starts working, the guard correctly stays silent, and this
+    // arm fails on `reportingExports(…)` being empty — which reads like a
+    // regression in this repo and is the opposite of one.
+    //
+    // WHAT TO DO THEN: check the installed client's `package.json` for an
+    // `exports` field first. If it has one, the guard's NodeNext half has
+    // nothing left to catch — delete this arm and its Bundler control, drop the
+    // NodeNext clause from the guard's message and from the
+    // `moduleResolution` warnings in `src/orchestrator/steps.ts`, and raise the
+    // peer range to the version that fixed it, all in one change. Do NOT keep
+    // the arm alive by loosening the assertion: it would then pass whether or
+    // not the peer resolves, which is the state this whole file exists to make
+    // impossible.
     const dir = consumerDirWithRealPeer();
     const files = { 'steps.d.ts': stepsDeclaration, ...GOOD_CONSUMER };
 

@@ -110,15 +110,23 @@
  * lacks a consumer file in its ledger, each of which is asserted to report.
  *
  * **The measurement.** Declarations emitted from this file at each revision
- * below, then a consumer compiled against them with `skipLibCheck: true` and
- * TypeScript 5.9.3 — the same harness
- * `test/orchestrator/steps-peer-guard.test.ts` runs, so the table can be
- * reproduced by running that test. Seven consumer files: one correct annotation
- * per export (five), one whose `$type` is deliberately wrong, and a planted
+ * below, then SEVEN consumer files compiled against them IN ONE PROGRAM with
+ * `skipLibCheck: true` and TypeScript 5.9.3: one correct annotation per export
+ * (five), one whose `$type` is deliberately wrong, and a planted
  * `const x: number = 's'` so a zero is distinguishable from a compiler wired to
  * nothing. "Peer installed" was measured twice, once through `paths` and once
  * against a real copy of the published package in the consumer's own
  * `node_modules`; both give the numbers below.
+ *
+ * ⚠️ RUNNING `test/orchestrator/steps-peer-guard.test.ts` DOES NOT REPRODUCE
+ * THIS TABLE, and none of its arms corresponds to a row here. It uses the same
+ * consumer sources and the same compiler settings, but groups them
+ * differently: the five correct annotations compile with the planted control
+ * and WITHOUT the wrong-`$type` file, which gets a program of its own. It also
+ * only ever compiles the module as it stands here, so the `be503a9d` and
+ * `851d8846` rows are out of its reach entirely. To reproduce a row: emit
+ * `steps.d.ts` from the revision that row names, then compile all seven
+ * consumer files together under the peer resolution it names.
  *
  * | this file at | peer / resolution | diagnostics |
  * |---|---|---|
@@ -288,7 +296,16 @@ type GuardPeer<T> = [PeerTypesUnresolved] extends [true] ? PeerTypesUnresolvedEr
  * be a second guard on the same path: deleting it would leave the export still
  * reporting, and `test/orchestrator/steps-peer-guard.test.ts` — which detects an
  * unwrapped export by the consumer file that stops reporting — could not see the
- * deletion.
+ * deletion. The same trap catches an export that reaches the map THROUGH
+ * ANOTHER EXPORT, since every export is guarded: that is why
+ * `TypedWorkflowTemplate` spells its `steps` element as a lookup into this map
+ * rather than as `AnyWorkflowStepTemplate`.
+ *
+ * 🔴 PINNED, because prose did not hold it. `TypedWorkflowTemplate` violated
+ * this paragraph from the moment the guard was introduced, with every check in
+ * the repo green. `test/orchestrator/steps-peer-guard.test.ts` now walks this AST
+ * and requires exactly one `GuardPeer` reference reachable from each exported
+ * alias, counting through this file's own type declarations.
  */
 interface StepTemplateMap {
   aceStepAudio: AceStepAudioStepTemplate;
@@ -452,10 +469,18 @@ export type AnyWorkflowStepTemplate = GuardPeer<StepTemplateMap[keyof StepTempla
  *
  * NOT VERIFIED against a live submit — doing so costs real Buzz. The evidence
  * above is the spec, this package's helpers, and civitai's call sites.
+ *
+ * `steps` is spelled `StepTemplateMap[keyof StepTemplateMap][]` rather than
+ * `AnyWorkflowStepTemplate[]`, which is the same type — when the peer resolves,
+ * `GuardPeer<X>` IS `X` — but reaches it without going through another guarded
+ * export. Writing `AnyWorkflowStepTemplate[]` here would put a SECOND guard on
+ * the `steps` path, and a second guard is what makes the first one deletable
+ * without anything noticing: the export would keep reporting from the inherited
+ * one. See the invariant on `StepTemplateMap` above, and the test that pins it.
  */
 export type TypedWorkflowTemplate = GuardPeer<
   Omit<WorkflowTemplate, 'steps' | 'currencies'> & {
-    steps: AnyWorkflowStepTemplate[];
+    steps: StepTemplateMap[keyof StepTemplateMap][];
     currencies?: WorkflowTemplate['currencies'];
   }
 >;

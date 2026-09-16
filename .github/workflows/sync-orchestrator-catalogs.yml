@@ -247,8 +247,11 @@ jobs:
                unless you have checked npm: each one says the orchestrator
                accepts that step type and `@civitai/client` has no generated
                template for it yet. Delete an entry only once a republished
-               client carries it, and add its key to `WorkflowStepTemplates` in
-               `src/orchestrator/steps.ts` in the same commit.
+               client carries it, and add its key to the `StepTemplateMap`
+               rows in `src/orchestrator/steps.ts` in the same commit.
+               (`StepTemplateMap` is the unexported interface that holds the
+               literal `$type` rows; the exported `WorkflowStepTemplates` is a
+               mapped type over it and has no keys of its own to edit.)
 
             Then `pnpm check:catalogs` goes green and this is a normal SDK PR.
 
