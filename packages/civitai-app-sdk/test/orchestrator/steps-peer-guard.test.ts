@@ -12,22 +12,37 @@
  * `GuardPeer<…>` from an export, and every other check in the repo would stay
  * green.
  *
- * WHAT MAKES IT RED, watched rather than assumed (matrix in the module's own
- * docblock): run against the declarations emitted at the commit before the
- * guard existed, the peer-absent arm reported no guard diagnostic at all — only
- * the planted control — and the ledger assertion below failed. Each of the four
- * guarded exports was also unwrapped one at a time; every one of those four
- * mutants was killed here, by the ledger naming the file that stopped
- * reporting. The peer-present arms are unchanged before and after the guard,
- * which is the other half of the claim: the guard must cost a correct consumer
- * nothing.
+ * THREE THINGS ARE PINNED HERE, and each one is a separate failure:
+ *
+ *  1. Every guarded export reports IN THE CONSUMER'S OWN FILE when the peer is
+ *     missing — asserted as a set of export names, so unwrapping the guard from
+ *     any single export names that export in the failure.
+ *  2. The ledger below covers every export of `steps.ts`. The export list is
+ *     read out of the module's own symbol table via the TypeScript API, not
+ *     from a hand-kept count, so adding an export without adding a consumer
+ *     file fails here rather than passing unnoticed.
+ *  3. `NodeNext` resolution degrades the peer EVEN WHEN IT IS INSTALLED, and
+ *     the guard reports there too — with the same directory compiled under
+ *     `Bundler` as the control that says the installed copy is fine.
+ *
+ * WATCHED RED, not assumed. Unwrapping `GuardPeer<…>` from each export in turn —
+ * five mutants, one per export, each applied to an otherwise pristine tree —
+ * fails (1) and (3), with that export's own name missing from the reported set
+ * and no other test moving. Adding a sixth guarded export with no consumer file
+ * fails (2) alone, naming it under `unledgeredExports`; that same mutant left
+ * the whole suite green before (2) existed, which is why the claim it replaces
+ * ("a new guarded export without an entry moves this number") was wrong — the
+ * count is built from the diagnostics of the files that exist, so an export
+ * nobody consumes contributes nothing to it. Against the pre-guard revision
+ * `be503a9d`, the compiles behind (1) and (3) produce nothing but the planted
+ * control, so both fail there.
  *
  * The consumer is compiled with `skipLibCheck: true` on purpose. That is the
  * TypeScript default for an app, it is what every starter in this repo sets,
  * and it is exactly the setting that swallows the `TS2307` on the unresolved
  * import and leaves the hole this guard closes.
  */
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -39,8 +54,10 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = join(HERE, '..', '..');
 const STEPS_SRC = join(PKG_ROOT, 'src', 'orchestrator', 'steps.ts');
 
+/** The real peer, as installed in this package. */
+const CLIENT_PKG = join(PKG_ROOT, 'node_modules', '@civitai', 'client');
 /** Resolved path of the real peer's declaration entry point. */
-const CLIENT_TYPES = join(PKG_ROOT, 'node_modules', '@civitai', 'client', 'dist', 'index.d.ts');
+const CLIENT_TYPES = join(CLIENT_PKG, 'dist', 'index.d.ts');
 
 /** A fragment of the guard's message — enough to identify it, short enough to survive rewording of the rest. */
 const GUARD_MARKER = 'is not type-checking';
@@ -56,14 +73,18 @@ const BASE_OPTIONS: ts.CompilerOptions = {
 };
 
 /**
- * Emit the declarations a consumer would actually install.
+ * Emit the declarations a consumer would actually install, and read this
+ * module's exported symbols out of the same program.
  *
  * Not `readFileSync(dist/orchestrator/steps.d.ts)`: that file may be stale or
  * absent depending on whether `pnpm build` ran, and a test that silently reads
  * last week's artifact is worse than no test. This emits from source, in the
  * package root so the peer resolves.
+ *
+ * The export list comes from the type checker rather than a regex over the
+ * source, so it cannot be fooled by how an export happens to be spelled.
  */
-function emitStepsDeclaration(): string {
+function emitStepsModule(): { declaration: string; exportedNames: string[] } {
   const program = ts.createProgram([STEPS_SRC], {
     ...BASE_OPTIONS,
     noEmit: false,
@@ -76,7 +97,18 @@ function emitStepsDeclaration(): string {
     if (fileName.endsWith('steps.d.ts')) text = contents;
   });
   if (text === undefined) throw new Error('declaration emit produced no steps.d.ts');
-  return text;
+
+  const source = program.getSourceFile(STEPS_SRC);
+  if (!source) throw new Error(`steps.ts not in the program: ${STEPS_SRC}`);
+  const checker = program.getTypeChecker();
+  const moduleSymbol = checker.getSymbolAtLocation(source);
+  if (!moduleSymbol) throw new Error('steps.ts has no module symbol');
+  const exportedNames = checker
+    .getExportsOfModule(moduleSymbol)
+    .map((s) => s.getName())
+    .sort();
+
+  return { declaration: text, exportedNames };
 }
 
 /** Compile `files` in a throwaway directory and return every diagnostic as `file(line): message`. */
@@ -102,47 +134,83 @@ function compile(
 }
 
 /**
- * One CORRECT consumer per guarded export, each in its OWN file.
+ * One CORRECT consumer per exported type, each in its OWN file.
  *
  * 🔴 A LEDGER, NOT A SAMPLE. A single consumer touching two of these would stay
  * green while the guard was unwrapped from one of them — the other export's
  * message would still be in the output and `some(…)` would still be true. One
- * file each, every file asserted, so dropping `GuardPeer<…>` from any single
- * export is visible. Adding a guarded export means adding an entry here; the
- * count is asserted below so a silently-shrinking ledger fails too.
+ * file each, and the arms below assert the exact SET of exports that reported,
+ * so dropping `GuardPeer<…>` from any single export names that export in the
+ * failure.
+ *
+ * The keys are export names, and `the ledger covers every export` below reads
+ * the real export list off the module. That is what makes this a ledger of the
+ * module rather than of whatever someone remembered to add: a new export with
+ * no entry here fails that test, and an entry here for an export that no longer
+ * exists fails it too.
  */
-const GUARDED_EXPORT_CONSUMERS: Record<string, string> = {
-  'uses-template.ts': [
-    "import type { WorkflowStepTemplateFor } from './steps.js';",
-    "const step: WorkflowStepTemplateFor<'textToImage'> = {",
-    "  $type: 'textToImage',",
-    "  input: { prompt: 'a fox', cfgScale: 5, seed: 1234 },",
-    '};',
-    'void step;',
-  ].join('\n'),
-  'uses-input.ts': [
-    "import type { WorkflowStepInputFor } from './steps.js';",
-    "const input: WorkflowStepInputFor<'textToImage'> = {",
-    "  prompt: 'a fox',",
-    '  cfgScale: 5,',
-    '  seed: 1234,',
-    '};',
-    'void input;',
-  ].join('\n'),
-  'uses-union.ts': [
-    "import type { AnyWorkflowStepTemplate } from './steps.js';",
-    'const any_: AnyWorkflowStepTemplate = {',
-    "  $type: 'textToImage',",
-    "  input: { prompt: 'a fox', cfgScale: 5, seed: 1234 },",
-    '};',
-    'void any_;',
-  ].join('\n'),
-  'uses-envelope.ts': [
-    "import type { TypedWorkflowTemplate } from './steps.js';",
-    "const body: TypedWorkflowTemplate = { steps: [], tags: ['t'] };",
-    'void body;',
-  ].join('\n'),
+const GUARDED_EXPORT_CONSUMERS: Record<string, { file: string; source: string }> = {
+  WorkflowStepTemplates: {
+    file: 'uses-map.ts',
+    source: [
+      "import type { WorkflowStepTemplates } from './steps.js';",
+      "const fromMap: WorkflowStepTemplates['textToImage'] = {",
+      "  $type: 'textToImage',",
+      "  input: { prompt: 'a fox', cfgScale: 5, seed: 1234 },",
+      '};',
+      'void fromMap;',
+    ].join('\n'),
+  },
+  WorkflowStepTemplateFor: {
+    file: 'uses-template.ts',
+    source: [
+      "import type { WorkflowStepTemplateFor } from './steps.js';",
+      "const step: WorkflowStepTemplateFor<'textToImage'> = {",
+      "  $type: 'textToImage',",
+      "  input: { prompt: 'a fox', cfgScale: 5, seed: 1234 },",
+      '};',
+      'void step;',
+    ].join('\n'),
+  },
+  WorkflowStepInputFor: {
+    file: 'uses-input.ts',
+    source: [
+      "import type { WorkflowStepInputFor } from './steps.js';",
+      "const input: WorkflowStepInputFor<'textToImage'> = {",
+      "  prompt: 'a fox',",
+      '  cfgScale: 5,',
+      '  seed: 1234,',
+      '};',
+      'void input;',
+    ].join('\n'),
+  },
+  AnyWorkflowStepTemplate: {
+    file: 'uses-union.ts',
+    source: [
+      "import type { AnyWorkflowStepTemplate } from './steps.js';",
+      'const any_: AnyWorkflowStepTemplate = {',
+      "  $type: 'textToImage',",
+      "  input: { prompt: 'a fox', cfgScale: 5, seed: 1234 },",
+      '};',
+      'void any_;',
+    ].join('\n'),
+  },
+  TypedWorkflowTemplate: {
+    file: 'uses-envelope.ts',
+    source: [
+      "import type { TypedWorkflowTemplate } from './steps.js';",
+      "const body: TypedWorkflowTemplate = { steps: [], tags: ['t'] };",
+      'void body;',
+    ].join('\n'),
+  },
 };
+
+const LEDGERED_EXPORTS = Object.keys(GUARDED_EXPORT_CONSUMERS).sort();
+
+/** file name → the export it exercises, so a failure names the export and not just a path. */
+const EXPORT_BY_FILE = new Map(
+  Object.entries(GUARDED_EXPORT_CONSUMERS).map(([name, { file }]) => [file, name]),
+);
 
 /**
  * Positive control: proves the program was really checked. A run that reports
@@ -152,7 +220,9 @@ const GUARDED_EXPORT_CONSUMERS: Record<string, string> = {
 const PLANTED_CONSUMER = ["const planted: number = 'not a number';", 'void planted;'].join('\n');
 
 const GOOD_CONSUMER: Record<string, string> = {
-  ...GUARDED_EXPORT_CONSUMERS,
+  ...Object.fromEntries(
+    Object.values(GUARDED_EXPORT_CONSUMERS).map(({ file, source }) => [file, source]),
+  ),
   'planted.ts': PLANTED_CONSUMER,
 };
 
@@ -178,18 +248,63 @@ function tempDir(): string {
   return d;
 }
 
+/**
+ * A consumer directory with the REAL peer package copied into its own
+ * `node_modules`, rather than mapped in through `paths`.
+ *
+ * `paths` would answer the wrong question for the NodeNext arm: the thing under
+ * test there is Node's own ESM resolution of the published package layout, so
+ * the package has to be resolved the way Node resolves it. `dereference` is
+ * required because the workspace copy is a pnpm symlink into the store.
+ */
+function consumerDirWithRealPeer(): string {
+  const dir = tempDir();
+  const dest = join(dir, 'node_modules', '@civitai', 'client');
+  mkdirSync(dirname(dest), { recursive: true });
+  cpSync(CLIENT_PKG, dest, { recursive: true, dereference: true });
+  writeFileSync(
+    join(dir, 'package.json'),
+    JSON.stringify({ name: 'peer-guard-consumer', private: true, type: 'module' }, null, 2),
+    'utf8',
+  );
+  return dir;
+}
+
+/** The set of exports whose consumer file reported the guard message. */
+function reportingExports(diagnostics: string[]): string[] {
+  const guard = diagnostics.filter((d) => d.includes(GUARD_MARKER));
+  const names = guard.map((d) => {
+    const file = d.slice(0, d.indexOf('('));
+    return EXPORT_BY_FILE.get(file) ?? `<no ledger entry for ${file}>`;
+  });
+  return [...new Set(names)].sort();
+}
+
 afterAll(() => {
   for (const d of tempDirs) rmSync(d, { recursive: true, force: true });
 });
 
 describe('the missing-peer guard on @civitai/app-sdk/orchestrator/steps', () => {
-  const stepsDeclaration = emitStepsDeclaration();
+  const { declaration: stepsDeclaration, exportedNames } = emitStepsModule();
 
   it('emits declarations that really do depend on the peer', () => {
     // Without this, every assertion below could be passing against an empty or
     // wrong file.
     expect(stepsDeclaration).toContain('@civitai/client');
     expect(stepsDeclaration).toContain('WorkflowStepTemplateFor');
+  });
+
+  it('the ledger covers every export of steps.ts', () => {
+    // The export list is the module's own, read through the type checker. An
+    // export added without a consumer file above would otherwise contribute no
+    // diagnostic to the peer-absent arm, so that arm could not notice it —
+    // which is exactly how an unguarded export would ship.
+    const unledgeredExports = exportedNames.filter((n) => !LEDGERED_EXPORTS.includes(n));
+    const staleLedgerEntries = LEDGERED_EXPORTS.filter((n) => !exportedNames.includes(n));
+    expect({ unledgeredExports, staleLedgerEntries }).toEqual({
+      unledgeredExports: [],
+      staleLedgerEntries: [],
+    });
   });
 
   it('PEER ABSENT: every guarded export reports in the CONSUMER’s own file', () => {
@@ -200,15 +315,12 @@ describe('the missing-peer guard on @civitai/app-sdk/orchestrator/steps', () => 
       ...GOOD_CONSUMER,
     });
 
-    const guard = diagnostics.filter((d) => d.includes(GUARD_MARKER));
     // In the consumers' own files, not in node_modules — that is the point.
-    const guardedFiles = new Set(guard.map((d) => d.slice(0, d.indexOf('('))));
-    expect([...guardedFiles].sort()).toEqual(Object.keys(GUARDED_EXPORT_CONSUMERS).sort());
-    // Four today. A new guarded export without an entry above, or an entry
-    // deleted, moves this number.
-    expect(guardedFiles.size).toBe(4);
+    expect(reportingExports(diagnostics)).toEqual(LEDGERED_EXPORTS);
     // It must name the remediation, not merely fail.
-    expect(guard.join('\n')).toContain('@civitai/client@beta');
+    expect(diagnostics.filter((d) => d.includes(GUARD_MARKER)).join('\n')).toContain(
+      '@civitai/client@beta',
+    );
     // And the run really happened.
     expect(diagnostics.join('\n')).toContain(PLANTED_CONTROL);
   });
@@ -222,8 +334,8 @@ describe('the missing-peer guard on @civitai/app-sdk/orchestrator/steps', () => 
     );
 
     expect(diagnostics.filter((d) => d.includes(GUARD_MARKER))).toEqual([]);
-    // The planted error is the ONLY thing reported: four correct consumers
-    // against four guarded exports contribute nothing.
+    // The planted error is the ONLY thing reported: a correct consumer per
+    // guarded export contributes nothing.
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]).toContain(PLANTED_CONTROL);
   });
@@ -241,5 +353,43 @@ describe('the missing-peer guard on @civitai/app-sdk/orchestrator/steps', () => 
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]).toContain('"definitelyNotAStepType"');
     expect(diagnostics[0]).toContain('"textToImage"');
+  });
+
+  describe('module resolution: the peer is installed and STILL does not resolve under NodeNext', () => {
+    // `@civitai/client@0.2.0-beta.98` ships `"type": "module"`, no `exports`
+    // map, and extensionless relative re-exports (`export * from './generated'`)
+    // that Node's ESM resolution does not resolve. Without the guard this looks
+    // exactly like a healthy build: measured at the pre-guard commit be503a9d,
+    // the NodeNext arm reported ONE diagnostic — the planted control — with the
+    // peer correctly installed.
+    const dir = consumerDirWithRealPeer();
+    const files = { 'steps.d.ts': stepsDeclaration, ...GOOD_CONSUMER };
+
+    it('CONTROL — the same directory under Bundler is clean', () => {
+      // Without this, the NodeNext arm below cannot tell "NodeNext resolution
+      // degrades the peer" from "the copied node_modules is broken".
+      const diagnostics = compile(dir, files);
+
+      expect(diagnostics.filter((d) => d.includes(GUARD_MARKER))).toEqual([]);
+      expect(diagnostics).toHaveLength(1);
+      expect(diagnostics[0]).toContain(PLANTED_CONTROL);
+    });
+
+    it('NodeNext: every guarded export reports, in the consumer’s own file', () => {
+      const diagnostics = compile(dir, files, {
+        module: ts.ModuleKind.NodeNext,
+        moduleResolution: ts.ModuleResolutionKind.NodeNext,
+      });
+
+      expect(reportingExports(diagnostics)).toEqual(LEDGERED_EXPORTS);
+      // The message names this cause, not just the missing-install one. Matched
+      // on the unescaped half of the sentence: TypeScript renders the quotes
+      // inside the string-literal type escaped, so a substring containing
+      // `"moduleResolution"` would never match however right it looked.
+      expect(diagnostics.filter((d) => d.includes(GUARD_MARKER)).join('\n')).toContain(
+        'does not resolve under NodeNext/Node16',
+      );
+      expect(diagnostics.join('\n')).toContain(PLANTED_CONTROL);
+    });
   });
 });

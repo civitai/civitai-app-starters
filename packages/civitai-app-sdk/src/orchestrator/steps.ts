@@ -102,21 +102,33 @@
  * here then degrade to an error type that behaves like `any`, and the code
  * below still compiles while checking NOTHING.
  *
- * **That hole is now closed by `GuardPeer` (below), and this is the
- * measurement.** A consumer installing this package's built `dist`, resolving
- * through the exports map, `skipLibCheck: true`,
- * `"moduleResolution": "Bundler"`, TypeScript 5.9.3. Four source files: a
- * correct step template + envelope, a file with a bogus `$type` and an unknown
- * `input` field, a file whose only defect is an unknown envelope field, and a
- * planted `const x: number = 's'` so a zero is distinguishable from a compiler
- * wired to nothing.
+ * **`GuardPeer` (below) closes that hole on every export of this module.** All
+ * five — `WorkflowStepTemplates`, `WorkflowStepTemplateFor`,
+ * `WorkflowStepInputFor`, `AnyWorkflowStepTemplate`, `TypedWorkflowTemplate` —
+ * are guarded, and a sixth cannot join them unnoticed: the test enumerates this
+ * module's exported symbols through the TypeScript API and fails if any of them
+ * lacks a consumer file in its ledger, each of which is asserted to report.
  *
- * | build | peer | diagnostics |
+ * **The measurement.** Declarations emitted from this file at each revision
+ * below, then a consumer compiled against them with `skipLibCheck: true` and
+ * TypeScript 5.9.3 — the same harness
+ * `test/orchestrator/steps-peer-guard.test.ts` runs, so the table can be
+ * reproduced by running that test. Seven consumer files: one correct annotation
+ * per export (five), one whose `$type` is deliberately wrong, and a planted
+ * `const x: number = 's'` so a zero is distinguishable from a compiler wired to
+ * nothing. "Peer installed" was measured twice, once through `paths` and once
+ * against a real copy of the published package in the consumer's own
+ * `node_modules`; both give the numbers below.
+ *
+ * | this file at | peer / resolution | diagnostics |
  * |---|---|---|
- * | before the guard | installed | 4 — the three real defects, plus the planted control |
- * | before the guard | missing | **1 — the planted control alone.** The three defects report nothing |
- * | with the guard | installed | 4 — byte-identical to the row above it |
- * | with the guard | missing | 5 — a `TS2322` on each annotation **in the consumer's own file**, naming the install command, plus the planted control |
+ * | `be503a9d`, before any guard | installed, Bundler | 2 — the wrong `$type`, plus the planted control |
+ * | `be503a9d`, before any guard | **missing**, Bundler | **1 — the planted control alone.** The wrong `$type` reports nothing |
+ * | `be503a9d`, before any guard | installed, **NodeNext** | **1 — the planted control alone**, with the peer correctly installed |
+ * | `851d8846`, guard on four exports | missing, Bundler | 6 — the four then-guarded exports report (one of them twice, since the wrong-`$type` file annotates with `WorkflowStepTemplateFor`), plus the planted control. **The `WorkflowStepTemplates` annotation is silent** |
+ * | here | installed, Bundler | 2 — the same two diagnostics, character for character, as the `be503a9d` / installed / Bundler row |
+ * | here | **missing**, Bundler | 7 — a `TS2322` **in the consumer's own file** for each of the five exports and for the wrong-`$type` file, naming the install command, plus the planted control |
+ * | here | installed, **NodeNext** | 7 — the same set |
  *
  * With `skipLibCheck: false` and no guard you get one error,
  * `TS2307: Cannot find module '@civitai/client'`, reported against
@@ -127,18 +139,16 @@
  * `NodeNext`/`Node16`.** `@civitai/client@0.2.0-beta.98` is published with
  * `"type": "module"`, no `exports` map, and extensionless relative re-exports
  * (`export * from './generated'`), which Node's ESM resolution does not
- * resolve. Measured in the same consumer with the peer present, only
- * `moduleResolution` changed: before the guard, `NodeNext` gave **1
- * diagnostic — the planted control alone**, i.e. the subpath was checking
- * nothing despite a correctly installed peer; with the guard it reports, which
- * is why the message names this case as well as the missing-peer one. Use
+ * resolve — see the third and last rows above. That is why the guard's message
+ * names this case as well as the missing-peer one. Use
  * `"moduleResolution": "Bundler"` (what every starter here and this package
  * itself set).
  *
- * The guard's two arms are pinned by `test/orchestrator/steps-peer-guard.test.ts`,
- * which compiles a consumer against this module's own emitted declarations with
- * the peer resolvable and unresolvable. It was watched to fail at the commit
- * before the guard existed.
+ * All three arms — peer absent, peer present, and peer present under NodeNext —
+ * are pinned by `test/orchestrator/steps-peer-guard.test.ts`, which compiles
+ * that consumer against this module's own emitted declarations. The NodeNext
+ * arm carries the same directory compiled under Bundler as its control, so a
+ * broken copy of the peer cannot be mistaken for the resolution failure.
  *
  * 🔴 **Install from the `beta` tag, not `latest`.** `@civitai/client`'s npm
  * `latest` dist-tag points at `0.1.1-beta.0`, ~97 betas behind the `beta` tag
@@ -270,33 +280,17 @@ type GuardPeer<T> = [PeerTypesUnresolved] extends [true] ? PeerTypesUnresolvedEr
 // ---------------------------------------------------------------------------
 
 /**
- * `$type` → its step-template type, for all 47 step types.
+ * The 47 wire-name → generated-template rows, UNGUARDED and NOT exported.
  *
- * Keyed by the WIRE name rather than the generated type name, because the wire
- * name is what you actually have in hand and the generator does not always
- * spell it the way you would guess (`model3DPreview` →
- * `Model3dPreviewStepTemplate`).
- *
- * `test/orchestrator/step-templates.test-d.ts` asserts this key set equals
- * `WORKFLOW_STEP_TYPES` (the catalog in `@civitai/app-sdk/orchestrator`, itself
- * pinned to the orchestrator spec's discriminator mapping) at COMPILE TIME,
- * BOTH directions, via an explicit `never` ledger for the gap. What that does
- * and does not buy:
- *
- *  - a key here that the catalog does not list (a typo, or a phantom `$type`
- *    like the `audioMix` the catalog itself once carried) fails the typecheck;
- *  - a catalog entry with no key here fails the typecheck, so this map cannot
- *    quietly fall behind the catalog;
- *  - it does NOT see the orchestrator gaining a step type that neither the
- *    catalog nor the pinned client knows about. That is the catalog's own
- *    drift check's job (`pnpm check:catalogs`, which re-fetches the LIVE spec).
- *
- * The two can legitimately disagree for a while: the catalog tracks the live
- * spec, while these types track whatever `@civitai/client` was last published
- * from. When the catalog syncs ahead, name the not-yet-typed step types in the
- * test's ledger in the same PR, and clear them when the client republishes.
+ * Every public export below is exactly one `GuardPeer<…>` over this map or a
+ * lookup into it, and keeping the raw rows here is what makes "exactly one"
+ * true. If the rows themselves were guarded, the guard on a public export would
+ * be a second guard on the same path: deleting it would leave the export still
+ * reporting, and `test/orchestrator/steps-peer-guard.test.ts` — which detects an
+ * unwrapped export by the consumer file that stops reporting — could not see the
+ * deletion.
  */
-export interface WorkflowStepTemplates {
+interface StepTemplateMap {
   aceStepAudio: AceStepAudioStepTemplate;
   ageClassification: AgeClassificationStepTemplate;
   audioCaptioning: AudioCaptioningStepTemplate;
@@ -347,13 +341,49 @@ export interface WorkflowStepTemplates {
 }
 
 /**
+ * `$type` → its step-template type, for all 47 step types.
+ *
+ * Keyed by the WIRE name rather than the generated type name, because the wire
+ * name is what you actually have in hand and the generator does not always
+ * spell it the way you would guess (`model3DPreview` →
+ * `Model3dPreviewStepTemplate`).
+ *
+ * Each value is wrapped in `GuardPeer`, so `WorkflowStepTemplates['textToImage']`
+ * is as loud about a missing peer as `WorkflowStepTemplateFor<'textToImage'>` is.
+ * `keyof` and the lookups are unaffected: when the peer resolves, `GuardPeer<X>`
+ * IS `X`.
+ *
+ * `test/orchestrator/step-templates.test-d.ts` asserts this key set equals
+ * `WORKFLOW_STEP_TYPES` (the catalog in `@civitai/app-sdk/orchestrator`, itself
+ * pinned to the orchestrator spec's discriminator mapping) at COMPILE TIME,
+ * BOTH directions, via an explicit `never` ledger for the gap. What that does
+ * and does not buy:
+ *
+ *  - a key here that the catalog does not list (a typo, or a phantom `$type`
+ *    like the `audioMix` the catalog itself once carried) fails the typecheck;
+ *  - a catalog entry with no key here fails the typecheck, so this map cannot
+ *    quietly fall behind the catalog;
+ *  - it does NOT see the orchestrator gaining a step type that neither the
+ *    catalog nor the pinned client knows about. That is the catalog's own
+ *    drift check's job (`pnpm check:catalogs`, which re-fetches the LIVE spec).
+ *
+ * The two can legitimately disagree for a while: the catalog tracks the live
+ * spec, while these types track whatever `@civitai/client` was last published
+ * from. When the catalog syncs ahead, name the not-yet-typed step types in the
+ * test's ledger in the same PR, and clear them when the client republishes.
+ */
+export type WorkflowStepTemplates = {
+  [K in keyof StepTemplateMap]: GuardPeer<StepTemplateMap[K]>;
+};
+
+/**
  * The step template for one `$type`.
  *
  * @example
  * type Tti = WorkflowStepTemplateFor<'textToImage'>;
  */
-export type WorkflowStepTemplateFor<T extends keyof WorkflowStepTemplates> = GuardPeer<
-  WorkflowStepTemplates[T]
+export type WorkflowStepTemplateFor<T extends keyof StepTemplateMap> = GuardPeer<
+  StepTemplateMap[T]
 >;
 
 /**
@@ -366,8 +396,8 @@ export type WorkflowStepTemplateFor<T extends keyof WorkflowStepTemplates> = Gua
  * @example
  * function buildVideo(input: WorkflowStepInputFor<'videoGen'>) { … }
  */
-export type WorkflowStepInputFor<T extends keyof WorkflowStepTemplates> = GuardPeer<
-  WorkflowStepTemplates[T]['input']
+export type WorkflowStepInputFor<T extends keyof StepTemplateMap> = GuardPeer<
+  StepTemplateMap[T]['input']
 >;
 
 /**
@@ -377,9 +407,7 @@ export type WorkflowStepInputFor<T extends keyof WorkflowStepTemplates> = GuardP
  * `string`, so it narrows nothing. This union is what makes
  * `Extract<…, { $type: 'comfy' }>` and an exhaustive `switch` work.
  */
-export type AnyWorkflowStepTemplate = GuardPeer<
-  WorkflowStepTemplates[keyof WorkflowStepTemplates]
->;
+export type AnyWorkflowStepTemplate = GuardPeer<StepTemplateMap[keyof StepTemplateMap]>;
 
 /**
  * A submit body whose `steps` are the narrowed union rather than
