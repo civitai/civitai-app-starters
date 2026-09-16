@@ -74,8 +74,9 @@ async function serveSpec(spec) {
 }
 
 /**
- * A synthetic tree carrying only the four paths the script writes, in the real
- * repo's shape. The SDK source and test file are REAL excerpts — same anchors
+ * A synthetic tree carrying only the paths the script writes, in the real repo's
+ * shape: the four files it rewrites, plus the `.changeset` directory it drops a
+ * fifth file into. The SDK source and test file are REAL excerpts — same anchors
  * the script does text surgery against — so a change to those anchors upstream
  * fails here rather than in production.
  */
@@ -332,6 +333,62 @@ test('an existing ledger GROWS rather than being replaced, and an unparseable on
     'exit 1 must mean NOTHING was written',
   );
   assert.deepEqual(readdirSync(join(refuse, '.changeset')), [], 'and no changeset');
+});
+
+test('a HYPHENATED step type survives the round trip: what one run writes, the next run can read', async (t) => {
+  // 🔴 THE WRITER AND THE READER MUST ADMIT THE SAME KEY SHAPE. `SAFE_KEY`
+  // deliberately allows hyphens — `flux1-kontext` is live in the imageGen
+  // mapping today and is named in that constant's own comment as the reason —
+  // so a hyphenated key is a shape this script accepts and emits. No hyphenated
+  // STEP TYPE is live yet (measured against the pinned fixture: 0 of 47, versus
+  // 1 of 13 engines), so this is a latent path, not a past incident. What made
+  // it a wedge rather than a crash is WHERE it lands: `extendLedger`'s reader
+  // was a separately hand-written regex that did not admit hyphens, so run 1
+  // wrote a ledger entry that run 2 refused — exit 1, nothing written, no PR,
+  // on a scheduled job, one run after the cause.
+  //
+  // The two runs are CHAINED: the second reads exactly what the first wrote,
+  // not a hand-typed copy of it. A test that asserted a literal ledger string
+  // could drift from the emitter and stop testing the pairing.
+  const dir = makeTree({ stepTypes: ['echo'], engines: ['comfy'] });
+  const firstSpec = await serveSpec(
+    makeSpec({ echo: 'Echo the input back.', 'flux1-kontext': 'Edit an image from an instruction.' }),
+  );
+  const secondSpec = await serveSpec(
+    makeSpec({
+      echo: 'Echo the input back.',
+      'flux1-kontext': 'Edit an image from an instruction.',
+      songGen: 'Generate a song.',
+    }),
+  );
+  t.after(async () => {
+    await firstSpec.close();
+    await secondSpec.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const run1 = await runSync(dir, firstSpec.url);
+  assert.equal(run1.code, 0, `run 1 should succeed; got ${run1.code}\n${run1.out}`);
+  assert.match(
+    read(dir, TYPE_TEST),
+    /^type CatalogStepTypesWithoutAGeneratedType = 'flux1-kontext';$/m,
+    'run 1 must write the hyphenated key into the ledger — otherwise run 2 has nothing to choke on',
+  );
+
+  const run2 = await runSync(dir, secondSpec.url);
+  assert.equal(
+    run2.code,
+    0,
+    `run 2 must be able to READ what run 1 wrote; got ${run2.code}\n${run2.out}`,
+  );
+  assert.match(
+    read(dir, TYPE_TEST),
+    /^type CatalogStepTypesWithoutAGeneratedType = 'flux1-kontext' \| 'songGen';$/m,
+    'the hyphenated entry must survive, and the new one must be added beside it',
+  );
+  // Positive control: run 2 really did work, rather than finding nothing to do.
+  assert.match(read(dir, SDK), /songGen: "Generate a song\."/);
+  assert.match(read(dir, SDK), /"flux1-kontext": "Edit an image from an instruction\."/);
 });
 
 test('a WITHDRAWN key is refused with exit 2 and NOTHING is written', async (t) => {

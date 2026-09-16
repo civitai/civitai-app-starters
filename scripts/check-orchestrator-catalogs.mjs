@@ -277,16 +277,22 @@ async function main() {
 
   if (drifted) {
     console.error(
-      `\nFix: update ALL THREE\n` +
+      `\nFix: update ALL FOUR\n` +
         `  ${FIXTURE}\n` +
         `  packages/civitai-app-sdk/src/orchestrator/index.ts\n` +
+        `  packages/civitai-app-sdk/test/orchestrator.test.ts\n` +
         `  packages/civitai-app-sdk/test/orchestrator/step-templates.test-d.ts\n` +
         `in the same PR (a new step type also needs a one-line description in the\n` +
         `catalog). \`pnpm --filter @civitai/app-sdk test\` pins the first two to each\n` +
-        `other. The third is the \`CatalogStepTypesWithoutAGeneratedType\` ledger: a new\n` +
-        `step type widens \`WorkflowStepType\`, and until \`@civitai/client\` republishes\n` +
-        `with a generated template for it, it belongs in that ledger or the SDK type\n` +
-        `test fails. \`pnpm sync:catalogs\` does all three for you.`,
+        `other. The third holds the pinned sizes — \`expect(SPEC_WORKFLOW_STEP_TYPES)\n` +
+        `.toHaveLength(N)\` and its imageGen twin — which read off the fixture above,\n` +
+        `so changing the fixture alone turns that assertion red. The fourth is the\n` +
+        `\`CatalogStepTypesWithoutAGeneratedType\` ledger: a new step type widens\n` +
+        `\`WorkflowStepType\`, and until \`@civitai/client\` republishes with a generated\n` +
+        `template for it, it belongs in that ledger or the SDK type test fails.\n` +
+        `\`pnpm sync:catalogs\` writes all of them plus a changeset — five files on a\n` +
+        `step-type run, four when only an imageGen engine moved (an engine cannot\n` +
+        `stale the ledger, so that file is left alone).`,
     );
     process.exitCode = 1;
     return;

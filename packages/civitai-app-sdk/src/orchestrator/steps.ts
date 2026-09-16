@@ -94,35 +94,51 @@
  * pnpm add -D @civitai/client@beta
  * ```
  *
- * 🔴 **FORGETTING THE PEER IS SILENT UNDER `skipLibCheck: true`, WHICH IS THE
- * DEFAULT.** The unresolved `@civitai/client` import lands in the emitted
- * `steps.d.ts`, so `skipLibCheck` — which every starter in this repo sets, as
- * does `tsc --init` — suppresses its `TS2307` along with every other
- * declaration-file diagnostic. Every export here then resolves to `any`: the
- * code below still compiles, and checks NOTHING.
+ * 🔴 **WITHOUT A GUARD, FORGETTING THE PEER IS SILENT UNDER
+ * `skipLibCheck: true`, WHICH IS THE DEFAULT.** The unresolved
+ * `@civitai/client` import lands in the emitted `steps.d.ts`, so `skipLibCheck`
+ * — which every starter in this repo sets, as does `tsc --init` — suppresses
+ * its `TS2307` along with every other declaration-file diagnostic. The exports
+ * here then degrade to an error type that behaves like `any`, and the code
+ * below still compiles while checking NOTHING.
  *
- * Measured against a built copy of this package, in a consumer resolving
- * through the exports map with the peer uninstalled:
+ * **That hole is now closed by `GuardPeer` (below), and this is the
+ * measurement.** A consumer installing this package's built `dist`, resolving
+ * through the exports map, `skipLibCheck: true`,
+ * `"moduleResolution": "Bundler"`, TypeScript 5.9.3. Four source files: a
+ * correct step template + envelope, a file with a bogus `$type` and an unknown
+ * `input` field, a file whose only defect is an unknown envelope field, and a
+ * planted `const x: number = 's'` so a zero is distinguishable from a compiler
+ * wired to nothing.
  *
- *  - `skipLibCheck: true` — **0 diagnostics**, on a file annotating
- *    `WorkflowStepTemplateFor<'textToImage'>` with a bogus `$type`, an
- *    unknown `input` field AND an unknown envelope field. A planted
- *    `const x: number = 's'` in the same project DID error, so that zero is a
- *    real zero. Reinstalling the peer turns those three into errors.
- *  - `skipLibCheck: false` — one error,
- *    `TS2307: Cannot find module '@civitai/client'`, reported against
- *    `node_modules/@civitai/app-sdk/dist/orchestrator/steps.d.ts` rather than
- *    against your own file.
+ * | build | peer | diagnostics |
+ * |---|---|---|
+ * | before the guard | installed | 4 — the three real defects, plus the planted control |
+ * | before the guard | missing | **1 — the planted control alone.** The three defects report nothing |
+ * | with the guard | installed | 4 — byte-identical to the row above it |
+ * | with the guard | missing | 5 — a `TS2322` on each annotation **in the consumer's own file**, naming the install command, plus the planted control |
  *
- * 🔴 There is no type-level guard that can close this, and that was measured
- * rather than assumed. A sentinel conditional (`0 extends 1 & WorkflowTemplate
- * ? …`) does not fire: TypeScript gives an unresolved import an ERROR type
- * which propagates as `any` through any type-level computation over it, so the
- * detector itself resolves to `any`. Verified in an isolated two-package repro
- * against a working control — with the module resolvable the probe reports
- * correctly and a deliberate mismatch errors; with it unresolvable every
- * assertion, including the positive control, passes. So the mitigation is
- * documentation, and the containment is that only THIS subpath is affected.
+ * With `skipLibCheck: false` and no guard you get one error,
+ * `TS2307: Cannot find module '@civitai/client'`, reported against
+ * `node_modules/@civitai/app-sdk/dist/orchestrator/steps.d.ts` rather than
+ * against your own file.
+ *
+ * 🔴 **THE SAME DEGRADATION HAPPENS WITH THE PEER INSTALLED, UNDER
+ * `NodeNext`/`Node16`.** `@civitai/client@0.2.0-beta.98` is published with
+ * `"type": "module"`, no `exports` map, and extensionless relative re-exports
+ * (`export * from './generated'`), which Node's ESM resolution does not
+ * resolve. Measured in the same consumer with the peer present, only
+ * `moduleResolution` changed: before the guard, `NodeNext` gave **1
+ * diagnostic — the planted control alone**, i.e. the subpath was checking
+ * nothing despite a correctly installed peer; with the guard it reports, which
+ * is why the message names this case as well as the missing-peer one. Use
+ * `"moduleResolution": "Bundler"` (what every starter here and this package
+ * itself set).
+ *
+ * The guard's two arms are pinned by `test/orchestrator/steps-peer-guard.test.ts`,
+ * which compiles a consumer against this module's own emitted declarations with
+ * the peer resolvable and unresolvable. It was watched to fail at the commit
+ * before the guard existed.
  *
  * 🔴 **Install from the `beta` tag, not `latest`.** `@civitai/client`'s npm
  * `latest` dist-tag points at `0.1.1-beta.0`, ~97 betas behind the `beta` tag
@@ -214,6 +230,42 @@ import type {
 } from '@civitai/client';
 
 // ---------------------------------------------------------------------------
+// Peer-resolution guard
+// ---------------------------------------------------------------------------
+
+/**
+ * `true` when `@civitai/client`'s types did not resolve for the compiler that
+ * is reading this module.
+ *
+ * TypeScript gives an unresolved import an ERROR type. That type behaves like
+ * `any` in most positions — which is why the exports below would otherwise
+ * check nothing under `skipLibCheck: true` — but `keyof` over it is
+ * `string | number | symbol`, not `any`. So `string extends keyof T` separates
+ * the two cases: FALSE for every generated template (whose keys are a finite
+ * union of literals), TRUE for the error type.
+ *
+ * `string extends keyof T` is only sound as a detector if no real template
+ * carries a string index signature. Enumerated over all 47 mapped templates
+ * plus the base `WorkflowStepTemplate` at `@civitai/client@0.2.0-beta.98`:
+ * none does, and the probe was checked in both directions (a synthetic
+ * `{ [k: string]: unknown }` reports TRUE, each real template reports FALSE).
+ */
+type PeerTypesUnresolved = string extends keyof TextToImageStepTemplate ? true : false;
+
+/**
+ * What a consumer sees instead of a step type when the peer did not resolve.
+ *
+ * A string literal type rather than `never`: assigning an object literal to it
+ * produces a `TS2322` **in the consumer's own file** whose text is this
+ * sentence, where the unguarded version produced no diagnostic at all.
+ */
+type PeerTypesUnresolvedError =
+  "@civitai/app-sdk/orchestrator/steps is not type-checking: @civitai/client's types did not resolve. Install the peer with `pnpm add -D @civitai/client@beta`. If it IS installed, this subpath needs `\"moduleResolution\": \"Bundler\"` — the published package does not resolve under NodeNext/Node16.";
+
+/** Collapses a lookup to the message above when the peer did not resolve. */
+type GuardPeer<T> = [PeerTypesUnresolved] extends [true] ? PeerTypesUnresolvedError : T;
+
+// ---------------------------------------------------------------------------
 // Keyed map + derived helpers
 // ---------------------------------------------------------------------------
 
@@ -300,8 +352,9 @@ export interface WorkflowStepTemplates {
  * @example
  * type Tti = WorkflowStepTemplateFor<'textToImage'>;
  */
-export type WorkflowStepTemplateFor<T extends keyof WorkflowStepTemplates> =
-  WorkflowStepTemplates[T];
+export type WorkflowStepTemplateFor<T extends keyof WorkflowStepTemplates> = GuardPeer<
+  WorkflowStepTemplates[T]
+>;
 
 /**
  * The `input` shape for one `$type` — the per-step payload, without having to
@@ -313,8 +366,9 @@ export type WorkflowStepTemplateFor<T extends keyof WorkflowStepTemplates> =
  * @example
  * function buildVideo(input: WorkflowStepInputFor<'videoGen'>) { … }
  */
-export type WorkflowStepInputFor<T extends keyof WorkflowStepTemplates> =
-  WorkflowStepTemplates[T]['input'];
+export type WorkflowStepInputFor<T extends keyof WorkflowStepTemplates> = GuardPeer<
+  WorkflowStepTemplates[T]['input']
+>;
 
 /**
  * Discriminated union of every step template — discriminate on `$type`.
@@ -323,8 +377,9 @@ export type WorkflowStepInputFor<T extends keyof WorkflowStepTemplates> =
  * `string`, so it narrows nothing. This union is what makes
  * `Extract<…, { $type: 'comfy' }>` and an exhaustive `switch` work.
  */
-export type AnyWorkflowStepTemplate =
-  WorkflowStepTemplates[keyof WorkflowStepTemplates];
+export type AnyWorkflowStepTemplate = GuardPeer<
+  WorkflowStepTemplates[keyof WorkflowStepTemplates]
+>;
 
 /**
  * A submit body whose `steps` are the narrowed union rather than
@@ -351,15 +406,16 @@ export type AnyWorkflowStepTemplate =
  * contradicts this package's own working helpers, and would make every existing
  * caller stop compiling.
  *
- * ⚠️ BE HONEST ABOUT WHICH DIRECTION THIS IS. The spec's own description of the
- * field is "Limit the currencies that can be used to pay for this workflow."
- * (read from `WorkflowTemplate.properties.currencies.description` in the live
- * spec) — it is a LIMITER, so omitting it is the PERMISSIVE choice, not the
- * safe one, and it sits on a spend-scoping field. (An earlier version of this
- * comment called omitting it "conservative". That was backwards, in the one
- * direction that matters.) What the relaxation is conservative ABOUT is this
- * package's API: it forbids nothing that compiled before, requires nothing new
- * of callers, and matches what the helpers have always sent. If you want a
+ * ⚠️ WHAT IS ESTABLISHED, AND WHAT IS NOT. The spec marks `currencies`
+ * required, and describes it — `WorkflowTemplate.properties.currencies
+ * .description` in the live spec — as "Limit the currencies that can be used to
+ * pay for this workflow." That description says what the field does WHEN
+ * PRESENT. **What the orchestrator does when it is omitted is unverified**: the
+ * spec licenses no inference either way, and the candidates (rejected as
+ * invalid, unlimited, or scoped to some server-side default) are not
+ * distinguishable from the document. This relaxation is about THIS package's
+ * API — it forbids nothing that compiled before, requires nothing new of
+ * callers, and matches what the helpers have always sent. If you want a
  * workflow's payment scoped to particular currencies, pass `currencies`
  * explicitly — the field is still here and still the generated element type.
  *
@@ -369,7 +425,9 @@ export type AnyWorkflowStepTemplate =
  * NOT VERIFIED against a live submit — doing so costs real Buzz. The evidence
  * above is the spec, this package's helpers, and civitai's call sites.
  */
-export type TypedWorkflowTemplate = Omit<WorkflowTemplate, 'steps' | 'currencies'> & {
-  steps: AnyWorkflowStepTemplate[];
-  currencies?: WorkflowTemplate['currencies'];
-};
+export type TypedWorkflowTemplate = GuardPeer<
+  Omit<WorkflowTemplate, 'steps' | 'currencies'> & {
+    steps: AnyWorkflowStepTemplate[];
+    currencies?: WorkflowTemplate['currencies'];
+  }
+>;

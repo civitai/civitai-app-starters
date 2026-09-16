@@ -282,6 +282,23 @@ const FORBIDDEN_IN_TEXT = /[\u0000-\u001f\u007f]/;
  */
 const SAFE_KEY = /^[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*$/;
 
+/**
+ * The quoted form of a `SAFE_KEY`, as `extendLedger` reads it back out of the
+ * type test.
+ *
+ * 🔴 DERIVED, NOT RESTATED, AND THAT IS THE WHOLE POINT. This pattern used to be
+ * written out by hand as `/^'[A-Za-z][A-Za-z0-9]*'$/` — which does not admit the
+ * hyphen `SAFE_KEY` deliberately does, so the writer emitted a key the reader
+ * then refused. Reproduced: one run adds a hyphenated step type to the ledger
+ * and exits 0; the NEXT run that adds any step type fails parsing the line the
+ * first one wrote, exits 1, writes nothing, and opens no PR — a scheduled job
+ * wedged one run after the cause, from two regexes sitting in different halves
+ * of this file. Widening `SAFE_KEY` now widens both ends at once. Pinned by the
+ * chained round-trip test in `tests/guards/sync-orchestrator-catalogs.test.mjs`,
+ * watched red before this constant existed.
+ */
+const SAFE_KEY_LITERAL = new RegExp(`^'${SAFE_KEY.source.replace(/^\^/, '').replace(/\$$/, '')}'$`);
+
 /** A key that can be written into an object literal without quoting. */
 const BARE_IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
@@ -438,7 +455,7 @@ function extendLedger(src, keys) {
   let existing = [];
   if (rhs !== 'never') {
     existing = rhs.split('|').map((part) => part.trim());
-    const bad = existing.filter((part) => !/^'[A-Za-z][A-Za-z0-9]*'$/.test(part));
+    const bad = existing.filter((part) => !SAFE_KEY_LITERAL.test(part));
     if (bad.length) {
       throw new Fatal(
         `\`type ${LEDGER_TYPE}\` in ${TYPE_TEST_SRC} is neither \`never\` nor a union of quoted step-type\n` +
