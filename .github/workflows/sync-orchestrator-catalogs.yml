@@ -190,14 +190,21 @@ jobs:
             `Orchestrator catalog drift-check` is red on `main`. This PR does the
             mechanical half of catching them up.
 
-            **Files touched** — the same four a human touches by hand (see
-            `da3a9dd`, the `miniMaxMusic3` precedent):
+            **Files touched** — the same ones a human touches by hand (see
+            `da3a9dd`, the `miniMaxMusic3` precedent, for the first three):
 
             - `packages/civitai-app-sdk/test/fixtures/orchestrator-spec-catalogs.json`
               — the transcribed lists, re-read from the live `discriminator.mapping`s.
             - `packages/civitai-app-sdk/src/orchestrator/index.ts` — the new keys.
             - `packages/civitai-app-sdk/test/orchestrator.test.ts` — the pinned
               `toHaveLength` counts.
+            - `packages/civitai-app-sdk/test/orchestrator/step-templates.test-d.ts`
+              — the `CatalogStepTypesWithoutAGeneratedType` ledger, but only when
+              this run added step types. A new step type widens
+              `WorkflowStepType`, so the ledger of catalog entries with no
+              `@civitai/client` template yet goes stale in the same edit; without
+              this the SDK type test fails, the `Validate SDK` step below fails,
+              and no PR opens at all.
             - `.changeset/orchestrator-catalog-sync-*.md` — `minor`, per
               `RELEASING.md`: a new key widens the exported `WorkflowStepType` /
               `ImageGenEngine` union, which is additive API.
@@ -236,6 +243,15 @@ jobs:
                The bot appends rather than guessing a section.
             3. Rewrite the changeset's last paragraph to say what the new
                entries actually are.
+            4. Leave the `CatalogStepTypesWithoutAGeneratedType` entries alone
+               unless you have checked npm: each one says the orchestrator
+               accepts that step type and `@civitai/client` has no generated
+               template for it yet. Delete an entry only once a republished
+               client carries it, and add its key to the `StepTemplateMap`
+               rows in `src/orchestrator/steps.ts` in the same commit.
+               (`StepTemplateMap` is the unexported interface that holds the
+               literal `$type` rows; the exported `WorkflowStepTemplates` is a
+               mapped type over it and has no keys of its own to edit.)
 
             Then `pnpm check:catalogs` goes green and this is a normal SDK PR.
 
