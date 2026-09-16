@@ -31,6 +31,10 @@
       "types": "./dist/orchestrator/index.d.ts",
       "import": "./dist/orchestrator/index.js"
     },
+    "./orchestrator/steps": {
+      "types": "./dist/orchestrator/steps.d.ts",
+      "import": "./dist/orchestrator/steps.js"
+    },
     "./blocks": {
       "types": "./dist/blocks/index.d.ts",
       "import": "./dist/blocks/index.js"
@@ -57,7 +61,36 @@
     "node": ">=20"
   },
   "dependencies": {},
+  "comment-peerDependencies": [
+    "@civitai/client is consumed for TYPES ONLY, by `./orchestrator/steps`.",
+    "It is an OPTIONAL peer, never a dependency: `dependencies` is empty on",
+    "purpose (this package ships into sandboxed browser iframes and every app",
+    "inherits its install graph), and @civitai/client has no types-only entry",
+    "point -- it ships .d.ts beside .js in one package with a real runtime",
+    "(@hey-api/client-fetch, rfc6902, tslib). Optional-peer keeps that graph",
+    "out of every app that does not ask for the step types, and keeps the",
+    "version the APP's choice.",
+    "",
+    "🔴 THE PIN IS NOT `latest` AND MUST NOT BECOME IT. @civitai/client's npm",
+    "`latest` dist-tag is 0.1.1-beta.0; the version the orchestrator is",
+    "actually generated against ships under the `beta` tag (0.2.0-beta.98 as of",
+    "this writing -- cross-checked against what civitai/civitai resolves).",
+    "`pnpm add @civitai/client` therefore installs something ~97 betas behind",
+    "and MISSING MOST STEP TYPES, with no error. The range below deliberately",
+    "excludes 0.1.x: verify with",
+    "`semver.satisfies('0.1.1-beta.0', '^0.2.0-beta.98')` === false.",
+    "Install with the tag: `pnpm add -D @civitai/client@beta`."
+  ],
+  "peerDependencies": {
+    "@civitai/client": "^0.2.0-beta.98"
+  },
+  "peerDependenciesMeta": {
+    "@civitai/client": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@civitai/client": "0.2.0-beta.98",
     "@types/node": "^25.9.1",
     "typescript": "^5.9.2",
     "vitest": "^4.1.11"

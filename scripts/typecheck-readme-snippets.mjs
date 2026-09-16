@@ -98,6 +98,14 @@ const ENTRYPOINTS = [
   { module: '@civitai/app-sdk/scopes', dts: join(SDK_DIST, 'scopes/index.d.ts') },
   { module: '@civitai/app-sdk/cookies', dts: join(SDK_DIST, 'cookies/index.d.ts') },
   { module: '@civitai/app-sdk/orchestrator', dts: join(SDK_DIST, 'orchestrator/index.d.ts') },
+  // Type-only subpath: the orchestrator's generated step templates, keyed by
+  // wire `$type` over `@civitai/client` (an OPTIONAL peer). Listed here so
+  // README snippets that import from it are resolved against the real
+  // declarations rather than shimmed to `any`. Its entry exports no values at
+  // all, so it contributes only to the TYPE map below — which is the point: an
+  // omitted-import reference to `TypedWorkflowTemplate` still validates against
+  // the true type.
+  { module: '@civitai/app-sdk/orchestrator/steps', dts: join(SDK_DIST, 'orchestrator/steps.d.ts') },
   { module: '@civitai/app-sdk/blocks', dts: join(SDK_DIST, 'blocks/index.d.ts') },
   { module: '@civitai/blocks-react', dts: join(BLOCKS_DIST, 'index.d.ts') },
   { module: '@civitai/blocks-react/ui', dts: join(BLOCKS_DIST, 'ui/index.d.ts') },
