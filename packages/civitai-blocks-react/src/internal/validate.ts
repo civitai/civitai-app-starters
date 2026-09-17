@@ -834,26 +834,53 @@ const GATED_IMAGE_STATUSES = new Set<string>(['visible', 'hidden']);
 /**
  * Shape-check ONE {@link import('@civitai/app-sdk/blocks').BlockGatedImage} entry.
  * `imageId` is always a finite number and `status` one of `visible`/`hidden`.
- *  - `visible` → the full moderated projection (`nsfwLevel` finite,
- *    `contentRating` a `g|pg|pg13|r|x` ladder value, `url` a non-empty string,
- *    `width`/`height` each `number | null`).
+ *  - `visible` → `url` a non-empty string and `width`/`height` each
+ *    `number | null`, PLUS exactly one of two rating shapes (below).
  *  - `hidden`  → ONLY `imageId` + `status`. A `hidden` entry carrying a `url` is
  *    REJECTED — defense in depth against a buggy/hostile host leaking an
  *    unclamped url on an image the viewer isn't allowed to see.
+ *
+ * 🔴 THE TWO `visible` SHAPES ARE MUTUALLY EXCLUSIVE, AND THAT IS ENFORCED.
+ * A RATED entry carries `nsfwLevel` + `contentRating` and NO `ratingPending`; an
+ * entry nothing has rated yet (returned only to the image's own author) carries
+ * `ratingPending: true` and NEITHER rating field. Anything in between is
+ * REJECTED, in BOTH directions:
+ *  - `ratingPending` alongside a rating would let a host assert a rating it has
+ *    just told us does not exist — the precise bug this state was added to stop
+ *    (an unrated image rendered as *"rated mature"*);
+ *  - a `visible` entry with neither a rating nor `ratingPending` is a host that
+ *    dropped the marker, and a block reading `nsfwLevel === undefined` there
+ *    cannot tell "unrated" from "the host lost the field".
+ * A half-populated entry (one rating field, not both) is rejected for the same
+ * reason it always was.
  */
 function isValidGatedImage(img: unknown): boolean {
   if (!isObject(img)) return false;
   if (!isFiniteNumber(img.imageId)) return false;
   if (typeof img.status !== 'string' || !GATED_IMAGE_STATUSES.has(img.status)) return false;
   if (img.status === 'visible') {
-    if (!isFiniteNumber(img.nsfwLevel)) return false;
-    if (typeof img.contentRating !== 'string' || !CONTENT_RATINGS.has(img.contentRating)) {
-      return false;
-    }
     if (!isNonEmptyString(img.url)) return false;
     // width/height are each `number | null` — accept a finite number OR null.
     if (img.width !== null && !isFiniteNumber(img.width)) return false;
     if (img.height !== null && !isFiniteNumber(img.height)) return false;
+
+    // Presence, not truthiness: `nsfwLevel` is a bitmask whose unrated value is
+    // `0`, so a falsy check would read a real level as "absent".
+    const hasLevel = 'nsfwLevel' in img && img.nsfwLevel !== undefined;
+    const hasRating = 'contentRating' in img && img.contentRating !== undefined;
+    const claimsPending = 'ratingPending' in img && img.ratingPending !== undefined;
+
+    if (claimsPending) {
+      // The pending shape: the marker is EXACTLY `true`, and no rating is claimed.
+      if (img.ratingPending !== true) return false;
+      if (hasLevel || hasRating) return false;
+      return true;
+    }
+    // The rated shape: both fields, both well-formed.
+    if (!isFiniteNumber(img.nsfwLevel)) return false;
+    if (typeof img.contentRating !== 'string' || !CONTENT_RATINGS.has(img.contentRating)) {
+      return false;
+    }
     return true;
   }
   // status === 'hidden': ONLY imageId + status. A leaked `url` on a hidden entry

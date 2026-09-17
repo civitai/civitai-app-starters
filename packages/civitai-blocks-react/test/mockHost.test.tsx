@@ -1,7 +1,7 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { AppWorkflow } from '@civitai/app-sdk/blocks';
+import type { AppWorkflow, BlockGatedImage } from '@civitai/app-sdk/blocks';
 
 import { useBlockContext } from '../src/hooks/useBlockContext.js';
 import { useBuzzWorkflow } from '../src/hooks/useBuzzWorkflow.js';
@@ -9,6 +9,7 @@ import { useResourcePicker } from '../src/hooks/useResourcePicker.js';
 import { useRequestConsent } from '../src/hooks/useRequestConsent.js';
 import { useBlockToken } from '../src/hooks/useBlockToken.js';
 import { useAppWorkflows } from '../src/hooks/useAppWorkflows.js';
+import { useGatedImages } from '../src/hooks/useGatedImages.js';
 import { getTransport } from '../src/internal/singleton.js';
 import { createMockHost, resetTransport } from '../src/testing.js';
 
@@ -356,5 +357,54 @@ describe('createMockHost', () => {
     expect(result.current.error?.message).toBe('block lacks scope');
 
     await expect(result.current.cancel('wf_app_1')).rejects.toThrow('block lacks scope');
+  });
+
+  /**
+   * 🔴 THE MOCK'S DEFAULT GATED PROJECTION MUST SURVIVE THE BLOCK-SIDE VALIDATOR.
+   * This is a SEAM, and each side was green in isolation while the pair was
+   * broken: `isValidGatedImage` required `nsfwLevel` + `contentRating` on every
+   * `visible` entry, so the host's new owner projection (`ratingPending`, NO
+   * rating) failed the shape check and `isValidImagesResult` dropped the WHOLE
+   * reply — every image in the batch. `getImages()` would then never resolve and
+   * the block would hang to its transport timeout. Nothing in either file's own
+   * tests could see that, because `mockHost.test.tsx` never drove this bridge and
+   * `useGatedImages.test.tsx` only ever fed the validator hand-written fixtures.
+   *
+   * It also pins the FIDELITY half: the mock must emit all three shapes a real
+   * host emits, or a block author reads `nsfwLevel` unconditionally, tests green
+   * locally, and renders their own freshly-published image as a maturity claim
+   * in production — the exact defect this contract change exists to fix.
+   */
+  it("the mock's DEFAULT gated projection carries all three shapes and passes the real validator", async () => {
+    uninstall = createMockHost().install();
+    const { result } = renderHook(() => useGatedImages());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    let images: BlockGatedImage[] = [];
+    await act(async () => {
+      // If the reply were dropped by the validator this would never settle —
+      // the assertions below would never run, and the test times out rather than
+      // passing vacuously.
+      images = await result.current.getImages([9001, 9002, 9003]);
+    });
+
+    // The reply survived the validator at all (the seam), …
+    expect(images).toHaveLength(3);
+
+    // …and carries one of each shape.
+    const rated = images.find((i) => i.status === 'visible' && !i.ratingPending);
+    const hidden = images.find((i) => i.status === 'hidden');
+    const pending = images.find((i) => i.status === 'visible' && i.ratingPending);
+    expect(rated, 'the mock must emit a RATED visible entry').toBeDefined();
+    expect(hidden, 'the mock must emit a HIDDEN entry').toBeDefined();
+    expect(pending, "the mock must emit the author's own not-yet-rated entry").toBeDefined();
+
+    // The rated entry claims a rating; the pending one claims none and still has
+    // its url; the hidden one has no url at all.
+    expect(rated).toMatchObject({ nsfwLevel: expect.any(Number), contentRating: expect.any(String) });
+    expect(pending).toMatchObject({ ratingPending: true, url: expect.any(String) });
+    expect(pending).not.toHaveProperty('nsfwLevel');
+    expect(pending).not.toHaveProperty('contentRating');
+    expect(hidden).not.toHaveProperty('url');
   });
 });

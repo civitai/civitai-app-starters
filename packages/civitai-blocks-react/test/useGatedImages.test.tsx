@@ -34,6 +34,28 @@ const VISIBLE: BlockGatedImage = {
   height: 1024,
 };
 const HIDDEN: BlockGatedImage = { imageId: 9002, status: 'hidden' };
+/** The viewer's OWN image that nothing has rated yet: url, marker, NO rating. */
+const RATING_PENDING: BlockGatedImage = {
+  imageId: 9003,
+  status: 'visible',
+  ratingPending: true,
+  url: 'https://image.civitai.com/x/9003.jpeg',
+  width: 1024,
+  height: 1024,
+};
+/** The same entry as an UNTYPED literal, so the malformed variants below can be
+ *  built by spreading. They are shapes `BlockGatedImage` deliberately cannot
+ *  express — the validator's job is to reject them at runtime anyway, because
+ *  the host is on the other side of a postMessage boundary and its types are not
+ *  evidence about the bytes it sent. */
+const PENDING_LITERAL: Record<string, unknown> = {
+  imageId: 9003,
+  status: 'visible',
+  ratingPending: true,
+  url: 'https://image.civitai.com/x/9003.jpeg',
+  width: 1024,
+  height: 1024,
+};
 
 function calls(mock: ReturnType<typeof vi.fn>, type: string) {
   return mock.mock.calls.filter((c) => c[0]?.type === type);
@@ -146,6 +168,71 @@ describe('isValidImagesResult (defense-in-depth)', () => {
   it('REJECTS a VISIBLE entry missing its url', () => {
     const noUrl = { imageId: 9001, status: 'visible', nsfwLevel: 1, contentRating: 'pg', width: 1, height: 1 };
     expect(isValidImagesResult({ requestId: 'r', result: { images: [noUrl] } })).toBe(false);
+  });
+
+  // ── `ratingPending`: the viewer's OWN not-yet-rated image ──────────────────
+  // 🔴 THIS BLOCK IS THE REASON THE SDK CHANGE IS A CO-REQUISITE AND NOT A
+  // NICETY. Before it, `isValidGatedImage` REQUIRED `nsfwLevel` + `contentRating`
+  // on every `visible` entry, so the host's new owner projection failed the shape
+  // check and `isValidImagesResult` DROPPED THE WHOLE REPLY — every image in the
+  // batch, not just the pending one. The block would have hung on a `getImages()`
+  // that never resolved. That is strictly worse than the "rated mature" bug the
+  // server change fixes.
+
+  it('ACCEPTS a `ratingPending` entry — url, no rating claim', () => {
+    expect(isValidImagesResult({ requestId: 'r', result: { images: [RATING_PENDING] } })).toBe(true);
+    // …and alongside the other two shapes, which is what a real grid returns.
+    expect(
+      isValidImagesResult({ requestId: 'r', result: { images: [VISIBLE, HIDDEN, RATING_PENDING] } })
+    ).toBe(true);
+  });
+
+  it('REJECTS a `ratingPending` entry that ALSO claims a rating', () => {
+    // The precise contradiction the state exists to stop: a host asserting a
+    // rating it has just said does not exist. Built as plain literals — these are
+    // shapes `BlockGatedImage` cannot express, which is the point.
+    for (const extra of [{ nsfwLevel: 1 }, { contentRating: 'pg' }, { nsfwLevel: 1, contentRating: 'pg' }]) {
+      const contradictory = { ...PENDING_LITERAL, ...extra };
+      expect(isValidImagesResult({ requestId: 'r', result: { images: [contradictory] } })).toBe(false);
+    }
+  });
+
+  it('REJECTS a `ratingPending` marker that is not exactly `true`', () => {
+    for (const marker of [false, 1, 'true', null, {}]) {
+      const odd = { ...PENDING_LITERAL, ratingPending: marker };
+      expect(isValidImagesResult({ requestId: 'r', result: { images: [odd] } })).toBe(false);
+    }
+  });
+
+  it('REJECTS a VISIBLE entry with NEITHER a rating NOR `ratingPending`', () => {
+    // A host that dropped the marker. A block reading `nsfwLevel === undefined`
+    // here cannot tell "unrated" from "the field went missing", so refuse it
+    // rather than let the ambiguity through.
+    const bare = { imageId: 9001, status: 'visible', url: 'https://image.civitai.com/x/9001.jpeg', width: 1, height: 1 };
+    expect(isValidImagesResult({ requestId: 'r', result: { images: [bare] } })).toBe(false);
+  });
+
+  it('REJECTS a half-populated rating (one field, not both)', () => {
+    const onlyLevel = { imageId: 9001, status: 'visible', nsfwLevel: 1, url: 'https://image.civitai.com/x/9001.jpeg', width: 1, height: 1 };
+    const onlyRating = { imageId: 9001, status: 'visible', contentRating: 'pg', url: 'https://image.civitai.com/x/9001.jpeg', width: 1, height: 1 };
+    expect(isValidImagesResult({ requestId: 'r', result: { images: [onlyLevel] } })).toBe(false);
+    expect(isValidImagesResult({ requestId: 'r', result: { images: [onlyRating] } })).toBe(false);
+  });
+
+  it('accepts `nsfwLevel: 0` — presence, not truthiness', () => {
+    // POSITIVE CONTROL for the `in`-based presence test: a falsy-check
+    // implementation would read a real `0` level as "absent" and then demand a
+    // `ratingPending` marker that is not there.
+    const zeroLevel = {
+      imageId: 9001,
+      status: 'visible',
+      nsfwLevel: 0,
+      contentRating: 'pg',
+      url: 'https://image.civitai.com/x/9001.jpeg',
+      width: 1,
+      height: 1,
+    };
+    expect(isValidImagesResult({ requestId: 'r', result: { images: [zeroLevel] } })).toBe(true);
   });
 
   it('REJECTS a reply with neither result nor error', () => {
