@@ -17,12 +17,18 @@ export interface UseGatedImages {
    *
    * The host applies the REQUESTING VIEWER's browsing-level clamp server-side, so
    * the shape a viewer receives depends on THEIR ceiling:
-   *  - `status: 'visible'` — scanned clean + within ceiling + unflagged: the full
-   *    moderated projection incl. `url` and `width`/`height` for grid layout.
+   *  - `status: 'visible'` — the viewer may see the pixels: `url` plus
+   *    `width`/`height` for grid layout. 🔴 TWO SHAPES. A RATED image also carries
+   *    `nsfwLevel` + `contentRating`. The viewer's OWN image that nothing has
+   *    rated yet carries `ratingPending: true` and NEITHER — render a "still
+   *    processing" affordance, and NEVER substitute a default rating.
    *  - `status: 'hidden'` — the image exists but is withheld from THIS viewer
-   *    (above ceiling / not-yet-scanned / flagged): NO `url` is ever returned, so
-   *    the block MUST render a blurred/placeholder cell for it. The block can
-   *    never obtain an unclamped url for an image the viewer isn't allowed to see.
+   *    (above ceiling / flagged / scan-refused, or someone else's not-yet-rated
+   *    image): NO `url` is ever returned, so the block MUST render a
+   *    blurred/placeholder cell for it. The block can never obtain an unclamped
+   *    url for an image the viewer isn't allowed to see, and cannot tell the
+   *    withholding reasons apart — that is deliberate, since distinguishing them
+   *    would let a SFW viewer enumerate which cells of a shared grid are mature.
    *
    * Ids the host can't resolve to a benchmark-eligible bare `Image` row are
    * OMITTED entirely (neither visible nor hidden), so the returned array MAY be
@@ -38,16 +44,28 @@ export interface UseGatedImages {
  * a cross-user image grid (e.g. ids stored via `useSharedStorage()`).
  *
  * The host applies the requesting viewer's browsing-level clamp server-side and
- * returns each image as `visible` (moderated projection incl. url) or `hidden`
- * (NO url — above ceiling / unscanned / flagged). This is the load-bearing
+ * returns each image as `visible` (url, plus a rating UNLESS it is the viewer's
+ * own not-yet-rated image) or `hidden` (NO url — above ceiling / flagged /
+ * scan-refused / someone else's unrated image). This is the load-bearing
  * cross-user moderation boundary: an unclamped edge URL never crosses to a viewer
  * who can't see the image, and the block must render a placeholder for any
  * `hidden` entry.
  *
+ * 🔴 `nsfwLevel` AND `contentRating` ARE OPTIONAL, AND A MISSING ONE IS NOT "G".
+ * They are absent exactly when `ratingPending` is present. Treating absent as a
+ * safe default is the bug this state exists to stop: an image published seconds
+ * earlier came back `hidden` under the old two-state contract and a grid rendered
+ * it as *"Hidden — rated mature"*, a maturity claim about an image nothing had
+ * rated, which a page reload then contradicted.
+ *
  * @example
  * const { getImages } = useGatedImages();
  * const images = await getImages([101, 102, 103]);
- * // …render `visible` cells with their url; `hidden` cells as a blurred placeholder.
+ * for (const image of images) {
+ *   if (image.status === 'hidden') renderPlaceholder(image.imageId);
+ *   else if (image.ratingPending) renderStillProcessing(image.url); // NO rating to show
+ *   else renderRated(image.url, image.contentRating);
+ * }
  */
 export function useGatedImages(): UseGatedImages {
   const getImages = useCallback(async (imageIds: number[]): Promise<BlockGatedImage[]> => {

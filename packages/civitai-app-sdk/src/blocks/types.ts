@@ -1552,33 +1552,60 @@ export interface AppWorkflow {
  * (`IMAGES_RESULT`). The host applies the REQUESTING VIEWER's browsing-level
  * clamp server-side, so the shape a viewer receives depends on THEIR ceiling:
  *
- *  - `status: 'visible'` — the image is scanned clean, within this viewer's
- *    browsing ceiling, and unflagged: the full moderated projection
- *    (`nsfwLevel`/`contentRating`/`url`, plus `width`/`height` for grid layout).
+ *  - `status: 'visible'` — the viewer may see the pixels. TWO shapes live under
+ *    this one status:
+ *      · a RATED image — the full moderated projection
+ *        (`nsfwLevel`/`contentRating`/`url`, plus `width`/`height` for layout);
+ *      · an image NOTHING HAS RATED YET, returned ONLY to its own author, with
+ *        `ratingPending: true` and NEITHER `nsfwLevel` NOR `contentRating`.
  *  - `status: 'hidden'` — the image EXISTS but is withheld from THIS viewer
- *    (above their browsing ceiling, not-yet-scanned, or flagged). NO `url` is
- *    ever returned — the block renders a blurred/placeholder cell. This is the
- *    load-bearing cross-user moderation boundary: an unclamped edge URL never
- *    crosses to a viewer who can't see the image.
+ *    (above their browsing ceiling, flagged, scan-refused, or — for everyone who
+ *    is not its author — not yet rated). NO `url` is ever returned; the block
+ *    renders a blurred/placeholder cell. This is the load-bearing cross-user
+ *    moderation boundary: an unclamped edge URL never crosses to a viewer who
+ *    can't see the image.
+ *
+ * 🔴 `nsfwLevel` AND `contentRating` ARE OPTIONAL, AND A MISSING ONE IS NOT "G".
+ * They were required until 0.42.0, and a block that dereferenced them on a
+ * `visible` entry now reads `undefined` for an author's own pending image. That
+ * absence IS the fix. `hidden` used to mean both "a rating exists and it is not
+ * for you" AND "nothing has rated this yet", so a block had ONE token to render
+ * and guessed maturity: an image published seconds earlier came back `hidden`
+ * and was displayed as *"Hidden — rated mature"* — a rating claim about an
+ * unrated image, which a page reload contradicted the moment the scan landed.
+ * Branch on `ratingPending` (or on `nsfwLevel === undefined`) and render a
+ * "still processing" affordance; NEVER substitute a default rating.
+ *
+ * 🔴 THE HOST DELIBERATELY DOES NOT DISTINGUISH "UNRATED" FROM "ABOVE YOUR
+ * CEILING" FOR SOMEONE ELSE'S IMAGE. Both are `hidden`. Reporting them apart
+ * would let a SFW viewer of a shared grid enumerate which cells are
+ * mature-or-flagged rather than merely unscanned, so there is no third status
+ * and no way to ask.
  *
  * Image ids the host cannot resolve to a benchmark-eligible bare Image row are
  * OMITTED from the result entirely (neither visible nor hidden).
  *
  * Mirrors civitai/civitai's gated-read projection in
- * `src/server/services/blocks/*` — keep in lockstep.
+ * `src/server/services/blocks/block-gated-images.service.ts` — keep in lockstep.
+ * That lockstep is now ENFORCED from the other side: civitai vendors this exact
+ * declaration in `src/server/services/blocks/blockGatedImageSdkParity.ts` and
+ * fails its typecheck when the two disagree. Change this type and that file has
+ * to move in the same landing.
  */
 export type BlockGatedImage =
   | {
       imageId: number;
       status: 'visible';
-      /** Scanner-resolved NSFW-level bitmask value. */
-      nsfwLevel: number;
-      /** Off-site content rating (`'g'|'pg'|'pg13'|'r'|'x'`). */
-      contentRating: ContentRating;
+      /** Scanner-resolved NSFW-level bitmask value. ABSENT on a `ratingPending` entry. */
+      nsfwLevel?: number;
+      /** Off-site content rating (`'g'|'pg'|'pg13'|'r'|'x'`). ABSENT on a `ratingPending` entry. */
+      contentRating?: ContentRating;
       /** Civitai-hosted image URL (only present for a viewer allowed to see it). */
       url: string;
       width: number | null;
       height: number | null;
+      /** Present ONLY on the viewer's OWN image that nothing has rated yet. */
+      ratingPending?: true;
     }
   | {
       imageId: number;

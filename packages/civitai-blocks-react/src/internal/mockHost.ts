@@ -1155,9 +1155,18 @@ function normalizePublishError(e: boolean | string | Error | undefined): string 
 
 /**
  * Default per-viewer gated projection reported on `GET_IMAGES_BY_IDS` when
- * {@link MockHostOptions.gatedImages} is omitted. Deliberately mixes a `visible`
- * entry (full moderated projection incl. url) with a `hidden` one (NO url) so a
- * block's blurred/placeholder path is exercised out of the box.
+ * {@link MockHostOptions.gatedImages} is omitted. Deliberately mixes ALL THREE
+ * shapes a block must render — a rated `visible` entry (full moderated
+ * projection incl. url), a `hidden` one (NO url), and the author's own
+ * not-yet-rated `visible` entry (`ratingPending`, url, NO rating) — so both the
+ * blurred/placeholder path and the "still processing" path are exercised out of
+ * the box.
+ *
+ * 🔴 THE THIRD ENTRY IS HERE BECAUSE ITS ABSENCE IS WHAT CAUSED THE BUG. A block
+ * developed against a mock that only ever produced rated `visible` cells reads
+ * `nsfwLevel` unconditionally, ships, and then renders its own author's
+ * freshly-published image as a maturity claim. The mock defaults are the
+ * fidelity gap where that happens.
  */
 const DEFAULT_GATED_IMAGES: BlockGatedImage[] = [
   {
@@ -1172,6 +1181,14 @@ const DEFAULT_GATED_IMAGES: BlockGatedImage[] = [
   {
     imageId: 9002,
     status: 'hidden',
+  },
+  {
+    imageId: 9003,
+    status: 'visible',
+    ratingPending: true,
+    url: 'https://image.civitai.com/mock/original=true/gated-9003.jpeg',
+    width: 1024,
+    height: 1024,
   },
 ];
 
