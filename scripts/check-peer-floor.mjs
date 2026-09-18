@@ -117,7 +117,9 @@ const CONTROL_SYMBOL = '__ThisSymbolDoesNotExist__';
  * the same package-local-then-root-then-PATH walk — but NOT the same candidate
  * list: that one looks in `civitai-app-sdk`, this one must look in
  * `civitai-blocks-react` first, because that is the package whose peer surface
- * is under test and the one that has a tsc.
+ * is under test. (Both packages declare typescript, so this is about which one
+ * is under test, NOT about which one has a tsc — candidate #2 is a real
+ * fallback, not dead code.)
  */
 export function tscBin() {
   for (const candidate of [
@@ -189,7 +191,7 @@ export function importedSymbols(srcDir = join(PKG_DIR, 'src')) {
   // or `import * as SDK from '<peer>/x'` is invisible — the same silent
   // blindness the bare-import case had.
   const star = new RegExp(
-    `(?:export\\s*\\*|import\\s*\\*\\s*as\\s+[A-Za-z_$][\\w$]*)\\s*from\\s*['"](${PEER}[^'"]*)['"]`,
+    `(?:export\\s*\\*(?:\\s*as\\s+[A-Za-z_$][\\w$]*)?|import\\s*\\*\\s*as\\s+[A-Za-z_$][\\w$]*)\\s*from\\s*['"](${PEER}[^'"]*)['"]`,
     'g',
   );
 
@@ -368,11 +370,18 @@ function probeAt(version, bySubpath, dir) {
 
   // An UNRESOLVABLE SUBPATH is a real finding about the version — it reports
   // TS2307 rather than "has no exported member".
+  // 🔴 FILTER TO OUR OWN SUBPATHS. `Cannot find module` fires for anything the
+  // probe's dependency graph cannot resolve — including app-sdk's OWN optional
+  // peer, which npm does not install here. An unfiltered list reported a foreign
+  // specifier as "a symbol blocks-react imports", and worse, let it count toward
+  // the control waiver below, so one foreign entry plus one genuinely-missing
+  // subpath could waive the control while a third subpath still resolved and
+  // should have carried it.
   const unresolved = [
     ...new Set(
       [...output.matchAll(/Cannot find module '([^']+)'/g)].map((m) => m[1]),
     ),
-  ];
+  ].filter((spec) => bySubpath.has(spec));
 
   const missing = [
     ...output.matchAll(/has no exported member '([^']+)'/g),
@@ -382,22 +391,44 @@ function probeAt(version, bySubpath, dir) {
     ),
   ].map((m) => m[1]);
 
-  // 🔴 THE CONTROL IS REQUIRED UNLESS EVERY SUBPATH FAILED TO RESOLVE.
+  // 🔴 A TOTAL RESOLUTION FAILURE IS A HARNESS VERDICT, NOT A FLOOR VERDICT.
   //
-  // The control symbol rides one probe file per subpath. A subpath that does not
-  // resolve suppresses its own file's diagnostics, including the control's — so
-  // demanding the control unconditionally would misreport a genuine "this
-  // version lacks that subpath" as a broken harness. An EARLIER fix for that
-  // returned early on any unresolved subpath, which was worse in two ways,
-  // both measured: it DISCARDED the real missing symbols found in the files that
-  // did resolve (breaking this header's promise that the message names them),
-  // and when NOTHING resolved it skipped the control entirely and printed
-  // "THE DECLARED FLOOR IS TOO LOW" — advice that cannot fix a broken harness.
+  // The control symbol rides one probe file per subpath, so a subpath that does
+  // not resolve suppresses its own file's diagnostics, the control's included.
+  // Round 1 handled that by returning early on ANY unresolved subpath, which
+  // discarded the real findings from the files that DID resolve. Round 2 waived
+  // the control when every subpath was unresolved and returned them as findings
+  // — which routed straight into the floor-too-low message and told the reader
+  // to raise the floor. That is advice that cannot fix the realistic cause.
   //
-  // So: the control is waived only when every subpath is unresolved, which is
-  // the one case where no probe file could have reported it.
-  const allSubpathsUnresolved = unresolved.length >= bySubpath.size;
-  if (!missing.includes(CONTROL_SYMBOL) && !allSubpathsUnresolved) {
+  // The realistic cause is not a version fact. `tscBin()` falls through to a
+  // PATH tsc on a checkout with no `pnpm install`, and both `moduleResolution:
+  // Bundler` and `verbatimModuleSyntax` need tsc >= 5.0 — an older one cannot
+  // resolve ANY subpath, so every probe file reports TS2307 at once. Verifying
+  // the install above rules out a missing package; it says nothing about tsc.
+  //
+  // So when nothing resolved, refuse with the harness in the message.
+  if (unresolved.length >= bySubpath.size && bySubpath.size > 0) {
+    let tscVersion = 'unknown';
+    try {
+      tscVersion = execFileSync(tsc, ['--version'], {
+        encoding: 'utf8',
+      }).trim();
+    } catch {
+      tscVersion = 'could not be determined';
+    }
+    bail(
+      `NOT ONE subpath resolved at ${PEER}@${version}, so this run measured nothing about the\n` +
+        `  floor. That is a harness state, not a version fact — do not raise the floor.\n\n` +
+        `  tsc used : ${tsc}\n` +
+        `  version  : ${tscVersion}\n\n` +
+        `  This probe needs tsc >= 5.0 (\`moduleResolution: Bundler\` and \`verbatimModuleSyntax\`).\n` +
+        `  The usual cause is a checkout with no \`pnpm install\`, which makes tscBin() fall\n` +
+        `  through to whatever tsc is on PATH.\n\n${output}`,
+    );
+  }
+
+  if (!missing.includes(CONTROL_SYMBOL)) {
     bail(
       `the synthetic control symbol did not report at ${PEER}@${version}. The probe is not ` +
         `type-checking anything, so its verdict is about the harness, not the package.\n\n${output}`,
@@ -533,7 +564,11 @@ const invokedDirectly = (() => {
       realpathSync(process.argv[1])
     );
   } catch {
-    return false;
+    // FAIL CLOSED. If the paths cannot be compared, RUN the check: a spurious
+    // run costs two installs, while a spurious skip is the silent exit-0 this
+    // guard exists to prevent, and the comment above states that invariant
+    // unconditionally.
+    return true;
   }
 })();
 if (invokedDirectly) {

@@ -128,6 +128,35 @@ describe('importedSymbols', () => {
     }
   });
 
+  test('🔴 registers a SUBPATH reached only by a STAR form — all three spellings', () => {
+    // A star form carries no symbol names to check, but the subpath still has to
+    // RESOLVE, and registering it is what gets it installed and probed.
+    //
+    // `export * as NS from` is here because it was the one this regex missed:
+    // the first draft matched `export *` only when `from` followed immediately,
+    // so the `as NS` spelling was silently invisible — a coverage gap inside the
+    // hunk written to close coverage gaps.
+    const dir = fixtureSrc({
+      'a.ts': `export * from '${PEER}/star-export';\n`,
+      'b.ts': `import * as SDK from '${PEER}/star-import';\n`,
+      'c.ts': `export * as NS from '${PEER}/star-export-as';\n`,
+    });
+    try {
+      const got = importedSymbols(dir);
+      for (const sub of ['star-export', 'star-import', 'star-export-as']) {
+        assert.ok(
+          got.has(`${PEER}/${sub}`),
+          `star form for ${sub} was not registered`,
+        );
+      }
+      // It registers the subpath, and contributes NO symbol names.
+      assert.equal(got.get(`${PEER}/star-export`).value.size, 0);
+      assert.equal(got.get(`${PEER}/star-export`).type.size, 0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('🔴 registers a SUBPATH reached only by a bare side-effect import', () => {
     // It names no symbols but still has to resolve. Without this the subpath is
     // never installed, never resolved and never checked at any version.
