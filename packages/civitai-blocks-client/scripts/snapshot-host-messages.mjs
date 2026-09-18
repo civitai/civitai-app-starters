@@ -1,0 +1,52 @@
+// Snapshots the host's handler inventory so the parity guard can run without the
+// civitai repo. Maintainer step, not CI: node scripts/snapshot-host-messages.mjs [path]
+import { execFileSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+
+const DEFAULT_SOURCE = resolve(
+  process.cwd(),
+  '../../../../civitai/repo/src/components/AppBlocks/hostHandlerParity.ts',
+);
+const OUT = 'snapshots/host-messages.json';
+
+const source = resolve(process.argv[2] ?? DEFAULT_SOURCE);
+const text = readFileSync(source, 'utf8');
+
+const messages = {};
+const entry = /^ {2}([A-Z_]+): \{\n([\s\S]*?)^ {2}\},$/gm;
+for (const [, name, body] of text.matchAll(entry)) {
+  messages[name] = {
+    request: /request: true/.test(body),
+    reply: body.match(/reply: '([^']*)'/)?.[1] ?? '',
+  };
+}
+
+if (Object.keys(messages).length === 0) {
+  throw new Error(`no INVENTORY entries parsed from ${source} — the shape changed`);
+}
+
+let capturedFrom = 'unknown';
+try {
+  capturedFrom = execFileSync('git', ['-C', dirname(source), 'rev-parse', '--short', 'HEAD'], {
+    encoding: 'utf8',
+  }).trim();
+} catch {
+  // A source tree without git still snapshots; provenance is best-effort.
+}
+
+writeFileSync(
+  OUT,
+  `${JSON.stringify(
+    {
+      source: 'civitai/civitai src/components/AppBlocks/hostHandlerParity.ts',
+      capturedFrom,
+      capturedAt: new Date().toISOString().slice(0, 10),
+      messages: Object.fromEntries(Object.entries(messages).sort(([a], [b]) => a.localeCompare(b))),
+    },
+    null,
+    2,
+  )}\n`,
+);
+
+console.log(`Wrote ${OUT} — ${Object.keys(messages).length} messages from ${capturedFrom}`);

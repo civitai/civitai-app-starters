@@ -249,6 +249,15 @@ review rather than as a surprise in a release.
 `@civitai/blocks-react`, and which parts of the host bridge are not ported —
 each with the reasoning and whether the decision is open.
 
+## Host parity
+
+`snapshots/host-messages.json` is a committed capture of the host's own handler
+inventory, and a guard checks every message this package sends against it — so a
+message the host does not answer fails a test here rather than hanging a block
+in production. Refresh it with `npm run snapshot:host` from a checkout of
+civitai/civitai; it is a maintainer step, never CI, since the host repo is not
+present there.
+
 ## Subpaths
 
 | Import | Contains |

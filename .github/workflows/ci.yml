@@ -97,11 +97,10 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - run: pnpm --filter @civitai/app-sdk build
-
       - run: pnpm --filter @civitai/blocks-client typecheck
       - run: pnpm --filter @civitai/blocks-client api:check
       - run: pnpm --filter @civitai/blocks-client check:layering
+      - run: pnpm --filter @civitai/blocks-client check:parity
       - run: pnpm --filter @civitai/blocks-client test
       - run: pnpm --filter @civitai/blocks-client build
 

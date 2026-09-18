@@ -86,3 +86,10 @@ four messages the transport acts on, and the fragment parsing — so
 move without waiting on another package's release. `blockId` and `appId` are
 not declared: the host must keep sending them, but they are build-time identity
 a block reads from its own manifest.
+
+A parity guard replaces the compiler that owning the handshake gave up: every
+message this package sends is checked against a committed snapshot of the host's
+own handler inventory, so a rename on either side fails a test instead of
+hanging a block with no error and no network call. The snapshot also records
+which messages the host does not answer yet — the `BUZZ_*` and `ORCHESTRATION_*`
+set — and fails the day it does, which is the prompt to delete the entry.

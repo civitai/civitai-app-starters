@@ -7,6 +7,16 @@ entry marked **undecided** is a thing we have looked at and not yet chosen.
 
 Keep this current when a domain lands or a decision is taken.
 
+## How this file stays honest
+
+`npm run check:parity` checks every message this package sends against
+`snapshots/host-messages.json` — a committed capture of the host's own
+`hostHandlerParity.ts`, refreshed with `npm run snapshot:host` from a checkout of
+civitai/civitai. It fails when we send something no host handler answers, when a
+legacy reply is expected under the wrong name, and when the host implements one
+of the messages listed below as awaiting it. Dropping `@civitai/app-sdk` removed
+the compiler from that job; this is what replaces it.
+
 ## Behaviour that changed for things that *are* ported
 
 | What | Before | Now | Why |

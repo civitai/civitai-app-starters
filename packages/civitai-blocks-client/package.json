@@ -27,6 +27,8 @@
     "api": "node scripts/api-report.mjs",
     "api:check": "node scripts/api-report.mjs --check",
     "check:layering": "node scripts/check-layering.mjs",
+    "check:parity": "node scripts/check-host-parity.mjs",
+    "snapshot:host": "node scripts/snapshot-host-messages.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest"
