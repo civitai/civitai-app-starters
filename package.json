@@ -71,6 +71,7 @@
     "overrides": {
       "@civitai/app-sdk": "workspace:*",
       "@civitai/blocks-react": "workspace:*",
+      "@civitai/blocks-client": "workspace:*",
       "@civitai/components": "workspace:*",
       "@civitai/components-react": "workspace:*",
       "@civitai/theme": "workspace:*",

@@ -82,6 +82,30 @@ jobs:
 
       - run: node scripts/check-orchestrator-catalogs.mjs
 
+  blocks-client:
+    name: blocks-client (typecheck + test + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm --filter @civitai/app-sdk build
+
+      - run: pnpm --filter @civitai/blocks-client typecheck
+      - run: pnpm --filter @civitai/blocks-client api:check
+      - run: pnpm --filter @civitai/blocks-client check:layering
+      - run: pnpm --filter @civitai/blocks-client test
+      - run: pnpm --filter @civitai/blocks-client build
+
+
   blocks-react:
     name: blocks-react (typecheck + test + build)
     runs-on: ubuntu-latest
