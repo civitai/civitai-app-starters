@@ -62,6 +62,39 @@ env:
   NODE_VERSION: '24'
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Sibling job: the blocks-react peer FLOOR, checked against the real registry.
+  #
+  # Same reason this whole workflow exists, one level down. `pnpm.overrides` maps
+  # `@civitai/app-sdk` to the workspace copy, so ci.yml's
+  # `blocks-react (typecheck + test + build)` job type-checks against whatever is
+  # in-tree and is STRUCTURALLY BLIND to the declared peer range — the range can
+  # say anything and that job stays green. That blindness IS the #309 defect:
+  # `>=0.29.0` was declared while symbols from 0.40.0 were imported, no install
+  # warned, and a consumer discovered it as 27 of 43 test files collecting zero
+  # tests with the summary line reporting no failures.
+  #
+  # 🔴 ADVISORY, AND FOR THE SAME REASON AS `smoke` — it installs from the public
+  # registry, so do NOT make it a required check.
+  #
+  # It needs a pnpm install (it runs the workspace's own tsc), which is why it is
+  # a SEPARATE job rather than a step in `smoke` — that job's "no pnpm here ON
+  # PURPOSE" comment is load-bearing and must not be undone from underneath it.
+  peer-floor:
+    name: blocks-react peer floor (advisory — do NOT require)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Derive and verify the peer floor
+        run: pnpm check:peer-floor
+
   smoke:
     name: Published-starter smoke (advisory — do NOT require)
     runs-on: ubuntu-latest
