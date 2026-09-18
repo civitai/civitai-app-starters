@@ -1,11 +1,9 @@
 import {
-  isMessage,
+  isHostMessage,
   parseBlockInitFragment,
   stripBlockInitFragment,
-  type BlockToParentMessage,
-  type ParentToBlockMessage,
   type WrappedToken,
-} from '@civitai/app-sdk/blocks';
+} from '../handshake.js';
 
 import {
   EMPTY_SNAPSHOT,
@@ -249,7 +247,7 @@ export class IframeTransport implements BlockTransport {
     const targets = this.#exactAllowedOrigins.length > 0 ? this.#exactAllowedOrigins : ['*'];
     for (const target of targets) {
       try {
-        parent.postMessage({ type: 'BLOCK_HELLO' } satisfies BlockToParentMessage, target);
+        parent.postMessage({ type: 'BLOCK_HELLO' }, target);
       } catch {
         // An unreachable/mismatched target throws nothing in practice; guard
         // anyway so one bad allowlist entry can't abort the remaining posts.
@@ -339,7 +337,7 @@ export class IframeTransport implements BlockTransport {
     const data = event.data as { type?: unknown; payload?: unknown };
     if (data == null || typeof data !== 'object' || typeof data.type !== 'string') return;
 
-    if (isMessage<ParentToBlockMessage, 'BLOCK_INIT'>(data, 'BLOCK_INIT')) {
+    if (isHostMessage(data, 'BLOCK_INIT')) {
       if (!this.#initResolved) {
         // Build before latching: a throw here must leave the transport exactly as
         // it was, so the host's re-post can still heal it.
@@ -357,14 +355,14 @@ export class IframeTransport implements BlockTransport {
 
     // Host-pushed token rotation (no requestId). Always apply to the
     // snapshot; never matches a pending request.
-    if (isMessage<ParentToBlockMessage, 'TOKEN_REFRESH'>(data, 'TOKEN_REFRESH')) {
+    if (isHostMessage(data, 'TOKEN_REFRESH')) {
       this.#applyTokenRefresh(data.payload.token);
       return;
     }
 
     // Not gated on init: a pre-init push is still the freshest value, and it
     // cannot half-init anything because BLOCK_INIT replaces the snapshot wholesale.
-    if (isMessage<ParentToBlockMessage, 'THEME_CHANGE'>(data, 'THEME_CHANGE')) {
+    if (isHostMessage(data, 'THEME_CHANGE')) {
       this.#applyThemeChange(data.payload.theme);
       return;
     }
@@ -385,7 +383,7 @@ export class IframeTransport implements BlockTransport {
 
     // Applies whether or not a requestId matched — the host may answer unsolicited.
     // Before resolving, so awaiting code sees the new token.
-    if (isMessage<ParentToBlockMessage, 'TOKEN_REFRESH_RESPONSE'>(data, 'TOKEN_REFRESH_RESPONSE')) {
+    if (isHostMessage(data, 'TOKEN_REFRESH_RESPONSE')) {
       this.#applyTokenRefresh(data.payload.token);
     }
 

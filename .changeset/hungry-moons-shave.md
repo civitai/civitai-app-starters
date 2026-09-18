@@ -6,8 +6,8 @@ Add `@civitai/blocks-client` — the host bridge for apps that are not React.
 
 The postMessage transport and its origin validation previously existed only
 inside `@civitai/blocks-react`, so a vanilla, Svelte or Vue app had to take a
-React dependency to reach them. This package stands alone with `@civitai/app-sdk`
-as its only peer. `@civitai/blocks-react` is unchanged.
+React dependency to reach them. This package stands alone: no peer at all,
+and `@civitai/orchestration-client` as its one dependency. `@civitai/blocks-react` is unchanged.
 
 The API is grouped by domain and reads `civitai.buzz.getBalance()`. Each call
 takes an `AbortSignal`, carries a per-message deadline, and throws `BridgeError`
@@ -79,3 +79,10 @@ block retries after an `await` instead of wiring a listener to a push that
 carries no correlation id. It also exposed that reply names are not derivable
 across the older messages — `GET_VIEWER` answers `VIEWER_RESULT` — so the ledger
 names each reply rather than deriving it.
+
+The handshake is owned here too, in `core/handshake.ts` — the init payload, the
+four messages the transport acts on, and the fragment parsing — so
+`@civitai/app-sdk` is no longer a dependency of any kind and the protocol can
+move without waiting on another package's release. `blockId` and `appId` are
+not declared: the host must keep sending them, but they are build-time identity
+a block reads from its own manifest.

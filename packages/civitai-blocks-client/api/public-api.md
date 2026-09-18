@@ -241,6 +241,91 @@ export interface BlockTransport {
      */
     on(type: string, handler: (payload: unknown) => void): () => void;
 }
+
+/**
+ * The host's side of the handshake, as it arrives on the wire. Owned here
+ * rather than imported so this package's protocol can move without waiting on
+ * `@civitai/app-sdk`; the shapes are the host's and must track it.
+ */
+export type Theme = 'light' | 'dark';
+
+/** Informational only — derive SFW from a browsing level, never from this. */
+export type ColorDomain = 'green' | 'blue' | 'red';
+
+export interface ViewerInfo {
+    signedIn?: true;
+    id: number;
+    username: string | null;
+    status?: 'active' | 'banned' | 'muted';
+}
+
+export type ModelSlotId = 'model.sidebar_top' | 'model.below_images' | 'model.actions_extra';
+
+export type PageSlotId = 'app.page';
+
+export interface ShowcaseImage {
+    id: number;
+    url: string;
+    width: number;
+    height: number;
+    prompt: string | null;
+    negativePrompt: string | null;
+    cfgScale: number | null;
+    steps: number | null;
+    seed: number | null;
+    sampler: string | null;
+    /** Per-resource CLIP layer skip count (SD1/SDXL). Flux ignores it. */
+    clipSkip: number | null;
+}
+
+export interface BlockCheckpointInfo {
+    versionId: number;
+    modelId: number;
+    modelName: string;
+    versionName: string;
+    baseModel: string;
+}
+
+export interface ModelSlotContext {
+    slotId: ModelSlotId;
+    modelId: number;
+    modelVersionId: number;
+    modelName: string;
+    modelType: string;
+    modelNsfwLevel: number;
+    theme?: Theme;
+    checkpoint?: BlockCheckpointInfo | null;
+    showcaseImages?: ShowcaseImage[];
+}
+
+export interface PageSlotContext {
+    slotId: PageSlotId;
+    entityType?: 'none';
+    slug: string;
+    subPath: string;
+    viewerUserId: number | null;
+    viewerUsername?: string | null;
+    theme?: Theme;
+}
+
+/** A slot this package does not know; `slotId` is all that is guaranteed. */
+export interface UnknownSlotContext {
+    slotId: string;
+}
+
+export type BlockContext = ModelSlotContext | PageSlotContext | UnknownSlotContext;
+
+export interface BlockSettings {
+    publisherSettings: Record<string, unknown>;
+    userSettings: Record<string, unknown>;
+}
+
+export interface BlockToken {
+    raw: string;
+    scopes: string[];
+    expiresAt: Date;
+    buzzBudget?: number;
+}
 ```
 
 ## `@civitai/blocks-client/testing`

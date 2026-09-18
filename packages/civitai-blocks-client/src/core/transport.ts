@@ -7,7 +7,7 @@ import type {
   Theme,
   ViewerInfo,
   WrappedToken,
-} from '@civitai/app-sdk/blocks';
+} from './handshake.js';
 
 
 

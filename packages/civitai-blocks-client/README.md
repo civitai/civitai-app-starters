@@ -3,10 +3,11 @@
 The host bridge for Civitai Apps that are not React: vanilla web components,
 Svelte, Vue, Solid, or a plain `<script type="module">`. It speaks the
 `postMessage` protocol to the civitai.com host and exposes it as typed,
-promise-returning functions grouped by domain.
+promise-returning functions grouped by domain. Its only dependency is
+`@civitai/orchestration-client`, for the workflow types it carries verbatim.
 
 ```bash
-pnpm add @civitai/blocks-client @civitai/app-sdk
+pnpm add @civitai/blocks-client
 ```
 
 ## Usage
@@ -241,6 +242,12 @@ entry.
 file, generated from the compiler's own declarations by `npm run api`. CI runs
 `npm run api:check`, so widening or narrowing the surface shows up as a diff in
 review rather than as a surprise in a release.
+
+## What this does not carry
+
+[`BREAKING.md`](BREAKING.md) records what an app loses moving off
+`@civitai/blocks-react`, and which parts of the host bridge are not ported —
+each with the reasoning and whether the decision is open.
 
 ## Subpaths
 

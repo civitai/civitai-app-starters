@@ -1,5 +1,4 @@
-import type { BlockInitPayload } from '@civitai/app-sdk/blocks';
-
+import type { BlockInitPayload } from '../../src/core/handshake.js';
 import { IframeTransport } from '../../src/core/transports/iframe-transport.js';
 
 export const HOST = 'https://civitai.com';
@@ -39,8 +38,6 @@ export function mountTransport(allowedParentOrigins: string[] = [HOST]) {
 
 export const initPayload = (overrides: Partial<BlockInitPayload> = {}): BlockInitPayload => ({
   blockInstanceId: 'bi-1',
-  blockId: 'b-1',
-  appId: 'a-1',
   token: { raw: 'jwt', scopes: [], expiresAt: '2030-01-01T00:00:00.000Z' },
   context: { slotId: 'slot-1' },
   settings: { publisherSettings: {}, userSettings: {} },

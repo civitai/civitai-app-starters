@@ -16,3 +16,18 @@ export type { CallOptions, NotifyOptions } from './core/messaging.js';
 export type { Live } from './core/live.js';
 export type { DetectOptions } from './core/get-transport.js';
 export type { BlockSnapshot, BlockTransport, RequestOptions } from './core/transport.js';
+export type {
+  BlockCheckpointInfo,
+  BlockContext,
+  BlockSettings,
+  BlockToken,
+  ColorDomain,
+  ModelSlotContext,
+  ModelSlotId,
+  PageSlotContext,
+  PageSlotId,
+  ShowcaseImage,
+  Theme,
+  UnknownSlotContext,
+  ViewerInfo,
+} from './core/handshake.js';
