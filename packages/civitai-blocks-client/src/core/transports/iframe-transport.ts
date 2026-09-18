@@ -13,8 +13,10 @@ import {
   tokenFromWrapped,
   type BlockSnapshot,
   type BlockTransport,
+  type ReplyFraming,
+  type RequestOptions,
 } from '../transport.js';
-import { BridgeError, type BridgeFailureCode } from '../errors.js';
+import { BridgeError, classifyHostError, type BridgeFailureCode } from '../errors.js';
 import { OriginMatcher } from '../origin-matcher.js';
 
 /**
@@ -28,18 +30,46 @@ interface Envelope<T> {
   error?: { code: BridgeFailureCode; message: string };
 }
 
+/**
+ * The framing the host had before this package owned the protocol: fields
+ * straight in the payload, and failure as the server's own sentence. Converting
+ * it here is what keeps the rest of this file — and every domain — speaking one
+ * shape; when the host modernises a message, its domain drops the declaration
+ * and this stops being reached.
+ */
+function fromLegacyReply(reply: LegacyReply): Envelope<unknown> {
+  const { requestId, error, ...fields } = reply;
+  // An empty string is how the host spells "no failure" on these replies.
+  if (typeof error === 'string' && error !== '') {
+    return { requestId, error: { code: classifyHostError(error), message: error } };
+  }
+  return { requestId, result: fields };
+}
+
+interface LegacyReply {
+  requestId: string;
+  error?: string;
+  [field: string]: unknown;
+}
+
 function replyTypeFor(type: string): string {
   return `${type}_RESULT`;
 }
 
 /** Turns a reply into the value it carries, or the failure it reports. */
-function unwrap(type: string, reply: unknown): unknown {
-  const envelope = reply as Envelope<unknown> | undefined;
+function unwrap(type: string, reply: unknown, framing: ReplyFraming): unknown {
+  if (reply == null || typeof reply !== 'object') {
+    throw new BridgeError('malformed', type, `${type} replied with no payload`);
+  }
+  const envelope =
+    framing === 'legacy'
+      ? fromLegacyReply(reply as LegacyReply)
+      : (reply as Envelope<unknown>);
 
-  if (envelope?.error !== undefined) {
+  if (envelope.error !== undefined) {
     throw new BridgeError(envelope.error.code, type, envelope.error.message || `${type} failed`);
   }
-  if (envelope?.result === undefined) {
+  if (envelope.result === undefined) {
     throw new BridgeError('malformed', type, `${type} reply carried no result`);
   }
   return envelope.result;
@@ -215,26 +245,16 @@ export class IframeTransport implements BlockTransport {
     this.#dispatch(message.type, message.payload);
   }
 
-  async request(
-    type: string,
-    params: unknown,
-    opts: { signal?: AbortSignal } = {},
-  ): Promise<unknown> {
-    return unwrap(type, await this.#exchange(type, params, opts));
+  async request(type: string, params: unknown, opts: RequestOptions = {}): Promise<unknown> {
+    return unwrap(type, await this.#exchange(type, params, opts), opts.replies ?? 'envelope');
   }
 
-  #exchange(
-    type: string,
-    params: unknown,
-    opts: { signal?: AbortSignal },
-  ): Promise<unknown> {
+  #exchange(type: string, params: unknown, opts: RequestOptions): Promise<unknown> {
     const responseType = replyTypeFor(type);
     const { signal } = opts;
     if (signal?.aborted) return Promise.reject(signal.reason);
 
     const requestId = nextRequestId();
-    // The reply name is derived once, in `envelope.ts`; at runtime the same
-    // pairing is enforced by matching `responseType` on arrival.
     return new Promise<unknown>((resolve, reject) => {
       const onAbort = () => {
         if (this.#pending.delete(requestId)) reject(signal!.reason);

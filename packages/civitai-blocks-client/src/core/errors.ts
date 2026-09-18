@@ -17,7 +17,7 @@ export type BridgeErrorCode =
 
 export class BridgeError extends Error {
   readonly code: BridgeErrorCode;
-  /** The message type that failed, e.g. `GET_BUZZ_BALANCE`. */
+  /** The message type that failed, e.g. `APP_STORAGE_GET`. */
   readonly operation: string;
 
   constructor(code: BridgeErrorCode, operation: string, message: string, options?: ErrorOptions) {
@@ -28,3 +28,19 @@ export class BridgeError extends Error {
   }
 }
 
+/**
+ * The messages this bridge already had report failure as the server's own
+ * sentence — the host holds the tRPC code and drops it. Unmatched text is
+ * `unavailable`; `message` still carries what the host said.
+ */
+const HOST_FAILURES: ReadonlyArray<readonly [RegExp, BridgeFailureCode]> = [
+  [/authenticated viewer/i, 'unauthenticated'],
+  [/requires the .+ scope|not approved|revoked|invalid block token|not enabled|review preview/i, 'forbidden'],
+  [/quota exceeded|row limit exceeded|exceeds \d+KB cap/i, 'insufficient'],
+  [/rate limit/i, 'rate-limited'],
+];
+
+export function classifyHostError(message: string): BridgeFailureCode {
+  for (const [pattern, code] of HOST_FAILURES) if (pattern.test(message)) return code;
+  return 'unavailable';
+}

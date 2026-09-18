@@ -76,9 +76,35 @@ export declare function watchWorkflow(workflowId: string, opts?: CallOptions): A
  */
 export declare function runWorkflow(workflow: WorkflowTemplate, opts: SubmitOptions): Promise<Workflow>;
 
+// namespace: storage
+/**
+ * A stored value, or `null` when the key is unset — which is also what an
+ * anonymous viewer reads, since the store is keyed by viewer. `T` is your
+ * assertion about what you wrote; nothing validates it.
+ */
+export declare function get<T = unknown>(key: string, opts?: CallOptions): Promise<T | null>;
+
+/**
+ * Writes a JSON value. A value is capped at 64KB and the viewer's store at 2MB
+ * per app; either ceiling fails as `insufficient`, without saying which.
+ */
+export declare function set(key: string, value: unknown, opts?: CallOptions): Promise<void>;
+
+/** Removes a key, answering `false` when it was already absent. */
+export declare function remove(key: string, opts?: CallOptions): Promise<boolean>;
+
+/**
+ * The viewer's keys in this app, ascending, fetching the next page only as you
+ * read into it. `break` stops fetching; the cursor stays inside.
+ */
+export declare function list(query?: StorageQuery, opts?: CallOptions): AsyncGenerator<StorageEntry>;
+
+/** What the viewer has used of their own allowance in this app. */
+export declare function getQuota(opts?: CallOptions): Promise<StorageQuota>;
+
 export declare class BridgeError extends Error {
     readonly code: BridgeErrorCode;
-    /** The message type that failed, e.g. `GET_BUZZ_BALANCE`. */
+    /** The message type that failed, e.g. `APP_STORAGE_GET`. */
     readonly operation: string;
     constructor(code: BridgeErrorCode, operation: string, message: string, options?: ErrorOptions);
 }
@@ -160,6 +186,18 @@ export interface BlockSnapshot {
     effectiveBrowsingLevel?: number;
 }
 
+/**
+ * How a message answers. `legacy` is the framing the host had before this
+ * package owned the protocol; it is declared per message by the domain that
+ * still speaks it, and the transport converts it to the other one.
+ */
+export type ReplyFraming = 'envelope' | 'legacy';
+
+export interface RequestOptions {
+    signal?: AbortSignal;
+    replies?: ReplyFraming;
+}
+
 export interface BlockTransport {
     /** Read synchronously at render time; `subscribe` fires on every change. */
     readonly snapshot: {
@@ -173,9 +211,7 @@ export interface BlockTransport {
      * failure it reported, the signal's `reason` if the caller aborts. Framing —
      * correlation ids, envelopes — is this layer's business, not a caller's.
      */
-    request(type: string, params: unknown, opts?: {
-        signal?: AbortSignal;
-    }): Promise<unknown>;
+    request(type: string, params: unknown, opts?: RequestOptions): Promise<unknown>;
     /**
      * Unsolicited host pushes, already origin-checked — a caller never needs its
      * own window listener.
@@ -193,6 +229,12 @@ export interface FakeTransport extends BlockTransport {
         type: string;
         payload: unknown;
     }[];
+    /**
+     * Answer every request of this type from its params. Throw from the handler
+     * to fail the call. A queued `reply`/`fail` is used first, so one call can
+     * depart from the standing answer.
+     */
+    handle(type: string, handler: (params: unknown) => unknown): void;
     /** Answer the next request of this type with the value it resolves to. */
     reply(type: string, result: unknown): void;
     /** Answer the next request of this type with a failure the host classified. */

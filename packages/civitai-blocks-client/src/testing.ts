@@ -6,6 +6,12 @@ export { __resetTransport } from './core/get-transport.js';
 export interface FakeTransport extends BlockTransport {
   /** Every request sent, in order. */
   readonly sent: { type: string; payload: unknown }[];
+  /**
+   * Answer every request of this type from its params. Throw from the handler
+   * to fail the call. A queued `reply`/`fail` is used first, so one call can
+   * depart from the standing answer.
+   */
+  handle(type: string, handler: (params: unknown) => unknown): void;
   /** Answer the next request of this type with the value it resolves to. */
   reply(type: string, result: unknown): void;
   /** Answer the next request of this type with a failure the host classified. */
@@ -34,6 +40,7 @@ export function createFakeTransport(snapshot: Partial<BlockSnapshot> = {}): Fake
   const queued = new Map<string, unknown[]>();
   const stalled = new Set<string>();
   const pending = new Map<string, ((payload: unknown) => void)[]>();
+  const handlers = new Map<string, (params: unknown) => unknown>();
   const pushListeners = new Map<string, Set<(payload: unknown) => void>>();
 
   const emit = () => {
@@ -70,11 +77,17 @@ export function createFakeTransport(snapshot: Partial<BlockSnapshot> = {}): Fake
       const responseType = type;
       const { signal } = opts;
       if (signal?.aborted) return Promise.reject(signal.reason);
-      const ready = stalled.has(responseType) ? undefined : queued.get(responseType);
+      if (stalled.has(responseType)) {
+        return new Promise<never>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+        });
+      }
+      const ready = queued.get(responseType);
       if (ready?.length) return settle(ready.shift());
+      const standing = handlers.get(responseType);
+      if (standing) return (async () => standing(params))() as Promise<never>;
       return new Promise<never>((resolve, reject) => {
         signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
-        if (stalled.has(responseType)) return;
         const waiting = pending.get(responseType) ?? [];
         waiting.push((outcome) => {
           if (outcome instanceof BridgeError) reject(outcome);
@@ -91,6 +104,9 @@ export function createFakeTransport(snapshot: Partial<BlockSnapshot> = {}): Fake
     },
     push(type, payload) {
       for (const handler of [...(pushListeners.get(type) ?? [])]) handler(payload);
+    },
+    handle(type, handler) {
+      handlers.set(type, handler);
     },
     reply(type, result) {
       answer(type, result);

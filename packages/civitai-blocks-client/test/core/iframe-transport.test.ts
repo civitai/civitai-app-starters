@@ -1,60 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { BlockInitPayload } from '@civitai/app-sdk/blocks';
 
-import { IframeTransport } from '../../src/core/transports/iframe-transport.js';
-
-const HOST = 'https://civitai.com';
-
-interface Posted {
-  msg: { type: string; payload?: unknown };
-  origin: string;
-}
-
-function mountTransport(allowedParentOrigins: string[] = [HOST]) {
-  const listeners = new Set<(event: MessageEvent) => void>();
-  const posted: Posted[] = [];
-  const win = {
-    parent: { postMessage: (msg: Posted['msg'], origin: string) => posted.push({ msg, origin }) },
-    location: { hash: '', pathname: '/', search: '' },
-    history: { state: null, replaceState: () => {} },
-    addEventListener: (type: string, fn: (event: MessageEvent) => void) => {
-      if (type === 'message') listeners.add(fn);
-    },
-    removeEventListener: (_type: string, fn: (event: MessageEvent) => void) => {
-      listeners.delete(fn);
-    },
-  };
-
-  const transport = new IframeTransport({
-    allowedParentOrigins,
-    window: win as unknown as Window,
-  });
-
-  const deliver = (data: unknown, origin = HOST) => {
-    for (const fn of [...listeners]) fn({ data, origin } as MessageEvent);
-  };
-  const sentTypes = () => posted.map((p) => p.msg.type);
-
-  return { transport, posted, deliver, sentTypes };
-}
-
-const initPayload = (overrides: Partial<BlockInitPayload> = {}): BlockInitPayload => ({
-  blockInstanceId: 'bi-1',
-  blockId: 'b-1',
-  appId: 'a-1',
-  token: { raw: 'jwt', scopes: [], expiresAt: '2030-01-01T00:00:00.000Z' },
-  context: { slotId: 'slot-1' },
-  settings: { publisherSettings: {}, userSettings: {} },
-  viewer: null,
-  theme: 'light',
-  renderMode: 'iframe',
-  ...overrides,
-});
-
-const init = (overrides?: Partial<BlockInitPayload>) => ({
-  type: 'BLOCK_INIT',
-  payload: initPayload(overrides),
-});
+import { HOST, init, mountTransport } from '../support/iframe-host.js';
 
 describe('IframeTransport handshake', () => {
   it('announces itself to each exact allowed origin', () => {
@@ -217,5 +163,38 @@ describe('IframeTransport pushes', () => {
     deliver({ type: 'USER_CHECKPOINT_SET', payload: { checkpoint: 'b' } });
 
     expect(seen).toEqual([{ checkpoint: 'a' }]);
+  });
+});
+
+describe('IframeTransport legacy replies', () => {
+  const exchange = (type: string, reply: (requestId: string) => unknown) => {
+    const { transport, posted, deliver } = mountTransport();
+    deliver(init());
+    const pending = transport.request(type, {}, { replies: 'legacy' });
+    const { requestId } = (posted.at(-1)!.msg as { payload: { requestId: string } }).payload;
+    deliver({ type: `${type}_RESULT`, payload: { requestId, ...(reply(requestId) as object) } });
+    return pending;
+  };
+
+  it('answers a reply that carries its fields directly', async () => {
+    await expect(exchange('APP_STORAGE_GET', () => ({ value: { theme: 'neon' } }))).resolves.toEqual({
+      value: { theme: 'neon' },
+    });
+  });
+
+  it('classifies a failure the host reported as prose', async () => {
+    await expect(
+      exchange('APP_STORAGE_SET', () => ({ error: 'per-user storage quota exceeded' })),
+    ).rejects.toMatchObject({
+      code: 'insufficient',
+      operation: 'APP_STORAGE_SET',
+      message: 'per-user storage quota exceeded',
+    });
+  });
+
+  it('reads an empty error as no failure at all', async () => {
+    await expect(exchange('APP_STORAGE_LIST', () => ({ keys: [], error: '' }))).resolves.toEqual({
+      keys: [],
+    });
   });
 });

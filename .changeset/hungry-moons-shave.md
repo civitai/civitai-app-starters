@@ -50,3 +50,22 @@ that pages the ledger as you read it, so the cursor never reaches a caller —
 which matters, because the host returns that cursor as a `Date` while declaring
 it a `string`. Each row's `date` is normalised to the ISO string its type
 declares for the same reason.
+
+`storage` is the per-viewer key/value store, and the one domain that needs
+nothing new from the host: it carries the existing `APP_STORAGE_*` messages
+unchanged, so `get`, `set`, `remove`, `list` and `getQuota` work against
+production today. Those replies put their fields straight in the payload and
+report failure as the server's own sentence, so the transport converts that
+framing into this one — `fromLegacyReply`, reached only for messages a domain
+names in `legacyReplies`, classifying the host's text into the same `code`
+everything else here throws. That list is the migration ledger: a name leaves it
+the day the host modernises the reply, and nothing else in the domain moves. There is deliberately no `localStorage` fallback: the host
+grants `allow-same-origin` only to verified apps, so for everyone else reading
+that property throws rather than returning empty — and silently degrading a
+signed-in viewer's saved work to one device is worse than an error.
+
+`createFakeTransport()` gains `handle(type, fn)`: a standing answer computed from
+the request, rather than a queued one consumed per call. A test says what the
+host does — `({ key }) => ({ value: store.get(key) ?? null })` — instead of
+lining up one reply per expected call. The one-shot `reply`/`fail` remain and are
+taken first, so a sequence or a single exception to the rule still reads well.

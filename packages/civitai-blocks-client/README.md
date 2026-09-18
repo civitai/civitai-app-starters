@@ -98,6 +98,39 @@ A read that fails for transport reasons is retried three times, waiting 250ms,
 be hammered. Any successful read resets that. An `AbortSignal` you abort ends
 the loop at once rather than waiting out a backoff.
 
+## App storage
+
+`storage` is a per-viewer, per-install key/value store the host keeps server-side
+— not a wrapper over `localStorage`:
+
+```ts
+await civitai.storage.set('draft/42', { prompt, seed });
+const draft = await civitai.storage.get<Draft>('draft/42');   // null when unset
+
+for await (const { key, updatedAt } of civitai.storage.list({ prefix: 'draft/' })) {
+  render(key, updatedAt);
+}
+```
+
+It is deliberately not a `localStorage` fallback, because the two are not
+interchangeable. In the iframe `localStorage` is usually not *available*: the
+host grants `allow-same-origin` only to verified and internal apps, so for
+everyone else the document has an opaque origin and merely reading the property
+throws. Where it does work it is one browser on one device. This store follows
+the viewer, and a value written here is read back after they switch machines.
+
+The trade is that it needs a signed-in viewer — an anonymous one reads `null`
+from every key — and every call is a round-trip, so it is for state worth
+keeping, not for which panel is open.
+
+Values are JSON, capped at 64KB each, with 2MB and a million rows per viewer per
+app. `getQuota()` reports usage against those ceilings; exceeding either fails as
+`insufficient`. `remove(key)` answers whether a row actually went. `list()` is an
+async generator that pages as you read it, ascending by key.
+
+Keys are scoped to the **install**, not the app: the same app placed on a model
+page and as a full page does not share a store.
+
 ## Ledgers
 
 `listTransactions()` is an async generator over the viewer's ledger. It fetches the
@@ -145,7 +178,7 @@ Failures are thrown as `BridgeError`, with a `code` to branch on and the
 |---|---|
 | `forbidden` | The block's token lacks the scope. |
 | `unauthenticated` | No viewer is signed in. |
-| `insufficient` | Not enough Buzz. |
+| `insufficient` | Not enough of a metered resource — Buzz, or storage quota. |
 | `rate-limited` | Too many requests. |
 | `unavailable` | Upstream is down; retrying may work. |
 | `invalid` | The request was malformed. |
@@ -178,13 +211,26 @@ review rather than as a surprise in a release.
 
 | Import | Contains |
 |---|---|
-| `@civitai/blocks-client` | domain namespaces (`buzz`), `BridgeError`, `getTransport` |
+| `@civitai/blocks-client` | domain namespaces (`buzz`, `orchestration`, `storage`), `BridgeError`, `getTransport` |
 | `@civitai/blocks-client/testing` | `createFakeTransport`, `__resetTransport` |
 
-`createFakeTransport()` is an in-memory transport for testing a block against a
-scripted host: pass it as `{ transport }` to any call, then answer by request
-type with `reply(type, result)` or `fail(type, { code, message })`, `stall(type)`
-to answer nothing, and `push(type, payload)` for an unsolicited message.
+`createFakeTransport()` is an in-memory `BlockTransport` for testing a block
+against a scripted host — the interface with the boilerplate pre-written, so a
+hand-rolled object literal remains a perfectly good stub where that reads better.
+Pass it as `{ transport }` to any call, then script it by request type:
+
+```ts
+const t = createFakeTransport();
+t.handle('APP_STORAGE_GET', ({ key }) => ({ value: store.get(key) ?? null }));
+```
+
+`handle(type, fn)` stands until replaced and answers from the request, so a test
+states a rule rather than counting calls; throw from it to fail the call.
+`reply(type, result)` and `fail(type, { code, message })` answer one call and are
+used ahead of a standing handler, which is how a sequence — page one then page
+two — or a single departure from the rule is written. `stall(type)` answers
+nothing, for abort and deadline tests, and `push(type, payload)` delivers an
+unsolicited host message.
 
 ## License
 

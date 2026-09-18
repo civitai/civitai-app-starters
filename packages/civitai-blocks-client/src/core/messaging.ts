@@ -1,5 +1,5 @@
 import { getTransport } from './get-transport.js';
-import type { BlockTransport } from './transport.js';
+import type { BlockTransport, ReplyFraming } from './transport.js';
 
 export interface CallOptions {
   transport?: BlockTransport;
@@ -20,18 +20,32 @@ export type RequestMap = Record<string, { params: unknown; result: unknown }>;
 /** A domain's unsolicited messages: name → payload. */
 export type PushMap = Record<string, unknown>;
 
+export interface DomainOptions<R extends RequestMap> {
+  /**
+   * The messages the host still answers in its pre-protocol framing. Naming them
+   * is the migration ledger: a name leaves this list the day the host modernises
+   * that reply, and nothing else in the domain changes.
+   */
+  legacyReplies?: ReadonlyArray<keyof R & string>;
+}
+
 /**
  * The typed entry points for one domain. A domain declares its own maps and
  * calls these; nothing in `core` needs to know the domains exist.
  */
-export function createCaller<R extends RequestMap>() {
+export function createCaller<R extends RequestMap>(domain: DomainOptions<R> = {}) {
+  const legacy = new Set<string>(domain.legacyReplies ?? []);
   return async function call<K extends keyof R & string>(
     type: K,
     params: R[K]['params'],
     opts: CallOptions = {},
   ): Promise<R[K]['result']> {
     const transport = opts.transport ?? getTransport();
-    return (await transport.request(type, params, { signal: opts.signal })) as R[K]['result'];
+    const replies: ReplyFraming = legacy.has(type) ? 'legacy' : 'envelope';
+    return (await transport.request(type, params, {
+      signal: opts.signal,
+      replies,
+    })) as R[K]['result'];
   };
 }
 

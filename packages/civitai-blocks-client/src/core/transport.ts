@@ -42,6 +42,18 @@ export interface BlockSnapshot {
 }
 
 
+/**
+ * How a message answers. `legacy` is the framing the host had before this
+ * package owned the protocol; it is declared per message by the domain that
+ * still speaks it, and the transport converts it to the other one.
+ */
+export type ReplyFraming = 'envelope' | 'legacy';
+
+export interface RequestOptions {
+  signal?: AbortSignal;
+  replies?: ReplyFraming;
+}
+
 export interface BlockTransport {
   /** Read synchronously at render time; `subscribe` fires on every change. */
   readonly snapshot: {
@@ -55,7 +67,7 @@ export interface BlockTransport {
    * failure it reported, the signal's `reason` if the caller aborts. Framing —
    * correlation ids, envelopes — is this layer's business, not a caller's.
    */
-  request(type: string, params: unknown, opts?: { signal?: AbortSignal }): Promise<unknown>;
+  request(type: string, params: unknown, opts?: RequestOptions): Promise<unknown>;
   /**
    * Unsolicited host pushes, already origin-checked — a caller never needs its
    * own window listener.
