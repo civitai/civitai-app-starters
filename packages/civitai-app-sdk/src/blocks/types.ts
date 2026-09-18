@@ -1024,9 +1024,17 @@ export type WorkflowBodyCustomComfy =
   | WorkflowBodyCustomComfyInline;
 
 /**
- * A **registered orchestrator step**, submitted through the host's step
- * registry — the uniform bridge for step types that are not full generation
- * recipes (image conversion, chat completion, captioning, …).
+ * The REGISTRY ARM of the `kind: 'step'` member — a **registered orchestrator
+ * step**, submitted through the host's step registry, the uniform bridge for
+ * step types that are not full generation recipes (image conversion, chat
+ * completion, captioning, …).
+ *
+ * 🔴 `kind: 'step'` HAS TWO ARMS, discriminated by whether `step` is present.
+ * This one names a REGISTERED id and the host translates it; the other is
+ * {@link WorkflowBodyPassThroughStep}, which omits `step`, names an orchestrator
+ * `$type` directly and has the host forward `input` unmodified. The trust model
+ * below describes THIS arm only — the pass-through arm deliberately drops four
+ * of these controls, and its own doc comment enumerates which.
  *
  * Mirrors the host's `blockStepBodySchema` element-for-element. That schema is
  * `.strict()` with exactly these three fields, so anything else on this object
@@ -1035,9 +1043,13 @@ export type WorkflowBodyCustomComfy =
  * Trust / safety model (all SERVER-ENFORCED, same posture as
  * {@link WorkflowBodyCustomComfy}):
  *  - `step` is a **registered step id** resolved against a code-reviewed,
- *    non-DB-editable registry. The wire enum is DERIVED from the registry keys,
- *    so an unregistered id is rejected **fail-closed at the schema**, before any
- *    translator, any spend reservation, or any orchestrator call.
+ *    non-DB-editable registry. THIS ARM's wire enum is DERIVED from the registry
+ *    keys, so an unregistered id is rejected **fail-closed at the schema**,
+ *    before any translator, any spend reservation, or any orchestrator call.
+ *    🔴 That is a statement about the REGISTRY ARM, not about `kind: 'step'` as
+ *    a whole: a body that omits `step` lands on
+ *    {@link WorkflowBodyPassThroughStep} instead, where an id the registry has
+ *    never heard of is exactly the supported case.
  *  - `params` are **bounded and validated per-step** by that step's own
  *    `.strict()` Zod schema. They are deliberately opaque on the wire (the host
  *    keeps the transport step-agnostic), so this field is `Record<string,
@@ -1059,8 +1071,12 @@ export type WorkflowBodyStep = {
   kind: 'step';
   /**
    * A **registered step id** (e.g. `'chat-completion'`). Resolved server-side
-   * against the code-reviewed step registry; an unregistered id is rejected
-   * fail-closed at the wire schema.
+   * against the code-reviewed step registry; on THIS arm an unregistered id is
+   * rejected fail-closed at the wire schema.
+   *
+   * Its presence is also the ARM DISCRIMINATOR. Omit it and the body is read as
+   * a {@link WorkflowBodyPassThroughStep} instead, where an unregistered id is
+   * not rejected because there is no registry lookup at all.
    */
   step: string;
   /**
@@ -1079,6 +1095,115 @@ export type WorkflowBodyStep = {
 };
 
 /**
+ * The PASS-THROUGH ARM of the `kind: 'step'` member — the block names an
+ * ORCHESTRATOR `$type` directly and the host forwards `input` **unmodified**.
+ * No registry entry, no server-side translator, no per-step param schema.
+ *
+ * Mirrors the host's `blockPassThroughStepBodySchema`. That schema is
+ * `.strict()` with exactly these fields, so anything else on this object is
+ * REJECTED server-side rather than dropped.
+ *
+ * 🔴 **`step` IS THE ARM DISCRIMINATOR AND IT MUST BE ABSENT.** Send
+ * `{ kind: 'step', $type, input, maxBuzz }` with no `step` key at all. It is
+ * typed `step?: undefined` here so that omitting it satisfies the type while
+ * setting it to anything is a compile error — the host's discriminated union
+ * uses `z.undefined()` for the same job, and a body carrying both `step` and
+ * `$type` is rejected by BOTH arms (each is `.strict()`) rather than resolved to
+ * a winner.
+ *
+ * WHAT THIS ARM GIVES UP relative to {@link WorkflowBodyStep}. Four of the
+ * registry's controls are deliberately absent, by operator decision — this is
+ * documented so it reads as a decision rather than an oversight:
+ *  1. **No per-step `.strict()` param schema.** `input` is opaque; the
+ *     orchestrator's own per-`$type` validation is the only shape gate, and it
+ *     runs AFTER the spend reservation rather than at the wire.
+ *  2. **No moderation posture and no prompt audit.** Nothing audits `input`.
+ *     Moderation moved to the PUBLISH boundary — nothing a block generates is
+ *     public until published, and that path is moderated.
+ *  3. **No resource policy / `urn:air:` scan.** AIR resources are ALLOWED here.
+ *     Spend, not entitlement, is the binding control.
+ *  4. **No `billingMode` and no load-time price invariant.** {@link maxBuzz}
+ *     replaces them, exactly as on {@link WorkflowBodyCustomComfyInline}.
+ *
+ * WHAT STILL BOUNDS IT, all server-side:
+ *  - A **denylist** of platform-internal `$type`s (scanners, moderation
+ *    classifiers, hashing/model-ingestion, web egress) is refused by the host
+ *    router before any spend reservation or orchestrator call. It is a DENYLIST,
+ *    not an allowlist: a `$type` the host has never heard of is allowed through
+ *    by construction, which is the point of this arm.
+ *  - `$type` is bounded to **1…64 characters** and `input` to **262144 bytes**
+ *    (256 KB) serialized. Both REJECT; neither truncates.
+ *  - `maxBuzz` is the single spend knob — see its own note below.
+ *
+ * @example A pass-through body for an orchestrator step the registry does not
+ * carry. Note there is no `step` key.
+ * ```ts
+ * const body: WorkflowBody = {
+ *   kind: 'step',
+ *   $type: 'imageBackgroundRemoval',
+ *   input: { image: 'https://image.civitai.com/…/00001.jpeg' },
+ *   maxBuzz: 10,
+ * };
+ * ```
+ */
+export type WorkflowBodyPassThroughStep = {
+  kind: 'step';
+  /**
+   * 🔴 THE ARM DISCRIMINATOR — **omit this key**. It exists in the type only so
+   * that a body which sets it cannot be mistaken for a pass-through body: the
+   * only assignable value is `undefined`, and the wire payload carries no `step`
+   * key at all (JSON cannot express `undefined`).
+   *
+   * To name a REGISTERED step id instead, you want {@link WorkflowBodyStep}.
+   */
+  step?: undefined;
+  /**
+   * The ORCHESTRATOR step type to run, verbatim — e.g. `'imageBackgroundRemoval'`.
+   * Required, 1…64 characters.
+   *
+   * This is the orchestrator's own `$type` discriminator, NOT a Civitai step-
+   * registry id, and it is not resolved against any allowlist. It is refused
+   * only if it names a platform-internal type (the denylist above; the match is
+   * case-insensitive). The host records the submitted value as the subtype of
+   * the generation it stamps, so a `$type` longer than the cap is rejected
+   * rather than silently degraded.
+   */
+  $type: string;
+  /**
+   * The orchestrator step's own input object, **forwarded unmodified**. The host
+   * does not read, rewrite, merge or default any field in here — that is the
+   * whole point of this arm, and the step the orchestrator receives carries an
+   * `input` byte-identical to this value.
+   *
+   * Consequently the orchestrator's per-`$type` schema is the ONLY authority for
+   * what a given `$type` accepts; nothing in this package or on the host mirrors
+   * it. Bounded only by size: at most **262144 bytes** (256 KB) serialized, which
+   * is a payload-DoS bound and not a shape gate.
+   */
+  input: Record<string, unknown>;
+  /**
+   * The per-job Buzz ceiling. Required, an integer in **1…250**.
+   *
+   * 🔴 **IT IS ALSO THE STEP TIMEOUT, IN SECONDS** — identical mechanism to
+   * {@link WorkflowBodyCustomComfyInline.maxBuzz}. The host stamps
+   * `stepTimeoutSeconds = maxBuzz`; there is only one number, which is what makes
+   * the ceiling physically enforceable rather than merely asserted. So
+   * `maxBuzz: 10` does not buy a cheap job; it buys one that is KILLED after 10
+   * seconds and comes back `expired`. Size it to the wall-clock time the step
+   * actually needs.
+   *
+   * You are billed the REAL cost: post-paid against measured GPU seconds,
+   * refunding the unused remainder of the ceiling, so a generous `maxBuzz` costs
+   * nothing extra when the job finishes early. `estimate` on a pass-through body
+   * echoes this number back as `cost.total` — an upper bound, not a price;
+   * surface it as "up to N Buzz".
+   *
+   * The host additionally requires `maxBuzz <= token.buzzBudget` before submit.
+   */
+  maxBuzz: number;
+};
+
+/**
  * Body the block sends to `useBuzzWorkflow().{submit,estimate}`. A real
  * discriminated union keyed by `kind`:
  *  - {@link WorkflowBodyTextToImage} (`kind: 'textToImage'`) — the original
@@ -1088,9 +1213,19 @@ export type WorkflowBodyStep = {
  *    {@link WorkflowBodyCustomComfyRecipe} (the default), or a
  *    {@link WorkflowBodyCustomComfyInline} graph the block ships itself
  *    (`mode: 'inline'`; developer-only).
- *  - {@link WorkflowBodyStep} (`kind: 'step'`) — a bounded, server-registered
- *    orchestrator step (the host's step registry; billing mode and moderation
- *    posture are declared per entry).
+ *  - {@link WorkflowBodyStep} (`kind: 'step'`, `step` PRESENT) — a bounded,
+ *    server-registered orchestrator step (the host's step registry; billing mode
+ *    and moderation posture are declared per entry).
+ *  - {@link WorkflowBodyPassThroughStep} (`kind: 'step'`, `step` ABSENT) — names
+ *    an orchestrator `$type` directly and has the host forward `input`
+ *    unmodified. Bounded by a platform-internal denylist and by `maxBuzz`, not
+ *    by a registry.
+ *
+ * `kind: 'step'` is therefore itself a union, discriminated on the PRESENCE of
+ * `step` — the same nesting {@link WorkflowBodyCustomComfy} has on `mode`.
+ * Narrowing on `kind === 'step'` alone leaves both arms in play; narrow further
+ * with `'$type' in body` (or `body.step === undefined`) before touching
+ * arm-specific fields.
  *
  * New kinds extend this union as the host gains support for them. Narrow on
  * `body.kind` before touching member-specific fields (e.g. `modelId`/`params`
@@ -1104,7 +1239,8 @@ export type WorkflowBodyStep = {
 export type WorkflowBody =
   | WorkflowBodyTextToImage
   | WorkflowBodyCustomComfy
-  | WorkflowBodyStep;
+  | WorkflowBodyStep
+  | WorkflowBodyPassThroughStep;
 
 /**
  * The host-mediated view of an orchestrator workflow that an iframe block

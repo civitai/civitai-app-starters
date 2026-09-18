@@ -119,6 +119,7 @@ export type {
   WorkflowBodyCustomComfyInline,
   InlineComfyNode,
   WorkflowBodyStep,
+  WorkflowBodyPassThroughStep,
   WorkflowStatus,
   BlockBuzzTransaction,
   BlockBuzzAccount,
