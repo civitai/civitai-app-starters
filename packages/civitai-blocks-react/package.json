@@ -41,8 +41,21 @@
     "@civitai/components": "workspace:*",
     "@civitai/theme": "workspace:*"
   },
+  "comment-peerDependencies": [
+    "The @civitai/app-sdk floor is DERIVED, not chosen: it is the lowest published",
+    "version that exports every symbol this package imports from the peer. Verify or",
+    "re-derive it with `pnpm check:peer-floor` (scripts/check-peer-floor.mjs) rather",
+    "than editing it by hand.",
+    "",
+    "\ud83d\udd34 A PEER RANGE IS METADATA AND NOTHING CHECKS IT AGAINST THE CODE. 0.49.0-0.51.0",
+    "declared >=0.29.0 while importing `effectiveBrowsingCeiling` (app-sdk 0.39.0) and",
+    "the create-post types (0.40.0). The range was SATISFIED, so no install warned;",
+    "the failure landed at module evaluation in a consumer's tests, where 27 of 43",
+    "test files collected ZERO tests -- 292 tests silently stopped running and the",
+    "summary reported no failures. See #309."
+  ],
   "peerDependencies": {
-    "@civitai/app-sdk": ">=0.29.0 <1.0.0",
+    "@civitai/app-sdk": ">=0.40.0 <1.0.0",
     "react": "^18.0.0 || ^19.0.0"
   },
   "devDependencies": {
