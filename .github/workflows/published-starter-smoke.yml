@@ -86,14 +86,79 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+
       - name: Derive and verify the peer floor
-        run: pnpm check:peer-floor
+        id: floor
+        run: |
+          set -euo pipefail
+          # Tee so the verdict lands on the run page as well as in the log — the
+          # summary is visible with no extra permissions, and is the surface a
+          # human actually reads.
+          {
+            echo '## blocks-react peer floor'
+            echo
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          rc=0
+          pnpm check:peer-floor 2>&1 | tee -a "$GITHUB_STEP_SUMMARY" || rc=$?
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
+      # ---- failure surfacing -------------------------------------------------
+      # 🔴 THIS JOB NEEDS ITS OWN. The `smoke` job's issue steps below belong to
+      # that job and do not run for a sibling — without these, a red peer floor
+      # is one red job in an advisory workflow nobody is required to watch, while
+      # `smoke` stays green and CLOSES its own tracking issue. That is the dead
+      # gate this workflow's header forbids, and this job is the ONLY automated
+      # caller of the check.
+      - name: Open or update the tracking issue
+        if: failure() && github.event_name == 'schedule'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.CHANGESETS_TOKEN || secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          cat > /tmp/floor-issue-body.md <<EOF
+          \`@civitai/blocks-react\`'s declared \`@civitai/app-sdk\` peer floor no longer matches the symbols it imports.
+
+          ${RUN_URL}
+
+          Run \`pnpm check:peer-floor\` locally for the verdict — it names the symbols and the version that supplies them. A floor that is too LOW ships a package whose install warns about nothing and whose consumers fail at module evaluation (this is #309); a floor that is too HIGH costs consumers an upgrade for nothing.
+
+          This is an ADVISORY job — it is not a required check and never blocks a merge. If the cause is a registry/network condition rather than a real break, close this issue; the next green night closes it automatically.
+          EOF
+          NUM="$(gh issue list --state open --label peer-floor \
+                   --json number --jq '.[0].number // empty')"
+          if [ -n "$NUM" ]; then
+            gh issue comment "$NUM" --body-file /tmp/floor-issue-body.md
+          else
+            gh label create peer-floor \
+              --description 'Nightly blocks-react peer-floor derivation' \
+              --color B60205 || true
+            gh issue create --title 'blocks-react peer floor is wrong' \
+              --label peer-floor --body-file /tmp/floor-issue-body.md
+          fi
+
+      - name: Close the tracking issue on a green night
+        if: success() && github.event_name == 'schedule'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.CHANGESETS_TOKEN || secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          NUM="$(gh issue list --state open --label peer-floor \
+                   --json number --jq '.[0].number // empty')"
+          if [ -n "$NUM" ]; then
+            gh issue close "$NUM" --comment "Green again — the declared peer floor is the version that supplies every imported symbol. ${RUN_URL}"
+          fi
 
   smoke:
     name: Published-starter smoke (advisory — do NOT require)

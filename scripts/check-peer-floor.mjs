@@ -25,7 +25,7 @@
  * satisfied the issue and stayed broken. Do not hand-maintain this floor; run
  * this.
  *
- * WHAT IT DOES. Two arms, because one of them is the other's control:
+ * WHAT IT DOES. Two arms:
  *
  *   AT the declared floor F — installs `@civitai/app-sdk@F` into a throwaway
  *   directory, generates a consumer that imports EVERY symbol blocks-react
@@ -49,10 +49,12 @@
  * not exist instead of simply lowering the floor.
  *
  * COST / WHEN TO RUN. It performs two real npm installs, so it is NOT part of
- * `pnpm test`. It runs in the nightly `published-starter-smoke` workflow, which
- * already installs from the live registry on purpose and has issue-open-on-fail
- * surfacing. Run it by hand whenever blocks-react starts importing a new symbol
- * from the peer:  `pnpm check:peer-floor`
+ * `pnpm test`. It runs nightly in the `published-starter-smoke` workflow, which
+ * is where this repo keeps its live-registry checks — as its OWN job, with its
+ * own step summary and its own issue-open-on-fail / close-on-green surfacing,
+ * because a scheduled job nobody watches is a dead gate and that workflow's
+ * header says so. Run it by hand whenever blocks-react starts importing a new
+ * symbol from the peer:  `pnpm check:peer-floor`
  *
  * ⚠️ IT SHELLS OUT TO `npm`, NOT `pnpm`, WHICH `CLAUDE.md` OTHERWISE FORBIDS.
  * That is deliberate and matches `scripts/smoke-published-starters.mjs`: the
@@ -61,9 +63,11 @@
  * local copy and measuring nothing.
  *
  * LIMITS, stated plainly:
- *   - It reads `import`/`export … from` clauses and bare side-effect imports of
- *     `@civitai/app-sdk*`. A symbol reached some other way — a `import('…').X`
- *     type reference, a runtime string — is invisible to it.
+ *   - It reads named `import`/`export … from` clauses, bare side-effect imports,
+ *     and star forms (`export * from`, `import * as`). A star form registers its
+ *     SUBPATH for a resolution check but contributes no symbol names, because
+ *     there are none to read. A symbol reached some other way — an
+ *     `import('…').X` type reference, a runtime string — is invisible to it.
  *   - It checks resolution and type-vs-value position, NOT shape. A symbol that
  *     exists at F with a different shape than blocks-react expects is caught
  *     only if that difference produces a diagnostic in a consumer that imports
@@ -75,25 +79,26 @@
  *     back at 0.40.0 makes `>=0.40.0` pass and `>=0.38.0` wrong for a reason
  *     the one-step-down arm cannot express.
  */
-import { execFileSync } from "node:child_process";
+import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const REPO = join(HERE, "..");
-const PKG_DIR = join(REPO, "packages", "civitai-blocks-react");
-const PEER = "@civitai/app-sdk";
-const CONTROL_SYMBOL = "__ThisSymbolDoesNotExist__";
+const REPO = join(HERE, '..');
+const PKG_DIR = join(REPO, 'packages', 'civitai-blocks-react');
+const PEER = '@civitai/app-sdk';
+const CONTROL_SYMBOL = '__ThisSymbolDoesNotExist__';
 
 /**
  * Resolve the workspace's tsc, PACKAGE-LOCAL FIRST.
@@ -108,17 +113,21 @@ const CONTROL_SYMBOL = "__ThisSymbolDoesNotExist__";
  * type-checking fault rather than a missing binary, AFTER paying for a real
  * registry install. It could not pass on any correct checkout.
  *
- * Same three-tier order as `scripts/typecheck-readme-snippets.mjs`'s `tscBin()`.
+ * Modelled on `scripts/typecheck-readme-snippets.mjs`'s `tscBin()`, which does
+ * the same package-local-then-root-then-PATH walk — but NOT the same candidate
+ * list: that one looks in `civitai-app-sdk`, this one must look in
+ * `civitai-blocks-react` first, because that is the package whose peer surface
+ * is under test and the one that has a tsc.
  */
 export function tscBin() {
   for (const candidate of [
-    join(PKG_DIR, "node_modules", ".bin", "tsc"),
-    join(REPO, "packages", "civitai-app-sdk", "node_modules", ".bin", "tsc"),
-    join(REPO, "node_modules", ".bin", "tsc"),
+    join(PKG_DIR, 'node_modules', '.bin', 'tsc'),
+    join(REPO, 'packages', 'civitai-app-sdk', 'node_modules', '.bin', 'tsc'),
+    join(REPO, 'node_modules', '.bin', 'tsc'),
   ]) {
     if (existsSync(candidate)) return candidate;
   }
-  return "tsc";
+  return 'tsc';
 }
 
 /**
@@ -152,7 +161,7 @@ function sourceFiles(dir) {
  * { … } from '<peer…>'` clauses count, so a local name that merely matches is
  * never included.
  */
-export function importedSymbols(srcDir = join(PKG_DIR, "src")) {
+export function importedSymbols(srcDir = join(PKG_DIR, 'src')) {
   const bySubpath = new Map();
   const touch = (subpath) => {
     if (!bySubpath.has(subpath))
@@ -168,18 +177,27 @@ export function importedSymbols(srcDir = join(PKG_DIR, "src")) {
   // it was missing from the probe's symbol set entirely.
   const clause = new RegExp(
     `(?:import|export)\\s+(type\\s+)?\\{([^}]*)\\}\\s*from\\s*['"](${PEER}[^'"]*)['"]`,
-    "gs",
+    'gs',
   );
   // A bare side-effect import names a SUBPATH and no symbols. It still has to
   // resolve, and `src/index.ts` carries one (`import '@civitai/app-sdk/safe-storage'`),
   // so without this the probe never installs or checks that subpath at all.
-  const bare = new RegExp(`import\\s*['"](${PEER}[^'"]*)['"]`, "g");
+  const bare = new RegExp(`import\\s*['"](${PEER}[^'"]*)['"]`, 'g');
+  // A STAR form names a subpath and no individual symbols. It cannot be
+  // symbol-checked, but the subpath still has to RESOLVE, and registering it is
+  // what gets it installed and probed. Without this, `export * from '<peer>/x'`
+  // or `import * as SDK from '<peer>/x'` is invisible — the same silent
+  // blindness the bare-import case had.
+  const star = new RegExp(
+    `(?:export\\s*\\*|import\\s*\\*\\s*as\\s+[A-Za-z_$][\\w$]*)\\s*from\\s*['"](${PEER}[^'"]*)['"]`,
+    'g',
+  );
 
   for (const file of sourceFiles(srcDir)) {
-    const text = readFileSync(file, "utf8");
+    const text = readFileSync(file, 'utf8');
     for (const [, clauseIsType, names, subpath] of text.matchAll(clause)) {
       const buckets = touch(subpath);
-      for (const raw of names.split(",")) {
+      for (const raw of names.split(',')) {
         // 🔴 KEEP TYPE-vs-VALUE. The probe reproduces each symbol in the POSITION
         // blocks-react imports it in, so `verbatimModuleSyntax` can do its job:
         // flattening everything to a plain `import { … }` would trip TS1484 on
@@ -187,28 +205,37 @@ export function importedSymbols(srcDir = join(PKG_DIR, "src")) {
         // version.
         const isType = Boolean(clauseIsType) || /^\s*type\s+/.test(raw);
         const name = raw
-          .replace(/^\s*type\s+/, "")
-          .replace(/\s+as\s+[\s\S]*$/, "")
+          .replace(/^\s*type\s+/, '')
+          .replace(/\s+as\s+[\s\S]*$/, '')
           .trim();
-        if (name) buckets[isType ? "type" : "value"].add(name);
+        if (name) buckets[isType ? 'type' : 'value'].add(name);
       }
     }
     for (const [, subpath] of text.matchAll(bare)) touch(subpath);
+    for (const [, subpath] of text.matchAll(star)) touch(subpath);
   }
   return bySubpath;
 }
 
 /** Published versions of the peer, oldest first. */
 function publishedVersions() {
-  const raw = execFileSync("npm", ["view", PEER, "versions", "--json"], {
-    encoding: "utf8",
-  });
-  return JSON.parse(raw);
+  // The workflow header anticipates this job going red for registry reasons, so
+  // an outage must read as an outage, not as an uncaught stack trace.
+  try {
+    const raw = execFileSync('npm', ['view', PEER, 'versions', '--json'], {
+      encoding: 'utf8',
+    });
+    return JSON.parse(raw);
+  } catch (err) {
+    return fail(
+      `could not read the published version list for ${PEER}:\n\n${(err.stderr || err.stdout || err.message).toString().trim()}`,
+    );
+  }
 }
 
 function compareSemver(a, b) {
-  const pa = a.split(".").map(Number);
-  const pb = b.split(".").map(Number);
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
   for (let i = 0; i < 3; i += 1) if (pa[i] !== pb[i]) return pa[i] - pb[i];
   return 0;
 }
@@ -219,32 +246,37 @@ function compareSemver(a, b) {
  */
 function missingSymbolsAt(version, bySubpath) {
   const dir = mkdtempSync(join(tmpdir(), `peer-floor-${version}-`));
-  // 🔴 NOT a `finally`. `fail()` calls `process.exit`, which does not unwind the
-  // stack, so a `finally` here is skipped on exactly the paths that run most
-  // often — and because the ENOENT bug above made EVERY run fail, every run
-  // leaked an npm-installed temp dir. Cleanup is explicit before each exit
-  // instead, via `bail`.
-  const cleanup = () => rmSync(dir, { recursive: true, force: true });
-  const bail = (msg) => {
-    cleanup();
-    fail(msg);
-  };
+  // Cleanup is a `finally` BECAUSE `fail()` throws. An earlier revision used
+  // `process.exit`, which does not unwind the stack, so a `finally` was useless
+  // and cleanup had to be hand-placed before each exit — and the hand-placed
+  // version then missed every path that throws something OTHER than a refusal
+  // (a malformed package.json, ENOSPC, a stubbed install), each of which leaked
+  // an npm-installed directory. One `finally` covers all of them.
+  try {
+    return probeAt(version, bySubpath, dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function probeAt(version, bySubpath, dir) {
+  const bail = fail;
 
   writeFileSync(
-    join(dir, "package.json"),
+    join(dir, 'package.json'),
     JSON.stringify(
-      { name: "peer-floor-probe", private: true, type: "module" },
+      { name: 'peer-floor-probe', private: true, type: 'module' },
       null,
       2,
     ),
   );
   writeFileSync(
-    join(dir, "tsconfig.json"),
+    join(dir, 'tsconfig.json'),
     JSON.stringify({
       compilerOptions: {
-        target: "ES2022",
-        module: "ESNext",
-        moduleResolution: "Bundler",
+        target: 'ES2022',
+        module: 'ESNext',
+        moduleResolution: 'Bundler',
         strict: true,
         skipLibCheck: true,
         noEmit: true,
@@ -257,10 +289,10 @@ function missingSymbolsAt(version, bySubpath) {
         // case reports TS1484, which is why TS1484 is in the pattern below.
         verbatimModuleSyntax: true,
       },
-      include: ["src/**/*.ts"],
+      include: ['src/**/*.ts'],
     }),
   );
-  mkdirSync(join(dir, "src"));
+  mkdirSync(join(dir, 'src'));
   let i = 0;
   for (const [subpath, buckets] of bySubpath) {
     const parts = [];
@@ -269,24 +301,24 @@ function missingSymbolsAt(version, bySubpath) {
     // any real value symbols.
     const values = [...buckets.value, CONTROL_SYMBOL];
     parts.push(
-      `import {\n${values.map((n) => `  ${n},`).join("\n")}\n} from '${subpath}';`,
+      `import {\n${values.map((n) => `  ${n},`).join('\n')}\n} from '${subpath}';`,
     );
     if (buckets.type.size > 0) {
       parts.push(
-        `import type {\n${[...buckets.type].map((n) => `  ${n},`).join("\n")}\n} from '${subpath}';`,
+        `import type {\n${[...buckets.type].map((n) => `  ${n},`).join('\n')}\n} from '${subpath}';`,
       );
     }
-    writeFileSync(join(dir, "src", `probe-${i++}.ts`), `${parts.join("\n")}\n`);
+    writeFileSync(join(dir, 'src', `probe-${i++}.ts`), `${parts.join('\n')}\n`);
   }
 
   try {
     execFileSync(
-      "npm",
-      ["install", "--no-audit", "--no-fund", `${PEER}@${version}`],
+      'npm',
+      ['install', '--no-audit', '--no-fund', `${PEER}@${version}`],
       {
         cwd: dir,
-        stdio: "pipe",
-        encoding: "utf8",
+        stdio: 'pipe',
+        encoding: 'utf8',
       },
     );
   } catch (err) {
@@ -306,8 +338,8 @@ function missingSymbolsAt(version, bySubpath) {
 
   const installed = JSON.parse(
     readFileSync(
-      join(dir, "node_modules", ...PEER.split("/"), "package.json"),
-      "utf8",
+      join(dir, 'node_modules', ...PEER.split('/'), 'package.json'),
+      'utf8',
     ),
   ).version;
   if (installed !== version) {
@@ -317,39 +349,30 @@ function missingSymbolsAt(version, bySubpath) {
   }
 
   const tsc = tscBin();
-  let output = "";
+  let output = '';
   try {
-    execFileSync(tsc, ["-p", "tsconfig.json", "--pretty", "false"], {
+    execFileSync(tsc, ['-p', 'tsconfig.json', '--pretty', 'false'], {
       cwd: dir,
-      encoding: "utf8",
+      encoding: 'utf8',
     });
   } catch (err) {
-    output = `${err.stdout ?? ""}${err.stderr ?? ""}`;
+    output = `${err.stdout ?? ''}${err.stderr ?? ''}`;
     // A spawn failure yields undefined stdout/stderr, so `output` would be ''
     // and every downstream test would read it as "no diagnostics". Say so.
-    if (err.code === "ENOENT") {
+    if (err.code === 'ENOENT') {
       bail(
         `could not execute tsc at ${tsc} — resolve it before trusting any verdict from this run`,
       );
     }
   }
 
-  // An UNRESOLVABLE SUBPATH is a real finding about the version, not a harness
-  // fault — it reports TS2307 rather than "has no exported member", so without
-  // this it would fall through to the control check and be misreported as a
-  // broken probe.
-  const unresolved = [...output.matchAll(/Cannot find module '([^']+)'/g)].map(
-    (m) => m[1],
-  );
-  if (unresolved.length > 0) {
-    // Return BEFORE the control check. An unresolvable module suppresses the
-    // control's own diagnostic for that file, so leaving this below would
-    // misreport a genuine "this version lacks the subpath" as a broken harness.
-    cleanup();
-    return [...new Set(unresolved)].map(
-      (u) => `${u} (subpath does not resolve)`,
-    );
-  }
+  // An UNRESOLVABLE SUBPATH is a real finding about the version — it reports
+  // TS2307 rather than "has no exported member".
+  const unresolved = [
+    ...new Set(
+      [...output.matchAll(/Cannot find module '([^']+)'/g)].map((m) => m[1]),
+    ),
+  ];
 
   const missing = [
     ...output.matchAll(/has no exported member '([^']+)'/g),
@@ -359,14 +382,31 @@ function missingSymbolsAt(version, bySubpath) {
     ),
   ].map((m) => m[1]);
 
-  if (!missing.includes(CONTROL_SYMBOL)) {
+  // 🔴 THE CONTROL IS REQUIRED UNLESS EVERY SUBPATH FAILED TO RESOLVE.
+  //
+  // The control symbol rides one probe file per subpath. A subpath that does not
+  // resolve suppresses its own file's diagnostics, including the control's — so
+  // demanding the control unconditionally would misreport a genuine "this
+  // version lacks that subpath" as a broken harness. An EARLIER fix for that
+  // returned early on any unresolved subpath, which was worse in two ways,
+  // both measured: it DISCARDED the real missing symbols found in the files that
+  // did resolve (breaking this header's promise that the message names them),
+  // and when NOTHING resolved it skipped the control entirely and printed
+  // "THE DECLARED FLOOR IS TOO LOW" — advice that cannot fix a broken harness.
+  //
+  // So: the control is waived only when every subpath is unresolved, which is
+  // the one case where no probe file could have reported it.
+  const allSubpathsUnresolved = unresolved.length >= bySubpath.size;
+  if (!missing.includes(CONTROL_SYMBOL) && !allSubpathsUnresolved) {
     bail(
       `the synthetic control symbol did not report at ${PEER}@${version}. The probe is not ` +
         `type-checking anything, so its verdict is about the harness, not the package.\n\n${output}`,
     );
   }
-  cleanup();
-  return missing.filter((m) => m !== CONTROL_SYMBOL);
+  return [
+    ...missing.filter((m) => m !== CONTROL_SYMBOL),
+    ...unresolved.map((u) => `${u} (subpath does not resolve at this version)`),
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -384,7 +424,7 @@ export function parseFloor(declared) {
   // — a clean PASS for a range that still admits the 0.29.x versions #309 was
   // about. This script validates ONE endpoint token; a union of ranges is not
   // something it can reason about, so it says so instead of guessing.
-  if (declared.includes("||")) {
+  if (declared.includes('||')) {
     fail(
       `the declared range "${declared}" has alternatives (\`||\`). This check validates a single\n` +
         `  \`>=\` floor and cannot reason about a union of ranges — express the peer as one range,\n` +
@@ -405,7 +445,7 @@ export function parseFloor(declared) {
 
 export function main() {
   const declared = JSON.parse(
-    readFileSync(join(PKG_DIR, "package.json"), "utf8"),
+    readFileSync(join(PKG_DIR, 'package.json'), 'utf8'),
   ).peerDependencies?.[PEER];
   if (!declared)
     fail(`packages/civitai-blocks-react declares no ${PEER} peer range`);
@@ -442,7 +482,7 @@ export function main() {
     fail(
       `THE DECLARED FLOOR IS TOO LOW.\n\n` +
         `  ${PEER}@${floor} does not export ${missingAtFloor.length} symbol(s) blocks-react imports:\n` +
-        missingAtFloor.map((m) => `    - ${m}`).join("\n") +
+        missingAtFloor.map((m) => `    - ${m}`).join('\n') +
         `\n\n  A consumer whose app-sdk satisfies this range still fails at module evaluation,\n` +
         `  and the install warns about nothing. Raise the floor in\n` +
         `  packages/civitai-blocks-react/package.json until this check passes.`,
@@ -474,13 +514,28 @@ export function main() {
   }
 
   console.log(
-    `\n✅ peer floor ${floor} is correct for blocks-react ${JSON.parse(readFileSync(join(PKG_DIR, "package.json"), "utf8")).version}`,
+    `\n✅ peer floor ${floor} is correct for blocks-react ${JSON.parse(readFileSync(join(PKG_DIR, 'package.json'), 'utf8')).version}`,
   );
 }
 
-const invokedDirectly =
-  process.argv[1] &&
-  fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+// 🔴 REALPATH BOTH SIDES OR THIS FAILS OPEN. Node realpaths the entry module's
+// URL but `resolve()` does not, so on a checkout reached through a symlink
+// (macOS /tmp -> /private/tmp, a nix-linked path, a mounted ~/code) the two
+// disagree, `main()` never runs, and the script exits 0 having printed NOTHING —
+// indistinguishable from a pass, on the one gate whose entire job is not to fail
+// open. Measured: `node /tmp/link/scripts/check-peer-floor.mjs` through a
+// symlinked repo root produced no output and rc=0.
+const invokedDirectly = (() => {
+  if (!process.argv[1]) return false;
+  try {
+    return (
+      realpathSync(fileURLToPath(import.meta.url)) ===
+      realpathSync(process.argv[1])
+    );
+  } catch {
+    return false;
+  }
+})();
 if (invokedDirectly) {
   try {
     main();

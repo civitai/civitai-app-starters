@@ -17,48 +17,48 @@
  * `published-starter-smoke`); what is covered here is every part that has
  * actually been wrong: binary resolution, range parsing, and symbol extraction.
  */
-import { test, describe } from "node:test";
-import assert from "node:assert/strict";
+import { test, describe } from 'node:test';
+import assert from 'node:assert/strict';
 import {
   existsSync,
   mkdtempSync,
   mkdirSync,
   rmSync,
   writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   importedSymbols,
   parseFloor,
   tscBin,
-} from "../../scripts/check-peer-floor.mjs";
+} from '../../scripts/check-peer-floor.mjs';
 
-const PEER = "@civitai/app-sdk";
+const PEER = '@civitai/app-sdk';
 
 /** A throwaway src/ tree, so extraction is tested on inputs we control. */
 function fixtureSrc(files) {
-  const dir = mkdtempSync(join(tmpdir(), "peer-floor-guard-"));
+  const dir = mkdtempSync(join(tmpdir(), 'peer-floor-guard-'));
   for (const [name, contents] of Object.entries(files)) {
     const full = join(dir, name);
-    mkdirSync(join(full, ".."), { recursive: true });
-    writeFileSync(full, contents, "utf8");
+    mkdirSync(join(full, '..'), { recursive: true });
+    writeFileSync(full, contents, 'utf8');
   }
   return dir;
 }
 
-describe("tscBin", () => {
-  test("resolves to a tsc that EXISTS in this checkout", () => {
+describe('tscBin', () => {
+  test('resolves to a tsc that EXISTS in this checkout', () => {
     const bin = tscBin();
     // The regression, stated as an assertion: a bare 'tsc' fallback means no
     // candidate path matched, which is exactly the state that made every run
     // fail with a misleading message.
     assert.notEqual(
       bin,
-      "tsc",
-      "tscBin() fell through to PATH — no workspace tsc was found. On a pnpm install " +
-        "the root node_modules/.bin has no tsc; the package-local path is the one that exists.",
+      'tsc',
+      'tscBin() fell through to PATH — no workspace tsc was found. On a pnpm install ' +
+        'the root node_modules/.bin has no tsc; the package-local path is the one that exists.',
     );
     assert.ok(
       existsSync(bin),
@@ -67,31 +67,31 @@ describe("tscBin", () => {
   });
 });
 
-describe("parseFloor", () => {
-  test("reads a single >= floor", () => {
-    assert.equal(parseFloor(">=0.40.0 <1.0.0"), "0.40.0");
+describe('parseFloor', () => {
+  test('reads a single >= floor', () => {
+    assert.equal(parseFloor('>=0.40.0 <1.0.0'), '0.40.0');
   });
 
-  test("REFUSES a compound range instead of silently taking the first >=", () => {
+  test('REFUSES a compound range instead of silently taking the first >=', () => {
     // This exact string used to print "(floor 0.40.0)" and exit 0 — a clean PASS
     // for a range that still admits the 0.29.x versions #309 was about.
     assert.throws(
-      () => parseFloor(">=0.40.0 <0.41.0 || >=0.29.0 <0.30.0"),
+      () => parseFloor('>=0.40.0 <0.41.0 || >=0.29.0 <0.30.0'),
       /alternatives/,
-      "a `||` range must be refused, not resolved to its first floor",
+      'a `||` range must be refused, not resolved to its first floor',
     );
   });
 
-  test("refuses two >= floors in one range", () => {
-    assert.throws(() => parseFloor(">=0.40.0 >=0.29.0"), /more than one/);
+  test('refuses two >= floors in one range', () => {
+    assert.throws(() => parseFloor('>=0.40.0 >=0.29.0'), /more than one/);
   });
 
   for (const range of [
-    "^0.40.0",
-    "~0.40.0",
-    ">0.39.0",
-    "0.40.0 - 0.99.0",
-    "*",
+    '^0.40.0',
+    '~0.40.0',
+    '>0.39.0',
+    '0.40.0 - 0.99.0',
+    '*',
   ]) {
     test(`refuses a range with no >= endpoint: ${range}`, () => {
       assert.throws(() => parseFloor(range), /cannot read a >= floor/);
@@ -99,70 +99,70 @@ describe("parseFloor", () => {
   }
 });
 
-describe("importedSymbols", () => {
-  test("finds a plain named import", () => {
+describe('importedSymbols', () => {
+  test('finds a plain named import', () => {
     const dir = fixtureSrc({
-      "a.ts": `import { Alpha } from '${PEER}/blocks';\n`,
+      'a.ts': `import { Alpha } from '${PEER}/blocks';\n`,
     });
     try {
       const got = importedSymbols(dir);
-      assert.deepEqual([...got.get(`${PEER}/blocks`).value], ["Alpha"]);
+      assert.deepEqual([...got.get(`${PEER}/blocks`).value], ['Alpha']);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test("🔴 finds a RE-EXPORT, which an import-only pattern misses", () => {
+  test('🔴 finds a RE-EXPORT, which an import-only pattern misses', () => {
     // `export type { X } from '<peer>'` puts the peer's symbol in this package's
     // emitted .d.ts exactly as an import does, so a consumer breaks identically.
     // A live instance existed in src/index.ts, and one of its symbols appeared
     // nowhere else — so it was absent from the probe entirely.
     const dir = fixtureSrc({
-      "index.ts": `export type { OnlyReExported } from '${PEER}/blocks';\n`,
+      'index.ts': `export type { OnlyReExported } from '${PEER}/blocks';\n`,
     });
     try {
       const got = importedSymbols(dir);
-      assert.deepEqual([...got.get(`${PEER}/blocks`).type], ["OnlyReExported"]);
+      assert.deepEqual([...got.get(`${PEER}/blocks`).type], ['OnlyReExported']);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test("🔴 registers a SUBPATH reached only by a bare side-effect import", () => {
+  test('🔴 registers a SUBPATH reached only by a bare side-effect import', () => {
     // It names no symbols but still has to resolve. Without this the subpath is
     // never installed, never resolved and never checked at any version.
-    const dir = fixtureSrc({ "index.ts": `import '${PEER}/safe-storage';\n` });
+    const dir = fixtureSrc({ 'index.ts': `import '${PEER}/safe-storage';\n` });
     try {
       const got = importedSymbols(dir);
       assert.ok(
         got.has(`${PEER}/safe-storage`),
-        "bare subpath import was not registered",
+        'bare subpath import was not registered',
       );
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test("keeps type-only and value imports APART", () => {
+  test('keeps type-only and value imports APART', () => {
     // The probe reproduces each symbol in the position it is imported in. If
     // this collapsed, `verbatimModuleSyntax` would trip TS1484 on every ordinary
     // type and report the entire surface as missing at every version.
     const dir = fixtureSrc({
-      "a.ts": `import { aValue, type aType } from '${PEER}/blocks';\n`,
-      "b.ts": `import type { bType } from '${PEER}/blocks';\n`,
+      'a.ts': `import { aValue, type aType } from '${PEER}/blocks';\n`,
+      'b.ts': `import type { bType } from '${PEER}/blocks';\n`,
     });
     try {
       const got = importedSymbols(dir).get(`${PEER}/blocks`);
-      assert.deepEqual([...got.value], ["aValue"]);
-      assert.deepEqual([...got.type].sort(), ["aType", "bType"]);
+      assert.deepEqual([...got.value], ['aValue']);
+      assert.deepEqual([...got.type].sort(), ['aType', 'bType']);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test("ignores an identifier that merely matches, outside an import clause", () => {
+  test('ignores an identifier that merely matches, outside an import clause', () => {
     const dir = fixtureSrc({
-      "a.ts": `const NotImported = 1;\nexport { NotImported };\n`,
+      'a.ts': `const NotImported = 1;\nexport { NotImported };\n`,
     });
     try {
       assert.equal(importedSymbols(dir).size, 0);
@@ -171,7 +171,7 @@ describe("importedSymbols", () => {
     }
   });
 
-  test("the REAL package surface is non-empty — a blind probe is not a passing probe", () => {
+  test('the REAL package surface is non-empty — a blind probe is not a passing probe', () => {
     const got = importedSymbols();
     const total = [...got.values()].reduce(
       (n, b) => n + b.value.size + b.type.size,
