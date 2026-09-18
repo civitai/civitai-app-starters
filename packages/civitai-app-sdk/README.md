@@ -106,7 +106,7 @@ interface BlockInitPayload {
 | `defineBlock({ manifest })` | Validates a `BlockManifestV1` (subset of the server checks) and returns it. Call at module scope so authoring mistakes throw before mount. Throws `BlockManifestError` (has a `.field` dot-path). |
 | `BLOCK_SCOPES` / `BLOCK_SCOPE_PATTERN` | The 15 known block scope strings (the authoritative enum `defineBlock` validates against) + the `domain:verb:target` format-helper regex. A scope is valid only if it's a member of `BLOCK_SCOPES`, matching the [canonical schema](https://civitai.com/schemas/app-block/v1.json). |
 | `isMessage(data, type)` | Discriminator-only message narrowing (see above). |
-| types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `WorkflowBodyCustomComfy` (+ its two arms `WorkflowBodyCustomComfyRecipe` / `WorkflowBodyCustomComfyInline`, and `InlineComfyNode`), `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
+| types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `WorkflowBodyCustomComfy` (+ its two arms `WorkflowBodyCustomComfyRecipe` / `WorkflowBodyCustomComfyInline`, and `InlineComfyNode`), `WorkflowBodyStep` / `WorkflowBodyPassThroughStep` (the two arms of `kind: 'step'`), `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
 
 `WorkflowBody`'s `customComfy` member is a discriminated union on `mode`, mirroring
 the host's `blockCustomComfyMemberSchema`. Narrow on the VALUE (`body.mode === 'inline'`),
@@ -122,6 +122,33 @@ own key:
   and page-token-only**, and code review is replaced by three fail-closed gates (AIR
   containment, entitlement, and a moderation sweep over every string leaf in the graph). A
   registered recipe remains the way to reach every viewer.
+
+`WorkflowBody`'s `step` member is likewise a union of two arms, mirroring the host's
+`blockStepMemberSchema`. Here the discriminator is the **presence of `step`**, so narrow with
+`'$type' in body` (or `body.step === undefined`) — `kind === 'step'` alone leaves both arms:
+
+- **`WorkflowBodyStep`** (`step` PRESENT) — names a **registered** step id (`'convert-image'`,
+  `'chat-completion'`, …). The wire enum is derived from the host's step registry, so an
+  unregistered id is rejected fail-closed at the schema, and `params` are validated by that
+  step's own `.strict()` schema.
+- **`WorkflowBodyPassThroughStep`** (`step` ABSENT) — names an **orchestrator `$type`** directly
+  and the host forwards `input` unmodified. There is no registry lookup, no param schema, no
+  prompt audit and no AIR scan; what bounds it is a denylist of platform-internal `$type`s
+  (scanners, moderation classifiers, hashing/model ingestion, web egress), a 64-character
+  `$type` cap, a 256 KB `input` cap, and `maxBuzz` — which, as on the inline arm, is **also the
+  step timeout in seconds**.
+
+```ts
+import type { WorkflowBody } from '@civitai/app-sdk/blocks';
+
+// Pass-through: note there is NO `step` key.
+const body: WorkflowBody = {
+  kind: 'step',
+  $type: 'imageBackgroundRemoval',
+  input: { image: imageUrl },
+  maxBuzz: 10,
+};
+```
 
 ### `defineBlock` validator rules
 

@@ -74,11 +74,13 @@ import { hostContextWithTheme } from './transport.js';
 /**
  * The block's preferred Buzz pool. On a `textToImage` {@link WorkflowBody} it's
  * the top-level `accountType`; on a `customComfy` RECIPE body it lives under
- * `params.accountType`; a `step` body and a `customComfy` INLINE body have NO
- * account preference at all — the host's `blockStepBodySchema` and
- * `blockInlineComfyBodySchema` are both `.strict()` with no `accountType`
- * anywhere, so there is no field to read and `undefined` (let the host pick) is
- * the accurate answer rather than a fallback.
+ * `params.accountType`; a `step` body (EITHER arm) and a `customComfy` INLINE
+ * body have NO account preference at all — the host's `blockStepBodySchema`,
+ * `blockPassThroughStepBodySchema` and `blockInlineComfyBodySchema` are all
+ * `.strict()` with no `accountType` anywhere, so there is no field to read and
+ * `undefined` (let the host pick) is the accurate answer rather than a fallback.
+ * That is why `case 'step'` needs no second narrow on the arm, unlike
+ * `customComfy`: both step arms give the same answer.
  *
  * 🔴 SWITCH ON EVERY MEMBER, NEVER `kind === 'x' ? … : …`. The previous shape
  * was a two-way ternary whose `else` branch assumed "not customComfy therefore
