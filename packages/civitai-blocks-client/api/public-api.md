@@ -102,6 +102,31 @@ export declare function list(query?: StorageQuery, opts?: CallOptions): AsyncGen
 /** What the viewer has used of their own allowance in this app. */
 export declare function getQuota(opts?: CallOptions): Promise<StorageQuota>;
 
+// namespace: viewer
+/**
+ * Who the viewer is, read fresh and audited per call. Needs `user:read:self`;
+ * an anonymous or banned viewer is a failure, not an empty result, so the
+ * caller reaches for `requestSignIn` rather than rendering nobody.
+ */
+export declare function getViewer(opts?: CallOptions): Promise<Viewer>;
+
+/**
+ * Starts the host's sign-in flow. Nothing is awaited: the block re-initialises
+ * as an authenticated viewer once login completes. `returnUrl` is a path within
+ * this app, which the host sanitises.
+ */
+export declare function requestSignIn(args?: {
+    returnUrl?: string;
+}, opts?: NotifyOptions): void;
+
+/**
+ * Asks the viewer to grant `scopes`, resolving once the token carries them and
+ * rejecting `forbidden` when the host says they never can be. Scopes already
+ * held resolve without asking; a viewer who neither confirms nor dismisses
+ * settles nothing, so pass a `signal` to bound the wait.
+ */
+export declare function requestConsent(scopes: string[], opts?: CallOptions): Promise<void>;
+
 export declare class BridgeError extends Error {
     readonly code: BridgeErrorCode;
     /** The message type that failed, e.g. `APP_STORAGE_GET`. */
@@ -122,8 +147,11 @@ export type BridgeErrorCode = BridgeFailureCode
 /** Options apply on first call only; `__resetTransport()` to re-detect. */
 export declare function getTransport(opts?: DetectOptions): BlockTransport;
 
-export interface CallOptions {
+export interface NotifyOptions {
     transport?: BlockTransport;
+}
+
+export interface CallOptions extends NotifyOptions {
     /**
      * Cancels the call. Request timeouts belong to the host, which owes a reply
      * to every request; this is the caller's own deadline, not a bound we impose.
@@ -186,16 +214,8 @@ export interface BlockSnapshot {
     effectiveBrowsingLevel?: number;
 }
 
-/**
- * How a message answers. `legacy` is the framing the host had before this
- * package owned the protocol; it is declared per message by the domain that
- * still speaks it, and the transport converts it to the other one.
- */
-export type ReplyFraming = 'envelope' | 'legacy';
-
 export interface RequestOptions {
     signal?: AbortSignal;
-    replies?: ReplyFraming;
 }
 
 export interface BlockTransport {
@@ -205,7 +225,10 @@ export interface BlockTransport {
         subscribe(listener: () => void): () => void;
     };
     /** A message the host does not answer. */
-    notify(message: BlockToParentMessage): void;
+    notify(message: {
+        type: string;
+        payload?: unknown;
+    }): void;
     /**
      * Resolves with the value the host answered, or rejects: a `BridgeError` for a
      * failure it reported, the signal's `reason` if the caller aborts. Framing —
@@ -246,6 +269,8 @@ export interface FakeTransport extends BlockTransport {
     stall(type: string): void;
     /** Deliver an unsolicited host push to `on` subscribers. */
     push(type: string, payload: unknown): void;
+    /** Subscribers to a push, so a test can assert one stopped listening. */
+    listenerCount(type: string): number;
     setSnapshot(next: Partial<BlockSnapshot>): void;
 }
 

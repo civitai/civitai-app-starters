@@ -34,8 +34,11 @@ export class BridgeError extends Error {
  * `unavailable`; `message` still carries what the host said.
  */
 const HOST_FAILURES: ReadonlyArray<readonly [RegExp, BridgeFailureCode]> = [
-  [/authenticated viewer/i, 'unauthenticated'],
-  [/requires the .+ scope|not approved|revoked|invalid block token|not enabled|review preview/i, 'forbidden'],
+  [/authenticated viewer|no block token/i, 'unauthenticated'],
+  [
+    /(requires|lacks) .+ scope|not approved|revoked|invalid block token|not enabled|review preview|^banned$/i,
+    'forbidden',
+  ],
   [/quota exceeded|row limit exceeded|exceeds \d+KB cap/i, 'insufficient'],
   [/rate limit/i, 'rate-limited'],
 ];

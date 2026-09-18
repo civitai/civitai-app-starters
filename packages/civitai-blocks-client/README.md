@@ -98,6 +98,41 @@ A read that fails for transport reasons is retried three times, waiting 250ms,
 be hammered. Any successful read resets that. An `AbortSignal` you abort ends
 the loop at once rather than waiting out a backoff.
 
+## The viewer
+
+`buzz` refuses with `unauthenticated` when nobody is signed in and `forbidden`
+when the block's token lacks a scope. `viewer` is how a block answers both:
+
+```ts
+try {
+  const me = await civitai.viewer.getViewer();
+} catch (err) {
+  if (err.code === 'unauthenticated') civitai.viewer.requestSignIn({ returnUrl: '/gallery' });
+}
+```
+
+`getViewer()` is the audited self-read — `id`, `username`, `status`,
+`buzzBudget` — and needs `user:read:self`. It is not the same as the snapshot's
+`viewer`, which every block receives unconditionally at load and which only
+tells you whether *someone* is signed in.
+
+`requestSignIn()` returns nothing to await: the host runs its login flow and the
+block re-initialises as an authenticated viewer.
+
+`requestConsent(scopes)` does have something to await:
+
+```ts
+await civitai.viewer.requestConsent(['buzz:read:self']);
+const accounts = await civitai.buzz.getAccounts();
+```
+
+It resolves once the re-minted token actually carries the scopes, so the retry
+belongs after the `await` rather than in a listener. Scopes already held resolve
+without asking anyone. It rejects `forbidden` when the host says the scopes were
+withheld at mint and no dialog here can add them — which is a real state, and
+distinct from a viewer who simply hasn't confirmed yet. A viewer who neither
+confirms nor dismisses settles nothing, so pass a `signal` to bound the wait.
+
 ## App storage
 
 `storage` is a per-viewer, per-install key/value store the host keeps server-side
@@ -211,7 +246,7 @@ review rather than as a surprise in a release.
 
 | Import | Contains |
 |---|---|
-| `@civitai/blocks-client` | domain namespaces (`buzz`, `orchestration`, `storage`), `BridgeError`, `getTransport` |
+| `@civitai/blocks-client` | domain namespaces (`buzz`, `orchestration`, `storage`, `viewer`), `BridgeError`, `getTransport` |
 | `@civitai/blocks-client/testing` | `createFakeTransport`, `__resetTransport` |
 
 `createFakeTransport()` is an in-memory `BlockTransport` for testing a block

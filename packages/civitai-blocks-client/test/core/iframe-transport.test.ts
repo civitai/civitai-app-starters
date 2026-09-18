@@ -170,7 +170,7 @@ describe('IframeTransport legacy replies', () => {
   const exchange = (type: string, reply: (requestId: string) => unknown) => {
     const { transport, posted, deliver } = mountTransport();
     deliver(init());
-    const pending = transport.request(type, {}, { replies: 'legacy' });
+    const pending = transport.request(type, {});
     const { requestId } = (posted.at(-1)!.msg as { payload: { requestId: string } }).payload;
     deliver({ type: `${type}_RESULT`, payload: { requestId, ...(reply(requestId) as object) } });
     return pending;

@@ -20,6 +20,8 @@ export interface FakeTransport extends BlockTransport {
   stall(type: string): void;
   /** Deliver an unsolicited host push to `on` subscribers. */
   push(type: string, payload: unknown): void;
+  /** Subscribers to a push, so a test can assert one stopped listening. */
+  listenerCount(type: string): number;
   setSnapshot(next: Partial<BlockSnapshot>): void;
 }
 
@@ -104,6 +106,9 @@ export function createFakeTransport(snapshot: Partial<BlockSnapshot> = {}): Fake
     },
     push(type, payload) {
       for (const handler of [...(pushListeners.get(type) ?? [])]) handler(payload);
+    },
+    listenerCount(type) {
+      return pushListeners.get(type)?.size ?? 0;
     },
     handle(type, handler) {
       handlers.set(type, handler);

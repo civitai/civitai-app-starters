@@ -13,7 +13,6 @@ import {
   tokenFromWrapped,
   type BlockSnapshot,
   type BlockTransport,
-  type ReplyFraming,
   type RequestOptions,
 } from '../transport.js';
 import { BridgeError, classifyHostError, type BridgeFailureCode } from '../errors.js';
@@ -52,8 +51,25 @@ interface LegacyReply {
   [field: string]: unknown;
 }
 
+/**
+ * The host's pre-protocol messages, each with the reply it answers with —
+ * `<REQUEST>_RESULT` holds across most of them but not all. It is the migration
+ * ledger for this protocol: an entry leaves the day the host modernises that
+ * reply, and when it empties `fromLegacyReply` goes with it.
+ */
+const LEGACY_REPLIES: Readonly<Record<string, string>> = {
+  APP_STORAGE_GET: 'APP_STORAGE_GET_RESULT',
+  APP_STORAGE_SET: 'APP_STORAGE_SET_RESULT',
+  APP_STORAGE_DELETE: 'APP_STORAGE_DELETE_RESULT',
+  APP_STORAGE_LIST: 'APP_STORAGE_LIST_RESULT',
+  APP_STORAGE_QUOTA: 'APP_STORAGE_QUOTA_RESULT',
+  GET_VIEWER: 'VIEWER_RESULT',
+};
+
+type ReplyFraming = 'envelope' | 'legacy';
+
 function replyTypeFor(type: string): string {
-  return `${type}_RESULT`;
+  return LEGACY_REPLIES[type] ?? `${type}_RESULT`;
 }
 
 /** Turns a reply into the value it carries, or the failure it reports. */
@@ -241,12 +257,13 @@ export class IframeTransport implements BlockTransport {
     }
   }
 
-  notify(message: BlockToParentMessage): void {
+  notify(message: { type: string; payload?: unknown }): void {
     this.#dispatch(message.type, message.payload);
   }
 
   async request(type: string, params: unknown, opts: RequestOptions = {}): Promise<unknown> {
-    return unwrap(type, await this.#exchange(type, params, opts), opts.replies ?? 'envelope');
+    const framing: ReplyFraming = type in LEGACY_REPLIES ? 'legacy' : 'envelope';
+    return unwrap(type, await this.#exchange(type, params, opts), framing);
   }
 
   #exchange(type: string, params: unknown, opts: RequestOptions): Promise<unknown> {

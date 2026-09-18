@@ -2,15 +2,7 @@ import { createCaller, type CallOptions } from '../core/messaging.js';
 
 import type { StorageEntry, StorageQuery, StorageQuota, StorageRequests } from './protocol.js';
 
-const call = createCaller<StorageRequests>({
-  legacyReplies: [
-    'APP_STORAGE_GET',
-    'APP_STORAGE_SET',
-    'APP_STORAGE_DELETE',
-    'APP_STORAGE_LIST',
-    'APP_STORAGE_QUOTA',
-  ],
-});
+const call = createCaller<StorageRequests>();
 
 export type { StorageEntry, StorageQuery, StorageQuota } from './protocol.js';
 

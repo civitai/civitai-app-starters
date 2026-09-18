@@ -7,7 +7,6 @@ import type {
   Theme,
   ViewerInfo,
   WrappedToken,
-  BlockToParentMessage,
 } from '@civitai/app-sdk/blocks';
 
 
@@ -42,16 +41,8 @@ export interface BlockSnapshot {
 }
 
 
-/**
- * How a message answers. `legacy` is the framing the host had before this
- * package owned the protocol; it is declared per message by the domain that
- * still speaks it, and the transport converts it to the other one.
- */
-export type ReplyFraming = 'envelope' | 'legacy';
-
 export interface RequestOptions {
   signal?: AbortSignal;
-  replies?: ReplyFraming;
 }
 
 export interface BlockTransport {
@@ -61,7 +52,7 @@ export interface BlockTransport {
     subscribe(listener: () => void): () => void;
   };
   /** A message the host does not answer. */
-  notify(message: BlockToParentMessage): void;
+  notify(message: { type: string; payload?: unknown }): void;
   /**
    * Resolves with the value the host answered, or rejects: a `BridgeError` for a
    * failure it reported, the signal's `reason` if the caller aborts. Framing —

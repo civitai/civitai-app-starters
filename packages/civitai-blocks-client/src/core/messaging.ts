@@ -1,8 +1,11 @@
 import { getTransport } from './get-transport.js';
-import type { BlockTransport, ReplyFraming } from './transport.js';
+import type { BlockTransport } from './transport.js';
 
-export interface CallOptions {
+export interface NotifyOptions {
   transport?: BlockTransport;
+}
+
+export interface CallOptions extends NotifyOptions {
   /**
    * Cancels the call. Request timeouts belong to the host, which owes a reply
    * to every request; this is the caller's own deadline, not a bound we impose.
@@ -17,35 +20,33 @@ export interface CallOptions {
  */
 export type RequestMap = Record<string, { params: unknown; result: unknown }>;
 
-/** A domain's unsolicited messages: name → payload. */
+/** A domain's unsolicited messages: name → payload. Both directions use it. */
 export type PushMap = Record<string, unknown>;
-
-export interface DomainOptions<R extends RequestMap> {
-  /**
-   * The messages the host still answers in its pre-protocol framing. Naming them
-   * is the migration ledger: a name leaves this list the day the host modernises
-   * that reply, and nothing else in the domain changes.
-   */
-  legacyReplies?: ReadonlyArray<keyof R & string>;
-}
 
 /**
  * The typed entry points for one domain. A domain declares its own maps and
  * calls these; nothing in `core` needs to know the domains exist.
  */
-export function createCaller<R extends RequestMap>(domain: DomainOptions<R> = {}) {
-  const legacy = new Set<string>(domain.legacyReplies ?? []);
+export function createCaller<R extends RequestMap>() {
   return async function call<K extends keyof R & string>(
     type: K,
     params: R[K]['params'],
     opts: CallOptions = {},
   ): Promise<R[K]['result']> {
     const transport = opts.transport ?? getTransport();
-    const replies: ReplyFraming = legacy.has(type) ? 'legacy' : 'envelope';
-    return (await transport.request(type, params, {
-      signal: opts.signal,
-      replies,
-    })) as R[K]['result'];
+    return (await transport.request(type, params, { signal: opts.signal })) as R[K]['result'];
+  };
+}
+
+/** A message the host does not answer, so there is nothing to await. */
+export function createNotifier<N extends PushMap>() {
+  return function notify<K extends keyof N & string>(
+    type: K,
+    payload: N[K],
+    opts: NotifyOptions = {},
+  ): void {
+    const transport = opts.transport ?? getTransport();
+    transport.notify({ type, payload });
   };
 }
 

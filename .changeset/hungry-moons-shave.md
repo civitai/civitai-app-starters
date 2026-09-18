@@ -56,10 +56,10 @@ nothing new from the host: it carries the existing `APP_STORAGE_*` messages
 unchanged, so `get`, `set`, `remove`, `list` and `getQuota` work against
 production today. Those replies put their fields straight in the payload and
 report failure as the server's own sentence, so the transport converts that
-framing into this one — `fromLegacyReply`, reached only for messages a domain
-names in `legacyReplies`, classifying the host's text into the same `code`
-everything else here throws. That list is the migration ledger: a name leaves it
-the day the host modernises the reply, and nothing else in the domain moves. There is deliberately no `localStorage` fallback: the host
+framing into this one — `fromLegacyReply`, classifying the host's text into the
+same `code` everything else here throws.
+
+There is deliberately no `localStorage` fallback: the host
 grants `allow-same-origin` only to verified apps, so for everyone else reading
 that property throws rather than returning empty — and silently degrading a
 signed-in viewer's saved work to one device is worse than an error.
@@ -69,3 +69,13 @@ the request, rather than a queued one consumed per call. A test says what the
 host does — `({ key }) => ({ value: store.get(key) ?? null })` — instead of
 lining up one reply per expected call. The one-shot `reply`/`fail` remain and are
 taken first, so a sequence or a single exception to the rule still reads well.
+
+`viewer` is the other half of the failures this package already throws:
+`getViewer()` for the audited self-read, `requestSignIn()` for an anonymous one,
+and `requestConsent(scopes)` for a token missing a scope. The last is awaitable
+even though the host message is fire-and-forget — it resolves when the re-minted
+token carries the scopes and rejects `forbidden` on `CONSENT_UNAVAILABLE`, so a
+block retries after an `await` instead of wiring a listener to a push that
+carries no correlation id. It also exposed that reply names are not derivable
+across the older messages — `GET_VIEWER` answers `VIEWER_RESULT` — so the ledger
+names each reply rather than deriving it.
