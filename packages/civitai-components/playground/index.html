@@ -1,9 +1,18 @@
 <!doctype html>
-<html lang="en" data-theme="light">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>@civitai/components — elements playground</title>
+    <script>
+      // Inline and before any paint: setting data-theme from the module would
+      // render one frame in the wrong scheme first.
+      document.documentElement.dataset.theme = window.matchMedia(
+        '(prefers-color-scheme: dark)'
+      ).matches
+        ? 'dark'
+        : 'light';
+    </script>
     <style>
       body {
         margin: 0;
@@ -110,6 +119,19 @@
       <civitai-alert color="success" heading="Saved">Your changes are live.</civitai-alert>
       <civitai-alert color="error" closable heading="Failed">Dismiss me.</civitai-alert>
     </civitai-stack>
+
+    <h2>Choice controls</h2>
+    <div class="row" style="align-items: flex-start">
+      <civitai-stack gap="sm">
+        <civitai-checkbox label="Enable upscaling" description="Adds a second pass"></civitai-checkbox>
+        <civitai-checkbox label="Accept terms" required></civitai-checkbox>
+        <civitai-checkbox label="Partial selection" indeterminate></civitai-checkbox>
+        <civitai-checkbox label="Locked" checked disabled></civitai-checkbox>
+      </civitai-stack>
+      <civitai-radio-group id="speed" label="Speed" description="Quality costs time"></civitai-radio-group>
+      <civitai-radio-group id="speed-h" label="Horizontal" orientation="horizontal"
+        error="Pick one"></civitai-radio-group>
+    </div>
 
     <h2>Form participation</h2>
     <form id="demo">

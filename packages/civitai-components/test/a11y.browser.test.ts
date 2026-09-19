@@ -43,6 +43,35 @@ const CASES: { id: string; markup: string; prepare?: (scope: HTMLElement) => voi
       ];
     },
   },
+  { id: 'checkbox', markup: '<civitai-checkbox label="Enable upscaling"></civitai-checkbox>' },
+  {
+    id: 'checkbox/invalid',
+    markup: '<civitai-checkbox label="Accept terms" required error="Required"></civitai-checkbox>',
+  },
+  { id: 'textarea', markup: '<civitai-textarea label="Prompt"></civitai-textarea>' },
+  {
+    id: 'number-input',
+    markup: '<civitai-number-input label="Steps" min="1" max="150"></civitai-number-input>',
+  },
+  {
+    id: 'select',
+    markup: '<civitai-select label="Model" placeholder="Pick one"></civitai-select>',
+    prepare: (scope) => {
+      (scope.querySelector('civitai-select') as HTMLElement & { data: unknown }).data = [
+        { value: 'sdxl', label: 'SDXL' },
+      ];
+    },
+  },
+  {
+    id: 'radio-group',
+    markup: '<civitai-radio-group label="Speed" description="Quality costs time"></civitai-radio-group>',
+    prepare: (scope) => {
+      (scope.querySelector('civitai-radio-group') as HTMLElement & { data: unknown }).data = [
+        { value: 'fast', label: 'Fast' },
+        { value: 'slow', label: 'Slow', disabled: true },
+      ];
+    },
+  },
   {
     id: 'form',
     markup:

@@ -122,6 +122,22 @@
     "./civitai-textarea/define": {
       "types": "./dist/elements/civitai-textarea.define.d.ts",
       "import": "./dist/elements/civitai-textarea.define.js"
+    },
+    "./civitai-checkbox": {
+      "types": "./dist/elements/civitai-checkbox.d.ts",
+      "import": "./dist/elements/civitai-checkbox.js"
+    },
+    "./civitai-checkbox/define": {
+      "types": "./dist/elements/civitai-checkbox.define.d.ts",
+      "import": "./dist/elements/civitai-checkbox.define.js"
+    },
+    "./civitai-radio-group": {
+      "types": "./dist/elements/civitai-radio-group.d.ts",
+      "import": "./dist/elements/civitai-radio-group.js"
+    },
+    "./civitai-radio-group/define": {
+      "types": "./dist/elements/civitai-radio-group.define.d.ts",
+      "import": "./dist/elements/civitai-radio-group.define.js"
     }
   },
   "files": [

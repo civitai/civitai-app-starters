@@ -1,5 +1,6 @@
 import { injectStyles } from '../src/index.js';
 import type { CivitaiSegmentedControl } from '../src/elements/civitai-segmented-control.js';
+import type { CivitaiRadioGroup } from '../src/elements/civitai-radio-group.js';
 import type { CivitaiSelect } from '../src/elements/civitai-select.js';
 import '../src/elements/register.js';
 
@@ -7,9 +8,23 @@ import '../src/elements/register.js';
 // markup they replace.
 injectStyles();
 
+const root = document.documentElement;
+const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+let followsSystem = true;
+
+const apply = (dark: boolean): void => {
+  root.dataset.theme = dark ? 'dark' : 'light';
+};
+
+// Keep following the OS until the toggle is used, so changing the desktop
+// theme with the page open still moves it.
+prefersDark.addEventListener('change', (event) => {
+  if (followsSystem) apply(event.matches);
+});
+
 document.querySelector('#theme')?.addEventListener('click', () => {
-  const root = document.documentElement;
-  root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+  followsSystem = false;
+  apply(root.dataset.theme !== 'dark');
 });
 
 const loadingToggle = document.querySelector('#toggle-loading');
@@ -37,6 +52,16 @@ if (model) {
     { value: 'flux', label: 'Flux.1 [dev]' },
     { value: 'sd15', label: 'SD 1.5 (retired)', disabled: true },
   ];
+}
+
+const SPEEDS = [
+  { value: 'fast', label: 'Fast' },
+  { value: 'balanced', label: 'Balanced' },
+  { value: 'quality', label: 'Quality (unavailable)', disabled: true },
+];
+for (const id of ['speed', 'speed-h']) {
+  const el = document.querySelector<CivitaiRadioGroup>(`#${id}`);
+  if (el) el.data = SPEEDS;
 }
 
 const scValue = document.querySelector('#sc-value');
