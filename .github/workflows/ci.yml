@@ -334,6 +334,27 @@ jobs:
         env:
           SKIP_ENV_VALIDATION: '1'
 
+      # EXPIRED-SESSION PROBE (next-app only). Next.js forbids cookie writes in a
+      # Server Component, and that rule exists only inside a real render — no
+      # unit test can reach it. `getSession()` used to refresh in place, so an
+      # expired session took the whole page render down with
+      # `Cookies can only be modified in a Server Action or Route Handler`, and
+      # the browser was never told to drop the dead cookie. Refresh now lives in
+      # middleware; this drives a real `next start` over HTTP and asserts BOTH
+      # arms — rejected refresh clears the cookie and renders logged-out,
+      # accepted refresh re-seals it and renders signed-in.
+      #
+      # PROBE_SKIP_BUILD reuses the `.next` the Build step above just produced.
+      # timeout-minutes for the same reason the playwright steps have one: a
+      # wedged child process is indistinguishable from a slow one, and would
+      # otherwise burn to GitHub's 6-hour cap.
+      - name: Expired-session probe (next-app)
+        if: matrix.starter == 'next-app'
+        run: pnpm --filter ./starters/next-app probe:expired-session
+        env:
+          PROBE_SKIP_BUILD: '1'
+        timeout-minutes: 5
+
       - name: Lint (if defined)
         run: |
           if pnpm --filter ./starters/${{ matrix.starter }} exec node -e "process.exit(require('./package.json').scripts?.lint ? 0 : 1)" 2>/dev/null; then
