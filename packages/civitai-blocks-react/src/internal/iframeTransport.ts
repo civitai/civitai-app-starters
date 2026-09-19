@@ -426,10 +426,18 @@ export class IframeTransport implements BlockTransport {
     // `BLOCK_INIT` has a validator and is never any request's `responseType`, so a
     // malformed one always lands on `pushed` and prints "nothing was awaiting it" —
     // while `waitForInit()` IS awaiting it and rejects 10s later, after which the
-    // host shows a fallback. Behaviour is unchanged by the filter (pre-init
-    // `pending` is empty, so the previous discriminator said the same thing) and the
-    // report itself is suppressed pre-init by `reportRejection`'s `parentOrigin`
-    // guard — but the rule above is not universal, and this is where it is wrong.
+    // host shows a fallback.
+    //
+    // ⚠️ AND THE FILTER DID CHANGE THIS PATH, which an earlier revision of this note
+    // denied on the premise that "pre-init `pending` is empty". It is not: a block
+    // calling `useViewer()` from a bare mount effect has `GET_VIEWER` in `pending`
+    // before any init lands, because `sendRequest` inserts there BEFORE `dispatch`
+    // decides to queue. Under the old `pending.size` discriminator that printed
+    // "1 request(s) … may now hang"; now it prints the push wording — i.e. the change
+    // moved this path in the direction this very note calls the worst one. The
+    // CONCLUSION still holds (no metric moves: `reportRejection` returns early on
+    // `!parentOrigin`), and the rule above is not universal. Only the premise was
+    // wrong.
     const awaiting = [...this.pending.values()].filter((p) => p.responseType === replyType);
     if (awaiting.length === 0) {
       return { label: OTHER_MESSAGE_TYPE_LABEL, hung: 'pushed' };

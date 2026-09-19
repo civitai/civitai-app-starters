@@ -1403,8 +1403,10 @@ export type BlockToParentMessageType = BlockToParentMessage['type'];
  * `vitest run`, so "what test fails when someone adds a message type" has an
  * answer that is not "a typecheck".
  *
- * ⚠️ Measured 2026-09-19 at `civitai-app-starters@44a79dc`: this set was exactly
- * equal to the 46 keys of civitai's own `hostHandlerParity.ts` `INVENTORY`, which
+ * ⚠️ Measured 2026-09-19: this set MINUS
+ * `BLOCK_MESSAGE_REJECTED` — the member this change adds, so 46 of the 47 below —
+ * was exactly equal to the 46 keys of civitai's own `hostHandlerParity.ts`
+ * `INVENTORY`, which
  * is what `boundBridgeMessageType` bounds the host-side `type` label against. That
  * equality is what makes a value clamped here survive the host's clamp unchanged —
  * it is a measurement, not an invariant, and civitai's own compile-time gate

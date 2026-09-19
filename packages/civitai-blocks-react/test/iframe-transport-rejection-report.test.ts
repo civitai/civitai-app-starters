@@ -395,10 +395,15 @@ describe('IframeTransport — validator-rejection reporting', () => {
 
   it('a non-object payload on a pending request does NOT claim the push case', async () => {
     const transport = await initTransport();
+    // TWO requests awaiting the SAME reply type, so `awaiting` is pinned at a value
+    // a hardcoded `1` cannot satisfy. Measured: with one, replacing
+    // `awaiting: awaiting.length` with `awaiting: 1` survived all 15 tests — the
+    // count an operator reads as "how many may hang" was asserted by nothing.
+    startImagesRequest(transport);
     startImagesRequest(transport);
 
     // `isValidImagesResult` rejects at its first line (`!isObject(p)`), so there is
-    // no `requestId` to read — while GET_IMAGES_BY_IDS is genuinely in flight.
+    // no `requestId` to read — while both GET_IMAGES_BY_IDS calls are in flight.
     window.dispatchEvent(
       mockParentMessage(
         { type: 'IMAGES_RESULT', payload: undefined } as unknown as ParentToBlockMessage,
@@ -419,7 +424,7 @@ describe('IframeTransport — validator-rejection reporting', () => {
     // message computed off the size of the entire pending table, which is the
     // discriminator this fix replaced.
     expect(warned).toContain(
-      '1 request(s) awaiting "IMAGES_RESULT" and this reply names none of them, so one may now hang',
+      '2 request(s) awaiting "IMAGES_RESULT" and this reply names none of them, so one may now hang',
     );
   });
 
