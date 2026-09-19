@@ -34,6 +34,10 @@ document.querySelector('#sc-md')?.addEventListener('change', (event) => {
   if (scValue) scValue.textContent = (event.target as CivitaiSegmentedControl).value;
 });
 
+document.querySelector('civitai-alert[closable]')?.addEventListener('close', (event) => {
+  (event.target as HTMLElement).remove();
+});
+
 const form = document.querySelector<HTMLFormElement>('#demo');
 const result = document.querySelector('#result');
 form?.addEventListener('submit', (event) => {

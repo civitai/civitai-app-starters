@@ -1,14 +1,14 @@
 import { css } from 'lit';
 
 /**
- * Inheritable properties cross a shadow boundary, so a host page's `font` or
- * `line-height` lands inside every element unless it is set deliberately.
+ * The legacy `[data-civitai-ui]` rule, and no more than it: adding a
+ * `line-height` here silently relaid out every element whose legacy
+ * counterpart inherited one.
  */
 export const hostBaseline = css`
   :host {
     box-sizing: border-box;
     font-family: var(--civitai-font);
-    line-height: 1;
   }
   :host *,
   :host *::before,

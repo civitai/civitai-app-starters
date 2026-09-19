@@ -80,6 +80,23 @@
       <output id="sc-value">grid</output>
     </div>
 
+    <h2>Presentational primitives</h2>
+    <civitai-stack gap="md">
+      <civitai-group>
+        <civitai-badge>default</civitai-badge>
+        <civitai-badge variant="light" color="success">ready</civitai-badge>
+        <civitai-badge variant="outline" color="warning">queued</civitai-badge>
+        <civitai-badge size="lg" color="error">failed</civitai-badge>
+        <civitai-loader size="sm" label="Working"></civitai-loader>
+        <civitai-loader></civitai-loader>
+      </civitai-group>
+      <civitai-card padding="md">A card, borderless — a hairline in light, none in dark.</civitai-card>
+      <civitai-card with-border padding="md">A card with an explicit border.</civitai-card>
+      <civitai-alert heading="Heads up">The default info intent.</civitai-alert>
+      <civitai-alert color="success" heading="Saved">Your changes are live.</civitai-alert>
+      <civitai-alert color="error" closable heading="Failed">Dismiss me.</civitai-alert>
+    </civitai-stack>
+
     <h2>Form participation</h2>
     <form id="demo">
       <civitai-text-input name="q" label="Query" value="hello"

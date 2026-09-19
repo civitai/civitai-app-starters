@@ -4,6 +4,292 @@
   "modules": [
     {
       "kind": "javascript-module",
+      "path": "src/elements/civitai-alert.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiAlert",
+          "members": [
+            {
+              "kind": "field",
+              "name": "color",
+              "privacy": "public",
+              "type": {
+                "text": "Intent | ''"
+              },
+              "default": "''",
+              "attribute": "color",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "heading",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Not `title`: that attribute is global and would render a tooltip.",
+              "default": "''",
+              "attribute": "heading",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "closable",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "closable",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "closeLabel",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Dismiss'",
+              "attribute": "close-label",
+              "reflects": true
+            },
+            {
+              "kind": "method",
+              "name": "#close",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            }
+          ],
+          "events": [
+            {
+              "name": "close",
+              "type": {
+                "text": "Event"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "color",
+              "type": {
+                "text": "Intent | ''"
+              },
+              "default": "''",
+              "fieldName": "color"
+            },
+            {
+              "name": "heading",
+              "type": {
+                "text": "string"
+              },
+              "description": "Not `title`: that attribute is global and would render a tooltip.",
+              "default": "''",
+              "fieldName": "heading"
+            },
+            {
+              "name": "closable",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "closable"
+            },
+            {
+              "name": "close-label",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Dismiss'",
+              "fieldName": "closeLabel"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-alert",
+          "cssParts": [
+            {
+              "name": "body"
+            },
+            {
+              "name": "title"
+            },
+            {
+              "name": "close"
+            }
+          ],
+          "slots": [
+            {
+              "name": ""
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiAlert",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiAlert",
+          "declaration": {
+            "name": "CivitaiAlert",
+            "module": "src/elements/civitai-alert.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiAlert",
+          "declaration": {
+            "name": "defineCivitaiAlert",
+            "module": "src/elements/civitai-alert.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-alert",
+          "declaration": {
+            "name": "CivitaiAlert",
+            "module": "src/elements/civitai-alert.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-badge.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiBadge",
+          "members": [
+            {
+              "kind": "field",
+              "name": "variant",
+              "privacy": "public",
+              "type": {
+                "text": "BadgeVariant"
+              },
+              "default": "'filled'",
+              "attribute": "variant",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "size",
+              "privacy": "public",
+              "type": {
+                "text": "BadgeSize"
+              },
+              "default": "'md'",
+              "attribute": "size",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "color",
+              "privacy": "public",
+              "type": {
+                "text": "Intent | ''"
+              },
+              "default": "''",
+              "attribute": "color",
+              "reflects": true
+            }
+          ],
+          "attributes": [
+            {
+              "name": "variant",
+              "type": {
+                "text": "BadgeVariant"
+              },
+              "default": "'filled'",
+              "fieldName": "variant"
+            },
+            {
+              "name": "size",
+              "type": {
+                "text": "BadgeSize"
+              },
+              "default": "'md'",
+              "fieldName": "size"
+            },
+            {
+              "name": "color",
+              "type": {
+                "text": "Intent | ''"
+              },
+              "default": "''",
+              "fieldName": "color"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-badge",
+          "slots": [
+            {
+              "name": ""
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiBadge",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiBadge",
+          "declaration": {
+            "name": "CivitaiBadge",
+            "module": "src/elements/civitai-badge.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiBadge",
+          "declaration": {
+            "name": "defineCivitaiBadge",
+            "module": "src/elements/civitai-badge.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-badge",
+          "declaration": {
+            "name": "CivitaiBadge",
+            "module": "src/elements/civitai-badge.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/elements/civitai-button.ts",
       "declarations": [
         {
@@ -239,6 +525,305 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/elements/civitai-card.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiCard",
+          "members": [
+            {
+              "kind": "field",
+              "name": "padding",
+              "privacy": "public",
+              "type": {
+                "text": "CardPadding | ''"
+              },
+              "default": "''",
+              "attribute": "padding",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "withBorder",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "with-border",
+              "reflects": true
+            }
+          ],
+          "attributes": [
+            {
+              "name": "padding",
+              "type": {
+                "text": "CardPadding | ''"
+              },
+              "default": "''",
+              "fieldName": "padding"
+            },
+            {
+              "name": "with-border",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "withBorder"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-card",
+          "slots": [
+            {
+              "name": ""
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiCard",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiCard",
+          "declaration": {
+            "name": "CivitaiCard",
+            "module": "src/elements/civitai-card.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiCard",
+          "declaration": {
+            "name": "defineCivitaiCard",
+            "module": "src/elements/civitai-card.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-card",
+          "declaration": {
+            "name": "CivitaiCard",
+            "module": "src/elements/civitai-card.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-group.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiGroup",
+          "members": [
+            {
+              "kind": "field",
+              "name": "gap",
+              "privacy": "public",
+              "type": {
+                "text": "Gap | ''"
+              },
+              "default": "''",
+              "attribute": "gap",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "nowrap",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "nowrap",
+              "reflects": true
+            }
+          ],
+          "attributes": [
+            {
+              "name": "gap",
+              "type": {
+                "text": "Gap | ''"
+              },
+              "default": "''",
+              "fieldName": "gap"
+            },
+            {
+              "name": "nowrap",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "nowrap"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-group",
+          "slots": [
+            {
+              "name": ""
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiGroup",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiGroup",
+          "declaration": {
+            "name": "CivitaiGroup",
+            "module": "src/elements/civitai-group.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiGroup",
+          "declaration": {
+            "name": "defineCivitaiGroup",
+            "module": "src/elements/civitai-group.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-group",
+          "declaration": {
+            "name": "CivitaiGroup",
+            "module": "src/elements/civitai-group.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-loader.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiLoader",
+          "members": [
+            {
+              "kind": "field",
+              "name": "size",
+              "privacy": "public",
+              "type": {
+                "text": "LoaderSize"
+              },
+              "default": "'md'",
+              "attribute": "size",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Announced to assistive tech; empty makes the loader decorative.",
+              "default": "''",
+              "attribute": "label",
+              "reflects": true
+            }
+          ],
+          "attributes": [
+            {
+              "name": "size",
+              "type": {
+                "text": "LoaderSize"
+              },
+              "default": "'md'",
+              "fieldName": "size"
+            },
+            {
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "description": "Announced to assistive tech; empty makes the loader decorative.",
+              "default": "''",
+              "fieldName": "label"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-loader",
+          "cssParts": [
+            {
+              "name": "spinner"
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiLoader",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiLoader",
+          "declaration": {
+            "name": "CivitaiLoader",
+            "module": "src/elements/civitai-loader.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiLoader",
+          "declaration": {
+            "name": "defineCivitaiLoader",
+            "module": "src/elements/civitai-loader.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-loader",
+          "declaration": {
+            "name": "CivitaiLoader",
+            "module": "src/elements/civitai-loader.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/elements/civitai-segmented-control.ts",
       "declarations": [
         {
@@ -464,6 +1049,86 @@
           "declaration": {
             "name": "CivitaiSegmentedControl",
             "module": "src/elements/civitai-segmented-control.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-stack.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiStack",
+          "members": [
+            {
+              "kind": "field",
+              "name": "gap",
+              "privacy": "public",
+              "type": {
+                "text": "Gap | ''"
+              },
+              "default": "''",
+              "attribute": "gap",
+              "reflects": true
+            }
+          ],
+          "attributes": [
+            {
+              "name": "gap",
+              "type": {
+                "text": "Gap | ''"
+              },
+              "default": "''",
+              "fieldName": "gap"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-stack",
+          "slots": [
+            {
+              "name": ""
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiStack",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiStack",
+          "declaration": {
+            "name": "CivitaiStack",
+            "module": "src/elements/civitai-stack.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiStack",
+          "declaration": {
+            "name": "defineCivitaiStack",
+            "module": "src/elements/civitai-stack.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-stack",
+          "declaration": {
+            "name": "CivitaiStack",
+            "module": "src/elements/civitai-stack.ts"
           }
         }
       ]

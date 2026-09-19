@@ -50,7 +50,55 @@
       "import": "./dist/elements/civitai-segmented-control.define.js"
     },
     "./elements.js": "./dist/elements.js",
-    "./custom-elements.json": "./custom-elements.json"
+    "./custom-elements.json": "./custom-elements.json",
+    "./civitai-alert": {
+      "types": "./dist/elements/civitai-alert.d.ts",
+      "import": "./dist/elements/civitai-alert.js"
+    },
+    "./civitai-alert/define": {
+      "types": "./dist/elements/civitai-alert.define.d.ts",
+      "import": "./dist/elements/civitai-alert.define.js"
+    },
+    "./civitai-badge": {
+      "types": "./dist/elements/civitai-badge.d.ts",
+      "import": "./dist/elements/civitai-badge.js"
+    },
+    "./civitai-badge/define": {
+      "types": "./dist/elements/civitai-badge.define.d.ts",
+      "import": "./dist/elements/civitai-badge.define.js"
+    },
+    "./civitai-card": {
+      "types": "./dist/elements/civitai-card.d.ts",
+      "import": "./dist/elements/civitai-card.js"
+    },
+    "./civitai-card/define": {
+      "types": "./dist/elements/civitai-card.define.d.ts",
+      "import": "./dist/elements/civitai-card.define.js"
+    },
+    "./civitai-group": {
+      "types": "./dist/elements/civitai-group.d.ts",
+      "import": "./dist/elements/civitai-group.js"
+    },
+    "./civitai-group/define": {
+      "types": "./dist/elements/civitai-group.define.d.ts",
+      "import": "./dist/elements/civitai-group.define.js"
+    },
+    "./civitai-loader": {
+      "types": "./dist/elements/civitai-loader.d.ts",
+      "import": "./dist/elements/civitai-loader.js"
+    },
+    "./civitai-loader/define": {
+      "types": "./dist/elements/civitai-loader.define.d.ts",
+      "import": "./dist/elements/civitai-loader.define.js"
+    },
+    "./civitai-stack": {
+      "types": "./dist/elements/civitai-stack.d.ts",
+      "import": "./dist/elements/civitai-stack.js"
+    },
+    "./civitai-stack/define": {
+      "types": "./dist/elements/civitai-stack.define.d.ts",
+      "import": "./dist/elements/civitai-stack.define.js"
+    }
   },
   "files": [
     "dist",
