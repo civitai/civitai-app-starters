@@ -46,6 +46,7 @@ the secret or breaks the auth model.
 - **Svelte 5 runes.** `$state<T>(...)` (explicit generic to avoid literal narrowing on `null`), `$derived`, `$props`. Skip `svelte/store` unless runes can't express it.
 - **Encrypted-cookie sessions, no DB.** `sealCookie`/`unsealCookie` (AES-256-GCM). Refresh-token cookie + short-lived PKCE-state cookie.
 - **Buzz cost preview before submission.** Always call `/api/generate/estimate` first.
+- 🔴 **`Secure` + HSTS derive from `APP_URL`'s scheme, never from `NODE_ENV`.** Nothing sets `NODE_ENV` — `pnpm start` is `node --env-file=.env dist-server/index.js` — so `NODE_ENV === 'production'` was false on a real production box, and the app shipped `civ_session` **without `Secure`** and no `Strict-Transport-Security`. It works perfectly over HTTPS either way, which is precisely why it goes unnoticed. `APP_URL` is required, URL-validated, and states the scheme the app is actually served over. `pnpm probe:cookie-flags` pins both directions.
 
 ## Patterns to avoid
 
@@ -80,6 +81,7 @@ the secret or breaks the auth model.
 | You touched | Run |
 |---|---|
 | Anything in `src/` or `server/` | `pnpm typecheck` (`svelte-check` + server tsc) |
+| `server/app.ts` security headers, cookie flags, `server/env.ts` | `pnpm probe:cookie-flags` |
 | `vite.config.ts`, env, security headers | `pnpm build` |
 | Auth flow (`server/app.ts` auth routes, `server/session.ts`) | `pnpm test:e2e -- auth-flow` |
 | Generation flow (`server/app.ts` generate routes, polling) | `pnpm test:e2e -- generation` |

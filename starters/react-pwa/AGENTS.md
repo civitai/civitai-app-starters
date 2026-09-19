@@ -59,6 +59,7 @@ src/                          # React SPA (tsconfig.json)
 - **The SPA bootstraps auth via `GET /api/me`** on mount. 401 → show login. 200 → show signed-in UI. No client-side token reading.
 - **Encrypted-cookie sessions, no DB.** `@civitai/app-sdk`'s `sealCookie`/`unsealCookie` (AES-256-GCM). One cookie holds the refresh token blob; another short-lived cookie holds the PKCE state during the login handshake.
 - **Buzz cost preview before submission.** Call `/api/generate/estimate` and show the cost before submitting. Users blame the app, not Civitai, when surprised by Buzz spend.
+- 🔴 **`Secure` + HSTS derive from `APP_URL`'s scheme, never from `NODE_ENV`.** Nothing sets `NODE_ENV` — `pnpm start` is `node --env-file=.env dist-server/index.js` — so `NODE_ENV === 'production'` was false on a real production box, and the app shipped `civ_session` **without `Secure`** and no `Strict-Transport-Security`. It works perfectly over HTTPS either way, which is precisely why it goes unnoticed. `APP_URL` is required, URL-validated, and states the scheme the app is actually served over. `pnpm probe:cookie-flags` pins both directions.
 
 ## Patterns to avoid
 
@@ -93,6 +94,7 @@ After any meaningful change, run the matching check before declaring done:
 | You touched | Run |
 |---|---|
 | Anything in `src/` or `server/` | `pnpm typecheck` (both tsconfigs) |
+| `server/app.ts` security headers, cookie flags, `server/env.ts` | `pnpm probe:cookie-flags` |
 | `vite.config.ts`, env wiring, security headers | `pnpm build` |
 | Auth flow (`server/app.ts` auth routes, `server/session.ts`) | `pnpm test:e2e -- auth-flow` |
 | Generation flow (`server/app.ts` generate routes, workflow polling) | `pnpm test:e2e -- generation` |

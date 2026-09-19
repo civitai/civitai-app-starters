@@ -334,6 +334,22 @@ jobs:
         env:
           SKIP_ENV_VALIDATION: '1'
 
+      # COOKIE-FLAGS PROBE (the two PWA starters). `production` used to be
+      # `NODE_ENV === 'production'`, and NOTHING SETS NODE_ENV: `pnpm start` is
+      # `node --env-file=.env dist-server/index.js`. So a correctly deployed,
+      # HTTPS-served app took the dev branch — session cookies without `Secure`
+      # and no HSTS — while working perfectly, which is why nobody would notice.
+      # It now derives from APP_URL's scheme. The probe drives the real OAuth
+      # handshake in-process against a stand-in hub and checks BOTH points on
+      # the dimension: https -> Secure + HSTS, http -> neither. One point alone
+      # is passed by `const production = true`.
+      - name: Cookie-flags probe (PWA starters)
+        if: matrix.starter == 'react-pwa' || matrix.starter == 'svelte-pwa'
+        run: pnpm --filter ./starters/${{ matrix.starter }} probe:cookie-flags
+        env:
+          PROBE_SKIP_BUILD: '1'
+        timeout-minutes: 5
+
       - name: Lint (if defined)
         run: |
           if pnpm --filter ./starters/${{ matrix.starter }} exec node -e "process.exit(require('./package.json').scripts?.lint ? 0 : 1)" 2>/dev/null; then
