@@ -207,6 +207,52 @@ jobs:
         timeout-minutes: 15
       - run: pnpm --filter @civitai/components-react test:browser
 
+      # The custom elements: real upgrade, ElementInternals and computed styles,
+      # including parity against the attribute markup they replace. Chromium is
+      # already installed by the step above (one shared Playwright cache).
+      - run: pnpm --filter @civitai/components test:browser
+
+      # @civitai/block-components — the bridge-bound elements. The layering
+      # guard runs FIRST and is the load-bearing one: @civitai/components has to
+      # stay usable by an external OAuth app, which has no host frame at all.
+      - run: pnpm --filter @civitai/blocks-client build
+      - run: pnpm --filter @civitai/block-components check:layering
+      - run: pnpm --filter @civitai/block-components typecheck
+      - run: pnpm --filter @civitai/block-components test:browser
+
+  # ADVISORY cross-engine contract. Kept OUT of branch protection because the
+  # cost here is the BROWSER INSTALL, not the tests: `playwright install
+  # --with-deps` was measured wedging for 2h13m on one commit (2026-08-19),
+  # which is why every install step in this file carries a timeout. Three
+  # engines triples that exposure, so a wedge or an upstream apt failure must
+  # not be able to block a PR. The chromium half of this contract already runs
+  # inside the REQUIRED `design-system` job, so nothing is only checked here.
+  design-system-cross-browser:
+    name: design-system cross-browser contract (advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm --filter @civitai/theme build
+      - run: pnpm --filter @civitai/components build
+
+      - run: pnpm --filter @civitai/components exec playwright install --with-deps chromium firefox webkit
+        timeout-minutes: 25
+
+      # Probes the platform features the elements are built on, then the
+      # cross-engine surface itself: upgrade, token inheritance across the
+      # shadow boundary, form association, `change` escaping, and `::part`.
+      - run: pnpm --filter @civitai/components test:contract
+
   # ADVISORY drift guard — depends on a LIVE external checkout of civitai/civitai
   # (sparse: src/providers + src/utils) to assert the vendored theme.source.ts
   # hasn't drifted from civitai's real Mantine theme, and the vendored px
