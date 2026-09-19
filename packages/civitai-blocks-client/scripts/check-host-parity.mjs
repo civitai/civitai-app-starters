@@ -49,6 +49,25 @@ const legacy = Object.fromEntries(
 if (sent.length === 0) fail('no messages found in any src/*/protocol.ts — the shape changed.');
 if (Object.keys(legacy).length === 0) fail('LEGACY_REPLIES parsed empty — the shape changed.');
 
+// A promise that never settles is not something BREAKING.md can warn a caller
+// about at the call site, so the tag is part of the contract, not a courtesy.
+const docs = domains.map((domain) => readFileSync(join('src', domain, 'index.ts'), 'utf8')).join('\n');
+const flagged = new Set(
+  [...docs.matchAll(/@experimental No host handler answers `([A-Z_]+)`/g)].map(([, type]) => type),
+);
+if (flagged.size === 0) fail('no @experimental notes found in any src/*/index.ts — the shape changed.');
+
+for (const type of AWAITING_HOST) {
+  if (!flagged.has(type)) {
+    problems.push(`${type} awaits a host handler, but no @experimental note tells a caller.`);
+  }
+}
+for (const type of flagged) {
+  if (!AWAITING_HOST.includes(type)) {
+    problems.push(`${type} is noted @experimental but is not in AWAITING_HOST — drop the note.`);
+  }
+}
+
 const answered = new Set([...Object.keys(host.messages), ...AWAITING_HOST, ...HANDSHAKE]);
 for (const type of sent) {
   if (!answered.has(type)) problems.push(`${type} is sent but no host handler answers it.`);

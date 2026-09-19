@@ -28,7 +28,12 @@ export interface PurchaseOutcome {
   accounts?: BuzzAccount[];
 }
 
-/** The viewer's spendable pools, read once. */
+/**
+ * The viewer's spendable pools, read once.
+ *
+ * @experimental No host handler answers `BUZZ_GET_ACCOUNTS` yet, so this never settles
+ * — request timeouts belong to the host. Tracked in BREAKING.md.
+ */
 export async function getAccounts(opts: CallOptions = {}): Promise<BuzzAccount[]> {
   return (await call('BUZZ_GET_ACCOUNTS', {}, opts)).accounts;
 }
@@ -39,6 +44,9 @@ const accountsCache = new WeakMap<BlockTransport, Live<BuzzAccount[]>>();
  * The pools as a shared live value: one round-trip however many components read
  * it, kept current by the host's `BUZZ_ACCOUNTS_CHANGED` push, so a tip arriving
  * or another app spending updates every consumer.
+ *
+ * @experimental No host handler answers `BUZZ_GET_ACCOUNTS` yet, so this never settles
+ * — request timeouts belong to the host. Tracked in BREAKING.md.
  */
 export function watchAccounts(opts: CallOptions = {}): Live<BuzzAccount[]> {
   return sharedLive(accountsCache, opts, getAccounts, (transport, accept) =>
@@ -50,6 +58,9 @@ export function watchAccounts(opts: CallOptions = {}): Live<BuzzAccount[]> {
  * The viewer's ledger, newest first, fetching the next page only as you read
  * into it. Stops after `limit` rows — 100 unless you say otherwise — so reading
  * a whole history is a choice. `break` stops fetching; the cursor stays inside.
+ *
+ * @experimental No host handler answers `BUZZ_LIST_TRANSACTIONS` yet, so this never
+ * settles — request timeouts belong to the host. Tracked in BREAKING.md.
  */
 export function listTransactions(
   query: BuzzLedgerQuery = {},
@@ -65,6 +76,9 @@ export function listTransactions(
  * Asks for a Buzz purchase and resolves with what the viewer decided. `amount`
  * is a suggestion they can change and the host caps at 50,000; an abandoned
  * flow answers `purchased: false`, because a refusal is an outcome.
+ *
+ * @experimental No host handler answers `BUZZ_REQUEST_PURCHASE` yet, so this never
+ * settles — request timeouts belong to the host. Tracked in BREAKING.md.
  */
 export async function requestPurchase(
   args: { amount?: number } = {},

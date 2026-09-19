@@ -179,6 +179,38 @@ The playground imports the elements from `src/`, so an edit is on screen
 without a build. `demo/` is the opposite: it loads the published artifact from
 jsDelivr to verify what consumers actually get.
 
+### Authoring rules
+
+Four decisions that were implicit until an API review made them explicit. They
+describe the set as it stands; a new element that breaks one needs a reason.
+
+**Content: a property when the element reads it, a slot when it does not.** A
+property is right where the element must measure, truncate or transform the
+text — `<civitai-tag name>` is uppercased and sized against the confidence bar,
+`<civitai-action-button label>` is animated to its own content width,
+`<civitai-avatar name>` is reduced to initials. Everything a consumer might want
+to style or enrich takes a slot, which is why `<civitai-badge>`, `<civitai-alert>`
+and `<civitai-menu-item>` take theirs that way. Mixing them is how
+`<civitai-tag>`'s label once vanished behind a slotted menu.
+
+**Parts are named after the property that fills them**, not after the tag that
+renders them: `heading` for the box `heading` fills, `label` for `label`. Where
+no property fills it, the part is the element's role — `button`, `control`,
+`panel`, `body`.
+
+**No `exportparts`, because nothing needs it.** Every composition in this set is
+by slot, and a slotted child lives in the consumer's own light DOM, so
+`civitai-reaction::part(button)` already reaches it. `exportparts` would only be
+needed if an element rendered another civitai element inside its own shadow
+root — none does, and one that did should ask first whether a slot is the
+better shape.
+
+**Visibility is a property; the methods are sugar.** An element with an `open`
+property also answers `show()`, `hide()` and `toggle()`, so neither style
+surprises anyone. A region that manages a collection rather than one box gets
+its own verbs instead — `<civitai-toast-region>` has `show(options)`,
+`dismiss(id)` and `clear()`, because it is a queue.
+
 ## Design
 
 - All rules live in `@layer civitai.components`, so consumer CSS wins the

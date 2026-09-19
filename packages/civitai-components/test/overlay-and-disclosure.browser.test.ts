@@ -50,6 +50,24 @@ describe('<civitai-modal>', () => {
     expect(dialog.matches(':modal')).toBe(true);
   });
 
+  it('opens and closes through show, hide and toggle as well as the property', async () => {
+    await mount('<civitai-modal heading="Confirm">body</civitai-modal>');
+    const el = scope!.querySelector<CivitaiModal>('civitai-modal')!;
+    await el.updateComplete;
+
+    el.show();
+    await el.updateComplete;
+    expect(dialogOf(el).open).toBe(true);
+
+    el.hide();
+    await el.updateComplete;
+    expect(dialogOf(el).open).toBe(false);
+
+    el.toggle();
+    await el.updateComplete;
+    expect(dialogOf(el).open).toBe(true);
+  });
+
   it('renders nothing visible until opened', async () => {
     await mount('<civitai-modal heading="Confirm">body</civitai-modal>');
     const el = scope!.querySelector<CivitaiModal>('civitai-modal')!;

@@ -128,6 +128,18 @@ export class CivitaiModal extends CivitaiElement {
     this.closeLabel = 'Close';
   }
 
+  show(): void {
+    this.open = true;
+  }
+
+  hide(): void {
+    this.open = false;
+  }
+
+  toggle(): void {
+    this.open = !this.open;
+  }
+
   get #dialog(): HTMLDialogElement | null {
     return this.renderRoot.querySelector('dialog');
   }

@@ -12,13 +12,21 @@ export interface PurchaseOutcome {
     accounts?: BuzzAccount[];
 }
 
-/** The viewer's spendable pools, read once. */
+/**
+ * The viewer's spendable pools, read once.
+ *
+ * @experimental No host handler answers `BUZZ_GET_ACCOUNTS` yet, so this never settles
+ * — request timeouts belong to the host. Tracked in BREAKING.md.
+ */
 export declare function getAccounts(opts?: CallOptions): Promise<BuzzAccount[]>;
 
 /**
  * The pools as a shared live value: one round-trip however many components read
  * it, kept current by the host's `BUZZ_ACCOUNTS_CHANGED` push, so a tip arriving
  * or another app spending updates every consumer.
+ *
+ * @experimental No host handler answers `BUZZ_GET_ACCOUNTS` yet, so this never settles
+ * — request timeouts belong to the host. Tracked in BREAKING.md.
  */
 export declare function watchAccounts(opts?: CallOptions): Live<BuzzAccount[]>;
 
@@ -26,6 +34,9 @@ export declare function watchAccounts(opts?: CallOptions): Live<BuzzAccount[]>;
  * The viewer's ledger, newest first, fetching the next page only as you read
  * into it. Stops after `limit` rows — 100 unless you say otherwise — so reading
  * a whole history is a choice. `break` stops fetching; the cursor stays inside.
+ *
+ * @experimental No host handler answers `BUZZ_LIST_TRANSACTIONS` yet, so this never
+ * settles — request timeouts belong to the host. Tracked in BREAKING.md.
  */
 export declare function listTransactions(query?: BuzzLedgerQuery, opts?: CallOptions): AsyncGenerator<BuzzTransaction>;
 
@@ -33,6 +44,9 @@ export declare function listTransactions(query?: BuzzLedgerQuery, opts?: CallOpt
  * Asks for a Buzz purchase and resolves with what the viewer decided. `amount`
  * is a suggestion they can change and the host caps at 50,000; an abandoned
  * flow answers `purchased: false`, because a refusal is an outcome.
+ *
+ * @experimental No host handler answers `BUZZ_REQUEST_PURCHASE` yet, so this never
+ * settles — request timeouts belong to the host. Tracked in BREAKING.md.
  */
 export declare function requestPurchase(args?: {
     amount?: number;
@@ -93,12 +107,18 @@ export interface WorkflowQuery {
  * page only as you read into it. Stops after `limit` workflows — 100 unless you
  * say otherwise. The host scopes it to this app, so a workflow another app
  * submitted is never reachable here.
+ *
+ * @experimental No host handler answers `ORCHESTRATION_LIST_WORKFLOWS` yet, so this
+ * never settles — request timeouts belong to the host. Tracked in BREAKING.md.
  */
 export declare function listWorkflows(query?: WorkflowQuery, opts?: CallOptions): AsyncGenerator<Workflow>;
 
 /**
  * Cost preview. A run that cannot proceed comes back as a `failed` workflow, so
  * a block can show a "top up Buzz" CTA instead of tearing down.
+ *
+ * @experimental No host handler answers `ORCHESTRATION_ESTIMATE_WORKFLOW` yet, so this
+ * never settles — request timeouts belong to the host. Tracked in BREAKING.md.
  */
 export declare function estimateWorkflow(workflow: WorkflowTemplate, opts: SubmitOptions): Promise<Workflow>;
 
@@ -106,13 +126,26 @@ export declare function estimateWorkflow(workflow: WorkflowTemplate, opts: Submi
  * Spends the viewer's Buzz. The workflow can already be terminal. Set
  * `workflow.externalId` to make a retry collapse onto the first submission
  * rather than charging twice.
+ *
+ * @experimental No host handler answers `ORCHESTRATION_SUBMIT_WORKFLOW` yet, so this
+ * never settles — request timeouts belong to the host. Tracked in BREAKING.md.
  */
 export declare function submitWorkflow(workflow: WorkflowTemplate, opts: SubmitOptions): Promise<Workflow>;
 
-/** A single read of the workflow's current state. */
+/**
+ * A single read of the workflow's current state.
+ *
+ * @experimental No host handler answers `ORCHESTRATION_GET_WORKFLOW` yet, so this never
+ * settles — request timeouts belong to the host. Tracked in BREAKING.md.
+ */
 export declare function getWorkflow(workflowId: string, opts?: CallOptions): Promise<Workflow>;
 
-/** Stops the work and refunds what the orchestrator has not spent. */
+/**
+ * Stops the work and refunds what the orchestrator has not spent.
+ *
+ * @experimental No host handler answers `ORCHESTRATION_CANCEL_WORKFLOW` yet, so this
+ * never settles — request timeouts belong to the host. Tracked in BREAKING.md.
+ */
 export declare function cancelWorkflow(workflowId: string, opts?: CallOptions): Promise<Workflow>;
 
 /**
@@ -126,6 +159,9 @@ export declare function watchWorkflow(workflowId: string, opts?: CallOptions): A
  * Submit and settle: resolves with the finished workflow, however it finished.
  * A failed run resolves too — `status` says which. For progress, submit and
  * watch the id yourself.
+ *
+ * @experimental No host handler answers `ORCHESTRATION_GET_WORKFLOW` yet, so this never
+ * settles — request timeouts belong to the host. Tracked in BREAKING.md.
  */
 export declare function runWorkflow(workflow: WorkflowTemplate, opts: SubmitOptions): Promise<Workflow>;
 

@@ -45,6 +45,9 @@ export interface WorkflowQuery {
  * page only as you read into it. Stops after `limit` workflows — 100 unless you
  * say otherwise. The host scopes it to this app, so a workflow another app
  * submitted is never reachable here.
+ *
+ * @experimental No host handler answers `ORCHESTRATION_LIST_WORKFLOWS` yet, so this
+ * never settles — request timeouts belong to the host. Tracked in BREAKING.md.
  */
 export function listWorkflows(
   query: WorkflowQuery = {},
@@ -59,6 +62,9 @@ export function listWorkflows(
 /**
  * Cost preview. A run that cannot proceed comes back as a `failed` workflow, so
  * a block can show a "top up Buzz" CTA instead of tearing down.
+ *
+ * @experimental No host handler answers `ORCHESTRATION_ESTIMATE_WORKFLOW` yet, so this
+ * never settles — request timeouts belong to the host. Tracked in BREAKING.md.
  */
 export async function estimateWorkflow(
   workflow: WorkflowTemplate,
@@ -72,6 +78,9 @@ export async function estimateWorkflow(
  * Spends the viewer's Buzz. The workflow can already be terminal. Set
  * `workflow.externalId` to make a retry collapse onto the first submission
  * rather than charging twice.
+ *
+ * @experimental No host handler answers `ORCHESTRATION_SUBMIT_WORKFLOW` yet, so this
+ * never settles — request timeouts belong to the host. Tracked in BREAKING.md.
  */
 export async function submitWorkflow(
   workflow: WorkflowTemplate,
@@ -81,12 +90,22 @@ export async function submitWorkflow(
   return call('ORCHESTRATION_SUBMIT_WORKFLOW', { workflow, maxBuzz }, rest);
 }
 
-/** A single read of the workflow's current state. */
+/**
+ * A single read of the workflow's current state.
+ *
+ * @experimental No host handler answers `ORCHESTRATION_GET_WORKFLOW` yet, so this never
+ * settles — request timeouts belong to the host. Tracked in BREAKING.md.
+ */
 export async function getWorkflow(workflowId: string, opts: CallOptions = {}): Promise<Workflow> {
   return call('ORCHESTRATION_GET_WORKFLOW', { workflowId }, opts);
 }
 
-/** Stops the work and refunds what the orchestrator has not spent. */
+/**
+ * Stops the work and refunds what the orchestrator has not spent.
+ *
+ * @experimental No host handler answers `ORCHESTRATION_CANCEL_WORKFLOW` yet, so this
+ * never settles — request timeouts belong to the host. Tracked in BREAKING.md.
+ */
 export async function cancelWorkflow(
   workflowId: string,
   opts: CallOptions = {},
@@ -136,6 +155,9 @@ export async function* watchWorkflow(
  * Submit and settle: resolves with the finished workflow, however it finished.
  * A failed run resolves too — `status` says which. For progress, submit and
  * watch the id yourself.
+ *
+ * @experimental No host handler answers `ORCHESTRATION_GET_WORKFLOW` yet, so this never
+ * settles — request timeouts belong to the host. Tracked in BREAKING.md.
  */
 export async function runWorkflow(
   workflow: WorkflowTemplate,
