@@ -40,7 +40,9 @@ function fromLegacyReply(reply: LegacyReply): Envelope<unknown> {
   if (typeof error === 'string' && error !== '') {
     return { requestId, error: { code: classifyHostError(error), message: error } };
   }
-  return { requestId, result: fields };
+  // Some of these replies nest their value under `result` and others put its
+  // fields straight in the payload; the host was never consistent about it.
+  return { requestId, result: 'result' in fields ? fields.result : fields };
 }
 
 interface LegacyReply {
@@ -62,6 +64,7 @@ const LEGACY_REPLIES: Readonly<Record<string, string>> = {
   APP_STORAGE_LIST: 'APP_STORAGE_LIST_RESULT',
   APP_STORAGE_QUOTA: 'APP_STORAGE_QUOTA_RESULT',
   GET_VIEWER: 'VIEWER_RESULT',
+  SAVE_IMAGE: 'SAVE_IMAGE_RESULT',
 };
 
 type ReplyFraming = 'envelope' | 'legacy';

@@ -16,9 +16,14 @@ const text = readFileSync(source, 'utf8');
 const messages = {};
 const entry = /^ {2}([A-Z_]+): \{\n([\s\S]*?)^ {2}\},$/gm;
 for (const [, name, body] of text.matchAll(entry)) {
+  // The inventory's `reply` is prose in places ("X (or a Y push when ...)"), so
+  // the snapshot keeps the reply NAME and the sentence it came from separately.
+  const declared = body.match(/reply: '([^']*)'/)?.[1] ?? '';
+  const reply = declared.match(/^[A-Z_]+/)?.[0] ?? '';
   messages[name] = {
     request: /request: true/.test(body),
-    reply: body.match(/reply: '([^']*)'/)?.[1] ?? '',
+    reply,
+    ...(declared === reply ? {} : { replyNote: declared }),
   };
 }
 

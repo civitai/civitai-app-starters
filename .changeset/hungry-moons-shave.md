@@ -93,3 +93,60 @@ own handler inventory, so a rename on either side fails a test instead of
 hanging a block with no error and no network call. The snapshot also records
 which messages the host does not answer yet — the `BUZZ_*` and `ORCHESTRATION_*`
 set — and fails the day it does, which is the prompt to delete the entry.
+
+`media` and `host` complete the surface: 20 of the host's 46 messages. `BREAKING.md` lists what is left out and why — the shared datastore, a
+creator-earnings report, wildcard-pack import, collection follow, an analytics
+message the host drops on arrival, and the app-scoped workflow bridge that
+`orchestration` supersedes. Its listing moved onto this package's own protocol
+as `ORCHESTRATION_LIST_WORKFLOWS` rather than being lost. A closed picker or dialog resolves `null` rather than throwing —
+abandoning is a decision — and a gated image comes back `hidden` rather than
+missing, so a gallery keeps its shape. `host` covers the frame itself: resize,
+navigate, error reporting, a token refresh the block asks for rather than waits
+for, and a visibility signal so a block can stand down while the page is hidden.
+
+One of these replies showed the host is not consistent about framing: some nest
+their value under `result` and others put its fields straight in the payload. The
+legacy converter now reads both, which leaves the strict envelope check intact
+for this package's own protocol.
+
+Every `list*` generator now stops after 100 items unless told otherwise:
+`limit` is a total rather than a page size, `Infinity` reads to the end, and the
+last request asks only for what is still wanted. A generator that walks to the
+end by default makes reading someone's entire history the easy mistake, and the
+cap is ours — it holds even if the host serves more than it was asked for.
+
+`REQUEST_TOKEN` is deliberately not exposed. Its only use is refreshing a bearer
+after a 401 on the direct-fetch path — `GET /api/v1/blocks/*` with `token.raw` —
+and that path competes with the bridge rather than complementing it. `BREAKING.md`
+records the seven capabilities that exist only over REST, so the choice between
+the two can be made on evidence.
+
+Parameter types follow one rule: a read that filters or pages takes a `query`
+(`BuzzLedgerQuery`, `StorageQuery`, `WorkflowQuery`); an action takes a `request`
+(`UploadRequest`, `SaveImageRequest`, `CreatePostRequest`). Calling an upload a
+query read as though it were a search.
+
+Image upload is not carried. The host's block-upload modals hard-code
+`accept="image/png,image/jpeg,image/webp"` while the site takes images, video and
+soon audio — and civitai already has a media upload wizard, so a blocks-only
+uploader would be a second, narrower one to maintain. Reading and publishing
+images that already exist is still here; only creating one is not.
+
+The resource pickers are not carried either. A workflow template addresses
+resources by AIR — `model` is the checkpoint's AIR and `additionalNetworks` is
+keyed by the network's — while `RESOURCE_PICKER_RESULT` returns a `versionId`
+with no way to convert, so a picked resource cannot be fed into this package's
+own submit path. `BREAKING.md` has the rest: the checkpoint picker is superseded
+in design but is still the only one wired on a model slot, and
+`SET_USER_CHECKPOINT` is inert on a page by construction.
+
+`media` is one function: `download()`, the host-chrome download a sandboxed block
+cannot trigger itself — named for what it does, since "save" reads as adding to a
+collection, which is a different thing entirely. It takes a url and takes images and video alike — the host's own
+download bridge already maps mp4, webm and mov, so only the message name says
+"image". The wire's `imageId` variant is not exposed, because nothing in this
+package produces an image id.
+Reading images by id and the two publish paths are not carried; `BREAKING.md`
+records that nothing in this package produces the ids they take, and that
+civitai's own router calls `publishGenerationOutputs`' missing audit row "a real
+gap, not a precedent".

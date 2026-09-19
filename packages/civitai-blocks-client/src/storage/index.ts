@@ -1,4 +1,5 @@
 import { createCaller, type CallOptions } from '../core/messaging.js';
+import { paginate } from '../core/paging.js';
 
 import type { StorageEntry, StorageQuery, StorageQuota, StorageRequests } from './protocol.js';
 
@@ -31,18 +32,17 @@ export async function remove(key: string, opts: CallOptions = {}): Promise<boole
 
 /**
  * The viewer's keys in this app, ascending, fetching the next page only as you
- * read into it. `break` stops fetching; the cursor stays inside.
+ * read into it. Stops after `limit` keys — 100 unless you say otherwise.
+ * `break` stops fetching; the cursor stays inside.
  */
-export async function* list(
+export function list(
   query: StorageQuery = {},
   opts: CallOptions = {},
 ): AsyncGenerator<StorageEntry> {
-  let cursor = query.cursor;
-  do {
-    const page = await call('APP_STORAGE_LIST', { ...query, cursor }, opts);
-    for (const entry of page.keys) yield entry;
-    cursor = page.nextCursor;
-  } while (cursor);
+  return paginate(query.limit, 200, async (take, cursor) => {
+    const page = await call('APP_STORAGE_LIST', { ...query, limit: take, cursor }, opts);
+    return { items: page.keys, cursor: page.nextCursor };
+  }, query.cursor);
 }
 
 /** What the viewer has used of their own allowance in this app. */

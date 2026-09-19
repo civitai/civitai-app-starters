@@ -167,12 +167,16 @@ describe('IframeTransport pushes', () => {
 });
 
 describe('IframeTransport legacy replies', () => {
-  const exchange = (type: string, reply: (requestId: string) => unknown) => {
+  const exchange = (
+    type: string,
+    reply: (requestId: string) => unknown,
+    replyType = `${type}_RESULT`,
+  ) => {
     const { transport, posted, deliver } = mountTransport();
     deliver(init());
     const pending = transport.request(type, {});
     const { requestId } = (posted.at(-1)!.msg as { payload: { requestId: string } }).payload;
-    deliver({ type: `${type}_RESULT`, payload: { requestId, ...(reply(requestId) as object) } });
+    deliver({ type: replyType, payload: { requestId, ...(reply(requestId) as object) } });
     return pending;
   };
 
@@ -189,6 +193,13 @@ describe('IframeTransport legacy replies', () => {
       code: 'insufficient',
       operation: 'APP_STORAGE_SET',
       message: 'per-user storage quota exceeded',
+    });
+  });
+
+  it('classifies a failure the host spelled as a code of its own', async () => {
+    await expect(exchange('SAVE_IMAGE', () => ({ error: 'busy' }))).rejects.toMatchObject({
+      code: 'rate-limited',
+      operation: 'SAVE_IMAGE',
     });
   });
 

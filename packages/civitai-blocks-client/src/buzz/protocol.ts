@@ -29,7 +29,7 @@ export interface BuzzLedgerQuery {
   /** ISO-8601. */
   start?: string;
   end?: string;
-  /** Page size, 1-200. */
+  /** Stop after this many rows. Defaults to 100; `Infinity` reads to the end. */
   limit?: number;
   /** Opaque; from a prior reply. */
   cursor?: string;

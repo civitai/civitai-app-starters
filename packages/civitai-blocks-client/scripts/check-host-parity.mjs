@@ -13,6 +13,7 @@ const AWAITING_HOST = [
   'ORCHESTRATION_SUBMIT_WORKFLOW',
   'ORCHESTRATION_GET_WORKFLOW',
   'ORCHESTRATION_CANCEL_WORKFLOW',
+  'ORCHESTRATION_LIST_WORKFLOWS',
 ];
 
 /** Sent by the transport itself rather than by a domain. */

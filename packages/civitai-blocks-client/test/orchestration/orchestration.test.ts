@@ -338,3 +338,37 @@ describe('orchestration reads', () => {
     expect(t.sent.at(-1)?.payload).toEqual({ workflowId: 'wf-1' });
   });
 });
+
+describe('orchestration.listWorkflows', () => {
+  it('walks the pages without the cursor reaching the caller', async () => {
+    const t = createFakeTransport();
+    t.reply('ORCHESTRATION_LIST_WORKFLOWS', {
+      workflows: [workflow('succeeded', { id: 'a' })],
+      cursor: 'next',
+    });
+    t.reply('ORCHESTRATION_LIST_WORKFLOWS', { workflows: [workflow('succeeded', { id: 'b' })] });
+
+    const ids: (string | null | undefined)[] = [];
+    for await (const w of orchestration.listWorkflows({}, { transport: t })) ids.push(w.id);
+
+    expect(ids).toEqual(['a', 'b']);
+    expect(t.sent.map((s) => s.payload)).toEqual([
+      { limit: 50, cursor: undefined },
+      { limit: 50, cursor: 'next' },
+    ]);
+  });
+
+  it('stops fetching when the caller stops reading', async () => {
+    const t = createFakeTransport();
+    t.reply('ORCHESTRATION_LIST_WORKFLOWS', {
+      workflows: [workflow('succeeded', { id: 'a' }), workflow('succeeded', { id: 'b' })],
+      cursor: 'next',
+    });
+
+    for await (const w of orchestration.listWorkflows({}, { transport: t })) {
+      if (w.id === 'a') break;
+    }
+
+    expect(t.sent).toHaveLength(1);
+  });
+});

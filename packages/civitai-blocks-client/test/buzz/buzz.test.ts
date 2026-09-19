@@ -68,18 +68,57 @@ describe('buzz.listTransactions', () => {
     return out;
   };
 
-  it('reads every page, following the cursor to the end', async () => {
+  it('follows the cursor, asking only for what is still wanted', async () => {
     const t = createFakeTransport();
     t.reply('BUZZ_LIST_TRANSACTIONS', { transactions: [row('a', 1)], cursor: 'c1' });
     t.reply('BUZZ_LIST_TRANSACTIONS', { transactions: [row('b', 2)] });
 
-    const all = await drain(buzz.listTransactions({ limit: 1 }, { transport: t }));
+    const all = await drain(buzz.listTransactions({}, { transport: t }));
 
     expect(all.map((r) => (r as { id: string }).id)).toEqual(['a', 'b']);
     expect(t.sent.map((m) => m.payload)).toEqual([
-      { limit: 1, cursor: undefined },
-      { limit: 1, cursor: 'c1' },
+      { limit: 100, cursor: undefined },
+      { limit: 99, cursor: 'c1' },
     ]);
+  });
+
+  it('stops at 100 rows rather than reading a whole history', async () => {
+    const t = createFakeTransport();
+    t.handle('BUZZ_LIST_TRANSACTIONS', () => ({
+      transactions: Array.from({ length: 100 }, (_, i) => row(`r${i}`, 1)),
+      cursor: 'more',
+    }));
+
+    const all = await drain(buzz.listTransactions({}, { transport: t }));
+
+    expect(all).toHaveLength(100);
+    expect(t.sent).toHaveLength(1);
+  });
+
+  it('holds the limit even when the host serves more than it was asked for', async () => {
+    const t = createFakeTransport();
+    t.reply('BUZZ_LIST_TRANSACTIONS', {
+      transactions: Array.from({ length: 40 }, (_, i) => row(`r${i}`, 1)),
+      cursor: 'more',
+    });
+
+    const all = await drain(buzz.listTransactions({ limit: 5 }, { transport: t }));
+
+    expect(all).toHaveLength(5);
+  });
+
+  it('reads past the default when the caller lifts it', async () => {
+    const t = createFakeTransport();
+    t.reply('BUZZ_LIST_TRANSACTIONS', {
+      transactions: Array.from({ length: 100 }, (_, i) => row(`r${i}`, 1)),
+      cursor: 'more',
+    });
+    t.reply('BUZZ_LIST_TRANSACTIONS', { transactions: [row('last', 1)] });
+
+    const all = await drain(buzz.listTransactions({ limit: Infinity }, { transport: t }));
+
+    expect(all).toHaveLength(101);
+    expect(t.sent.map((m) => (m.payload as { limit: number }).limit)).toEqual([200, 200]);
   });
 
   it('asks for nothing more once the reader stops', async () => {
@@ -146,3 +185,4 @@ describe('buzz.watchAccounts', () => {
     expect(t.sent.filter((m) => m.type === 'BUZZ_GET_ACCOUNTS')).toHaveLength(1);
   });
 });
+

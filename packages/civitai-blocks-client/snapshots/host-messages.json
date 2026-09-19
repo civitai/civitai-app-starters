@@ -121,7 +121,8 @@
     },
     "REQUEST_TOKEN": {
       "request": true,
-      "reply": "TOKEN_REFRESH_RESPONSE (or a TOKEN_REFRESH push when no requestId was sent)"
+      "reply": "TOKEN_REFRESH_RESPONSE",
+      "replyNote": "TOKEN_REFRESH_RESPONSE (or a TOKEN_REFRESH push when no requestId was sent)"
     },
     "RESIZE_IFRAME": {
       "request": false,

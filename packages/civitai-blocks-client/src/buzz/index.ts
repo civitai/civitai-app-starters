@@ -1,4 +1,5 @@
 import { sharedLive, type Live } from '../core/live.js';
+import { paginate } from '../core/paging.js';
 import { createCaller, createListener, type CallOptions } from '../core/messaging.js';
 import type { BlockTransport } from '../core/transport.js';
 
@@ -47,18 +48,17 @@ export function watchAccounts(opts: CallOptions = {}): Live<BuzzAccount[]> {
 
 /**
  * The viewer's ledger, newest first, fetching the next page only as you read
- * into it. `break` stops fetching; the cursor stays inside.
+ * into it. Stops after `limit` rows — 100 unless you say otherwise — so reading
+ * a whole history is a choice. `break` stops fetching; the cursor stays inside.
  */
-export async function* listTransactions(
+export function listTransactions(
   query: BuzzLedgerQuery = {},
   opts: CallOptions = {},
 ): AsyncGenerator<BuzzTransaction> {
-  let cursor = query.cursor;
-  do {
-    const page = await call('BUZZ_LIST_TRANSACTIONS', { ...query, cursor }, opts);
-    for (const transaction of page.transactions) yield transaction;
-    cursor = page.cursor;
-  } while (cursor);
+  return paginate(query.limit, 200, async (take, cursor) => {
+    const page = await call('BUZZ_LIST_TRANSACTIONS', { ...query, limit: take, cursor }, opts);
+    return { items: page.transactions, cursor: page.cursor };
+  }, query.cursor);
 }
 
 /**

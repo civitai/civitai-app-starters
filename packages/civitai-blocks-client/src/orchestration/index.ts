@@ -5,6 +5,7 @@ import type {
 } from '@civitai/orchestration-client/dist/generated/types.gen.js';
 
 import { createCaller, type CallOptions } from '../core/messaging.js';
+import { paginate } from '../core/paging.js';
 
 import type { OrchestrationRequests, SpendLimit } from './protocol.js';
 
@@ -30,6 +31,29 @@ export interface SubmitOptions extends CallOptions, SpendLimit {}
 
 export function isTerminal(workflow: Workflow): boolean {
   return TERMINAL.has(workflow.status);
+}
+
+export interface WorkflowQuery {
+  /** Stop after this many. Defaults to 100; `Infinity` reads to the end. */
+  limit?: number;
+  /** Opaque; from a prior reply. */
+  cursor?: string;
+}
+
+/**
+ * What this app has submitted for this viewer, newest first, fetching the next
+ * page only as you read into it. Stops after `limit` workflows — 100 unless you
+ * say otherwise. The host scopes it to this app, so a workflow another app
+ * submitted is never reachable here.
+ */
+export function listWorkflows(
+  query: WorkflowQuery = {},
+  opts: CallOptions = {},
+): AsyncGenerator<Workflow> {
+  return paginate(query.limit, 50, async (take, cursor) => {
+    const page = await call('ORCHESTRATION_LIST_WORKFLOWS', { ...query, limit: take, cursor }, opts);
+    return { items: page.workflows, cursor: page.cursor };
+  }, query.cursor);
 }
 
 /**

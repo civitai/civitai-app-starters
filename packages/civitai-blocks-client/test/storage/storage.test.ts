@@ -88,8 +88,8 @@ describe('storage.list', () => {
 
     expect(keys).toEqual(['a', 'b', 'c']);
     expect(t.sent.map((s) => s.payload)).toEqual([
-      { prefix: 'draft/', cursor: undefined },
-      { prefix: 'draft/', cursor: 'Yg==' },
+      { prefix: 'draft/', limit: 100, cursor: undefined },
+      { prefix: 'draft/', limit: 98, cursor: 'Yg==' },
     ]);
   });
 

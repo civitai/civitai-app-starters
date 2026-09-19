@@ -30,4 +30,9 @@ export type OrchestrationRequests = {
     result: Workflow;
   };
   ORCHESTRATION_CANCEL_WORKFLOW: { params: { workflowId: string }; result: Workflow };
+  /** The host scopes this to the calling app; a block cannot widen it. */
+  ORCHESTRATION_LIST_WORKFLOWS: {
+    params: { limit?: number; cursor?: string };
+    result: { workflows: Workflow[]; cursor?: string };
+  };
 };

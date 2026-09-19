@@ -78,6 +78,8 @@ rather than charging twice.
 
 `submitWorkflow()` and `watchWorkflow(workflowId)` are the halves, for when the
 id has to outlive the loop — stored, or picked up after a reload.
+`listWorkflows()` is an async generator over what this app has already submitted
+for this viewer, scoped to this app by the host.
 `getWorkflow(workflowId)` is a single read, `estimateWorkflow()` previews the
 cost, and `cancelWorkflow()` stops the work.
 
@@ -188,6 +190,26 @@ const next = async (n: number) => {
 };
 ```
 
+## How much a list reads
+
+Every `list*` generator stops after **100 items** unless told otherwise. A
+generator that walks to the end by default makes reading someone's entire
+history the easy mistake — one `for await` with no `break` and you have pulled
+every row they own.
+
+```ts
+civitai.buzz.listTransactions();                    // at most 100
+civitai.buzz.listTransactions({ limit: 500 });      // at most 500
+civitai.buzz.listTransactions({ limit: Infinity }); // to the end, deliberately
+```
+
+`limit` is a **total**, not a page size: the last request asks only for what is
+still wanted, and the cap holds even if the host serves more than it was asked
+for. The same rule covers `storage.list()` and `orchestration.listWorkflows()`.
+
+Reaching the limit looks the same as reaching the end — the generator simply
+finishes. Raise `limit` when you need to tell them apart.
+
 ## Live values
 
 A read several components share has a `watch*` form — one round-trip however
@@ -248,6 +270,16 @@ review rather than as a surprise in a release.
 [`BREAKING.md`](BREAKING.md) records what an app loses moving off
 `@civitai/blocks-react`, and which parts of the host bridge are not ported —
 each with the reasoning and whether the decision is open.
+
+## Media, pickers and the host frame
+
+`media.download()` sends a file to the viewer's device through the host's own
+chrome — a sandboxed block cannot trigger one itself. Images and video both, and
+it saves nothing on civitai. Uploading and publishing are not here;
+[`BREAKING.md`](BREAKING.md) says why.
+
+`host` is the frame itself: `resize()`, `navigate()`, `reportError()`, and
+`onVisibilityChange()` so a block can stand down while the page is hidden.
 
 ## Host parity
 

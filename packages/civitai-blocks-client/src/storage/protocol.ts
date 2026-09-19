@@ -15,7 +15,7 @@ export interface StorageQuota {
 export interface StorageQuery {
   /** Keys starting with this; `%` and `_` are literal, not wildcards. */
   prefix?: string;
-  /** Page size, 1-200. */
+  /** Stop after this many keys. Defaults to 100; `Infinity` reads to the end. */
   limit?: number;
   /** Opaque; from a prior reply. */
   cursor?: string;

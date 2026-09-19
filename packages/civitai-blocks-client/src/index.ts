@@ -4,6 +4,8 @@
  */
 
 export * as buzz from './buzz/index.js';
+export * as host from './host/index.js';
+export * as media from './media/index.js';
 export * as orchestration from './orchestration/index.js';
 export * as storage from './storage/index.js';
 export * as viewer from './viewer/index.js';

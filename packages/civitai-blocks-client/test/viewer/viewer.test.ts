@@ -103,3 +103,4 @@ describe('viewer.requestConsent', () => {
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
   });
 });
+

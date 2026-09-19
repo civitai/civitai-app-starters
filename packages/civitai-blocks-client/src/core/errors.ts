@@ -40,7 +40,12 @@ const HOST_FAILURES: ReadonlyArray<readonly [RegExp, BridgeFailureCode]> = [
     'forbidden',
   ],
   [/quota exceeded|row limit exceeded|exceeds \d+KB cap/i, 'insufficient'],
-  [/rate limit/i, 'rate-limited'],
+  [/rate limit|^busy$/i, 'rate-limited'],
+  // A few of the host's older replies carry a code of their own in `error`.
+  [/^(forbidden|review-mode|declined)$/i, 'forbidden'],
+  [/^sign-in-required$/i, 'unauthenticated'],
+  [/^too-large$/i, 'insufficient'],
+  [/^(not-found|parse-failed|invalid-request|collection-unavailable)$/i, 'invalid'],
 ];
 
 export function classifyHostError(message: string): BridgeFailureCode {

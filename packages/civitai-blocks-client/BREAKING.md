@@ -43,80 +43,214 @@ today.
 
 ## Not ported
 
-### `SHARED_*` — the community datastore · **undecided**
+20 of the host's 46 block→host messages are carried. The rest were looked at and
+left out; none of it is an oversight.
 
-Ten messages: `SHARED_GET` `SHARED_LIST` `SHARED_APPEND` `SHARED_UPDATE`
-`SHARED_WITHDRAW` `SHARED_VOTE` `SHARED_UNVOTE` `SHARED_GET_COUNT`
-`SHARED_GET_COUNTS` `SHARED_REPORT`.
+| Message(s) | Why not | Revisit when |
+|---|---|---|
+| `SHARED_*` (10) | A community feature, not a storage primitive — and it emits no signals | An app needs a request board, **or** the host adds a fan-out push |
+| `GET_DAILY_COMPENSATION` | A creator-earnings report, not a capability | A creator-dashboard block exists |
+| `GET_WILDCARD_PACK` | Prompt-list pack import; one app shape | An app imports wildcard packs |
+| `SET_COLLECTION_FOLLOW` | One social verb, no caller | An app shows a collection |
+| `TRACK_EVENT` | The page host has no sink; it is dropped on arrival | The host wires one |
+| `QUERY_APP_WORKFLOWS`, `CANCEL_APP_WORKFLOW` | Superseded by `orchestration` — see below | — |
+| `REQUEST_TOKEN` | Its only use is the direct-fetch path, which we would rather not encourage — see below | The REST-vs-bridge question below is settled |
+| `OPEN_IMAGE_UPLOAD` (+ `IMAGE_SCAN_RESOLVED`) | A blocks-only uploader that takes images when the site takes media — see below | The host routes blocks through its own media upload |
+| `OPEN_RESOURCE_PICKER`, `OPEN_CHECKPOINT_PICKER`, `SET_USER_CHECKPOINT` | A picked resource cannot be fed into this package's own submit path — see below | `RESOURCE_PICKER_RESULT` carries the resource's AIR |
+| `GET_IMAGES_BY_IDS`, `PUBLISH_GENERATION_OUTPUTS`, `CREATE_POST_FROM_APP` | Nothing in this package produces the ids they take, and publishing has two paths of unequal quality — see below | The publish path is one design, not two |
 
-An app-global, append-only, moderated list with voting — `shared_kv` keyed by a
-server-generated ULID, `votes` (one row per key+user), a `counters` tally cache
-and a report table. Unlike the per-viewer `kv`, rows are visible to every viewer
-of the app and carry no `block_instance_id`, so the app itself is the rendezvous
-point.
+None of the first five has a caller in any app in this workspace. Adding any one back
+is an afternoon — the protocol file, the domain function, its tests — and the
+parity guard keeps them visible, because they stay in the host snapshot as
+messages we deliberately do not send.
 
-Deferred for two reasons, both worth revisiting rather than assuming:
+### `SHARED_*`, in more detail
 
-- **It is a product feature, not a storage primitive.** The value shape is fixed
-  at `{ title, body?, data? }`, voting is in the schema, and the surrounding
-  controls — a blocking content-safety pass on append, a min-trust gate, per-user
-  row caps, daily rate limits, moderator soft-hide — all exist because the payload
-  is public user-generated text. It was built for particular apps (a benchmarking
-  grid, request boards).
-- **There are no signals.** Every `SHARED_*` message the host sends is a reply;
-  there is no push. A viewer cannot see another viewer's vote without re-reading,
-  so a vote count is stale the moment it renders. A `watchShared*` would have to
-  be a polling loop wearing a `watch` name, which is the one thing this package
-  has refused to do elsewhere.
+An app-global, append-only, moderated list with voting: `shared_kv` keyed by a
+server-generated ULID, `votes` (one row per key+user), a `counters` tally cache,
+a report table. Rows carry no `block_instance_id`, so every install of the app
+shares one list.
 
-**Revisit when** an app actually needs a request board, or if the host gains a
-fan-out push for shared rows — that second one is what would make a live view
-honest, and is worth raising with whoever owns the bridge regardless.
+Two reasons it is out:
 
-### Media · **undecided**
+- **It is a product feature.** The value shape is fixed at `{ title, body?, data? }`,
+  voting is in the schema, and the controls around it — a blocking content-safety
+  pass on append, a min-trust gate, per-user row caps, daily rate limits,
+  moderator soft-hide — exist because the payload is public user-generated text.
+- **There are no signals.** Every `SHARED_*` message the host sends is a reply. A
+  viewer cannot see another viewer's vote without re-reading, so a vote count is
+  stale the moment it renders, and a `watchShared*` would be a polling loop
+  wearing a `watch` name.
 
-`OPEN_IMAGE_UPLOAD` `SAVE_IMAGE` `GET_IMAGES_BY_IDS`
-`PUBLISH_GENERATION_OUTPUTS` `CREATE_POST_FROM_APP`, plus the
-`IMAGE_SCAN_RESOLVED` push (which reuses its request's `requestId` — the
-transport already guards against answering the upload with the scan verdict).
+### `QUERY_APP_WORKFLOWS` / `CANCEL_APP_WORKFLOW`
 
-The output pipeline: what turns a generation into something on-site. Deferred
-because these are host-chrome flows where a human sits in a modal for an
-unbounded time, and because they are the messages most likely to change shape
-when the host work happens. `requestPurchase` is the precedent for the API shape
-— a request that resolves with an outcome rather than throwing on abandonment.
+The host's own app-scoped orchestrator bridge, which `orchestration` replaces.
+`CANCEL_APP_WORKFLOW` is a straight duplicate of `ORCHESTRATION_CANCEL_WORKFLOW`.
+The listing was not, so it moved onto this package's protocol as
+`ORCHESTRATION_LIST_WORKFLOWS` rather than being lost — the host scopes it to the
+calling app, exactly as it already does for the older message.
 
-### Pickers · **undecided**
+Carrying both would have meant two workflow types in one package, and the older
+one is lossy: `AppWorkflow` is a projection with an `images` array, so it assumes
+every generation produces images. `orchestration` carries the orchestrator's own
+`Workflow`, where outputs are whatever the steps really produced.
 
-`OPEN_RESOURCE_PICKER` `OPEN_CHECKPOINT_PICKER` `SET_USER_CHECKPOINT`
-`GET_WILDCARD_PACK`, plus the `USER_CHECKPOINT_SET` push. Same reasoning as
-media. Note `pickerOverlay.ts` in `blocks-react` appends its modal to
-`document.body`, which is a portal a shadow-DOM element cannot style — relevant
-when `@civitai/elements` needs a picker.
+**Cost:** `orchestration` speaks a protocol no host handler implements, so
+listing past generations does not work today, where the older message did.
 
-### App workflow history · **undecided**
+### Upload — `OPEN_IMAGE_UPLOAD`, `IMAGE_SCAN_RESOLVED`
 
-`QUERY_APP_WORKFLOWS` `CANCEL_APP_WORKFLOW`. App-scoped listing, distinct from
-`orchestration`'s per-workflow reads. Probably belongs inside `orchestration`
-rather than as its own domain.
+The site takes images, video and soon audio. **This uploader does not.** Both
+host modals hard-code `accept="image/png,image/jpeg,image/webp"` as a literal
+string rather than the platform's own `IMAGE_MIME_TYPE`, so they did not even
+inherit the video support civitai already defines beside it
+(`VIDEO_MIME_TYPE` = mp4, webm).
 
-### Odds and ends
+Not ported because civitai already has a media upload wizard. A blocks-only
+modal that accepts three image formats is a second, narrower uploader to
+maintain, and anything built on it would need renaming the day it widens —
+`uploadImage`, its `PickedImage` union and the async-scan handshake are all
+image-shaped.
 
-| Message | Status |
+**Revisit when** the host routes block uploads through its own wizard. At that
+point the bridge message should carry media, not images.
+
+Still ported: `getImages`, `saveImage`, `publishOutputs` and `createPost`. Those
+read or publish images that already exist, which is a different question from how
+one gets created.
+
+### Pickers — `OPEN_RESOURCE_PICKER`, `OPEN_CHECKPOINT_PICKER`, `SET_USER_CHECKPOINT`
+
+The host side of this is good: both messages open civitai's own
+`ResourceSelectModal` **unmodified**, in host chrome. The block never receives
+the catalog, the search API or a list — only the one resource the viewer
+physically picked. Nothing bespoke was built for blocks.
+
+Four findings, all pointing at a design pass rather than a port:
+
+**The picked resource cannot reach our submit path.** A workflow template
+addresses resources by AIR — `model` is "the AIR of the checkpoint model", and
+`additionalNetworks` is keyed by "the AIR of the network". `RESOURCE_PICKER_RESULT`
+returns a `versionId`, with no way to convert. `@civitai/blocks-react` never hits
+this because it posts `body.modelVersionId` to the *host*, which resolves the AIR
+server-side; `orchestration` deliberately bypasses that by carrying the
+orchestrator's own `WorkflowTemplate`. The picker and the submit path came from
+two different worlds and do not join up.
+
+**Adopting the orchestrator's own `ResourceInfo` is not the fix.** That type is a
+worker descriptor — `air`, `size`, `hashes`, `downloadUrls` — and handing a block
+download URLs for a gated model would be a disclosure. It also lacks the names and
+trigger words a picker exists to provide. What is needed is the **identifier**:
+`air` alongside `versionId`, which is additive and back-compatible.
+
+**`OPEN_CHECKPOINT_PICKER` is superseded in design but not in deployment.** Both
+messages open the same modal, and the host's own comment says the resource picker
+"generalizes" the checkpoint one. But the wide picker is wired **page-only** — on
+a model slot the narrow one is all there is, so it cannot simply be dropped in
+favour of the general one.
+
+**`SET_USER_CHECKPOINT` is inert on a page.** It persists to `block_user_settings`
+for a model-bound install (what later feeds `BLOCK_INIT.context.checkpoint`), and
+`updateUserSettings` hard-requires a `modelId` the page token does not carry — so
+the page host answers `ok: false` by design. A plain `setCheckpoint(versionId)`
+would give no hint that it does nothing on half the surfaces.
+
+**Revisit when** `RESOURCE_PICKER_RESULT` carries the AIR. At that point the
+picker is worth exposing, and the checkpoint/resource split is worth collapsing.
+
+### Publishing and reading images
+
+`SAVE_IMAGE` is carried, as `media.save()`. The rest is not.
+
+**No image ids anywhere.** Every source of one inside this package is gone or
+unported — the picker, the upload, and the two publish paths below. So
+`GET_IMAGES_BY_IDS` is not carried, and `media.download()` takes a `url` only,
+although the wire accepts `imageId` too. An app can persist ids it obtained
+elsewhere and re-read them, but that is a use case waiting for a surface.
+
+Worth knowing for when it comes back: the `imageId` variant of `SAVE_IMAGE` is
+not merely a convenience. It resolves through the same gated per-viewer read that
+backs `GET_IMAGES_BY_IDS`, so a withheld image cannot be coerced into a
+download — a permission check the block cannot perform itself.
+
+**Publishing has two paths, and the newer one says so.** The router's own comment
+on the post audit row reads: *"NET-NEW ON THIS FAMILY. `publishGenerationOutputs`
+writes NO such row (its omission is a real gap, not a precedent)"* — so a publish
+through the older message leaves nothing in the viewer's Activity feed to say an
+app posted on their behalf. `CREATE_POST_FROM_APP` is the considered design and
+`PUBLISH_GENERATION_OUTPUTS` is what came before it.
+
+**Both address outputs positionally.** `imageIndexes` indexes into a workflow's
+images, absent meaning "every available output". That assumes an image-producing
+workflow and stable ordering — the same assumption behind the `imageUrls` shape
+this package already refused.
+
+**Revisit when** publishing is one design rather than two.
+
+### `GET_DAILY_COMPENSATION`, and a correction
+
+Per-modelVersion creator earnings, Buzz plus cash in pennies. **Despite the name
+it returns the whole month** containing the date, bucketed by day —
+`getDailyCompensationRewardByUser` uses `startOf('month')` / `endOf('month')`.
+This package briefly shipped it documented as one day's earnings, which was
+wrong; noted here so the misreading is not repeated.
+
+
+## Open question: the bridge or the REST API
+
+A block has two ways to reach civitai. The bridge, where the host decides per
+message whether to serve it, rate-limits per block instance and audits it. And
+`GET https://civitai.com/api/v1/blocks/*` with `token.raw` as a bearer, where a
+block can call anything its scopes allow, forever.
+
+**`REQUEST_TOKEN` / `refreshToken()` exists only to serve the second path** —
+mint a fresh token after a 401 and retry. It is not exposed here for that
+reason: with everything else host-mediated, nothing in this package needs it.
+
+### Seven capabilities exist only over REST
+
+Deciding the question means deciding these, because today a block that wants any
+of them has to hold a bearer token:
+
+| Endpoint | What it gives a block |
 |---|---|
-| `SET_COLLECTION_FOLLOW` | **undecided** — one message, social graph |
-| `GET_DAILY_COMPENSATION` | **undecided** — creator daily comp, buzz-adjacent |
-| `NAVIGATE` | **undecided** — deep-link within the app's own sub-path space |
-| `TRACK_EVENT` | **not planned** — the page host has no sink wired; it is dropped on arrival |
+| `GET /models` | Catalog model search, maturity-clamped |
+| `GET /images` | Catalog image search |
+| `GET /collections`, `/collections/{id}` | Collection discovery — `mode=public\|mine`, search, sort, paging |
+| `GET`/`POST /tools` | Tool definitions for a chat model, and executing one |
+| `POST /tip`, `GET /tip-allowance` | Send a Buzz tip; read the remaining daily cap |
+| `GET /generation-resources?ids=` | Rehydrate a saved set of picked resources — the picker returns one at a time |
+| `GET /shared-storage/top`, `POST /shared-storage/increment` | App-defined counters |
 
-### Lifecycle reachable but unnamed
+`GET /me` and `POST /collections/{id}/follow` also exist but duplicate bridge
+messages. `submissions`, `submit-version`, `withdraw` and `dev-token` are CLI and
+harness surface, authenticated by a developer token — they belong nowhere near a
+block.
 
-`SUSPEND` / `RESUME` (page visibility) and `BLOCK_ERROR` arrive and depart
-through the transport but have no domain API: a consumer reaches them with
-`transport.on('SUSPEND', …)` and `transport.notify({ type: 'BLOCK_ERROR', … })`.
-`REQUEST_TOKEN` — a block asking for a fresh token rather than waiting for the
-host's ~13-minute rotation — is **not implemented**; the transport only applies
-host-pushed `TOKEN_REFRESH`.
+**Tipping is the one to look at first.** `<civitai-tip-button>` is planned for
+`@civitai/elements` and has no bridge message at all, so it inherits the
+direct-fetch path unless the bridge grows one.
+
+### A third answer, not scheduled
+
+If a token is ever exposed again, it should be minted **by grant** — the app asks
+for one for a purpose, the host decides, and the SDK owns its lifetime so no app
+code ever refreshes. `requestConsent` is already the shape of that ask; it just
+widens the block's own token instead of returning a separate one. This is the
+version where the two paths stop competing, because minting becomes the gate
+rather than the bridge. Recorded as direction, not planned work.
+
+### The stronger version of the argument
+
+The token is already in the block's hands — `BLOCK_INIT` ships `token.raw`, and
+it is on the snapshot. So direct-fetch discloses nothing new; the disclosure
+happened at init.
+
+Which means: **if everything went over the bridge, `raw` would not need to be in
+`BLOCK_INIT` at all.** A block would get scopes, expiry and budget — enough to
+gate its own UI — without the JWT. That is a host-side change and breaking for
+deployed blocks, so it is not ours to take, but it is the difference between two
+overlapping paths and one.
 
 ## The handshake is now owned here
 

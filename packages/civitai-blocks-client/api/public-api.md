@@ -24,7 +24,8 @@ export declare function watchAccounts(opts?: CallOptions): Live<BuzzAccount[]>;
 
 /**
  * The viewer's ledger, newest first, fetching the next page only as you read
- * into it. `break` stops fetching; the cursor stays inside.
+ * into it. Stops after `limit` rows — 100 unless you say otherwise — so reading
+ * a whole history is a choice. `break` stops fetching; the cursor stays inside.
  */
 export declare function listTransactions(query?: BuzzLedgerQuery, opts?: CallOptions): AsyncGenerator<BuzzTransaction>;
 
@@ -37,11 +38,63 @@ export declare function requestPurchase(args?: {
     amount?: number;
 }, opts?: CallOptions): Promise<PurchaseOutcome>;
 
+// namespace: host
+/** Asks the host to resize the frame. Clamped to the manifest's bounds. */
+export declare function resize(height: number, opts?: NotifyOptions): void;
+
+/**
+ * Tells the host the block has failed. `fatal` replaces the block with the
+ * host's own fallback, so it is for a block that cannot continue, not for a
+ * failed request.
+ */
+export declare function reportError(message: string, args?: {
+    fatal?: boolean;
+}, opts?: NotifyOptions): void;
+
+/**
+ * Deep-links within this app's own sub-path space; the host refuses anything
+ * outside it. `new_tab` opens a window instead of routing in place.
+ */
+export declare function navigate(path: string, args?: {
+    target?: 'current' | 'new_tab';
+}, opts?: NotifyOptions): void;
+
+/**
+ * Fires when the page hides and again when it returns. A block that polls or
+ * animates should stand down in between; the host sends both unprompted.
+ */
+export declare function onVisibilityChange(handler: (visible: boolean) => void, opts?: NotifyOptions): () => void;
+
+// namespace: media
+/**
+ * Downloads to the viewer's device through the host's own chrome, because a
+ * block cannot: the sandbox withholds `allow-downloads` by default, and even
+ * with it the `download` attribute is ignored cross-origin, so the filename is
+ * lost. The host fetches only from origins it allowlists. Images and video
+ * both. It saves nothing on civitai; a collection is a different thing.
+ */
+export declare function download(request: DownloadRequest, opts?: CallOptions): Promise<void>;
+
 // namespace: orchestration
 export interface SubmitOptions extends CallOptions, SpendLimit {
 }
 
 export declare function isTerminal(workflow: Workflow): boolean;
+
+export interface WorkflowQuery {
+    /** Stop after this many. Defaults to 100; `Infinity` reads to the end. */
+    limit?: number;
+    /** Opaque; from a prior reply. */
+    cursor?: string;
+}
+
+/**
+ * What this app has submitted for this viewer, newest first, fetching the next
+ * page only as you read into it. Stops after `limit` workflows — 100 unless you
+ * say otherwise. The host scopes it to this app, so a workflow another app
+ * submitted is never reachable here.
+ */
+export declare function listWorkflows(query?: WorkflowQuery, opts?: CallOptions): AsyncGenerator<Workflow>;
 
 /**
  * Cost preview. A run that cannot proceed comes back as a `failed` workflow, so
@@ -95,7 +148,8 @@ export declare function remove(key: string, opts?: CallOptions): Promise<boolean
 
 /**
  * The viewer's keys in this app, ascending, fetching the next page only as you
- * read into it. `break` stops fetching; the cursor stays inside.
+ * read into it. Stops after `limit` keys — 100 unless you say otherwise.
+ * `break` stops fetching; the cursor stays inside.
  */
 export declare function list(query?: StorageQuery, opts?: CallOptions): AsyncGenerator<StorageEntry>;
 
