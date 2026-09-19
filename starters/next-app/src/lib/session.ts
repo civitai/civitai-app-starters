@@ -35,7 +35,8 @@ export type { Session, OAuthStateCookie };
  * The `catch` arm is the nastier half: it converts a recoverable "your session
  * ended" into an unrecoverable render error.
  *
- * Refresh now happens in `src/middleware.ts`, which runs before the render and
+ * Refresh now happens in `src/proxy.ts` (Next 16's rename of `middleware.ts`),
+ * which runs before the render and
  * IS allowed to write cookies. By the time this function runs, the request's
  * cookie is either already refreshed or already gone.
  */
