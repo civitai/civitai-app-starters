@@ -1394,10 +1394,14 @@ export type BlockToParentMessageType = BlockToParentMessage['type'];
  * makes drift a BUILD ERROR in BOTH directions (a union member missing from the
  * array, and an array entry the union does not declare), and
  * `blockToParentMessageTypes.test.ts` re-derives the union from this file's own
- * source text under plain `vitest run`. ⚠️ Those two are NOT independent of each
- * other for the GROWTH case — both fail when the union grows — but they fail in
- * different tools, and the runtime one is the only one that catches the array being
- * edited alone.
+ * source text under plain `vitest run`. ⚠️ THEY ARE NOT INDEPENDENT: the `Exclude`
+ * gate catches BOTH directions — a union member missing from the array and an array
+ * entry the union does not declare — so it already covers the array being edited
+ * alone, earlier, and for consumers. (An earlier revision of this sentence claimed
+ * that case as the runtime test's unique property; it is not.) What the runtime
+ * test uniquely buys is the TOOL: it is the only one that fails under plain
+ * `vitest run`, so "what test fails when someone adds a message type" has an
+ * answer that is not "a typecheck".
  *
  * ⚠️ Measured 2026-09-19 at `civitai-app-starters@44a79dc`: this set was exactly
  * equal to the 46 keys of civitai's own `hostHandlerParity.ts` `INVENTORY`, which

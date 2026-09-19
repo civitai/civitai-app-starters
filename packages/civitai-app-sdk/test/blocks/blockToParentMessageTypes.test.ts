@@ -15,10 +15,12 @@ import {
  * that EXECUTES rather than only a typecheck.
  *
  * 🔴 WHY A SOURCE-DERIVED CHECK WHEN A TYPE-LEVEL ONE EXISTS. A union is erased at
- * runtime, so nothing this file imports can enumerate it — and the sibling
- * `.test-d.ts` proves the two agree only for the compiler, which means the proof
- * lives in a different tool from the one a reader runs as "the tests". Parsing the
- * declaration is the only way to ask the question at runtime. It is a genuinely
+ * runtime, so nothing this file imports can enumerate it. The mirror is held by the
+ * `Exclude` gate embedded in `messages.ts` — NOT by the sibling `.test-d.ts`, which
+ * no longer asserts it at all (an earlier revision of this sentence said it did);
+ * and that gate lives in the compiler, a different tool from the one a reader runs
+ * as "the tests". Parsing the declaration is the only way to ask the question at
+ * runtime. It is a genuinely
  * independent gate: it fails when the ARRAY is edited without the union, which the
  * embedded gate in `messages.ts` also catches, AND it is the only one of the TWO
  * that runs under plain `vitest run`.

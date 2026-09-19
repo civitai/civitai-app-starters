@@ -378,12 +378,15 @@ export class IframeTransport implements BlockTransport {
    *    most validators check), while its request sits in `pending` and hangs to its
    *    timeout;
    *  - a PRE-v2 host, which echoes `requestId` only via
-   *    `...(requestId ? { requestId } : {})` — the asymmetry `isValidTokenRefresh`
-   *    exists to tolerate, so a legacy host's malformed `TOKEN_REFRESH_RESPONSE`
+   *    `...(requestId ? { requestId } : {})` — the asymmetry
+   *    `isValidTokenRefreshResponse` exists to tolerate (NOT `isValidTokenRefresh`,
+   *    which validates a host PUSH and has no `requestId` handling at all), so a
+   *    legacy host's malformed `TOKEN_REFRESH_RESPONSE`
    *    arrives with no `requestId` at all while `REQUEST_TOKEN` is awaiting it.
-   * In both, something IS hanging and the operator was told the opposite. So the
-   * unreadable case now reports `unknown` rather than `pushed`, and the warn says
-   * a request may be hanging that we cannot name.
+   * In both, something IS hanging and the operator was told the opposite. So a
+   * reply that leaves a request OF ITS OWN TYPE unattributed reports `unknown`
+   * rather than `pushed`, and the warn names how many are awaiting that reply type
+   * rather than claiming none was.
    *
    * 🔴 AND THE LOOKUP APPLIES THE SAME `responseType` PREDICATE AS REAL
    * CORRELATION. Without it, a malformed reply carrying ANOTHER in-flight request's
@@ -404,28 +407,35 @@ export class IframeTransport implements BlockTransport {
   private hangingRequestTypeFor(
     replyType: string,
     payload: unknown,
-  ): { label: string; hung: 'named' | 'unknown' | 'pushed' } {
+  ): { label: string; hung: 'named' | 'pushed'} | { label: string; hung: 'unknown'; awaiting: number } {
+    // 🔴 THE DISCRIMINATOR IS "WHO IS AWAITING **THIS REPLY TYPE**", NOT
+    // `pending.size`. An earlier revision used the size of the whole table, and it
+    // was wrong in BOTH directions — the shape this file keeps producing:
+    //  - too WIDE: a genuine malformed PUSH (`THEME_CHANGE`, `CONSENT_UNAVAILABLE`,
+    //    `TOKEN_REFRESH`) arriving while anything at all was in flight printed "one
+    //    may now hang", when `validate.ts` says in as many words that dropping one
+    //    of those "costs at most a stale theme … never a hang — nothing awaits this
+    //    message". For a busy block that made the honest push case near-unreachable;
+    //  - too NARROW, on the same pass: the `responseType`-mismatch branch reached
+    //    the "this reply names none of them" wording having just FOUND the request
+    //    by id, so it asserted the one thing that was demonstrably false there.
+    // Filtering by `responseType` answers both: if nobody is awaiting this reply
+    // type, nothing here can hang whatever else is in flight.
+    const awaiting = [...this.pending.values()].filter((p) => p.responseType === replyType);
+    if (awaiting.length === 0) {
+      return { label: OTHER_MESSAGE_TYPE_LABEL, hung: 'pushed' };
+    }
     const requestId = (payload as { requestId?: unknown } | null | undefined)?.requestId;
-    if (typeof requestId !== 'string') {
-      // Nothing in flight at all ⇒ genuinely a push. Anything in flight ⇒ we cannot
-      // tell, and must not claim the push case. `pending.size` is the only thing
-      // that separates them, and it is right here.
-      return this.pending.size === 0
-        ? { label: OTHER_MESSAGE_TYPE_LABEL, hung: 'pushed' }
-        : { label: OTHER_MESSAGE_TYPE_LABEL, hung: 'unknown' };
+    if (typeof requestId === 'string') {
+      const pending = this.pending.get(requestId);
+      // The same predicate `handleMessage` applies before it will SETTLE a reply.
+      // An id matching a request awaiting a DIFFERENT reply type names nothing we
+      // may attribute: blaming it would pin this breakage on a healthy request.
+      if (pending && pending.responseType === replyType) {
+        return { label: boundBlockToParentMessageType(pending.requestType), hung: 'named' };
+      }
     }
-    const pending = this.pending.get(requestId);
-    if (!pending) {
-      return this.pending.size === 0
-        ? { label: OTHER_MESSAGE_TYPE_LABEL, hung: 'pushed' }
-        : { label: OTHER_MESSAGE_TYPE_LABEL, hung: 'unknown' };
-    }
-    if (pending.responseType !== replyType) {
-      // The id matches a request awaiting a DIFFERENT reply type. Naming it would
-      // blame a healthy request for this one's breakage.
-      return { label: OTHER_MESSAGE_TYPE_LABEL, hung: 'unknown' };
-    }
-    return { label: boundBlockToParentMessageType(pending.requestType), hung: 'named' };
+    return { label: OTHER_MESSAGE_TYPE_LABEL, hung: 'unknown', awaiting: awaiting.length };
   }
 
   /**
@@ -526,7 +536,7 @@ export class IframeTransport implements BlockTransport {
           ? `; "${hanging.label}" will now hang to its request timeout)`
           : hanging.hung === 'pushed'
             ? ', unsolicited push — nothing was awaiting it)'
-            : `; ${this.pending.size} request(s) are in flight and this reply names none of them, so one may now hang)`;
+            : `; ${hanging.hung === 'unknown' ? hanging.awaiting : 0} request(s) awaiting "${data.type}" and this reply names none of them, so one may now hang)`;
       // eslint-disable-next-line no-console -- developer-facing diagnostic at a trust boundary
       console.warn(
         `IframeTransport: dropping malformed "${data.type}" message from ${event.origin} ` +

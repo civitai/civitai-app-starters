@@ -374,14 +374,18 @@ describe('IframeTransport — validator-rejection reporting', () => {
   });
 
   // ───────────────────────────────────────────────────────────────────────────
-  // The budget, and failing soft
+  // Failing soft
   // ───────────────────────────────────────────────────────────────────────────
 
   // ── "I cannot tell which" is not "nothing was awaiting it" ────────────────
-  // Three shapes where a request IS hanging but the reply does not name it. An
-  // earlier revision reported all three as an unsolicited push and printed
-  // "nothing was awaiting it" — the opposite of the truth, to the one person
-  // reading the console while a request hangs.
+  // Three shapes where a request of the reply's OWN type is hanging and the reply
+  // does not attributably name it. ⚠️ They did NOT all fail the same way before the
+  // fix, and an earlier version of this comment claimed they did: the first two
+  // printed "unsolicited push — nothing was awaiting it" (no readable `requestId`),
+  // while the third printed the OPPOSITE — `"GET_IMAGES_BY_IDS" will now hang` —
+  // because the id DID resolve, to a request awaiting a different reply type. One
+  // understated the hang, one blamed a healthy request; the predicate below is what
+  // separates them.
 
   it('a non-object payload on a pending request does NOT claim the push case', async () => {
     const transport = await initTransport();
@@ -403,7 +407,40 @@ describe('IframeTransport — validator-rejection reporting', () => {
     ]);
     const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(warned).not.toContain('nothing was awaiting it');
-    expect(warned).toContain('in flight');
+    // The WHOLE sentence, not a keyword: it names the reply type and the count of
+    // requests awaiting THAT type, which is the fact that distinguishes this case
+    // from a push. A `toContain('in flight')` — the earlier spelling — passed for a
+    // message computed off the size of the entire pending table, which is the
+    // discriminator this fix replaced.
+    expect(warned).toContain(
+      '1 request(s) awaiting "IMAGES_RESULT" and this reply names none of them, so one may now hang',
+    );
+  });
+
+  it('a malformed PUSH still reports `pushed` even while other requests are in flight', async () => {
+    // 🔴 THE REGRESSION THE FIRST VERSION OF THIS FIX INTRODUCED, PINNED SO IT
+    // CANNOT RETURN. Discriminating on `this.pending.size` made every malformed push
+    // print "one may now hang" for any block with anything in flight — i.e. for a
+    // busy block, always — while `validate.ts` says of exactly these types that
+    // dropping one "costs at most a stale theme … never a hang — nothing awaits
+    // this message". Filtering by `responseType` is what restores the honest answer:
+    // nobody is awaiting a THEME_CHANGE, so nothing hangs, whatever else is pending.
+    const transport = await initTransport();
+    startImagesRequest(transport); // GET_IMAGES_BY_IDS in flight, awaiting IMAGES_RESULT
+
+    window.dispatchEvent(
+      mockParentMessage(
+        { type: 'THEME_CHANGE', payload: { theme: 'chartreuse' } } as unknown as ParentToBlockMessage,
+        PARENT_ORIGIN,
+      ),
+    );
+
+    expect(rejectionReports()).toEqual([
+      { type: 'BLOCK_MESSAGE_REJECTED', payload: { type: OTHER_MESSAGE_TYPE_LABEL } },
+    ]);
+    const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(warned).toContain('unsolicited push — nothing was awaiting it');
+    expect(warned).not.toContain('may now hang');
   });
 
   it('a legacy host omitting requestId does NOT claim the push case', async () => {
