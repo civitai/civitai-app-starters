@@ -32,7 +32,34 @@ import {
   type GenerateInput,
 } from './civitai.js';
 
-const production = process.env.NODE_ENV === 'production';
+/**
+ * 🔴 DERIVED FROM `APP_URL`, NOT `NODE_ENV`.
+ *
+ * This flag decides two things that only matter in production and are invisible
+ * when they are wrong: whether session cookies carry `Secure`, and whether the
+ * response carries HSTS.
+ *
+ * `NODE_ENV === 'production'` was the wrong signal because NOTHING SETS IT.
+ * The documented production start is
+ *
+ *     node --env-file=.env dist-server/index.js
+ *
+ * which leaves `NODE_ENV` undefined — so a correctly deployed, HTTPS-served app
+ * took the DEV branch: `civ_session` and `civ_oauth_state` without `Secure`, and
+ * no `Strict-Transport-Security`. The app works perfectly either way over
+ * HTTPS, which is exactly why nobody notices; the cost is that one plaintext
+ * request to the same host hands over the sealed session cookie, and the
+ * browser was never told not to make one.
+ *
+ * `APP_URL` is the right signal: it is REQUIRED, it is validated as a URL, and
+ * it states the scheme the app is actually served over. A deployment cannot be
+ * configured for HTTPS and still get the dev branch.
+ *
+ * The `?? ''` is for `SKIP_ENV_VALIDATION=1` builds, where `env.APP_URL` may be
+ * undefined; it fails CLOSED, to the non-secure branch, because that path is
+ * only ever a local build and a crash at import would be worse.
+ */
+const production = (env.APP_URL ?? '').startsWith('https://');
 
 export const app = new Hono();
 
