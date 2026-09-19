@@ -5,7 +5,7 @@ import type { CivitaiRadioGroup } from '../src/elements/civitai-radio-group.js';
 import type { CivitaiSelect } from '../src/elements/civitai-select.js';
 import type { CivitaiTabs } from '../src/elements/civitai-tabs.js';
 import type { CivitaiToastRegion } from '../src/elements/civitai-toast-region.js';
-import '../src/elements/register.js';
+import '../src/elements/register-site.js';
 
 // The legacy attribute CSS, so the playground can sit elements next to the
 // markup they replace.
@@ -13,21 +13,14 @@ injectStyles();
 
 const root = document.documentElement;
 const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
-let followsSystem = true;
 
-const apply = (dark: boolean): void => {
-  root.dataset.theme = dark ? 'dark' : 'light';
-};
-
-// Keep following the OS until the toggle is used, so changing the desktop
-// theme with the page open still moves it.
-prefersDark.addEventListener('change', (event) => {
-  if (followsSystem) apply(event.matches);
-});
+// No `data-theme` until the toggle is used, so the page loads the way any app
+// that never sets one does: following the OS, via @civitai/theme alone.
+const showingDark = (): boolean =>
+  root.dataset.theme ? root.dataset.theme === 'dark' : prefersDark.matches;
 
 document.querySelector('#theme')?.addEventListener('click', () => {
-  followsSystem = false;
-  apply(root.dataset.theme !== 'dark');
+  root.dataset.theme = showingDark() ? 'light' : 'dark';
 });
 
 const loadingToggle = document.querySelector('#toggle-loading');
@@ -144,4 +137,25 @@ form?.addEventListener('submit', (event) => {
 });
 form?.addEventListener('reset', () => {
   if (result) result.textContent = 'form reset';
+});
+
+const tagLog = document.querySelector('#tag-log');
+document.querySelector('#tags')?.addEventListener('vote', (event) => {
+  const { name, vote } = (event as CustomEvent<{ name: string; vote: number }>).detail;
+  const said = vote === 1 ? 'upvoted' : vote === -1 ? 'downvoted' : 'cleared';
+  if (tagLog) tagLog.textContent = `${said} ${name}`;
+});
+
+const menuLog = document.querySelector('#menu-log');
+document.querySelector('#actions')?.addEventListener('select', (event) => {
+  const { item } = (event as CustomEvent<{ item: HTMLElement }>).detail;
+  if (menuLog) menuLog.textContent = `chose "${item.textContent?.trim()}"`;
+});
+
+const cardLog = document.querySelector('#card-log');
+document.querySelector('#cards')?.addEventListener('react', (event) => {
+  const { emoji, reacted, count } = (
+    event as CustomEvent<{ emoji: string; reacted: boolean; count: number }>
+  ).detail;
+  if (cardLog) cardLog.textContent = `${reacted ? 'reacted' : 'un-reacted'} ${emoji} \u2192 ${count}`;
 });

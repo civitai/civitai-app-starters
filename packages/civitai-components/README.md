@@ -64,7 +64,69 @@ One script tag, no build:
 
 `elements.js` is a self-contained bundle at the package root, because jsDelivr
 ignores `exports` — the same reason `styles.css` is copied there. The build
-fails if it exceeds **25 kB gzip**; it currently sits at about 11 kB.
+fails if it exceeds **25 kB gzip**; it currently sits at about 19 kB.
+
+### The civitai vocabulary
+
+`site-elements.js` is the same kit **plus** the elements that only mean
+something on civitai.com — `<civitai-avatar>`, `<civitai-rating-badge>`,
+`<civitai-tag>`. Load one bundle or the other, never both: they each carry their
+own copy of Lit, and a superset costs less over the wire than two that overlap.
+
+`<civitai-menu>` is *not* in there — a dropdown is generic, so it ships in
+`elements.js` with the modal and the tabs.
+
+```html
+<script type="module"
+  src="https://cdn.jsdelivr.net/npm/@civitai/components/site-elements.js"></script>
+```
+
+```ts
+import '@civitai/components/register-site';       // generic kit + vocabulary
+import '@civitai/components/civitai-tag/define';  // just this one
+```
+
+These are presentational: state goes in as attributes, intent comes out as an
+event. `<civitai-tag>` emits `vote` with `{ name, vote }` and clears the vote
+when you press the side you already chose, exactly as the site's own control
+does — where that vote *goes* is a binding's problem, not the element's. The
+rating ladder (`g`/`pg`/`pg13`/`r`/`x`) is the site's own off-site vocabulary,
+and an unrecognised value renders verbatim rather than being reshaped.
+
+`confidence` (0–1, from the tagger) draws the bar behind the label. It is
+separate from `score`, which is the vote total — the site's own pill happens to
+derive its bar from the score, but the two are different numbers.
+
+### The image card
+
+`<civitai-media-card>` is the media plus three overlay slots — `top-start`,
+`top-end` and `bottom` — with a scrim behind the last so counts stay readable on
+a pale image. Give it an `href` and the media becomes a link; the overlays stay
+siblings of that link, so a menu or a button in a corner is still reachable.
+
+```html
+<civitai-media-card href="/images/1" label="Open image">
+  <img slot="media" src="…" alt="" />
+  <civitai-rating-badge slot="top-start" rating="pg"></civitai-rating-badge>
+  <civitai-menu slot="top-end" label="Image actions">…</civitai-menu>
+  <civitai-action-button slot="top-end" label="Remix">
+    <span slot="icon" aria-hidden="true">✦</span>
+    <span slot="icon-expanded" aria-hidden="true">→</span>
+  </civitai-action-button>
+  <civitai-reaction slot="bottom" emoji="👍" label="Like" count="13100"></civitai-reaction>
+</civitai-media-card>
+```
+
+`<civitai-action-button>` is a circle that expands to its label on hover or
+focus; `expanded` holds it open, which is the whole of touch support. Give it an
+`icon-expanded` and the icon crossfades into an inverted chip as the pill opens;
+give it only `icon` and nothing swaps. On a media card it turns light regardless
+of the page theme, because its background is the image.
+
+The `top-end` corner stacks — the kebab sits at the top and the action button
+hangs under it — while `top-start` and `bottom` stay in a row, which is where
+the rating and the `POI` badges sit side by side. `<civitai-reaction>`
+abbreviates its count the way the site does.
 
 [`custom-elements.json`](./custom-elements.json) is the published contract —
 every tag, attribute, property, `::part` and slot. It is generated from the

@@ -8,7 +8,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { injectStyles } from '../src/index.js';
 import type { CivitaiSegmentedControl } from '../src/elements/civitai-segmented-control.js';
-import '../src/elements/register.js';
+import '../src/elements/register-site.js';
+
+const PIXEL =
+  'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
 const AXE_OPTIONS: axe.RunOptions = {
   rules: { 'color-contrast': { enabled: false } },
@@ -118,6 +121,59 @@ const CASES: { id: string; markup: string; prepare?: (scope: HTMLElement) => voi
     markup:
       '<form><civitai-text-input label="Query" name="q"></civitai-text-input>' +
       '<civitai-button type="submit">Search</civitai-button></form>',
+  },
+  { id: 'rating-badge', markup: '<civitai-rating-badge rating="pg13"></civitai-rating-badge>' },
+  { id: 'avatar/image', markup: '<civitai-avatar src="' + PIXEL + '" name="Jane Doe"></civitai-avatar>' },
+  { id: 'avatar/initials', markup: '<civitai-avatar name="Jane Doe"></civitai-avatar>' },
+  { id: 'tag', markup: '<civitai-tag name="wolf"></civitai-tag>' },
+  { id: 'tag/voted', markup: '<civitai-tag name="wolf" vote="1" score="12" show-score></civitai-tag>' },
+  { id: 'tag/readonly', markup: '<civitai-tag name="wolf" readonly></civitai-tag>' },
+  {
+    id: 'tag/confidence',
+    markup: '<civitai-tag name="wolf" confidence="0.82"></civitai-tag>',
+  },
+  {
+    id: 'action-button',
+    markup:
+      '<civitai-action-button label="Remix"><span slot="icon" aria-hidden="true">&#8594;</span></civitai-action-button>',
+  },
+  { id: 'reaction', markup: '<civitai-reaction emoji="\u{1F44D}" label="Like" count="13100"></civitai-reaction>' },
+  {
+    id: 'reaction/reacted',
+    markup: '<civitai-reaction emoji="\u2764" label="Heart" count="5000" reacted></civitai-reaction>',
+  },
+  {
+    id: 'media-card',
+    markup:
+      `<civitai-media-card href="/images/1" label="Open image" style="width: 240px">` +
+      `<img slot="media" src="${PIXEL}" alt="" />` +
+      '<civitai-rating-badge slot="top-start" rating="pg"></civitai-rating-badge>' +
+      '<civitai-menu slot="top-end" label="Image actions">' +
+      '<button slot="trigger" aria-label="More">\u22ee</button>' +
+      '<civitai-menu-item>Report image</civitai-menu-item></civitai-menu>' +
+      '<civitai-action-button slot="top-end" label="Remix">' +
+      '<span slot="icon" aria-hidden="true">&#8594;</span></civitai-action-button>' +
+      '<civitai-reaction slot="bottom" emoji="\u{1F44D}" label="Like" count="13100"></civitai-reaction>' +
+      '<civitai-reaction slot="bottom" emoji="\u2764" label="Heart" count="5000" reacted></civitai-reaction>' +
+      '</civitai-media-card>',
+  },
+  {
+    id: 'menu/closed',
+    markup:
+      '<civitai-menu label="Image actions"><button slot="trigger" aria-label="More">\u22ee</button>' +
+      '<civitai-menu-item>Report image</civitai-menu-item></civitai-menu>',
+  },
+  {
+    id: 'menu/open',
+    markup:
+      '<civitai-menu label="Image actions"><button slot="trigger" aria-label="More">\u22ee</button>' +
+      '<civitai-menu-item>Save image to collection</civitai-menu-item>' +
+      '<civitai-menu-label>Moderator</civitai-menu-label>' +
+      '<civitai-menu-item disabled>Rescan image</civitai-menu-item>' +
+      '<civitai-menu-item destructive>Delete</civitai-menu-item></civitai-menu>',
+    prepare: (scope) => {
+      (scope.querySelector('civitai-menu') as HTMLElement & { show: () => void }).show();
+    },
   },
 ];
 

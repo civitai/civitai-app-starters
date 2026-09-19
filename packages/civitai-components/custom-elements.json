@@ -4,6 +4,151 @@
   "modules": [
     {
       "kind": "javascript-module",
+      "path": "src/elements/civitai-action-button.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiActionButton",
+          "members": [
+            {
+              "kind": "field",
+              "name": "label",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Hidden until hover or focus, and the button's accessible name throughout.",
+              "default": "''",
+              "attribute": "label",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "expanded",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Holds it open — a touch screen has no hover to reveal it with.",
+              "default": "false",
+              "attribute": "expanded",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "disabled",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "#onSwapSlot",
+              "privacy": "private",
+              "readonly": true
+            }
+          ],
+          "attributes": [
+            {
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "description": "Hidden until hover or focus, and the button's accessible name throughout.",
+              "default": "''",
+              "fieldName": "label"
+            },
+            {
+              "name": "expanded",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Holds it open — a touch screen has no hover to reveal it with.",
+              "default": "false",
+              "fieldName": "expanded"
+            },
+            {
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "disabled"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-action-button",
+          "cssParts": [
+            {
+              "name": "button"
+            },
+            {
+              "name": "label"
+            },
+            {
+              "name": "icon"
+            },
+            {
+              "name": "icon-expanded"
+            }
+          ],
+          "slots": [
+            {
+              "name": "icon"
+            },
+            {
+              "name": "icon-expanded"
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiActionButton",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiActionButton",
+          "declaration": {
+            "name": "CivitaiActionButton",
+            "module": "src/elements/civitai-action-button.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiActionButton",
+          "declaration": {
+            "name": "defineCivitaiActionButton",
+            "module": "src/elements/civitai-action-button.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-action-button",
+          "declaration": {
+            "name": "CivitaiActionButton",
+            "module": "src/elements/civitai-action-button.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/elements/civitai-alert.ts",
       "declarations": [
         {
@@ -166,6 +311,174 @@
           "declaration": {
             "name": "CivitaiAlert",
             "module": "src/elements/civitai-alert.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-avatar.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiAvatar",
+          "members": [
+            {
+              "kind": "field",
+              "name": "src",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "src",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "name",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Names the person, and supplies both the alt text and the initials.",
+              "default": "''",
+              "attribute": "name",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "size",
+              "privacy": "public",
+              "type": {
+                "text": "AvatarSize"
+              },
+              "default": "'md'",
+              "attribute": "size",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "frame",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Any CSS background — a cosmetic ring reduces to exactly this much.",
+              "default": "''",
+              "attribute": "frame",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "broken",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "broken"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "src",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "src"
+            },
+            {
+              "name": "name",
+              "type": {
+                "text": "string"
+              },
+              "description": "Names the person, and supplies both the alt text and the initials.",
+              "default": "''",
+              "fieldName": "name"
+            },
+            {
+              "name": "size",
+              "type": {
+                "text": "AvatarSize"
+              },
+              "default": "'md'",
+              "fieldName": "size"
+            },
+            {
+              "name": "frame",
+              "type": {
+                "text": "string"
+              },
+              "description": "Any CSS background — a cosmetic ring reduces to exactly this much.",
+              "default": "''",
+              "fieldName": "frame"
+            },
+            {
+              "name": "broken",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "broken"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-avatar",
+          "cssParts": [
+            {
+              "name": "frame"
+            },
+            {
+              "name": "inner"
+            },
+            {
+              "name": "image"
+            },
+            {
+              "name": "initials"
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiAvatar",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiAvatar",
+          "declaration": {
+            "name": "CivitaiAvatar",
+            "module": "src/elements/civitai-avatar.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiAvatar",
+          "declaration": {
+            "name": "defineCivitaiAvatar",
+            "module": "src/elements/civitai-avatar.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-avatar",
+          "declaration": {
+            "name": "CivitaiAvatar",
+            "module": "src/elements/civitai-avatar.ts"
           }
         }
       ]
@@ -1528,6 +1841,573 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/elements/civitai-media-card.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiMediaCard",
+          "members": [
+            {
+              "kind": "field",
+              "name": "href",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Makes the media itself a link, leaving the overlays independently clickable.",
+              "default": "''",
+              "attribute": "href",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Names that link, since the media is the only thing inside it.",
+              "default": "''",
+              "attribute": "label",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "noScrim",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "no-scrim",
+              "reflects": true
+            }
+          ],
+          "attributes": [
+            {
+              "name": "href",
+              "type": {
+                "text": "string"
+              },
+              "description": "Makes the media itself a link, leaving the overlays independently clickable.",
+              "default": "''",
+              "fieldName": "href"
+            },
+            {
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "description": "Names that link, since the media is the only thing inside it.",
+              "default": "''",
+              "fieldName": "label"
+            },
+            {
+              "name": "no-scrim",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "noScrim"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-media-card",
+          "cssParts": [
+            {
+              "name": "media"
+            },
+            {
+              "name": "top-start"
+            },
+            {
+              "name": "top-end"
+            },
+            {
+              "name": "bottom"
+            }
+          ],
+          "slots": [
+            {
+              "name": "media"
+            },
+            {
+              "name": "top-start"
+            },
+            {
+              "name": "top-end"
+            },
+            {
+              "name": "bottom"
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiMediaCard",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiMediaCard",
+          "declaration": {
+            "name": "CivitaiMediaCard",
+            "module": "src/elements/civitai-media-card.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiMediaCard",
+          "declaration": {
+            "name": "defineCivitaiMediaCard",
+            "module": "src/elements/civitai-media-card.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-media-card",
+          "declaration": {
+            "name": "CivitaiMediaCard",
+            "module": "src/elements/civitai-media-card.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-menu-item.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiMenuItem",
+          "members": [
+            {
+              "kind": "field",
+              "name": "disabled",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "destructive",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Paints the item as a destructive action — Delete, Remove, Block.",
+              "default": "false",
+              "attribute": "destructive",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "#gate",
+              "privacy": "private",
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "#activateOnKey",
+              "privacy": "private",
+              "readonly": true
+            }
+          ],
+          "attributes": [
+            {
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "disabled"
+            },
+            {
+              "name": "destructive",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Paints the item as a destructive action — Delete, Remove, Block.",
+              "default": "false",
+              "fieldName": "destructive"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-menu-item",
+          "slots": [
+            {
+              "name": ""
+            },
+            {
+              "name": "icon"
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiMenuItem",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiMenuItem",
+          "declaration": {
+            "name": "CivitaiMenuItem",
+            "module": "src/elements/civitai-menu-item.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiMenuItem",
+          "declaration": {
+            "name": "defineCivitaiMenuItem",
+            "module": "src/elements/civitai-menu-item.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-menu-item",
+          "declaration": {
+            "name": "CivitaiMenuItem",
+            "module": "src/elements/civitai-menu-item.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-menu-label.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiMenuLabel",
+          "members": [],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-menu-label",
+          "slots": [
+            {
+              "name": ""
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiMenuLabel",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiMenuLabel",
+          "declaration": {
+            "name": "CivitaiMenuLabel",
+            "module": "src/elements/civitai-menu-label.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiMenuLabel",
+          "declaration": {
+            "name": "defineCivitaiMenuLabel",
+            "module": "src/elements/civitai-menu-label.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-menu-label",
+          "declaration": {
+            "name": "CivitaiMenuLabel",
+            "module": "src/elements/civitai-menu-label.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-menu.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiMenu",
+          "members": [
+            {
+              "kind": "field",
+              "name": "open",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "open",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "placement",
+              "privacy": "public",
+              "type": {
+                "text": "MenuPlacement"
+              },
+              "default": "'bottom-start'",
+              "attribute": "placement",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Names the menu for a screen reader, e.g. \"Image actions\".",
+              "default": "''",
+              "attribute": "label",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "#panel",
+              "privacy": "private",
+              "type": {
+                "text": "HTMLElement | null"
+              },
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "#trigger",
+              "privacy": "private",
+              "type": {
+                "text": "HTMLElement | null"
+              },
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "#items",
+              "privacy": "private",
+              "type": {
+                "text": "CivitaiMenuItem[]"
+              },
+              "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "show",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Opens the menu and puts focus on the first item, as a menu button does."
+            },
+            {
+              "kind": "method",
+              "name": "hide",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "options",
+                  "default": "{}",
+                  "type": {
+                    "text": "{ restoreFocus?: boolean }"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "toggle",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "field",
+              "name": "#position",
+              "privacy": "private",
+              "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "#focusItem",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "index",
+                  "type": {
+                    "text": "number"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "#focusOffset",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "step",
+                  "type": {
+                    "text": "number"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "field",
+              "name": "#onKeydown",
+              "privacy": "private",
+              "readonly": true
+            }
+          ],
+          "events": [
+            {
+              "name": "select",
+              "type": {
+                "text": "CustomEvent"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "open",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "open"
+            },
+            {
+              "name": "placement",
+              "type": {
+                "text": "MenuPlacement"
+              },
+              "default": "'bottom-start'",
+              "fieldName": "placement"
+            },
+            {
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "description": "Names the menu for a screen reader, e.g. \"Image actions\".",
+              "default": "''",
+              "fieldName": "label"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-menu",
+          "cssParts": [
+            {
+              "name": "panel"
+            }
+          ],
+          "slots": [
+            {
+              "name": ""
+            },
+            {
+              "name": "trigger"
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiMenu",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiMenu",
+          "declaration": {
+            "name": "CivitaiMenu",
+            "module": "src/elements/civitai-menu.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiMenu",
+          "declaration": {
+            "name": "defineCivitaiMenu",
+            "module": "src/elements/civitai-menu.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-menu",
+          "declaration": {
+            "name": "CivitaiMenu",
+            "module": "src/elements/civitai-menu.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/elements/civitai-modal.ts",
       "declarations": [
         {
@@ -2300,6 +3180,273 @@
           "declaration": {
             "name": "CivitaiRadioGroup",
             "module": "src/elements/civitai-radio-group.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-rating-badge.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiRatingBadge",
+          "members": [
+            {
+              "kind": "field",
+              "name": "rating",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "rating",
+              "reflects": true
+            }
+          ],
+          "attributes": [
+            {
+              "name": "rating",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "rating"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-rating-badge"
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiRatingBadge",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiRatingBadge",
+          "declaration": {
+            "name": "CivitaiRatingBadge",
+            "module": "src/elements/civitai-rating-badge.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiRatingBadge",
+          "declaration": {
+            "name": "defineCivitaiRatingBadge",
+            "module": "src/elements/civitai-rating-badge.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-rating-badge",
+          "declaration": {
+            "name": "CivitaiRatingBadge",
+            "module": "src/elements/civitai-rating-badge.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-reaction.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiReaction",
+          "members": [
+            {
+              "kind": "field",
+              "name": "emoji",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "emoji",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "count",
+              "privacy": "public",
+              "type": {
+                "text": "number"
+              },
+              "default": "0",
+              "attribute": "count",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "reacted",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Whether the viewer has already reacted — the pressed state.",
+              "default": "false",
+              "attribute": "reacted",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "disabled",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Names the reaction for a screen reader, e.g. \"Like\".",
+              "default": "''",
+              "attribute": "label",
+              "reflects": true
+            },
+            {
+              "kind": "method",
+              "name": "#toggle",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            }
+          ],
+          "events": [
+            {
+              "name": "react",
+              "type": {
+                "text": "CustomEvent"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "emoji",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "emoji"
+            },
+            {
+              "name": "count",
+              "type": {
+                "text": "number"
+              },
+              "default": "0",
+              "fieldName": "count"
+            },
+            {
+              "name": "reacted",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Whether the viewer has already reacted — the pressed state.",
+              "default": "false",
+              "fieldName": "reacted"
+            },
+            {
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "disabled"
+            },
+            {
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "description": "Names the reaction for a screen reader, e.g. \"Like\".",
+              "default": "''",
+              "fieldName": "label"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-reaction",
+          "cssParts": [
+            {
+              "name": "button"
+            },
+            {
+              "name": "emoji"
+            },
+            {
+              "name": "count"
+            }
+          ]
+        },
+        {
+          "kind": "variable",
+          "name": "reacted",
+          "type": {
+            "text": "boolean"
+          },
+          "default": "!this.reacted"
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiReaction",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiReaction",
+          "declaration": {
+            "name": "CivitaiReaction",
+            "module": "src/elements/civitai-reaction.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiReaction",
+          "declaration": {
+            "name": "defineCivitaiReaction",
+            "module": "src/elements/civitai-reaction.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-reaction",
+          "declaration": {
+            "name": "CivitaiReaction",
+            "module": "src/elements/civitai-reaction.ts"
           }
         }
       ]
@@ -3100,6 +4247,250 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/elements/civitai-tag.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiTag",
+          "members": [
+            {
+              "kind": "field",
+              "name": "name",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "name",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "score",
+              "privacy": "public",
+              "type": {
+                "text": "number"
+              },
+              "default": "0",
+              "attribute": "score",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "confidence",
+              "privacy": "public",
+              "type": {
+                "text": "number | null"
+              },
+              "description": "0–1 from the tagger. `null` leaves the bar off entirely.",
+              "default": "null",
+              "attribute": "confidence",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "vote",
+              "privacy": "public",
+              "type": {
+                "text": "TagVote"
+              },
+              "default": "0",
+              "attribute": "vote",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "rating",
+              "privacy": "public",
+              "type": {
+                "text": "ContentRating | ''"
+              },
+              "default": "''",
+              "attribute": "rating",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "readOnly",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Drops the vote controls; the pill stays.",
+              "default": "false",
+              "attribute": "readonly",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "showScore",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "show-score",
+              "reflects": true
+            },
+            {
+              "kind": "method",
+              "name": "#cast",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "direction",
+                  "type": {
+                    "text": "1 | -1"
+                  }
+                }
+              ]
+            }
+          ],
+          "events": [
+            {
+              "name": "vote",
+              "type": {
+                "text": "CustomEvent"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "name",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "name"
+            },
+            {
+              "name": "score",
+              "type": {
+                "text": "number"
+              },
+              "default": "0",
+              "fieldName": "score"
+            },
+            {
+              "name": "confidence",
+              "type": {
+                "text": "number | null"
+              },
+              "description": "0–1 from the tagger. `null` leaves the bar off entirely.",
+              "default": "null",
+              "fieldName": "confidence"
+            },
+            {
+              "name": "vote",
+              "type": {
+                "text": "TagVote"
+              },
+              "default": "0",
+              "fieldName": "vote"
+            },
+            {
+              "name": "rating",
+              "type": {
+                "text": "ContentRating | ''"
+              },
+              "default": "''",
+              "fieldName": "rating"
+            },
+            {
+              "name": "readonly",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Drops the vote controls; the pill stays.",
+              "default": "false",
+              "fieldName": "readOnly"
+            },
+            {
+              "name": "show-score",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "showScore"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-tag",
+          "cssParts": [
+            {
+              "name": "fill"
+            },
+            {
+              "name": "votes"
+            },
+            {
+              "name": "up"
+            },
+            {
+              "name": "down"
+            },
+            {
+              "name": "label"
+            },
+            {
+              "name": "score"
+            }
+          ],
+          "slots": [
+            {
+              "name": "menu"
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiTag",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiTag",
+          "declaration": {
+            "name": "CivitaiTag",
+            "module": "src/elements/civitai-tag.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiTag",
+          "declaration": {
+            "name": "defineCivitaiTag",
+            "module": "src/elements/civitai-tag.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-tag",
+          "declaration": {
+            "name": "CivitaiTag",
+            "module": "src/elements/civitai-tag.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/elements/civitai-text-input.ts",
       "declarations": [
         {
@@ -3141,6 +4532,29 @@
               "reflects": true
             },
             {
+              "kind": "field",
+              "name": "maxLength",
+              "privacy": "public",
+              "type": {
+                "text": "number"
+              },
+              "description": "0 means unbounded, matching an absent native `maxlength`.",
+              "default": "0",
+              "attribute": "maxlength",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "autocomplete",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "autocomplete",
+              "reflects": true
+            },
+            {
               "kind": "method",
               "name": "renderControl",
               "privacy": "protected",
@@ -3175,6 +4589,23 @@
               },
               "default": "false",
               "fieldName": "readOnly"
+            },
+            {
+              "name": "maxlength",
+              "type": {
+                "text": "number"
+              },
+              "description": "0 means unbounded, matching an absent native `maxlength`.",
+              "default": "0",
+              "fieldName": "maxLength"
+            },
+            {
+              "name": "autocomplete",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "autocomplete"
             }
           ],
           "superclass": {
@@ -3265,6 +4696,29 @@
               "reflects": true
             },
             {
+              "kind": "field",
+              "name": "maxLength",
+              "privacy": "public",
+              "type": {
+                "text": "number"
+              },
+              "description": "0 means unbounded, matching an absent native `maxlength`.",
+              "default": "0",
+              "attribute": "maxlength",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "autocomplete",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "autocomplete",
+              "reflects": true
+            },
+            {
               "kind": "method",
               "name": "renderControl",
               "privacy": "protected",
@@ -3300,6 +4754,23 @@
               },
               "default": "false",
               "fieldName": "readOnly"
+            },
+            {
+              "name": "maxlength",
+              "type": {
+                "text": "number"
+              },
+              "description": "0 means unbounded, matching an absent native `maxlength`.",
+              "default": "0",
+              "fieldName": "maxLength"
+            },
+            {
+              "name": "autocomplete",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "autocomplete"
             }
           ],
           "superclass": {

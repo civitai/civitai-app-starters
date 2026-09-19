@@ -4,16 +4,20 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>@civitai/components — elements playground</title>
-    <script>
-      // Inline and before any paint: setting data-theme from the module would
-      // render one frame in the wrong scheme first.
-      document.documentElement.dataset.theme = window.matchMedia(
-        '(prefers-color-scheme: dark)'
-      ).matches
-        ? 'dark'
-        : 'light';
-    </script>
     <style>
+      .card-kebab {
+        color: #fff;
+        text-shadow: 0 1px 4px rgb(0 0 0 / 0.8);
+      }
+      .kebab {
+        border: 0;
+        border-radius: 3px;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+        padding: 0 2px;
+      }
       body {
         margin: 0;
         padding: 32px;
@@ -203,6 +207,99 @@
       <civitai-button id="toast-clear" variant="subtle">Clear all</civitai-button>
     </civitai-group>
     <civitai-toast-region id="toasts"></civitai-toast-region>
+
+    <h2>Civitai vocabulary &mdash; site-elements.js</h2>
+    <civitai-group>
+      <civitai-rating-badge rating="g"></civitai-rating-badge>
+      <civitai-rating-badge rating="pg"></civitai-rating-badge>
+      <civitai-rating-badge rating="pg13"></civitai-rating-badge>
+      <civitai-rating-badge rating="r"></civitai-rating-badge>
+      <civitai-rating-badge rating="x"></civitai-rating-badge>
+      <civitai-rating-badge rating="nc17"></civitai-rating-badge>
+    </civitai-group>
+    <civitai-group>
+      <civitai-avatar size="sm" name="Vladaa"></civitai-avatar>
+      <civitai-avatar name="Jane Q Doe"></civitai-avatar>
+      <civitai-avatar
+        size="lg"
+        name="SinityWAI"
+        frame="linear-gradient(135deg, #f0a, #0af)"
+      ></civitai-avatar>
+      <civitai-avatar size="xl" name="Broken Image" src="/nope.png"></civitai-avatar>
+    </civitai-group>
+    <civitai-group id="tags">
+      <civitai-tag name="wolf" confidence="0.97"></civitai-tag>
+      <civitai-tag name="blonde hair" vote="1" score="128" show-score confidence="0.81"></civitai-tag>
+      <civitai-tag name="full moon" vote="-1" rating="pg13" confidence="0.54"></civitai-tag>
+      <civitai-tag name="oni" rating="r" confidence="0.23"></civitai-tag>
+      <civitai-tag name="anime" readonly></civitai-tag>
+      <civitai-tag name="moderated content" confidence="0.66">
+        <civitai-menu slot="menu" label="Tag actions" placement="bottom-end">
+          <button slot="trigger" aria-label="Tag actions" class="kebab">&#8942;</button>
+          <civitai-menu-item>Hide content with this tag</civitai-menu-item>
+          <civitai-menu-item destructive>Remove tag</civitai-menu-item>
+        </civitai-menu>
+      </civitai-tag>
+    </civitai-group>
+    <p id="tag-log" style="font-size: 13px; color: var(--civitai-color-text-dimmed)">No vote yet.</p>
+
+    <civitai-group>
+      <civitai-menu id="actions" label="Image actions">
+        <civitai-button slot="trigger" variant="outline" size="sm" aria-label="More">&#8942;</civitai-button>
+        <civitai-menu-item>Save image to collection</civitai-menu-item>
+        <civitai-menu-item>View post</civitai-menu-item>
+        <civitai-menu-item>Report image</civitai-menu-item>
+        <civitai-menu-label>Moderator</civitai-menu-label>
+        <civitai-menu-item disabled>Rescan image</civitai-menu-item>
+        <civitai-menu-item destructive>Delete</civitai-menu-item>
+      </civitai-menu>
+      <span id="menu-log" style="font-size: 13px; color: var(--civitai-color-text-dimmed)"
+        >Nothing chosen yet.</span
+      >
+    </civitai-group>
+
+    <h2>Media cards &mdash; every layer at once</h2>
+    <civitai-group id="cards" style="align-items: flex-start">
+      <civitai-media-card href="#image-1" label="Open image 1" style="width: 200px">
+        <img slot="media" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='300'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0%25' stop-color='%23b98b4a'/><stop offset='100%25' stop-color='%231b1f2a'/></linearGradient></defs><rect width='200' height='300' fill='url(%23g)'/></svg>" alt="" />
+        <civitai-rating-badge slot="top-start" rating="pg"></civitai-rating-badge>
+        <civitai-menu slot="top-end" label="Image actions" placement="bottom-end">
+          <button slot="trigger" aria-label="Image actions" class="kebab card-kebab">&#8942;</button>
+          <civitai-menu-item>Save image to collection</civitai-menu-item>
+          <civitai-menu-item>View post</civitai-menu-item>
+          <civitai-menu-item destructive>Report image</civitai-menu-item>
+        </civitai-menu>
+        <civitai-action-button slot="top-end" label="Remix">
+          <span slot="icon" aria-hidden="true">&#10022;</span>
+          <span slot="icon-expanded" aria-hidden="true">&rarr;</span>
+        </civitai-action-button>
+        <civitai-reaction slot="bottom" emoji="&#128077;" label="Like" count="13100"></civitai-reaction>
+        <civitai-reaction slot="bottom" emoji="&#10084;&#65039;" label="Heart" count="5000"></civitai-reaction>
+        <civitai-reaction slot="bottom" emoji="&#128514;" label="Laugh" count="1600"></civitai-reaction>
+        <civitai-reaction slot="bottom" emoji="&#9889;" label="Tipped Buzz" count="964"></civitai-reaction>
+      </civitai-media-card>
+      <civitai-media-card href="#image-2" label="Open image 2" style="width: 200px">
+        <img slot="media" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='300'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0%25' stop-color='%234aa3ff'/><stop offset='100%25' stop-color='%23101820'/></linearGradient></defs><rect width='200' height='300' fill='url(%23g)'/></svg>" alt="" />
+        <civitai-rating-badge slot="top-start" rating="pg13"></civitai-rating-badge>
+        <civitai-menu slot="top-end" label="Image actions" placement="bottom-end">
+          <button slot="trigger" aria-label="Image actions" class="kebab card-kebab">&#8942;</button>
+          <civitai-menu-item>Save image to collection</civitai-menu-item>
+          <civitai-menu-item>View post</civitai-menu-item>
+          <civitai-menu-item destructive>Report image</civitai-menu-item>
+        </civitai-menu>
+        <civitai-action-button slot="top-end" label="Remix">
+          <span slot="icon" aria-hidden="true">&#10022;</span>
+          <span slot="icon-expanded" aria-hidden="true">&rarr;</span>
+        </civitai-action-button>
+        <civitai-reaction slot="bottom" emoji="&#128077;" label="Like" count="812" reacted></civitai-reaction>
+        <civitai-reaction slot="bottom" emoji="&#10084;&#65039;" label="Heart" count="309"></civitai-reaction>
+        <civitai-reaction slot="bottom" emoji="&#128514;" label="Laugh" count="67"></civitai-reaction>
+        <civitai-reaction slot="bottom" emoji="&#9889;" label="Tipped Buzz" count="0"></civitai-reaction>
+      </civitai-media-card>
+    </civitai-group>
+    <p id="card-log" style="font-size: 13px; color: var(--civitai-color-text-dimmed)">
+      Hover the round button; open the kebab; react.
+    </p>
 
     <h2>Form participation</h2>
     <form id="demo">

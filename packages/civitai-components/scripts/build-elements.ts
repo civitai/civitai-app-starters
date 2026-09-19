@@ -12,39 +12,49 @@ import { build } from 'vite';
 
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** Gzipped, because that is what a CDN actually ships over the wire. */
-const BUDGET_BYTES = 25 * 1024;
+/**
+ * Two self-contained bundles, gzipped because that is what a CDN ships. A page
+ * loads ONE: `elements.js` for the generic kit, `site-elements.js` for that
+ * plus the civitai vocabulary. Measured: two disjoint bundles would duplicate
+ * 8.5 kB of Lit in any page needing both, which is every page with a tag in it.
+ */
+const BUNDLES = [
+  { entry: 'src/elements/register.ts', file: 'elements.js', budget: 25 * 1024 },
+  { entry: 'src/elements/register-site.ts', file: 'site-elements.js', budget: 30 * 1024 },
+] as const;
 
-await build({
-  root: pkgRoot,
-  configFile: false,
-  logLevel: 'warn',
-  build: {
-    outDir: 'dist',
-    emptyOutDir: false,
-    lib: {
-      entry: join(pkgRoot, 'src/elements/register.ts'),
-      formats: ['es'],
-      fileName: () => 'elements.js',
+let over = false;
+
+for (const { entry, file, budget } of BUNDLES) {
+  await build({
+    root: pkgRoot,
+    configFile: false,
+    logLevel: 'warn',
+    build: {
+      outDir: 'dist',
+      emptyOutDir: false,
+      lib: { entry: join(pkgRoot, entry), formats: ['es'], fileName: () => file },
     },
-  },
-});
+  });
 
-const bundled = join(pkgRoot, 'dist', 'elements.js');
-copyFileSync(bundled, join(pkgRoot, 'elements.js'));
+  const bundled = join(pkgRoot, 'dist', file);
+  copyFileSync(bundled, join(pkgRoot, file));
 
-const raw = statSync(bundled).size;
-const gzipped = gzipSync(readFileSync(bundled)).length;
-const percent = Math.round((gzipped / BUDGET_BYTES) * 100);
+  const raw = statSync(bundled).size;
+  const gzipped = gzipSync(readFileSync(bundled)).length;
+  const percent = Math.round((gzipped / budget) * 100);
 
-console.log(
-  `[build-elements] dist/elements.js + elements.js — ${(raw / 1024).toFixed(1)} kB raw, ` +
-    `${(gzipped / 1024).toFixed(1)} kB gzip (${percent}% of the ${BUDGET_BYTES / 1024} kB budget)`
-);
-
-if (gzipped > BUDGET_BYTES) {
-  console.error(
-    `[build-elements] OVER BUDGET by ${((gzipped - BUDGET_BYTES) / 1024).toFixed(1)} kB gzip.`
+  console.log(
+    `[build-elements] dist/${file} + ${file} — ${(raw / 1024).toFixed(1)} kB raw, ` +
+      `${(gzipped / 1024).toFixed(1)} kB gzip (${percent}% of the ${budget / 1024} kB budget)`
   );
-  process.exit(1);
+
+  if (gzipped > budget) {
+    console.error(
+      `[build-elements] ${file} OVER BUDGET by ${((gzipped - budget) / 1024).toFixed(1)} kB gzip.`
+    );
+    over = true;
+  }
 }
+
+if (over) process.exit(1);

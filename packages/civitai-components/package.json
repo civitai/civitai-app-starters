@@ -7,7 +7,8 @@
   "sideEffects": [
     "**/*.css",
     "**/*.define.js",
-    "**/elements/register.js"
+    "**/elements/register.js",
+    "**/elements/register-site.js"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -202,6 +203,83 @@
     "./civitai-toast-region/define": {
       "types": "./dist/elements/civitai-toast-region.define.d.ts",
       "import": "./dist/elements/civitai-toast-region.define.js"
+    },
+    "./register-site": {
+      "types": "./dist/elements/register-site.d.ts",
+      "import": "./dist/elements/register-site.js"
+    },
+    "./site-elements.js": "./dist/site-elements.js",
+    "./civitai-avatar": {
+      "types": "./dist/elements/civitai-avatar.d.ts",
+      "import": "./dist/elements/civitai-avatar.js"
+    },
+    "./civitai-avatar/define": {
+      "types": "./dist/elements/civitai-avatar.define.d.ts",
+      "import": "./dist/elements/civitai-avatar.define.js"
+    },
+    "./civitai-rating-badge": {
+      "types": "./dist/elements/civitai-rating-badge.d.ts",
+      "import": "./dist/elements/civitai-rating-badge.js"
+    },
+    "./civitai-rating-badge/define": {
+      "types": "./dist/elements/civitai-rating-badge.define.d.ts",
+      "import": "./dist/elements/civitai-rating-badge.define.js"
+    },
+    "./civitai-tag": {
+      "types": "./dist/elements/civitai-tag.d.ts",
+      "import": "./dist/elements/civitai-tag.js"
+    },
+    "./civitai-tag/define": {
+      "types": "./dist/elements/civitai-tag.define.d.ts",
+      "import": "./dist/elements/civitai-tag.define.js"
+    },
+    "./civitai-menu": {
+      "types": "./dist/elements/civitai-menu.d.ts",
+      "import": "./dist/elements/civitai-menu.js"
+    },
+    "./civitai-menu/define": {
+      "types": "./dist/elements/civitai-menu.define.d.ts",
+      "import": "./dist/elements/civitai-menu.define.js"
+    },
+    "./civitai-menu-item": {
+      "types": "./dist/elements/civitai-menu-item.d.ts",
+      "import": "./dist/elements/civitai-menu-item.js"
+    },
+    "./civitai-menu-item/define": {
+      "types": "./dist/elements/civitai-menu-item.define.d.ts",
+      "import": "./dist/elements/civitai-menu-item.define.js"
+    },
+    "./civitai-menu-label": {
+      "types": "./dist/elements/civitai-menu-label.d.ts",
+      "import": "./dist/elements/civitai-menu-label.js"
+    },
+    "./civitai-menu-label/define": {
+      "types": "./dist/elements/civitai-menu-label.define.d.ts",
+      "import": "./dist/elements/civitai-menu-label.define.js"
+    },
+    "./civitai-media-card": {
+      "types": "./dist/elements/civitai-media-card.d.ts",
+      "import": "./dist/elements/civitai-media-card.js"
+    },
+    "./civitai-media-card/define": {
+      "types": "./dist/elements/civitai-media-card.define.d.ts",
+      "import": "./dist/elements/civitai-media-card.define.js"
+    },
+    "./civitai-reaction": {
+      "types": "./dist/elements/civitai-reaction.d.ts",
+      "import": "./dist/elements/civitai-reaction.js"
+    },
+    "./civitai-reaction/define": {
+      "types": "./dist/elements/civitai-reaction.define.d.ts",
+      "import": "./dist/elements/civitai-reaction.define.js"
+    },
+    "./civitai-action-button": {
+      "types": "./dist/elements/civitai-action-button.d.ts",
+      "import": "./dist/elements/civitai-action-button.js"
+    },
+    "./civitai-action-button/define": {
+      "types": "./dist/elements/civitai-action-button.define.d.ts",
+      "import": "./dist/elements/civitai-action-button.define.js"
     }
   },
   "files": [
@@ -209,6 +287,7 @@
     "demo",
     "styles.css",
     "elements.js",
+    "site-elements.js",
     "custom-elements.json",
     "MARKUP.md",
     "README.md"

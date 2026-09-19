@@ -49,6 +49,25 @@ describe('entry points', () => {
     expect(external.filter((s) => !allowed.has(s))).toEqual([]);
   });
 
+  it('the site entry adds only what its own elements need', () => {
+    const external = [...reachableSpecifiers('dist/elements/register-site.js')].sort();
+    const allowed = new Set([
+      '@civitai/theme',
+      'lit',
+      'lit/directives/if-defined.js',
+      'lit/directives/style-map.js',
+    ]);
+    expect(external.filter((s) => !allowed.has(s))).toEqual([]);
+  });
+
+  it('the site entry is a SUPERSET, so a page loads one bundle and not two', () => {
+    const source = readFileSync(join(pkgRoot, 'src/elements/register-site.ts'), 'utf8');
+    expect(source, 'register-site must pull the generic kit in').toContain(
+      "from './register.js'"
+    );
+    expect(source).toContain('registerAll()');
+  });
+
   it('keeps the registration entries out of tree-shaking', () => {
     // `sideEffects: false` deletes every `*.define.js` and `register.js` as dead
     // code, so `import '.../define'` silently registers nothing. Measured: both
@@ -56,6 +75,7 @@ describe('entry points', () => {
     expect(pkg.sideEffects, 'a blanket false would delete every registration').not.toBe(false);
     expect(pkg.sideEffects).toContain('**/*.define.js');
     expect(pkg.sideEffects).toContain('**/elements/register.js');
+    expect(pkg.sideEffects).toContain('**/elements/register-site.js');
   });
 
   it('every declared export resolves to a built file', () => {

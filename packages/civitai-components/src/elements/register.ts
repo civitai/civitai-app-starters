@@ -1,3 +1,4 @@
+import { defineCivitaiActionButton } from './civitai-action-button.js';
 import { defineCivitaiAlert } from './civitai-alert.js';
 import { defineCivitaiBadge } from './civitai-badge.js';
 import { defineCivitaiButton } from './civitai-button.js';
@@ -7,6 +8,9 @@ import { defineCivitaiCollapse } from './civitai-collapse.js';
 import { defineCivitaiGroup } from './civitai-group.js';
 import { defineCivitaiImage } from './civitai-image.js';
 import { defineCivitaiLoader } from './civitai-loader.js';
+import { defineCivitaiMenu } from './civitai-menu.js';
+import { defineCivitaiMenuItem } from './civitai-menu-item.js';
+import { defineCivitaiMenuLabel } from './civitai-menu-label.js';
 import { defineCivitaiModal } from './civitai-modal.js';
 import { defineCivitaiNumberInput } from './civitai-number-input.js';
 import { defineCivitaiRadioGroup } from './civitai-radio-group.js';
@@ -23,6 +27,7 @@ import { defineCivitaiTooltip } from './civitai-tooltip.js';
 
 /** Register every element in this package. Safe to call more than once. */
 export function registerAll(): void {
+  defineCivitaiActionButton();
   defineCivitaiAlert();
   defineCivitaiBadge();
   defineCivitaiButton();
@@ -32,6 +37,9 @@ export function registerAll(): void {
   defineCivitaiGroup();
   defineCivitaiImage();
   defineCivitaiLoader();
+  defineCivitaiMenu();
+  defineCivitaiMenuItem();
+  defineCivitaiMenuLabel();
   defineCivitaiModal();
   defineCivitaiNumberInput();
   defineCivitaiRadioGroup();

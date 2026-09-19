@@ -11,6 +11,7 @@ build/
 packages/civitai-theme/styles.css
 packages/civitai-components/styles.css
 packages/civitai-components/elements.js
+packages/civitai-components/site-elements.js
 .next/
 .svelte-kit/
 .vercel/
