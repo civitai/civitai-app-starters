@@ -35,7 +35,8 @@
     "preview": "vite preview",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:e2e:install": "playwright install --with-deps chromium"
+    "test:e2e:install": "playwright install --with-deps chromium",
+    "probe:static-serving": "node scripts/probe-static-serving.mjs"
   },
   "dependencies": {
     "@civitai/app-sdk": "^0.45.0",

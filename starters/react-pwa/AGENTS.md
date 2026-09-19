@@ -34,6 +34,8 @@ server/                       # Hono BFF (tsconfig.server.json)
 ├── index.ts                  # prod entry only — calls @hono/node-server's
 │                             #   serve() and serves static dist/. NOT loaded
 │                             #   in dev (Vite's middleware handles that).
+│                             #   Paths resolve from import.meta.url, NOT the
+│                             #   CWD, and index.html is read once at boot.
 ├── env.ts                    # validated env — reads process.env populated by
 │                             #   vite.config.ts loadEnv (dev) or
 │                             #   `node --env-file=.env` (prod start script).
@@ -59,6 +61,7 @@ src/                          # React SPA (tsconfig.json)
 - **The SPA bootstraps auth via `GET /api/me`** on mount. 401 → show login. 200 → show signed-in UI. No client-side token reading.
 - **Encrypted-cookie sessions, no DB.** `@civitai/app-sdk`'s `sealCookie`/`unsealCookie` (AES-256-GCM). One cookie holds the refresh token blob; another short-lived cookie holds the PKCE state during the login handshake.
 - **Buzz cost preview before submission.** Call `/api/generate/estimate` and show the cost before submitting. Users blame the app, not Civitai, when surprised by Buzz spend.
+- 🔴 **The prod server never fetches itself, and resolves paths from `import.meta.url`.** `server/index.ts` used to do both wrong: `serveStatic({ root: './dist' })` against the process CWD, and an SPA fallback that did `fetch('http://localhost:' + PORT + '/index.html')`. Started from anywhere but the package root (systemd `WorkingDirectory`, a container `WORKDIR`, pm2), the static middleware missed and `/index.html` fell into the same catch-all that fetched it — unbounded recursion. Measured: 25 requests, 20 → 92,124 open descriptors, every request timed out, and the server still logged `Listening`. `index.html` is read once at boot and served from memory, and a missing `dist/index.html` exits non-zero instead of starting a server that is broken on every route.
 
 ## Patterns to avoid
 
@@ -67,6 +70,7 @@ src/                          # React SPA (tsconfig.json)
 - ❌ Exposing `CIVITAI_CLIENT_SECRET` to the SPA build. It's a server-only env var. `vite-plugin-pwa` won't include it because nothing in `src/` references it.
 - ❌ Adding a DB. The starter is stateless. If the user needs persistence, suggest Vercel KV / Cloudflare D1 / Postgres explicitly.
 - ❌ Removing the BFF to "make it a real SPA." See "Why this shape" above.
+- ❌ Having the server `fetch()` its own origin, or resolving a bundled path against `process.cwd()`. Both were real bugs here; `pnpm probe:static-serving` guards against their return.
 
 ## Extending
 
@@ -93,6 +97,7 @@ After any meaningful change, run the matching check before declaring done:
 | You touched | Run |
 |---|---|
 | Anything in `src/` or `server/` | `pnpm typecheck` (both tsconfigs) |
+| `server/index.ts`, static serving, the SPA fallback | `pnpm probe:static-serving` |
 | `vite.config.ts`, env wiring, security headers | `pnpm build` |
 | Auth flow (`server/app.ts` auth routes, `server/session.ts`) | `pnpm test:e2e -- auth-flow` |
 | Generation flow (`server/app.ts` generate routes, workflow polling) | `pnpm test:e2e -- generation` |
