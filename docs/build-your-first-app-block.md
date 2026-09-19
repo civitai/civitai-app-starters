@@ -146,7 +146,9 @@ export function App() {
   const rootRef = useRef<HTMLDivElement>(null);
   useBlockResize(rootRef);             // host fits the iframe to content
 
-  if (!ready) return <div ref={rootRef} data-theme={theme}>Loading…</div>;
+  // No ref on the pre-init skeleton — useBlockResize observes the real root
+  // whenever it mounts, including on a later render.
+  if (!ready) return <div data-theme={theme}>Loading…</div>;
   // `context` is a union keyed on slotId — narrow with the guard, not a cast.
   if (!isModelSlotContext(context)) return <div ref={rootRef}>Wrong slot.</div>;
 
