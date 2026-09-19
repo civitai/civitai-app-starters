@@ -1,7 +1,7 @@
 {
   "name": "@civitai/components-react",
   "version": "0.4.1",
-  "description": "Thin React bindings over @civitai/components — forwardRef wrappers that render the framework-agnostic data-civitai-ui markup, themed by @civitai/theme.",
+  "description": "Thin React bindings over @civitai/components \u2014 forwardRef wrappers that render the framework-agnostic data-civitai-ui markup, themed by @civitai/theme.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./elements": {
+      "types": "./dist/elements/index.d.ts",
+      "import": "./dist/elements/index.js"
     }
   },
   "files": [

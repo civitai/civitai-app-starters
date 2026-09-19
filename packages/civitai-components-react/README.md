@@ -22,6 +22,28 @@ Components: `Button, TextInput, Textarea, NumberInput, Card, Stack, Group,
 Alert, Loader, Badge`. Each renders the exact markup documented in
 [`@civitai/components/MARKUP.md`](../civitai-components/MARKUP.md).
 
+## Elements
+
+React bindings for the custom elements in
+[`@civitai/components`](../civitai-components#elements), on their own entry
+point so nothing here pulls a renderer unless you ask for one:
+
+```tsx
+import { ButtonElement, SegmentedControlElement } from '@civitai/components-react/elements';
+
+<ButtonElement variant="outline" onClick={run}>Generate</ButtonElement>
+<SegmentedControlElement data={views} value={view} onChange={setView} aria-label="View" />
+```
+
+These sit alongside `Button` / `SegmentedControl`, which keep rendering the
+attribute markup. The difference is where the behaviour lives: the elements
+carry it themselves, so the same keyboard handling works outside React too.
+
+Props are assigned as **properties** after mount. React chooses between
+attribute and property by whether the element has upgraded, so a boolean can
+arrive as the string `""` and never reach Lit's converter — and an array prop
+like `data` cannot survive an attribute at all.
+
 ## The point of this package
 
 It proves the **dual-consumption** claim: the `html-vs-react-parity` browser
