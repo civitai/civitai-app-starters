@@ -54,6 +54,19 @@ if (model) {
   ];
 }
 
+// An inline SVG, so the playground needs no asset server.
+const SAMPLE =
+  'data:image/svg+xml;utf8,' +
+  encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+       <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+         <stop offset="0" stop-color="#228be6"/><stop offset="1" stop-color="#326D5C"/>
+       </linearGradient></defs>
+       <rect width="100" height="100" fill="url(#g)"/>
+     </svg>`
+  );
+document.querySelector('#ok')?.setAttribute('src', SAMPLE);
+
 const SPEEDS = [
   { value: 'fast', label: 'Fast' },
   { value: 'balanced', label: 'Balanced' },

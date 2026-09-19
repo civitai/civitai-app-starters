@@ -120,6 +120,20 @@
       <civitai-alert color="error" closable heading="Failed">Dismiss me.</civitai-alert>
     </civitai-stack>
 
+    <h2>Image &amp; slider</h2>
+    <civitai-group gap="lg" style="align-items: flex-start">
+      <civitai-image id="ok" alt="A generated image" style="width: 140px; aspect-ratio: 1"></civitai-image>
+      <civitai-image id="broken" src="/does-not-exist.png" alt="Broken"
+        fallback="Could not load" style="width: 140px; aspect-ratio: 1"></civitai-image>
+      <civitai-stack style="flex: 1; min-width: 240px">
+        <civitai-slider label="CFG scale" min="1" max="20" step="0.5" value="7" show-value
+          description="How closely to follow the prompt"></civitai-slider>
+        <civitai-slider label="Denoise" min="0" max="1" step="0.05" show-value></civitai-slider>
+        <civitai-slider label="Steps" min="1" max="150" value="200" show-value
+          error="Above the maximum"></civitai-slider>
+      </civitai-stack>
+    </civitai-group>
+
     <h2>Choice controls</h2>
     <div class="row" style="align-items: flex-start">
       <civitai-stack gap="sm">

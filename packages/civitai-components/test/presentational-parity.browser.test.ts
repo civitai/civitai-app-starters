@@ -53,6 +53,18 @@ const CASES: Case[] = [
     legacy: `<div data-civitai-ui="alert" data-color="warning">msg</div>` },
 ];
 
+const PIXEL =
+  'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+CASES.push(
+  { id: 'image', element: `<civitai-image src="${PIXEL}" alt="p"></civitai-image>`,
+    legacy: `<div data-civitai-ui="image"><img data-civitai-ui-image-img src="${PIXEL}" alt="p" /></div>` },
+  { id: 'slider', element: '<civitai-slider value="50"></civitai-slider>',
+    legacy: `<div data-civitai-ui="slider"><input type="range" value="50" /></div>`,
+    compare: (host) => host.shadowRoot!.querySelector('input')!,
+    legacyTarget: (legacy) => legacy.querySelector('input')! }
+);
+
 const FIELD_CHROME = `<label data-civitai-ui-label for="lg">L</label>` +
   `<span data-civitai-ui-description>D</span>`;
 

@@ -138,6 +138,22 @@
     "./civitai-radio-group/define": {
       "types": "./dist/elements/civitai-radio-group.define.d.ts",
       "import": "./dist/elements/civitai-radio-group.define.js"
+    },
+    "./civitai-image": {
+      "types": "./dist/elements/civitai-image.d.ts",
+      "import": "./dist/elements/civitai-image.js"
+    },
+    "./civitai-image/define": {
+      "types": "./dist/elements/civitai-image.define.d.ts",
+      "import": "./dist/elements/civitai-image.define.js"
+    },
+    "./civitai-slider": {
+      "types": "./dist/elements/civitai-slider.d.ts",
+      "import": "./dist/elements/civitai-slider.js"
+    },
+    "./civitai-slider/define": {
+      "types": "./dist/elements/civitai-slider.define.d.ts",
+      "import": "./dist/elements/civitai-slider.define.js"
     }
   },
   "files": [

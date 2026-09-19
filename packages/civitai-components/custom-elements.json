@@ -1069,6 +1069,208 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/elements/civitai-image.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiImage",
+          "members": [
+            {
+              "kind": "field",
+              "name": "src",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "src",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "alt",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "alt",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "fit",
+              "privacy": "public",
+              "type": {
+                "text": "ImageFit"
+              },
+              "default": "'cover'",
+              "attribute": "fit",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "fallback",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Text shown when the image fails; the `fallback` slot wins over it.",
+              "default": "''",
+              "attribute": "fallback",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "status",
+              "privacy": "public",
+              "type": {
+                "text": "ImageStatus"
+              },
+              "default": "'loading'",
+              "attribute": "status",
+              "reflects": true
+            },
+            {
+              "kind": "method",
+              "name": "#reconcile",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "A cached image can already be `complete` before the listeners attach, so\nneither `load` nor `error` ever fires. The failed arm is defensive and\nmirrors the React binding: every failure observed here settles via the\n`error` event first, so mutating it does not fail a test."
+            },
+            {
+              "kind": "method",
+              "name": "#settle",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "next",
+                  "type": {
+                    "text": "ImageStatus"
+                  }
+                }
+              ]
+            }
+          ],
+          "events": [
+            {
+              "type": {
+                "text": "Event"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "src",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "src"
+            },
+            {
+              "name": "alt",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "alt"
+            },
+            {
+              "name": "fit",
+              "type": {
+                "text": "ImageFit"
+              },
+              "default": "'cover'",
+              "fieldName": "fit"
+            },
+            {
+              "name": "fallback",
+              "type": {
+                "text": "string"
+              },
+              "description": "Text shown when the image fails; the `fallback` slot wins over it.",
+              "default": "''",
+              "fieldName": "fallback"
+            },
+            {
+              "name": "status",
+              "type": {
+                "text": "ImageStatus"
+              },
+              "default": "'loading'",
+              "fieldName": "status"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-image",
+          "cssParts": [
+            {
+              "name": "image"
+            },
+            {
+              "name": "fallback"
+            }
+          ],
+          "slots": [
+            {
+              "name": "fallback"
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiImage",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiImage",
+          "declaration": {
+            "name": "CivitaiImage",
+            "module": "src/elements/civitai-image.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiImage",
+          "declaration": {
+            "name": "defineCivitaiImage",
+            "module": "src/elements/civitai-image.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-image",
+          "declaration": {
+            "name": "CivitaiImage",
+            "module": "src/elements/civitai-image.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/elements/civitai-loader.ts",
       "declarations": [
         {
@@ -1983,6 +2185,194 @@
           "declaration": {
             "name": "CivitaiSelect",
             "module": "src/elements/civitai-select.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-slider.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiSlider",
+          "members": [
+            {
+              "kind": "field",
+              "name": "min",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'0'",
+              "attribute": "min",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "max",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'100'",
+              "attribute": "max",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "step",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'1'",
+              "attribute": "step",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "showValue",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Shows the current value beside the label.",
+              "default": "false",
+              "attribute": "show-value",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "valueAsNumber",
+              "type": {
+                "text": "number"
+              },
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "control",
+              "type": {
+                "text": "HTMLElement | null"
+              },
+              "privacy": "protected",
+              "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "sync",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "renderControl",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "TemplateResult"
+                }
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "min",
+              "type": {
+                "text": "string"
+              },
+              "default": "'0'",
+              "fieldName": "min"
+            },
+            {
+              "name": "max",
+              "type": {
+                "text": "string"
+              },
+              "default": "'100'",
+              "fieldName": "max"
+            },
+            {
+              "name": "step",
+              "type": {
+                "text": "string"
+              },
+              "default": "'1'",
+              "fieldName": "step"
+            },
+            {
+              "name": "show-value",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Shows the current value beside the label.",
+              "default": "false",
+              "fieldName": "showValue"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiField",
+            "module": "/src/elements/field-base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-slider",
+          "cssParts": [
+            {
+              "name": "header"
+            },
+            {
+              "name": "label"
+            },
+            {
+              "name": "value"
+            },
+            {
+              "name": "description"
+            },
+            {
+              "name": "error"
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiSlider",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiSlider",
+          "declaration": {
+            "name": "CivitaiSlider",
+            "module": "src/elements/civitai-slider.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiSlider",
+          "declaration": {
+            "name": "defineCivitaiSlider",
+            "module": "src/elements/civitai-slider.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-slider",
+          "declaration": {
+            "name": "CivitaiSlider",
+            "module": "src/elements/civitai-slider.ts"
           }
         }
       ]
