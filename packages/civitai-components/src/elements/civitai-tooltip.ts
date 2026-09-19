@@ -1,5 +1,6 @@
 import { injectTokens } from '@civitai/theme';
 
+import { HTMLElementBase } from './html-element.js';
 import { defineElement } from './registry.js';
 
 const TAG = 'civitai-tooltip';
@@ -55,7 +56,7 @@ function injectTooltipStyles(doc: Document): void {
   (doc.head ?? doc.documentElement).appendChild(style);
 }
 
-export class CivitaiTooltip extends HTMLElement {
+export class CivitaiTooltip extends HTMLElementBase {
   static observedAttributes = ['label'];
 
   #bubble: HTMLElement | null = null;

@@ -1,5 +1,6 @@
 import { injectTokens } from '@civitai/theme';
 
+import { HTMLElementBase } from './html-element.js';
 import { defineElement } from './registry.js';
 
 const TAG = 'civitai-tabs';
@@ -89,13 +90,13 @@ function injectTabStyles(doc: Document): void {
 }
 
 /** A panel. Its `value` pairs it with the tab of the same value. */
-export class CivitaiTabPanel extends HTMLElement {
+export class CivitaiTabPanel extends HTMLElementBase {
   get value(): string {
     return this.getAttribute('value') ?? '';
   }
 }
 
-export class CivitaiTabs extends HTMLElement {
+export class CivitaiTabs extends HTMLElementBase {
   static observedAttributes = ['value'];
 
   #tablist: HTMLElement | null = null;

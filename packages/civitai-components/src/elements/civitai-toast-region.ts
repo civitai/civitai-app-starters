@@ -1,5 +1,6 @@
 import { injectTokens } from '@civitai/theme';
 
+import { HTMLElementBase } from './html-element.js';
 import { defineElement } from './registry.js';
 
 import type { Intent } from './civitai-badge.js';
@@ -47,7 +48,7 @@ function injectRegionStyles(doc: Document): void {
   (doc.head ?? doc.documentElement).appendChild(style);
 }
 
-export class CivitaiToastRegion extends HTMLElement {
+export class CivitaiToastRegion extends HTMLElementBase {
   readonly #timers = new Map<string, ReturnType<typeof setTimeout>>();
 
   connectedCallback(): void {
