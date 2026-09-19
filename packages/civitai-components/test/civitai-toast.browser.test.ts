@@ -152,7 +152,7 @@ describe('<civitai-toast>', () => {
 
   it('renders a heading above the message when given one', async () => {
     const el = await toast('heading="Saved"');
-    expect(el.shadowRoot!.querySelector('[part="title"]')!.textContent?.trim()).toBe('Saved');
+    expect(el.shadowRoot!.querySelector('[part="heading"]')!.textContent?.trim()).toBe('Saved');
   });
 
   it('has no close button unless closable', async () => {

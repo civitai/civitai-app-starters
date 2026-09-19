@@ -83,7 +83,7 @@ export class CivitaiCollapse extends CivitaiElement {
     return html`
       <button
         id=${triggerId}
-        part="trigger"
+        part="button"
         type="button"
         aria-expanded=${String(this.open)}
         aria-controls=${regionId}

@@ -106,7 +106,7 @@ export class CivitaiToast extends CivitaiElement {
     return html`
       <div class="body" part="body">
         ${this.heading !== ''
-          ? html`<div class="title" part="title">${this.heading}</div>`
+          ? html`<div class="title" part="heading">${this.heading}</div>`
           : nothing}
         <slot></slot>
       </div>

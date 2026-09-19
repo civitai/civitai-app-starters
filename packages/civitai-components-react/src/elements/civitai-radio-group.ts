@@ -13,6 +13,7 @@ export const CivitaiRadioGroup = createComponent({
   elementClass: CivitaiRadioGroupElement,
   displayName: 'CivitaiRadioGroup',
   events: {
-
+    onChange: 'change',
+    onInvalid: 'invalid',
   },
 });

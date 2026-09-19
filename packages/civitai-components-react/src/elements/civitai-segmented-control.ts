@@ -14,5 +14,6 @@ export const CivitaiSegmentedControl = createComponent({
   displayName: 'CivitaiSegmentedControl',
   events: {
     onChange: 'change',
+    onInvalid: 'invalid',
   },
 });

@@ -101,10 +101,14 @@ export class CivitaiImage extends CivitaiElement {
     this.#settle(img.naturalWidth > 0 ? 'loaded' : 'error');
   }
 
-  #settle(next: ImageStatus): void {
+  /* Spelled out rather than computed so the manifest can read the names; a
+     ternary here is what left `custom-elements.json` with a nameless event.
+     Neither bubbles, matching the `<img>` events they stand in for. */
+  #settle(next: 'loaded' | 'error'): void {
     if (this.status === next) return;
     this.status = next;
-    this.dispatchEvent(new Event(next === 'error' ? 'error' : 'load', { composed: true }));
+    if (next === 'error') this.dispatchEvent(new Event('error'));
+    else this.dispatchEvent(new Event('load'));
   }
 
   override render(): TemplateResult {

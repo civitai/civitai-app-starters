@@ -7,26 +7,21 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { EVENTS, RETARGETED, bindingSources, componentsRoot, elements, pkgRoot } from '../scripts/bindings.js';
+import {
+  EVENTS,
+  RETARGETED,
+  bindingSources,
+  classBody,
+  elements,
+  isField,
+  pkgRoot,
+} from '../scripts/bindings.js';
 
 const bindingsDir = join(pkgRoot, 'src', 'elements');
-const componentsSrc = join(componentsRoot, 'src', 'elements');
 const entries = elements();
-
-/** Just this class's body, so two elements sharing a module stay separate. */
-function classBody(tag: string): string {
-  const entry = entries.find((e) => e.tag === tag)!;
-  const source = readFileSync(join(componentsSrc, `${entry.specifier}.ts`), 'utf8');
-  const start = source.indexOf(`export class ${entry.className} `);
-  if (start === -1) return source;
-  const next = source.indexOf('\nexport ', start + 1);
-  return source.slice(start, next === -1 ? undefined : next);
-}
 
 const dispatched = (tag: string): string[] =>
   [...classBody(tag).matchAll(/new (?:Custom)?Event\('([a-z-]+)'/g)].map((m) => m[1]!);
-
-const isField = (tag: string): boolean => classBody(tag).includes('extends CivitaiField');
 
 const fires = (tag: string): Set<string> =>
   new Set([...dispatched(tag), ...(isField(tag) ? RETARGETED : [])]);

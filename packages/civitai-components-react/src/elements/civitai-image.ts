@@ -13,6 +13,7 @@ export const CivitaiImage = createComponent({
   elementClass: CivitaiImageElement,
   displayName: 'CivitaiImage',
   events: {
-
+    onImageLoad: 'load',
+    onImageError: 'error',
   },
 });

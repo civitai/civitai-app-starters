@@ -266,7 +266,7 @@
               "name": "body"
             },
             {
-              "name": "title"
+              "name": "heading"
             },
             {
               "name": "close"
@@ -946,71 +946,6 @@
           "members": [
             {
               "kind": "field",
-              "name": "formAssociated",
-              "type": {
-                "text": "boolean"
-              },
-              "static": true,
-              "default": "true"
-            },
-            {
-              "kind": "field",
-              "name": "name",
-              "privacy": "public",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "attribute": "name",
-              "reflects": true
-            },
-            {
-              "kind": "field",
-              "name": "value",
-              "privacy": "public",
-              "type": {
-                "text": "string"
-              },
-              "description": "Submitted when checked, exactly as a native checkbox does.",
-              "default": "'on'",
-              "attribute": "value",
-              "reflects": true
-            },
-            {
-              "kind": "field",
-              "name": "label",
-              "privacy": "public",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "attribute": "label",
-              "reflects": true
-            },
-            {
-              "kind": "field",
-              "name": "description",
-              "privacy": "public",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "attribute": "description",
-              "reflects": true
-            },
-            {
-              "kind": "field",
-              "name": "error",
-              "privacy": "public",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "attribute": "error",
-              "reflects": true
-            },
-            {
-              "kind": "field",
               "name": "checked",
               "privacy": "public",
               "type": {
@@ -1030,64 +965,33 @@
               "attribute": "indeterminate"
             },
             {
-              "kind": "field",
-              "name": "required",
-              "privacy": "public",
-              "type": {
-                "text": "boolean"
-              },
-              "default": "false",
-              "attribute": "required",
-              "reflects": true
-            },
-            {
-              "kind": "field",
-              "name": "disabled",
-              "privacy": "public",
-              "type": {
-                "text": "boolean"
-              },
-              "default": "false",
-              "attribute": "disabled",
-              "reflects": true
-            },
-            {
-              "kind": "field",
-              "name": "#internals",
-              "privacy": "private",
-              "readonly": true
-            },
-            {
-              "kind": "field",
-              "name": "#id",
-              "privacy": "private",
-              "readonly": true,
-              "default": "`ci-checkbox-${(sequence += 1)}`"
-            },
-            {
-              "kind": "field",
-              "name": "form",
-              "type": {
-                "text": "HTMLFormElement | null"
-              },
-              "readonly": true
-            },
-            {
-              "kind": "field",
-              "name": "validity",
-              "type": {
-                "text": "ValidityState"
-              },
-              "readonly": true
-            },
-            {
               "kind": "method",
-              "name": "checkValidity",
+              "name": "formValue",
+              "privacy": "protected",
               "return": {
                 "type": {
-                  "text": "boolean"
+                  "text": "string | null"
                 }
-              }
+              },
+              "description": "An unchecked checkbox submits nothing at all, like the native one."
+            },
+            {
+              "kind": "field",
+              "name": "missing",
+              "type": {
+                "text": "boolean"
+              },
+              "privacy": "protected",
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "missingMessage",
+              "type": {
+                "text": "string"
+              },
+              "privacy": "protected",
+              "readonly": true
             },
             {
               "kind": "method",
@@ -1118,16 +1022,6 @@
             },
             {
               "kind": "method",
-              "name": "#sync",
-              "privacy": "private",
-              "return": {
-                "type": {
-                  "text": "void"
-                }
-              }
-            },
-            {
-              "kind": "method",
               "name": "#onChange",
               "privacy": "private",
               "return": {
@@ -1143,17 +1037,31 @@
                   }
                 }
               ]
-            }
-          ],
-          "attributes": [
+            },
             {
-              "name": "name",
+              "kind": "method",
+              "name": "renderControl",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "TemplateResult"
+                }
+              }
+            },
+            {
+              "kind": "field",
+              "name": "value",
+              "privacy": "public",
               "type": {
                 "text": "string"
               },
-              "default": "''",
-              "fieldName": "name"
-            },
+              "description": "Submitted when checked, exactly as a native checkbox does.",
+              "default": "'on'",
+              "attribute": "value",
+              "reflects": true
+            }
+          ],
+          "attributes": [
             {
               "name": "value",
               "type": {
@@ -1162,30 +1070,6 @@
               "description": "Submitted when checked, exactly as a native checkbox does.",
               "default": "'on'",
               "fieldName": "value"
-            },
-            {
-              "name": "label",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "fieldName": "label"
-            },
-            {
-              "name": "description",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "fieldName": "description"
-            },
-            {
-              "name": "error",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "fieldName": "error"
             },
             {
               "name": "checked",
@@ -1202,45 +1086,17 @@
               },
               "default": "false",
               "fieldName": "indeterminate"
-            },
-            {
-              "name": "required",
-              "type": {
-                "text": "boolean"
-              },
-              "default": "false",
-              "fieldName": "required"
-            },
-            {
-              "name": "disabled",
-              "type": {
-                "text": "boolean"
-              },
-              "default": "false",
-              "fieldName": "disabled"
             }
           ],
           "superclass": {
-            "name": "CivitaiElement",
-            "module": "/src/elements/base.js"
+            "name": "CivitaiField",
+            "module": "/src/elements/field-base.js"
           },
           "customElement": true,
           "tagName": "civitai-checkbox",
           "cssParts": [
             {
               "name": "choice"
-            },
-            {
-              "name": "control"
-            },
-            {
-              "name": "label"
-            },
-            {
-              "name": "description"
-            },
-            {
-              "name": "error"
             }
           ]
         },
@@ -1385,7 +1241,7 @@
           "tagName": "civitai-collapse",
           "cssParts": [
             {
-              "name": "trigger"
+              "name": "button"
             },
             {
               "name": "chevron"
@@ -1625,7 +1481,7 @@
                 {
                   "name": "next",
                   "type": {
-                    "text": "ImageStatus"
+                    "text": "'loaded' | 'error'"
                   }
                 }
               ]
@@ -1633,6 +1489,13 @@
           ],
           "events": [
             {
+              "name": "error",
+              "type": {
+                "text": "Event"
+              }
+            },
+            {
+              "name": "load",
               "type": {
                 "text": "Event"
               }
@@ -1995,6 +1858,18 @@
           "members": [
             {
               "kind": "field",
+              "name": "value",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "`<option>` semantics: the item's own text is the value until you set one.",
+              "default": "''",
+              "attribute": "value",
+              "reflects": true
+            },
+            {
+              "kind": "field",
               "name": "disabled",
               "privacy": "public",
               "type": {
@@ -2018,6 +1893,14 @@
             },
             {
               "kind": "field",
+              "name": "selectedValue",
+              "type": {
+                "text": "string"
+              },
+              "readonly": true
+            },
+            {
+              "kind": "field",
               "name": "#gate",
               "privacy": "private",
               "readonly": true
@@ -2030,6 +1913,15 @@
             }
           ],
           "attributes": [
+            {
+              "name": "value",
+              "type": {
+                "text": "string"
+              },
+              "description": "`<option>` semantics: the item's own text is the value until you set one.",
+              "default": "''",
+              "fieldName": "value"
+            },
             {
               "name": "disabled",
               "type": {
@@ -2641,7 +2533,7 @@
               "name": "header"
             },
             {
-              "name": "title"
+              "name": "heading"
             },
             {
               "name": "close"
@@ -2855,97 +2747,12 @@
           "members": [
             {
               "kind": "field",
-              "name": "formAssociated",
-              "type": {
-                "text": "boolean"
-              },
-              "static": true,
-              "default": "true"
-            },
-            {
-              "kind": "field",
               "name": "data",
               "privacy": "public",
               "type": {
                 "text": "RadioOption[]"
               },
               "default": "[]"
-            },
-            {
-              "kind": "field",
-              "name": "value",
-              "privacy": "public",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "attribute": "value"
-            },
-            {
-              "kind": "field",
-              "name": "name",
-              "privacy": "public",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "attribute": "name",
-              "reflects": true
-            },
-            {
-              "kind": "field",
-              "name": "label",
-              "privacy": "public",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "attribute": "label",
-              "reflects": true
-            },
-            {
-              "kind": "field",
-              "name": "description",
-              "privacy": "public",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "attribute": "description",
-              "reflects": true
-            },
-            {
-              "kind": "field",
-              "name": "error",
-              "privacy": "public",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "attribute": "error",
-              "reflects": true
-            },
-            {
-              "kind": "field",
-              "name": "required",
-              "privacy": "public",
-              "type": {
-                "text": "boolean"
-              },
-              "default": "false",
-              "attribute": "required",
-              "reflects": true
-            },
-            {
-              "kind": "field",
-              "name": "disabled",
-              "privacy": "public",
-              "type": {
-                "text": "boolean"
-              },
-              "default": "false",
-              "attribute": "disabled",
-              "reflects": true
             },
             {
               "kind": "field",
@@ -2959,73 +2766,28 @@
               "reflects": true
             },
             {
-              "kind": "field",
-              "name": "#internals",
-              "privacy": "private",
-              "readonly": true
-            },
-            {
-              "kind": "field",
-              "name": "#id",
-              "privacy": "private",
-              "readonly": true,
-              "default": "`ci-radio-group-${(sequence += 1)}`"
-            },
-            {
-              "kind": "field",
-              "name": "form",
-              "type": {
-                "text": "HTMLFormElement | null"
-              },
-              "readonly": true
-            },
-            {
-              "kind": "field",
-              "name": "validity",
-              "type": {
-                "text": "ValidityState"
-              },
-              "readonly": true
-            },
-            {
               "kind": "method",
-              "name": "checkValidity",
+              "name": "formValue",
+              "privacy": "protected",
               "return": {
                 "type": {
-                  "text": "boolean"
+                  "text": "string | null"
                 }
               }
             },
             {
-              "kind": "method",
-              "name": "formResetCallback",
-              "return": {
-                "type": {
-                  "text": "void"
-                }
-              }
-            },
-            {
-              "kind": "method",
-              "name": "formStateRestoreCallback",
-              "return": {
-                "type": {
-                  "text": "void"
-                }
+              "kind": "field",
+              "name": "missingMessage",
+              "type": {
+                "text": "string"
               },
-              "parameters": [
-                {
-                  "name": "state",
-                  "type": {
-                    "text": "string | null"
-                  }
-                }
-              ]
+              "privacy": "protected",
+              "readonly": true
             },
             {
               "kind": "method",
-              "name": "#sync",
-              "privacy": "private",
+              "name": "sync",
+              "privacy": "protected",
               "return": {
                 "type": {
                   "text": "void"
@@ -3049,65 +2811,29 @@
                   }
                 }
               ]
+            },
+            {
+              "kind": "method",
+              "name": "renderLabel",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "TemplateResult | typeof nothing"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "renderControl",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "TemplateResult"
+                }
+              }
             }
           ],
           "attributes": [
-            {
-              "name": "value",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "fieldName": "value"
-            },
-            {
-              "name": "name",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "fieldName": "name"
-            },
-            {
-              "name": "label",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "fieldName": "label"
-            },
-            {
-              "name": "description",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "fieldName": "description"
-            },
-            {
-              "name": "error",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "fieldName": "error"
-            },
-            {
-              "name": "required",
-              "type": {
-                "text": "boolean"
-              },
-              "default": "false",
-              "fieldName": "required"
-            },
-            {
-              "name": "disabled",
-              "type": {
-                "text": "boolean"
-              },
-              "default": "false",
-              "fieldName": "disabled"
-            },
             {
               "name": "orientation",
               "type": {
@@ -3118,20 +2844,14 @@
             }
           ],
           "superclass": {
-            "name": "CivitaiElement",
-            "module": "/src/elements/base.js"
+            "name": "CivitaiField",
+            "module": "/src/elements/field-base.js"
           },
           "customElement": true,
           "tagName": "civitai-radio-group",
           "cssParts": [
             {
-              "name": "group"
-            },
-            {
               "name": "label"
-            },
-            {
-              "name": "description"
             },
             {
               "name": "options"
@@ -3143,7 +2863,7 @@
               "name": "option-label"
             },
             {
-              "name": "error"
+              "name": "group"
             }
           ]
         },
@@ -3462,42 +3182,12 @@
           "members": [
             {
               "kind": "field",
-              "name": "formAssociated",
-              "type": {
-                "text": "boolean"
-              },
-              "static": true,
-              "default": "true"
-            },
-            {
-              "kind": "field",
               "name": "data",
               "privacy": "public",
               "type": {
                 "text": "SegmentItem[]"
               },
               "default": "[]"
-            },
-            {
-              "kind": "field",
-              "name": "value",
-              "privacy": "public",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "attribute": "value"
-            },
-            {
-              "kind": "field",
-              "name": "name",
-              "privacy": "public",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "attribute": "name",
-              "reflects": true
             },
             {
               "kind": "field",
@@ -3511,27 +3201,42 @@
               "reflects": true
             },
             {
-              "kind": "field",
-              "name": "#internals",
-              "privacy": "private",
-              "readonly": true
-            },
-            {
-              "kind": "field",
-              "name": "form",
-              "type": {
-                "text": "HTMLFormElement | null"
-              },
-              "readonly": true
-            },
-            {
               "kind": "method",
               "name": "formResetCallback",
               "return": {
                 "type": {
                   "text": "void"
                 }
+              },
+              "description": "Reset falls back to the first enabled segment, as a radio group always has one."
+            },
+            {
+              "kind": "method",
+              "name": "formValue",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "string"
+                }
               }
+            },
+            {
+              "kind": "field",
+              "name": "missing",
+              "type": {
+                "text": "boolean"
+              },
+              "privacy": "protected",
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "missingMessage",
+              "type": {
+                "text": "string"
+              },
+              "privacy": "protected",
+              "readonly": true
             },
             {
               "kind": "field",
@@ -3594,6 +3299,16 @@
                 }
               ],
               "description": "WAI-ARIA roving tabindex: arrows wrap across the enabled segments and\nselection follows focus, so the group is one tab stop rather than N."
+            },
+            {
+              "kind": "method",
+              "name": "renderControl",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "TemplateResult"
+                }
+              }
             }
           ],
           "events": [
@@ -3606,22 +3321,6 @@
           ],
           "attributes": [
             {
-              "name": "value",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "fieldName": "value"
-            },
-            {
-              "name": "name",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "fieldName": "name"
-            },
-            {
               "name": "size",
               "type": {
                 "text": "SegmentedControlSize"
@@ -3631,14 +3330,14 @@
             }
           ],
           "superclass": {
-            "name": "CivitaiElement",
-            "module": "/src/elements/base.js"
+            "name": "CivitaiField",
+            "module": "/src/elements/field-base.js"
           },
           "customElement": true,
           "tagName": "civitai-segmented-control",
           "cssParts": [
             {
-              "name": "group"
+              "name": "group control"
             },
             {
               "name": "segment"
@@ -3917,16 +3616,7 @@
               "name": "header"
             },
             {
-              "name": "label"
-            },
-            {
               "name": "value"
-            },
-            {
-              "name": "description"
-            },
-            {
-              "name": "error"
             }
           ]
         },
@@ -4066,7 +3756,8 @@
             }
           ],
           "superclass": {
-            "name": "HTMLElement"
+            "name": "HTMLElementBase",
+            "module": "/src/elements/html-element.js"
           },
           "customElement": true,
           "tagName": "civitai-tab-panel"
@@ -4187,7 +3878,8 @@
             }
           ],
           "superclass": {
-            "name": "HTMLElement"
+            "name": "HTMLElementBase",
+            "module": "/src/elements/html-element.js"
           },
           "customElement": true,
           "tagName": "civitai-tabs"
@@ -4903,7 +4595,8 @@
             }
           ],
           "superclass": {
-            "name": "HTMLElement"
+            "name": "HTMLElementBase",
+            "module": "/src/elements/html-element.js"
           },
           "customElement": true,
           "tagName": "civitai-toast-region"
@@ -5085,7 +4778,7 @@
               "name": "body"
             },
             {
-              "name": "title"
+              "name": "heading"
             },
             {
               "name": "close"
@@ -5213,7 +4906,8 @@
             }
           ],
           "superclass": {
-            "name": "HTMLElement"
+            "name": "HTMLElementBase",
+            "module": "/src/elements/html-element.js"
           },
           "customElement": true,
           "tagName": "civitai-tooltip"

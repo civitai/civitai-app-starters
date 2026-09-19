@@ -172,7 +172,7 @@ export class CivitaiModal extends CivitaiElement {
           ${this.heading !== '' || this.withCloseButton
             ? html`<div class="header" part="header">
                 ${this.heading !== ''
-                  ? html`<h2 id="${this.#id}-title" class="title" part="title">
+                  ? html`<h2 id="${this.#id}-title" class="title" part="heading">
                       ${this.heading}
                     </h2>`
                   : html`<span></span>`}

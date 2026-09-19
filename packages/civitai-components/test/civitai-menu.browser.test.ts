@@ -1,7 +1,7 @@
 import { userEvent } from 'vitest/browser';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { CivitaiMenu } from '../src/elements/civitai-menu.js';
+import type { CivitaiMenu, MenuSelectDetail } from '../src/elements/civitai-menu.js';
 import type { CivitaiMenuItem } from '../src/elements/civitai-menu-item.js';
 import '../src/elements/register.js';
 
@@ -10,7 +10,7 @@ let scope: HTMLElement | undefined;
 const MARKUP = `
   <civitai-menu label="Image actions">
     <button slot="trigger" aria-label="More">&#8942;</button>
-    <civitai-menu-item id="save">Save image to collection</civitai-menu-item>
+    <civitai-menu-item id="save" value="save">Save image to collection</civitai-menu-item>
     <civitai-menu-item id="report">Report image</civitai-menu-item>
     <civitai-menu-label>Moderator</civitai-menu-label>
     <civitai-menu-item id="rescan" disabled>Rescan image</civitai-menu-item>
@@ -129,18 +129,31 @@ describe('<civitai-menu> keyboard', () => {
 });
 
 describe('<civitai-menu> selection', () => {
-  it('reports which item was chosen, and closes', async () => {
+  it('reports the chosen value, and closes', async () => {
     const menu = await opened(mount());
     const seen: string[] = [];
     menu.addEventListener('select', (e) => {
-      seen.push(((e as CustomEvent<{ item: CivitaiMenuItem }>).detail.item).id);
+      seen.push((e as CustomEvent<MenuSelectDetail>).detail.value);
+    });
+
+    item(menu, 'save').click();
+    await menu.updateComplete;
+
+    expect(seen).toEqual(['save']);
+    expect(menu.open).toBe(false);
+  });
+
+  it('falls back to the item text when it carries no value', async () => {
+    const menu = await opened(mount());
+    const seen: string[] = [];
+    menu.addEventListener('select', (e) => {
+      seen.push((e as CustomEvent<MenuSelectDetail>).detail.value);
     });
 
     item(menu, 'report').click();
     await menu.updateComplete;
 
-    expect(seen).toEqual(['report']);
-    expect(menu.open).toBe(false);
+    expect(seen).toEqual(['Report image']);
   });
 
   it('refuses a disabled item, staying open', async () => {

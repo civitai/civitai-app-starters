@@ -13,6 +13,7 @@ export const CivitaiCheckbox = createComponent({
   elementClass: CivitaiCheckboxElement,
   displayName: 'CivitaiCheckbox',
   events: {
-
+    onChange: 'change',
+    onInvalid: 'invalid',
   },
 });

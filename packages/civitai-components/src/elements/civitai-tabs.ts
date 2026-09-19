@@ -143,7 +143,7 @@ export class CivitaiTabs extends HTMLElementBase {
   #select(next: string, moveFocus: boolean): void {
     if (next !== this.value) {
       this.value = next;
-      this.dispatchEvent(new Event('change', { bubbles: true }));
+      this.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
     }
     if (!moveFocus) return;
     this.#tablist?.querySelector<HTMLButtonElement>(`[data-tab][data-value="${next}"]`)?.focus();

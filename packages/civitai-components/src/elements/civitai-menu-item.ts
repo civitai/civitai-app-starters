@@ -43,18 +43,26 @@ export class CivitaiMenuItem extends CivitaiElement {
   ];
 
   static override properties: PropertyDeclarations = {
+    value: { reflect: true },
     disabled: { type: Boolean, reflect: true },
     destructive: { type: Boolean, reflect: true },
   };
 
+  /** `<option>` semantics: the item's own text is the value until you set one. */
+  declare value: string;
   declare disabled: boolean;
   /** Paints the item as a destructive action — Delete, Remove, Block. */
   declare destructive: boolean;
 
   constructor() {
     super();
+    this.value = '';
     this.disabled = false;
     this.destructive = false;
+  }
+
+  get selectedValue(): string {
+    return this.value || (this.textContent ?? '').trim();
   }
 
   override connectedCallback(): void {

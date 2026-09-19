@@ -136,29 +136,13 @@ export class CivitaiSlider extends CivitaiField {
     return html`
       ${this.label !== '' || this.showValue
         ? html`<div class="header" part="header">
-            ${this.label !== ''
-              ? html`<label for=${this.fieldId} part="label"
-                  >${this.label}${this.required
-                    ? html`<span class="required" aria-hidden="true">*</span>`
-                    : nothing}</label
-                >`
-              : html`<span></span>`}
+            ${this.label !== '' ? this.renderLabel() : html`<span></span>`}
             ${this.showValue
               ? html`<span class="readout" part="value">${this.value}</span>`
               : nothing}
           </div>`
         : nothing}
-      ${this.description !== ''
-        ? html`<span id="${this.fieldId}-desc" class="description" part="description"
-            >${this.description}</span
-          >`
-        : nothing}
-      ${this.renderControl()}
-      ${this.invalid
-        ? html`<span id="${this.fieldId}-err" class="error" part="error" role="alert"
-            >${this.error}</span
-          >`
-        : nothing}
+      ${this.renderDescription()}${this.renderControl()}${this.renderError()}
     `;
   }
 }

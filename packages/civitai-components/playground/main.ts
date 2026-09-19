@@ -148,8 +148,8 @@ document.querySelector('#tags')?.addEventListener('vote', (event) => {
 
 const menuLog = document.querySelector('#menu-log');
 document.querySelector('#actions')?.addEventListener('select', (event) => {
-  const { item } = (event as CustomEvent<{ item: HTMLElement }>).detail;
-  if (menuLog) menuLog.textContent = `chose "${item.textContent?.trim()}"`;
+  const { value } = (event as CustomEvent<{ value: string }>).detail;
+  if (menuLog) menuLog.textContent = `chose "${value}"`;
 });
 
 const cardLog = document.querySelector('#card-log');

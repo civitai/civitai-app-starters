@@ -176,6 +176,46 @@ describe('<civitai-segmented-control> value and forms', () => {
   });
 });
 
+describe('<civitai-segmented-control> field chrome', () => {
+  it('stacks the label above the segments rather than beside them', async () => {
+    const el = await mount(DATA, { label: 'View', 'aria-label': 'View' });
+    const label = el.shadowRoot!.querySelector('[part="label"]')!.getBoundingClientRect();
+    const group = el.shadowRoot!.querySelector('.group')!.getBoundingClientRect();
+
+    expect(label.bottom).toBeLessThanOrEqual(group.top);
+  });
+
+  it('shrinks to its segments, so it is not a full-width block', async () => {
+    const el = await mount(DATA, { label: 'View' });
+    const group = el.shadowRoot!.querySelector('.group')!.getBoundingClientRect();
+
+    expect(el.getBoundingClientRect().width).toBeLessThan(scope!.getBoundingClientRect().width);
+    expect(Math.round(el.getBoundingClientRect().width)).toBe(Math.round(group.width));
+  });
+
+  it('does not let a long label stretch the segments', async () => {
+    const short = await mount(DATA, { 'aria-label': 'View' });
+    const narrow = short.shadowRoot!.querySelector('.group')!.getBoundingClientRect().width;
+
+    const el = await mount(DATA, { label: 'Which view would you like to use today' });
+    const group = el.shadowRoot!.querySelector('.group')!.getBoundingClientRect();
+    const label = el.shadowRoot!.querySelector('[part="label"]')!.getBoundingClientRect();
+
+    expect(label.width).toBeGreaterThan(group.width);
+    expect(Math.round(group.width)).toBe(Math.round(narrow));
+  });
+
+  it('disables every segment when the control is disabled', async () => {
+    const el = await mount(DATA, { disabled: '', value: 'grid' });
+    segments(el).forEach((button) => expect(button.disabled).toBe(true));
+
+    segments(el)[1]!.click();
+    await el.updateComplete;
+
+    expect(el.value).toBe('grid');
+  });
+});
+
 describe('<civitai-segmented-control> styling', () => {
   const LEGACY = (size: string) =>
     `<div data-civitai-ui="segmented-control" role="radiogroup" aria-label="View">` +

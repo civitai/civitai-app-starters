@@ -122,8 +122,10 @@ export abstract class CivitaiField extends CivitaiElement {
     this.value = state ?? '';
   }
 
+  /* The PART, not a class: a checkbox marks its input with one but has no use
+     for the `.control` box styling, and both still need a validity anchor. */
   protected get control(): HTMLElement | null {
-    return this.renderRoot.querySelector('.control');
+    return this.renderRoot.querySelector('[part~="control"]');
   }
 
   protected get invalid(): boolean {
@@ -151,15 +153,25 @@ export abstract class CivitaiField extends CivitaiElement {
     this.sync();
   }
 
+  /** What the form submits. A control that can submit nothing answers `null`. */
+  protected formValue(): string | File | FormData | null {
+    return this.value;
+  }
+
+  /** Whether `required` is unsatisfied. */
+  protected get missing(): boolean {
+    return this.value === '';
+  }
+
+  protected get missingMessage(): string {
+    return 'Please fill out this field.';
+  }
+
   protected sync(): void {
-    this.internals.setFormValue(this.value);
+    this.internals.setFormValue(this.formValue());
     const anchor = (this.control as HTMLElement | undefined) ?? undefined;
-    if (this.required && this.value === '') {
-      this.internals.setValidity(
-        { valueMissing: true },
-        this.error || 'Please fill out this field.',
-        anchor
-      );
+    if (this.required && this.missing) {
+      this.internals.setValidity({ valueMissing: true }, this.error || this.missingMessage, anchor);
     } else if (this.invalid) {
       this.internals.setValidity({ customError: true }, this.error, anchor);
     } else {
@@ -185,26 +197,34 @@ export abstract class CivitaiField extends CivitaiElement {
 
   protected abstract renderControl(): TemplateResult;
 
+  protected renderRequiredMark(): TemplateResult | typeof nothing {
+    return this.required ? html`<span class="required" aria-hidden="true">*</span>` : nothing;
+  }
+
+  protected renderLabel(): TemplateResult | typeof nothing {
+    if (this.label === '') return nothing;
+    return html`<label for=${this.fieldId} part="label"
+      >${this.label}${this.renderRequiredMark()}</label
+    >`;
+  }
+
+  protected renderDescription(): TemplateResult | typeof nothing {
+    if (this.description === '') return nothing;
+    return html`<span id="${this.fieldId}-desc" class="description" part="description"
+      >${this.description}</span
+    >`;
+  }
+
+  protected renderError(): TemplateResult | typeof nothing {
+    if (!this.invalid) return nothing;
+    return html`<span id="${this.fieldId}-err" class="error" part="error" role="alert"
+      >${this.error}</span
+    >`;
+  }
+
   override render(): TemplateResult {
     return html`
-      ${this.label !== ''
-        ? html`<label for=${this.fieldId} part="label"
-            >${this.label}${this.required
-              ? html`<span class="required" aria-hidden="true">*</span>`
-              : nothing}</label
-          >`
-        : nothing}
-      ${this.description !== ''
-        ? html`<span id="${this.fieldId}-desc" class="description" part="description"
-            >${this.description}</span
-          >`
-        : nothing}
-      ${this.renderControl()}
-      ${this.invalid
-        ? html`<span id="${this.fieldId}-err" class="error" part="error" role="alert"
-            >${this.error}</span
-          >`
-        : nothing}
+      ${this.renderLabel()}${this.renderDescription()}${this.renderControl()}${this.renderError()}
     `;
   }
 

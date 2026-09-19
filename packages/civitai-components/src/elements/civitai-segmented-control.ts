@@ -1,7 +1,7 @@
-import { css, html, type PropertyDeclarations, type PropertyValues, type TemplateResult } from 'lit';
+import { css, html, type PropertyDeclarations, type TemplateResult } from 'lit';
 import { ifDefined } from 'lit/directives/if-defined.js';
 
-import { CivitaiElement } from './base.js';
+import { CivitaiField, fieldStyles } from './field-base.js';
 import { defineElement } from './registry.js';
 import { hostBaseline } from './shared-styles.js';
 
@@ -21,14 +21,16 @@ const NAV_KEYS = ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Home', 'En
  * — a tab's `aria-controls` is an IDREF, and an IDREF cannot reach a panel in
  * the light DOM from inside this shadow root, so tabs need their own element.
  */
-export class CivitaiSegmentedControl extends CivitaiElement {
-  static formAssociated = true;
-
+export class CivitaiSegmentedControl extends CivitaiField {
   static override styles = [
     hostBaseline,
+    fieldStyles,
     css`
+      /* Inline so the control shrinks to its segments rather than filling the
+         row, and flex-start so a label wider than them does not stretch them. */
       :host {
         display: inline-flex;
+        align-items: flex-start;
         max-width: 100%;
       }
       .group {
@@ -90,36 +92,35 @@ export class CivitaiSegmentedControl extends CivitaiElement {
   ];
 
   static override properties: PropertyDeclarations = {
+    ...CivitaiField.properties,
     data: { attribute: false },
-    // Deliberately not reflected: the `value` ATTRIBUTE is the default that
-    // `form.reset()` returns to, exactly as on a native control. Reflecting the
-    // live value would overwrite it and make reset a no-op.
-    value: {},
-    name: { reflect: true },
     size: { reflect: true },
   };
 
   declare data: SegmentItem[];
-  declare value: string;
-  declare name: string;
   declare size: SegmentedControlSize;
-
-  readonly #internals = this.attachInternals();
 
   constructor() {
     super();
     this.data = [];
-    this.value = '';
-    this.name = '';
     this.size = 'md';
   }
 
-  get form(): HTMLFormElement | null {
-    return this.#internals.form;
+  /** Reset falls back to the first enabled segment, as a radio group always has one. */
+  override formResetCallback(): void {
+    this.value = this.getAttribute('value') ?? this.#enabled[0]?.value ?? '';
   }
 
-  formResetCallback(): void {
-    this.value = this.getAttribute('value') ?? this.#enabled[0]?.value ?? '';
+  protected override formValue(): string {
+    return this.#selected;
+  }
+
+  protected override get missing(): boolean {
+    return this.#selected === '';
+  }
+
+  protected override get missingMessage(): string {
+    return 'Please select one of these options.';
   }
 
   get #enabled(): SegmentItem[] {
@@ -130,16 +131,6 @@ export class CivitaiSegmentedControl extends CivitaiElement {
   get #selected(): string {
     const known = this.data.some((item) => item.value === this.value);
     return known ? this.value : (this.#enabled[0]?.value ?? '');
-  }
-
-  override connectedCallback(): void {
-    super.connectedCallback();
-    this.#internals.setFormValue(this.#selected);
-  }
-
-  protected override updated(changed: PropertyValues): void {
-    super.updated(changed);
-    this.#internals.setFormValue(this.#selected);
   }
 
   #select(next: string, moveFocus: boolean): void {
@@ -176,13 +167,13 @@ export class CivitaiSegmentedControl extends CivitaiElement {
     this.#select(values[next]!, true);
   }
 
-  override render(): TemplateResult {
+  protected override renderControl(): TemplateResult {
     const selected = this.#selected;
 
     return html`
       <div
         class="group"
-        part="group"
+        part="group control"
         role="radiogroup"
         aria-label=${ifDefined(this.getAttribute('aria-label') ?? undefined)}
         aria-labelledby=${ifDefined(this.getAttribute('aria-labelledby') ?? undefined)}
@@ -198,7 +189,7 @@ export class CivitaiSegmentedControl extends CivitaiElement {
               role="radio"
               aria-checked=${String(isSelected)}
               tabindex=${isSelected ? 0 : -1}
-              ?disabled=${item.disabled ?? false}
+              ?disabled=${this.disabled || (item.disabled ?? false)}
               @click=${() => this.#select(item.value, false)}
             >
               ${item.label}

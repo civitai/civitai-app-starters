@@ -25,10 +25,15 @@ export interface EventBinding {
 export const EVENTS: Record<string, EventBinding[]> = {
   'civitai-alert': [{ prop: 'onClose', event: 'close' }],
   'civitai-collapse': [{ prop: 'onToggle', event: 'toggle' }],
-  'civitai-menu': [{ prop: 'onSelect', event: 'select' }],
+  // Not `onLoad`/`onError`: React wires those itself on any host element, so
+  // sharing the name would call the handler twice.
+  'civitai-image': [
+    { prop: 'onImageLoad', event: 'load' },
+    { prop: 'onImageError', event: 'error' },
+  ],
+  'civitai-menu': [{ prop: 'onSelect', event: 'select', detail: 'MenuSelectDetail' }],
   'civitai-modal': [{ prop: 'onClose', event: 'close' }],
   'civitai-reaction': [{ prop: 'onReact', event: 'react', detail: 'ReactionDetail' }],
-  'civitai-segmented-control': [{ prop: 'onChange', event: 'change' }],
   'civitai-tabs': [{ prop: 'onChange', event: 'change' }],
   'civitai-tag': [{ prop: 'onVote', event: 'vote', detail: 'TagVoteDetail' }],
   'civitai-toast': [{ prop: 'onClose', event: 'close' }],
@@ -37,14 +42,28 @@ export const EVENTS: Record<string, EventBinding[]> = {
 /** The field base re-dispatches both out of every field's shadow root (R4). */
 export const RETARGETED = ['change', 'invalid'] as const;
 
-for (const tag of [
-  'civitai-text-input',
-  'civitai-textarea',
-  'civitai-number-input',
-  'civitai-select',
-  'civitai-slider',
-]) {
+/** Just this class's body, so two elements sharing a module stay separate. */
+export function classBody(tag: string): string {
+  const entry = elements().find((e) => e.tag === tag);
+  if (!entry) return '';
+  const source = readFileSync(
+    join(componentsRoot, 'src', 'elements', `${entry.specifier}.ts`),
+    'utf8'
+  );
+  const start = source.indexOf(`export class ${entry.className} `);
+  if (start === -1) return source;
+  const next = source.indexOf('\nexport ', start + 1);
+  return source.slice(start, next === -1 ? undefined : next);
+}
+
+export const isField = (tag: string): boolean => classBody(tag).includes('extends CivitaiField');
+
+// Read off the base class rather than listed by hand: a control that joins the
+// field base gains both events, and a list would quietly not know.
+for (const { tag } of elements()) {
+  if (!isField(tag)) continue;
   EVENTS[tag] = [
+    ...(EVENTS[tag] ?? []),
     { prop: 'onChange', event: 'change' },
     { prop: 'onInvalid', event: 'invalid' },
   ];

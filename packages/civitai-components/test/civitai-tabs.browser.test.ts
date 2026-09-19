@@ -111,6 +111,28 @@ describe('<civitai-tabs>', () => {
     expect(changes).toBe(1);
   });
 
+  it('lets change out of a consumer shadow root', async () => {
+    scope?.remove();
+    scope = document.createElement('div');
+    document.body.append(scope);
+    const root = scope.attachShadow({ mode: 'open' });
+    root.innerHTML =
+      '<civitai-tabs aria-label="View">' +
+      TABS.map((t) => `<civitai-tab-panel value="${t.value}">${t.label}</civitai-tab-panel>`).join('') +
+      '</civitai-tabs>';
+    const el = root.querySelector<CivitaiTabs>('civitai-tabs')!;
+    el.data = TABS;
+    await el.updateComplete;
+
+    let heard = 0;
+    const onChange = (): void => void (heard += 1);
+    document.addEventListener('change', onChange);
+    tabs(el)[1]!.click();
+    document.removeEventListener('change', onChange);
+
+    expect(heard).toBe(1);
+  });
+
   it('leaves other keys to the page', () => {
     const el = mount();
     const event = new KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true });

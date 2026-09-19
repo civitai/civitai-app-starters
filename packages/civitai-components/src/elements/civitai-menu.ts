@@ -9,6 +9,10 @@ const TAG = 'civitai-menu';
 
 export type MenuPlacement = 'bottom-start' | 'bottom-end';
 
+export interface MenuSelectDetail {
+  value: string;
+}
+
 const GAP = 6;
 
 export class CivitaiMenu extends CivitaiElement {
@@ -205,8 +209,9 @@ export class CivitaiMenu extends CivitaiElement {
             (node) => node instanceof HTMLElement && node.getAttribute('role') === 'menuitem'
           ) as CivitaiMenuItem | undefined;
           if (!item || item.disabled) return;
+          const detail: MenuSelectDetail = { value: item.selectedValue };
           this.dispatchEvent(
-            new CustomEvent('select', { detail: { item }, bubbles: true, composed: true })
+            new CustomEvent('select', { detail, bubbles: true, composed: true })
           );
           this.hide();
         }}
