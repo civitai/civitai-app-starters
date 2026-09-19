@@ -47,11 +47,16 @@ describe('custom-elements.json', () => {
     expect(documented.length).toBeGreaterThan(0);
   });
 
-  /** A module may define more than one element, e.g. tabs and its panel. */
+  /**
+   * A module may define more than one element (tabs and its panel), and one
+   * module may merely MENTION another's tag — the region creates toasts — so
+   * match the tag's own declaration rather than any occurrence of the string.
+   */
   const sourceFor = (tag: string): string => {
+    const declares = new RegExp(`const \\w+\\s*=\\s*'${tag}'`);
     for (const file of readdirSync(elementsDir).filter((f) => /^civitai-.*(?<!\.define)\.ts$/.test(f))) {
       const source = readFileSync(join(elementsDir, file), 'utf8');
-      if (source.includes(`'${tag}'`)) return source;
+      if (declares.test(source)) return source;
     }
     throw new Error(`no source declares ${tag}`);
   };

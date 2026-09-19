@@ -4,6 +4,7 @@ import type { CivitaiModal } from '../src/elements/civitai-modal.js';
 import type { CivitaiRadioGroup } from '../src/elements/civitai-radio-group.js';
 import type { CivitaiSelect } from '../src/elements/civitai-select.js';
 import type { CivitaiTabs } from '../src/elements/civitai-tabs.js';
+import type { CivitaiToastRegion } from '../src/elements/civitai-toast-region.js';
 import '../src/elements/register.js';
 
 // The legacy attribute CSS, so the playground can sit elements next to the
@@ -115,6 +116,24 @@ for (const id of ['#modal-ok', '#modal-cancel']) {
     if (modal) modal.open = false;
   });
 }
+
+const toasts = document.querySelector<CivitaiToastRegion>('#toasts');
+document.querySelector('#toast-info')?.addEventListener('click', () => {
+  toasts?.show({ message: 'Queued for generation.', color: 'info' });
+});
+document.querySelector('#toast-success')?.addEventListener('click', () => {
+  toasts?.show({ heading: 'Saved', message: 'Your changes are live.', color: 'success' });
+});
+document.querySelector('#toast-error')?.addEventListener('click', () => {
+  toasts?.show({
+    heading: 'Generation failed',
+    message: 'Not enough Buzz.',
+    color: 'error',
+    duration: 0,
+    urgent: true,
+  });
+});
+document.querySelector('#toast-clear')?.addEventListener('click', () => toasts?.clear());
 
 const form = document.querySelector<HTMLFormElement>('#demo');
 const result = document.querySelector('#result');

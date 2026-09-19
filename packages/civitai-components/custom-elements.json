@@ -3348,6 +3348,323 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/elements/civitai-toast-region.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiToastRegion",
+          "members": [
+            {
+              "kind": "field",
+              "name": "#timers",
+              "privacy": "private",
+              "readonly": true,
+              "default": "new Map<string, ReturnType<typeof setTimeout>>()"
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "defaultDuration",
+              "type": {
+                "text": "number"
+              },
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "toasts",
+              "type": {
+                "text": "CivitaiToast[]"
+              },
+              "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "show",
+              "return": {
+                "type": {
+                  "text": "string"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "ToastOptions"
+                  }
+                }
+              ],
+              "description": "Enqueues a toast and returns its id."
+            },
+            {
+              "kind": "method",
+              "name": "dismiss",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "id",
+                  "type": {
+                    "text": "string"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "clear",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            }
+          ],
+          "superclass": {
+            "name": "HTMLElement"
+          },
+          "customElement": true,
+          "tagName": "civitai-toast-region"
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiToastRegion",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiToastRegion",
+          "declaration": {
+            "name": "CivitaiToastRegion",
+            "module": "src/elements/civitai-toast-region.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiToastRegion",
+          "declaration": {
+            "name": "defineCivitaiToastRegion",
+            "module": "src/elements/civitai-toast-region.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-toast-region",
+          "declaration": {
+            "name": "CivitaiToastRegion",
+            "module": "src/elements/civitai-toast-region.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-toast.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiToast",
+          "members": [
+            {
+              "kind": "field",
+              "name": "color",
+              "privacy": "public",
+              "type": {
+                "text": "Intent | ''"
+              },
+              "default": "''",
+              "attribute": "color",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "heading",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Not `title`: that attribute is global and would render a tooltip.",
+              "default": "''",
+              "attribute": "heading",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "closable",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "closable",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "urgent",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Announce assertively rather than politely.",
+              "default": "false",
+              "attribute": "urgent",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "closeLabel",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Dismiss'",
+              "attribute": "close-label",
+              "reflects": true
+            },
+            {
+              "kind": "method",
+              "name": "#close",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            }
+          ],
+          "events": [
+            {
+              "name": "close",
+              "type": {
+                "text": "Event"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "color",
+              "type": {
+                "text": "Intent | ''"
+              },
+              "default": "''",
+              "fieldName": "color"
+            },
+            {
+              "name": "heading",
+              "type": {
+                "text": "string"
+              },
+              "description": "Not `title`: that attribute is global and would render a tooltip.",
+              "default": "''",
+              "fieldName": "heading"
+            },
+            {
+              "name": "closable",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "closable"
+            },
+            {
+              "name": "urgent",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Announce assertively rather than politely.",
+              "default": "false",
+              "fieldName": "urgent"
+            },
+            {
+              "name": "close-label",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Dismiss'",
+              "fieldName": "closeLabel"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-toast",
+          "cssParts": [
+            {
+              "name": "body"
+            },
+            {
+              "name": "title"
+            },
+            {
+              "name": "close"
+            }
+          ],
+          "slots": [
+            {
+              "name": ""
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiToast",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiToast",
+          "declaration": {
+            "name": "CivitaiToast",
+            "module": "src/elements/civitai-toast.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiToast",
+          "declaration": {
+            "name": "defineCivitaiToast",
+            "module": "src/elements/civitai-toast.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-toast",
+          "declaration": {
+            "name": "CivitaiToast",
+            "module": "src/elements/civitai-toast.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/elements/civitai-tooltip.ts",
       "declarations": [
         {

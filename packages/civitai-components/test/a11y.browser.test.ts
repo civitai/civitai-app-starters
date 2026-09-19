@@ -103,6 +103,17 @@ const CASES: { id: string; markup: string; prepare?: (scope: HTMLElement) => voi
     markup: '<civitai-modal heading="Confirm" open>Costs Buzz.</civitai-modal>',
   },
   {
+    id: 'toast-region',
+    markup: '<civitai-toast-region></civitai-toast-region>',
+    prepare: (scope) => {
+      const region = scope.querySelector('civitai-toast-region') as HTMLElement & {
+        show(options: { message: string; heading?: string; color?: string; duration?: number }): string;
+      };
+      region.show({ message: 'Saved', heading: 'Done', color: 'success', duration: 0 });
+      region.show({ message: 'Failed', color: 'error', duration: 0 });
+    },
+  },
+  {
     id: 'form',
     markup:
       '<form><civitai-text-input label="Query" name="q"></civitai-text-input>' +

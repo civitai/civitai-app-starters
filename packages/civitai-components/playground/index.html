@@ -195,6 +195,15 @@
       Only the &times; closes this one.
     </civitai-modal>
 
+    <h2>Toasts</h2>
+    <civitai-group>
+      <civitai-button id="toast-info" variant="light">Info</civitai-button>
+      <civitai-button id="toast-success" variant="light">Success</civitai-button>
+      <civitai-button id="toast-error" variant="light">Error (sticky, assertive)</civitai-button>
+      <civitai-button id="toast-clear" variant="subtle">Clear all</civitai-button>
+    </civitai-group>
+    <civitai-toast-region id="toasts"></civitai-toast-region>
+
     <h2>Form participation</h2>
     <form id="demo">
       <civitai-text-input name="q" label="Query" value="hello"

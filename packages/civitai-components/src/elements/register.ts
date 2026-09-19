@@ -17,6 +17,8 @@ import { defineCivitaiStack } from './civitai-stack.js';
 import { defineCivitaiTabs } from './civitai-tabs.js';
 import { defineCivitaiTextInput } from './civitai-text-input.js';
 import { defineCivitaiTextarea } from './civitai-textarea.js';
+import { defineCivitaiToast } from './civitai-toast.js';
+import { defineCivitaiToastRegion } from './civitai-toast-region.js';
 import { defineCivitaiTooltip } from './civitai-tooltip.js';
 
 /** Register every element in this package. Safe to call more than once. */
@@ -40,6 +42,8 @@ export function registerAll(): void {
   defineCivitaiTabs();
   defineCivitaiTextInput();
   defineCivitaiTextarea();
+  defineCivitaiToast();
+  defineCivitaiToastRegion();
   defineCivitaiTooltip();
 }
 

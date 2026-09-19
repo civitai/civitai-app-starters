@@ -186,6 +186,22 @@
     "./civitai-tabs/define": {
       "types": "./dist/elements/civitai-tabs.define.d.ts",
       "import": "./dist/elements/civitai-tabs.define.js"
+    },
+    "./civitai-toast": {
+      "types": "./dist/elements/civitai-toast.d.ts",
+      "import": "./dist/elements/civitai-toast.js"
+    },
+    "./civitai-toast/define": {
+      "types": "./dist/elements/civitai-toast.define.d.ts",
+      "import": "./dist/elements/civitai-toast.define.js"
+    },
+    "./civitai-toast-region": {
+      "types": "./dist/elements/civitai-toast-region.d.ts",
+      "import": "./dist/elements/civitai-toast-region.js"
+    },
+    "./civitai-toast-region/define": {
+      "types": "./dist/elements/civitai-toast-region.define.d.ts",
+      "import": "./dist/elements/civitai-toast-region.define.js"
     }
   },
   "files": [
