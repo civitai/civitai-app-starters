@@ -18,7 +18,7 @@ to `dist/`. Tested with `vitest`. Published to npm with subpath exports
 |---|---|
 | `src/oauth/` | PKCE, authorize URL builder, code exchange, refresh, revoke, `fetchMe`. The OAuth flow as stateless functions. |
 | `src/scopes/` | `TokenScope` bitmask + `bitmaskFromScopes` / `scopesFromBitmask` / `hasScope` / `getScopeLabel`. Mirrors `civitai/civitai`'s `src/shared/constants/token-scope.constants.ts` — keep in sync. |
-| `src/cookies/` | AES-256-CTR `sealCookie` / `unsealCookie` + `buildSetCookieHeader` / `readCookie`. Used by every starter to seal sessions into one `httpOnly` cookie. |
+| `src/cookies/` | AES-256-GCM `sealCookie` / `unsealCookie` + `buildSetCookieHeader` / `readCookie`. Used by every starter to seal sessions into one `httpOnly` cookie. |
 | `src/orchestrator/` | Orchestrator client factory, `estimateWorkflow` / `submitWorkflow` / `getWorkflow` / `pollWorkflow`, `buildTextToImageBody`, types + `OrchestratorError`. |
 | `src/blocks/` | Civitai Apps contract: `BlockManifestV1`, `defineBlock`, `BLOCK_SCOPES`, typed parent↔block `postMessage` protocol. **Subpath-only** (`@civitai/app-sdk/blocks`) — deliberately not re-exported from `src/index.ts` so default-imports stay lean. Hooks + iframe transport live in [`@civitai/blocks-react`](../civitai-blocks-react/) so this module stays runtime-agnostic. |
 | `src/safe-storage/` | Opaque-origin `localStorage`/`sessionStorage` repair. Block iframes are sandboxed without `allow-same-origin`, where *reading* those globals throws — usually from a dependency nobody can guard. **The only module in this package with an import side effect**, and deliberately so: import order is hoisted, so a side-effect import is the only thing that can beat a dependency that reads storage while evaluating. `src/blocks/index.ts` imports it first; `@civitai/blocks-react` does too. It replaces a global only after a round-trip probe proves it unusable — never touches working storage, never fabricates storage where the runtime has none (Node/SSR/workers). |
@@ -71,7 +71,7 @@ to `dist/`. Tested with `vitest`. Published to npm with subpath exports
 |---|---|
 | New Civitai HTTP call | Add to the closest existing module (`oauth/` for auth-shaped, `orchestrator/` for orchestrator). Export from `src/index.ts` + add a subpath export to `package.json` if it's its own area. |
 | New scope constant | `civitai/civitai` is the source of truth — copy the new flag into `src/scopes/index.ts` and update `tokenScopeLabels` / `TokenScopePresets` if relevant. |
-| New cookie-shape helper | `src/cookies/index.ts`. Keep the AES-256-CTR + HMAC envelope; don't swap algorithms without a major bump. |
+| New cookie-shape helper | `src/cookies/index.ts`. Keep the AES-256-GCM (AEAD) envelope — the GCM auth tag *is* the integrity check, so no separate MAC is layered on top. Don't swap algorithms without a major bump. |
 | Breaking API change | Author a **major** changeset; document the migration path in the changeset body. |
 | Anything for one specific framework | **Wrong layer.** Put it in the starter, not the SDK. |
 
