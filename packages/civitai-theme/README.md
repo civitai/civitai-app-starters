@@ -18,8 +18,9 @@ resolution → re-namespaced `--civitai-*`. This is the same primitive civitai
 uses in `mantine-css-variables.ts`. `--mantine-*` is fully resolved away, so the
 `--civitai-*` contract is self-contained.
 
-The one exception is the **breakpoint scale**, which deliberately bypasses the
-Mantine pipeline — see below.
+Two kinds of token depart from that. The **breakpoint scale** bypasses the
+Mantine pipeline entirely (see below), and a few tokens declare an explicit
+**light/dark pair** — see next section.
 
 Four guards keep it honest (`pnpm --filter @civitai/theme test`):
 
@@ -32,6 +33,22 @@ Four guards keep it honest (`pnpm --filter @civitai/theme test`):
   byte-match a fresh generation, so a stale hand-edit can't slip through.
 - **px-not-em guard** — self-contained; pins the breakpoint tokens to the px
   scale and asserts the em values are absent.
+
+## Scheme-paired tokens
+
+A custom property inherits across a shadow boundary; an ancestor selector does
+not cross one. So a component that wanted "gray in light, surface in dark" could
+only say it as `[data-theme='dark'] <descendant>` in `@civitai/components`, which
+a shadow root can never match (`:host-context()` has never shipped in Firefox).
+
+Those decisions are tokens now — `--civitai-card-border-width`,
+`--civitai-color-track`, `--civitai-color-segmented-bg` and
+`--civitai-color-media-placeholder`. Mantine has no variable that carries either
+side of these pairs, so `TokenSpec.source` and `.literal` each accept a
+`{ light, dark }` pair, resolved against its own scheme's variable map.
+
+`--civitai-card-border-width` is a **width**, not a color: dark drops the default
+hairline's box, and a transparent color would still occupy 1px on every card.
 
 ## Breakpoints — 🔴 the px scale, not Mantine's em scale
 

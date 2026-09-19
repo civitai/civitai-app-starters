@@ -272,20 +272,17 @@
 
   /* ----- Card ----- */
   /*
-   * F5 (issue #181): in LIGHT mode --civitai-color-surface == --civitai-color-body
-   * (both #fefefe), so a borderless card is invisible against the page. Give
-   * every card a subtle DEFAULT hairline (a low-alpha mix of the border token)
-   * so a card WITHOUT `data-with-border` is still visible. `data-with-border`
-   * stays the stronger, explicit, fully-opaque border. Dark mode already
-   * differentiates surface from body, so the default hairline is removed there
-   * (see the [data-theme='dark'] rule below) — no over-adding. The default
-   * (no [data-theme]) light palette keeps the hairline, matching light mode.
+   * F5 (issue #181): light resolves surface and body to the same #fefefe, so a
+   * borderless card needs a default hairline to be visible at all; dark already
+   * separates them and zeroes the width. `data-with-border` is the stronger,
+   * explicit, opaque border and is unconditional.
    */
   [data-civitai-ui='card'] {
     background: var(--civitai-color-surface);
     border-radius: var(--civitai-radius);
     color: var(--civitai-color-text);
-    border: 1px solid color-mix(in srgb, var(--civitai-color-border) 55%, transparent);
+    border: var(--civitai-card-border-width, 1px) solid
+      color-mix(in srgb, var(--civitai-color-border) 55%, transparent);
 
     &[data-with-border='true'] {
       border: 1px solid var(--civitai-color-border);
@@ -293,14 +290,6 @@
     &[data-padding='sm'] { padding: 10px; }
     &[data-padding='md'] { padding: 16px; }
     &[data-padding='lg'] { padding: 24px; }
-  }
-  /*
-   * Dark already differentiates surface (#1A1B1E) from body — drop the default
-   * hairline on a borderless card so dark is visually unchanged. An explicit
-   * `data-with-border` still renders its full border.
-   */
-  [data-theme='dark'] [data-civitai-ui='card']:not([data-with-border='true']) {
-    border: 0;
   }
 
   /* ----- Stack / Group ----- */
@@ -632,11 +621,8 @@
     padding: 0;
     border-radius: 999px;
     accent-color: var(--civitai-color-primary);
-    background: var(--civitai-color-gray-2);
+    background: var(--civitai-color-track, var(--civitai-color-gray-2));
     cursor: pointer;
-  }
-  [data-theme='dark'] [data-civitai-ui='slider'] input[type='range'] {
-    background: var(--civitai-color-surface-2);
   }
   [data-civitai-ui='slider'] input[type='range']:focus-visible {
     outline: 2px solid var(--civitai-color-primary);
@@ -664,13 +650,10 @@
     display: inline-flex;
     gap: 2px;
     padding: 4px;
-    background: var(--civitai-color-gray-1);
+    background: var(--civitai-color-segmented-bg, var(--civitai-color-gray-1));
     border-radius: var(--civitai-radius);
     max-width: 100%;
     overflow-x: auto;
-  }
-  [data-theme='dark'] [data-civitai-ui='segmented-control'] {
-    background: var(--civitai-color-surface-2);
   }
   [data-civitai-ui-segment] {
     -webkit-appearance: none;
@@ -849,11 +832,8 @@
     position: relative;
     display: block;
     overflow: hidden;
-    background: var(--civitai-color-gray-2);
+    background: var(--civitai-color-media-placeholder, var(--civitai-color-gray-2));
     border-radius: var(--civitai-radius);
-  }
-  [data-theme='dark'] [data-civitai-ui='image'] {
-    background: var(--civitai-color-surface-2);
   }
   [data-civitai-ui-image-img] {
     display: block;

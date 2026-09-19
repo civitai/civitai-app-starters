@@ -29,25 +29,35 @@ import {
 import { BREAKPOINT_KEYS, civitaiBreakpointsSource } from './breakpoints.source.js';
 import { civitaiThemeSource } from './theme.source.js';
 
+/**
+ * A light/dark pair, for the tokens whose two sides come from different places —
+ * something a single Mantine variable cannot express.
+ */
+type SchemePair = { light: string; dark: string };
+
+const forScheme = (value: string | SchemePair, scheme: keyof SchemePair): string =>
+  typeof value === 'string' ? value : value[scheme];
+
 /** A single public token, mapped to the Mantine variable it derives from. */
 interface TokenSpec {
   /** Public name WITHOUT the `--civitai-` prefix, e.g. `color-primary`. */
   name: string;
   /**
-   * Source Mantine variable name (with `--mantine-` prefix). Mutually exclusive
-   * with `literal` — exactly one of the two must be set.
+   * Source Mantine variable name (with `--mantine-` prefix), or one per scheme.
+   * Mutually exclusive with `literal` — exactly one of the two must be set.
    */
-  source?: string;
+  source?: string | SchemePair;
   /**
    * Concrete literal value for a token that deliberately does NOT derive from
-   * Mantine. Only the breakpoint scale uses this, and the reason is load-bearing:
+   * Mantine. The breakpoint scale uses this, and the reason is load-bearing:
    * civitai's px breakpoints are NOT part of its Mantine theme, and Mantine's own
    * stock EM scale disagrees with them on four of five keys (see
    * `breakpoints.source.ts`). Routing them through `mergeMantineTheme` would
    * silently resolve any un-overridden key to the wrong number, so they bypass
-   * the Mantine pipeline entirely. Scheme-independent by construction.
+   * the Mantine pipeline entirely. A single string is scheme-independent by
+   * construction.
    */
-  literal?: string;
+  literal?: string | SchemePair;
   /** Typed-syntax category — drives `@property` registration + DTCG `$type`. */
   type: 'color' | 'length' | 'font';
   description: string;
@@ -209,6 +219,34 @@ const TOKEN_SPEC: readonly TokenSpec[] = [
         `(src/utils/breakpoints.json) — NOT Mantine's em scale.`,
     })
   ),
+  // Scheme-paired: a shadow root cannot see a `[data-theme='dark']` ancestor,
+  // so these carry the decision as an inherited property. Appended last.
+  {
+    name: 'card-border-width',
+    // A width, not a color: a transparent hairline still occupies 1px of box.
+    literal: { light: '1px', dark: '0' },
+    type: 'length',
+    description:
+      'Default card hairline width. Light needs it (surface == body); dark already separates them, so it collapses to 0.',
+  },
+  {
+    name: 'color-track',
+    source: { light: '--mantine-color-gray-2', dark: '--mantine-color-default' },
+    type: 'color',
+    description: 'Groove behind a slider thumb.',
+  },
+  {
+    name: 'color-segmented-bg',
+    source: { light: '--mantine-color-gray-1', dark: '--mantine-color-default' },
+    type: 'color',
+    description: 'Trough a segmented control\'s segments sit in.',
+  },
+  {
+    name: 'color-media-placeholder',
+    source: { light: '--mantine-color-gray-2', dark: '--mantine-color-default' },
+    type: 'color',
+    description: 'Backdrop shown while an image loads or after it fails.',
+  },
 ] as const;
 
 type VarDict = Record<string, string>;
@@ -280,11 +318,16 @@ export function resolveTokens(themeOverride: MantineThemeOverride = civitaiTheme
         `Token ${varName}: exactly one of \`source\` (Mantine-derived) or \`literal\` must be set.`
       );
     }
-    // A `literal` spec is scheme-independent by construction and NEVER touches the
-    // Mantine dicts — that bypass is the whole point for the breakpoint scale.
+    // A `literal` spec NEVER touches the Mantine dicts — that bypass is the
+    // whole point for the breakpoint scale.
     const lightVal =
-      spec.literal ?? resolveValue(`var(${spec.source})`, lightDict);
-    const darkVal = spec.literal ?? resolveValue(`var(${spec.source})`, darkDict);
+      spec.literal != null
+        ? forScheme(spec.literal, 'light')
+        : resolveValue(`var(${forScheme(spec.source!, 'light')})`, lightDict);
+    const darkVal =
+      spec.literal != null
+        ? forScheme(spec.literal, 'dark')
+        : resolveValue(`var(${forScheme(spec.source!, 'dark')})`, darkDict);
     root[varName] = lightVal;
     if (darkVal !== lightVal || spec.alwaysDark) dark[varName] = darkVal;
     meta.push({ varName, camel: camel(spec.name), type: spec.type, description: spec.description });
