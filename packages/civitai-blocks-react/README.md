@@ -35,7 +35,9 @@ export function App() {
   const rootRef = useRef<HTMLDivElement>(null);
   useBlockResize(rootRef);                 // host fits the iframe to content
 
-  if (!ready) return <div ref={rootRef}>Loading…</div>;
+  // No ref on the pre-init skeleton — useBlockResize observes the real root
+  // whenever it mounts, including on a later render.
+  if (!ready) return <div>Loading…</div>;
   // `context` is a union keyed on slotId — narrow with the guard, not a cast.
   if (!isModelSlotContext(context)) return <div ref={rootRef}>Wrong slot.</div>;
 
@@ -152,6 +154,12 @@ naturally).
 const rootRef = useRef<HTMLDivElement>(null);
 useBlockResize(rootRef);
 ```
+
+**The element may mount on a later render, and that is the normal case** — a
+block renders a skeleton until `BLOCK_INIT` lands. The hook keys on the observed
+*element*, so you do **not** need to pin the same `ref` to every branch of a
+loading/ready conditional to keep the host resizing. Put it on the root you
+actually want measured, in whichever branch renders it.
 
 > Also set `iframe.minHeight` in your manifest to the block's *real* rendered
 > height — a too-small minHeight makes the iframe seed short and grow-jump on
@@ -1039,7 +1047,7 @@ import {
 export function App() {
   const { ready, theme } = useBlockContext();
   const rootRef = useRef<HTMLDivElement>(null);
-  if (!ready) return <div ref={rootRef}>Loading…</div>;
+  if (!ready) return <div>Loading…</div>;
 
   return (
     // GOTCHA #60 — theme your OWN root; that's what the pack reads.
