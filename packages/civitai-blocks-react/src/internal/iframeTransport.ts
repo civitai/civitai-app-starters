@@ -367,25 +367,65 @@ export class IframeTransport implements BlockTransport {
   }
 
   /**
-   * Which block→host request is left hanging by a reply we are about to drop —
-   * clamped to a bounded label, `'other'` when nothing was awaiting it.
+   * Which block→host request a reply we are about to drop leaves hanging, and
+   * whether we can tell at all.
+   *
+   * 🔴 "NO REQUEST IS PENDING" AND "I CANNOT TELL WHICH" ARE DIFFERENT ANSWERS, and
+   * an earlier revision collapsed them. It returned `'other'` whenever `requestId`
+   * was not a readable string and the `console.warn` then asserted *"unsolicited
+   * push — nothing was awaiting it"*, which is FALSE for two shapes that occur:
+   *  - a reply whose whole payload is not an object (`isObject` is the first thing
+   *    most validators check), while its request sits in `pending` and hangs to its
+   *    timeout;
+   *  - a PRE-v2 host, which echoes `requestId` only via
+   *    `...(requestId ? { requestId } : {})` — the asymmetry `isValidTokenRefresh`
+   *    exists to tolerate, so a legacy host's malformed `TOKEN_REFRESH_RESPONSE`
+   *    arrives with no `requestId` at all while `REQUEST_TOKEN` is awaiting it.
+   * In both, something IS hanging and the operator was told the opposite. So the
+   * unreadable case now reports `unknown` rather than `pushed`, and the warn says
+   * a request may be hanging that we cannot name.
+   *
+   * 🔴 AND THE LOOKUP APPLIES THE SAME `responseType` PREDICATE AS REAL
+   * CORRELATION. Without it, a malformed reply carrying ANOTHER in-flight request's
+   * `requestId` — which a buggy host can produce by echoing the wrong id — reports
+   * against the wrong request type, i.e. mislabels a healthy request as the broken
+   * one. `handleMessage` already refuses to settle such a reply; this must refuse to
+   * name it for the same reason.
    *
    * The `requestId` is read from an UNVALIDATED payload (the validator just
    * rejected it), so it is used ONLY as a `Map` key on our own pending table and
-   * never trusted as data. A lookup miss and a non-string both mean the same
-   * thing here: no pending request, so no hang, so nothing to name.
+   * never trusted as data.
    *
    * 🔴 THE CLAMP IS NOT REDUNDANT WITH THE TYPE SYSTEM. `requestType` is whatever
    * the caller passed to `sendRequest` — typed, but a JavaScript consumer, or a
    * block built against a newer protocol, can put any string there, and this value
    * becomes a Prometheus label on the host. See `boundBlockToParentMessageType`.
    */
-  private hangingRequestTypeFor(payload: unknown): string {
+  private hangingRequestTypeFor(
+    replyType: string,
+    payload: unknown,
+  ): { label: string; hung: 'named' | 'unknown' | 'pushed' } {
     const requestId = (payload as { requestId?: unknown } | null | undefined)?.requestId;
-    if (typeof requestId !== 'string') return OTHER_MESSAGE_TYPE_LABEL;
+    if (typeof requestId !== 'string') {
+      // Nothing in flight at all ⇒ genuinely a push. Anything in flight ⇒ we cannot
+      // tell, and must not claim the push case. `pending.size` is the only thing
+      // that separates them, and it is right here.
+      return this.pending.size === 0
+        ? { label: OTHER_MESSAGE_TYPE_LABEL, hung: 'pushed' }
+        : { label: OTHER_MESSAGE_TYPE_LABEL, hung: 'unknown' };
+    }
     const pending = this.pending.get(requestId);
-    if (!pending) return OTHER_MESSAGE_TYPE_LABEL;
-    return boundBlockToParentMessageType(pending.requestType);
+    if (!pending) {
+      return this.pending.size === 0
+        ? { label: OTHER_MESSAGE_TYPE_LABEL, hung: 'pushed' }
+        : { label: OTHER_MESSAGE_TYPE_LABEL, hung: 'unknown' };
+    }
+    if (pending.responseType !== replyType) {
+      // The id matches a request awaiting a DIFFERENT reply type. Naming it would
+      // blame a healthy request for this one's breakage.
+      return { label: OTHER_MESSAGE_TYPE_LABEL, hung: 'unknown' };
+    }
+    return { label: boundBlockToParentMessageType(pending.requestType), hung: 'named' };
   }
 
   /**
@@ -476,16 +516,24 @@ export class IframeTransport implements BlockTransport {
     // rather than crash — see ./validate.ts.
     const validator = payloadValidatorFor(data.type);
     if (validator && !validator(data.payload)) {
-      const hangingRequestType = this.hangingRequestTypeFor(data.payload);
+      const hanging = this.hangingRequestTypeFor(data.type, data.payload);
+      // 🔴 THE THREE CASES SAY THREE DIFFERENT THINGS, and `unknown` is the one an
+      // earlier revision printed as `pushed`. Claiming "nothing was awaiting it"
+      // while a request hangs is worse than saying nothing: it sends the one person
+      // reading this console away from the actual symptom.
+      const diagnosis =
+        hanging.hung === 'named'
+          ? `; "${hanging.label}" will now hang to its request timeout)`
+          : hanging.hung === 'pushed'
+            ? ', unsolicited push — nothing was awaiting it)'
+            : `; ${this.pending.size} request(s) are in flight and this reply names none of them, so one may now hang)`;
       // eslint-disable-next-line no-console -- developer-facing diagnostic at a trust boundary
       console.warn(
         `IframeTransport: dropping malformed "${data.type}" message from ${event.origin} ` +
           `(rejected by ${validator.name || 'an anonymous validator'}` +
-          (hangingRequestType === OTHER_MESSAGE_TYPE_LABEL
-            ? ', unsolicited push — nothing was awaiting it)'
-            : `; "${hangingRequestType}" will now hang to its request timeout)`),
+          diagnosis,
       );
-      this.reportRejection(hangingRequestType);
+      this.reportRejection(hanging.label);
       return;
     }
 

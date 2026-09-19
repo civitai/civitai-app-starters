@@ -377,6 +377,84 @@ describe('IframeTransport — validator-rejection reporting', () => {
   // The budget, and failing soft
   // ───────────────────────────────────────────────────────────────────────────
 
+  // ── "I cannot tell which" is not "nothing was awaiting it" ────────────────
+  // Three shapes where a request IS hanging but the reply does not name it. An
+  // earlier revision reported all three as an unsolicited push and printed
+  // "nothing was awaiting it" — the opposite of the truth, to the one person
+  // reading the console while a request hangs.
+
+  it('a non-object payload on a pending request does NOT claim the push case', async () => {
+    const transport = await initTransport();
+    startImagesRequest(transport);
+
+    // `isValidImagesResult` rejects at its first line (`!isObject(p)`), so there is
+    // no `requestId` to read — while GET_IMAGES_BY_IDS is genuinely in flight.
+    window.dispatchEvent(
+      mockParentMessage(
+        { type: 'IMAGES_RESULT', payload: undefined } as unknown as ParentToBlockMessage,
+        PARENT_ORIGIN,
+      ),
+    );
+
+    // The label is still `other` — we cannot name the request, and inventing one
+    // would be worse — but the WARN must not assert the push case.
+    expect(rejectionReports()).toEqual([
+      { type: 'BLOCK_MESSAGE_REJECTED', payload: { type: OTHER_MESSAGE_TYPE_LABEL } },
+    ]);
+    const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(warned).not.toContain('nothing was awaiting it');
+    expect(warned).toContain('in flight');
+  });
+
+  it('a legacy host omitting requestId does NOT claim the push case', async () => {
+    // A pre-v2 host echoes `requestId` only via `...(requestId ? {requestId} : {})`
+    // — the asymmetry `isValidTokenRefreshResponse` deliberately tolerates. So a
+    // malformed reply from one arrives with no `requestId` while REQUEST_TOKEN awaits.
+    const transport = await initTransport();
+    const pending = sendTypedRequest(
+      transport,
+      { type: 'REQUEST_TOKEN', payload: { blockInstanceId: 'inst-1' } },
+      'TOKEN_REFRESH_RESPONSE',
+      { timeoutMs: 1_000 },
+    );
+    void pending.catch(() => {});
+
+    window.dispatchEvent(
+      mockParentMessage(
+        { type: 'TOKEN_REFRESH_RESPONSE', payload: { token: 'not-an-object' } } as unknown as ParentToBlockMessage,
+        PARENT_ORIGIN,
+      ),
+    );
+
+    expect(rejectionReports()).toEqual([
+      { type: 'BLOCK_MESSAGE_REJECTED', payload: { type: OTHER_MESSAGE_TYPE_LABEL } },
+    ]);
+    const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(warned).not.toContain('nothing was awaiting it');
+  });
+
+  it("does not blame a HEALTHY request when a malformed reply echoes its requestId", async () => {
+    // A buggy host can echo the wrong id. `handleMessage` already refuses to SETTLE
+    // such a reply (the responseType must match); naming it here would report the
+    // breakage against a request that is fine.
+    const transport = await initTransport();
+    const { requestId } = startImagesRequest(transport); // awaiting IMAGES_RESULT
+
+    // A malformed VIEWER_RESULT carrying the images request's id.
+    window.dispatchEvent(
+      mockParentMessage(
+        { type: 'VIEWER_RESULT', payload: { requestId } } as unknown as ParentToBlockMessage,
+        PARENT_ORIGIN,
+      ),
+    );
+
+    expect(rejectionReports()).toEqual([
+      { type: 'BLOCK_MESSAGE_REJECTED', payload: { type: OTHER_MESSAGE_TYPE_LABEL } },
+    ]);
+    const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(warned).not.toContain('GET_IMAGES_BY_IDS');
+  });
+
   it('fails soft: a throwing postMessage does not abort dispatch for the event', async () => {
     // Telemetry must never break the transport it observes. A throw here would
     // propagate out of the `message` listener and add a second silent drop on top

@@ -91,7 +91,11 @@ const REQUEST_TIMEOUT_CLASS = {
   // Reports a drop that has ALREADY happened, so there is nothing to answer and
   // nothing to bound. Deliberately `'no-reply'` and not merely "unhandled": if a
   // host ever did reply to it, that reply would itself run the validator this
-  // message exists to report on — a rejection loop with a budget as its only brake.
+  // message exists to report on — a rejection loop with NOTHING braking it. (The
+  // emitter carries no cap; an earlier revision did, and this comment used to name
+  // it as the brake.) The loop is unreachable today because the payload carries no
+  // `requestId`, so neither host NACKs it — but that is a property of the hosts,
+  // not of this bucket, which is why the bucket is the one that must stay.
   BLOCK_MESSAGE_REJECTED: 'no-reply',
   BLOCK_READY: 'no-reply',
   NAVIGATE: 'no-reply',

@@ -20,7 +20,7 @@ import {
  * lives in a different tool from the one a reader runs as "the tests". Parsing the
  * declaration is the only way to ask the question at runtime. It is a genuinely
  * independent gate: it fails when the ARRAY is edited without the union, which the
- * embedded gate in `messages.ts` also catches, AND it is the only one of the four
+ * embedded gate in `messages.ts` also catches, AND it is the only one of the TWO
  * that runs under plain `vitest run`.
  *
  * ⚠️ IT PARSES SOURCE, SO THE PARSE IS ITSELF UNDER TEST. A regex that matched
