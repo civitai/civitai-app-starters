@@ -37,9 +37,11 @@ src/
 │       │   └── route.ts                  # POST → submit
 │       └── workflow/[id]/route.ts        # GET  → snapshot
 ├── components/             # client components (login button, prompt form, etc.)
+├── middleware.ts           # THE ONLY PLACE THE SESSION IS REFRESHED (nodejs runtime)
 └── lib/
     ├── env.ts              # validated env access
-    ├── session.ts          # read/write the sealed session cookie
+    ├── session-cookie.ts   # cookie names + pure parse/expiry helpers (no next/headers)
+    ├── session.ts          # read the sealed session cookie; write it from routes only
     └── civitai.ts          # @civitai/app-sdk wiring (createAppClient, fetchMe, etc.)
 ```
 
@@ -47,12 +49,14 @@ src/
 
 - **OAuth + tokens stay server-side.** Never expose `access_token`, `refresh_token`, or `CIVITAI_CLIENT_SECRET` to the browser. The client only ever sees an opaque `httpOnly` `civ_session` cookie.
 - **Session = sealed cookie.** Read via `getSession()` in `src/lib/session.ts`. If `null`, the user is logged out. Don't reach into the cookie store directly elsewhere.
+- 🔴 **`getSession()` is READ-ONLY, and must stay that way.** Next.js allows cookie writes in Route Handlers, Server Actions and middleware — **not** in a Server Component, which is `getSession()`'s primary caller. It used to refresh in place; both arms (`setSession` on success, `clearSession` on failure) called `cookies().set()`, so an expired session threw `Cookies can only be modified in a Server Action or Route Handler` and took the whole page render down. Refresh lives in `src/middleware.ts` now. If you add a write to `getSession()`, `pnpm probe:expired-session` will catch it.
 - **All Civitai API calls happen in route handlers**, not React server components. RSCs can trigger route handlers via `fetch('/api/…')` or read session via `getSession()` and call helpers in `lib/civitai.ts` directly.
 - **Buzz cost preview before submission.** Always call `/api/generate/estimate` and show the cost before submitting. Users blame the app, not Civitai, when they're surprised by Buzz spend.
 
 ## Patterns to avoid
 
 - ❌ Storing tokens in `localStorage`, cookies-without-httpOnly, or in rendered HTML.
+- ❌ Writing a cookie from a Server Component — including indirectly, via a helper that looks like a read. That is the exact shape of the bug `src/middleware.ts` exists to fix.
 - ❌ Using the `next-auth` / `@auth/core` patterns from older Next.js tutorials — this starter intentionally does not use those.
 - ❌ Hard-coding orchestrator base URLs — use the SDK defaults or env override.
 - ❌ Adding new env vars without putting them in `.env.example` and validating them in `src/lib/env.ts`.
@@ -84,6 +88,7 @@ After any meaningful change, run the matching check before declaring done:
 |---|---|
 | Anything in `src/` | `pnpm typecheck` |
 | `next.config.mjs`, env wiring, security headers | `pnpm build` |
+| `src/lib/session.ts`, `src/middleware.ts`, anything touching the session cookie | `pnpm probe:expired-session` |
 | Auth flow (`src/app/api/auth/**`), session helpers | `pnpm test:e2e -- auth-flow` |
 | Generation flow (`src/app/api/generate/**`, workflow polling) | `pnpm test:e2e -- generation` |
 
