@@ -177,7 +177,39 @@ jobs:
       # which is the invariant; it stops covering the case nobody asked for.
       # (The `${{ }}` wrapper is required, not cosmetic: a bare `if: !cancelled()`
       # is invalid YAML — `!` opens a tag.)
+      # 🔴 THE DEFAULT BUDGET IS AN ORDER OF MAGNITUDE UNDER THE MEASURED LAG, AND
+      # THIS GATE HAS NOW BEEN RED ON EIGHT CONSECUTIVE SUCCESSFUL PUBLISHES.
+      #
+      # The number that has to beat the lag is the VERSION-PROBE WINDOW, which is
+      # (TRIES-1) x DELAY — NOT the `2 x (TRIES-1) x DELAY` the script's docblock
+      # quotes. That figure is total SLEEPING across both probes (a 404 pays twice,
+      # version probe + name probe); the window a lagging version has to appear
+      # inside is only the first term. At the 5/3000 defaults that window is 12s.
+      #
+      # Measured read-after-write lag on THIS repo, publish-step success -> version
+      # visible on the registry: 76s, 126s, 127s, 157s. So the gate was failing with
+      # ~12s of patience against a worst case of 157s, then reporting
+      # "PUBLISH DID NOT HAPPEN" for a publish that had already succeeded and pushed
+      # its git tag. Worked example, 2026-09-19: step 8 logged
+      # `success packages published successfully` at 01:35:53 and pushed
+      # `@civitai/blocks-react@0.52.0`; this step 404'd at 01:36:08; the registry
+      # served 0.52.0 at 01:37:59 — 127s.
+      #
+      # 25/10000 gives a 240s window, ~1.5x the worst observed. The cost is paid ONLY
+      # by a package that never appears: a lagging one resolves as soon as it lands
+      # and sleeps no longer than it had to, and a healthy publish resolves on attempt
+      # 1 with no sleeping at all.
+      #
+      # timeout-minutes covers the GENUINE-failure case, where the full budget burns
+      # per package, sequentially: 2 x 24 x 10000 = 480s each, so ~8min for one and
+      # ~16min for two. Three or more total-failure packages trips the cap — accepted,
+      # because that run fails loudly either way and the release `concurrency` lane
+      # has no `cancel-in-progress`, so the cap is what stops a bad run parking it.
+      # 🔴 If you raise TRIES or DELAY, re-derive both numbers; they are coupled.
       - name: Assert the published versions actually exist on npm
         if: ${{ !cancelled() }}
-        timeout-minutes: 10
+        timeout-minutes: 20
+        env:
+          PUBLISH_CHECK_TRIES: '25'
+          PUBLISH_CHECK_DELAY: '10000'
         run: pnpm assert:published
