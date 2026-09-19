@@ -38,6 +38,85 @@ injectStyles();
 React authors want [`@civitai/components-react`](../civitai-components-react),
 which renders exactly this markup.
 
+## Elements
+
+The same components as **custom elements**, so behaviour ships with the style
+instead of being reimplemented per framework. They render in a shadow root and
+read the same `--civitai-*` tokens, which inherit across the boundary.
+
+```ts
+import '@civitai/components/register';               // every element
+import '@civitai/components/civitai-button/define';  // just this one
+```
+
+```html
+<civitai-button variant="filled" size="md">Generate</civitai-button>
+<civitai-text-input label="Prompt" name="prompt"></civitai-text-input>
+<civitai-segmented-control aria-label="View"></civitai-segmented-control>
+```
+
+One script tag, no build:
+
+```html
+<script type="module"
+  src="https://cdn.jsdelivr.net/npm/@civitai/components/elements.js"></script>
+```
+
+`elements.js` is a self-contained bundle at the package root, because jsDelivr
+ignores `exports` — the same reason `styles.css` is copied there. The build
+fails if it exceeds **25 kB gzip**; it currently sits at about 11 kB.
+
+[`custom-elements.json`](./custom-elements.json) is the published contract —
+every tag, attribute, property, `::part` and slot. It is generated from the
+element sources (tags from `defineElement(TAG, …)`, parts and slots from the
+templates), so nothing is restated in JSDoc and nothing can drift. A test fails
+if it stops matching what the package registers.
+
+The attribute CSS above keeps shipping unchanged at the same path, so nothing
+has to migrate. The `.` entry still carries no renderer — importing
+`injectStyles()` does not pull Lit in, and a test asserts it.
+
+Elements set their own tokens up: the first one to connect calls
+`injectTokens()` on its document, so a single `<script type="module">` is
+enough on a bare page.
+
+| | |
+|---|---|
+| Attributes | mirror the props, kebab-cased (`full-width`) |
+| Properties | `el.variant = 'outline'` — identical result to the attribute |
+| Styling hooks | `::part(button)`, plus every `--civitai-*` token |
+| Forms | form-associated: `FormData`, `form.reset()`, `type="submit"`/`type="reset"` and Enter-to-submit all work, which controls inside a shadow root otherwise lose |
+| Events | `change` is re-dispatched across the boundary (it is `composed: false`, so it would never escape) |
+
+`<civitai-segmented-control>` takes its segments as a property, since they are
+structured data:
+
+```ts
+document.querySelector('civitai-segmented-control').data = [
+  { value: 'grid', label: 'Grid' },
+  { value: 'list', label: 'List' },
+];
+```
+
+It implements the roving tabindex `MARKUP.md` currently asks hand-HTML authors
+to write themselves: one tab stop, arrows wrapping across enabled segments,
+Home/End, and selection following focus.
+
+`error` on a field also makes it **invalid**, so the form will not submit while
+the message shows — unlike the React binding, which draws the message but leaves
+`checkValidity()` true despite setting `aria-invalid`.
+
+### Working on them
+
+```bash
+pnpm --filter @civitai/components dev           # playground, HMR from src/
+pnpm --filter @civitai/components test:browser  # element behaviour + parity
+```
+
+The playground imports the elements from `src/`, so an edit is on screen
+without a build. `demo/` is the opposite: it loads the published artifact from
+jsDelivr to verify what consumers actually get.
+
 ## Design
 
 - All rules live in `@layer civitai.components`, so consumer CSS wins the

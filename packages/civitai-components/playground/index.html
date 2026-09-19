@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@civitai/components — elements playground</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 32px;
+        min-height: 100vh;
+        background: var(--civitai-color-body);
+        color: var(--civitai-color-text);
+        font-family: var(--civitai-font);
+        line-height: 1.5;
+      }
+      h1 { font-size: 20px; margin: 0; }
+      h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em;
+           color: var(--civitai-color-text-dimmed); margin: 32px 0 12px; }
+      header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+      .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+      form { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+      output { font-size: 13px; color: var(--civitai-color-text-dimmed); }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>@civitai/components — elements</h1>
+      <civitai-button id="theme" variant="outline" size="sm">Toggle theme</civitai-button>
+    </header>
+
+    <h2>Variants</h2>
+    <div class="row">
+      <civitai-button variant="filled">Filled</civitai-button>
+      <civitai-button variant="light">Light</civitai-button>
+      <civitai-button variant="outline">Outline</civitai-button>
+      <civitai-button variant="subtle">Subtle</civitai-button>
+    </div>
+
+    <h2>Sizes</h2>
+    <div class="row">
+      <civitai-button size="sm">Small</civitai-button>
+      <civitai-button size="md">Medium</civitai-button>
+      <civitai-button size="lg">Large</civitai-button>
+    </div>
+
+    <h2>States</h2>
+    <div class="row">
+      <civitai-button disabled>Disabled</civitai-button>
+      <civitai-button loading>Loading</civitai-button>
+      <civitai-button id="toggle-loading" variant="outline">Start loading</civitai-button>
+    </div>
+
+    <h2>Sections</h2>
+    <div class="row">
+      <civitai-button><span slot="left">&#9733;</span>Left section</civitai-button>
+      <civitai-button>Right section<span slot="right">&#8594;</span></civitai-button>
+    </div>
+
+    <h2>Full width</h2>
+    <civitai-button full-width variant="light">Full width</civitai-button>
+
+    <h2>Text input</h2>
+    <div class="row" style="align-items: flex-start">
+      <civitai-text-input label="Prompt" description="What to draw" placeholder="a cat"
+        style="min-width: 220px"></civitai-text-input>
+      <civitai-text-input label="Seed" value="12345" required
+        style="min-width: 160px"></civitai-text-input>
+      <civitai-text-input label="Steps" value="999" error="Max is 150"
+        style="min-width: 160px"></civitai-text-input>
+      <civitai-text-input label="Locked" value="read only" readonly disabled
+        style="min-width: 160px"></civitai-text-input>
+    </div>
+
+    <h2>Segmented control &mdash; arrow keys, Home/End, one tab stop</h2>
+    <div class="row">
+      <civitai-segmented-control id="sc-sm" size="sm" aria-label="View, small"></civitai-segmented-control>
+      <civitai-segmented-control id="sc-md" aria-label="View"></civitai-segmented-control>
+      <civitai-segmented-control id="sc-lg" size="lg" aria-label="View, large"></civitai-segmented-control>
+      <output id="sc-value">grid</output>
+    </div>
+
+    <h2>Form participation</h2>
+    <form id="demo">
+      <civitai-text-input name="q" label="Query" value="hello"
+        style="min-width: 200px"></civitai-text-input>
+      <civitai-segmented-control id="sc-form" name="view" aria-label="Result view"></civitai-segmented-control>
+      <civitai-button type="submit">Submit</civitai-button>
+      <civitai-button type="reset" variant="subtle">Reset</civitai-button>
+      <output id="result">no submit yet</output>
+    </form>
+    <p style="font-size: 13px; color: var(--civitai-color-text-dimmed)">
+      Tab into the group, then use &larr;/&rarr;. Press Enter in the query field to submit.
+    </p>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

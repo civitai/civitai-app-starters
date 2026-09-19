@@ -36,4 +36,16 @@ writeFileSync(
   `${banner}\n\n/** The @civitai/components stylesheet (identical to dist/components.css). */\nexport const componentsCss = ${JSON.stringify(css)};\n`
 );
 
-console.log('[build-css] wrote dist/components.css + styles.css + src/styles.generated.ts');
+// The elements stamp this on every constructor they register, so two copies of
+// the package on one page can name their versions when they collide.
+const { version } = JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf8')) as {
+  version: string;
+};
+writeFileSync(
+  join(pkgRoot, 'src', 'version.generated.ts'),
+  `${banner}\n\n/** This package's version, stamped onto every registered element. */\nexport const VERSION = ${JSON.stringify(version)};\n`
+);
+
+console.log(
+  '[build-css] wrote dist/components.css + styles.css + src/styles.generated.ts + src/version.generated.ts'
+);

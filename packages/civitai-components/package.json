@@ -4,6 +4,11 @@
   "description": "Attribute-driven, framework-agnostic component CSS for civitai App Blocks. Plain HTML or any framework, themed by @civitai/theme.",
   "license": "MIT",
   "type": "module",
+  "sideEffects": [
+    "**/*.css",
+    "**/*.define.js",
+    "**/elements/register.js"
+  ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -11,32 +16,78 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./styles.css": "./dist/components.css"
+    "./styles.css": "./dist/components.css",
+    "./register": {
+      "types": "./dist/elements/register.d.ts",
+      "import": "./dist/elements/register.js"
+    },
+    "./internals": {
+      "types": "./dist/elements/internals.d.ts",
+      "import": "./dist/elements/internals.js"
+    },
+    "./civitai-button": {
+      "types": "./dist/elements/civitai-button.d.ts",
+      "import": "./dist/elements/civitai-button.js"
+    },
+    "./civitai-button/define": {
+      "types": "./dist/elements/civitai-button.define.d.ts",
+      "import": "./dist/elements/civitai-button.define.js"
+    },
+    "./civitai-text-input": {
+      "types": "./dist/elements/civitai-text-input.d.ts",
+      "import": "./dist/elements/civitai-text-input.js"
+    },
+    "./civitai-text-input/define": {
+      "types": "./dist/elements/civitai-text-input.define.d.ts",
+      "import": "./dist/elements/civitai-text-input.define.js"
+    },
+    "./civitai-segmented-control": {
+      "types": "./dist/elements/civitai-segmented-control.d.ts",
+      "import": "./dist/elements/civitai-segmented-control.js"
+    },
+    "./civitai-segmented-control/define": {
+      "types": "./dist/elements/civitai-segmented-control.define.d.ts",
+      "import": "./dist/elements/civitai-segmented-control.define.js"
+    },
+    "./elements.js": "./dist/elements.js",
+    "./custom-elements.json": "./custom-elements.json"
   },
   "files": [
     "dist",
     "demo",
     "styles.css",
+    "elements.js",
+    "custom-elements.json",
     "MARKUP.md",
     "README.md"
   ],
   "scripts": {
+    "dev": "vite",
     "generate": "tsx scripts/build-css.ts",
-    "build": "tsx scripts/build-css.ts && tsc -p tsconfig.json",
+    "build": "tsx scripts/build-css.ts && tsc -p tsconfig.json && tsx scripts/build-elements.ts && cem analyze",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "vitest run --project node",
+    "test:watch": "vitest --project node",
+    "test:browser": "vitest run --project browser",
+    "test:contract": "vitest run --project contract",
+    "manifest": "cem analyze"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
-    "@civitai/theme": "workspace:*"
+    "@civitai/theme": "workspace:*",
+    "lit": "^3.3.3"
   },
   "devDependencies": {
+    "@custom-elements-manifest/analyzer": "^0.11.0",
     "@types/node": "^25.9.1",
+    "@vitest/browser-playwright": "^4.1.11",
+    "axe-core": "^4.12.1",
+    "playwright": "^1.60.0",
     "tsx": "^4.19.2",
     "typescript": "^5.9.2",
+    "vite": "^8.0.14",
     "vitest": "^4.1.11"
   },
   "publishConfig": {
@@ -56,5 +107,6 @@
     "type": "git",
     "url": "git+https://github.com/civitai/civitai-app-starters.git",
     "directory": "packages/civitai-components"
-  }
+  },
+  "customElements": "custom-elements.json"
 }
