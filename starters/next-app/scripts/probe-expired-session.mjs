@@ -48,18 +48,37 @@ const SIGNED_IN_MARKER = 'probe-user';
 const NEW_ACCESS_TOKEN = 'refreshed-access-token-1234';
 
 const children = [];
-function cleanup() {
+/**
+ * 🔴 KILL THE PROCESS GROUP, NOT THE CHILD — and SIGKILL, not SIGTERM.
+ *
+ * `next start` is a WRAPPER: it spawns a separate `next-server` process. Killing
+ * the child we spawned leaves that GRANDCHILD alive, still bound to the port.
+ * Measured the hard way: an orphan from an earlier run kept answering on 3941
+ * and served a build from before the change under test, so three consecutive
+ * "measurements" were made against code that was not on disk — including a
+ * negative control that exited 1 for entirely the wrong reason. The giveaway
+ * was an EMPTY server log next to a 200 response: nothing we started was
+ * serving those requests.
+ *
+ * `detached: true` at spawn puts each child in its own process group, so a
+ * negative PID reaches the wrapper and everything it started.
+ */
+function killAll() {
   for (const c of children) {
     try {
-      c.kill('SIGTERM');
+      process.kill(-c.pid, 'SIGKILL');
     } catch {
-      /* already gone */
+      try {
+        c.kill('SIGKILL');
+      } catch {
+        /* already gone */
+      }
     }
   }
 }
-process.on('exit', cleanup);
+process.on('exit', killAll);
 process.on('SIGINT', () => {
-  cleanup();
+  killAll();
   process.exit(130);
 });
 
@@ -107,6 +126,8 @@ function run(cmd, args, env) {
     cwd: new URL('..', import.meta.url).pathname,
     env: { ...process.env, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
+    // Own process group, so `killAll` can take the wrapper AND its server.
+    detached: true,
   });
   children.push(child);
   return child;
@@ -177,12 +198,45 @@ async function main() {
     }
   }
 
+  // 🔴 REFUSE TO MEASURE A SERVER WE DID NOT START. If something already
+  // answers on this port, every assertion below would describe THAT process's
+  // build, not the working tree — and it would look like a perfectly ordinary
+  // pass or fail. This exact thing happened: an orphaned `next-server` from an
+  // earlier run served three consecutive "measurements" of code that was not on
+  // disk.
+  let portBusy = false;
+  try {
+    await fetch(`http://127.0.0.1:${APP_PORT}/api/health`, {
+      signal: AbortSignal.timeout(1500),
+    });
+    portBusy = true;
+  } catch {
+    /* free, as it should be */
+  }
+  if (portBusy) {
+    throw new Error(
+      `port ${APP_PORT} already has something listening. A stale server would be ` +
+        `measured instead of this build. Find it with \`ss -lptn 'sport = :${APP_PORT}'\` ` +
+        `and kill it by the PID that reports, or set PROBE_APP_PORT to a free port.`,
+    );
+  }
+
   console.log('[probe] starting…');
   const server = run('npx', ['next', 'start', '-p', String(APP_PORT)], appEnv);
   let serverLog = '';
   server.stdout.on('data', (d) => (serverLog += d));
   server.stderr.on('data', (d) => (serverLog += d));
   await waitForHttp(`http://127.0.0.1:${APP_PORT}/api/health`, 60_000);
+
+  // Second half of the same guard: the server that answered must be the one we
+  // started. An empty log beside a 200 response is the tell.
+  if (!/Ready in|Local:/.test(serverLog)) {
+    throw new Error(
+      `something is answering on ${APP_PORT} but the server we started printed nothing ` +
+        `(log: ${JSON.stringify(serverLog.slice(0, 200))}). Refusing to report a ` +
+        `measurement of a process we do not own.`,
+    );
+  }
 
   // ---- Scenario A: refresh rejected --------------------------------------
   refreshMode = 'reject';
@@ -277,6 +331,18 @@ main()
     process.exitCode = 1;
   })
   .finally(() => {
+    // 🔴 TEARDOWN HAS TO BE FORCEFUL, AND I LEARNED THAT FROM CI RATHER THAN
+    // LOCALLY. The first version called `authHub.close()` + SIGTERM and then
+    // let the event loop drain. It printed PASS and HUNG: `close()` stops the
+    // listener but WAITS for live connections, and the Next server holds
+    // keep-alive sockets to the hub from its refresh and /api/v1/me calls. The
+    // GitHub step timed out at 5 minutes on a run whose every assertion had
+    // already passed — a green result reported as a red job, which is the worst
+    // of both.
+    authHub.closeAllConnections?.();
     authHub.close();
-    cleanup();
+    killAll();
+    // Nothing is outstanding at this point; exit rather than wait on a handle
+    // some child still owns. `process.exitCode` is already set by the checks.
+    process.exit(process.exitCode ?? 0);
   });

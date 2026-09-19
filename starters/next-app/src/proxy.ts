@@ -11,17 +11,25 @@ import {
 /**
  * 🔴 THE ONLY PLACE THE SESSION IS REFRESHED.
  *
- * Next.js permits cookie writes in Route Handlers, Server Actions and
- * middleware — and nowhere else. `getSession()` used to refresh in place, but
- * its primary caller is a Server Component, so both of its write arms
+ * Next.js permits cookie writes in Route Handlers, Server Actions and this
+ * file — and nowhere else. `getSession()` used to refresh in place, but its
+ * primary caller is a Server Component, so both of its write arms
  * (`setSession` on success, `clearSession` on failure) threw
  * `Cookies can only be modified in a Server Action or Route Handler` and took
  * the whole render down with them. Moving refresh here fixes both arms at once
  * and leaves `getSession()` a pure read.
  *
- * Middleware runs BEFORE the render, so it can do the one thing a render
- * cannot: rewrite the request the render is about to see. Each branch therefore
- * makes TWO edits that must agree —
+ * FILE NAME: `proxy.ts`, not `middleware.ts`. Next.js 16 renamed the
+ * convention; `middleware.ts` still runs but logs a deprecation warning on
+ * every build, which is the wrong thing for a template to teach. `proxy` is
+ * ALWAYS the Node.js runtime — which is what `sealCookie`/`unsealCookie` need,
+ * since `node:crypto` is unavailable on edge — and it is not configurable:
+ * exporting `runtime` from this file THROWS. That is why there is no
+ * `export const runtime` here.
+ *
+ * It runs BEFORE the render, so it can do the one thing a render cannot:
+ * rewrite the request the render is about to see. Each branch therefore makes
+ * TWO edits that must agree —
  *
  *   - `request.cookies` — what THIS render/handler reads, and
  *   - `response.cookies` — what the BROWSER keeps for the next request.
@@ -29,10 +37,6 @@ import {
  * Changing only the response would leave this render still holding the dead
  * cookie; changing only the request would make the browser re-send it forever.
  */
-
-/** Node runtime: `sealCookie` / `unsealCookie` need `node:crypto`, which the
- *  edge runtime does not provide. */
-export const runtime = 'nodejs';
 
 export const config = {
   matcher: [
@@ -55,7 +59,7 @@ function sessionCookieOptions(maxAge: number) {
   };
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const sealed = request.cookies.get(SESSION_COOKIE)?.value;
   const session = parseSession(sealed, env.SESSION_SECRET);
 
