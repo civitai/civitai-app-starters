@@ -824,6 +824,157 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/elements/civitai-number-input.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiNumberInput",
+          "members": [
+            {
+              "kind": "field",
+              "name": "placeholder",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "placeholder",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "min",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "min",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "max",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "max",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "step",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "step",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "valueAsNumber",
+              "type": {
+                "text": "number | null"
+              },
+              "description": "`null` when the field is empty or not a number, never `NaN`.",
+              "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "renderControl",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "TemplateResult"
+                }
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "placeholder",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "placeholder"
+            },
+            {
+              "name": "min",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "min"
+            },
+            {
+              "name": "max",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "max"
+            },
+            {
+              "name": "step",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "step"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiField",
+            "module": "/src/elements/field-base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-number-input"
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiNumberInput",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiNumberInput",
+          "declaration": {
+            "name": "CivitaiNumberInput",
+            "module": "src/elements/civitai-number-input.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiNumberInput",
+          "declaration": {
+            "name": "defineCivitaiNumberInput",
+            "module": "src/elements/civitai-number-input.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-number-input",
+          "declaration": {
+            "name": "CivitaiNumberInput",
+            "module": "src/elements/civitai-number-input.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/elements/civitai-segmented-control.ts",
       "declarations": [
         {
@@ -1055,6 +1206,103 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/elements/civitai-select.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiSelect",
+          "members": [
+            {
+              "kind": "field",
+              "name": "data",
+              "privacy": "public",
+              "type": {
+                "text": "SelectOption[]"
+              },
+              "description": "Options as data; an attribute cannot carry them.",
+              "default": "[]"
+            },
+            {
+              "kind": "field",
+              "name": "placeholder",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Shown as a disabled first option when nothing is selected.",
+              "default": "''",
+              "attribute": "placeholder",
+              "reflects": true
+            },
+            {
+              "kind": "method",
+              "name": "renderControl",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "TemplateResult"
+                }
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "placeholder",
+              "type": {
+                "text": "string"
+              },
+              "description": "Shown as a disabled first option when nothing is selected.",
+              "default": "''",
+              "fieldName": "placeholder"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiField",
+            "module": "/src/elements/field-base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-select"
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiSelect",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiSelect",
+          "declaration": {
+            "name": "CivitaiSelect",
+            "module": "src/elements/civitai-select.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiSelect",
+          "declaration": {
+            "name": "defineCivitaiSelect",
+            "module": "src/elements/civitai-select.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-select",
+          "declaration": {
+            "name": "CivitaiSelect",
+            "module": "src/elements/civitai-select.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/elements/civitai-stack.ts",
       "declarations": [
         {
@@ -1144,71 +1392,6 @@
           "members": [
             {
               "kind": "field",
-              "name": "formAssociated",
-              "type": {
-                "text": "boolean"
-              },
-              "static": true,
-              "default": "true"
-            },
-            {
-              "kind": "field",
-              "name": "name",
-              "privacy": "public",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "attribute": "name",
-              "reflects": true
-            },
-            {
-              "kind": "field",
-              "name": "value",
-              "privacy": "public",
-              "type": {
-                "text": "string"
-              },
-              "description": "Current text. The `value` ATTRIBUTE is the default, as on a native input.",
-              "default": "''",
-              "attribute": "value"
-            },
-            {
-              "kind": "field",
-              "name": "label",
-              "privacy": "public",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "attribute": "label",
-              "reflects": true
-            },
-            {
-              "kind": "field",
-              "name": "description",
-              "privacy": "public",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "attribute": "description",
-              "reflects": true
-            },
-            {
-              "kind": "field",
-              "name": "error",
-              "privacy": "public",
-              "type": {
-                "text": "string"
-              },
-              "description": "Message to show; also marks the control invalid.",
-              "default": "''",
-              "attribute": "error",
-              "reflects": true
-            },
-            {
-              "kind": "field",
               "name": "placeholder",
               "privacy": "public",
               "type": {
@@ -1231,28 +1414,6 @@
             },
             {
               "kind": "field",
-              "name": "required",
-              "privacy": "public",
-              "type": {
-                "text": "boolean"
-              },
-              "default": "false",
-              "attribute": "required",
-              "reflects": true
-            },
-            {
-              "kind": "field",
-              "name": "disabled",
-              "privacy": "public",
-              "type": {
-                "text": "boolean"
-              },
-              "default": "false",
-              "attribute": "disabled",
-              "reflects": true
-            },
-            {
-              "kind": "field",
               "name": "readOnly",
               "privacy": "public",
               "type": {
@@ -1263,179 +1424,17 @@
               "reflects": true
             },
             {
-              "kind": "field",
-              "name": "#internals",
-              "privacy": "private",
-              "readonly": true
-            },
-            {
-              "kind": "field",
-              "name": "#id",
-              "privacy": "private",
-              "readonly": true,
-              "default": "`ci-text-input-${(sequence += 1)}`"
-            },
-            {
-              "kind": "field",
-              "name": "form",
-              "type": {
-                "text": "HTMLFormElement | null"
-              },
-              "readonly": true
-            },
-            {
-              "kind": "field",
-              "name": "validity",
-              "type": {
-                "text": "ValidityState"
-              },
-              "readonly": true
-            },
-            {
               "kind": "method",
-              "name": "checkValidity",
+              "name": "renderControl",
+              "privacy": "protected",
               "return": {
                 "type": {
-                  "text": "boolean"
+                  "text": "TemplateResult"
                 }
               }
-            },
-            {
-              "kind": "method",
-              "name": "reportValidity",
-              "return": {
-                "type": {
-                  "text": "boolean"
-                }
-              }
-            },
-            {
-              "kind": "method",
-              "name": "formResetCallback",
-              "return": {
-                "type": {
-                  "text": "void"
-                }
-              },
-              "description": "Native semantics: reset returns to the `value` attribute, not to empty."
-            },
-            {
-              "kind": "method",
-              "name": "formStateRestoreCallback",
-              "return": {
-                "type": {
-                  "text": "void"
-                }
-              },
-              "parameters": [
-                {
-                  "name": "state",
-                  "type": {
-                    "text": "string | null"
-                  }
-                }
-              ]
-            },
-            {
-              "kind": "field",
-              "name": "#control",
-              "privacy": "private",
-              "type": {
-                "text": "HTMLInputElement | null"
-              },
-              "readonly": true
-            },
-            {
-              "kind": "method",
-              "name": "#sync",
-              "privacy": "private",
-              "return": {
-                "type": {
-                  "text": "void"
-                }
-              }
-            },
-            {
-              "kind": "method",
-              "name": "#onInput",
-              "privacy": "private",
-              "return": {
-                "type": {
-                  "text": "void"
-                }
-              },
-              "parameters": [
-                {
-                  "name": "event",
-                  "type": {
-                    "text": "Event"
-                  }
-                }
-              ]
-            },
-            {
-              "kind": "method",
-              "name": "#onKeyDown",
-              "privacy": "private",
-              "return": {
-                "type": {
-                  "text": "void"
-                }
-              },
-              "parameters": [
-                {
-                  "name": "event",
-                  "type": {
-                    "text": "KeyboardEvent"
-                  }
-                }
-              ],
-              "description": "A form does not cross a shadow boundary, so the inner input's implicit\nsubmission never reaches it. Enter has to be forwarded by hand."
             }
           ],
           "attributes": [
-            {
-              "name": "name",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "fieldName": "name"
-            },
-            {
-              "name": "value",
-              "type": {
-                "text": "string"
-              },
-              "description": "Current text. The `value` ATTRIBUTE is the default, as on a native input.",
-              "default": "''",
-              "fieldName": "value"
-            },
-            {
-              "name": "label",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "fieldName": "label"
-            },
-            {
-              "name": "description",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "fieldName": "description"
-            },
-            {
-              "name": "error",
-              "type": {
-                "text": "string"
-              },
-              "description": "Message to show; also marks the control invalid.",
-              "default": "''",
-              "fieldName": "error"
-            },
             {
               "name": "placeholder",
               "type": {
@@ -1453,22 +1452,6 @@
               "fieldName": "type"
             },
             {
-              "name": "required",
-              "type": {
-                "text": "boolean"
-              },
-              "default": "false",
-              "fieldName": "required"
-            },
-            {
-              "name": "disabled",
-              "type": {
-                "text": "boolean"
-              },
-              "default": "false",
-              "fieldName": "disabled"
-            },
-            {
               "name": "readonly",
               "type": {
                 "text": "boolean"
@@ -1478,25 +1461,11 @@
             }
           ],
           "superclass": {
-            "name": "CivitaiElement",
-            "module": "/src/elements/base.js"
+            "name": "CivitaiField",
+            "module": "/src/elements/field-base.js"
           },
           "customElement": true,
-          "tagName": "civitai-text-input",
-          "cssParts": [
-            {
-              "name": "label"
-            },
-            {
-              "name": "description"
-            },
-            {
-              "name": "control"
-            },
-            {
-              "name": "error"
-            }
-          ]
+          "tagName": "civitai-text-input"
         },
         {
           "kind": "function",
@@ -1531,6 +1500,131 @@
           "declaration": {
             "name": "CivitaiTextInput",
             "module": "src/elements/civitai-text-input.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-textarea.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiTextarea",
+          "members": [
+            {
+              "kind": "field",
+              "name": "placeholder",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "placeholder",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "rows",
+              "privacy": "public",
+              "type": {
+                "text": "number"
+              },
+              "description": "0 leaves the native default (2). `blocks-react`'s Textarea picks 3; the\nattribute markup this replaces does not, and that is the contract here.",
+              "default": "0",
+              "attribute": "rows",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "readOnly",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "readonly",
+              "reflects": true
+            },
+            {
+              "kind": "method",
+              "name": "renderControl",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "TemplateResult"
+                }
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "placeholder",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "placeholder"
+            },
+            {
+              "name": "rows",
+              "type": {
+                "text": "number"
+              },
+              "description": "0 leaves the native default (2). `blocks-react`'s Textarea picks 3; the\nattribute markup this replaces does not, and that is the contract here.",
+              "default": "0",
+              "fieldName": "rows"
+            },
+            {
+              "name": "readonly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "readOnly"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiField",
+            "module": "/src/elements/field-base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-textarea"
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiTextarea",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiTextarea",
+          "declaration": {
+            "name": "CivitaiTextarea",
+            "module": "src/elements/civitai-textarea.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiTextarea",
+          "declaration": {
+            "name": "defineCivitaiTextarea",
+            "module": "src/elements/civitai-textarea.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-textarea",
+          "declaration": {
+            "name": "CivitaiTextarea",
+            "module": "src/elements/civitai-textarea.ts"
           }
         }
       ]

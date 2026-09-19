@@ -64,12 +64,26 @@
     <div class="row" style="align-items: flex-start">
       <civitai-text-input label="Prompt" description="What to draw" placeholder="a cat"
         style="min-width: 220px"></civitai-text-input>
-      <civitai-text-input label="Seed" value="12345" required
-        style="min-width: 160px"></civitai-text-input>
-      <civitai-text-input label="Steps" value="999" error="Max is 150"
-        style="min-width: 160px"></civitai-text-input>
+      <civitai-number-input label="Seed" value="12345" min="0" step="1" required
+        style="min-width: 160px"></civitai-number-input>
+      <civitai-number-input label="Steps" value="999" min="1" max="150" step="5"
+        error="Max is 150" style="min-width: 160px"></civitai-number-input>
       <civitai-text-input label="Locked" value="read only" readonly disabled
         style="min-width: 160px"></civitai-text-input>
+    </div>
+    <p style="font-size: 13px; color: var(--civitai-color-text-dimmed)">
+      Seed and Steps are real number inputs &mdash; spinners, &uarr;/&darr; and
+      min/max/step all come from the native control inside the shadow root.
+    </p>
+
+    <h2>Textarea &amp; select</h2>
+    <div class="row" style="align-items: flex-start">
+      <civitai-textarea label="Prompt" rows="3" placeholder="a cat, oil painting"
+        description="Enter makes a newline here, not a submit"
+        style="min-width: 260px"></civitai-textarea>
+      <civitai-select id="model" label="Model" placeholder="Pick a model"
+        description="Options come from a property, not an attribute"
+        style="min-width: 200px"></civitai-select>
     </div>
 
     <h2>Segmented control &mdash; arrow keys, Home/End, one tab stop</h2>

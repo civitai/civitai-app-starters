@@ -88,8 +88,8 @@ enough on a bare page.
 | Forms | form-associated: `FormData`, `form.reset()`, `type="submit"`/`type="reset"` and Enter-to-submit all work, which controls inside a shadow root otherwise lose |
 | Events | `change` is re-dispatched across the boundary (it is `composed: false`, so it would never escape) |
 
-`<civitai-segmented-control>` takes its segments as a property, since they are
-structured data:
+`<civitai-segmented-control>` and `<civitai-select>` take their items as a
+property, since an attribute cannot carry structured data:
 
 ```ts
 document.querySelector('civitai-segmented-control').data = [

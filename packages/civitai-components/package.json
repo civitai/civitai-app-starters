@@ -98,6 +98,30 @@
     "./civitai-stack/define": {
       "types": "./dist/elements/civitai-stack.define.d.ts",
       "import": "./dist/elements/civitai-stack.define.js"
+    },
+    "./civitai-number-input": {
+      "types": "./dist/elements/civitai-number-input.d.ts",
+      "import": "./dist/elements/civitai-number-input.js"
+    },
+    "./civitai-number-input/define": {
+      "types": "./dist/elements/civitai-number-input.define.d.ts",
+      "import": "./dist/elements/civitai-number-input.define.js"
+    },
+    "./civitai-select": {
+      "types": "./dist/elements/civitai-select.d.ts",
+      "import": "./dist/elements/civitai-select.js"
+    },
+    "./civitai-select/define": {
+      "types": "./dist/elements/civitai-select.define.d.ts",
+      "import": "./dist/elements/civitai-select.define.js"
+    },
+    "./civitai-textarea": {
+      "types": "./dist/elements/civitai-textarea.d.ts",
+      "import": "./dist/elements/civitai-textarea.js"
+    },
+    "./civitai-textarea/define": {
+      "types": "./dist/elements/civitai-textarea.define.d.ts",
+      "import": "./dist/elements/civitai-textarea.define.js"
     }
   },
   "files": [

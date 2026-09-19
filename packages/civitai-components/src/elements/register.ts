@@ -4,9 +4,12 @@ import { defineCivitaiButton } from './civitai-button.js';
 import { defineCivitaiCard } from './civitai-card.js';
 import { defineCivitaiGroup } from './civitai-group.js';
 import { defineCivitaiLoader } from './civitai-loader.js';
+import { defineCivitaiNumberInput } from './civitai-number-input.js';
 import { defineCivitaiSegmentedControl } from './civitai-segmented-control.js';
+import { defineCivitaiSelect } from './civitai-select.js';
 import { defineCivitaiStack } from './civitai-stack.js';
 import { defineCivitaiTextInput } from './civitai-text-input.js';
+import { defineCivitaiTextarea } from './civitai-textarea.js';
 
 /** Register every element in this package. Safe to call more than once. */
 export function registerAll(): void {
@@ -16,9 +19,12 @@ export function registerAll(): void {
   defineCivitaiCard();
   defineCivitaiGroup();
   defineCivitaiLoader();
+  defineCivitaiNumberInput();
   defineCivitaiSegmentedControl();
+  defineCivitaiSelect();
   defineCivitaiStack();
   defineCivitaiTextInput();
+  defineCivitaiTextarea();
 }
 
 registerAll();

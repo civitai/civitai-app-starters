@@ -1,39 +1,54 @@
-import { html, type PropertyDeclarations, type TemplateResult } from 'lit';
+import { css, html, type PropertyDeclarations, type TemplateResult } from 'lit';
 import { ifDefined } from 'lit/directives/if-defined.js';
 
-import { CivitaiField } from './field-base.js';
+import { CivitaiField, fieldStyles } from './field-base.js';
 import { defineElement } from './registry.js';
+import { hostBaseline } from './shared-styles.js';
 
-const TAG = 'civitai-text-input';
+const TAG = 'civitai-textarea';
 
-export class CivitaiTextInput extends CivitaiField {
+export class CivitaiTextarea extends CivitaiField {
+  static override styles = [
+    hostBaseline,
+    fieldStyles,
+    css`
+      textarea.control {
+        resize: vertical;
+        line-height: 1.5;
+      }
+    `,
+  ];
+
   static override properties: PropertyDeclarations = {
     ...CivitaiField.properties,
     placeholder: { reflect: true },
-    type: { reflect: true },
+    rows: { type: Number, reflect: true },
     readOnly: { type: Boolean, reflect: true, attribute: 'readonly' },
   };
 
   declare placeholder: string;
-  declare type: string;
+  /** 0 leaves the native default (2). `blocks-react`'s Textarea picks 3; the
+      attribute markup this replaces does not, and that is the contract here. */
+  declare rows: number;
   declare readOnly: boolean;
 
   constructor() {
     super();
     this.placeholder = '';
-    this.type = 'text';
+    this.rows = 0;
     this.readOnly = false;
   }
 
+  // No Enter-to-submit: in a textarea, Enter is a newline.
   protected override renderControl(): TemplateResult {
     const { id, part, name, ariaInvalid, ariaDescribedBy } = this.controlAttrs();
-    return html`<input
+    return html`<textarea
       class="control"
       id=${id}
       part=${part}
       .value=${this.value}
-      type=${this.type}
       name=${ifDefined(name)}
+      rows=${ifDefined(this.rows > 0 ? this.rows : undefined)}
       placeholder=${ifDefined(this.placeholder || undefined)}
       ?required=${this.required}
       ?disabled=${this.disabled}
@@ -41,17 +56,16 @@ export class CivitaiTextInput extends CivitaiField {
       aria-invalid=${ifDefined(ariaInvalid)}
       aria-describedby=${ifDefined(ariaDescribedBy)}
       @input=${this.onControlInput}
-      @keydown=${this.submitOnEnter}
-    />`;
+    ></textarea>`;
   }
 }
 
-export function defineCivitaiTextInput(): void {
-  defineElement(TAG, CivitaiTextInput);
+export function defineCivitaiTextarea(): void {
+  defineElement(TAG, CivitaiTextarea);
 }
 
 declare global {
   interface HTMLElementTagNameMap {
-    'civitai-text-input': CivitaiTextInput;
+    'civitai-textarea': CivitaiTextarea;
   }
 }

@@ -4,25 +4,35 @@ import { ifDefined } from 'lit/directives/if-defined.js';
 import { CivitaiField } from './field-base.js';
 import { defineElement } from './registry.js';
 
-const TAG = 'civitai-text-input';
+const TAG = 'civitai-number-input';
 
-export class CivitaiTextInput extends CivitaiField {
+export class CivitaiNumberInput extends CivitaiField {
   static override properties: PropertyDeclarations = {
     ...CivitaiField.properties,
     placeholder: { reflect: true },
-    type: { reflect: true },
-    readOnly: { type: Boolean, reflect: true, attribute: 'readonly' },
+    min: { reflect: true },
+    max: { reflect: true },
+    step: { reflect: true },
   };
 
   declare placeholder: string;
-  declare type: string;
-  declare readOnly: boolean;
+  declare min: string;
+  declare max: string;
+  declare step: string;
 
   constructor() {
     super();
     this.placeholder = '';
-    this.type = 'text';
-    this.readOnly = false;
+    this.min = '';
+    this.max = '';
+    this.step = '';
+  }
+
+  /** `null` when the field is empty or not a number, never `NaN`. */
+  get valueAsNumber(): number | null {
+    if (this.value === '') return null;
+    const parsed = Number(this.value);
+    return Number.isNaN(parsed) ? null : parsed;
   }
 
   protected override renderControl(): TemplateResult {
@@ -31,13 +41,15 @@ export class CivitaiTextInput extends CivitaiField {
       class="control"
       id=${id}
       part=${part}
+      type="number"
       .value=${this.value}
-      type=${this.type}
       name=${ifDefined(name)}
+      min=${ifDefined(this.min || undefined)}
+      max=${ifDefined(this.max || undefined)}
+      step=${ifDefined(this.step || undefined)}
       placeholder=${ifDefined(this.placeholder || undefined)}
       ?required=${this.required}
       ?disabled=${this.disabled}
-      ?readonly=${this.readOnly}
       aria-invalid=${ifDefined(ariaInvalid)}
       aria-describedby=${ifDefined(ariaDescribedBy)}
       @input=${this.onControlInput}
@@ -46,12 +58,12 @@ export class CivitaiTextInput extends CivitaiField {
   }
 }
 
-export function defineCivitaiTextInput(): void {
-  defineElement(TAG, CivitaiTextInput);
+export function defineCivitaiNumberInput(): void {
+  defineElement(TAG, CivitaiNumberInput);
 }
 
 declare global {
   interface HTMLElementTagNameMap {
-    'civitai-text-input': CivitaiTextInput;
+    'civitai-number-input': CivitaiNumberInput;
   }
 }

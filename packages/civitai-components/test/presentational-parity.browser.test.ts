@@ -14,7 +14,7 @@ const BOX = [
   'backgroundColor', 'color', 'borderTopColor', 'borderTopWidth', 'borderTopStyle',
   'borderRadius', 'paddingTop', 'paddingBottom', 'paddingLeft', 'paddingRight',
   'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'textTransform',
-  'gap', 'alignItems', 'flexDirection', 'flexWrap', 'whiteSpace', 'height',
+  'gap', 'alignItems', 'flexDirection', 'flexWrap', 'whiteSpace', 'height', 'resize',
 ] as const;
 
 interface Case {
@@ -52,6 +52,24 @@ const CASES: Case[] = [
   { id: 'alert/warning', element: '<civitai-alert color="warning">msg</civitai-alert>',
     legacy: `<div data-civitai-ui="alert" data-color="warning">msg</div>` },
 ];
+
+const FIELD_CHROME = `<label data-civitai-ui-label for="lg">L</label>` +
+  `<span data-civitai-ui-description>D</span>`;
+
+CASES.push(
+  { id: 'textarea', element: '<civitai-textarea label="L" description="D"></civitai-textarea>',
+    legacy: `<div data-civitai-ui="textarea">${FIELD_CHROME}<textarea id="lg" data-civitai-ui-control></textarea></div>`,
+    compare: (host) => host.shadowRoot!.querySelector('textarea')!,
+    legacyTarget: (legacy) => legacy.querySelector('textarea')! },
+  { id: 'number-input', element: '<civitai-number-input label="L" description="D"></civitai-number-input>',
+    legacy: `<div data-civitai-ui="number-input">${FIELD_CHROME}<input id="lg" type="number" data-civitai-ui-control /></div>`,
+    compare: (host) => host.shadowRoot!.querySelector('input')!,
+    legacyTarget: (legacy) => legacy.querySelector('input')! },
+  { id: 'select', element: '<civitai-select label="L" description="D"></civitai-select>',
+    legacy: `<div data-civitai-ui="select">${FIELD_CHROME}<select id="lg" data-civitai-ui-control></select></div>`,
+    compare: (host) => host.shadowRoot!.querySelector('select')!,
+    legacyTarget: (legacy) => legacy.querySelector('select')! }
+);
 
 for (const variant of ['filled', 'light', 'outline'] as const) {
   for (const color of ['', 'info', 'success', 'warning', 'error'] as const) {

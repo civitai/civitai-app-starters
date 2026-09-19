@@ -1,5 +1,6 @@
 import { injectStyles } from '../src/index.js';
 import type { CivitaiSegmentedControl } from '../src/elements/civitai-segmented-control.js';
+import type { CivitaiSelect } from '../src/elements/civitai-select.js';
 import '../src/elements/register.js';
 
 // The legacy attribute CSS, so the playground can sit elements next to the
@@ -27,6 +28,15 @@ const SEGMENTS = [
 for (const id of ['sc-sm', 'sc-md', 'sc-lg', 'sc-form']) {
   const el = document.querySelector<CivitaiSegmentedControl>(`#${id}`);
   if (el) el.data = SEGMENTS;
+}
+
+const model = document.querySelector<CivitaiSelect>('#model');
+if (model) {
+  model.data = [
+    { value: 'sdxl', label: 'SDXL' },
+    { value: 'flux', label: 'Flux.1 [dev]' },
+    { value: 'sd15', label: 'SD 1.5 (retired)', disabled: true },
+  ];
 }
 
 const scValue = document.querySelector('#sc-value');
