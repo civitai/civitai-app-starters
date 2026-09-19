@@ -199,6 +199,30 @@ describe('<civitai-select>', () => {
   });
 });
 
+describe('native control theming', () => {
+  it.each(['light', 'dark'] as const)(
+    '%s reaches the native controls inside the shadow root',
+    async (theme) => {
+      scope?.remove();
+      scope = document.createElement('div');
+      scope.setAttribute('data-theme', theme);
+      scope.innerHTML =
+        '<civitai-number-input value="1"></civitai-number-input><civitai-select></civitai-select>';
+      document.body.append(scope);
+      await Promise.all(
+        [...scope.children].map((el) => (el as CivitaiNumberInput).updateComplete)
+      );
+
+      // Without this the browser paints the spinner and the caret in light mode
+      // whatever the surface under them looks like.
+      for (const el of scope.children) {
+        const control = el.shadowRoot!.querySelector('.control')!;
+        expect(getComputedStyle(control).colorScheme, el.tagName).toBe(theme);
+      }
+    }
+  );
+});
+
 describe('shared field chrome', () => {
   it.each(['civitai-textarea', 'civitai-number-input', 'civitai-select'])(
     '%s wires label, description and error to its control',

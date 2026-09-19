@@ -382,12 +382,17 @@ export function buildArtifacts(themeOverride: MantineThemeOverride = civitaiThem
     .map((m) => `  ${m.varName}: ${dark[m.varName]};`)
     .join('\n');
 
+  // Not a token: it tells the UA which scheme to paint NATIVE controls in.
+  // Without it a number input's spinner, a select's caret and a scrollbar stay
+  // light against a dark surface. It inherits, so it reaches shadow roots too.
+  const scheme = (value: string) => `  color-scheme: ${value};`;
+
   const tokensCss =
     `${AUTOGEN_BANNER}\n` +
     `${propertyRules}\n\n` +
-    `:root {\n${rootBlock}\n}\n\n` +
-    `[data-theme='light'] {\n${lightBlock}\n}\n\n` +
-    `[data-theme='dark'] {\n${darkBlock}\n}\n`;
+    `:root {\n${scheme('light')}\n${rootBlock}\n}\n\n` +
+    `[data-theme='light'] {\n${scheme('light')}\n${lightBlock}\n}\n\n` +
+    `[data-theme='dark'] {\n${scheme('dark')}\n${darkBlock}\n}\n`;
 
   // ---- tokens.dtcg.json (W3C DTCG 2025.10) ----
   const dtcg: Record<string, Record<string, unknown>> = {};
