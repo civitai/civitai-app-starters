@@ -421,6 +421,15 @@ export class IframeTransport implements BlockTransport {
     //    by id, so it asserted the one thing that was demonstrably false there.
     // Filtering by `responseType` answers both: if nobody is awaiting this reply
     // type, nothing here can hang whatever else is in flight.
+    //
+    // ⚠️ ONE EXCEPTION, AND IT IS THE HIGHEST-STAKES MOMENT THIS WARN HAS.
+    // `BLOCK_INIT` has a validator and is never any request's `responseType`, so a
+    // malformed one always lands on `pushed` and prints "nothing was awaiting it" —
+    // while `waitForInit()` IS awaiting it and rejects 10s later, after which the
+    // host shows a fallback. Behaviour is unchanged by the filter (pre-init
+    // `pending` is empty, so the previous discriminator said the same thing) and the
+    // report itself is suppressed pre-init by `reportRejection`'s `parentOrigin`
+    // guard — but the rule above is not universal, and this is where it is wrong.
     const awaiting = [...this.pending.values()].filter((p) => p.responseType === replyType);
     if (awaiting.length === 0) {
       return { label: OTHER_MESSAGE_TYPE_LABEL, hung: 'pushed' };
@@ -536,7 +545,11 @@ export class IframeTransport implements BlockTransport {
           ? `; "${hanging.label}" will now hang to its request timeout)`
           : hanging.hung === 'pushed'
             ? ', unsolicited push — nothing was awaiting it)'
-            : `; ${hanging.hung === 'unknown' ? hanging.awaiting : 0} request(s) awaiting "${data.type}" and this reply names none of them, so one may now hang)`;
+            // `hung` is exactly three states and the two above are excluded, so this
+            // arm is `'unknown'` by construction — but a FOURTH state would land here
+            // silently, and the obvious `: 0` fallback prints "0 request(s) … so one
+            // may now hang", a sentence that contradicts itself. Say that instead.
+            : `; ${hanging.hung === 'unknown' ? `${hanging.awaiting} request(s)` : 'an unknown number of requests'} awaiting "${data.type}" and this reply names none of them, so one may now hang)`;
       // eslint-disable-next-line no-console -- developer-facing diagnostic at a trust boundary
       console.warn(
         `IframeTransport: dropping malformed "${data.type}" message from ${event.origin} ` +

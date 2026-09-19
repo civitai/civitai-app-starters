@@ -377,15 +377,21 @@ describe('IframeTransport — validator-rejection reporting', () => {
   // Failing soft
   // ───────────────────────────────────────────────────────────────────────────
 
-  // ── "I cannot tell which" is not "nothing was awaiting it" ────────────────
-  // Three shapes where a request of the reply's OWN type is hanging and the reply
+  // ── Naming the hang, and not naming one that is not there ─────────────────
+  // FOUR tests follow and they are not four of a kind. An earlier version of this
+  // comment said "three shapes where a request IS hanging"; a later commit then
+  // inserted a case where nothing hangs into the same block, leaving the heading
+  // describing neither the count nor the contents.
+  //
+  // THREE are shapes where a request of the reply's own type IS hanging and the reply
   // does not attributably name it. ⚠️ They did NOT all fail the same way before the
-  // fix, and an earlier version of this comment claimed they did: the first two
-  // printed "unsolicited push — nothing was awaiting it" (no readable `requestId`),
-  // while the third printed the OPPOSITE — `"GET_IMAGES_BY_IDS" will now hang` —
-  // because the id DID resolve, to a request awaiting a different reply type. One
-  // understated the hang, one blamed a healthy request; the predicate below is what
-  // separates them.
+  // fix: the no-`requestId` pair printed "unsolicited push — nothing was awaiting
+  // it", while the wrong-id one printed the OPPOSITE — `"GET_IMAGES_BY_IDS" will now
+  // hang` — because the id DID resolve, to a request awaiting a different reply type.
+  // One understated the hang; one blamed a healthy request.
+  //
+  // The FOURTH is the inverse, and it is here because the fix for those three broke
+  // it: a malformed PUSH, where nothing hangs and saying so is the correct answer.
 
   it('a non-object payload on a pending request does NOT claim the push case', async () => {
     const transport = await initTransport();
@@ -471,16 +477,35 @@ describe('IframeTransport — validator-rejection reporting', () => {
   });
 
   it("does not blame a HEALTHY request when a malformed reply echoes its requestId", async () => {
-    // A buggy host can echo the wrong id. `handleMessage` already refuses to SETTLE
-    // such a reply (the responseType must match); naming it here would report the
-    // breakage against a request that is fine.
+    // 🔴 TWO REQUESTS IN FLIGHT, AND THAT IS WHAT MAKES THE GUARD REACHABLE AT ALL.
+    // An earlier version of this test started ONE `GET_IMAGES_BY_IDS` and sent a
+    // malformed `VIEWER_RESULT`. That looks like the same scenario and is not: with
+    // nobody awaiting `VIEWER_RESULT`, `hangingRequestTypeFor` returns `pushed` from
+    // its FIRST branch and the `responseType` predicate this test exists to pin never
+    // executes. MEASURED — deleting that predicate left all 15 tests GREEN. An
+    // unreachable guard reads as coverage and provides none, and the fix for the
+    // previous round is what made it unreachable.
+    //
+    // So: put something in flight that IS awaiting this reply type (`GET_VIEWER`) and
+    // have the malformed reply echo the OTHER request's id. The early return cannot
+    // fire, the id resolves to an entry awaiting a DIFFERENT type, and the predicate
+    // is the only thing between the report and a healthy request's name.
     const transport = await initTransport();
-    const { requestId } = startImagesRequest(transport); // awaiting IMAGES_RESULT
+    const viewer = sendTypedRequest(
+      transport,
+      { type: 'GET_VIEWER', payload: {} },
+      'VIEWER_RESULT',
+      { timeoutMs: 1_000 },
+    );
+    void viewer.catch(() => {});
+    const { requestId: imagesRequestId } = startImagesRequest(transport);
 
-    // A malformed VIEWER_RESULT carrying the images request's id.
     window.dispatchEvent(
       mockParentMessage(
-        { type: 'VIEWER_RESULT', payload: { requestId } } as unknown as ParentToBlockMessage,
+        {
+          type: 'VIEWER_RESULT',
+          payload: { requestId: imagesRequestId },
+        } as unknown as ParentToBlockMessage,
         PARENT_ORIGIN,
       ),
     );
@@ -489,7 +514,12 @@ describe('IframeTransport — validator-rejection reporting', () => {
       { type: 'BLOCK_MESSAGE_REJECTED', payload: { type: OTHER_MESSAGE_TYPE_LABEL } },
     ]);
     const warned = warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    // Neither the label nor the console may name the healthy request.
     expect(warned).not.toContain('GET_IMAGES_BY_IDS');
+    // And it must take the `unknown` arm, not `pushed` — something IS awaiting
+    // VIEWER_RESULT, so this reply may well have hung it.
+    expect(warned).toContain('1 request(s) awaiting "VIEWER_RESULT"');
+    expect(warned).not.toContain('unsolicited push');
   });
 
   it('fails soft: a throwing postMessage does not abort dispatch for the event', async () => {

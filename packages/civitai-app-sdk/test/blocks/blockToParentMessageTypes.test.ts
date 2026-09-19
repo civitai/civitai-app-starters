@@ -20,10 +20,15 @@ import {
  * no longer asserts it at all (an earlier revision of this sentence said it did);
  * and that gate lives in the compiler, a different tool from the one a reader runs
  * as "the tests". Parsing the declaration is the only way to ask the question at
- * runtime. It is a genuinely
- * independent gate: it fails when the ARRAY is edited without the union, which the
- * embedded gate in `messages.ts` also catches, AND it is the only one of the TWO
- * that runs under plain `vitest run`.
+ * runtime.
+ *
+ * ⚠️ IT IS NOT AN INDEPENDENT GATE, and an earlier revision of this docblock called
+ * it one in the same sentence that conceded the point. The `Exclude` gate catches
+ * every drift this test catches, in both directions. What this buys is the TOOL: it
+ * is the only one that fails under a bare `vitest run`. ⚠️ And note the honest limit
+ * of even that — this package's `test` script is
+ * `vitest run && tsc -p tsconfig.typecheck.json`, so `pnpm test` surfaces the drift
+ * either way; the distinction is real only for someone running vitest directly.
  *
  * ⚠️ IT PARSES SOURCE, SO THE PARSE IS ITSELF UNDER TEST. A regex that matched
  * nothing would yield an empty set, and "the array contains everything in the
