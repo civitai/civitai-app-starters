@@ -3,6 +3,7 @@ import type { CivitaiSegmentedControl } from '../src/elements/civitai-segmented-
 import type { CivitaiModal } from '../src/elements/civitai-modal.js';
 import type { CivitaiRadioGroup } from '../src/elements/civitai-radio-group.js';
 import type { CivitaiSelect } from '../src/elements/civitai-select.js';
+import type { CivitaiTabs } from '../src/elements/civitai-tabs.js';
 import '../src/elements/register.js';
 
 // The legacy attribute CSS, so the playground can sit elements next to the
@@ -86,6 +87,16 @@ document.querySelector('#sc-md')?.addEventListener('change', (event) => {
 document.querySelector('civitai-alert[closable]')?.addEventListener('close', (event) => {
   (event.target as HTMLElement).remove();
 });
+
+const tabsEl = document.querySelector<CivitaiTabs>('#tabs');
+if (tabsEl) {
+  tabsEl.data = [
+    { value: 'grid', label: 'Grid' },
+    { value: 'list', label: 'List' },
+    { value: 'map', label: 'Map (unavailable)', disabled: true },
+    { value: 'feed', label: 'Feed' },
+  ];
+}
 
 const modal = document.querySelector<CivitaiModal>('#modal');
 const sticky = document.querySelector<CivitaiModal>('#sticky');

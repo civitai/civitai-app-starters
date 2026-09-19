@@ -28,8 +28,15 @@ const documented = declarations.filter((d) => d.customElement);
 /** Tags the package actually registers, read from the element sources. */
 const registered = readdirSync(elementsDir)
   .filter((file) => /^civitai-.*(?<!\.define)\.ts$/.test(file))
-  .map((file) => /const TAG\s*=\s*'([^']+)'/.exec(readFileSync(join(elementsDir, file), 'utf8'))?.[1])
-  .filter((tag): tag is string => tag != null);
+  .flatMap((file) => {
+    const source = readFileSync(join(elementsDir, file), 'utf8');
+    const tags = Object.fromEntries(
+      [...source.matchAll(/const (\w+)\s*=\s*'(civitai-[a-z-]+)'/g)].map((m) => [m[1], m[2]!])
+    );
+    return [...source.matchAll(/defineElement\((\w+),/g)]
+      .map(([, constant]) => tags[constant!])
+      .filter((tag): tag is string => tag != null);
+  });
 
 describe('custom-elements.json', () => {
   it('documents exactly the elements this package registers', () => {
@@ -40,9 +47,18 @@ describe('custom-elements.json', () => {
     expect(documented.length).toBeGreaterThan(0);
   });
 
+  /** A module may define more than one element, e.g. tabs and its panel. */
+  const sourceFor = (tag: string): string => {
+    for (const file of readdirSync(elementsDir).filter((f) => /^civitai-.*(?<!\.define)\.ts$/.test(f))) {
+      const source = readFileSync(join(elementsDir, file), 'utf8');
+      if (source.includes(`'${tag}'`)) return source;
+    }
+    throw new Error(`no source declares ${tag}`);
+  };
+
   it.each(registered)('%s documents attributes that exist in its source', (tag) => {
     const declaration = documented.find((d) => d.tagName === tag)!;
-    const source = readFileSync(join(elementsDir, `${tag}.ts`), 'utf8');
+    const source = sourceFor(tag);
     for (const attribute of declaration.attributes ?? []) {
       expect(source, `${tag} documents ${attribute.name}`).toContain(attribute.name);
     }
@@ -50,7 +66,7 @@ describe('custom-elements.json', () => {
 
   it.each(registered)('%s documents parts that exist in its template', (tag) => {
     const declaration = documented.find((d) => d.tagName === tag)!;
-    const source = readFileSync(join(elementsDir, `${tag}.ts`), 'utf8');
+    const source = sourceFor(tag);
     for (const part of declaration.cssParts ?? []) {
       expect(source, `${tag} documents part ${part.name}`).toContain(`part="${part.name}"`);
     }

@@ -170,6 +170,22 @@
     "./civitai-modal/define": {
       "types": "./dist/elements/civitai-modal.define.d.ts",
       "import": "./dist/elements/civitai-modal.define.js"
+    },
+    "./civitai-tooltip": {
+      "types": "./dist/elements/civitai-tooltip.d.ts",
+      "import": "./dist/elements/civitai-tooltip.js"
+    },
+    "./civitai-tooltip/define": {
+      "types": "./dist/elements/civitai-tooltip.define.d.ts",
+      "import": "./dist/elements/civitai-tooltip.define.js"
+    },
+    "./civitai-tabs": {
+      "types": "./dist/elements/civitai-tabs.d.ts",
+      "import": "./dist/elements/civitai-tabs.js"
+    },
+    "./civitai-tabs/define": {
+      "types": "./dist/elements/civitai-tabs.define.d.ts",
+      "import": "./dist/elements/civitai-tabs.define.js"
     }
   },
   "files": [

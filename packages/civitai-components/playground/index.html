@@ -147,6 +147,27 @@
         error="Pick one"></civitai-radio-group>
     </div>
 
+    <h2>Tooltip &amp; tabs</h2>
+    <civitai-group gap="lg">
+      <civitai-tooltip label="Spends Buzz from your balance">
+        <civitai-button variant="outline">Hover or focus me</civitai-button>
+      </civitai-tooltip>
+      <span style="font-size: 13px; color: var(--civitai-color-text-dimmed)">
+        Tab to it, then press Escape &mdash; it hides while focus stays put.
+      </span>
+    </civitai-group>
+    <civitai-tabs id="tabs" aria-label="Result view" style="margin-top: 12px">
+      <civitai-tab-panel value="grid">
+        <civitai-card padding="md">The grid panel.</civitai-card>
+      </civitai-tab-panel>
+      <civitai-tab-panel value="list">
+        <civitai-card padding="md">The list panel.</civitai-card>
+      </civitai-tab-panel>
+      <civitai-tab-panel value="feed">
+        <civitai-card padding="md">The feed panel.</civitai-card>
+      </civitai-tab-panel>
+    </civitai-tabs>
+
     <h2>Modal &amp; collapse</h2>
     <civitai-group>
       <civitai-button id="open-modal">Open modal</civitai-button>

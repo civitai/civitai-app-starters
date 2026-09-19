@@ -14,8 +14,10 @@ import { defineCivitaiSegmentedControl } from './civitai-segmented-control.js';
 import { defineCivitaiSelect } from './civitai-select.js';
 import { defineCivitaiSlider } from './civitai-slider.js';
 import { defineCivitaiStack } from './civitai-stack.js';
+import { defineCivitaiTabs } from './civitai-tabs.js';
 import { defineCivitaiTextInput } from './civitai-text-input.js';
 import { defineCivitaiTextarea } from './civitai-textarea.js';
+import { defineCivitaiTooltip } from './civitai-tooltip.js';
 
 /** Register every element in this package. Safe to call more than once. */
 export function registerAll(): void {
@@ -35,8 +37,10 @@ export function registerAll(): void {
   defineCivitaiSelect();
   defineCivitaiSlider();
   defineCivitaiStack();
+  defineCivitaiTabs();
   defineCivitaiTextInput();
   defineCivitaiTextarea();
+  defineCivitaiTooltip();
 }
 
 registerAll();

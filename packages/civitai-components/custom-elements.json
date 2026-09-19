@@ -2902,6 +2902,204 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/elements/civitai-tabs.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "A panel. Its `value` pairs it with the tab of the same value.",
+          "name": "CivitaiTabPanel",
+          "members": [
+            {
+              "kind": "field",
+              "name": "value",
+              "type": {
+                "text": "string"
+              },
+              "readonly": true
+            }
+          ],
+          "superclass": {
+            "name": "HTMLElement"
+          },
+          "customElement": true,
+          "tagName": "civitai-tab-panel"
+        },
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiTabs",
+          "members": [
+            {
+              "kind": "field",
+              "name": "#tablist",
+              "privacy": "private",
+              "type": {
+                "text": "HTMLElement | null"
+              },
+              "default": "null"
+            },
+            {
+              "kind": "field",
+              "name": "#data",
+              "privacy": "private",
+              "type": {
+                "text": "TabItem[]"
+              },
+              "default": "[]"
+            },
+            {
+              "kind": "field",
+              "name": "#id",
+              "privacy": "private",
+              "readonly": true,
+              "default": "`ci-tabs-${(sequence += 1)}`"
+            },
+            {
+              "kind": "field",
+              "name": "data",
+              "type": {
+                "text": "TabItem[]"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "value",
+              "type": {
+                "text": "string"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "#enabled",
+              "privacy": "private",
+              "type": {
+                "text": "TabItem[]"
+              },
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "panels",
+              "type": {
+                "text": "CivitaiTabPanel[]"
+              },
+              "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "#select",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "next",
+                  "type": {
+                    "text": "string"
+                  }
+                },
+                {
+                  "name": "moveFocus",
+                  "type": {
+                    "text": "boolean"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "field",
+              "name": "#onKeyDown",
+              "privacy": "private",
+              "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "#render",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            }
+          ],
+          "events": [
+            {
+              "name": "change",
+              "type": {
+                "text": "Event"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "value"
+            }
+          ],
+          "superclass": {
+            "name": "HTMLElement"
+          },
+          "customElement": true,
+          "tagName": "civitai-tabs"
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiTabs",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiTabPanel",
+          "declaration": {
+            "name": "CivitaiTabPanel",
+            "module": "src/elements/civitai-tabs.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "CivitaiTabs",
+          "declaration": {
+            "name": "CivitaiTabs",
+            "module": "src/elements/civitai-tabs.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiTabs",
+          "declaration": {
+            "name": "defineCivitaiTabs",
+            "module": "src/elements/civitai-tabs.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-tab-panel",
+          "declaration": {
+            "name": "CivitaiTabPanel",
+            "module": "src/elements/civitai-tabs.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-tabs",
+          "declaration": {
+            "name": "CivitaiTabs",
+            "module": "src/elements/civitai-tabs.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/elements/civitai-text-input.ts",
       "declarations": [
         {
@@ -3144,6 +3342,127 @@
           "declaration": {
             "name": "CivitaiTextarea",
             "module": "src/elements/civitai-textarea.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-tooltip.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiTooltip",
+          "members": [
+            {
+              "kind": "field",
+              "name": "#bubble",
+              "privacy": "private",
+              "type": {
+                "text": "HTMLElement | null"
+              },
+              "default": "null"
+            },
+            {
+              "kind": "field",
+              "name": "#id",
+              "privacy": "private",
+              "readonly": true,
+              "default": "`ci-tooltip-${(sequence += 1)}`"
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "type": {
+                "text": "string"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "open",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Forces the bubble open; hover and focus reveal it without this."
+            },
+            {
+              "kind": "field",
+              "name": "trigger",
+              "type": {
+                "text": "HTMLElement | null"
+              },
+              "description": "The element the tooltip describes: the first element child.",
+              "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "#ensure",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "field",
+              "name": "#reveal",
+              "privacy": "private",
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "#onKeyDown",
+              "privacy": "private",
+              "readonly": true,
+              "description": "Escape genuinely hides it, even while the pointer still hovers — the CSS\nreveal is gated on the absence of this flag."
+            }
+          ],
+          "attributes": [
+            {
+              "name": "label"
+            }
+          ],
+          "superclass": {
+            "name": "HTMLElement"
+          },
+          "customElement": true,
+          "tagName": "civitai-tooltip"
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiTooltip",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiTooltip",
+          "declaration": {
+            "name": "CivitaiTooltip",
+            "module": "src/elements/civitai-tooltip.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiTooltip",
+          "declaration": {
+            "name": "defineCivitaiTooltip",
+            "module": "src/elements/civitai-tooltip.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-tooltip",
+          "declaration": {
+            "name": "CivitaiTooltip",
+            "module": "src/elements/civitai-tooltip.ts"
           }
         }
       ]

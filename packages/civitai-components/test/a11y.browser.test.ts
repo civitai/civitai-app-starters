@@ -81,6 +81,28 @@ const CASES: { id: string; markup: string; prepare?: (scope: HTMLElement) => voi
       '<civitai-image alt="A generated landscape" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></civitai-image>',
   },
   {
+    id: 'tooltip',
+    markup: '<civitai-tooltip label="Spends Buzz"><button>Generate</button></civitai-tooltip>',
+  },
+  {
+    id: 'tabs',
+    markup:
+      '<civitai-tabs aria-label="View">' +
+      '<civitai-tab-panel value="grid">Grid</civitai-tab-panel>' +
+      '<civitai-tab-panel value="list">List</civitai-tab-panel>' +
+      '</civitai-tabs>',
+    prepare: (scope) => {
+      (scope.querySelector('civitai-tabs') as HTMLElement & { data: unknown }).data = [
+        { value: 'grid', label: 'Grid' },
+        { value: 'list', label: 'List', disabled: true },
+      ];
+    },
+  },
+  {
+    id: 'modal',
+    markup: '<civitai-modal heading="Confirm" open>Costs Buzz.</civitai-modal>',
+  },
+  {
     id: 'form',
     markup:
       '<form><civitai-text-input label="Query" name="q"></civitai-text-input>' +
