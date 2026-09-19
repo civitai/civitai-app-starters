@@ -8,9 +8,16 @@ import { sendTypedRequest } from '../src/internal/transport.js';
 import { mockParentMessage } from '../src/testing.js';
 
 /**
- * The FIFTH bridge silence: a host reply that fails the SDK's own validator.
+ * The SDK-SIDE bridge silence: a host reply that fails the SDK's own validator.
  *
- * Four of the bridge's five drop paths are host-side and counted since
+ * ⚠️ NOT "the fifth and final" one, and this suite does not pin it as such.
+ * `handleMessage` still drops silently and uncounted in at least three more places:
+ * an origin mismatch and a malformed envelope both bare-`return` ahead of every
+ * validator, and a WELL-FORMED reply whose `requestId` matches no pending entry (or
+ * matches one awaiting a different `responseType`) falls off the end of the function
+ * and hangs the request the same way. What follows covers the path card 625 names.
+ *
+ * Four of the bridge's drop paths are host-side and counted since
  * civitai#4946 (`civitai_app_block_bridge_messages_total` over
  * `{handled, no_handler, rate_limited, deduped, no_token}`). This one is not and
  * cannot be: the validator runs in the iframe AFTER the host has already replied,
@@ -370,41 +377,6 @@ describe('IframeTransport — validator-rejection reporting', () => {
   // The budget, and failing soft
   // ───────────────────────────────────────────────────────────────────────────
 
-  it('bounds reports to 30 per 10s window, then resumes in the next window', async () => {
-    // An uncapped reporter turns a broken-reply flood into a postMessage flood on
-    // a bridge whose inbound budget is 30/sec — the budget `bridgeLabels.ts` says
-    // legitimate BLOCK_ERROR reporting needs. The consequence is a deliberate
-    // undercount, which is why the series is read as "which types, and when it
-    // started", never as an exact total.
-    const transport = await initTransport();
-    const flood = (n: number) => {
-      for (let i = 0; i < n; i += 1) {
-        window.dispatchEvent(
-          mockParentMessage(
-            {
-              type: 'IMAGES_RESULT',
-              payload: { requestId: `r-${i}`, result: { images: [{ imageId: 1 }] } },
-            } as unknown as ParentToBlockMessage,
-            PARENT_ORIGIN,
-          ),
-        );
-      }
-    };
-
-    flood(45);
-    expect(rejectionReports()).toHaveLength(30);
-
-    // Same window: still capped.
-    vi.advanceTimersByTime(5_000);
-    flood(5);
-    expect(rejectionReports()).toHaveLength(30);
-
-    // Past the window: the budget refills.
-    vi.advanceTimersByTime(10_001);
-    flood(3);
-    expect(rejectionReports()).toHaveLength(33);
-  });
-
   it('fails soft: a throwing postMessage does not abort dispatch for the event', async () => {
     // Telemetry must never break the transport it observes. A throw here would
     // propagate out of the `message` listener and add a second silent drop on top
@@ -424,12 +396,19 @@ describe('IframeTransport — validator-rejection reporting', () => {
     }).not.toThrow();
   });
 
-  it('queues a pre-init rejection report and flushes it once a valid BLOCK_INIT lands', async () => {
-    // `dispatch` has no parentOrigin before the first valid BLOCK_INIT, so a report
-    // raised while rejecting a MALFORMED init is queued, not sent — and is lost if
-    // no init ever succeeds. That residual gap is covered by a different series
-    // (the host's ready timeout ⇒ `renders_total{result="timeout"}`); this test
-    // pins the queueing rather than leaving the ordering to inference.
+  it('reports NOTHING before BLOCK_INIT, and does not queue one for later', async () => {
+    // 🔴 THE DELIBERATE GAP, PINNED SO IT STAYS DELIBERATE. Before the first valid
+    // init there is no `parentOrigin`, so a report could only go onto `dispatch`'s
+    // unbounded outbound queue — and the host re-sends BLOCK_INIT every ~400ms until
+    // BLOCK_READY, so a malformed init makes that queue a producer with no consumer
+    // (~25 entries inside one 10s ready window, flushed only if a later init
+    // succeeds). An earlier revision queued them; this asserts it no longer does,
+    // INCLUDING after a later init succeeds — which is the half a test of the
+    // pre-init moment alone would miss.
+    //
+    // Nothing is lost: a block that never inits never sends BLOCK_READY, so the
+    // host's ready timeout already records
+    // `civitai_app_block_renders_total{result="timeout"}` for exactly this case.
     const transport = trackTransport(
       new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] }),
     );
@@ -446,6 +425,16 @@ describe('IframeTransport — validator-rejection reporting', () => {
     );
     await transport.waitForInit();
 
+    // Still nothing — the pre-init rejection was dropped, not deferred.
+    expect(rejectionReports()).toEqual([]);
+    // Positive control: the transport is live and DOES report now, so the empty
+    // assertion above is about the pre-init drop and not about a dead reporter.
+    window.dispatchEvent(
+      mockParentMessage(
+        { type: 'THEME_CHANGE', payload: { theme: 'nope' } } as unknown as ParentToBlockMessage,
+        PARENT_ORIGIN,
+      ),
+    );
     expect(rejectionReports()).toEqual([
       { type: 'BLOCK_MESSAGE_REJECTED', payload: { type: OTHER_MESSAGE_TYPE_LABEL } },
     ]);

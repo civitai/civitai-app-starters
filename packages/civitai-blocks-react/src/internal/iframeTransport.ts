@@ -28,32 +28,6 @@ import type { WrappedToken } from '@civitai/app-sdk/blocks';
 
 const INIT_TIMEOUT_MS = 10_000;
 
-/**
- * Sliding window for the `BLOCK_MESSAGE_REJECTED` emit budget below.
- */
-const REJECTION_REPORT_WINDOW_MS = 10_000;
-
-/**
- * Most `BLOCK_MESSAGE_REJECTED` reports one transport will post per
- * {@link REJECTION_REPORT_WINDOW_MS}.
- *
- * 🔴 IT IS A BUDGET ON THE BRIDGE, NOT A TUNING KNOB, AND IT MAKES THE SERIES AN
- * UNDERCOUNT ON PURPOSE. The host's dispatcher rate-limits inbound messages to 30
- * per second and `bridgeLabels.ts` is explicit that a flood must not burn the
- * budget legitimate `BLOCK_ERROR` reporting needs. An uncapped reporter would turn
- * a broken-reply flood into exactly that: one inbound rejection ⇒ one outbound
- * report, on a path whose whole premise is that something is already wrong.
- *
- * 3/sec sustained is one tenth of the host's inbound budget, and far above what a
- * real rejection produces — a genuine protocol break rejects one reply per
- * user-driven request. Above the cap reports are DROPPED, so read
- * `outcome="validator_rejected"` as *which types are being rejected and when it
- * started*, never as an exact total. That is the same trade
- * `BRIDGE_MESSAGE_COUNT_MAX` makes on the host side: prefer a visible, bounded
- * wrongness to an unbounded channel.
- */
-const MAX_REJECTION_REPORTS_PER_WINDOW = 30;
-
 export interface IframeTransportOptions {
   /**
    * Origins from which `BLOCK_INIT` (and any other inbound message) is
@@ -128,14 +102,6 @@ export class IframeTransport implements BlockTransport {
   private initResolved = false;
 
   private readonly messageListener: (event: MessageEvent) => void;
-
-  /**
-   * Timestamps of the `BLOCK_MESSAGE_REJECTED` reports posted inside the current
-   * {@link REJECTION_REPORT_WINDOW_MS} — the emit budget's whole state. Pruned on
-   * every report, so it cannot grow past
-   * {@link MAX_REJECTION_REPORTS_PER_WINDOW} + 1.
-   */
-  private rejectionReportTimes: number[] = [];
 
   constructor(opts: IframeTransportOptions) {
     if (!opts.allowedParentOrigins.length) {
@@ -439,36 +405,51 @@ export class IframeTransport implements BlockTransport {
    * host's handler for this message records `outcome="validator_rejected"` against
    * the `type` we name here.
    *
-   * 🔴 THE VALIDATOR'S NAME IS DELIBERATELY NOT ON THIS WIRE. `payloadValidatorFor`
-   * is a function from type to validator, so the top-level validator is DERIVABLE
-   * from the type already on it — a `validator` field would carry only the
-   * derivable half, which reads as coverage while adding none, and a fifth
-   * Prometheus label is not free (the beacon route's own docblock asks for the label
-   * product to be read before one is added). The half that is NOT derivable is
-   * which NESTED helper rejected — `isValidGatedImage` inside `isValidImagesResult`
-   * on 2026-09-18 — and no validator in `validate.ts` reports that today. It stays
-   * in the `console.warn` above, and closing it properly means teaching the
-   * validators to return a reason.
+   * 🔴 THE VALIDATOR'S NAME IS NOT ON THIS WIRE, AND THE `console.warn` DOES NOT
+   * CLOSE THE GAP EITHER — an earlier revision of this docblock claimed it did, and
+   * that was false. `payloadValidatorFor` is a function from type to validator, so
+   * the TOP-LEVEL validator is derivable from the type already on the wire; a
+   * `validator` field would carry only that derivable half, which reads as coverage
+   * while adding none, and a fifth Prometheus label is not free (the beacon route's
+   * own docblock asks for the label product to be read before one is added). The
+   * half that is NOT derivable is which NESTED helper rejected —
+   * `isValidGatedImage` inside `isValidImagesResult` on 2026-09-18 — and the warn
+   * cannot supply it: `validator.name` resolves to the top-level validator, and no
+   * helper in `validate.ts` reports its own name anywhere at runtime. So that
+   * diagnosis is UNAVAILABLE today, from any surface. Closing it means teaching the
+   * validators to return a reason; do not read the warn as a substitute.
    *
-   * PRE-INIT REJECTIONS ARE QUEUED, NOT SENT. `dispatch` has no `parentOrigin`
-   * before the first valid `BLOCK_INIT`, so a report raised while rejecting a
-   * malformed `BLOCK_INIT` flushes only if a LATER init succeeds, and is lost if
-   * none does. That gap is already covered by a different series: a block that
-   * never inits never sends `BLOCK_READY`, so the host's ready timeout records
+   * 🔴 NOTHING IS REPORTED BEFORE `BLOCK_INIT`, DELIBERATELY. `dispatch` has no
+   * `parentOrigin` until the first valid init, so a report raised while rejecting a
+   * malformed `BLOCK_INIT` could only be QUEUED — and the host re-sends init on a
+   * ~400ms interval until `BLOCK_READY`, so that queue is a producer with no
+   * consumer: ~25 entries inside one 10s ready window, flushed only if a later init
+   * succeeds and silently discarded if none does. The gap it would have covered is
+   * already covered by a different series — a block that never inits never sends
+   * `BLOCK_READY`, so the host's ready timeout records
    * `civitai_app_block_renders_total{result="timeout"}`. This counter exists for the
-   * failures that happen AFTER ready, which that one is structurally blind to.
+   * failures AFTER ready, which that one is structurally blind to.
+   *
+   * 🔴 NO EMIT BUDGET, AND THE ONE AN EARLIER REVISION CARRIED WAS JUSTIFIED BY A
+   * FALSEHOOD. It capped reports at 30 per 10s "so a flood cannot burn the host's
+   * 30 msg/sec inbound budget that legitimate `BLOCK_ERROR` reporting needs". The
+   * host consumes `BLOCK_MESSAGE_REJECTED` in its shared dispatcher ABOVE that
+   * limiter — the same placement, and for the same stated reason, as its
+   * `no_handler` branch — so a report consumes none of that budget and the cap
+   * bought nothing. What it did buy was a permanent UNDERCOUNT, which inverts the
+   * receiving side's own documented preference: `bridgeLabels.ts` chooses its clamp
+   * so that "a real flood is still VISIBLE rather than exactly counted … the series
+   * reads 'enormous' instead of 'wrong'". A cap here makes a flood read SMALL, the
+   * one shape of wrongness that side rejects. Magnitude is therefore unbounded on
+   * this path exactly as it already is for `no_handler` and `deduped`; the host's
+   * `BRIDGE_MESSAGE_COUNT_MAX` is the clamp that bounds a row, and the beacon
+   * coalesces identical label sets, so the network cost of a flood is ~one row.
    */
   private reportRejection(hangingRequestType: string): void {
-    const now = Date.now();
-    const recent = this.rejectionReportTimes.filter(
-      (t) => now - t < REJECTION_REPORT_WINDOW_MS,
-    );
-    if (recent.length >= MAX_REJECTION_REPORTS_PER_WINDOW) {
-      this.rejectionReportTimes = recent;
-      return;
-    }
-    recent.push(now);
-    this.rejectionReportTimes = recent;
+    // No parent origin yet ⇒ nothing to post to, and queueing is worse than
+    // dropping here (see the docblock). Checked rather than left to `dispatch`,
+    // whose queue is unbounded and has no consumer on this path.
+    if (!this.parentOrigin) return;
     // Fail-soft: a throw here would propagate out of the `message` listener and
     // abort dispatch for this event — turning an observability feature into a
     // second silent drop on top of the one it is reporting.

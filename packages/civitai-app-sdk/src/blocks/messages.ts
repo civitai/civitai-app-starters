@@ -1388,11 +1388,16 @@ export type BlockToParentMessageType = BlockToParentMessage['type'];
  *
  * 🔴 AND WHY IT IS GATED RATHER THAN HAND-MAINTAINED. A copied list answers the
  * question while drifting from the union it claims to mirror, and the drift is
- * invisible: a new message type simply reports as `'other'`. The gate below makes
- * drift a BUILD ERROR in BOTH directions — a union member missing from the array,
- * and an array entry the union does not declare. `blockMessageTypes.test.ts`
- * additionally re-derives the union from this file's own source, so growth fails a
- * TEST and not only a typecheck.
+ * invisible: a new message type simply reports as `'other'`. TWO gates hold it, and
+ * two is deliberate — an earlier revision had four over this one fact and needed a
+ * warning label about which of them a red build implicated. The `Exclude` gate below
+ * makes drift a BUILD ERROR in BOTH directions (a union member missing from the
+ * array, and an array entry the union does not declare), and
+ * `blockToParentMessageTypes.test.ts` re-derives the union from this file's own
+ * source text under plain `vitest run`. ⚠️ Those two are NOT independent of each
+ * other for the GROWTH case — both fail when the union grows — but they fail in
+ * different tools, and the runtime one is the only one that catches the array being
+ * edited alone.
  *
  * ⚠️ Measured 2026-09-19 at `civitai-app-starters@44a79dc`: this set was exactly
  * equal to the 46 keys of civitai's own `hostHandlerParity.ts` `INVENTORY`, which
@@ -1449,10 +1454,7 @@ export const BLOCK_TO_PARENT_MESSAGE_TYPES = [
   'SHARED_REPORT',
   'SAVE_IMAGE',
   'SET_COLLECTION_FOLLOW',
-  // `satisfies` catches the EXTRA direction at this declaration, naming the bad
-  // entry on the line that wrote it. It cannot catch the MISSING direction — an
-  // array is a subset-shaped claim — which is what the gate below is for.
-] as const satisfies readonly BlockToParentMessageType[];
+] as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // BIDIRECTIONAL compile-time gate on the array above. Both directions matter and
