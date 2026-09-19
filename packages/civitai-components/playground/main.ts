@@ -1,5 +1,6 @@
 import { injectStyles } from '../src/index.js';
 import type { CivitaiSegmentedControl } from '../src/elements/civitai-segmented-control.js';
+import type { CivitaiModal } from '../src/elements/civitai-modal.js';
 import type { CivitaiRadioGroup } from '../src/elements/civitai-radio-group.js';
 import type { CivitaiSelect } from '../src/elements/civitai-select.js';
 import '../src/elements/register.js';
@@ -85,6 +86,24 @@ document.querySelector('#sc-md')?.addEventListener('change', (event) => {
 document.querySelector('civitai-alert[closable]')?.addEventListener('close', (event) => {
   (event.target as HTMLElement).remove();
 });
+
+const modal = document.querySelector<CivitaiModal>('#modal');
+const sticky = document.querySelector<CivitaiModal>('#sticky');
+if (sticky) {
+  sticky.closeOnEscape = false;
+  sticky.closeOnOverlayClick = false;
+}
+document.querySelector('#open-modal')?.addEventListener('click', () => {
+  if (modal) modal.open = true;
+});
+document.querySelector('#open-sticky')?.addEventListener('click', () => {
+  if (sticky) sticky.open = true;
+});
+for (const id of ['#modal-ok', '#modal-cancel']) {
+  document.querySelector(id)?.addEventListener('click', () => {
+    if (modal) modal.open = false;
+  });
+}
 
 const form = document.querySelector<HTMLFormElement>('#demo');
 const result = document.querySelector('#result');

@@ -154,6 +154,22 @@
     "./civitai-slider/define": {
       "types": "./dist/elements/civitai-slider.define.d.ts",
       "import": "./dist/elements/civitai-slider.define.js"
+    },
+    "./civitai-collapse": {
+      "types": "./dist/elements/civitai-collapse.d.ts",
+      "import": "./dist/elements/civitai-collapse.js"
+    },
+    "./civitai-collapse/define": {
+      "types": "./dist/elements/civitai-collapse.define.d.ts",
+      "import": "./dist/elements/civitai-collapse.define.js"
+    },
+    "./civitai-modal": {
+      "types": "./dist/elements/civitai-modal.d.ts",
+      "import": "./dist/elements/civitai-modal.js"
+    },
+    "./civitai-modal/define": {
+      "types": "./dist/elements/civitai-modal.define.d.ts",
+      "import": "./dist/elements/civitai-modal.define.js"
     }
   },
   "files": [

@@ -72,6 +72,14 @@ const CASES: { id: string; markup: string; prepare?: (scope: HTMLElement) => voi
       ];
     },
   },
+  { id: 'collapse', markup: '<civitai-collapse heading="Advanced">body</civitai-collapse>' },
+  { id: 'collapse/open', markup: '<civitai-collapse heading="Advanced" open>body</civitai-collapse>' },
+  { id: 'slider', markup: '<civitai-slider label="CFG" min="1" max="20" value="7"></civitai-slider>' },
+  {
+    id: 'image',
+    markup:
+      '<civitai-image alt="A generated landscape" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></civitai-image>',
+  },
   {
     id: 'form',
     markup:

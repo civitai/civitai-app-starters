@@ -970,6 +970,162 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/elements/civitai-collapse.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiCollapse",
+          "members": [
+            {
+              "kind": "field",
+              "name": "open",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "open",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "heading",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Trigger label. Not `title`, which is a global attribute.",
+              "default": "''",
+              "attribute": "heading",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "disabled",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "#id",
+              "privacy": "private",
+              "readonly": true,
+              "default": "`ci-collapse-${(sequence += 1)}`"
+            },
+            {
+              "kind": "method",
+              "name": "#toggle",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            }
+          ],
+          "events": [
+            {
+              "name": "toggle",
+              "type": {
+                "text": "Event"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "open",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "open"
+            },
+            {
+              "name": "heading",
+              "type": {
+                "text": "string"
+              },
+              "description": "Trigger label. Not `title`, which is a global attribute.",
+              "default": "''",
+              "fieldName": "heading"
+            },
+            {
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "disabled"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-collapse",
+          "cssParts": [
+            {
+              "name": "trigger"
+            },
+            {
+              "name": "chevron"
+            },
+            {
+              "name": "region"
+            }
+          ],
+          "slots": [
+            {
+              "name": ""
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiCollapse",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiCollapse",
+          "declaration": {
+            "name": "CivitaiCollapse",
+            "module": "src/elements/civitai-collapse.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiCollapse",
+          "declaration": {
+            "name": "defineCivitaiCollapse",
+            "module": "src/elements/civitai-collapse.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-collapse",
+          "declaration": {
+            "name": "CivitaiCollapse",
+            "module": "src/elements/civitai-collapse.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/elements/civitai-group.ts",
       "declarations": [
         {
@@ -1366,6 +1522,293 @@
           "declaration": {
             "name": "CivitaiLoader",
             "module": "src/elements/civitai-loader.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-modal.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "Native `<dialog>.showModal()`: the focus trap, the top layer, the inert\nbackground and focus restore all come from the platform. The React binding\ndocuments that it traps nothing, so this is a strict upgrade, not a port.",
+          "name": "CivitaiModal",
+          "members": [
+            {
+              "kind": "field",
+              "name": "open",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "open",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "heading",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Not `title`: that attribute is global and would render a tooltip.",
+              "default": "''",
+              "attribute": "heading",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "size",
+              "privacy": "public",
+              "type": {
+                "text": "ModalSize"
+              },
+              "default": "'md'",
+              "attribute": "size",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "withCloseButton",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "attribute": "with-close-button",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "closeOnOverlayClick",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "attribute": "close-on-overlay-click",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "closeOnEscape",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "attribute": "close-on-escape",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "closeLabel",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Close'",
+              "attribute": "close-label",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "#id",
+              "privacy": "private",
+              "readonly": true,
+              "default": "`ci-modal-${(sequence += 1)}`"
+            },
+            {
+              "kind": "field",
+              "name": "#dialog",
+              "privacy": "private",
+              "type": {
+                "text": "HTMLDialogElement | null"
+              },
+              "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "#onCancel",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "event",
+                  "type": {
+                    "text": "Event"
+                  }
+                }
+              ],
+              "description": "Escape reaches the dialog as `cancel`, which is preventable."
+            },
+            {
+              "kind": "method",
+              "name": "#onClose",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "#onClick",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "event",
+                  "type": {
+                    "text": "MouseEvent"
+                  }
+                }
+              ]
+            }
+          ],
+          "events": [
+            {
+              "name": "close",
+              "type": {
+                "text": "Event"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "open",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "open"
+            },
+            {
+              "name": "heading",
+              "type": {
+                "text": "string"
+              },
+              "description": "Not `title`: that attribute is global and would render a tooltip.",
+              "default": "''",
+              "fieldName": "heading"
+            },
+            {
+              "name": "size",
+              "type": {
+                "text": "ModalSize"
+              },
+              "default": "'md'",
+              "fieldName": "size"
+            },
+            {
+              "name": "with-close-button",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "fieldName": "withCloseButton"
+            },
+            {
+              "name": "close-on-overlay-click",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "fieldName": "closeOnOverlayClick"
+            },
+            {
+              "name": "close-on-escape",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "fieldName": "closeOnEscape"
+            },
+            {
+              "name": "close-label",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Close'",
+              "fieldName": "closeLabel"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-modal",
+          "cssParts": [
+            {
+              "name": "dialog"
+            },
+            {
+              "name": "panel"
+            },
+            {
+              "name": "header"
+            },
+            {
+              "name": "title"
+            },
+            {
+              "name": "close"
+            },
+            {
+              "name": "body"
+            }
+          ],
+          "slots": [
+            {
+              "name": ""
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiModal",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiModal",
+          "declaration": {
+            "name": "CivitaiModal",
+            "module": "src/elements/civitai-modal.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiModal",
+          "declaration": {
+            "name": "defineCivitaiModal",
+            "module": "src/elements/civitai-modal.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-modal",
+          "declaration": {
+            "name": "CivitaiModal",
+            "module": "src/elements/civitai-modal.ts"
           }
         }
       ]
