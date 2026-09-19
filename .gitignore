@@ -10,6 +10,7 @@ build/
 # not committed.
 packages/civitai-theme/styles.css
 packages/civitai-components/styles.css
+packages/civitai-components/elements.js
 .next/
 .svelte-kit/
 .vercel/

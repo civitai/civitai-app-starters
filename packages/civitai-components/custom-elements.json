@@ -1,0 +1,874 @@
+{
+  "schemaVersion": "1.0.0",
+  "readme": "",
+  "modules": [
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-button.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiButton",
+          "members": [
+            {
+              "kind": "field",
+              "name": "formAssociated",
+              "type": {
+                "text": "boolean"
+              },
+              "static": true,
+              "default": "true"
+            },
+            {
+              "kind": "field",
+              "name": "variant",
+              "privacy": "public",
+              "type": {
+                "text": "ButtonVariant"
+              },
+              "description": "Visual style.",
+              "default": "'filled'",
+              "attribute": "variant",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "size",
+              "privacy": "public",
+              "type": {
+                "text": "ButtonSize"
+              },
+              "description": "Size preset.",
+              "default": "'md'",
+              "attribute": "size",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "loading",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Shows a spinner and, like the React binding, disables the control.",
+              "default": "false",
+              "attribute": "loading",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "disabled",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "fullWidth",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "full-width",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "type",
+              "privacy": "public",
+              "type": {
+                "text": "'button' | 'submit' | 'reset'"
+              },
+              "description": "Matches the native attribute, including its `submit`/`reset` behaviour.",
+              "default": "'button'",
+              "attribute": "type",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "#internals",
+              "privacy": "private",
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "form",
+              "type": {
+                "text": "HTMLFormElement | null"
+              },
+              "description": "The form this button would submit, exactly as a native button reports it.",
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "#gate",
+              "privacy": "private",
+              "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "#activate",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "A form does not cross a shadow boundary, so the inner button's implicit\nsubmit never reaches the outer form. Form association gives it back."
+            }
+          ],
+          "attributes": [
+            {
+              "name": "variant",
+              "type": {
+                "text": "ButtonVariant"
+              },
+              "description": "Visual style.",
+              "default": "'filled'",
+              "fieldName": "variant"
+            },
+            {
+              "name": "size",
+              "type": {
+                "text": "ButtonSize"
+              },
+              "description": "Size preset.",
+              "default": "'md'",
+              "fieldName": "size"
+            },
+            {
+              "name": "loading",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Shows a spinner and, like the React binding, disables the control.",
+              "default": "false",
+              "fieldName": "loading"
+            },
+            {
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "disabled"
+            },
+            {
+              "name": "full-width",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "fullWidth"
+            },
+            {
+              "name": "type",
+              "type": {
+                "text": "'button' | 'submit' | 'reset'"
+              },
+              "description": "Matches the native attribute, including its `submit`/`reset` behaviour.",
+              "default": "'button'",
+              "fieldName": "type"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-button",
+          "cssParts": [
+            {
+              "name": "button"
+            }
+          ],
+          "slots": [
+            {
+              "name": ""
+            },
+            {
+              "name": "left"
+            },
+            {
+              "name": "right"
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiButton",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiButton",
+          "declaration": {
+            "name": "CivitaiButton",
+            "module": "src/elements/civitai-button.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiButton",
+          "declaration": {
+            "name": "defineCivitaiButton",
+            "module": "src/elements/civitai-button.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-button",
+          "declaration": {
+            "name": "CivitaiButton",
+            "module": "src/elements/civitai-button.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-segmented-control.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "A panel-less value switch: `radiogroup` of `radio`s. Tabs are NOT a mode here\n— a tab's `aria-controls` is an IDREF, and an IDREF cannot reach a panel in\nthe light DOM from inside this shadow root, so tabs need their own element.",
+          "name": "CivitaiSegmentedControl",
+          "members": [
+            {
+              "kind": "field",
+              "name": "formAssociated",
+              "type": {
+                "text": "boolean"
+              },
+              "static": true,
+              "default": "true"
+            },
+            {
+              "kind": "field",
+              "name": "data",
+              "privacy": "public",
+              "type": {
+                "text": "SegmentItem[]"
+              },
+              "default": "[]"
+            },
+            {
+              "kind": "field",
+              "name": "value",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "value"
+            },
+            {
+              "kind": "field",
+              "name": "name",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "name",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "size",
+              "privacy": "public",
+              "type": {
+                "text": "SegmentedControlSize"
+              },
+              "default": "'md'",
+              "attribute": "size",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "#internals",
+              "privacy": "private",
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "form",
+              "type": {
+                "text": "HTMLFormElement | null"
+              },
+              "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "formResetCallback",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "field",
+              "name": "#enabled",
+              "privacy": "private",
+              "type": {
+                "text": "SegmentItem[]"
+              },
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "#selected",
+              "privacy": "private",
+              "type": {
+                "text": "string"
+              },
+              "description": "Falls back to the first enabled segment, as a radio group always has one.",
+              "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "#select",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "next",
+                  "type": {
+                    "text": "string"
+                  }
+                },
+                {
+                  "name": "moveFocus",
+                  "type": {
+                    "text": "boolean"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "#onKeyDown",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "event",
+                  "type": {
+                    "text": "KeyboardEvent"
+                  }
+                }
+              ],
+              "description": "WAI-ARIA roving tabindex: arrows wrap across the enabled segments and\nselection follows focus, so the group is one tab stop rather than N."
+            }
+          ],
+          "events": [
+            {
+              "name": "change",
+              "type": {
+                "text": "Event"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "value",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "value"
+            },
+            {
+              "name": "name",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "name"
+            },
+            {
+              "name": "size",
+              "type": {
+                "text": "SegmentedControlSize"
+              },
+              "default": "'md'",
+              "fieldName": "size"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-segmented-control",
+          "cssParts": [
+            {
+              "name": "group"
+            },
+            {
+              "name": "segment"
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiSegmentedControl",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiSegmentedControl",
+          "declaration": {
+            "name": "CivitaiSegmentedControl",
+            "module": "src/elements/civitai-segmented-control.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiSegmentedControl",
+          "declaration": {
+            "name": "defineCivitaiSegmentedControl",
+            "module": "src/elements/civitai-segmented-control.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-segmented-control",
+          "declaration": {
+            "name": "CivitaiSegmentedControl",
+            "module": "src/elements/civitai-segmented-control.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-text-input.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiTextInput",
+          "members": [
+            {
+              "kind": "field",
+              "name": "formAssociated",
+              "type": {
+                "text": "boolean"
+              },
+              "static": true,
+              "default": "true"
+            },
+            {
+              "kind": "field",
+              "name": "name",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "name",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "value",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Current text. The `value` ATTRIBUTE is the default, as on a native input.",
+              "default": "''",
+              "attribute": "value"
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "label",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "description",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "description",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "error",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Message to show; also marks the control invalid.",
+              "default": "''",
+              "attribute": "error",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "placeholder",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "placeholder",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "type",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'text'",
+              "attribute": "type",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "required",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "required",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "disabled",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "readOnly",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "readonly",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "#internals",
+              "privacy": "private",
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "#id",
+              "privacy": "private",
+              "readonly": true,
+              "default": "`ci-text-input-${(sequence += 1)}`"
+            },
+            {
+              "kind": "field",
+              "name": "form",
+              "type": {
+                "text": "HTMLFormElement | null"
+              },
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "validity",
+              "type": {
+                "text": "ValidityState"
+              },
+              "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "checkValidity",
+              "return": {
+                "type": {
+                  "text": "boolean"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "reportValidity",
+              "return": {
+                "type": {
+                  "text": "boolean"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "formResetCallback",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Native semantics: reset returns to the `value` attribute, not to empty."
+            },
+            {
+              "kind": "method",
+              "name": "formStateRestoreCallback",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "state",
+                  "type": {
+                    "text": "string | null"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "field",
+              "name": "#control",
+              "privacy": "private",
+              "type": {
+                "text": "HTMLInputElement | null"
+              },
+              "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "#sync",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "#onInput",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "event",
+                  "type": {
+                    "text": "Event"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "#onKeyDown",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "event",
+                  "type": {
+                    "text": "KeyboardEvent"
+                  }
+                }
+              ],
+              "description": "A form does not cross a shadow boundary, so the inner input's implicit\nsubmission never reaches it. Enter has to be forwarded by hand."
+            }
+          ],
+          "attributes": [
+            {
+              "name": "name",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "name"
+            },
+            {
+              "name": "value",
+              "type": {
+                "text": "string"
+              },
+              "description": "Current text. The `value` ATTRIBUTE is the default, as on a native input.",
+              "default": "''",
+              "fieldName": "value"
+            },
+            {
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "label"
+            },
+            {
+              "name": "description",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "description"
+            },
+            {
+              "name": "error",
+              "type": {
+                "text": "string"
+              },
+              "description": "Message to show; also marks the control invalid.",
+              "default": "''",
+              "fieldName": "error"
+            },
+            {
+              "name": "placeholder",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "placeholder"
+            },
+            {
+              "name": "type",
+              "type": {
+                "text": "string"
+              },
+              "default": "'text'",
+              "fieldName": "type"
+            },
+            {
+              "name": "required",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "required"
+            },
+            {
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "disabled"
+            },
+            {
+              "name": "readonly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "readOnly"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-text-input",
+          "cssParts": [
+            {
+              "name": "label"
+            },
+            {
+              "name": "description"
+            },
+            {
+              "name": "control"
+            },
+            {
+              "name": "error"
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiTextInput",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiTextInput",
+          "declaration": {
+            "name": "CivitaiTextInput",
+            "module": "src/elements/civitai-text-input.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiTextInput",
+          "declaration": {
+            "name": "defineCivitaiTextInput",
+            "module": "src/elements/civitai-text-input.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-text-input",
+          "declaration": {
+            "name": "CivitaiTextInput",
+            "module": "src/elements/civitai-text-input.ts"
+          }
+        }
+      ]
+    }
+  ]
+}
