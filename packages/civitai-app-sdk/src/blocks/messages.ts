@@ -910,6 +910,43 @@ export type BlockToParentMessage =
   | { type: 'BLOCK_HELLO'; payload?: undefined }
   | { type: 'BLOCK_READY'; payload: { height: number } }
   | { type: 'BLOCK_ERROR'; payload: { message: string; fatal: boolean } }
+  // The block's transport REFUSED an inbound host message at its trust boundary
+  // and dropped it. Fire-and-forget, no `requestId`, no reply: it reports a drop
+  // that has ALREADY happened, so there is nothing for the host to answer.
+  //
+  // 🔴 WHY THIS EXISTS — IT IS THE ONE BRIDGE SILENCE THE HOST CANNOT SEE.
+  // `@civitai/blocks-react`'s `internal/validate.ts` shape-checks every inbound
+  // payload and DROPS a failure with nothing but a `console.warn`. That check runs
+  // in the iframe, AFTER the host has already replied, so from the host's side the
+  // exchange completed: its own dispatcher counts it `handled`. The block's pending
+  // request then never settles and the UI hangs to its request timeout with no
+  // network call and no host-visible error. Measured cost: on 2026-09-18
+  // `custom-generators` served *"Couldn't load your kept images just now."* to
+  // every viewer from relist until a human found it by hand, while
+  // `civitai_app_block_renders_total` read `result=ok, error_class=none` for the
+  // whole window (that metric fires once per mount and is blind to anything after
+  // ready). This message is what makes that state a number instead of a warning in
+  // a console nobody has open.
+  //
+  // 🔴 `type` IS THE HANGING REQUEST'S TYPE, NOT THE REJECTED REPLY'S. Two reasons,
+  // and the first one is load-bearing:
+  //  - the host's bridge counter bounds its `type` label against the code-owned
+  //    block→host INVENTORY (`boundBridgeMessageType`), which holds NO `*_RESULT`
+  //    key — measured: 0 of its 46. Putting `IMAGES_RESULT` on this wire would
+  //    therefore clamp to `'other'` server-side and collapse every rejection in the
+  //    protocol onto ONE label, i.e. the count would exist and distinguish nothing;
+  //  - the request type is the operationally useful half anyway: it names what the
+  //    viewer is waiting on. The reply type and its top-level validator are both
+  //    derivable from it, and the block's own `console.warn` names them.
+  // Senders MUST clamp with {@link boundBlockToParentMessageType}; a rejection with
+  // no resolvable pending request (a host PUSH — `THEME_CHANGE`,
+  // `CONSENT_UNAVAILABLE`, `TOKEN_REFRESH`) carries
+  // {@link OTHER_MESSAGE_TYPE_LABEL} instead, because nothing awaits a push so
+  // there is no hanging request to name.
+  //
+  // A host that does not handle this type degrades safely: its dispatcher records
+  // one `no_handler` and, because the payload carries no `requestId`, sends no NACK.
+  | { type: 'BLOCK_MESSAGE_REJECTED'; payload: { type: string } }
   | { type: 'REQUEST_TOKEN'; payload: { requestId: string; blockInstanceId: string } }
   | { type: 'RESIZE_IFRAME'; payload: { height: number } }
   // `idempotencyKey` (OPTIONAL): a stable client id the block reuses across its
@@ -1333,6 +1370,152 @@ export type BlockToParentMessage =
     };
 
 export type BlockToParentMessageType = BlockToParentMessage['type'];
+
+/**
+ * Every {@link BlockToParentMessage} type as a RUNTIME value, in union order.
+ *
+ * 🔴 WHY A RUNTIME ARRAY EXISTS WHEN THE UNION ALREADY DOES. A union is a TYPE:
+ * it evaporates at build time, so nothing at runtime can answer *"is this string
+ * one the protocol declares?"*. `BLOCK_MESSAGE_REJECTED` needs exactly that
+ * answer before it puts a `type` on the wire, for two reasons that are both
+ * silent when they fail:
+ *  - the value reaches a Prometheus LABEL. prom-client retains every distinct
+ *    label set in the Node heap forever across the host fleet, so an unbounded
+ *    label is a memory-exhaustion vector, not untidiness;
+ *  - the host's beacon schema caps `type` at 128 chars and rejects the WHOLE
+ *    batch above it, so one over-length value destroys every legitimate count
+ *    flushed alongside it.
+ *
+ * 🔴 AND WHY IT IS GATED RATHER THAN HAND-MAINTAINED. A copied list answers the
+ * question while drifting from the union it claims to mirror, and the drift is
+ * invisible: a new message type simply reports as `'other'`. The gate below makes
+ * drift a BUILD ERROR in BOTH directions — a union member missing from the array,
+ * and an array entry the union does not declare. `blockMessageTypes.test.ts`
+ * additionally re-derives the union from this file's own source, so growth fails a
+ * TEST and not only a typecheck.
+ *
+ * ⚠️ Measured 2026-09-19 at `civitai-app-starters@44a79dc`: this set was exactly
+ * equal to the 46 keys of civitai's own `hostHandlerParity.ts` `INVENTORY`, which
+ * is what `boundBridgeMessageType` bounds the host-side `type` label against. That
+ * equality is what makes a value clamped here survive the host's clamp unchanged —
+ * it is a measurement, not an invariant, and civitai's own compile-time gate
+ * (published SDK union ⊆ `keyof INVENTORY`) is what holds one direction of it.
+ */
+export const BLOCK_TO_PARENT_MESSAGE_TYPES = [
+  'BLOCK_HELLO',
+  'BLOCK_READY',
+  'BLOCK_ERROR',
+  'BLOCK_MESSAGE_REJECTED',
+  'REQUEST_TOKEN',
+  'RESIZE_IFRAME',
+  'SUBMIT_WORKFLOW',
+  'ESTIMATE_WORKFLOW',
+  'POLL_WORKFLOW',
+  'CANCEL_WORKFLOW',
+  'OPEN_BUZZ_PURCHASE',
+  'GET_BUZZ_BALANCE',
+  'GET_VIEWER',
+  'GET_BUZZ_TRANSACTIONS',
+  'GET_BUZZ_ACCOUNTS',
+  'GET_DAILY_COMPENSATION',
+  'GET_WILDCARD_PACK',
+  'QUERY_APP_WORKFLOWS',
+  'PUBLISH_GENERATION_OUTPUTS',
+  'CREATE_POST_FROM_APP',
+  'GET_IMAGES_BY_IDS',
+  'CANCEL_APP_WORKFLOW',
+  'OPEN_CHECKPOINT_PICKER',
+  'OPEN_RESOURCE_PICKER',
+  'OPEN_IMAGE_UPLOAD',
+  'SET_USER_CHECKPOINT',
+  'NAVIGATE',
+  'REQUEST_SIGN_IN',
+  'REQUEST_CONSENT',
+  'TRACK_EVENT',
+  'APP_STORAGE_GET',
+  'APP_STORAGE_SET',
+  'APP_STORAGE_DELETE',
+  'APP_STORAGE_LIST',
+  'APP_STORAGE_QUOTA',
+  'SHARED_LIST',
+  'SHARED_GET_COUNT',
+  'SHARED_GET_COUNTS',
+  'SHARED_APPEND',
+  'SHARED_VOTE',
+  'SHARED_UNVOTE',
+  'SHARED_WITHDRAW',
+  'SHARED_UPDATE',
+  'SHARED_GET',
+  'SHARED_REPORT',
+  'SAVE_IMAGE',
+  'SET_COLLECTION_FOLLOW',
+  // `satisfies` catches the EXTRA direction at this declaration, naming the bad
+  // entry on the line that wrote it. It cannot catch the MISSING direction — an
+  // array is a subset-shaped claim — which is what the gate below is for.
+] as const satisfies readonly BlockToParentMessageType[];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BIDIRECTIONAL compile-time gate on the array above. Both directions matter and
+// they fail differently:
+//   - a union member MISSING from the array  ⇒ that type silently reports as
+//     `'other'`, so the counter exists and says nothing about the new message;
+//   - an array entry the union does NOT declare ⇒ a dead label value that reads
+//     as coverage for a message the protocol cannot send.
+// If either fires, the error prints the offending member(s):
+//   Type 'true' is not assignable to type '["…", "GET_SOMETHING_NEW"]'
+// ─────────────────────────────────────────────────────────────────────────────
+type _MessageTypesMissing = Exclude<
+  BlockToParentMessageType,
+  (typeof BLOCK_TO_PARENT_MESSAGE_TYPES)[number]
+>;
+type _MessageTypesExtra = Exclude<
+  (typeof BLOCK_TO_PARENT_MESSAGE_TYPES)[number],
+  BlockToParentMessageType
+>;
+type _MessageTypesGate = [_MessageTypesMissing] extends [never]
+  ? [_MessageTypesExtra] extends [never]
+    ? true
+    : ['BLOCK_TO_PARENT_MESSAGE_TYPES declares types the union does not:', _MessageTypesExtra]
+  : ['BLOCK_TO_PARENT_MESSAGE_TYPES is missing union member(s):', _MessageTypesMissing];
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const _messageTypesGate: _MessageTypesGate = true;
+
+/**
+ * The bucket a message type falls into when the protocol does not declare it.
+ *
+ * 🔴 SPELLED `'other'` TO MATCH civitai's `boundBridgeMessageType` EXACTLY. Both
+ * sides clamp, and the host clamps LAST — so a different spelling here would be
+ * rewritten server-side, and the value this SDK reports would differ from the
+ * value that lands in the series. Same word ⇒ the emitted label IS the stored
+ * label, and a reader of one can reason about the other.
+ *
+ * It cannot collide with a real message type: every member of
+ * {@link BLOCK_TO_PARENT_MESSAGE_TYPES} is SCREAMING_SNAKE_CASE. Pinned by test
+ * rather than left to the eye.
+ */
+export const OTHER_MESSAGE_TYPE_LABEL = 'other';
+
+const BLOCK_TO_PARENT_MESSAGE_TYPE_SET: ReadonlySet<string> = new Set(
+  BLOCK_TO_PARENT_MESSAGE_TYPES,
+);
+
+/**
+ * Clamp an arbitrary string to a bounded block→host message label: the type
+ * itself when {@link BLOCK_TO_PARENT_MESSAGE_TYPES} declares it, else
+ * {@link OTHER_MESSAGE_TYPE_LABEL}.
+ *
+ * A `Set` rather than an object map ON PURPOSE: a plain-object lookup answers
+ * truthily for inherited keys (`'toString'`, `'constructor'`), so an object-backed
+ * membership test would pass ~12 prototype names through as "declared types" and
+ * put them on a prom label. A `Set` has no such keys.
+ *
+ * Takes `string` rather than the union so a JavaScript caller — and a block built
+ * against a NEWER protocol than the host it is running under — reaches the clamp
+ * rather than bypassing it on the strength of a type it does not actually satisfy.
+ */
+export function boundBlockToParentMessageType(type: string): string {
+  return BLOCK_TO_PARENT_MESSAGE_TYPE_SET.has(type) ? type : OTHER_MESSAGE_TYPE_LABEL;
+}
 
 /**
  * Narrowing helper for either-direction message handlers.

@@ -49,7 +49,12 @@ export {
 } from './initFragment.js';
 export type { BlockInitFragment } from './initFragment.js';
 
-export { isMessage } from './messages.js';
+export {
+  isMessage,
+  BLOCK_TO_PARENT_MESSAGE_TYPES,
+  OTHER_MESSAGE_TYPE_LABEL,
+  boundBlockToParentMessageType,
+} from './messages.js';
 export type {
   BlockInitPayload,
   BlockToParentMessage,

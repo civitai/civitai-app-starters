@@ -1,5 +1,7 @@
 import {
+  boundBlockToParentMessageType,
   isMessage,
+  OTHER_MESSAGE_TYPE_LABEL,
   parseBlockInitFragment,
   stripBlockInitFragment,
   type BlockInitPayload,
@@ -26,6 +28,32 @@ import type { WrappedToken } from '@civitai/app-sdk/blocks';
 
 const INIT_TIMEOUT_MS = 10_000;
 
+/**
+ * Sliding window for the `BLOCK_MESSAGE_REJECTED` emit budget below.
+ */
+const REJECTION_REPORT_WINDOW_MS = 10_000;
+
+/**
+ * Most `BLOCK_MESSAGE_REJECTED` reports one transport will post per
+ * {@link REJECTION_REPORT_WINDOW_MS}.
+ *
+ * 🔴 IT IS A BUDGET ON THE BRIDGE, NOT A TUNING KNOB, AND IT MAKES THE SERIES AN
+ * UNDERCOUNT ON PURPOSE. The host's dispatcher rate-limits inbound messages to 30
+ * per second and `bridgeLabels.ts` is explicit that a flood must not burn the
+ * budget legitimate `BLOCK_ERROR` reporting needs. An uncapped reporter would turn
+ * a broken-reply flood into exactly that: one inbound rejection ⇒ one outbound
+ * report, on a path whose whole premise is that something is already wrong.
+ *
+ * 3/sec sustained is one tenth of the host's inbound budget, and far above what a
+ * real rejection produces — a genuine protocol break rejects one reply per
+ * user-driven request. Above the cap reports are DROPPED, so read
+ * `outcome="validator_rejected"` as *which types are being rejected and when it
+ * started*, never as an exact total. That is the same trade
+ * `BRIDGE_MESSAGE_COUNT_MAX` makes on the host side: prefer a visible, bounded
+ * wrongness to an unbounded channel.
+ */
+const MAX_REJECTION_REPORTS_PER_WINDOW = 30;
+
 export interface IframeTransportOptions {
   /**
    * Origins from which `BLOCK_INIT` (and any other inbound message) is
@@ -45,6 +73,18 @@ interface PendingRequest {
   reject: (err: Error) => void;
   timeoutId: ReturnType<typeof setTimeout>;
   responseType: ParentToBlockMessageType;
+  /**
+   * The block→host message type this entry is awaiting a reply TO — i.e. what the
+   * block asked for, not what the host answers with.
+   *
+   * 🔴 IT IS HERE FOR THE REJECTION REPORT, AND THE REPLY TYPE CANNOT SUBSTITUTE.
+   * `BLOCK_MESSAGE_REJECTED` names the hanging REQUEST because the host's counter
+   * bounds its `type` label against the block→host protocol inventory, which holds
+   * no `*_RESULT` key — so reporting `responseType` would clamp to `'other'`
+   * server-side and collapse every rejection onto one label. See the message's
+   * docblock in `@civitai/app-sdk/blocks`.
+   */
+  requestType: string;
 }
 
 /**
@@ -88,6 +128,14 @@ export class IframeTransport implements BlockTransport {
   private initResolved = false;
 
   private readonly messageListener: (event: MessageEvent) => void;
+
+  /**
+   * Timestamps of the `BLOCK_MESSAGE_REJECTED` reports posted inside the current
+   * {@link REJECTION_REPORT_WINDOW_MS} — the emit budget's whole state. Pruned on
+   * every report, so it cannot grow past
+   * {@link MAX_REJECTION_REPORTS_PER_WINDOW} + 1.
+   */
+  private rejectionReportTimes: number[] = [];
 
   constructor(opts: IframeTransportOptions) {
     if (!opts.allowedParentOrigins.length) {
@@ -300,6 +348,7 @@ export class IframeTransport implements BlockTransport {
         reject,
         timeoutId,
         responseType,
+        requestType: request.type,
       });
       this.dispatch(request.type, { ...request.payload, requestId });
     });
@@ -351,6 +400,85 @@ export class IframeTransport implements BlockTransport {
     }
   }
 
+  /**
+   * Which block→host request is left hanging by a reply we are about to drop —
+   * clamped to a bounded label, `'other'` when nothing was awaiting it.
+   *
+   * The `requestId` is read from an UNVALIDATED payload (the validator just
+   * rejected it), so it is used ONLY as a `Map` key on our own pending table and
+   * never trusted as data. A lookup miss and a non-string both mean the same
+   * thing here: no pending request, so no hang, so nothing to name.
+   *
+   * 🔴 THE CLAMP IS NOT REDUNDANT WITH THE TYPE SYSTEM. `requestType` is whatever
+   * the caller passed to `sendRequest` — typed, but a JavaScript consumer, or a
+   * block built against a newer protocol, can put any string there, and this value
+   * becomes a Prometheus label on the host. See `boundBlockToParentMessageType`.
+   */
+  private hangingRequestTypeFor(payload: unknown): string {
+    const requestId = (payload as { requestId?: unknown } | null | undefined)?.requestId;
+    if (typeof requestId !== 'string') return OTHER_MESSAGE_TYPE_LABEL;
+    const pending = this.pending.get(requestId);
+    if (!pending) return OTHER_MESSAGE_TYPE_LABEL;
+    return boundBlockToParentMessageType(pending.requestType);
+  }
+
+  /**
+   * Tell the host that this transport refused an inbound message, so the drop
+   * becomes a number instead of a `console.warn` nobody is reading.
+   *
+   * 🔴 WHY IT GOES OVER THE BRIDGE AND NOT STRAIGHT TO AN ENDPOINT. A block runs
+   * in a sandboxed iframe at an OPAQUE origin with no ambient credential and no
+   * civitai session, so it has no metrics path of its own: a direct POST would be
+   * cross-origin, uncredentialed, and would need a new PUBLIC unauthenticated
+   * endpoint to receive it — a fresh abuse surface for an observability add-on, and
+   * explicitly out of scope. The host already owns the receiving half: its
+   * dispatcher counts every inbound bridge message on
+   * `civitai_app_block_bridge_messages_total{app_block_id,type,host,outcome}` and
+   * flushes it through the same-origin, coalescing `/api/track/block-message`
+   * beacon. Reporting over the bridge reuses that end to end and adds no route: the
+   * host's handler for this message records `outcome="validator_rejected"` against
+   * the `type` we name here.
+   *
+   * 🔴 THE VALIDATOR'S NAME IS DELIBERATELY NOT ON THIS WIRE. `payloadValidatorFor`
+   * is a function from type to validator, so the top-level validator is DERIVABLE
+   * from the type already on it — a `validator` field would carry only the
+   * derivable half, which reads as coverage while adding none, and a fifth
+   * Prometheus label is not free (the beacon route's own docblock asks for the label
+   * product to be read before one is added). The half that is NOT derivable is
+   * which NESTED helper rejected — `isValidGatedImage` inside `isValidImagesResult`
+   * on 2026-09-18 — and no validator in `validate.ts` reports that today. It stays
+   * in the `console.warn` above, and closing it properly means teaching the
+   * validators to return a reason.
+   *
+   * PRE-INIT REJECTIONS ARE QUEUED, NOT SENT. `dispatch` has no `parentOrigin`
+   * before the first valid `BLOCK_INIT`, so a report raised while rejecting a
+   * malformed `BLOCK_INIT` flushes only if a LATER init succeeds, and is lost if
+   * none does. That gap is already covered by a different series: a block that
+   * never inits never sends `BLOCK_READY`, so the host's ready timeout records
+   * `civitai_app_block_renders_total{result="timeout"}`. This counter exists for the
+   * failures that happen AFTER ready, which that one is structurally blind to.
+   */
+  private reportRejection(hangingRequestType: string): void {
+    const now = Date.now();
+    const recent = this.rejectionReportTimes.filter(
+      (t) => now - t < REJECTION_REPORT_WINDOW_MS,
+    );
+    if (recent.length >= MAX_REJECTION_REPORTS_PER_WINDOW) {
+      this.rejectionReportTimes = recent;
+      return;
+    }
+    recent.push(now);
+    this.rejectionReportTimes = recent;
+    // Fail-soft: a throw here would propagate out of the `message` listener and
+    // abort dispatch for this event — turning an observability feature into a
+    // second silent drop on top of the one it is reporting.
+    try {
+      this.dispatch('BLOCK_MESSAGE_REJECTED', { type: hangingRequestType });
+    } catch {
+      // swallow — telemetry must never break the transport it observes
+    }
+  }
+
   private postToParent(msg: { type: string; payload: unknown }): void {
     // `parentOrigin` is captured from a validated BLOCK_INIT; safe to use as targetOrigin.
     this.window.parent.postMessage(msg, this.parentOrigin!);
@@ -367,10 +495,16 @@ export class IframeTransport implements BlockTransport {
     // rather than crash — see ./validate.ts.
     const validator = payloadValidatorFor(data.type);
     if (validator && !validator(data.payload)) {
+      const hangingRequestType = this.hangingRequestTypeFor(data.payload);
       // eslint-disable-next-line no-console -- developer-facing diagnostic at a trust boundary
       console.warn(
-        `IframeTransport: dropping malformed "${data.type}" message from ${event.origin}`,
+        `IframeTransport: dropping malformed "${data.type}" message from ${event.origin} ` +
+          `(rejected by ${validator.name || 'an anonymous validator'}` +
+          (hangingRequestType === OTHER_MESSAGE_TYPE_LABEL
+            ? ', unsolicited push — nothing was awaiting it)'
+            : `; "${hangingRequestType}" will now hang to its request timeout)`),
       );
+      this.reportRejection(hangingRequestType);
       return;
     }
 

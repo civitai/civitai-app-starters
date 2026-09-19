@@ -88,6 +88,11 @@ const REQUEST_TIMEOUT_CLASS = {
   // ── Fire-and-forget: no requestId, so no pending promise to time out ────
   BLOCK_ERROR: 'no-reply',
   BLOCK_HELLO: 'no-reply',
+  // Reports a drop that has ALREADY happened, so there is nothing to answer and
+  // nothing to bound. Deliberately `'no-reply'` and not merely "unhandled": if a
+  // host ever did reply to it, that reply would itself run the validator this
+  // message exists to report on — a rejection loop with a budget as its only brake.
+  BLOCK_MESSAGE_REJECTED: 'no-reply',
   BLOCK_READY: 'no-reply',
   NAVIGATE: 'no-reply',
   // Human-gated in SPIRIT, but the host never replies — a grant arrives later as
