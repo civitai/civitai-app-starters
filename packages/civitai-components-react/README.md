@@ -24,25 +24,35 @@ Alert, Loader, Badge`. Each renders the exact markup documented in
 
 ## Elements
 
-React bindings for the custom elements in
-[`@civitai/components`](../civitai-components#elements), on their own entry
-point so nothing here pulls a renderer unless you ask for one:
+React bindings for every `<civitai-*>` custom element, built on
+[`@lit/react`](https://lit.dev/docs/frameworks/react/). Props and their types
+come from the element class, refs point at the element itself, and values are
+assigned as **properties** — which is what React 19 gets wrong on its own, and
+why these exist at all.
 
 ```tsx
-import { ButtonElement, SegmentedControlElement } from '@civitai/components-react/elements';
+import { CivitaiButton } from '@civitai/components-react/elements/civitai-button';
+import { CivitaiTag } from '@civitai/components-react/elements/civitai-tag';
 
-<ButtonElement variant="outline" onClick={run}>Generate</ButtonElement>
-<SegmentedControlElement data={views} value={view} onChange={setView} aria-label="View" />
+<CivitaiButton variant="outline" onClick={run}>Generate</CivitaiButton>
+<CivitaiTag name="wolf" confidence={0.82} onVote={(e) => save(e.detail)} />
 ```
 
-These sit alongside `Button` / `SegmentedControl`, which keep rendering the
-attribute markup. The difference is where the behaviour lives: the elements
-carry it themselves, so the same keyboard handling works outside React too.
+Import a binding by name and you get that element and nothing else. The
+`@civitai/components-react/elements` barrel is the convenient path and registers
+all 32.
 
-Props are assigned as **properties** after mount. React chooses between
-attribute and property by whether the element has upgraded, so a boolean can
-arrive as the string `""` and never reach Lit's converter — and an array prop
-like `data` cannot survive an attribute at all.
+Handlers receive the **DOM event**, not an extracted value —
+`onChange={(e) => e.target.value}`, `onVote={(e) => e.detail}`. The bindings are
+generated from the elements manifest; a parity test fails if a committed file
+stops matching, and two more fail if the event map names an event no element
+fires, or misses one that an element does.
+
+**Server rendering** is best-effort: property assignment happens in effects,
+which do not run on the server, so the wrapper emits a bare tag and the element
+fills in after hydration. The tag written directly in JSX keeps its attributes
+server-side and the elements reflect them, so that is the path to use where
+server output matters.
 
 ## The point of this package
 

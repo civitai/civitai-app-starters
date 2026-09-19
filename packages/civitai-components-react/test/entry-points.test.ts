@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import { elements } from '../scripts/bindings.js';
+
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 // Both `import x from 'y'` / `export … from 'y'` AND a bare `import 'y'`, which
 // is how a register entry pulls its side effect in.
@@ -39,8 +41,24 @@ describe('entry points', () => {
     expect(external).not.toContain('@civitai/components/register');
   });
 
-  it('the `./elements` entry is where the elements enter', () => {
-    const external = [...reachableSpecifiers('dist/elements/index.js')];
-    expect(external).toContain('@civitai/components/register');
+  it('the `./elements` barrel registers every element', () => {
+    const external = new Set(reachableSpecifiers('dist/elements/index.js'));
+    for (const { specifier } of elements()) {
+      expect(external, `the barrel must pull ${specifier}/define`).toContain(
+        `@civitai/components/${specifier}/define`
+      );
+    }
+  });
+
+  it('a single binding reaches its own element and nothing else', () => {
+    // The whole point of per-element modules: importing one button must not
+    // drag in thirty-two elements behind it.
+    const external = [...reachableSpecifiers('dist/elements/civitai-button.js')]
+      .filter((s) => s.startsWith('@civitai/components'))
+      .sort();
+    expect(external).toEqual([
+      '@civitai/components/civitai-button',
+      '@civitai/components/civitai-button/define',
+    ]);
   });
 });
