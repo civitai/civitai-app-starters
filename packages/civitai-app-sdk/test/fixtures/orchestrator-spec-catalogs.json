@@ -18,7 +18,7 @@
     ".discriminator.mapping."
   ],
   "specUrl": "https://orchestration.civitai.com/openapi/v2-consumers.json",
-  "readOn": "2026-09-01",
+  "readOn": "2026-09-19",
   "workflowStepTypes": [
     "aceStepAudio",
     "ageClassification",
@@ -34,6 +34,7 @@
     "imageBackgroundRemoval",
     "imageGen",
     "imageResourceTraining",
+    "imageScanning",
     "imageToSvg",
     "imageUpload",
     "imageUpscaler",
@@ -48,6 +49,7 @@
     "modelPickleScan",
     "polyGen",
     "preprocessImage",
+    "preprocessVideo",
     "promptEnhancement",
     "qwenImageBench",
     "shieldstralModeration",
@@ -66,12 +68,14 @@
     "wdTagging",
     "webScrape",
     "webSearch",
-    "xGuardModeration"
+    "xGuardModeration",
+    "yuE2"
   ],
   "imageGenEngines": [
     "comfy",
     "fal",
     "flux1-kontext",
+    "flux1-pro",
     "flux2",
     "gemini",
     "google",
