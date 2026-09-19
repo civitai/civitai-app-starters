@@ -24,6 +24,8 @@ export class CivitaiTextarea extends CivitaiField {
     placeholder: { reflect: true },
     rows: { type: Number, reflect: true },
     readOnly: { type: Boolean, reflect: true, attribute: 'readonly' },
+    maxLength: { type: Number, reflect: true, attribute: 'maxlength' },
+    autocomplete: { reflect: true },
   };
 
   declare placeholder: string;
@@ -31,12 +33,17 @@ export class CivitaiTextarea extends CivitaiField {
       attribute markup this replaces does not, and that is the contract here. */
   declare rows: number;
   declare readOnly: boolean;
+  /** 0 means unbounded, matching an absent native `maxlength`. */
+  declare maxLength: number;
+  declare autocomplete: string;
 
   constructor() {
     super();
     this.placeholder = '';
     this.rows = 0;
     this.readOnly = false;
+    this.maxLength = 0;
+    this.autocomplete = '';
   }
 
   // No Enter-to-submit: in a textarea, Enter is a newline.
@@ -50,6 +57,8 @@ export class CivitaiTextarea extends CivitaiField {
       name=${ifDefined(name)}
       rows=${ifDefined(this.rows > 0 ? this.rows : undefined)}
       placeholder=${ifDefined(this.placeholder || undefined)}
+      maxlength=${ifDefined(this.maxLength > 0 ? this.maxLength : undefined)}
+      autocomplete=${ifDefined(this.autocomplete || undefined)}
       ?required=${this.required}
       ?disabled=${this.disabled}
       ?readonly=${this.readOnly}

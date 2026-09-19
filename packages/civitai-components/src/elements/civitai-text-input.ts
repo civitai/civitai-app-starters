@@ -12,17 +12,24 @@ export class CivitaiTextInput extends CivitaiField {
     placeholder: { reflect: true },
     type: { reflect: true },
     readOnly: { type: Boolean, reflect: true, attribute: 'readonly' },
+    maxLength: { type: Number, reflect: true, attribute: 'maxlength' },
+    autocomplete: { reflect: true },
   };
 
   declare placeholder: string;
   declare type: string;
   declare readOnly: boolean;
+  /** 0 means unbounded, matching an absent native `maxlength`. */
+  declare maxLength: number;
+  declare autocomplete: string;
 
   constructor() {
     super();
     this.placeholder = '';
     this.type = 'text';
     this.readOnly = false;
+    this.maxLength = 0;
+    this.autocomplete = '';
   }
 
   protected override renderControl(): TemplateResult {
@@ -35,6 +42,8 @@ export class CivitaiTextInput extends CivitaiField {
       type=${this.type}
       name=${ifDefined(name)}
       placeholder=${ifDefined(this.placeholder || undefined)}
+      maxlength=${ifDefined(this.maxLength > 0 ? this.maxLength : undefined)}
+      autocomplete=${ifDefined(this.autocomplete || undefined)}
       ?required=${this.required}
       ?disabled=${this.disabled}
       ?readonly=${this.readOnly}

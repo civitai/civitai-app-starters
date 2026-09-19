@@ -1,3 +1,4 @@
+import { userEvent } from 'vitest/browser';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { componentsCss } from '../src/styles.generated.js';
@@ -99,6 +100,37 @@ describe('<civitai-text-input> form participation', () => {
     await rendered(el);
     expect(el.checkValidity()).toBe(false);
     expect(el.validity.customError).toBe(true);
+  });
+});
+
+describe('<civitai-text-input> native input attributes', () => {
+  it('caps what a user can type at maxlength', async () => {
+    mount('<civitai-text-input maxlength="5"></civitai-text-input>');
+    const el = await rendered(scope!.querySelector('civitai-text-input')!);
+
+    controlOf(el).focus();
+    await userEvent.keyboard('ABCDEFGHIJ');
+
+    expect(controlOf(el).value).toBe('ABCDE');
+    expect(el.value).toBe('ABCDE');
+  });
+
+  it('is unbounded with no maxlength', async () => {
+    mount('<civitai-text-input></civitai-text-input>');
+    const el = await rendered(scope!.querySelector('civitai-text-input')!);
+
+    controlOf(el).focus();
+    await userEvent.keyboard('ABCDEFGHIJ');
+
+    expect(el.value).toBe('ABCDEFGHIJ');
+    expect(controlOf(el).hasAttribute('maxlength')).toBe(false);
+  });
+
+  it('hands autocomplete to the control, which is what the UA reads', async () => {
+    mount('<civitai-text-input autocomplete="off"></civitai-text-input>');
+    const el = await rendered(scope!.querySelector('civitai-text-input')!);
+
+    expect(controlOf(el).autocomplete).toBe('off');
   });
 });
 
