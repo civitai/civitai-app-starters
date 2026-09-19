@@ -2,8 +2,9 @@ import { playwright } from '@vitest/browser-playwright';
 import { defineConfig } from 'vitest/config';
 
 /**
- * `node` = source guards, `browser` = element behaviour on chromium,
- * `contract` = the cross-engine surface on all three engines.
+ * `node` = source guards, `browser` = element behaviour on chromium, `contract`
+ * = the cross-engine surface on all three engines. `prefers-dark` needs its own
+ * project because the OS scheme is a browser-context option, not a page one.
  */
 const CHROMIUM_ARGS = ['--no-sandbox', '--disable-dev-shm-usage'];
 
@@ -28,7 +29,12 @@ export default defineConfig({
           name: 'node',
           environment: 'node',
           include: ['test/**/*.test.ts'],
-          exclude: ['node_modules', '**/*.browser.test.ts', '**/*.contract.test.ts'],
+          exclude: [
+            'node_modules',
+            '**/*.browser.test.ts',
+            '**/*.contract.test.ts',
+            '**/*.prefers-dark.test.ts',
+          ],
         },
       },
       {
@@ -43,6 +49,22 @@ export default defineConfig({
               launchOptions: { args: CHROMIUM_ARGS, ...CONTRACT_EXECUTABLE },
             }),
             instances: CONTRACT_BROWSERS.map((browser) => ({ browser })),
+          },
+        },
+      },
+      {
+        test: {
+          name: 'prefers-dark',
+          include: ['test/**/*.prefers-dark.test.ts'],
+          browser: {
+            enabled: true,
+            headless: true,
+            screenshotFailures: false,
+            provider: playwright({
+              launchOptions: { args: CHROMIUM_ARGS, ...EXECUTABLE },
+              contextOptions: { colorScheme: 'dark' },
+            }),
+            instances: [{ browser: 'chromium' }],
           },
         },
       },

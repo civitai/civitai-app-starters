@@ -3,7 +3,7 @@
 Framework-agnostic **design tokens**, derived at build time from civitai's real
 Mantine theme. Ships three forms of the same `--civitai-*` token contract:
 
-- `dist/tokens.css` — a `:root` + `[data-theme='light'|'dark']` stylesheet
+- `dist/tokens.css` — a `:root` + `[data-theme='light'|'dark']` + OS-preference stylesheet
   (`--civitai-*` custom properties; `<color>` tokens registered via `@property`).
 - typed JS — `import { tokens, darkTokens, tokenVars, tokensCss } from '@civitai/theme'`.
 - `dist/tokens.dtcg.json` — a W3C **Design Tokens Community Group** export
@@ -99,6 +99,13 @@ tokens.colorPrimary;     // "#228BE6"
 ```
 
 Theme by setting `data-theme="light" | "dark"` on any ancestor.
+
+Set nothing and the page follows the OS: the stylesheet carries the dark values
+under `@media (prefers-color-scheme: dark)`, scoped to `:root:not([data-theme])`.
+An app that sets the attribute — a block acting on the host's `THEME_CHANGE`, or
+its own theme switch — never matches that block and is unaffected. The attribute
+is the override, and it wins wherever it sits, because a nearer ancestor's tokens
+inherit over a farther one's.
 
 ## Build
 

@@ -377,22 +377,31 @@ export function buildArtifacts(themeOverride: MantineThemeOverride = civitaiThem
   // Explicit light block mirrors the :root defaults so `[data-theme='light']`
   // (used by @civitai/components) always wins over an ambient dark ancestor.
   const lightBlock = meta.map((m) => `  ${m.varName}: ${root[m.varName]};`).join('\n');
-  const darkBlock = meta
+  const darkDecls = meta
     .filter((m) => m.varName in dark)
-    .map((m) => `  ${m.varName}: ${dark[m.varName]};`)
-    .join('\n');
+    .map((m) => `${m.varName}: ${dark[m.varName]};`);
+  const darkBlock = darkDecls.map((d) => `  ${d}`).join('\n');
+  const nestedDarkBlock = darkDecls.map((d) => `    ${d}`).join('\n');
 
   // Not a token: it tells the UA which scheme to paint NATIVE controls in.
   // Without it a number input's spinner, a select's caret and a scrollbar stay
   // light against a dark surface. It inherits, so it reaches shadow roots too.
   const scheme = (value: string) => `  color-scheme: ${value};`;
 
+  // `:not([data-theme])` is what keeps an explicit choice authoritative: a host
+  // that sets the attribute never matches, and a nested one wins by proximity.
+  const preferenceBlock =
+    `@media (prefers-color-scheme: dark) {\n` +
+    `  :root:not([data-theme]) {\n` +
+    `  ${scheme('dark')}\n${nestedDarkBlock}\n  }\n}\n`;
+
   const tokensCss =
     `${AUTOGEN_BANNER}\n` +
     `${propertyRules}\n\n` +
     `:root {\n${scheme('light')}\n${rootBlock}\n}\n\n` +
     `[data-theme='light'] {\n${scheme('light')}\n${lightBlock}\n}\n\n` +
-    `[data-theme='dark'] {\n${scheme('dark')}\n${darkBlock}\n}\n`;
+    `[data-theme='dark'] {\n${scheme('dark')}\n${darkBlock}\n}\n\n` +
+    preferenceBlock;
 
   // ---- tokens.dtcg.json (W3C DTCG 2025.10) ----
   const dtcg: Record<string, Record<string, unknown>> = {};
