@@ -355,6 +355,26 @@ jobs:
           PROBE_SKIP_BUILD: '1'
         timeout-minutes: 5
 
+      # STATIC-SERVING PROBE (the two PWA starters). Their prod entry used to
+      # resolve `./dist` against the PROCESS CWD and serve the SPA fallback by
+      # fetching ITSELF over TCP. Started from any directory other than the
+      # package root — systemd `WorkingDirectory`, a container `WORKDIR`, pm2 —
+      # the static middleware missed, so `/index.html` fell into the same
+      # catch-all that fetched it, recursing without bound. Measured: 25
+      # requests took the process from 20 open descriptors to 92,124, and every
+      # one of them timed out, while the server still logged "Listening".
+      #
+      # The probe starts the built server from a temp directory and asserts a
+      # real asset comes back byte-identical, that a concurrent burst does not
+      # double the socket count, and that a missing dist/index.html exits
+      # non-zero. PROBE_SKIP_BUILD reuses the Build step's output.
+      - name: Static-serving probe (PWA starters)
+        if: matrix.starter == 'react-pwa' || matrix.starter == 'svelte-pwa'
+        run: pnpm --filter ./starters/${{ matrix.starter }} probe:static-serving
+        env:
+          PROBE_SKIP_BUILD: '1'
+        timeout-minutes: 5
+
       - name: Lint (if defined)
         run: |
           if pnpm --filter ./starters/${{ matrix.starter }} exec node -e "process.exit(require('./package.json').scripts?.lint ? 0 : 1)" 2>/dev/null; then
