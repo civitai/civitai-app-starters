@@ -32,6 +32,16 @@ jobs:
       - run: pnpm --filter @civitai/app-sdk test
       - run: pnpm --filter @civitai/app-sdk build
 
+      # AFTER build, on purpose. The vitest suite imports `src/`; every consumer
+      # imports the PUBLISHED specifier (`@civitai/app-sdk/vite`). Those are two
+      # different resolutions and a green suite says nothing about the second --
+      # a typo in `exports`, a `dist` path never emitted, or a schema file that
+      # `files` does not ship all leave the tests green and a scaffold build red.
+      # This resolves the node-only subpaths BY PACKAGE NAME and runs
+      # `defineBlock` once, which is what proves the vendored schema is reachable
+      # from `dist/`.
+      - run: pnpm --filter @civitai/app-sdk test:exports
+
   schema-drift:
     name: Canonical schema drift-check
     runs-on: ubuntu-latest

@@ -1,10 +1,14 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// Validates block.manifest.json against the canonical schema on every dev-server
-// boot and every build. Wired in by #330 — before it, nothing in any starter
-// called `defineBlock`, so no shipped manifest was ever checked.
-import { blockManifestPlugin } from './vite-plugin-block-manifest';
+// Validates block.manifest.json on every dev-server boot and every build, by
+// compiling the CANONICAL schema (https://civitai.com/schemas/app-block/v1.json,
+// vendored inside the SDK) with Ajv — not against a hand-written mirror of it.
+// Wired in by #330; before it nothing in any starter called `defineBlock`, so no
+// shipped manifest was ever checked. Needs `ajv` in devDependencies (an optional
+// peer of @civitai/app-sdk). This is a dev-loop gate, NOT a substitute for
+// `civitai app validate`.
+import { blockManifestPlugin } from '@civitai/app-sdk/vite';
 
 // Civitai Apps are served at the ROOT of their own subdomain
 // (https://<blockId>.civit.ai/) by an nginx container — the platform stamps that

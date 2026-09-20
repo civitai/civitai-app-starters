@@ -17,28 +17,30 @@
  * machine-checkable claim, and the fix is to edit both sides.
  */
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
 import { manifest } from './defineBlock.example.js';
 
-const SRC = join(__dirname, '../../src/blocks/defineBlock.ts');
-const EXAMPLE_MODULE = join(__dirname, 'defineBlock.example.ts');
+const HERE = dirname(fileURLToPath(import.meta.url));
+const SRC = join(HERE, '../../src/manifest/defineBlock.ts');
+const EXAMPLE_MODULE = join(HERE, 'defineBlock.example.ts');
 const EXAMPLE_START_MARKER = '// --- EXAMPLE START ---';
 /**
  * The ONE line that legitimately differs: the doc snippet names the published
- * package, the runnable module reaches into `src` so the test exercises the
+ * subpath, the runnable module reaches into `src` so the test exercises the
  * code under test instead of a stale `dist`.
  */
-const DOC_IMPORT = "import { defineBlock } from '@civitai/app-sdk/blocks';";
-const MODULE_IMPORT = "import { defineBlock } from '../../src/blocks/index.js';";
+const DOC_IMPORT = "import { defineBlock } from '@civitai/app-sdk/manifest';";
+const MODULE_IMPORT = "import { defineBlock } from '../../src/manifest/index.js';";
 
 /** Pull the `@example` body out of the docblock, stripping the ` * ` prefix. */
 function readDocExample(): string {
   const source = readFileSync(SRC, 'utf8');
   const start = source.indexOf(' * @example\n');
-  if (start === -1) throw new Error('no `@example` tag found in defineBlock.ts');
+  if (start === -1) throw new Error('no `@example` tag found in src/manifest/defineBlock.ts');
   const end = source.indexOf(' */', start);
   if (end === -1) throw new Error('unterminated docblock after `@example`');
   return source

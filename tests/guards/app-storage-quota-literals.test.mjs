@@ -214,10 +214,9 @@ const EXPECTED_SCAN_UNITS = [
   'starters/examples/kv-storage/src/App.tsx',
   'starters/examples/kv-storage/src/Harness.tsx',
   'starters/examples/kv-storage/src/main.tsx',
-  // Added by #330 — the manifest gate's Vite plugin, copied verbatim into every
-  // scaffold that ships a `block.manifest.json`. Quotes no storage figure; it is
-  // in the ledger only because it sits in a scanned directory.
-  'starters/examples/kv-storage/vite-plugin-block-manifest.ts',
+  // #330 briefly added a per-scaffold `vite-plugin-block-manifest.ts` here. It
+  // is gone again — the gate now ships from `@civitai/app-sdk/vite`, so there
+  // are no per-scaffold copies to scan.
   'starters/examples/kv-storage/vite.config.ts',
 ];
 

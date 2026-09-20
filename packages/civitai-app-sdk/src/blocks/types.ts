@@ -1488,11 +1488,6 @@ export interface ManifestPage {
   buzzBudgetPerGen?: number;
 }
 
-export interface ManifestAsset {
-  url: string;
-  integrity: string;
-}
-
 export interface ManifestPreview {
   thumbnail: string;
   description: string;
@@ -1511,16 +1506,23 @@ export interface ManifestPreview {
  */
 export interface BlockManifestV1 {
   /**
-   * Optional JSON-Schema reference. `defineBlock` requires it to be the
-   * canonical URL WHEN PRESENT — a wrong value silently disables editor
-   * validation, which is the only thing this field does.
+   * Optional JSON-Schema reference. The canonical types it as a plain string
+   * and its own description says it is "ignored by the platform validator", so
+   * `defineBlock` does NOT constrain the value — point it at a vendored copy or
+   * a preview draft if that is what your editor needs. Until #330 a mismatch
+   * was a hard throw, which (once the gate was wired into Vite) failed the
+   * build on a field the server provably ignores.
+   *
+   * The union below is an AUTOCOMPLETE NUDGE, not a rule: `string & {}` keeps
+   * the literal visible in editor suggestions while still admitting any string.
    */
-  $schema?: 'https://civitai.com/schemas/app-block/v1.json';
+  $schema?: 'https://civitai.com/schemas/app-block/v1.json' | (string & {});
   /**
-   * NOT a canonical manifest property. Your app id lives in `civitai.app.json`
-   * (`{"appId": "..."}`), which is what the `civitai` CLI reads. Tolerated here
-   * — the canonical does not forbid extra top-level keys and the starters still
-   * carry it — but never required and never load-bearing.
+   * NOT a canonical manifest property, and NOT validated. Your app id lives in
+   * `civitai.app.json` (`{"appId": "..."}`), which is what the `civitai` CLI
+   * reads. The canonical does not forbid extra top-level keys, so the server
+   * ignores this one; the scaffolds still carry `"app_REPLACE_ME"` and it is
+   * inert.
    */
   appId?: string;
   blockId: string;
@@ -1553,7 +1555,6 @@ export interface BlockManifestV1 {
    * blank iframe for the whole load.
    */
   bootSkeleton?: boolean;
-  assets?: ManifestAsset[];
   /**
    * Per-field settings declaration the platform validates user input
    * against AND renders the publisher/viewer settings UI from. v0 shape;
@@ -1574,10 +1575,12 @@ export interface BlockManifestV1 {
    * + detail page. Manifest-governed: it flows to the store listing on
    * moderator-approve and is re-synced from the manifest on every subsequent
    * approved version — for an ON-SITE app the manifest is the ONLY surface that
-   * sets it. Omit it and the store simply shows no tagline. Trimmed and capped at
+   * sets it. Omit it and the store simply shows no tagline. Capped at
    * {@link BLOCK_TAGLINE_MAX_LENGTH} (140) characters, the same bound off-site
    * listings use, so both store kinds render the same slot. Kept in lockstep with
-   * the canonical schema's `tagline` (civitai #3441).
+   * the canonical schema's `tagline` (civitai #3441). NOTE the canonical counts
+   * the RAW string while the server measures the trimmed one, and `defineBlock`
+   * takes the canonical's verdict — so trim before you count.
    */
   tagline?: string;
   /**

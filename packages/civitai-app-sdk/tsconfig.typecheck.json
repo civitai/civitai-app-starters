@@ -9,6 +9,6 @@
   // EXECUTED by `defineBlock.example.test.ts`. Listed explicitly because it is
   // neither `src/` nor a `*.test-d.ts`; drop it and the docs example silently
   // stops compiling again (#330).
-  "include": ["src/**/*", "test/**/*.test-d.ts", "test/blocks/defineBlock.example.ts"],
+  "include": ["src/**/*", "test/**/*.test-d.ts", "test/manifest/defineBlock.example.ts"],
   "exclude": ["dist", "node_modules"]
 }

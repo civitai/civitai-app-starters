@@ -2,8 +2,9 @@
 
 > **If you only read one thing:** this package is the React-runtime side of
 > Civitai Apps. The framework-agnostic contract — manifest types,
-> `defineBlock`, `BLOCK_SCOPES`, the `postMessage` protocol — lives in
-> [`@civitai/app-sdk/blocks`](../civitai-app-sdk/). This package adds the
+> `BLOCK_SCOPES`, the `postMessage` protocol — lives in
+> [`@civitai/app-sdk/blocks`](../civitai-app-sdk/) (the `defineBlock` manifest
+> gate is on the node-only `@civitai/app-sdk/manifest` subpath). This package adds the
 > `IframeTransport`, the singleton that detects + caches it, and the eight
 > React hooks block apps actually call.
 

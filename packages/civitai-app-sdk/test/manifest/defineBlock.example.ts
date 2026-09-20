@@ -1,7 +1,7 @@
 // THE `@example` BLOCK OF `defineBlock`, VERBATIM.
 //
 // Everything below the marker is compared byte-for-byte (after stripping the
-// JSDoc ` * ` prefix) against the `@example` in `src/blocks/defineBlock.ts` by
+// JSDoc ` * ` prefix) against the `@example` in `src/manifest/defineBlock.ts` by
 // `defineBlock.example.test.ts`, which also IMPORTS this module — so the
 // snippet in the docs is type-checked by `tsc` and executed by `vitest`.
 // Before #330 the `@example` omitted required fields and set `iframe.src`: it
@@ -13,7 +13,7 @@
 // into src so the test exercises the code under test rather than `dist`.
 //
 // --- EXAMPLE START ---
-import { defineBlock } from '../../src/blocks/index.js';
+import { defineBlock } from '../../src/manifest/index.js';
 
 export const manifest = defineBlock({
   manifest: {

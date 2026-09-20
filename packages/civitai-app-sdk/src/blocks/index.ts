@@ -1,10 +1,12 @@
 /**
  * `@civitai/app-sdk/blocks` — framework-agnostic contract for Civitai Apps.
  *
- * This subpath exports the manifest type, scope strings, postMessage protocol,
- * and the `defineBlock` validator. Hooks and transport implementations live in
- * a separate package (see `@civitai/blocks-react`) so this module stays usable
- * from any runtime — Node, browsers, workers — with no React dependency.
+ * This subpath exports the manifest type, scope strings and postMessage
+ * protocol. Hooks and transport implementations live in a separate package (see
+ * `@civitai/blocks-react`) so this module stays usable from any runtime — Node,
+ * browsers, workers — with no React dependency and no runtime dependencies at
+ * all. Build-time manifest validation lives at `@civitai/app-sdk/manifest`
+ * (node-only); see the note on `BlockManifestError` below.
  */
 
 // FIRST import, on purpose. Blocks are framed at an opaque origin (sandbox
@@ -18,8 +20,18 @@ import '../safe-storage/index.js';
 export { installSafeStorage, createMemoryStorage } from '../safe-storage/index.js';
 export type { SafeStorageInstallResult, SafeStorageName } from '../safe-storage/index.js';
 
-export { defineBlock, BlockManifestError } from './defineBlock.js';
-export type { DefineBlockConfig } from './defineBlock.js';
+/**
+ * `defineBlock` MOVED to `@civitai/app-sdk/manifest` (a NODE-ONLY subpath) in
+ * the release that closed #330. It now validates by compiling the vendored
+ * canonical schema with Ajv instead of maintaining a hand-written mirror of it,
+ * which needs `node:fs` and a runtime dependency — neither of which belongs on
+ * this browser-facing, zero-dependency surface. Most callers want the Vite
+ * plugin at `@civitai/app-sdk/vite` rather than the function.
+ *
+ * `BlockManifestError` stays exported here, from its own module, so
+ * `instanceof` means the same thing on both subpaths.
+ */
+export { BlockManifestError } from './manifestError.js';
 
 export {
   BLOCK_SCOPES,
@@ -103,7 +115,6 @@ export type {
   BlockSettings,
   BlockToken,
   ContentRating,
-  ManifestAsset,
   ManifestBooleanField,
   ManifestIframe,
   ManifestNumberField,
