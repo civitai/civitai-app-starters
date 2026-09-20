@@ -11,9 +11,13 @@
  *      and that key set is READ OUT OF `createMockHost`'s `DEFAULT_VIEWER`, not
  *      retyped here. This guard pins a RELATIONSHIP (harness ≡ mock host), so
  *      moving one side without the other is what goes red.
- *   B. No starter block app open-codes the sign-in gate. Every starter source
- *      that reads `viewer` off `useBlockContext()` must import `isSignedIn`
- *      from `@civitai/app-sdk/blocks` and answer through it.
+ *   B. No starter block app open-codes the sign-in gate. Every starter
+ *      `.ts`/`.tsx` source that BINDS a `viewer` — off `useBlockContext()`
+ *      directly, through a named context binding, or as a component prop —
+ *      must import `isSignedIn` from `@civitai/app-sdk/blocks` and answer
+ *      through it. The precise scope, and the shapes it does NOT reach, are
+ *      enumerated on {@link viewerReadingApps}; read that before quoting this
+ *      rule as coverage.
  *
  * WHY A IS HERE
  * =============
@@ -74,10 +78,31 @@
  *     `packages/civitai-app-sdk/test/blocks/viewer-signed-in.test.ts`, and its
  *     behaviour on real payloads by `blockInitV2.test.ts` section 4.
  *   - {@link stripComments} tracks string and template literals so a `//` in a
- *     URL is not mistaken for a comment, but it does NOT track regex literals.
- *     No starter source contains one; a future one that does could have a `/`…`/`
- *     body misread. That direction is a false POSITIVE (text gets removed that
- *     should not), i.e. it fails loud rather than passing quietly.
+ *     URL is not mistaken for a comment. It does NOT parse JSX or regex
+ *     literals, and an earlier revision's handling of that turned a quote
+ *     character it could not pair up into a licence to copy the REST OF THE
+ *     LINE through unstripped — which made `<p>Here's the viewer</p>; //
+ *     isSignedIn(viewer)` read as a real call. A lone quote is now emitted as
+ *     an ordinary character and scanning resumes, so that walk is closed and
+ *     pinned by the control below.
+ *
+ *     🔴 WHAT IS STILL OPEN, AND IN WHICH DIRECTION — the earlier note here
+ *     claimed the only failure mode was a loud false POSITIVE. That was wrong,
+ *     and a maintainer who believed it would have left the walk above in
+ *     place. Both directions exist:
+ *       · FALSE NEGATIVE (quiet — a comment survives and can satisfy a
+ *         positive check): two quote characters on ONE line that are not a
+ *         string but pair up anyway — `<p>Here's Bob's file</p>` — make the
+ *         span between them opaque, so a `//` INSIDE that span is not
+ *         stripped. The trailing comment after the pair still is.
+ *       · FALSE POSITIVE (loud — real code is blanked and the rule fires): a
+ *         regex literal whose body contains `//` or `/*`, or an odd number of
+ *         quote characters arranged so a real string's opening quote is
+ *         consumed as the partner of a prose apostrophe.
+ *     Neither shape exists in `starters/` today. The honest scope of this
+ *     function is "good enough for the shapes a starter is written in", not
+ *     "a lexer" — if a starter ever needs one, replace it rather than widening
+ *     the regex-by-regex patchwork.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -127,11 +152,45 @@ const OPEN_CODED_GATES = [
   { pattern: /\bviewer\.(?:id|username|signedIn|status)\b/, label: 'a direct field read' },
 ];
 
-/** A `viewer: { … }` literal inside a hand-built `BlockInitPayload`. */
-const HARNESS_VIEWER_LITERAL = /viewer:\s*\{([^}]*)\}/g;
+/**
+ * The `viewer:` field of a hand-built `BlockInitPayload`, in every shape a
+ * harness can write it: an INLINE `{ … }` literal, a reference to a hoisted
+ * `const`, or an explicit `null` / `undefined` for an anonymous viewer.
+ *
+ * 🔴 IT MUST MATCH THE REFERENCE FORM, NOT ONLY THE LITERAL. An earlier
+ * revision matched `viewer:\s*\{ … \}` alone and then did `if (matches.length
+ * === 0) continue;` — so hoisting the object one line up
+ * (`const DEV_VIEWER = { id: 2, username: 'dev-viewer', status: 'active' };`
+ * … `viewer: DEV_VIEWER,`) took the file silently OUT of scope and restored
+ * the exact 66f9e09 defect with the suite green. Rule A now RESOLVES the
+ * reference, and the accounting assertion below refuses to pass while any
+ * harness went uncompared.
+ */
+const HARNESS_VIEWER_FIELD =
+  /(?<![\w$])viewer\s*:\s*(\{[^{}]*\}|null\b|undefined\b|[A-Za-z_$][\w$]*)/g;
 
 /**
- * Does this file take `viewer` OFF THE BLOCK CONTEXT?
+ * `const NAME = { … }` / `const NAME: T = { … }` — how a harness that hoists
+ * its viewer declares it. Built per-identifier so only the one actually
+ * referenced by `viewer:` is read.
+ */
+const hoistedObjectDecl = (name) =>
+  new RegExp(`(?:const|let|var)\\s+${name}\\s*(?::[^=;]*)?=\\s*\\{([^{}]*)\\}`);
+
+/**
+ * Harnesses that deliberately post `viewer: null` (an ANONYMOUS viewer) and so
+ * have no key set to compare. A NAMED allowlist, not a silent `continue`:
+ * being on it exempts a harness only while the file really does post
+ * `null`/`undefined`, so it cannot be used to wave through a shape rule A
+ * failed to parse.
+ *
+ * Empty today — all seven harnesses post a present viewer.
+ */
+const ANONYMOUS_HARNESSES = new Set([]);
+
+/**
+ * Does this file HANDLE a host viewer — i.e. is it a place the sign-in gate
+ * could be open-coded?
  *
  * 🔴 NOT a bare `\bviewer\b` search, which is what a first draft used. It put
  * `starters/examples/settings/src/App.tsx` in scope on the strength of
@@ -139,15 +198,62 @@ const HARNESS_VIEWER_LITERAL = /viewer:\s*\{([^}]*)\}/g;
  * SETTINGS scope named `viewer` and never reads the context field at all. A
  * rule that demands an unused import from a file that does not have the problem
  * is exactly the cry-wolf failure that gets a guard deleted, so the scope
- * predicate is bound to the destructuring that actually produces the value.
+ * predicate is bound to a BINDING named `viewer`, never to a mention of the
+ * word.
+ *
+ * 🔴 AND NOT ONLY THE DESTRUCTURE, which is what the revision before this one
+ * matched. Two measured survivors:
+ *   - `const ctx = useBlockContext(); const viewer = ctx.viewer;` — the same
+ *     read through a named binding, invisible to a pattern anchored on `{ … }
+ *     = useBlockContext()`.
+ *   - a SIBLING component (`ViewerBadge.tsx`) taking `viewer` as a prop and
+ *     open-coding `viewer !== null` there, while `App.tsx` stayed clean.
+ *     Extracting a component is the first thing a growing starter does, and
+ *     rule B exists precisely because a `tiged`-copied template must not carry
+ *     its own copy of the gate decision — which half of the template carries it
+ *     is beside the point.
  */
-const VIEWER_FROM_CONTEXT = [
-  /\{[^{}]*\bviewer\b[^{}]*\}\s*=\s*useBlockContext\s*\(/,
-  /\buseBlockContext\s*\([^)]*\)\s*\.viewer\b/,
+const VIEWER_BINDINGS = [
+  {
+    pattern: /\{[^{}]*\bviewer\b[^{}]*\}\s*=\s*useBlockContext\s*\(/,
+    label: 'destructured off `useBlockContext()`',
+  },
+  {
+    pattern: /\buseBlockContext\s*\([^)]*\)\s*\.viewer\b/,
+    label: 'read straight off `useBlockContext()`',
+  },
+  {
+    // `function Badge({ viewer }: Props)` / `({ viewer, theme }) =>` — a
+    // component or helper that RECEIVES the viewer.
+    pattern: /\(\s*\{[^{}]*\bviewer\b[^{}]*\}\s*[:,)]/,
+    label: 'a destructured `viewer` parameter',
+  },
+  {
+    // `viewer: ViewerInfo | null` — a declared prop or field of the host type.
+    pattern: /\bviewer\s*\??\s*:\s*(?:null\s*\|\s*)?ViewerInfo\b/,
+    label: 'a `viewer: ViewerInfo` declaration',
+  },
+  {
+    // `const viewer = …` — any local binding by that name, whatever the source.
+    pattern: /\b(?:const|let|var)\s+viewer\b\s*[:=]/,
+    label: 'a local binding named `viewer`',
+  },
 ];
 
+/**
+ * `const ctx = useBlockContext(); … ctx.viewer` — the context read through a
+ * named binding. Resolved per-identifier rather than by a `\w+\.viewer` regex,
+ * so an unrelated `foo.viewer` on some other object does not pull a file in.
+ */
+function readsViewerOffContextAlias(code) {
+  for (const m of code.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*useBlockContext\s*\(/g)) {
+    if (new RegExp(`\\b${m[1]}\\s*\\.\\s*viewer\\b`).test(code)) return true;
+  }
+  return false;
+}
+
 function readsViewerFromContext(code) {
-  return VIEWER_FROM_CONTEXT.some((p) => p.test(code));
+  return VIEWER_BINDINGS.some((b) => b.pattern.test(code)) || readsViewerOffContextAlias(code);
 }
 
 /**
@@ -184,16 +290,33 @@ export function stripComments(src) {
     const ch = src[i];
     if (ch === "'" || ch === '"' || ch === '`') {
       let j = i + 1;
+      let closed = false;
       while (j < src.length) {
         if (src[j] === '\\') {
           j += 2;
           continue;
         }
-        if (src[j] === ch) break;
-        // An unterminated single/double-quoted string cannot span a newline;
-        // bail so a stray apostrophe in prose can't eat the rest of the file.
+        if (src[j] === ch) {
+          closed = true;
+          break;
+        }
+        // A single/double-quoted string cannot span a newline, so a quote with
+        // no partner before the line ends is not a string at all.
         if (ch !== '`' && src[j] === '\n') break;
         j += 1;
+      }
+      // 🔴 AN UNPAIRED QUOTE IS ORDINARY TEXT, NOT A ONE-LINE STRING. An
+      // earlier revision stopped the scan at the newline but still COPIED
+      // everything up to it verbatim, so a lone apostrophe in JSX prose
+      // (`<p>Here's the viewer</p>`) or in a regex literal (`/it's/`) shielded
+      // every `//` later on that line from being stripped — and a gate
+      // mentioned in such a comment then satisfied rule B's call check. Emit
+      // the quote as a plain character and resume scanning from the next one
+      // so the rest of the line is still examined.
+      if (!closed) {
+        out += ch;
+        i += 1;
+        continue;
       }
       out += src.slice(i, Math.min(j + 1, src.length));
       i = Math.min(j + 1, src.length);
@@ -229,6 +352,71 @@ export function keysOfObjectLiteralBody(body) {
     .sort();
 }
 
+/**
+ * Read the `viewer` a harness posts in its `BlockInitPayload`, from SOURCE
+ * TEXT that has already been through {@link stripComments}.
+ *
+ * Returns one of:
+ *   `{ kind: 'keys', keys }`      — a key set to compare against the host's.
+ *   `{ kind: 'anonymous' }`       — an explicit `viewer: null` / `undefined`.
+ *   `{ kind: 'unreadable', why }` — this guard cannot tell what is posted.
+ *
+ * 🔴 THERE IS NO FOURTH OUTCOME, and that is the whole point. A shape it does
+ * not understand is reported as UNREADABLE, never skipped: the caller counts
+ * the harnesses it actually compared and fails when that number is short.
+ *
+ * Exported so the controls can drive it with literals — no starter hoists its
+ * viewer today, so the reference-resolving branch has no in-tree exercise and
+ * would otherwise be an unreachable guard.
+ */
+export function readHarnessViewer(code) {
+  HARNESS_VIEWER_FIELD.lastIndex = 0;
+  const matches = [...code.matchAll(HARNESS_VIEWER_FIELD)];
+
+  if (matches.length === 0) {
+    return {
+      kind: 'unreadable',
+      why:
+        'no `viewer:` field this guard can read. It accepts an inline `{ … }` literal, a ' +
+        'reference to a hoisted `const`, or `null`. Anything else (a factory call, a spread) ' +
+        'would leave the file UNCHECKED, which is how the 66f9e09 viewer came back once already.',
+    };
+  }
+
+  // 🔴 ASSERT THE ASSUMPTION RATHER THAN RELYING ON IT. Taking the FIRST
+  // `viewer:` is correct only while a harness has exactly one — true today for
+  // all seven, and silently wrong the day one also mocks a `GET_VIEWER` reply
+  // (whose viewer legitimately DOES carry `status`, so comparing every one
+  // against the BLOCK_INIT key set would be wrong too).
+  if (matches.length > 1) {
+    return {
+      kind: 'unreadable',
+      why:
+        `${matches.length} \`viewer:\` fields; this guard can only identify the BLOCK_INIT ` +
+        `one while there is exactly one. Anchor the extraction on the \`BlockInitPayload\` ` +
+        `declaration before adding another.`,
+    };
+  }
+
+  const value = matches[0][1].trim();
+  if (value === 'null' || value === 'undefined') return { kind: 'anonymous' };
+  if (value.startsWith('{')) {
+    return { kind: 'keys', keys: keysOfObjectLiteralBody(value.slice(1, -1)) };
+  }
+
+  const decl = code.match(hoistedObjectDecl(value));
+  if (!decl) {
+    return {
+      kind: 'unreadable',
+      why:
+        `\`viewer: ${value}\`, but no \`const ${value} = { … }\` object literal in the same ` +
+        `file. Inline the literal or declare it as one so its key set can be compared ` +
+        `against the host's.`,
+    };
+  }
+  return { kind: 'keys', keys: keysOfObjectLiteralBody(decl[1]) };
+}
+
 /** Recursively enumerate files under `dir`, skipping build/vendor trees. */
 function walkStarters(predicate) {
   const out = [];
@@ -255,17 +443,50 @@ function walkStarters(predicate) {
   return out.sort();
 }
 
-/** Every `src/**` file named `Harness.tsx` under `starters/`. */
+/**
+ * Every `src/**` file named `Harness.tsx` under `starters/` — the set rule A
+ * applies to, and the denominator its coverage accounting is checked against.
+ *
+ * 🔴 THE SET IS CHOSEN BY FILENAME, so a dev harness under any other name
+ * (`DevHarness.tsx`, `main.dev.tsx`) is not merely unchecked, it is INVISIBLE:
+ * the accounting below can only reconcile the files this returns. Measured — a
+ * `DevHarness.tsx` posting the 66f9e09 viewer leaves the suite green. The
+ * mitigation is the convention, not this guard: every starter's `dev:harness`
+ * entry point is named `Harness.tsx`, and the COVERAGE FLOOR test fails if
+ * that stops producing at least seven files.
+ */
 function harnessFiles() {
   return walkStarters((name) => name === 'Harness.tsx');
 }
 
 /**
- * Every starter source that takes `viewer` from the block context — the set
- * rule B applies to. It GROWS on its own when a new example is added, which is
- * the point: a hand-written list would have to be remembered.
+ * Every starter `.ts`/`.tsx` source that BINDS a `viewer` — the set rule B
+ * applies to. It grows on its own as examples and components are added: no
+ * hand-written list to remember.
+ *
+ * 🔴 THE SCOPE IS EXACTLY {@link VIEWER_BINDINGS} PLUS
+ * {@link readsViewerOffContextAlias}, NO WIDER. Say the uncovered shapes out
+ * loud, because a scope predicate that reads as "everything" while matching
+ * five patterns is the defect this revision exists to fix:
+ *   - A RENAMED binding. `const { viewer: v } = useBlockContext()` puts the
+ *     file in scope (the destructure still matches) but every open-coded gate
+ *     is then written on `v`, which no pattern here looks at. MEASURED both
+ *     ways: in a {@link REFERENCE_APPS} file the rename is still caught,
+ *     because those must CALL `isSignedIn(viewer)` by name; in any other
+ *     in-scope file (`kv-storage/src/App.tsx` renamed to `v` and gated on
+ *     `v === null`) the suite stays green. The import check applies
+ *     everywhere; the open-coding check does not survive a rename.
+ *   - A viewer that reaches a component under any other parameter name
+ *     (`user`, `me`, `props.v`).
+ *   - `.svelte` files. The walk takes `.ts`/`.tsx` only; the two Svelte
+ *     starters are OAuth apps with no `useBlockContext`, so there is nothing
+ *     to cover today — but a Svelte block starter would be UNCOVERED, not
+ *     merely unvisited.
+ *   - Anything outside `starters/`. The packages have their own tests.
+ * What is covered is the shape a starter is actually written in, and the two
+ * that were measured walking straight past the previous revision.
  */
-function viewerReadingApps() {
+export function viewerReadingApps() {
   const out = [];
   for (const file of walkStarters((name) => name.endsWith('.tsx') || name.endsWith('.ts'))) {
     if (file.endsWith('Harness.tsx')) continue;
@@ -305,6 +526,56 @@ test('POSITIVE CONTROL — the key-set extractor sees a wrong key set as wrong',
     "\n      // a leading comment line\n      id: 2, username: 'dev-viewer', signedIn: true,\n    ",
   );
   assert.deepEqual(fixed, ['id', 'signedIn', 'username']);
+});
+
+test('POSITIVE CONTROL — readHarnessViewer follows a HOISTED viewer and refuses what it cannot read', () => {
+  // 🔴 THE MUTANT THAT TOOK A HARNESS OUT OF SCOPE. The 66f9e09 viewer, moved
+  // one line up out of the payload. Rule A used to see no `viewer: { … }` and
+  // `continue`; it must now resolve the reference and report the real key set.
+  const hoisted = [
+    "    const DEV_VIEWER = { id: 2, username: 'dev-viewer', status: 'active' };",
+    '    const payload: BlockInitPayload = {',
+    '      viewer: DEV_VIEWER,',
+    "      theme: 'dark',",
+    '    };',
+  ].join('\n');
+  assert.deepEqual(readHarnessViewer(hoisted), {
+    kind: 'keys',
+    keys: ['id', 'status', 'username'],
+  });
+
+  // Typed and `let`-declared spellings of the same hoist.
+  assert.deepEqual(
+    readHarnessViewer(
+      "let V: ViewerInfo = { id: 2, username: 'dev-viewer', signedIn: true };\nviewer: V,",
+    ),
+    { kind: 'keys', keys: ['id', 'signedIn', 'username'] },
+  );
+
+  // The inline form still works, and `setViewer:` / `myviewer:` must not be
+  // mistaken for the field.
+  assert.deepEqual(readHarnessViewer("viewer: { id: 2, signedIn: true, username: 'x' },"), {
+    kind: 'keys',
+    keys: ['id', 'signedIn', 'username'],
+  });
+  assert.equal(readHarnessViewer('onViewer: handler,').kind, 'unreadable');
+
+  // An anonymous viewer is a distinct outcome, not a comparison.
+  assert.deepEqual(readHarnessViewer('viewer: null,'), { kind: 'anonymous' });
+
+  // 🔴 AND THE SHAPES IT CANNOT READ MUST SAY SO rather than return nothing.
+  for (const [label, code] of [
+    ['a factory call', 'viewer: makeViewer(),'],
+    ['a reference with no literal in the file', 'viewer: IMPORTED_VIEWER,'],
+    ['no viewer at all', "const payload = { theme: 'dark' };"],
+    ['two viewer fields', "viewer: { id: 1 },\nviewer: { id: 2, status: 'active' },"],
+  ]) {
+    assert.equal(
+      readHarnessViewer(code).kind,
+      'unreadable',
+      `readHarnessViewer silently accepted ${label}: ${code}`,
+    );
+  }
 });
 
 test('POSITIVE CONTROL — stripComments removes prose and keeps code', () => {
@@ -354,6 +625,42 @@ test('POSITIVE CONTROL — stripComments removes prose and keeps code', () => {
   assert.equal(realCode.split('\n').length, real.split('\n').length);
 });
 
+test('POSITIVE CONTROL — an unpaired quote does not shield the rest of the line', () => {
+  // 🔴 THE SECOND WALK AROUND RULE B. A quote character that is not a string
+  // delimiter — an apostrophe in JSX prose, one inside a regex literal —
+  // used to stop the comment scanner for the rest of the line, so a `//`
+  // after it survived and the gate MENTIONED there satisfied the call check.
+  // Each row is `[source, what must be true of the stripped output]`.
+  const shielded = [
+    "<p>Hello</p>; // isSignedIn(viewer)",
+    "<p>Here's the viewer</p>; // isSignedIn(viewer)",
+    "const re = /it's/; // isSignedIn(viewer)",
+    "const label = <em>Here's your block</em>; // the gate: isSignedIn(viewer)",
+    'const q = "don\'t"; // isSignedIn(viewer)',
+  ];
+  for (const line of shielded) {
+    const code = stripComments(line);
+    assert.ok(
+      !GATE_CALL.test(code),
+      `a gate in a trailing \`//\` comment survived stripping, so PROSE satisfies rule B:\n  ${line}\n  -> ${code}`,
+    );
+    assert.equal(code.length, line.length, `offsets drifted while stripping: ${line}`);
+  }
+
+  // NEGATIVE CONTROL — the fix must not start eating code. A `//` that is
+  // genuinely inside a quoted string still survives, apostrophe or not.
+  const kept = [
+    ["const u = 'https://example.com/KEEP-ME';", 'KEEP-ME'],
+    ['const u = "https://example.com/KEEP-ME"; // isSignedIn(viewer)', 'KEEP-ME'],
+    ["const s = 'it\\'s https://example.com/KEEP-ME';", 'KEEP-ME'],
+    ['const t = `https://example.com/KEEP-ME`;', 'KEEP-ME'],
+  ];
+  for (const [line, marker] of kept) {
+    const code = stripComments(line);
+    assert.ok(code.includes(marker), `a \`//\` inside a string literal was stripped: ${line}`);
+  }
+});
+
 test('POSITIVE CONTROL — every open-coded-gate pattern fires on its own shape', () => {
   // Each pattern gets a case it MUST flag. A pattern that has stopped matching
   // is invisible in the real scan below, which only ever reports zero.
@@ -401,14 +708,25 @@ test('COVERAGE FLOOR — every starter dev harness is found', () => {
   }
 });
 
-test('CONTROL — rule B scopes on the context read, not the word `viewer`', () => {
-  // POSITIVE: the three shapes a starter actually uses to obtain the value.
+test('CONTROL — rule B scopes on a `viewer` BINDING, not the word `viewer`', () => {
+  // POSITIVE: every shape a starter can obtain or receive the value in. The
+  // last three are the survivors the previous revision's scope walked past —
+  // each is asserted individually so one of them regressing cannot hide behind
+  // the others.
   for (const inScope of [
     'const { ready, context, viewer, theme, blockInstanceId } = useBlockContext();',
     'const { ready, viewer, theme } = useBlockContext();',
     'const v = useBlockContext().viewer;',
+    // the named-binding indirection
+    'const ctx = useBlockContext();\nconst viewer = ctx.viewer;',
+    'let c = useBlockContext();\nif (c.viewer) return null;',
+    // a sibling component receiving it as a prop
+    'export function ViewerBadge({ viewer }: { viewer: ViewerInfo | null }) {',
+    'export const Badge = ({ viewer, theme }) => <b>{theme}</b>;',
+    'type Props = { viewer: ViewerInfo | null };',
+    'function f(viewer?: ViewerInfo) {}',
   ]) {
-    assert.ok(readsViewerFromContext(inScope), `scope predicate missed a real read: ${inScope}`);
+    assert.ok(readsViewerFromContext(inScope), `scope predicate missed a real binding: ${inScope}`);
   }
 
   // NEGATIVE: verbatim from `starters/examples/settings/src/App.tsx`, which a
@@ -424,11 +742,44 @@ test('CONTROL — rule B scopes on the context read, not the word `viewer`', () 
     !readsViewerFromContext(settingsShape),
     'the scope predicate over-reported on a file whose only `viewer` is a settings scope name',
   );
+
+  // NEGATIVE: the identifiers the widened patterns are most likely to
+  // over-reach onto. All three are real shapes in `starters/examples/`.
+  for (const outOfScope of [
+    'const viewerMessage = snap.status === "failed" ? failure(snap) : undefined;',
+    '...(viewerMessage ? { viewerMessage } : {})',
+    'const viewerPresent = Date.now() - startedAt < MAX;',
+    "// the viewer is whoever the host says it is — const viewer = never happens here",
+    'const url = `${base}/viewer/${id}`;',
+  ]) {
+    assert.ok(
+      !readsViewerFromContext(stripComments(outOfScope)),
+      `scope predicate over-reported on: ${outOfScope}`,
+    );
+  }
+
+  // 🔴 AND THE ALIAS RESOLUTION MUST BE BOUND TO THE RIGHT OBJECT. A
+  // `.viewer` read off something that is not the block context does not put a
+  // file in scope, or every starter with a `props.viewer`-shaped API is
+  // dragged in.
+  assert.ok(
+    !readsViewerFromContext('const ctx = useBlockContext();\nconst n = other.viewer;'),
+    'the alias resolver matched `.viewer` on an unrelated object',
+  );
 });
 
 test('COVERAGE FLOOR — rule B reaches both reference apps', () => {
   const found = viewerReadingApps().map((f) => relative(REPO_ROOT, f));
-  for (const required of REFERENCE_APPS) {
+  // Rule B reports `[]` identically whether it scanned three files or none, so
+  // the size of its scope is asserted rather than assumed. Three today; a
+  // GROWING set is the point, a SHRINKING one means the predicate stopped
+  // seeing a shape the starters are written in.
+  assert.ok(
+    found.length >= 3,
+    `rule B's scope is down to ${found.length} file(s) — it used to reach three. ` +
+      `Scope found:\n  ${found.join('\n  ')}`,
+  );
+  for (const required of [...REFERENCE_APPS, 'starters/examples/kv-storage/src/App.tsx']) {
     assert.ok(
       found.includes(required),
       `rule B's scope does not include ${required} — the two files a new block author ` +
@@ -447,35 +798,65 @@ test('RULE A — every harness viewer has the key set the production host sends'
       `Fix the mock host first — every harness is compared against it.`,
   );
 
+  const harnesses = harnessFiles();
   const mismatches = [];
-  for (const file of harnessFiles()) {
-    const rel = relative(REPO_ROOT, file);
-    const code = stripComments(readFileSync(file, 'utf8'));
-    HARNESS_VIEWER_LITERAL.lastIndex = 0;
-    const matches = [...code.matchAll(HARNESS_VIEWER_LITERAL)];
-    if (matches.length === 0) continue; // a harness that does not build a viewer is not in scope
+  const unreadable = [];
+  const compared = [];
+  const anonymous = [];
 
-    // 🔴 ASSERT THE ASSUMPTION RATHER THAN RELYING ON IT. Taking the FIRST
-    // `viewer: { … }` is correct only while a harness has exactly one — true
-    // today for all seven, and silently wrong the day one also mocks a
-    // `GET_VIEWER` reply (whose viewer legitimately DOES carry `status`, so
-    // comparing every literal against the BLOCK_INIT key set would be wrong
-    // too). Fail loudly and make whoever adds the second one anchor the
-    // extraction on the `BlockInitPayload` instead of silently checking the
-    // wrong object.
-    if (matches.length > 1) {
-      mismatches.push(
-        `${rel} — ${matches.length} \`viewer: { … }\` literals; this guard can only ` +
-          `identify the BLOCK_INIT one while there is exactly one. Anchor the extraction ` +
-          `on the \`BlockInitPayload\` declaration before adding another.`,
-      );
+  for (const file of harnesses) {
+    const rel = relative(REPO_ROOT, file);
+    const read = readHarnessViewer(stripComments(readFileSync(file, 'utf8')));
+
+    if (read.kind === 'unreadable') {
+      unreadable.push(`${rel} — ${read.why}`);
+      continue;
+    }
+    if (read.kind === 'anonymous') {
+      // Legitimate, but it is the one shape with no key set to compare, so it
+      // has to be NAMED rather than silently skipped.
+      if (!ANONYMOUS_HARNESSES.has(rel)) {
+        unreadable.push(
+          `${rel} — posts \`viewer: null\` (an anonymous viewer). That is legitimate, but ` +
+            `it is the one shape with no key set to compare, so it must be listed in ` +
+            `ANONYMOUS_HARNESSES in this file to stay in the accounting.`,
+        );
+        continue;
+      }
+      anonymous.push(rel);
       continue;
     }
 
-    const keys = keysOfObjectLiteralBody(matches[0][1]);
-    if (keys.join(',') === expected.join(',')) continue;
-    mismatches.push(`${rel} — has [${keys}], host sends [${expected}]`);
+    compared.push(rel);
+    if (read.keys.join(',') === expected.join(',')) continue;
+    mismatches.push(`${rel} — has [${read.keys}], host sends [${expected}]`);
   }
+
+  // 🔴 THE COVERAGE CLAIM, ASSERTED FIRST. The key-set comparison below reports
+  // `[]` identically whether it compared seven harnesses or zero, so the number
+  // it looked at has to be a checked fact rather than an assumption.
+  assert.deepEqual(
+    unreadable,
+    [],
+    `Rule A could not read a harness's viewer, so that harness was NOT compared\n` +
+      `against the host contract. Silence here is indistinguishable from compliance.\n\n` +
+      `    ${unreadable.join('\n    ')}\n`,
+  );
+  assert.equal(
+    compared.length + anonymous.length,
+    harnesses.length,
+    `Rule A compared ${compared.length} harness viewers (+${anonymous.length} allowlisted ` +
+      `anonymous) but the walk found ${harnesses.length} harnesses. Compared:\n  ` +
+      `${compared.join('\n  ')}`,
+  );
+  assert.equal(
+    compared.length,
+    harnesses.length - ANONYMOUS_HARNESSES.size,
+    `ANONYMOUS_HARNESSES lists ${ANONYMOUS_HARNESSES.size} exemption(s) but ` +
+      `${harnesses.length - compared.length} harness(es) went uncompared. An entry that no ` +
+      `longer posts \`viewer: null\` must be removed from the allowlist.`,
+  );
+
   assert.deepEqual(
     mismatches,
     [],

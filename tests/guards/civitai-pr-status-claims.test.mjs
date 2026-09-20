@@ -40,6 +40,16 @@
  *     spelling of it. The non-walkable half of the contract is the positive
  *     assertion in `tests/guards/starter-signin-gate.test.mjs`, which pins what
  *     the starters DO rather than what a comment says.
+ *   - {@link flattenComments} knows three comment leaders — a double slash, a
+ *     lone star, and a block-comment terminator. A claim wrapped across a line
+ *     that starts with anything else
+ *     (a markdown `-` bullet, a `>` blockquote, a `#` heading) still breaks
+ *     the `\s+` in {@link CONTINGENCY_DIRECTIVE} and reads clean. MEASURED:
+ *     `IF #3707\n * - IS ABANDONED: …` inside a JSDoc block leaves the suite
+ *     green. Adding leaders is cheap, but each one also blanks a character
+ *     that could BE part of the claim — `#` was in this list and had to come
+ *     out for exactly that reason — so widen it against a test, never on
+ *     taste.
  *   - OFFLINE by design, like `doc-cdn-urls.test.mjs`. It never calls `gh`. A
  *     network check that fails on a GitHub outage cannot be a required gate;
  *     re-verifying a PR's live state is a human's job at review time.
@@ -197,9 +207,18 @@ function scannableFiles() {
  * shorter read dirty. Replacing each leader character with a SPACE (never
  * deleting it) keeps every subsequent offset intact, so `lineOf` and the
  * excerpt still point at the real source line.
+ *
+ * 🔴 `#` IS NOT A LEADER HERE, AND MUST NOT BE ADDED BACK. None of the nine
+ * {@link SCAN_EXTENSIONS} uses `#` to start a comment, so the branch bought
+ * nothing — and it REOPENED the very evasion this function closes: a line
+ * whose first non-space character is `#` had that `#` blanked, so a
+ * column-0 `#3707 is abandoned` was invisible to
+ * {@link CONTINGENCY_DIRECTIVE} (which matches a BARE `#NNNN`) while the
+ * identical words one column to the right were flagged. Pinned by the
+ * "contingency directive at column 0" cases in the positive control below.
  */
 function flattenComments(text) {
-  return text.replace(/\n[ \t]*(?:\/\/|\*\/|\*|#)?[ \t]*/g, (m) => ' '.repeat(m.length));
+  return text.replace(/\n[ \t]*(?:\/\/|\*\/|\*)?[ \t]*/g, (m) => ' '.repeat(m.length));
 }
 
 export function findStatusClaims(rawText) {
@@ -280,6 +299,19 @@ test('POSITIVE CONTROL — the matcher fires on every real stale phrasing', () =
       ' * ...by {@link ViewerInfo.signedIn}.\n * \n * 🔴 IF #3707 IS\n * ABANDONED: drop `signedIn` from this default.',
     'wrapped across a `//` leader':
       '    // 🔴 IF #3707 NEVER\n    // LANDS, this assertion is what has to change first.',
+    // 🔴 THE COLUMN-0 EVASION. Identical words to the mockHost.ts:916 case,
+    // moved one column left so the `#` is the first character on its line. A
+    // `#` in `flattenComments`'s leader alternation blanked it, leaving
+    // `3707 is abandoned` with no `#` for CONTINGENCY_DIRECTIVE to anchor on —
+    // the same wrap-evasion class, one column over.
+    'contingency directive at column 0':
+      'The default below is what the production host sends.\n#3707 is abandoned, so drop `signedIn` from it.',
+    'contingency directive at column 0 inside a block comment':
+      '/*\n#3707 never lands, so this fence is what has to change first.\n*/',
+    // And the indented twin, so a fix that merely moved the `#` handling into
+    // the `[ \t]*` run re-breaks here.
+    'contingency directive indented, no comment leader':
+      'Background.\n    #3707 is abandoned, so drop `signedIn` from this default.',
   };
   for (const [label, phrasing] of Object.entries(realStalePhrasings)) {
     const findings = findStatusClaims(phrasing);
