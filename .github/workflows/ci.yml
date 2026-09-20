@@ -97,20 +97,17 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # blocks-react consumes @civitai/app-sdk, @civitai/theme,
-      # @civitai/components and @civitai/elements via workspace:^ and resolves
-      # types from their dist/. Build those deps first so blocks-react isn't
-      # typechecking against stale or missing declarations.
+      # blocks-react consumes @civitai/app-sdk, @civitai/theme and
+      # @civitai/components via workspace:^ and resolves types from their dist/.
+      # Build those deps first so blocks-react isn't typechecking against stale
+      # or missing declarations.
       #
-      # @civitai/elements joined this list with the first STRANGLER SEAM:
-      # src/ui/Stack.tsx now renders <civitai-stack> instead of a <div>. Omit
-      # the build and blocks-react's typecheck fails on a missing
-      # `@civitai/elements/stack` declaration — which reads as a broken base
-      # branch, not a missing build step.
+      # @civitai/elements is deliberately NOT in this list. A published package
+      # must not depend on an unpublished one, so blocks-react has no edge to
+      # it — see `packages/civitai-elements/docs/DECISIONS.md` §10.
       - run: pnpm --filter @civitai/app-sdk build
       - run: pnpm --filter @civitai/theme build
       - run: pnpm --filter @civitai/components build
-      - run: pnpm --filter @civitai/elements build
 
       - run: pnpm --filter @civitai/blocks-react typecheck
       - run: pnpm --filter @civitai/blocks-react test
@@ -343,12 +340,10 @@ jobs:
 
       # The snippet checker resolves documented imports against the packages'
       # BUILT declarations, so build deps first (blocks-react consumes app-sdk,
-      # @civitai/theme, @civitai/components and — since the first strangler
-      # seam — @civitai/elements).
+      # @civitai/theme and @civitai/components).
       - run: pnpm --filter @civitai/app-sdk build
       - run: pnpm --filter @civitai/theme build
       - run: pnpm --filter @civitai/components build
-      - run: pnpm --filter @civitai/elements build
       - run: pnpm --filter @civitai/blocks-react build
 
       - run: pnpm typecheck:readme

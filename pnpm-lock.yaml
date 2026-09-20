@@ -43,9 +43,6 @@ importers:
       '@civitai/components':
         specifier: workspace:*
         version: link:../civitai-components
-      '@civitai/elements':
-        specifier: workspace:*
-        version: link:../civitai-elements
       '@civitai/theme':
         specifier: workspace:*
         version: link:../civitai-theme

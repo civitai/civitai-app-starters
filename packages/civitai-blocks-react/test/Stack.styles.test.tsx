@@ -1,27 +1,38 @@
 /**
- * REGRESSION — the strangler shim must still inject the PACK's stylesheet.
+ * `<Stack>` must inject the PACK's stylesheet — the one property no other test
+ * in this package covers.
  *
- * `<Stack>` renders `<civitai-stack>`, which adopts its own per-component CSS
- * and the `@civitai/theme` tokens on upgrade. An earlier draft of the shim read
- * that as "the element brings its own styling, so `useBlocksStyles()` is
- * redundant" and dropped the hook — the only one of the pack's components to
- * lack it.
- *
- * It is not redundant. `useBlocksStyles()` injects the WHOLE pack: the tokens,
+ * `useBlocksStyles()` injects the WHOLE pack: the `@civitai/theme` tokens,
  * `@civitai/components`' presentational sheet, and this package's own
  * interactive CSS. Rendering any `/ui` component has always been enough to
  * style a block, including its hand-written `data-civitai-ui="…"` markup — the
  * contract `@civitai/components`' MARKUP.md documents. A block whose only
- * `/ui` import is `<Stack>` therefore lost the styling for everything else on
- * the page.
+ * `/ui` import is `<Stack>` therefore depends on `<Stack>` for the styling of
+ * everything else on the page.
  *
- * `Stack.test.tsx` cannot see this: all six of its assertions are about
- * attributes and inline styles the shim writes itself, so it stays green with
- * the hook present or absent. This file asserts the injected DOM instead.
+ * `Stack.test.tsx` cannot see this: all six of its assertions are about the
+ * attributes and inline styles `Stack` writes itself, so it stays green with
+ * the hook present or absent.
  *
- * Red/green matrix (measured, not assumed):
- *   - at the parent commit (shim without `useBlocksStyles()`) — RED, both cases
- *   - at HEAD — GREEN
+ * MUTATION MATRIX — measured against THIS file's `Stack.tsx`, not a former
+ * revision of it. Two mutants, both run with the rest of the package's unit
+ * tier so the attribution is checked, not assumed:
+ *
+ *   1. `useBlocksStyles();` commented out (identifier still present in the
+ *      file) → the two behavioural cases below FAIL with their OWN assertions
+ *      ("<style data-civitai-theme> missing …" and "expected '' to contain
+ *      [data-civitai-ui='card']"). Across the full unit tier — 88 files,
+ *      1508 tests — those two are the ONLY failures; every other test stays
+ *      green, which is the point: nothing else observes this.
+ *   2. the call AND its import deleted → all three cases fail, the ledger
+ *      included.
+ *
+ *   Unmutated: 1508/1508 green.
+ *
+ * Mutant 1 is also the honest limit of the ledger at the bottom of this file:
+ * it greps for the STRING `useBlocksStyles()`, so a commented-out call
+ * satisfies it. It is a guard on spelling and survives mutant 1; the two
+ * behavioural cases are what actually pin the behaviour.
  */
 import { cleanup, render } from '@testing-library/react';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -84,12 +95,13 @@ describe('Stack injects the pack stylesheet', () => {
 
 describe('every /ui component injects the pack styles', () => {
   // LEDGER, not a sample: fails when the set of non-injecting components GROWS
-  // (the next strangler seam repeating Stack's mistake) *or* SHRINKS (the
+  // (a new or rewritten `/ui` component dropping the hook) *or* SHRINKS (the
   // exception below silently acquiring the hook, which would mean this list is
   // no longer describing reality).
   //
   // This is a guard on the SPELLING of a call, so it is weaker than the
-  // behavioural cases above; it exists to make the next omission loud at the
+  // behavioural cases above — measured: it survives a commented-out call (see
+  // mutant 1 in the header). It exists to make the next omission loud at the
   // file level, not to replace them.
   const EXPECTED_WITHOUT = new Set([
     // Documented as intentionally unstyled: it ships native controls so the

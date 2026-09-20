@@ -39,7 +39,6 @@
   },
   "dependencies": {
     "@civitai/components": "workspace:*",
-    "@civitai/elements": "workspace:*",
     "@civitai/theme": "workspace:*"
   },
   "comment-peerDependencies": [

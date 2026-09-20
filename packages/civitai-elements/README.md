@@ -32,18 +32,29 @@ hazard: the same name, in the same file tree, meaning two different things.
 
 ### 🔴 What phase 1 does NOT yet do
 
-**It has not closed that hazard.** 33 of the 34 colliding names still stand;
-the only drift actually resolved is `Stack`'s `gap`, through the one strangler
-seam. Issue #328 is the *motivation* for this package, not something it has
-fixed — do not cite it as a delivered result until more seams land.
+**It has not closed that hazard.** All 34 colliding names still stand. Issue
+#328 is the *motivation* for this package, not something it has fixed — do not
+cite it as a delivered result until real seams land.
+
+🔴 **There is no strangler seam yet, deliberately.** An earlier revision of
+this branch made `@civitai/blocks-react`'s `Stack` render `<civitai-stack>`,
+which meant a **published** package taking a `workspace:*` dependency on this
+**unpublished** one. `@civitai/elements` 404s on the npm registry (control:
+`@civitai/blocks-react` returns 200), so the next `blocks-react` release would
+have had to co-publish this package or ship a dependency resolving to nothing.
+The seam was removed; the two packages have no edge between them today, and
+the first seam lands only once this package has a published version to depend
+on.
 
 Two consequences worth stating plainly:
 
 - **Adding names here can make #328 worse.** `@civitai/elements-react` briefly
   re-exported `ButtonVariant` and `ButtonSize`, which took two of the 34 from
   two definitions to three. Removed. Don't re-add that kind of convenience.
-- **The migration has a transitional cost that is currently unpaid down.** The
-  `/ui` barrel now drags both design systems (see the size note below).
+- **One real bug went out with the seam.** The removed shim incidentally fixed
+  `blocks-react/ui`'s `Stack`, where `gap="md"` typechecks and silently renders
+  the default spacing. Tracked as #357, and it belongs in the React package —
+  not in a seam.
 
 ---
 
@@ -110,11 +121,14 @@ Two things that remain true and are worth knowing:
   each. Under a per-component split (row B) the React side pays per component
   too, so the curves converge and the JS column decides — in the React side's
   favour.
-- The `/ui` barrel import got **worse** with the first strangler seam (110,772 B
-  → 121,742 B): it now drags both design systems, because `Stack` renders
-  `<civitai-stack>` *and* still injects the pack stylesheet. That is the
-  transitional cost of a strangler, and it does not come back down until the
-  monolithic stylesheet string is gone.
+- A strangler seam makes the `/ui` barrel **bigger** while it is in place, and
+  that cost is measured, not hypothetical: the now-removed `Stack` shim took
+  the barrel from 110,772 B to 121,742 B, because the shim rendered
+  `<civitai-stack>` *and* still injected the pack stylesheet, so the bundle
+  carried both design systems. With the seam gone the barrel is back to
+  **110,772 B** (`pnpm --filter @civitai/elements measure`, last row — re-run
+  after the removal). Expect the same +11 KB back when the first real seam
+  lands; it does not come down until the monolithic stylesheet string is gone.
 
 ---
 

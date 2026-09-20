@@ -101,13 +101,23 @@ The reasons that do survive measurement: one implementation instead of two,
 real `<form>` participation via `ElementInternals`, and framework independence
 across the React/Svelte/plain-HTML starters.
 
-🔴 **Phase 1 has NOT yet reduced the duplication.** 33 of the 34 colliding names
-still stand — only `Stack`'s `gap` drift is closed. Until more seams land,
-#328's hazard is the motivation for this work, not something it has fixed.
+🔴 **Phase 1 has NOT reduced the duplication at all.** All 34 colliding names
+still stand. #328's hazard is the motivation for this work, not something it
+has fixed — do not cite it as a delivered result.
 
-Migration is **strangler**, not a cutover: the React packages keep working and
-re-export from the elements one component at a time. The first seam is
-`blocks-react/ui`'s `Stack`, whose existing tests are unchanged and green.
+🔴 **Nothing published depends on `@civitai/elements` yet, and nothing may
+until it is published.** An earlier revision of this branch made
+`@civitai/blocks-react` — published, and on `latest` — take a
+`workspace:*` dependency on `@civitai/elements`, which is 404 on the registry.
+That turns every subsequent `blocks-react` release into either a forced
+co-publish or a package resolving to nothing. Removed. The intended migration
+is still **strangler**, one component at a time behind an unchanged React API,
+but the first seam lands only after `@civitai/elements` has a published
+version to depend on.
+
+Removing that seam restored a real bug in `blocks-react/ui`'s `Stack`
+(`gap="md"` typechecks and silently renders the default spacing) — tracked
+separately as #357, and fixed inside the React package, not by a seam.
 
 **When adding a new shared component, add it to `@civitai/elements`** — do not
 add a 35th duplicated pair. Do not add an alias for a name that already exists

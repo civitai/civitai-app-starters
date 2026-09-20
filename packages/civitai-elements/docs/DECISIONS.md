@@ -253,26 +253,54 @@ migration.
 
 ---
 
-## 10. The strangler seam is `Stack`
+## 10. REVERSED — there is no strangler seam in phase 1
 
-`@civitai/blocks-react/ui/Stack.tsx` is now a compatibility shim rendering
-`<civitai-stack>`. Its six existing tests are unchanged and green.
+An earlier revision of this branch made `@civitai/blocks-react/ui/Stack.tsx` a
+compatibility shim rendering `<civitai-stack>`, as the first strangler seam.
+**That seam has been removed and this package now has no consumer inside the
+monorepo.**
 
-`Stack` was chosen over `Card`/`Button` for a mechanical reason: `Card`'s
-existing test asserts `ref.current.tagName === 'DIV'`, which cannot survive the
-migration without editing the test — and the point of the first seam is to
-prove the path with *zero* test churn. `Card` is the next seam and its test
-needs one line changed.
+The reason is a release hazard, not a design objection. `@civitai/blocks-react`
+is published and sits on `latest`; the shim gave it
+`dependencies: { "@civitai/elements": "workspace:*" }`. Measured at the time of
+removal: `@civitai/elements` and `@civitai/elements-react` both return **404**
+from the npm registry, while `@civitai/blocks-react` returns **200**. Neither
+new package is `private`, and neither is in `.changeset/config.json`'s `ignore`
+list. So the next `blocks-react` release had exactly two outcomes: publish this
+unfinished package in the same run, or ship a `blocks-react` whose dependency
+resolves to nothing. This repo's release pipeline has a recorded history of
+partial publishes where `latest` moves anyway and consumers get `ETARGET`.
 
-The shim quietly fixes `gap="md"` on the way through (routed to the element's
-`gap` attribute instead of an invalid `style.gap`). `Stack.test.tsx` passes
-whether or not the element upgrades, so `Stack.strangler.test.tsx` is the
-positive control: it asserts the tag, the upgrade, and the behaviour only the
-element can provide.
+**The rule this establishes: a published package must not depend on an
+unpublished one.** The first seam lands after `@civitai/elements` has a version
+on the registry — then the dependency is an ordinary semver range, and a
+`blocks-react` release is no longer coupled to this package's readiness.
 
-One type change: the forwarded ref is `HTMLElement`, not `HTMLDivElement`.
-Assignment still works (object property types are covariant), but code reading
-`.tagName === 'DIV'` will notice.
+What stays true for whenever that happens:
+
+- `Stack` is still the right first seam, for a mechanical reason: `Card`'s
+  existing test asserts `ref.current.tagName === 'DIV'`, which cannot survive
+  the migration without editing the test, and the point of a first seam is to
+  prove the path with *zero* test churn. `Card` is second and its test needs
+  one line changed.
+- The shim will change one type: the forwarded ref becomes `HTMLElement`, not
+  `HTMLDivElement`. Assignment still works (object property types are
+  covariant), but code reading `.tagName === 'DIV'` will notice.
+- `Stack.test.tsx` passes whether or not the element upgrades — every one of its
+  six assertions is about attributes and inline styles the shim writes itself.
+  A seam therefore needs its own positive control asserting the tag, the
+  upgrade and the element-only behaviour. The removed
+  `Stack.strangler.test.tsx` was that control; it went with the seam.
+- The seam's *incidental* fix did not. `blocks-react/ui`'s `Stack` types `gap`
+  as `string | number`, so `gap="md"` typechecks, is dropped by the CSS parser
+  and silently renders the default spacing. That is **#357**, and it is fixed
+  inside the React package by routing named steps to `data-gap` — the attribute
+  `@civitai/components`' stylesheet already answers. Do not leave it waiting on
+  a seam.
+- `packages/civitai-blocks-react`'s `Stack.styles.test.tsx` was kept, because
+  the property it pins (rendering `<Stack>` injects the whole pack stylesheet)
+  is true of the plain-`<div>` implementation too. Its docblock records the
+  mutation matrix measured against *that* implementation.
 
 ---
 
