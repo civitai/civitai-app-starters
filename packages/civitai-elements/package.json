@@ -47,15 +47,15 @@
   "scripts": {
     "generate": "tsx scripts/build-css.ts",
     "build": "tsx scripts/build-css.ts && tsc -p tsconfig.json",
-    "analyze": "pnpm build && cem analyze --config custom-elements-manifest.config.mjs",
-    "gen:react": "node scripts/gen-react-types.mjs",
+    "analyze": "pnpm build && cem analyze --config custom-elements-manifest.config.mjs && node scripts/normalize-manifest.mjs",
     "api:snapshot": "node scripts/api-snapshot.mjs --write",
     "api:check": "node scripts/api-snapshot.mjs --check",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --project unit",
     "test:browser": "vitest run --project browser",
     "test:watch": "vitest",
-    "measure": "node scripts/measure-bundle.mjs"
+    "measure": "node scripts/measure-bundle.mjs",
+    "mutation:check": "node scripts/mutation-check.mjs"
   },
   "engines": {
     "node": ">=20"

@@ -83,19 +83,42 @@ Read `event.currentTarget.value` with that spelling.
 
 ## What ships
 
-Nothing but `.d.ts` plus a side-effect import. `src/generated/jsx.ts` is
-generated from `@civitai/elements`' `custom-elements.json` by
-`scripts/gen-react-types.mjs` in that package, and
-`@civitai/elements`'s `test/generation-parity.test.ts` re-runs the generator
-and fails on any diff.
+Nothing but `.d.ts` plus a side-effect import — **one** subpath, `.`.
+
+`src/generated/jsx.ts` is generated from `@civitai/elements`'
+`custom-elements.json` by this package's own `scripts/gen-jsx-types.mjs`, and
+`test/generation-parity.test.ts` re-runs the generator (into a temp directory,
+so it never touches the working tree) and fails on any diff.
 
 ```bash
-pnpm --filter @civitai/elements gen:react
+pnpm --filter @civitai/elements-react generate
 ```
 
 Getter-only members (`form`, `validity`, `validationMessage`, `willValidate`)
 are part of the element's surface but deliberately **not** of the JSX surface —
 writing `validity={…}` in JSX would throw at runtime.
+
+### What this package does NOT export
+
+Only the four `Civitai*Props` types, which exist nowhere else. It deliberately
+re-exports **nothing** from `@civitai/elements` — not `ButtonVariant`, not
+`ButtonSize`, not the element classes. Import those from `@civitai/elements`
+(or `@civitai/elements/button`), where they are declared.
+
+That is not pedantry. This package exists downstream of the 34-duplicated-names
+problem; an earlier version re-exported `ButtonVariant` and `ButtonSize` as a
+convenience, which took two of those names from two definitions across the
+fleet to three.
+
+### Why a separate package rather than `@civitai/elements/react`
+
+Because `@civitai/elements` is framework-agnostic and must stay that way —
+that property is one of the three arguments that survive the bundle-size
+retraction in its README. A `./react` subpath would put React in its peer
+dependencies and force this package's `^19`-only constraint onto it. Keeping
+the boundary is also the reversible choice: adding a runtime to an existing
+npm name is easy, un-publishing a subpath is not. Full reasoning and the
+conditions that would reopen it: `@civitai/elements/docs/DECISIONS.md` §6b.
 
 ---
 
@@ -112,8 +135,13 @@ defect, measured.
 ## Tests
 
 ```bash
-pnpm --filter @civitai/elements-react test:browser
+pnpm --filter @civitai/elements-react test          # unit: the tsc TYPE gate + generation parity
+pnpm --filter @civitai/elements-react test:browser  # real Chromium: the React-19 evidence
 ```
+
+Both tiers run in CI. The unit tier is the type gate (`tsc` over
+`test/fixtures/*.tsx`, asserting that a wrong prop type is a compile error and
+that `onChange` + `.detail` does not compile); it previously ran nowhere.
 
 On NixOS:
 

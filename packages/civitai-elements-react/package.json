@@ -9,14 +9,21 @@
   "sideEffects": [
     "./dist/index.js"
   ],
+  "comment-exports": [
+    "🔴 ONE subpath, and every subpath declared here is covered by",
+    "test/exports-map.test.ts, which packs the real tarball and imports each",
+    "one. A `./types` subpath used to be declared, mapping to",
+    "./dist/types.d.ts + ./dist/types.js — files no build ever emitted",
+    "(tsconfig rootDir is ./src, and src/ holds only index.ts and",
+    "generated/jsx.ts). `import '@civitai/elements-react/types'` was",
+    "ERR_MODULE_NOT_FOUND for every consumer, on day one, and nothing in the",
+    "repo exercised it. It was also redundant: every type it would have",
+    "re-exported is already exported from '.'."
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./types": {
-      "types": "./dist/types.d.ts",
-      "import": "./dist/types.js"
     }
   },
   "files": [
@@ -24,7 +31,7 @@
     "README.md"
   ],
   "scripts": {
-    "generate": "node ../civitai-elements/scripts/gen-react-types.mjs",
+    "generate": "node scripts/gen-jsx-types.mjs",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --project unit",

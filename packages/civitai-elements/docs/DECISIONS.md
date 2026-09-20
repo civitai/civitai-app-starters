@@ -46,7 +46,9 @@ attributes and CSS hooks and never render content". Adopted, and extended to
 wrapper. The cost is that `leftSection` / `rightSection` stop being props and
 become ordinary children (spaced by the host's `gap`); the benefit is that
 Button's module graph never loads `lit-html`, which is 6.8 KB of the 21.3 KB
-one-Button bundle.
+one-Button bundle. (Note the scope: that saving is real *within* this package.
+It does not make the package smaller than the React Button it replaces — see
+decision 8.)
 
 ---
 
@@ -151,6 +153,53 @@ every non-React consumer and every form library has to learn a non-standard
 event name for a control that is otherwise indistinguishable from a native one.
 **OPEN** if the SyntheticEvent edge proves confusing in practice.
 
+### 6b. `@civitai/elements-react` stays a SEPARATE package, and stays types-only
+
+The brief asked for "react specific bindings and hooks in a dedicated
+downstream package". The measurements above say the *hooks* half is
+unnecessary: React 19 sets properties, attaches listeners, and hands back a
+ref to the upgraded element, so there is nothing for a binding layer to do.
+Review raised the obvious objection — a types-only package whose generator
+lived in a sibling is a package boundary with nothing behind it — and offered
+two ways out: add hooks, or collapse to `@civitai/elements/react`.
+
+**Neither. The package stays, and it stays types-only.** Reasoning:
+
+- Inventing `useCustomEventListener` / `useUpgraded` to justify the boundary
+  would be adding runtime *because the brief said hooks*, in a PR whose whole
+  correction is that the brief's premise was not measured. The one sharp edge
+  a hook could smooth (`onChange` loses `detail`) already has a working
+  declarative answer in the `onchange` spelling, which the generator types.
+- Collapsing to `@civitai/elements/react` would put React in the peer
+  dependencies of the package whose **framework independence is now the
+  strongest remaining argument for its existence** (see decision 8). It would
+  also force the `^19`-only constraint of decision 7 onto a package that has
+  no business declaring a React range at all.
+- Separate is the REVERSIBLE choice. Publishing hooks later into an existing
+  name is easy; un-publishing a React subpath from a framework-agnostic
+  package is not, and a published npm name is close to permanent.
+
+What review was right about, and what changed:
+
+- the generator moved from `@civitai/elements/scripts/gen-react-types.mjs` to
+  `@civitai/elements-react/scripts/gen-jsx-types.mjs`, so the package
+  generates its own source and `pnpm --filter @civitai/elements-react
+  generate` no longer shells into a sibling;
+- its parity test moved with it (`test/generation-parity.test.ts`);
+- its unit tier — the tsc-over-fixtures TYPE gate — now runs in CI; it did not;
+- `exports["./types"]` pointed at `dist/types.d.ts` / `dist/types.js`, which no
+  build emits. Removed (every type it would have re-exported is already on
+  `.`), and `pnpm check:exports` now imports every declared subpath of every
+  publishable package out of its packed tarball;
+- the package no longer re-exports `ButtonVariant` / `ButtonSize` / the element
+  classes from `@civitai/elements`. That convenience took two names from #328's
+  collision list from two definitions to three.
+
+**Reopen this if** any of these becomes true: React 18 has to be supported; an
+element gains an event whose name React cannot attach in either spelling; or
+SSR property-seeding needs a client-side hook. Each is a measurable trigger,
+not a matter of taste.
+
 ---
 
 ## 7. React peer range is `^19` only
@@ -175,7 +224,18 @@ available and a `<style data-civitai-element>` otherwise.
 `renderRoot.adoptedStyleSheets`, which exists on `Document` and `ShadowRoot`
 but not on an ordinary element.
 
-Measured effect: one Button 52,571 B → 21,309 B. Full numbers in the README.
+🔴 **Retracted claim.** This section used to end "Measured effect: one Button
+52,571 B → 21,309 B", which read as a reason to adopt custom elements. It is
+not one. Per-component CSS is a good design, but it is available *without* them:
+slicing `@civitai/components`' stylesheet in place gets the existing React
+Button to **13,480 B**, beating this package's 21,309 B by 37%. The whole
+baseline-vs-element gap is the CSS column; the JS column moves the other way,
+4.6× against the element. Three-column measurement, method and control in the
+README and in `scripts/measure-bundle.mjs`.
+
+What stays true: adopting per-root, per-component sheets is the right shape for
+a light-DOM element and is what makes row C's CSS column (10,155 B) comparable
+to a properly-split React Button's (11,063 B) rather than 5× worse.
 
 ---
 
@@ -250,4 +310,6 @@ the bundle).
 
 Making it opt-in would cut the one-Button number to ~15.3 KB but would mean an
 element can render unstyled, which is a worse failure than a duplicated
-stylesheet. Leaving it as measured, and flagged.
+stylesheet. Leaving it as measured, and flagged. (Note that the same 5,984 B
+is paid by every row of the measurement table, including the CSS-split-in-place
+control, so it is not a difference between the options.)

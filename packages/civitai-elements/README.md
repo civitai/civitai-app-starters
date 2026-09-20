@@ -30,57 +30,91 @@ Fleet usage across 33 app repos: `blocks-react/ui` in 147 files,
 `components-react` in 32 — and **five of six apps import both**. That is the
 hazard: the same name, in the same file tree, meaning two different things.
 
-The second reason is bundle cost. Importing **one** `/ui` `Button` costs
-**52,571 B** minified, of which ~50.5 KB is stylesheet text held in
-`export const` strings that no bundler can split.
+### 🔴 What phase 1 does NOT yet do
+
+**It has not closed that hazard.** 33 of the 34 colliding names still stand;
+the only drift actually resolved is `Stack`'s `gap`, through the one strangler
+seam. Issue #328 is the *motivation* for this package, not something it has
+fixed — do not cite it as a delivered result until more seams land.
+
+Two consequences worth stating plainly:
+
+- **Adding names here can make #328 worse.** `@civitai/elements-react` briefly
+  re-exported `ButtonVariant` and `ButtonSize`, which took two of the 34 from
+  two definitions to three. Removed. Don't re-add that kind of convenience.
+- **The migration has a transitional cost that is currently unpaid down.** The
+  `/ui` barrel now drags both design systems (see the size note below).
 
 ---
 
-## Measured result
+## 🔴 Bundle size is NOT a reason to adopt this package — retracted
 
-`node scripts/measure-bundle.mjs` (esbuild, minified, ESM, React external):
+An earlier version of this README led with "one Button: 52,568 B → 21,309 B, a
+59.5% cut." **That claim is withdrawn.** It is arithmetically correct and
+analytically worthless, because it compares a per-component-CSS design against
+a baseline whose size is caused by something else entirely, and then credits
+the difference to custom elements.
 
-| scenario | minified | gzip | vs baseline |
-|---|---|---|---|
-| `blocks-react/ui` Button (**baseline**) | 52,568 B | 12,478 B | 100% |
-| `components-react` Button | 51,765 B | 12,668 B | 98.5% |
-| **`@civitai/elements/button`** | **21,309 B** | **6,247 B** | **40.5%** |
-| `elements/button` + `elements/stack` | 23,735 B | 6,946 B | 45.2% |
-| all four elements (barrel import) | 42,411 B | 12,544 B | 80.7% |
-| `blocks-react/ui` all (barrel import) | 121,738 B | 33,244 B | 231.6% |
+`node scripts/measure-bundle.mjs` now splits every row into a JS column and a
+CSS column and adds the control that was missing:
 
-A one-Button page drops **59.5%** of its bytes (50% gzipped), and **all four
-elements together still cost less than one Button does today**.
+| scenario | total | JS | CSS | gzip | vs A |
+|---|---|---|---|---|---|
+| **A.** `blocks-react/ui` Button — un-split baseline | 52,568 | 2,417 | 50,151 | 12,478 | 100% |
+| **B.** `blocks-react/ui` Button — **CSS split in place** | **13,480** | **2,417** | **11,063** | **3,525** | **25.6%** |
+| **C.** `@civitai/elements/button` — custom element | 21,309 | 11,154 | 10,155 | 6,247 | 40.5% |
 
-Where the 21,309 B goes:
+Read the columns, not the totals:
 
-| | bytes |
-|---|---|
-| `@lit/reactive-element` runtime | 6,833 |
-| `@civitai/theme` token sheet | 5,984 |
-| Button's own CSS | 4,330 |
-| Button element code | 2,268 |
-| style adoption + base class + define | 1,234 |
+- **95.4% of the baseline is stylesheet text.** `ui/Button.tsx` imports
+  `useBlocksStyles` from `./styles.js`, whose `BLOCKS_UI_STYLES` concatenates
+  the theme tokens, the WHOLE of `@civitai/components`' sheet and this
+  package's `INTERACTIVE_STYLES` into one `export const` string. A bundle
+  containing only a Button therefore also contains the CSS for SegmentedControl,
+  Toast, Tooltip, NumberInput and fifteen others.
+- **Row B fixes exactly that, and nothing else.** No new package, no Lit, no
+  custom element, no new contract: just `@civitai/components`' sheet sliced per
+  component so Button's bundle carries Button's rules (plus Loader's, which
+  `<Button loading>` renders). It is a real build of a real slice — the slicer
+  is asserted lossless against `src/components.css` before any number is
+  reported.
+- **Row B beats row C by 37%** (and by 43% gzipped). The CSS columns are within
+  ~900 B of each other; the difference between the two is the **JS column**,
+  where the custom element costs **4.6× more** — `@lit/reactive-element`, the
+  base classes, and style adoption.
 
-`lit-html` is **not in that list**, and that is not an accident — see
-constraint (a).
+So: **on bytes, the control wins.** If bundle size is the deciding criterion,
+the right change is to split `@civitai/components`' stylesheet inside the
+existing packages and not to adopt this one.
 
-Three honest caveats.
+The reasons to adopt this package are the ones that survive that measurement:
 
-1. The absolute numbers depend on esbuild's settings; only the ratios between
-   rows are meaningful, and every row is bundled identically.
-2. The shape of the curve differs. The React packages pay ~52 KB for the first
-   component and ~0 for each of the next 33; this package pays ~13 KB of shared
-   runtime plus ~1–4 KB per component. The crossover is somewhere around a dozen
-   components, so an app importing the *entire* library would not win on size —
-   but no measured app does, and the ones importing a handful win large.
-3. **The last row got worse, and that is the strangler's transitional cost.**
-   It was 110,772 B before this change; `blocks-react/ui`'s barrel now drags
-   `@civitai/elements` as well, because `Stack` renders `<civitai-stack>`. Any
-   app importing the whole `/ui` barrel pays for both design systems until the
-   migration finishes. Apps importing named components pay only for the ones
-   they use, and this is the expected shape of a strangler — the number comes
-   back down as seams land, not before.
+1. **One implementation instead of two.** 34 component names are currently
+   defined twice with drifted contracts (see the table above). A custom element
+   is consumable from React, Svelte, SvelteKit and plain HTML, so the duplicate
+   pair collapses to one. *Phase 1 does not yet deliver this* — see "What phase
+   1 does NOT yet do" above.
+2. **Form association.** `ElementInternals` gives a component real
+   participation in `<form>` submission, validation and reset. There is no
+   React-only equivalent; `@civitai/components-react`'s `Slider` documents
+   `required` and forwards it nowhere.
+3. **Framework independence.** The starters span React, Svelte and plain HTML.
+   This is the argument that now carries the case, which is why the React
+   bindings stay in a separate downstream package rather than becoming a
+   `@civitai/elements/react` subpath.
+
+Two things that remain true and are worth knowing:
+
+- The cost CURVE differs. The React packages pay ~50 KB of CSS for the first
+  component and ~0 for the next 33; this package pays ~12 KB shared plus ~1–4 KB
+  each. Under a per-component split (row B) the React side pays per component
+  too, so the curves converge and the JS column decides — in the React side's
+  favour.
+- The `/ui` barrel import got **worse** with the first strangler seam (110,772 B
+  → 121,742 B): it now drags both design systems, because `Stack` renders
+  `<civitai-stack>` *and* still injects the pack stylesheet. That is the
+  transitional cost of a strangler, and it does not come back down until the
+  monolithic stylesheet string is gone.
 
 ---
 
@@ -280,18 +314,37 @@ nix-shell -p chromium --run \
   'PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=$(command -v chromium) pnpm --filter @civitai/elements test:browser'
 ```
 
-### Mutation battery
+### Mutation battery — MANUAL, not a CI gate
 
 ```bash
-node scripts/mutation-check.mjs
+pnpm --filter @civitai/elements mutation:check
+# NixOS: prefix with
+#   PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=$(nix-shell -p chromium --run 'command -v chromium')
 ```
 
 Breaks one mechanism at a time and asserts the matching guard goes red on
-**its own** assertion, so a guard is never merely believed. Includes a positive
-control (an obviously-wrong mutation that must be caught) and a baseline run
-(green, or every other row is void), and refuses to run a mutation whose search
-string does not match exactly once — a no-op mutation would otherwise be scored
-SURVIVED and read as a coverage gap that does not exist.
+**its own** assertion, so a guard is never merely believed. Result: **15/15
+killed**.
+
+It is deliberately outside CI. Each mutant pins an exact source string, so an
+unrelated refactor of the targeted line stops it applying — as a required gate
+that is the permanently-red kind everyone learns to click through. Run it by
+hand whenever you touch a guard or the code a guard protects.
+
+Controls: a positive-control mutant that must obviously be caught; a baseline
+run that must be green (or every other row is void); a refusal to run any
+mutation whose search string does not match exactly once (a no-op mutation
+would otherwise be scored SURVIVED and read as a coverage gap that does not
+exist); and — added after a re-run caught it — a refusal to score any run that
+produced no parseable vitest summary.
+
+🔴 That last control was earned. A re-run of the battery reported
+`D1 … SURVIVED, failures (0): (none)`. D1 is in fact killed by three
+assertions; the run had simply produced no result line at all (a browser tier
+that failed to come up), and the loop read the ABSENCE of parsed failures as
+"the guard did not fire". An absence is the observable that an infrastructure
+failure and a weak guard share, so it identifies neither. The loop now aborts
+on it. With the control in place the battery reproduces 15/15.
 
 ---
 

@@ -82,18 +82,38 @@ only one of them is where things are going:
   with drifted contracts** — `Select` is controlled in one and uncontrolled in
   the other, `Stack`'s `gap` means two different things, `Alert` derives `role`
   differently. Five of six audited apps import **both**, which is the hazard.
-- `@civitai/elements` is the replacement: light-DOM Lit custom elements, one
-  contract per component, per-component CSS (one Button: 21.3 KB vs 52.5 KB
-  measured), form-associated inputs, Custom Elements Manifest as the source of
-  truth for the React types and the CI API-surface gate.
+- `@civitai/elements` is the intended replacement: light-DOM Lit custom
+  elements, one contract per component, form-associated inputs, Custom Elements
+  Manifest as the source of truth for the React types and the CI API-surface
+  gate. `@civitai/elements-react` carries its generated JSX types (React 19
+  needs no wrapper components — measured, not assumed).
+
+🔴 **Do not cite bundle size as the reason.** An earlier version of this section
+said "one Button: 21.3 KB vs 52.5 KB measured". **Retracted.** Splitting
+`@civitai/components`' stylesheet per component *inside the existing React
+packages* — no new package, no Lit — gets the same Button to **13.5 KB**, which
+beats the custom element by 37%. 95% of the 52.5 KB baseline is one monolithic
+`export const` CSS string, and that has nothing to do with custom elements; the
+element's JS is 4.6× larger. Numbers, method and the control:
+`packages/civitai-elements/README.md` and `scripts/measure-bundle.mjs`.
+
+The reasons that do survive measurement: one implementation instead of two,
+real `<form>` participation via `ElementInternals`, and framework independence
+across the React/Svelte/plain-HTML starters.
+
+🔴 **Phase 1 has NOT yet reduced the duplication.** 33 of the 34 colliding names
+still stand — only `Stack`'s `gap` drift is closed. Until more seams land,
+#328's hazard is the motivation for this work, not something it has fixed.
 
 Migration is **strangler**, not a cutover: the React packages keep working and
 re-export from the elements one component at a time. The first seam is
 `blocks-react/ui`'s `Stack`, whose existing tests are unchanged and green.
 
 **When adding a new shared component, add it to `@civitai/elements`** — do not
-add a 35th duplicated pair. When fixing a bug in an existing one, check whether
-the same bug exists in its twin.
+add a 35th duplicated pair. Do not add an alias for a name that already exists
+in either React package either: re-exporting `ButtonVariant` from a third place
+makes #328 worse, not better. When fixing a bug in an existing component, check
+whether the same bug exists in its twin.
 
 ## Releasing a new SDK version
 

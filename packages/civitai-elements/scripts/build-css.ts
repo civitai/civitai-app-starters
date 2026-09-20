@@ -7,8 +7,14 @@
  *
  * The point of one module PER COMPONENT (rather than one `componentsCss`
  * string, as `@civitai/components` ships) is that a bundler can then drop the
- * CSS of components an app never imports. That is the measured difference
- * against the 52,571 B one-Button baseline — see scripts/measure-bundle.mjs.
+ * CSS of components an app never imports.
+ *
+ * 🔴 That is a property of the SPLIT, not of custom elements, and this comment
+ * used to claim it as "the measured difference against the 52,571 B one-Button
+ * baseline". Retracted: `@civitai/components` can be split the same way in
+ * place, and when it is, the React Button lands at 13,480 B — smaller than
+ * this package's 21,309 B. See `scripts/measure-bundle.mjs`, which now carries
+ * the control and a JS/CSS column split.
  *
  * It also writes `dist/styles.css`: every sheet concatenated, for the zero-JS
  * `<link>` route.

@@ -43,91 +43,6 @@
     },
     {
       "kind": "javascript-module",
-      "path": "src/select.ts",
-      "declarations": [],
-      "exports": [
-        {
-          "kind": "js",
-          "name": "CivitaiSelect",
-          "declaration": {
-            "name": "CivitaiSelect",
-            "module": "src/select.ts"
-          }
-        },
-        {
-          "kind": "js",
-          "name": "SelectOption",
-          "declaration": {
-            "name": "SelectOption",
-            "module": "./select/civitai-select.js"
-          }
-        },
-        {
-          "kind": "js",
-          "name": "SelectChangeDetail",
-          "declaration": {
-            "name": "SelectChangeDetail",
-            "module": "./select/civitai-select.js"
-          }
-        }
-      ]
-    },
-    {
-      "kind": "javascript-module",
-      "path": "src/slider.ts",
-      "declarations": [],
-      "exports": [
-        {
-          "kind": "js",
-          "name": "CivitaiSlider",
-          "declaration": {
-            "name": "CivitaiSlider",
-            "module": "src/slider.ts"
-          }
-        },
-        {
-          "kind": "js",
-          "name": "SliderChangeDetail",
-          "declaration": {
-            "name": "SliderChangeDetail",
-            "module": "./slider/civitai-slider.js"
-          }
-        }
-      ]
-    },
-    {
-      "kind": "javascript-module",
-      "path": "src/stack.ts",
-      "declarations": [],
-      "exports": [
-        {
-          "kind": "js",
-          "name": "CivitaiStack",
-          "declaration": {
-            "name": "CivitaiStack",
-            "module": "src/stack.ts"
-          }
-        },
-        {
-          "kind": "js",
-          "name": "GAP_STEPS",
-          "declaration": {
-            "name": "GAP_STEPS",
-            "module": "src/stack.ts"
-          }
-        },
-        {
-          "kind": "js",
-          "name": "GapStep",
-          "declaration": {
-            "name": "GapStep",
-            "module": "./stack/civitai-stack.js"
-          }
-        }
-      ]
-    },
-    {
-      "kind": "javascript-module",
       "path": "src/button/civitai-button.ts",
       "declarations": [
         {
@@ -398,6 +313,73 @@
           "declaration": {
             "name": "CivitaiButton",
             "module": "src/button/civitai-button.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/internal/adoptStyles.ts",
+      "declarations": [
+        {
+          "kind": "function",
+          "name": "adoptStyles",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          },
+          "parameters": [
+            {
+              "name": "el",
+              "type": {
+                "text": "Element"
+              },
+              "description": "The upgraded custom element."
+            },
+            {
+              "name": "id",
+              "type": {
+                "text": "string"
+              },
+              "description": "Stable component identifier, e.g. `'civitai-button'`."
+            },
+            {
+              "name": "css",
+              "type": {
+                "text": "string"
+              },
+              "description": "The component's own rule text."
+            }
+          ],
+          "description": "Adopt `css` into `el`'s root node exactly once per (root, id)."
+        },
+        {
+          "kind": "function",
+          "name": "__resetAdoptedStyles",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          },
+          "description": "Test-only: forget every adoption record so a suite can assert re-injection."
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "adoptStyles",
+          "declaration": {
+            "name": "adoptStyles",
+            "module": "src/internal/adoptStyles.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "__resetAdoptedStyles",
+          "declaration": {
+            "name": "__resetAdoptedStyles",
+            "module": "src/internal/adoptStyles.ts"
           }
         }
       ]
@@ -834,73 +816,6 @@
     },
     {
       "kind": "javascript-module",
-      "path": "src/internal/adoptStyles.ts",
-      "declarations": [
-        {
-          "kind": "function",
-          "name": "adoptStyles",
-          "return": {
-            "type": {
-              "text": "void"
-            }
-          },
-          "parameters": [
-            {
-              "name": "el",
-              "type": {
-                "text": "Element"
-              },
-              "description": "The upgraded custom element."
-            },
-            {
-              "name": "id",
-              "type": {
-                "text": "string"
-              },
-              "description": "Stable component identifier, e.g. `'civitai-button'`."
-            },
-            {
-              "name": "css",
-              "type": {
-                "text": "string"
-              },
-              "description": "The component's own rule text."
-            }
-          ],
-          "description": "Adopt `css` into `el`'s root node exactly once per (root, id)."
-        },
-        {
-          "kind": "function",
-          "name": "__resetAdoptedStyles",
-          "return": {
-            "type": {
-              "text": "void"
-            }
-          },
-          "description": "Test-only: forget every adoption record so a suite can assert re-injection."
-        }
-      ],
-      "exports": [
-        {
-          "kind": "js",
-          "name": "adoptStyles",
-          "declaration": {
-            "name": "adoptStyles",
-            "module": "src/internal/adoptStyles.ts"
-          }
-        },
-        {
-          "kind": "js",
-          "name": "__resetAdoptedStyles",
-          "declaration": {
-            "name": "__resetAdoptedStyles",
-            "module": "src/internal/adoptStyles.ts"
-          }
-        }
-      ]
-    },
-    {
-      "kind": "javascript-module",
       "path": "src/internal/define.ts",
       "declarations": [
         {
@@ -977,6 +892,37 @@
           "declaration": {
             "name": "ensureTokens",
             "module": "src/internal/tokens.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/select.ts",
+      "declarations": [],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiSelect",
+          "declaration": {
+            "name": "CivitaiSelect",
+            "module": "src/select.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "SelectOption",
+          "declaration": {
+            "name": "SelectOption",
+            "module": "./select/civitai-select.js"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "SelectChangeDetail",
+          "declaration": {
+            "name": "SelectChangeDetail",
+            "module": "./select/civitai-select.js"
           }
         }
       ]
@@ -1615,6 +1561,29 @@
           "declaration": {
             "name": "CivitaiSelect",
             "module": "src/select/civitai-select.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/slider.ts",
+      "declarations": [],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiSlider",
+          "declaration": {
+            "name": "CivitaiSlider",
+            "module": "src/slider.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "SliderChangeDetail",
+          "declaration": {
+            "name": "SliderChangeDetail",
+            "module": "./slider/civitai-slider.js"
           }
         }
       ]
@@ -2331,6 +2300,37 @@
           "declaration": {
             "name": "CivitaiSlider",
             "module": "src/slider/civitai-slider.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/stack.ts",
+      "declarations": [],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiStack",
+          "declaration": {
+            "name": "CivitaiStack",
+            "module": "src/stack.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "GAP_STEPS",
+          "declaration": {
+            "name": "GAP_STEPS",
+            "module": "src/stack.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "GapStep",
+          "declaration": {
+            "name": "GapStep",
+            "module": "./stack/civitai-stack.js"
           }
         }
       ]

@@ -11,8 +11,21 @@
  * Covered here:
  *   - `src/generated/*.css.ts`   vs the sibling `.css` source
  *   - `api-snapshot.json`        vs `custom-elements.json`
- *   - `elements-react/src/generated/jsx.ts` vs `custom-elements.json`
  *   - `custom-elements.json`     vs the reactive properties actually declared
+ *
+ * NOT covered here, deliberately: `elements-react/src/generated/jsx.ts`. Its
+ * generator moved into `@civitai/elements-react` (the package it writes into),
+ * so its parity assertion lives there too — see
+ * `packages/civitai-elements-react/test/generation-parity.test.ts`.
+ *
+ * ALSO NOT covered here: whether the COMMITTED `custom-elements.json` matches
+ * what `cem analyze` produces right now. That cannot be asserted from inside
+ * the suite without running the analyzer (which needs a build), and CI's
+ * `analyze` step OVERWRITES the committed file before this suite runs — so
+ * every assertion below reads the freshly generated manifest, and a stale
+ * committed one is invisible to all of them. The gate for that is a
+ * `git diff --exit-code custom-elements.json` step immediately after
+ * `analyze`; see `.github/workflows/ci.yml`.
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
@@ -73,18 +86,6 @@ describe('the API snapshot matches the manifest', () => {
       encoding: 'utf8',
     });
     expect(out).toContain('public surface unchanged');
-  });
-});
-
-describe('the React types match the manifest', () => {
-  it('regenerating jsx.ts produces no diff', () => {
-    const generated = join(pkgRoot, '..', 'civitai-elements-react', 'src', 'generated', 'jsx.ts');
-    const before = readFileSync(generated, 'utf8');
-    execFileSync(process.execPath, [join(pkgRoot, 'scripts', 'gen-react-types.mjs')], {
-      cwd: pkgRoot,
-      encoding: 'utf8',
-    });
-    expect(readFileSync(generated, 'utf8')).toBe(before);
   });
 });
 

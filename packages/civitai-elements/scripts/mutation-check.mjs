@@ -7,17 +7,42 @@
  * which tests went red and with what message — so the report can say the guard
  * died on ITS OWN assertion rather than on a collateral error.
  *
- * Controls built in:
+ * ── 🟡 MANUAL-ONLY, AND DELIBERATELY SO ───────────────────────────────────
+ * This runs in NO CI job and is not wired to `pnpm test`. Two reasons, both
+ * about what a gate is for:
+ *   - it takes ~15 vitest invocations, half of them in a real browser;
+ *   - every mutant pins an EXACT source string, so an unrelated refactor of
+ *     the line it targets makes it stop applying. As a gate that is the
+ *     permanently-red kind everyone learns to click through.
+ * It fails LOUDLY rather than quietly when it rots (see the occurrence check
+ * below), which is what makes manual-only safe: a stale mutant is reported as
+ * a harness error, never as a coverage gap.
+ *
+ * Run it BY HAND whenever you change a guard, the code a guard protects, or
+ * the shape of a test name a mutant matches on:
+ *
+ *     pnpm --filter @civitai/elements mutation:check
+ *
+ * On NixOS the browser rows need a system Chromium:
+ *     PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=$(nix-shell -p chromium --run 'command -v chromium')
+ *
+ * ── Controls built in ─────────────────────────────────────────────────────
  *   - a POSITIVE CONTROL mutant that must obviously be caught; if it survives,
  *     the harness is wired to nothing and every other row is meaningless.
  *   - a BASELINE run with no mutation, which must be fully green; if it is
  *     red, every "killed" row is red for the wrong reason.
  *   - every mutant asserts its search string was actually FOUND and replaced.
- *     A mutation that silently no-ops is scored SURVIVED and would read as a
- *     coverage gap that does not exist.
- *
- * Run: node scripts/mutation-check.mjs  (needs PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
- * for the browser-tier rows).
+ *     A mutation that silently no-ops would otherwise be scored SURVIVED and
+ *     read as a coverage gap that does not exist.
+ *   - 🔴 every mutant run must produce a PARSEABLE vitest summary. This one was
+ *     missing and it produced a false SURVIVED: a re-run of the battery
+ *     reported `D1 … SURVIVED, failures (0): (none)` while D1 is in fact
+ *     killed by three assertions (verified by hand immediately afterwards).
+ *     The run had produced no `Tests N passed|failed` line at all — a browser
+ *     that failed to launch, an unhandled error, a wedged transform — and the
+ *     loop read "no failures parsed" as "the guard did not fire". An ABSENCE
+ *     is the observable that an infrastructure failure and a weak guard share;
+ *     it identifies neither. The loop now aborts on it instead of scoring it.
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -201,6 +226,19 @@ for (const m of MUTANTS) {
     out = capture(m.test, m.project);
   } finally {
     writeFileSync(path, original);
+  }
+  // 🔴 Read the CONTENT, and refuse to score a run whose result cannot be
+  // read. A browser that failed to launch produces no summary line at all,
+  // which parses as "0 failures" and would be recorded as SURVIVED — a
+  // coverage gap that does not exist, reported with total confidence.
+  if (!/Tests\s+\d+ (?:failed|passed)/.test(out)) {
+    console.error(
+      `!! ${m.id}\n   the ${m.project} run produced no parseable vitest summary — ` +
+        'refusing to score it. This is an infrastructure failure, not a surviving mutant.\n' +
+        `   last 800 chars:\n${out.slice(-800)}`
+    );
+    process.exitCode = 1;
+    continue;
   }
   const failed = [...out.matchAll(/×\s+.*?>\s*(.+?)(?:\s+\d+ms)?$/gm)].map((x) => x[1].trim());
   const failedLine = /Tests\s+(\d+) failed/.exec(out);

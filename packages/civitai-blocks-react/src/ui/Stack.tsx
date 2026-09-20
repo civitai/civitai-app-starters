@@ -2,6 +2,8 @@ import { createElement, forwardRef } from 'react';
 
 import { CivitaiStack, GAP_STEPS } from '@civitai/elements/stack';
 
+import { useBlocksStyles } from './styles.js';
+
 /**
  * ── STRANGLER SEAM #1 ─────────────────────────────────────────────────────
  *
@@ -18,7 +20,22 @@ import { CivitaiStack, GAP_STEPS } from '@civitai/elements/stack';
  *     what the shipped contract does and what six existing tests assert,
  *   - `data-civitai-ui="stack"`, so any consumer CSS selecting on the
  *     attribute keeps matching,
- *   - a forwarded ref, `className`, and every spread prop.
+ *   - a forwarded ref, `className`, and every spread prop,
+ *   - 🔴 `useBlocksStyles()`. The element adopts its OWN CSS on upgrade, so an
+ *     earlier draft of this shim dropped the hook as redundant and a test
+ *     asserted the drop was safe. It is not: `useBlocksStyles()` is the pack's
+ *     whole-stylesheet injection, and every other `/ui` component calls it.
+ *     A block whose only `/ui` import is `<Stack>` — with hand-written
+ *     `data-civitai-ui="card"` / `"badge"` markup beside it, the contract
+ *     `@civitai/components`' MARKUP.md documents — got NO pack stylesheet at
+ *     all and rendered unstyled. Nothing in `Stack.test.tsx` could see it:
+ *     its six assertions are about attributes and inline styles this shim
+ *     writes itself. `Stack.styles.test.tsx` now pins it.
+ *
+ *     Cost, stated plainly: this re-drags the pack's ~50 KB stylesheet string
+ *     into any bundle that imports `Stack`. That cost belongs to
+ *     `ui/styles.ts` shipping one monolithic `BLOCKS_UI_STYLES` constant, not
+ *     to this shim — see `@civitai/elements/scripts/measure-bundle.mjs`, row B.
  *
  * What it QUIETLY FIXES on the way through: a named step (`gap="md"`) is
  * routed to the element's `gap` ATTRIBUTE instead of `style.gap`. Under the
@@ -61,6 +78,7 @@ export const Stack = forwardRef<HTMLElement, StackProps>(function Stack(
   { gap = 12, align, justify, style, children, ...rest },
   ref
 ): React.JSX.Element {
+  useBlocksStyles();
   const named = typeof gap === 'string' && STEPS.has(gap);
   // `createElement` rather than JSX so this package needs no JSX-intrinsics
   // augmentation (that lives in @civitai/elements-react, which React consumers

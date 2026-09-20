@@ -225,19 +225,36 @@ jobs:
       - run: pnpm --filter @civitai/theme build
       - run: pnpm --filter @civitai/elements build
 
-      # Regenerate the manifest from source and fail if the committed public
-      # surface moved without the snapshot being updated in the same PR. This
-      # is the gate the audit of the two React packages wanted and never had:
-      # 59% of their surface was undocumented and nothing in CI could see a
-      # prop being added, renamed or dropped.
+      # Regenerate the manifest from source. `outdir` is '.', so this
+      # OVERWRITES the committed custom-elements.json.
       - run: pnpm --filter @civitai/elements analyze
-      - run: pnpm --filter @civitai/elements api:check
+
+      # 🔴 THE GATE ON THE COMMITTED MANIFEST. Without this line the step above
+      # is a laundering operation: every downstream check (the api-snapshot
+      # comparison, the JSX-type parity test, the README tables) then reads the
+      # FRESHLY GENERATED manifest, so a committed custom-elements.json that
+      # has gone stale is invisible to all of them — while npm ships the
+      # committed copy (it is in `files` and named by the `customElements`
+      # field, which is what editors read for completions).
+      #
+      # `git diff --exit-code` prints the drift and fails; the fix is
+      # `pnpm --filter @civitai/elements analyze` and committing the result.
+      - name: the committed manifest must match what the analyzer produces
+        run: git diff --exit-code -- packages/civitai-elements/custom-elements.json
 
       - run: pnpm --filter @civitai/elements typecheck
+      # `api:check` is NOT a separate step: generation-parity.test.ts shells out
+      # to the same script and asserts on its OUTPUT ("public surface
+      # unchanged"), not an exit code. Two invocations of one gate is one to
+      # maintain and one to forget.
       - run: pnpm --filter @civitai/elements test
 
       - run: pnpm --filter @civitai/elements-react build
       - run: pnpm --filter @civitai/elements-react typecheck
+      # The unit tier here is the TYPE gate (tsc over fixture files asserting
+      # that a wrong prop type is a compile error). It was absent from this job
+      # and ran nowhere in CI.
+      - run: pnpm --filter @civitai/elements-react test
 
       # Same apt/network wedge hazard as the two jobs above; same 15m budget,
       # same reasoning — see the measurement recorded on the blocks-react job.
@@ -246,15 +263,17 @@ jobs:
       - run: pnpm --filter @civitai/elements test:browser
       - run: pnpm --filter @civitai/elements-react test:browser
 
-      # The bundle-cost claim this package is justified by, re-measured on every
-      # run so it cannot quietly stop being true. Printed, not asserted: a hard
-      # byte threshold would go red on an esbuild bump and train people to
-      # ignore it.
-      - run: pnpm --filter @civitai/components build
-      - run: pnpm --filter @civitai/app-sdk build
-      - run: pnpm --filter @civitai/blocks-react build
-      - run: pnpm --filter @civitai/components-react build
-      - run: pnpm --filter @civitai/elements measure
+      # Every subpath every publishable package DECLARES in `exports` must
+      # resolve from its packed tarball. Needs all packages built, which is why
+      # it lives here rather than in the pre-install `test:guards` step.
+      #
+      # This replaces a `pnpm --filter @civitai/elements measure` step that
+      # asserted nothing by design — it printed a table, so the only way it
+      # could fail was by crashing, and it required these same four builds to
+      # do it. `measure` is now a decision instrument run by hand
+      # (`pnpm --filter @civitai/elements measure`), not a gate.
+      - run: pnpm -r --filter "./packages/*" build
+      - run: pnpm check:exports
 
   # ADVISORY drift guard — depends on a LIVE external checkout of civitai/civitai
   # (sparse: src/providers + src/utils) to assert the vendored theme.source.ts

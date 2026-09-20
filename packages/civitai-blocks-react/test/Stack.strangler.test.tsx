@@ -84,7 +84,13 @@ describe('Stack is served by @civitai/elements', () => {
     expect(kid.isConnected).toBe(true);
   });
 
-  it('the element brings its own styling — no useBlocksStyles() needed', () => {
+  it('the element brings its OWN styling, on top of the pack stylesheet', () => {
+    // 🔴 "on top of", not "instead of". An earlier version of this test was
+    // titled "no useBlocksStyles() needed" and was used to justify dropping
+    // that hook from the shim — which silently unstyled every OTHER
+    // `data-civitai-ui` node in a Stack-only block. The pack injection is
+    // asserted in `Stack.styles.test.tsx`; this case covers only the half the
+    // element itself contributes.
     render(<Stack>x</Stack>);
     // The elements package adopts per-component CSS on upgrade (constructed
     // stylesheet where available, a <style data-civitai-element> otherwise),

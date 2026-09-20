@@ -36,28 +36,31 @@
  * For a CUSTOM event name, React attaches `on<Rest>` verbatim. `onCivitaiFoo`
  * listens for `CivitaiFoo`, not `civitai-foo`. This package only declares
  * handler props that were verified to fire; see `REACT_SYNTHETIC` in
- * `scripts/gen-react-types.mjs`.
+ * `scripts/gen-jsx-types.mjs`.
  */
 import '@civitai/elements';
 import './generated/jsx.js';
 
+/**
+ * The only names this package DEFINES: the JSX prop shapes, which exist
+ * nowhere else.
+ *
+ * 🔴 It deliberately re-exports NOTHING from `@civitai/elements`. An earlier
+ * version also re-exported `ButtonVariant`, `ButtonSize`, `ButtonType`,
+ * `GapStep`, `SelectOption`, `SelectChangeDetail`, `SliderChangeDetail` and
+ * the four element classes as a convenience — which took `ButtonVariant` and
+ * `ButtonSize` from TWO definitions across the fleet (`blocks-react/ui` and
+ * `components-react`) to THREE. This package exists downstream of issue #328,
+ * whose whole subject is 34 duplicated names with drifted contracts; a
+ * convenience alias that adds to that count is working against the reason the
+ * package was built.
+ *
+ * Import those from `@civitai/elements` (or `@civitai/elements/button`), which
+ * is where they are declared.
+ */
 export type {
   CivitaiButtonProps,
   CivitaiSelectProps,
   CivitaiSliderProps,
   CivitaiStackProps,
 } from './generated/jsx.js';
-
-export type {
-  CivitaiButton,
-  CivitaiSelect,
-  CivitaiSlider,
-  CivitaiStack,
-  SelectOption,
-  SelectChangeDetail,
-  SliderChangeDetail,
-  ButtonVariant,
-  ButtonSize,
-  ButtonType,
-  GapStep,
-} from '@civitai/elements';
