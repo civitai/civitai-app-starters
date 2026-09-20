@@ -40,6 +40,12 @@ export {
 export type { BrowsingLevelKey, BrowsingLevelBit, ColorDomain } from './browsingLevel.js';
 
 export {
+  APP_STORAGE_MAX_VALUE_BYTES,
+  APP_STORAGE_MAX_BYTES,
+  APP_STORAGE_MAX_ROWS,
+} from './appStorageLimits.js';
+
+export {
   BLOCK_INIT_FRAGMENT_MARKER_KEY,
   BLOCK_INIT_FRAGMENT_VERSION,
   BLOCK_INIT_FRAGMENT_KEYS,

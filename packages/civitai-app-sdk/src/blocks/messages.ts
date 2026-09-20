@@ -747,11 +747,36 @@ export type ParentToBlockMessage =
       payload: { requestId: string; value: unknown; error?: string };
     }
   | {
-      // Reply to APP_STORAGE_SET. `error: "PAYLOAD_TOO_LARGE"` covers
-      // both the per-value 64KB cap and the per-app 50MB quota — the
-      // host doesn't leak which one tripped. `sizeBytes` is the byte
-      // size the row landed at, so the block can update its own quota
-      // estimate without another round-trip to `getQuota`.
+      // Reply to APP_STORAGE_SET. A non-empty `error` is the
+      // reject signal, and any of three ceilings can raise it: the
+      // per-value cap (`APP_STORAGE_MAX_VALUE_BYTES`) or either
+      // per-(app, viewer) budget (`APP_STORAGE_MAX_BYTES`,
+      // `APP_STORAGE_MAX_ROWS`). Do not assume a rejection means the
+      // VALUE was too big; the row ceiling is the one a block usually
+      // reaches first, and it has nothing to do with the size of the
+      // value being written.
+      //
+      // 🔴 ON WHICH CEILING TRIPPED, THE MOCK AND THE HOST DIFFER, AND
+      // THIS FIELD'S BEHAVIOUR HERE DESCRIBES THE MOCK.
+      // `createMockHost` answers the single string
+      // `"PAYLOAD_TOO_LARGE"` for all three, so under `dev:mock` they
+      // are NOT distinguishable. The real host DOES distinguish them:
+      // measured on `civitai/civitai` `main`, each rejection site
+      // throws its own message (`value exceeds 64KB cap`,
+      // `per-user storage quota exceeded`, `per-user row limit
+      // exceeded`, plus two app-wide variants), and the bridge's
+      // `storageErrorMessage()` forwards `err.message` — not the TRPC
+      // code — so that string is what reaches the block.
+      //
+      // Reconciling the mock and this contract is tracked in
+      // civitai/civitai-app-starters#343. Until it lands, do NOT write
+      // a single generic retry arm on the assumption that the cause is
+      // unknowable, and do not hard-code a host string either: the set
+      // above is measured, not contractual.
+      //
+      // `sizeBytes` is the byte size the row landed at, so the block
+      // can update its own quota estimate without another round-trip
+      // to `getQuota`.
       type: 'APP_STORAGE_SET_RESULT';
       payload: { requestId: string; ok?: boolean; error?: string; sizeBytes?: number };
     }
@@ -1215,9 +1240,13 @@ export type BlockToParentMessage =
       payload: { eventName: string; properties?: Record<string, unknown> };
     }
   // Civitai Apps KV datastore (W4-v0). Storage calls go through the host —
-  // the block never sees the apps DB credentials. Scope is (block instance,
-  // user). `value` is freeform JSON; the host enforces a 64 KB per-value
-  // cap and a 50 MB per-app quota.
+  // the block never sees the apps DB credentials. Keys are NAMESPACED per
+  // (block instance, user); the byte and row BUDGETS are enforced per (app,
+  // user), so every instance of one app shares one budget per viewer.
+  // `value` is freeform JSON. Ceilings: `APP_STORAGE_MAX_VALUE_BYTES` per
+  // value, `APP_STORAGE_MAX_BYTES` + `APP_STORAGE_MAX_ROWS` per (app, viewer)
+  // — see `./appStorageLimits.ts`, which is the only place they are written
+  // down and carries their provenance.
   | {
       type: 'APP_STORAGE_GET';
       payload: { requestId: string; key: string };

@@ -692,17 +692,71 @@ async function onCancel(id: string) {
 
 ### `useAppStorage()`
 
-Per-(block instance, viewer) KV datastore, host-mediated. 64 KB per value,
-50 MB + ~1M rows per app.
+KV datastore, host-mediated. Keys are **namespaced** per (block instance,
+viewer); the byte and row **budgets** are enforced per (**app**, viewer), so
+every instance of one app shares one budget for that viewer.
 
 ```tsx
+import {
+  APP_STORAGE_MAX_VALUE_BYTES, // largest single value, in wire bytes
+  APP_STORAGE_MAX_BYTES,       // total stored bytes per (app, viewer)
+  APP_STORAGE_MAX_ROWS,        // total rows per (app, viewer)
+} from '@civitai/app-sdk/blocks';
+
 const storage = useAppStorage();
-await storage.set('key', { any: 'json' });   // throws "PAYLOAD_TOO_LARGE" over a limit
+await storage.set('key', { any: 'json' });   // rejects over ANY of the three ceilings
 const v = await storage.get<MyShape>('key'); // null if unset / anon
 await storage.delete('key');                  // idempotent
 const { keys } = await storage.list({ prefix: 'note-' });
 const quota = await storage.getQuota();       // { usedBytes, rowCount, limitBytes, limitRows }
 ```
+
+🔴 **`getQuota()` is the authority; the constants are a snapshot.** These three
+are the ceilings **as of the version of `@civitai/app-sdk` you installed** —
+compiled-in figures, which is the same frozen-number failure mode this page
+used to demonstrate, just with one copy instead of nine. The host can move a
+ceiling without your lockfile changing. So:
+
+- **Render `getQuota()`'s reply**, never a constant, anywhere a viewer sees a
+  number or a code path decides whether a write will fit.
+- **Reach for the constants only where no quota reply is available** — a
+  build-time sanity check, a test fixture, a rough design-time estimate — and
+  treat the answer as "roughly, at install time".
+- **Re-check after any SDK bump**, and expect movement: the per-viewer clamp
+  was sized against a measured distribution and the host says to expect a
+  re-measure. `appStorageLimits.ts` in `@civitai/app-sdk` carries the
+  provenance and a one-liner that re-derives the current values from the host.
+
+Never hard-code a figure of your own: the docs here used to quote the app-wide
+umbrella instead of the per-viewer clamp and were **25x** out on bytes and
+**1000x** out on rows.
+
+🔴 **The ROW ceiling is usually the binding one, and a byte-based "x of y used"
+readout will not see it coming.** A block caching one modest record per item a
+viewer touches exhausts `limitRows` while still holding a small fraction of
+`limitBytes`. Show rows too.
+
+`createMockHost()` defaults to these same ceilings and enforces the per-value
+cap, the byte budget and — since it was added — the **row** budget on write, so
+a row-limit overrun now fails under `dev:mock` where it previously passed and
+failed only in production. Pass `storage: { quotaBytes, limitRows }` to
+simulate something smaller.
+
+⚠️ The mock is **not** gate-for-gate identical to the host. Three known
+divergences:
+
+- the error string a rejection carries
+  ([#343](https://github.com/civitai/civitai-app-starters/issues/343));
+- the byte gate refusing a shrinking overwrite that the host admits
+  ([#345](https://github.com/civitai/civitai-app-starters/issues/345));
+- 🔴 the byte gate counting **wire** bytes where the host counts **stored**
+  bytes — `octet_length(value::jsonb::text)`, larger for every container, up to
+  ~1.5x ([#347](https://github.com/civitai/civitai-app-starters/issues/347)).
+
+Passing under `dev:mock` is evidence, not proof — and note the third one is
+**permissive**: unlike the other two, it lets a write pass locally that
+production will reject. Size your fixtures against `getQuota()`, not against
+what the mock accepted.
 
 ### `useSharedStorage()`
 

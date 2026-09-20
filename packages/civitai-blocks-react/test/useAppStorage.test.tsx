@@ -316,8 +316,14 @@ describe('useAppStorage', () => {
               requestId: sent.payload.requestId,
               usedBytes: 4096,
               rowCount: 3,
-              limitBytes: 50 * 1024 * 1024,
-              limitRows: 1_000_000,
+              // 🔴 DELIBERATELY NOT the real ceilings. This test asserts the
+              // hook PASSES THE HOST'S REPLY THROUGH — every field distinct,
+              // and distinct from `APP_STORAGE_MAX_BYTES` /
+              // `APP_STORAGE_MAX_ROWS`, so a hook that substituted its own
+              // defaults for the host's numbers would go red here. Using the
+              // real constants would make that mutant survive.
+              limitBytes: 7_654_321,
+              limitRows: 4_321,
             },
           },
           origin: PARENT_ORIGIN,
@@ -328,8 +334,8 @@ describe('useAppStorage', () => {
     await expect(promise).resolves.toEqual({
       usedBytes: 4096,
       rowCount: 3,
-      limitBytes: 50 * 1024 * 1024,
-      limitRows: 1_000_000,
+      limitBytes: 7_654_321,
+      limitRows: 4_321,
     });
   });
 
