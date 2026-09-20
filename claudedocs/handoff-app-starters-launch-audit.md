@@ -21,21 +21,48 @@ Audited for code quality, dead code, over-exporting, comment rot, and bloat.
   returns no issue whose body says "launch-blocking" and is unreferenced by a merged PR.
 
 ## State now
-- **Branch:** `main` @ `503fe39`, clean, in sync with origin. No PR open from this session.
-- **Published this session (3 releases, all verified against the registry by content, not by workflow status):**
-  - `@civitai/app-sdk` 0.45.0 → 0.46.0 → 0.47.0 → **0.48.0**
-  - `@civitai/blocks-react` 0.53.0 → 0.53.1 → 0.54.0 → **0.55.0**
-- **Merged PRs:** #317, #319, #320, #321, #335, #336, #337, #338, #340, #341, #344, #351,
-  #352, #353, #355 + version PRs #318, #339, #350, #354.
-- **13 launch-blockers found; all 13 fixed and published.** Filed as issues #322–#334
-  (five carry a `security` label created for the purpose).
-- **Audits run:** round 0 on #340/#341/#344/#346/#351/#352/#353, round 1 on #340/#341/#344.
-  Every round 0 found a real requirement problem. Three of them were defects in the
-  *brief*, not the PR — see Gotchas.
-- **IN FLIGHT:** nothing. All agents finished; no worktrees remain (`git worktree list`).
-- **Deploy/verify status:** published AND verified by reproducing each defect's original
-  failure path against the published tarballs — not by reading workflow status. See
-  "How to verify".
+
+- **DoD VERDICT (round 1 closing-condition): ADDRESSED — but the check that says so is VACUOUS.**
+  `gh issue list --repo civitai/civitai-app-starters --state open --label bug` returns 9 issues,
+  none containing "launch-blocking" ⇒ literally green. It is green for the wrong reason: the
+  string **appears in ZERO issues in the repo, including all 13 the doc designates blockers
+  (#322–#334)**, so the grep cannot fail. Instrument control: grepping a known-present string in
+  #343 returned 16 hits, so the zero is real. Substance verified BY HAND instead — all 13 were
+  filed as #322–#334 and every one spot-checked (#322, #327, #333, #343) carries a
+  `## Closing condition` section. The condition is an OR (*published OR filed with a closing
+  condition*), so the 9 still-open issues do not violate it. **The round-1 arc is CLOSED.**
+  Everything in Next steps is a NEW arc.
+- **Branch:** `main` @ `503fe39`, unchanged this session (untracked `.venv/`, `opencode.json` only).
+- **This doc** lives on `docs/handoff-app-starters-launch-audit` = **PR #356**, not on `main`.
+- **PR #346 decision made and EXECUTED (disposition (a)): keep the two new packages, strip the
+  strangler seam.** Commit **`4a359be`** pushed to `feat/civitai-elements-phase1`; PR #346 remains
+  **OPEN / MERGEABLE**, not merged, not closed. PR body + a comment record why.
+  - Removed: `@civitai/elements: workspace:*` from `packages/civitai-blocks-react/package.json`,
+    the lockfile edge, `src/ui/Stack.tsx` reverted to `main`'s `<div>` (byte-identical, verified),
+    `test/Stack.strangler.test.tsx` deleted, and the two `pnpm --filter @civitai/elements build`
+    steps in `ci.yml` that existed only for the seam. Prose corrected in `AGENTS.md`,
+    `packages/civitai-elements/README.md`, `packages/civitai-elements/docs/DECISIONS.md` (§10
+    retitled REVERSED).
+  - **Independently re-verified (not from the subagent's self-report):** head of #346 is `4a359be`;
+    `blocks-react` dependencies are now exactly `{@civitai/components, @civitai/theme}`;
+    `Stack.tsx` diff vs `main` is empty; #346 state OPEN/MERGEABLE.
+  - Enumerated grep (NOT `grep -r`, which honours `.gitignore`):
+    `find packages/civitai-blocks-react -type f -not -path '*/node_modules/*' -print0 | xargs -0 grep -n '@civitai/elements'`
+    → **0 lines over 498 files**; positive control with `@civitai/components` over the same
+    enumeration → **69 lines**.
+- **Issue #357 filed** — `blocks-react/ui` `Stack` types `gap` as `string | number`, so `gap="md"`
+  typechecks and silently renders 12px when the author asked 16px. The removed shim was quietly
+  fixing this; reverting restores it. Has a `## Closing condition`.
+- **IN FLIGHT:** branch **`zach/components-css-split`** (pushed, `756192e`) — a subagent landing the
+  per-component CSS split inside `@civitai/components`, lifting the already-lossless-asserted
+  `sliceComponentsCss()` from `packages/civitai-elements/scripts/measure-bundle.mjs`. Deliberately
+  does NOT rewire `blocks-react`'s `useBlocksStyles()` (see Gotchas). Worktree
+  `/home/zach/workspace/civit/civitai-app-starters-cssplit`.
+- **Worktrees created this session, to remove when done:** `-launchaudit` (holds this doc's branch),
+  `-seamcut` (holds `feat/civitai-elements-phase1`), `-cssplit`.
+- **Deploy/verify status:** nothing published this session. `4a359be` is verified LOCALLY only —
+  1508 unit + 73 browser + 98 guards + 18/18 typechecks + 7/7 builds green — but **CI has not run on
+  it and the branch is 4 commits behind `main`, so none of it was measured on a merged tree.**
 
 ## Open investigations — live diagnosis state
 
@@ -76,42 +103,51 @@ Audited for code quality, dead code, over-exporting, comment rot, and bloat.
   `find . -name '*.tmpl' -print0 | xargs -0 grep -n "blocks-react/testing"`
 
 ## Next steps (ranked)
-1. **Decide `@civitai/elements` (PR #346, still open).** The web-components spike. Its
-   headline byte case is RETRACTED — a per-component CSS split *inside the existing
-   packages* measured 13,480 B against the custom element's 21,309 B, 37% better with
-   identical JS. The architecture now rests on one-implementation / form-association /
-   framework-independence, having closed 1 of 34 name collisions. Files:
-   `packages/civitai-elements/`, `packages/civitai-elements-react/`.
-   forcing: none
-2. **Work the 22 HIGH audit findings.** Not yet filed as issues. The sharpest is a defect in
-   the *published* `@civitai/blocks-react`: `internal/detector.js` reads
-   `import.meta.env?.[key]` with a **variable** key, so Vite cannot statically replace it and
-   inlines the entire `VITE_*` env — including `VITE_LIVE_BLOCK_TOKEN` — into every block
-   app's production bundle. Fix is three literal `import.meta.env.VITE_…` reads.
+
+1. **🔴 `detector.js` leaks the whole `VITE_*` env into every block app's production bundle.**
+   VERIFIED AGAINST THE PUBLISHED TARBALL this session, not inferred: install
+   `@civitai/blocks-react@0.55.0`, then `dist/internal/detector.js:33` reads
+   `import.meta.env?.[key]` with a **variable** key. Vite cannot statically replace that, so it
+   inlines the entire `VITE_*` env — including `VITE_LIVE_BLOCK_TOKEN`. Fix is three literal
+   `import.meta.env.VITE_…` reads in `packages/civitai-blocks-react/src/internal/detector.ts`.
+   Needs its own branch + changeset; do NOT run it concurrently with another agent editing
+   `blocks-react`.
    forcing: security
-3. **Fix `civitai/cli`'s `page-money` template before anyone bumps its `^0.53.0` pin**
+2. **Review/merge the CSS-split PR** on `zach/components-css-split` once CI is green.
+   IN FLIGHT: civitai/civitai-app-starters — branch pushed, PR number not yet known at write time.
+   Files: `packages/civitai-components/scripts/build-css.ts`, `src/components.css`, generated
+   per-component artifacts, `package.json` `exports`.
+   forcing: none
+3. **Fix `civitai/cli`'s `page-money` scaffold template before anyone bumps its `^0.53.0` pin**
    (see Open investigations). Out of this tree.
    forcing: regression
-4. **Issue #343 — the host forwards `err.message`, never `err.code`,** so the documented
-   App Storage error codes never reach a block and `kv-storage`'s only error branch is
-   unreachable in production. Docs and mock assert otherwise across ~18 sites.
+4. **Issue #343 — the host forwards `err.message`, never `err.code`,** so the documented App Storage
+   error codes never reach a block and `kv-storage`'s only error branch is unreachable in
+   production. Docs and mock assert otherwise across ~18 sites.
    forcing: user
-5. **Issues #345, #347, #348, #349** — mock/host divergences and unpinned constants, all
-   filed with closing conditions during the audit.
+5. **Decide `@civitai/elements` on its architectural merits (PR #346).** No longer a release
+   hazard, so it can sit open. The byte case is retracted AND the control beats it by 37%; the
+   decision now rests on one-implementation (**by the PR's own admission unmet — 33 of 34 name
+   collisions still stand**), form-association (real, no React-only equivalent), and
+   framework-independence (real but currently unconsumed — the Svelte starters do not use
+   `blocks-react/ui`). Files: `packages/civitai-elements/`, `packages/civitai-elements-react/`.
    forcing: none
-6. **`@civitai/app-sdk` peers `@civitai/client` at `^0.2.0-beta.98`** — a beta range shipping
-   to external developers. Never decided.
+6. **Batch: the filed-with-closing-condition issues** — #345, #347, #348, #349 (mock/host
+   divergences, unpinned constants), #357 (Stack `gap="md"`), and the undecided
+   `@civitai/app-sdk` peer on `@civitai/client` at `^0.2.0-beta.98`, a beta range shipping to
+   external developers.
    forcing: none
 
 ## Defects (batched)
-- `packages/civitai-blocks-react/src/internal/detector.js` — variable-key `import.meta.env`
-  inlines the whole `VITE_*` env into consumer bundles (see rank 2).
-- 22 HIGH findings from the audit are unfiled; the artifact that held them was deleted twice
-  and is not republished. They exist only in this session's transcript.
-- `@civitai/blocks-react`'s `comment-peerDependencies` block still describes the peer-floor
-  guard's old version-equality rule; #355 replaced it with a symbol-derived ledger. Not
-  wrong, incomplete — deliberately untouched because editing it changes a published
-  package's tarball.
+
+- 22 HIGH audit findings remain UNFILED and exist only in a prior session's transcript — the
+  artifact holding them was deleted twice and never republished. They will age out.
+- `4a359be` was never tested on a merged tree: branch is 4 commits behind `main` and CI has not run
+  on it. This repo's own history includes a merge that broke `main` with zero file overlap.
+- `pnpm lint` exits 1 repo-wide (`ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT` — root script exists, no package
+  implements it). Pre-existing on `main`, no CI job runs it.
+- `@civitai/blocks-react`'s `comment-peerDependencies` block still describes the peer-floor guard's
+  old version-equality rule; #355 replaced it with a symbol-derived ledger.
 
 ## Gotchas / decisions / dead-ends
 
@@ -152,34 +188,91 @@ Audited for code quality, dead code, over-exporting, comment rot, and bloat.
   behind node-only `./manifest` and `./vite` subpaths with `ajv`/`vite` as optional peers.
   `./blocks` keeps zero runtime dependencies. 906 hand-written rule lines deleted.
 
+- 🔴 **This doc's own round-1 closing condition is a NON-INSTRUMENT.** It greps issue bodies for
+  `launch-blocking`, a marker **nobody ever wrote** — zero occurrences repo-wide, including in the
+  13 issues the doc itself calls blockers. It can only ever return green. When writing a
+  closing-condition that greps for a token, **grep for it once at write time and confirm a
+  non-zero count**, or the condition is decorative. Verified here with both controls (16 hits on a
+  known-present string; 0 on the token).
+- 🔴 **`workspace:*` from a PUBLISHED package to an UNPUBLISHED one is a release hazard, and
+  `pnpm` makes it sharper: on pack it rewrites `workspace:*` to an EXACT pin.** Measured:
+  `@civitai/elements` and `@civitai/elements-react` both 404 on the registry;
+  `@civitai/blocks-react` and `@civitai/components` both 200 (the control). Neither new package is
+  `private`; neither is in `.changeset/config.json`'s `ignore`. This is why #346's seam was cut.
+- 🔴 **CORRECTION made this session: "an eight-instance history of partial publishes" OVERSTATES
+  the record.** That conflated eight RED `assert-published-versions` runs (the propagation-lag
+  saga) with consumer-facing partial publishes, of which `RELEASING.md:110-200` documents **two**
+  (2026-09-02, 2026-09-03). The hazard above stands on its own mechanism; do not re-cite the
+  eight.
+- 🔴 **happy-dom and Chromium disagree about invalid inline style values, and the unit tier is the
+  misleading one.** For `<Stack gap="md">`: happy-dom yields `style="gap: md"`; **real Chromium
+  writes no style attribute at all** (`getAttribute('style') === null`, `el.style.length === 0`)
+  and computed gap falls back to `12px`. A unit-tier assertion on `style="gap: md"` measures
+  happy-dom, not the bug. Both rows are in #357.
+- 🔴 **The `@civitai/elements` byte case, with the numbers, so they survive this doc's next status
+  replace.** esbuild, minified, ESM, React external, every row bundled identically
+  (`pnpm --filter @civitai/elements measure`):
+  **A.** `blocks-react/ui` Button, un-split baseline — total 52,568 B · JS 2,417 · CSS 50,151 ·
+  gzip 12,478. **B.** the same Button with `@civitai/components`' sheet split in place (the
+  CONTROL) — total **13,480** · JS 2,417 · CSS 11,063 · gzip 3,525. **C.** `@civitai/elements`
+  custom element — total 21,309 · JS 11,154 · CSS 10,155 · gzip 6,247.
+  **95.4% of the baseline is stylesheet text**; the control beats the custom element by **37%**
+  (43% gzipped) with an IDENTICAL JS column, and the element's JS costs **4.6×** more
+  (`@lit/reactive-element`, base classes, style adoption). So on bytes the control wins and the
+  elements case must rest on one-implementation / form-association / framework-independence alone.
+- **Decision: `useBlocksStyles()` injecting the WHOLE pack is a documented CONTRACT, not an
+  oversight** — `packages/civitai-components/MARKUP.md` promises that rendering any `/ui`
+  component also styles hand-written `data-civitai-ui="…"` markup elsewhere on the page, and
+  `test/Stack.styles.test.tsx` exists because an earlier draft broke exactly that. So the CSS
+  split lands as an ENABLING change (per-component exports, `componentsCss`/`injectStyles()` kept
+  byte-identical) and the win is MEASURED but not realized; rewiring `/ui` onto per-component CSS
+  breaks the contract and is a separate decision, filed as its own issue.
+- **Decision: `Stack.styles.test.tsx` KEPT after the revert**, mutation-tested against the reverted
+  `Stack.tsx` rather than assumed: commenting out `useBlocksStyles()` fails its 2 behavioural cases
+  with **their own** assertions and they are the only 2 failures in 1508 tests; deleting call+import
+  fails all 3. Its docblock now records the honest limit found on the way — the file-scan ledger
+  greps for the *string* `useBlocksStyles()` and therefore SURVIVES mutant 1, so it is recorded
+  rather than counted as behavioural coverage.
+- **Dead end:** a concurrent session overwrote a file in the shared scratchpad mid-run. Name scratch
+  files per-agent; subagents share one scratchpad path.
+
 ## How to verify
-Reproduce the published behaviour, not the workflow status:
+
+`4a359be` — that the release hazard is actually gone (the point of the change):
+
+```bash
+R=/home/zach/workspace/civit/civitai-app-starters
+git -C $R show origin/feat/civitai-elements-phase1:packages/civitai-blocks-react/package.json \
+  | python3 -c "import json,sys;print(json.load(sys.stdin)['dependencies'])"
+# => {'@civitai/components': 'workspace:*', '@civitai/theme': 'workspace:*'}  — no elements
+
+git -C $R diff --stat main..origin/feat/civitai-elements-phase1 \
+  -- packages/civitai-blocks-react/src/ui/Stack.tsx      # => empty (identical to main)
+```
+
+Registry state, with its control (a 404 alone cannot distinguish "unpublished" from "probe broken"):
+
+```bash
+for p in @civitai/elements @civitai/elements-react @civitai/blocks-react @civitai/components; do
+  printf '%s -> %s\n' "$p" "$(curl -s -o /dev/null -w '%{http_code}' \
+    "https://registry.npmjs.org/$(python3 -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=""))' "$p")")"
+done   # => 404 404 200 200
+```
+
+Rank 1, reproduce the leak against the PUBLISHED tarball (not the workspace):
 
 ```bash
 cd "$(mktemp -d)" && printf '{"name":"v","private":true,"type":"module"}' > package.json
-npm i @civitai/blocks-react@0.55.0 @civitai/app-sdk@0.48.0 react@19 ajv --silent
-
-# #353 — createLiveHost moved off ./testing
-node --input-type=module -e "
-import * as t from '@civitai/blocks-react/testing';
-import * as l from '@civitai/blocks-react/live';
-console.log(Object.keys(t).sort().join(','));      // Harness,createMockHost,readMockHostUrlOptions,resetTransport
-console.log('on ./testing:', 'createLiveHost' in t); // false
-console.log('on ./live   :', typeof l.createLiveHost); // function"
-
-# #352 — defineBlock derives from the canonical schema, both directions
-node --input-type=module -e "
-import { defineBlock } from '@civitai/app-sdk/manifest';
-const b={blockId:'my-block',version:'1.0.0',name:'N',contentRating:'pg',scopes:[]};
-const t=(l,m)=>{try{defineBlock({manifest:m});console.log(l,'ACCEPTED')}catch(e){console.log(l,'rejected:',e.message.split('\n')[0].slice(0,50))}};
-t('5-field minimum  ', b);                                        // ACCEPTED (was rejected)
-t('iframe.src set   ', {...b, iframe:{src:'https://x/',minHeight:300}}); // rejected: SERVER-OWNED
-t('bad blockId      ', {...b, blockId:'Not-A-DNS-Label'});        // rejected by schema pattern"
+npm i @civitai/blocks-react@0.55.0 --silent --prefer-online
+find node_modules/@civitai/blocks-react/dist -name 'detector*' -print0 \
+  | xargs -0 grep -nE 'import\.meta\.env'
+# => dist/internal/detector.js:33:  const fromImportMeta = import.meta.env?.[key];
 ```
 
-⚠ `contentRating` is lowercase (`g|pg|pg13|r|x`) — a capitalised fixture fails for the
-wrong reason and reads like a code defect.
+Repo-side, and note `pnpm -r test` runs ONLY blocks-react's `unit` project:
 
-Repo-side: `pnpm -r typecheck && pnpm -r test && pnpm test:guards && pnpm typecheck:readme`
-— and separately `pnpm --filter @civitai/blocks-react test:browser` under
-`nix-shell -p chromium`.
+```bash
+pnpm -r typecheck && pnpm -r test && pnpm test:guards && pnpm typecheck:readme
+nix-shell -p chromium --run 'PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=$(which chromium) \
+  pnpm --filter @civitai/blocks-react test:browser'
+```
