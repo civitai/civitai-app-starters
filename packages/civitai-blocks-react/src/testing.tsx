@@ -5,26 +5,16 @@
  * and test suite use to stand in for civitai.com: a mock host, a React wrapper
  * around it, and a transport reset.
  *
- * EVERYTHING HERE IS A MOCK. No network, no Buzz, no real backend. That is now
- * a property of the subpath rather than a claim in a comment: `createLiveHost`,
- * which forwards the protocol to the REAL Civitai backend and spends the token
- * holder's own Buzz, was moved OUT of here to its own subpath in #334 —
- * `@civitai/blocks-react/live`. It used to sit one autocomplete entry from
- * `createMockHost`, and that adjacency was the hazard.
+ * EVERYTHING HERE IS A MOCK. No network, no Buzz, no real backend. That is a
+ * property of the subpath, not a claim in a comment: `createLiveHost`, which
+ * spends the token holder's own Buzz, lives at `@civitai/blocks-react/live`
+ * (#334).
  *
- * THE WHOLE SURFACE IS ENUMERATED IN EXACTLY ONE PLACE — README § "The
- * `/testing` subexport". It is NOT restated here, and must not be: a second
- * copy of the list is what went stale and became #334. `test/subpathSurfaces.
- * test.ts` holds a ledger, pins it to THIS module (two tests, one for values
- * and one — via the TypeScript checker — for types), and pins it to that README
- * section (a third). Growth and shrinkage both fail, and no edit to any one of
- * the three leaves all of them green.
- *
- * STABILITY: see that same README section. Short version — this is a normal
- * published subpath of a `0.x` package, on the same footing as `.` and `./ui`;
- * a minor may break it. What is enforced is that the symbol SET cannot change
- * silently. What is NOT here (the catalog client, the picker overlay, JWT
- * decoding) is genuinely internal and may move or change without notice.
+ * Surface, rationale and stability are documented in exactly one place — README
+ * § "The `/testing` subexport". Do not restate them here; a second copy is what
+ * went stale and became #334. `test/subpathSurfaces.test.ts` pins that ledger to
+ * this module (runtime values and, via the TypeScript checker, types) and to the
+ * README section, failing on growth and on shrinkage alike.
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';

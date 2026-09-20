@@ -1348,39 +1348,39 @@ does not publish — open an issue rather than reaching into `dist/internal/`.
 > exists for one caller: a `pnpm dev:live` harness. **It must never appear in a
 > test suite.** The free one is `createMockHost`, on `./testing`.
 
-This subpath exists because of
-[#334](https://github.com/civitai/civitai-app-starters/issues/334): until
-`0.55.0`, `createLiveHost` was exported from `./testing`, one autocomplete entry
-from `createMockHost`, with near-identical signatures, in a module the project's
-own guide described as "test-only helpers". The defect was the **adjacency and
-the name**, not the byte count — no amount of documentation makes
-`import … from '…/testing'` read as *"this charges you"*. Now the import line
-carries the warning.
+### Why it has its own subpath
+
+Until `0.55.0` this code was exported from `./testing`. The argument for moving
+it, in full, is that **a client which spends the caller's money should not be
+reachable through an import path named `testing`** — the import line is the one
+piece of context that travels with every call site, and `…/testing` actively
+asserts the opposite of what this module does. That is
+[#334](https://github.com/civitai/civitai-app-starters/issues/334)'s literal
+closing condition.
+
+Two arguments that were made for this change and **do not hold** — recorded so
+they are not made again:
+
+- **It does not shrink the install.** Measured: **+4,447 B**. See
+  [What the host-simulation subpaths cost you](#what-the-host-simulation-subpaths-cost-you).
+- **It does not close a wrong-autocomplete hazard**, because there was none to
+  close. `createMockHost(options: MockHostOptions = {})` is callable bare;
+  `createLiveHost(options: LiveHostOptions)` takes a **required** argument whose
+  `blockToken` is a **required** short-lived RS256 JWT that a human mints and
+  pastes by hand. `createLiveHost()` and `createLiveHost({})` do not compile, so
+  nobody reaches this module by picking the wrong completion. Earlier revisions
+  of this file, of the changeset, and of #334 called the two signatures
+  "near-identical"; none of them had read the signatures.
 
 ### The whole surface
 
-Same rule as `./testing`: the marked regions below are the canonical list, and
-`test/subpathSurfaces.test.ts` parses them.
-
-**Values**
-
-<!-- LIVE-SURFACE:VALUES:BEGIN -->
+One value and one type. `test/subpathSurfaces.test.ts` pins the runtime export
+set, failing on growth and on shrinkage.
 
 | Export | What it is |
 |---|---|
 | `createLiveHost` | 🔴 **Real backend, real Buzz.** Installs a host that proxies the block's `postMessage` traffic to civitai.com using a dev block token. Returns a handle; call `.install()` and keep the teardown, exactly like `createMockHost`. |
-
-<!-- LIVE-SURFACE:VALUES:END -->
-
-**Types**
-
-<!-- LIVE-SURFACE:TYPES:BEGIN -->
-
-```text
-LiveHostOptions
-```
-
-<!-- LIVE-SURFACE:TYPES:END -->
+| `LiveHostOptions` *(type)* | Options for the above. `blockToken` is required; everything else (`backendBaseUrl`, `viewer`, `theme`, `context`, `onOutbound`, …) has a default. |
 
 ### In a `dev:live` harness
 
@@ -1401,8 +1401,15 @@ const uninstall = host.install();
 ### Stability of `/live`
 
 The same terms as `./testing`: a normal subpath of a `0.x` package where a minor
-may break it, with the symbol set pinned by `test/subpathSurfaces.test.ts` so it
-cannot change silently.
+may break it, with the runtime symbol set pinned by
+`test/subpathSurfaces.test.ts` so it cannot change silently.
+
+🔴 One cost worth stating plainly: publishing and documenting this subpath makes
+[#334](https://github.com/civitai/civitai-app-starters/issues/334) **item 3** —
+getting the live-host code out of the tarball entirely — *harder*, not easier.
+`./live` is now a named public entry point, so removing it later is a breaking
+change on a surface consumers pin against, where before it was one export among
+many on a subpath nobody was told to rely on.
 
 ## What the host-simulation subpaths cost you
 
@@ -1438,9 +1445,10 @@ entries, 1,590,099 B → 1,597,161 B uncompressed.** The only files that differ 
 ```
 
 `liveHost.js`, `pickerOverlay.js` and `catalog.js` do not appear in that diff at
-all — they are byte-identical and still in the tarball. `files` is `["dist"]`
-and `tsconfig` compiles all of `src/**/*`, so the `exports` map has no bearing
-whatsoever on tarball contents; it decides only what a consumer can *name*.
+all — they are byte-identical and still in the tarball. `files` is
+`["dist", "README.md"]` and `tsconfig` compiles all of `src/**/*`, so the
+`exports` map has no bearing whatsoever on tarball contents; it decides only what
+a consumer can *name*.
 **The `/live` split buys safety, not size.** Moving these bytes needs the code
 deleted or published as a second artifact; that is
 [#334](https://github.com/civitai/civitai-app-starters/issues/334) item 3, and it

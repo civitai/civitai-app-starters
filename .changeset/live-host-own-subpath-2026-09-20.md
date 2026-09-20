@@ -15,9 +15,18 @@ That is the whole migration. `./testing` is unchanged otherwise.
 
 `createLiveHost` is not a mock. It forwards the App-Block postMessage protocol to the **real Civitai backend** over a pasted short-lived dev block token, `blocks.submitWorkflow` included, and a successful generation **debits the token holder's own Buzz**. There is no dry-run mode and no confirmation.
 
-It sat one autocomplete entry from `createMockHost`, with a near-identical signature, in a module the project's own guide described as "test-only helpers". An author writing a test — or copying a `dev:live` snippet, since `dev:live` legitimately uses it — could pick the wrong one and put real `blocks.submitWorkflow` calls on every CI run. The bill is the first signal. **The defect is the adjacency and the name**; no amount of documentation makes `import … from '…/testing'` read as *"this charges you"*. Now the import line carries the warning, and `./testing` can state flatly that everything on it is a mock.
+**The argument for the move, in full: a client that spends the caller's money should not be reachable through an import path named `testing`.** The import line is the one piece of context that travels with every call site, and `…/testing` actively asserts the opposite of what this module does. `./testing` can now state flatly that everything on it is a mock — a property of the subpath rather than a promise in a comment. That is #334's literal closing condition, and it is the whole of the case.
 
-This is #334's closing condition: `createLiveHost` is no longer exported from `@civitai/blocks-react/testing`, and the ledger test asserts that absence *structurally* — it walks `./testing`'s declared exports and fails if any of them resolves into `internal/liveHost.ts`, so re-adding it under a different name does not walk the check.
+**Two arguments made for this change do NOT hold**, recorded here so they are not made again:
+
+- **It does not shrink the install.** It adds 4,447 B — see below.
+- **It does not close a wrong-autocomplete hazard**, because there was none. `createMockHost(options: MockHostOptions = {})` is callable bare; `createLiveHost(options: LiveHostOptions)` takes a **required** argument whose `blockToken` is a **required** short-lived RS256 JWT a human mints and pastes by hand. `createLiveHost()` and `createLiveHost({})` do not compile. #334's Scenario A — a developer autocompleting the wrong one and billing their CI — cannot happen, and the "near-identical signatures" claim it rests on was asserted in six places by people who had not read the signatures.
+
+`createLiveHost` is no longer exported from `@civitai/blocks-react/testing`, and `test/subpathSurfaces.test.ts` asserts that absence *structurally* — it walks `./testing`'s declared exports and fails if any of them resolves into `internal/liveHost.ts`, so re-adding it under a different name does not walk the check.
+
+### 🔴 This makes #334 item 3 harder, not easier
+
+`./live` is now a **named, documented, published** entry point. #334 item 3 asks for the live-host code to leave the tarball entirely (a second package or a second artifact). Removing `./live` later is a breaking change on a surface consumers are now told to pin against; before this release the same code was one export among many on a subpath nobody was told to rely on. That cost is accepted here in exchange for the import-path signal, but it is a real one and it is not reversible for free.
 
 ### 🔴 Known impact — the Go CLI's scaffold template emits a broken import
 
@@ -43,6 +52,6 @@ None of them is reachable by this release without a deliberate bump: every `@civ
 
 ### What it does NOT do: shrink the install
 
-Measured with `pnpm pack` on both sides of the split — 319 → 323 entries, 1,590,099 B → 1,597,161 B uncompressed — and `liveHost.js` (86,688 B), `pickerOverlay.js` (29,508 B) and `catalog.js` (15,351 B) do not appear in the diff at all: **byte-identical and still in the tarball**. `files` is `["dist"]` and `tsconfig` compiles all of `src/**/*`, so the `exports` map has no bearing whatsoever on what ships; it decides only what a consumer can *name*. The split in fact ADDS 4,447 B of code (`dist/live.*` +6,048, `dist/testing.*` −1,692, `package.json` +91).
+Measured with `pnpm pack` on both sides of the split — 319 → 323 entries, 1,590,099 B → 1,597,161 B uncompressed — and `liveHost.js` (86,688 B), `pickerOverlay.js` (29,508 B) and `catalog.js` (15,351 B) do not appear in the diff at all: **byte-identical and still in the tarball**. `files` is `["dist", "README.md"]` and `tsconfig` compiles all of `src/**/*`, so the `exports` map has no bearing whatsoever on what ships; it decides only what a consumer can *name*. The split in fact ADDS 4,447 B of code (`dist/live.*` +6,048, `dist/testing.*` −1,692, `package.json` +91).
 
 **The `/live` split buys safety, not size.** #334 item 3 (get the code out of the tarball — a second package or a second artifact) is still open and is not done here.

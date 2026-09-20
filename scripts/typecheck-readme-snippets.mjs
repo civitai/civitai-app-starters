@@ -124,10 +124,14 @@ const ENTRYPOINTS = [
   // (`moduleResolution: "Bundler"` over the workspace-linked package), and only
   // for the subpaths it actually imports: `src/dev/LiveHarness.tsx` imports
   // `@civitai/blocks-react/live`, `src/main.tsx` `@civitai/blocks-react/ui`,
-  // `src/App.tsx` the root. NOTHING in this repo imports
-  // `@civitai/blocks-react/testing` by specifier, so its map entry has no
-  // resolver coverage at all — which is why
-  // `tests/guards/package-exports-map.test.mjs` exists.
+  // `src/App.tsx` the root. Measured: deleting the `"./live"` key from the map
+  // gives `LiveHarness.tsx(5,32): error TS2307`.
+  //
+  // 🔴 NOTHING in this repo imports `@civitai/blocks-react/testing` by
+  // specifier, so a DELETED `"./testing"` map key is caught by nothing. A wrong
+  // or missing TARGET for it still is — this script resolves the specifier to
+  // `dist/testing.d.ts` explicitly below. Closing the remaining gap needs a real
+  // in-repo consumer of the subpath, not another scanner; see #334.
   { module: '@civitai/blocks-react/testing', dts: join(BLOCKS_DIST, 'testing.d.ts') },
   { module: '@civitai/blocks-react/live', dts: join(BLOCKS_DIST, 'live.d.ts') },
 ];
