@@ -21,6 +21,10 @@
     "./testing": {
       "types": "./dist/testing.d.ts",
       "import": "./dist/testing.js"
+    },
+    "./live": {
+      "types": "./dist/live.d.ts",
+      "import": "./dist/live.js"
     }
   },
   "files": [

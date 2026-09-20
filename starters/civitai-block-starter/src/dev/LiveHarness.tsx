@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
-import { createLiveHost } from '@civitai/blocks-react/testing';
+// 🔴 `/live`, NOT `/testing`. This is the REAL backend and it spends real Buzz;
+// since #334 it has its own subpath so the import line itself says so.
+import { createLiveHost } from '@civitai/blocks-react/live';
 
 /**
  * LIVE development harness — the real-backend sibling of {@link Harness}.

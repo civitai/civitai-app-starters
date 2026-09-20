@@ -1204,20 +1204,16 @@ dev harness. It is a normal, published subpath of a `0.x` package — see
 [Stability](#stability-of-testing) below for exactly what that does and does not
 promise.
 
-> ### 🔴 `createLiveHost` spends real Buzz
->
-> Everything on this subpath is a mock **except `createLiveHost`**. That one
-> forwards the App-Block postMessage protocol to the **real Civitai backend**
-> over a pasted short-lived dev block token — `blocks.submitWorkflow` included —
-> and a successful generation **debits the token holder's own Buzz**. There is
-> no dry-run mode and no confirmation. It exists for `pnpm dev:live`; it must
-> never appear in a test suite. `createMockHost` is the free one, and it sits
-> one autocomplete entry away.
+**Everything on this subpath is a mock.** No network, no Buzz, no real backend.
+Until `0.55.0` that was not true: `createLiveHost`, which talks to the real
+Civitai backend and spends the token holder's own Buzz, was exported from here
+too, one autocomplete entry from `createMockHost`. It now lives on its own
+subpath — see [The `/live` subexport](#the-live-subexport) below.
 
 ### The whole surface
 
 This section is **the one place the surface is written down**, and it is not
-prose: `test/testingSurface.test.ts` parses the two marked regions below and
+prose: `test/subpathSurfaces.test.ts` parses the two marked regions below and
 fails if they disagree with what `src/testing.tsx` actually exports — in either
 direction. Every other mention of this subpath (module docblock, `AGENTS.md`)
 points here rather than repeating the list, because a second copy is exactly
@@ -1233,7 +1229,6 @@ what went stale in [#334](https://github.com/civitai/civitai-app-starters/issues
 | `createMockHost` | A framework-agnostic fake of the embedding host — answers every `*_RESULT` message, with knobs for generation cost/latency/failure, Buzz balance, app + shared storage, consent, maturity. Returns a `MockHost`; call `.install()` and keep the returned teardown. **No network, no Buzz.** |
 | `readMockHostUrlOptions` | Reads the harness URL toggles (`?viewer` `?consent` `?fail` `?theme` `?pick` `?balance` `?latency` `?seed` …) into a `Partial<MockHostOptions>`. `Harness` applies it for you; call it directly only in a hand-rolled harness. |
 | `Harness` | The React wrapper: installs a `createMockHost` on mount, tears it down on unmount, and renders an optional on-screen outbound-message log. Takes every `MockHostOptions` field plus `applyUrlToggles` and `showLog`. |
-| `createLiveHost` | 🔴 **Real backend, real Buzz.** See the box above. |
 
 <!-- TESTING-SURFACE:VALUES:END -->
 
@@ -1249,7 +1244,6 @@ CannedPick
 CostSpec
 HarnessProps
 ImageSpec
-LiveHostOptions
 MockBuzzBalance
 MockBuzzHandle
 MockBuzzScenario
@@ -1319,13 +1313,12 @@ section above is that documentation.
 
 Concretely, and with no guarantee beyond what is actually enforced:
 
-- **It is a normal subpath of a `0.x` package**, on the same footing as `.` and
-  `./ui` — no stronger, no weaker. Under semver `0.x`, a **minor may break it**.
-  It is not `@internal`, and it is not "unsupported": fleet blocks import it
-  from their dev harnesses and the block starter's `dev:live` depends on
-  `createLiveHost`.
+- **It is a normal subpath of a `0.x` package**, on the same footing as `.`,
+  `./ui` and `./live` — no stronger, no weaker. Under semver `0.x`, a **minor
+  may break it**. It is not `@internal`, and it is not "unsupported": fleet
+  blocks import it from their dev harnesses and from their test suites.
 - **What is enforced** is that a change to the exported *symbol set* cannot ship
-  silently. `test/testingSurface.test.ts` fails on growth and on shrinkage, and
+  silently. `test/subpathSurfaces.test.ts` fails on growth and on shrinkage, and
   it fails again unless the README section above is updated to match — so any
   such change is a deliberate edit that a reviewer sees and a changeset names.
 - **What is *not* promised** is the *shape* of the mock-host option and result
@@ -1334,42 +1327,124 @@ Concretely, and with no guarantee beyond what is actually enforced:
   names, not shapes, and deliberately so.
 
 What is *not* listed above is genuinely internal and carries no guarantee. Until
-`0.55.0` this subpath also re-exported 24 symbols with no documentation — the
+`0.55.0` this subpath also re-exported 25 symbols with no documentation — the
 catalog client (`fetchCatalog`, `buildCatalogUrl`, `edgeThumb`, `modelToCard`,
 `DEFAULT_LIMIT`, …), the in-harness picker overlay (`openPickerOverlay`),
 `decodeBlockTokenPayload`, `disallowedAccountError`, `mockParentMessage`, and
-the `MockHostProvider` alias. Those are gone; see the `0.55.0` changelog entry
-for the full list and for the two that had a measured fleet consumer. If you
-were importing one, it lives at a path this package does not publish — open an
-issue rather than reaching into `dist/internal/`.
+the `MockHostProvider` alias — plus `createLiveHost` / `LiveHostOptions`, which
+moved to `./live` rather than disappearing. See the `0.55.0` changelog entry for
+the full list and for the three removals that had a measured fleet consumer. If
+you were importing one of the internal ones, it lives at a path this package
+does not publish — open an issue rather than reaching into `dist/internal/`.
 
-### What this subpath costs you
+## The `/live` subexport
 
-Six `dist/` modules — 264,785 B of JavaScript plus 75,258 B of `.d.ts` — are
-reachable only from this subpath and from nothing under `.` or `./ui`, measured
-by walking the built module graph:
+> ### 🔴 `@civitai/blocks-react/live` spends real Buzz
+>
+> `createLiveHost` forwards the App-Block postMessage protocol to the **real
+> Civitai backend** over a pasted short-lived dev block token —
+> `blocks.submitWorkflow` included — and a successful generation **debits the
+> token holder's own Buzz**. There is no dry-run mode and no confirmation. It
+> exists for one caller: a `pnpm dev:live` harness. **It must never appear in a
+> test suite.** The free one is `createMockHost`, on `./testing`.
+
+This subpath exists because of
+[#334](https://github.com/civitai/civitai-app-starters/issues/334): until
+`0.55.0`, `createLiveHost` was exported from `./testing`, one autocomplete entry
+from `createMockHost`, with near-identical signatures, in a module the project's
+own guide described as "test-only helpers". The defect was the **adjacency and
+the name**, not the byte count — no amount of documentation makes
+`import … from '…/testing'` read as *"this charges you"*. Now the import line
+carries the warning.
+
+### The whole surface
+
+Same rule as `./testing`: the marked regions below are the canonical list, and
+`test/subpathSurfaces.test.ts` parses them.
+
+**Values**
+
+<!-- LIVE-SURFACE:VALUES:BEGIN -->
+
+| Export | What it is |
+|---|---|
+| `createLiveHost` | 🔴 **Real backend, real Buzz.** Installs a host that proxies the block's `postMessage` traffic to civitai.com using a dev block token. Returns a handle; call `.install()` and keep the teardown, exactly like `createMockHost`. |
+
+<!-- LIVE-SURFACE:VALUES:END -->
+
+**Types**
+
+<!-- LIVE-SURFACE:TYPES:BEGIN -->
 
 ```text
-118,590  dist/internal/mockHost.js        ← createMockHost
- 86,688  dist/internal/liveHost.js        ← createLiveHost
- 29,508  dist/internal/pickerOverlay.js   ← createLiveHost
- 15,351  dist/internal/catalog.js         ← createLiveHost (via pickerOverlay)
-  9,951  dist/testing.js
+LiveHostOptions
+```
+
+<!-- LIVE-SURFACE:TYPES:END -->
+
+### In a `dev:live` harness
+
+```ts
+import { createLiveHost, type LiveHostOptions } from '@civitai/blocks-react/live';
+
+// The token is a SHORT-LIVED dev block token pasted into the harness env, never
+// an API key: `POST /api/v1/blocks/dev-token`, ~4h, re-minted by hand.
+const options: LiveHostOptions = {
+  blockToken: devBlockToken,
+  theme: 'dark',
+};
+
+const host = createLiveHost(options);
+const uninstall = host.install();
+```
+
+### Stability of `/live`
+
+The same terms as `./testing`: a normal subpath of a `0.x` package where a minor
+may break it, with the symbol set pinned by `test/subpathSurfaces.test.ts` so it
+cannot change silently.
+
+## What the host-simulation subpaths cost you
+
+Seven `dist/` modules — 266,790 B of JavaScript plus 77,338 B of `.d.ts` — are
+reachable only from `./testing` and `./live`, and from nothing under `.` or
+`./ui`. Measured by walking the built module graph:
+
+```text
+118,590  dist/internal/mockHost.js        ← ./testing  (createMockHost)
+ 86,688  dist/internal/liveHost.js        ← ./live     (createLiveHost)
+ 29,508  dist/internal/pickerOverlay.js   ← ./live     (via liveHost)
+ 15,351  dist/internal/catalog.js         ← ./live     (via pickerOverlay)
+  9,141  dist/testing.js
   4,697  dist/internal/consent.js         ← BOTH hosts import it
+  2,815  dist/live.js
 ```
 
 **They ship in every install**, production dependency trees included. They are
 tree-shaken out of application *bundles* — no block ships a mock host to a
 browser — so this is `node_modules` weight, not bundle weight.
 
-Two things follow that are easy to get wrong:
+🔴 **Splitting `createLiveHost` onto its own subpath removed none of this — it
+ADDS 4,447 B of code, and trimming the export list moved nothing either.**
+Measured with `pnpm pack` on both sides of the split, in a detached worktree so
+neither pack is contaminated by the other change in this release: **319 → 323
+entries, 1,590,099 B → 1,597,161 B uncompressed.** The only files that differ are
 
-- **Trimming the export list did not move any of it.** `createMockHost` and
-  `createLiveHost` are what reach those modules, and both are staying.
-- **Neither would moving `createLiveHost` to a different subpath.** `files` is
-  `["dist"]` and `tsconfig` compiles all of `src/**/*`, so every module above is
-  in the tarball whatever the `exports` map says. Only deleting the code, or
-  publishing it as a second artifact, moves those bytes.
+```text
++6,048  dist/live.*        (new: .js 2,815, .d.ts 2,839, + maps)
+-1,692  dist/testing.*     (the re-export and its docblock leaving)
+   +91  package.json       (the new exports-map key)
++2,615  README.md          (this section)
+```
+
+`liveHost.js`, `pickerOverlay.js` and `catalog.js` do not appear in that diff at
+all — they are byte-identical and still in the tarball. `files` is `["dist"]`
+and `tsconfig` compiles all of `src/**/*`, so the `exports` map has no bearing
+whatsoever on tarball contents; it decides only what a consumer can *name*.
+**The `/live` split buys safety, not size.** Moving these bytes needs the code
+deleted or published as a second artifact; that is
+[#334](https://github.com/civitai/civitai-app-starters/issues/334) item 3, and it
+is not done here.
 
 ## Examples
 

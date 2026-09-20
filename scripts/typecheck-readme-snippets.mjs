@@ -109,19 +109,27 @@ const ENTRYPOINTS = [
   { module: '@civitai/app-sdk/blocks', dts: join(SDK_DIST, 'blocks/index.d.ts') },
   { module: '@civitai/blocks-react', dts: join(BLOCKS_DIST, 'index.d.ts') },
   { module: '@civitai/blocks-react/ui', dts: join(BLOCKS_DIST, 'ui/index.d.ts') },
-  // The host-simulation subpath (#334). Listed so the README's `/testing`
-  // snippets are checked against the BUILT declarations rather than failing to
-  // resolve: it is a published entry point like the two above, and its surface
-  // is small and enumerated on purpose.
+  // The two host-simulation subpaths (#334). Listed so the README's `/testing`
+  // and `/live` snippets are checked against the BUILT declarations rather than
+  // failing to resolve: both are published entry points like the two above, and
+  // their surfaces are small and enumerated on purpose.
   //
   // 🔴 WHAT THIS DOES **NOT** CHECK: the `exports` map. `makeTsconfig` below
   // maps `@civitai/blocks-react/*` straight at `dist/*` via tsconfig `paths`,
   // which BYPASSES `package.json#exports` entirely — so a subpath deleted from
-  // that map still resolves here. Measured, not assumed. Do not cite a green
-  // run as evidence that a published subpath resolves; the thing that resolves
-  // through the real map is a STARTER typecheck, and only for the subpaths a
-  // starter actually imports.
+  // that map still resolves here. Do not cite a green run as evidence that a
+  // published subpath resolves.
+  //
+  // What DOES exercise the real map is the block starter's own `typecheck`
+  // (`moduleResolution: "Bundler"` over the workspace-linked package), and only
+  // for the subpaths it actually imports: `src/dev/LiveHarness.tsx` imports
+  // `@civitai/blocks-react/live`, `src/main.tsx` `@civitai/blocks-react/ui`,
+  // `src/App.tsx` the root. NOTHING in this repo imports
+  // `@civitai/blocks-react/testing` by specifier, so its map entry has no
+  // resolver coverage at all — which is why
+  // `tests/guards/package-exports-map.test.mjs` exists.
   { module: '@civitai/blocks-react/testing', dts: join(BLOCKS_DIST, 'testing.d.ts') },
+  { module: '@civitai/blocks-react/live', dts: join(BLOCKS_DIST, 'live.d.ts') },
 ];
 
 /**

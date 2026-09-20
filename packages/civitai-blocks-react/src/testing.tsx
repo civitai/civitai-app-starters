@@ -3,22 +3,18 @@
  *
  * This is NOT "two test helpers". It is the surface a block app's dev harness
  * and test suite use to stand in for civitai.com: a mock host, a React wrapper
- * around it, a transport reset, and — deliberately, and dangerously — a LIVE
- * host that talks to the real backend.
+ * around it, and a transport reset.
  *
- * ┌─────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 `createLiveHost` SPENDS REAL BUZZ. It is not a mock and not a         │
- * │ sandbox: it forwards the App-Block postMessage protocol to the REAL     │
- * │ Civitai backend over a pasted dev block token, including                │
- * │ `blocks.submitWorkflow`. A successful generation debits the token       │
- * │ holder's own Buzz. NEVER reach for it in a test — `createMockHost` is   │
- * │ the one that costs nothing. It lives here, next to its mock sibling,    │
- * │ because `pnpm dev:live` needs it; that adjacency is the hazard.         │
- * └─────────────────────────────────────────────────────────────────────────┘
+ * EVERYTHING HERE IS A MOCK. No network, no Buzz, no real backend. That is now
+ * a property of the subpath rather than a claim in a comment: `createLiveHost`,
+ * which forwards the protocol to the REAL Civitai backend and spends the token
+ * holder's own Buzz, was moved OUT of here to its own subpath in #334 —
+ * `@civitai/blocks-react/live`. It used to sit one autocomplete entry from
+ * `createMockHost`, and that adjacency was the hazard.
  *
  * THE WHOLE SURFACE IS ENUMERATED IN EXACTLY ONE PLACE — README § "The
  * `/testing` subexport". It is NOT restated here, and must not be: a second
- * copy of the list is what went stale and became #334. `test/testingSurface.
+ * copy of the list is what went stale and became #334. `test/subpathSurfaces.
  * test.ts` holds a ledger, pins it to THIS module (two tests, one for values
  * and one — via the TypeScript checker — for types), and pins it to that README
  * section (a third). Growth and shrinkage both fail, and no edit to any one of
@@ -66,8 +62,10 @@ export {
   type CannedPick,
 } from './internal/mockHost.js';
 
-// 🔴 REAL BACKEND, REAL BUZZ — see the box at the top of this file.
-export { createLiveHost, type LiveHostOptions } from './internal/liveHost.js';
+// 🔴 DO NOT RE-EXPORT `createLiveHost` HERE. It spends real Buzz and lives at
+// `@civitai/blocks-react/live` (`src/live.ts`) precisely so it cannot be reached
+// from a path called "testing". See #334. `test/subpathSurfaces.test.ts` fails if
+// it reappears on this surface.
 
 interface OutboundLog {
   type: string;
