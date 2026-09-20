@@ -40,7 +40,7 @@
     "probe:expired-session": "node scripts/probe-expired-session.mjs"
   },
   "dependencies": {
-    "@civitai/app-sdk": "^0.45.0",
+    "@civitai/app-sdk": "^0.46.0",
     "@civitai/components": "^0.4.1",
     "@civitai/components-react": "^0.4.1",
     "@civitai/theme": "^0.3.1",
