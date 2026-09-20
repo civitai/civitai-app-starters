@@ -59,7 +59,7 @@ Don't try to "make this a real OAuth app." That's what `react-pwa` is for.
 - **Gate UI on `ready`.** `useBlockContext().ready` is `false` until `BLOCK_INIT` lands. Render a small skeleton (or nothing) while waiting — the host shows its own loading state next to the iframe.
 - **Attach `useBlockResize` to your root element.** The iframe doesn't auto-resize; `RESIZE_IFRAME` messages drive that. Without `useBlockResize` the iframe stays at `iframe.minHeight` from the manifest.
 - **Narrow `context` per slot.** `BlockContext` is intentionally loose (`{ slotId, [key]: unknown }`). When you know your manifest targets model-page slots, cast to `ModelSlotContext` (from `@civitai/app-sdk/blocks`) to get `modelId`, `modelVersionId`, `modelName`, etc. typed. Other slot families get their own narrowing types as they ship.
-- **Treat `viewer === null` as anonymous.** The platform sends `viewer: null` for signed-out users, not an object with everything nulled out.
+- **Gate sign-in on `viewer?.signedIn === true`.** The platform sends `viewer: null` for signed-out users — never an object with everything nulled out — and stamps `signedIn: true` on every present viewer, so `viewer !== null` agrees and stays a correct fallback. Prefer `signedIn`: `viewer.id`/`viewer.username` are `@deprecated` and scheduled for removal, and `signedIn` is the field that outlives them. Need the identity itself? Call `useViewer()` — scope-gated and audited per call.
 
 ## Boot skeleton
 

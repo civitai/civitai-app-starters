@@ -16,18 +16,22 @@ import { isModelSlotContext } from '@civitai/app-sdk/blocks';
  *   `isPageSlotContext` instead. `context` is a discriminated union keyed on
  *   `slotId`, so narrowing is what makes the slot's fields readable
  *
- * On the viewer: this reads `viewer !== null` — a SIGN-IN GATE, which is all
- * most blocks need. `viewer.id` / `viewer.username` are deprecated: BLOCK_INIT
- * hands them to every block on load, before any interaction. If your block
- * genuinely needs the viewer's identity, call `useViewer()` — that read is
+ * On the viewer: this reads `viewer?.signedIn === true` — a SIGN-IN GATE, which
+ * is all most blocks need. `viewer.id` / `viewer.username` are deprecated:
+ * BLOCK_INIT hands them to every block on load, before any interaction. If your
+ * block genuinely needs the viewer's identity, call `useViewer()` — that read is
  * scope-gated and audited per call rather than broadcast at mount.
  *
- * Deliberately NOT `viewer?.signedIn` yet. That flag is the successor signal and
- * both dev hosts already send it, but the production host does not until its
- * counterpart (civitai/civitai#3707 — open, unmerged) ships — so a block gating
- * on it today renders its anonymous branch to every signed-in user, and a green
- * local run proves nothing about that. `viewer !== null` means exactly the same
- * thing and works against both.
+ * `signedIn` is on the wire in production: civitai/civitai's `withSignedInFlag`
+ * stamps the literal `true` on every present viewer, from both host surfaces
+ * (it arrived with civitai/civitai#3707, merged 2026-08-07). This starter used
+ * to steer you to `viewer !== null` instead, because the field genuinely was not
+ * being sent yet; that is no longer the case.
+ *
+ * `viewer !== null` still answers correctly — anonymous is `viewer: null`, and
+ * the wire shape is frozen at object-or-null — so the two gates agree. Prefer
+ * `signedIn`: it is the field that survives `id`/`username` being removed, and
+ * it says what you mean.
  */
 export function App() {
   const { ready, context, viewer, theme, blockInstanceId } = useBlockContext();
@@ -64,7 +68,7 @@ export function App() {
         </p>
       ) : null}
       <p style={{ margin: 0 }}>
-        Viewer: <strong>{viewer ? 'signed in' : 'anonymous'}</strong>
+        Viewer: <strong>{viewer?.signedIn === true ? 'signed in' : 'anonymous'}</strong>
       </p>
     </div>
   );

@@ -118,9 +118,9 @@ export function isValidBlockInitPayload(p: unknown): p is BlockInitPayload {
     if (!isObject(p.viewer)) return false;
     if (typeof p.viewer.id !== 'number') return false;
     if (p.viewer.username !== null && typeof p.viewer.username !== 'string') return false;
-    // `signedIn` is ADDITIVE + OPTIONAL: a host predating it omits the field
-    // (still valid — `viewer !== null` already means signed in), and when a host
-    // does send it, it is the literal `true`.
+    // `signedIn` is ADDITIVE + OPTIONAL: production sends it, but a host
+    // predating it omits the field (still valid — `viewer !== null` already
+    // means signed in), and when a host does send it, it is the literal `true`.
     //
     // 🔴 DELIBERATELY NOT REJECTED WHEN MALFORMED. A `signedIn` that is not
     // `true` on a non-null viewer is a contradiction, but failing the WHOLE
@@ -144,17 +144,20 @@ export function isValidBlockInitPayload(p: unknown): p is BlockInitPayload {
     // `isValidTokenRefreshResponse` comment below spells out — do not turn a
     // degraded path into a broken one.
     //
-    // It is also unreachable from the real host today — but NOT for the reason
-    // an earlier revision of this comment gave. It is not that
-    // `projectBlockInitViewer` writes a literal `true`: on civitai/civitai
-    // `main` that function does not write `signedIn` AT ALL (the identifier
-    // appears zero times under `src/components/AppBlocks/`, and the host's
-    // contract test pins the viewer key set as exactly `['id', 'username']`).
-    // The host that writes the literal `true` is civitai/civitai#3707, which is
-    // OPEN and unmerged. Either way there is no malformed value to reject today,
-    // so the strict version bought nothing and cost a fleet-wide brick the day
-    // that stopped holding — e.g. a future host writing `signedIn: !!user`,
-    // which is `false` exactly when `viewer` should have been `null`.
+    // It is also unreachable from the real host today, and the reason has
+    // changed twice — so state the CURRENT one rather than a status. On
+    // civitai/civitai `main`, `withSignedInFlag()` in
+    // `src/components/AppBlocks/projectBlockInit.ts` writes the LITERAL `true`
+    // (never a computed boolean — a present viewer object IS a signed-in
+    // viewer, and anonymous is the absence of the object), and that repo's
+    // contract test pins both the key set `['id', 'signedIn', 'username']` and
+    // `signedIn === true`. Both host surfaces funnel through that one helper.
+    // Before it landed (civitai/civitai#3707, merged 2026-08-07) the field was
+    // simply absent — also not malformed. Either way there is no malformed
+    // value to reject today, so the strict version bought nothing and would
+    // cost a fleet-wide brick the day that stopped holding — e.g. a future host
+    // writing `signedIn: !!user`, which is `false` exactly when `viewer` should
+    // have been `null`.
     // `status` is OPTIONAL. The platform deliberately omits the viewer's coarse
     // ban/mute moderation state from BLOCK_INIT to third-party iframes for
     // privacy (civitai #2521). When present it must be one of the three values;

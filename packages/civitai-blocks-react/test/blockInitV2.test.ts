@@ -136,9 +136,12 @@ const HOST_DERIVED_MODEL_CONTEXT = {
 };
 
 /**
- * civitai/civitai `main`'s own contract test pins the viewer projection as
- * exactly `{ id: 8888, username: 'alice' }`. `signedIn` is added by
- * civitai/civitai#3707 (OPEN, unmerged) — see the DEFAULT-viewer fence below.
+ * Mirrors civitai/civitai `main`'s own contract test, which asserts the viewer
+ * projection is exactly `{ id: 8888, username: 'alice', signedIn: true }` and
+ * pins `Object.keys(viewer).sort()` as `['id', 'signedIn', 'username']`
+ * (`src/components/AppBlocks/__tests__/projectBlockInit.test.ts`). `signedIn`
+ * arrived with civitai/civitai#3707 (merged 2026-08-07) — see the
+ * DEFAULT-viewer fence below.
  */
 const HOST_DERIVED_VIEWER = { id: 8888, username: 'alice', signedIn: true as const };
 
@@ -807,37 +810,34 @@ describe('createMockHost BLOCK_INIT fidelity', () => {
   });
 
   it('🔴 the DEFAULT viewer is exactly { id, username, signedIn } — no `status`', async () => {
-    // 🔴 THIS FENCE STAYS — and it is deliberately NOT a mirror of a shipped
-    // host assertion. An earlier revision claimed it was. Its two halves have
-    // different provenance:
+    // 🔴 THIS FENCE STAYS, and it now pins a SHIPPED host contract rather than
+    // an intended one. Both halves mirror production:
     //
-    //  - `status` ABSENT mirrors production TODAY. civitai/civitai `main`'s
-    //    `projectBlockInitViewer` builds `{ id, username }`, and
-    //    `src/components/AppBlocks/__tests__/projectBlockInit.test.ts:154` pins
-    //    `Object.keys(viewer).sort()` as exactly `['id', 'username']`. `status`
-    //    is @deprecated because the platform withholds the viewer's moderation
-    //    state from third-party iframes (civitai #2521).
-    //  - `signedIn` PRESENT pins the INTENDED post-#3707 contract, not a shipped
-    //    one. `signedIn` appears ZERO times under `src/components/AppBlocks/` on
-    //    `main`. civitai/civitai#3707 (OPEN, unmerged) is what adds it, and what
-    //    moves the host's pinned key set to ['id','signedIn','username'].
+    //  - `status` ABSENT. `status` is @deprecated because the platform
+    //    withholds the viewer's moderation state from third-party iframes
+    //    (civitai #2521).
+    //  - `signedIn` PRESENT. civitai/civitai `main`'s `withSignedInFlag`
+    //    (`src/components/AppBlocks/projectBlockInit.ts`) stamps the literal
+    //    `true` on every present viewer, and
+    //    `src/components/AppBlocks/__tests__/projectBlockInit.test.ts` pins
+    //    `Object.keys(viewer).sort()` as exactly ['id','signedIn','username'].
+    //    It arrived with civitai/civitai#3707 (merged 2026-08-07).
     //
-    // WHY KEEP IT. The mock is what makes `signedIn` exercisable locally ahead
-    // of the host; without a fence the field can be dropped from the mock by an
-    // unrelated edit and nothing goes red. The cost of running ahead — a block
-    // gating on `viewer?.signedIn` that passes here and renders its anonymous
-    // branch to every signed-in user in production — is carried elsewhere, on
-    // purpose: `ViewerInfo.signedIn`'s doc, the changeset, and the migrated
-    // starter + `hello-world`, which all gate on `viewer !== null` instead.
+    // WHY KEEP IT. The mock is what makes `signedIn` exercisable locally;
+    // without a fence the field can be dropped from the mock by an unrelated
+    // edit and nothing goes red — and now that the field IS what blocks are
+    // told to gate on, dropping it would break every local run of a correct
+    // block.
     //
-    // 🔴 IF #3707 NEVER LANDS, this assertion is what has to change first. Drop
-    // `signedIn` from `DEFAULT_VIEWER` (mockHost), from `anonFallbackViewer`
-    // (liveHost), from the two expectations below, from `HOST_DERIVED_VIEWER`
-    // above, and from the two `payload.viewer` fences in `liveHost.test.tsx`
-    // (~L229 and ~L277) — in ONE change — do not
-    // leave a fence pinning a contract nobody ships, which is the same
-    // both-wrong-blind defect this section exists to prevent, pointed the other
-    // way.
+    // 🔴 THIS COMMENT USED TO END IN A CONTINGENCY DIRECTIVE: an instruction
+    // naming this assertion as the first thing to change, and listing the five
+    // other places to strip `signedIn` from — `DEFAULT_VIEWER` (mockHost),
+    // `anonFallbackViewer` (liveHost), the two expectations below,
+    // `HOST_DERIVED_VIEWER` above, and the two `payload.viewer` fences in
+    // `liveHost.test.tsx` — should #3707 not land. It merged 2026-08-07, so
+    // that condition resolved the other way and the instruction is deleted.
+    // Do not re-derive it: carrying it out today would delete working support
+    // for a shipped contract.
     //
     // `toEqual` is load-bearing — `toMatchObject` cannot see an extra key.
     uninstall = createMockHost().install();

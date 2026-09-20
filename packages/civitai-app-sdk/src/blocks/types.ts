@@ -500,11 +500,8 @@ export interface BlockSettings {
  * The signed-in viewer. `null` in `BlockInitPayload.viewer` means anonymous.
  *
  * 🔴 DATA-MINIMISATION IN PROGRESS — never read `id`/`username` to answer "is
- * someone signed in?". WHICH sign-in gate to write depends on which host you are
- * against, and {@link ViewerInfo.signedIn} states the rule in full. Short
- * version: gate on `viewer !== null` TODAY (that is what production emits, and
- * it means exactly the same thing); move to `viewer?.signedIn === true` once the
- * host counterpart ships.
+ * someone signed in?". Gate on `viewer?.signedIn === true`; production emits
+ * the field, and {@link ViewerInfo.signedIn} states the rule in full.
  *
  * `BLOCK_INIT` discloses the viewer's identity to EVERY block unconditionally
  * on load, before any interaction. Almost every block only needs to know
@@ -547,29 +544,38 @@ export interface ViewerInfo {
    * so that a block reading it keeps compiling, and keeps meaning the same
    * thing, after `id`/`username` go away.
    *
-   * 🔴 WHICH GATE TO WRITE, AND HOW TO TELL WHICH WORLD YOU ARE IN.
+   * 🔴 WHICH GATE TO WRITE: `viewer?.signedIn === true`. The field is ON THE
+   * WIRE in production — that question is settled, and this doc used to say the
+   * opposite.
    *
-   *  - TODAY, against production: write `viewer !== null`. The field is NOT on
-   *    the wire yet. `signedIn` appears ZERO times under
-   *    `src/components/AppBlocks/` on civitai/civitai `main`, and that repo's
-   *    own contract test (`__tests__/projectBlockInit.test.ts`) pins the
-   *    BLOCK_INIT viewer key set as exactly `['id', 'username']`. The field
-   *    arrives with civitai/civitai#3707, which is OPEN and unmerged. A block
-   *    that gates on `viewer?.signedIn` before that lands reads `undefined` —
-   *    i.e. false — and renders its anonymous branch to every signed-in user.
-   *    This is why the migrated starter and `hello-world` use `viewer !== null`.
-   *  - AFTER #3707 ships: the two gates agree, and `signedIn` becomes the one to
-   *    write. `viewer: null` stays the anonymous case, so the field is only ever
-   *    the literal `true` on a present viewer; #3707 moves the host's pinned key
-   *    set to `['id', 'signedIn', 'username']`.
-   *  - HOW TO TELL, at runtime: `viewer !== null && viewer.signedIn === undefined`
-   *    IS the probe — there is no version handshake. 🔴 Do NOT answer it with the
-   *    dev hosts: `createMockHost` and `createLiveHost` both emit `signedIn`
-   *    deliberately, ahead of the host, so the field is exercisable locally.
-   *    Local presence is not evidence of production presence.
+   * The settled facts, and where each is checkable:
    *
-   * OPTIONAL for exactly that reason — a host that predates #3707 omits it
-   * entirely, and that must stay assignable.
+   *  - The host stamps it. civitai/civitai `src/components/AppBlocks/
+   *    projectBlockInit.ts` exports `withSignedInFlag()`, which returns `null`
+   *    for an anonymous viewer and `{ id, username, signedIn: true }` otherwise.
+   *    BOTH host surfaces funnel through it — `IframeHost` (the model slot,
+   *    which derives its viewer from the slot context) and `PageBlockHost` (the
+   *    full-page surface, which receives an already-resolved `viewer` prop) —
+   *    so there is no half-covered fleet.
+   *  - That repo's own contract test (`__tests__/projectBlockInit.test.ts`) now
+   *    pins the BLOCK_INIT viewer key set as exactly
+   *    `['id', 'signedIn', 'username']`, and asserts the value is literally
+   *    `true` rather than a computed boolean.
+   *  - It arrived with civitai/civitai#3707 (merged 2026-08-07). An earlier
+   *    revision of this doc told authors to write `viewer !== null` instead,
+   *    because at the time the field genuinely was not on the wire. That
+   *    premise expired on merge day and the advice went with it.
+   *
+   * `viewer !== null` still answers correctly and is the documented fallback —
+   * the wire shape is FROZEN at object-or-null (see the `isValidBlockInitPayload`
+   * note below), so the two gates agree and will keep agreeing. Prefer
+   * `signedIn` anyway: it is the field that survives `id`/`username` being
+   * removed, and reading it keeps a block's INTENT legible as "does someone need
+   * to sign in?" rather than "is there an identity object?".
+   *
+   * OPTIONAL, and it must stay optional: `BlockInitPayload` is also the shape
+   * older host code paths and test fixtures construct, so a REQUIRED field here
+   * would break them at compile time for no wire benefit.
    *
    * A malformed value is not rejected at the trust boundary — see the note on
    * `isValidBlockInitPayload` in `@civitai/blocks-react`: failing the whole init

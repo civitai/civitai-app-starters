@@ -45,7 +45,8 @@ export function App() {
     // GOTCHA #60: set data-theme on YOUR OWN root — the host can't reach into
     // the iframe to set it. Without this any [data-theme="dark"] CSS is dormant.
     <div ref={rootRef} data-theme={theme}>
-      <p>Block for model {context.modelName} ({viewer ? 'signed in' : 'anon'})</p>
+      {/* Sign-in gate: `viewer?.signedIn === true`, not an identity read. */}
+      <p>Block for model {context.modelName} ({viewer?.signedIn === true ? 'signed in' : 'anon'})</p>
       {/* `/ui` Button — themed by the data-theme above; `loading` disables + shows a spinner */}
       <Button
         loading={status === 'submitting' || status === 'polling'}
@@ -113,7 +114,12 @@ const { ready, context, viewer, theme, settings, blockId, blockInstanceId, appId
 
 - `context` — `BlockContext` (`{ slotId, … }`); narrow to `ModelSlotContext` for
   model-page slots.
-- `viewer` — `ViewerInfo | null` (`null` = anonymous).
+- `viewer` — `ViewerInfo | null` (`null` = anonymous). **Gate sign-in on
+  `viewer?.signedIn === true`**, never on `viewer.id`/`viewer.username` (both
+  `@deprecated`). The host stamps `signedIn: true` on every present viewer, so
+  `viewer !== null` agrees and remains a correct fallback; `signedIn` is the
+  field that outlives `id`/`username`. Need the identity itself? Use
+  [`useViewer()`](#useviewer) — scope-gated and audited per call.
 - `theme` — `'light' | 'dark'`. **Set `data-theme={theme}` on your root** (gotcha #60).
   LIVE: it starts at the `BLOCK_INIT` value and then tracks the host's
   `THEME_CHANGE` push when the viewer toggles dark mode mid-session — see

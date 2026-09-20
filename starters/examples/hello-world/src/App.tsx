@@ -14,13 +14,14 @@ import { isModelSlotContext, isPageSlotContext } from '@civitai/app-sdk/blocks';
  *    union keyed on `slotId`; narrowing with a guard is what makes a slot's
  *    fields readable, and it is a real runtime check on a value that crossed a
  *    `postMessage` boundary.
- *  - The viewer as a SIGN-IN GATE (`viewer ? … : 'anonymous'`) rather than an
+ *  - The viewer as a SIGN-IN GATE (`viewer?.signedIn === true`) rather than an
  *    identity read. `viewer.id`/`viewer.username` are deprecated — BLOCK_INIT
  *    discloses them to every block on load, before any interaction. Need the
- *    identity? Call `useViewer()`: scope-gated, audited per call. (Not
- *    `viewer?.signedIn` yet: the dev hosts send it, production does not until
- *    the host counterpart lands (civitai/civitai#3707 — open, unmerged), so
- *    gating on it today would show every signed-in user the anonymous branch.)
+ *    identity? Call `useViewer()`: scope-gated, audited per call. (`signedIn`
+ *    is on the wire in production — civitai/civitai's `withSignedInFlag` stamps
+ *    it on every present viewer; it arrived with civitai/civitai#3707, merged
+ *    2026-08-07. `viewer !== null` still agrees, since anonymous is `null`, but
+ *    `signedIn` is the field that outlives `id`/`username`.)
  *  - `useBlockResize(ref)` — tells the host how tall the iframe should be
  *    (emits RESIZE_IFRAME on every height change). Attach to the root.
  *  - The host TRUST FRAME — civitai.com draws a bordered chrome bar with a
@@ -78,7 +79,7 @@ export function App() {
       ) : null}
 
       <div className="hw-card">
-        Viewer: <strong>{viewer ? 'signed in' : 'anonymous'}</strong>
+        Viewer: <strong>{viewer?.signedIn === true ? 'signed in' : 'anonymous'}</strong>
       </div>
     </div>
   );
