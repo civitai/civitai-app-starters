@@ -30,9 +30,10 @@ export interface BlockSnapshot {
   /**
    * `null` for anonymous viewers, matching `BlockInitPayload.viewer`.
    *
-   * Read `viewer?.signedIn` (or the equivalent `viewer !== null`) for the
-   * sign-in gate; `viewer.id` / `viewer.username` are @deprecated init-time
-   * identity disclosure — use `useViewer()` for identity.
+   * Call `isSignedIn(viewer)` (`@civitai/app-sdk/blocks`) for the sign-in gate
+   * rather than open-coding it — it is the one place the two candidate
+   * spellings are adjudicated. `viewer.id` / `viewer.username` are @deprecated
+   * init-time identity disclosure — use `useViewer()` for identity.
    */
   viewer: ViewerInfo | null;
   theme: Theme;

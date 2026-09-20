@@ -885,11 +885,7 @@ const DEFAULT_GENERATION_SOURCE_UPLOAD: BlockGenerationSourceImageInfo = {
  * The `BLOCK_INIT.viewer` the mock host sends when {@link MockHostOptions.viewer}
  * is omitted — EXACTLY `{ id, username, signedIn }`.
  *
- * BOTH halves of that key set now mirror production byte-for-byte. That was
- * NOT true when this default was written — `signedIn` was emitted deliberately
- * ahead of the host — and the note below records how each half got here,
- * because "the mock matches the host" is the property this fence exists to
- * hold and the reason it can drift is that the host moves.
+ * Both halves mirror production byte-for-byte, and each is checkable:
  *
  *  - NO `status`. The platform deliberately withholds the viewer's coarse
  *    ban/mute moderation state from third-party iframes (civitai #2521) —
@@ -906,15 +902,10 @@ const DEFAULT_GENERATION_SOURCE_UPLOAD: BlockGenerationSourceImageInfo = {
  *    `src/components/AppBlocks/__tests__/projectBlockInit.test.ts` pins
  *    `Object.keys(viewer).sort()` as exactly `['id', 'signedIn', 'username']`.
  *
- * 🔴 THIS BLOCK USED TO END IN A CONTINGENCY DIRECTIVE: an instruction to
- * strip `signedIn` from this default, from `createLiveHost`'s
- * `anonFallbackViewer`, and from the two key-set fences in
- * `test/blockInitV2.test.ts`, should civitai/civitai#3707 not land. It merged
- * 2026-08-07, so that condition resolved the other way and the instruction has
- * been deleted rather than left for someone to execute — carrying it out today
- * would remove working support for a shipped contract. What it was protecting
- * still holds, pointed the other way: the dev hosts must not be more generous
- * than the host they imitate, and now they are not.
+ * 🔴 THE PROPERTY THIS FENCE HOLDS: the dev hosts must not be more generous
+ * than the host they imitate. Any change here moves with
+ * `createLiveHost`'s `anonFallbackViewer` and the two key-set fences in
+ * `test/blockInitV2.test.ts` — they are one key set in four places.
  */
 const DEFAULT_VIEWER: ViewerInfo = { id: 2, username: 'dev-viewer', signedIn: true };
 

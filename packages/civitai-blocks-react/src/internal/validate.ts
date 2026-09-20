@@ -138,9 +138,11 @@ export function isValidBlockInitPayload(p: unknown): p is BlockInitPayload {
     // twice more (`MAX_AUTO_RETRIES = 2`, backoff [2s, 5s]) — a fresh controller
     // and a fresh 10s window each time, ~37s total — and then shows its terminal
     // fallback. That is a broken block, where ignoring the flag is merely a
-    // degraded one: `viewer?.signedIn === true` reads false, the block shows a
-    // sign-in CTA to someone already signed in, and the documented
-    // `viewer !== null` fallback still answers correctly. Same principle the
+    // degraded one: `viewer?.signedIn === true` reads false and a block that
+    // open-coded that gate shows a sign-in CTA to someone already signed in.
+    // 🔴 THAT ASYMMETRY IS WHY THE SDK'S `isSignedIn` GATES ON PRESENCE, not on
+    // this flag — the property this guard enforces is the one the gate reads.
+    // Same principle the
     // `isValidTokenRefreshResponse` comment below spells out — do not turn a
     // degraded path into a broken one.
     //

@@ -500,8 +500,8 @@ export interface BlockSettings {
  * The signed-in viewer. `null` in `BlockInitPayload.viewer` means anonymous.
  *
  * 🔴 DATA-MINIMISATION IN PROGRESS — never read `id`/`username` to answer "is
- * someone signed in?". Gate on `viewer?.signedIn === true`; production emits
- * the field, and {@link ViewerInfo.signedIn} states the rule in full.
+ * someone signed in?". Call {@link isSignedIn} instead; it is the one place the
+ * gate is spelled, and its doc states the rule in full.
  *
  * `BLOCK_INIT` discloses the viewer's identity to EVERY block unconditionally
  * on load, before any interaction. Almost every block only needs to know
@@ -544,11 +544,12 @@ export interface ViewerInfo {
    * so that a block reading it keeps compiling, and keeps meaning the same
    * thing, after `id`/`username` go away.
    *
-   * 🔴 WHICH GATE TO WRITE: `viewer?.signedIn === true`. The field is ON THE
-   * WIRE in production — that question is settled, and this doc used to say the
-   * opposite.
+   * 🔴 DO NOT WRITE A GATE ON THIS FIELD — call {@link isSignedIn}. This field
+   * is OPTIONAL and unvalidated at the trust boundary; `isSignedIn` answers the
+   * same question from the property the boundary does enforce, and its doc
+   * carries the three measured reasons.
    *
-   * The settled facts, and where each is checkable:
+   * The settled facts about the field itself, and where each is checkable:
    *
    *  - The host stamps it. civitai/civitai `src/components/AppBlocks/
    *    projectBlockInit.ts` exports `withSignedInFlag()`, which returns `null`
@@ -561,26 +562,24 @@ export interface ViewerInfo {
    *    pins the BLOCK_INIT viewer key set as exactly
    *    `['id', 'signedIn', 'username']`, and asserts the value is literally
    *    `true` rather than a computed boolean.
-   *  - It arrived with civitai/civitai#3707 (merged 2026-08-07). An earlier
-   *    revision of this doc told authors to write `viewer !== null` instead,
-   *    because at the time the field genuinely was not on the wire. That
-   *    premise expired on merge day and the advice went with it.
-   *
-   * `viewer !== null` still answers correctly and is the documented fallback —
-   * the wire shape is FROZEN at object-or-null (see the `isValidBlockInitPayload`
-   * note below), so the two gates agree and will keep agreeing. Prefer
-   * `signedIn` anyway: it is the field that survives `id`/`username` being
-   * removed, and reading it keeps a block's INTENT legible as "does someone need
-   * to sign in?" rather than "is there an identity object?".
+   *  - It arrived with civitai/civitai#3707 (merged 2026-08-07). Earlier
+   *    revisions of this doc first told authors to write `viewer !== null`
+   *    (correct at the time — the field was not yet on the wire) and then told
+   *    them to write `viewer?.signedIn === true`. Both spellings are now
+   *    confined to {@link isSignedIn}, which is the answer to "which one?".
    *
    * OPTIONAL, and it must stay optional: `BlockInitPayload` is also the shape
    * older host code paths and test fixtures construct, so a REQUIRED field here
-   * would break them at compile time for no wire benefit.
+   * would break them at compile time for no wire benefit. That optionality is
+   * also the first reason {@link isSignedIn} does not read it — an omitting host
+   * makes `viewer?.signedIn === true` read `false` for a signed-in viewer.
    *
    * A malformed value is not rejected at the trust boundary — see the note on
    * `isValidBlockInitPayload` in `@civitai/blocks-react`: failing the whole init
-   * over one advisory flag would cost the block every other field. So a block
-   * that reads it should compare to `true` rather than treat it as a boolean.
+   * over one advisory flag would cost the block every other field. So this is
+   * the one viewer property nothing validates, which is the second reason
+   * {@link isSignedIn} gates on presence instead. If a block reads the field
+   * directly anyway, compare it to `true` rather than treating it as a boolean.
    */
   signedIn?: true;
   /**
@@ -596,6 +595,63 @@ export interface ViewerInfo {
   username: string | null;
   /** @deprecated Not sent by the platform to third-party iframes (civitai #2521). */
   status?: 'active' | 'banned' | 'muted';
+}
+
+/**
+ * THE sign-in gate. Pass `useBlockContext().viewer` (or a `BlockInitPayload`'s
+ * `viewer`) and render the signed-in branch when it returns `true`.
+ *
+ * ```ts
+ * import { isSignedIn } from '@civitai/app-sdk/blocks';
+ * // …
+ * return <p>{isSignedIn(viewer) ? 'signed in' : 'anonymous'}</p>;
+ * ```
+ *
+ * It exists so that "is someone signed in?" is spelled ONCE, here, instead of
+ * being open-coded in every block, every doc snippet and every `tiged`-copied
+ * starter. If the wire contract ever changes, this body is the only thing that
+ * has to change with it.
+ *
+ * 🔴 IT DOES NOT READ {@link ViewerInfo.signedIn}, AND THAT IS THE POINT.
+ * `viewer?.signedIn === true` looks like the more precise gate; it is the more
+ * FRAGILE one, for three reasons that are checkable rather than stylistic:
+ *
+ *  1. `signedIn` is OPTIONAL (`signedIn?: true`) and must stay optional — a
+ *     host that predates it omits the field entirely. `viewer?.signedIn === true`
+ *     then reads `false` for a viewer who is genuinely signed in. Presence does
+ *     not have that failure mode: `viewer: null` is the ONLY anonymous value on
+ *     the wire, from every host version.
+ *  2. PRESENCE IS WHAT THE TRUST BOUNDARY ACTUALLY ENFORCES. `@civitai/blocks-
+ *     react`'s `isValidBlockInitPayload` pins `viewer` as object-or-null (that
+ *     shape is a compatibility floor compiled into every already-deployed block
+ *     bundle) and — in the same guard, deliberately — does NOT reject a
+ *     malformed `signedIn`, because failing the whole init over one advisory
+ *     flag would cost the block its token, context and settings too. So a gate
+ *     on `signedIn` is a gate on the one viewer property nothing validates,
+ *     while a gate on presence is a gate on the one property everything does.
+ *  3. THE NAMED FUTURE HAZARD LANDS ON `signedIn`, NOT ON PRESENCE. That same
+ *     guard's comment names the case it refuses to brick for: a host writing
+ *     `signedIn: !!user`. Under it, `viewer?.signedIn === true` shows a sign-in
+ *     CTA to someone already signed in; presence still answers correctly.
+ *
+ * The stated reason to prefer `signedIn` — that it outlives the `@deprecated`
+ * `id`/`username` — is delivered here in full: this predicate reads NEITHER
+ * field, so nothing a block writes through it has to change when they are
+ * removed. That was always the real requirement; reading `signedIn` was one way
+ * to meet it, and the weaker one.
+ *
+ * `signedIn` remains on `ViewerInfo` and is still sent — it is the explicit,
+ * self-describing wire signal, and it is what this function would switch to if
+ * presence ever stopped meaning sign-in. Today it is redundant with presence by
+ * construction: the host's `withSignedInFlag()` returns `null` for an anonymous
+ * viewer and stamps the literal `true` on every present one, so there is no
+ * value of the pair that the two spellings disagree about.
+ *
+ * Accepts `undefined` as well as `null` so it is safe on a pre-`BLOCK_INIT`
+ * snapshot and on a hand-built payload whose `viewer` key is simply absent.
+ */
+export function isSignedIn(viewer: ViewerInfo | null | undefined): boolean {
+  return viewer !== null && viewer !== undefined;
 }
 
 /**

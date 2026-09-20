@@ -228,8 +228,8 @@ describe('createLiveHost — BLOCK_INIT', () => {
     //    would let a block read a field it will never get.
     //  - `signedIn: true`. civitai/civitai `main`'s `withSignedInFlag` stamps it
     //    on every present viewer (arrived with civitai/civitai#3707, merged
-    //    2026-08-07), and `viewer?.signedIn === true` is the gate blocks are
-    //    told to write.
+    //    2026-08-07). Blocks gate with `isSignedIn(viewer)` rather than reading
+    //    the field, but the dev host must still send what production sends.
     // `toEqual` (not `toMatchObject`) is the assertion that can see the extra
     // key.
     expect(payload.viewer).toEqual({ id: 42, username: 'dev-mod', signedIn: true });

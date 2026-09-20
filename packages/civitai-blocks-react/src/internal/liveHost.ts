@@ -1823,7 +1823,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
  * A minimal anon-ish viewer used when `/api/v1/blocks/me` can't be reached.
  *
  * Carries EXACTLY `{ id, username, signedIn }` — byte-for-byte the key set the
- * real host puts on the wire. Both halves are production now:
+ * real host puts on the wire:
  *
  *  - NO `status`. The platform withholds the viewer's moderation state from
  *    third-party iframes (civitai #2521), so a dev host that sent it would
@@ -1834,14 +1834,9 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
  *    `__tests__/projectBlockInit.test.ts` pins the viewer key set as exactly
  *    `['id', 'signedIn', 'username']`.
  *
- * 🔴 THIS FENCE USED TO CARRY A CONTINGENCY DIRECTIVE, pointing at
- * {@link DEFAULT_VIEWER} in `mockHost` for the list of places to strip
- * `signedIn` from should #3707 not land. #3707 merged 2026-08-07, so that
- * instruction resolved the other way and has been deleted rather than left
- * for someone to execute against a shipped contract. The property it was
- * protecting still stands, pointed the other way: this default must keep
- * MATCHING the host, not run ahead of it. See {@link DEFAULT_VIEWER} for the
- * same note.
+ * 🔴 THE PROPERTY THIS FENCE HOLDS: the dev hosts must not be more generous
+ * than the host they imitate — this default MATCHES the host, it does not run
+ * ahead of it. See `DEFAULT_VIEWER` in `mockHost` for the same note.
  */
 function anonFallbackViewer(): ViewerInfo {
   return { id: 0, username: 'dev-live', signedIn: true };

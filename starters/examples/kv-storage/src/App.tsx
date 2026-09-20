@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useAppStorage, useBlockContext, useBlockResize } from '@civitai/blocks-react';
 import type { AppStorageKeyEntry, AppStorageQuota } from '@civitai/blocks-react';
+import { isSignedIn } from '@civitai/app-sdk/blocks';
 
 /**
  * kv-storage — per-(block instance, viewer) key-value store.
@@ -31,7 +32,8 @@ export function App() {
   const [draftValue, setDraftValue] = useState('');
   const [status, setStatus] = useState<string | null>(null);
 
-  const isAnon = ready && !viewer;
+  // Sign-in gate via the SDK predicate, not an open-coded truthiness check.
+  const isAnon = ready && !isSignedIn(viewer);
 
   const refresh = useCallback(async () => {
     if (isAnon) return;

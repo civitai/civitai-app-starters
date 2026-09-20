@@ -1,7 +1,7 @@
 import { useRef } from 'react';
 
 import { useBlockContext, useBlockResize } from '@civitai/blocks-react';
-import { isModelSlotContext } from '@civitai/app-sdk/blocks';
+import { isModelSlotContext, isSignedIn } from '@civitai/app-sdk/blocks';
 
 /**
  * Replace this body with your block's actual UI.
@@ -16,22 +16,18 @@ import { isModelSlotContext } from '@civitai/app-sdk/blocks';
  *   `isPageSlotContext` instead. `context` is a discriminated union keyed on
  *   `slotId`, so narrowing is what makes the slot's fields readable
  *
- * On the viewer: this reads `viewer?.signedIn === true` — a SIGN-IN GATE, which
- * is all most blocks need. `viewer.id` / `viewer.username` are deprecated:
- * BLOCK_INIT hands them to every block on load, before any interaction. If your
- * block genuinely needs the viewer's identity, call `useViewer()` — that read is
+ * On the viewer: this calls `isSignedIn(viewer)` — a SIGN-IN GATE, which is all
+ * most blocks need. `viewer.id` / `viewer.username` are deprecated: BLOCK_INIT
+ * hands them to every block on load, before any interaction. If your block
+ * genuinely needs the viewer's identity, call `useViewer()` — that read is
  * scope-gated and audited per call rather than broadcast at mount.
  *
- * `signedIn` is on the wire in production: civitai/civitai's `withSignedInFlag`
- * stamps the literal `true` on every present viewer, from both host surfaces
- * (it arrived with civitai/civitai#3707, merged 2026-08-07). This starter used
- * to steer you to `viewer !== null` instead, because the field genuinely was not
- * being sent yet; that is no longer the case.
- *
- * `viewer !== null` still answers correctly — anonymous is `viewer: null`, and
- * the wire shape is frozen at object-or-null — so the two gates agree. Prefer
- * `signedIn`: it is the field that survives `id`/`username` being removed, and
- * it says what you mean.
+ * 🔴 CALL THE PREDICATE; DO NOT OPEN-CODE THE GATE. This file gets copied, so a
+ * gate spelled inline here becomes the gate the ecosystem writes — and two
+ * earlier revisions of this comment argued for two DIFFERENT inline spellings
+ * (`viewer !== null`, then `viewer?.signedIn === true`) as the wire contract
+ * moved. `isSignedIn` is where that argument now lives, once, in the SDK; hover
+ * it for which spelling it uses and the three measured reasons.
  */
 export function App() {
   const { ready, context, viewer, theme, blockInstanceId } = useBlockContext();
@@ -68,7 +64,7 @@ export function App() {
         </p>
       ) : null}
       <p style={{ margin: 0 }}>
-        Viewer: <strong>{viewer?.signedIn === true ? 'signed in' : 'anonymous'}</strong>
+        Viewer: <strong>{isSignedIn(viewer) ? 'signed in' : 'anonymous'}</strong>
       </p>
     </div>
   );
