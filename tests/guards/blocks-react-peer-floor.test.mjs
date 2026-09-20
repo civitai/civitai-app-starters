@@ -37,19 +37,26 @@
  * stale. That is exactly the #344 shape.
  *
  * 🔴 KNOWN LIMITS — read these before trusting a green.
- *   - OFFLINE AND TREE-LOCAL, on purpose. CI checks out at `fetch-depth: 1`
- *     and the guard job has no registry access budget, so this cannot ask git
- *     what `origin/main` exported, nor npm what a published tarball exports.
- *     Everything below is computed from the working tree.
- *   - Consequently the FLOOR EXCLUSION is a recorded measurement, not a live
- *     one: the version it names was measured by hand (`npm i
- *     @civitai/app-sdk@<v>` in a scratch dir outside this workspace, then
- *     `node -e` importing the symbol), and the recipe to redo it lives in
- *     `packages/civitai-blocks-react/package.json`'s `comment-peerDependencies`.
- *     This asserts the number that measurement produced is still declared.
+ *   - OFFLINE AND TREE-LOCAL, on purpose. `pnpm test:guards` runs in the
+ *     required `Starter` matrix BEFORE the install (`.github/workflows/ci.yml`),
+ *     on an `actions/checkout` at depth 1. There is no registry access and no
+ *     git history, so this cannot ask npm what a published tarball exports nor
+ *     git what `origin/main` exported. Everything below is computed from the
+ *     working tree plus the RECORDED MEASUREMENTS in this file.
+ *   - Consequently every version number here is a recorded measurement, not a
+ *     live one. `PEER_VALUE_SYMBOL_SINCE` / `PEER_SUBPATH_SINCE` were measured
+ *     against the real tarballs of every published `@civitai/app-sdk` (see
+ *     their docblocks for the recipe and the controls); this file asserts the
+ *     tree is still consistent with them. Adding a peer import that is not in
+ *     the ledger FAILS — it is never a silent pass.
  *   - It cannot see a symbol imported through a re-export chain it does not
  *     parse; `blocks/index.ts` has no `export *` today and the symbol-coverage
  *     test below fails loudly if one appears.
+ *   - It cannot see the FUTURE. The range's ceiling is `<1.0.0`, so it admits
+ *     app-sdk versions that do not exist yet; nothing offline can check those.
+ *     A symbol REMOVED from `./blocks` in a later minor (0.48.0 moved
+ *     `defineBlock` off it) is caught only when the ledger is re-measured,
+ *     which is why each entry records a CONTIGUOUS run, not a first sighting.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -83,6 +90,84 @@ const APP_STORAGE_CONSTANTS = [
   'APP_STORAGE_MAX_BYTES',
   'APP_STORAGE_MAX_ROWS',
 ];
+
+/**
+ * THE LEDGER. For each VALUE symbol `@civitai/blocks-react` imports from the
+ * peer: the lowest PUBLISHED `@civitai/app-sdk` from which that symbol is
+ * exported CONTINUOUSLY through the latest published version.
+ *
+ * This is what the floor rule is actually made of. The floor must be >= the
+ * highest entry here across the symbols the package imports today — i.e. every
+ * version the range still admits exports everything the code reaches for. That
+ * rule is a statement about SYMBOLS; it is NOT "the floor equals the in-tree
+ * version", which is a different and much stricter claim that goes red on every
+ * release that bumps app-sdk without this package needing anything new.
+ *
+ * 🔴 CONTIGUOUS, not first-sighted, and the distinction is load-bearing: exports
+ * are not monotonic. `defineBlock` and `BlockManifestError` were exported by
+ * `./blocks` up to 0.47.0 and MOVED OFF IT in 0.48.0 (#352). A "first version
+ * that exports it" number would keep vouching for a symbol that no longer
+ * exists. Each entry below is the start of an unbroken run to the newest
+ * published version at measurement time.
+ *
+ * MEASURED 2026-09-20 against the REAL tarballs of all 47 published versions
+ * (0.1.0 … 0.47.0), not the workspace copy and not a parse of the source:
+ *   for each version V:
+ *     npm pack @civitai/app-sdk@V && tar -xf …
+ *     resolve `exports['./blocks'].import` out of the tarball's package.json
+ *     node -e "import(<that file>).then(m => console.log(Object.keys(m)))"
+ *   then, per symbol, walk versions DOWNWARD from the newest while the symbol
+ *   is present; the last version still present is the entry below.
+ * Controls run on that sweep before its numbers were believed:
+ *   - POSITIVE: 46/47 versions yielded a non-empty export set (0.1.0 predates
+ *     the `./blocks` subpath entirely). A sweep reporting zero everywhere is
+ *     indistinguishable from one wired to nothing.
+ *   - NEGATIVE: an impossible symbol (`__THIS_SYMBOL_CANNOT_EXIST__`) was
+ *     reported absent in 0 of 46 — the probe can say "no".
+ *   - CROSS-CHECK: the sweep independently reproduces the hand measurement
+ *     already recorded in `comment-peerDependencies` — 0.46.0 exports none of
+ *     the three App Storage constants, 0.47.0 exports all three.
+ *
+ * 🔴 TO ADD AN ENTRY you must MEASURE it, not infer it from release ordering.
+ * #309's own ticket guessed `>=0.39.0` from the first symbol it noticed and was
+ * wrong by a whole minor. Re-run the sweep above for the new symbol; a guess
+ * here is worse than no ledger, because it reads as a measurement.
+ */
+const PEER_VALUE_SYMBOL_SINCE = {
+  APP_STORAGE_MAX_BYTES: '0.47.0',
+  APP_STORAGE_MAX_ROWS: '0.47.0',
+  APP_STORAGE_MAX_VALUE_BYTES: '0.47.0',
+  BLOCK_SCOPES: '0.6.0',
+  BrowsingLevel: '0.13.0',
+  OTHER_MESSAGE_TYPE_LABEL: '0.45.0',
+  SFW_LEVELS: '0.13.0',
+  boundBlockToParentMessageType: '0.45.0',
+  effectiveBrowsingCeiling: '0.39.0',
+  isLevelAllowed: '0.13.0',
+  isMessage: '0.6.0',
+  isSfwCeiling: '0.13.0',
+  parseBlockInitFragment: '0.31.0',
+  stripBlockInitFragment: '0.31.0',
+};
+
+/**
+ * The same ledger for SUBPATHS. A bare `import '@civitai/app-sdk/safe-storage'`
+ * (src/index.ts, first import on purpose) names no symbol, so the symbol ledger
+ * cannot see it — but it still has to RESOLVE, and against a version without
+ * that subpath it dies at module load with
+ * `ERR_PACKAGE_PATH_NOT_EXPORTED`, on the MAIN entry rather than `./testing`.
+ * A type-only `export type { … } from '@civitai/app-sdk/blocks'` is here for
+ * the same reason: no value crosses, but the specifier must still resolve for
+ * `tsc` in a consumer.
+ *
+ * Measured by the same sweep, reading `Object.keys(pkg.exports)` out of each
+ * published tarball's package.json and walking downward while the subpath is
+ * present.
+ */
+const PEER_SUBPATH_SINCE = {
+  '@civitai/app-sdk/blocks': '0.6.0',
+  '@civitai/app-sdk/safe-storage': '0.27.0',
+};
 
 const readJson = (rel) => JSON.parse(readFileSync(join(REPO_ROOT, rel), 'utf8'));
 const readText = (rel) => readFileSync(join(REPO_ROOT, rel), 'utf8');
@@ -162,13 +247,29 @@ export function valueExportsOf(indexSource) {
 }
 
 /**
- * VALUE symbols `source` imports from any `@civitai/app-sdk*` specifier, as
- * `{ symbol, specifier }`. `import type { … }` and inline `type X` are
- * excluded for the same reason as above; bare and star imports name no symbol.
+ * VALUE symbols `source` imports — or re-exports — from any `@civitai/app-sdk*`
+ * specifier, as `{ symbol, specifier }`. `import type { … }` and inline
+ * `type X` are excluded for the same reason as above; bare and star imports
+ * name no symbol (see `peerSpecifiersOf`).
+ *
+ * 🔴 STATEMENT-ANCHORED (`(?:^|;)[ \t]*`), and that is not cosmetic. A JSDoc
+ * `@example` block is a comment full of lines that look exactly like imports:
+ *   src/hooks/useBlockContext.ts:42  ` * import { isSignedIn } from '@civitai/app-sdk/blocks';`
+ * The unanchored form counted that as a real import of `isSignedIn`. Harmless
+ * for the #344 range check, but NOT for the derived-floor rule below: an
+ * app-sdk symbol mentioned in a doc example would push the REQUIRED floor up
+ * and turn a correct floor red — the same over-strictness this file has already
+ * shipped once. A real ESM `import`/`export … from` declaration is top-level,
+ * so it starts a line (or follows a `;`); a JSDoc line starts with `*`.
+ *
+ * `export { X } from '@civitai/app-sdk/blocks'` is matched too: a value
+ * re-exported from the peer has to resolve in the consumer exactly like an
+ * imported one, and the old `import`-only parser was blind to it.
  */
 export function valueImportsOf(source) {
   const out = [];
-  const re = /import\s+(type\s+)?\{([^{}]*)\}\s*from\s*['"](@civitai\/app-sdk[^'"]*)['"]/g;
+  const re =
+    /(?:^|;)[ \t]*(?:import|export)\s+(type\s+)?\{([^{}]*)\}\s*from\s*['"](@civitai\/app-sdk[^'"]*)['"]/gm;
   let m;
   while ((m = re.exec(source))) {
     if (m[1]) continue;
@@ -181,6 +282,46 @@ export function valueImportsOf(source) {
     }
   }
   return out;
+}
+
+/**
+ * Every `@civitai/app-sdk*` SPECIFIER `source` imports from or re-exports from,
+ * whatever the clause shape — named, `import type`, bare side-effect, star, or
+ * `export … from`. These name no symbol but still have to resolve, so they are
+ * the other half of the peer surface.
+ *
+ * Statement-anchored for the same reason as above, and the specifier character
+ * class excludes quotes, so a match can never run past an earlier statement's
+ * string literal into a later one.
+ */
+export function peerSpecifiersOf(source) {
+  const out = new Set();
+  const re = /(?:^|;)[ \t]*(?:import|export)\b[^'"`;]*?['"](@civitai\/app-sdk[^'"]*)['"]/gm;
+  let m;
+  while ((m = re.exec(source))) out.add(m[1]);
+  return out;
+}
+
+/**
+ * The lowest peer version that satisfies every `need` (a symbol name, or a
+ * specifier), per `ledger`, plus the needs the ledger does not cover.
+ *
+ * `unledgered` is the no-silent-pass half: a need with no recorded measurement
+ * is not assumed fine, it is REPORTED. That is what makes a newly-imported
+ * symbol — #344's exact shape — fail this guard instead of sliding past it.
+ */
+export function requiredFloorFor(needs, ledger) {
+  const unledgered = [];
+  let required = null;
+  for (const need of needs) {
+    if (!Object.hasOwn(ledger, need)) {
+      unledgered.push(need);
+      continue;
+    }
+    const v = parseVersion(ledger[need]);
+    if (required === null || cmp(v, required) > 0) required = v;
+  }
+  return { required, unledgered: unledgered.sort() };
 }
 
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', '.turbo', 'coverage']);
@@ -244,6 +385,68 @@ test('CONTROL — the import/export parsers are not wired to nothing', () => {
   assert.ok(!exports.has('InlineType'), 'an inline `type X` clause is NOT a value export');
 
   assert.throws(() => valueExportsOf("export * from './a.js';"), /export \*/);
+});
+
+test('CONTROL — a JSDoc @example is not an import, and an `export … from` the peer is', () => {
+  // The exact line that fooled the unanchored parser, in its real surroundings.
+  const doc = [
+    '/**',
+    ' * ```tsx',
+    " * import { isSignedIn } from '@civitai/app-sdk/blocks';",
+    ' * ```',
+    ' */',
+    "import { REAL_VALUE } from '@civitai/app-sdk/blocks';",
+    "export { RE_EXPORTED } from '@civitai/app-sdk/blocks';",
+    "export type { JustAType } from '@civitai/app-sdk/blocks';",
+  ].join('\n');
+  const symbols = valueImportsOf(doc).map((i) => i.symbol).sort();
+  assert.deepEqual(
+    symbols,
+    ['REAL_VALUE', 'RE_EXPORTED'].sort(),
+    'a doc-comment example must not count as an import, and a value re-export must',
+  );
+  assert.ok(!symbols.includes('isSignedIn'), 'the JSDoc line leaked back in');
+
+  // POSITIVE CONTROL on the anchor itself: it must not have narrowed so far
+  // that a genuinely indented or `;`-chained declaration stops being seen.
+  assert.deepEqual(
+    valueImportsOf("  import { INDENTED } from '@civitai/app-sdk/blocks';").map((i) => i.symbol),
+    ['INDENTED'],
+  );
+  assert.deepEqual(
+    valueImportsOf("import 'x'; import { CHAINED } from '@civitai/app-sdk/blocks';").map((i) => i.symbol),
+    ['CHAINED'],
+  );
+
+  // Specifier scan: every clause shape, and nothing from a comment.
+  const specs = peerSpecifiersOf(
+    [
+      " * import '@civitai/app-sdk/from-a-comment';",
+      "   x?: import('@civitai/app-sdk/from-a-type-position').Thing;",
+      "import '@civitai/app-sdk/safe-storage';",
+      "import * as sdk from '@civitai/app-sdk/blocks';",
+      "import type { T } from '@civitai/app-sdk/blocks';",
+      "export type { U } from '@civitai/app-sdk/other';",
+      "import { Local } from './local.js';",
+      "import { Unrelated } from 'react';",
+    ].join('\n'),
+  );
+  assert.deepEqual(
+    [...specs].sort(),
+    ['@civitai/app-sdk/blocks', '@civitai/app-sdk/other', '@civitai/app-sdk/safe-storage'],
+    'bare/star/type/export clauses all name a specifier; comments and other packages do not',
+  );
+
+  // The floor arithmetic, both directions.
+  const ledger = { A: '0.10.0', B: '0.45.0', C: '0.3.0' };
+  assert.deepEqual(requiredFloorFor(['A', 'C'], ledger), { required: [0, 10, 0], unledgered: [] });
+  assert.deepEqual(requiredFloorFor(['A', 'B', 'C'], ledger), { required: [0, 45, 0], unledgered: [] });
+  assert.deepEqual(
+    requiredFloorFor(['A', 'NEW_SYMBOL', 'ALSO_NEW'], ledger),
+    { required: [0, 10, 0], unledgered: ['ALSO_NEW', 'NEW_SYMBOL'] },
+    'an unrecorded need must be REPORTED, never skipped — skipping it is the silent pass',
+  );
+  assert.deepEqual(requiredFloorFor([], ledger), { required: null, unledgered: [] });
 });
 
 // ---------------------------------------------------------------------------
@@ -351,24 +554,141 @@ test('INVARIANT GUARD — the floor never names a version that will not be publi
   );
 });
 
-test('the changesets on this branch still compute the declared floor', () => {
-  // The DERIVATION, re-run as an assertion. `changeset status` is the tool that
-  // will actually run at release; this re-derives its arithmetic from the same
-  // two inputs (the in-tree version and the pending bump) and checks the number
-  // written into the manifest is still that one.
+test('DERIVED FLOOR — the floor is at least the lowest app-sdk that exports everything this package imports', () => {
+  // THE RULE, stated as the package's own `comment-peerDependencies` states it:
+  // "the floor is the lowest published version that exports every symbol this
+  // package imports from the peer". Not "the floor equals the in-tree version".
   //
-  // 🔴 This rule is LIVE ONLY WHILE AN app-sdk BUMP IS PENDING. Once the
-  // Version Packages PR merges the changeset is consumed, the in-tree version
-  // becomes the published one, and the floor legitimately equals it. Both cases
-  // are asserted, so neither is a skip.
+  // 🔴 THE PREVIOUS VERSION OF THIS TEST ASSERTED `floor >= inTree`, AND THAT
+  // WAS THE WRONG RULE. It is strictly stronger than the one the package needs:
+  // it demands the floor rise on EVERY app-sdk bump, including the many that
+  // add nothing this package imports. It went red on Version Packages #354 —
+  // floor `>=0.47.0`, in-tree `0.48.0` after `changeset version`, nothing new
+  // imported, nothing actually wrong — in all five legs of the required
+  // `Starter` matrix. A required gate that reds on every release is worse than
+  // no gate: it teaches everyone to click through the one signal that matters.
+  //
+  // The rule below is version-agnostic by construction: it moves only when the
+  // SYMBOLS move, so a release that bumps app-sdk alone leaves it green, and
+  // #344's shape (a new value import the floor does not cover) leaves it red.
   const { peerDependencies } = readJson(BLOCKS_REACT_PKG);
-  const { floor } = parsePeerRange(peerDependencies['@civitai/app-sdk']);
-  const inTree = parseVersion(readJson(APP_SDK_PKG).version);
+  const range = peerDependencies['@civitai/app-sdk'];
+  const { floor } = parsePeerRange(range);
+
+  const files = walkSources(join(REPO_ROOT, BLOCKS_REACT_SRC));
+  assert.ok(files.length > 20, `only ${files.length} sources walked — the walker is not reaching src/`);
+
+  const symbols = new Set();
+  const specifiers = new Set();
+  for (const file of files) {
+    const src = readFileSync(file, 'utf8');
+    for (const { symbol } of valueImportsOf(src)) symbols.add(symbol);
+    for (const spec of peerSpecifiersOf(src)) specifiers.add(spec);
+  }
+
+  // POSITIVE CONTROLS on the sweep. Everything below is a claim about these two
+  // sets; if either is empty the assertions are vacuous, and a vacuous green is
+  // what this file exists to prevent.
+  assert.ok(symbols.size > 0, 'no value imports from @civitai/app-sdk were seen at all — the sweep is wired to nothing');
+  assert.ok(specifiers.size > 0, 'no @civitai/app-sdk specifiers were seen at all — the sweep is wired to nothing');
+
+  const RECIPE =
+    `Measure it — do NOT infer it from release ordering (#309's ticket did, and was wrong by a\n` +
+    `whole minor). In a scratch dir OUTSIDE this workspace, for candidate versions of\n` +
+    `@civitai/app-sdk: \`npm pack @civitai/app-sdk@<v>\`, untar, resolve the subpath out of the\n` +
+    `tarball's own package.json \`exports\`, and \`node -e "import(<file>).then(m => …Object.keys(m))"\`.\n` +
+    `The entry is the LOWEST version from which it is present CONTINUOUSLY through the newest\n` +
+    `published one — exports are not monotonic (0.48.0 moved \`defineBlock\` off ./blocks).\n` +
+    `Include a symbol you know cannot exist and check it reports absent, or the probe is wired\n` +
+    `to nothing. pnpm cannot make this measurement: \`pnpm.overrides\` resolves the peer to the\n` +
+    `workspace copy, which is the blindness this whole file is about.`;
+
+  const bySymbol = requiredFloorFor(symbols, PEER_VALUE_SYMBOL_SINCE);
+  assert.deepEqual(
+    bySymbol.unledgered,
+    [],
+    `@civitai/blocks-react now value-imports peer symbols with no recorded measurement:\n\n` +
+      `    ${bySymbol.unledgered.join(', ')}\n\n` +
+      `This guard cannot know which published @civitai/app-sdk versions export them, so it\n` +
+      `cannot tell you whether the declared floor "${range}" is still safe — and it will not\n` +
+      `guess, because a guess here reads as a measurement. This is #344's exact shape: the\n` +
+      `range stays SATISFIED, npm warns about nothing, and a consumer dies at module\n` +
+      `evaluation with "does not provide an export named '${bySymbol.unledgered[0]}'".\n\n` +
+      `Add each symbol to PEER_VALUE_SYMBOL_SINCE in this file, then raise the floor if the\n` +
+      `assertion below says so.\n\n${RECIPE}`,
+  );
+
+  const bySubpath = requiredFloorFor(specifiers, PEER_SUBPATH_SINCE);
+  assert.deepEqual(
+    bySubpath.unledgered,
+    [],
+    `@civitai/blocks-react now imports from @civitai/app-sdk subpaths with no recorded\n` +
+      `measurement:\n\n    ${bySubpath.unledgered.join(', ')}\n\n` +
+      `A subpath names no symbol, so the symbol ledger cannot see it — but it still has to\n` +
+      `resolve. Against a version that does not export it the failure is\n` +
+      `ERR_PACKAGE_PATH_NOT_EXPORTED at module load. Add each to PEER_SUBPATH_SINCE, reading\n` +
+      `\`Object.keys(pkg.exports)\` out of each candidate tarball's package.json.\n\n${RECIPE}`,
+  );
+
+  // Both ledgers are covered, so both `required` values are non-null here —
+  // guaranteed by the positive controls above, which proved the sets non-empty.
+  const required =
+    cmp(bySymbol.required, bySubpath.required) >= 0 ? bySymbol.required : bySubpath.required;
+  const driver = cmp(bySymbol.required, bySubpath.required) >= 0 ? 'symbol' : 'subpath';
+  const drivers = (driver === 'symbol'
+    ? [...symbols].filter((s) => PEER_VALUE_SYMBOL_SINCE[s] === required.join('.'))
+    : [...specifiers].filter((s) => PEER_SUBPATH_SINCE[s] === required.join('.'))
+  ).sort();
+
   assert.ok(
-    cmp(floor, inTree) >= 0,
-    `the peer floor ${floor.join('.')} is below the in-tree app-sdk ${inTree.join('.')}. That is\n` +
-      `allowed in general — an old floor is fine when nothing new is imported — but this\n` +
-      `package imports the App Storage constants, so see the #344 regression test above.`,
+    cmp(floor, required) >= 0,
+    `the declared @civitai/app-sdk peer floor ${floor.join('.')} is BELOW ${required.join('.')}, the\n` +
+      `lowest published version that provides everything this package imports.\n\n` +
+      `What forces ${required.join('.')} — the highest ${driver} requirement in the tree:\n` +
+      `    ${drivers.join(', ')}\n\n` +
+      `The range "${range}" therefore still admits published versions that do NOT provide\n` +
+      `them. npm will not warn — the range is SATISFIED — so a consumer installs cleanly and\n` +
+      `then dies at module evaluation:\n\n` +
+      `    SyntaxError: The requested module '@civitai/app-sdk/blocks'\n` +
+      `      does not provide an export named '${drivers[0]}'\n\n` +
+      `Raise the floor in packages/civitai-blocks-react/package.json to at least\n` +
+      `${required.join('.')} and record the derivation in its \`comment-peerDependencies\` block.\n` +
+      `\`changeset version\` will NOT do this for you: onlyUpdatePeerDependentsWhenOutOfRange\n` +
+      `only rewrites a range the computed version FAILS, and a too-LOW floor never fails one.`,
+  );
+});
+
+test('DERIVED FLOOR — the ledgers describe what the package imports TODAY, with nothing dead left in', () => {
+  // The other direction, and it is not hygiene. A stale entry for a symbol the
+  // package stopped importing keeps DEMANDING its version forever, so the floor
+  // can only be held too HIGH — which is how this file shipped an over-strict
+  // required gate in the first place. Prune on the way out, not "eventually".
+  const files = walkSources(join(REPO_ROOT, BLOCKS_REACT_SRC));
+  const symbols = new Set();
+  const specifiers = new Set();
+  for (const file of files) {
+    const src = readFileSync(file, 'utf8');
+    for (const { symbol } of valueImportsOf(src)) symbols.add(symbol);
+    for (const spec of peerSpecifiersOf(src)) specifiers.add(spec);
+  }
+  assert.ok(symbols.size > 0 && specifiers.size > 0, 'the sweep saw nothing — see the controls above');
+
+  const deadSymbols = Object.keys(PEER_VALUE_SYMBOL_SINCE).filter((s) => !symbols.has(s)).sort();
+  assert.deepEqual(
+    deadSymbols,
+    [],
+    `PEER_VALUE_SYMBOL_SINCE records symbols @civitai/blocks-react no longer value-imports:\n\n` +
+      `    ${deadSymbols.join(', ')}\n\n` +
+      `Each one still counts toward the required floor, so the floor is now pinned higher than\n` +
+      `the code needs and this gate reds on releases that are fine. Delete them.`,
+  );
+
+  const deadSubpaths = Object.keys(PEER_SUBPATH_SINCE).filter((s) => !specifiers.has(s)).sort();
+  assert.deepEqual(
+    deadSubpaths,
+    [],
+    `PEER_SUBPATH_SINCE records subpaths @civitai/blocks-react no longer imports:\n\n` +
+      `    ${deadSubpaths.join(', ')}\n\nDelete them — see above.`,
   );
 });
 
