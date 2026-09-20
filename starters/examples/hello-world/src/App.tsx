@@ -37,11 +37,12 @@ export function App() {
   useBlockResize(rootRef);
 
   if (!ready) {
-    // Pre-init: BLOCK_INIT hasn't landed. Render a minimal skeleton so the
-    // iframe has something to measure. The host shows its own loading state
-    // in the trust frame while it waits for our BLOCK_READY.
+    // Pre-init: BLOCK_INIT hasn't landed. The host shows its own loading state
+    // in the trust frame while it waits for our BLOCK_READY, so this skeleton
+    // needs no `rootRef` — `useBlockResize` picks up the real root when it
+    // mounts on a later render.
     return (
-      <div ref={rootRef} data-theme={theme} className="hw-root">
+      <div data-theme={theme} className="hw-root">
         Loading…
       </div>
     );
