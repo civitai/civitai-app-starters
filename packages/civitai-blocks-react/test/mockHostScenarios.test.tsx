@@ -11,12 +11,8 @@ import {
 import { useBuzzBalance } from '../src/hooks/useBuzzBalance.js';
 import { useAppStorage } from '../src/hooks/useAppStorage.js';
 import { getTransport } from '../src/internal/singleton.js';
-import {
-  createMockHost,
-  resetTransport,
-  readMockHostUrlOptions,
-  disallowedAccountError,
-} from '../src/testing.js';
+import { createMockHost, resetTransport, readMockHostUrlOptions } from '../src/testing.js';
+import { disallowedAccountError } from '../src/internal/mockHost.js';
 
 /**
  * Layer-1 scenario coverage for `createMockHost`: the `generation` / `buzz` /

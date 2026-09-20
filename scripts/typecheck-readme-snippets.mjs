@@ -109,6 +109,14 @@ const ENTRYPOINTS = [
   { module: '@civitai/app-sdk/blocks', dts: join(SDK_DIST, 'blocks/index.d.ts') },
   { module: '@civitai/blocks-react', dts: join(BLOCKS_DIST, 'index.d.ts') },
   { module: '@civitai/blocks-react/ui', dts: join(BLOCKS_DIST, 'ui/index.d.ts') },
+  // The host-simulation subpath (#334). Listed so the README's `/testing`
+  // snippets are checked against the BUILT declarations rather than failing to
+  // resolve: it is a published, semver-protected entry point like the two
+  // above, and its surface is small and enumerated on purpose. This is also
+  // the only CI step that resolves `@civitai/blocks-react/testing` from
+  // outside the package — the ledger test in `packages/civitai-blocks-react/
+  // test/testingSurface.test.ts` reads `src/`, not `dist/`.
+  { module: '@civitai/blocks-react/testing', dts: join(BLOCKS_DIST, 'testing.d.ts') },
 ];
 
 /**

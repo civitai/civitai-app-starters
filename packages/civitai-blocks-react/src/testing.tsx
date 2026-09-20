@@ -1,16 +1,39 @@
 /**
- * Test-only helpers for `@civitai/blocks-react`. Not part of the runtime
- * surface — block apps should never import from here in production code (the
- * `./testing` subpath keeps accidental prod imports visible in review).
+ * `@civitai/blocks-react/testing` — the HOST-SIMULATION subpath.
  *
- * Exposes:
- *  - `resetTransport` / `mockParentMessage` — low-level test primitives.
- *  - `createMockHost` — a framework-agnostic fake of the civitai.com embedding
- *    host (usable from node/jsdom/happy-dom tests AND a dev harness).
- *  - `<Harness>` / `<MockHostProvider>` — a thin React wrapper that installs a
- *    mock host for local dev, with an optional on-screen message log.
+ * This is NOT "two test helpers". It is the surface a block app's dev harness
+ * and test suite use to stand in for civitai.com: a mock host, a React wrapper
+ * around it, a transport reset, and — deliberately, and dangerously — a LIVE
+ * host that talks to the real backend.
  *
- * These replace the ~250-line per-block hand-rolled harness.
+ * ┌─────────────────────────────────────────────────────────────────────────┐
+ * │ 🔴 `createLiveHost` SPENDS REAL BUZZ. It is not a mock and not a         │
+ * │ sandbox: it forwards the App-Block postMessage protocol to the REAL     │
+ * │ Civitai backend over a pasted dev block token, including                │
+ * │ `blocks.submitWorkflow`. A successful generation debits the token       │
+ * │ holder's own Buzz. NEVER reach for it in a test — `createMockHost` is   │
+ * │ the one that costs nothing. It lives here, next to its mock sibling,    │
+ * │ because `pnpm dev:live` needs it; that adjacency is the hazard.         │
+ * └─────────────────────────────────────────────────────────────────────────┘
+ *
+ * THE WHOLE SURFACE (5 values, 17 types — asserted by
+ * `test/testingSurface.test.ts`; see README § "The `/testing` subexport"):
+ *
+ *  - `resetTransport` — drop the cached singleton transport between tests.
+ *  - `createMockHost` / `readMockHostUrlOptions` — a framework-agnostic fake of
+ *    the embedding host (node/jsdom/happy-dom tests AND a dev harness), plus
+ *    the reader for its `?viewer/?consent/?fail/…` URL toggles.
+ *  - `<Harness>` — a thin React wrapper that installs a mock host for local
+ *    dev, with an optional on-screen message log.
+ *  - `createLiveHost` — see the box above.
+ *  - the option/result types those five need to be NAMEABLE.
+ *
+ * STABILITY: this subpath is PUBLIC and semver-protected exactly like `.` and
+ * `./ui`. Removing or narrowing anything here is a breaking change and needs a
+ * changeset naming the symbol. It is not an `@internal` escape hatch — five
+ * fleet apps and the block starter import it. What is NOT here (the catalog
+ * client, the picker overlay, JWT decoding) is genuinely internal and may move
+ * or change without notice.
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -27,7 +50,10 @@ export { __resetTransport as resetTransport };
 export {
   createMockHost,
   readMockHostUrlOptions,
-  disallowedAccountError,
+  // The transitive type closure of `createMockHost`/`MockHostOptions`: every
+  // one of these is the declared type of a `MockHostOptions` property, of a
+  // `MockHost` member, or of a property of one of those — i.e. a consumer
+  // cannot hoist the sub-object out of an options literal without naming it.
   type MockHost,
   type MockHostOptions,
   type MockHostFailMode,
@@ -45,45 +71,8 @@ export {
   type CannedPick,
 } from './internal/mockHost.js';
 
-export {
-  createLiveHost,
-  decodeBlockTokenPayload,
-  type LiveHostOptions,
-} from './internal/liveHost.js';
-
-export {
-  buildCatalogUrl,
-  fetchCatalog,
-  modelToCard,
-  responseToPage,
-  edgeThumb,
-  cardToCheckpoint,
-  cardToResource,
-  filterCardsByFamily,
-  CATALOG_API_BASE,
-  CATALOG_API_BASE_BLOCKS,
-  DEFAULT_LIMIT,
-  type CatalogQuery,
-  type CatalogCard,
-  type CatalogPage,
-  type CatalogResult,
-  type CatalogModelType,
-} from './internal/catalog.js';
-
-export {
-  openPickerOverlay,
-  type PickerOverlayHandle,
-  type PickerSelection,
-  type OpenPickerOptions,
-} from './internal/pickerOverlay.js';
-
-/**
- * Builds a `MessageEvent` that mimics a parent-frame postMessage so tests can
- * exercise `IframeTransport.handleMessage` without a real cross-frame setup.
- */
-export function mockParentMessage(data: unknown, origin: string): MessageEvent {
-  return new MessageEvent('message', { data, origin, source: null });
-}
+// 🔴 REAL BACKEND, REAL BUZZ — see the box at the top of this file.
+export { createLiveHost, type LiveHostOptions } from './internal/liveHost.js';
 
 interface OutboundLog {
   type: string;
@@ -91,7 +80,7 @@ interface OutboundLog {
 }
 
 /**
- * Props for the dev `<Harness>` (a.k.a. {@link MockHostProvider}).
+ * Props for the dev {@link Harness}.
  */
 export interface HarnessProps extends MockHostOptions {
   /** The block app to render inside the mocked host. */
@@ -254,9 +243,6 @@ export function Harness({
     </div>
   );
 }
-
-/** Alias of {@link Harness} — same component, clearer name when used as a context provider. */
-export const MockHostProvider = Harness;
 
 // Minimal console / terminal aesthetic: dark terminal slab, monospace, a
 // subtle accent top border, dim chrome text with brighter accents for the

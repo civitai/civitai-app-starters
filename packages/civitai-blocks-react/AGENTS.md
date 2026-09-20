@@ -25,7 +25,10 @@ under the same release pipeline as `@civitai/app-sdk` (changesets + OIDC).
 | `src/internal/requestTimeouts.ts` | `DEFAULT_REQUEST_TIMEOUT_MS` (30s, protocol round-trips), `HUMAN_INTERACTION_TIMEOUT_MS` (10 min, anything gated on a person), and `REQUEST_TIMEOUT_CLASS` — a TOTAL `human`/`protocol`/`no-reply` bucketing of every block→parent message type, from which `HUMAN_GATED_REQUEST_TYPES` is derived. |
 | `src/internal/singleton.ts` | `getTransport()` lazy-init + cache. Hooks share one instance. `__resetTransport()` for tests only. |
 | `src/hooks/` | The eight public hooks. Each is a thin wrapper around the singleton transport. |
-| `src/testing.ts` | Test-only helpers (`resetTransport`, `mockParentMessage`). Subpath-exported (`@civitai/blocks-react/testing`) so production code doesn't accidentally depend on it. |
+| `src/testing.tsx` | The **host-simulation subpath**, `@civitai/blocks-react/testing` — a PUBLIC, semver-protected entry point, not an internal escape hatch. Exactly **5 values + 17 types**, pinned by `test/testingSurface.test.ts`: `resetTransport`, `createMockHost` + `readMockHostUrlOptions` (a fake civitai.com host for tests and `dev:harness`), `<Harness>` (the React wrapper around it), **`createLiveHost`**, and the option/result types those five need to be nameable. 🔴 **`createLiveHost` is NOT a mock — it forwards the postMessage protocol to the REAL Civitai backend over a pasted dev block token, `blocks.submitWorkflow` included, and a successful generation SPENDS THE TOKEN HOLDER'S REAL BUZZ.** It sits one autocomplete entry away from `createMockHost`; only `createMockHost` is free. `dev:live` is the only thing that should reach for it. See README § "The `/testing` subexport" for the full ledger and the stability contract. |
+| `src/internal/mockHost.ts` | The mock host itself (~3.1k lines) — every `*_RESULT` reply, the scenario knobs, the in-memory app/shared storage. Reached only from `src/testing.tsx`; nothing in `src/index.ts` or `src/ui/` imports it. |
+| `src/internal/liveHost.ts` | The LIVE host (~1.9k lines of real tRPC calls against civitai.com). Backs `createLiveHost`. Reached only from `src/testing.tsx`. |
+| `src/internal/catalog.ts`, `src/internal/pickerOverlay.ts` | The catalog client + the in-harness picker overlay the live host opens for `OPEN_RESOURCE_PICKER`. **Internal wiring, deliberately NOT on the `./testing` surface** (they were until #334, under names like `fetchCatalog` and `DEFAULT_LIMIT`). `liveHost.ts` is their only consumer in `src/`; import them by relative path from `test/`. |
 
 ## Patterns to keep
 
@@ -41,7 +44,9 @@ under the same release pipeline as `@civitai/app-sdk` (changesets + OIDC).
 ## Patterns to avoid
 
 - ❌ Adding a runtime `react` dep instead of `peerDependencies`. Two copies of React in one tree break Hooks.
-- ❌ Mocking `window.parent.postMessage` inline in tests; use the `mockParentMessage()` helper in `src/testing.ts` so origin-validation paths get exercised.
+- ❌ Mocking `window.parent.postMessage` inline in tests; use the `mockParentMessage()` helper in `test/helpers/mockParentMessage.ts` so origin-validation paths get exercised. (It lives under `test/`, not `src/` — it had no consumer outside this package, and `test/` is excluded from the build, so it no longer ships.)
+- ❌ **Adding an export to `src/testing.tsx` because it is convenient to reach from a test.** That subpath is published and semver-protected; a relative import from `test/` (`../src/internal/<module>.js`) reaches the same symbol with no public-API cost. `test/testingSurface.test.ts` fails when the surface grows OR shrinks — updating its ledger is the deliberate act that makes an addition public.
+- ❌ **Reaching for `createLiveHost` in a test.** It spends real Buzz. `createMockHost` is the free one.
 - ❌ Awaiting init inside individual hooks. `getTransport().getSnapshot()` returns a synchronous view; the gate is `snapshot.ready`. Only `useBlockContext` exposes `ready` to consumers.
 - ❌ Caching the token across `useBlockToken()` calls inside React. The transport already caches; pulling from `useSyncExternalStore` ensures hooks re-render when refresh succeeds.
 

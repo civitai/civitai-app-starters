@@ -1196,6 +1196,116 @@ For non-React or advanced use, the transport primitives are exported too:
 `readAllowedOriginsFromEnv`, `getTransport`, and `sendTypedRequest`. Hooks are the
 recommended surface; reach for these only when a hook doesn't fit.
 
+## The `/testing` subexport
+
+`@civitai/blocks-react/testing` is the **host-simulation** entry point: it stands
+in for civitai.com so your block can run in `vitest`/`happy-dom` and in a local
+dev harness. It is a normal, public, semver-protected subpath — see
+[Stability](#stability-of-testing) below.
+
+> ### 🔴 `createLiveHost` spends real Buzz
+>
+> Everything on this subpath is a mock **except `createLiveHost`**. That one
+> forwards the App-Block postMessage protocol to the **real Civitai backend**
+> over a pasted short-lived dev block token — `blocks.submitWorkflow` included —
+> and a successful generation **debits the token holder's own Buzz**. There is
+> no dry-run mode and no confirmation. It exists for `pnpm dev:live`; it must
+> never appear in a test suite. `createMockHost` is the free one, and it sits
+> one autocomplete entry away.
+
+### The whole surface
+
+**5 values**
+
+| Export | What it is |
+|---|---|
+| `resetTransport()` | Drops the cached singleton transport. Call it in `beforeEach` so each test starts clean. |
+| `createMockHost(options?)` | A framework-agnostic fake of the embedding host — answers every `*_RESULT` message, with knobs for generation cost/latency/failure, Buzz balance, app + shared storage, consent, maturity. Returns a `MockHost`; call `.install()` and keep the returned teardown. **No network, no Buzz.** |
+| `readMockHostUrlOptions(win?)` | Reads the harness URL toggles (`?viewer` `?consent` `?fail` `?theme` `?pick` `?balance` `?latency` `?seed` …) into a `Partial<MockHostOptions>`. `<Harness>` applies it for you; call it directly only in a hand-rolled harness. |
+| `<Harness>` | The React wrapper: installs a `createMockHost` on mount, tears it down on unmount, and renders an optional on-screen outbound-message log. Takes every `MockHostOptions` field plus `applyUrlToggles` and `showLog`. |
+| `createLiveHost(options)` | 🔴 **Real backend, real Buzz.** See the box above. |
+
+**17 types** — `HarnessProps`, `LiveHostOptions`, `MockHost`, `MockHostOptions`,
+`MockHostScenarioPatch`, `MockHostFailMode`, `MockGenerationScenario`,
+`MockBuzzScenario`, `MockBuzzBalance`, `MockBuzzHandle`, `MockStorageScenario`,
+`MockSharedScenario`, `MockSharedSeed`, `MockCannedImageScan`, `CostSpec`,
+`ImageSpec`, `CannedPick`. These are the transitive closure that makes the five
+values nameable: each is the declared type of an option, of a `MockHost` member,
+or of a property of one of those — so you can hoist a sub-object out of an
+options literal and give it a type.
+
+That is the complete list. Nothing else is exported, and the set is asserted by
+`test/testingSurface.test.ts`, which fails if it grows **or** shrinks.
+
+### In a test
+
+```ts
+import {
+  createMockHost,
+  resetTransport,
+  type MockHostOptions,
+  type MockGenerationScenario,
+} from '@civitai/blocks-react/testing';
+
+resetTransport();
+
+// Hoisting a sub-object out of the options literal is why the scenario types
+// are exported.
+const generation: MockGenerationScenario = { costPerGen: 12, latencyMs: 0 };
+const options: MockHostOptions = { viewer: null, failMode: 'some', generation };
+
+const host = createMockHost(options);
+const uninstall = host.install();
+host.setScenario({ failMode: 'none' });   // live-tune mid-test
+uninstall();
+```
+
+### In a dev harness
+
+```tsx
+import { Harness } from '@civitai/blocks-react/testing';
+
+export function DevRoot() {
+  return (
+    <Harness failMode="some" showLog>
+      <App />
+    </Harness>
+  );
+}
+```
+
+`<Harness>` fires host messages from `window.location.origin`, and the transport
+drops inbound messages from origins outside its allowlist — so a dev harness
+must include its own origin, e.g. `VITE_BLOCK_ALLOWED_PARENT_ORIGINS=http://localhost:5173`.
+Otherwise `BLOCK_INIT` never lands.
+
+### Stability of `/testing`
+
+**It gets the same semver protection as `.` and `./ui`.** It is not an
+`@internal` escape hatch and not "test-only" in the sense of "unsupported":
+block apps across the fleet import it from their dev harnesses, and the block
+starter's `dev:live` depends on `createLiveHost`. Removing or narrowing anything
+listed above is a breaking change and ships with a changeset naming the symbol.
+
+What is *not* listed above is genuinely internal and carries no guarantee. Until
+`0.55.0` this subpath also re-exported 24 symbols with no documentation and no
+consumers — the catalog client (`fetchCatalog`, `buildCatalogUrl`, `edgeThumb`,
+`modelToCard`, `DEFAULT_LIMIT`, …), the in-harness picker overlay
+(`openPickerOverlay`), `decodeBlockTokenPayload`, `disallowedAccountError`,
+`mockParentMessage`, and the `MockHostProvider` alias. Those are gone; see the
+`0.55.0` changelog entry for the full list. If you were importing one, it lives
+at a path this package does not publish — open an issue rather than reaching
+into `dist/internal/`.
+
+### What this subpath costs you
+
+The mock host and the live host are ~265 KB of JavaScript in `dist/`, reachable
+only from this subpath. **They ship in every install**, production dependency
+trees included. They are tree-shaken out of application *bundles* — no block
+ships a mock host to a browser — so this is `node_modules` weight, not bundle
+weight. Trimming the export list above did not change it: `createLiveHost` and
+`createMockHost` are what pull those modules in, and both are staying.
+
 ## Examples
 
 Runnable, minimal blocks — one per feature, each with its own README:
