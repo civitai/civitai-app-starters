@@ -295,6 +295,7 @@ const tokens = await exchangeCode({
   redirectUri: 'https://your-app.com/api/auth/callback/civitai',
   code: codeFromQuery,
   codeVerifier: verifierFromSealedCookie,
+  fallbackScope: scope, // used only if the server omits `scope` entirely
 });
 
 // 3. Store tokens in an encrypted httpOnly cookie
@@ -315,6 +316,23 @@ console.log(`Hi ${me.username}`);
 > `fetchBuzzAccount` (buzz tRPC) default to `https://civitai.com`. Pass an
 > explicit `baseUrl` to each call only when targeting a local / self-hosted
 > instance (e.g. a dev auth hub vs a dev main app).
+
+> **How `tokens.scope` is parsed.** Civitai's token endpoint returns `scope` as
+> a decimal bitmask in a JSON *string* (`"scope": "114689"` — see the
+> [endpoint reference](https://developer.civitai.com/site/oauth/endpoints)),
+> matching the decimal `scope` `buildAuthorizeUrl` puts on the authorize URL.
+> [RFC 6749 §5.1](https://datatracker.ietf.org/doc/html/rfc6749#section-5.1)
+> instead specifies a space-delimited list, so `exchangeCode` / `refreshToken`
+> accept both — and any mixture — via the exported `parseScope`:
+> `114689`, `"114689"`, `"UserRead BuzzRead AIServicesWrite"`, `"1 65536"`.
+> A `scope` that is none of those (an unknown scope name, a negative or
+> fractional number) throws `OAuthScopeError` naming the value received, rather
+> than resolving to `NaN` or `0` — both of which make `hasScope()` answer
+> `false` for every scope and tell a user who just consented that they granted
+> nothing. An **omitted** `scope` is not an error: it resolves to
+> `fallbackScope`, which RFC 6749 §5.1/§6 define as the scope you requested.
+> Pass `fallbackScope: tokens.scope` on refresh, or a rotation whose response
+> omits `scope` will silently downgrade the session to no permissions.
 
 ```ts
 

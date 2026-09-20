@@ -1,4 +1,5 @@
 import type { OAuthTokenResponse, OAuthTokens } from '../types.js';
+import { TokenScope } from '../scopes/index.js';
 
 // OAuth endpoints (token/revoke) live on the standalone auth hub.
 const DEFAULT_AUTH_BASE_URL = 'https://auth.civitai.com';
@@ -12,13 +13,29 @@ interface CommonOpts {
   clientSecret?: string;
 }
 
-export interface ExchangeCodeOpts extends CommonOpts {
+/** Mixed into the grants that return tokens (not into revoke). */
+interface ScopeFallbackOpts {
+  /**
+   * Bitmask to use when the token response omits `scope` entirely. RFC 6749
+   * §5.1/§6 let the server omit `scope` when the grant is identical to what
+   * was requested, so pass the scope you asked for (`REQUESTED_SCOPES` on
+   * exchange, the previously granted `tokens.scope` on refresh). Without it an
+   * omitted `scope` resolves to `0`, i.e. "no permissions".
+   *
+   * This is only consulted when `scope` is absent — a `scope` the server *did*
+   * send but this SDK cannot parse throws {@link OAuthScopeError} instead of
+   * silently falling back.
+   */
+  fallbackScope?: number;
+}
+
+export interface ExchangeCodeOpts extends CommonOpts, ScopeFallbackOpts {
   code: string;
   redirectUri: string;
   codeVerifier: string;
 }
 
-export interface RefreshTokenOpts extends CommonOpts {
+export interface RefreshTokenOpts extends CommonOpts, ScopeFallbackOpts {
   refreshToken: string;
 }
 
@@ -27,7 +44,10 @@ export interface RevokeTokenOpts extends CommonOpts {
 }
 
 export class OAuthError extends Error {
-  override readonly name = 'OAuthError';
+  // Typed `string`, not the literal `'OAuthError'`, so subclasses such as
+  // {@link OAuthScopeError} can narrow it. Base instances still read
+  // `'OAuthError'` at runtime.
+  override readonly name: string = 'OAuthError';
   constructor(
     message: string,
     readonly status: number,
@@ -67,12 +87,123 @@ async function postForm(
   return parsed;
 }
 
+/**
+ * Thrown when a token response carries a `scope` this SDK cannot turn into a
+ * bitmask. Extends {@link OAuthError} so existing `catch (e) { if (e
+ * instanceof OAuthError) … }` blocks around {@link exchangeCode} /
+ * {@link refreshToken} keep working. `status` is the HTTP status of the token
+ * response itself (the request succeeded; only the payload was unusable).
+ */
+export class OAuthScopeError extends OAuthError {
+  override readonly name = 'OAuthScopeError';
+  /** The raw `scope` value as received from the authorization server. */
+  readonly received: unknown;
+  constructor(received: unknown, detail: string, status = 200) {
+    super(
+      `OAuth token response has an unparseable \`scope\`: ${JSON.stringify(received) ?? String(received)} (${detail}). ` +
+        'Expected a decimal bitmask (e.g. 114689 or "114689"), or a space-delimited ' +
+        'list of scope names or decimal values (e.g. "UserRead BuzzRead").',
+      status,
+      received,
+    );
+    this.received = received;
+  }
+}
+
+/**
+ * Largest value this SDK will accept as a scope bitmask. Scopes are combined
+ * with `|`, which is a 32-bit *signed* operation in JS — anything at or above
+ * 2**31 would wrap negative and silently corrupt every later `hasScope` check.
+ * `TokenScope.Full` is 2**25-1, so this leaves six bits of headroom.
+ */
+const MAX_SCOPE_BITMASK = 2 ** 31 - 1;
+
+/** Exact-name lookup for every `TokenScope` key (`None` and `Full` included). */
+const SCOPE_BY_NAME = new Map<string, number>(
+  Object.entries(TokenScope).map(([name, bit]) => [name, bit as number]),
+);
+
+function assertUsableBitmask(value: number, received: unknown, what: string): number {
+  if (!Number.isSafeInteger(value) || value < 0 || value > MAX_SCOPE_BITMASK) {
+    throw new OAuthScopeError(
+      received,
+      `${what} is not a non-negative integer <= ${MAX_SCOPE_BITMASK}`,
+    );
+  }
+  return value;
+}
+
+/**
+ * Turn an OAuth token response's `scope` into a {@link TokenScope} bitmask.
+ *
+ * Civitai's authorization server sends a **decimal integer bitmask as a JSON
+ * string** (`"scope": "114689"` — see
+ * https://developer.civitai.com/site/oauth/endpoints), matching the decimal
+ * `scope` that {@link buildAuthorizeUrl} puts on the authorize URL. RFC 6749
+ * §5.1 instead defines `scope` as a space-delimited list, so this parser
+ * accepts both shapes and every mixture of them:
+ *
+ * - a JSON number — `114689`
+ * - a decimal string — `"114689"`
+ * - space-delimited scope names — `"UserRead BuzzRead AIServicesWrite"`
+ * - space-delimited decimal values — `"1 65536 32768"`
+ * - any mixture — `"UserRead 65536"`
+ *
+ * It never returns `NaN` and never silently degrades to `0`: a value it cannot
+ * understand — an unknown scope name, a negative or fractional number, a
+ * non-string/non-number type — throws {@link OAuthScopeError} naming the value
+ * received. On an auth path a loud failure beats handing the caller a bitmask
+ * that quietly claims the user granted nothing.
+ *
+ * An **absent** `scope` (`undefined` or `null`) is not an error. RFC 6749 §5.1
+ * and §6 make `scope` optional precisely when the grant is identical to what
+ * was requested, so this returns `fallback` — pass the scope you asked for.
+ * With no `fallback`, it returns `0`.
+ *
+ * @example
+ * parseScope('114689');                    // 114689
+ * parseScope('UserRead BuzzRead');         // 65537
+ * parseScope(undefined, REQUESTED_SCOPES); // REQUESTED_SCOPES
+ * parseScope('UserRead Nonsense');         // throws OAuthScopeError
+ */
+export function parseScope(raw: unknown, fallback?: number): number {
+  // Absent: not an error — this is what `fallback` is for.
+  if (raw === undefined || raw === null) return fallback ?? 0;
+
+  if (typeof raw === 'number') {
+    return assertUsableBitmask(raw, raw, 'scope');
+  }
+
+  if (typeof raw !== 'string') {
+    throw new OAuthScopeError(raw, `scope is a ${typeof raw}, expected a string or a number`);
+  }
+
+  const tokens = raw.trim().split(/\s+/).filter(Boolean);
+  // An empty/whitespace-only string carries no grant information; treat it the
+  // same as an omitted scope rather than asserting "you were granted nothing".
+  if (tokens.length === 0) return fallback ?? 0;
+
+  let mask = 0;
+  for (const token of tokens) {
+    const named = SCOPE_BY_NAME.get(token);
+    if (named !== undefined) {
+      mask |= named;
+      continue;
+    }
+    if (!/^\d+$/.test(token)) {
+      throw new OAuthScopeError(raw, `"${token}" is not a known scope name or a decimal value`);
+    }
+    mask |= assertUsableBitmask(Number(token), raw, `"${token}"`);
+  }
+  return assertUsableBitmask(mask, raw, 'the combined scope');
+}
+
 function shapeTokens(json: OAuthTokenResponse, fallbackScope?: number): OAuthTokens {
   return {
     access_token: json.access_token,
     refresh_token: json.refresh_token,
     expires_at: Date.now() + (json.expires_in ?? 3600) * 1000,
-    scope: typeof json.scope === 'number' ? json.scope : Number(json.scope ?? fallbackScope ?? 0),
+    scope: parseScope(json.scope, fallbackScope),
     token_type: json.token_type ?? 'Bearer',
   };
 }
@@ -81,7 +212,10 @@ function shapeTokens(json: OAuthTokenResponse, fallbackScope?: number): OAuthTok
  * Exchange an authorization code for tokens (PKCE flow). Call this in your
  * `redirect_uri` callback handler with the `code` from the query string and the
  * `codeVerifier` you stashed when starting the flow. Omit `clientSecret` for
- * public clients. Throws {@link OAuthError} on a non-2xx token response.
+ * public clients. Throws {@link OAuthError} on a non-2xx token response, or
+ * {@link OAuthScopeError} if the response's `scope` cannot be parsed (see
+ * {@link parseScope}). Pass `fallbackScope` so an *omitted* `scope` resolves to
+ * what you requested rather than to `0`.
  *
  * @example
  * const tokens = await exchangeCode({
@@ -90,6 +224,7 @@ function shapeTokens(json: OAuthTokenResponse, fallbackScope?: number): OAuthTok
  *   redirectUri: 'https://your-app.com/api/auth/callback/civitai',
  *   code: codeFromQuery,
  *   codeVerifier: verifierFromSealedCookie,
+ *   fallbackScope: REQUESTED_SCOPES,
  * });
  */
 export async function exchangeCode(opts: ExchangeCodeOpts): Promise<OAuthTokens> {
@@ -102,7 +237,7 @@ export async function exchangeCode(opts: ExchangeCodeOpts): Promise<OAuthTokens>
     client_secret: opts.clientSecret,
     code_verifier: opts.codeVerifier,
   })) as OAuthTokenResponse;
-  return shapeTokens(json);
+  return shapeTokens(json, opts.fallbackScope);
 }
 
 /**
@@ -110,11 +245,17 @@ export async function exchangeCode(opts: ExchangeCodeOpts): Promise<OAuthTokens>
  * {@link OAuthTokens} (with a recomputed `expires_at`). Throws
  * {@link OAuthError} on failure — treat that as "re-authenticate."
  *
+ * Pass `fallbackScope: stored.scope`: RFC 6749 §6 lets the server omit `scope`
+ * when the refreshed grant is unchanged, and callers that replace the whole
+ * token blob (`{ ...session, tokens: fresh }`) would otherwise persist a `0`
+ * scope and lock the user out of their own features.
+ *
  * @example
  * const tokens = await refreshToken({
  *   clientId: process.env.CIVITAI_CLIENT_ID!,
  *   clientSecret: process.env.CIVITAI_CLIENT_SECRET, // omit for public clients
  *   refreshToken: stored.refresh_token,
+ *   fallbackScope: stored.scope,
  * });
  */
 export async function refreshToken(opts: RefreshTokenOpts): Promise<OAuthTokens> {
@@ -125,7 +266,7 @@ export async function refreshToken(opts: RefreshTokenOpts): Promise<OAuthTokens>
     client_id: opts.clientId,
     client_secret: opts.clientSecret,
   })) as OAuthTokenResponse;
-  return shapeTokens(json);
+  return shapeTokens(json, opts.fallbackScope);
 }
 
 /**
