@@ -4,7 +4,7 @@ import {
   openPickerOverlay,
   type PickerOverlayHandle,
   type PickerSelection,
-} from '../src/testing.js';
+} from '../src/internal/pickerOverlay.js';
 
 /**
  * Coverage for the in-harness picker overlay's catalog wiring — specifically the

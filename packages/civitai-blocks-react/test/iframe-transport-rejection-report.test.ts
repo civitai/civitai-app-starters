@@ -5,7 +5,7 @@ import { OTHER_MESSAGE_TYPE_LABEL } from '@civitai/app-sdk/blocks';
 
 import { IframeTransport } from '../src/internal/iframeTransport.js';
 import { sendTypedRequest } from '../src/internal/transport.js';
-import { mockParentMessage } from '../src/testing.js';
+import { mockParentMessage } from './helpers/mockParentMessage.js';
 
 /**
  * The SDK-SIDE bridge silence: a host reply that fails the SDK's own validator.
