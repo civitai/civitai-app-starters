@@ -62,6 +62,7 @@ src/                          # React SPA (tsconfig.json)
 - **Encrypted-cookie sessions, no DB.** `@civitai/app-sdk`'s `sealCookie`/`unsealCookie` (AES-256-GCM). One cookie holds the refresh token blob; another short-lived cookie holds the PKCE state during the login handshake.
 - **Buzz cost preview before submission.** Call `/api/generate/estimate` and show the cost before submitting. Users blame the app, not Civitai, when surprised by Buzz spend.
 - 🔴 **The prod server never fetches itself, and resolves paths from `import.meta.url`.** `server/index.ts` used to do both wrong: `serveStatic({ root: './dist' })` against the process CWD, and an SPA fallback that did `fetch('http://localhost:' + PORT + '/index.html')`. Started from anywhere but the package root (systemd `WorkingDirectory`, a container `WORKDIR`, pm2), the static middleware missed and `/index.html` fell into the same catch-all that fetched it — unbounded recursion. Measured: 25 requests, 20 → 92,124 open descriptors, every request timed out, and the server still logged `Listening`. `index.html` is read once at boot and served from memory, and a missing `dist/index.html` exits non-zero instead of starting a server that is broken on every route.
+- 🔴 **`Secure` + HSTS derive from `APP_URL`'s scheme, never from `NODE_ENV`.** Nothing sets `NODE_ENV` — `pnpm start` is `node --env-file=.env dist-server/index.js` — so `NODE_ENV === 'production'` was false on a real production box, and the app shipped `civ_session` **without `Secure`** and no `Strict-Transport-Security`. It works perfectly over HTTPS either way, which is precisely why it goes unnoticed. `APP_URL` is required, URL-validated, and states the scheme the app is actually served over. `pnpm probe:cookie-flags` pins both directions.
 
 ## Patterns to avoid
 
@@ -98,6 +99,7 @@ After any meaningful change, run the matching check before declaring done:
 |---|---|
 | Anything in `src/` or `server/` | `pnpm typecheck` (both tsconfigs) |
 | `server/index.ts`, static serving, the SPA fallback | `pnpm probe:static-serving` |
+| `server/app.ts` security headers, cookie flags, `server/env.ts` | `pnpm probe:cookie-flags` |
 | `vite.config.ts`, env wiring, security headers | `pnpm build` |
 | Auth flow (`server/app.ts` auth routes, `server/session.ts`) | `pnpm test:e2e -- auth-flow` |
 | Generation flow (`server/app.ts` generate routes, workflow polling) | `pnpm test:e2e -- generation` |

@@ -47,6 +47,7 @@ the secret or breaks the auth model.
 - **Encrypted-cookie sessions, no DB.** `sealCookie`/`unsealCookie` (AES-256-GCM). Refresh-token cookie + short-lived PKCE-state cookie.
 - **Buzz cost preview before submission.** Always call `/api/generate/estimate` first.
 - 🔴 **The prod server never fetches itself, and resolves paths from `import.meta.url`.** `server/index.ts` used to do both wrong: `serveStatic({ root: './dist' })` against the process CWD, and an SPA fallback that did `fetch('http://localhost:' + PORT + '/index.html')`. Started from anywhere but the package root (systemd `WorkingDirectory`, a container `WORKDIR`, pm2), the static middleware missed and `/index.html` fell into the same catch-all that fetched it — unbounded recursion. Measured here: 25 requests, 20 → 93,304 open descriptors, every request timed out, and the server still logged `Listening`. `index.html` is read once at boot and served from memory, and a missing `dist/index.html` exits non-zero instead of starting a server that is broken on every route.
+- 🔴 **`Secure` + HSTS derive from `APP_URL`'s scheme, never from `NODE_ENV`.** Nothing sets `NODE_ENV` — `pnpm start` is `node --env-file=.env dist-server/index.js` — so `NODE_ENV === 'production'` was false on a real production box, and the app shipped `civ_session` **without `Secure`** and no `Strict-Transport-Security`. It works perfectly over HTTPS either way, which is precisely why it goes unnoticed. `APP_URL` is required, URL-validated, and states the scheme the app is actually served over. `pnpm probe:cookie-flags` pins both directions.
 
 ## Patterns to avoid
 
@@ -83,6 +84,7 @@ the secret or breaks the auth model.
 |---|---|
 | Anything in `src/` or `server/` | `pnpm typecheck` (`svelte-check` + server tsc) |
 | `server/index.ts`, static serving, the SPA fallback | `pnpm probe:static-serving` |
+| `server/app.ts` security headers, cookie flags, `server/env.ts` | `pnpm probe:cookie-flags` |
 | `vite.config.ts`, env, security headers | `pnpm build` |
 | Auth flow (`server/app.ts` auth routes, `server/session.ts`) | `pnpm test:e2e -- auth-flow` |
 | Generation flow (`server/app.ts` generate routes, polling) | `pnpm test:e2e -- generation` |
