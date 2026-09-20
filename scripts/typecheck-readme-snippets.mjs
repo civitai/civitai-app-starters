@@ -111,11 +111,16 @@ const ENTRYPOINTS = [
   { module: '@civitai/blocks-react/ui', dts: join(BLOCKS_DIST, 'ui/index.d.ts') },
   // The host-simulation subpath (#334). Listed so the README's `/testing`
   // snippets are checked against the BUILT declarations rather than failing to
-  // resolve: it is a published, semver-protected entry point like the two
-  // above, and its surface is small and enumerated on purpose. This is also
-  // the only CI step that resolves `@civitai/blocks-react/testing` from
-  // outside the package — the ledger test in `packages/civitai-blocks-react/
-  // test/testingSurface.test.ts` reads `src/`, not `dist/`.
+  // resolve: it is a published entry point like the two above, and its surface
+  // is small and enumerated on purpose.
+  //
+  // 🔴 WHAT THIS DOES **NOT** CHECK: the `exports` map. `makeTsconfig` below
+  // maps `@civitai/blocks-react/*` straight at `dist/*` via tsconfig `paths`,
+  // which BYPASSES `package.json#exports` entirely — so a subpath deleted from
+  // that map still resolves here. Measured, not assumed. Do not cite a green
+  // run as evidence that a published subpath resolves; the thing that resolves
+  // through the real map is a STARTER typecheck, and only for the subpaths a
+  // starter actually imports.
   { module: '@civitai/blocks-react/testing', dts: join(BLOCKS_DIST, 'testing.d.ts') },
 ];
 

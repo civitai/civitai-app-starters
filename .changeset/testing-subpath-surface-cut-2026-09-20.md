@@ -23,13 +23,18 @@ The in-harness picker overlay (4):
 Other (4):
 `decodeBlockTokenPayload`, `disallowedAccountError`, `mockParentMessage`, `MockHostProvider` (it was an alias of `Harness` — use `Harness`).
 
-Twenty-two of the 24 are internal wiring for the mock/live hosts with no documented contract and no measured consumer anywhere in the fleet. There is no replacement import path: they are not published. If you depend on one, open an issue rather than reaching into `dist/internal/`.
+Twenty-two of the 24 are internal wiring for the mock/live hosts with no documented contract and no consumer anywhere in the fleet. There is no replacement import path: they are not published. If you depend on one, open an issue rather than reaching into `dist/internal/`.
 
-### Known impact — the two removals that DO have a fleet consumer
+### Known impact — the two removals that DO have a consumer
 
-**1. `openPickerOverlay`.** `civitai-app-panorama-360` (`src/orch-host.ts:270`) uses the in-harness overlay as a real, network-backed picker UI in its `orch` mode. Replace it with the host-mediated `useResourcePicker()` / `useCheckpointPicker()` hooks, which is what a non-harness block should be calling anyway.
+**1. `openPickerOverlay`.** `civitai-app-panorama-360` (`src/orch-host.ts:270`, a `await import()` inside `orch` mode) uses the in-harness overlay as a real, network-backed picker UI. Replace it with the host-mediated `useResourcePicker()` / `useCheckpointPicker()` hooks, which is what a non-harness block should be calling anyway. One repo, one site — the single most load-bearing misuse of this subpath in the fleet, and exactly the trap #334 describes.
 
-**2. `mockParentMessage`.** `dogfood-app/dogfood-2` (`src/mock-buzz.ts:32`, used at `:124`) imports it from this subpath. It was always a two-line `MessageEvent` constructor; inline it:
+**2. `mockParentMessage`.** Two consumers, and the second one matters more than the first:
+
+- `dogfood-app/dogfood-2/src/mock-buzz.ts:32` (import), dispatched at `:124`.
+- 🔴 **`civitai/cli`'s scaffold template** `internal/scaffold/templates/page-money/src/mock-buzz.ts.tmpl:33`. That template currently pins `"@civitai/blocks-react": "^0.53.0"`, and a caret on `0.x` pins the minor — so `civitai app init` keeps resolving `0.53.x` and new scaffolds are unaffected **until someone bumps that pin**. Whoever bumps it must fix this import in the same change, or the CLI starts emitting projects that do not typecheck.
+
+It was always a two-line `MessageEvent` constructor; inline it:
 
 ```ts
 function mockParentMessage(data: unknown, origin: string): MessageEvent {
@@ -37,11 +42,30 @@ function mockParentMessage(data: unknown, origin: string): MessageEvent {
 }
 ```
 
-Neither repo is reachable by this release without a deliberate upgrade — no `@civitai/blocks-react` range anywhere in the fleet admits it (on a `0.x` package a caret pins the minor). So nothing breaks on `npm install`; the break happens on a deliberate bump, and this list is what that upgrader reads.
+Nothing here breaks on `npm install`. Every `@civitai/blocks-react` range that governs a `./testing` importer anywhere in the fleet is a caret on `0.x`, an exact pin, or `workspace:` — none of them admits this release. The single unbounded range in the tree (`>=0.33`, `civitai-app-panorama-360/packages/comfy-run-kit`) is an **optional peer of a sub-package that does not import this subpath at all**. The break happens on a deliberate bump, and this list is what that upgrader reads.
+
+### The fleet scan behind those numbers
+
+A full enumeration of **all 489 directories** under the local `civit` tree (not a sample), excluding `node_modules`/`dist`/build output: **1,800 files mention the subpath; 382 contain a real import; 10 distinct symbols are imported** (11 counting one that appears only in a README fence). Restricted to real app source — dropping agent worktrees, this monorepo's own clones, and the CLI's `.tmpl` scaffold files — that is **179 files across 27 logical repos**.
+
+| symbol | repos (app source) |
+|---|---|
+| `createLiveHost` | 27 |
+| `resetTransport` | 26 |
+| `Harness` | 25 |
+| `MockSharedSeed` | 8 |
+| `createMockHost` | 7 |
+| `MockHostOptions` | 5 |
+| `readMockHostUrlOptions` | 3 |
+| `HarnessProps` | 1 |
+| `mockParentMessage` | 1 (+ the CLI template) |
+| `openPickerOverlay` | 1 |
+
+There are **zero** namespace imports (`import * as …`) of this subpath anywhere, so the surface a consumer can be depending on is exactly the named set above.
 
 ### Stability, stated rather than invented
 
-Three signals used to disagree: the module header and `AGENTS.md` said "test-only, never in production", a starter and a couple of dozen fleet apps imported it, and it ships in the production tarball. The tarball and the consumers win — it is documented, supported API.
+Three signals used to disagree: the module header and `AGENTS.md` said "test-only, never in production", a starter and **27 fleet repos** imported it, and it ships in the production tarball. The tarball and the consumers win — it is documented, supported API.
 
 That is #334's *first* branch ("add the missing 41 to the docs"), and only that branch. It is **not** marked `@internal`, and it is **not** given a stability promise stronger than the rest of the package: `./testing` is a normal subpath of a `0.x` package, on the same footing as `.` and `./ui`, where **a minor may break it**. What *is* enforced is narrower and mechanical — the exported symbol *set* cannot change silently. `test/testingSurface.test.ts` fails on growth and on shrinkage, and fails again unless the README section it parses is updated to match. The *shapes* of the mock-host option and result types are explicitly not frozen; the ledger asserts names, not shapes.
 
