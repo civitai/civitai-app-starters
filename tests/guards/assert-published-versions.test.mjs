@@ -1475,12 +1475,22 @@ describe('assert-published-versions', () => {
   });
 
   test('a STALE CDN cannot hide a published version — the behavioural case, not just the header', async () => {
-    // Models the real failure end-to-end: the CDN holds a 404 it cached BEFORE
-    // the publish landed. The bare URL therefore serves that stale 404 forever;
-    // only a cache key the edge has never seen reaches the origin, which has the
-    // version. A guard that retried WITHOUT cache-busting re-reads the same
-    // cached 404 every attempt and reports PUBLISH DID NOT HAPPEN for a package
-    // that is live — exactly what run 34908486900 did on 2026-09-14.
+    // Models a SYNTHETIC hazard: a CDN holding a 404 it cached BEFORE the publish
+    // landed. The bare URL then serves that stale 404 forever; only a cache key the
+    // edge has never seen reaches the origin, which has the version. A guard that
+    // retried WITHOUT cache-busting re-reads the same cached 404 every attempt and
+    // reports PUBLISH DID NOT HAPPEN for a package that is live.
+    //
+    // 🔴 THIS IS NOT WHAT RUN 34908486900 DID ON 2026-09-14, AND AN EARLIER DRAFT OF
+    // THIS COMMENT SAID IT WAS. That run was PROPAGATION LAG: the versions appeared
+    // +45s and +96s after the assertion gave up at 23:22:39, which a cached 404 does
+    // not explain — a cached 404 does not heal on its own inside 96s. Nor is the
+    // modelled state observed on registry.npmjs.org: measured 2026-09-20, an absent
+    // version returns NO cache-control and NO cf-cache-status at all, so 404s are not
+    // cached there. The per-version route IS cacheable for live versions
+    // (`lodash@4.17.21` -> HIT), which is why this case is kept as defence in depth
+    // against a registry that caches 404s — but it models a hazard we have not seen,
+    // and it must not be cited as the reproduction of a real incident.
     //
     // 🔴 THE PRE-WARMED ENTRY IS WHAT MAKES THIS DISCRIMINATING, and getting it
     // wrong is a live trap: an earlier draft served the truth to the first

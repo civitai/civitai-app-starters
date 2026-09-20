@@ -479,12 +479,35 @@ function readPublishablePackages() {
  * independently on `@civitai/cli@0.1.105`, whose `time.modified` was five days
  * stale while the version was live.
  *
+ * 🔴 THAT MEASUREMENT IS ABOUT THE PACKUMENT, AND AN EARLIER DRAFT OF THIS BLOCK
+ * GENERALISED IT TO THE PER-VERSION ENDPOINT, WHICH IS A DIFFERENT URL AND A
+ * DIFFERENT CACHE KEY. Re-measured 2026-09-20, all plain reads, no headers:
+ *
+ *   /@civitai/app-sdk            (packument)    -> HIT      public, max-age=300
+ *   /@civitai/app-sdk/0.46.0     (per-version)  -> DYNAMIC
+ *   /react/18.3.1                (per-version)  -> DYNAMIC  max-age=300
+ *   /lodash/4.17.21              (per-version)  -> HIT      public, max-age=300
+ *   /@civitai/app-sdk/99.99.99   (absent)       -> no cf-cache-status, no cache-control
+ *
+ * Read those five rows carefully, because two plausible summaries are both wrong.
+ * The per-version route IS cacheable — `lodash@4.17.21` proves it, so "that route
+ * is never cached" is false. But OUR versions measure DYNAMIC, because they are
+ * low-traffic and nothing has warmed the edge for them. And an ABSENT version
+ * carries no cache headers at all, so a 404 cached ahead of a publish — the shape
+ * that would actually defeat a retry loop on this endpoint — was NOT observed.
+ *
+ * So the honest scope: cache-busting is LOAD-BEARING for the packument (the name
+ * probe, measurably cached for 300s) and is CHEAP DEFENCE IN DEPTH for the
+ * per-version probe (cacheable in principle, uncached for our packages today).
+ * It is NOT what fixed the impatience bug — the budget did, in PR #314. Three
+ * releases since resolved lagging versions on attempts 17 / 13 / 6 using PLAIN,
+ * un-cache-busted reads (runs 35424827246, 35462947032, 35483643402), which a
+ * loop pinned to a cached 404 could not have done.
+ *
  * BOTH mechanisms are used, because they cover different caches:
  *   - `cache-control: no-cache` asks the CDN to revalidate with the origin.
  *   - a UNIQUE `?_cb=` query param makes the URL itself a cache key nothing has
  *     seen, which also defeats any intermediate proxy that ignores the header.
- * The packument and the per-version endpoint sit behind the SAME CDN, so
- * without this the two probes are not two samples — they are one.
  *
  * The param must be unique PER REQUEST, not per run: two attempts of the same
  * retry loop are exactly the pair that must not share a cache entry. `Date.now()`
@@ -493,10 +516,18 @@ function readPublishablePackages() {
  *
  * COST, stated rather than assumed: an unknown query param is ignored by
  * registry.npmjs.org (measured — 200 for a live version, 404 for an absent one,
- * i.e. cache-busting does NOT conjure versions into existence). A strict private
- * mirror that rejected it would answer non-2xx, which this script already routes
- * to the graceful-skip path — so the worst case is a skipped assertion, never a
- * false failure.
+ * i.e. cache-busting does NOT conjure versions into existence).
+ *
+ * 🔴 THE WORST CASE IS NOT ALWAYS A SKIPPED ASSERTION, AND AN EARLIER DRAFT SAID
+ * IT WAS. `get()` routes 404/410 to `notFound` — the FAIL path — and only OTHER
+ * non-2xx to `{ error }` -> skip. So a strict mirror that 404s an unknown query
+ * param sends BOTH probes to notFound/unknown, every package reads as "new", and
+ * the zero-confirmed floor fires: a FALSE FAILURE, not a skip. That is
+ * hypothetical for this repo today — `release.yml` sets no `NPM_REGISTRY`, so
+ * REGISTRY is always registry.npmjs.org, which is measured to ignore the param —
+ * and it is stated because the claim it replaces made cache-busting look free
+ * against any registry, which is the kind of unestablished reassurance this file
+ * was corrected for.
  */
 let cacheBustSeq = 0;
 function cacheBusted(path) {
