@@ -38,44 +38,56 @@ injectStyles();
 React authors want [`@civitai/components-react`](../civitai-components-react),
 which renders exactly this markup.
 
-### One component's CSS only
+### One component's CSS only — not available, on purpose
 
-`componentsCss` / `injectStyles()` / `styles.css` all carry the **whole** sheet,
-and that is deliberate — see the note below. When you are bundling and want just
-one component's rules, import its slice instead:
+`componentsCss` / `injectStyles()` / `styles.css` all carry the **whole** sheet.
+There is **no supported way to import one component's rules**, and no
+`@civitai/components/css/*` subpath: the package declares exactly two exports,
+`.` and `./styles.css`.
 
-```ts
-import { css } from '@civitai/components/css/button'; // the string
-```
+The build does slice the sheet — `scripts/build-css.ts` writes one standalone,
+layered stylesheet per section to `dist/css/<slug>.css`, and those files ship
+inside the tarball — but nothing in `exports` names them, so they are build
+inputs for this repo's own measurement, not an API. Treat them as private and
+unstable; they can be renamed or removed in a patch release.
 
-```ts
-import '@civitai/components/css/button.css'; // the file, for a CSS pipeline
-```
+Why hold a surface whose files are already built: the files are reversible, an
+`exports` key on a published package is not, and no consumer imports them today.
+Opening the surface is cheap later and irreversible now.
 
-There is a subpath for every name in `COMPONENT_NAMES` (plus `tabs`). Each slice
-is a **standalone, layered sheet**: it carries the shared `[data-civitai-ui]`
-base rule and the `@layer civitai.components` wrapper, so importing two of them
-duplicates those (both idempotent in CSS) and importing one is enough on its own.
-Components that share a section share a slice — `text-input`, `textarea`,
-`number-input` and `select` all resolve to the same module, so a bundler dedupes
-them. From a CDN the same files are at
-`https://cdn.jsdelivr.net/npm/@civitai/components/dist/css/button.css`.
-
-Measured with esbuild (minify, ESM, React external), a `@civitai/blocks-react/ui`
-Button bundle is **52,568 B, of which 50,151 B is stylesheet** — 95.4% CSS for
-one component. The same bundle over Button's + Loader's slices is 13,480 B.
-
-> 🔴 **`@civitai/blocks-react` deliberately still injects the whole pack.**
+> 🔴 **`@civitai/blocks-react` deliberately injects the whole pack.**
 > [`MARKUP.md`](./MARKUP.md) documents that rendering any one `/ui` component is
 > enough to style hand-written `data-civitai-ui="…"` markup elsewhere on the
 > page; narrowing it onto slices would take the bytes and break that contract
-> silently. Whether to do it anyway is
-> [issue #358](https://github.com/civitai/civitai-app-starters/issues/358).
+> silently. Whether to do it anyway — and what, if anything, to export — is
+> [issue #358](https://github.com/civitai/civitai-app-starters/issues/358),
+> which `pnpm measure:css-split` prices.
 
-The slices are generated from `src/components.css` by `scripts/build-css.ts`,
-whose split is asserted **byte-identical on reassembly** before anything is
+**A slice is not self-sufficient, so any future surface must say so.** Slices
+are cut along the sheet's `/* ----- Name ----- */` section markers, and the
+sheet contains rules that cross those markers. Measured on the current sheet by
+sweeping every section for references it does not own (method and counts in the
+PR for #358):
+
+| Section | Depends on | Effect of taking the section alone |
+|---|---|---|
+| `button` | `loader` | `[data-civitai-ui='loader']`'s base rule — width, height, border-width, the `civitai-ui-spin` animation — and the `[data-civitai-ui='button'] [data-civitai-ui='loader'] { color: currentColor }` override both live in the **Loader** section. A loading button renders a **0×0, invisible** loader. Nothing errors. |
+| `checkbox` / `radio` | `text-input` | `[data-civitai-ui-label]`'s base typography (14px / 600 / text token) lives in the **TextInput** section; the Checkbox section only overrides `font-weight`/`cursor` on top of it. The label renders in the page's inherited font instead. |
+
+Two is the measured total for the current sheet, not a general guarantee: a
+Button-and-Loader pair is what the measurement below actually bundles, and the
+right unit for a consumer is the **transitive** component set, never one name.
+
+Measured with esbuild (minify, ESM, React external), a `@civitai/blocks-react/ui`
+Button bundle is **52,568 B, of which 50,151 B is stylesheet** — 95.4% CSS for
+one component. The same bundle over Button's **and Loader's** slices is 13,480 B.
+Reproduce with `pnpm measure:css-split` from the repo root.
+
+The split is asserted **byte-identical on reassembly** before anything is
 written (`scripts/slice-css.ts`, guarded with its negative control in
-`test/css-slice.test.ts`).
+`test/css-slice.test.ts`), and the component vocabulary is derived from the
+`data-civitai-ui` selectors each section contains — a test pins that set equal
+to `COMPONENT_NAMES` in both directions.
 
 ## Design
 

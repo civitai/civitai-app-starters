@@ -4,21 +4,48 @@
  *
  * THE CLAIM UNDER TEST is a RELATIONSHIP, not a component: the 14 slices this
  * package emits are a faithful PARTITION of `src/components.css`. A slicer that
- * silently dropped a section would still produce valid-looking CSS files, a
- * green build, and an export map that resolves — the defect would surface as
- * "one element renders unstyled in one app" with nothing pointing back here.
+ * silently dropped a section would still produce valid-looking CSS files and a
+ * green build — the defect would surface as "one element renders unstyled in
+ * one app" with nothing pointing back here.
  *
- * So the suite asserts, in both directions:
+ * 🔴 WHAT THIS SUITE DOES **NOT** COVER — read before trusting it.
+ * The per-component artifacts are NOT a public surface. `package.json`
+ * declares no `./css/*` entries, so `@civitai/components/css/button` does not
+ * resolve for any consumer; the files ship inside the tarball (`files:
+ * ["dist"]`) and nothing more. That is deliberate — `dist/css/*.css` is
+ * reversible, an `exports` key on a package with ~1.4k downloads/month is not,
+ * and no consumer imports these yet. The decision is held pending issue #358.
+ * An earlier revision of this file asserted set-equality between the slug set
+ * and the `./css/*` export keys; there is no export surface left for it to
+ * describe, so that assertion is GONE rather than weakened, and
+ * `no ./css/* export is declared` below pins the hold so that re-opening the
+ * surface is a deliberate edit to this test and not a silent one.
+ *
+ * So the suite asserts:
  *   - reassembly is BYTE-identical to the source sheet (and a deliberately
  *     lossy slice FAILS, naming the byte gap — the negative control below);
  *   - every emitted `dist/css/<slug>.css` is exactly the composed slice;
  *   - every emitted `src/css/<slug>.generated.ts` string equals that file;
- *   - the set of `./css/*` exports in package.json equals the set of slugs the
- *     slicer produces — failing when either side GROWS or SHRINKS;
- *   - every declared `COMPONENT_NAME` has a subpath;
+ *   - the slug vocabulary the slicer derives EQUALS `COMPONENT_NAMES`, in both
+ *     directions — the assertion that would have caught the phantom `tabs`
+ *     component the old prose-derived vocabulary invented;
+ *   - `package.json` declares no `./css/*` export (the hold, pinned);
+ *   - `pnpm build` prunes only its OWN generated files from the TRACKED
+ *     `src/css/` directory;
  *   - `componentsCss` (the whole-pack contract) still carries EVERY section.
  */
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -146,52 +173,138 @@ describe('emitted per-component artifacts', () => {
   });
 });
 
-describe('./css/* subpath exports', () => {
-  /** `./css/button` and `./css/button.css`, expected exactly once per slug. */
-  const expected = new Map<string, string>();
-  for (const slice of slices) {
-    for (const slug of slice.slugs) {
-      expected.set(`./css/${slug}`, slice.slug);
-      expected.set(`./css/${slug}.css`, slice.slug);
-    }
-  }
-  const declared = Object.keys(pkg.exports).filter((k) => k.startsWith('./css/'));
-
-  it('declares exactly one subpath pair per component slug', () => {
-    // Set equality in BOTH directions: a slug added to the sheet without an
-    // export, or an export left behind after a section is renamed, both fail.
-    expect(new Set(declared)).toEqual(new Set(expected.keys()));
-    expect(declared.length).toBe(expected.size);
-    // Literal floor so the pair above cannot agree at zero: 21 component slugs
-    // (14 sections' own names + 7 group/alias names) x 2 subpaths each.
-    expect(new Set(slices.flatMap((s) => s.slugs)).size).toBe(21);
-    expect(declared.length).toBe(42);
+describe('the slug vocabulary is derived from SELECTORS, not from comment prose', () => {
+  /**
+   * 🔴 THE ASSERTION THIS DESCRIBE EXISTS FOR.
+   *
+   * The old derivation read slugs out of the English in the section markers —
+   * `SegmentedControl / Tabs` split on `/` — plus a hand-maintained alias
+   * table for the names no title spelled. It produced `tabs`, which is not a
+   * component: it is not in `COMPONENT_NAMES` and no rule in the sheet selects
+   * `[data-civitai-ui='tabs']`; MARKUP.md documents it as a `role="tab"` MODE
+   * of segmented-control.
+   *
+   * The permissive direction ("every COMPONENT_NAME has a slug") is what the
+   * suite used to check, and it is exactly why `tabs` got through: an EXTRA
+   * slug satisfies it. So this asserts SET EQUALITY, which fails when the
+   * derived vocabulary grows a name the package does not declare *or* loses
+   * one it does.
+   */
+  it('the derived slug set EQUALS COMPONENT_NAMES, in both directions', () => {
+    const derived = new Set(slices.flatMap((s) => s.slugs));
+    const declared = new Set<string>(COMPONENT_NAMES);
+    // `toEqual` on two Sets reports the symmetric difference, so a failure
+    // names the offending slug rather than just a count.
+    expect(derived).toEqual(declared);
+    // Literal floor so the equality above cannot be satisfied at zero by a
+    // derivation that returns nothing on both sides.
+    expect(derived.size).toBe(20);
+    expect(COMPONENT_NAMES.length).toBe(20);
   });
 
-  it('every subpath target exists on disk and points at the right slice', () => {
-    for (const [subpath, owningSlug] of expected) {
-      const entry = pkg.exports[subpath];
-      if (subpath.endsWith('.css')) {
-        expect(entry, subpath).toBe(`./dist/css/${owningSlug}.css`);
-        expect(existsSync(join(pkgRoot, `dist/css/${owningSlug}.css`)), subpath).toBe(true);
-      } else {
-        expect(entry, subpath).toEqual({
-          types: `./dist/css/${owningSlug}.generated.d.ts`,
-          import: `./dist/css/${owningSlug}.generated.js`,
-        });
-        expect(existsSync(join(pkgRoot, `dist/css/${owningSlug}.generated.js`)), subpath).toBe(
-          true
-        );
-        expect(existsSync(join(pkgRoot, `dist/css/${owningSlug}.generated.d.ts`)), subpath).toBe(
-          true
-        );
+  it('no slug is a phantom: every one is selected by a rule in the sheet', () => {
+    for (const slice of slices) {
+      for (const slug of slice.slugs) {
+        expect(srcCss, slug).toContain(`[data-civitai-ui='${slug}']`);
       }
     }
+    // Positive control for the check above: the phantom the old derivation
+    // produced is NOT selected anywhere, so the same check would have failed
+    // on it. Without this line the loop could be vacuously satisfiable.
+    expect(srcCss).not.toContain(`[data-civitai-ui='tabs']`);
   });
 
-  it('every declared COMPONENT_NAME has a subpath', () => {
-    for (const name of COMPONENT_NAMES) {
-      expect(declared, name).toContain(`./css/${name}`);
+  it('each slug resolves to exactly one slice', () => {
+    const owners = new Map<string, string>();
+    for (const slice of slices) {
+      for (const slug of slice.slugs) {
+        expect(owners.has(slug), `${slug} claimed twice`).toBe(false);
+        owners.set(slug, slice.slug);
+      }
+    }
+    // The measured subtlety, pinned: `src/components.css` carries
+    // `[data-civitai-ui='button'] [data-civitai-ui='loader']` inside the
+    // LOADER section. A derivation reading every compound rather than the
+    // leading one would hand `button` to Loader as well; first-section-wins
+    // plus leading-compound-only means Button keeps it.
+    expect(srcCss).toContain(`[data-civitai-ui='button'] [data-civitai-ui='loader']`);
+    expect(owners.get('button')).toBe('button');
+    expect(owners.get('loader')).toBe('loader');
+  });
+});
+
+describe('the ./css/* export surface is deliberately UNSHIPPED (issue #358)', () => {
+  /**
+   * The artifacts exist and are complete; nothing can NAME them. Files are
+   * reversible, `exports` keys on a published package are not, and no consumer
+   * imports these. Deleting this test to add exports back is the point: it
+   * makes re-opening the surface a deliberate edit.
+   */
+  it('declares no ./css/* export', () => {
+    const declared = Object.keys(pkg.exports).filter((k) => k.startsWith('./css/'));
+    expect(declared).toEqual([]);
+    // Positive control that the filter is wired to a real, non-empty map —
+    // a zero from a mis-read `exports` would otherwise look identical.
+    expect(Object.keys(pkg.exports)).toContain('./styles.css');
+  });
+
+  it('every slice still has BOTH artifacts on disk, complete', () => {
+    // What the removed set-equality assertion used to prove via the export
+    // map: the emitted set is complete and one file per slice exists.
+    for (const slice of slices) {
+      const cssFile = join(pkgRoot, 'dist/css', `${slice.slug}.css`);
+      const srcTs = join(pkgRoot, 'src/css', `${slice.slug}.generated.ts`);
+      expect(existsSync(cssFile), cssFile).toBe(true);
+      expect(existsSync(srcTs), srcTs).toBe(true);
+      expect(existsSync(join(pkgRoot, 'dist/css', `${slice.slug}.generated.js`)), slice.slug).toBe(
+        true
+      );
+      expect(
+        existsSync(join(pkgRoot, 'dist/css', `${slice.slug}.generated.d.ts`)),
+        slice.slug
+      ).toBe(true);
+    }
+    expect(slices).toHaveLength(14);
+  });
+});
+
+describe('build-css.ts prunes src/css/ without wiping it', () => {
+  /**
+   * 🔴 REGRESSION. `src/css/` is TRACKED. The build writer used to clear it
+   * with `rmSync(srcCssDir, { recursive: true, force: true })` on the strength
+   * of a comment saying the directory held only generated files — so any
+   * hand-written file placed there (a README, a helper) was deleted silently
+   * by the next `pnpm build`, with nothing but `git status` to notice.
+   *
+   * Run against the REAL script, in a throwaway copy of the package so the
+   * suite never mutates the checkout (and never races the tests above, which
+   * read `dist/css/`).
+   */
+  it('keeps a hand-written file and still drops a stale *.generated.ts', () => {
+    const sandbox = mkdtempSync(join(tmpdir(), 'civitai-build-css-'));
+    try {
+      mkdirSync(join(sandbox, 'src/css'), { recursive: true });
+      cpSync(join(pkgRoot, 'scripts'), join(sandbox, 'scripts'), { recursive: true });
+      cpSync(join(pkgRoot, 'src/components.css'), join(sandbox, 'src/components.css'));
+      const sentinel = join(sandbox, 'src/css/README.md');
+      const stale = join(sandbox, 'src/css/deleted-section.generated.ts');
+      writeFileSync(sentinel, '# hand-written, tracked, must survive a build\n');
+      writeFileSync(stale, 'export const css: string = "stale";\n');
+
+      execFileSync(
+        process.execPath,
+        [join(pkgRoot, 'node_modules/tsx/dist/cli.mjs'), join(sandbox, 'scripts/build-css.ts')],
+        { stdio: 'pipe' }
+      );
+
+      expect(existsSync(sentinel), 'tracked hand-written file was deleted by the build').toBe(true);
+      expect(readFileSync(sentinel, 'utf8')).toContain('must survive a build');
+      expect(existsSync(stale), 'stale generated artifact survived the build').toBe(false);
+      // and the real artifacts were still written
+      expect(existsSync(join(sandbox, 'src/css/button.generated.ts'))).toBe(true);
+      expect(existsSync(join(sandbox, 'dist/css/button.css'))).toBe(true);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
     }
   });
 });

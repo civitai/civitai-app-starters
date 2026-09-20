@@ -15,8 +15,15 @@
  * concatenates the theme tokens + the ENTIRE `@civitai/components` sheet +
  * `INTERACTIVE_STYLES` into one string. A Button-only bundle therefore also
  * carries SegmentedControl, Toast, Tooltip, NumberInput and fifteen others.
- * `@civitai/components` now ships per-component slices — so: what would
- * `useBlocksStyles()` importing only Button's slice cost instead?
+ * `@civitai/components` now BUILDS per-component slices (internal artifacts,
+ * not exported) — so: what would `useBlocksStyles()` importing only Button's
+ * slice cost instead?
+ *
+ * 🔴 RETIRES WHEN #358 CLOSES. This script exists to feed exactly one open
+ * decision, and #358 cites `pnpm measure:css-split` as its reproduction step.
+ * When that issue is resolved either way, delete this file and the root
+ * `measure:css-split` script — a measurement kept past the question it answers
+ * is upkeep with no reader.
  *
  * 🔴 This measures a path that is NOT taken. `blocks-react` is deliberately
  * unchanged, because injecting the whole pack is a DOCUMENTED contract

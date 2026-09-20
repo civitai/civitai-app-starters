@@ -10,9 +10,13 @@
  *   - generates `src/styles.generated.ts` embedding the same CSS as a string
  *     (the JS-injectable form), compiled by tsc into dist, and
  *   - slices the sheet per component (`scripts/slice-css.ts`) into
- *     `dist/css/<slug>.css` plus `src/css/<slug>.generated.ts`, reachable as
- *     the `./css/<component>` and `./css/<component>.css` subpath exports.
+ *     `dist/css/<slug>.css` plus `src/css/<slug>.generated.ts`.
  * A generation-parity test asserts the two never diverge.
+ *
+ * 🔴 The per-component artifacts ship inside the tarball (`files: ["dist"]`)
+ * but are NOT declared in package.json `exports`, so no consumer can name
+ * them. Files are reversible; export keys on a published package are not, and
+ * nothing imports these yet. Held until issue #358.
  *
  * 🔴 The whole-sheet outputs above are FROZEN. `componentsCss` and
  * `injectStyles()` still carry every rule, byte-identical to before the split
@@ -21,7 +25,7 @@
  * styles hand-written `data-civitai-ui="…"` markup elsewhere on the page. The
  * per-component artifacts are ADDITIVE and opt-in. See issue #358.
  */
-import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -56,14 +60,24 @@ const split = sliceComponentsCss(css);
 assertLossless(split, css);
 const slices = cssSlices(split);
 
-// Both directories hold ONLY generated files, so a full wipe is what keeps a
-// renamed or deleted section from leaving a stale artifact behind that the
-// export map would still happily resolve.
+// Stale artifacts must not survive a renamed or deleted section — but the two
+// directories need DIFFERENT treatment, and conflating them was a defect.
+//
+// 🔴 `src/css/` is TRACKED. A blanket `rmSync(..., { recursive: true })` here
+// deletes whatever a human puts in it — a README, a hand-written helper —
+// silently, on the next `pnpm build`, with no diff to read until `git status`.
+// So prune only what this script WRITES (`*.generated.ts`), by name.
+//
+// `dist/` is gitignored and holds nothing but build output (this script's
+// `.css` files plus tsc's `.js`/`.d.ts` emitted from `src/css/`), so the wipe
+// is correct there and is the only thing that clears a stale compiled slice.
 const srcCssDir = join(pkgRoot, 'src', 'css');
 const distCssDir = join(distDir, 'css');
-rmSync(srcCssDir, { recursive: true, force: true });
-rmSync(distCssDir, { recursive: true, force: true });
 mkdirSync(srcCssDir, { recursive: true });
+for (const name of readdirSync(srcCssDir)) {
+  if (name.endsWith('.generated.ts')) rmSync(join(srcCssDir, name), { force: true });
+}
+rmSync(distCssDir, { recursive: true, force: true });
 mkdirSync(distCssDir, { recursive: true });
 
 for (const slice of slices) {
@@ -77,7 +91,11 @@ for (const slice of slices) {
       ` * a standalone, layered sheet carrying the shared \`[data-civitai-ui]\` base\n` +
       ` * rule plus this section only. Identical to dist/css/${slice.slug}.css.\n` +
       ` *\n` +
-      ` * Reachable as \`@civitai/components/css/${slice.slugs.join('\`, \`@civitai/components/css/')}\`.\n` +
+      ` * Components in this slice: ${slice.slugs.join(', ')}.\n` +
+      ` *\n` +
+      ` * 🔴 NOT importable by consumers. This file ships in the tarball but is\n` +
+      ` * not declared in package.json \`exports\`, so \`@civitai/components/css/…\`\n` +
+      ` * does not resolve. The export surface is held until issue #358.\n` +
       ` */\n` +
       // `: string` is load-bearing, not decoration. Without it tsc infers the
       // STRING LITERAL type and inlines the whole sheet into the `.d.ts` — the
@@ -91,5 +109,6 @@ for (const slice of slices) {
 
 console.log(
   `[build-css] wrote dist/components.css + styles.css + src/styles.generated.ts + ` +
-    `${slices.length} slices (${slices.reduce((n, s) => n + s.slugs.length, 0)} component subpaths)`
+    `${slices.length} slices covering ${slices.reduce((n, s) => n + s.slugs.length, 0)} ` +
+    `components (not exported — see #358)`
 );
