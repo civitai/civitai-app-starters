@@ -224,9 +224,11 @@ describe('the slug vocabulary is derived from SELECTORS, not from comment prose'
     }
     // The measured subtlety, pinned: `src/components.css` carries
     // `[data-civitai-ui='button'] [data-civitai-ui='loader']` inside the
-    // LOADER section. A derivation reading every compound rather than the
-    // leading one would hand `button` to Loader as well; first-section-wins
-    // plus leading-compound-only means Button keeps it.
+    // LOADER section, so `button` is named by two sections' rules. What
+    // resolves it is FIRST-SECTION-WINS — Button claimed the slug 400 lines
+    // earlier — not the leading-compound narrowing, which reports `button` for
+    // the Loader section too. Delete the first-wins rule and `button` becomes
+    // a duplicate; this pins the outcome.
     expect(srcCss).toContain(`[data-civitai-ui='button'] [data-civitai-ui='loader']`);
     expect(owners.get('button')).toBe('button');
     expect(owners.get('loader')).toBe('loader');

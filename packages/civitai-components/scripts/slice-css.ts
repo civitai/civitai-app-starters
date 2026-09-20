@@ -132,11 +132,15 @@ const COMMENT_RE = /\/\*[\s\S]*?\*\//g;
 /**
  * The selector preludes of a section's TOP-LEVEL rules, in source order.
  *
- * Depth-0 only, which is what makes the derivation correct rather than merely
- * plausible: a nested `&[data-size='sm']` never names a component, and a
- * descendant rule's later compounds (`… [data-civitai-ui='loader']`) are read
- * by {@link sectionSlugs} from the LEADING compound only. At-rule preludes
- * (`@keyframes civitai-ui-spin`) simply do not match the slug pattern.
+ * Depth-0 only: a nested `&[data-size='sm']` is a variant of the rule it sits
+ * in, never a component of its own. At-rule preludes (`@keyframes
+ * civitai-ui-spin`) simply do not match the slug pattern.
+ *
+ * Comments are stripped FIRST, which is load-bearing rather than tidy: the
+ * sheet's prose mentions component names constantly (`the shared
+ * [data-civitai-ui-error] styling`, `a BARE `<span data-civitai-ui="loader">``)
+ * and letting any of it reach the matcher would reintroduce the prose
+ * dependency this module exists to remove.
  */
 function topLevelPreludes(sectionText: string): string[] {
   const src = sectionText.replace(COMMENT_RE, '');
@@ -161,14 +165,19 @@ function topLevelPreludes(sectionText: string): string[] {
 /**
  * Every component slug a section's own top-level rules SELECT, in source order.
  *
- * Only the leading compound of each comma-separated selector counts. That is
- * deliberate and is the one measured subtlety: `src/components.css` carries
- * `[data-civitai-ui='button'] [data-civitai-ui='loader']` INSIDE the Loader
- * section (the cross-component override that tints a button's loader to
- * `currentColor`), so a derivation reading every compound would report `button`
- * as a Loader component. Reading the leading compound reports `button`, which
- * {@link cssSlices} then discards under first-section-wins because the Button
- * section claimed it first.
+ * Only the LEADING compound of each comma-separated selector counts: a rule
+ * whose subject is `X` is a rule about `X`, whatever its ancestors name.
+ *
+ * 🔴 That narrowing is NOT what resolves the cross-section rule. Measured on
+ * the sheet at the time of writing, reading every compound instead produces
+ * the IDENTICAL slug set, section for section — because
+ * `[data-civitai-ui='button'] [data-civitai-ui='loader']` sits in the Loader
+ * section, and `button` is discarded there either way by
+ * {@link cssSlices}'s FIRST-SECTION-WINS rule (the Button section claimed it
+ * 400 lines earlier). First-section-wins is the guarantee; leading-compound is
+ * the narrower reading that keeps this function honest on its own terms, so a
+ * future descendant rule naming a component NO earlier section owns cannot
+ * silently mint a slug here.
  */
 export function sectionSlugs(sectionText: string): string[] {
   const slugs: string[] = [];
