@@ -139,7 +139,7 @@ Read everything from the host with `useBlockContext()`; gate on `ready`:
 ```tsx
 import { useRef } from 'react';
 import { useBlockContext, useBlockResize } from '@civitai/blocks-react';
-import { isModelSlotContext } from '@civitai/app-sdk/blocks';
+import { isModelSlotContext, isSignedIn } from '@civitai/app-sdk/blocks';
 
 export function App() {
   const { ready, context, viewer, theme } = useBlockContext();
@@ -155,7 +155,8 @@ export function App() {
   return (
     // GOTCHA: data-theme on YOUR root — the host can't set it inside the iframe.
     <div ref={rootRef} data-theme={theme}>
-      Block for {context.modelName}, hi {viewer ? 'there' : 'anon'}
+      {/* Sign-in gate: call `isSignedIn`, never an identity read. */}
+      Block for {context.modelName}, hi {isSignedIn(viewer) ? 'there' : 'anon'}
     </div>
   );
 }

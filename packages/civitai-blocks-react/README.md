@@ -27,7 +27,7 @@ your block app and the SDK share a single React tree.
 import { useRef } from 'react';
 import { useBlockContext, useBlockResize, useBuzzWorkflow } from '@civitai/blocks-react';
 import { Button } from '@civitai/blocks-react/ui';
-import { isModelSlotContext } from '@civitai/app-sdk/blocks';
+import { isModelSlotContext, isSignedIn } from '@civitai/app-sdk/blocks';
 
 export function App() {
   const { ready, context, viewer, theme } = useBlockContext();
@@ -45,7 +45,8 @@ export function App() {
     // GOTCHA #60: set data-theme on YOUR OWN root — the host can't reach into
     // the iframe to set it. Without this any [data-theme="dark"] CSS is dormant.
     <div ref={rootRef} data-theme={theme}>
-      <p>Block for model {context.modelName} ({viewer ? 'signed in' : 'anon'})</p>
+      {/* Sign-in gate: call `isSignedIn`, never an identity read. */}
+      <p>Block for model {context.modelName} ({isSignedIn(viewer) ? 'signed in' : 'anon'})</p>
       {/* `/ui` Button — themed by the data-theme above; `loading` disables + shows a spinner */}
       <Button
         loading={status === 'submitting' || status === 'polling'}
@@ -113,7 +114,14 @@ const { ready, context, viewer, theme, settings, blockId, blockInstanceId, appId
 
 - `context` — `BlockContext` (`{ slotId, … }`); narrow to `ModelSlotContext` for
   model-page slots.
-- `viewer` — `ViewerInfo | null` (`null` = anonymous).
+- `viewer` — `ViewerInfo | null` (`null` = anonymous). **Gate sign-in with
+  `isSignedIn(viewer)`** (from `@civitai/app-sdk/blocks`), never on
+  `viewer.id`/`viewer.username` (both `@deprecated`). Don't open-code the gate:
+  the SDK owns which spelling is correct — `signedIn` is optional on the wire
+  and is the one viewer field the init validator deliberately does not reject
+  when malformed, so `isSignedIn` answers from presence instead. Hover it for
+  the full reasoning. Need the identity itself? Use
+  [`useViewer()`](#useviewer) — scope-gated and audited per call.
 - `theme` — `'light' | 'dark'`. **Set `data-theme={theme}` on your root** (gotcha #60).
   LIVE: it starts at the `BLOCK_INIT` value and then tracks the host's
   `THEME_CHANGE` push when the viewer toggles dark mode mid-session — see

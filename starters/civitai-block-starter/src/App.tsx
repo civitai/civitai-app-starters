@@ -1,7 +1,7 @@
 import { useRef } from 'react';
 
 import { useBlockContext, useBlockResize } from '@civitai/blocks-react';
-import { isModelSlotContext } from '@civitai/app-sdk/blocks';
+import { isModelSlotContext, isSignedIn } from '@civitai/app-sdk/blocks';
 
 /**
  * Replace this body with your block's actual UI.
@@ -16,18 +16,18 @@ import { isModelSlotContext } from '@civitai/app-sdk/blocks';
  *   `isPageSlotContext` instead. `context` is a discriminated union keyed on
  *   `slotId`, so narrowing is what makes the slot's fields readable
  *
- * On the viewer: this reads `viewer !== null` — a SIGN-IN GATE, which is all
+ * On the viewer: this calls `isSignedIn(viewer)` — a SIGN-IN GATE, which is all
  * most blocks need. `viewer.id` / `viewer.username` are deprecated: BLOCK_INIT
  * hands them to every block on load, before any interaction. If your block
  * genuinely needs the viewer's identity, call `useViewer()` — that read is
  * scope-gated and audited per call rather than broadcast at mount.
  *
- * Deliberately NOT `viewer?.signedIn` yet. That flag is the successor signal and
- * both dev hosts already send it, but the production host does not until its
- * counterpart (civitai/civitai#3707 — open, unmerged) ships — so a block gating
- * on it today renders its anonymous branch to every signed-in user, and a green
- * local run proves nothing about that. `viewer !== null` means exactly the same
- * thing and works against both.
+ * 🔴 CALL THE PREDICATE; DO NOT OPEN-CODE THE GATE. This file gets copied, so a
+ * gate spelled inline here becomes the gate the ecosystem writes — and two
+ * earlier revisions of this comment argued for two DIFFERENT inline spellings
+ * (`viewer !== null`, then `viewer?.signedIn === true`) as the wire contract
+ * moved. `isSignedIn` is where that argument now lives, once, in the SDK; hover
+ * it for which spelling it uses and the three measured reasons.
  */
 export function App() {
   const { ready, context, viewer, theme, blockInstanceId } = useBlockContext();
@@ -64,7 +64,7 @@ export function App() {
         </p>
       ) : null}
       <p style={{ margin: 0 }}>
-        Viewer: <strong>{viewer ? 'signed in' : 'anonymous'}</strong>
+        Viewer: <strong>{isSignedIn(viewer) ? 'signed in' : 'anonymous'}</strong>
       </p>
     </div>
   );

@@ -78,6 +78,13 @@ export type {
  */
 export { isModelSlotContext, isPageSlotContext } from './types.js';
 
+/**
+ * The sign-in gate, spelled once. Blocks, docs and starters call this instead
+ * of open-coding `viewer !== null` or `viewer?.signedIn === true`; see its doc
+ * in `types.ts` for which of the two it uses and why.
+ */
+export { isSignedIn } from './types.js';
+
 export type {
   BlockContext,
   KnownSlotId,

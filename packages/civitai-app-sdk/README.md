@@ -89,7 +89,7 @@ interface BlockInitPayload {
   token: WrappedToken;                 // { raw, scopes[], expiresAt (ISO), buzzBudget? }
   context: BlockContext;               // { slotId, … } — narrow to ModelSlotContext
   settings: BlockSettings;             // { publisherSettings, userSettings }
-  viewer: ViewerInfo | null;           // null = anonymous
+  viewer: ViewerInfo | null;           // null = anonymous — gate with isSignedIn(viewer)
   theme: 'light' | 'dark';
   renderMode: 'iframe' | 'inline';
 }
@@ -106,6 +106,8 @@ interface BlockInitPayload {
 | `defineBlock({ manifest })` | Validates a `BlockManifestV1` (subset of the server checks) and returns it. Call at module scope so authoring mistakes throw before mount. Throws `BlockManifestError` (has a `.field` dot-path). |
 | `BLOCK_SCOPES` / `BLOCK_SCOPE_PATTERN` | The 15 known block scope strings (the authoritative enum `defineBlock` validates against) + the `domain:verb:target` format-helper regex. A scope is valid only if it's a member of `BLOCK_SCOPES`, matching the [canonical schema](https://civitai.com/schemas/app-block/v1.json). |
 | `isMessage(data, type)` | Discriminator-only message narrowing (see above). |
+| `isModelSlotContext(ctx)` / `isPageSlotContext(ctx)` | Runtime narrowing for the `slotId`-discriminated `BlockContext` union. Real checks on a value that crossed a `postMessage` boundary — they verify every field they assert, not just `slotId`. |
+| `isSignedIn(viewer)` | **The sign-in gate.** `isSignedIn(useBlockContext().viewer)` — do not open-code it as `viewer !== null` or `viewer?.signedIn === true`. Which of those is correct has already changed once with the host contract, and this is the one place it is decided. It reads neither `viewer.id` nor `viewer.username` (both `@deprecated`), so nothing written through it changes when those are removed. Need the identity rather than the presence? `useViewer()` — scope-gated and audited per call. |
 | types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `WorkflowBodyCustomComfy` (+ its two arms `WorkflowBodyCustomComfyRecipe` / `WorkflowBodyCustomComfyInline`, and `InlineComfyNode`), `WorkflowBodyStep` / `WorkflowBodyPassThroughStep` (the two arms of `kind: 'step'`), `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
 
 `WorkflowBody`'s `customComfy` member is a discriminated union on `mode`, mirroring

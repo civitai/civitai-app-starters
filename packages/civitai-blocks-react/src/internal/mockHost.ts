@@ -885,38 +885,27 @@ const DEFAULT_GENERATION_SOURCE_UPLOAD: BlockGenerationSourceImageInfo = {
  * The `BLOCK_INIT.viewer` the mock host sends when {@link MockHostOptions.viewer}
  * is omitted — EXACTLY `{ id, username, signedIn }`.
  *
- * 🔴 The two halves of that key set have DIFFERENT provenance. One mirrors
- * production; one runs ahead of it. Do not read this default as "byte-for-byte
- * what the real host puts on the wire" — today it is not.
+ * Both halves mirror production byte-for-byte, and each is checkable:
  *
- *  - NO `status` — TRUE OF PRODUCTION NOW. On civitai/civitai `main`,
- *    `projectBlockInitViewer` builds `{ id, username }` and nothing else, and
+ *  - NO `status`. The platform deliberately withholds the viewer's coarse
+ *    ban/mute moderation state from third-party iframes (civitai #2521) —
+ *    `ViewerInfo.status` is `@deprecated` for precisely that reason. A fake
+ *    that sends it lets a block read a field production never provides and
+ *    still pass every local test: the same both-wrong-blind shape as the
+ *    over-shared `ModelSlotContext` fields removed from the seven starter
+ *    harnesses. The authoritative self-read (`GET_VIEWER` →
+ *    {@link DEFAULT_VIEWER_RESULT}) is where `status` belongs, and it still
+ *    carries it.
+ *  - WITH `signedIn: true`. civitai/civitai `main`'s `withSignedInFlag`
+ *    (`src/components/AppBlocks/projectBlockInit.ts`) stamps the literal `true`
+ *    on every present viewer, from BOTH host surfaces, and that repo's
  *    `src/components/AppBlocks/__tests__/projectBlockInit.test.ts` pins
- *    `Object.keys(viewer).sort()` as exactly `['id', 'username']`. The platform
- *    deliberately withholds the viewer's coarse ban/mute moderation state from
- *    third-party iframes (civitai #2521) — `ViewerInfo.status` is `@deprecated`
- *    for precisely that reason. A fake that sends it lets a block read a field
- *    production never provides and still pass every local test: the same
- *    both-wrong-blind shape as the over-shared `ModelSlotContext` fields this
- *    release removed from the seven starter harnesses. The authoritative
- *    self-read (`GET_VIEWER` → {@link DEFAULT_VIEWER_RESULT}) is where `status`
- *    belongs, and it still carries it.
- *  - WITH `signedIn: true` — NOT IN PRODUCTION YET. `signedIn` appears ZERO
- *    times under `src/components/AppBlocks/` on civitai/civitai `main`; it
- *    arrives with civitai/civitai#3707, which is OPEN and unmerged and is what
- *    moves the host's pinned key set to `['id', 'signedIn', 'username']`. The
- *    mock emits it AHEAD of the host on purpose — the field only means anything
- *    if a dev can exercise it locally, and a mock that omits it hands every
- *    local run `undefined` for the field this release tells authors to migrate
- *    TO. The cost of running ahead (a block that gates on `viewer?.signedIn`
- *    passing here and rendering its anonymous branch in production) is carried
- *    by {@link ViewerInfo.signedIn}, which documents `viewer !== null` as the
- *    gate to SHIP today.
+ *    `Object.keys(viewer).sort()` as exactly `['id', 'signedIn', 'username']`.
  *
- * 🔴 IF #3707 IS ABANDONED: drop `signedIn` from this default, from
- * `createLiveHost`'s `anonFallbackViewer`, and from the two key-set fences in
- * `test/blockInitV2.test.ts` — in one change. Leaving it would make both dev
- * hosts permanently more generous than the host they exist to imitate.
+ * 🔴 THE PROPERTY THIS FENCE HOLDS: the dev hosts must not be more generous
+ * than the host they imitate. Any change here moves with
+ * `createLiveHost`'s `anonFallbackViewer` and the two key-set fences in
+ * `test/blockInitV2.test.ts` — they are one key set in four places.
  */
 const DEFAULT_VIEWER: ViewerInfo = { id: 2, username: 'dev-viewer', signedIn: true };
 
