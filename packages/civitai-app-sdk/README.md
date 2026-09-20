@@ -19,7 +19,7 @@ pnpm add @civitai/app-sdk
 | `cookies/*` — `sealCookie`, `unsealCookie`, `buildSetCookieHeader`, `readCookie` | AES-256-GCM authenticated cookie crypto. Use to seal a session blob (refresh token, expiry, scope) into an `httpOnly` cookie with zero external session store. |
 | `orchestrator/*` — `createOrchestratorClient`, `estimateWorkflow`, `submitWorkflow`, `getWorkflow`, `pollWorkflow`, `buildTextToImageBody`, `buildImageGenBody`, `buildWorkflowBody`, `WORKFLOW_STEP_TYPES`, `IMAGE_GEN_ENGINES`, `isTerminal`, `extractImageUrls`, `OrchestratorError`, `WorkflowSnapshot`, `GenerateInput`, `ImageGenInput`, `WorkflowStepType`, `ImageGenEngine`, `DEFAULT_MODEL_AIR` | Orchestrator workflow glue — types, body builders, raw HTTP, and long-poll helper. Client + server safe (fetch-only). `estimateWorkflow` calls `?whatif=true` to preview Buzz cost without spending. `pollWorkflow` long-polls to terminal status. `WORKFLOW_STEP_TYPES` is the catalog of every step `$type` the orchestrator accepts. |
 | `orchestrator/steps` — `WorkflowStepTemplates`, `WorkflowStepTemplateFor`, `WorkflowStepInputFor`, `AnyWorkflowStepTemplate`, `TypedWorkflowTemplate` | **Type-only** subpath (0 runtime bytes) keying the orchestrator's generated workflow-step shapes from `@civitai/client` by wire `$type`, so apps compose real step bodies against types that track the spec instead of hand-maintained copies. Requires the optional peer `@civitai/client@beta`. Type surface only — it grants no submit permission; see "Typed step shapes" below. |
-| `blocks/*` — `defineBlock`, `BlockManifestError`, `BLOCK_SCOPES`, `BLOCK_SCOPE_PATTERN`, `isMessage`, types (`BlockManifestV1`, `BlockContext`, `BlockToken`, `BlockSettings`, `ViewerInfo`, `ThemeInfo`, `BlockWorkflowSnapshot`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`, …) | Framework-agnostic contract for [Civitai Apps](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md). `defineBlock(config)` validates a `BlockManifestV1` at startup so authoring mistakes surface in `pnpm dev` instead of at `civitai app validate`/submit. Ships a byte-identical copy of the server-published canonical JSON Schema (draft 2020-12, https://civitai.com/schemas/app-block/v1.json) at the `./schemas/app-block/v1.json` subpath for offline validation; a CI drift-check keeps it in sync. Runtime-agnostic — no React or DOM types. Hooks and the iframe transport live in a separate package. |
+| `blocks/*` — `defineBlock`, `BlockManifestError`, `BLOCK_SCOPES`, `BLOCK_SCOPE_PATTERN`, `isMessage`, types (`BlockManifestV1`, `BlockContext`, `BlockToken`, `BlockSettings`, `ViewerInfo`, `ThemeInfo`, `BlockWorkflowSnapshot`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`, …) | Framework-agnostic contract for [Civitai Apps](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md). `defineBlock(config)` validates a `BlockManifestV1` against the canonical schema so authoring mistakes surface in `pnpm dev` instead of at `civitai app validate`/submit — the block scaffolds wire it into their Vite config, so it runs on every dev-server boot and build. Ships a byte-identical copy of the server-published canonical JSON Schema (draft 2020-12, https://civitai.com/schemas/app-block/v1.json) at the `./schemas/app-block/v1.json` subpath for offline validation; a CI drift-check keeps it in sync. Runtime-agnostic — no React or DOM types. Hooks and the iframe transport live in a separate package. |
 
 ## Subpath imports
 
@@ -103,7 +103,7 @@ interface BlockInitPayload {
 
 | Export | What |
 |---|---|
-| `defineBlock({ manifest })` | Validates a `BlockManifestV1` (subset of the server checks) and returns it. Call at module scope so authoring mistakes throw before mount. Throws `BlockManifestError` (has a `.field` dot-path). |
+| `defineBlock({ manifest })` | Validates a `BlockManifestV1` against every machine-checkable rule in the [canonical schema](https://civitai.com/schemas/app-block/v1.json), plus the itemised extras in `SCHEMA_DIVERGENCES`, and returns it. Already wired into every block scaffold's Vite config, so `pnpm dev`/`pnpm build` check the manifest for you; call it at module scope too if you want the check at mount. Throws `BlockManifestError` (has a `.field` dot-path). Passing is necessary, not sufficient — see `KNOWN_GAPS`. |
 | `BLOCK_SCOPES` / `BLOCK_SCOPE_PATTERN` | The 15 known block scope strings (the authoritative enum `defineBlock` validates against) + the `domain:verb:target` format-helper regex. A scope is valid only if it's a member of `BLOCK_SCOPES`, matching the [canonical schema](https://civitai.com/schemas/app-block/v1.json). |
 | `isMessage(data, type)` | Discriminator-only message narrowing (see above). |
 | `isModelSlotContext(ctx)` / `isPageSlotContext(ctx)` | Runtime narrowing for the `slotId`-discriminated `BlockContext` union. Real checks on a value that crossed a `postMessage` boundary — they verify every field they assert, not just `slotId`. |
@@ -154,31 +154,65 @@ const body: WorkflowBody = {
 
 ### `defineBlock` validator rules
 
-Mirrors a strict subset of the civitai/civitai server gate. It throws on:
+`defineBlock` enforces **every rule the [canonical schema](https://civitai.com/schemas/app-block/v1.json)
+expresses in machine-checkable form**, plus a short, itemised list of extras that
+mirror server checks the canonical states only in prose. It is not a "subset" —
+that wording was wrong in both directions and is gone ([#330](https://github.com/civitai/civitai-app-starters/issues/330)).
 
-- A missing **required** field: `$schema`, `appId`, `blockId`, `version`, `name`,
-  `type`, `targets`, `scopes`, `iframe`, `contentRating`, `minApiVersion`.
-- `$schema` ≠ `https://civitai.com/schemas/app-block/v1.json`.
+Only the canonical's **five** required fields are required: `blockId`, `version`,
+`name`, `contentRating`, `scopes`. Everything else is optional.
+
+It throws on:
+
+- A missing required field (the five above).
 - `blockId` not matching the canonical `/^[a-z][a-z0-9-]*[a-z0-9]$/` (DNS-subdomain-safe:
   lowercase, starts with a letter, ends alphanumeric) or outside 3–40 chars —
-  the blockId becomes `<blockId>.civit.ai`; `version` not semver; `name` > 80 chars.
-- `type` not `block` | `embed`; `contentRating` not `g|pg|pg13|r|x`.
-- **Empty `scopes`** (must be a non-empty array) or any scope that isn't one of
-  the 15 known block scopes (`BLOCK_SCOPES`). The [canonical schema](https://civitai.com/schemas/app-block/v1.json)
-  validates `scopes` by **enum membership**, so a well-formed but unknown scope
-  (e.g. `models:read:all`) is rejected; PascalCase like `ModelsReadSelf` gets a
-  pointed error.
-- **Empty `targets`**, or a target with a non-string `slotId` / non-integer `priority`.
-- `iframe.src` not https (http only for `localhost`/`127.0.0.1`/`[::1]`/`*.localhost`);
-  a banned sandbox token (`allow-same-origin`, any `allow-top-navigation*`);
-  non-positive integer `minHeight`; bad `maxHeight`; non-boolean `resizable`.
+  the blockId becomes `<blockId>.civit.ai`; `version` not semver; an empty `name`
+  (the canonical imposes **no** length cap on `name`).
+- `type` not `block` (the canonical enum has exactly one member — `embed` is
+  **not** valid); `contentRating` not `g|pg|pg13|r|x`; an unknown `category` or
+  `renderMode`.
+- Any scope that isn't one of the known block scopes (`BLOCK_SCOPES`). The
+  canonical validates `scopes` by **enum membership**, so a well-formed but
+  unknown scope (e.g. `models:read:all`) is rejected; PascalCase like
+  `ModelsReadSelf` gets a pointed error. An **empty** `scopes` array is fine —
+  the canonical sets no `minItems`.
+- More than 16 `targets`, or a target with a non-string `slotId`.
+- `iframe` carrying an unknown key (the canonical sets `additionalProperties: false`),
+  a `minHeight`/`maxHeight` outside **40–4000 px** or non-integer, a non-boolean
+  `resizable`, or a banned sandbox token (`allow-same-origin`, any
+  `allow-top-navigation*`).
+- `minApiVersion` that isn't dot-separated integers; a `buildCommand` outside the
+  allowlist, or one set without `outputDir`; an `outputDir` that is absolute,
+  contains `..`, a backslash or a drive prefix; more than 32
+  `publicSettingsKeys`; a non-`https` `assetBundleUrl`; a `repository` that isn't
+  an `https` repo **root** on github.com/gitlab.com/codeberg.org; a `page`
+  missing `path`/`title`.
 - `settings` with a bad key (must be `snake_case`), > 32 fields, or a field
   missing/mis-typed `scope` / `type` / `label` / `description`.
+- **A dev-set `iframe.src` or `trustTier`.** Both are SERVER-OWNED — the platform
+  stamps the bundle URL and assigns the trust tier — and `civitai app submit`
+  refuses a manifest that declares either. (Until #330 `defineBlock` *required*
+  `iframe.src`, which is why it rejected every manifest the starters ship.)
 
-> The validator does **not** check that `iframe.src` hostname equals
-> `<blockId>.<APPS_DOMAIN>` or that the path is root — those are enforced
-> **server-side** at submit time (gotcha #33). Keep `iframe.src` =
-> `https://<blockId>.civit.ai/` (root, no path prefix) and your Vite `base: '/'`.
+> **Passing is necessary, not sufficient.** The server applies rules the schema
+> cannot express: the scope set review actually grants, the tier-dependent
+> sandbox allowlist, whether a `slotId` names a registered slot, the stricter
+> per-segment `repository` rules, and the requirement that *sensitive* scopes
+> carry a `scopeJustifications` entry (`defineBlock` checks that map's shape, not
+> that requirement). See `KNOWN_GAPS` in `src/blocks/defineBlock.ts`.
+
+The extras — and the reason for each — are the `SCHEMA_DIVERGENCES` table in
+`src/blocks/defineBlock.ts`. `test/blocks/schema-parity.test.ts` compiles the
+vendored schema with Ajv and asserts `defineBlock`'s verdict matches the
+schema's on every fixture *except* those the table names, so the two cannot
+drift apart silently again.
+
+**Where it runs.** Every scaffold that ships a `block.manifest.json`
+(`starters/civitai-block-starter` and all six `starters/examples/*`) registers
+`vite-plugin-block-manifest.ts`, which calls `defineBlock` from Vite's
+`configResolved` — so `pnpm dev`, `pnpm dev:harness` and `pnpm build` all fail
+loudly on a bad manifest, with the offending field path in the message.
 
 ### Web storage in a block (`@civitai/app-sdk/safe-storage`)
 

@@ -1,10 +1,32 @@
 /**
  * Build-time / startup validation for a `BlockManifestV1`.
  *
- * This is a subset of what the civitai/civitai server enforces — the client
- * runs it so authoring mistakes surface in `pnpm dev` rather than at
- * `civitai deploy` time. Rules here MUST stay a strict subset of the
- * server's; if the server tightens, mirror the change here.
+ * WHAT THIS IS, PRECISELY. The old docblock claimed "a strict subset of what
+ * the civitai/civitai server enforces". That was false in both directions — it
+ * required 11 fields where the canonical requires 5 (including `appId`, which
+ * the canonical does not declare at all) and it rejected every
+ * `block.manifest.json` this repo ships. It is gone (issue #330). What replaces
+ * it is a claim you can actually check:
+ *
+ *   1. Every rule the CANONICAL schema expresses in machine-checkable form is
+ *      enforced here. "Canonical" = `schemas/app-block/v1.json`, a
+ *      byte-identical vendored copy of
+ *      https://civitai.com/schemas/app-block/v1.json, kept in lockstep by
+ *      `scripts/check-canonical-schema.sh` (CI job `schema-drift`).
+ *   2. Beyond that, exactly the rules in {@link SCHEMA_DIVERGENCES} — each one
+ *      mirroring a server check the canonical states only in PROSE, each
+ *      carrying its own reason.
+ *   3. Nothing else. `defineBlock` never requires a field the canonical does
+ *      not require, and never applies a bound the canonical does not apply.
+ *
+ * Both halves are MECHANICALLY checked, not asserted in prose:
+ * `test/blocks/schema-parity.test.ts` runs Ajv against the vendored schema over
+ * a fixture corpus and asserts `defineBlock`'s verdict agrees with the schema's
+ * on every fixture except the ones the divergence table names.
+ *
+ * PASSING IS NECESSARY, NOT SUFFICIENT, for `civitai app submit` — see
+ * {@link KNOWN_GAPS}. Do not read a green `defineBlock` as "submit will
+ * succeed".
  *
  * Every check guards `typeof` before pattern-testing — the highest-value
  * caller is `JSON.parse(fs.readFileSync('block.manifest.json'))`, where
@@ -20,6 +42,132 @@ import {
 import type { BlockManifest, ContentRating } from './types.js';
 
 /**
+ * Rules `defineBlock` applies that the canonical schema does NOT express in
+ * machine-checkable form. Every entry is a decision with a reason; there is no
+ * blanket "we are stricter" clause. `schema-parity.test.ts` asserts this table
+ * covers the divergences that actually exist — adding a rule without an entry
+ * here fails the suite.
+ *
+ * Not exported from `./index.ts` on purpose: this is documentation plus a test
+ * oracle, not public API.
+ */
+export const SCHEMA_DIVERGENCES = {
+  '$schema': {
+    rule: 'When present, must equal the canonical schema URL exactly.',
+    canonical: 'Any string; the description says it is "ignored by the platform validator".',
+    reason:
+      'The ONLY thing `$schema` does is point an editor at the canonical for live validation. ' +
+      'A wrong URL silently turns that off, which is indistinguishable from having no editor ' +
+      'validation at all. Never REQUIRED — omitting it is fine.',
+  },
+  appId: {
+    rule: 'When present, must be a non-empty string. Never required.',
+    canonical: 'Not a declared property. The top level does not forbid extra keys, so it is tolerated.',
+    reason:
+      '`appId` is APP-level config and lives in `civitai.app.json`, not in the block manifest. ' +
+      'It was REQUIRED here until #330 — that was the headline defect. It is now tolerated (the ' +
+      'starters still carry it) and shape-checked only; a non-string can only be a mistake, and ' +
+      'the check cannot reject a manifest the server accepts.',
+  },
+  'targets[].priority': {
+    rule: 'When present, must be an integer.',
+    canonical: 'Not a declared property of a target item (only `slotId` is).',
+    reason:
+      'Universally present in authored manifests and in the docs. Shape-checked when present, ' +
+      'never required — a non-integer can only be an authoring mistake.',
+  },
+  'iframe.src': {
+    rule: 'REJECTED when present.',
+    canonical:
+      'Declared under `iframe.properties` with the description "SERVER-OWNED. Do NOT set ' +
+      "iframe.src — the platform assigns it. Present here only so the schema can reject dev-set " +
+      'values." The JSON-Schema `not` is deliberately absent; the top-level `allOf` $comment ' +
+      'says the platform validator and the Go CLI reject it "with clearer error messages".',
+    reason:
+      'Mirrors the server check the canonical states in prose. This one is load-bearing in the ' +
+      'opposite direction from every other entry: before #330 `defineBlock` REQUIRED `iframe.src`, ' +
+      'so it demanded the exact value submit refuses.',
+  },
+  trustTier: {
+    rule: 'REJECTED when present.',
+    canonical:
+      'Declared with the description "SERVER-OWNED. Do NOT set this in your manifest — the ' +
+      'platform assigns the trust tier during review. Present here only to reject dev-set values." ' +
+      'Same missing-`not` situation as `iframe.src`.',
+    reason: 'Mirrors the server check the canonical states in prose.',
+  },
+  'iframe.sandbox': {
+    rule: 'Rejects allow-same-origin and every allow-top-navigation* token.',
+    canonical: 'Only `minLength: 1`; the tier allowlist is prose in the description.',
+    reason:
+      'allow-same-origin combined with allow-scripts defeats the sandbox entirely, and ' +
+      'top-navigation (including the -by-user-activation and -to-custom-protocols variants) lets ' +
+      'the block navigate the host frame instead of routing through the NAVIGATE postMessage. ' +
+      'Both are refused at review; catching them locally is the whole point of a client gate.',
+  },
+  scopeJustifications: {
+    rule: 'Every key must be a scope also present in `scopes`.',
+    canonical:
+      '`additionalProperties: { type: string, minLength: 1, maxLength: 500 }` — any key passes. ' +
+      'The canonical says so itself: "The requirement is enforced imperatively by the manifest ' +
+      'validator (not expressed as JSON-Schema conditionals here)."',
+    reason:
+      'Mirrors the server check the canonical states in prose. The OTHER half of that server rule ' +
+      '— justifications being REQUIRED for sensitive scopes — is deliberately NOT mirrored; see ' +
+      'KNOWN_GAPS.',
+  },
+  tagline: {
+    rule: 'Length is measured on the TRIMMED string.',
+    canonical: '`maxLength: 140` counts the RAW string.',
+    reason:
+      'The server trims before measuring, and the canonical says so itself ("the server measures ' +
+      'the TRIMMED length, while this maxLength counts the raw string — that asymmetry is ' +
+      'deliberate"). Matching the SERVER here means a padded-but-fitting tagline is never rejected ' +
+      'locally and then accepted at submit.',
+  },
+  assets: {
+    rule: 'When present, must be an array of `{ url, integrity }` with an SRI hash.',
+    canonical: 'Not a declared property (the canonical has `assetBundleUrl`, a different field).',
+    reason:
+      'Forward-compat surface predating `assetBundleUrl`. Shape-checked when present, never ' +
+      'required — same disposition as `appId`.',
+  },
+  settings: {
+    rule: 'Validated against the W3 settings meta-schema (scope/type/label/description, snake_case keys, max 32).',
+    canonical: 'Not a declared property.',
+    reason:
+      "Manifest settings ARE validated server-side, by civitai/civitai's " +
+      '`manifest-settings.meta.schema.ts` rather than by the app-block schema. This mirrors that ' +
+      'meta-schema. `publicSettingsKeys` (which IS canonical) is validated separately.',
+  },
+} as const;
+
+/**
+ * Rules the server applies that `defineBlock` deliberately does NOT — stated so
+ * nobody reads a green `defineBlock` as "submit will succeed".
+ *
+ * - `scopeJustifications` REQUIRED for sensitive scopes. The canonical names
+ *   the sensitive set only in a prose description, not in a machine-readable
+ *   form. Hand-mirroring that list here would regenerate exactly the drift bug
+ *   #330 is about, so only the SHAPE is checked (keys must be declared scopes,
+ *   values 1..500 chars); the requirement itself is server-side.
+ * - `repository`. The canonical's `pattern` is documented as "a coarse SHAPE
+ *   check and NOT the whole rule"; the server additionally constrains each path
+ *   segment. `defineBlock` mirrors the canonical pattern exactly and is
+ *   therefore necessary-not-sufficient BY THE CANONICAL'S OWN DESIGN.
+ * - Rules with no schema expression at all: the scope set review actually
+ *   grants, the trust-tier-dependent sandbox allowlist, and whether a `slotId`
+ *   names a registered slot.
+ */
+export const KNOWN_GAPS = [
+  'scopeJustifications-required-for-sensitive-scopes',
+  'repository-per-segment-rules',
+  'review-granted-scope-subset',
+  'tier-dependent-sandbox-allowlist',
+  'slotId-registry',
+] as const;
+
+/**
  * Canonical `blockId` rule (https://civitai.com/schemas/app-block/v1.json):
  * lowercase, must start with a letter, end alphanumeric, hyphen-separated,
  * 3–40 chars. This is the DNS-subdomain-safe rule — the blockId becomes
@@ -32,7 +180,6 @@ const BLOCK_ID_MAX_LENGTH = 40;
 const KNOWN_BLOCK_SCOPES = new Set<string>(Object.values(BLOCK_SCOPES));
 /** The 7 canonical marketplace categories (enum the schema validates `category` against). */
 const KNOWN_CATEGORIES = new Set<string>(BLOCK_CATEGORIES);
-const NAME_MAX_LENGTH = 80;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 /** Detects the SubresourceIntegrity hash format (sha256/384/512 + base64). */
 const SRI_PATTERN = /^sha(?:256|384|512)-[A-Za-z0-9+/=]+$/;
@@ -41,6 +188,38 @@ const PASCAL_CASE_PATTERN = /^[A-Z][A-Za-z0-9]*$/;
 const EXPECTED_SCHEMA_URL = 'https://civitai.com/schemas/app-block/v1.json';
 
 const CONTENT_RATINGS: readonly ContentRating[] = ['g', 'pg', 'pg13', 'r', 'x'];
+/** Canonical `type` enum. The canonical lists ONE member — `embed` is NOT valid. */
+const MANIFEST_TYPES = ['block'] as const;
+/** Canonical `renderMode` enum. */
+const RENDER_MODES = ['iframe', 'inline', 'hybrid'] as const;
+/** Canonical `targets.maxItems`. */
+const TARGETS_MAX_ITEMS = 16;
+/** Canonical `minApiVersion.pattern` — dot-separated integers. */
+const MIN_API_VERSION_PATTERN = /^\d+(\.\d+)*$/;
+/** Canonical `iframe.minHeight` / `iframe.maxHeight` bounds. */
+const IFRAME_HEIGHT_MIN = 40;
+const IFRAME_HEIGHT_MAX = 4000;
+/** Canonical `iframe` is `additionalProperties: false` — this is that key set. */
+const IFRAME_KEYS = new Set(['src', 'minHeight', 'maxHeight', 'resizable', 'sandbox']);
+/** Canonical `page` is `additionalProperties: false` — this is that key set. */
+const PAGE_KEYS = new Set(['path', 'title', 'icon', 'buzzBudgetPerGen']);
+const PAGE_PATH_MAX_LENGTH = 256;
+const PAGE_TITLE_MAX_LENGTH = 128;
+const PAGE_ICON_MAX_LENGTH = 128;
+/** Canonical `buildCommand` pattern + cap (allowlisted build invocations). */
+const BUILD_COMMAND_PATTERN = /^(?:(?:npm|pnpm|yarn) run [a-zA-Z0-9:_-]+|(?:npx )?vite build)$/;
+const BUILD_COMMAND_MAX_LENGTH = 128;
+const OUTPUT_DIR_MAX_LENGTH = 256;
+/** Canonical `publicSettingsKeys` bounds. */
+const PUBLIC_SETTINGS_KEYS_MAX_ITEMS = 32;
+const PUBLIC_SETTINGS_KEY_MAX_LENGTH = 64;
+/** Canonical `assetBundleUrl` pattern. */
+const ASSET_BUNDLE_URL_PATTERN = /^https:\/\//;
+/** Canonical `repository` pattern + cap (deliberately COARSE — see KNOWN_GAPS). */
+const REPOSITORY_PATTERN = /^https:\/\/(github\.com|gitlab\.com|codeberg\.org)\/[^/]+\/[^/]+\/?$/;
+const REPOSITORY_MAX_LENGTH = 200;
+/** Canonical `scopeJustifications.additionalProperties.maxLength`. */
+const SCOPE_JUSTIFICATION_MAX_LENGTH = 500;
 /**
  * W3 v0 — settings type set. Mirrors the meta-schema discriminated union
  * in civitai/civitai's `manifest-settings.meta.schema.ts`. Keep aligned.
@@ -65,19 +244,25 @@ const BANNED_SANDBOX_TOKENS = new Set([
   'allow-top-navigation-to-custom-protocols',
 ]);
 
+/**
+ * EXACTLY the canonical `required` array — no more. Asserted equal to
+ * `schemas/app-block/v1.json#/required` by `schema-parity.test.ts`, so this
+ * list cannot drift above the canonical again.
+ */
 const REQUIRED_FIELDS = [
-  '$schema',
-  'appId',
   'blockId',
   'version',
   'name',
-  'type',
-  'targets',
-  'scopes',
-  'iframe',
   'contentRating',
-  'minApiVersion',
+  'scopes',
 ] as const satisfies ReadonlyArray<keyof BlockManifest>;
+
+/**
+ * Fields the PLATFORM owns and assigns. Declaring one in a manifest is refused
+ * at submit, so it is refused here. See `SCHEMA_DIVERGENCES['iframe.src']`.
+ */
+const SERVER_OWNED_MESSAGE =
+  'is SERVER-OWNED — the platform assigns it during build/approve. Remove it from the manifest.';
 
 /** Thrown by `defineBlock` for any manifest violation. */
 export class BlockManifestError extends Error {
@@ -100,10 +285,15 @@ export interface DefineBlockConfig {
 
 /**
  * Validates the manifest and returns it unchanged. Acts as a typed identity
- * function — call it at module scope in the block app so violations throw
- * before the app mounts. Mirrors a strict subset of the civitai/civitai server
- * gate, so authoring mistakes surface in `pnpm dev` instead of at submit time.
- * Throws {@link BlockManifestError} (with a `.field` dot-path) on a bad manifest.
+ * function — call it at module scope (or from the build) so violations throw
+ * before the app mounts. Enforces every machine-checkable rule in the canonical
+ * `block.manifest.json` schema, plus the documented extras in
+ * {@link SCHEMA_DIVERGENCES}; see {@link KNOWN_GAPS} for what only the server
+ * can check. Throws {@link BlockManifestError} (with a `.field` dot-path).
+ *
+ * The example below is kept byte-identical to `test/blocks/defineBlock.example.ts`,
+ * which is compiled and executed by the suite — a guard fails if they drift, so
+ * this snippet both type-checks and runs.
  *
  * @example
  * import { defineBlock } from '@civitai/app-sdk/blocks';
@@ -111,14 +301,19 @@ export interface DefineBlockConfig {
  * export const manifest = defineBlock({
  *   manifest: {
  *     $schema: 'https://civitai.com/schemas/app-block/v1.json',
- *     appId: 'my-app',
  *     blockId: 'my-block',
- *     version: '1.0.0',
+ *     version: '0.1.0',
  *     name: 'My Block',
  *     type: 'block',
  *     targets: [{ slotId: 'model.sidebar_top', priority: 100 }],
- *     scopes: ['ai:write:budgeted'],
- *     iframe: { src: 'https://my-block.civit.ai/', minHeight: 200 },
+ *     scopes: ['models:read:self'],
+ *     // NOTE: no `iframe.src` — the platform stamps it at build/approve time.
+ *     iframe: {
+ *       minHeight: 200,
+ *       maxHeight: 600,
+ *       resizable: true,
+ *       sandbox: 'allow-scripts allow-forms',
+ *     },
  *     contentRating: 'pg',
  *     minApiVersion: '1.0',
  *   },
@@ -137,14 +332,24 @@ export function defineBlock(config: DefineBlockConfig): BlockManifest {
     }
   }
 
-  if (manifest.$schema !== EXPECTED_SCHEMA_URL) {
-    throw new BlockManifestError(
-      `manifest.$schema must be "${EXPECTED_SCHEMA_URL}"`,
-      '$schema',
-    );
+  // Server-owned fields first, so a dev-set value gets the pointed message
+  // rather than a downstream type complaint.
+  if ((manifest as { trustTier?: unknown }).trustTier !== undefined) {
+    throw new BlockManifestError(`manifest.trustTier ${SERVER_OWNED_MESSAGE}`, 'trustTier');
   }
 
-  requireNonEmptyString(manifest.appId, 'appId');
+  if (manifest.$schema !== undefined) {
+    if (manifest.$schema !== EXPECTED_SCHEMA_URL) {
+      throw new BlockManifestError(
+        `manifest.$schema must be "${EXPECTED_SCHEMA_URL}" (or omitted)`,
+        '$schema',
+      );
+    }
+  }
+
+  // Not a canonical property — `appId` belongs in `civitai.app.json`. Tolerated
+  // and shape-checked; never required. See SCHEMA_DIVERGENCES.appId.
+  if (manifest.appId !== undefined) requireNonEmptyString(manifest.appId, 'appId');
 
   requireNonEmptyString(manifest.blockId, 'blockId');
   if (
@@ -168,23 +373,21 @@ export function defineBlock(config: DefineBlockConfig): BlockManifest {
     );
   }
 
+  // The canonical declares `minLength: 1` and NO maxLength, saying so out loud:
+  // "The server only requires a non-empty string (no length cap), so the CLI
+  // does not impose one either." Neither does this.
   requireNonEmptyString(manifest.name, 'name');
-  if (manifest.name.length > NAME_MAX_LENGTH) {
-    throw new BlockManifestError(
-      `manifest.name must be ${NAME_MAX_LENGTH} characters or fewer (got ${manifest.name.length})`,
-      'name',
-    );
-  }
 
-  if (manifest.type !== 'block' && manifest.type !== 'embed') {
+  if (manifest.type !== undefined && !MANIFEST_TYPES.includes(manifest.type)) {
     throw new BlockManifestError(
-      `manifest.type must be "block" or "embed". Got: ${JSON.stringify(manifest.type)}`,
+      `manifest.type must be ${MANIFEST_TYPES.map((t) => `"${t}"`).join(' or ')} (or omitted). ` +
+        `Got: ${JSON.stringify(manifest.type)}`,
       'type',
     );
   }
 
-  if (!Array.isArray(manifest.scopes) || manifest.scopes.length === 0) {
-    throw new BlockManifestError('manifest.scopes must be a non-empty array', 'scopes');
+  if (!Array.isArray(manifest.scopes)) {
+    throw new BlockManifestError('manifest.scopes must be an array', 'scopes');
   }
   for (const scope of manifest.scopes) {
     // Authoritative validity = membership in the canonical enum (BLOCK_SCOPES),
@@ -195,10 +398,24 @@ export function defineBlock(config: DefineBlockConfig): BlockManifest {
     }
   }
 
-  if (!Array.isArray(manifest.targets) || manifest.targets.length === 0) {
-    throw new BlockManifestError('manifest.targets must be a non-empty array', 'targets');
+  if (manifest.scopeJustifications !== undefined) {
+    validateScopeJustifications(manifest.scopeJustifications, manifest.scopes);
   }
-  manifest.targets.forEach((target, i) => validateTarget(target, i));
+
+  // `targets` is OPTIONAL in the canonical ("Optional for page-only apps") and
+  // capped at 16. Each item requires only `slotId`.
+  if (manifest.targets !== undefined) {
+    if (!Array.isArray(manifest.targets)) {
+      throw new BlockManifestError('manifest.targets must be an array', 'targets');
+    }
+    if (manifest.targets.length > TARGETS_MAX_ITEMS) {
+      throw new BlockManifestError(
+        `manifest.targets must have at most ${TARGETS_MAX_ITEMS} entries (got ${manifest.targets.length})`,
+        'targets',
+      );
+    }
+    manifest.targets.forEach((target, i) => validateTarget(target, i));
+  }
 
   if (!CONTENT_RATINGS.includes(manifest.contentRating)) {
     throw new BlockManifestError(
@@ -218,6 +435,14 @@ export function defineBlock(config: DefineBlockConfig): BlockManifest {
         'category',
       );
     }
+  }
+
+  if (manifest.renderMode !== undefined && !RENDER_MODES.includes(manifest.renderMode)) {
+    throw new BlockManifestError(
+      `manifest.renderMode must be one of ${RENDER_MODES.join(', ')} (or omitted). ` +
+        `Got: ${JSON.stringify(manifest.renderMode)}`,
+      'renderMode',
+    );
   }
 
   // `tagline` is OPTIONAL. When present it must be a string whose TRIMMED length
@@ -241,9 +466,91 @@ export function defineBlock(config: DefineBlockConfig): BlockManifest {
     }
   }
 
-  requireNonEmptyString(manifest.minApiVersion, 'minApiVersion');
+  if (manifest.repository !== undefined) {
+    const repository = manifest.repository;
+    if (typeof repository !== 'string' || repository.length === 0) {
+      throw new BlockManifestError(
+        `manifest.repository must be a non-empty string (or omitted). Got: ${JSON.stringify(repository)}`,
+        'repository',
+      );
+    }
+    if (repository.length > REPOSITORY_MAX_LENGTH) {
+      throw new BlockManifestError(
+        `manifest.repository must be at most ${REPOSITORY_MAX_LENGTH} characters. Got: ${repository.length}`,
+        'repository',
+      );
+    }
+    if (!REPOSITORY_PATTERN.test(repository)) {
+      throw new BlockManifestError(
+        'manifest.repository must be an https:// link to a repository ROOT on github.com, ' +
+          `gitlab.com or codeberg.org (e.g. "https://github.com/owner/repo"). Got: ${JSON.stringify(repository)}. ` +
+          'NOTE: this is a coarse shape check — the server applies stricter per-segment rules.',
+        'repository',
+      );
+    }
+  }
 
-  validateIframe(manifest.iframe);
+  if (manifest.minApiVersion !== undefined) {
+    requireNonEmptyString(manifest.minApiVersion, 'minApiVersion');
+    if (!MIN_API_VERSION_PATTERN.test(manifest.minApiVersion)) {
+      throw new BlockManifestError(
+        `manifest.minApiVersion must be dot-separated integers (e.g. "1" or "1.0"). Got: ${JSON.stringify(manifest.minApiVersion)}`,
+        'minApiVersion',
+      );
+    }
+  }
+
+  if (manifest.bootSkeleton !== undefined && typeof manifest.bootSkeleton !== 'boolean') {
+    throw new BlockManifestError(
+      `manifest.bootSkeleton must be a boolean (or omitted). Got: ${JSON.stringify(manifest.bootSkeleton)}`,
+      'bootSkeleton',
+    );
+  }
+
+  if (manifest.buildCommand !== undefined) {
+    requireNonEmptyString(manifest.buildCommand, 'buildCommand');
+    if (manifest.buildCommand.length > BUILD_COMMAND_MAX_LENGTH) {
+      throw new BlockManifestError(
+        `manifest.buildCommand must be at most ${BUILD_COMMAND_MAX_LENGTH} characters. Got: ${manifest.buildCommand.length}`,
+        'buildCommand',
+      );
+    }
+    if (!BUILD_COMMAND_PATTERN.test(manifest.buildCommand)) {
+      throw new BlockManifestError(
+        'manifest.buildCommand must be one of the allowlisted build invocations: ' +
+          '"npm run <script>", "pnpm run <script>", "yarn run <script>", "vite build" or ' +
+          `"npx vite build". Got: ${JSON.stringify(manifest.buildCommand)}`,
+        'buildCommand',
+      );
+    }
+    // Canonical `allOf`: outputDir is required whenever buildCommand is set.
+    if (manifest.outputDir === undefined || manifest.outputDir === null) {
+      throw new BlockManifestError(
+        'manifest.outputDir is required when manifest.buildCommand is set',
+        'outputDir',
+      );
+    }
+  }
+
+  if (manifest.outputDir !== undefined) validateOutputDir(manifest.outputDir);
+
+  if (manifest.publicSettingsKeys !== undefined) {
+    validatePublicSettingsKeys(manifest.publicSettingsKeys);
+  }
+
+  if (manifest.assetBundleUrl !== undefined) {
+    requireNonEmptyString(manifest.assetBundleUrl, 'assetBundleUrl');
+    if (!ASSET_BUNDLE_URL_PATTERN.test(manifest.assetBundleUrl)) {
+      throw new BlockManifestError(
+        `manifest.assetBundleUrl must be a public https:// URL. Got: ${JSON.stringify(manifest.assetBundleUrl)}`,
+        'assetBundleUrl',
+      );
+    }
+  }
+
+  // `iframe` is OPTIONAL in the canonical and has NO required sub-fields.
+  if (manifest.iframe !== undefined) validateIframe(manifest.iframe);
+  if (manifest.page !== undefined) validatePage(manifest.page);
 
   if (manifest.assets !== undefined) validateAssets(manifest.assets);
   if (manifest.settings !== undefined) validateSettings(manifest.settings);
@@ -279,6 +586,40 @@ function buildScopeError(scope: unknown): string {
   );
 }
 
+/**
+ * Canonical `scopeJustifications`: a map of scope-id → rationale, 1..500 chars,
+ * every key also present in `scopes`. The "REQUIRED for sensitive scopes" half
+ * is server-side only — see KNOWN_GAPS.
+ */
+function validateScopeJustifications(value: unknown, scopes: readonly string[]): void {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new BlockManifestError(
+      'manifest.scopeJustifications must be an object (scope-id → rationale)',
+      'scopeJustifications',
+    );
+  }
+  const declared = new Set(scopes);
+  for (const [scope, rationale] of Object.entries(value as Record<string, unknown>)) {
+    const path = `scopeJustifications.${scope}`;
+    if (!declared.has(scope)) {
+      throw new BlockManifestError(
+        `manifest.${path} justifies a scope that is not in manifest.scopes. ` +
+          'Every justification key must be a scope the manifest actually requests.',
+        path,
+      );
+    }
+    if (typeof rationale !== 'string' || rationale.length === 0) {
+      throw new BlockManifestError(`manifest.${path} must be a non-empty string`, path);
+    }
+    if (rationale.length > SCOPE_JUSTIFICATION_MAX_LENGTH) {
+      throw new BlockManifestError(
+        `manifest.${path} must be at most ${SCOPE_JUSTIFICATION_MAX_LENGTH} characters. Got: ${rationale.length}`,
+        path,
+      );
+    }
+  }
+}
+
 function validateTarget(target: unknown, index: number): void {
   const path = `targets[${index}]`;
   if (target == null || typeof target !== 'object') {
@@ -288,65 +629,191 @@ function validateTarget(target: unknown, index: number): void {
   if (typeof t.slotId !== 'string' || t.slotId.length === 0) {
     throw new BlockManifestError(`manifest.${path}.slotId must be a non-empty string`, `${path}.slotId`);
   }
-  if (typeof t.priority !== 'number' || !Number.isInteger(t.priority)) {
+  // `priority` is NOT a canonical property — shape-checked when present, never
+  // required. See SCHEMA_DIVERGENCES['targets[].priority'].
+  if (t.priority !== undefined && (typeof t.priority !== 'number' || !Number.isInteger(t.priority))) {
     throw new BlockManifestError(`manifest.${path}.priority must be an integer`, `${path}.priority`);
   }
 }
 
+/**
+ * Canonical `outputDir`: 1..256 chars, and none of four traversal/absolute
+ * shapes (leading `/`, a backslash, a `..` segment, a Windows drive prefix).
+ */
+function validateOutputDir(value: unknown): void {
+  requireNonEmptyString(value, 'outputDir');
+  if (value.length > OUTPUT_DIR_MAX_LENGTH) {
+    throw new BlockManifestError(
+      `manifest.outputDir must be at most ${OUTPUT_DIR_MAX_LENGTH} characters. Got: ${value.length}`,
+      'outputDir',
+    );
+  }
+  const unsafe: ReadonlyArray<readonly [RegExp, string]> = [
+    [/^\//, 'must be relative (no leading "/")'],
+    [/\\/, 'must not contain a backslash separator'],
+    [/(^|\/)\.\.(\/|$)/, 'must not contain a ".." path-traversal segment'],
+    [/^[A-Za-z]:/, 'must not start with a Windows drive prefix'],
+  ];
+  for (const [pattern, why] of unsafe) {
+    if (pattern.test(value)) {
+      throw new BlockManifestError(
+        `manifest.outputDir ${why}. Got: ${JSON.stringify(value)}`,
+        'outputDir',
+      );
+    }
+  }
+}
+
+function validatePublicSettingsKeys(value: unknown): void {
+  if (!Array.isArray(value)) {
+    throw new BlockManifestError('manifest.publicSettingsKeys must be an array', 'publicSettingsKeys');
+  }
+  if (value.length > PUBLIC_SETTINGS_KEYS_MAX_ITEMS) {
+    throw new BlockManifestError(
+      `manifest.publicSettingsKeys must have at most ${PUBLIC_SETTINGS_KEYS_MAX_ITEMS} entries (got ${value.length})`,
+      'publicSettingsKeys',
+    );
+  }
+  value.forEach((key, i) => {
+    const path = `publicSettingsKeys[${i}]`;
+    if (typeof key !== 'string' || key.length === 0) {
+      throw new BlockManifestError(`manifest.${path} must be a non-empty string`, path);
+    }
+    if (key.length > PUBLIC_SETTINGS_KEY_MAX_LENGTH) {
+      throw new BlockManifestError(
+        `manifest.${path} must be at most ${PUBLIC_SETTINGS_KEY_MAX_LENGTH} characters. Got: ${key.length}`,
+        path,
+      );
+    }
+  });
+}
+
 function validateIframe(iframe: BlockManifest['iframe']): void {
-  if (iframe == null || typeof iframe !== 'object') {
+  if (iframe == null || typeof iframe !== 'object' || Array.isArray(iframe)) {
     throw new BlockManifestError('manifest.iframe must be an object', 'iframe');
   }
 
-  if (typeof iframe.src !== 'string' || iframe.src.length === 0) {
-    throw new BlockManifestError('manifest.iframe.src must be a non-empty string', 'iframe.src');
-  }
-  if (!isAllowedIframeSrc(iframe.src)) {
-    throw new BlockManifestError(
-      `manifest.iframe.src must use https:// (http:// only accepted for localhost/127.0.0.1/[::1]/*.localhost). Got: ${JSON.stringify(iframe.src)}`,
-      'iframe.src',
-    );
-  }
-
-  if (typeof iframe.sandbox !== 'string') {
-    throw new BlockManifestError('manifest.iframe.sandbox must be a string', 'iframe.sandbox');
-  }
-  const tokens = new Set(iframe.sandbox.split(/\s+/).filter(Boolean));
-  for (const banned of BANNED_SANDBOX_TOKENS) {
-    if (tokens.has(banned)) {
+  // The canonical sets `additionalProperties: false` on `iframe`.
+  for (const key of Object.keys(iframe)) {
+    if (!IFRAME_KEYS.has(key)) {
       throw new BlockManifestError(
-        `manifest.iframe.sandbox must not contain "${banned}". ` +
-          (banned === 'allow-same-origin'
-            ? 'Combined with "allow-scripts" it defeats the sandbox entirely.'
-            : 'Blocks must route navigation through the NAVIGATE postMessage so the host can mediate.'),
-        'iframe.sandbox',
+        `manifest.iframe.${key} is not a known iframe property. Allowed: ${[...IFRAME_KEYS].join(', ')}.`,
+        `iframe.${key}`,
       );
     }
   }
 
-  if (typeof iframe.minHeight !== 'number' || !Number.isInteger(iframe.minHeight) || iframe.minHeight <= 0) {
-    throw new BlockManifestError(
-      'manifest.iframe.minHeight must be a positive integer',
-      'iframe.minHeight',
-    );
+  // SERVER-OWNED. Required by this validator until #330 — the exact value
+  // `civitai app submit` refuses. See SCHEMA_DIVERGENCES['iframe.src'].
+  if ((iframe as { src?: unknown }).src !== undefined) {
+    throw new BlockManifestError(`manifest.iframe.src ${SERVER_OWNED_MESSAGE}`, 'iframe.src');
   }
 
-  if (
-    iframe.maxHeight !== undefined &&
-    iframe.maxHeight !== null &&
-    (typeof iframe.maxHeight !== 'number' || !Number.isInteger(iframe.maxHeight) || iframe.maxHeight <= 0)
-  ) {
-    throw new BlockManifestError(
-      'manifest.iframe.maxHeight must be a positive integer, null, or omitted',
-      'iframe.maxHeight',
-    );
+  if (iframe.sandbox !== undefined) {
+    if (typeof iframe.sandbox !== 'string' || iframe.sandbox.length === 0) {
+      throw new BlockManifestError(
+        'manifest.iframe.sandbox must be a non-empty string',
+        'iframe.sandbox',
+      );
+    }
+    const tokens = new Set(iframe.sandbox.split(/\s+/).filter(Boolean));
+    for (const banned of BANNED_SANDBOX_TOKENS) {
+      if (tokens.has(banned)) {
+        throw new BlockManifestError(
+          `manifest.iframe.sandbox must not contain "${banned}". ` +
+            (banned === 'allow-same-origin'
+              ? 'Combined with "allow-scripts" it defeats the sandbox entirely.'
+              : 'Blocks must route navigation through the NAVIGATE postMessage so the host can mediate.'),
+          'iframe.sandbox',
+        );
+      }
+    }
   }
 
-  if (typeof iframe.resizable !== 'boolean') {
+  if (iframe.minHeight !== undefined) {
+    validateIframeHeight(iframe.minHeight, 'iframe.minHeight', false);
+  }
+  if (iframe.maxHeight !== undefined && iframe.maxHeight !== null) {
+    validateIframeHeight(iframe.maxHeight, 'iframe.maxHeight', true);
+  }
+
+  if (iframe.resizable !== undefined && typeof iframe.resizable !== 'boolean') {
     throw new BlockManifestError(
       'manifest.iframe.resizable must be a boolean',
       'iframe.resizable',
     );
+  }
+}
+
+/** Canonical bounds: integer, 40..4000 px. `maxHeight` additionally allows null. */
+function validateIframeHeight(value: unknown, field: string, nullable: boolean): void {
+  const suffix = nullable ? ', null, or omitted' : ' (or omitted)';
+  if (typeof value !== 'number' || !Number.isInteger(value)) {
+    throw new BlockManifestError(
+      `manifest.${field} must be an integer${suffix}. Got: ${JSON.stringify(value)}`,
+      field,
+    );
+  }
+  if (value < IFRAME_HEIGHT_MIN || value > IFRAME_HEIGHT_MAX) {
+    throw new BlockManifestError(
+      `manifest.${field} must be between ${IFRAME_HEIGHT_MIN} and ${IFRAME_HEIGHT_MAX} px. Got: ${value}`,
+      field,
+    );
+  }
+}
+
+/** Canonical `page`: additionalProperties false, `path` + `title` required. */
+function validatePage(page: BlockManifest['page']): void {
+  if (page == null || typeof page !== 'object' || Array.isArray(page)) {
+    throw new BlockManifestError('manifest.page must be an object', 'page');
+  }
+  for (const key of Object.keys(page)) {
+    if (!PAGE_KEYS.has(key)) {
+      throw new BlockManifestError(
+        `manifest.page.${key} is not a known page property. Allowed: ${[...PAGE_KEYS].join(', ')}.`,
+        `page.${key}`,
+      );
+    }
+  }
+  requireNonEmptyString(page.path, 'page.path');
+  if (!page.path.startsWith('/')) {
+    throw new BlockManifestError(
+      `manifest.page.path must start with "/". Got: ${JSON.stringify(page.path)}`,
+      'page.path',
+    );
+  }
+  if (page.path.length > PAGE_PATH_MAX_LENGTH) {
+    throw new BlockManifestError(
+      `manifest.page.path must be at most ${PAGE_PATH_MAX_LENGTH} characters. Got: ${page.path.length}`,
+      'page.path',
+    );
+  }
+  requireNonEmptyString(page.title, 'page.title');
+  if (page.title.length > PAGE_TITLE_MAX_LENGTH) {
+    throw new BlockManifestError(
+      `manifest.page.title must be at most ${PAGE_TITLE_MAX_LENGTH} characters. Got: ${page.title.length}`,
+      'page.title',
+    );
+  }
+  if (page.icon !== undefined) {
+    if (typeof page.icon !== 'string') {
+      throw new BlockManifestError('manifest.page.icon must be a string', 'page.icon');
+    }
+    if (page.icon.length > PAGE_ICON_MAX_LENGTH) {
+      throw new BlockManifestError(
+        `manifest.page.icon must be at most ${PAGE_ICON_MAX_LENGTH} characters. Got: ${page.icon.length}`,
+        'page.icon',
+      );
+    }
+  }
+  if (page.buzzBudgetPerGen !== undefined) {
+    const budget = page.buzzBudgetPerGen;
+    if (typeof budget !== 'number' || !Number.isInteger(budget) || budget <= 0) {
+      throw new BlockManifestError(
+        `manifest.page.buzzBudgetPerGen must be a positive integer. Got: ${JSON.stringify(budget)}`,
+        'page.buzzBudgetPerGen',
+      );
+    }
   }
 }
 
@@ -376,8 +843,9 @@ function validateAssets(assets: BlockManifest['assets']): void {
 /**
  * W3 v0 settings validation. Manifest authors declare fields as a record
  * keyed by snake_case field name; each entry carries scope, type, label,
- * description, and a widget hint. This is a strict subset of the platform
- * meta-schema (`manifestSettingsSchema`) — keep both sides aligned.
+ * description, and a widget hint. Mirrors the platform meta-schema
+ * (`manifestSettingsSchema`) — keep both sides aligned. The canonical
+ * app-block schema declares no `settings` property; see SCHEMA_DIVERGENCES.
  */
 function validateSettings(settings: BlockManifest['settings']): void {
   if (settings == null || typeof settings !== 'object' || Array.isArray(settings)) {
@@ -435,25 +903,4 @@ function validateSettings(settings: BlockManifest['settings']): void {
       );
     }
   }
-}
-
-function isAllowedIframeSrc(src: string): boolean {
-  let url: URL;
-  try {
-    url = new URL(src);
-  } catch {
-    return false;
-  }
-  // Reject URLs with no host even if they parse (e.g. "https://" alone, which
-  // some URL parsers permit).
-  if (!url.hostname) return false;
-  if (url.protocol === 'https:') return true;
-  if (url.protocol !== 'http:') return false;
-  const host = url.hostname;
-  // RFC 6761 reserves `.localhost` for loopback.
-  if (host === 'localhost' || host.endsWith('.localhost')) return true;
-  if (host === '127.0.0.1') return true;
-  // IPv6 loopback. WHATWG URL parses "[::1]" → hostname "[::1]" or "::1".
-  if (host === '[::1]' || host === '::1') return true;
-  return false;
 }

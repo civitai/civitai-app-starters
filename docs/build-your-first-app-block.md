@@ -100,7 +100,7 @@ my-block/
 ```jsonc
 {
   "$schema": "https://civitai.com/schemas/app-block/v1.json",
-  "appId": "app_REPLACE_ME",        // your OauthClient id (created on first approve)
+  "appId": "app_REPLACE_ME",        // NOT a canonical field — see the note below
   "blockId": "my-block",            // /^[a-z][a-z0-9-]*[a-z0-9]$/, 3–40 chars — also your subdomain
   "version": "0.1.0",               // semver; bump on each new submission
   "name": "My Block",
@@ -109,11 +109,13 @@ my-block/
     { "slotId": "model.sidebar_top", "priority": 100,
       "requiredContext": ["modelId", "modelVersionId"] }
   ],
-  "scopes": ["models:read:self"],   // non-empty; domain:verb:target lowercase
+  "scopes": ["models:read:self"],   // domain:verb:target lowercase
   "iframe": {
-    "src": "https://my-block.civit.ai/",   // ROOT of <blockId>.civit.ai (§6)
+    // NO "src" — it is SERVER-OWNED. The platform stamps the canonical bundle
+    // URL (https://<blockId>.civit.ai/, root-served) at build/approve. Declaring
+    // it is refused at submit, and `defineBlock` refuses it locally (§6).
     "minHeight": 240,                       // set to your REAL height (§6)
-    "maxHeight": 600,
+    "maxHeight": 600,                       // 40–4000 px, like minHeight
     "resizable": true,
     "sandbox": "allow-scripts allow-forms"  // NOT allow-same-origin / allow-top-navigation
   },
@@ -122,8 +124,20 @@ my-block/
 }
 ```
 
-Validate it any time with `defineBlock` (it throws with a `.field` path on the
-first violation):
+Only five of those are **required** by the
+[canonical schema](https://civitai.com/schemas/app-block/v1.json): `blockId`,
+`version`, `name`, `contentRating`, `scopes`. The rest are optional.
+
+> **`appId` is not a manifest field.** Your app id lives in `civitai.app.json`
+> (`{"appId": "..."}`), which is what the `civitai` CLI reads. The scaffold still
+> carries an `appId` key in the manifest and the platform ignores it; a future
+> scaffold will drop it.
+
+**You don't have to run the validator by hand** — the block scaffolds register
+`vite-plugin-block-manifest.ts`, which validates `block.manifest.json` on every
+`pnpm dev`, `pnpm dev:harness` and `pnpm build`, and fails with the offending
+field path. To check it from your own code as well, call `defineBlock` at module
+scope (it throws with a `.field` path on the first violation):
 
 ```ts
 // @ts-skip-readme: imports a project-local ./block.manifest.json that doesn't exist in isolation
@@ -131,6 +145,10 @@ import { defineBlock } from '@civitai/app-sdk/blocks';
 import manifest from './block.manifest.json' with { type: 'json' };
 defineBlock({ manifest });   // call at module scope so mistakes throw at startup
 ```
+
+Passing is **necessary, not sufficient**: the server also checks things the
+schema cannot express (the scope set review granted, the tier-dependent sandbox
+allowlist, whether your `slotId` is a registered slot).
 
 ## 3. Write the block
 

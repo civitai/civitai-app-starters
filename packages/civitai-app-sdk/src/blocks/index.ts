@@ -107,6 +107,7 @@ export type {
   ManifestBooleanField,
   ManifestIframe,
   ManifestNumberField,
+  ManifestPage,
   ManifestPreview,
   ManifestSettingField,
   ManifestSettings,

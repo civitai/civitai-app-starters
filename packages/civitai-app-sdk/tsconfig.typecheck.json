@@ -4,6 +4,11 @@
     "noEmit": true,
     "rootDir": "."
   },
-  "include": ["src/**/*", "test/**/*.test-d.ts"],
+  // `defineBlock.example.ts` is the `@example` from `defineBlock`'s docblock,
+  // stored as a real module so the snippet in the docs is TYPE-CHECKED here and
+  // EXECUTED by `defineBlock.example.test.ts`. Listed explicitly because it is
+  // neither `src/` nor a `*.test-d.ts`; drop it and the docs example silently
+  // stops compiling again (#330).
+  "include": ["src/**/*", "test/**/*.test-d.ts", "test/blocks/defineBlock.example.ts"],
   "exclude": ["dist", "node_modules"]
 }
