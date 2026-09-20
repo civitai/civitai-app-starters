@@ -18,6 +18,8 @@
       "import": "./dist/index.js"
     },
     "./styles.css": "./dist/components.css",
+    "./utilities.css": "./dist/utilities.css",
+    "./bootstrap-compat.css": "./dist/bootstrap-compat.css",
     "./register": {
       "types": "./dist/elements/register.d.ts",
       "import": "./dist/elements/register.js"
@@ -290,12 +292,14 @@
     "site-elements.js",
     "custom-elements.json",
     "MARKUP.md",
-    "README.md"
+    "README.md",
+    "utilities.css",
+    "bootstrap-compat.css"
   ],
   "scripts": {
     "dev": "vite",
-    "generate": "tsx scripts/build-css.ts",
-    "build": "tsx scripts/build-css.ts && tsc -p tsconfig.json && tsx scripts/build-elements.ts && cem analyze",
+    "generate": "tsx scripts/build-css.ts && tsx scripts/build-utilities.ts",
+    "build": "tsx scripts/build-css.ts && tsx scripts/build-utilities.ts && tsc -p tsconfig.json && tsx scripts/build-elements.ts && cem analyze",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --project node",
     "test:watch": "vitest --project node",

@@ -179,6 +179,47 @@ The playground imports the elements from `src/`, so an edit is on screen
 without a build. `demo/` is the opposite: it loads the published artifact from
 jsDelivr to verify what consumers actually get.
 
+## Utilities
+
+Elements cover the components. They cannot cover the markup *between* them —
+the row, the gap, the margin — and until now this package had no answer for
+that, so every hand-HTML author wrote their own. `./utilities.css` is that
+answer: ~217 classes under a `ci-` prefix, spending the same tokens the
+elements do.
+
+```html
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/components/utilities.css" />
+
+<div class="ci-flex ci-items-center ci-justify-between ci-gap-2 ci-mb-4">
+  <civitai-badge>New</civitai-badge>
+  <span class="ci-muted ci-small">3 minutes ago</span>
+</div>
+```
+
+Spacing is a scale of its own — `--civitai-space-0` through `-6` — because
+Mantine expresses spacing per component rather than as a ramp, so
+`@civitai/theme` has nothing to derive it from. Override the custom properties
+to retune every utility at once. Colour utilities name tokens rather than
+shades, so `ci-muted` follows the theme into dark mode instead of pinning a
+grey. The grid is CSS Grid: `ci-row` is twelve columns, `ci-col-4` spans four,
+and `ci-md-col-6` does it from the `md` breakpoint up.
+
+### Coming from Bootstrap
+
+`./bootstrap-compat.css` is a **transitional** sheet that maps Bootstrap's own
+class names onto the same declarations, so a page can adopt the tokens before
+it touches its markup. It keeps Bootstrap's breakpoints rather than ours,
+because its job is to preserve behaviour while the markup moves.
+
+```html
+<link rel="stylesheet" href="…/@civitai/components/bootstrap-compat.css" />
+<!-- `d-flex`, `mb-3`, `col-md-6`, `text-muted` keep working, on civitai tokens -->
+```
+
+It is meant to be deleted. A browser test asserts every alias computes
+identically to the `ci-` utility behind it, so a rule can be dropped the day its
+markup moves and nothing else shifts.
+
 ### Authoring rules
 
 Four decisions that were implicit until an API review made them explicit. They
