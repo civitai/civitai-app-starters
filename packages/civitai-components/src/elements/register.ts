@@ -16,6 +16,8 @@ import { defineCivitaiMenu } from './civitai-menu.js';
 import { defineCivitaiMenuItem } from './civitai-menu-item.js';
 import { defineCivitaiMenuLabel } from './civitai-menu-label.js';
 import { defineCivitaiModal } from './civitai-modal.js';
+import { defineCivitaiNavItem } from './civitai-nav-item.js';
+import { defineCivitaiNavList } from './civitai-nav-list.js';
 import { defineCivitaiNumberInput } from './civitai-number-input.js';
 import { defineCivitaiPagination } from './civitai-pagination.js';
 import { defineCivitaiProgress } from './civitai-progress.js';
@@ -53,6 +55,8 @@ export function registerAll(): void {
   defineCivitaiMenuItem();
   defineCivitaiMenuLabel();
   defineCivitaiModal();
+  defineCivitaiNavItem();
+  defineCivitaiNavList();
   defineCivitaiNumberInput();
   defineCivitaiPagination();
   defineCivitaiProgress();

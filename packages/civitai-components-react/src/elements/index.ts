@@ -23,6 +23,8 @@ export { CivitaiMenu } from './civitai-menu.js';
 export { CivitaiMenuItem } from './civitai-menu-item.js';
 export { CivitaiMenuLabel } from './civitai-menu-label.js';
 export { CivitaiModal } from './civitai-modal.js';
+export { CivitaiNavItem } from './civitai-nav-item.js';
+export { CivitaiNavList } from './civitai-nav-list.js';
 export { CivitaiNumberInput } from './civitai-number-input.js';
 export { CivitaiPagination } from './civitai-pagination.js';
 export { CivitaiProgress } from './civitai-progress.js';

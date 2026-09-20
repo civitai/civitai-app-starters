@@ -346,6 +346,22 @@
     "./civitai-input-group/define": {
       "types": "./dist/elements/civitai-input-group.define.d.ts",
       "default": "./dist/elements/civitai-input-group.define.js"
+    },
+    "./civitai-nav-item": {
+      "types": "./dist/elements/civitai-nav-item.d.ts",
+      "default": "./dist/elements/civitai-nav-item.js"
+    },
+    "./civitai-nav-item/define": {
+      "types": "./dist/elements/civitai-nav-item.define.d.ts",
+      "default": "./dist/elements/civitai-nav-item.define.js"
+    },
+    "./civitai-nav-list": {
+      "types": "./dist/elements/civitai-nav-list.d.ts",
+      "default": "./dist/elements/civitai-nav-list.js"
+    },
+    "./civitai-nav-list/define": {
+      "types": "./dist/elements/civitai-nav-list.define.d.ts",
+      "default": "./dist/elements/civitai-nav-list.define.js"
     }
   },
   "files": [

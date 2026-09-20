@@ -191,6 +191,31 @@ Added because a real consumer needed them and the vocabulary had no answer:
 | `<civitai-breadcrumb>` | `data`-driven. The separator is a pseudo-element, which is what keeps it out of the trail a screen reader reads. |
 | `<civitai-table>` | **Light DOM on purpose**: a slotted `<tr>` inside a shadow `<table>` leaves the table formatting context and stops being a row. This styles a table the page already owns — including one a data grid generated, which is why it works with QuickGrid or any server-rendered table. |
 
+### Navigation
+
+Primitives, not an app shell — the reusable part of a sidebar is the nav tree's
+behaviour, not the chrome around it. Lay the page out with the utilities.
+
+```html
+<civitai-nav-list label="Sections" current="/jobs/replay">
+  <civitai-nav-item href="/" label="Summary"></civitai-nav-item>
+  <civitai-nav-item label="Jobs">
+    <civitai-nav-item href="/jobs" label="Active"></civitai-nav-item>
+    <civitai-nav-item href="/jobs/replay" label="Replay"></civitai-nav-item>
+  </civitai-nav-item>
+</civitai-nav-list>
+```
+
+`current` is an `href`, matched exactly. The list marks that item and **opens
+every group above it**, which is the part sidebars usually get wrong: landing
+on a nested route with the section containing it still collapsed. An item is a
+link when it has an `href` and a disclosure when it has children — an `href`
+with children is still a disclosure, never an anchor that also toggles. Depth
+is counted by the item, so nesting indents without anyone tracking levels.
+
+Icons stay slotted (`<slot name="icon">`): the package ships no icon set, so
+an app brings its own and pays for nothing it does not use.
+
 ### Grouping, and a confirmation
 
 | | |

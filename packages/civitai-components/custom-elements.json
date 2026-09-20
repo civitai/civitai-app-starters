@@ -3445,6 +3445,358 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/elements/civitai-nav-item.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "A link, or a group of them. `href` decides which: a group is a disclosure\nbutton over its own children, never an anchor that also toggles.",
+          "name": "CivitaiNavItem",
+          "members": [
+            {
+              "kind": "field",
+              "name": "href",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "href",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Used when the item has no text of its own to read.",
+              "default": "''",
+              "attribute": "label",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "current",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "current",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "expanded",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "expanded",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "disabled",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "group",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Set by the element once it sees nested items.",
+              "default": "false",
+              "attribute": "group",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "#id",
+              "privacy": "private",
+              "readonly": true,
+              "default": "`ci-nav-${(sequence += 1)}`"
+            },
+            {
+              "kind": "method",
+              "name": "toggle",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "field",
+              "name": "#onSlotChange",
+              "privacy": "private",
+              "readonly": true
+            }
+          ],
+          "attributes": [
+            {
+              "name": "href",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "href"
+            },
+            {
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "description": "Used when the item has no text of its own to read.",
+              "default": "''",
+              "fieldName": "label"
+            },
+            {
+              "name": "current",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "current"
+            },
+            {
+              "name": "expanded",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "expanded"
+            },
+            {
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "disabled"
+            },
+            {
+              "name": "group",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Set by the element once it sees nested items.",
+              "default": "false",
+              "fieldName": "group"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-nav-item",
+          "cssParts": [
+            {
+              "name": "label"
+            },
+            {
+              "name": "link"
+            },
+            {
+              "name": "button"
+            },
+            {
+              "name": "chevron"
+            },
+            {
+              "name": "children"
+            }
+          ],
+          "slots": [
+            {
+              "name": "icon"
+            },
+            {
+              "name": "label"
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiNavItem",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiNavItem",
+          "declaration": {
+            "name": "CivitaiNavItem",
+            "module": "src/elements/civitai-nav-item.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiNavItem",
+          "declaration": {
+            "name": "defineCivitaiNavItem",
+            "module": "src/elements/civitai-nav-item.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-nav-item",
+          "declaration": {
+            "name": "CivitaiNavItem",
+            "module": "src/elements/civitai-nav-item.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-nav-list.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "Marks the item matching `current` and opens the groups above it, which is\nthe part every sidebar gets wrong: landing on a nested route with the\nsection that contains it still collapsed.",
+          "name": "CivitaiNavList",
+          "members": [
+            {
+              "kind": "field",
+              "name": "current",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "The `href` of the page being shown. Matching is exact.",
+              "default": "''",
+              "attribute": "current",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Names the landmark. Set it on the ROOT list only; nested ones inherit it.",
+              "default": "''",
+              "attribute": "label",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "#items",
+              "privacy": "private",
+              "type": {
+                "text": "CivitaiNavItem[]"
+              },
+              "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "#sync",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "field",
+              "name": "#onSlotChange",
+              "privacy": "private",
+              "readonly": true
+            }
+          ],
+          "attributes": [
+            {
+              "name": "current",
+              "type": {
+                "text": "string"
+              },
+              "description": "The `href` of the page being shown. Matching is exact.",
+              "default": "''",
+              "fieldName": "current"
+            },
+            {
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "description": "Names the landmark. Set it on the ROOT list only; nested ones inherit it.",
+              "default": "''",
+              "fieldName": "label"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-nav-list",
+          "cssParts": [
+            {
+              "name": "list"
+            },
+            {
+              "name": "nav"
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiNavList",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiNavList",
+          "declaration": {
+            "name": "CivitaiNavList",
+            "module": "src/elements/civitai-nav-list.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiNavList",
+          "declaration": {
+            "name": "defineCivitaiNavList",
+            "module": "src/elements/civitai-nav-list.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-nav-list",
+          "declaration": {
+            "name": "CivitaiNavList",
+            "module": "src/elements/civitai-nav-list.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/elements/civitai-number-input.ts",
       "declarations": [
         {
