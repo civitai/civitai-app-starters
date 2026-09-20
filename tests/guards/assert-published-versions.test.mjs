@@ -1475,24 +1475,31 @@ describe('assert-published-versions', () => {
   });
 
   test('a STALE CDN cannot hide a published version — the behavioural case, not just the header', async () => {
-    // Models the real failure end-to-end: a cache that serves a stale 404 to any
-    // read it has seen before, and the truth only to a URL it has not. A guard
-    // that retried without cache-busting would 404 all five times here and
-    // report PUBLISH DID NOT HAPPEN for a package that is live — which is
-    // exactly what run 34908486900 did on 2026-09-14.
-    const servedKeys = new Set();
+    // Models the real failure end-to-end: the CDN holds a 404 it cached BEFORE
+    // the publish landed. The bare URL therefore serves that stale 404 forever;
+    // only a cache key the edge has never seen reaches the origin, which has the
+    // version. A guard that retried WITHOUT cache-busting re-reads the same
+    // cached 404 every attempt and reports PUBLISH DID NOT HAPPEN for a package
+    // that is live — exactly what run 34908486900 did on 2026-09-14.
+    //
+    // 🔴 THE PRE-WARMED ENTRY IS WHAT MAKES THIS DISCRIMINATING, and getting it
+    // wrong is a live trap: an earlier draft served the truth to the first
+    // unseen key and staleness only on REPEATS, which is backwards. The guard's
+    // very first request is unseen, so it resolved on attempt 1 and the test
+    // passed WITH AND WITHOUT the fix — a mutation sweep caught it surviving.
+    // The stale entry has to be there BEFORE the first read, because that is
+    // what "the CDN cached a 404 while the publish was still propagating" means.
     const srv = createServer((req, res) => {
       const raw = decodeURIComponent(req.url || '');
       const path = raw.replace(/\?.*$/, '');
+      const busted = /[?&]_cb=/.test(raw);
       if (path === '/@civitai/app-sdk/0.31.0') {
-        // The "CDN": a key it has already served comes back from cache (stale
-        // 404). A key it has never seen goes to origin, which has the version.
-        if (servedKeys.has(raw)) {
+        if (!busted) {
+          // The pre-warmed edge entry: a 404 cached before the publish landed.
           res.writeHead(404, { 'content-type': 'application/json' });
-          res.end(JSON.stringify({ error: 'stale' }));
+          res.end(JSON.stringify({ error: 'stale edge copy' }));
           return;
         }
-        servedKeys.add(raw);
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ name: '@civitai/app-sdk', version: '0.31.0' }));
         return;
