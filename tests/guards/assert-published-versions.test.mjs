@@ -13,7 +13,14 @@ import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createFixture, destroyFixture, runGuard, startFakeRegistry, DEFAULT_PACKAGES } from './fixture.mjs';
+import {
+  createFixture,
+  destroyFixture,
+  runGuard,
+  startFakeRegistry,
+  DEFAULT_PACKAGES,
+  REPO_ROOT,
+} from './fixture.mjs';
 
 const SCRIPT = 'assert-published-versions.mjs';
 const FAST = { PUBLISH_CHECK_TRIES: '1', PUBLISH_CHECK_DELAY: '0' };
@@ -22,12 +29,24 @@ const FAST = { PUBLISH_CHECK_TRIES: '1', PUBLISH_CHECK_DELAY: '0' };
  * A registry with a hand-written response function, for the shapes
  * `startFakeRegistry` deliberately cannot express: a 2xx carrying the wrong
  * body, a 410, and a package that 404s N times before appearing (publish
- * propagation). Returns { origin, hits, close }.
+ * propagation). Returns { origin, hits, rawHits, close }.
+ *
+ * 🔴 `respond` is handed the path with the QUERY STRING REMOVED, and the Nth-hit
+ * counter counts stripped paths. The guard cache-busts every read with a unique
+ * `?_cb=` param, so without stripping, every request would look like a distinct
+ * URL: `respond` would never match its own target path, and `nth` would be 1
+ * forever — silently breaking the retry/propagation tests, which depend on the
+ * counter advancing, in a way that reads as a guard defect rather than a harness
+ * one. Same contract as `startFakeRegistry`; see its note for why the real
+ * registry behaves this way too.
  */
 async function startScriptedRegistry(respond) {
   const hits = [];
+  const rawHits = [];
   const server = createServer((req, res) => {
-    const url = decodeURIComponent(req.url || '');
+    const raw = decodeURIComponent(req.url || '');
+    rawHits.push(raw);
+    const url = raw.replace(/\?.*$/, '');
     hits.push(url);
     const r = respond(url, hits.filter((h) => h === url).length) || { status: 404, body: { error: 'Not found' } };
     res.writeHead(r.status, { 'content-type': 'application/json' });
@@ -38,6 +57,7 @@ async function startScriptedRegistry(respond) {
   return {
     origin: `http://127.0.0.1:${port}`,
     hits,
+    rawHits,
     close: () =>
       new Promise((r) => {
         server.closeAllConnections();
@@ -942,57 +962,87 @@ describe('assert-published-versions', () => {
 
       const lines = r.out.split('\n').map((l) => l.trimEnd());
 
-      // 🔴 The CHECK-FIRST block, pinned whole and pinned SEPARATELY, because it
-      // is an ORDERING claim: it must reach the operator BEFORE the two-causes
-      // block offers "re-run the release workflow" as cause 1. A blind re-run
-      // over a partly-staged release is what published `blocks-react@0.45.1`
-      // while `components@0.4.1` sat staged, and that is the state that ETARGETs
-      // every consumer. It also names the npmjs.com Staged Packages page rather
-      // than `npm stage list`: measured 2026-09-03, that command returns
-      // `E401 Unable to authenticate` from a machine that is not npm-logged-in,
-      // so it is not the surface to send someone to mid-incident.
-      const checkFirst = lines.findIndex((l) => l.includes('CHECK FOR STAGED VERSIONS BEFORE'));
-      assert.ok(checkFirst >= 0, `no check-staged-first block in:\n${r.out}`);
-      assert.deepEqual(lines.slice(checkFirst, checkFirst + 7), [
-        '       🔴 CHECK FOR STAGED VERSIONS BEFORE YOU RE-RUN ANYTHING:',
-        '',
-        '            https://www.npmjs.com/settings/civitai/staged-packages',
-        '',
-        '       (`npm stage list <package>` needs an npm login and returns E401 from a',
-        '       machine that is not logged in — measured 2026-09-03 — so the web page is',
-        '       the route that reliably answers this.)',
-      ]);
+      // 🔴 THE CANNOT-TELL headline must come FIRST, and that is an ORDERING
+      // claim: it has to reach the operator BEFORE the two-causes block offers
+      // "re-run the release workflow" as cause 1. A blind re-run over a
+      // partly-staged release is what published `blocks-react@0.45.1` while
+      // `components@0.4.1` sat staged, and that is the state that ETARGETs every
+      // consumer.
+      const cannotTell = lines.findIndex((l) => l.includes('CANNOT TELL YOU WHICH CAUSE'));
+      assert.ok(cannotTell >= 0, `no cannot-distinguish headline in:\n${r.out}`);
 
       const start = lines.findIndex((l) => l.includes('TWO causes produce this'));
       assert.ok(start >= 0, `no two-causes block in:\n${r.out}`);
-      // ORDER, asserted rather than assumed: the two blocks are pinned
-      // independently above, so nothing else would notice if they swapped.
       assert.ok(
-        checkFirst < start,
-        `the check-for-staged block (line ${checkFirst}) must come BEFORE the two-causes ` +
+        cannotTell < start,
+        `the cannot-distinguish headline (line ${cannotTell}) must come BEFORE the two-causes ` +
           `block (line ${start}) — cause 1 there is "re-run", which is the move that breaks ` +
           `consumers when a version is staged.`,
       );
-      assert.deepEqual(lines.slice(start, start + 18), [
+
+      // The whole remedy block, pinned as ONE normalised string. Prose guards are
+      // walkable by rewording, and every sentence here is load-bearing: which
+      // cause is asserted, which is merely named, and what the link is claimed to
+      // prove. A cosmetic reword failing this test is the intended cost.
+      assert.deepEqual(lines.slice(cannotTell, cannotTell + 47), [
+        '       🔴 THIS GUARD CANNOT TELL YOU WHICH CAUSE THIS IS. DO NOT ASSUME.',
+        '',
+        '       It reads the registry ANONYMOUSLY, and an anonymous 404 is byte-identical',
+        '       for a publish that failed and for a version npm STAGED instead of',
+        '       publishing. Neither is more likely from what is printed above. A mix of',
+        '       published and unpublished packages is NOT a staging signature — a partly',
+        '       failed publish produces exactly the same mix.',
+        '',
         '       TWO causes produce this, and they need OPPOSITE fixes:',
         '',
-        '       1. the publish failed  -> re-run the release workflow.',
-        '       2. npm STAGED the version instead of publishing it. A staged version is',
-        '          invisible to anonymous reads and OCCUPIES ITS SEMVER SLOT, so every',
+        '       1. the publish failed        -> re-running the release workflow fixes it.',
+        '       2. npm STAGED the version    -> re-running is a DEAD END. A staged version',
+        '          is invisible to anonymous reads and OCCUPIES ITS SEMVER SLOT, so every',
         '          re-run (and a manual `npm publish`) returns',
-        '          `E409 Cannot publish over previously staged version`. Re-running is a',
-        '          DEAD END. Only a human with 2FA can finish it:',
+        '          `E409 Cannot publish over previously staged version`. Only a human with',
+        '          2FA can clear it.',
         '',
-        '            npm stage approve <stage-id>   # publish it   (2FA)',
-        '            npm stage reject  <stage-id>   # free the slot (2FA)',
+        '       🔴 SETTLE WHICH ONE BEFORE YOU ACT. Staging is directly detectable, but',
+        '       ONLY by an authenticated caller — that is why this guard cannot do it for',
+        '       you. From a machine logged in to npm as a civitai org member:',
+        '',
+        '            npm whoami                     # E401 here => you are NOT logged in',
+        '            npm stage list <package>       # the authoritative answer',
+        '',
+        '       Read `npm whoami` FIRST. `npm stage list` returns E401 from a machine that',
+        '       is not logged in (measured 2026-09-03), and an E401 is an answer about',
+        '       YOUR SESSION, not about whether anything is staged.',
+        '',
+        '            https://www.npmjs.com/settings/civitai/staged-packages',
+        '',
+        '       ⚠ That page is reachable ONLY while logged in as a civitai org member.',
+        '       A 404/403 there does NOT establish that nothing is staged — npm answers',
+        '       the same way for a signed-out or non-member request, so an empty staging',
+        '       area and an unauthorised read are indistinguishable from the browser.',
+        '       Treat the page as useful only when it LOADS; when it does not, the',
+        '       `npm stage list` result above is the one that means something.',
+        '',
+        '       If it IS staged, only these finish it (both 2FA):',
+        '',
+        '            npm stage approve <stage-id>   # publish it',
+        '            npm stage reject  <stage-id>   # free the slot',
         '',
         '       A BLIND RE-RUN OVER A PARTLY-STAGED RELEASE IS WHAT BREAKS CONSUMERS: it',
         '       publishes whichever half is not staged and strands the other, so a live',
         '       dependent exact-pins a staged dependency -> ETARGET on install for',
         '       everyone. That is not a risk, it is what happened on 2026-09-03.',
-        '       Some packages above published and others did not IS the staged signature.',
         '       Approve in DEPENDENCY ORDER; see RELEASING.md § "Staged publishing".',
       ]);
+
+      // 🔴 THE OVERCLAIM MUST BE GONE, pinned as its own assertion so removing it
+      // can never be an accident of rewording the block above. This exact
+      // sentence failed a HEALTHY release (run 34908486900, 2026-09-14): both
+      // packages had published and simply had not propagated, and the message
+      // sent the operator into a 2FA staging recovery for a release that had
+      // already succeeded. A partly-FAILED publish produces the same mix, so the
+      // mix is a signature of nothing.
+      assert.doesNotMatch(r.out, /IS the staged signature/);
+      assert.doesNotMatch(r.out, /others did not IS/);
 
       // The old advice must not survive alongside the new: an operator reading
       // "publish this package manually" against a staged version walks into the
@@ -1268,7 +1318,10 @@ describe('assert-published-versions', () => {
     // Nothing pinned the header before, so dropping it was a silent mutation.
     const seen = [];
     const srv = createServer((req, res) => {
-      seen.push({ url: decodeURIComponent(req.url || ''), accept: req.headers.accept || '' });
+      const raw = decodeURIComponent(req.url || '');
+      // `url` is query-stripped so the lookups below still match; `raw` keeps
+      // the cache-busting param. Same contract as the two shared registries.
+      seen.push({ url: raw.replace(/\?.*$/, ''), raw, accept: req.headers.accept || '' });
       res.writeHead(404, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: 'nope' }));
     });
@@ -1331,6 +1384,307 @@ describe('assert-published-versions', () => {
     } finally {
       destroyFixture(dir);
       await behind.close();
+    }
+  });
+
+  // ---- cache-busting (clawgate #594, criterion 2) -------------------------
+  //
+  // Retrying over a CDN-cached response re-reads ONE stale document N times and
+  // learns nothing — so without this, raising the retry budget fixes nothing.
+  // Measured on the live registry 2026-09-19: a plain read returned
+  // `cf-cache-status: HIT`, the same read with `cache-control: no-cache` plus a
+  // unique `?_cb=` returned `MISS`, and the response carried
+  // `cache-control: public, max-age=300` — a 300s TTL, larger on its own than
+  // the worst read-after-write lag ever measured on this repo (157s).
+
+  test('CACHE-BUSTS every read — a unique query param AND a no-cache header', async () => {
+    const seen = [];
+    const srv = createServer((req, res) => {
+      const raw = decodeURIComponent(req.url || '');
+      seen.push({ raw, cacheControl: req.headers['cache-control'] || '', pragma: req.headers.pragma || '' });
+      const path = raw.replace(/\?.*$/, '');
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ name: '@civitai/app-sdk', version: path.split('/').pop() }));
+    });
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const dir = createFixture({ scripts: [SCRIPT] });
+    try {
+      const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: `http://127.0.0.1:${srv.address().port}`, ...FAST });
+      assert.equal(r.code, 0, r.out);
+
+      // POSITIVE CONTROL on the harness first: if no request were issued at all,
+      // every assertion below would pass vacuously over an empty array.
+      assert.equal(seen.length, 5, `expected 5 requests, got ${seen.length}`);
+
+      for (const s of seen) {
+        assert.match(s.raw, /[?&]_cb=/, `read was not cache-busted: ${s.raw}`);
+        assert.match(s.cacheControl, /no-cache/, `missing no-cache header on ${s.raw}`);
+        assert.match(s.pragma, /no-cache/, `missing pragma header on ${s.raw}`);
+      }
+
+      // 🔴 The param must be UNIQUE PER REQUEST, not merely present. A constant
+      // `?_cb=1` is cache-busted exactly once and then cached forever — which
+      // looks identical to this fix from the code, and reproduces the original
+      // bug from the second request onward.
+      const params = seen.map((s) => new URL(`http://x${s.raw}`).searchParams.get('_cb'));
+      assert.equal(new Set(params).size, params.length, `_cb repeated across requests: ${JSON.stringify(params)}`);
+    } finally {
+      destroyFixture(dir);
+      srv.closeAllConnections();
+      await new Promise((r) => srv.close(r));
+    }
+  });
+
+  test('CACHE-BUSTS ACROSS RETRIES — the mutant that busts once then repeats must die', async () => {
+    // The retry loop is the case that matters: two attempts sharing a cache key
+    // are ONE sample, which is precisely the bug. DELAY=0 puts both attempts
+    // inside the same millisecond, so a `_cb` built from `Date.now()` alone
+    // would collide here — that is why the implementation mixes in a counter,
+    // and this test is what holds it to that.
+    const params = [];
+    const TARGET = '/@civitai/app-sdk/0.31.0';
+    const late = await startScriptedRegistry((url, nth) => {
+      if (url === TARGET) {
+        return nth < 3
+          ? { status: 404, body: { error: 'not yet' } }
+          : { status: 200, body: { name: '@civitai/app-sdk', version: '0.31.0' } };
+      }
+      return { status: 200, body: { name: 'x', version: url.split('/').pop() } };
+    });
+    const dir = createFixture({ scripts: [SCRIPT] });
+    try {
+      const r = await runGuard(dir, SCRIPT, {
+        NPM_REGISTRY: late.origin,
+        PUBLISH_CHECK_TRIES: '5',
+        PUBLISH_CHECK_DELAY: '0',
+      });
+      assert.equal(r.code, 0, r.out);
+
+      for (const raw of late.rawHits) {
+        if (!raw.startsWith(TARGET)) continue;
+        params.push(new URL(`http://x${raw}`).searchParams.get('_cb'));
+      }
+      // POSITIVE CONTROL: the retries actually happened. Without this a broken
+      // fixture yielding 0 retries would make the uniqueness check vacuous.
+      assert.equal(params.length, 3, `expected 3 retried reads, got ${JSON.stringify(late.rawHits)}`);
+      assert.equal(new Set(params).size, 3, `retries shared a cache key: ${JSON.stringify(params)}`);
+    } finally {
+      destroyFixture(dir);
+      await late.close();
+    }
+  });
+
+  test('a STALE CDN cannot hide a published version — the behavioural case, not just the header', async () => {
+    // Models a SYNTHETIC hazard: a CDN holding a 404 it cached BEFORE the publish
+    // landed. The bare URL then serves that stale 404 forever; only a cache key the
+    // edge has never seen reaches the origin, which has the version. A guard that
+    // retried WITHOUT cache-busting re-reads the same cached 404 every attempt and
+    // reports PUBLISH DID NOT HAPPEN for a package that is live.
+    //
+    // 🔴 THIS IS NOT WHAT RUN 34908486900 DID ON 2026-09-14, AND AN EARLIER DRAFT OF
+    // THIS COMMENT SAID IT WAS. That run was PROPAGATION LAG: the versions appeared
+    // +45s and +96s after the assertion gave up at 23:22:39, which a cached 404 does
+    // not explain — a cached 404 does not heal on its own inside 96s. Nor is the
+    // modelled state observed on registry.npmjs.org: measured 2026-09-20, an absent
+    // version returns NO cache-control and NO cf-cache-status at all, so 404s are not
+    // cached there. The per-version route IS cacheable for live versions
+    // (`lodash@4.17.21` -> HIT), which is why this case is kept as defence in depth
+    // against a registry that caches 404s — but it models a hazard we have not seen,
+    // and it must not be cited as the reproduction of a real incident.
+    //
+    // 🔴 THE PRE-WARMED ENTRY IS WHAT MAKES THIS DISCRIMINATING, and getting it
+    // wrong is a live trap: an earlier draft served the truth to the first
+    // unseen key and staleness only on REPEATS, which is backwards. The guard's
+    // very first request is unseen, so it resolved on attempt 1 and the test
+    // passed WITH AND WITHOUT the fix — a mutation sweep caught it surviving.
+    // The stale entry has to be there BEFORE the first read, because that is
+    // what "the CDN cached a 404 while the publish was still propagating" means.
+    const srv = createServer((req, res) => {
+      const raw = decodeURIComponent(req.url || '');
+      const path = raw.replace(/\?.*$/, '');
+      const busted = /[?&]_cb=/.test(raw);
+      if (path === '/@civitai/app-sdk/0.31.0') {
+        if (!busted) {
+          // The pre-warmed edge entry: a 404 cached before the publish landed.
+          res.writeHead(404, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: 'stale edge copy' }));
+          return;
+        }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ name: '@civitai/app-sdk', version: '0.31.0' }));
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ name: 'x', version: path.split('/').pop() }));
+    });
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const dir = createFixture({ scripts: [SCRIPT] });
+    try {
+      const r = await runGuard(dir, SCRIPT, { NPM_REGISTRY: `http://127.0.0.1:${srv.address().port}`, ...FAST });
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /5\/5 publishable package version\(s\) confirmed/);
+      assert.doesNotMatch(r.out, /PUBLISH DID NOT HAPPEN/);
+    } finally {
+      destroyFixture(dir);
+      srv.closeAllConnections();
+      await new Promise((r) => srv.close(r));
+    }
+  });
+
+  // ---- the budget is a SEAM: release.yml sets it, this script spends it ----
+
+  test('release.yml budgets a version-probe window that beats the measured registry lag', async () => {
+    // 🔴 A SEAM GUARD, not a component one. The script's ENV DEFAULTS (5/3000 =
+    // a 12s window) are NOT what CI runs; `release.yml` overrides them. So every
+    // test in this file that passes `PUBLISH_CHECK_TRIES` explicitly is blind to
+    // the only budget that ships — and this gate was red on EIGHT consecutive
+    // successful publishes with a perfectly green suite.
+    //
+    // The number asserted is the VERSION-PROBE WINDOW, (TRIES-1) x DELAY: how
+    // long a lagging version has to appear. NOT 2x(TRIES-1)xDELAY, which is
+    // total sleeping across both probes and is the figure `timeout-minutes` has
+    // to cover. Conflating the two reads as twice the patience on offer.
+    //
+    // FLOOR: 240s. Measured read-after-write lag on this repo, publish-step
+    // success -> version visible on the registry: 76s, 126s, 127s, 157s; plus
+    // the CDN's own `max-age=300`. 240s is ~1.5x the worst observed lag and is
+    // what shipped in #314. The cost of the headroom is paid ONLY by a package
+    // that never appears — a lagging one resolves the moment it lands.
+    const yml = readFileSync(join(REPO_ROOT, '.github', 'workflows', 'release.yml'), 'utf8');
+    const tries = Number(/PUBLISH_CHECK_TRIES:\s*'(\d+)'/.exec(yml)?.[1]);
+    const delay = Number(/PUBLISH_CHECK_DELAY:\s*'(\d+)'/.exec(yml)?.[1]);
+    // POSITIVE CONTROL on the parse: "no match" and "matched 0" are the same
+    // falsy value, and a regex that silently stopped matching would make the
+    // window read as NaN — which fails no comparison at all.
+    assert.ok(Number.isFinite(tries) && tries > 1, `could not parse PUBLISH_CHECK_TRIES from release.yml`);
+    assert.ok(Number.isFinite(delay) && delay > 0, `could not parse PUBLISH_CHECK_DELAY from release.yml`);
+
+    const windowSec = ((tries - 1) * delay) / 1000;
+    assert.ok(
+      windowSec >= 240,
+      `release.yml's version-probe window is ${windowSec}s ((${tries}-1) x ${delay}ms). ` +
+        `Worst measured read-after-write lag on this repo is 157s and the registry CDN's own ` +
+        `max-age is 300s, so anything under 240s re-introduces the false "PUBLISH DID NOT HAPPEN" ` +
+        `this budget was raised to stop. If you are lowering it deliberately, move this floor and ` +
+        `say what measurement justifies the new one.`,
+    );
+  });
+
+  // ---- clawgate #594 criterion 5: the gate must STILL be able to fail ------
+
+  test('NEGATIVE CONTROL: at the REAL release budget, a genuinely missing version still FAILS', async () => {
+    // 🔴 The failure mode being guarded here is the OPPOSITE of the reported
+    // one. Raising the budget and cache-busting every read are both changes that
+    // make the gate more forgiving; over-correcting yields a gate that cannot
+    // fail, which is strictly worse than the false alarm it replaced.
+    //
+    // So: the workflow's own TRIES (25) — not the suite's fast default — against
+    // a registry that is genuinely one minor behind. DELAY=0 keeps it quick; the
+    // ATTEMPT COUNT is what this exercises, and 25 attempts of patience must
+    // still end in exit 1.
+    const yml = readFileSync(join(REPO_ROOT, '.github', 'workflows', 'release.yml'), 'utf8');
+    const tries = /PUBLISH_CHECK_TRIES:\s*'(\d+)'/.exec(yml)?.[1];
+    assert.ok(tries, 'could not parse PUBLISH_CHECK_TRIES from release.yml');
+
+    const behind = await startFakeRegistry({ ...allPublished(), '@civitai/app-sdk': '0.30.0' });
+    const dir = createFixture({ scripts: [SCRIPT] });
+    try {
+      const r = await runGuard(dir, SCRIPT, {
+        NPM_REGISTRY: behind.origin,
+        PUBLISH_CHECK_TRIES: tries,
+        PUBLISH_CHECK_DELAY: '0',
+      });
+      assert.equal(r.code, 1, `the gate did not fail on a genuinely missing version:\n${r.out}`);
+      assert.match(r.out, /PUBLISH DID NOT HAPPEN/);
+      assert.match(r.out, /@civitai\/app-sdk@0\.31\.0/);
+      assert.doesNotMatch(r.out, /0 missing/);
+      // It spent the whole budget before saying so — the retries are real, not a
+      // number printed from a loop that exited early.
+      assert.equal(
+        behind.hits.filter((h) => h === '/@civitai/app-sdk/0.31.0').length,
+        Number(tries),
+        `expected ${tries} version probes, got ${behind.hits.filter((h) => h === '/@civitai/app-sdk/0.31.0').length}`,
+      );
+      // And it reports the patience it actually spent, so the next reader can
+      // rule out impatience from the log instead of guessing.
+      assert.match(r.out, /Each version was re-checked for up to/);
+    } finally {
+      destroyFixture(dir);
+      await behind.close();
+    }
+  });
+
+  // ---- clawgate #594 criterion 6: the healthy-but-slow release ------------
+
+  test('POSITIVE CONTROL: the 2026-09-14 timeline replayed — slow propagation now PASSES', async () => {
+    // A SIMULATION of run 34908486900, not a live release. That run failed red
+    // with both packages healthy: the assertion gave up at 23:22:39 while
+    // `@civitai/blocks-react@0.50.0` landed +45s and `@civitai/app-sdk@0.40.0`
+    // landed +96s.
+    //
+    // Modelled in the registry's own units rather than wall-clock, so the test
+    // stays fast and deterministic: at the shipped 10000ms delay, +45s is attempt
+    // 6 and +96s is attempt 11. Three packages resolve immediately (the three
+    // that were already OK in the real log), two lag. The pre-fix budget was 5
+    // attempts — both laggards land beyond it, which is why the real run failed.
+    const LATE = { '/@civitai/blocks-react/0.39.0': 6, '/@civitai/app-sdk/0.31.0': 11 };
+    const slow = await startScriptedRegistry((url, nth) => {
+      const appearsAt = LATE[url];
+      if (appearsAt && nth < appearsAt) return { status: 404, body: { error: 'not yet' } };
+      const version = url.split('/').pop();
+      return { status: 200, body: { name: url.replace(/\/[^/]+$/, '').slice(1), version } };
+    });
+    const dir = createFixture({ scripts: [SCRIPT] });
+    try {
+      const yml = readFileSync(join(REPO_ROOT, '.github', 'workflows', 'release.yml'), 'utf8');
+      const tries = /PUBLISH_CHECK_TRIES:\s*'(\d+)'/.exec(yml)?.[1];
+      assert.ok(tries, 'could not parse PUBLISH_CHECK_TRIES from release.yml');
+
+      const r = await runGuard(dir, SCRIPT, {
+        NPM_REGISTRY: slow.origin,
+        PUBLISH_CHECK_TRIES: tries,
+        PUBLISH_CHECK_DELAY: '0',
+      });
+      assert.equal(r.code, 0, `a healthy-but-slow release still failed:\n${r.out}`);
+      assert.match(r.out, /5\/5 publishable package version\(s\) confirmed/);
+      assert.doesNotMatch(r.out, /PUBLISH DID NOT HAPPEN/);
+      // The laggards resolved via RETRY, not immediately — otherwise this test
+      // would pass without ever exercising the propagation path it claims to.
+      assert.match(r.out, /@civitai\/app-sdk@0\.31\.0 is on the registry\s+\(after 11 attempts/);
+      assert.match(r.out, /@civitai\/blocks-react@0\.39\.0 is on the registry\s+\(after 6 attempts/);
+    } finally {
+      destroyFixture(dir);
+      await slow.close();
+    }
+  });
+
+  test('CONTROL for the replay: the SAME timeline at the PRE-FIX budget FAILS', async () => {
+    // 🔴 Without this arm the test above is a claim about the command line. The
+    // replay must be able to produce the ORIGINAL red — if it passes at 5
+    // attempts too, then the fixture is not modelling the defect and the green
+    // above proves nothing about the budget.
+    const LATE = { '/@civitai/blocks-react/0.39.0': 6, '/@civitai/app-sdk/0.31.0': 11 };
+    const slow = await startScriptedRegistry((url, nth) => {
+      const appearsAt = LATE[url];
+      if (appearsAt && nth < appearsAt) return { status: 404, body: { error: 'not yet' } };
+      const version = url.split('/').pop();
+      return { status: 200, body: { name: url.replace(/\/[^/]+$/, '').slice(1), version } };
+    });
+    const dir = createFixture({ scripts: [SCRIPT] });
+    try {
+      const r = await runGuard(dir, SCRIPT, {
+        NPM_REGISTRY: slow.origin,
+        PUBLISH_CHECK_TRIES: '5', // the budget that was live on 2026-09-14
+        PUBLISH_CHECK_DELAY: '0',
+      });
+      assert.equal(r.code, 1, `the pre-fix budget did NOT reproduce the false failure:\n${r.out}`);
+      assert.match(r.out, /PUBLISH DID NOT HAPPEN/);
+      // Both laggards, exactly as the real run reported them.
+      assert.match(r.out, /@civitai\/app-sdk@0\.31\.0 -> HTTP 404 after 5 attempt\(s\)/);
+      assert.match(r.out, /@civitai\/blocks-react@0\.39\.0 -> HTTP 404 after 5 attempt\(s\)/);
+    } finally {
+      destroyFixture(dir);
+      await slow.close();
     }
   });
 });
