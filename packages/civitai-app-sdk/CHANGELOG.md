@@ -1,5 +1,321 @@
 # @civitai/app-sdk
 
+## 0.47.0
+
+### Minor Changes
+
+- 192ea9b: App Storage: the real ceilings, written once, and the mock now ENFORCES the row limit
+
+  Every documented and simulated source of truth in this repo put the App Storage
+  quota **25x too high on bytes and 1000x too high on rows**. Worse, the mock
+  host's _defaults_ carried those figures, so a block that exceeded the real limit
+  ran perfectly under `dev:mock` and failed only in production.
+
+  ## The numbers, confirmed
+
+  The audit that found this could not verify the host's figures from this
+  repository. They are now confirmed, from `civitai/civitai` `main` on 2026-09-19
+  via `gh api` (not a local checkout), `src/server/routers/apps.router.ts`, blob
+  `654f2d6`:
+
+  ```ts
+  const PER_VALUE_BYTE_CAP = 64 * 1024; // :172
+  const USER_QUOTA_BYTES = 2 * 1024 * 1024; // :204
+  const USER_ROW_LIMIT = 1_000; // :205
+  ```
+
+  and `getQuota` returns `limitBytes: USER_QUOTA_BYTES, limitRows: USER_ROW_LIMIT`
+  — so those are exactly the numbers a block reads back.
+
+  **What the old docs were quoting.** The host has a second, app-wide pair
+  (`APP_QUOTA_BYTES` / `APP_ROW_LIMIT`) sitting above the per-viewer clamp; the
+  repo's figures were those. They are real, but nothing reports an app's usage
+  against them and the per-viewer clamp binds long first.
+
+  ## Scope: the namespace and the budget are different
+
+  The docs said "(block instance, user)" and then quoted a per-**app** ceiling.
+  Both halves were describing something real, which is why the contradiction went
+  unnoticed:
+
+  - **Namespace** — rows are keyed `(block_instance_id, user_id, key)`. "Per
+    (block instance, viewer)" is correct and unchanged.
+  - **Budget** — the host's quota counter is keyed `(app_block_id, user_id)`, so
+    the byte and row budgets are per **(app, viewer)**: every instance of one app
+    shares one budget for that viewer.
+
+  ## Written once
+
+  New: `APP_STORAGE_MAX_VALUE_BYTES`, `APP_STORAGE_MAX_BYTES` and
+  `APP_STORAGE_MAX_ROWS`, exported from `@civitai/app-sdk/blocks`. Their
+  definition file is the only place any **runtime or documentation** site spells
+  the figures, and it carries their provenance plus the `gh api` one-liner that
+  re-derives them. (Not literally the only place in the repo: this changeset, the
+  guard that enforces the rule, and future CHANGELOGs all quote them, as history
+  and as test data must.) Nine files
+  (the SDK message contract, `useAppStorage`, both dev hosts, two READMEs, the
+  `kv-storage` example and its harness, and a test) now reference the constants —
+  29 hand-copied literals removed.
+
+  The app-wide umbrella is deliberately **not** exported and its value
+  deliberately not written down: nothing reports usage against it, so a constant
+  for it could only be used to build a UI that lies.
+
+  ## The mock now fails on the row limit, where it used to pass
+
+  `createMockHost`'s storage defaults ARE the production ceilings, and — the part
+  that turns a docs bug into a shipped-block bug — the write path now **enforces
+  the row limit**. It was reported by `getQuota` and enforced by nothing, so the
+  ceiling a block reaches _first_ was invisible to `dev:mock`. The same gap
+  existed in the `kv-storage` example's own harness and is fixed there too.
+
+  The gate is `isInsert`-guarded, matching the host: a store sitting at the
+  ceiling must still accept an **overwrite**, or an app whose UI has no delete
+  affordance would be permanently stuck with no way back under the cap (only the
+  owning viewer may delete their own rows).
+
+  This closes one gap; it does not make the mock gate-for-gate identical to the
+  host, and the docs no longer claim it is. **Three** divergences are known and
+  filed:
+
+  - the error string a rejection carries (#343);
+  - the byte gate's SHAPE — the host's is `!isNonIncreasing`-guarded, the mock's
+    is not, so `dev:mock` still refuses a shrinking overwrite production admits
+    (#345);
+  - the byte gate's UNIT — the mock counts **wire** bytes
+    (`TextEncoder(JSON.stringify(v)).length`), the host counts **stored** bytes
+    (`octet_length(value::jsonb::text)`), which is larger for every container
+    because `jsonb`'s canonical text inserts a space after each `:` and `,` (up
+    to ~1.4999x for a long array). So the mock's budget is up to half again too
+    generous (#347).
+
+  🔴 **The third one runs the other way.** #343 and #345 are RESTRICTIVE — the
+  mock shows a failure or a wrong string where production would be fine. #347 is
+  **permissive**: a block can pass `dev:mock` and be rejected in production. That
+  is the shape of the very bug this release exists to end, so it is called out
+  rather than batched — and the unit fact behind it is one this diff already
+  relies on, in `mockHost.ts`'s reason for not fixing #345. The conclusion had
+  simply never been drawn for the budget gate.
+
+  ## The `@civitai/blocks-react` peer floor moves 0.45.0 → 0.47.0
+
+  `internal/mockHost.ts` now VALUE-imports `APP_STORAGE_MAX_BYTES`,
+  `APP_STORAGE_MAX_ROWS` and `APP_STORAGE_MAX_VALUE_BYTES`, which first ship in
+  the `@civitai/app-sdk` minor this changeset publishes. Left at `>=0.45.0`, the
+  range admitted the published `0.46.0` — which has none of them — with no peer
+  warning at all, and `@civitai/blocks-react/testing` then died at module
+  evaluation:
+
+  ```
+  SyntaxError: The requested module '@civitai/app-sdk/blocks'
+    does not provide an export named 'APP_STORAGE_MAX_BYTES'
+  ```
+
+  Measured against the real tarballs: the main entry still resolves (61 exports),
+  so the failure lands on every dev harness and downstream test suite rather than
+  on the block. This is the third time the class has come up (#309, #317), so the
+  floor's derivation — `changeset status --verbose` on this branch, plus the
+  measurement in both directions — is recorded in the package's
+  `comment-peerDependencies`, and `tests/guards/blocks-react-peer-floor.test.mjs`
+  now fails when the declared range admits an app-sdk version that lacks the
+  constants. Note `changeset version` cannot fix this: with
+  `onlyUpdatePeerDependentsWhenOutOfRange` a floor that is too LOW is still
+  satisfied, so it is left alone and ships stale.
+
+  ## 🔴 BREAKING FOR CONSUMERS OF `@civitai/blocks-react/testing` — a `minor`, not a `patch`
+
+  `createMockHost` is published. This changes its **defaults** and adds a
+  **rejection** to its write path, so a downstream block's existing test suite can
+  go green → red with no change on its side:
+
+  - `storage.limitRows` defaults from **1,000,000 to 1,000**, and is now enforced.
+    A test that seeds or writes more than 1,000 distinct keys now gets
+    `{ ok: false }` on the 1,001st INSERT where it previously got `{ ok: true }`.
+  - `storage.quotaBytes` defaults from **50 MB to the per-viewer clamp** (25x
+    smaller). A fixture holding more than the clamp now trips the byte gate.
+  - A snapshot or assertion that pins `getQuota()`'s `limitBytes` / `limitRows`
+    against the old defaults now reads different numbers.
+
+  **That is the intended behaviour** — every one of those suites was green against
+  a simulation 1000x more permissive than production, which is precisely the
+  failure this release exists to end. But it is a behaviour change to a published
+  API's observable output, so it ships as a `minor` rather than a `patch`.
+
+  **To restore the old behaviour in a test that needs it** (e.g. a deliberate
+  high-volume fixture), pass the ceiling explicitly:
+  `createMockHost({ storage: { limitRows: 1_000_000, quotaBytes: 50 * 1024 * 1024 } })`.
+  Prefer fixing the fixture: if the block really writes that many rows, it will
+  fail in production too.
+
+  ## Not changed: the error code
+
+  The issue proposed splitting `PAYLOAD_TOO_LARGE` into a distinct
+  `ROW_LIMIT_EXCEEDED`. Declined, and the reason is measured: the host returns
+  `PAYLOAD_TOO_LARGE` for **all five** rejection sites. Inventing a code
+  production never emits would make the mock diverge from the host in exactly the
+  direction this change exists to close. The docs now say instead that a
+  rejection does **not** imply the value was too big — the row ceiling has nothing
+  to do with the size of the value being written.
+
+  (Separately measured while confirming the above: the host bridge forwards the
+  TRPCError's _message_, not its code, so a block actually receives strings like
+  `per-user row limit exceeded`. Our docs and mock both say `PAYLOAD_TOO_LARGE`.
+  That is a real divergence, it is a different defect from this one, and it is
+  filed as #343 rather than batched here. The contract comment and the mock's
+  docs now scope the "you cannot tell which ceiling tripped" statement to the
+  MOCK and point at #343, so nobody writes a single generic retry arm on the
+  strength of a claim we have already measured to be false of the host.)
+
+- c577f71: `isSignedIn(viewer)` — the sign-in gate, spelled once in the SDK
+
+  **New export:** `isSignedIn` from `@civitai/app-sdk/blocks`, alongside
+  `isModelSlotContext` / `isPageSlotContext`. This is a MINOR (new public value
+  export), not a patch.
+
+  ```ts
+  import { isSignedIn } from "@civitai/app-sdk/blocks";
+  const { viewer } = useBlockContext();
+  return <p>{isSignedIn(viewer) ? "signed in" : "anonymous"}</p>;
+  ```
+
+  **Why a function instead of a documented expression.** The gate was spelled in
+  six places — `ViewerInfo`'s doc, the `blocks-react` README, the block-starter's
+  `AGENTS.md`, two reference `App.tsx` files, and a repo guard — and the right
+  spelling had already changed once (`viewer !== null` → `viewer?.signedIn ===
+true`) as `civitai/civitai#3707` landed. Every one of those sites is COPIED by
+  `tiged` into somebody's app, so each change of mind has to be chased through
+  every copy ever made. One named predicate makes the next change a version bump
+  instead of an archaeology exercise.
+
+  **What it does, and why.** `isSignedIn` answers from PRESENCE
+  (`viewer !== null && viewer !== undefined`), not from the `signedIn` flag.
+  Three measured reasons, all of which point the same way:
+
+  1. `signedIn` is `signedIn?: true` — OPTIONAL, and it must stay optional so the
+     older payload shapes keep compiling. Against a host that omits it,
+     `viewer?.signedIn === true` reads `false` for a viewer who IS signed in.
+  2. Presence is what the trust boundary actually enforces.
+     `isValidBlockInitPayload` pins `viewer` as object-or-null — a compatibility
+     floor compiled into every already-deployed block bundle — and in the same
+     guard, deliberately, does **not** reject a malformed `signedIn`, because
+     failing the whole init over one advisory flag would cost the block its token,
+     context and settings. A gate on `signedIn` is a gate on the one viewer
+     property nothing validates.
+  3. That guard names the future host mistake it refuses to brick for:
+     `signedIn: !!user`. Under it, a flag-reading gate shows a sign-in CTA to
+     someone already signed in; presence still answers correctly.
+
+  The stated reason to prefer `signedIn` — that it outlives the `@deprecated`
+  `id`/`username` — is delivered in full here: `isSignedIn` reads neither field,
+  so nothing written through it changes when they are removed. That was the real
+  requirement; reading `signedIn` was the weaker way to meet it. The field stays
+  on `ViewerInfo` and stays on the wire; it is what this function would switch to
+  if presence ever stopped meaning sign-in.
+
+  **Docs corrected.** `civitai/civitai#3707` merged **2026-08-07**. Seventeen
+  sites across both packages and two reference starters still asserted it was
+  "OPEN and unmerged", including four occurrences inside `@civitai/app-sdk`'s
+  published `dist/blocks/types.d.ts` — i.e. in the editor tooltip an author hovers
+  while deciding which gate to write. Re-verified against `civitai/civitai` `main`
+  (via `gh api`, not a local checkout): `src/components/AppBlocks/projectBlockInit.ts`
+  exports `withSignedInFlag()`, which returns `null` for an anonymous viewer and
+  `{ id, username, signedIn: true }` otherwise, from BOTH host surfaces
+  (`IframeHost` and `PageBlockHost`); that repo's contract test pins
+  `Object.keys(viewer).sort()` as exactly `['id', 'signedIn', 'username']` with
+  the value literally `true`.
+
+  **And the defect that made the whole question live.** All seven starter dev
+  harnesses hand-build their `BlockInitPayload` (they do not go through
+  `createMockHost`, so the existing `DEFAULT_VIEWER` fence could not see them) and
+  every one posted `viewer: { id: 2, username: 'dev-viewer', status: 'active' }`.
+  That is wrong in both directions at once: it OMITS `signedIn`, which production
+  always sends, and it ADDS `status`, which the platform deliberately withholds
+  from third-party iframes (civitai #2521) — so a block reading `status` passes
+  every local run and gets `undefined` in production. All seven now post
+  `{ id, username, signedIn }`.
+
+  Also corrected: the `useBlockContext` JSDoc example rendered
+  `viewer?.username ?? 'anon'` — an identity read on a `@deprecated` field
+  standing in for a presence check.
+
+  Two repo guards (not shipped in either package) hold the class rather than this
+  instance: `tests/guards/civitai-pr-status-claims.test.mjs` fails on any source
+  comment asserting a `civitai/civitai#NNNN` is open, unmerged or abandoned, and
+  `tests/guards/starter-signin-gate.test.mjs` pins every starter harness's viewer
+  key set against `createMockHost`'s `DEFAULT_VIEWER` (a relationship, so neither
+  side can move alone) and requires every starter that reads `viewer` to gate
+  through `isSignedIn` rather than open-code it.
+
+### Patch Changes
+
+- 56b62b4: oauth: guard the token response's `scope`, and wire `fallbackScope` up
+
+  `shapeTokens` coerced `OAuthTokenResponse.scope` with `Number()` and used the
+  result unchecked. Civitai's authorization server sends a decimal bitmask in a
+  JSON string (`"scope": "114689"`), which coerces fine — but [RFC 6749
+  §5.1](https://datatracker.ietf.org/doc/html/rfc6749#section-5.1) defines `scope`
+  as a _space-delimited list_, and `Number('ai:write:budgeted user:read:self')` is
+  `NaN`. `NaN & scope` is `0`, so `hasScope()` returned `false` for every scope
+  and `scopesFromBitmask()` returned `[]` — a user who had just completed consent
+  was told they granted nothing, with no error anywhere. Refs #326.
+
+  A `scope` that is not a whole number in `[0, 2**31-1]` — `NaN`, `Infinity`, a
+  fraction, a negative, a value wide enough to wrap under the signed 32-bit `|`,
+  or one of the wrong _type_ entirely (`Number(['65537'])` is `65537` and
+  `Number(true)` is `1`, i.e. a valid-looking but invented grant) — is now
+  rejected. Rejected means **replaced by `fallbackScope` plus a `console.warn`
+  naming the value received**, not thrown: on the token path an exception turns a
+  degraded-but-working session into a hard login failure, and #326 explicitly
+  left the choice open.
+
+  The same predicate is applied to `fallbackScope` itself. It is typed `number`,
+  which admits `NaN` — `fallbackScope: Number(stored.scope)` against an absent
+  `stored.scope` is an easy way to pass one, and `??` does not catch it — so an
+  unvalidated fallback would put the original `NaN` straight back into
+  `tokens.scope`. An unusable `fallbackScope` is **discarded in favour of `0`**
+  and warned about, on the absent-`scope` path too, which is otherwise silent.
+
+  ### Absent and unreadable are not equally sound
+
+  The two rejected-into-`fallbackScope` paths are documented separately because
+  only one of them is safe by construction:
+
+  - **Absent** `scope` — RFC 6749 §5.1/§6 make it optional _precisely when the
+    grant matches the request_, so the requested scope **is** the granted scope.
+    Silent, and correct.
+  - **Present but unreadable** `scope` — no such guarantee. The server is saying
+    something about the grant that this SDK cannot read, and it may be a
+    _reduced_ grant, so falling back to the requested scope can **over-state**
+    what the user actually granted. Every starter renders
+    `scopesFromBitmask(tokens.scope)` to the user as "Granted scopes", so the
+    over-statement is user-visible. #326 weighed this against `0` and against
+    throwing and chose fallback ("more honest than 0"); that stands, and the
+    `console.warn` is what keeps the trade visible rather than silent.
+
+  ### `fallbackScope` is now reachable, and the starters pass it
+
+  `shapeTokens` has always taken a `fallbackScope` parameter that neither call
+  site passed — dead since the initial commit. It is now an optional
+  `fallbackScope` on `ExchangeCodeOpts` / `RefreshTokenOpts`, and all four
+  starters pass it: the requested scope from the sealed OAuth-state cookie on
+  exchange, the previously granted `tokens.scope` on refresh.
+
+  This matters most on refresh. RFC 6749 §6 lets a server omit `scope` when the
+  refreshed grant is unchanged, and every starter replaces the whole token blob
+  (`{ ...session, tokens: fresh }`), so that omission would be _persisted_ as
+  `0` and lock the user out of features their token still grants. The default
+  with no `fallbackScope` is unchanged (`0`).
+
+  `patch`, not `minor`: the only surface change is a new optional
+  `fallbackScope?: number` on the exported `ExchangeCodeOpts` /
+  `RefreshTokenOpts` (it does appear in the emitted `.d.ts`). Nothing is removed,
+  nothing existing changes type, no call that resolved before rejects now, and
+  the package is pre-1.0. Both failure shapes are **latent** rather than live:
+  Civitai's documented success response carries `scope` for both the
+  authorization-code and refresh grants. They are reachable against a custom
+  `baseUrl` (self-hosted or mock auth hub), and become live the day the server is
+  made RFC-conformant.
+
 ## 0.46.0
 
 ### Minor Changes
