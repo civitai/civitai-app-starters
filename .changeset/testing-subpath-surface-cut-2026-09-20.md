@@ -23,14 +23,28 @@ The in-harness picker overlay (4):
 Other (4):
 `decodeBlockTokenPayload`, `disallowedAccountError`, `mockParentMessage`, `MockHostProvider` (it was an alias of `Harness` — use `Harness`).
 
-All 24 are internal wiring for the mock/live hosts with no documented contract. There is no replacement import path: they are not published. If you depend on one, open an issue rather than reaching into `dist/internal/`.
+Twenty-two of the 24 are internal wiring for the mock/live hosts with no documented contract and no measured consumer anywhere in the fleet. There is no replacement import path: they are not published. If you depend on one, open an issue rather than reaching into `dist/internal/`.
 
-**Known impact:** one app in the fleet uses `openPickerOverlay` as a real, network-backed picker UI (`civitai-app-panorama-360`, `src/orch-host.ts`). It is pinned to `^0.35.2`, so this release cannot reach it without a deliberate bump — but that bump will need the overlay replaced with the host-mediated `useResourcePicker()`/`useCheckpointPicker()` hooks, which is what a real (non-harness) block should be calling anyway.
+### Known impact — the two removals that DO have a fleet consumer
 
-### Stability contract, now written down
+**1. `openPickerOverlay`.** `civitai-app-panorama-360` (`src/orch-host.ts:270`) uses the in-harness overlay as a real, network-backed picker UI in its `orch` mode. Replace it with the host-mediated `useResourcePicker()` / `useCheckpointPicker()` hooks, which is what a non-harness block should be calling anyway.
 
-`./testing` is **public and semver-protected, exactly like `.` and `./ui`.** Three signals used to disagree — the module header and `AGENTS.md` said "test-only, never in production", a starter and five fleet apps imported it, and it ships in the production tarball. The tarball and the consumers win: it is supported API, and removing or narrowing anything on it is a breaking change that ships with a changeset naming the symbol. `test/testingSurface.test.ts` is the ledger that enforces it; `pnpm typecheck:readme` now resolves the subpath against the built `.d.ts`.
+**2. `mockParentMessage`.** `dogfood-app/dogfood-2` (`src/mock-buzz.ts:32`, used at `:124`) imports it from this subpath. It was always a two-line `MessageEvent` constructor; inline it:
 
-### Not fixed by this change
+```ts
+function mockParentMessage(data: unknown, origin: string): MessageEvent {
+  return new MessageEvent('message', { data, origin, source: null });
+}
+```
 
-`./testing` still pulls ~265 KB of `dist` JavaScript (`mockHost`, `liveHost`, `pickerOverlay`, `catalog`, `consent`) that no other entry point reaches, and that still ships in every install. Cutting the export list moved none of it: `createMockHost` and `createLiveHost` are what reach those modules, and both are staying. It is tree-shaken out of application bundles, so it is `node_modules` weight, not bundle weight. Removing it needs the code out of the tarball — a separate package or a second published artifact — not a shorter export list.
+Neither repo is reachable by this release without a deliberate upgrade — no `@civitai/blocks-react` range anywhere in the fleet admits it (on a `0.x` package a caret pins the minor). So nothing breaks on `npm install`; the break happens on a deliberate bump, and this list is what that upgrader reads.
+
+### Stability, stated rather than invented
+
+Three signals used to disagree: the module header and `AGENTS.md` said "test-only, never in production", a starter and a couple of dozen fleet apps imported it, and it ships in the production tarball. The tarball and the consumers win — it is documented, supported API.
+
+That is #334's *first* branch ("add the missing 41 to the docs"), and only that branch. It is **not** marked `@internal`, and it is **not** given a stability promise stronger than the rest of the package: `./testing` is a normal subpath of a `0.x` package, on the same footing as `.` and `./ui`, where **a minor may break it**. What *is* enforced is narrower and mechanical — the exported symbol *set* cannot change silently. `test/testingSurface.test.ts` fails on growth and on shrinkage, and fails again unless the README section it parses is updated to match. The *shapes* of the mock-host option and result types are explicitly not frozen; the ledger asserts names, not shapes.
+
+### Not fixed by this change — and not fixable by any export-list edit
+
+`./testing` still reaches six `dist` modules no other entry point does — 264,991 B of JS plus 75,464 B of `.d.ts` (`mockHost` 118,590, `liveHost` 86,688, `pickerOverlay` 29,508, `catalog` 15,351, `testing` 10,157, `consent` 4,697) — and they still ship in every install. Cutting the export list moved none of it, and **neither would moving a symbol to a different subpath**: `files` is `["dist"]` and `tsconfig` compiles all of `src/**/*`, so the `exports` map has no effect whatsoever on tarball contents. Only deleting the code or publishing a second artifact moves those bytes. It is tree-shaken out of application bundles, so it is `node_modules` weight, not bundle weight.

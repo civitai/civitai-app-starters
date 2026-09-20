@@ -16,24 +16,19 @@
  * │ because `pnpm dev:live` needs it; that adjacency is the hazard.         │
  * └─────────────────────────────────────────────────────────────────────────┘
  *
- * THE WHOLE SURFACE (5 values, 17 types — asserted by
- * `test/testingSurface.test.ts`; see README § "The `/testing` subexport"):
+ * THE WHOLE SURFACE IS ENUMERATED IN EXACTLY ONE PLACE — README § "The
+ * `/testing` subexport". It is NOT restated here, and must not be: a second
+ * copy of the list is what went stale and became #334. `test/testingSurface.
+ * test.ts` holds a ledger, pins it to THIS module (two tests, one for values
+ * and one — via the TypeScript checker — for types), and pins it to that README
+ * section (a third). Growth and shrinkage both fail, and no edit to any one of
+ * the three leaves all of them green.
  *
- *  - `resetTransport` — drop the cached singleton transport between tests.
- *  - `createMockHost` / `readMockHostUrlOptions` — a framework-agnostic fake of
- *    the embedding host (node/jsdom/happy-dom tests AND a dev harness), plus
- *    the reader for its `?viewer/?consent/?fail/…` URL toggles.
- *  - `<Harness>` — a thin React wrapper that installs a mock host for local
- *    dev, with an optional on-screen message log.
- *  - `createLiveHost` — see the box above.
- *  - the option/result types those five need to be NAMEABLE.
- *
- * STABILITY: this subpath is PUBLIC and semver-protected exactly like `.` and
- * `./ui`. Removing or narrowing anything here is a breaking change and needs a
- * changeset naming the symbol. It is not an `@internal` escape hatch — five
- * fleet apps and the block starter import it. What is NOT here (the catalog
- * client, the picker overlay, JWT decoding) is genuinely internal and may move
- * or change without notice.
+ * STABILITY: see that same README section. Short version — this is a normal
+ * published subpath of a `0.x` package, on the same footing as `.` and `./ui`;
+ * a minor may break it. What is enforced is that the symbol SET cannot change
+ * silently. What is NOT here (the catalog client, the picker overlay, JWT
+ * decoding) is genuinely internal and may move or change without notice.
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';

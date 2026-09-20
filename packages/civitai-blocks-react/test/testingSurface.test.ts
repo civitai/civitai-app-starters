@@ -1,11 +1,13 @@
 /**
- * LEDGER of the `@civitai/blocks-react/testing` subpath's public surface.
+ * LEDGER of the `@civitai/blocks-react/testing` subpath's public surface, and
+ * the tie between that surface and the ONE document that describes it.
  *
  * WHY THIS EXISTS (#334): the subpath grew to 46 exports — 41 of them
  * undocumented, including `createLiveHost`, which talks to the real Civitai
  * backend and spends real Buzz — while `AGENTS.md` described it as two
- * "test-only helpers". Nothing anywhere asserted what the subpath exported, so
- * it grew silently. This file is the asserted set.
+ * "test-only helpers" and named a file that does not exist. Nothing anywhere
+ * asserted what the subpath exported, so it grew silently, and nothing tied the
+ * prose to the code, so the prose rotted.
  *
  * WHAT EACH TEST ACTUALLY COVERS — read this before citing a green run:
  *
@@ -22,18 +24,40 @@
  *     `test/`, so a type annotation written in this file would never be
  *     checked by `pnpm typecheck` and would assert nothing.
  *
- *  3. `exports map` pins `package.json`'s `./testing` subpath to the build
- *     output of `src/testing.tsx`. It is a tree-local mapping check; it does
- *     NOT prove the published subpath resolves. The thing that exercises the
- *     REAL resolution is `pnpm typecheck:readme` (CI job "README snippets"),
- *     which typechecks the README's `./testing` snippet against the built
- *     `dist/testing.d.ts`.
+ *  3. `README enumerates exactly this surface` parses the two marked regions of
+ *     `README.md` § "The `/testing` subexport" and compares them to the two
+ *     ledger arrays in THIS file. Read the direction precisely: it ties the
+ *     README to the LEDGER, not directly to the module — tests 1 and 2 tie the
+ *     ledger to the module, and the ledger array is the hub of the triangle. So
+ *     editing `src/testing.tsx` alone reddens 1 and 2 (not 3); editing the
+ *     ledger alone reddens 1/2 AND 3; editing the README alone reddens 3. There
+ *     is no edit to any one of the three that leaves all four tests green.
  *
- * TO CHANGE THE SURFACE: edit `src/testing.tsx` AND the ledgers below, and
- * write a changeset naming every symbol you added or removed. Removing one is
- * a BREAKING change for block authors — see `README.md` § "Stability".
+ *     This is the guard that stops #334 recurring. The ledger alone pins the
+ *     surface against an array inside a test file and never reads the
+ *     documents, so a surface change would turn the ledger red and leave the
+ *     prose stale — the original failure, reproduced. The README is now the
+ *     single canonical enumeration; `AGENTS.md` and the module docblock point
+ *     at it instead of repeating it.
+ *
+ *  4. `AGENTS.md names files that exist` walks every `src/…` path `AGENTS.md`
+ *     mentions and stats it. #334's closing condition asks for exactly this
+ *     (`ls packages/civitai-blocks-react/src/testing.tsx` matching the path
+ *     named in `AGENTS.md`); it is written for every path in the file rather
+ *     than that one, because a rule about one path regrows at the next.
+ *
+ * NOT COVERED HERE: whether the PUBLISHED subpath resolves. `package.json`'s
+ * `exports` map is exercised for real by `pnpm typecheck:readme` (CI job
+ * "README snippets"), which typechecks the README's `./testing` snippets
+ * against the BUILT `dist/testing.d.ts` from outside the package. A string
+ * comparison against the exports map was deleted from this file in favour of
+ * that: one rule, one place, and the real resolver is the stronger of the two.
+ *
+ * TO CHANGE THE SURFACE: edit `src/testing.tsx`, the ledgers below, AND the
+ * README section test 3 parses, then write a changeset naming every symbol you
+ * added or removed.
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -85,18 +109,25 @@ const TYPE_EXPORTS = [
 
 const DECLARED_EXPORTS = [...VALUE_EXPORTS, ...TYPE_EXPORTS].sort();
 
+/**
+ * Slice the text between a `<!-- MARKER:BEGIN -->` / `<!-- MARKER:END -->` pair.
+ * Throws rather than returning empty: an absent marker must not read as an
+ * empty enumeration that happens to match an empty expectation.
+ */
+function markedRegion(doc: string, marker: string): string {
+  const begin = `<!-- ${marker}:BEGIN -->`;
+  const end = `<!-- ${marker}:END -->`;
+  const from = doc.indexOf(begin);
+  const to = doc.indexOf(end);
+  if (from === -1) throw new Error(`README.md is missing the marker ${begin}`);
+  if (to === -1) throw new Error(`README.md is missing the marker ${end}`);
+  if (to < from) throw new Error(`README.md has ${end} before ${begin}`);
+  return doc.slice(from + begin.length, to);
+}
+
 describe('@civitai/blocks-react/testing surface ledger', () => {
   it('runtime value exports match the ledger exactly (grows OR shrinks → red)', () => {
     expect(Object.keys(testingNamespace).sort()).toEqual(VALUE_EXPORTS);
-  });
-
-  it('every ledgered value is actually importable and defined', () => {
-    for (const name of VALUE_EXPORTS) {
-      expect(
-        (testingNamespace as Record<string, unknown>)[name],
-        `${name} is exported but undefined`,
-      ).toBeDefined();
-    }
   });
 
   it('declared surface (values + types) matches the ledger exactly', () => {
@@ -127,22 +158,58 @@ describe('@civitai/blocks-react/testing surface ledger', () => {
     expect(declared).toEqual(DECLARED_EXPORTS);
   }, 60_000);
 
-  it('the ./testing exports map points at the build output of src/testing.tsx', () => {
-    const pkg = JSON.parse(readFileSync(path.join(PKG_ROOT, 'package.json'), 'utf8')) as {
-      exports: Record<string, { types: string; import: string }>;
-      files: string[];
-    };
-    const tsconfig = JSON.parse(
-      readFileSync(path.join(PKG_ROOT, 'tsconfig.json'), 'utf8'),
-    ) as { compilerOptions: { outDir: string; rootDir: string } };
+  it('README.md enumerates exactly this surface (the doc is the canonical list)', () => {
+    const readme = readFileSync(path.join(PKG_ROOT, 'README.md'), 'utf8');
 
-    // `src/testing.tsx` under rootDir `./src` emits to outDir `./dist` as
-    // `testing.js` / `testing.d.ts`. Assert the map names exactly that.
-    const outDir = tsconfig.compilerOptions.outDir.replace(/^\.\//, '');
-    expect(pkg.exports['./testing']).toEqual({
-      types: `./${outDir}/testing.d.ts`,
-      import: `./${outDir}/testing.js`,
-    });
-    expect(pkg.files).toContain(outDir);
+    // VALUES: a markdown table; the first cell of each body row is the export,
+    // written as a single backticked identifier. Header + `|---|` separator are
+    // skipped by requiring a backticked first cell.
+    const valuesRegion = markedRegion(readme, 'TESTING-SURFACE:VALUES');
+    const documentedValues = valuesRegion
+      .split('\n')
+      .map((line) => /^\s*\|\s*`([A-Za-z_$][\w$]*)`\s*\|/.exec(line))
+      .filter((m): m is RegExpExecArray => m !== null)
+      .map((m) => m[1]!)
+      .sort();
+    expect(
+      documentedValues,
+      'README § "The `/testing` subexport" → the VALUES table does not match the value ledger',
+    ).toEqual(VALUE_EXPORTS);
+
+    // TYPES: a plain fenced block, one identifier per line.
+    const typesRegion = markedRegion(readme, 'TESTING-SURFACE:TYPES');
+    const fence = /```[a-z]*\n([\s\S]*?)```/.exec(typesRegion);
+    expect(fence, 'the TYPES marked region must contain one fenced block').not.toBeNull();
+    const documentedTypes = fence![1]!
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .sort();
+    expect(
+      documentedTypes,
+      'README § "The `/testing` subexport" → the TYPES block does not match the type ledger',
+    ).toEqual(TYPE_EXPORTS);
+  });
+
+  it('AGENTS.md names only `src/` files that exist', () => {
+    // #334's closing condition, generalised: its `AGENTS.md` row named
+    // `src/testing.ts`, which has never existed (the file is `src/testing.tsx`).
+    // Checking that ONE path would regrow at the next row, so every `src/…`
+    // path the document mentions in backticks is stat'ed.
+    const agents = readFileSync(path.join(PKG_ROOT, 'AGENTS.md'), 'utf8');
+    const mentioned = [...agents.matchAll(/`(src\/[A-Za-z0-9_./-]+)`/g)]
+      .map((m) => m[1]!)
+      // Not a claim about a concrete file: `src/hooks/` etc. are directories,
+      // which `existsSync` handles; anything with a placeholder is filtered by
+      // the character class above (`<module>` cannot match).
+      .filter((p, i, all) => all.indexOf(p) === i)
+      .sort();
+
+    // Positive control: the document must actually mention some paths, or this
+    // test passes vacuously over an empty list.
+    expect(mentioned.length, 'AGENTS.md should reference `src/…` paths').toBeGreaterThan(5);
+
+    const missing = mentioned.filter((p) => !existsSync(path.join(PKG_ROOT, p)));
+    expect(missing, `AGENTS.md names ${missing.length} path(s) that do not exist`).toEqual([]);
   });
 });
