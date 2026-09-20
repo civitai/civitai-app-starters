@@ -21,6 +21,15 @@ interface ScopeFallbackOpts {
    * (`REQUESTED_SCOPES` on exchange, the previously granted `tokens.scope` on
    * refresh). Without it, an absent or unusable `scope` resolves to `0`, i.e.
    * "no permissions".
+   *
+   * Must itself be a whole number in `[0, 2**31-1]`. `NaN` (the result of
+   * `Number(undefined)` — easy to pass by accident from a half-populated
+   * store), a negative, a fraction and anything past the ceiling are
+   * **discarded in favour of `0`**, with a warning: an unchecked fallback is
+   * the same silent-`NaN` defect this guard exists to close.
+   *
+   * On a *present but unreadable* `scope` this value can **over-state** the
+   * grant — see {@link parseScope}. The over-statement is logged.
    */
   fallbackScope?: number;
 }
@@ -89,6 +98,47 @@ async function postForm(
 const MAX_SCOPE_BITMASK = 2 ** 31 - 1;
 
 /**
+ * The one predicate for "is this a bitmask we can safely `&`/`|`". Both the
+ * wire value and the caller-supplied `fallback` go through it — a fallback
+ * checked by a *different* rule (or by none) is how #326 comes back through
+ * the very option that was added to prevent it.
+ */
+function isUsableBitmask(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0 && value <= MAX_SCOPE_BITMASK;
+}
+
+/**
+ * Resolve the caller's `fallback` into a bitmask that is safe to return.
+ *
+ * `fallback` is typed `number`, which admits `NaN`, `Infinity`, negatives and
+ * values past the ceiling — and `?? ` does **not** catch any of them. A caller
+ * writing `fallbackScope: Number(stored.scope)` against an absent
+ * `stored.scope` passes `NaN`, so an unvalidated fallback puts `NaN` straight
+ * into `tokens.scope` and every `hasScope()` answers `false`: #326 verbatim.
+ *
+ * An unusable fallback is therefore **discarded in favour of `0`**, with its
+ * own warning. `0` is the same "no permissions" answer a caller who passed no
+ * fallback at all gets; it is wrong in the safe direction (features stay
+ * disabled) where `NaN` is wrong in a direction nothing downstream can detect,
+ * and an over-ceiling value is wrong in the *unsafe* direction once `|` wraps
+ * it negative. The warning fires on the absent-scope path too, which is
+ * otherwise silent — the caller's own argument is a caller bug, not a server
+ * quirk, so it is worth saying out loud.
+ */
+function usableFallback(fallback: number | undefined): number {
+  if (fallback === undefined) return 0;
+  if (!isUsableBitmask(fallback)) {
+    console.warn(
+      `[@civitai/app-sdk] \`fallbackScope\` is not a usable bitmask: ${String(fallback)}. ` +
+        `Expected a whole number in [0, ${MAX_SCOPE_BITMASK}] (e.g. 114689). ` +
+        `Discarding it and using 0 ("no permissions") instead.`,
+    );
+    return 0;
+  }
+  return fallback;
+}
+
+/**
  * Coerce a token response's `scope` into a usable bitmask.
  *
  * Civitai sends a decimal bitmask as a JSON string (`"scope": "114689"` — see
@@ -98,7 +148,14 @@ const MAX_SCOPE_BITMASK = 2 ** 31 - 1;
  * `Number('ai:write:budgeted user:read:self')` is `NaN`. `NaN & anything` is
  * `0`, so every `hasScope()` answered `false` and a user who had just consented
  * was told they granted nothing, with no error anywhere (#326). Anything that
- * is not a whole number in `[0, 2**31-1]` is therefore rejected.
+ * is not a whole number in `[0, 2**31-1]` is therefore rejected — including the
+ * `fallback`, see {@link usableFallback}.
+ *
+ * The `typeof` check before `Number()` is load-bearing on its own: `Number()`
+ * coerces a one-element array and a boolean into *valid-looking* bitmasks
+ * (`Number(['65537'])` is `65537`, `Number(true)` is `1`, i.e.
+ * `TokenScope.UserRead`), so without it a wrong-typed `scope` becomes a real,
+ * wrong grant rather than a rejected one.
  *
  * **Rejected means fall back and warn, not throw.** #326 left that open
  * ("ignored *or* an error — say which"). A throw here turns a
@@ -107,22 +164,35 @@ const MAX_SCOPE_BITMASK = 2 ** 31 - 1;
  * — a better answer than either `0` or an abort. The warning names the value
  * received so an unexpected wire format stays diagnosable.
  *
- * An **absent** `scope` (`undefined`, `null`, or whitespace-only) is not a
- * fault at all — RFC 6749 §5.1/§6 make it optional when the grant matches the
- * request — so it resolves to `fallback` silently.
+ * The two rejected-into-`fallback` paths are **not** equally sound, and the
+ * difference is invisible at this seam:
+ *
+ * - An **absent** `scope` (`undefined`, `null`, or whitespace-only) is not a
+ *   fault at all — RFC 6749 §5.1/§6 make it optional precisely when the grant
+ *   *matches the request*, so the requested scope IS the granted scope and
+ *   `fallback` is exactly right. This path is silent.
+ * - A **present but unreadable** `scope` carries no such guarantee. The server
+ *   is saying something about the grant that this SDK cannot read, and it may
+ *   be a *reduced* grant. Falling back to the requested scope can therefore
+ *   **over-state** what the user granted — every starter renders
+ *   `scopesFromBitmask(tokens.scope)` to the user as "Granted scopes". #326
+ *   weighed that against `0` and against throwing and chose fallback ("more
+ *   honest than 0"), which is why this path warns: the over-statement is a
+ *   known, logged trade, not an invariant.
  */
 function parseScope(raw: unknown, fallback?: number): number {
-  if (raw === undefined || raw === null) return fallback ?? 0;
-  if (typeof raw === 'string' && raw.trim() === '') return fallback ?? 0;
+  if (raw === undefined || raw === null) return usableFallback(fallback);
+  if (typeof raw === 'string' && raw.trim() === '') return usableFallback(fallback);
 
   const value = typeof raw === 'number' || typeof raw === 'string' ? Number(raw) : NaN;
-  if (!Number.isSafeInteger(value) || value < 0 || value > MAX_SCOPE_BITMASK) {
+  if (!isUsableBitmask(value)) {
+    const resolved = usableFallback(fallback);
     console.warn(
       `[@civitai/app-sdk] OAuth token response has an unusable \`scope\`: ${JSON.stringify(raw)}. ` +
         `Expected a decimal bitmask in [0, ${MAX_SCOPE_BITMASK}] (e.g. "114689"). ` +
-        `Falling back to ${fallback ?? 0}.`,
+        `Falling back to ${resolved}.`,
     );
-    return fallback ?? 0;
+    return resolved;
   }
   return value;
 }

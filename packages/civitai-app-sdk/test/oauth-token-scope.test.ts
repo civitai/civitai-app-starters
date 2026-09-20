@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { exchangeCode, refreshToken } from '../src/oauth/token.js';
+import { TokenScope } from '../src/scopes/index.js';
 
 /**
  * Coverage for `shapeTokens`' handling of `OAuthTokenResponse.scope` (#326).
@@ -69,6 +70,20 @@ async function exchangeWithScope(scope: unknown, fallbackScope?: number) {
   });
 }
 
+async function refreshWithScope(scope: unknown, fallbackScope?: number) {
+  fetchMock.mockResolvedValueOnce(jsonResponse(tokenBody(scope)));
+  return refreshToken({
+    clientId: 'cid',
+    refreshToken: 'rt',
+    ...(fallbackScope === undefined ? {} : { fallbackScope }),
+  });
+}
+
+/** Every warning emitted so far, joined — order-independent assertions. */
+function warnMessages(): string[] {
+  return warnSpy.mock.calls.map((call) => String(call[0]));
+}
+
 describe('shapeTokens scope parsing (LB-E / #326)', () => {
   // ---- the #326 shape: RFC 6749 §5.1 space-delimited names --------------
   // The literal worked example from issue #326. `Number()` of it is NaN, and
@@ -133,9 +148,85 @@ describe('shapeTokens scope parsing (LB-E / #326)', () => {
     expect(tokens.scope).toBe(33);
   });
 
+  // ---- the `typeof` guard, reached by inputs `Number()` would ACCEPT -----
+  // `{ granted: [...] }` below is rejected by `Number()` itself (NaN), so it
+  // cannot tell whether the `typeof` guard ran. These two can: `Number()` is
+  // happy to coerce a one-element array and a boolean into a *valid-looking*
+  // bitmask, so only the guard stops them.
+
+  it('rejects an array scope that Number() would coerce to a valid bitmask', async () => {
+    // `Number(['65537'])` is 65537 — a legal bitmask, reached through a shape
+    // no token response should ever carry.
+    const tokens = await exchangeWithScope(['65537'], 33);
+    expect(tokens.scope).toBe(33);
+    expect(tokens.scope).not.toBe(65537);
+  });
+
+  it('rejects a boolean scope rather than reading `true` as UserRead', async () => {
+    // `Number(true)` is 1, which is exactly `TokenScope.UserRead` — a boolean
+    // would silently become a real, wrong grant.
+    const tokens = await exchangeWithScope(true, 33);
+    expect(tokens.scope).toBe(33);
+    expect(tokens.scope).not.toBe(TokenScope.UserRead);
+  });
+
   it('rejects a scope of the wrong type entirely', async () => {
     const tokens = await exchangeWithScope({ granted: ['UserRead'] }, 33);
     expect(tokens.scope).toBe(33);
+  });
+
+  // ---- the fallback is validated with the same predicate as the scope ----
+  // Without this, `fallbackScope` reintroduces #326 verbatim through the very
+  // option this change added: `??` does not catch `NaN`, so
+  // `fallbackScope: Number(stored.scope)` on an absent `stored.scope` put a
+  // `NaN` straight into `tokens.scope` — with no warning at all on the
+  // omitted-scope branch, which is documented as "not a fault".
+
+  it('discards a NaN fallbackScope instead of returning NaN when scope is omitted', async () => {
+    const tokens = await refreshWithScope(undefined, Number.NaN);
+    expect(Number.isNaN(tokens.scope)).toBe(false);
+    expect(tokens.scope).toBe(0);
+  });
+
+  it('discards a NaN fallbackScope instead of returning NaN when scope is unusable', async () => {
+    const tokens = await refreshWithScope(RFC_SCOPE, Number.NaN);
+    expect(Number.isNaN(tokens.scope)).toBe(false);
+    expect(tokens.scope).toBe(0);
+  });
+
+  it('discards an over-ceiling fallbackScope, which would wrap under signed |', async () => {
+    const tokens = await exchangeWithScope(undefined, 2 ** 32);
+    expect(tokens.scope).toBe(0);
+  });
+
+  it('discards a negative fallbackScope', async () => {
+    const tokens = await exchangeWithScope(undefined, -7);
+    expect(tokens.scope).toBe(0);
+  });
+
+  it('discards a fractional fallbackScope', async () => {
+    const tokens = await exchangeWithScope(undefined, 6.25);
+    expect(tokens.scope).toBe(0);
+  });
+
+  it('warns, naming the unusable fallbackScope, on the otherwise-silent absent-scope path', async () => {
+    await exchangeWithScope(undefined, 2 ** 32);
+    const messages = warnMessages();
+    expect(messages.some((m) => m.includes('fallbackScope') && m.includes('4294967296'))).toBe(
+      true,
+    );
+  });
+
+  it('keeps the scope warning distinct from the fallback warning when both are unusable', async () => {
+    await exchangeWithScope(RFC_SCOPE, Number.NaN);
+    const messages = warnMessages();
+    expect(messages).toHaveLength(2);
+    expect(messages.some((m) => m.includes('fallbackScope') && m.includes('NaN'))).toBe(true);
+    // The scope warning must still name the value received AND the bitmask
+    // actually used, which is now 0 rather than the discarded NaN.
+    expect(messages.some((m) => m.includes(RFC_SCOPE) && m.includes('Falling back to 0'))).toBe(
+      true,
+    );
   });
 
   // ---- absent scope: not a fault; this is what fallbackScope is for -----
@@ -195,5 +286,16 @@ describe('shapeTokens scope parsing (LB-E / #326)', () => {
   it('[invariant guard] yields 0 when scope is omitted and no fallbackScope was supplied', async () => {
     const tokens = await exchangeWithScope(undefined);
     expect(tokens.scope).toBe(0);
+  });
+
+  // The ceiling is `<=`, not `<`: 2**31-1 is the widest bitmask that survives
+  // the signed 32-bit `|`/`&` the scope helpers use, and it must be ACCEPTED.
+  // Green at `66f9e09` (the old code returned a JSON number untouched), so it
+  // is not regression coverage — but it is the only case that pins the
+  // boundary, and it is what kills a `value > MAX` -> `>=` mutant.
+  it('[invariant guard] accepts the ceiling value itself, 2**31-1', async () => {
+    const tokens = await exchangeWithScope(2 ** 31 - 1, 33);
+    expect(tokens.scope).toBe(2147483647);
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 });
