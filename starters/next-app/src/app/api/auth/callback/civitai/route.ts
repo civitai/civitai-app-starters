@@ -23,6 +23,9 @@ export async function GET(req: NextRequest) {
       redirectUri: REDIRECT_URI,
       code,
       codeVerifier: expected.verifier,
+      // RFC 6749 §5.1 lets the server omit `scope` when the grant matches the
+      // request. Without this the session would record "no permissions".
+      fallbackScope: expected.scope,
     });
     await setSession({ tokens });
   } catch (err) {

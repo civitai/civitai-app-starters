@@ -175,6 +175,9 @@ app.get('/api/auth/callback/civitai', async (c) => {
       redirectUri: REDIRECT_URI,
       code,
       codeVerifier: expected.verifier,
+      // RFC 6749 §5.1 lets the server omit `scope` when the grant matches the
+      // request. Without this the session would record "no permissions".
+      fallbackScope: expected.scope,
     });
     writeSession(c, { tokens }, production);
   } catch (err) {

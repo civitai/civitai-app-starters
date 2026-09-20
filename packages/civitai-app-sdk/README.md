@@ -295,6 +295,7 @@ const tokens = await exchangeCode({
   redirectUri: 'https://your-app.com/api/auth/callback/civitai',
   code: codeFromQuery,
   codeVerifier: verifierFromSealedCookie,
+  fallbackScope: scope, // used if the response's `scope` is absent or unreadable
 });
 
 // 3. Store tokens in an encrypted httpOnly cookie
@@ -315,6 +316,46 @@ console.log(`Hi ${me.username}`);
 > `fetchBuzzAccount` (buzz tRPC) default to `https://civitai.com`. Pass an
 > explicit `baseUrl` to each call only when targeting a local / self-hosted
 > instance (e.g. a dev auth hub vs a dev main app).
+
+> **`fallbackScope`, and what happens to a `scope` we cannot read.** Civitai's
+> token endpoint returns `scope` as a decimal bitmask in a JSON *string*
+> (`"scope": "114689"` — see the
+> [endpoint reference](https://developer.civitai.com/site/oauth/endpoints)),
+> matching the decimal `scope` `buildAuthorizeUrl` puts on the authorize URL,
+> and that is what `exchangeCode` / `refreshToken` read. Anything that is not a
+> whole number in `[0, 2**31-1]` is **not** used: `Number()` of
+> [RFC 6749 §5.1](https://datatracker.ietf.org/doc/html/rfc6749#section-5.1)'s
+> space-delimited form is `NaN`, and `NaN & anything` is `0`, so `hasScope()`
+> would answer `false` for every scope and tell a user who just consented that
+> they granted nothing. A wrong *type* is rejected on the same grounds:
+> `Number(['65537'])` is `65537` and `Number(true)` is `1` (i.e.
+> `TokenScope.UserRead`), so an un-guarded coercion would invent a
+> valid-looking grant rather than fail. Such a value is replaced by
+> `fallbackScope` and a warning naming the value received — not an exception,
+> which on the token path would turn a degraded-but-working session into a hard
+> login failure.
+>
+> Pass `fallbackScope: REQUESTED_SCOPES` on exchange and
+> `fallbackScope: tokens.scope` on refresh — without it, either case resolves to
+> `0`, and a caller that persists the whole refreshed token blob would lock the
+> user out of features their token still grants. `fallbackScope` must itself be
+> a whole number in `[0, 2**31-1]`; `NaN` (what `Number(stored.scope)` gives you
+> on a half-populated store — and `??` does not catch it), a negative, a
+> fraction or an over-ceiling value is **discarded in favour of `0`** with its
+> own warning, rather than being handed back as the scope.
+>
+> **The two fallback paths are not equally sound.** An **omitted** `scope` is
+> not a fault at all: RFC 6749 §5.1/§6 make it optional *precisely when the
+> grant matches the request*, so the requested scope is the granted scope and
+> `fallbackScope` is exactly right — that path is silent. A **present but
+> unreadable** `scope` carries no such guarantee: the server is describing the
+> grant in terms this SDK cannot read, and it may be a *reduced* grant, so
+> falling back to the requested scope can **over-state** what the user granted.
+> All four starters render `scopesFromBitmask(tokens.scope)` to the user as
+> "Granted scopes", so the over-statement is user-visible. It is a deliberate
+> trade (`0` and a thrown error are both worse here), which is why this path
+> always warns — if you gate anything security-relevant on `tokens.scope`,
+> treat that warning as "re-authenticate", not as noise.
 
 ```ts
 
