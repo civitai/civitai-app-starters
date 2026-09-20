@@ -343,8 +343,15 @@ export interface MockStorageScenario {
   seed?: Record<string, unknown>;
   /**
    * Simulated per-(app, viewer) byte quota. A `set` that would cross it
-   * resolves `{ ok: false, error: 'PAYLOAD_TOO_LARGE' }` (the host doesn't
-   * leak which cap tripped). Defaults to `APP_STORAGE_MAX_BYTES`.
+   * resolves `{ ok: false, error: 'PAYLOAD_TOO_LARGE' }`. Defaults to
+   * `APP_STORAGE_MAX_BYTES`.
+   *
+   * THIS MOCK answers the same string for all three ceilings, so under
+   * `dev:mock` a rejection does not tell you which one tripped. That is a
+   * property of the mock, not a documented property of the host — the real
+   * host is believed to send a distinct per-gate message. See
+   * civitai/civitai-app-starters#343; do not write a block that relies on
+   * either behaviour until it is settled.
    */
   quotaBytes?: number;
   /**
@@ -355,9 +362,11 @@ export interface MockStorageScenario {
   valueCapBytes?: number;
   /**
    * Simulated per-(app, viewer) row ceiling. A `set` that would ADD a row past
-   * it resolves `{ ok: false, error: 'PAYLOAD_TOO_LARGE' }`; overwriting an
-   * existing key adds no row and is never refused by this gate. Defaults to
-   * `APP_STORAGE_MAX_ROWS`.
+   * it resolves `{ ok: false, error: 'PAYLOAD_TOO_LARGE' }` — the same string
+   * the byte gates use, so this mock does not distinguish them (see
+   * {@link MockStorageScenario.quotaBytes} and
+   * civitai/civitai-app-starters#343). Overwriting an existing key adds no row
+   * and is never refused by this gate. Defaults to `APP_STORAGE_MAX_ROWS`.
    *
    * 🔴 THIS WAS REPORTED BUT NOT ENFORCED. `getQuota` returned it from the
    * start while the write path checked only `quotaBytes`, so a row-limit
@@ -2467,6 +2476,17 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               return;
             }
             // Quota check: projected usage after this upsert.
+            //
+            // ⚠️ KNOWN DIVERGENCE FROM THE HOST, tracked as
+            // civitai/civitai-app-starters#345. The host's byte gates are
+            // `!isNonIncreasing`-guarded: a write whose stored bytes do not
+            // increase skips them even when the store is already over quota,
+            // which is how a block with no delete affordance gets back under
+            // the byte cap. This gate is unconditional, so `dev:mock` refuses
+            // a shrinking overwrite production would land. Deliberately NOT
+            // fixed here — the host compares in the STORED unit and this mock
+            // only has the WIRE unit, so the mirrored gate needs its own
+            // reasoning and its own regression test.
             const existing = store.get(key);
             const existingBytes = existing ? jsonByteSize(existing.value) + key.length : 0;
             const projected = usedBytes() - existingBytes + sizeBytes + key.length;

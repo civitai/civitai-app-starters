@@ -1,12 +1,24 @@
 /**
- * The App Storage ceilings the host enforces — **the only place in this
- * repository these numbers are written down**.
+ * The App Storage ceilings the host enforces — **the only RUNTIME or
+ * DOCUMENTATION site in this repository that spells these numbers**.
  *
  * Every doc site, the mock host, the live dev host and the starter harnesses
  * reference these constants. That is the point of the module: seven
  * hand-copied literals is how the old figures came to agree with each other
  * and disagree with the host by 25x on bytes and 1000x on rows, with nothing
  * in any build, test or type-check able to notice.
+ *
+ * 🔴 **"Only site" is a claim about what is ENFORCED, and the enforcement is
+ * narrower than the repo.** `tests/guards/app-storage-quota-literals.test.mjs`
+ * bans the OLD figures across the App Storage surface — `src/blocks/` here,
+ * all of `packages/civitai-blocks-react`, `starters/examples/kv-storage`, plus
+ * `packages/civitai-app-sdk/README.md` and `starters/examples/README.md` — and
+ * pins the derivation at each runtime site. It does NOT scan, and the rule
+ * does not apply to: the guard itself (it spells every figure, as test data),
+ * `CHANGELOG.md` and `.changeset/*.md` (history, which must not be rewritten to
+ * satisfy a guard), `scripts/`, `tests/`, `claudedocs/`, the root README, or
+ * any package outside that surface. If you are re-deriving after a host move,
+ * do not assume those paths are empty — grep them.
  *
  * ## Provenance — measured, not assumed
  *

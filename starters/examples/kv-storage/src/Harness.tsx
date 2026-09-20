@@ -100,6 +100,11 @@ export function Harness({ children }: { children: ReactNode }) {
           // overwrite, or an app with no delete affordance would be stuck with
           // no way back under the cap. It used to be missing entirely — the
           // row limit was reported by getQuota and enforced by nothing.
+          //
+          // ⚠️ The BYTE gate is NOT the host's shape: the host exempts a write
+          // whose stored bytes do not increase, and this one does not (nor
+          // does it subtract the bytes of the row being replaced). Tracked as
+          // civitai/civitai-app-starters#345.
           const wouldInsert = !store.has(key);
           if (
             bytes > PER_VALUE_CAP ||

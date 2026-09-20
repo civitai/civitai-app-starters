@@ -168,18 +168,23 @@ export function App() {
  * `snapshot.error`, and the same reason not to render it. These lines used to
  * put it straight into the status line.
  *
- * The one distinction worth surfacing is expressed as OUR copy: the host answers
- * `PAYLOAD_TOO_LARGE` for both the per-value cap and the total quota without
- * saying which tripped, so the message names both possibilities rather than
- * guessing.
+ * The one distinction worth surfacing is expressed as OUR copy: the MOCK answers
+ * `PAYLOAD_TOO_LARGE` for the per-value cap, the byte budget and the row budget
+ * alike, so under `dev:mock` they are not distinguishable and the message names
+ * every possibility rather than guessing. The real host forwards its own
+ * per-gate message instead, so in production the string below may not even
+ * match — tracked in civitai/civitai-app-starters#343, which is also where the
+ * decision about what to branch on belongs. Naming all three is the copy that
+ * stays correct either way.
  */
 function storageFailureMessage(err: unknown, attempted: string): string {
   const raw = err instanceof Error ? err.message : String(err);
   console.warn(`[kv-storage] could not ${attempted}:`, raw);
-  // ONE branch, deliberately: the host answers `PAYLOAD_TOO_LARGE` for BOTH the
-  // per-value cap and the total quota without saying which tripped, so there is
-  // no second string to select and the copy names both possibilities. (An
-  // additional `/quota/` arm would be dead code — the docblock above says why.)
+  // ONE branch, deliberately: the MOCK answers `PAYLOAD_TOO_LARGE` for the
+  // per-value cap, the byte budget and the row budget alike, so there is no
+  // second string to select and the copy names every possibility. (An
+  // additional `/quota/` arm would be dead code — the docblock above says why,
+  // and #343 says why a host-string arm cannot be written yet either.)
   if (/payload_too_large/i.test(raw)) {
     return 'That note is too large, or your storage is full. Try a shorter note or delete one.';
   }

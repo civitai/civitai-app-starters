@@ -1,6 +1,6 @@
 ---
 '@civitai/app-sdk': minor
-'@civitai/blocks-react': patch
+'@civitai/blocks-react': minor
 ---
 
 App Storage: the real ceilings, written once, and the mock now ENFORCES the row limit
@@ -47,8 +47,11 @@ unnoticed:
 
 New: `APP_STORAGE_MAX_VALUE_BYTES`, `APP_STORAGE_MAX_BYTES` and
 `APP_STORAGE_MAX_ROWS`, exported from `@civitai/app-sdk/blocks`. Their
-definition file is the only place the figures appear in this repo and carries
-their provenance plus the `gh api` one-liner that re-derives them. Nine files
+definition file is the only place any **runtime or documentation** site spells
+the figures, and it carries their provenance plus the `gh api` one-liner that
+re-derives them. (Not literally the only place in the repo: this changeset, the
+guard that enforces the rule, and future CHANGELOGs all quote them, as history
+and as test data must.) Nine files
 (the SDK message contract, `useAppStorage`, both dev hosts, two READMEs, the
 `kv-storage` example and its harness, and a test) now reference the constants —
 29 hand-copied literals removed.
@@ -57,7 +60,7 @@ The app-wide umbrella is deliberately **not** exported and its value
 deliberately not written down: nothing reports usage against it, so a constant
 for it could only be used to build a UI that lies.
 
-## The mock now fails where production fails
+## The mock now fails on the row limit, where it used to pass
 
 `createMockHost`'s storage defaults ARE the production ceilings, and — the part
 that turns a docs bug into a shipped-block bug — the write path now **enforces
@@ -69,6 +72,37 @@ The gate is `isInsert`-guarded, matching the host: a store sitting at the
 ceiling must still accept an **overwrite**, or an app whose UI has no delete
 affordance would be permanently stuck with no way back under the cap (only the
 owning viewer may delete their own rows).
+
+This closes one gap; it does not make the mock gate-for-gate identical to the
+host, and the docs no longer claim it is. Two divergences are known and filed:
+the error string a rejection carries (#343), and the byte gate — the host's is
+`!isNonIncreasing`-guarded, the mock's is not, so `dev:mock` still refuses a
+shrinking overwrite production admits (#345).
+
+## 🔴 BREAKING FOR CONSUMERS OF `@civitai/blocks-react/testing` — a `minor`, not a `patch`
+
+`createMockHost` is published. This changes its **defaults** and adds a
+**rejection** to its write path, so a downstream block's existing test suite can
+go green → red with no change on its side:
+
+- `storage.limitRows` defaults from **1,000,000 to 1,000**, and is now enforced.
+  A test that seeds or writes more than 1,000 distinct keys now gets
+  `{ ok: false }` on the 1,001st INSERT where it previously got `{ ok: true }`.
+- `storage.quotaBytes` defaults from **50 MB to the per-viewer clamp** (25x
+  smaller). A fixture holding more than the clamp now trips the byte gate.
+- A snapshot or assertion that pins `getQuota()`'s `limitBytes` / `limitRows`
+  against the old defaults now reads different numbers.
+
+**That is the intended behaviour** — every one of those suites was green against
+a simulation 1000x more permissive than production, which is precisely the
+failure this release exists to end. But it is a behaviour change to a published
+API's observable output, so it ships as a `minor` rather than a `patch`.
+
+**To restore the old behaviour in a test that needs it** (e.g. a deliberate
+high-volume fixture), pass the ceiling explicitly:
+`createMockHost({ storage: { limitRows: 1_000_000, quotaBytes: 50 * 1024 * 1024 } })`.
+Prefer fixing the fixture: if the block really writes that many rows, it will
+fail in production too.
 
 ## Not changed: the error code
 
@@ -84,4 +118,7 @@ to do with the size of the value being written.
 TRPCError's *message*, not its code, so a block actually receives strings like
 `per-user row limit exceeded`. Our docs and mock both say `PAYLOAD_TOO_LARGE`.
 That is a real divergence, it is a different defect from this one, and it is
-filed rather than batched here.)
+filed as #343 rather than batched here. The contract comment and the mock's
+docs now scope the "you cannot tell which ceiling tripped" statement to the
+MOCK and point at #343, so nobody writes a single generic retry arm on the
+strength of a claim we have already measured to be false of the host.)

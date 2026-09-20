@@ -696,30 +696,50 @@ import {
 } from '@civitai/app-sdk/blocks';
 
 const storage = useAppStorage();
-await storage.set('key', { any: 'json' });   // throws "PAYLOAD_TOO_LARGE" over ANY ceiling
+await storage.set('key', { any: 'json' });   // rejects over ANY of the three ceilings
 const v = await storage.get<MyShape>('key'); // null if unset / anon
 await storage.delete('key');                  // idempotent
 const { keys } = await storage.list({ prefix: 'note-' });
 const quota = await storage.getQuota();       // { usedBytes, rowCount, limitBytes, limitRows }
 ```
 
-Those three constants are the **only** place the ceilings are written down in
-this repo — `appStorageLimits.ts` in `@civitai/app-sdk` carries their
-provenance and the one-liner that re-derives them from the host. Import them
-when you need to plan a data model; render `getQuota()`'s reply when you need
-to show a viewer where they stand. Never hard-code a figure: the docs used to
-quote the app-wide umbrella instead of the per-viewer clamp and were **25x**
-out on bytes and **1000x** out on rows.
+🔴 **`getQuota()` is the authority; the constants are a snapshot.** These three
+are the ceilings **as of the version of `@civitai/app-sdk` you installed** —
+compiled-in figures, which is the same frozen-number failure mode this page
+used to demonstrate, just with one copy instead of nine. The host can move a
+ceiling without your lockfile changing. So:
+
+- **Render `getQuota()`'s reply**, never a constant, anywhere a viewer sees a
+  number or a code path decides whether a write will fit.
+- **Reach for the constants only where no quota reply is available** — a
+  build-time sanity check, a test fixture, a rough design-time estimate — and
+  treat the answer as "roughly, at install time".
+- **Re-check after any SDK bump**, and expect movement: the per-viewer clamp
+  was sized against a measured distribution and the host says to expect a
+  re-measure. `appStorageLimits.ts` in `@civitai/app-sdk` carries the
+  provenance and a one-liner that re-derives the current values from the host.
+
+Never hard-code a figure of your own: the docs here used to quote the app-wide
+umbrella instead of the per-viewer clamp and were **25x** out on bytes and
+**1000x** out on rows.
 
 🔴 **The ROW ceiling is usually the binding one, and a byte-based "x of y used"
 readout will not see it coming.** A block caching one modest record per item a
-viewer touches exhausts `APP_STORAGE_MAX_ROWS` while still holding a small
-fraction of `APP_STORAGE_MAX_BYTES`. Show rows too.
+viewer touches exhausts `limitRows` while still holding a small fraction of
+`limitBytes`. Show rows too.
 
-`createMockHost()` defaults to these same ceilings and **enforces both** on
-write, so a row-limit overrun fails under `dev:mock` exactly where it fails in
-production. Pass `storage: { quotaBytes, limitRows }` to simulate something
-smaller.
+`createMockHost()` defaults to these same ceilings and enforces the per-value
+cap, the byte budget and — since it was added — the **row** budget on write, so
+a row-limit overrun now fails under `dev:mock` where it previously passed and
+failed only in production. Pass `storage: { quotaBytes, limitRows }` to
+simulate something smaller.
+
+⚠️ The mock is **not** gate-for-gate identical to the host. Two known
+divergences: the error string a rejection carries
+([#343](https://github.com/civitai/civitai-app-starters/issues/343)), and the
+byte gate refusing a shrinking overwrite that the host admits
+([#345](https://github.com/civitai/civitai-app-starters/issues/345)). Passing
+under `dev:mock` is evidence, not proof.
 
 ### `useSharedStorage()`
 

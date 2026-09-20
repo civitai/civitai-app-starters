@@ -98,8 +98,15 @@ export interface UseAppStorage {
  * (`APP_STORAGE_MAX_BYTES` / `APP_STORAGE_MAX_ROWS`, plus
  * `APP_STORAGE_MAX_VALUE_BYTES` per value, all from `@civitai/app-sdk/blocks`)
  * are enforced per (APP, viewer): every instance of the same app draws on ONE
- * budget for that viewer. Plan against the constants, and render
- * `getQuota()`'s reply rather than any literal.
+ * budget for that viewer.
+ *
+ * 🔴 THE CONSTANTS ARE A SNAPSHOT; `getQuota()` IS THE AUTHORITY. They are the
+ * ceilings as of the `@civitai/app-sdk` version you installed — a figure
+ * compiled into a published package is still a frozen figure, and the host can
+ * move a ceiling without your lockfile changing. Render `getQuota()`'s reply
+ * anywhere a viewer sees a number or a code path decides whether a write will
+ * fit; reach for a constant only where no reply is available (a test fixture, a
+ * design-time estimate), and re-check after an SDK bump.
  *
  * @example
  * const storage = useAppStorage();

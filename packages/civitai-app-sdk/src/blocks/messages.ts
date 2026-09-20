@@ -747,16 +747,30 @@ export type ParentToBlockMessage =
       payload: { requestId: string; value: unknown; error?: string };
     }
   | {
-      // Reply to APP_STORAGE_SET. `error: "PAYLOAD_TOO_LARGE"` covers
-      // every ceiling: the per-value cap
-      // (`APP_STORAGE_MAX_VALUE_BYTES`) and BOTH per-(app, viewer)
-      // budgets (`APP_STORAGE_MAX_BYTES`, `APP_STORAGE_MAX_ROWS`) — the
-      // host doesn't leak which one tripped. 🔴 Do not assume a
-      // rejection means the VALUE was too big; the row ceiling is the
-      // one a block usually reaches first, and it has nothing to do
-      // with the size of the value being written. `sizeBytes` is the
-      // byte size the row landed at, so the block can update its own
-      // quota estimate without another round-trip to `getQuota`.
+      // Reply to APP_STORAGE_SET. A non-empty `error` is the
+      // reject signal, and any of three ceilings can raise it: the
+      // per-value cap (`APP_STORAGE_MAX_VALUE_BYTES`) or either
+      // per-(app, viewer) budget (`APP_STORAGE_MAX_BYTES`,
+      // `APP_STORAGE_MAX_ROWS`). Do not assume a rejection means the
+      // VALUE was too big; the row ceiling is the one a block usually
+      // reaches first, and it has nothing to do with the size of the
+      // value being written.
+      //
+      // On WHICH ceiling tripped, the mock and the host differ, and
+      // this comment describes the MOCK: `createMockHost` answers the
+      // single string `"PAYLOAD_TOO_LARGE"` for all three, so under
+      // `dev:mock` they are not distinguishable. The real host is
+      // believed to send a distinct per-gate message instead (the
+      // bridge forwards `err.message`, not a code), which would make
+      // them distinguishable in production — that divergence, and what
+      // the SDK should document as the contract, is tracked in
+      // civitai/civitai-app-starters#343. Until it lands, branch on
+      // `error` only against strings you have confirmed against the
+      // host you are targeting.
+      //
+      // `sizeBytes` is the byte size the row landed at, so the block
+      // can update its own quota estimate without another round-trip
+      // to `getQuota`.
       type: 'APP_STORAGE_SET_RESULT';
       payload: { requestId: string; ok?: boolean; error?: string; sizeBytes?: number };
     }
