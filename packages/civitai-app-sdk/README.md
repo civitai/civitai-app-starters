@@ -295,7 +295,7 @@ const tokens = await exchangeCode({
   redirectUri: 'https://your-app.com/api/auth/callback/civitai',
   code: codeFromQuery,
   codeVerifier: verifierFromSealedCookie,
-  fallbackScope: scope, // used only if the server omits `scope` entirely
+  fallbackScope: scope, // used if the response's `scope` is absent or unreadable
 });
 
 // 3. Store tokens in an encrypted httpOnly cookie
@@ -317,22 +317,25 @@ console.log(`Hi ${me.username}`);
 > explicit `baseUrl` to each call only when targeting a local / self-hosted
 > instance (e.g. a dev auth hub vs a dev main app).
 
-> **How `tokens.scope` is parsed.** Civitai's token endpoint returns `scope` as
-> a decimal bitmask in a JSON *string* (`"scope": "114689"` — see the
+> **`fallbackScope`, and what happens to a `scope` we cannot read.** Civitai's
+> token endpoint returns `scope` as a decimal bitmask in a JSON *string*
+> (`"scope": "114689"` — see the
 > [endpoint reference](https://developer.civitai.com/site/oauth/endpoints)),
-> matching the decimal `scope` `buildAuthorizeUrl` puts on the authorize URL.
-> [RFC 6749 §5.1](https://datatracker.ietf.org/doc/html/rfc6749#section-5.1)
-> instead specifies a space-delimited list, so `exchangeCode` / `refreshToken`
-> accept both — and any mixture — via the exported `parseScope`:
-> `114689`, `"114689"`, `"UserRead BuzzRead AIServicesWrite"`, `"1 65536"`.
-> A `scope` that is none of those (an unknown scope name, a negative or
-> fractional number) throws `OAuthScopeError` naming the value received, rather
-> than resolving to `NaN` or `0` — both of which make `hasScope()` answer
-> `false` for every scope and tell a user who just consented that they granted
-> nothing. An **omitted** `scope` is not an error: it resolves to
-> `fallbackScope`, which RFC 6749 §5.1/§6 define as the scope you requested.
-> Pass `fallbackScope: tokens.scope` on refresh, or a rotation whose response
-> omits `scope` will silently downgrade the session to no permissions.
+> matching the decimal `scope` `buildAuthorizeUrl` puts on the authorize URL,
+> and that is what `exchangeCode` / `refreshToken` read. Anything that is not a
+> whole number in `[0, 2**31-1]` is **not** used: `Number()` of
+> [RFC 6749 §5.1](https://datatracker.ietf.org/doc/html/rfc6749#section-5.1)'s
+> space-delimited form is `NaN`, and `NaN & anything` is `0`, so `hasScope()`
+> would answer `false` for every scope and tell a user who just consented that
+> they granted nothing. Such a value is replaced by `fallbackScope` and a
+> warning naming the value received — not an exception, which on the token path
+> would turn a degraded-but-working session into a hard login failure.
+> An **omitted** `scope` is not a fault at all: RFC 6749 §5.1/§6 make it
+> optional when the grant matches the request, so it resolves to `fallbackScope`
+> silently. Pass `fallbackScope: REQUESTED_SCOPES` on exchange and
+> `fallbackScope: tokens.scope` on refresh — without it, either case resolves to
+> `0`, and a caller that persists the whole refreshed token blob would lock the
+> user out of features their token still grants.
 
 ```ts
 
