@@ -348,10 +348,11 @@ export interface MockStorageScenario {
    *
    * THIS MOCK answers the same string for all three ceilings, so under
    * `dev:mock` a rejection does not tell you which one tripped. That is a
-   * property of the mock, not a documented property of the host — the real
-   * host is believed to send a distinct per-gate message. See
-   * civitai/civitai-app-starters#343; do not write a block that relies on
-   * either behaviour until it is settled.
+   * property of the mock, NOT of the host: the host throws a distinct message
+   * per rejection site and the bridge forwards `err.message`, so a real block
+   * receives e.g. `per-user row limit exceeded`. See
+   * civitai/civitai-app-starters#343 — until it is reconciled, do not write a
+   * block that relies on either behaviour.
    */
   quotaBytes?: number;
   /**

@@ -756,17 +756,23 @@ export type ParentToBlockMessage =
       // reaches first, and it has nothing to do with the size of the
       // value being written.
       //
-      // On WHICH ceiling tripped, the mock and the host differ, and
-      // this comment describes the MOCK: `createMockHost` answers the
-      // single string `"PAYLOAD_TOO_LARGE"` for all three, so under
-      // `dev:mock` they are not distinguishable. The real host is
-      // believed to send a distinct per-gate message instead (the
-      // bridge forwards `err.message`, not a code), which would make
-      // them distinguishable in production — that divergence, and what
-      // the SDK should document as the contract, is tracked in
-      // civitai/civitai-app-starters#343. Until it lands, branch on
-      // `error` only against strings you have confirmed against the
-      // host you are targeting.
+      // 🔴 ON WHICH CEILING TRIPPED, THE MOCK AND THE HOST DIFFER, AND
+      // THIS FIELD'S BEHAVIOUR HERE DESCRIBES THE MOCK.
+      // `createMockHost` answers the single string
+      // `"PAYLOAD_TOO_LARGE"` for all three, so under `dev:mock` they
+      // are NOT distinguishable. The real host DOES distinguish them:
+      // measured on `civitai/civitai` `main`, each rejection site
+      // throws its own message (`value exceeds 64KB cap`,
+      // `per-user storage quota exceeded`, `per-user row limit
+      // exceeded`, plus two app-wide variants), and the bridge's
+      // `storageErrorMessage()` forwards `err.message` — not the TRPC
+      // code — so that string is what reaches the block.
+      //
+      // Reconciling the mock and this contract is tracked in
+      // civitai/civitai-app-starters#343. Until it lands, do NOT write
+      // a single generic retry arm on the assumption that the cause is
+      // unknowable, and do not hard-code a host string either: the set
+      // above is measured, not contractual.
       //
       // `sizeBytes` is the byte size the row landed at, so the block
       // can update its own quota estimate without another round-trip
