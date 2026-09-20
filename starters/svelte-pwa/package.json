@@ -40,7 +40,7 @@
     "probe:cookie-flags": "node scripts/probe-cookie-flags.mjs"
   },
   "dependencies": {
-    "@civitai/app-sdk": "^0.46.0",
+    "@civitai/app-sdk": "^0.47.0",
     "@civitai/components": "^0.4.1",
     "@civitai/theme": "^0.3.1",
     "@hono/node-server": "^2.0.4",
