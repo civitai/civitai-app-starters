@@ -299,8 +299,19 @@ export type ImageGenEngine = keyof typeof IMAGE_GEN_ENGINES;
  * Orchestrator workflow status. Lowercase — matches what the orchestrator
  * actually returns. Forward-compat: open-ended string union so unknown
  * statuses don't break typing.
+ *
+ * 🔴 PREFIXED BECAUSE THE BARE NAME IS TAKEN BY A DIFFERENT UNION.
+ * `@civitai/app-sdk/blocks` exports its own `WorkflowStatus` — the block-side
+ * hook lifecycle (`'idle' | 'estimating' | 'submitting' | …`), which has 27
+ * call sites across the starters and fleet apps and is NOT this. This one is
+ * the orchestrator's wire status. Because `src/index.ts` re-exports
+ * `./orchestrator/index.js` wholesale, the bare name sat on the DEFAULT import
+ * surface, so `import type { WorkflowStatus } from '@civitai/app-sdk'` and
+ * `… from '@civitai/app-sdk/blocks'` resolved to two unrelated unions that
+ * happened to be assignable to each other — both widen to `string`, so the
+ * compiler could never object.
  */
-export type WorkflowStatus =
+export type OrchestratorWorkflowStatus =
   | 'unassigned'
   | 'pending'
   | 'processing'
@@ -325,7 +336,7 @@ export interface GenerateInput {
 
 export interface WorkflowSnapshot {
   id: string;
-  status: WorkflowStatus;
+  status: OrchestratorWorkflowStatus;
   cost?: { total?: number };
   steps?: Array<{
     output?: {
