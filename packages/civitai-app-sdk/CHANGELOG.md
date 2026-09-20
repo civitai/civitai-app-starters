@@ -1360,7 +1360,7 @@ entry.
 Initial public release.
 
 OAuth (PKCE + token exchange + refresh + revoke), encrypted-cookie session
-helpers (`sealCookie` / `unsealCookie`, AES-256-CTR), scope bitmask helpers,
+helpers (`sealCookie` / `unsealCookie`, AES-256-GCM), scope bitmask helpers,
 and the orchestrator client factory + `pollWorkflow` / `estimateWorkflow` /
 `submitWorkflow` / `getWorkflow` helpers. Subpath exports: `/oauth`,
 `/scopes`, `/cookies`, `/orchestrator`.
