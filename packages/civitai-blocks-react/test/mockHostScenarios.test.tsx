@@ -1,6 +1,8 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { APP_STORAGE_MAX_BYTES, APP_STORAGE_MAX_ROWS } from '@civitai/app-sdk/blocks';
+
 import {
   useBuzzWorkflow,
   WorkflowEstimateError,
@@ -740,6 +742,73 @@ describe('createMockHost — storage scenario (in-memory KV)', () => {
     await expect(result.current.set('a', 'x'.repeat(10))).resolves.toMatchObject({ ok: true });
     // Second write blows the 50-byte quota.
     await expect(result.current.set('b', 'y'.repeat(100))).rejects.toThrow('PAYLOAD_TOO_LARGE');
+  });
+
+  /**
+   * 🔴 REGRESSION, not an invariant guard. Watched to FAIL at `66f9e09`, where
+   * the write below RESOLVED `{ ok: true }`: `limitRows` was REPORTED by
+   * `getQuota` and enforced by nothing, so the one ceiling a block reaches
+   * first was invisible to `dev:mock`. A block that seeded 5,000 rows passed
+   * here, rendered "5000 / 1000000 rows" from its own quota UI, and failed on
+   * the 1,001st write in production.
+   *
+   * `limitRows: 2` rather than the real ceiling so the case is cheap — the
+   * DEFAULT value is pinned separately, by the guard suite.
+   */
+  it('limitRows rejects an INSERT past the row ceiling', async () => {
+    host = createMockHost({ storage: { limitRows: 2 } });
+    uninstall = host.install();
+    const { result } = renderHook(() => useAppStorage());
+    await ready();
+
+    // Two rows fit. Values are tiny, so the byte quota is nowhere near — this
+    // failure can only be the ROW gate.
+    await expect(result.current.set('a', 1)).resolves.toMatchObject({ ok: true });
+    await expect(result.current.set('b', 2)).resolves.toMatchObject({ ok: true });
+
+    const q = await result.current.getQuota();
+    expect(q.rowCount).toBe(2);
+    expect(q.usedBytes).toBeLessThan(100); // nowhere near any byte ceiling
+
+    // The third INSERT is refused.
+    await expect(result.current.set('c', 3)).rejects.toThrow('PAYLOAD_TOO_LARGE');
+    expect((await result.current.getQuota()).rowCount).toBe(2);
+  });
+
+  /**
+   * The `isInsert` half of that gate, and it is not cosmetic: without it a
+   * store sitting AT the ceiling refuses to overwrite a key it already holds.
+   * Only the owning viewer can delete their own rows, so an app whose UI has
+   * no delete affordance would be permanently stuck with no way back under the
+   * cap. The host's gate is `isInsert`-guarded for exactly this reason.
+   */
+  it('at the row ceiling, an OVERWRITE still succeeds', async () => {
+    host = createMockHost({ storage: { limitRows: 1 } });
+    uninstall = host.install();
+    const { result } = renderHook(() => useAppStorage());
+    await ready();
+
+    await expect(result.current.set('only', 'first')).resolves.toMatchObject({ ok: true });
+    // Full — but this adds no row.
+    await expect(result.current.set('only', 'second')).resolves.toMatchObject({ ok: true });
+    await expect(result.current.get('only')).resolves.toBe('second');
+    // A genuinely new key is still refused.
+    await expect(result.current.set('other', 'x')).rejects.toThrow('PAYLOAD_TOO_LARGE');
+  });
+
+  /**
+   * The defaults are the PRODUCTION ceilings, not a generous fiction. This is
+   * the property that makes `dev:mock` fail where production fails; it is the
+   * reason the 1000x row gap mattered at all.
+   */
+  it('the DEFAULT ceilings are the SDK constants — no generous local fiction', async () => {
+    host = createMockHost({ storage: {} });
+    uninstall = host.install();
+    const { result } = renderHook(() => useAppStorage());
+    await ready();
+    const q = await result.current.getQuota();
+    expect(q.limitBytes).toBe(APP_STORAGE_MAX_BYTES);
+    expect(q.limitRows).toBe(APP_STORAGE_MAX_ROWS);
   });
 
   it('getQuota reports used/row counts + the configured ceilings', async () => {

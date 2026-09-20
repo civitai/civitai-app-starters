@@ -7,15 +7,26 @@ import type { AppStorageKeyEntry, AppStorageQuota } from '@civitai/blocks-react'
  * kv-storage — per-(block instance, viewer) key-value store.
  *
  * `useAppStorage()` is the W4-v0 KV datastore. Calls flow through the host's
- * postMessage bridge; the block never sees the apps DB credentials. Scope is
- * (this block instance, this viewer) — two users of the same block get
- * isolated stores, and the same user on a different model gets a different
- * store.
+ * postMessage bridge; the block never sees the apps DB credentials. Keys are
+ * NAMESPACED per (this block instance, this viewer) — two users of the same
+ * block get isolated stores, and the same user on a different model gets a
+ * different store.
+ *
+ * 🔴 THE BUDGET IS SCOPED WIDER THAN THE NAMESPACE. `APP_STORAGE_MAX_BYTES`
+ * and `APP_STORAGE_MAX_ROWS` are per (APP, viewer): every instance of this app
+ * draws on ONE budget for a given viewer. `APP_STORAGE_MAX_VALUE_BYTES` caps a
+ * single value. All three live in `@civitai/app-sdk/blocks` — import them,
+ * never retype a figure, and render `getQuota()`'s reply to a viewer.
+ *
+ * 🔴 ROWS RUN OUT BEFORE BYTES DO. One small record per item a viewer touches
+ * hits the row ceiling while barely denting the byte one, so a bytes-only
+ * usage readout shows headroom right up to the rejection. This demo prints
+ * both.
  *
  * The `apps:storage` capability is ambient at v0 — every block can call it
  * (it's gated by the host, not a declared manifest scope; a future version may
- * make it a real scope, see W11 H4). Limits: 64 KB per value, 50 MB + ~1M rows
- * per app. Anon viewers: `get`/`list` no-op (null / empty), writes reject.
+ * make it a real scope, see W11 H4). Anon viewers: `get`/`list` no-op (null /
+ * empty), writes reject.
  *
  * This example is a tiny notes pad backed by KV.
  */

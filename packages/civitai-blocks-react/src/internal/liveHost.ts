@@ -47,7 +47,9 @@
  * tRPC procedures (publicProcedure + verifyBlockToken, FLAT `{ blockToken, … }`
  * input). Reads need the `apps:storage:read` scope, writes `apps:storage:write`
  * — the dev token already carries whatever the local manifest declared, and the
- * server enforces. Real per-(block_instance, user) KV, real 64KB/50MB quotas.
+ * server enforces. Real KV — keys namespaced per (block_instance, user), byte
+ * and row budgets enforced per (app, user) — with the REAL ceilings, so a
+ * write this host accepts is one production would accept.
  *
  * SET_USER_CHECKPOINT (Phase 4): FORWARDED (faithful) to the block-token
  * `blocks.updateUserSettings` mutation — never fabricated. The default page
@@ -1307,7 +1309,9 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
 
           case 'APP_STORAGE_SET': {
             // Mutation apps.storage.set {blockToken, key, value} (POST). The
-            // server enforces apps:storage:write + the 64KB/50MB quotas.
+            // server enforces apps:storage:write + the per-value cap and both
+            // per-(app, viewer) budgets — no simulation here, so nothing to
+            // keep in sync.
             const key = typed.payload?.key ?? '';
             const value = typed.payload?.value;
             void callTrpcData(

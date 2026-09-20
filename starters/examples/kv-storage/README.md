@@ -36,13 +36,31 @@ future version may turn it into a real declared scope.
 
 ### Limits
 
-- **64 KB** per value
-- **50 MB** + **~1M rows** per app
+Three ceilings, all exported from `@civitai/app-sdk/blocks` — **import them, do
+not retype the numbers**:
 
-On a write that would cross either, `set()` rejects with the host's error string
-`"PAYLOAD_TOO_LARGE"` — the host deliberately doesn't leak *which* limit tripped.
-Surface `getQuota()` in your UI (e.g. "X of 50 MB used") rather than hard-coding
-50 MB, since the ceiling can change.
+| Constant | Caps |
+|---|---|
+| `APP_STORAGE_MAX_VALUE_BYTES` | one value, in wire bytes |
+| `APP_STORAGE_MAX_BYTES` | total stored bytes per (**app**, viewer) |
+| `APP_STORAGE_MAX_ROWS` | total rows per (**app**, viewer) |
+
+🔴 **Note the scope difference.** The store above is *namespaced* per (block
+instance, viewer), but the byte and row *budgets* are per (**app**, viewer) —
+every instance of this app shares one budget for a given viewer. The docs used
+to quote a far larger app-wide umbrella here, which is why they were **25x**
+out on bytes and **1000x** out on rows.
+
+🔴 **Rows run out before bytes do.** One small record per item a viewer touches
+exhausts `APP_STORAGE_MAX_ROWS` while using a small fraction of
+`APP_STORAGE_MAX_BYTES`, so a bytes-only usage readout shows plenty of headroom
+right up to the rejection. This example prints both.
+
+On a write that would cross any of the three, `set()` rejects with the host's
+error string `"PAYLOAD_TOO_LARGE"` — the host deliberately doesn't leak *which*
+limit tripped, so do not assume it was the value's size. Surface `getQuota()`
+in your UI (`"X of {limitBytes}"`, `"N of {limitRows} rows"`) rather than
+hard-coding anything: the ceilings move.
 
 ### Anon viewers
 
@@ -57,6 +75,9 @@ pnpm install
 pnpm dev:harness   # → http://localhost:5183
 ```
 
-The harness backs the bridge with an in-memory Map that enforces the same caps,
-so set/get/delete/list/quota all work offline. See the
+The harness backs the bridge with an in-memory Map that enforces all three
+caps against the same SDK constants — **including the row limit**, which it
+reported but did not enforce until recently, so a row-limit overrun used to
+pass here and fail only in production. set/get/delete/list/quota all work
+offline. See the
 [root README](../../../README.md) for submit → review → deploy.

@@ -684,17 +684,42 @@ async function onCancel(id: string) {
 
 ### `useAppStorage()`
 
-Per-(block instance, viewer) KV datastore, host-mediated. 64 KB per value,
-50 MB + ~1M rows per app.
+KV datastore, host-mediated. Keys are **namespaced** per (block instance,
+viewer); the byte and row **budgets** are enforced per (**app**, viewer), so
+every instance of one app shares one budget for that viewer.
 
 ```tsx
+import {
+  APP_STORAGE_MAX_VALUE_BYTES, // largest single value, in wire bytes
+  APP_STORAGE_MAX_BYTES,       // total stored bytes per (app, viewer)
+  APP_STORAGE_MAX_ROWS,        // total rows per (app, viewer)
+} from '@civitai/app-sdk/blocks';
+
 const storage = useAppStorage();
-await storage.set('key', { any: 'json' });   // throws "PAYLOAD_TOO_LARGE" over a limit
+await storage.set('key', { any: 'json' });   // throws "PAYLOAD_TOO_LARGE" over ANY ceiling
 const v = await storage.get<MyShape>('key'); // null if unset / anon
 await storage.delete('key');                  // idempotent
 const { keys } = await storage.list({ prefix: 'note-' });
 const quota = await storage.getQuota();       // { usedBytes, rowCount, limitBytes, limitRows }
 ```
+
+Those three constants are the **only** place the ceilings are written down in
+this repo — `appStorageLimits.ts` in `@civitai/app-sdk` carries their
+provenance and the one-liner that re-derives them from the host. Import them
+when you need to plan a data model; render `getQuota()`'s reply when you need
+to show a viewer where they stand. Never hard-code a figure: the docs used to
+quote the app-wide umbrella instead of the per-viewer clamp and were **25x**
+out on bytes and **1000x** out on rows.
+
+🔴 **The ROW ceiling is usually the binding one, and a byte-based "x of y used"
+readout will not see it coming.** A block caching one modest record per item a
+viewer touches exhausts `APP_STORAGE_MAX_ROWS` while still holding a small
+fraction of `APP_STORAGE_MAX_BYTES`. Show rows too.
+
+`createMockHost()` defaults to these same ceilings and **enforces both** on
+write, so a row-limit overrun fails under `dev:mock` exactly where it fails in
+production. Pass `storage: { quotaBytes, limitRows }` to simulate something
+smaller.
 
 ### `useSharedStorage()`
 

@@ -39,6 +39,9 @@
  */
 
 import {
+  APP_STORAGE_MAX_BYTES,
+  APP_STORAGE_MAX_ROWS,
+  APP_STORAGE_MAX_VALUE_BYTES,
   BrowsingLevel,
   SFW_LEVELS,
   type BlockContext,
@@ -127,10 +130,23 @@ const ALL_LEVELS =
 const DEV_TOKEN = 'dev.mockhost.mock.jwt.NOT.A.REAL.RS256';
 const BUDGETED_SCOPE = 'ai:write:budgeted';
 
-/** v0 host storage ceilings (mirror civitai/civitai's APP_STORAGE limits). */
-const DEFAULT_STORAGE_QUOTA_BYTES = 50 * 1024 * 1024; // 50 MB per app
-const DEFAULT_STORAGE_VALUE_CAP_BYTES = 64 * 1024; // 64 KB per value
-const DEFAULT_STORAGE_LIMIT_ROWS = 1_000_000;
+/**
+ * Host storage ceilings, taken from the SDK's single definition.
+ *
+ * 🔴 NEVER RE-TYPE THESE AS LITERALS. They were literals once, copied from the
+ * host's APP-WIDE umbrella rather than the per-viewer clamp it actually
+ * enforces — 25x too large on bytes and **1000x** on rows. A block that seeded
+ * 5,000 rows passed
+ * `dev:mock` reporting 0.5% of its row budget used, and failed on the 1,001st
+ * write in production. The mock's job is to fail where production fails, so
+ * the defaults ARE the production values; {@link MockStorageScenario.quotaBytes}
+ * / {@link MockStorageScenario.limitRows} remain for tests that want something
+ * smaller. See `@civitai/app-sdk/blocks`'s `appStorageLimits.ts` for
+ * provenance and the re-derivation command.
+ */
+const DEFAULT_STORAGE_QUOTA_BYTES = APP_STORAGE_MAX_BYTES;
+const DEFAULT_STORAGE_VALUE_CAP_BYTES = APP_STORAGE_MAX_VALUE_BYTES;
+const DEFAULT_STORAGE_LIMIT_ROWS = APP_STORAGE_MAX_ROWS;
 
 /**
  * How submits behave. `'none'` = everything succeeds; `'all'` / `'insufficient'`
@@ -326,17 +342,30 @@ export interface MockStorageScenario {
    */
   seed?: Record<string, unknown>;
   /**
-   * Simulated per-app quota in bytes. A `set` that would cross it resolves
-   * `{ ok: false, error: 'PAYLOAD_TOO_LARGE' }` (the host doesn't leak which
-   * cap tripped). Default 50 MB.
+   * Simulated per-(app, viewer) byte quota. A `set` that would cross it
+   * resolves `{ ok: false, error: 'PAYLOAD_TOO_LARGE' }` (the host doesn't
+   * leak which cap tripped). Defaults to `APP_STORAGE_MAX_BYTES`.
    */
   quotaBytes?: number;
   /**
    * Per-value byte cap. A `set` whose serialized value exceeds it resolves
-   * `{ ok: false, error: 'PAYLOAD_TOO_LARGE' }`. Default 64 KB.
+   * `{ ok: false, error: 'PAYLOAD_TOO_LARGE' }`. Defaults to
+   * `APP_STORAGE_MAX_VALUE_BYTES`.
    */
   valueCapBytes?: number;
-  /** Simulated row ceiling reported by `getQuota`. Default 1,000,000. */
+  /**
+   * Simulated per-(app, viewer) row ceiling. A `set` that would ADD a row past
+   * it resolves `{ ok: false, error: 'PAYLOAD_TOO_LARGE' }`; overwriting an
+   * existing key adds no row and is never refused by this gate. Defaults to
+   * `APP_STORAGE_MAX_ROWS`.
+   *
+   * 🔴 THIS WAS REPORTED BUT NOT ENFORCED. `getQuota` returned it from the
+   * start while the write path checked only `quotaBytes`, so a row-limit
+   * overrun — the ceiling a block is most likely to hit, since rows fill long
+   * before bytes do — passed `dev:mock` silently and failed only in
+   * production. Reporting a limit nobody enforces is worse than not reporting
+   * one: it reads as coverage.
+   */
   limitRows?: number;
   /**
    * Force the next N storage MUTATIONS (`set`/`delete`) to fail with a generic
@@ -2442,6 +2471,22 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             const existingBytes = existing ? jsonByteSize(existing.value) + key.length : 0;
             const projected = usedBytes() - existingBytes + sizeBytes + key.length;
             if (projected > quotaBytes) {
+              dispatchToBlock({
+                type: 'APP_STORAGE_SET_RESULT',
+                payload: { requestId, ok: false, error: 'PAYLOAD_TOO_LARGE' },
+              });
+              return;
+            }
+            // Row check, mirroring the host's `isInsert && rowCount + 1 >
+            // USER_ROW_LIMIT` gate.
+            //
+            // 🔴 `isInsert` IS LOAD-BEARING, not a micro-optimisation. Without
+            // it, a store sitting exactly AT the ceiling would refuse to
+            // overwrite a key it already holds — and since only the owning
+            // viewer can delete their own rows, an app whose UI has no delete
+            // affordance would be permanently stuck with no way back under the
+            // cap. The host is `isInsert`-guarded for the same reason.
+            if (!existing && store.size + 1 > limitRows) {
               dispatchToBlock({
                 type: 'APP_STORAGE_SET_RESULT',
                 payload: { requestId, ok: false, error: 'PAYLOAD_TOO_LARGE' },

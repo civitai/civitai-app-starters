@@ -22,9 +22,23 @@ export interface AppStorageListResult {
 export interface AppStorageQuota {
   usedBytes: number;
   rowCount: number;
-  /** Host-enforced ceiling (bytes). Surface in UI so callers don't hard-code 50MB. */
+  /**
+   * Host-enforced byte ceiling for this (app, viewer). **Render THIS, never a
+   * hard-coded figure** — the ceiling moves, and a UI built on a literal goes
+   * quietly wrong rather than loudly wrong. Matches
+   * `APP_STORAGE_MAX_BYTES` from `@civitai/app-sdk/blocks` against the current
+   * host.
+   */
   limitBytes: number;
-  /** Host-enforced row ceiling (~1M today). */
+  /**
+   * Host-enforced row ceiling for this (app, viewer). Same rule: render it.
+   * Matches `APP_STORAGE_MAX_ROWS`.
+   *
+   * 🔴 THIS IS USUALLY THE BINDING ONE. Rows are small; a block caching one
+   * modest record per item a viewer touches exhausts the row ceiling while
+   * still using a small fraction of `limitBytes`, so a byte-only "x of y used"
+   * readout will show plenty of headroom right up to the rejection.
+   */
   limitRows: number;
 }
 
@@ -36,9 +50,11 @@ export interface UseAppStorage {
    */
   get<T = unknown>(key: string): Promise<T | null>;
   /**
-   * Upsert a value. Resolves on host ack. Rejects with the host's
-   * `error` string when the value exceeds 64KB, when the per-app 50MB
-   * quota would be crossed, or when the viewer is anonymous.
+   * Upsert a value. Resolves on host ack. Rejects with the host's `error`
+   * string when the value exceeds `APP_STORAGE_MAX_VALUE_BYTES`, when the
+   * per-(app, viewer) byte or ROW ceiling would be crossed
+   * (`APP_STORAGE_MAX_BYTES` / `APP_STORAGE_MAX_ROWS`), or when the viewer is
+   * anonymous. All from `@civitai/app-sdk/blocks`.
    */
   set<T = unknown>(key: string, value: T): Promise<{ ok: true; sizeBytes?: number }>;
   /**
@@ -57,8 +73,10 @@ export interface UseAppStorage {
     cursor?: string;
   }): Promise<AppStorageListResult>;
   /**
-   * Diagnostic: current usage + the v0 ceilings. Build a "X of 50 MB used"
-   * settings widget against this.
+   * Diagnostic: current usage + the host's ceilings. Build an "X of Y used"
+   * settings widget against this — taking **both** numbers from the reply, and
+   * showing ROWS as well as bytes (see {@link AppStorageQuota.limitRows} for
+   * why bytes alone mislead).
    */
   getQuota(): Promise<AppStorageQuota>;
 }
@@ -75,7 +93,13 @@ export interface UseAppStorage {
  * once the transport singleton is created, so it's safe to put in
  * dependency arrays of `useEffect` / `useMemo`.
  *
- * 64 KB per value, 50 MB + ~1M rows per app.
+ * 🔴 THE NAMESPACE AND THE BUDGET ARE SCOPED DIFFERENTLY. Keys are namespaced
+ * per (block instance, viewer) — the tuple above. The BYTE and ROW budgets
+ * (`APP_STORAGE_MAX_BYTES` / `APP_STORAGE_MAX_ROWS`, plus
+ * `APP_STORAGE_MAX_VALUE_BYTES` per value, all from `@civitai/app-sdk/blocks`)
+ * are enforced per (APP, viewer): every instance of the same app draws on ONE
+ * budget for that viewer. Plan against the constants, and render
+ * `getQuota()`'s reply rather than any literal.
  *
  * @example
  * const storage = useAppStorage();
