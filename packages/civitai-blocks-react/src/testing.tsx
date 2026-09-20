@@ -3,32 +3,18 @@
  *
  * This is NOT "two test helpers". It is the surface a block app's dev harness
  * and test suite use to stand in for civitai.com: a mock host, a React wrapper
- * around it, a transport reset, and — deliberately, and dangerously — a LIVE
- * host that talks to the real backend.
+ * around it, and a transport reset.
  *
- * ┌─────────────────────────────────────────────────────────────────────────┐
- * │ 🔴 `createLiveHost` SPENDS REAL BUZZ. It is not a mock and not a         │
- * │ sandbox: it forwards the App-Block postMessage protocol to the REAL     │
- * │ Civitai backend over a pasted dev block token, including                │
- * │ `blocks.submitWorkflow`. A successful generation debits the token       │
- * │ holder's own Buzz. NEVER reach for it in a test — `createMockHost` is   │
- * │ the one that costs nothing. It lives here, next to its mock sibling,    │
- * │ because `pnpm dev:live` needs it; that adjacency is the hazard.         │
- * └─────────────────────────────────────────────────────────────────────────┘
+ * EVERYTHING HERE IS A MOCK. No network, no Buzz, no real backend. That is a
+ * property of the subpath, not a claim in a comment: `createLiveHost`, which
+ * spends the token holder's own Buzz, lives at `@civitai/blocks-react/live`
+ * (#334).
  *
- * THE WHOLE SURFACE IS ENUMERATED IN EXACTLY ONE PLACE — README § "The
- * `/testing` subexport". It is NOT restated here, and must not be: a second
- * copy of the list is what went stale and became #334. `test/testingSurface.
- * test.ts` holds a ledger, pins it to THIS module (two tests, one for values
- * and one — via the TypeScript checker — for types), and pins it to that README
- * section (a third). Growth and shrinkage both fail, and no edit to any one of
- * the three leaves all of them green.
- *
- * STABILITY: see that same README section. Short version — this is a normal
- * published subpath of a `0.x` package, on the same footing as `.` and `./ui`;
- * a minor may break it. What is enforced is that the symbol SET cannot change
- * silently. What is NOT here (the catalog client, the picker overlay, JWT
- * decoding) is genuinely internal and may move or change without notice.
+ * Surface, rationale and stability are documented in exactly one place — README
+ * § "The `/testing` subexport". Do not restate them here; a second copy is what
+ * went stale and became #334. `test/subpathSurfaces.test.ts` pins that ledger to
+ * this module (runtime values and, via the TypeScript checker, types) and to the
+ * README section, failing on growth and on shrinkage alike.
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -66,8 +52,10 @@ export {
   type CannedPick,
 } from './internal/mockHost.js';
 
-// 🔴 REAL BACKEND, REAL BUZZ — see the box at the top of this file.
-export { createLiveHost, type LiveHostOptions } from './internal/liveHost.js';
+// 🔴 DO NOT RE-EXPORT `createLiveHost` HERE. It spends real Buzz and lives at
+// `@civitai/blocks-react/live` (`src/live.ts`) precisely so it cannot be reached
+// from a path called "testing". See #334. `test/subpathSurfaces.test.ts` fails if
+// it reappears on this surface.
 
 interface OutboundLog {
   type: string;

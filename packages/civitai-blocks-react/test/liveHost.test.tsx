@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { isPageSlotContext } from '@civitai/app-sdk/blocks';
 
-import { createLiveHost } from '../src/testing.js';
+import { createLiveHost } from '../src/live.js';
 import { decodeBlockTokenPayload } from '../src/internal/liveHost.js';
 import type { PickerOverlayHandle } from '../src/internal/pickerOverlay.js';
 import type {

@@ -22,7 +22,7 @@
  * changeset for this release names both and shows the replacement.
  *
  * If a block author ever needs it back, re-export it from `src/testing.tsx`,
- * add it to the ledger in `test/testingSurface.test.ts` AND to the README
+ * add it to the ledger in `test/subpathSurfaces.test.ts` AND to the README
  * section that test parses, and write a changeset.
  */
 export function mockParentMessage(data: unknown, origin: string): MessageEvent {
