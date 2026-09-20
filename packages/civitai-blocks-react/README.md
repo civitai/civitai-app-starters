@@ -1345,7 +1345,7 @@ issue rather than reaching into `dist/internal/`.
 
 ### What this subpath costs you
 
-Six `dist/` modules — 264,991 B of JavaScript plus 75,464 B of `.d.ts` — are
+Six `dist/` modules — 264,785 B of JavaScript plus 75,258 B of `.d.ts` — are
 reachable only from this subpath and from nothing under `.` or `./ui`, measured
 by walking the built module graph:
 
@@ -1354,7 +1354,7 @@ by walking the built module graph:
  86,688  dist/internal/liveHost.js        ← createLiveHost
  29,508  dist/internal/pickerOverlay.js   ← createLiveHost
  15,351  dist/internal/catalog.js         ← createLiveHost (via pickerOverlay)
- 10,157  dist/testing.js
+  9,951  dist/testing.js
   4,697  dist/internal/consent.js         ← BOTH hosts import it
 ```
 
