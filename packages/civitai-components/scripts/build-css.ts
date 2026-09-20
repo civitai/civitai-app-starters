@@ -6,14 +6,26 @@
  *     `cdn.jsdelivr.net/npm/@civitai/components/styles.css` resolves to a real
  *     file (jsDelivr ignores package.json `exports`, so the `./styles.css`
  *     export alias alone 404s there; a real root file added to `files` fixes
- *     every CDN uniformly while the alias keeps bundler imports working), and
+ *     every CDN uniformly while the alias keeps bundler imports working),
  *   - generates `src/styles.generated.ts` embedding the same CSS as a string
- *     (the JS-injectable form), compiled by tsc into dist.
+ *     (the JS-injectable form), compiled by tsc into dist, and
+ *   - slices the sheet per component (`scripts/slice-css.ts`) into
+ *     `dist/css/<slug>.css` plus `src/css/<slug>.generated.ts`, reachable as
+ *     the `./css/<component>` and `./css/<component>.css` subpath exports.
  * A generation-parity test asserts the two never diverge.
+ *
+ * 🔴 The whole-sheet outputs above are FROZEN. `componentsCss` and
+ * `injectStyles()` still carry every rule, byte-identical to before the split
+ * existed, because `blocks-react`'s `useBlocksStyles()` injecting the WHOLE
+ * pack is a documented contract (MARKUP.md): rendering any one `/ui` component
+ * styles hand-written `data-civitai-ui="…"` markup elsewhere on the page. The
+ * per-component artifacts are ADDITIVE and opt-in. See issue #358.
  */
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { assertLossless, cssSlices, sliceComponentsCss } from './slice-css.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(here, '..');
@@ -36,4 +48,48 @@ writeFileSync(
   `${banner}\n\n/** The @civitai/components stylesheet (identical to dist/components.css). */\nexport const componentsCss = ${JSON.stringify(css)};\n`
 );
 
-console.log('[build-css] wrote dist/components.css + styles.css + src/styles.generated.ts');
+/* ── per-component slices ───────────────────────────────────────────────── */
+
+const split = sliceComponentsCss(css);
+// Before ANY slice is written. A slicer that dropped a section would emit
+// per-component CSS missing rules, and nothing downstream could tell.
+assertLossless(split, css);
+const slices = cssSlices(split);
+
+// Both directories hold ONLY generated files, so a full wipe is what keeps a
+// renamed or deleted section from leaving a stale artifact behind that the
+// export map would still happily resolve.
+const srcCssDir = join(pkgRoot, 'src', 'css');
+const distCssDir = join(distDir, 'css');
+rmSync(srcCssDir, { recursive: true, force: true });
+rmSync(distCssDir, { recursive: true, force: true });
+mkdirSync(srcCssDir, { recursive: true });
+mkdirSync(distCssDir, { recursive: true });
+
+for (const slice of slices) {
+  writeFileSync(join(distCssDir, `${slice.slug}.css`), slice.css);
+  const constName = `${slice.slug.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())}Css`;
+  writeFileSync(
+    join(srcCssDir, `${slice.slug}.generated.ts`),
+    `${banner}\n\n` +
+      `/**\n` +
+      ` * The \`${slice.title}\` slice of the @civitai/components stylesheet —\n` +
+      ` * a standalone, layered sheet carrying the shared \`[data-civitai-ui]\` base\n` +
+      ` * rule plus this section only. Identical to dist/css/${slice.slug}.css.\n` +
+      ` *\n` +
+      ` * Reachable as \`@civitai/components/css/${slice.slugs.join('\`, \`@civitai/components/css/')}\`.\n` +
+      ` */\n` +
+      // `: string` is load-bearing, not decoration. Without it tsc infers the
+      // STRING LITERAL type and inlines the whole sheet into the `.d.ts` — the
+      // shape `styles.generated.ts` already has, where one 32 KB constant costs
+      // another 33 KB of declaration. Repeated across 14 slices that was 100 KB
+      // of `.d.ts` in the tarball (measured), for a type no consumer wants.
+      `export const css: string = ${JSON.stringify(slice.css)};\n\n` +
+      `/** Alias of {@link css}, named for this slice. */\nexport const ${constName}: string = css;\n`
+  );
+}
+
+console.log(
+  `[build-css] wrote dist/components.css + styles.css + src/styles.generated.ts + ` +
+    `${slices.length} slices (${slices.reduce((n, s) => n + s.slugs.length, 0)} component subpaths)`
+);

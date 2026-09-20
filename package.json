@@ -13,6 +13,7 @@
     "typecheck": "pnpm -r --filter \"./packages/*\" typecheck",
     "lint": "pnpm -r --filter \"./packages/*\" lint",
     "e2e:all": "node scripts/run-all-e2e.mjs",
+    "measure:css-split": "node scripts/measure-css-split.mjs",
     "typecheck:readme": "node scripts/typecheck-readme-snippets.mjs",
     "typecheck:readme:selftest": "node scripts/test-readme-snippet-gate.mjs",
     "check:schema": "bash scripts/check-canonical-schema.sh",
@@ -45,7 +46,8 @@
     "url": "git+https://github.com/civitai/civitai-app-starters.git"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.27.10"
+    "@changesets/cli": "^2.27.10",
+    "esbuild": "0.28.1"
   },
   "pnpm": {
     "comment-overrides": [

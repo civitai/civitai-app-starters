@@ -38,6 +38,45 @@ injectStyles();
 React authors want [`@civitai/components-react`](../civitai-components-react),
 which renders exactly this markup.
 
+### One component's CSS only
+
+`componentsCss` / `injectStyles()` / `styles.css` all carry the **whole** sheet,
+and that is deliberate — see the note below. When you are bundling and want just
+one component's rules, import its slice instead:
+
+```ts
+import { css } from '@civitai/components/css/button'; // the string
+```
+
+```ts
+import '@civitai/components/css/button.css'; // the file, for a CSS pipeline
+```
+
+There is a subpath for every name in `COMPONENT_NAMES` (plus `tabs`). Each slice
+is a **standalone, layered sheet**: it carries the shared `[data-civitai-ui]`
+base rule and the `@layer civitai.components` wrapper, so importing two of them
+duplicates those (both idempotent in CSS) and importing one is enough on its own.
+Components that share a section share a slice — `text-input`, `textarea`,
+`number-input` and `select` all resolve to the same module, so a bundler dedupes
+them. From a CDN the same files are at
+`https://cdn.jsdelivr.net/npm/@civitai/components/dist/css/button.css`.
+
+Measured with esbuild (minify, ESM, React external), a `@civitai/blocks-react/ui`
+Button bundle is **52,568 B, of which 50,151 B is stylesheet** — 95.4% CSS for
+one component. The same bundle over Button's + Loader's slices is 13,480 B.
+
+> 🔴 **`@civitai/blocks-react` deliberately still injects the whole pack.**
+> [`MARKUP.md`](./MARKUP.md) documents that rendering any one `/ui` component is
+> enough to style hand-written `data-civitai-ui="…"` markup elsewhere on the
+> page; narrowing it onto slices would take the bytes and break that contract
+> silently. Whether to do it anyway is
+> [issue #358](https://github.com/civitai/civitai-app-starters/issues/358).
+
+The slices are generated from `src/components.css` by `scripts/build-css.ts`,
+whose split is asserted **byte-identical on reassembly** before anything is
+written (`scripts/slice-css.ts`, guarded with its negative control in
+`test/css-slice.test.ts`).
+
 ## Design
 
 - All rules live in `@layer civitai.components`, so consumer CSS wins the
@@ -45,8 +84,9 @@ which renders exactly this markup.
 - State colors (hover/active/tint) are derived with `color-mix()` from base
   tokens — no shade enumeration.
 - Authored in plain CSS with native nesting (no preprocessor); `src/components.css`
-  is the single source of truth (copied to `dist/components.css` and embedded as
-  the injectable string, guarded by a parity test).
+  is the single source of truth (copied to `dist/components.css`, embedded as
+  the injectable string, and sliced per component — all three guarded by parity
+  tests, the slicing additionally by a byte-identical-reassembly assertion).
 
 ## Markup contract
 

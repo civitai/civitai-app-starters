@@ -11,7 +11,112 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./styles.css": "./dist/components.css"
+    "./styles.css": "./dist/components.css",
+    "./css/button": {
+      "types": "./dist/css/button.generated.d.ts",
+      "import": "./dist/css/button.generated.js"
+    },
+    "./css/button.css": "./dist/css/button.css",
+    "./css/text-input": {
+      "types": "./dist/css/text-input.generated.d.ts",
+      "import": "./dist/css/text-input.generated.js"
+    },
+    "./css/text-input.css": "./dist/css/text-input.css",
+    "./css/textarea": {
+      "types": "./dist/css/text-input.generated.d.ts",
+      "import": "./dist/css/text-input.generated.js"
+    },
+    "./css/textarea.css": "./dist/css/text-input.css",
+    "./css/number-input": {
+      "types": "./dist/css/text-input.generated.d.ts",
+      "import": "./dist/css/text-input.generated.js"
+    },
+    "./css/number-input.css": "./dist/css/text-input.css",
+    "./css/select": {
+      "types": "./dist/css/text-input.generated.d.ts",
+      "import": "./dist/css/text-input.generated.js"
+    },
+    "./css/select.css": "./dist/css/text-input.css",
+    "./css/checkbox": {
+      "types": "./dist/css/checkbox.generated.d.ts",
+      "import": "./dist/css/checkbox.generated.js"
+    },
+    "./css/checkbox.css": "./dist/css/checkbox.css",
+    "./css/radio": {
+      "types": "./dist/css/checkbox.generated.d.ts",
+      "import": "./dist/css/checkbox.generated.js"
+    },
+    "./css/radio.css": "./dist/css/checkbox.css",
+    "./css/radio-group": {
+      "types": "./dist/css/radio-group.generated.d.ts",
+      "import": "./dist/css/radio-group.generated.js"
+    },
+    "./css/radio-group.css": "./dist/css/radio-group.css",
+    "./css/card": {
+      "types": "./dist/css/card.generated.d.ts",
+      "import": "./dist/css/card.generated.js"
+    },
+    "./css/card.css": "./dist/css/card.css",
+    "./css/stack": {
+      "types": "./dist/css/stack.generated.d.ts",
+      "import": "./dist/css/stack.generated.js"
+    },
+    "./css/stack.css": "./dist/css/stack.css",
+    "./css/group": {
+      "types": "./dist/css/stack.generated.d.ts",
+      "import": "./dist/css/stack.generated.js"
+    },
+    "./css/group.css": "./dist/css/stack.css",
+    "./css/alert": {
+      "types": "./dist/css/alert.generated.d.ts",
+      "import": "./dist/css/alert.generated.js"
+    },
+    "./css/alert.css": "./dist/css/alert.css",
+    "./css/loader": {
+      "types": "./dist/css/loader.generated.d.ts",
+      "import": "./dist/css/loader.generated.js"
+    },
+    "./css/loader.css": "./dist/css/loader.css",
+    "./css/badge": {
+      "types": "./dist/css/badge.generated.d.ts",
+      "import": "./dist/css/badge.generated.js"
+    },
+    "./css/badge.css": "./dist/css/badge.css",
+    "./css/slider": {
+      "types": "./dist/css/slider.generated.d.ts",
+      "import": "./dist/css/slider.generated.js"
+    },
+    "./css/slider.css": "./dist/css/slider.css",
+    "./css/segmented-control": {
+      "types": "./dist/css/segmented-control.generated.d.ts",
+      "import": "./dist/css/segmented-control.generated.js"
+    },
+    "./css/segmented-control.css": "./dist/css/segmented-control.css",
+    "./css/tabs": {
+      "types": "./dist/css/segmented-control.generated.d.ts",
+      "import": "./dist/css/segmented-control.generated.js"
+    },
+    "./css/tabs.css": "./dist/css/segmented-control.css",
+    "./css/toast": {
+      "types": "./dist/css/toast.generated.d.ts",
+      "import": "./dist/css/toast.generated.js"
+    },
+    "./css/toast.css": "./dist/css/toast.css",
+    "./css/toast-region": {
+      "types": "./dist/css/toast.generated.d.ts",
+      "import": "./dist/css/toast.generated.js"
+    },
+    "./css/toast-region.css": "./dist/css/toast.css",
+    "./css/tooltip": {
+      "types": "./dist/css/tooltip.generated.d.ts",
+      "import": "./dist/css/tooltip.generated.js"
+    },
+    "./css/tooltip.css": "./dist/css/tooltip.css",
+    "./css/image": {
+      "types": "./dist/css/image.generated.d.ts",
+      "import": "./dist/css/image.generated.js"
+    },
+    "./css/image.css": "./dist/css/image.css"
   },
   "files": [
     "dist",
