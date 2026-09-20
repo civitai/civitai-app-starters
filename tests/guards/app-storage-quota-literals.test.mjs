@@ -116,7 +116,8 @@ const SCAN_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.md', '.
 const EXEMPT_BASENAMES = new Set(['CHANGELOG.md']);
 
 /**
- * Coverage floor. 190 files match today across SCAN_DIRS + SCAN_FILES. An
+ * Coverage floor. 192 files match today across SCAN_DIRS + SCAN_FILES (down
+ * from 453 when the scan was `packages/ starters/ docs/`). An
  * unasserted count is indistinguishable from a walker wired to nothing: a
  * directory renamed out from under `SCAN_DIRS` would otherwise read as a PASS.
  * Well below the real count on purpose — this catches a collapse, not drift.
