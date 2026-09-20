@@ -82,7 +82,7 @@ than a full app: a single static SPA, no OAuth dance, no BFF.
 
 | Package | What |
 |---|---|
-| [`@civitai/app-sdk`](https://www.npmjs.com/package/@civitai/app-sdk) (`/blocks` subpath) — [source](./packages/civitai-app-sdk) | Framework-agnostic contract: manifest types, scopes, the `postMessage` protocol, `defineBlock` validator. |
+| [`@civitai/app-sdk`](https://www.npmjs.com/package/@civitai/app-sdk) (`/blocks` subpath) — [source](./packages/civitai-app-sdk) | Framework-agnostic contract: manifest types, scopes, the `postMessage` protocol. Build-time manifest validation (`defineBlock`, `blockManifestPlugin`) lives on the node-only `/manifest` and `/vite` subpaths. |
 | [`@civitai/blocks-react`](https://www.npmjs.com/package/@civitai/blocks-react) — [source](./packages/civitai-blocks-react) | React hooks (`useBlockContext`, `useBuzzWorkflow`, `useAppStorage`, …) + iframe transport. Plus `/ui` (the `SettingsForm`). |
 | Go [`civitai` CLI](https://github.com/civitai/cli) | `civitai login` / `civitai app init` / `civitai app validate` / `civitai app submit` — scaffold and ship a block. (Local dev is the project's own `npm run dev:harness`.) Replaces the deprecated `@civitai/blocks-cli`. |
 

@@ -214,6 +214,9 @@ const EXPECTED_SCAN_UNITS = [
   'starters/examples/kv-storage/src/App.tsx',
   'starters/examples/kv-storage/src/Harness.tsx',
   'starters/examples/kv-storage/src/main.tsx',
+  // #330 briefly added a per-scaffold `vite-plugin-block-manifest.ts` here. It
+  // is gone again — the gate now ships from `@civitai/app-sdk/vite`, so there
+  // are no per-scaffold copies to scan.
   'starters/examples/kv-storage/vite.config.ts',
 ];
 

@@ -104,10 +104,14 @@ export type BlockCategory = (typeof BLOCK_CATEGORIES)[number];
  * `src/server/services/block-manifest-validator.service.ts` (the authoritative
  * gate) and the `tagline.maxLength` in the canonical schema
  * (https://civitai.com/schemas/app-block/v1.json). Keep all three in lockstep —
- * the schema-parity test asserts this const equals the vendored schema's bound.
+ * `test/manifest/canonical-derivation.test.ts` asserts this const equals the
+ * vendored schema's bound.
  *
  * NOTE: the SERVER measures the TRIMMED length; JSON Schema's `maxLength` counts
- * the raw string. `defineBlock` mirrors the server (trimmed) so an author is
- * never rejected locally for padding the server would ignore.
+ * the RAW string, so a tagline padded with whitespace past 140 is rejected by
+ * the schema and accepted by the server. `defineBlock` takes the SCHEMA's
+ * verdict — it applies no relaxation to any canonical rule — so that one shape
+ * is rejected locally. The canonical documents the asymmetry as deliberate
+ * ("this schema is never more permissive than the server"); trim the tagline.
  */
 export const BLOCK_TAGLINE_MAX_LENGTH = 140;

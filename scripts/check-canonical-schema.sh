@@ -14,7 +14,15 @@
 set -euo pipefail
 
 CANONICAL_URL="https://civitai.com/schemas/app-block/v1.json"
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# `cd -P … >/dev/null`, not a bare `cd`. With CDPATH set, bash ECHOES the
+# resolved directory on a successful `cd` — and `$(…)` captures that echo
+# alongside `pwd`, so REPO_ROOT becomes a two-line string and every path built
+# from it is malformed. MEASURED: bash skips CDPATH entirely for an operand
+# starting with `.` or `/`, so invoking this as its own header documents
+# (`./scripts/check-canonical-schema.sh`) is rc 0 even with CDPATH set; the
+# breakage needs a bare `scripts/check-canonical-schema.sh` spelling, or any
+# other relative form without a leading `./`. Cheap to make unconditional.
+REPO_ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null && pwd)"
 VENDORED="$REPO_ROOT/packages/civitai-app-sdk/schemas/app-block/v1.json"
 
 if [[ ! -f "$VENDORED" ]]; then

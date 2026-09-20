@@ -1443,22 +1443,49 @@ export type ContentRating = 'g' | 'pg' | 'pg13' | 'r' | 'x';
 
 export interface ManifestTarget {
   slotId: string;
-  priority: number;
+  /**
+   * Slot ordering hint. NOT a property of the canonical schema (whose target
+   * items require only `slotId`), so it is optional and shape-checked only.
+   */
+  priority?: number;
   requiredContext?: string[];
 }
 
+/**
+ * iframe envelope. Every field is optional — the canonical schema declares no
+ * `required` list here, and the platform supplies its own defaults.
+ */
 export interface ManifestIframe {
-  src: string;
-  minHeight: number;
-  /** Optional. Omit or set to `null` for no cap. */
+  /**
+   * SERVER-OWNED — the platform stamps the canonical bundle URL at
+   * build/approve time. Typed `never` so setting it is a compile error;
+   * `defineBlock` rejects it at runtime too. Until #330 the SDK REQUIRED this
+   * field, which made every valid manifest fail local validation and every
+   * locally-valid manifest fail `civitai app submit`.
+   */
+  src?: never;
+  /** Canonical bounds: integer, 40–4000 px. */
+  minHeight?: number;
+  /** Optional. Omit or set to `null` for no cap. Canonical bounds: 40–4000 px. */
   maxHeight?: number | null;
-  resizable: boolean;
-  sandbox: string;
+  resizable?: boolean;
+  sandbox?: string;
 }
 
-export interface ManifestAsset {
-  url: string;
-  integrity: string;
+/** Full-page surface descriptor (W10). Page apps mount at `/apps/run/<slug>`. */
+export interface ManifestPage {
+  /** Sub-path the page mounts at; must start with `/`. */
+  path: string;
+  /** Title shown in host chrome. */
+  title: string;
+  icon?: string;
+  /**
+   * Per-generation Buzz SAFETY CEILING for `ai:write:budgeted` tokens — a
+   * ceiling against a drained wallet, NOT a cost forecast. Size it well above
+   * your worst-case generation; a budget set to your estimate becomes a hard
+   * outage the moment real cost drifts up.
+   */
+  buzzBudgetPerGen?: number;
 }
 
 export interface ManifestPreview {
@@ -1470,18 +1497,42 @@ export interface ManifestPreview {
 /**
  * v1 manifest shape. Mirrors `schemas/app-block/v1.json` — keep them in sync.
  *
- * The trailing `renderMode` / `assetBundle` / `trustTier` fields are
- * forward-compat hooks for v2 inline mode; they are accepted but unused
- * by the v1 iframe runtime.
+ * REQUIRED HERE = REQUIRED THERE. Only `blockId`, `version`, `name`,
+ * `contentRating` and `scopes` are required, because those are exactly the five
+ * entries in the canonical schema's `required` array. Before #330 this
+ * interface required eleven (including `appId`, which the canonical does not
+ * declare at all, and `iframe.src`, which the platform REFUSES), so the type
+ * itself rejected every manifest the starters ship.
  */
 export interface BlockManifestV1 {
-  $schema: 'https://civitai.com/schemas/app-block/v1.json';
-  appId: string;
+  /**
+   * Optional JSON-Schema reference. The canonical types it as a plain string
+   * and its own description says it is "ignored by the platform validator", so
+   * `defineBlock` does NOT constrain the value — point it at a vendored copy or
+   * a preview draft if that is what your editor needs. Until #330 a mismatch
+   * was a hard throw, which (once the gate was wired into Vite) failed the
+   * build on a field the server provably ignores.
+   *
+   * The union below is an AUTOCOMPLETE NUDGE, not a rule: `string & {}` keeps
+   * the literal visible in editor suggestions while still admitting any string.
+   */
+  $schema?: 'https://civitai.com/schemas/app-block/v1.json' | (string & {});
+  /**
+   * NOT a canonical manifest property, and NOT validated. Your app id lives in
+   * `civitai.app.json` (`{"appId": "..."}`), which is what the `civitai` CLI
+   * reads. The canonical does not forbid extra top-level keys, so the server
+   * ignores this one; the scaffolds still carry `"app_REPLACE_ME"` and it is
+   * inert.
+   */
+  appId?: string;
   blockId: string;
   version: string;
+  /** Human-readable display name. Non-empty; the canonical imposes NO length cap. */
   name: string;
-  type: 'block' | 'embed';
-  targets: ManifestTarget[];
+  /** Canonical enum — `block` is the only member. */
+  type?: 'block';
+  /** Optional (page-only apps declare none). Canonical cap: 16 entries. */
+  targets?: ManifestTarget[];
   scopes: string[];
   /**
    * Optional per-scope justification: a map of scope-id → free-text rationale
@@ -1493,8 +1544,17 @@ export interface BlockManifestV1 {
    * with the canonical schema's `scopeJustifications` (civitai #3195).
    */
   scopeJustifications?: Record<string, string>;
-  iframe: ManifestIframe;
-  assets?: ManifestAsset[];
+  /** Optional; the canonical declares no required sub-field. */
+  iframe?: ManifestIframe;
+  /** Full-page surface descriptor (W10). */
+  page?: ManifestPage;
+  /**
+   * The app's shipped `index.html` paints its own loading state inside `#root`,
+   * so the full-page run host stands down its branded overlay. Only declare it
+   * if the markup really exists — with the overlay gone, an empty `#root` is a
+   * blank iframe for the whole load.
+   */
+  bootSkeleton?: boolean;
   /**
    * Per-field settings declaration the platform validates user input
    * against AND renders the publisher/viewer settings UI from. v0 shape;
@@ -1515,23 +1575,51 @@ export interface BlockManifestV1 {
    * + detail page. Manifest-governed: it flows to the store listing on
    * moderator-approve and is re-synced from the manifest on every subsequent
    * approved version — for an ON-SITE app the manifest is the ONLY surface that
-   * sets it. Omit it and the store simply shows no tagline. Trimmed and capped at
+   * sets it. Omit it and the store simply shows no tagline. Capped at
    * {@link BLOCK_TAGLINE_MAX_LENGTH} (140) characters, the same bound off-site
    * listings use, so both store kinds render the same slot. Kept in lockstep with
-   * the canonical schema's `tagline` (civitai #3441).
+   * the canonical schema's `tagline` (civitai #3441). NOTE the canonical counts
+   * the RAW string while the server measures the trimmed one, and `defineBlock`
+   * takes the canonical's verdict — so trim before you count.
    */
   tagline?: string;
+  /**
+   * Optional PUBLIC source-repository link rendered as a `Source` row on the
+   * app's store detail page. `https://` root URL on github.com, gitlab.com or
+   * codeberg.org, at most 200 chars. `defineBlock` mirrors the canonical's
+   * COARSE pattern; the server applies stricter per-segment rules, so passing
+   * locally is necessary, not sufficient.
+   */
+  repository?: string;
   preview?: ManifestPreview;
   promotionEligible?: boolean;
-  minApiVersion: string;
+  /** Optional; dot-separated integers (e.g. `"1"` or `"1.0"`). Informational. */
+  minApiVersion?: string;
   /**
    * Author-declared mode preference. `hybrid` is a manifest-only hint that
    * the host resolves to a concrete `iframe` | `inline` value before sending
    * `BLOCK_INIT` — that's why `BlockInitPayload.renderMode` is narrower.
    */
   renderMode?: 'iframe' | 'inline' | 'hybrid';
+  /**
+   * Config-as-code: the command the platform runs to build the static bundle.
+   * One of an allowlisted set (`npm|pnpm|yarn run <script>`, `vite build`,
+   * `npx vite build`). When set, `outputDir` is REQUIRED.
+   */
+  buildCommand?: string;
+  /** Directory `buildCommand` emits into. Safe relative path; required with `buildCommand`. */
+  outputDir?: string;
+  /** Allowlist of settings keys exposed to anonymous viewers. Max 32 keys, 64 chars each. */
+  publicSettingsKeys?: string[];
+  /** Optional v2 surface — a public `https://` URL to a hosted asset bundle. */
+  assetBundleUrl?: string;
   assetBundle?: { url: string | null; sha256: string | null };
-  trustTier?: 'unverified' | 'verified' | 'internal';
+  /**
+   * SERVER-OWNED — the platform assigns the trust tier during review. Typed
+   * `never` so setting it is a compile error; `defineBlock` rejects it at
+   * runtime too.
+   */
+  trustTier?: never;
 }
 
 export type BlockManifest = BlockManifestV1;

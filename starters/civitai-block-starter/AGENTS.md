@@ -16,7 +16,8 @@ sibling workspaces. Help them extend it.
 
 - Vite 7 + React 19 + TypeScript strict
 - `@civitai/blocks-react` for the eight hooks + the singleton `IframeTransport`
-- `@civitai/app-sdk/blocks` for the manifest types, scope strings, JSON schema, and the `defineBlock` validator
+- `@civitai/app-sdk/blocks` for the manifest types, scope strings and the JSON schema
+- `@civitai/app-sdk/vite` for `blockManifestPlugin`, the build-time manifest gate (needs the optional peer `ajv`, already in `devDependencies`)
 - No styling library — the demo uses inline styles + the `[data-theme]` attribute the host provides
 
 ## Why this shape
@@ -41,9 +42,9 @@ Don't try to "make this a real OAuth app." That's what `react-pwa` is for.
 ```
 .
 ├── block.manifest.json     # registered with civitai.com — declares slot + scopes (NOT iframe.src; platform stamps it)
-├── civitai.app.json        # CLI config (appId + manifest list)
+├── civitai.app.json        # CLI config (appId + manifest list) — appId lives HERE, not in the manifest
 ├── index.html
-├── vite.config.ts
+├── vite.config.ts          # registers blockManifestPlugin — validates block.manifest.json on every dev boot + build
 ├── .env.example
 ├── src/
 │   ├── App.tsx             # the block UI
@@ -131,7 +132,7 @@ page surface, with the markup already in place so the two can never separate.
 |---|---|
 | `src/App.tsx`, any block UI | `pnpm typecheck && pnpm dev:harness` and verify visually |
 | `vite.config.ts`, env wiring | `pnpm build` |
-| `block.manifest.json` | Validate against the JSON schema: `node -e "import('./node_modules/@civitai/app-sdk/dist/blocks/defineBlock.js').then(m => m.defineBlock({manifest: require('./block.manifest.json')}))"` |
+| `block.manifest.json` | Nothing extra — `blockManifestPlugin` (from `@civitai/app-sdk/vite`, registered in `vite.config.ts`) validates it against the canonical schema on every `pnpm dev`, `pnpm dev:harness` and `pnpm build`, and fails with the offending field path. `pnpm build` is the quickest way to check in isolation. Before submitting, also run `civitai app validate` — the CLI checks things only the server knows. |
 
 The starter intentionally ships without an e2e suite — real end-to-end
 verification requires civitai.com embedding the block. The dev harness +
