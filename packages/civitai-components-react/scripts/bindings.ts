@@ -32,6 +32,7 @@ export const EVENTS: Record<string, EventBinding[]> = {
     { prop: 'onImageError', event: 'error' },
   ],
   'civitai-menu': [{ prop: 'onSelect', event: 'select', detail: 'MenuSelectDetail' }],
+  'civitai-pagination': [{ prop: 'onChange', event: 'change' }],
   'civitai-modal': [{ prop: 'onClose', event: 'close' }],
   'civitai-reaction': [{ prop: 'onReact', event: 'react', detail: 'ReactionDetail' }],
   'civitai-tabs': [{ prop: 'onChange', event: 'change' }],

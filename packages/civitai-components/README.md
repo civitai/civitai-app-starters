@@ -179,6 +179,18 @@ The playground imports the elements from `src/`, so an edit is on screen
 without a build. `demo/` is the opposite: it loads the published artifact from
 jsDelivr to verify what consumers actually get.
 
+### The dashboard five
+
+Added because a real consumer needed them and the vocabulary had no answer:
+
+| | |
+|---|---|
+| `<civitai-switch>` | The checkbox wearing a track and a thumb. It *extends* `<civitai-checkbox>` rather than restating it, so the form participation, validity and `role="switch"` all come from one implementation. |
+| `<civitai-progress>` | Determinate or `indeterminate`, with the ARIA value dropped in the second case because the element genuinely does not know it. |
+| `<civitai-pagination>` | Keeps the first and last page either side of an ellipsis, so the buttons do not move under the pointer as you page. Emits `change`. |
+| `<civitai-breadcrumb>` | `data`-driven. The separator is a pseudo-element, which is what keeps it out of the trail a screen reader reads. |
+| `<civitai-table>` | **Light DOM on purpose**: a slotted `<tr>` inside a shadow `<table>` leaves the table formatting context and stops being a row. This styles a table the page already owns — including one a data grid generated, which is why it works with QuickGrid or any server-rendered table. |
+
 ## Utilities
 
 Elements cover the components. They cannot cover the markup *between* them —

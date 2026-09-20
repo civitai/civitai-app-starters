@@ -15,7 +15,9 @@ const elementsDir = join(pkgRoot, 'src/elements');
 
 interface Declaration {
   customElement?: boolean;
+  name?: string;
   tagName?: string;
+  superclass?: { name: string; module?: string };
   attributes?: { name: string }[];
   cssParts?: { name: string }[];
 }
@@ -61,9 +63,24 @@ describe('custom-elements.json', () => {
     throw new Error(`no source declares ${tag}`);
   };
 
+  /**
+   * A subclass inherits its superclass's contract and the manifest records it
+   * there, so `<civitai-switch>` documents what `<civitai-checkbox>` declares.
+   */
+  const contractSource = (tag: string): string => {
+    const sources = [sourceFor(tag)];
+    let superclass = documented.find((d) => d.tagName === tag)?.superclass;
+    while (superclass?.module?.startsWith('/src/')) {
+      const file = join(pkgRoot, superclass.module.replace(/^\//, '').replace(/\.js$/, '.ts'));
+      sources.push(readFileSync(file, 'utf8'));
+      superclass = declarations.find((d) => d.name === superclass!.name)?.superclass;
+    }
+    return sources.join('\n');
+  };
+
   it.each(registered)('%s documents attributes that exist in its source', (tag) => {
     const declaration = documented.find((d) => d.tagName === tag)!;
-    const source = sourceFor(tag);
+    const source = contractSource(tag);
     for (const attribute of declaration.attributes ?? []) {
       expect(source, `${tag} documents ${attribute.name}`).toContain(attribute.name);
     }
@@ -71,7 +88,7 @@ describe('custom-elements.json', () => {
 
   it.each(registered)('%s documents parts that exist in its template', (tag) => {
     const declaration = documented.find((d) => d.tagName === tag)!;
-    const source = sourceFor(tag);
+    const source = contractSource(tag);
     for (const part of declaration.cssParts ?? []) {
       expect(source, `${tag} documents part ${part.name}`).toContain(`part="${part.name}"`);
     }

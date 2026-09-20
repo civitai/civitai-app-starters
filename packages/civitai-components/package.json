@@ -282,6 +282,46 @@
     "./civitai-action-button/define": {
       "types": "./dist/elements/civitai-action-button.define.d.ts",
       "import": "./dist/elements/civitai-action-button.define.js"
+    },
+    "./civitai-breadcrumb": {
+      "types": "./dist/elements/civitai-breadcrumb.d.ts",
+      "default": "./dist/elements/civitai-breadcrumb.js"
+    },
+    "./civitai-breadcrumb/define": {
+      "types": "./dist/elements/civitai-breadcrumb.define.d.ts",
+      "default": "./dist/elements/civitai-breadcrumb.define.js"
+    },
+    "./civitai-pagination": {
+      "types": "./dist/elements/civitai-pagination.d.ts",
+      "default": "./dist/elements/civitai-pagination.js"
+    },
+    "./civitai-pagination/define": {
+      "types": "./dist/elements/civitai-pagination.define.d.ts",
+      "default": "./dist/elements/civitai-pagination.define.js"
+    },
+    "./civitai-progress": {
+      "types": "./dist/elements/civitai-progress.d.ts",
+      "default": "./dist/elements/civitai-progress.js"
+    },
+    "./civitai-progress/define": {
+      "types": "./dist/elements/civitai-progress.define.d.ts",
+      "default": "./dist/elements/civitai-progress.define.js"
+    },
+    "./civitai-switch": {
+      "types": "./dist/elements/civitai-switch.d.ts",
+      "default": "./dist/elements/civitai-switch.js"
+    },
+    "./civitai-switch/define": {
+      "types": "./dist/elements/civitai-switch.define.d.ts",
+      "default": "./dist/elements/civitai-switch.define.js"
+    },
+    "./civitai-table": {
+      "types": "./dist/elements/civitai-table.d.ts",
+      "default": "./dist/elements/civitai-table.js"
+    },
+    "./civitai-table/define": {
+      "types": "./dist/elements/civitai-table.define.d.ts",
+      "default": "./dist/elements/civitai-table.define.js"
     }
   },
   "files": [

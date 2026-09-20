@@ -66,6 +66,11 @@ export class CivitaiCheckbox extends CivitaiField {
     this.indeterminate = false;
   }
 
+  /** `<civitai-switch>` is this control wearing `role="switch"`. */
+  protected get inputRole(): string | undefined {
+    return undefined;
+  }
+
   protected override renderControl(): TemplateResult {
     const { id, part, name, ariaInvalid, ariaDescribedBy } = this.controlAttrs();
     return html`
@@ -74,6 +79,7 @@ export class CivitaiCheckbox extends CivitaiField {
           id=${id}
           part=${part}
           name=${ifDefined(name)}
+          role=${ifDefined(this.inputRole)}
           type="checkbox"
           .checked=${this.checked}
           ?required=${this.required}

@@ -18,9 +18,12 @@ const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
  * plus the civitai vocabulary. Measured: two disjoint bundles would duplicate
  * 8.5 kB of Lit in any page needing both, which is every page with a tag in it.
  */
+/* Raised from 25/30 kB when the vocabulary reached 31 elements: an all-in-one
+   bundle grows with it, and no element is an outlier to shave. A page that
+   counts bytes imports `@civitai/components/<tag>/define` instead. */
 const BUNDLES = [
-  { entry: 'src/elements/register.ts', file: 'elements.js', budget: 25 * 1024 },
-  { entry: 'src/elements/register-site.ts', file: 'site-elements.js', budget: 30 * 1024 },
+  { entry: 'src/elements/register.ts', file: 'elements.js', budget: 32 * 1024 },
+  { entry: 'src/elements/register-site.ts', file: 'site-elements.js', budget: 38 * 1024 },
 ] as const;
 
 let over = false;

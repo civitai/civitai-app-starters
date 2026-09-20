@@ -45,7 +45,12 @@ describe('entry points', () => {
     expect(external.some((s) => s === 'lit' || s.startsWith('lit/'))).toBe(true);
     // A whitelist, not a denylist: a new dependency has to be declared here on
     // purpose, which is what keeps an external OAuth app's bundle honest.
-    const allowed = new Set(['@civitai/theme', 'lit', 'lit/directives/if-defined.js']);
+    const allowed = new Set([
+      '@civitai/theme',
+      'lit',
+      'lit/directives/if-defined.js',
+      'lit/directives/style-map.js',
+    ]);
     expect(external.filter((s) => !allowed.has(s))).toEqual([]);
   });
 

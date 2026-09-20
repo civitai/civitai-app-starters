@@ -603,6 +603,107 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/elements/civitai-breadcrumb.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiBreadcrumb",
+          "members": [
+            {
+              "kind": "field",
+              "name": "data",
+              "privacy": "public",
+              "type": {
+                "text": "Crumb[]"
+              },
+              "default": "[]"
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Breadcrumb'",
+              "attribute": "label",
+              "reflects": true
+            }
+          ],
+          "attributes": [
+            {
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Breadcrumb'",
+              "fieldName": "label"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-breadcrumb",
+          "cssParts": [
+            {
+              "name": "nav"
+            },
+            {
+              "name": "list"
+            },
+            {
+              "name": "crumb"
+            },
+            {
+              "name": "current"
+            },
+            {
+              "name": "link"
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiBreadcrumb",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiBreadcrumb",
+          "declaration": {
+            "name": "CivitaiBreadcrumb",
+            "module": "src/elements/civitai-breadcrumb.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiBreadcrumb",
+          "declaration": {
+            "name": "defineCivitaiBreadcrumb",
+            "module": "src/elements/civitai-breadcrumb.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-breadcrumb",
+          "declaration": {
+            "name": "CivitaiBreadcrumb",
+            "module": "src/elements/civitai-breadcrumb.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/elements/civitai-button.ts",
       "declarations": [
         {
@@ -1037,6 +1138,16 @@
                   }
                 }
               ]
+            },
+            {
+              "kind": "field",
+              "name": "inputRole",
+              "type": {
+                "text": "string | undefined"
+              },
+              "privacy": "protected",
+              "description": "`<civitai-switch>` is this control wearing `role=\"switch\"`.",
+              "readonly": true
             },
             {
               "kind": "method",
@@ -2765,6 +2876,461 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/elements/civitai-pagination.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiPagination",
+          "members": [
+            {
+              "kind": "field",
+              "name": "page",
+              "privacy": "public",
+              "type": {
+                "text": "number"
+              },
+              "description": "1-based, as every page number a reader ever sees is.",
+              "default": "1",
+              "attribute": "page",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "total",
+              "privacy": "public",
+              "type": {
+                "text": "number"
+              },
+              "default": "1",
+              "attribute": "total",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "siblings",
+              "privacy": "public",
+              "type": {
+                "text": "number"
+              },
+              "description": "How many pages to keep either side of the current one.",
+              "default": "1",
+              "attribute": "siblings",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Pagination'",
+              "attribute": "label",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "previousLabel",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Previous'",
+              "attribute": "previous-label",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "nextLabel",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Next'",
+              "attribute": "next-label",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "#current",
+              "privacy": "private",
+              "type": {
+                "text": "number"
+              },
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "#pages",
+              "privacy": "private",
+              "type": {
+                "text": "number[]"
+              },
+              "description": "First and last always show, so the run stays a fixed width and the buttons\ndo not move under the pointer as you page through.",
+              "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "#go",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "next",
+                  "type": {
+                    "text": "number"
+                  }
+                }
+              ]
+            }
+          ],
+          "events": [
+            {
+              "name": "change",
+              "type": {
+                "text": "Event"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "page",
+              "type": {
+                "text": "number"
+              },
+              "description": "1-based, as every page number a reader ever sees is.",
+              "default": "1",
+              "fieldName": "page"
+            },
+            {
+              "name": "total",
+              "type": {
+                "text": "number"
+              },
+              "default": "1",
+              "fieldName": "total"
+            },
+            {
+              "name": "siblings",
+              "type": {
+                "text": "number"
+              },
+              "description": "How many pages to keep either side of the current one.",
+              "default": "1",
+              "fieldName": "siblings"
+            },
+            {
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Pagination'",
+              "fieldName": "label"
+            },
+            {
+              "name": "previous-label",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Previous'",
+              "fieldName": "previousLabel"
+            },
+            {
+              "name": "next-label",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Next'",
+              "fieldName": "nextLabel"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-pagination",
+          "cssParts": [
+            {
+              "name": "nav"
+            },
+            {
+              "name": "previous"
+            },
+            {
+              "name": "gap"
+            },
+            {
+              "name": "page"
+            },
+            {
+              "name": "next"
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiPagination",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiPagination",
+          "declaration": {
+            "name": "CivitaiPagination",
+            "module": "src/elements/civitai-pagination.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiPagination",
+          "declaration": {
+            "name": "defineCivitaiPagination",
+            "module": "src/elements/civitai-pagination.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-pagination",
+          "declaration": {
+            "name": "CivitaiPagination",
+            "module": "src/elements/civitai-pagination.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-progress.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiProgress",
+          "members": [
+            {
+              "kind": "field",
+              "name": "value",
+              "privacy": "public",
+              "type": {
+                "text": "number"
+              },
+              "default": "0",
+              "attribute": "value",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "max",
+              "privacy": "public",
+              "type": {
+                "text": "number"
+              },
+              "default": "100",
+              "attribute": "max",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Names the bar for a screen reader, and shows above it when given.",
+              "default": "''",
+              "attribute": "label",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "color",
+              "privacy": "public",
+              "type": {
+                "text": "ProgressColor | ''"
+              },
+              "default": "''",
+              "attribute": "color",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "size",
+              "privacy": "public",
+              "type": {
+                "text": "'sm' | 'md' | 'lg'"
+              },
+              "default": "'md'",
+              "attribute": "size",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "indeterminate",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Work is running but its extent is unknown.",
+              "default": "false",
+              "attribute": "indeterminate",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "showValue",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "show-value",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "#fraction",
+              "privacy": "private",
+              "type": {
+                "text": "number"
+              },
+              "readonly": true
+            }
+          ],
+          "attributes": [
+            {
+              "name": "value",
+              "type": {
+                "text": "number"
+              },
+              "default": "0",
+              "fieldName": "value"
+            },
+            {
+              "name": "max",
+              "type": {
+                "text": "number"
+              },
+              "default": "100",
+              "fieldName": "max"
+            },
+            {
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "description": "Names the bar for a screen reader, and shows above it when given.",
+              "default": "''",
+              "fieldName": "label"
+            },
+            {
+              "name": "color",
+              "type": {
+                "text": "ProgressColor | ''"
+              },
+              "default": "''",
+              "fieldName": "color"
+            },
+            {
+              "name": "size",
+              "type": {
+                "text": "'sm' | 'md' | 'lg'"
+              },
+              "default": "'md'",
+              "fieldName": "size"
+            },
+            {
+              "name": "indeterminate",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Work is running but its extent is unknown.",
+              "default": "false",
+              "fieldName": "indeterminate"
+            },
+            {
+              "name": "show-value",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "showValue"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-progress",
+          "cssParts": [
+            {
+              "name": "readout"
+            },
+            {
+              "name": "label"
+            },
+            {
+              "name": "value"
+            },
+            {
+              "name": "track"
+            },
+            {
+              "name": "bar"
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiProgress",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiProgress",
+          "declaration": {
+            "name": "CivitaiProgress",
+            "module": "src/elements/civitai-progress.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiProgress",
+          "declaration": {
+            "name": "defineCivitaiProgress",
+            "module": "src/elements/civitai-progress.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-progress",
+          "declaration": {
+            "name": "CivitaiProgress",
+            "module": "src/elements/civitai-progress.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/elements/civitai-radio-group.ts",
       "declarations": [
         {
@@ -3760,6 +4326,330 @@
           "declaration": {
             "name": "CivitaiStack",
             "module": "src/elements/civitai-stack.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-switch.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "The checkbox wearing a track and a thumb. It stays a real\n`<input type=\"checkbox\">` because `role=\"switch\"` is defined on one, and a\ndiv pretending to be a control would lose the form and the keyboard.",
+          "name": "CivitaiSwitch",
+          "members": [
+            {
+              "kind": "field",
+              "name": "inputRole",
+              "type": {
+                "text": "string | undefined"
+              },
+              "privacy": "protected",
+              "description": "`<civitai-switch>` is this control wearing `role=\"switch\"`.",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiCheckbox",
+                "module": "src/elements/civitai-checkbox.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "checked",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "checked",
+              "inheritedFrom": {
+                "name": "CivitaiCheckbox",
+                "module": "src/elements/civitai-checkbox.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "indeterminate",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "indeterminate",
+              "inheritedFrom": {
+                "name": "CivitaiCheckbox",
+                "module": "src/elements/civitai-checkbox.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "formValue",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "string | null"
+                }
+              },
+              "description": "An unchecked checkbox submits nothing at all, like the native one.",
+              "inheritedFrom": {
+                "name": "CivitaiCheckbox",
+                "module": "src/elements/civitai-checkbox.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "missing",
+              "type": {
+                "text": "boolean"
+              },
+              "privacy": "protected",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiCheckbox",
+                "module": "src/elements/civitai-checkbox.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "missingMessage",
+              "type": {
+                "text": "string"
+              },
+              "privacy": "protected",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiCheckbox",
+                "module": "src/elements/civitai-checkbox.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "formResetCallback",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Native semantics: reset returns to the `checked` ATTRIBUTE.",
+              "inheritedFrom": {
+                "name": "CivitaiCheckbox",
+                "module": "src/elements/civitai-checkbox.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "formStateRestoreCallback",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "state",
+                  "type": {
+                    "text": "string | null"
+                  }
+                }
+              ],
+              "inheritedFrom": {
+                "name": "CivitaiCheckbox",
+                "module": "src/elements/civitai-checkbox.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "#onChange",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "event",
+                  "type": {
+                    "text": "Event"
+                  }
+                }
+              ],
+              "inheritedFrom": {
+                "name": "CivitaiCheckbox",
+                "module": "src/elements/civitai-checkbox.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "renderControl",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "TemplateResult"
+                }
+              },
+              "inheritedFrom": {
+                "name": "CivitaiCheckbox",
+                "module": "src/elements/civitai-checkbox.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "value",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Submitted when checked, exactly as a native checkbox does.",
+              "default": "'on'",
+              "attribute": "value",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiCheckbox",
+                "module": "src/elements/civitai-checkbox.ts"
+              }
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiCheckbox",
+            "module": "/src/elements/civitai-checkbox.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-switch",
+          "cssParts": [
+            {
+              "name": "choice",
+              "inheritedFrom": {
+                "name": "CivitaiCheckbox",
+                "module": "src/elements/civitai-checkbox.ts"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "value",
+              "type": {
+                "text": "string"
+              },
+              "description": "Submitted when checked, exactly as a native checkbox does.",
+              "default": "'on'",
+              "fieldName": "value",
+              "inheritedFrom": {
+                "name": "CivitaiCheckbox",
+                "module": "src/elements/civitai-checkbox.ts"
+              }
+            },
+            {
+              "name": "checked",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "checked",
+              "inheritedFrom": {
+                "name": "CivitaiCheckbox",
+                "module": "src/elements/civitai-checkbox.ts"
+              }
+            },
+            {
+              "name": "indeterminate",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "indeterminate",
+              "inheritedFrom": {
+                "name": "CivitaiCheckbox",
+                "module": "src/elements/civitai-checkbox.ts"
+              }
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiSwitch",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiSwitch",
+          "declaration": {
+            "name": "CivitaiSwitch",
+            "module": "src/elements/civitai-switch.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiSwitch",
+          "declaration": {
+            "name": "defineCivitaiSwitch",
+            "module": "src/elements/civitai-switch.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-switch",
+          "declaration": {
+            "name": "CivitaiSwitch",
+            "module": "src/elements/civitai-switch.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-table.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiTable",
+          "superclass": {
+            "name": "HTMLElementBase",
+            "module": "/src/elements/html-element.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-table"
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiTable",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiTable",
+          "declaration": {
+            "name": "CivitaiTable",
+            "module": "src/elements/civitai-table.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiTable",
+          "declaration": {
+            "name": "defineCivitaiTable",
+            "module": "src/elements/civitai-table.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-table",
+          "declaration": {
+            "name": "CivitaiTable",
+            "module": "src/elements/civitai-table.ts"
           }
         }
       ]
