@@ -1,0 +1,97 @@
+{
+  "name": "@civitai/elements",
+  "version": "0.1.0",
+  "description": "Light-DOM Lit custom elements for Civitai apps. Framework-agnostic, per-component CSS, form-associated inputs, themed by @civitai/theme.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": [
+    "./dist/index.js",
+    "./dist/button.js",
+    "./dist/stack.js",
+    "./dist/select.js",
+    "./dist/slider.js"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./button": {
+      "types": "./dist/button.d.ts",
+      "import": "./dist/button.js"
+    },
+    "./stack": {
+      "types": "./dist/stack.d.ts",
+      "import": "./dist/stack.js"
+    },
+    "./select": {
+      "types": "./dist/select.d.ts",
+      "import": "./dist/select.js"
+    },
+    "./slider": {
+      "types": "./dist/slider.d.ts",
+      "import": "./dist/slider.js"
+    },
+    "./styles.css": "./dist/styles.css",
+    "./custom-elements.json": "./custom-elements.json"
+  },
+  "customElements": "custom-elements.json",
+  "files": [
+    "dist",
+    "custom-elements.json",
+    "api-snapshot.json",
+    "README.md"
+  ],
+  "scripts": {
+    "generate": "tsx scripts/build-css.ts",
+    "build": "tsx scripts/build-css.ts && tsc -p tsconfig.json",
+    "analyze": "pnpm build && cem analyze --config custom-elements-manifest.config.mjs",
+    "gen:react": "node scripts/gen-react-types.mjs",
+    "api:snapshot": "node scripts/api-snapshot.mjs --write",
+    "api:check": "node scripts/api-snapshot.mjs --check",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --project unit",
+    "test:browser": "vitest run --project browser",
+    "test:watch": "vitest",
+    "measure": "node scripts/measure-bundle.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@civitai/theme": "workspace:*",
+    "@lit/reactive-element": "^2.0.4",
+    "lit": "^3.3.0"
+  },
+  "devDependencies": {
+    "@custom-elements-manifest/analyzer": "^0.11.0",
+    "@types/node": "^25.9.1",
+    "@vitest/browser": "4.1.11",
+    "@vitest/browser-playwright": "4.1.11",
+    "esbuild": "^0.28.1",
+    "happy-dom": "^20.9.0",
+    "playwright": "^1.57.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.2",
+    "vitest": "^4.1.11"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "civitai",
+    "custom-elements",
+    "web-components",
+    "lit",
+    "design-system"
+  ],
+  "homepage": "https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-elements#readme",
+  "bugs": "https://github.com/civitai/civitai-app-starters/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/civitai/civitai-app-starters.git",
+    "directory": "packages/civitai-elements"
+  }
+}

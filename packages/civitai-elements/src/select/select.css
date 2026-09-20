@@ -1,0 +1,39 @@
+/*
+ * civitai-select — the inner native <select> keeps the browser's own combobox
+ * semantics, keyboard handling, type-ahead and popup. It carries NO `name`
+ * attribute (constraint (b)); the host element owns `name` and submits through
+ * ElementInternals.setFormValue().
+ */
+@layer civitai.elements {
+  civitai-select {
+    & select[data-civitai-ui-control] {
+      width: 100%;
+      font-family: var(--civitai-font);
+      font-size: 14px;
+      line-height: 1.4;
+      color: var(--civitai-color-text);
+      background: var(--civitai-color-surface);
+      border: 1px solid var(--civitai-color-border);
+      border-radius: var(--civitai-radius);
+      padding: 8px 28px 8px 12px;
+      cursor: pointer;
+      transition: border-color 120ms ease;
+    }
+    & select[data-civitai-ui-control]:focus {
+      outline: none;
+      border-color: var(--civitai-color-primary);
+    }
+    & select[data-civitai-ui-control]:focus-visible {
+      outline: 2px solid var(--civitai-color-primary);
+      outline-offset: 1px;
+    }
+    & select[data-civitai-ui-control]:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    &[error] select[data-civitai-ui-control],
+    & select[data-civitai-ui-control][aria-invalid='true'] {
+      border-color: var(--civitai-color-error);
+    }
+  }
+}

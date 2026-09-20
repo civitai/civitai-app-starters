@@ -1,0 +1,85 @@
+{
+  "name": "@civitai/elements-react",
+  "version": "0.1.0",
+  "description": "Typed React JSX intrinsics and event details for @civitai/elements. Types only — React 19 needs no wrapper components.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": [
+    "./dist/index.js"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "import": "./dist/types.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "generate": "node ../civitai-elements/scripts/gen-react-types.mjs",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --project unit",
+    "test:browser": "vitest run --project browser",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "@civitai/elements": "workspace:*",
+    "react": "^19.0.0"
+  },
+  "comment-peerDependencies": [
+    "🔴 react is ^19 ONLY, deliberately NARROWER than the ^18 || ^19 the two",
+    "existing packages declare. This package's whole premise — that no wrapper",
+    "components are needed — rests on React 19 behaviour that React 18 does NOT",
+    "have: React 18 sets every custom-element prop as a stringified ATTRIBUTE",
+    "(so an `options` array becomes the literal string '[object Object]') and",
+    "has no declarative custom-event listeners at all. Both are MEASURED in",
+    "test/react19-custom-elements.browser.test.tsx. Declaring ^18 here would be",
+    "the same defect the blocks-react peer-range note documents: a range that",
+    "is metadata, satisfied at install, and broken at runtime. Every consumer",
+    "measured across the 33 app repos is already on React 19."
+  ],
+  "devDependencies": {
+    "@civitai/elements": "workspace:*",
+    "@testing-library/react": "^16.0.0",
+    "@types/node": "^25.9.1",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.0",
+    "@vitest/browser": "4.1.11",
+    "@vitest/browser-playwright": "4.1.11",
+    "happy-dom": "^20.9.0",
+    "playwright": "^1.57.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^5.9.2",
+    "vitest": "^4.1.11"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "civitai",
+    "custom-elements",
+    "react",
+    "jsx",
+    "types"
+  ],
+  "homepage": "https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-elements-react#readme",
+  "bugs": "https://github.com/civitai/civitai-app-starters/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/civitai/civitai-app-starters.git",
+    "directory": "packages/civitai-elements-react"
+  }
+}

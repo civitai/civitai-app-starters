@@ -1,0 +1,494 @@
+{
+  "schemaVersion": 1,
+  "tags": {
+    "civitai-button": {
+      "className": "CivitaiButton",
+      "formAssociated": true,
+      "attributes": [
+        {
+          "name": "color",
+          "type": "string",
+          "default": "'primary'",
+          "fieldName": "color"
+        },
+        {
+          "name": "disabled",
+          "type": "boolean",
+          "default": "false",
+          "fieldName": "disabled"
+        },
+        {
+          "name": "full-width",
+          "type": "boolean",
+          "default": "false",
+          "fieldName": "fullWidth"
+        },
+        {
+          "name": "loading",
+          "type": "boolean",
+          "default": "false",
+          "fieldName": "loading"
+        },
+        {
+          "name": "size",
+          "type": "ButtonSize",
+          "default": "'md'",
+          "fieldName": "size"
+        },
+        {
+          "name": "type",
+          "type": "ButtonType",
+          "default": "'button'",
+          "fieldName": "type"
+        },
+        {
+          "name": "variant",
+          "type": "ButtonVariant",
+          "default": "'filled'",
+          "fieldName": "variant"
+        }
+      ],
+      "properties": [
+        {
+          "name": "color",
+          "type": "string",
+          "readonly": false,
+          "default": "'primary'"
+        },
+        {
+          "name": "disabled",
+          "type": "boolean",
+          "readonly": false,
+          "default": "false"
+        },
+        {
+          "name": "fullWidth",
+          "type": "boolean",
+          "readonly": false,
+          "default": "false"
+        },
+        {
+          "name": "loading",
+          "type": "boolean",
+          "readonly": false,
+          "default": "false"
+        },
+        {
+          "name": "size",
+          "type": "ButtonSize",
+          "readonly": false,
+          "default": "'md'"
+        },
+        {
+          "name": "type",
+          "type": "ButtonType",
+          "readonly": false,
+          "default": "'button'"
+        },
+        {
+          "name": "variant",
+          "type": "ButtonVariant",
+          "readonly": false,
+          "default": "'filled'"
+        }
+      ],
+      "events": [],
+      "cssProperties": [
+        {
+          "name": "--civitai-color-primary"
+        },
+        {
+          "name": "--civitai-radius"
+        }
+      ]
+    },
+    "civitai-select": {
+      "className": "CivitaiSelect",
+      "formAssociated": true,
+      "attributes": [
+        {
+          "name": "description",
+          "type": "string | null",
+          "default": "null",
+          "fieldName": "description"
+        },
+        {
+          "name": "disabled",
+          "type": "boolean",
+          "default": "false",
+          "fieldName": "disabled"
+        },
+        {
+          "name": "error",
+          "type": "string | null",
+          "default": "null",
+          "fieldName": "error"
+        },
+        {
+          "name": "label",
+          "type": "string | null",
+          "default": "null",
+          "fieldName": "label"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "default": "''",
+          "fieldName": "name"
+        },
+        {
+          "name": "placeholder",
+          "type": "string | null",
+          "default": "null",
+          "fieldName": "placeholder"
+        },
+        {
+          "name": "required",
+          "type": "boolean",
+          "default": "false",
+          "fieldName": "required"
+        },
+        {
+          "name": "value",
+          "type": "string",
+          "default": "''",
+          "fieldName": "value"
+        }
+      ],
+      "properties": [
+        {
+          "name": "description",
+          "type": "string | null",
+          "readonly": false,
+          "default": "null"
+        },
+        {
+          "name": "disabled",
+          "type": "boolean",
+          "readonly": false,
+          "default": "false"
+        },
+        {
+          "name": "error",
+          "type": "string | null",
+          "readonly": false,
+          "default": "null"
+        },
+        {
+          "name": "form",
+          "type": "HTMLFormElement | null",
+          "readonly": true,
+          "default": null
+        },
+        {
+          "name": "formAssociationAvailable",
+          "type": "boolean",
+          "readonly": true,
+          "default": null
+        },
+        {
+          "name": "label",
+          "type": "string | null",
+          "readonly": false,
+          "default": "null"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "readonly": false,
+          "default": "''"
+        },
+        {
+          "name": "options",
+          "type": "SelectOption[]",
+          "readonly": false,
+          "default": "[]"
+        },
+        {
+          "name": "placeholder",
+          "type": "string | null",
+          "readonly": false,
+          "default": "null"
+        },
+        {
+          "name": "required",
+          "type": "boolean",
+          "readonly": false,
+          "default": "false"
+        },
+        {
+          "name": "validationMessage",
+          "type": "string",
+          "readonly": true,
+          "default": null
+        },
+        {
+          "name": "validity",
+          "type": "ValidityState | null",
+          "readonly": true,
+          "default": null
+        },
+        {
+          "name": "value",
+          "type": "string",
+          "readonly": false,
+          "default": "''"
+        },
+        {
+          "name": "willValidate",
+          "type": "boolean",
+          "readonly": true,
+          "default": null
+        }
+      ],
+      "events": [
+        {
+          "name": "change",
+          "type": "CustomEvent<SelectChangeDetail>"
+        },
+        {
+          "name": "input",
+          "type": "CustomEvent<SelectChangeDetail>"
+        }
+      ],
+      "cssProperties": []
+    },
+    "civitai-slider": {
+      "className": "CivitaiSlider",
+      "formAssociated": true,
+      "attributes": [
+        {
+          "name": "description",
+          "type": "string | null",
+          "default": "null",
+          "fieldName": "description"
+        },
+        {
+          "name": "disabled",
+          "type": "boolean",
+          "default": "false",
+          "fieldName": "disabled"
+        },
+        {
+          "name": "error",
+          "type": "string | null",
+          "default": "null",
+          "fieldName": "error"
+        },
+        {
+          "name": "label",
+          "type": "string | null",
+          "default": "null",
+          "fieldName": "label"
+        },
+        {
+          "name": "max",
+          "type": "number",
+          "default": "100",
+          "fieldName": "max"
+        },
+        {
+          "name": "min",
+          "type": "number",
+          "default": "0",
+          "fieldName": "min"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "default": "''",
+          "fieldName": "name"
+        },
+        {
+          "name": "required",
+          "type": "boolean",
+          "default": "false",
+          "fieldName": "required"
+        },
+        {
+          "name": "show-value",
+          "type": "boolean",
+          "default": "false",
+          "fieldName": "showValue"
+        },
+        {
+          "name": "step",
+          "type": "number",
+          "default": "1",
+          "fieldName": "step"
+        },
+        {
+          "name": "value",
+          "type": "number",
+          "default": null,
+          "fieldName": "value"
+        }
+      ],
+      "properties": [
+        {
+          "name": "description",
+          "type": "string | null",
+          "readonly": false,
+          "default": "null"
+        },
+        {
+          "name": "disabled",
+          "type": "boolean",
+          "readonly": false,
+          "default": "false"
+        },
+        {
+          "name": "error",
+          "type": "string | null",
+          "readonly": false,
+          "default": "null"
+        },
+        {
+          "name": "form",
+          "type": "HTMLFormElement | null",
+          "readonly": true,
+          "default": null
+        },
+        {
+          "name": "formAssociationAvailable",
+          "type": "boolean",
+          "readonly": true,
+          "default": null
+        },
+        {
+          "name": "hasExplicitValue",
+          "type": "boolean",
+          "readonly": true,
+          "default": null
+        },
+        {
+          "name": "label",
+          "type": "string | null",
+          "readonly": false,
+          "default": "null"
+        },
+        {
+          "name": "max",
+          "type": "number",
+          "readonly": false,
+          "default": "100"
+        },
+        {
+          "name": "min",
+          "type": "number",
+          "readonly": false,
+          "default": "0"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "readonly": false,
+          "default": "''"
+        },
+        {
+          "name": "required",
+          "type": "boolean",
+          "readonly": false,
+          "default": "false"
+        },
+        {
+          "name": "showValue",
+          "type": "boolean",
+          "readonly": false,
+          "default": "false"
+        },
+        {
+          "name": "step",
+          "type": "number",
+          "readonly": false,
+          "default": "1"
+        },
+        {
+          "name": "validationMessage",
+          "type": "string",
+          "readonly": true,
+          "default": null
+        },
+        {
+          "name": "validity",
+          "type": "ValidityState | null",
+          "readonly": true,
+          "default": null
+        },
+        {
+          "name": "value",
+          "type": "number",
+          "readonly": false,
+          "default": null
+        },
+        {
+          "name": "willValidate",
+          "type": "boolean",
+          "readonly": true,
+          "default": null
+        }
+      ],
+      "events": [
+        {
+          "name": "change",
+          "type": "CustomEvent<SliderChangeDetail>"
+        },
+        {
+          "name": "input",
+          "type": "CustomEvent<SliderChangeDetail>"
+        }
+      ],
+      "cssProperties": []
+    },
+    "civitai-stack": {
+      "className": "CivitaiStack",
+      "formAssociated": false,
+      "attributes": [
+        {
+          "name": "align",
+          "type": "string | null",
+          "default": "null",
+          "fieldName": "align"
+        },
+        {
+          "name": "gap",
+          "type": "string | number | null",
+          "default": "null",
+          "fieldName": "gap"
+        },
+        {
+          "name": "justify",
+          "type": "string | null",
+          "default": "null",
+          "fieldName": "justify"
+        }
+      ],
+      "properties": [
+        {
+          "name": "align",
+          "type": "string | null",
+          "readonly": false,
+          "default": "null"
+        },
+        {
+          "name": "gap",
+          "type": "string | number | null",
+          "readonly": false,
+          "default": "null"
+        },
+        {
+          "name": "justify",
+          "type": "string | null",
+          "readonly": false,
+          "default": "null"
+        }
+      ],
+      "events": [],
+      "cssProperties": [
+        {
+          "name": "--civitai-stack-gap"
+        }
+      ]
+    }
+  }
+}

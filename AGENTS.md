@@ -62,13 +62,38 @@ Each starter ships a deliberately minimal demo (login + balance + cost preview +
 civitai-app-starters/
 ├── packages/
 │   ├── civitai-app-sdk/         # shared OAuth + SDK glue + framework-agnostic blocks contract
-│   └── civitai-blocks-react/    # React hooks + iframe transport for Civitai Apps
+│   ├── civitai-blocks-react/    # React hooks + iframe transport for Civitai Apps
+│   ├── civitai-elements/        # light-DOM Lit custom elements (the design system's future)
+│   └── civitai-elements-react/  # typed JSX intrinsics for the above — types only, no wrappers
 └── starters/
     ├── next-app/                # Next.js 15 App Router (SSR)
     ├── sveltekit-app/           # SvelteKit 2 (SSR)
     ├── react-pwa/               # Vite + React 19 (SPA + Hono BFF)
     └── svelte-pwa/              # Vite + Svelte 5 (SPA + Hono BFF)
 ```
+
+## The component story (in flight)
+
+There are currently **three** ways to render a themed Civitai component, and
+only one of them is where things are going:
+
+- `@civitai/blocks-react/ui` (147 files across the fleet) and
+  `@civitai/components-react` (32 files) publish **34 identical component names
+  with drifted contracts** — `Select` is controlled in one and uncontrolled in
+  the other, `Stack`'s `gap` means two different things, `Alert` derives `role`
+  differently. Five of six audited apps import **both**, which is the hazard.
+- `@civitai/elements` is the replacement: light-DOM Lit custom elements, one
+  contract per component, per-component CSS (one Button: 21.3 KB vs 52.5 KB
+  measured), form-associated inputs, Custom Elements Manifest as the source of
+  truth for the React types and the CI API-surface gate.
+
+Migration is **strangler**, not a cutover: the React packages keep working and
+re-export from the elements one component at a time. The first seam is
+`blocks-react/ui`'s `Stack`, whose existing tests are unchanged and green.
+
+**When adding a new shared component, add it to `@civitai/elements`** — do not
+add a 35th duplicated pair. When fixing a bug in an existing one, check whether
+the same bug exists in its twin.
 
 ## Releasing a new SDK version
 

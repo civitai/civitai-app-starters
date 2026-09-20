@@ -1,0 +1,2487 @@
+{
+  "schemaVersion": "1.0.0",
+  "readme": "",
+  "modules": [
+    {
+      "kind": "javascript-module",
+      "path": "src/button.ts",
+      "declarations": [],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiButton",
+          "declaration": {
+            "name": "CivitaiButton",
+            "module": "src/button.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "ButtonVariant",
+          "declaration": {
+            "name": "ButtonVariant",
+            "module": "./button/civitai-button.js"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "ButtonSize",
+          "declaration": {
+            "name": "ButtonSize",
+            "module": "./button/civitai-button.js"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "ButtonType",
+          "declaration": {
+            "name": "ButtonType",
+            "module": "./button/civitai-button.js"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/select.ts",
+      "declarations": [],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiSelect",
+          "declaration": {
+            "name": "CivitaiSelect",
+            "module": "src/select.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "SelectOption",
+          "declaration": {
+            "name": "SelectOption",
+            "module": "./select/civitai-select.js"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "SelectChangeDetail",
+          "declaration": {
+            "name": "SelectChangeDetail",
+            "module": "./select/civitai-select.js"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/slider.ts",
+      "declarations": [],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiSlider",
+          "declaration": {
+            "name": "CivitaiSlider",
+            "module": "src/slider.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "SliderChangeDetail",
+          "declaration": {
+            "name": "SliderChangeDetail",
+            "module": "./slider/civitai-slider.js"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/stack.ts",
+      "declarations": [],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiStack",
+          "declaration": {
+            "name": "CivitaiStack",
+            "module": "src/stack.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "GAP_STEPS",
+          "declaration": {
+            "name": "GAP_STEPS",
+            "module": "src/stack.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "GapStep",
+          "declaration": {
+            "name": "GapStep",
+            "module": "./stack/civitai-stack.js"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/button/civitai-button.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "`<civitai-button>` — themed button.\n\nENHANCE-ONLY (constraint (a)): the element never writes a child node. Its\nlabel, icons and left/right sections are the consumer's own light-DOM\nchildren, which survive every re-render because there is no render path.\nThe loading spinner is a `::before` pseudo-element, not a `<civitai-loader>`.",
+          "name": "CivitaiButton",
+          "cssProperties": [
+            {
+              "description": "Accent, overridden by `color`.",
+              "name": "--civitai-color-primary"
+            },
+            {
+              "description": "Corner radius.",
+              "name": "--civitai-radius"
+            }
+          ],
+          "slots": [
+            {
+              "description": "NONE. Light DOM has no slots; children are simply left in place.",
+              "name": ""
+            }
+          ],
+          "members": [
+            {
+              "kind": "field",
+              "name": "componentId",
+              "type": {
+                "text": "string"
+              },
+              "static": true,
+              "default": "'civitai-button'",
+              "description": "Stable style-adoption key. Subclasses MUST override.",
+              "inheritedFrom": {
+                "name": "CivitaiEnhanceElement",
+                "module": "src/internal/CivitaiEnhanceElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "componentCss",
+              "type": {
+                "text": "string"
+              },
+              "static": true,
+              "default": "buttonCss",
+              "description": "This component's own rule text. Subclasses MUST override.",
+              "inheritedFrom": {
+                "name": "CivitaiEnhanceElement",
+                "module": "src/internal/CivitaiEnhanceElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "formAssociated",
+              "type": {
+                "text": "boolean"
+              },
+              "static": true,
+              "default": "true",
+              "description": "Form association exists only so `type=\"submit\"`/`\"reset\"` can reach the\nowning form (including via the `form=\"<id>\"` attribute, which\n`closest('form')` cannot see) and so `<fieldset disabled>` propagates.\nThe button NEVER calls `setFormValue()`, so it contributes nothing to\n`FormData` — pinned by test/form-participation.test.ts."
+            },
+            {
+              "kind": "field",
+              "name": "variant",
+              "privacy": "public",
+              "type": {
+                "text": "ButtonVariant"
+              },
+              "default": "'filled'",
+              "attribute": "variant",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "size",
+              "privacy": "public",
+              "type": {
+                "text": "ButtonSize"
+              },
+              "default": "'md'",
+              "attribute": "size",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "color",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'primary'",
+              "attribute": "color"
+            },
+            {
+              "kind": "field",
+              "name": "loading",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "loading",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "fullWidth",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "full-width",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "disabled",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "type",
+              "privacy": "public",
+              "type": {
+                "text": "ButtonType"
+              },
+              "default": "'button'",
+              "attribute": "type",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "internals",
+              "type": {
+                "text": "ElementInternals | null"
+              },
+              "privacy": "private",
+              "default": "null"
+            },
+            {
+              "kind": "field",
+              "name": "inactive",
+              "type": {
+                "text": "boolean"
+              },
+              "privacy": "private",
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "ownerForm",
+              "type": {
+                "text": "HTMLFormElement | null"
+              },
+              "privacy": "private",
+              "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "#resolveAccent",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "string | undefined"
+                }
+              }
+            },
+            {
+              "kind": "field",
+              "name": "#onClick",
+              "privacy": "private"
+            },
+            {
+              "kind": "field",
+              "name": "#onKeydown",
+              "privacy": "private"
+            },
+            {
+              "kind": "field",
+              "name": "#onKeyup",
+              "privacy": "private"
+            }
+          ],
+          "attributes": [
+            {
+              "type": {
+                "text": "ButtonVariant"
+              },
+              "description": "Visual style. Default `filled`.",
+              "name": "variant",
+              "default": "'filled'",
+              "fieldName": "variant"
+            },
+            {
+              "type": {
+                "text": "ButtonSize"
+              },
+              "description": "Size preset. Default `md`.",
+              "name": "size",
+              "default": "'md'",
+              "fieldName": "size"
+            },
+            {
+              "type": {
+                "text": "string"
+              },
+              "description": "`primary` (default), a semantic token name (`error`/`success`/`warning`/`info`), or any CSS color. Overrides the `--civitai-color-primary` the variant styling reads.",
+              "name": "color",
+              "default": "'primary'",
+              "fieldName": "color"
+            },
+            {
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Spinner + blocks activation, sets `aria-busy`.",
+              "name": "loading",
+              "default": "false",
+              "fieldName": "loading"
+            },
+            {
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Stretch to the container width.",
+              "name": "full-width",
+              "default": "false",
+              "fieldName": "fullWidth"
+            },
+            {
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Blocks activation and leaves the tab order.",
+              "name": "disabled",
+              "default": "false",
+              "fieldName": "disabled"
+            },
+            {
+              "type": {
+                "text": "ButtonType"
+              },
+              "description": "Default `button`, matching `@civitai/blocks-react/ui`: a button dropped into a form should not submit by accident.",
+              "name": "type",
+              "default": "'button'",
+              "fieldName": "type"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiEnhanceElement",
+            "module": "/src/internal/CivitaiEnhanceElement.js"
+          },
+          "tagName": "civitai-button",
+          "customElement": true
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiButton",
+          "declaration": {
+            "name": "CivitaiButton",
+            "module": "src/button/civitai-button.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/internal/CivitaiEnhanceElement.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "Base class for LAYOUT / WRAPPER primitives — `civitai-button`,\n`civitai-stack`, `civitai-card`.\n\n── Constraint (a): light DOM has no `<slot>` ──────────────────────────────\n`<slot>` is a shadow-DOM feature. With `createRenderRoot()` returning `this`\nthere is nowhere to project children, so anything that TEMPLATES its own\nchildren will clobber whatever the consumer put inside. For a wrapper whose\nentire purpose is arbitrary children (`<civitai-button>Generate</...>`,\n`<civitai-stack><Foo/><Bar/></...>`) that is fatal.\n\nThe fix is STRUCTURAL, not a convention: this base extends `ReactiveElement`,\nwhich has no templating layer at all — no `render()`, no `lit-html` in its\nmodule graph. A subclass of this class CANNOT clobber children by accident,\nbecause there is no code path that writes them. `scripts/…` + the\n`enhance-only.test.ts` architecture guard assert that `dist/button.js` and\n`dist/stack.js` never import `lit-html`, so the property is checked in CI and\nnot merely documented.\n\nWhat a wrapper IS allowed to do: set attributes on itself, set custom\nproperties on its own `style`, wire ARIA, and adopt its own stylesheet.\nEverything visual that would otherwise need an extra element (a loading\nspinner, a left/right section divider) is done with CSS pseudo-elements and\nchild-combinator selectors against the consumer's own children.\n\nLeaf components that OWN their content (`civitai-select`, `civitai-slider`)\ntake content via properties instead and extend `CivitaiFieldElement`.",
+          "name": "CivitaiEnhanceElement",
+          "members": [
+            {
+              "kind": "field",
+              "name": "componentId",
+              "type": {
+                "text": "string"
+              },
+              "static": true,
+              "default": "'civitai-element'",
+              "description": "Stable style-adoption key. Subclasses MUST override."
+            },
+            {
+              "kind": "field",
+              "name": "componentCss",
+              "type": {
+                "text": "string"
+              },
+              "static": true,
+              "default": "''",
+              "description": "This component's own rule text. Subclasses MUST override."
+            }
+          ],
+          "superclass": {
+            "name": "ReactiveElement",
+            "package": "@lit/reactive-element"
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiEnhanceElement",
+          "declaration": {
+            "name": "CivitaiEnhanceElement",
+            "module": "src/internal/CivitaiEnhanceElement.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/internal/CivitaiFieldElement.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "Base class for FORM-ASSOCIATED leaf inputs — `civitai-select`,\n`civitai-slider`.\n\n── Constraint (b): never double-submit ───────────────────────────────────\nA form-associated custom element (FACE) participates in submission through\n`ElementInternals.setFormValue()`. An element that ALSO renders a native\ncontrol carrying a `name` attribute participates a SECOND time, because the\nnative control is itself a listed, named, form-owned element — the enclosing\ncustom element does not hide it. `new FormData(form)` then yields two entries\nfor one visible control, and whichever the server reads last wins.\n\nThe rule this package enforces: **the custom element owns `name`; the inner\nnative control must never have one.** Subclasses render their control through\n`renderControl()` and are asserted by `form-participation.test.ts` — a guard\nthat submits a real `<form>` and counts `FormData` entries, plus a structural\nledger over the rendered subtree that fails if ANY descendant grows a `name`.\n\nThe inner native control is still REQUIRED for a11y and keyboard behaviour\n(a `<select>` gives combobox semantics, arrow keys, type-ahead and the native\npopup for free), so removing it is not an option — removing its `name` is.\n\n── Validity reaches the real control ─────────────────────────────────────\n`setValidity(flags, message, anchor)` takes the inner control as the\nVALIDATION ANCHOR, so the browser's native validation bubble points at the\nthing the user actually operates. This is the `required` divergence the audit\nfound: `@civitai/components-react`'s `Slider` documents `required` on its\nshared field props and then never applies it. Here `required` is wired in the\nbase class, so a subclass cannot forget it.",
+          "name": "CivitaiFieldElement",
+          "members": [
+            {
+              "kind": "field",
+              "name": "formAssociated",
+              "type": {
+                "text": "boolean"
+              },
+              "static": true,
+              "default": "true"
+            },
+            {
+              "kind": "field",
+              "name": "componentId",
+              "type": {
+                "text": "string"
+              },
+              "static": true,
+              "default": "'civitai-field'",
+              "description": "Stable style-adoption key. Subclasses MUST override."
+            },
+            {
+              "kind": "field",
+              "name": "componentCss",
+              "type": {
+                "text": "string"
+              },
+              "static": true,
+              "default": "''",
+              "description": "This component's own rule text. Subclasses MUST override."
+            },
+            {
+              "kind": "field",
+              "name": "name",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Submitted field name. Lives on the HOST, never on the inner control.",
+              "default": "''",
+              "attribute": "name",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "disabled",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "required",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "required",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "privacy": "public",
+              "type": {
+                "text": "string | null"
+              },
+              "default": "null",
+              "attribute": "label"
+            },
+            {
+              "kind": "field",
+              "name": "description",
+              "privacy": "public",
+              "type": {
+                "text": "string | null"
+              },
+              "default": "null",
+              "attribute": "description"
+            },
+            {
+              "kind": "field",
+              "name": "error",
+              "privacy": "public",
+              "type": {
+                "text": "string | null"
+              },
+              "default": "null",
+              "attribute": "error",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "internals",
+              "type": {
+                "text": "ElementInternals | null"
+              },
+              "privacy": "protected",
+              "readonly": true,
+              "description": "`null` only where the platform has no `attachInternals` — MEASURED:\nhappy-dom 20.9.0 does not implement it (`typeof\nHTMLElement.prototype.attachInternals === 'undefined'`). Throwing there\nwould take down every consumer's happy-dom suite for an unrelated reason,\nso the element degrades to a non-form-participating control and says so\nonce. The consequence is that NO form behaviour can be observed under\nhappy-dom — which is why every form guard in this package is a\n`*.browser.test.ts`, and why `test/no-vacuous-form-tests.test.ts` asserts\nthe degraded path is inert rather than silently passing."
+            },
+            {
+              "kind": "field",
+              "name": "uid",
+              "privacy": "protected",
+              "readonly": true,
+              "default": "`ce-${(seq += 1)}`",
+              "description": "Stable, collision-free ids for label/description/error wiring."
+            },
+            {
+              "kind": "field",
+              "name": "controlId",
+              "type": {
+                "text": "string"
+              },
+              "privacy": "protected",
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "descId",
+              "type": {
+                "text": "string"
+              },
+              "privacy": "protected",
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "errId",
+              "type": {
+                "text": "string"
+              },
+              "privacy": "protected",
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "describedBy",
+              "type": {
+                "text": "string | undefined"
+              },
+              "privacy": "protected",
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "control",
+              "type": {
+                "text": "HTMLElement | null"
+              },
+              "privacy": "protected",
+              "description": "The inner native control, once rendered. Used as the validation anchor.",
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "formValue",
+              "type": {
+                "text": "string | null"
+              },
+              "privacy": "protected",
+              "description": "The string this element contributes to `FormData`.",
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "valueMissing",
+              "type": {
+                "text": "boolean"
+              },
+              "privacy": "protected",
+              "description": "Subclass hook: `true` when `required` is unsatisfied.",
+              "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "syncForm",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Publish the current value + validity to the form. Call after every change\nto `value`, `required` or `disabled`."
+            },
+            {
+              "kind": "field",
+              "name": "form",
+              "type": {
+                "text": "HTMLFormElement | null"
+              },
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "validity",
+              "type": {
+                "text": "ValidityState | null"
+              },
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "validationMessage",
+              "type": {
+                "text": "string"
+              },
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "willValidate",
+              "type": {
+                "text": "boolean"
+              },
+              "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "checkValidity",
+              "return": {
+                "type": {
+                  "text": "boolean"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "reportValidity",
+              "return": {
+                "type": {
+                  "text": "boolean"
+                }
+              }
+            },
+            {
+              "kind": "field",
+              "name": "formAssociationAvailable",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "`false` where the platform lacks `ElementInternals`; see the field doc.",
+              "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "formDisabledCallback",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "disabled",
+                  "type": {
+                    "text": "boolean"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "retarget",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "inner",
+                  "type": {
+                    "text": "Event"
+                  }
+                },
+                {
+                  "name": "type",
+                  "type": {
+                    "text": "'change' | 'input'"
+                  }
+                },
+                {
+                  "name": "detail",
+                  "type": {
+                    "text": "T"
+                  }
+                }
+              ],
+              "description": "Re-emit a host-level event for a change that originated on the inner\ncontrol, and STOP the inner one.\n\nWithout the stop, a consumer's single `onChange` on the host fires twice:\nonce for the native control's own bubbling `change`, once for ours. React\n19 attaches `onChange` on a custom element as a plain `change` listener on\nthe host (measured — see `react19-custom-elements.test.tsx`), so it sees\nboth. Pinned by `event-identity.test.ts`."
+            }
+          ],
+          "events": [
+            {
+              "name": "type",
+              "type": {
+                "text": "CustomEvent"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "name",
+              "type": {
+                "text": "string"
+              },
+              "description": "Submitted field name. Lives on the HOST, never on the inner control.",
+              "default": "''",
+              "fieldName": "name"
+            },
+            {
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "disabled"
+            },
+            {
+              "name": "required",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "required"
+            },
+            {
+              "name": "label",
+              "type": {
+                "text": "string | null"
+              },
+              "default": "null",
+              "fieldName": "label"
+            },
+            {
+              "name": "description",
+              "type": {
+                "text": "string | null"
+              },
+              "default": "null",
+              "fieldName": "description"
+            },
+            {
+              "name": "error",
+              "type": {
+                "text": "string | null"
+              },
+              "default": "null",
+              "fieldName": "error"
+            }
+          ],
+          "superclass": {
+            "name": "LitElement",
+            "package": "lit"
+          },
+          "customElement": true
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiFieldElement",
+          "declaration": {
+            "name": "CivitaiFieldElement",
+            "module": "src/internal/CivitaiFieldElement.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/internal/adoptStyles.ts",
+      "declarations": [
+        {
+          "kind": "function",
+          "name": "adoptStyles",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          },
+          "parameters": [
+            {
+              "name": "el",
+              "type": {
+                "text": "Element"
+              },
+              "description": "The upgraded custom element."
+            },
+            {
+              "name": "id",
+              "type": {
+                "text": "string"
+              },
+              "description": "Stable component identifier, e.g. `'civitai-button'`."
+            },
+            {
+              "name": "css",
+              "type": {
+                "text": "string"
+              },
+              "description": "The component's own rule text."
+            }
+          ],
+          "description": "Adopt `css` into `el`'s root node exactly once per (root, id)."
+        },
+        {
+          "kind": "function",
+          "name": "__resetAdoptedStyles",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          },
+          "description": "Test-only: forget every adoption record so a suite can assert re-injection."
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "adoptStyles",
+          "declaration": {
+            "name": "adoptStyles",
+            "module": "src/internal/adoptStyles.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "__resetAdoptedStyles",
+          "declaration": {
+            "name": "__resetAdoptedStyles",
+            "module": "src/internal/adoptStyles.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/internal/define.ts",
+      "declarations": [
+        {
+          "kind": "function",
+          "name": "define",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          },
+          "parameters": [
+            {
+              "name": "tag",
+              "type": {
+                "text": "string"
+              }
+            },
+            {
+              "name": "ctor",
+              "type": {
+                "text": "CustomElementConstructor"
+              }
+            }
+          ],
+          "description": "Idempotent `customElements.define`.\n\nEvery per-component entrypoint is a SIDE-EFFECT module (importing it\nregisters the tag), so an app that imports both `@civitai/elements/button`\nand `@civitai/elements` must not throw on the second registration. It also\nkeeps HMR and duplicated-copy-in-node_modules situations from being fatal."
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "define",
+          "declaration": {
+            "name": "define",
+            "module": "src/internal/define.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "tag",
+          "declaration": {
+            "name": "ctor",
+            "module": "src/internal/define.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/internal/tokens.ts",
+      "declarations": [
+        {
+          "kind": "function",
+          "name": "ensureTokens",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          },
+          "parameters": [
+            {
+              "name": "el",
+              "type": {
+                "text": "Element"
+              }
+            }
+          ],
+          "description": "Ensure the `--civitai-*` design tokens are present for `el`'s document.\n\nDX parity with `@civitai/blocks-react/ui` and `@civitai/components-react`:\nrendering ANY element is enough to get the themed look, with no CSS import\nand no setup step. `injectTokens()` is idempotent and a no-op under SSR.\n\nCOST NOTE (measured, see scripts/measure-bundle.mjs): the token sheet is\n5,826 B of the per-app floor and is shared by every component. Apps that\nalready `<link>` `@civitai/theme/styles.css` still pay it in the bundle,\nbecause this call is unconditional. A consumer who wants it gone should\nimport from `@civitai/elements/<component>` and tree-shake nothing — there is\nno way to drop it without losing the zero-setup guarantee, and the operator's\nmeasured baseline pays it too, so the comparison is like-for-like."
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "ensureTokens",
+          "declaration": {
+            "name": "ensureTokens",
+            "module": "src/internal/tokens.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/select/civitai-select.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "`<civitai-select>` — labelled dropdown, form-associated.\n\nLEAF component: it OWNS its content, which it takes via the `options`\nproperty rather than children. That is the other half of the light-DOM\nanswer — wrappers never render, leaves never accept children.\n\nRESOLVES THE SHARPEST DRIFT IN THE FLEET. `@civitai/blocks-react/ui`'s\n`Select` is strictly controlled (`value` + `onChange` both required, a React\nvalue never written back to the DOM); `@civitai/components-react`'s is an\nuncontrolled native `<select>` taking `<option>` children. Neither can be\ndropped in for the other. The element follows the NATIVE contract, which is\nthe one both were approximating: `value` is a live property, the user can\nmove it, and a `change` event reports the new value. A React consumer that\nwrites `value` every render gets controlled behaviour; one that writes it\nonce gets uncontrolled behaviour. No third contract.\n\nFORM PARTICIPATION (constraint (b)): the inner native `<select>` has NO\n`name`. The host owns `name` and submits via\n`ElementInternals.setFormValue()`, so a submitted form yields exactly one\nentry. See `CivitaiFieldElement`.",
+          "name": "CivitaiSelect",
+          "members": [
+            {
+              "kind": "field",
+              "name": "componentId",
+              "type": {
+                "text": "string"
+              },
+              "static": true,
+              "default": "'civitai-select'",
+              "description": "Stable style-adoption key. Subclasses MUST override.",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "componentCss",
+              "type": {
+                "text": "string"
+              },
+              "static": true,
+              "default": "selectCss",
+              "description": "This component's own rule text. Subclasses MUST override.",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "value",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "value",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "placeholder",
+              "privacy": "public",
+              "type": {
+                "text": "string | null"
+              },
+              "default": "null",
+              "attribute": "placeholder"
+            },
+            {
+              "kind": "field",
+              "name": "options",
+              "privacy": "public",
+              "type": {
+                "text": "SelectOption[]"
+              },
+              "default": "[]",
+              "description": "Declarative options."
+            },
+            {
+              "kind": "field",
+              "name": "#initialValue",
+              "privacy": "private",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "description": "The value at the time the element joined its form, for `formResetCallback`."
+            },
+            {
+              "kind": "field",
+              "name": "control",
+              "type": {
+                "text": "HTMLElement | null"
+              },
+              "privacy": "protected",
+              "description": "The inner native control, once rendered. Used as the validation anchor.",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "formValue",
+              "type": {
+                "text": "string | null"
+              },
+              "privacy": "protected",
+              "description": "The string this element contributes to `FormData`.",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "valueMissing",
+              "type": {
+                "text": "boolean"
+              },
+              "privacy": "protected",
+              "description": "Subclass hook: `true` when `required` is unsatisfied.",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "#onChange",
+              "privacy": "private"
+            },
+            {
+              "kind": "field",
+              "name": "#onInput",
+              "privacy": "private"
+            },
+            {
+              "kind": "method",
+              "name": "formResetCallback",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "formStateRestoreCallback",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "state",
+                  "type": {
+                    "text": "string | null"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "field",
+              "name": "formAssociated",
+              "type": {
+                "text": "boolean"
+              },
+              "static": true,
+              "default": "true",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "name",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Submitted field name. Lives on the HOST, never on the inner control.",
+              "default": "''",
+              "attribute": "name",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "disabled",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "required",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "required",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "privacy": "public",
+              "type": {
+                "text": "string | null"
+              },
+              "default": "null",
+              "attribute": "label",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "description",
+              "privacy": "public",
+              "type": {
+                "text": "string | null"
+              },
+              "default": "null",
+              "attribute": "description",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "error",
+              "privacy": "public",
+              "type": {
+                "text": "string | null"
+              },
+              "default": "null",
+              "attribute": "error",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "internals",
+              "type": {
+                "text": "ElementInternals | null"
+              },
+              "privacy": "protected",
+              "readonly": true,
+              "description": "`null` only where the platform has no `attachInternals` — MEASURED:\nhappy-dom 20.9.0 does not implement it (`typeof\nHTMLElement.prototype.attachInternals === 'undefined'`). Throwing there\nwould take down every consumer's happy-dom suite for an unrelated reason,\nso the element degrades to a non-form-participating control and says so\nonce. The consequence is that NO form behaviour can be observed under\nhappy-dom — which is why every form guard in this package is a\n`*.browser.test.ts`, and why `test/no-vacuous-form-tests.test.ts` asserts\nthe degraded path is inert rather than silently passing.",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "uid",
+              "privacy": "protected",
+              "readonly": true,
+              "default": "`ce-${(seq += 1)}`",
+              "description": "Stable, collision-free ids for label/description/error wiring.",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "controlId",
+              "type": {
+                "text": "string"
+              },
+              "privacy": "protected",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "descId",
+              "type": {
+                "text": "string"
+              },
+              "privacy": "protected",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "errId",
+              "type": {
+                "text": "string"
+              },
+              "privacy": "protected",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "describedBy",
+              "type": {
+                "text": "string | undefined"
+              },
+              "privacy": "protected",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "syncForm",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Publish the current value + validity to the form. Call after every change\nto `value`, `required` or `disabled`.",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "form",
+              "type": {
+                "text": "HTMLFormElement | null"
+              },
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "validity",
+              "type": {
+                "text": "ValidityState | null"
+              },
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "validationMessage",
+              "type": {
+                "text": "string"
+              },
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "willValidate",
+              "type": {
+                "text": "boolean"
+              },
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "checkValidity",
+              "return": {
+                "type": {
+                  "text": "boolean"
+                }
+              },
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "reportValidity",
+              "return": {
+                "type": {
+                  "text": "boolean"
+                }
+              },
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "formAssociationAvailable",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "`false` where the platform lacks `ElementInternals`; see the field doc.",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "formDisabledCallback",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "disabled",
+                  "type": {
+                    "text": "boolean"
+                  }
+                }
+              ],
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "retarget",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "inner",
+                  "type": {
+                    "text": "Event"
+                  }
+                },
+                {
+                  "name": "type",
+                  "type": {
+                    "text": "'change' | 'input'"
+                  }
+                },
+                {
+                  "name": "detail",
+                  "type": {
+                    "text": "T"
+                  }
+                }
+              ],
+              "description": "Re-emit a host-level event for a change that originated on the inner\ncontrol, and STOP the inner one.\n\nWithout the stop, a consumer's single `onChange` on the host fires twice:\nonce for the native control's own bubbling `change`, once for ours. React\n19 attaches `onChange` on a custom element as a plain `change` listener on\nthe host (measured — see `react19-custom-elements.test.tsx`), so it sees\nboth. Pinned by `event-identity.test.ts`.",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            }
+          ],
+          "events": [
+            {
+              "type": {
+                "text": "CustomEvent<SelectChangeDetail>"
+              },
+              "description": "Commit. Retargeted from the inner control so a host listener fires exactly once. In React reach it as `onchange` (lowercase) to receive the real CustomEvent with `detail`; `onChange` also fires but React wraps it in a SyntheticEvent that DROPS `detail` — measured, see @civitai/elements-react.",
+              "name": "change"
+            },
+            {
+              "type": {
+                "text": "CustomEvent<SelectChangeDetail>"
+              },
+              "description": "Same, on every edit.",
+              "name": "input"
+            },
+            {
+              "name": "type",
+              "type": {
+                "text": "CustomEvent"
+              },
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "name",
+              "type": {
+                "text": "string"
+              },
+              "description": "Submitted field name. On the HOST, never the control.",
+              "default": "''",
+              "fieldName": "name",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "type": {
+                "text": "string"
+              },
+              "description": "Selected value.",
+              "name": "value",
+              "default": "''",
+              "fieldName": "value"
+            },
+            {
+              "name": "label",
+              "type": {
+                "text": "string | null"
+              },
+              "default": "null",
+              "fieldName": "label",
+              "description": "Visible label, linked with `for`/`id`.",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "name": "description",
+              "type": {
+                "text": "string | null"
+              },
+              "default": "null",
+              "fieldName": "description",
+              "description": "Helper text, linked via `aria-describedby`.",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "name": "error",
+              "type": {
+                "text": "string | null"
+              },
+              "default": "null",
+              "fieldName": "error",
+              "description": "Error message; sets `aria-invalid` and a `customError`.",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "name": "required",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "required",
+              "description": "Sets `aria-required` on the control AND a real `valueMissing` validity anchored at it.",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "disabled",
+              "description": "Disables the control and withdraws the form value.",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "type": {
+                "text": "string | null"
+              },
+              "description": "Disabled empty-valued leading option.",
+              "name": "placeholder",
+              "default": "null",
+              "fieldName": "placeholder"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiFieldElement",
+            "module": "/src/internal/CivitaiFieldElement.js"
+          },
+          "tagName": "civitai-select",
+          "customElement": true
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiSelect",
+          "declaration": {
+            "name": "CivitaiSelect",
+            "module": "src/select/civitai-select.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/slider/civitai-slider.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "`<civitai-slider>` — labelled range input, form-associated.\n\nLEAF component: owns its content, takes it via properties.\n\nFORM PARTICIPATION (constraint (b)): the inner `<input type=\"range\">` has NO\n`name`; the host owns it and submits via `setFormValue()`.\n\n`required` — THE DIVERGENCE THIS FIXES. `@civitai/components-react`'s\n`Slider` inherits `required` from its shared `FieldBaseProps` (whose doc\ncomment promises \"shows an asterisk and sets the native `required`\") and then\nnever forwards it to the input; `@civitai/blocks-react/ui`'s Slider forwards\nit to a native attribute that does nothing, because a range input ALWAYS has\na value and can therefore never be `valueMissing` natively.\n\nHere `required` means the only thing it can usefully mean for a range: the\nuser must have MOVED it. Until the first `input`, the element is\n`valueMissing`, with the message anchored on the real control so the native\nvalidation bubble points at the slider. `aria-required=\"true\"` reaches the\ncontrol and the asterisk reaches the label. Pinned by\ntest/required-reaches-control.test.ts.",
+          "name": "CivitaiSlider",
+          "members": [
+            {
+              "kind": "field",
+              "name": "componentId",
+              "type": {
+                "text": "string"
+              },
+              "static": true,
+              "default": "'civitai-slider'",
+              "description": "Stable style-adoption key. Subclasses MUST override.",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "componentCss",
+              "type": {
+                "text": "string"
+              },
+              "static": true,
+              "default": "sliderCss",
+              "description": "This component's own rule text. Subclasses MUST override.",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "min",
+              "privacy": "public",
+              "type": {
+                "text": "number"
+              },
+              "default": "0",
+              "attribute": "min",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "max",
+              "privacy": "public",
+              "type": {
+                "text": "number"
+              },
+              "default": "100",
+              "attribute": "max",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "step",
+              "privacy": "public",
+              "type": {
+                "text": "number"
+              },
+              "default": "1",
+              "attribute": "step",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "showValue",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "show-value",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "#value",
+              "privacy": "private",
+              "type": {
+                "text": "number | null"
+              },
+              "default": "null",
+              "description": "`null` until something sets it — the ONLY reliable way to know whether an\nauthor supplied a value.\n\n🔴 An earlier revision defaulted to the midpoint in `connectedCallback`\nguarded by `if (!this.hasAttribute('value'))`. That is correct for hand-\nwritten HTML and WRONG for React: React 19 sets `value` as a PROPERTY and\nwrites no attribute (measured), so the guard saw no attribute and silently\noverwrote the author's value with the midpoint. `<civitai-slider value={6}\nmin={1} max={20}/>` submitted `10.5`. Caught by\nelements-react's react19-custom-elements.browser.test.tsx, not by any\nelement-level test — the defect lives in the SEAM between React's\nproperty-setting and the element's attribute-shaped default."
+            },
+            {
+              "kind": "field",
+              "name": "#touched",
+              "privacy": "private",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "`required` is satisfied by interaction, not by having a number."
+            },
+            {
+              "kind": "field",
+              "name": "#initialValue",
+              "privacy": "private",
+              "type": {
+                "text": "number | null"
+              },
+              "default": "null"
+            },
+            {
+              "kind": "field",
+              "name": "value",
+              "privacy": "public",
+              "type": {
+                "text": "number"
+              },
+              "description": "The current value; the midpoint of `min`..`max` until one is supplied.",
+              "attribute": "value",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "hasExplicitValue",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "`false` while the value is still the computed midpoint.",
+              "readonly": true
+            },
+            {
+              "kind": "field",
+              "name": "control",
+              "type": {
+                "text": "HTMLElement | null"
+              },
+              "privacy": "protected",
+              "description": "The inner native control, once rendered. Used as the validation anchor.",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "formValue",
+              "type": {
+                "text": "string | null"
+              },
+              "privacy": "protected",
+              "description": "The string this element contributes to `FormData`.",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "valueMissing",
+              "type": {
+                "text": "boolean"
+              },
+              "privacy": "protected",
+              "description": "Subclass hook: `true` when `required` is unsatisfied.",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "#onInput",
+              "privacy": "private"
+            },
+            {
+              "kind": "field",
+              "name": "#onChange",
+              "privacy": "private"
+            },
+            {
+              "kind": "method",
+              "name": "formResetCallback",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "formStateRestoreCallback",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "state",
+                  "type": {
+                    "text": "string | null"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "field",
+              "name": "formAssociated",
+              "type": {
+                "text": "boolean"
+              },
+              "static": true,
+              "default": "true",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "name",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Submitted field name. Lives on the HOST, never on the inner control.",
+              "default": "''",
+              "attribute": "name",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "disabled",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "required",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "required",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "privacy": "public",
+              "type": {
+                "text": "string | null"
+              },
+              "default": "null",
+              "attribute": "label",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "description",
+              "privacy": "public",
+              "type": {
+                "text": "string | null"
+              },
+              "default": "null",
+              "attribute": "description",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "error",
+              "privacy": "public",
+              "type": {
+                "text": "string | null"
+              },
+              "default": "null",
+              "attribute": "error",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "internals",
+              "type": {
+                "text": "ElementInternals | null"
+              },
+              "privacy": "protected",
+              "readonly": true,
+              "description": "`null` only where the platform has no `attachInternals` — MEASURED:\nhappy-dom 20.9.0 does not implement it (`typeof\nHTMLElement.prototype.attachInternals === 'undefined'`). Throwing there\nwould take down every consumer's happy-dom suite for an unrelated reason,\nso the element degrades to a non-form-participating control and says so\nonce. The consequence is that NO form behaviour can be observed under\nhappy-dom — which is why every form guard in this package is a\n`*.browser.test.ts`, and why `test/no-vacuous-form-tests.test.ts` asserts\nthe degraded path is inert rather than silently passing.",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "uid",
+              "privacy": "protected",
+              "readonly": true,
+              "default": "`ce-${(seq += 1)}`",
+              "description": "Stable, collision-free ids for label/description/error wiring.",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "controlId",
+              "type": {
+                "text": "string"
+              },
+              "privacy": "protected",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "descId",
+              "type": {
+                "text": "string"
+              },
+              "privacy": "protected",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "errId",
+              "type": {
+                "text": "string"
+              },
+              "privacy": "protected",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "describedBy",
+              "type": {
+                "text": "string | undefined"
+              },
+              "privacy": "protected",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "syncForm",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Publish the current value + validity to the form. Call after every change\nto `value`, `required` or `disabled`.",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "form",
+              "type": {
+                "text": "HTMLFormElement | null"
+              },
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "validity",
+              "type": {
+                "text": "ValidityState | null"
+              },
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "validationMessage",
+              "type": {
+                "text": "string"
+              },
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "willValidate",
+              "type": {
+                "text": "boolean"
+              },
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "checkValidity",
+              "return": {
+                "type": {
+                  "text": "boolean"
+                }
+              },
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "reportValidity",
+              "return": {
+                "type": {
+                  "text": "boolean"
+                }
+              },
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "formAssociationAvailable",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "`false` where the platform lacks `ElementInternals`; see the field doc.",
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "formDisabledCallback",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "disabled",
+                  "type": {
+                    "text": "boolean"
+                  }
+                }
+              ],
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "retarget",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "inner",
+                  "type": {
+                    "text": "Event"
+                  }
+                },
+                {
+                  "name": "type",
+                  "type": {
+                    "text": "'change' | 'input'"
+                  }
+                },
+                {
+                  "name": "detail",
+                  "type": {
+                    "text": "T"
+                  }
+                }
+              ],
+              "description": "Re-emit a host-level event for a change that originated on the inner\ncontrol, and STOP the inner one.\n\nWithout the stop, a consumer's single `onChange` on the host fires twice:\nonce for the native control's own bubbling `change`, once for ours. React\n19 attaches `onChange` on a custom element as a plain `change` listener on\nthe host (measured — see `react19-custom-elements.test.tsx`), so it sees\nboth. Pinned by `event-identity.test.ts`.",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            }
+          ],
+          "events": [
+            {
+              "type": {
+                "text": "CustomEvent<SliderChangeDetail>"
+              },
+              "description": "Every drag/keyboard step.",
+              "name": "input"
+            },
+            {
+              "type": {
+                "text": "CustomEvent<SliderChangeDetail>"
+              },
+              "description": "Commit.",
+              "name": "change"
+            },
+            {
+              "name": "type",
+              "type": {
+                "text": "CustomEvent"
+              },
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "name",
+              "type": {
+                "text": "string"
+              },
+              "description": "Submitted field name. On the HOST, never the control.",
+              "default": "''",
+              "fieldName": "name",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "type": {
+                "text": "number"
+              },
+              "description": "The current value; the midpoint of `min`..`max` until one is supplied.",
+              "name": "value",
+              "fieldName": "value"
+            },
+            {
+              "type": {
+                "text": "number"
+              },
+              "description": "Default `0`.",
+              "name": "min",
+              "default": "0",
+              "fieldName": "min"
+            },
+            {
+              "type": {
+                "text": "number"
+              },
+              "description": "Default `100`.",
+              "name": "max",
+              "default": "100",
+              "fieldName": "max"
+            },
+            {
+              "type": {
+                "text": "number"
+              },
+              "description": "Default `1`.",
+              "name": "step",
+              "default": "1",
+              "fieldName": "step"
+            },
+            {
+              "name": "label",
+              "type": {
+                "text": "string | null"
+              },
+              "default": "null",
+              "fieldName": "label",
+              "description": "Visible label, linked with `for`/`id`.",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "name": "description",
+              "type": {
+                "text": "string | null"
+              },
+              "default": "null",
+              "fieldName": "description",
+              "description": "Helper text, linked via `aria-describedby`.",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "name": "error",
+              "type": {
+                "text": "string | null"
+              },
+              "default": "null",
+              "fieldName": "error",
+              "description": "Error message; sets `aria-invalid` and a `customError`.",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "name": "required",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "required",
+              "description": "The user must move the slider; see above.",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "disabled",
+              "description": "Disables the control and withdraws the form value.",
+              "inheritedFrom": {
+                "name": "CivitaiFieldElement",
+                "module": "src/internal/CivitaiFieldElement.ts"
+              }
+            },
+            {
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Render the live value beside the label.",
+              "name": "show-value",
+              "default": "false",
+              "fieldName": "showValue"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiFieldElement",
+            "module": "/src/internal/CivitaiFieldElement.js"
+          },
+          "tagName": "civitai-slider",
+          "customElement": true
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiSlider",
+          "declaration": {
+            "name": "CivitaiSlider",
+            "module": "src/slider/civitai-slider.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/stack/civitai-stack.ts",
+      "declarations": [
+        {
+          "kind": "variable",
+          "name": "GAP_STEPS",
+          "type": {
+            "text": "['none', 'xs', 'sm', 'md', 'lg', 'xl']"
+          },
+          "default": "['none', 'xs', 'sm', 'md', 'lg', 'xl']",
+          "description": "The named gap steps. Anything else is treated as a raw CSS length."
+        },
+        {
+          "kind": "class",
+          "description": "`<civitai-stack>` — vertical flex container. ENHANCE-ONLY (constraint (a)):\nit sets attributes and custom properties on ITSELF and never touches its\nchildren, so arbitrary consumer content survives every re-render.\n\n`gap` resolves BOTH contracts that drifted apart in the two React packages:\na named step (`md`) lands on the `[gap=…]` rules; anything else is a CSS\nlength and lands on `--civitai-stack-gap`. A bare number is read as px, which\nis what `@civitai/blocks-react/ui` did. There is no input that silently\nevaporates.",
+          "name": "CivitaiStack",
+          "cssProperties": [
+            {
+              "description": "The resolved gap; set directly to override.",
+              "name": "--civitai-stack-gap"
+            }
+          ],
+          "slots": [
+            {
+              "description": "NONE. Light DOM has no slots; children are simply left in place.",
+              "name": ""
+            }
+          ],
+          "members": [
+            {
+              "kind": "field",
+              "name": "componentId",
+              "type": {
+                "text": "string"
+              },
+              "static": true,
+              "default": "'civitai-stack'",
+              "description": "Stable style-adoption key. Subclasses MUST override.",
+              "inheritedFrom": {
+                "name": "CivitaiEnhanceElement",
+                "module": "src/internal/CivitaiEnhanceElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "componentCss",
+              "type": {
+                "text": "string"
+              },
+              "static": true,
+              "default": "stackCss",
+              "description": "This component's own rule text. Subclasses MUST override.",
+              "inheritedFrom": {
+                "name": "CivitaiEnhanceElement",
+                "module": "src/internal/CivitaiEnhanceElement.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "gap",
+              "privacy": "public",
+              "type": {
+                "text": "string | number | null"
+              },
+              "default": "null",
+              "attribute": "gap",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "align",
+              "privacy": "public",
+              "type": {
+                "text": "string | null"
+              },
+              "default": "null",
+              "attribute": "align",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "justify",
+              "privacy": "public",
+              "type": {
+                "text": "string | null"
+              },
+              "default": "null",
+              "attribute": "justify",
+              "reflects": true
+            }
+          ],
+          "attributes": [
+            {
+              "type": {
+                "text": "string | number | null"
+              },
+              "description": "Spacing between children. Default `md` (12px).",
+              "name": "gap",
+              "default": "null",
+              "fieldName": "gap"
+            },
+            {
+              "type": {
+                "text": "string | null"
+              },
+              "description": "`align-items`.",
+              "name": "align",
+              "default": "null",
+              "fieldName": "align"
+            },
+            {
+              "type": {
+                "text": "string | null"
+              },
+              "description": "`justify-content`.",
+              "name": "justify",
+              "default": "null",
+              "fieldName": "justify"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiEnhanceElement",
+            "module": "/src/internal/CivitaiEnhanceElement.js"
+          },
+          "tagName": "civitai-stack",
+          "customElement": true
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "GAP_STEPS",
+          "declaration": {
+            "name": "GAP_STEPS",
+            "module": "src/stack/civitai-stack.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "CivitaiStack",
+          "declaration": {
+            "name": "CivitaiStack",
+            "module": "src/stack/civitai-stack.ts"
+          }
+        }
+      ]
+    }
+  ]
+}

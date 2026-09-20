@@ -1,0 +1,46 @@
+/*
+ * civitai-stack — ENHANCE-ONLY vertical flex container.
+ *
+ * THE DRIFT THIS FIXES: `@civitai/blocks-react/ui`'s Stack types `gap` as
+ * `string | number` and writes it straight to `style.gap`, while
+ * `@civitai/components-react`'s Stack types it as `'sm' | 'md' | 'lg'` and
+ * writes `data-gap`. An app importing from the wrong one and writing
+ * `gap="md"` emits `style="gap: md"` — invalid CSS, silently dropped, no error
+ * anywhere. Here ONE element accepts BOTH forms: a named step resolves through
+ * the `[gap=…]` rules below, any other value is treated as a CSS length and
+ * lands on `--civitai-stack-gap`. Neither spelling can be silently dropped.
+ */
+@layer civitai.elements {
+  civitai-stack {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    font-family: var(--civitai-font);
+    gap: var(--civitai-stack-gap, 12px);
+
+    & *,
+    & *::before,
+    & *::after {
+      box-sizing: border-box;
+    }
+
+    &[gap='none'] {
+      --civitai-stack-gap: 0;
+    }
+    &[gap='xs'] {
+      --civitai-stack-gap: 4px;
+    }
+    &[gap='sm'] {
+      --civitai-stack-gap: 8px;
+    }
+    &[gap='md'] {
+      --civitai-stack-gap: 12px;
+    }
+    &[gap='lg'] {
+      --civitai-stack-gap: 20px;
+    }
+    &[gap='xl'] {
+      --civitai-stack-gap: 32px;
+    }
+  }
+}

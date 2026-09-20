@@ -97,13 +97,20 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # blocks-react consumes @civitai/app-sdk, @civitai/theme and
-      # @civitai/components via workspace:^ and resolves types from their dist/.
-      # Build those deps first so blocks-react isn't typechecking against stale
-      # or missing declarations.
+      # blocks-react consumes @civitai/app-sdk, @civitai/theme,
+      # @civitai/components and @civitai/elements via workspace:^ and resolves
+      # types from their dist/. Build those deps first so blocks-react isn't
+      # typechecking against stale or missing declarations.
+      #
+      # @civitai/elements joined this list with the first STRANGLER SEAM:
+      # src/ui/Stack.tsx now renders <civitai-stack> instead of a <div>. Omit
+      # the build and blocks-react's typecheck fails on a missing
+      # `@civitai/elements/stack` declaration — which reads as a broken base
+      # branch, not a missing build step.
       - run: pnpm --filter @civitai/app-sdk build
       - run: pnpm --filter @civitai/theme build
       - run: pnpm --filter @civitai/components build
+      - run: pnpm --filter @civitai/elements build
 
       - run: pnpm --filter @civitai/blocks-react typecheck
       - run: pnpm --filter @civitai/blocks-react test
@@ -184,6 +191,71 @@ jobs:
         timeout-minutes: 15
       - run: pnpm --filter @civitai/components-react test:browser
 
+  # SELF-CONTAINED custom-elements job. `@civitai/elements` is the light-DOM Lit
+  # replacement for the duplicated React component sets; `@civitai/elements-react`
+  # is its generated type surface (no runtime).
+  #
+  # 🔴 THE BROWSER STEP IS NOT OPTIONAL HERE, unlike the two jobs above where it
+  # covers layout and a11y on top of a green unit tier. Both 🔴 constraints this
+  # package exists to satisfy — a form-associated element must not double-submit,
+  # and `required` must reach the real control — run through `ElementInternals`,
+  # which happy-dom 20.9.0 does NOT implement (measured: `typeof
+  # HTMLElement.prototype.attachInternals === 'undefined'`). Every form assertion
+  # is therefore STRUCTURALLY INVISIBLE to the unit tier. Dropping `test:browser`
+  # from this job would leave the unit tier green and the package's whole reason
+  # for existing untested. `test/no-vacuous-form-tests.test.ts` pins the
+  # environment limit so this stays visible.
+  custom-elements:
+    name: custom-elements (elements + elements-react)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Dependency order: theme (tokens) -> elements (adopts them) ->
+      # elements-react (imports elements' types from its dist/).
+      - run: pnpm --filter @civitai/theme build
+      - run: pnpm --filter @civitai/elements build
+
+      # Regenerate the manifest from source and fail if the committed public
+      # surface moved without the snapshot being updated in the same PR. This
+      # is the gate the audit of the two React packages wanted and never had:
+      # 59% of their surface was undocumented and nothing in CI could see a
+      # prop being added, renamed or dropped.
+      - run: pnpm --filter @civitai/elements analyze
+      - run: pnpm --filter @civitai/elements api:check
+
+      - run: pnpm --filter @civitai/elements typecheck
+      - run: pnpm --filter @civitai/elements test
+
+      - run: pnpm --filter @civitai/elements-react build
+      - run: pnpm --filter @civitai/elements-react typecheck
+
+      # Same apt/network wedge hazard as the two jobs above; same 15m budget,
+      # same reasoning — see the measurement recorded on the blocks-react job.
+      - run: pnpm --filter @civitai/elements exec playwright install --with-deps chromium
+        timeout-minutes: 15
+      - run: pnpm --filter @civitai/elements test:browser
+      - run: pnpm --filter @civitai/elements-react test:browser
+
+      # The bundle-cost claim this package is justified by, re-measured on every
+      # run so it cannot quietly stop being true. Printed, not asserted: a hard
+      # byte threshold would go red on an esbuild bump and train people to
+      # ignore it.
+      - run: pnpm --filter @civitai/components build
+      - run: pnpm --filter @civitai/app-sdk build
+      - run: pnpm --filter @civitai/blocks-react build
+      - run: pnpm --filter @civitai/components-react build
+      - run: pnpm --filter @civitai/elements measure
+
   # ADVISORY drift guard — depends on a LIVE external checkout of civitai/civitai
   # (sparse: src/providers + src/utils) to assert the vendored theme.source.ts
   # hasn't drifted from civitai's real Mantine theme, and the vendored px
@@ -252,10 +324,12 @@ jobs:
 
       # The snippet checker resolves documented imports against the packages'
       # BUILT declarations, so build deps first (blocks-react consumes app-sdk,
-      # @civitai/theme and @civitai/components).
+      # @civitai/theme, @civitai/components and — since the first strangler
+      # seam — @civitai/elements).
       - run: pnpm --filter @civitai/app-sdk build
       - run: pnpm --filter @civitai/theme build
       - run: pnpm --filter @civitai/components build
+      - run: pnpm --filter @civitai/elements build
       - run: pnpm --filter @civitai/blocks-react build
 
       - run: pnpm typecheck:readme

@@ -73,6 +73,8 @@
       "@civitai/blocks-react": "workspace:*",
       "@civitai/components": "workspace:*",
       "@civitai/components-react": "workspace:*",
+      "@civitai/elements": "workspace:*",
+      "@civitai/elements-react": "workspace:*",
       "@civitai/theme": "workspace:*",
       "cookie@<0.7.0": "^0.7.0",
       "postcss@<8.5.10": ">=8.5.10"

@@ -1,0 +1,153 @@
+/*
+ * civitai-button — ENHANCE-ONLY. The element never writes a child node, so
+ * everything that would normally need extra DOM is done here:
+ *   - the loading spinner is a ::before pseudo-element,
+ *   - left/right sections are the consumer's own children, spaced with `gap`.
+ * Selected by tag name; `[data-civitai-ui='button']` is also emitted on the host
+ * for back-compat with @civitai/components' sheet and consumer CSS.
+ */
+@layer civitai.elements {
+  civitai-button {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border: 1px solid transparent;
+    border-radius: var(--civitai-radius);
+    font-family: var(--civitai-font);
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    user-select: none;
+    text-decoration: none;
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease;
+
+    /* Documented defaults: variant=filled, size=md — applied on the BASE rule
+       so a bare <civitai-button> with no attributes still renders correctly
+       during the window before upgrade reflects them. */
+    background: var(--civitai-color-primary);
+    color: var(--civitai-color-primary-fg);
+    border-color: var(--civitai-color-primary);
+    height: 36px;
+    padding: 0 18px;
+    font-size: 14px;
+
+    & *,
+    & *::before,
+    & *::after {
+      box-sizing: border-box;
+    }
+
+    &:hover:not([disabled]):not([loading]) {
+      background: var(--civitai-color-primary-hover);
+      border-color: var(--civitai-color-primary-hover);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--civitai-color-primary);
+      outline-offset: 2px;
+    }
+
+    &[size='sm'] {
+      height: 30px;
+      padding: 0 14px;
+      font-size: 13px;
+    }
+    &[size='md'] {
+      height: 36px;
+      padding: 0 18px;
+      font-size: 14px;
+    }
+    &[size='lg'] {
+      height: 44px;
+      padding: 0 22px;
+      font-size: 16px;
+    }
+    &[full-width] {
+      display: flex;
+      width: 100%;
+    }
+
+    &[variant='filled'] {
+      background: var(--civitai-color-primary);
+      color: var(--civitai-color-primary-fg);
+      border-color: var(--civitai-color-primary);
+
+      &:hover:not([disabled]):not([loading]) {
+        background: var(--civitai-color-primary-hover);
+        border-color: var(--civitai-color-primary-hover);
+      }
+    }
+    &[variant='light'] {
+      background: color-mix(in srgb, var(--civitai-color-primary) 12%, transparent);
+      color: var(--civitai-color-primary);
+      border-color: transparent;
+
+      &:hover:not([disabled]):not([loading]) {
+        background: color-mix(in srgb, var(--civitai-color-primary) 22%, transparent);
+      }
+    }
+    &[variant='outline'] {
+      background: transparent;
+      color: var(--civitai-color-primary);
+      border-color: var(--civitai-color-primary);
+
+      &:hover:not([disabled]):not([loading]) {
+        background: color-mix(in srgb, var(--civitai-color-primary) 10%, transparent);
+      }
+    }
+    &[variant='subtle'] {
+      background: transparent;
+      color: var(--civitai-color-primary);
+      border-color: transparent;
+
+      &:hover:not([disabled]):not([loading]) {
+        background: color-mix(in srgb, var(--civitai-color-primary) 10%, transparent);
+      }
+    }
+
+    &[disabled],
+    &[loading] {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    /* A disabled wrapper must also neutralise its children — a light-DOM
+       <a> or <button> inside would otherwise stay interactive. */
+    &[disabled] > *,
+    &[loading] > * {
+      pointer-events: none;
+    }
+
+    /* Loading spinner WITHOUT a child node. `content: ''` on ::before keeps
+       the element's children untouched, which is the whole enhance-only
+       contract. */
+    &[loading]::before {
+      content: '';
+      display: inline-block;
+      flex: none;
+      width: 1em;
+      height: 1em;
+      border: 2px solid currentColor;
+      border-right-color: transparent;
+      border-radius: 50%;
+      animation: civitai-elements-spin 0.7s linear infinite;
+    }
+  }
+
+  @keyframes civitai-elements-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    civitai-button[loading]::before {
+      animation-duration: 2.4s;
+    }
+  }
+}

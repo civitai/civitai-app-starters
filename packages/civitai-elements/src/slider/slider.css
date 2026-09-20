@@ -1,0 +1,51 @@
+/*
+ * civitai-slider — the inner native <input type="range"> keeps arrow-key /
+ * Home / End / PageUp / PageDown handling and the implicit role="slider" with
+ * aria-valuemin/max/now. It carries NO `name` (constraint (b)).
+ */
+@layer civitai.elements {
+  civitai-slider {
+    gap: 6px;
+
+    & [data-civitai-ui-slider-header] {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    & [data-civitai-ui-slider-value] {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--civitai-color-text-dimmed);
+      font-variant-numeric: tabular-nums;
+    }
+    & input[type='range'] {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 6px;
+      margin: 6px 0;
+      padding: 0;
+      border-radius: 999px;
+      accent-color: var(--civitai-color-primary);
+      background: var(--civitai-color-gray-2);
+      cursor: pointer;
+    }
+    & input[type='range']:focus-visible {
+      outline: 2px solid var(--civitai-color-primary);
+      outline-offset: 4px;
+    }
+    & input[type='range']:disabled {
+      cursor: not-allowed;
+      opacity: 0.6;
+      accent-color: var(--civitai-color-gray-5);
+    }
+    &[error] input[type='range'] {
+      accent-color: var(--civitai-color-error);
+    }
+  }
+
+  [data-theme='dark'] civitai-slider input[type='range'] {
+    background: var(--civitai-color-surface-2);
+  }
+}
