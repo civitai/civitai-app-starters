@@ -203,10 +203,19 @@ export class CivitaiModal extends CivitaiElement {
                   : nothing}
               </div>`
             : nothing}
-          <div class="body" part="body"><slot></slot></div>
+          ${this.renderBody()}${this.renderFooter()}
         </div>
       </dialog>
     `;
+  }
+
+  protected renderBody(): TemplateResult {
+    return html`<div class="body" part="body"><slot></slot></div>`;
+  }
+
+  /** `<civitai-confirm-dialog>` is this with its two buttons filled in. */
+  protected renderFooter(): TemplateResult | typeof nothing {
+    return nothing;
   }
 }
 

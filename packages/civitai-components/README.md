@@ -191,6 +191,13 @@ Added because a real consumer needed them and the vocabulary had no answer:
 | `<civitai-breadcrumb>` | `data`-driven. The separator is a pseudo-element, which is what keeps it out of the trail a screen reader reads. |
 | `<civitai-table>` | **Light DOM on purpose**: a slotted `<tr>` inside a shadow `<table>` leaves the table formatting context and stops being a row. This styles a table the page already owns — including one a data grid generated, which is why it works with QuickGrid or any server-rendered table. |
 
+### Grouping, and a confirmation
+
+| | |
+|---|---|
+| `<civitai-button-group>` · `<civitai-input-group>` | **Light DOM**, because joining controls means reaching their `::part(button)` / `::part(control)`, and a part crosses exactly one boundary — reachable from the document, never from a shadow root the controls were slotted into. |
+| `<civitai-confirm-dialog>` | Extends `<civitai-modal>`, so the focus trap and the top layer come from one implementation. `await dialog.ask()` resolves `true`, `false` on cancel, and `false` on a dismissal — a caller is never left waiting. Destructive confirmations land focus on Cancel. |
+
 ## Utilities
 
 Elements cover the components. They cannot cover the markup *between* them —

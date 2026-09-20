@@ -704,6 +704,58 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/elements/civitai-button-group.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiButtonGroup",
+          "superclass": {
+            "name": "HTMLElementBase",
+            "module": "/src/elements/html-element.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-button-group"
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiButtonGroup",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiButtonGroup",
+          "declaration": {
+            "name": "CivitaiButtonGroup",
+            "module": "src/elements/civitai-button-group.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiButtonGroup",
+          "declaration": {
+            "name": "defineCivitaiButtonGroup",
+            "module": "src/elements/civitai-button-group.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-button-group",
+          "declaration": {
+            "name": "CivitaiButtonGroup",
+            "module": "src/elements/civitai-button-group.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/elements/civitai-button.ts",
       "declarations": [
         {
@@ -1406,6 +1458,601 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/elements/civitai-confirm-dialog.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "The modal with its two buttons filled in. `ask()` is the reason it exists:\na confirmation reads as one awaited line rather than a pair of listeners.",
+          "name": "CivitaiConfirmDialog",
+          "members": [
+            {
+              "kind": "field",
+              "name": "message",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "message",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "confirmLabel",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Confirm'",
+              "attribute": "confirm-label",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "cancelLabel",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Cancel'",
+              "attribute": "cancel-label",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "destructive",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Paints the confirm button as a destructive action, and focuses cancel.",
+              "default": "false",
+              "attribute": "destructive",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "#settle",
+              "privacy": "private",
+              "type": {
+                "text": "((confirmed: boolean) => void) | undefined"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "ask",
+              "return": {
+                "type": {
+                  "text": "Promise<boolean>"
+                }
+              },
+              "description": "Opens, and resolves with what the viewer chose. Dismissing is a `false`."
+            },
+            {
+              "kind": "method",
+              "name": "#answer",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "confirmed",
+                  "type": {
+                    "text": "boolean"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "renderBody",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "TemplateResult"
+                }
+              },
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "renderFooter",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "TemplateResult"
+                }
+              },
+              "description": "`<civitai-confirm-dialog>` is this with its two buttons filled in.",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "open",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "open",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "heading",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Not `title`: that attribute is global and would render a tooltip.",
+              "default": "''",
+              "attribute": "heading",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "size",
+              "privacy": "public",
+              "type": {
+                "text": "ModalSize"
+              },
+              "default": "'md'",
+              "attribute": "size",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "withCloseButton",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "attribute": "with-close-button",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "closeOnOverlayClick",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "attribute": "close-on-overlay-click",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "closeOnEscape",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "attribute": "close-on-escape",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "closeLabel",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Close'",
+              "attribute": "close-label",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "#id",
+              "privacy": "private",
+              "readonly": true,
+              "default": "`ci-modal-${(sequence += 1)}`",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "show",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "hide",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "toggle",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "#dialog",
+              "privacy": "private",
+              "type": {
+                "text": "HTMLDialogElement | null"
+              },
+              "readonly": true,
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "#onCancel",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "event",
+                  "type": {
+                    "text": "Event"
+                  }
+                }
+              ],
+              "description": "Escape reaches the dialog as `cancel`, which is preventable.",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "#onClose",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "#onClick",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "event",
+                  "type": {
+                    "text": "MouseEvent"
+                  }
+                }
+              ],
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            }
+          ],
+          "events": [
+            {
+              "name": "confirm",
+              "type": {
+                "text": "Event"
+              }
+            },
+            {
+              "name": "close",
+              "type": {
+                "text": "Event"
+              },
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "message",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "message"
+            },
+            {
+              "name": "confirm-label",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Confirm'",
+              "fieldName": "confirmLabel"
+            },
+            {
+              "name": "cancel-label",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Cancel'",
+              "fieldName": "cancelLabel"
+            },
+            {
+              "name": "destructive",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Paints the confirm button as a destructive action, and focuses cancel.",
+              "default": "false",
+              "fieldName": "destructive"
+            },
+            {
+              "name": "open",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "open",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "name": "heading",
+              "type": {
+                "text": "string"
+              },
+              "description": "Not `title`: that attribute is global and would render a tooltip.",
+              "default": "''",
+              "fieldName": "heading",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "name": "size",
+              "type": {
+                "text": "ModalSize"
+              },
+              "default": "'md'",
+              "fieldName": "size",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "name": "with-close-button",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "fieldName": "withCloseButton",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "name": "close-on-overlay-click",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "fieldName": "closeOnOverlayClick",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "name": "close-on-escape",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "fieldName": "closeOnEscape",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "name": "close-label",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Close'",
+              "fieldName": "closeLabel",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiModal",
+            "module": "/src/elements/civitai-modal.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-confirm-dialog",
+          "cssParts": [
+            {
+              "name": "body",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "name": "message"
+            },
+            {
+              "name": "actions"
+            },
+            {
+              "name": "cancel"
+            },
+            {
+              "name": "confirm"
+            },
+            {
+              "name": "dialog",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "name": "panel",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "name": "header",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "name": "heading",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "name": "close",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            }
+          ],
+          "slots": [
+            {
+              "name": "",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiConfirmDialog",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiConfirmDialog",
+          "declaration": {
+            "name": "CivitaiConfirmDialog",
+            "module": "src/elements/civitai-confirm-dialog.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiConfirmDialog",
+          "declaration": {
+            "name": "defineCivitaiConfirmDialog",
+            "module": "src/elements/civitai-confirm-dialog.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-confirm-dialog",
+          "declaration": {
+            "name": "CivitaiConfirmDialog",
+            "module": "src/elements/civitai-confirm-dialog.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/elements/civitai-group.ts",
       "declarations": [
         {
@@ -1708,6 +2355,58 @@
           "declaration": {
             "name": "CivitaiImage",
             "module": "src/elements/civitai-image.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-input-group.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiInputGroup",
+          "superclass": {
+            "name": "HTMLElementBase",
+            "module": "/src/elements/html-element.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-input-group"
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiInputGroup",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiInputGroup",
+          "declaration": {
+            "name": "CivitaiInputGroup",
+            "module": "src/elements/civitai-input-group.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiInputGroup",
+          "declaration": {
+            "name": "defineCivitaiInputGroup",
+            "module": "src/elements/civitai-input-group.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-input-group",
+          "declaration": {
+            "name": "CivitaiInputGroup",
+            "module": "src/elements/civitai-input-group.ts"
           }
         }
       ]
@@ -2585,6 +3284,27 @@
                   }
                 }
               ]
+            },
+            {
+              "kind": "method",
+              "name": "renderBody",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "TemplateResult"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "renderFooter",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "TemplateResult | typeof nothing"
+                }
+              },
+              "description": "`<civitai-confirm-dialog>` is this with its two buttons filled in."
             }
           ],
           "events": [

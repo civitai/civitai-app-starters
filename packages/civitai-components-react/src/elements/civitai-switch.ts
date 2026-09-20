@@ -13,6 +13,7 @@ export const CivitaiSwitch = createComponent({
   elementClass: CivitaiSwitchElement,
   displayName: 'CivitaiSwitch',
   events: {
-
+    onChange: 'change',
+    onInvalid: 'invalid',
   },
 });

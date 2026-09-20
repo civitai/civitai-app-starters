@@ -322,6 +322,30 @@
     "./civitai-table/define": {
       "types": "./dist/elements/civitai-table.define.d.ts",
       "default": "./dist/elements/civitai-table.define.js"
+    },
+    "./civitai-button-group": {
+      "types": "./dist/elements/civitai-button-group.d.ts",
+      "default": "./dist/elements/civitai-button-group.js"
+    },
+    "./civitai-button-group/define": {
+      "types": "./dist/elements/civitai-button-group.define.d.ts",
+      "default": "./dist/elements/civitai-button-group.define.js"
+    },
+    "./civitai-confirm-dialog": {
+      "types": "./dist/elements/civitai-confirm-dialog.d.ts",
+      "default": "./dist/elements/civitai-confirm-dialog.js"
+    },
+    "./civitai-confirm-dialog/define": {
+      "types": "./dist/elements/civitai-confirm-dialog.define.d.ts",
+      "default": "./dist/elements/civitai-confirm-dialog.define.js"
+    },
+    "./civitai-input-group": {
+      "types": "./dist/elements/civitai-input-group.d.ts",
+      "default": "./dist/elements/civitai-input-group.js"
+    },
+    "./civitai-input-group/define": {
+      "types": "./dist/elements/civitai-input-group.define.d.ts",
+      "default": "./dist/elements/civitai-input-group.define.js"
     }
   },
   "files": [

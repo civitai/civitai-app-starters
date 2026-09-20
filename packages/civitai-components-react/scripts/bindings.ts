@@ -25,6 +25,10 @@ export interface EventBinding {
 export const EVENTS: Record<string, EventBinding[]> = {
   'civitai-alert': [{ prop: 'onClose', event: 'close' }],
   'civitai-collapse': [{ prop: 'onToggle', event: 'toggle' }],
+  'civitai-confirm-dialog': [
+    { prop: 'onConfirm', event: 'confirm' },
+    { prop: 'onClose', event: 'close' },
+  ],
   // Not `onLoad`/`onError`: React wires those itself on any host element, so
   // sharing the name would call the handler twice.
   'civitai-image': [
@@ -43,21 +47,39 @@ export const EVENTS: Record<string, EventBinding[]> = {
 /** The field base re-dispatches both out of every field's shadow root (R4). */
 export const RETARGETED = ['change', 'invalid'] as const;
 
-/** Just this class's body, so two elements sharing a module stay separate. */
-export function classBody(tag: string): string {
-  const entry = elements().find((e) => e.tag === tag);
-  if (!entry) return '';
-  const source = readFileSync(
-    join(componentsRoot, 'src', 'elements', `${entry.specifier}.ts`),
-    'utf8'
-  );
-  const start = source.indexOf(`export class ${entry.className} `);
+function bodyOf(file: string, className: string): string {
+  const source = readFileSync(file, 'utf8');
+  const start = source.indexOf(`export class ${className} `);
   if (start === -1) return source;
   const next = source.indexOf('\nexport ', start + 1);
   return source.slice(start, next === -1 ? undefined : next);
 }
 
-export const isField = (tag: string): boolean => classBody(tag).includes('extends CivitaiField');
+const inElements = (specifier: string): string =>
+  join(componentsRoot, 'src', 'elements', `${specifier}.ts`);
+
+/**
+ * This class's body AND every superclass in the package: a subclass inherits
+ * the events its base dispatches, and a React prop for them either way.
+ */
+export function classBody(tag: string): string {
+  const entry = elements().find((e) => e.tag === tag);
+  if (!entry) return '';
+
+  const bodies = [bodyOf(inElements(entry.specifier), entry.className)];
+  let superclass = entry.superclass;
+  const seen = new Set<string>();
+  while (superclass?.module?.startsWith('/src/') && !seen.has(superclass.name)) {
+    seen.add(superclass.name);
+    const file = join(componentsRoot, superclass.module.replace(/^\//, '').replace(/\.js$/, '.ts'));
+    bodies.push(bodyOf(file, superclass.name));
+    superclass = elements().find((e) => e.className === superclass!.name)?.superclass;
+  }
+  return bodies.join('\n');
+}
+
+export const isField = (tag: string): boolean =>
+  classBody(tag).includes('extends CivitaiField') || classBody(tag).includes('class CivitaiField');
 
 // Read off the base class rather than listed by hand: a control that joins the
 // field base gains both events, and a list would quietly not know.
@@ -73,6 +95,7 @@ for (const { tag } of elements()) {
 interface Declaration {
   tagName?: string;
   name?: string;
+  superclass?: { name: string; module?: string };
 }
 interface Module {
   path: string;
@@ -84,6 +107,7 @@ export interface ElementEntry {
   className: string;
   /** The package export the class and its `/define` live behind. */
   specifier: string;
+  superclass?: { name: string; module?: string };
 }
 
 export function elements(): ElementEntry[] {
@@ -99,6 +123,7 @@ export function elements(): ElementEntry[] {
           tag: declaration.tagName!,
           className: declaration.name!,
           specifier: basename(module.path, '.ts'),
+          superclass: declaration.superclass,
         }))
     )
     .sort((a, b) => a.tag.localeCompare(b.tag));
