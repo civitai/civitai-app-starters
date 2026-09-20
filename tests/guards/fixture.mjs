@@ -204,18 +204,37 @@ export async function runGuard(dir, script, env = {}) {
  *                            the mapped one 404s, which is exactly the
  *                            failed-publish state that guard must catch.
  *
- * Returns { origin, close, hits } — `hits` records every path served so a test
- * can assert the guard actually issued the requests it claims to (a guard that
- * silently makes no request would otherwise look identical to a passing one).
+ * Returns { origin, close, hits, rawHits } — `hits` records every path served so
+ * a test can assert the guard actually issued the requests it claims to (a guard
+ * that silently makes no request would otherwise look identical to a passing one).
+ *
+ * 🔴 `hits` is the path with ANY QUERY STRING REMOVED, and `rawHits` is the URL
+ * exactly as requested. The guard cache-busts every read with a unique `?_cb=`
+ * param (see `cacheBusted` in assert-published-versions.mjs), so the raw URL is
+ * different on every single request and an equality assertion against it can
+ * never match. Routing on the stripped path is also what the REAL registry does
+ * — measured: an unknown query param is ignored, 200 for a live version and 404
+ * for an absent one — so a fixture that let the param change the response would
+ * be modelling a registry npm does not operate, and would fail the guard for a
+ * reason production cannot produce.
+ *
+ * Both are exposed rather than one, because they answer different questions:
+ * `hits` proves WHICH endpoint was asked and HOW MANY TIMES; `rawHits` is the
+ * only thing that can prove the reads were cache-busted at all. Asserting
+ * cache-busting against `hits` would be vacuous by construction.
  */
 export async function startFakeRegistry(versions) {
   const hits = [];
+  const rawHits = [];
   // `versions` is caller-supplied data, so membership MUST be an own-property
   // test: a bare `versions[pkg]` would resolve inherited keys ('constructor',
   // 'toString') to truthy junk and serve a 200 for a package nobody declared.
   const has = (k) => Object.prototype.hasOwnProperty.call(versions, k);
   const server = createServer((req, res) => {
-    const url = decodeURIComponent(req.url || '');
+    const raw = decodeURIComponent(req.url || '');
+    rawHits.push(raw);
+    // Strip the query BEFORE routing or recording — see the note above.
+    const url = raw.replace(/\?.*$/, '');
     hits.push(url);
     const path = url.replace(/^\//, '');
 
@@ -266,6 +285,7 @@ export async function startFakeRegistry(versions) {
   return {
     origin: `http://127.0.0.1:${port}`,
     hits,
+    rawHits,
     close: () =>
       new Promise((resolve) => {
         // undici keeps connections alive, so a bare close() never resolves.
