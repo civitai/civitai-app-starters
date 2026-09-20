@@ -72,9 +72,16 @@ example's harness the error string is `"PAYLOAD_TOO_LARGE"` for all three, so
 the mock does not distinguish them.** That is a property of the mock. The real
 host forwards its own per-gate message instead, which would make them
 distinguishable in production; reconciling the two is tracked in
-[#343](https://github.com/civitai/civitai-app-starters/issues/343). Until then,
-do not branch on the string — write one arm that names every possibility, as
-`storageFailureMessage()` in `src/App.tsx` does.
+[#343](https://github.com/civitai/civitai-app-starters/issues/343).
+
+🔴 **So `storageFailureMessage()` in `src/App.tsx` is MOCK-ONLY today, and the
+example is honest about it.** Its `/payload_too_large/i` arm matches the mock's
+string and nothing the live host sends, so in production that function has one
+branch — the generic fallback. Copy its **shape** (own your viewer copy, log
+the host's words with `console.warn`, never render them); do not copy the
+pattern expecting it to fire against the host. Widening it means guessing at
+host prose nobody has enumerated, which fails the same way while looking
+handled — do it in the change that closes #343, against the real strings.
 
 Surface `getQuota()` in your UI (`"X of {limitBytes}"`, `"N of {limitRows}
 rows"`) rather than hard-coding anything: the ceilings move.
@@ -98,11 +105,18 @@ reported but did not enforce until recently, so a row-limit overrun used to
 pass here and fail only in production. set/get/delete/list/quota all work
 offline.
 
-⚠️ It is a simulation, not a replica: it is known to diverge from the host on
-the error string a rejection carries
-([#343](https://github.com/civitai/civitai-app-starters/issues/343)) and on
-whether a shrinking overwrite is admitted when the store is already over the
-byte budget ([#345](https://github.com/civitai/civitai-app-starters/issues/345)
-— the host admits it, the harness does not). Passing here is evidence, not
-proof. See the
-[root README](../../../README.md) for submit → review → deploy.
+⚠️ It is a simulation, not a replica. Three known divergences from the host:
+
+- the error string a rejection carries
+  ([#343](https://github.com/civitai/civitai-app-starters/issues/343));
+- whether a shrinking overwrite is admitted when the store is already over the
+  byte budget ([#345](https://github.com/civitai/civitai-app-starters/issues/345)
+  — the host admits it, the harness does not);
+- 🔴 the UNIT the byte budget is counted in: wire bytes here, `octet_length(
+  value::jsonb::text)` on the host, which is larger for every container — up to
+  ~1.5x ([#347](https://github.com/civitai/civitai-app-starters/issues/347)).
+
+Passing here is evidence, not proof — and the third one is **permissive**: it
+lets a write through locally that production will reject, which is the failure
+direction that costs you a production incident rather than a confusing local
+error. See the [root README](../../../README.md) for submit → review → deploy.

@@ -734,12 +734,21 @@ a row-limit overrun now fails under `dev:mock` where it previously passed and
 failed only in production. Pass `storage: { quotaBytes, limitRows }` to
 simulate something smaller.
 
-⚠️ The mock is **not** gate-for-gate identical to the host. Two known
-divergences: the error string a rejection carries
-([#343](https://github.com/civitai/civitai-app-starters/issues/343)), and the
-byte gate refusing a shrinking overwrite that the host admits
-([#345](https://github.com/civitai/civitai-app-starters/issues/345)). Passing
-under `dev:mock` is evidence, not proof.
+⚠️ The mock is **not** gate-for-gate identical to the host. Three known
+divergences:
+
+- the error string a rejection carries
+  ([#343](https://github.com/civitai/civitai-app-starters/issues/343));
+- the byte gate refusing a shrinking overwrite that the host admits
+  ([#345](https://github.com/civitai/civitai-app-starters/issues/345));
+- 🔴 the byte gate counting **wire** bytes where the host counts **stored**
+  bytes — `octet_length(value::jsonb::text)`, larger for every container, up to
+  ~1.5x ([#347](https://github.com/civitai/civitai-app-starters/issues/347)).
+
+Passing under `dev:mock` is evidence, not proof — and note the third one is
+**permissive**: unlike the other two, it lets a write pass locally that
+production will reject. Size your fixtures against `getQuota()`, not against
+what the mock accepted.
 
 ### `useSharedStorage()`
 

@@ -74,10 +74,52 @@ affordance would be permanently stuck with no way back under the cap (only the
 owning viewer may delete their own rows).
 
 This closes one gap; it does not make the mock gate-for-gate identical to the
-host, and the docs no longer claim it is. Two divergences are known and filed:
-the error string a rejection carries (#343), and the byte gate — the host's is
-`!isNonIncreasing`-guarded, the mock's is not, so `dev:mock` still refuses a
-shrinking overwrite production admits (#345).
+host, and the docs no longer claim it is. **Three** divergences are known and
+filed:
+
+- the error string a rejection carries (#343);
+- the byte gate's SHAPE — the host's is `!isNonIncreasing`-guarded, the mock's
+  is not, so `dev:mock` still refuses a shrinking overwrite production admits
+  (#345);
+- the byte gate's UNIT — the mock counts **wire** bytes
+  (`TextEncoder(JSON.stringify(v)).length`), the host counts **stored** bytes
+  (`octet_length(value::jsonb::text)`), which is larger for every container
+  because `jsonb`'s canonical text inserts a space after each `:` and `,` (up
+  to ~1.4999x for a long array). So the mock's budget is up to half again too
+  generous (#347).
+
+🔴 **The third one runs the other way.** #343 and #345 are RESTRICTIVE — the
+mock shows a failure or a wrong string where production would be fine. #347 is
+**permissive**: a block can pass `dev:mock` and be rejected in production. That
+is the shape of the very bug this release exists to end, so it is called out
+rather than batched — and the unit fact behind it is one this diff already
+relies on, in `mockHost.ts`'s reason for not fixing #345. The conclusion had
+simply never been drawn for the budget gate.
+
+## The `@civitai/blocks-react` peer floor moves 0.45.0 → 0.47.0
+
+`internal/mockHost.ts` now VALUE-imports `APP_STORAGE_MAX_BYTES`,
+`APP_STORAGE_MAX_ROWS` and `APP_STORAGE_MAX_VALUE_BYTES`, which first ship in
+the `@civitai/app-sdk` minor this changeset publishes. Left at `>=0.45.0`, the
+range admitted the published `0.46.0` — which has none of them — with no peer
+warning at all, and `@civitai/blocks-react/testing` then died at module
+evaluation:
+
+```
+SyntaxError: The requested module '@civitai/app-sdk/blocks'
+  does not provide an export named 'APP_STORAGE_MAX_BYTES'
+```
+
+Measured against the real tarballs: the main entry still resolves (61 exports),
+so the failure lands on every dev harness and downstream test suite rather than
+on the block. This is the third time the class has come up (#309, #317), so the
+floor's derivation — `changeset status --verbose` on this branch, plus the
+measurement in both directions — is recorded in the package's
+`comment-peerDependencies`, and `tests/guards/blocks-react-peer-floor.test.mjs`
+now fails when the declared range admits an app-sdk version that lacks the
+constants. Note `changeset version` cannot fix this: with
+`onlyUpdatePeerDependentsWhenOutOfRange` a floor that is too LOW is still
+satisfied, so it is left alone and ships stale.
 
 ## 🔴 BREAKING FOR CONSUMERS OF `@civitai/blocks-react/testing` — a `minor`, not a `patch`
 

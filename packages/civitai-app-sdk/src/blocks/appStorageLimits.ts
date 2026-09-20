@@ -9,16 +9,29 @@
  * in any build, test or type-check able to notice.
  *
  * 🔴 **"Only site" is a claim about what is ENFORCED, and the enforcement is
- * narrower than the repo.** `tests/guards/app-storage-quota-literals.test.mjs`
- * bans the OLD figures across the App Storage surface — `src/blocks/` here,
- * all of `packages/civitai-blocks-react`, `starters/examples/kv-storage`, plus
- * `packages/civitai-app-sdk/README.md` and `starters/examples/README.md` — and
- * pins the derivation at each runtime site. It does NOT scan, and the rule
- * does not apply to: the guard itself (it spells every figure, as test data),
- * `CHANGELOG.md` and `.changeset/*.md` (history, which must not be rewritten to
- * satisfy a guard), `scripts/`, `tests/`, `claudedocs/`, the root README, or
- * any package outside that surface. If you are re-deriving after a host move,
- * do not assume those paths are empty — grep them.
+ * much narrower than the repo.** `tests/guards/app-storage-quota-literals.test.mjs`
+ * bans the OLD figures, and pins the derivation at each runtime site, over
+ * exactly this surface:
+ *
+ *   - this file and `messages.ts`, here in `src/blocks/`;
+ *   - `useAppStorage.ts`, `internal/mockHost.ts` and `internal/liveHost.ts` in
+ *     `packages/civitai-blocks-react` — NAMED FILES, not the package: the
+ *     banned numbers are the TRUE ceilings of neighbouring features there
+ *     (the shared-storage app-wide quota, the iframe frame cap, Buzz figures),
+ *     and a value ban over the package failed the build for saying so;
+ *   - all of `starters/examples/kv-storage`;
+ *   - and, in `packages/civitai-blocks-react/README.md`,
+ *     `packages/civitai-app-sdk/README.md` and `starters/examples/README.md`,
+ *     ONLY the App-Storage REGION — sections whose heading names App Storage,
+ *     plus lines that name it themselves. `### useSharedStorage()` in the same
+ *     file is not read.
+ *
+ * It does NOT scan, and the rule does not apply to: the guard itself (it spells
+ * every figure, as test data), `CHANGELOG.md` and `.changeset/*.md` (history,
+ * which must not be rewritten to satisfy a guard), `scripts/`, `tests/`,
+ * `claudedocs/`, the root README, other sections of the READMEs above, or any
+ * other file in any package. If you are re-deriving after a host move, do not
+ * assume those paths are empty — grep them.
  *
  * ## Provenance — measured, not assumed
  *

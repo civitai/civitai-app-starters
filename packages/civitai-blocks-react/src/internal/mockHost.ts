@@ -353,6 +353,15 @@ export interface MockStorageScenario {
    * receives e.g. `per-user row limit exceeded`. See
    * civitai/civitai-app-starters#343 — until it is reconciled, do not write a
    * block that relies on either behaviour.
+   *
+   * 🔴 AND THIS BUDGET IS COUNTED IN A DIFFERENT UNIT FROM THE HOST'S. The
+   * mock sums WIRE bytes (`JSON.stringify` as UTF-8); the host sums STORED
+   * bytes (`octet_length(value::jsonb::text)`), which is larger for every
+   * container — up to ~1.5x for a long array. So this ceiling is up to half
+   * again more generous than production's, and unlike the mock's other known
+   * divergences that error is PERMISSIVE: a fixture that fits here can be
+   * rejected live. civitai/civitai-app-starters#347. Size against
+   * `getQuota()`, and treat a local pass as evidence, not proof.
    */
   quotaBytes?: number;
   /**
@@ -2478,16 +2487,33 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             }
             // Quota check: projected usage after this upsert.
             //
-            // ⚠️ KNOWN DIVERGENCE FROM THE HOST, tracked as
-            // civitai/civitai-app-starters#345. The host's byte gates are
-            // `!isNonIncreasing`-guarded: a write whose stored bytes do not
-            // increase skips them even when the store is already over quota,
-            // which is how a block with no delete affordance gets back under
-            // the byte cap. This gate is unconditional, so `dev:mock` refuses
-            // a shrinking overwrite production would land. Deliberately NOT
-            // fixed here — the host compares in the STORED unit and this mock
-            // only has the WIRE unit, so the mirrored gate needs its own
-            // reasoning and its own regression test.
+            // ⚠️ TWO KNOWN DIVERGENCES FROM THE HOST LIVE ON THIS ONE GATE,
+            // and they run in OPPOSITE directions.
+            //
+            // 1. SHAPE — civitai/civitai-app-starters#345. The host's byte
+            //    gates are `!isNonIncreasing`-guarded: a write whose stored
+            //    bytes do not increase skips them even when the store is
+            //    already over quota, which is how a block with no delete
+            //    affordance gets back under the byte cap. This gate is
+            //    unconditional, so `dev:mock` REFUSES a shrinking overwrite
+            //    production would land. Restrictive: a local failure that is
+            //    not real.
+            //
+            // 2. 🔴 UNIT — civitai/civitai-app-starters#347, and this is the
+            //    dangerous one. `jsonByteSize` counts WIRE bytes; the host
+            //    counts STORED bytes, `octet_length(value::jsonb::text)`.
+            //    `jsonb`'s canonical text inserts a space after every `:` and
+            //    every `,`, so stored > wire for every container — approaching
+            //    1.5x for a long array. This gate therefore ADMITS writes
+            //    production rejects. Permissive: a local pass that is not
+            //    real, which is the direction that ships a bug.
+            //
+            // Neither is fixed here, and #347 is why #345 cannot be: mirroring
+            // the host's gate requires the STORED unit, which this mock does
+            // not have. A stored-size model guessed rather than measured would
+            // be wrong in the permissive direction, i.e. no better than today
+            // — so #347 asks for a fixture table of (value, host
+            // `octet_length`) pairs first, and #345 lands on top of it.
             const existing = store.get(key);
             const existingBytes = existing ? jsonByteSize(existing.value) + key.length : 0;
             const projected = usedBytes() - existingBytes + sizeBytes + key.length;

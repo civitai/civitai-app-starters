@@ -168,23 +168,38 @@ export function App() {
  * `snapshot.error`, and the same reason not to render it. These lines used to
  * put it straight into the status line.
  *
- * The one distinction worth surfacing is expressed as OUR copy: the MOCK answers
+ * 🔴 **THE SPECIFIC ARM BELOW ONLY FIRES UNDER `dev:mock`. SAY SO OUT LOUD.**
+ * `createMockHost` and this example's harness answer the literal string
  * `PAYLOAD_TOO_LARGE` for the per-value cap, the byte budget and the row budget
- * alike, so under `dev:mock` they are not distinguishable and the message names
- * every possibility rather than guessing. The real host forwards its own
- * per-gate message instead, so in production the string below may not even
- * match — tracked in civitai/civitai-app-starters#343, which is also where the
- * decision about what to branch on belongs. Naming all three is the copy that
- * stays correct either way.
+ * alike — so locally the match succeeds and the viewer gets the actionable
+ * copy. The real host does NOT send that code: the bridge forwards the
+ * TRPCError's *message*, so a live block receives prose like `per-user row
+ * limit exceeded`, `/payload_too_large/i` does not match, and the viewer gets
+ * the generic fallback instead. That is civitai/civitai-app-starters#343.
+ *
+ * So: **in production this function currently has one branch, the fallback.**
+ * An earlier revision of this comment claimed the copy "stays correct either
+ * way". It does not — the copy is correct, and unreachable.
+ *
+ * It is left narrow on purpose rather than widened: adding `/row limit/`,
+ * `/quota/` and friends means guessing at host prose nobody here has
+ * enumerated, and a guessed pattern that misses fails exactly as it does today
+ * while *looking* handled — a guard spelled rather than structural. #343 is
+ * where the host's real rejection contract gets pinned; widen this arm when it
+ * lands, in the same change, against the enumerated strings.
+ *
+ * Copy the SHAPE of this function (own your viewer copy, log the host's words,
+ * never render them). Do not copy `/payload_too_large/i` expecting it to fire
+ * against the host.
  */
 function storageFailureMessage(err: unknown, attempted: string): string {
   const raw = err instanceof Error ? err.message : String(err);
   console.warn(`[kv-storage] could not ${attempted}:`, raw);
-  // ONE branch, deliberately: the MOCK answers `PAYLOAD_TOO_LARGE` for the
-  // per-value cap, the byte budget and the row budget alike, so there is no
-  // second string to select and the copy names every possibility. (An
-  // additional `/quota/` arm would be dead code — the docblock above says why,
-  // and #343 says why a host-string arm cannot be written yet either.)
+  // MOCK-ONLY ARM — see the docblock. Matches `createMockHost` / this example's
+  // harness, which answer `PAYLOAD_TOO_LARGE` for all three ceilings, so there
+  // is no second string to select locally and the copy names every possibility.
+  // Against the live host this does not match at all (#343) and the fallback
+  // below is what a viewer sees.
   if (/payload_too_large/i.test(raw)) {
     return 'That note is too large, or your storage is full. Try a shorter note or delete one.';
   }
