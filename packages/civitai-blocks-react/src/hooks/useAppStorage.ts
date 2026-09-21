@@ -125,19 +125,21 @@ export interface UseAppStorage {
  * budget for that viewer.
  *
  * 🔴 FOR THE BYTE/ROW BUDGET, THE CONSTANTS ARE A SNAPSHOT AND `getQuota()` IS
- * THE AUTHORITY. The three are that budget's ceilings as of the
- * `@civitai/app-sdk` version you installed — a figure compiled into a published
- * package is still a frozen figure, and the host can move one without your
- * lockfile changing. Render `getQuota()`'s reply anywhere a viewer sees a
- * number or a code path decides whether a write will FIT; reach for a constant
- * only where no reply is available (a test fixture, a design-time estimate),
- * and re-check after an SDK bump.
+ * THE AUTHORITY FOR THOSE TWO NUMBERS. All three are compiled-in figures as of
+ * the `@civitai/app-sdk` version you installed — a figure compiled into a
+ * published package is still a frozen figure, and the host can move any of them
+ * without your lockfile changing. Render `getQuota()`'s reply anywhere a viewer
+ * sees a number or a code path decides whether a write will FIT; reach for a
+ * constant only where no reply is available (a test fixture, a design-time
+ * estimate), and re-check after an SDK bump.
  *
  * 🔴 THAT AUTHORITY STOPS AT THE BUDGET. `getQuota()` answers
  * `{ usedBytes, rowCount, limitBytes, limitRows }` and nothing more, so it
- * cannot report the host's 200-character `key` cap — see {@link UseAppStorage.set}.
- * A write that fits the quota reply can still be refused on key length, and
- * nothing local will tell you.
+ * reports neither the host's 200-character `key` cap nor
+ * `APP_STORAGE_MAX_VALUE_BYTES`, which is a per-WRITE cap and not part of that
+ * budget — see {@link UseAppStorage.set}. A write that fits the quota reply can
+ * still be refused on key length or on value size, and for key length nothing
+ * local will tell you.
  *
  * @example
  * const storage = useAppStorage();

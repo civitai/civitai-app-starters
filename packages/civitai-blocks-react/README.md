@@ -711,11 +711,12 @@ const { keys } = await storage.list({ prefix: 'note-' });
 const quota = await storage.getQuota();       // { usedBytes, rowCount, limitBytes, limitRows }
 ```
 
-🔴 **For the byte/row budget, `getQuota()` is the authority and the constants
-are a snapshot.** These three are that budget's ceilings **as of the version of
-`@civitai/app-sdk` you installed** — compiled-in figures, which is the same
-frozen-number failure mode this page used to demonstrate, just with one copy
-instead of nine. The host can move one without your lockfile changing. So:
+🔴 **For the byte/row budget, `getQuota()` is the authority for those two
+numbers and the constants are a snapshot.** All three above are compiled-in
+figures **as of the version of `@civitai/app-sdk` you installed** — which is the
+same frozen-number failure mode this page used to demonstrate, just with one
+copy instead of nine. The host can move any of them without your lockfile
+changing. So:
 
 - **Render `getQuota()`'s reply**, never a constant, anywhere a viewer sees a
   number or a code path decides whether a write will fit.
@@ -733,9 +734,11 @@ umbrella instead of the per-viewer clamp and were **25x** out on bytes and
 
 🔴 **That authority stops at the budget, and so does the list above.**
 `getQuota()` answers `{ usedBytes, rowCount, limitBytes, limitRows }` and
-nothing more, so it cannot report the host's **200-character cap on `key`**
-— a write that fits the quota reply is still refused if the key is too long,
-and nothing local catches it
+nothing more, so it reports neither of the other two ceilings: the host's
+**200-character cap on `key`**, nor `APP_STORAGE_MAX_VALUE_BYTES`, which is a
+per-**write** cap rather than part of the per-(app, viewer) budget. A write that
+fits the quota reply is still refused if its key is too long or its value is
+over the per-value cap — and for the key, nothing local catches it
 ([#370](https://github.com/civitai/civitai-app-starters/issues/370), detailed
 below). Cap or hash long keys in your block.
 

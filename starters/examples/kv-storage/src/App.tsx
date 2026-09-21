@@ -187,13 +187,18 @@ export function App() {
  *
  * 🔴 **KEEP THE `default` ARM GENERIC — AND DO NOT WRITE "please try again" IN
  * IT.** `classifyAppStorageError` answers `null` for a string it does not
- * recognise, and that is a REAL outcome with two very different causes. One is
- * a reworded or newly-added ceiling message that an older SDK has not seen.
- * The other — the common one in production — is an AUTHORIZATION failure: the
+ * recognise, and that is a REAL outcome with three very different causes. One
+ * is a reworded or newly-added ceiling message that an older SDK has not seen.
+ * The second — the common one in production — is an AUTHORIZATION failure: the
  * host's bridge catches every rejection out of `apps.storage.*` with a blanket
  * `catch` and forwards its message on this same field, so an expired block
  * token (`invalid block token`), a revoked instance, an unapproved block and a
- * missing `apps:storage:write` scope all land on `null` too.
+ * missing `apps:storage:write` scope all land on `null` too — that list is
+ * ILLUSTRATIVE, not a bound on the bucket. The third is a zod INPUT rejection,
+ * which never reaches a handler at all: the host caps `key` at 200 characters
+ * and nothing in this repo caps it, so a key built from a URL or a title saves
+ * fine in this harness and fails forever in production
+ * (civitai/civitai-app-starters#370).
  *
  * Retrying fixes none of those, so the arm below offers a RELOAD (which
  * re-mints the token, and also covers a genuine transport blip) and concedes
@@ -234,9 +239,13 @@ function storageFailureMessage(err: unknown, attempted: string): string {
     // `null` — the classifier did not recognise the message. NOT a synonym for
     // "transient": an expired block token, a revoked instance, an unapproved
     // block or a missing storage scope all arrive here (the host's bridge
-    // forwards every `apps.storage.*` rejection on the same field), and so
-    // does a ceiling message this SDK version predates. A reload re-mints the
-    // token and also retries, which is the best advice true of the whole set.
+    // forwards every `apps.storage.*` rejection on the same field), and so do
+    // a ceiling message this SDK version predates and a zod input rejection
+    // such as the host's 200-character `key` cap. A reload re-mints the token,
+    // so it fixes the token cases and retries a transport blip; it does
+    // nothing for a key that is too long, which fails identically every time.
+    // No one line of advice is right for every `null`, which is why the copy
+    // below hedges instead of promising a remedy.
     default:
       // `attempted` covers loads as well as saves, so the copy says "storage",
       // not "saving".
