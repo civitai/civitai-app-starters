@@ -140,8 +140,9 @@ const PEER_VALUE_SYMBOL_SINCE = {
   // is a fact rather than an inference from release ordering:
   //   - in-tree `packages/civitai-app-sdk/package.json` is 0.48.0, and
   //     `npm view @civitai/app-sdk version` is also 0.48.0 — nothing mid-flight;
-  //   - `git ls-tree -r origin/main .changeset/` shows main carries no other
-  //     `@civitai/app-sdk` changeset;
+  //   - `git ls-tree -r origin/main .changeset/` shows main carries NO pending
+  //     changesets at all (#365 consumed them), so this branch's is the only
+  //     input to the next release plan;
   //   - `pnpm exec changeset status --verbose` on this branch prints
   //     `@civitai/app-sdk 0.49.0` — the tool that will actually run, answering
   //     with the number it will actually write.
@@ -149,7 +150,10 @@ const PEER_VALUE_SYMBOL_SINCE = {
   // ⚠️ RELEASE ORDERING IS THE RESIDUAL RISK and it is not removable from here:
   // if another app-sdk minor merges and publishes before this PR does, 0.49.0
   // ships WITHOUT these symbols and this PR publishes 0.50.0. RE-RUN
-  // `changeset status --verbose` after any rebase onto a moved main.
+  // `changeset status --verbose` after any rebase onto a moved main — this
+  // branch was rebased onto 8971ba3 mid-flight and the derivation was re-run
+  // there, which is the only reason the number above is a measurement of THIS
+  // base rather than of the one it was branched from.
   APP_STORAGE_ERROR_REQUEST_FAILED: '0.49.0',
   APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED: '0.49.0',
   APP_STORAGE_ERROR_USER_ROW_LIMIT: '0.49.0',
