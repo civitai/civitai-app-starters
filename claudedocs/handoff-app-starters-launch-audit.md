@@ -22,42 +22,40 @@ Audited for code quality, dead code, over-exporting, comment rot, and bloat.
 
 ## State now
 
-- **DoD VERDICT (round 1 closing-condition): ADDRESSED — the check that says so is VACUOUS.**
+- **DoD VERDICT (round-1 closing-condition): ADDRESSED, and the check that says so is VACUOUS.**
   It greps open `bug` issues for "launch-blocking"; that string appears in **ZERO** issues repo-wide,
-  including all 13 the doc designates blockers (#322–#334), so the grep cannot fail. Instrument
-  control: a known-present string in #343 returned 16 hits, so the zero is real. Substance verified
-  by hand — all 13 filed, each carrying a `## Closing condition`. **The round-1 arc is CLOSED;**
-  everything below is a NEW arc.
-- **Branch:** `main` @ `503fe39`, unchanged this session. This doc lives on
-  `docs/handoff-app-starters-launch-audit` = **PR #356**, not on `main`.
+  including all 13 the doc designates blockers. Control: a known-present string in #343 returned 16
+  hits, so the zero is real. Substance verified by hand — all 13 filed, each with a
+  `## Closing condition`. **That arc is CLOSED.** Everything below belongs to the follow-on arc.
 
-### Open PRs, none merged
-| PR | head | state | what |
-|---|---|---|---|
-| **#346** | `4a359be` | OPEN/MERGEABLE | elements spike, strangler seam STRIPPED — no longer a release hazard |
-| **#359** | `04f5f0a` | OPEN/MERGEABLE/CLEAN, CI green | per-component CSS split, `./css/*` exports HELD |
-| **#361** | `c54d4a7` | OPEN/MERGEABLE/CLEAN, CI green | detector env-inlining security fix |
-| **#356** | — | OPEN | this doc |
+### Merged this session
+| PR | squash commit | what |
+|---|---|---|
+| **#361** | `b22670b` | `detector.ts` env-inlining security fix (leak + silent miss) |
+| **#359** | `e06173f` | per-component CSS slices, `./css/*` export surface HELD |
 
-- **#346** — decision executed (disposition (a)): keep the two new packages, strip the seam.
-  Re-verified independently: `blocks-react` deps are exactly `{@civitai/components, @civitai/theme}`;
-  `Stack.tsx` byte-identical to `main`; enumerated grep over 498 files → **0** refs to
-  `@civitai/elements` (positive control with `@civitai/components` → 69 lines).
-  🔴 Verified LOCALLY ONLY — CI has not run on `4a359be` and it is 4 commits behind `main`.
-- **#361** — `detector.ts` now uses three literal reads per env var. **Both halves were defects:**
-  (a) LEAK — `import.meta.env?.[key]` made Vite emit the whole env, decoy sentinels present in a
-  4954 B bundle at `origin/main`; (b) **SILENT MISS** — measured on a real Next 15.5.25 production
-  build, webpack AND Turbopack, read after hydration: `typeof globalThis.process === 'undefined'`,
-  so `NEXT_PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS` has **never** resolved in a Next block app.
-  Matrix: `origin/main` 3 failed/4 passed → HEAD 7 passed. Issue **#360** (`bug`+`security`).
-- **#359** — exports map went 44 keys → 2 and `package.json` is now **sha256-identical to `main`**
-  (`f2ffb9ac…`), i.e. the export hold is a clean revert (positive control: `build-css.ts` differs,
-  `6aeab733…` vs `98165071…`). `npm pack --dry-run`: 84 files, **70 under `dist/css/`** — artifacts
-  still ship, just not nameable. Changeset `minor` → `patch`. Slug derivation is now structural
-  (leading compound of each depth-0 rule prelude, first-section-wins) → re-measured **20 slugs,
-  0 missing, 0 extra**, exactly `COMPONENT_NAMES`; `EXTRA_ALIASES`/`toSlug()` deleted.
-- **IN FLIGHT:** nothing. All agents finished.
-- **Worktrees to remove when the PRs land:** `-launchaudit`, `-seamcut`, `-cssplit`, `-detector`.
+🔴 **Verified by CONTENT, never ancestry** — a squash merge never makes the branch head an ancestor,
+so `git merge-base --is-ancestor` reports "not merged" forever. `origin/main` now has: zero computed
+env accesses in `detector.ts` **once comment lines are stripped** (5 literal reads found by the same
+search as the positive control); `@civitai/components` `exports` still exactly `.` + `./styles.css`;
+`files` carrying `"!dist/css"`; slicer, guards and `measure-css-split.mjs` present.
+
+- 🔴 **NOTHING IS PUBLISHED YET.** The merges opened **Version Packages PR #365**, which plans
+  `@civitai/blocks-react@0.55.1` (patch) and `@civitai/components@0.4.2` (patch). **Merging #365 is
+  what publishes.** Until then the env leak is still live in the published `0.55.0`.
+- **#346 remains OPEN** (`4a359be`) — seam stripped, no longer a release hazard, awaiting the
+  architectural decision. 🔴 It is now **4+ commits behind `main`** and CI has never run on it.
+- **Issues filed this session:** #357 (`Stack gap="md"` silently 12px), #358 (the whole-pack contract
+  question — title and body corrected to carry both figures with their precondition), #360 (the env
+  leak), #362 (`PUBLIC_` SvelteKit reader never resolved), #363 (nothing observes the property on
+  built `dist/`), #364 (598 lines of TS outside every typecheck gate).
+- **Audit ladder on #359: round 0 → round 1 → round 2, ENDED at round 2.** Claims blocks posted as
+  PR comments (issue comments, not review comments — the assembler reads only the former).
+  Round 0 and round 1 each produced findings that were fixed; round 2 returned **safe to merge, no
+  🔴**, and its findings were fixed prose-only. Payload ledger: round 1 = 246, round 2 = 40, so the
+  attribution gate never fired. **#361 had round 0 only** — its round 1 was never run.
+- **IN FLIGHT:** nothing. All agents finished; all session worktrees removed; base clone re-synced
+  `--ff-only` to `e06173f`.
 
 ## Open investigations — live diagnosis state
 
@@ -99,16 +97,15 @@ Audited for code quality, dead code, over-exporting, comment rot, and bloat.
 
 ## Next steps (ranked)
 
-1. **Round 1 (the nine correctness axes) on #359, and a round-0 + round-1 pass on #361.**
-   Round 0 explicitly REPORTS and does not move the ladder, so #359 has never had a correctness
-   audit, and the tree changed substantially after round 0 read it. #361 has had no audit at all.
-   `python3 ~/workspace/devrc/scripts/audit-dispatch.py 359 --round 1` (and `361 --round 0`).
-   forcing: gate
-2. **Test #359 + #361 on a MERGED TREE before merging either.** Both are green on their own
-   branches only. #361 touches `blocks-react`; #359 touches `components` and adds a root
-   `esbuild`/`vite` devDependency — disjoint files, which this repo's history says is not safety.
-   Build an integration branch off current `main`, merge both, run the full suite there, and
-   bisect the merge commits to attribute any failure. Then merge **#361 first** (security, smaller).
+1. **Decide whether to merge Version Packages PR #365 — this is the publish.** The `detector.ts`
+   leak (`VITE_LIVE_BLOCK_TOKEN` inlined into every block app's production bundle) is **live in the
+   published `0.55.0`** and stays live until `0.55.1` ships. Verify the changelog text and the
+   planned bumps before merging, never `mergeStateStatus`: a Version PR can be STALE and still read
+   MERGEABLE (measured on #350 this arc).
+   forcing: security
+2. **Run round 1 (the nine correctness axes) on #346 if it is to be considered at all** — it has had
+   no correctness audit, is 4+ commits behind `main`, and CI has never run on `4a359be`.
+   Then decide `@civitai/elements` and #358 together (see rank 4).
    forcing: gate
 3. **Fix `civitai/cli`'s `page-money` scaffold template before anyone bumps its `^0.53.0` pin**
    (see Open investigations). Out of this tree.
@@ -117,32 +114,30 @@ Audited for code quality, dead code, over-exporting, comment rot, and bloat.
    error codes never reach a block and `kv-storage`'s only error branch is unreachable in
    production. Docs and mock assert otherwise across ~18 sites.
    forcing: user
-5. **Decide `@civitai/elements` (PR #346) and the contract question (#358) together.** #359 now
-   banks the byte win WITHOUT adopting elements, so the elements case rests solely on
-   one-implementation (**by the PR's own admission unmet — 33 of 34 collisions stand**),
-   form-association (real, no React-only equivalent) and framework-independence (real but
-   unconsumed). #358 asks whether `useBlocksStyles()` should switch to per-component CSS and break
-   the documented whole-pack contract; it also decides the `./css/*` vocabulary now held.
+5. **Decide `@civitai/elements` (#346) and the contract question (#358) together.** #359 banked the
+   enabling split WITHOUT adopting elements, so the elements case rests solely on one-implementation
+   (**by the PR's own admission unmet — 33 of 34 collisions stand**), form-association (real, no
+   React-only equivalent) and framework-independence (real but unconsumed). 🔴 **#358's 13,480 B
+   figure is correct FOR #358's question** — a per-component injector in `blocks-react` would slice
+   `INTERACTIVE_STYLES` too — but today's split alone gives 25,518 B; the remaining 12,038 B needs
+   the `blocks-react` change #358 is deciding.
    forcing: none
-6. **Batch: the filed-with-closing-condition issues** — #345, #347, #348, #349, #357, and the
-   undecided `@civitai/app-sdk` peer on `@civitai/client` at `^0.2.0-beta.98`.
+6. **Batch: the filed-with-closing-condition issues** — #345, #347, #348, #349, #357, #362, #363,
+   #364, and the undecided `@civitai/app-sdk` peer on `@civitai/client` at `^0.2.0-beta.98`.
    forcing: none
 
 ## Defects (batched)
 
-- 🔴 **`scripts/typecheck-readme-snippets.mjs` does NOT scan
-  `packages/civitai-components/README.md`** — it covers only `civitai-app-sdk/README.md`,
-  `civitai-blocks-react/README.md` and `docs/build-your-first-app-block.md`. That is HOW a broken
-  `@civitai/components/css/button` import example survived a gate named "typecheck readme".
-  Closing condition: that path in the scan list, `pnpm typecheck:readme` exits 0.
 - 22 HIGH audit findings remain UNFILED, surviving only in a prior session's transcript.
-- `4a359be` (#346) was never tested on a merged tree and CI has not run on it.
+- `#346` (`4a359be`) has never been tested on a merged tree and CI has never run on it.
 - `pnpm lint` exits 1 repo-wide (`ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT`). Pre-existing on `main`.
+- The Playwright browser tier does not start unaided on this host — it wants
+  `chromium_headless_shell-1223`, `PLAYWRIGHT_BROWSERS_PATH` supplies `-1228`. **Confirmed
+  pre-existing by discriminating control** (same failure in the unmodified base clone on `main`),
+  so it is not a regression from anything this arc merged. CI installs Playwright explicitly.
 - `styles.generated.ts`'s `.d.ts` is un-annotated, so tsc inlines the sheet as a string-literal type
   (33 KB). The new slices annotate `: string` (99,780 B → 6,570 B across 14). Left alone because
   changing it would break the byte-identity contract.
-- `blocks-react`'s `comment-peerDependencies` block still describes the peer-floor guard's old
-  version-equality rule; #355 replaced it with a symbol-derived ledger.
 
 ## Gotchas / decisions / dead-ends
 
@@ -268,6 +263,43 @@ Audited for code quality, dead code, over-exporting, comment rot, and bloat.
   decided it — `dist/css/*.css` artifacts are reversible, `exports` keys on a published package are
   not. Land the slicer, `assertLossless`, the artifacts, the tests and the whole-pack pin; ship the
   subpaths once #358 picks a vocabulary.
+
+- 🔴 **THIS REPO HAS NO COMMIT-STATUS PRODUCERS, so that surface is structurally empty and must not
+  be read as a signal.** `gh api repos/<r>/commits/<sha>/status` returns `state=pending statuses=0`
+  for **`main` itself** and for a PR that merged cleanly minutes earlier — the control that proves
+  it. Read the **check-runs** rollup here (16/16 SUCCESS on #359's head). The general rule still
+  holds elsewhere: the two surfaces are not supersets of each other and `CLEAN` is not a CI settle
+  signal — get the terminal state from `actions/runs?head_sha=<sha>`.
+- 🔴 **A MUTANT THAT FAILS TO APPLY REPORTS AS A CLEAN PASS.** While negative-controlling the
+  merged tree I patched `detector.ts` with a string taken from memory; it matched 0 times, and the
+  test run afterwards reported a reassuring **1520 passed** against the *unmutated* file. Only an
+  `assert count == 1` before writing caught it. **Assert the occurrence count inside the mutation
+  script, and treat a green mutant run as unproven until the mutation is confirmed applied.**
+  (The same run also showed a vitest path filter silently not applying — 1520 tests ran, not 7.)
+- 🔴 **zsh eats `:s` after an unbraced variable as a history modifier.** `git show "$B:scripts/x.mjs"`
+  returned the **commit** instead of the file, silently and with rc 0. `git show "${B}:scripts/x.mjs"`
+  works. Any conclusion drawn from that first read would have been wrong.
+- 🔴 **`grep` over a source file cannot tell CODE from a DOCBLOCK QUOTING that code.** Verifying #361
+  landed, a grep for `import.meta.env?.[` hit 1 and read as "🔴 the defect is still in `main`" — the
+  match was line 42 of the explanatory comment. Strip comment lines first, and keep a positive
+  control that finds the real reads.
+- 🔴 **A clean git merge is not a clean merge, and the shared file here was `pnpm-lock.yaml`.** #359
+  and #361 touch otherwise disjoint files but both added a devDependency. The discriminating check
+  is `pnpm install --frozen-lockfile` on the merged tree (rc 0), not the absence of conflict markers.
+- **Merged-tree evidence, recorded because each PR's own green was a claim about a tree that would
+  not exist after the other landed:** integration branch off `503fe39` + #361 + #359 →
+  `--frozen-lockfile` rc 0, build/typecheck rc 0, tests theme 25 · sdk 373 · components **21** ·
+  components-react 50 · blocks-react **1520** (both PRs' fingerprints present together), guards
+  `fail 0`, readme 53/1/0. **Negative control:** reintroducing the computed key on that merged tree
+  turned **2 of 7** bundle tests red with their own assertions; restore verified byte-identical by
+  sha256 and the file re-ran 7/7 green.
+- **Decision (operator): HOLD the `./css/*` export block.** `dist/css/*` artifacts are reversible;
+  `exports` keys on a published package are not. Ship the subpaths once #358 picks a vocabulary.
+- 🔴 **Round 0 changed the outcome on BOTH PRs it ran on** (`ran: 2 · changed the outcome: 2`).
+  On #359 it questioned whether the export surface should exist yet — 42 irreversible keys, zero
+  importers — and the operator held them. On #361 it found the `PUBLIC_` reader has never resolved
+  and is referenced nowhere but its own docstring (#362). Neither finding is reachable from a
+  diff-scoped correctness round.
 
 ## How to verify
 
