@@ -78,14 +78,20 @@ the host's router, plus the bridge's `storage request failed` fallback — and
 this example's harness draws its rejections from the same module, so the
 branches it CAN reach fire the same way here and in production.
 
-🔴 **Six is what was MEASURED, not everything that arrives.** The host's bridge
-wraps each `apps.storage.*` call in a *blanket* `catch` and forwards the
-message on this same field, so authorization failures come through it too:
-`invalid block token` (an expired token mid-session), `block instance revoked`,
-`app block not found`, `app block is not approved`, `storage set requires the
-apps:storage:write scope`, `storage requires an authenticated viewer`, plus
-tRPC's zod validation messages. None of those classify — they all land on
-`null`, which is why the `default:` arm below must not say "please try again".
+🔴 **Six is the CEILING family, not everything that arrives.** The host's bridge
+wraps each `apps.storage.*` call in a *blanket* `catch` and forwards the message
+on this same field, so authorization, approval and feature-flag failures come
+through it too. **None of those classify — they all land on `null`**, which is
+why the `default:` arm below must not say "please try again".
+
+That rule is deliberately stated without a list of the non-ceiling strings.
+Two earlier drafts tried to enumerate them and both came up short; the honest,
+stable claim is the structural one — the six ceilings classify, everything else
+is `null` — and it stays true when the host adds or rewords a message.
+`invalid block token` (an expired token mid-session), `block instance revoked`
+and `Apps are not enabled` are *illustrations*, not a bound. See the header of
+the app-sdk's `blocks/appStorageErrors.ts` for the full reasoning and the
+re-derivation recipe, which is the authority here.
 
 ⚠️ **It reaches three of the six**, and that is a property of the harness, not
 of your block. It has one rejection site, a three-way choice between the
@@ -115,7 +121,8 @@ reason), and reload. A `bytes`-only readout gives no warning about the second.
 
 🔴 **Keep its `default:` arm, and note what it does NOT say.** The classifier
 answers `null` for a ceiling message it does not recognise — the host can
-reword one in any deploy — *and* for every authorization failure above. Since
+reword one in any deploy — *and* for every non-ceiling rejection the host
+raises, which is the larger and far more common half. Since
 retrying cannot fix an expired token, a revoked instance or a missing scope,
 that arm offers a **reload** (which re-mints the token, and retries as a side
 effect) instead of "please try again", and `request-failed` is split out to

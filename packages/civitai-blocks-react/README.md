@@ -772,16 +772,23 @@ request failed` fallback — and `createMockHost` draws its rejections from that
 same module, so for the ceilings the mock HAS it answers the message production
 would send, and `classifyAppStorageError(err)` picks the same branch in both.
 
-🔴 **Those six are not every string a block can receive.** The bridge catches
-every rejection out of `apps.storage.*` with a *blanket* `catch` and puts its
-message on the same `error` field, so the host's authorization prose travels
-the identical path: `invalid block token` (an expired token mid-session),
-`block instance revoked`, `app block not found`, `app block is not approved`,
-`storage set requires the apps:storage:write scope`, `storage requires an
-authenticated viewer`, plus tRPC's zod input-validation messages. **Every one
-of them classifies `null`.** That is deliberate — the SDK owns the ceiling
-vocabulary, not the host's whole error surface — but it means `null` is a busy
-bucket, and see the `default` arm note below before writing copy for it.
+🔴 **Those six are not every string a block can receive — and nothing here
+enumerates the rest.** The bridge catches every rejection out of
+`apps.storage.*` with a *blanket* `catch` and puts its message on the same
+`error` field, so the host's authorization, approval and feature-flag prose all
+travel the identical path. **Every one of them classifies `null`.**
+
+That is the whole rule, and it is stated structurally on purpose: the SDK owns
+the ceiling vocabulary, not the host's error surface, so the honest claim is
+"ceilings classify, everything else is `null`" — which needs no list and stays
+true when the host adds or rewords a message. Two earlier drafts of this
+section tried instead to enumerate the non-ceiling strings, and **both lists
+were short**; see the header of `blocks/appStorageErrors.ts` for what they
+missed and why no third list replaced them. `invalid block token` (an expired
+token mid-session), `block instance revoked` and `Apps are not enabled` are
+*illustrations* of what lands on `null`, never a bound on it. The practical
+consequence: `null` is a busy bucket, so see the `default` arm note below
+before writing copy for it.
 
 ⚠️ **The mock reaches four of the six.** It models no app-wide umbrella
 ([#368](https://github.com/civitai/civitai-app-starters/issues/368)), so

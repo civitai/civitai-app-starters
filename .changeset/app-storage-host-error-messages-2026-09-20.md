@@ -19,20 +19,11 @@
 
 and `src/components/AppBlocks/IframeHost.tsx:282` (same pair in `PageBlockHost.tsx`) returns `err.message` when it is a non-empty string, else `'storage request failed'` — a **sixth** string, reachable on reads and deletes too.
 
-🔴 **Those six are the CEILING family, not every string a block can receive.** `storageErrorMessage(err)` is called from *blanket* `catch (err)` arms (`IframeHost.tsx:2395` GET, `:2427` SET, `:2458` DELETE, `:2508` LIST, `:2535` QUOTA), so every rejection out of `apps.storage.*` arrives on the same `error` field — including the host's authorization prose, measured in the same read:
+🔴 **Those six are the CEILING family, not every string a block can receive — and this changeset deliberately does not list the rest.** `storageErrorMessage(err)` is called from *blanket* `catch (err)` arms (`IframeHost.tsx:2395` GET, `:2427` SET, `:2458` DELETE, `:2508` LIST, `:2535` QUOTA), so every rejection out of `apps.storage.*` arrives on the same `error` field. **All of them classify `null`.**
 
-| site | message | code |
-| --- | --- | --- |
-| `:289` | `invalid block token` | UNAUTHORIZED |
-| `:294` | `block id is not a valid storage slug` | INTERNAL_SERVER_ERROR |
-| `:321` | `block instance revoked` | FORBIDDEN |
-| `:344`, `:422` | `` `storage ${op} requires the ${scope} scope` `` | FORBIDDEN |
-| `:372` | `review preview is no longer active for this request` | FORBIDDEN |
-| `:406` | `app block not found` | NOT_FOUND |
-| `:410` | `app block is not approved` | FORBIDDEN |
-| `:528`, `:949` | `storage requires an authenticated viewer` | UNAUTHORIZED |
+That claim is structural, and it is stated that way on purpose. Two earlier drafts of this section tried to enumerate the non-ceiling strings instead — the first missed the whole authorization family, the second added a table of eight and still missed four more (`Apps are not enabled`, thrown by the `enforceAppBlocksFlag` middleware that guards all five storage procedures; `block token subject could not be resolved`; `review token subject could not be resolved`; `Apps authoring is not enabled for this account`). The router carries **21** `throw new TRPCError` sites and **17** distinct messages. A third list would be the same mistake again, so the rule replaces it: *the six ceilings classify, everything else is `null`* — true without enumeration, and still true after the host adds or rewords a message. The authority is the re-derivation recipe in `appStorageErrors.ts`, not any prose in this repo; the strings named anywhere in these docs are illustrations, never a bound.
 
-plus tRPC's zod input-validation messages. **All of them classify `null`** — deliberately, since this module owns the ceiling vocabulary rather than the host's whole error surface. The consequence for block authors is the important part: **`null` does not mean "transient"**, and a `default:` arm that says "please try again" is wrong advice for an expired token or a revoked instance, which is the bucket's dominant production occupant. The docs, the `kv-storage` example and the `messages.ts` contract doc all say so now, and a test pins that those eight strings classify `null`.
+The consequence for block authors is the important part: **`null` does not mean "transient"**, and a `default:` arm that says "please try again" is wrong advice for an expired token or a revoked instance, which is the bucket's dominant production occupant. The docs, the `kv-storage` example and the `messages.ts` contract doc all say so now, and a test pins that a sample of known host strings classifies `null`.
 
 ### `@civitai/app-sdk` — new, additive (`minor`)
 
@@ -67,7 +58,7 @@ New exports from `@civitai/app-sdk/blocks`: `classifyAppStorageError`, the type 
 
 🔴 **The per-value message is DERIVED from `APP_STORAGE_MAX_VALUE_BYTES`, not written out.** It is a template literal on the host, so `'value exceeds 64KB cap'` is true only while the cap is 64KB — and a spelling that silently stops matching the host is this bug, again. A test feeds the builder a cap the constant cannot equal and watches the output move; `classifyAppStorageError` matches the per-value message as a **family** (`value exceeds <n>KB cap`) so a host that re-measures its cap still classifies against an older SDK.
 
-The `APP_STORAGE_SET_RESULT` contract doc in `messages.ts` and the `useAppStorage().set` doc now say the field is a host-authored **message**, name the enumerated set, and say not to render it to a viewer.
+The `APP_STORAGE_SET_RESULT` contract doc in `messages.ts` and the `useAppStorage().set` doc now say the field is a host-authored **message**, name the closed ceiling set (and say plainly that it is not a bound on what arrives), and say not to render it to a viewer.
 
 ### `@civitai/blocks-react` — **BREAKING (minor, 0.x)** for tests that assert the old strings
 

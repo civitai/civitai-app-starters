@@ -47,11 +47,13 @@ describe('APP_STORAGE host error messages', () => {
 
   // 🔴 "the six CEILING strings", NOT "the six a block can receive". The host's
   // bridge catches every `apps.storage.*` rejection with a blanket `catch` and
-  // forwards its message on the same field, so `invalid block token`, `block
-  // instance revoked`, `app block is not approved`, the `storage … scope`
-  // template and `storage requires an authenticated viewer` reach a block too,
-  // and all classify `null`. This array is the `PAYLOAD_TOO_LARGE` family plus
-  // the bridge fallback — all that was ever measured.
+  // forwards its message on the same field, so every non-ceiling rejection the
+  // host raises reaches a block too and all of them classify `null` —
+  // `invalid block token`, `block instance revoked` and `Apps are not enabled`
+  // are ILLUSTRATIONS of that, not a bound on it (no list in this repository
+  // is; see the header of `src/blocks/appStorageErrors.ts`). This array is the
+  // `PAYLOAD_TOO_LARGE` family plus the bridge fallback, which IS a closed set
+  // because a `code` defines it.
   it('the exported set is the six ceiling strings, all distinct', () => {
     expect([...APP_STORAGE_HOST_ERROR_MESSAGES]).toEqual([
       APP_STORAGE_ERROR_VALUE_TOO_LARGE,
@@ -135,21 +137,29 @@ describe('APP_STORAGE host error messages', () => {
     expect(classifyAppStorageError('value exceeds 64MB cap')).toBeNull();
   });
 
-  it('the host AUTHORIZATION messages reach a block and classify null (#366)', () => {
-    // 🔴 THE CLAIM THIS PINS: the exported set is the PAYLOAD_TOO_LARGE family
-    // plus the bridge fallback — NOT "every string a block can receive". The
+  it('a SAMPLE of known non-ceiling host messages classifies null (#366)', () => {
+    // 🔴 THIS IS A SAMPLE, NOT A LEDGER — and the distinction is the whole
+    // point of #366's third round. The list below is hand-typed and nothing
+    // enforces its completeness, so read it as "these known strings classify
+    // `null`", never as "these are the strings a block can receive". Two
+    // earlier drafts made exactly that completeness claim in prose and both
+    // were short; see the header of `src/blocks/appStorageErrors.ts` for what
+    // they missed and why no list in this repository is authoritative.
+    //
+    // 🔴 THE CLAIM THIS PINS is the structural one, which needs no complete
+    // list: the classifier owns the PAYLOAD_TOO_LARGE family plus the bridge
+    // fallback, and EVERYTHING ELSE the host raises classifies `null`. The
     // host's bridge wraps each `apps.storage.*` call in a blanket `catch` and
     // forwards `err.message` on the same `error` field (IframeHost.tsx :2395,
-    // :2427, :2458, :2508, :2535), so these arrive at a block identically to a
-    // ceiling message. Read from `civitai/civitai` `main`, 2026-09-20.
+    // :2427, :2458, :2508, :2535), so all of these arrive at a block
+    // identically to a ceiling message. Read from `civitai/civitai` `main`,
+    // 2026-09-21.
     //
-    // They answer `null` on purpose — this module owns the ceiling vocabulary,
-    // not the host's whole error surface. The point of asserting it is that
-    // `null` is therefore a BUSY bucket whose dominant production occupant is
-    // an expired or revoked token, so a `default:` arm must not read "please
-    // try again". If someone teaches the classifier these strings, this test
-    // goes red and the docs saying `null` is not "transient" get revisited
-    // with it.
+    // Why assert it at all: `null` is therefore a BUSY bucket whose dominant
+    // production occupant is an expired or revoked token, so a `default:` arm
+    // must not read "please try again". If someone teaches the classifier any
+    // of these strings, this test goes red and the docs saying `null` is not
+    // "transient" get revisited with it.
     for (const hostMessage of [
       'invalid block token', // apps.router.ts:289  UNAUTHORIZED
       'block id is not a valid storage slug', // :294  INTERNAL_SERVER_ERROR
@@ -159,6 +169,17 @@ describe('APP_STORAGE host error messages', () => {
       'app block not found', // :406  NOT_FOUND
       'app block is not approved', // :410  FORBIDDEN
       'storage requires an authenticated viewer', // :528/:949  UNAUTHORIZED
+      // 🔴 The four a previous draft's "measured in the same read" table
+      // missed — added here as evidence that the enumeration kept coming up
+      // short, not to make the sample complete.
+      'Apps are not enabled', // :153/:255/:257  UNAUTHORIZED — the feature-flag
+      //                         kill switch, thrown by the enforceAppBlocksFlag
+      //                         middleware `.use()`d on all five storage
+      //                         procedures (:470, :509, :938, :1022, :1106), so
+      //                         it fires before anything else on every call
+      'block token subject could not be resolved', // :148, from resolveStorageContext
+      'review token subject could not be resolved', // :82
+      'Apps authoring is not enabled for this account', // :89
     ]) {
       expect(classifyAppStorageError(hostMessage), hostMessage).toBeNull();
       expect(classifyAppStorageError(new Error(hostMessage)), hostMessage).toBeNull();

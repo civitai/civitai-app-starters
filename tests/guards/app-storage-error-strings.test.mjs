@@ -42,11 +42,12 @@
  *     have NOT been measured; `SHARED_UNAVAILABLE` and friends are deliberately
  *     out of scope, not vouched for.
  *   - It checks the SPELLING a mock emits, not the host's whole error surface.
- *     `appStorageErrors.ts` exports the six CEILING messages; the host's
- *     authorization prose (`invalid block token`, `block instance revoked`,
- *     `app block is not approved`, …) reaches a block on the same field and is
- *     not in that module, so nothing here would notice a mock inventing an
- *     auth-shaped string either. See that module's header.
+ *     `appStorageErrors.ts` exports the six CEILING messages; every OTHER
+ *     rejection the host raises reaches a block on the same field and is not in
+ *     that module (`invalid block token`, `block instance revoked`, `Apps are
+ *     not enabled` — illustrations, and deliberately not a list: see that
+ *     module's header for why no enumeration of them is authoritative). So
+ *     nothing here would notice a mock inventing an auth-shaped string either.
  *   - The set of files this reads is `MOCKS` + `NOT_MOCKS`, and it is
  *     ENFORCED — a walk of the repository must find rejection sites in exactly
  *     those files. 🔴 It was NOT enforced until #366: `MOCKS` was a fixed list,
@@ -66,6 +67,16 @@
  *     locals is not followed — it fails the membership check rather than
  *     passing, which is the safe direction, but the message will point at the
  *     wrong thing.
+ *   - 🔴 The walk reads only the extensions in {@link SCAN_EXTENSIONS}
+ *     (`.ts .tsx .js .jsx .mjs .cjs .svelte`), so a rejection site in ANY other
+ *     extension is invisible to BOTH halves — the membership rule never judges
+ *     it and the completeness assertion never counts it. Measured: the #343
+ *     regression planted verbatim in `mockHost2.mts` and in `mockHost3.vue`
+ *     leaves this file at 8 pass / 0 fail, while the same content in
+ *     `mockHost2.ts` reds it. Latent today — every source file in the repo
+ *     carries a covered extension — but it is a SECOND blind spot alongside the
+ *     `const` limit above, not a restatement of it. Add the extension here when
+ *     the repo gains one (`.mts`, `.cts`, `.vue`, `.astro`).
  *   - It cannot tell whether the SDK's strings still match the host. Nothing
  *     offline can. Re-run the commands in `appStorageErrors.ts` when the host
  *     changes; `tests/guards/app-storage-mock-divergences.test.mjs` is the
@@ -137,12 +148,25 @@ const NOT_MOCKS = [
  * Where a rejection site could appear. The walk starts at the repo root — the
  * point of #343's scaffolding finding is that a NEW file is exactly what a
  * fixed list cannot see.
+ *
+ * 🔴 `.claude` IS SKIPPED BECAUSE OF NESTED CHECKOUTS, NOT AS HOUSEKEEPING.
+ * Agent worktrees live at `.claude/worktrees/<agent>/`, each a FULL second copy
+ * of this repository carrying its own `mockHost.ts`, `liveHost.ts` and
+ * `Harness.tsx`. Only `.claude/settings.local.json` is gitignored, so the walk
+ * reaches them, and the completeness assertion below then reports three extra
+ * "unledgered" rejection-carrying files and tells the maintainer to add
+ * `.claude/worktrees/agent-xxx/…` to MOCKS — advice that is actively wrong,
+ * since the path is transient and belongs to a different checkout. Measured: a
+ * single planted worktree takes this file from 8 pass / 0 fail to 7 / 1.
+ * A worktree's `.git` is a FILE, not a directory, so the `.git` entry above
+ * gives no protection here.
  */
 const SKIP_DIRS = new Set([
   'node_modules',
   'dist',
   'build',
   '.git',
+  '.claude',
   '.direnv',
   '.turbo',
   'coverage',

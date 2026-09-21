@@ -775,21 +775,24 @@ export type ParentToBlockMessage =
       // their rejections from, so `dev:mock` now exercises the branch
       // production takes.
       //
-      // 🔴 THOSE SIX ARE NOT EVERY VALUE THIS FIELD CAN HOLD. The
-      // bridge's catch arms are BLANKET, so the host's authorization
-      // prose rides the same field: `invalid block token` (an expired
-      // token mid-session), `block instance revoked`, `app block not
-      // found`, `app block is not approved`, `storage <op> requires
-      // the <scope> scope`, `storage requires an authenticated
-      // viewer`, plus tRPC's zod validation messages. All classify
-      // `null`. See `appStorageErrors.ts` for the measured table.
+      // 🔴 THOSE SIX ARE NOT EVERY VALUE THIS FIELD CAN HOLD, AND
+      // NOTHING HERE LISTS THE REST. The bridge's catch arms are
+      // BLANKET, so every other rejection the host raises —
+      // authorization, approval, the feature-flag kill switch — rides
+      // this same field. ALL of them classify `null`. That rule needs
+      // no enumeration and survives the host rewording a message;
+      // `invalid block token` (an expired token mid-session), `block
+      // instance revoked` and `Apps are not enabled` are
+      // ILLUSTRATIONS, not a bound. Two earlier drafts tried to list
+      // the set and both came up short — see the header of
+      // `appStorageErrors.ts` for why the third does not try.
       //
       // 🔴 AND DO NOT RENDER IT. Server prose, not viewer copy: not
       // localized, not written for an end user, free to move in any
       // host deploy. Log it, classify it, show copy your app owns —
       // and keep a generic arm for `null`. 🔴 Do NOT write "try
-      // again" in that arm: `null` is mostly the authorization family
-      // above, and retrying an expired token never succeeds.
+      // again" in that arm: `null` is mostly expired or revoked
+      // tokens, and retrying an expired token never succeeds.
       //
       // `sizeBytes` is the byte size the row landed at, so the block
       // can update its own quota estimate without another round-trip

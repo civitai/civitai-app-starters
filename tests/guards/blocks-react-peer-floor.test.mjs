@@ -806,14 +806,23 @@ test('PREDICTION HAS COME TRUE — the predicted release is in-tree, so the entr
         `tree — so it is being released now (this is the Version Packages PR) or it already has.\n` +
         `A prediction that came true is a MEASUREMENT, and must stop being exempt from the\n` +
         `measurement rule.\n\n` +
-        `DO THIS:\n` +
-        `  1. Confirm ${predictedStr} really published and really exports them:\n` +
+        `DO THIS — the runnable steps first, because the npm check is NOT runnable\n` +
+        `in the state that fires this test:\n` +
+        `  1. Empty PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH — this is the fix, and it is the\n` +
+        `     whole fix:\n` +
+        `       ${PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH.join(',\n       ')}\n` +
+        `  2. LEAVE THE FLOOR WHERE IT IS.\n` +
+        `  3. THEN confirm ${predictedStr} really published and really exports them — but only\n` +
+        `     once the publish has actually run:\n` +
         `       npm view @civitai/app-sdk@${predictedStr} version\n` +
         `       # then check the tarball's exports, as the rest of this ledger was measured\n` +
-        `  2. Leave PEER_VALUE_SYMBOL_SINCE alone if the measurement agrees; correct it if not.\n` +
-        `  3. Empty PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH:\n` +
-        `       ${PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH.join(',\n       ')}\n` +
-        `  4. LEAVE THE FLOOR WHERE IT IS.\n\n` +
+        `     🔴 This test fires on the Version Packages PR, where ${predictedStr} is in-tree and\n` +
+        `     the npm publish has NOT run yet, so that command answers\n` +
+        `     "npm error code E404 / No match found for version ${predictedStr}". In that state the\n` +
+        `     E404 is the CORRECT answer and not something to fix — do not read it as "the\n` +
+        `     prediction was wrong" and do not bump the ledger to chase it. Re-run it after the\n` +
+        `     release job publishes.\n` +
+        `  4. Leave PEER_VALUE_SYMBOL_SINCE alone if the measurement agrees; correct it if not.\n\n` +
         `🔴 DO NOT "fix" this by raising the floor or bumping the entries to a later version.\n` +
         `${predictedStr} genuinely exports these symbols, so a floor above it excludes a good\n` +
         `release — spurious peer warnings and --strict-peer-deps install failures. That is the\n` +

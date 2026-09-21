@@ -203,19 +203,78 @@ test('every site states the COUNT, and the count matches the ledger', () => {
 // exported set. Positive claims, not an absence.
 // ---------------------------------------------------------------------------
 
-test('the PERMISSIVE divergence is called out as such at every site', () => {
+/**
+ * The PARAGRAPH of a site's caveat that makes the permissive claim — the block
+ * of non-blank lines around the first line naming "permissive".
+ *
+ * Bounded to the paragraph, not "to the end of the caveat": the claim and the
+ * issue numbers backing it are written as one sentence, and a wider region
+ * would start counting issue references from unrelated prose that happens to
+ * follow.
+ */
+function permissiveClaimOf(site) {
+  const lines = caveatOf(site).split('\n');
+  const at = lines.findIndex((l) => /permissive/i.test(l));
+  if (at < 0) return { at, text: '' };
+  let start = at;
+  while (start > 0 && lines[start - 1].trim() !== '') start -= 1;
+  let end = at;
+  while (end < lines.length - 1 && lines[end + 1].trim() !== '') end += 1;
+  return { at, text: lines.slice(start, end + 1).join('\n') };
+}
+
+test('every site names EXACTLY the PERMISSIVE divergences the ledger holds', () => {
   // The direction is the actionable half. A restrictive divergence costs a
   // confusing local failure; a permissive one ships a block that fails in
   // production, which is the exact bug this whole change exists to end.
+  //
+  // 🔴 THIS PINS THE COUNT, NOT THE WORD — and the previous version pinned the
+  // word. It asserted `/permissive/i.test(caveat)`, which was green while both
+  // READMEs said #347 was permissive "**alone among them**" — the defect — and
+  // stayed green when #368 was correctly added as a second one. A guard that
+  // cannot tell those two states apart is not guarding the correction; it is
+  // guarding the presence of a word, which any wording satisfies. So the claim
+  // asserted here is the SET: the issue numbers the permissive sentence names
+  // must be exactly the ledger's `direction: 'PERMISSIVE'` rows, failing when
+  // the prose is short (the dangerous direction) and when it is long.
   const permissive = DIVERGENCE_LEDGER.filter((d) => d.direction === 'PERMISSIVE');
   assert.ok(permissive.length > 0, 'ledger records no permissive divergence — update this test with it');
+  const expected = permissive.map((d) => d.issue).sort((a, b) => a - b);
+  const word = COUNT_WORDS[permissive.length];
+
   for (const site of SITES) {
-    const caveat = caveatOf(site);
+    const { at, text } = permissiveClaimOf(site);
     assert.ok(
-      /permissive/i.test(caveat),
-      `${site.file} must list #${permissive.map((d) => d.issue).join('/')} and never says the word\n` +
-        `"permissive". A reader who skims the list has no way to tell that one of these lets a\n` +
-        `write PASS locally and fail live, while the others do the opposite.`,
+      at >= 0,
+      `${site.file} must list #${expected.join('/')} as permissive and never says the word\n` +
+        `"permissive" anywhere in its divergence caveat. A reader who skims the list has no way\n` +
+        `to tell that ${word} of these let a write PASS locally and fail live, while the others\n` +
+        `do the opposite.`,
+    );
+
+    // The paragraph must be a STRICT slice of the caveat, or the set below is
+    // just the full-ledger assertion wearing a different name.
+    assert.ok(
+      text.length < caveatOf(site).length,
+      `${site.file}: the permissive paragraph spans the whole caveat, so comparing its issue\n` +
+        `references to the permissive subset is not reading the claim — it is reading the list.`,
+    );
+
+    assert.deepEqual(
+      issuesIn(text),
+      expected,
+      `${site.file}'s permissive sentence names ${JSON.stringify(issuesIn(text))}, but the ledger\n` +
+        `holds ${permissive.length} permissive divergence(s): ${permissive
+          .map((d) => `#${d.issue} (${d.what})`)
+          .join('; ')}.\n\n` +
+        `        SHORT is the dangerous direction — it was "#347, alone among them", which read as a\n` +
+        `        reassuring singular while #368 lets a write the host refuses with \`app quota\n` +
+        `        exceeded\` succeed locally. Name every permissive row in the sentence that makes the\n` +
+        `        claim, and say how many.\n\n` +
+        `        Paragraph read:\n${text
+          .split('\n')
+          .map((l) => `          ${l}`)
+          .join('\n')}`,
     );
   }
 });
