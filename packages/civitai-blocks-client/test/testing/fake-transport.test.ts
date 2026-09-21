@@ -1,38 +1,46 @@
 import { describe, expect, it } from 'vitest';
 
-import { BridgeError, storage } from '../../src/index.js';
+import { BridgeError } from '../../src/index.js';
+import { createHost } from '../../src/host/index.js';
 import { createFakeTransport } from '../../src/testing.js';
+
+const LORA = {
+  versionId: 11,
+  modelId: 10,
+  modelName: 'Ink',
+  versionName: 'v1',
+  baseModel: 'SDXL 1.0',
+  modelType: 'LORA',
+};
 
 describe('createFakeTransport().handle', () => {
   it('answers every call of that type from the params it was given', async () => {
     const t = createFakeTransport();
-    const store = new Map([['a', 1]]);
-    t.handle('APP_STORAGE_GET', (params) => ({
-      value: store.get((params as { key: string }).key) ?? null,
-    }));
+    t.handle('OPEN_RESOURCE_PICKER', (params) =>
+      (params as { resourceType: string }).resourceType === 'LORA' ? { selected: LORA } : {},
+    );
+    const host = createHost(t);
 
-    await expect(storage.get('a', { transport: t })).resolves.toBe(1);
-    await expect(storage.get('a', { transport: t })).resolves.toBe(1);
-    await expect(storage.get('b', { transport: t })).resolves.toBeNull();
+    await expect(host.openResourcePicker({ resourceType: 'LORA' })).resolves.toEqual(LORA);
+    await expect(host.openResourcePicker({ resourceType: 'Checkpoint' })).resolves.toBeNull();
   });
 
   it('fails the call when the handler throws', async () => {
     const t = createFakeTransport();
-    t.handle('APP_STORAGE_SET', () => {
-      throw new BridgeError('insufficient', 'APP_STORAGE_SET', 'per-user storage quota exceeded');
+    t.handle('OPEN_BUZZ_PURCHASE', () => {
+      throw new BridgeError('forbidden', 'OPEN_BUZZ_PURCHASE', 'review-mode');
     });
 
-    await expect(storage.set('a', 1, { transport: t })).rejects.toMatchObject({
-      code: 'insufficient',
-    });
+    await expect(createHost(t).openBuzzPurchase()).rejects.toMatchObject({ code: 'forbidden' });
   });
 
   it('lets a queued reply depart from the standing answer for one call', async () => {
     const t = createFakeTransport();
-    t.handle('APP_STORAGE_GET', () => ({ value: 'standing' }));
-    t.reply('APP_STORAGE_GET', { value: 'once' });
+    t.handle('OPEN_BUZZ_PURCHASE', () => ({ purchased: false }));
+    t.reply('OPEN_BUZZ_PURCHASE', { purchased: true });
+    const host = createHost(t);
 
-    await expect(storage.get('a', { transport: t })).resolves.toBe('once');
-    await expect(storage.get('a', { transport: t })).resolves.toBe('standing');
+    await expect(host.openBuzzPurchase()).resolves.toEqual({ purchased: true });
+    await expect(host.openBuzzPurchase()).resolves.toEqual({ purchased: false });
   });
 });

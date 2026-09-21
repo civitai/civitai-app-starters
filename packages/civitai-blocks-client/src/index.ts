@@ -1,23 +1,46 @@
 /**
- * Host bridge for Civitai Apps. `import * as civitai` reads as
- * `civitai.buzz.getAccounts()`; `import { buzz }` tree-shakes identically.
+ * `const app = await initialize()`, then `app.site`, `app.orchestration` and,
+ * inside a civitai.com page, `app.host`.
  */
 
-export * as buzz from './buzz/index.js';
-export * as host from './host/index.js';
-export * as media from './media/index.js';
-export * as orchestration from './orchestration/index.js';
-export * as storage from './storage/index.js';
-export * as viewer from './viewer/index.js';
+export { initialize } from './app/index.js';
+export type {
+  AppClient,
+  BlockAppClient,
+  BlockInitializeOptions,
+  TokenInitializeOptions,
+} from './app/index.js';
 
+export type { GrantOptions, TokenOptions, TokenSource } from './session/index.js';
+export type { SiteClient } from './site/index.js';
+export { isTerminal } from './orchestration/index.js';
+export type {
+  OrchestrationClient,
+  WaitOptions,
+  Workflow,
+  WorkflowPage,
+  WorkflowQuery,
+  WorkflowStatus,
+  WorkflowTemplate,
+} from './orchestration/index.js';
+export { createHost } from './host/index.js';
+export type {
+  ConsentRefusal,
+  DownloadRequest,
+  Host,
+  HostCallOptions,
+  PickedResource,
+  ResourcePickerType,
+} from './host/index.js';
+
+export { ApiError } from './http/index.js';
+export type { Query, QueryValue, RequestOptions } from './http/index.js';
 export { BridgeError } from './core/errors.js';
 export type { BridgeErrorCode, BridgeFailureCode } from './core/errors.js';
 
 export { getTransport } from './core/get-transport.js';
-export type { CallOptions, NotifyOptions } from './core/messaging.js';
-export type { Live } from './core/live.js';
 export type { DetectOptions } from './core/get-transport.js';
-export type { BlockSnapshot, BlockTransport, RequestOptions } from './core/transport.js';
+export type { BlockSnapshot, BlockTransport } from './core/transport.js';
 export type {
   BlockCheckpointInfo,
   BlockContext,

@@ -180,19 +180,19 @@ describe('IframeTransport legacy replies', () => {
     return pending;
   };
 
-  it('answers a reply that carries its fields directly', async () => {
-    await expect(exchange('APP_STORAGE_GET', () => ({ value: { theme: 'neon' } }))).resolves.toEqual({
-      value: { theme: 'neon' },
-    });
+  it('answers a reply under the name the host gives it, fields and all', async () => {
+    await expect(
+      exchange('OPEN_BUZZ_PURCHASE', () => ({ purchased: true, newBalance: 900 }), 'BUZZ_PURCHASE_RESULT'),
+    ).resolves.toEqual({ purchased: true, newBalance: 900 });
   });
 
   it('classifies a failure the host reported as prose', async () => {
     await expect(
-      exchange('APP_STORAGE_SET', () => ({ error: 'per-user storage quota exceeded' })),
+      exchange('SAVE_IMAGE', () => ({ error: 'block token lacks the required scope' })),
     ).rejects.toMatchObject({
-      code: 'insufficient',
-      operation: 'APP_STORAGE_SET',
-      message: 'per-user storage quota exceeded',
+      code: 'forbidden',
+      operation: 'SAVE_IMAGE',
+      message: 'block token lacks the required scope',
     });
   });
 
@@ -204,8 +204,8 @@ describe('IframeTransport legacy replies', () => {
   });
 
   it('reads an empty error as no failure at all', async () => {
-    await expect(exchange('APP_STORAGE_LIST', () => ({ keys: [], error: '' }))).resolves.toEqual({
-      keys: [],
-    });
+    await expect(
+      exchange('OPEN_RESOURCE_PICKER', () => ({ error: '' }), 'RESOURCE_PICKER_RESULT'),
+    ).resolves.toEqual({});
   });
 });

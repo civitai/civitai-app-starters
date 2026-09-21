@@ -1,4 +1,4 @@
-import { getTransport, viewer, type BlockTransport } from '@civitai/blocks-client';
+import { createHost, getTransport, type BlockTransport } from '@civitai/blocks-client';
 import { CivitaiElement, defineElement } from '@civitai/components/internals';
 import '@civitai/components/civitai-button/define';
 import { css, html, nothing, type PropertyDeclarations, type TemplateResult } from 'lit';
@@ -79,9 +79,8 @@ export class CivitaiSignInButton extends CivitaiElement {
     // disabled control is a courtesy, this is the thing that must hold.
     const snapshot = transport.snapshot.get();
     if (!snapshot.ready || snapshot.viewer != null) return;
-    viewer.requestSignIn(
-      this.returnUrl === '' ? {} : { returnUrl: this.returnUrl },
-      { transport }
+    createHost(transport).requestSignIn(
+      this.returnUrl === '' ? {} : { returnUrl: this.returnUrl }
     );
   }
 

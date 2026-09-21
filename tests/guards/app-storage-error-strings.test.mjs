@@ -147,12 +147,6 @@ const NOT_MOCKS = [
       'Pinning those to host vocabulary would destroy what they test.',
   },
   {
-    file: 'packages/civitai-blocks-client/test/storage/storage.test.ts',
-    why:
-      'a transport unit test, not a mock host. It posts one rejection to prove the free-text\n' +
-      'error is classified into a coded BridgeError, which a host-vocabulary pin would not change.',
-  },
-  {
     file: 'tests/guards/app-storage-error-strings.test.mjs',
     why: "this guard's own control fixtures, which must contain the shapes that have to FAIL.",
   },

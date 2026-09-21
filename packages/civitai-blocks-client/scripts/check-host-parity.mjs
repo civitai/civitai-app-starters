@@ -1,22 +1,10 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-/**
- * Messages this package invents, which no host handler answers yet. Each is a
- * standing promise to the host; an entry leaves the day the host implements it.
- */
-const AWAITING_HOST = [
-  'BUZZ_GET_ACCOUNTS',
-  'BUZZ_LIST_TRANSACTIONS',
-  'BUZZ_REQUEST_PURCHASE',
-  'ORCHESTRATION_ESTIMATE_WORKFLOW',
-  'ORCHESTRATION_SUBMIT_WORKFLOW',
-  'ORCHESTRATION_GET_WORKFLOW',
-  'ORCHESTRATION_CANCEL_WORKFLOW',
-  'ORCHESTRATION_LIST_WORKFLOWS',
-];
+// Checked against a committed snapshot of civitai's own handler inventory, so
+// it runs without the civitai repo. Refresh with `npm run snapshot:host`.
 
-/** Sent by the transport itself rather than by a domain. */
+/** Sent by the transport itself rather than declared by a domain. */
 const HANDSHAKE = ['BLOCK_HELLO', 'BLOCK_READY'];
 
 const problems = [];
@@ -27,12 +15,13 @@ function fail(message) {
 
 const host = JSON.parse(readFileSync('snapshots/host-messages.json', 'utf8'));
 
-const domains = readdirSync('src', { withFileTypes: true })
+const protocols = readdirSync('src', { withFileTypes: true })
   .filter((entry) => entry.isDirectory() && entry.name !== 'core')
-  .map((entry) => entry.name);
+  .map((entry) => join('src', entry.name, 'protocol.ts'))
+  .filter((file) => existsSync(file));
 
-const sent = domains.flatMap((domain) => {
-  const source = readFileSync(join('src', domain, 'protocol.ts'), 'utf8');
+const sent = protocols.flatMap((file) => {
+  const source = readFileSync(file, 'utf8');
   const maps = source.matchAll(/export type \w+(?:Requests|Notifications) = \{([\s\S]*?)^\};$/gm);
   return [...maps].flatMap(([, body]) => [...body.matchAll(/^ {2}([A-Z_]+):/gm)].map((m) => m[1]));
 });
@@ -45,38 +34,13 @@ const legacy = Object.fromEntries(
   [...table[1].matchAll(/^ {2}([A-Z_]+): '([A-Z_]+)',$/gm)].map(([, type, reply]) => [type, reply]),
 );
 
-// Guard the guard: a grep that silently matches nothing would pass everything.
+// A grep that silently matches nothing would pass everything.
 if (sent.length === 0) fail('no messages found in any src/*/protocol.ts — the shape changed.');
 if (Object.keys(legacy).length === 0) fail('LEGACY_REPLIES parsed empty — the shape changed.');
 
-// A promise that never settles is not something BREAKING.md can warn a caller
-// about at the call site, so the tag is part of the contract, not a courtesy.
-const docs = domains.map((domain) => readFileSync(join('src', domain, 'index.ts'), 'utf8')).join('\n');
-const flagged = new Set(
-  [...docs.matchAll(/@experimental No host handler answers `([A-Z_]+)`/g)].map(([, type]) => type),
-);
-if (flagged.size === 0) fail('no @experimental notes found in any src/*/index.ts — the shape changed.');
-
-for (const type of AWAITING_HOST) {
-  if (!flagged.has(type)) {
-    problems.push(`${type} awaits a host handler, but no @experimental note tells a caller.`);
-  }
-}
-for (const type of flagged) {
-  if (!AWAITING_HOST.includes(type)) {
-    problems.push(`${type} is noted @experimental but is not in AWAITING_HOST — drop the note.`);
-  }
-}
-
-const answered = new Set([...Object.keys(host.messages), ...AWAITING_HOST, ...HANDSHAKE]);
+const answered = new Set([...Object.keys(host.messages), ...HANDSHAKE]);
 for (const type of sent) {
   if (!answered.has(type)) problems.push(`${type} is sent but no host handler answers it.`);
-}
-
-for (const type of AWAITING_HOST) {
-  if (type in host.messages) {
-    problems.push(`${type} now has a host handler — drop it from AWAITING_HOST.`);
-  }
 }
 
 for (const [type, reply] of Object.entries(legacy)) {
@@ -95,7 +59,4 @@ if (problems.length > 0) {
   process.exit(1);
 }
 
-console.log(
-  `host parity ok: ${sent.length} messages, ${AWAITING_HOST.length} awaiting a host handler ` +
-    `(snapshot ${host.capturedFrom}).`,
-);
+console.log(`host parity ok: ${sent.length} messages (snapshot ${host.capturedFrom}).`);

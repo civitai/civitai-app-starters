@@ -1,17 +1,18 @@
 import type {
+  CursedArrayOfTelemetryCursorAndWorkflow,
   Workflow,
   WorkflowStatus,
   WorkflowTemplate,
 } from '@civitai/orchestration-client/dist/generated/types.gen.js';
 
-import { createCaller, type CallOptions } from '../core/messaging.js';
-import { paginate } from '../core/paging.js';
+import { ApiError, type Http } from '../http/index.js';
 
-import type { OrchestrationRequests, SpendLimit } from './protocol.js';
+export type { Workflow, WorkflowStatus, WorkflowTemplate };
+export type WorkflowPage = CursedArrayOfTelemetryCursorAndWorkflow;
 
-export type { SpendLimit } from './protocol.js';
+export const DEFAULT_ORCHESTRATION_URL = 'https://orchestration.civitai.com';
 
-const call = createCaller<OrchestrationRequests>();
+const WORKFLOWS = 'v2/consumer/workflows';
 
 const TERMINAL: ReadonlySet<WorkflowStatus> = new Set<WorkflowStatus>([
   'succeeded',
@@ -20,167 +21,133 @@ const TERMINAL: ReadonlySet<WorkflowStatus> = new Set<WorkflowStatus>([
   'expired',
 ]);
 
-/**
- * Waits between consecutive failed reads, and so also how many are absorbed
- * before giving up. A blip should not end a generation; an outage should not be
- * hammered. Any successful read resets it.
- */
+/** How long the orchestrator holds each read while watching, in seconds. */
+const HELD_READ_SECONDS = 20;
+
+/** Waits between consecutive failed reads while watching; a success resets it. */
 const RETRY_BACKOFF_MS = [250, 1_000, 4_000];
 
-export interface SubmitOptions extends CallOptions, SpendLimit {}
+export interface CallOptions {
+  signal?: AbortSignal;
+}
+
+export interface WaitOptions extends CallOptions {
+  /** Seconds the orchestrator may hold the reply. */
+  wait?: number;
+  /** What ends the hold early: the workflow finishing (the default), or any change to it. */
+  until?: 'completion' | 'change';
+}
+
+export interface WorkflowQuery {
+  cursor?: string;
+  take?: number;
+  tags?: string[];
+  excludeFailed?: boolean;
+}
+
+/**
+ * Workflows on the orchestrator, as the viewer. Steps are the orchestrator's
+ * own `WorkflowStepTemplate`s, so a step type it gains needs no release here.
+ */
+export interface OrchestrationClient {
+  submitWorkflow(template: WorkflowTemplate, opts?: WaitOptions): Promise<Workflow>;
+  /** Prices a workflow without running it. */
+  estimateWorkflow(template: WorkflowTemplate, opts?: CallOptions): Promise<Workflow>;
+  getWorkflow(workflowId: string, opts?: WaitOptions): Promise<Workflow>;
+  /**
+   * Yields the workflow now and again each time it changes, ending at a final
+   * status. Break out of the loop to stop watching.
+   */
+  watchWorkflow(workflowId: string, opts?: CallOptions): AsyncGenerator<Workflow, void, undefined>;
+  /** Resolves once the workflow reaches a final status, whichever it is. */
+  waitForWorkflow(workflowId: string, opts?: CallOptions): Promise<Workflow>;
+  cancelWorkflow(workflowId: string, opts?: CallOptions): Promise<void>;
+  queryWorkflows(query?: WorkflowQuery, opts?: CallOptions): Promise<WorkflowPage>;
+}
 
 export function isTerminal(workflow: Workflow): boolean {
   return TERMINAL.has(workflow.status);
 }
 
-export interface WorkflowQuery {
-  /** Stop after this many. Defaults to 100; `Infinity` reads to the end. */
-  limit?: number;
-  /** Opaque; from a prior reply. */
-  cursor?: string;
-}
+export function createOrchestrationClient(http: Http): OrchestrationClient {
+  const getWorkflow = (workflowId: string, { wait, until, signal }: WaitOptions = {}) =>
+    http<Workflow>('GET', `${WORKFLOWS}/${encodeURIComponent(workflowId)}`, {
+      query: { wait, until },
+      signal,
+    });
 
-/**
- * What this app has submitted for this viewer, newest first, fetching the next
- * page only as you read into it. Stops after `limit` workflows — 100 unless you
- * say otherwise. The host scopes it to this app, so a workflow another app
- * submitted is never reachable here.
- *
- * @experimental No host handler answers `ORCHESTRATION_LIST_WORKFLOWS` yet, so this
- * never settles — request timeouts belong to the host. Tracked in BREAKING.md.
- */
-export function listWorkflows(
-  query: WorkflowQuery = {},
-  opts: CallOptions = {},
-): AsyncGenerator<Workflow> {
-  return paginate(query.limit, 50, async (take, cursor) => {
-    const page = await call('ORCHESTRATION_LIST_WORKFLOWS', { ...query, limit: take, cursor }, opts);
-    return { items: page.workflows, cursor: page.cursor };
-  }, query.cursor);
-}
-
-/**
- * Cost preview. A run that cannot proceed comes back as a `failed` workflow, so
- * a block can show a "top up Buzz" CTA instead of tearing down.
- *
- * @experimental No host handler answers `ORCHESTRATION_ESTIMATE_WORKFLOW` yet, so this
- * never settles — request timeouts belong to the host. Tracked in BREAKING.md.
- */
-export async function estimateWorkflow(
-  workflow: WorkflowTemplate,
-  opts: SubmitOptions,
-): Promise<Workflow> {
-  const { maxBuzz, ...rest } = opts;
-  return call('ORCHESTRATION_ESTIMATE_WORKFLOW', { workflow, maxBuzz }, rest);
-}
-
-/**
- * Spends the viewer's Buzz. The workflow can already be terminal. Set
- * `workflow.externalId` to make a retry collapse onto the first submission
- * rather than charging twice.
- *
- * @experimental No host handler answers `ORCHESTRATION_SUBMIT_WORKFLOW` yet, so this
- * never settles — request timeouts belong to the host. Tracked in BREAKING.md.
- */
-export async function submitWorkflow(
-  workflow: WorkflowTemplate,
-  opts: SubmitOptions,
-): Promise<Workflow> {
-  const { maxBuzz, ...rest } = opts;
-  return call('ORCHESTRATION_SUBMIT_WORKFLOW', { workflow, maxBuzz }, rest);
-}
-
-/**
- * A single read of the workflow's current state.
- *
- * @experimental No host handler answers `ORCHESTRATION_GET_WORKFLOW` yet, so this never
- * settles — request timeouts belong to the host. Tracked in BREAKING.md.
- */
-export async function getWorkflow(workflowId: string, opts: CallOptions = {}): Promise<Workflow> {
-  return call('ORCHESTRATION_GET_WORKFLOW', { workflowId }, opts);
-}
-
-/**
- * Stops the work and refunds what the orchestrator has not spent.
- *
- * @experimental No host handler answers `ORCHESTRATION_CANCEL_WORKFLOW` yet, so this
- * never settles — request timeouts belong to the host. Tracked in BREAKING.md.
- */
-export async function cancelWorkflow(
-  workflowId: string,
-  opts: CallOptions = {},
-): Promise<Workflow> {
-  return call('ORCHESTRATION_CANCEL_WORKFLOW', { workflowId }, opts);
-}
-
-/**
- * Every state a running workflow passes through, ending at a terminal one.
- * `break` stops watching; it does NOT cancel — the Buzz is spent and the
- * orchestrator keeps running, so call `cancelWorkflow()` to stop the work.
- */
-export async function* watchWorkflow(
-  workflowId: string,
-  opts: CallOptions = {},
-): AsyncGenerator<Workflow> {
-  let failures = 0;
-  let previous = '';
-
-  while (true) {
-    let workflow: Workflow;
-    try {
-      workflow = await call('ORCHESTRATION_GET_WORKFLOW', { workflowId, wait: true }, opts);
-      failures = 0;
-    } catch (cause) {
-      // A pod rolling or a network blip should not end a generation the caller
-      // is still waiting on; a burst is absorbed, a sustained outage is not.
-      const backoff = RETRY_BACKOFF_MS[failures];
-      failures += 1;
-      if (opts.signal?.aborted || backoff === undefined) throw cause;
-      await pause(backoff, opts.signal);
-      continue;
+  async function* watchWorkflow(workflowId: string, { signal }: CallOptions = {}) {
+    let seen: string | undefined;
+    let failures = 0;
+    let held = false;
+    for (;;) {
+      let workflow: Workflow;
+      try {
+        workflow = await getWorkflow(
+          workflowId,
+          held ? { wait: HELD_READ_SECONDS, until: 'change', signal } : { signal },
+        );
+        failures = 0;
+      } catch (error) {
+        if (signal?.aborted || !isTransient(error) || failures >= RETRY_BACKOFF_MS.length) throw error;
+        await sleep(RETRY_BACKOFF_MS[failures++]!, signal);
+        continue;
+      }
+      held = true;
+      // Compared whole, so anything the orchestrator adds to a workflow counts as progress.
+      const snapshot = JSON.stringify(workflow);
+      if (snapshot !== seen) {
+        seen = snapshot;
+        yield workflow;
+      }
+      if (isTerminal(workflow)) return;
     }
-
-    // Compared whole rather than by field: this package names nothing inside a
-    // workflow, so anything the orchestrator adds counts as progress for free.
-    const current = JSON.stringify(workflow);
-    const changed = current !== previous;
-    previous = current;
-
-    if (changed) yield workflow;
-    if (isTerminal(workflow)) return;
   }
+
+  return {
+    submitWorkflow: (template, { wait, signal } = {}) =>
+      http<Workflow>('POST', WORKFLOWS, { body: template, query: { wait }, signal }),
+
+    estimateWorkflow: (template, { signal } = {}) =>
+      http<Workflow>('POST', WORKFLOWS, { body: template, query: { whatif: true }, signal }),
+
+    getWorkflow,
+
+    watchWorkflow,
+
+    async waitForWorkflow(workflowId, opts = {}) {
+      let last: Workflow | undefined;
+      for await (const workflow of watchWorkflow(workflowId, opts)) last = workflow;
+      return last!;
+    },
+
+    cancelWorkflow: async (workflowId, { signal } = {}) => {
+      await http('PUT', `${WORKFLOWS}/${encodeURIComponent(workflowId)}`, {
+        body: { status: 'canceled' },
+        signal,
+      });
+    },
+
+    queryWorkflows: (query = {}, { signal } = {}) =>
+      http<WorkflowPage>('GET', WORKFLOWS, { query: { ...query }, signal }),
+  };
 }
 
-/**
- * Submit and settle: resolves with the finished workflow, however it finished.
- * A failed run resolves too — `status` says which. For progress, submit and
- * watch the id yourself.
- *
- * @experimental No host handler answers `ORCHESTRATION_GET_WORKFLOW` yet, so this never
- * settles — request timeouts belong to the host. Tracked in BREAKING.md.
- */
-export async function runWorkflow(
-  workflow: WorkflowTemplate,
-  opts: SubmitOptions,
-): Promise<Workflow> {
-  const submitted = await submitWorkflow(workflow, opts);
-  if (isTerminal(submitted) || !submitted.id) return submitted;
-
-  let latest = submitted;
-  for await (const next of watchWorkflow(submitted.id, opts)) latest = next;
-  return latest;
+/** A blip is worth waiting out; a refusal is an answer. */
+function isTransient(error: unknown): boolean {
+  return !(error instanceof ApiError) || error.status >= 500 || error.status === 429;
 }
 
-/** Wakes early on abort, so cancelling never waits out the backoff. */
-function pause(ms: number, signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted) return Promise.resolve();
-  return new Promise<void>((resolve) => {
-    const done = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', done);
-      resolve();
-    };
-    const timer = setTimeout(done, ms);
-    signal?.addEventListener('abort', done, { once: true });
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        reject(signal.reason);
+      },
+      { once: true },
+    );
   });
 }

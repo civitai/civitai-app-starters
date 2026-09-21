@@ -1,7 +1,7 @@
 {
   "name": "@civitai/blocks-client",
   "version": "0.1.0",
-  "description": "Framework-free host bridge for Civitai Apps: transport core plus domain services.",
+  "description": "The Civitai app SDK, v1 shape: an app holds a token and calls the Civitai API and the orchestrator; a block asks its host only to show host UI.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -45,11 +45,11 @@
   },
   "keywords": [
     "civitai",
-    "blocks",
+    "sdk",
+    "api",
+    "orchestration",
     "iframe",
-    "postmessage",
-    "transport",
-    "embed"
+    "postmessage"
   ],
   "homepage": "https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-blocks-client#readme",
   "bugs": "https://github.com/civitai/civitai-app-starters/issues",
