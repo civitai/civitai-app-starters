@@ -70,8 +70,9 @@ describe('throwOnFailedReply — for replies carrying the `{ ok, error }` pair',
   // passes through whatever the host sent. It used to read `PAYLOAD_TOO_LARGE`,
   // which is a value no host can put on an App Storage reply: that is the TRPC
   // CODE and the bridge forwards the MESSAGE (#343). A fixture that spells a
-  // fiction teaches the fiction; the real strings are
-  // `APP_STORAGE_HOST_ERROR_MESSAGES` in `@civitai/app-sdk/blocks`.
+  // fiction teaches the fiction; the real strings live in the app-sdk's
+  // `blocks/appStorageErrors.ts`, and `classifyAppStorageError` (exported from
+  // `@civitai/app-sdk/blocks`) is what matches them.
   it('throws the host text on ok:false with a non-empty error', () => {
     expect(() => throwOnFailedReply({ ok: false, error: 'host text' }, FB)).toThrow(/^host text$/);
   });

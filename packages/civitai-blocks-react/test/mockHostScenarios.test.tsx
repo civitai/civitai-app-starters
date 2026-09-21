@@ -760,12 +760,32 @@ describe('createMockHost — storage scenario (in-memory KV)', () => {
   }
 
   /**
-   * 🔴 REGRESSION (civitai/civitai-app-starters#343). Watched to FAIL at
-   * `e06173f`, where all three ceilings answered the single literal
-   * `'PAYLOAD_TOO_LARGE'` — a string the host CANNOT send, because its bridge
-   * forwards the TRPCError's `message` and never its `code`. A block branching
-   * on it therefore took the actionable arm under `dev:mock` and the generic
-   * arm in production, and no local run could tell.
+   * 🔴 REGRESSION (civitai/civitai-app-starters#343). The defect: all three
+   * ceilings answered the single literal `'PAYLOAD_TOO_LARGE'` (and `failNext`
+   * answered `'STORAGE_UNAVAILABLE'`) — strings the host CANNOT send, because
+   * its bridge forwards the TRPCError's `message` and never its `code`. A block
+   * branching on them therefore took the actionable arm under `dev:mock` and
+   * the generic arm in production, and no local run could tell.
+   *
+   * 🔴 HOW IT WAS WATCHED RED, stated exactly, because the obvious phrasing is
+   * not reproducible. This test CANNOT run against the pre-change tree: it
+   * value-imports `APP_STORAGE_ERROR_*` from `@civitai/app-sdk/blocks`, and
+   * that module is created by the same change. At this branch's base
+   * (`8971ba3`) — and at `e06173f` before it — neither the constants nor this
+   * test existed, so "red at the base" is not a claim anyone can check out and
+   * re-run.
+   *
+   * What WAS watched, and what to re-run: keep the whole tree, revert only
+   * `internal/mockHost.ts`'s five `APP_STORAGE_*_RESULT` rejection arms to the
+   * literals `8971ba3` carried (`git show 8971ba3:…/mockHost.ts` — lines 2465,
+   * 2473, 2512, 2528, 2546), then run this file. Measured:
+   *
+   *     Tests  6 failed | 42 passed (48)
+   *     AssertionError: expected 'PAYLOAD_TOO_LARGE' to be 'value exceeds 64KB cap'
+   *
+   * i.e. this test plus the five per-gate cases below. At HEAD: 48 passed.
+   * That is the regression matrix — the mock's behaviour is the variable, and
+   * the SDK module is held fixed because it has to be.
    *
    * Three properties, and all three are needed:
    *   1. each gate answers the message the HOST's matching throw site sends;

@@ -742,28 +742,48 @@ a row-limit overrun now fails under `dev:mock` where it previously passed and
 failed only in production. Pass `storage: { quotaBytes, limitRows }` to
 simulate something smaller.
 
-⚠️ The mock is **not** gate-for-gate identical to the host. Two known
+⚠️ The mock is **not** gate-for-gate identical to the host. Four known
 divergences:
 
 - the byte gate refusing a shrinking overwrite that the host admits
   ([#345](https://github.com/civitai/civitai-app-starters/issues/345));
 - 🔴 the byte gate counting **wire** bytes where the host counts **stored**
   bytes — `octet_length(value::jsonb::text)`, larger for every container, up to
-  ~1.5x ([#347](https://github.com/civitai/civitai-app-starters/issues/347)).
+  ~1.5x ([#347](https://github.com/civitai/civitai-app-starters/issues/347));
+- nothing models the **app-wide** umbrella, so `app quota exceeded` and `app row
+  limit exceeded` cannot be produced here at all
+  ([#368](https://github.com/civitai/civitai-app-starters/issues/368));
+- lowering `valueCapBytes` moves the **gate** but not the **message**, which
+  keeps naming the host's real cap
+  ([#369](https://github.com/civitai/civitai-app-starters/issues/369)).
 
 Passing under `dev:mock` is evidence, not proof — and note the second is
-**permissive**: unlike the other, it lets a write pass locally that production
+**permissive**: alone among them, it lets a write pass locally that production
 will reject. Size your fixtures against `getQuota()`, not against what the mock
 accepted.
 
 🔴 **A rejection carries a host-authored MESSAGE, not a code.** There is no
 `PAYLOAD_TOO_LARGE` on the wire — that is the TRPC *code*, and the host's
-bridge forwards `err.message`. The six strings a block can receive (five
-rejection sites plus the bridge's `storage request failed` fallback) are
-exported as `APP_STORAGE_HOST_ERROR_MESSAGES` from `@civitai/app-sdk/blocks`,
-and `createMockHost` draws its rejections from the same module — so each
-ceiling answers the message production would send, and
-`classifyAppStorageError(err)` picks the same branch in both:
+bridge forwards `err.message`. A block can receive six strings: five rejection
+sites plus the bridge's `storage request failed` fallback. They are measured and
+single-sourced in the app-sdk's `blocks/appStorageErrors.ts`, and
+`createMockHost` draws its rejections from that same module — so for the
+ceilings the mock HAS, it answers the message production would send, and
+`classifyAppStorageError(err)` picks the same branch in both.
+
+⚠️ **The mock reaches four of the six.** It models no app-wide umbrella
+([#368](https://github.com/civitai/civitai-app-starters/issues/368)), so
+`app quota exceeded` and `app row limit exceeded` are production-only: a block
+must still handle them, and no local run will ever exercise that branch. The
+other four are covered — the three ceilings, plus `storage request failed` via
+`storage: { failNext }`.
+
+Branch on the classifier's **reason**, never on the string. The reason is this
+SDK's and cannot move; the message is the host's and can. (That is also why the
+SDK exports `classifyAppStorageError` and the reason type, but deliberately does
+*not* export the array of messages: `MESSAGES.includes(err.message)` is equality
+against a snapshot, and the per-value message is a template over a cap the host
+is free to change.)
 
 ```ts
 import { classifyAppStorageError } from '@civitai/app-sdk/blocks';

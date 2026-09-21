@@ -147,13 +147,19 @@ const PEER_VALUE_SYMBOL_SINCE = {
   //     `@civitai/app-sdk 0.49.0` — the tool that will actually run, answering
   //     with the number it will actually write.
   //
-  // ⚠️ RELEASE ORDERING IS THE RESIDUAL RISK and it is not removable from here:
-  // if another app-sdk minor merges and publishes before this PR does, 0.49.0
-  // ships WITHOUT these symbols and this PR publishes 0.50.0. RE-RUN
-  // `changeset status --verbose` after any rebase onto a moved main — this
-  // branch was rebased onto 8971ba3 mid-flight and the derivation was re-run
-  // there, which is the only reason the number above is a measurement of THIS
-  // base rather than of the one it was branched from.
+  // ⚠️ RELEASE ORDERING IS THE RESIDUAL RISK: if another app-sdk minor merges
+  // and publishes before this PR does, 0.49.0 ships WITHOUT these symbols and
+  // this PR publishes 0.50.0. This branch was rebased onto 8971ba3 mid-flight
+  // and the derivation was re-run there, which is why the number above is a
+  // measurement of THIS base rather than of the one it was branched from.
+  //
+  // 🔴 THAT RISK IS NOW MECHANICAL, NOT A NOTE ASKING SOMEONE TO REMEMBER.
+  // These four are declared in PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH, and the
+  // `PREDICTED ENTRY` test below re-derives the number from the tree on every
+  // run — so a rebase that moves the base reds THERE instead of drifting past
+  // the other assertions, which are all satisfied by a stale prediction.
+  // Delete the four from that list and re-measure against the real tarball once
+  // the release has published.
   APP_STORAGE_ERROR_REQUEST_FAILED: '0.49.0',
   APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED: '0.49.0',
   APP_STORAGE_ERROR_USER_ROW_LIMIT: '0.49.0',
@@ -173,6 +179,34 @@ const PEER_VALUE_SYMBOL_SINCE = {
   parseBlockInitFragment: '0.31.0',
   stripBlockInitFragment: '0.31.0',
 };
+
+/**
+ * Ledger entries that are PREDICTIONS, not measurements.
+ *
+ * 🔴 EVERY OTHER ENTRY IN `PEER_VALUE_SYMBOL_SINCE` WAS READ OFF A PUBLISHED
+ * TARBALL. These were not, and could not be: they ship for the first time in
+ * the app-sdk release THIS BRANCH's changeset produces, so there is nothing to
+ * probe. Declaring them here is what makes the difference machine-readable —
+ * without it, a number derived from a release plan is textually
+ * indistinguishable from one derived from a measurement, which the ledger's own
+ * docblock calls worse than no ledger.
+ *
+ * Two things follow, both asserted by the `PREDICTED ENTRY` test below: the
+ * entry must name the version `changeset status` computes on the CURRENT base
+ * (so a rebase past another app-sdk release goes red instead of drifting), and
+ * the floor must equal that version exactly rather than merely not exceed it.
+ *
+ * 🔴 EMPTY THIS LIST once the release publishes, and re-measure the entries
+ * against the real tarball at the same time. A prediction that came true is a
+ * measurement and should stop being exempt from the measurement rule; a list
+ * left populated after the release pins the floor to the NEXT release forever.
+ */
+const PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH = [
+  'APP_STORAGE_ERROR_REQUEST_FAILED',
+  'APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED',
+  'APP_STORAGE_ERROR_USER_ROW_LIMIT',
+  'APP_STORAGE_ERROR_VALUE_TOO_LARGE',
+];
 
 /**
  * The same ledger for SUBPATHS. A bare `import '@civitai/app-sdk/safe-storage'`
@@ -348,6 +382,54 @@ export function requiredFloorFor(needs, ledger) {
   return { required, unledgered: unledgered.sort() };
 }
 
+/**
+ * The app-sdk bump the pending changesets ask for: `major` > `minor` > `patch`
+ * > `none`, exactly as `changeset version` resolves a set of them.
+ *
+ * Pure — it takes the frontmatter blocks, not the directory — so the control
+ * below can feed it every precedence pair without writing files. A changeset
+ * that does not name `@civitai/app-sdk` contributes nothing.
+ */
+export function appSdkBumpFrom(changesetTexts) {
+  let bump = 'none';
+  for (const text of changesetTexts) {
+    const m = /^---\n([\s\S]*?)\n---/.exec(text);
+    if (!m) continue;
+    const line = m[1].split('\n').find((l) => /['"]@civitai\/app-sdk['"]\s*:/.test(l));
+    if (!line) continue;
+    if (/:\s*major/.test(line)) bump = 'major';
+    else if (/:\s*minor/.test(line) && bump !== 'major') bump = 'minor';
+    else if (/:\s*patch/.test(line) && bump === 'none') bump = 'patch';
+  }
+  return bump;
+}
+
+/** `([0,48,0], 'minor')` -> `[0,49,0]`. `'none'` returns the input unchanged. */
+export function applyBump(version, bump) {
+  if (bump === 'major') return [version[0] + 1, 0, 0];
+  if (bump === 'minor') return [version[0], version[1] + 1, 0];
+  if (bump === 'patch') return [version[0], version[1], version[2] + 1];
+  return version;
+}
+
+/**
+ * The app-sdk version this branch will publish: the in-tree version plus the
+ * pending changesets' bump.
+ *
+ * 🔴 IT IS A FUNCTION OF THE BASE, which is the whole point of the `PREDICTED
+ * ENTRY` test: rebase onto a main that released app-sdk and this number MOVES,
+ * silently invalidating anything derived from the old one.
+ */
+function nextAppSdkVersion() {
+  const inTree = parseVersion(readJson(APP_SDK_PKG).version);
+  const dir = join(REPO_ROOT, '.changeset');
+  const texts = readdirSync(dir)
+    .filter((name) => name.endsWith('.md') && name !== 'README.md')
+    .map((name) => readFileSync(join(dir, name), 'utf8'));
+  const bump = appSdkBumpFrom(texts);
+  return { inTree, bump, next: applyBump(inTree, bump) };
+}
+
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', '.turbo', 'coverage']);
 
 function walkSources(dir, out = []) {
@@ -473,6 +555,47 @@ test('CONTROL — a JSDoc @example is not an import, and an `export … from` th
   assert.deepEqual(requiredFloorFor([], ledger), { required: null, unledgered: [] });
 });
 
+test('CONTROL — the next-version arithmetic resolves a bump set and can move in every direction', () => {
+  const cs = (pkgs) => `---\n${pkgs}\n---\n\nbody\n`;
+
+  // NEGATIVE: a changeset naming other packages must not bump app-sdk.
+  assert.equal(appSdkBumpFrom([cs(`'@civitai/blocks-react': minor`)]), 'none');
+  assert.equal(appSdkBumpFrom([]), 'none');
+  assert.equal(appSdkBumpFrom(['no frontmatter at all']), 'none');
+
+  // POSITIVE, and the precedence in both orders — a `patch` must not be able to
+  // win over a `minor` just by being read second.
+  assert.equal(appSdkBumpFrom([cs(`'@civitai/app-sdk': patch`)]), 'patch');
+  assert.equal(appSdkBumpFrom([cs(`'@civitai/app-sdk': minor`)]), 'minor');
+  assert.equal(
+    appSdkBumpFrom([cs(`'@civitai/app-sdk': patch`), cs(`'@civitai/app-sdk': minor`)]),
+    'minor',
+  );
+  assert.equal(
+    appSdkBumpFrom([cs(`'@civitai/app-sdk': minor`), cs(`'@civitai/app-sdk': patch`)]),
+    'minor',
+  );
+  assert.equal(
+    appSdkBumpFrom([cs(`'@civitai/app-sdk': minor`), cs(`"@civitai/app-sdk": major`)]),
+    'major',
+  );
+
+  // The arithmetic. Fixture is 1.2.3, NOT 0.48.0: every component is distinct
+  // and non-zero, so a mutant that bumps the wrong one — or forgets to zero the
+  // components below it — cannot land on the right answer by coincidence.
+  assert.deepEqual(applyBump([1, 2, 3], 'patch'), [1, 2, 4]);
+  assert.deepEqual(applyBump([1, 2, 3], 'minor'), [1, 3, 0]);
+  assert.deepEqual(applyBump([1, 2, 3], 'major'), [2, 0, 0]);
+  assert.deepEqual(applyBump([1, 2, 3], 'none'), [1, 2, 3]);
+
+  // And the tree's own answer is well-formed — a positive control on the reader
+  // the two guards below take their number from.
+  const { inTree, bump, next } = nextAppSdkVersion();
+  assert.equal(inTree.length, 3);
+  assert.ok(['none', 'patch', 'minor', 'major'].includes(bump));
+  assert.deepEqual(next, applyBump(inTree, bump));
+});
+
 // ---------------------------------------------------------------------------
 // The guards.
 // ---------------------------------------------------------------------------
@@ -546,35 +669,84 @@ test('INVARIANT GUARD — the floor never names a version that will not be publi
   // Green before #344 too; it catches a typo in the other direction.
   const floorRange = readJson(BLOCKS_REACT_PKG).peerDependencies['@civitai/app-sdk'];
   const { floor } = parsePeerRange(floorRange);
-  const inTree = parseVersion(readJson(APP_SDK_PKG).version);
-
-  const dir = join(REPO_ROOT, '.changeset');
-  let bump = 'none';
-  for (const name of readdirSync(dir)) {
-    if (!name.endsWith('.md') || name === 'README.md') continue;
-    const text = readFileSync(join(dir, name), 'utf8');
-    const m = /^---\n([\s\S]*?)\n---/.exec(text);
-    if (!m) continue;
-    const line = m[1].split('\n').find((l) => /['"]@civitai\/app-sdk['"]\s*:/.test(l));
-    if (!line) continue;
-    if (/:\s*major/.test(line)) bump = 'major';
-    else if (/:\s*minor/.test(line) && bump !== 'major') bump = 'minor';
-    else if (/:\s*patch/.test(line) && bump === 'none') bump = 'patch';
-  }
-  const next =
-    bump === 'major'
-      ? [inTree[0] + 1, 0, 0]
-      : bump === 'minor'
-        ? [inTree[0], inTree[1] + 1, 0]
-        : bump === 'patch'
-          ? [inTree[0], inTree[1], inTree[2] + 1]
-          : inTree;
+  const { inTree, bump, next } = nextAppSdkVersion();
 
   assert.ok(
     cmp(floor, next) <= 0,
     `the peer floor ${floor.join('.')} is ABOVE the app-sdk version this branch will publish\n` +
       `(${next.join('.')} = in-tree ${inTree.join('.')} + the pending "${bump}" changeset), so no\n` +
       `release can ever satisfy it.`,
+  );
+});
+
+test('PREDICTED ENTRY — a ledger entry derived from this branch\'s own release plan still names the release this branch will publish', () => {
+  // 🔴 WHAT THIS CLOSES, AND WHY `floor <= next` ABOVE CANNOT.
+  //
+  // The four `APP_STORAGE_ERROR_*` entries in PEER_VALUE_SYMBOL_SINCE are the
+  // one kind of entry the ledger's own contract forbids: not measured against a
+  // published tarball, because no such tarball exists — DERIVED from
+  // `changeset status` on this base. The docblock up top says a guess "reads as
+  // a measurement", and that is precisely the hazard: nothing distinguishes
+  // `'0.49.0'` typed from a release plan from `'0.45.0'` read off a real
+  // tarball, so the prediction silently outlives the base it was computed on.
+  //
+  // THE DRIFT, which is #344 for a fourth time. Another app-sdk minor merges
+  // and publishes first. This branch is rebased; in-tree app-sdk is now 0.49.0
+  // and `next` is 0.50.0 — but the four entries still say 0.49.0, and so does
+  // the floor. Every existing assertion stays green: `bySymbol.required` is
+  // 0.49.0 so DERIVED FLOOR is satisfied, and `floor <= next` is satisfied from
+  // ABOVE only. A consumer then installs `app-sdk@0.49.0` (which really shipped,
+  // WITHOUT these symbols) alongside `blocks-react`, gets no peer warning, and
+  // dies at `import '@civitai/blocks-react/testing'`.
+  //
+  // So the rule here is EQUALITY, in both places, and it is deliberately the
+  // strict version of the rule the rest of this file avoids: it applies ONLY to
+  // entries explicitly declared as predictions, and it retires itself — once
+  // the release lands, the entries are measurements, the list below empties,
+  // and nothing here constrains anything.
+  const { inTree, bump, next } = nextAppSdkVersion();
+  const nextStr = next.join('.');
+
+  const drifted = PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH.filter(
+    (s) => PEER_VALUE_SYMBOL_SINCE[s] !== nextStr,
+  ).sort();
+  assert.deepEqual(
+    drifted,
+    [],
+    `PEER_VALUE_SYMBOL_SINCE records these symbols as first exported by a version this branch\n` +
+      `is NOT going to publish:\n\n` +
+      drifted.map((s) => `    ${s}: '${PEER_VALUE_SYMBOL_SINCE[s]}'  (branch publishes ${nextStr})`).join('\n') +
+      `\n\nThey are listed in PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH, i.e. they ship for the FIRST\n` +
+      `time in the app-sdk release this branch's own changeset produces, so their ledger entry is\n` +
+      `a PREDICTION about that release and has to name it exactly. The number moved because the\n` +
+      `base did: ${nextStr} = in-tree ${inTree.join('.')} + the pending "${bump}" changeset.\n` +
+      `Most likely another app-sdk release merged and published ahead of this branch, which means\n` +
+      `${PEER_VALUE_SYMBOL_SINCE[drifted[0]] ?? '(the old number)'} shipped WITHOUT these symbols\n` +
+      `while the floor still admits it — #344's exact shape, and invisible to every other test in\n` +
+      `this file (DERIVED FLOOR is satisfied by the stale entry, and the invariant above only\n` +
+      `bounds the floor from ABOVE).\n\n` +
+      `Re-run \`pnpm exec changeset status --verbose\`, set every entry above to the number it\n` +
+      `prints, raise the floor to match, and update the derivation in the package's\n` +
+      `\`comment-peerDependencies\` block. Once the release has actually published, MEASURE the\n` +
+      `entries against the real tarball and delete them from\n` +
+      `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH — a prediction that has come true is a measurement,\n` +
+      `and should stop being exempt from the measurement rule.`,
+  );
+
+  if (PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH.length === 0) return;
+
+  const floorRange = readJson(BLOCKS_REACT_PKG).peerDependencies['@civitai/app-sdk'];
+  const { floor } = parsePeerRange(floorRange);
+  assert.equal(
+    floor.join('.'),
+    nextStr,
+    `the declared @civitai/app-sdk peer floor is "${floorRange}", but this branch publishes\n` +
+      `${nextStr}, and ${PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH.length} ledger entries say these symbols\n` +
+      `first exist there:\n\n    ${PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH.join(', ')}\n\n` +
+      `While a prediction is pending, the floor must be EXACTLY the predicted release — not merely\n` +
+      `at-or-below it. Anything lower admits a published version that provably does not export\n` +
+      `them (the release does not exist yet), and npm will not warn, because the range is\n` +
+      `SATISFIED. Set the floor to >=${nextStr} <1.0.0.`,
   );
 });
 

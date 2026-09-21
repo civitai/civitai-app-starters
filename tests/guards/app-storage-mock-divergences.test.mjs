@@ -54,6 +54,21 @@ const DIVERGENCE_LEDGER = [
   // which is what the tests below enforce.
   { issue: 345, what: 'the byte gate refuses a shrinking overwrite the host admits', direction: 'restrictive' },
   { issue: 347, what: 'the byte budget is counted in wire bytes, the host counts stored bytes', direction: 'PERMISSIVE' },
+  // 🔴 ADDED WITH #343's FIX, NOT BY IT. Both of these were already true before
+  // the mock started emitting the host's own messages; they were simply absent
+  // from this ledger, so both READMEs rendered a list of "two known
+  // divergences" that was short by two. A list that is SHORT is the dangerous
+  // shape — it reads as exhaustive. #366 wrote them down; neither is fixed.
+  {
+    issue: 368,
+    what: 'no mock models the app-wide umbrella, so `app quota exceeded` / `app row limit exceeded` are unreachable outside production',
+    direction: 'restrictive',
+  },
+  {
+    issue: 369,
+    what: 'lowering `valueCapBytes` moves the gate but not the message, which still names the host’s real cap',
+    direction: 'neither',
+  },
 ];
 
 /** English count words, so the prose and the ledger cannot drift apart. */
@@ -158,12 +173,22 @@ test('every site states the COUNT, and the count matches the ledger', () => {
 // ---------------------------------------------------------------------------
 // #343's consequence in the one example a reader copies from — now CLOSED.
 //
-// Three tests lived here, pinning the shape of the defect: that `kv-storage`'s
+// TWO tests lived here (this file went 7 -> 5), plus the `errorArmPatternOf`
+// helper they shared:
+//   - 'INVARIANT GUARD — the kv-storage example matches the MOCK string and NOT
+//     the host message (#343)'
+//   - 'the kv-storage example DOCUMENTS the arm as mock-only, and no longer
+//     claims otherwise'
+// Both pinned the shape of the defect — that `kv-storage`'s
 // `storageFailureMessage()` matched the MOCK's `PAYLOAD_TOO_LARGE` and nothing
-// the host sends, and that the file said so out loud ("MOCK-ONLY"). All three
+// the host sends, and that the file said so out loud ("MOCK-ONLY"). Both
 // asserted the bug, correctly, while it existed. They are gone with it — a
 // guard that pins a fixed defect goes red on the fix, and leaving it to be
 // "adjusted" is how a test ends up asserting the opposite of the truth.
+//
+// The count is here so a later reader can verify the deletion was complete
+// against `git show <base>:<this file>`; it said "three" until #366, and it was
+// wrong.
 //
 // The successor claims live in `tests/guards/app-storage-error-strings.test.mjs`:
 // the example branches on `classifyAppStorageError()` and spells no host

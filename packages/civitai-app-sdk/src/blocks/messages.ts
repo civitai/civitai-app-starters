@@ -766,11 +766,11 @@ export type ParentToBlockMessage =
       // string for three releases, which is how the mistake survived
       // every local run; civitai/civitai-app-starters#343.)
       //
-      // The strings are enumerated, measured and single-sourced as
-      // `APP_STORAGE_HOST_ERROR_MESSAGES` in
-      // `@civitai/app-sdk/blocks` — five rejection sites plus the
+      // The strings are enumerated, measured and single-sourced in
+      // `blocks/appStorageErrors.ts` — five rejection sites plus the
       // bridge's `'storage request failed'` fallback. Branch with
-      // `classifyAppStorageError(err)` rather than spelling one here;
+      // `classifyAppStorageError(err)` from `@civitai/app-sdk/blocks`
+      // rather than spelling one here;
       // it is the same module the mock and the starter harnesses draw
       // their rejections from, so `dev:mock` now exercises the branch
       // production takes.

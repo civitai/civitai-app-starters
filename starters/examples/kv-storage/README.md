@@ -72,19 +72,36 @@ one it was, do not assume it was the value's size.
 🔴 **The rejection carries a host-authored MESSAGE, not a code.** There is no
 `PAYLOAD_TOO_LARGE` on the wire: that is the TRPC *code*, and the host's bridge
 forwards `err.message` (`per-user row limit exceeded`, `value exceeds 64KB
-cap`, …). The six strings a block can receive are exported as
-`APP_STORAGE_HOST_ERROR_MESSAGES` from `@civitai/app-sdk/blocks`, and this
-example's harness draws its rejections from the same module — so every branch
-below fires the same way here and in production.
+cap`, …). Six such strings exist; they are measured and single-sourced in the
+app-sdk's `blocks/appStorageErrors.ts`, and this example's harness draws its
+rejections from the same module — so the branches it CAN reach fire the same
+way here and in production.
+
+⚠️ **It reaches three of the six**, and that is a property of the harness, not
+of your block. It has one rejection site, a three-way choice between the
+per-value cap, the per-user byte budget and the per-user row budget. So:
+
+| reason | reachable under `pnpm dev:harness`? |
+| --- | --- |
+| `value-too-large` | yes |
+| `user-quota-exceeded` | yes |
+| `user-row-limit` | yes |
+| `app-quota-exceeded` / `app-row-limit` | **no** — nothing here models the app-wide umbrella ([#368](https://github.com/civitai/civitai-app-starters/issues/368)) |
+| `request-failed`, and the `default:` arm's `null` | **no** — the harness has no forced-failure knob (`createMockHost` does, via `storage: { failNext }`) |
+
+Those arms are still correct and still required — a block that drops them
+renders nothing at all for a real production rejection. They are simply not
+exercised by running this example locally, which is the #343 lesson with its
+polarity reversed: there, a branch fired locally and never live.
 
 `storageFailureMessage()` in `src/App.tsx` is the shape to copy: it calls
 `classifyAppStorageError(err)`, branches on the REASON, logs the host's words
 with `console.warn` and renders copy the app owns. Note which remedies it keeps
-apart — "too long, shorten it" and "no slots left, delete one" are different
-sentences because they are different fixes, and a `bytes`-only readout gives no
-warning about the second. Keep its `default:` arm: the classifier answers
-`null` for a message it does not recognise, and the host can reword one in any
-deploy.
+apart — four of them, because they are four different fixes: shorten the value,
+free a row, free bytes, and "this is the developer's problem, do not send the
+viewer on an errand". A `bytes`-only readout gives no warning about the second.
+Keep its `default:` arm: the classifier answers `null` for a message it does
+not recognise, and the host can reword one in any deploy.
 
 It did not always work this way. The arm used to be `/payload_too_large/i`,
 matching the mock's invented string and nothing the live host sends — so the
@@ -113,14 +130,19 @@ reported but did not enforce until recently, so a row-limit overrun used to
 pass here and fail only in production. set/get/delete/list/quota all work
 offline.
 
-⚠️ It is a simulation, not a replica. Two known divergences from the host:
+⚠️ It is a simulation, not a replica. Four known divergences from the host:
 
 - whether a shrinking overwrite is admitted when the store is already over the
   byte budget ([#345](https://github.com/civitai/civitai-app-starters/issues/345)
   — the host admits it, the harness does not);
 - 🔴 the UNIT the byte budget is counted in: wire bytes here, `octet_length(
   value::jsonb::text)` on the host, which is larger for every container — up to
-  ~1.5x ([#347](https://github.com/civitai/civitai-app-starters/issues/347)).
+  ~1.5x ([#347](https://github.com/civitai/civitai-app-starters/issues/347));
+- the **app-wide** ceilings do not exist here at all, so `app quota exceeded`
+  and `app row limit exceeded` can never be produced locally
+  ([#368](https://github.com/civitai/civitai-app-starters/issues/368));
+- in `createMockHost`, lowering `valueCapBytes` moves the gate but not the
+  message ([#369](https://github.com/civitai/civitai-app-starters/issues/369)).
 
 Passing here is evidence, not proof — and the second is **permissive**: it lets
 a write through locally that production will reject, which is the failure

@@ -1,7 +1,18 @@
 /**
- * The App Storage rejection MESSAGES the host puts on the wire — **the only
- * site in this repository that spells them**, sibling of
+ * The App Storage rejection MESSAGES the host puts on the wire — the only site
+ * in this repository that spells them **in executable code**, sibling of
  * `appStorageLimits.ts`, which owns the numbers.
+ *
+ * 🔴 **"IN EXECUTABLE CODE" IS THE WHOLE CLAIM — do not read it wider.** What
+ * `tests/guards/app-storage-error-strings.test.mjs` actually enforces is
+ * narrower still: every `error:` value inside an `APP_STORAGE_*_RESULT` payload
+ * in the scanned mocks must NAME a constant from this module. It sees nothing
+ * else. Hand-typed copies of these six strings live today in
+ * `mockHost.ts`'s option docblocks (which ship in the published `.d.ts`),
+ * in `blocks-react/test/validate.test.ts`'s fixture, in this guard's own
+ * control assertions, and in both READMEs — and every one of them is invisible
+ * to the guard. If the host rewords a message they go stale silently. Grep the
+ * literal, not just the identifier, when a message moves.
  *
  * 🔴 **THE WIRE CARRIES A MESSAGE, NOT A CODE.** The host's router throws a
  * `TRPCError` that has BOTH: `code: 'PAYLOAD_TOO_LARGE'` and a per-site
@@ -155,6 +166,15 @@ export const APP_STORAGE_ERROR_REQUEST_FAILED = 'storage request failed';
  * enforced by `tests/guards/app-storage-error-strings.test.mjs`, so a
  * hand-typed string cannot reappear at a mock rejection site.
  *
+ * 🔴 **NOT RE-EXPORTED FROM `@civitai/app-sdk/blocks`, ON PURPOSE.** Publishing
+ * this array invites `APP_STORAGE_HOST_ERROR_MESSAGES.includes(err.message)`,
+ * which is EQUALITY against a frozen snapshot — narrower than
+ * {@link isAppStorageHostErrorMessage}, and narrower than
+ * {@link classifyAppStorageError}, by exactly the per-value message, whose cap
+ * the host is free to move. That is the matcher shape #343 exists to
+ * eliminate, so it must not become public API. Reach it by file path from a
+ * test or a guard; a block branches on the classifier's reason.
+ *
  * 🔴 **A CLOSED SET IS A CLAIM ABOUT A MEASUREMENT, NOT A CONTRACT.** The host
  * can add a sixth site or reword an existing one in any deploy. Treat an
  * unrecognised string as "some ceiling, unknown which" — never as impossible.
@@ -249,6 +269,11 @@ export function classifyAppStorageError(error: unknown): AppStorageRejectionReas
  * Wider than `APP_STORAGE_HOST_ERROR_MESSAGES.includes(…)` by exactly one
  * case: the per-value message is a template on the host, so any cap spelling
  * is admitted — see {@link classifyAppStorageError}.
+ *
+ * Module-internal, like the array: it is a `classifyAppStorageError(…) !== null`
+ * convenience for `tests/guards/app-storage-error-strings.test.mjs`, which
+ * imports this file by PATH. A block wants the classifier's reason, not a
+ * yes/no on host prose.
  */
 export function isAppStorageHostErrorMessage(message: unknown): message is string {
   return typeof message === 'string' && classifyAppStorageError(message) !== null;

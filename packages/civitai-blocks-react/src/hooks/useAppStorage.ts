@@ -58,10 +58,9 @@ export interface UseAppStorage {
    *
    * 🔴 THE REJECTION CARRIES A HOST-AUTHORED MESSAGE, NOT A CODE. The thrown
    * `Error`'s `message` is verbatim whatever the host's bridge put on the
-   * wire — one of `APP_STORAGE_HOST_ERROR_MESSAGES`, e.g. `per-user row limit
-   * exceeded`. There is no `PAYLOAD_TOO_LARGE` to match: that is the TRPC
-   * CODE, and the bridge forwards `err.message` instead
-   * (civitai/civitai-app-starters#343).
+   * wire — e.g. `per-user row limit exceeded`. There is no
+   * `PAYLOAD_TOO_LARGE` to match: that is the TRPC CODE, and the bridge
+   * forwards `err.message` instead (civitai/civitai-app-starters#343).
    *
    * So: branch with `classifyAppStorageError(err)` from
    * `@civitai/app-sdk/blocks`, handle its `null` with a generic arm, and never
