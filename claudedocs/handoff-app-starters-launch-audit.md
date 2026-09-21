@@ -17,12 +17,57 @@ Audited for code quality, dead code, over-exporting, comment rot, and bloat.
 
 - **closing-condition:** `check` — every finding the audit classified launch-blocking is
   either published to npm or filed as a GitHub issue with its own closing condition.
-  Verify: `gh issue list --repo civitai/civitai-app-starters --state open --label bug`
-  returns no issue whose body says "launch-blocking" and is unreferenced by a merged PR.
+  🔴 **REPAIRED 2026-09-21. The previous wording grepped issue bodies for the token
+  `launch-blocking`, which nobody ever wrote — it could only ever return green.** Re-measured
+  before replacing it: **0** hits for the token against **11** open bug issues as the positive
+  control. The working check does not depend on a token at all:
+
+  ```bash
+  # The 13 audited blockers are #322–#334. The condition is that NONE is still open.
+  gh issue list --repo civitai/civitai-app-starters --state open --limit 100 \
+    --json number -q '[.[] | select(.number >= 322 and .number <= 334)] | length'
+  # => 0  ⇒ every audited blocker is closed.
+  # POSITIVE CONTROL, run it in the same breath or the zero means nothing:
+  gh issue list --repo civitai/civitai-app-starters --state open --limit 100 \
+    --json number -q 'length'        # => non-zero, so the query CAN return rows
+  ```
+  🔴 **When you write a closing-condition that greps for a token, grep for it once at write
+  time and confirm a non-zero count** — otherwise the condition is decorative. That is the
+  mistake this entry is repairing.
+
+  🔴 **ON REPAIR IT RETURNED 8 — AND 7 OF THOSE 8 WERE ALREADY FIXED IN CODE, MERELY NEVER
+  CLOSED.** This is the trap worth carrying forward: **an open-issue count is not a defect count**,
+  and the repaired check measures tracker hygiene, not the tree. Each of the 8 was re-measured
+  against `eed2df5` and 7 were found fixed by a dedicated PR that never said "Closes #N":
+
+  | issue | fixed by | verified how |
+  |---|---|---|
+  | #322 `scryptSync` per call | `d4f9da9` (#320) | `keyCache` memoizes derived keys by secret |
+  | #323 refresh in a Server Component | `3524fd6` (#336) | moved to `proxy.ts` middleware; docblock names the mechanism |
+  | #324 self-fetch → fd exhaustion | `4a3dd95` (#337) | module-relative `DIST_DIR`, boot-time read, `exit(1)`; its own grep returns 0 (control: 4 `fetch` hits) |
+  | #325 no `Secure`/HSTS | `c68cea4` (#338) | `production` from `APP_URL.startsWith('https://')`; `NODE_ENV` now in 4 docs (was 0 of 20) |
+  | #327 `useBlockResize` | `2ffdbc3` (#321) | dep array removed on purpose + `el === observedRef.current` |
+  | #329 `WorkflowStatus` twice | `b3e4f35` (#335) | renamed `OrchestratorWorkflowStatus` |
+  | #333 AES-256-CTR in docs | `d3f4296` (#319) | 0 files say CTR, 8 say GCM (enumerated — a recursive `grep` is `.gitignore`-blind here) |
+
+  All 7 were closed 2026-09-21 with that evidence attached. **The check now returns 1: only #328**
+  (34 duplicate export names) is a live blocker, and it is a design decision rather than a patch —
+  #346 was the attempt and was closed with 33 of 34 collisions standing. Controls on the re-run:
+  21 open issues total (positive), an impossible number range returns 0 (negative), and each
+  closure was confirmed by reading back `state == CLOSED` rather than by trusting an exit code.
+
+  Read "Round-1 DoD: ADDRESSED" below as *the round-1 write-up was addressed*, never as *the
+  blockers are fixed* — though as of this repair they very nearly are.
 
 ## State now
 
-- **Round-1 DoD: ADDRESSED (its check is vacuous — see Gotchas). That arc is CLOSED.**
+- **Round-1 DoD: 12 of the 13 audited blockers are fixed and closed. One is live: #328.**
+  🔴 Its check was vacuous and has been repaired (see Goal). The repair first returned **8**, but
+  **7 of those 8 were already fixed in code and merely never closed** — each traced to its fixing
+  PR, re-measured, and closed on 2026-09-21 with the evidence attached. The one live blocker is
+  **#328** (blocks-react/ui and components-react export **34** identical names — computed: 62 ∩ 64,
+  control passes). Earlier versions of this line said "That arc is CLOSED", which was true by
+  accident of a broken instrument; it is now nearly true on the merits.
 
 ### Merged / published so far
 | | |
@@ -52,11 +97,59 @@ Audited for code quality, dead code, over-exporting, comment rot, and bloat.
   comment on #366. The ladder ended on a **stated criterion** (round 5's own: *"neither needs a new
   round to verify beyond re-reading the sentences"*), with the sentences verified directly.
 - **#346 CLOSED**, not merged — reasoning + three reopen conditions on the PR, branch preserved.
-- **Base clone re-synced to `10db006`** (was 3 behind).
-- **Worktrees still on disk:** `-launchaudit` (this doc's branch), `-peermeasure` (#372, open),
-  `-storagefidelity` (#366, merged — **removable**), `-relfix` (on `zach/tmp-relfix`, the #371
-  retirement, now merged — **removable**).
-- **IN FLIGHT:** #372's CI. Nothing else.
+- ✅ **#372 MERGED `24db9c3`** (the ledger conversion) and **#356 MERGED `eed2df5`** (this doc
+  reached `main`). Both verified by CONTENT, not ancestry — a squash merge never makes the branch
+  head an ancestor.
+- **Base clone re-synced.** Worktrees `-launchaudit`, `-peermeasure`, `-storagefidelity`, `-relfix`
+  all **removed** after proving each HEAD was byte-identical to its merged PR head sha.
+- **IN FLIGHT:** nothing.
+
+### 🔴 THE 28 RECOVERED AUDIT FINDINGS — WHERE THEY LIVE
+
+The doc used to say the unfiled HIGH findings "survive only in a prior session's transcript and
+will age out". **They were recovered on 2026-09-21 and no longer decay.**
+
+- **Source:** Claude Code transcript `c5ec3943-03ce-4e46-8c4d-b1a8518411e6` (session opened
+  2026-09-20 21:39), transcript lines `[372, 413, 434, 450, 474, 497]` — six separate sub-audits
+  (packaging, export surface, comment rot, starter security, second-pass, SDK+hooks).
+- **Recovered to:** `/home/zach/workspace/civit/audit-findings-app-starters-2026-09-19.md`
+  (~167 KB: the six reports **verbatim**, plus the triage table below). Extraction was
+  positive- and negative-controlled.
+- 🔴 **DELIBERATELY OUTSIDE THIS REPO, and it must stay outside.** This repo is PUBLIC and the file
+  holds unfiled security findings in raw form. Filing them here as curated issues is the plan
+  (#322–#325 set that precedent); bulk-pasting 167 KB of raw findings is not the same act. **Do not
+  copy that file into the repo.**
+- 🔴 **It is on ONE host's disk and nothing but this bullet points at it.** If it is gone, the
+  transcript above is the re-derivation path — but transcripts age out, so re-recover before
+  relying on that.
+- **The count is 28, not 22.** The "22" in earlier versions of this doc was one round's tally; six
+  sub-audits were merged on recovery.
+
+**Triage against `origin/main` @ `eed2df5`, 2026-09-21** — verdicts measured, not inferred:
+
+| Verdict | Count | Which |
+|---|---|---|
+| **CONFIRMED LIVE** | 9 | 1 (duplicate co-installs), 2 (post-mortem prose published), 3 (dangling sourcemaps), 4 (half-barrel), 5 (`internal/` on main entry), 8 (`WorkflowBody` 4-vs-THREE), 9 (50-vs-47 step types), 10 (README wide-floor claim), 18 (`tiged`'d vulnerable `cookie`) |
+| **FIXED since audit** | 1 | 16 (whole `VITE_*` env inlined) — died with #361 → `0.55.1` |
+| **LIVE, partial** | 3 | 17 (SSR ships `me` whole), 22 (no unmount guard), 24 (`requestId` spellings) |
+| **ALREADY FILED** | 1 | 26 → #328 + #247 |
+| **NOT YET VERIFIED** | 12 | 6, 7, 11, 12, 13/20, 14, 15, 19, 21, 23, 25, 27, 28 |
+| **FILED AS ISSUES** | **0** | ← the open work |
+
+🔴 **Two of the confirmed-live findings were made WORSE by this arc, which is why they are cheap
+wins and should go first:**
+- **#2** — `comment-peerDependencies` is **79%** of blocks-react's published `package.json`
+  (10,071 B of 12,717 B), up from the audited 67% (4,827 of 7,231). The peer-floor incident
+  narrative this arc kept appending is what grew it. Every external developer installs it.
+- **#10** — `README.md:1589-1590` still tells readers the floor "stays" the deliberately-wide
+  `>=0.29.0 <1.0.0` so "npm will not warn you". Raising the floor to `>=0.49.0` in #371 made that
+  sentence more wrong, not less.
+
+🔴 **Two notes that save the next pass real work:** **13 and 20 are the SAME finding** seen by two
+sub-audits (liveHost dropping three block→parent bridges) — count it once; and **23 may already be
+fixed** — both CHANGELOGs describe a mutation sweep that killed "an unmapped `payloadValidatorFor`
+case". Check before filing. Where a triage instrument failed it is recorded as a failure in that
+file, not as a clean result.
 
 ## Open investigations — live diagnosis state
 
@@ -162,23 +255,34 @@ harm** — no other app-sdk minor took `0.49.0`.
 
 ## Next steps (ranked)
 
-1. **Merge #372** (the ledger conversion) once CI lands — comment-only, guards 158/0.
-   🔴 Read the check-runs rollup for the head sha and confirm `ci.yml` actually RAN: a PR here can
-   show a green rollup with **no CI run at all** (measured on #359; close/reopen fixed it).
-   IN FLIGHT: civitai/civitai-app-starters#372.
-   forcing: gate
-2. **Batch: everything filed with a closing condition, plus the doc PR.** #356 (merge this doc's PR
-   so the canonical doc is on `main`), #358, #362, #363, #364, #367 (no CI job runs
-   `changeset status`), #368, #369, #370 (no key-length cap anywhere local), #345/#347/#348/#349/#357,
-   and the undecided `@civitai/app-sdk` peer on `@civitai/client` at `^0.2.0-beta.98`.
+1. **Finish triaging the 12 unverified recovered findings, then file every confirmed-live one**
+   (9 confirmed + whatever the 12 yield), each with its own closing condition. Start with **#2** and
+   **#10** — both are confirmed, both were made worse by this arc, and both are small.
+   🔴 **Do NOT file a finding you have not re-measured**: 1 of the first 2 spot-checks was already
+   fixed, so the base rate of staleness in this set is real.
+   closing-condition: `check` — every finding in the recovered file's triage table reads either
+   FILED (with an issue number), FIXED, or NOT-A-DEFECT, with no row left at NOT YET VERIFIED.
    forcing: none
-4. **The 22 HIGH audit findings that were never filed** — they survive only in a prior session's
-   transcript and will age out. Reconstruct them from it, or accept the loss explicitly.
+2. **Batch: everything already filed with a closing condition.** #358, #362, #363, #364, #367 (no CI
+   job runs `changeset status`), #368, #369, #370 (no key-length cap anywhere local),
+   #345/#347/#348/#349/#357, and the undecided `@civitai/app-sdk` peer on `@civitai/client` at
+   `^0.2.0-beta.98` (#305). All are tracked, none advanced this session.
    forcing: none
+3. **#328 — the ONE live launch blocker: 34 names exported by both `blocks-react/ui` and
+   `@civitai/components-react`.** Computed on `eed2df5`: 62 ∩ 64 = **34**, control passes. This is
+   a design decision, not a patch — #346 (`@civitai/elements`) was the attempt, was closed, and its
+   own admission was that 33 of 34 collisions stand; #359 shipped the CSS-split control that
+   retired its byte case. Needs a direction chosen before it can be worked.
+   forcing: gate — it is the last thing between this arc and its closing condition.
+   closing-condition: `check` — the Goal's query returns 0.
+
+~~4. Repair this doc's own closing condition~~ ✅ **DONE 2026-09-21** — replacement in Goal,
+   validated with both controls; it now returns 1 (only #328).
 
 ## Defects (batched)
 
-- 22 HIGH audit findings remain UNFILED (rank 4).
+- **0 of the 28 recovered findings are FILED** (rank 1), and 12 are still unverified.
+- **#372 and #361 both merged with round 0 only** — the nine correctness axes never ran on either.
 - `pnpm lint` exits 1 repo-wide (`ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT`). Pre-existing; no CI job gates it.
 - `#361` shipped with round 0 only — the nine correctness axes never ran on it.
 - `packages/civitai-components/test/css-slice.test.ts`'s *"the per-component artifacts are NOT
@@ -227,6 +331,18 @@ harm** — no other app-sdk minor took `0.49.0`.
   behind node-only `./manifest` and `./vite` subpaths with `ajv`/`vite` as optional peers.
   `./blocks` keeps zero runtime dependencies. 906 hand-written rule lines deleted.
 
+- ✅ **REPAIRED 2026-09-21 — and the repair taught a second lesson the first one hid.** The
+  replacement (in Goal) is number-range based, needs no token, and was validated with both controls
+  before being written down. It returned **8**, not 0 — so the broken instrument really had been the
+  only reason the arc looked closeable.
+  🔴 **But 8 open issues turned out to be 1 real defect.** Seven were fixed in code and never
+  closed, because their fixing PRs never wrote "Closes #N". Acting on that 8 as though it were a
+  defect count would have meant re-fixing seven solved problems — and in this session it briefly
+  did: the count was reported as "eight live blockers, five of them security" before any of the
+  eight had been read against the tree. **A tracker query answers a question about the TRACKER.
+  Re-measure each item against the code before believing the total**, and prefer closing-conditions
+  that read the tree over ones that count issues. The original entry follows, because the lesson in
+  it is also still reusable:
 - 🔴 **This doc's own round-1 closing condition is a NON-INSTRUMENT.** It greps issue bodies for
   `launch-blocking`, a marker **nobody ever wrote** — zero occurrences repo-wide, including in the
   13 issues the doc itself calls blockers. It can only ever return green. When writing a
