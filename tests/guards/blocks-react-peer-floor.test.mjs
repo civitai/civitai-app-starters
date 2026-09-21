@@ -147,19 +147,22 @@ const PEER_VALUE_SYMBOL_SINCE = {
   //     `@civitai/app-sdk 0.49.0` — the tool that will actually run, answering
   //     with the number it will actually write.
   //
-  // ⚠️ RELEASE ORDERING IS THE RESIDUAL RISK: if another app-sdk minor merges
-  // and publishes before this PR does, 0.49.0 ships WITHOUT these symbols and
-  // this PR publishes 0.50.0. This branch was rebased onto 8971ba3 mid-flight
-  // and the derivation was re-run there, which is why the number above is a
-  // measurement of THIS base rather than of the one it was branched from.
+  // ⚠️ These four were PREDICTIONS while #366 was in flight — 0.49.0 did not
+  // exist, so they could not be read off a tarball like every other entry here.
+  // The release-ordering risk they carried (another app-sdk minor publishing
+  // first, taking 0.49.0, and pushing these symbols to 0.50.0) was held by
+  // `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH` + the `PREDICTED ENTRY` test, which
+  // re-derived the number from the tree on every run rather than trusting it.
   //
-  // 🔴 THAT RISK IS NOW MECHANICAL, NOT A NOTE ASKING SOMEONE TO REMEMBER.
-  // These four are declared in PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH, and the
-  // `PREDICTED ENTRY` test below re-derives the number from the tree on every
-  // run — so a rebase that moves the base reds THERE instead of drifting past
-  // the other assertions, which are all satisfied by a stale prediction.
-  // Delete the four from that list and re-measure against the real tarball once
-  // the release has published.
+  // 🔴 RESOLVED 2026-09-21 — the risk did not materialise. The Version Packages
+  // PR (#371) puts app-sdk 0.49.0 in-tree, `PREDICTION HAS COME TRUE` fired
+  // exactly as designed, and the list is now empty. These entries are therefore
+  // ordinary ledger rows again, and the floor stays at `>=0.49.0` — 0.49.0 does
+  // export them, so raising it would exclude a good release.
+  //
+  // Still owed, and the one thing NOT yet measured: re-read these four off the
+  // published 0.49.0 tarball once the release job has run. Until then they are
+  // a prediction that came true, which is not the same as a measurement.
   APP_STORAGE_ERROR_REQUEST_FAILED: '0.49.0',
   APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED: '0.49.0',
   APP_STORAGE_ERROR_USER_ROW_LIMIT: '0.49.0',
@@ -201,12 +204,19 @@ const PEER_VALUE_SYMBOL_SINCE = {
  * measurement and should stop being exempt from the measurement rule; a list
  * left populated after the release pins the floor to the NEXT release forever.
  */
-const PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH = [
-  'APP_STORAGE_ERROR_REQUEST_FAILED',
-  'APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED',
-  'APP_STORAGE_ERROR_USER_ROW_LIMIT',
-  'APP_STORAGE_ERROR_VALUE_TOO_LARGE',
-];
+// RETIRED 2026-09-21 on the Version Packages PR (#371) that releases app-sdk
+// 0.49.0 — which is what `PREDICTION HAS COME TRUE` fires on, and it did, on its
+// first real occasion. The four `APP_STORAGE_ERROR_*` entries in
+// `PEER_VALUE_SYMBOL_SINCE` above stay at `0.49.0` and the floor stays at
+// `>=0.49.0`: 0.49.0 genuinely exports them, so raising either would exclude a
+// good release — the #309/#317/#344 family with the sign flipped.
+//
+// Their entries are no longer exempt from the measurement rule. Re-measure them
+// against the published tarball once the release job has run:
+//   npm view @civitai/app-sdk@0.49.0 version
+// (Before the publish that answers E404, which is the CORRECT answer in that
+// state and not something to chase.)
+const PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH = [];
 
 /**
  * The same ledger for SUBPATHS. A bare `import '@civitai/app-sdk/safe-storage'`
