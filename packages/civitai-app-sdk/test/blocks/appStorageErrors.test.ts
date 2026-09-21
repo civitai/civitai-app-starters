@@ -176,10 +176,16 @@ describe('APP_STORAGE host error messages', () => {
       // missed — added here as evidence that the enumeration kept coming up
       // short, not to make the sample complete.
       'Apps are not enabled', // :153/:255/:257  UNAUTHORIZED — the feature-flag
-      //                         kill switch, thrown by the enforceAppBlocksFlag
-      //                         middleware `.use()`d on all five storage
-      //                         procedures (:470, :509, :938, :1022, :1106), so
-      //                         it fires before anything else on every call
+      //                         kill switch, thrown from TWO gates with one
+      //                         spelling: the enforceAppBlocksFlag middleware
+      //                         (:249, throwing :255/:257), `.use()`d BEFORE
+      //                         `.input()` on all five storage procedures
+      //                         (:470, :509, :938, :1022, :1106), so it fires
+      //                         before anything else on every call; and
+      //                         assertAppBlocksEnabledForTokenUser (:139-155,
+      //                         throwing :153), reached from
+      //                         resolveStorageContext. Grepping the middleware
+      //                         name does NOT find :153.
       'block token subject could not be resolved', // :148, from resolveStorageContext
       'review token subject could not be resolved', // :82
       'Apps authoring is not enabled for this account', // :89

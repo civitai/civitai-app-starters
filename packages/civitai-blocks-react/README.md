@@ -794,9 +794,11 @@ forever in production, classified `null`. **The reload the `null` arm below
 recommends does not fix it.** Cap or hash long keys in your block.
 
 That is the whole rule, and it is stated structurally on purpose: the SDK owns
-the ceiling vocabulary, not the host's error surface, so the honest claim is
-"ceilings classify, everything else is `null`" — which needs no list and stays
-true when the host adds or rewords a message. Two earlier drafts of this
+a chosen slice of the ceiling vocabulary, not the host's error surface, so the
+honest claim is "**these six** classify, everything else is `null`" — which
+needs no list and stays true when the host adds or rewords a message. Note it
+is deliberately *not* "every ceiling classifies": the zod key cap above is a
+ceiling that lands on `null` like everything else. Two earlier drafts of this
 section tried instead to enumerate the non-ceiling strings, and **both lists
 were short**; see the header of `blocks/appStorageErrors.ts` for what they
 missed and why no third list replaced them. `invalid block token` (an expired

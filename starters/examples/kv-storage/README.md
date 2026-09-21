@@ -78,7 +78,8 @@ the host's router, plus the bridge's `storage request failed` fallback — and
 this example's harness draws its rejections from the same module, so the
 branches it CAN reach fire the same way here and in production.
 
-🔴 **Six is the CEILING family, not everything that arrives.** The host's bridge
+🔴 **Six is the `PAYLOAD_TOO_LARGE` family plus the bridge's fallback, not
+everything that arrives — and not even every ceiling.** The host's bridge
 wraps each `apps.storage.*` call in a *blanket* `catch` and forwards the message
 on this same field, so authorization, approval and feature-flag failures — and
 tRPC's own zod input-validation messages, which never reach a handler at all —
@@ -96,12 +97,13 @@ Cap or hash long keys in your block.
 
 That rule is deliberately stated without a list of the non-ceiling strings.
 Two earlier drafts tried to enumerate them and both came up short; the honest,
-stable claim is the structural one — the six ceilings classify, everything else
-is `null` — and it stays true when the host adds or rewords a message.
+stable claim is the structural one — these six classify, everything else is
+`null` — and it stays true when the host adds or rewords a message.
 `invalid block token` (an expired token mid-session), `block instance revoked`
 and `Apps are not enabled` are *illustrations*, not a bound. See the header of
 the app-sdk's `blocks/appStorageErrors.ts` for the full reasoning and the
-re-derivation recipe, which is the authority here.
+re-derivation recipe — which beats any prose in this repo, but is **necessary,
+not sufficient**: it greps `TRPCError` throws, so it cannot see a zod cap.
 
 ⚠️ **It reaches three of the six**, and that is a property of the harness, not
 of your block. It has one rejection site, a three-way choice between the
