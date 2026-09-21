@@ -31,25 +31,32 @@ Audited for code quality, dead code, over-exporting, comment rot, and bloat.
 | `@civitai/components` / `-react` | **0.4.2** published same run (per-component CSS slices, exports held) |
 | **#366** | **MERGED `d057664`** — App Storage error fidelity; **#343 auto-closed** |
 
-- 🔴 **`@civitai/app-sdk 0.49.0` and `@civitai/blocks-react 0.56.0` are NOT published.** Registry
-  checked at handoff time: app-sdk **0.48.0**, blocks-react **0.55.1**. The Version Packages PR
-  **#371** is what publishes them.
-- **#371 state at handoff:** OPEN / MERGEABLE / **BLOCKED**, head **`75c711a`**, 15 checks SUCCESS
-  and **1 still running** — blocked on the pending check, nothing failed.
-- **`75c711a` is mine**, pushed to the bot branch `changeset-release/main`: it retires the
-  peer-floor prediction (see the investigation block below). Guards **158 pass / 0 fail**;
-  negative control (restore one entry) **157 / 1** on `PREDICTION HAS COME TRUE`'s own assertion,
-  so the retirement is not a blinding.
+- ✅ **#371 MERGED `10db0064` 2026-09-21T15:28:40Z; the release job published both packages.**
+  `@civitai/app-sdk` **0.49.0** and `@civitai/blocks-react` **0.56.0**, registry `time`
+  **2026-09-21T15:33:32Z**, `latest` moved to both. Release run `35619202423` green end-to-end
+  including its own post-publish `assert-published-versions` step.
+- **Publish verified by THREE claims, each with its own control** (a release run reporting success
+  is a claim about the RUN): (1) registry HAS it — packument via `json.loads(strict=False)`, both
+  targets PRESENT, prior versions PRESENT as positive control, `99.99.99` ABSENT as negative;
+  (2) it RESOLVES — `npm install --dry-run --prefer-online` rc 0 for both, `0.48.0` rc 0
+  (positive), `99.99.99` rc 1 `ETARGET` (negative); (3) the symbols are really in the tarball —
+  the table in the retired investigation below.
+- ✅ **The four `APP_STORAGE_ERROR_*` peer-floor entries are now MEASUREMENTS, not predictions.**
+  Converted in **#372** (comment-only, guards 158/0 unchanged). Floor proved **EXACT** from both
+  sides: `0.49.0` exports all four (34 symbols on `./blocks`), `0.48.0` exports **none** (29).
+- **`75c711a` was mine**, pushed to the bot branch `changeset-release/main`: it retired the
+  peer-floor prediction. Guards **158 pass / 0 fail**; negative control (restore one entry)
+  **157 / 1** on `PREDICTION HAS COME TRUE`'s own assertion, so the retirement was not a blinding.
 - **Audit ladder on #366: rounds 0–5, CLOSED.** Findings 5 → 4 → 5 → 3 → 2 → 2; payload
   324 → 269 → 256 → 122 → 75; scaffolding 0 for the last two. Every round's claims block is a PR
   comment on #366. The ladder ended on a **stated criterion** (round 5's own: *"neither needs a new
   round to verify beyond re-reading the sentences"*), with the sentences verified directly.
 - **#346 CLOSED**, not merged — reasoning + three reopen conditions on the PR, branch preserved.
-- **Base clone is 2 behind `origin/main`** — re-sync with
-  `git -C /home/zach/workspace/civit/civitai-app-starters fetch origin && git -C … merge --ff-only origin/main`.
-- **Worktrees still on disk:** `-launchaudit` (this doc's branch), `-storagefidelity` (#366, merged —
-  removable), `-relfix` (on `zach/tmp-relfix`, the #371 retirement — removable once #371 merges).
-- **IN FLIGHT:** #371's last CI check. Nothing else.
+- **Base clone re-synced to `10db006`** (was 3 behind).
+- **Worktrees still on disk:** `-launchaudit` (this doc's branch), `-peermeasure` (#372, open),
+  `-storagefidelity` (#366, merged — **removable**), `-relfix` (on `zach/tmp-relfix`, the #371
+  retirement, now merged — **removable**).
+- **IN FLIGHT:** #372's CI. Nothing else.
 
 ## Open investigations — live diagnosis state
 
@@ -89,7 +96,30 @@ Audited for code quality, dead code, over-exporting, comment rot, and bloat.
 - **Next probe:** in the `civitai/cli` repo (out of tree, not audited here):
   `find . -name '*.tmpl' -print0 | xargs -0 grep -n "blocks-react/testing"`
 
-### The four `APP_STORAGE_ERROR_*` peer-floor entries are a prediction that came true, NOT yet a measurement
+### ✅ RETIRED 2026-09-21 — the four `APP_STORAGE_ERROR_*` peer-floor entries, converted to measurement
+**Outcome, so the numbers outlive this block.** #371 merged `10db006`; app-sdk `0.49.0` published
+15:33:32Z; the four symbols were read off the published tarball with `0.48.0` as the control:
+
+| symbol | `0.48.0` | `0.49.0` |
+|---|---|---|
+| `APP_STORAGE_ERROR_REQUEST_FAILED` | ABSENT | **PRESENT** |
+| `APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED` | ABSENT | **PRESENT** |
+| `APP_STORAGE_ERROR_USER_ROW_LIMIT` | ABSENT | **PRESENT** |
+| `APP_STORAGE_ERROR_VALUE_TOO_LARGE` | ABSENT | **PRESENT** |
+| total exports on `./blocks` | 29 | 34 |
+
+🔴 **The `0.48.0` column is the load-bearing half and is easy to skip.** Measuring only `0.49.0`
+proves the floor SUFFICIENT while leaving open that it is too HIGH — which is #309/#317/#344 with
+the sign flipped (a floor above the truth excludes a good release: spurious peer warnings,
+`--strict-peer-deps` install failures). `0.48.0` exporting none of the four is what makes
+`>=0.49.0` **EXACT**. Controls: the `29 → 34` delta is the probe moving (positive); an impossible
+symbol read ABSENT on both (negative); published `blocks-react@0.56.0` declares
+`>=0.49.0 <1.0.0` and `--dry-run` resolves app-sdk `0.49.0` under it (cross-check).
+Landed as **#372**, comment-only, guards 158/0 unchanged. **The prediction never materialised into
+harm** — no other app-sdk minor took `0.49.0`.
+
+<details><summary>Original investigation block (superseded — kept for the reasoning trail)</summary>
+
 - as-of: 2026-09-21
 - **Symptom + exact repro:** `packages/civitai-blocks-react/package.json` declares
   `"@civitai/app-sdk": ">=0.49.0 <1.0.0"`, and `PEER_VALUE_SYMBOL_SINCE` in
@@ -128,21 +158,16 @@ Audited for code quality, dead code, over-exporting, comment rot, and bloat.
   All four PRESENT ⇒ the ledger entries are measurements; retire this block. Any ABSENT ⇒ the floor
   is wrong and the entries must be corrected to the version that does export them.
 
+</details>
+
 ## Next steps (ranked)
 
-1. **Merge #371 once its last check lands — this is the publish.** Verify the bumps by CONTENT
-   first (`@civitai/app-sdk 0.49.0`, `@civitai/blocks-react 0.56.0` on
-   `origin/changeset-release/main`), never `mergeStateStatus`: a Version PR can be stale and still
-   read MERGEABLE, measured on #350 in this arc.
-   IN FLIGHT: civitai/civitai-app-starters#371.
+1. **Merge #372** (the ledger conversion) once CI lands — comment-only, guards 158/0.
+   🔴 Read the check-runs rollup for the head sha and confirm `ci.yml` actually RAN: a PR here can
+   show a green rollup with **no CI run at all** (measured on #359; close/reopen fixed it).
+   IN FLIGHT: civitai/civitai-app-starters#372.
    forcing: gate
-2. **After the publish, do BOTH halves and report the pair.** (a) Verify by RESOLVING —
-   `npm install --dry-run --prefer-online @civitai/app-sdk@0.49.0`, with `0.48.0` as the positive
-   control and a non-existent version as the negative; this pipeline has a recorded history of a
-   version string reading fine while the package would not install. (b) Run the Open-investigations
-   probe above to convert the four ledger entries from prediction to measurement.
-   forcing: gate
-3. **Batch: everything filed with a closing condition, plus the doc PR.** #356 (merge this doc's PR
+2. **Batch: everything filed with a closing condition, plus the doc PR.** #356 (merge this doc's PR
    so the canonical doc is on `main`), #358, #362, #363, #364, #367 (no CI job runs
    `changeset status`), #368, #369, #370 (no key-length cap anywhere local), #345/#347/#348/#349/#357,
    and the undecided `@civitai/app-sdk` peer on `@civitai/client` at `^0.2.0-beta.98`.
@@ -389,10 +414,19 @@ Audited for code quality, dead code, over-exporting, comment rot, and bloat.
   becomes possible. Round 5 then found its first remedy step would have raised the floor, excluding
   a good release. Both fixes are visible in the message it actually printed on #371: the runnable
   steps lead, and it says in capitals **DO NOT raise the floor**. The retirement is `75c711a`.
-- 🔴 **A "prediction that came true" is still not a measurement.** The four ledger entries now name
-  a version that will exist, derived from `changeset status` rather than from a tarball. The ledger's
-  own docblock calls a guess worse than no ledger *because it reads as a measurement*. Converting it
-  is rank 2, not a formality.
+- 🔴 **A "prediction that came true" is still not a measurement.** ✅ **CONVERTED 2026-09-21 in
+  #372** — the four ledger entries were re-read off the published `0.49.0` tarball. The entry stands
+  as the general rule: a number derived from `changeset status` reads exactly like one read off a
+  tarball, and the ledger's own docblock calls a guess worse than no ledger *because* of that.
+  Converting it was rank 2, not a formality.
+- 🔴 **MEASURING ONLY THE TARGET VERSION PROVES A FLOOR *SUFFICIENT*, NEVER *EXACT* — YOU MUST ALSO
+  MEASURE THE VERSION BELOW IT.** Reading the four symbols off `0.49.0` and stopping would have
+  confirmed `>=0.49.0` admits nothing broken while leaving *too high* wide open — and too-high is a
+  real defect with the sign flipped (excludes a good release ⇒ spurious peer warnings,
+  `--strict-peer-deps` install failures), the shape #309/#317/#344 keeps regenerating. `0.48.0`
+  exporting **none** of the four is the half that makes the floor exact. Generalise: **a
+  one-sided read of a boundary cannot tell you the boundary is in the right place** — and the
+  export-count moving (29 → 34) is what proves the probe was even looking at two different tarballs.
 - 🔴 **`grep` PATTERNS ARE A DEPENDENCY YOU DID NOT PIN — TWO INSTRUMENT FAILURES THIS SESSION, BOTH
   RETURNING A CLEAN-LOOKING ZERO.** (a) A positive control searched `"try reloading"` against a file
   containing `"Try reloading"` — a **case** mismatch — and returned 0 right beside the result it was
