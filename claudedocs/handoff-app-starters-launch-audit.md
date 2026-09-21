@@ -332,6 +332,15 @@ published `0.55.1` (clean) with a negative control importing `mockParentMessage`
 - **Decision: do NOT force-push to correct a commit message on a PR with review threads.** Record
   the correction in a later commit and a PR comment instead.
 
+- 📍 **Where the `0.55.1` / `0.4.2` release evidence LIVES, since this doc's status section is
+  replaced on every update.** The three-stage validation — registry resolve with positive *and*
+  negative controls, published-tarball bundle repro, and a real `civitai-block-starter` `vite build`
+  — was measured on 2026-09-21 and the full tables are a **comment on issue #360**, which is durable
+  and will outlive any rewrite here. The headline pair, so a reader knows what they are looking for:
+  the decoy sentinel appears in **0** files at `0.55.1` and **1** file at `0.55.0`, in both the
+  direct bundle and the real starter build, with both artifacts non-empty. The *method* is the
+  "VERIFY A PUBLISH BY THREE SEPARATE CLAIMS" entry above; the *numbers* are on #360.
+
 ## How to verify
 
 `4a359be` — that the release hazard is actually gone (the point of the change):
