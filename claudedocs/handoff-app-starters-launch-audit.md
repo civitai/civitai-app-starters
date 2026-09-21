@@ -23,27 +23,33 @@ Audited for code quality, dead code, over-exporting, comment rot, and bloat.
 ## State now
 
 - **Round-1 DoD: ADDRESSED (its check is vacuous — see Gotchas). That arc is CLOSED.**
-- **Published 2026-09-21T02:44Z and verified three ways with controls:**
-  `@civitai/blocks-react@0.55.1`, `@civitai/components@0.4.2`, `@civitai/components-react@0.4.2`.
-  Merged #361 (`b22670b`), #359 (`e06173f`), Version PR #365 (`8971ba3`). No partial publish.
 
-### Open now
-| PR | head | state | what |
-|---|---|---|---|
-| **#366** | `c58038d` | OPEN/MERGEABLE/CLEAN, CI 13/13 | App Storage error fidelity (#343) — **round 0 done, round 1 NOT run** |
-| **#356** | — | OPEN | this handoff doc |
+### Merged / published so far
+| | |
+|---|---|
+| `@civitai/blocks-react` | **0.55.1** published 2026-09-21T02:44Z (detector env-inlining security fix) |
+| `@civitai/components` / `-react` | **0.4.2** published same run (per-component CSS slices, exports held) |
+| **#366** | **MERGED `d057664`** — App Storage error fidelity; **#343 auto-closed** |
 
-- **#346 CLOSED** (not merged) with reasoning + 3 checkable reopen conditions; branch preserved.
-- **Issues open:** #343 (being closed by #366), #345, #347, #348, #349, #357, #358, #362, #363,
-  **#367** (no CI `changeset status`), **#368**, **#369** (the two mock divergences), #364.
-  Plus 6 dependabot PRs including `zod 3 → 4` (a major on a published SDK's dep).
-- **IN FLIGHT:** nothing. Worktree `civitai-app-starters-storagefidelity` still exists for #366.
-
-### Rank 1 of the previous list turned out to be ALREADY DONE
-`civitai/cli`'s `page-money` templates no longer import `createLiveHost` or `mockParentMessage`;
-the pin is `^0.55.0`, not `^0.53.0`. Verified by typechecking the exact template import set against
-published `0.55.1` (clean) with a negative control importing `mockParentMessage` (fails with
-`has no exported member`). **The investigation block for it is retired below.**
+- 🔴 **`@civitai/app-sdk 0.49.0` and `@civitai/blocks-react 0.56.0` are NOT published.** Registry
+  checked at handoff time: app-sdk **0.48.0**, blocks-react **0.55.1**. The Version Packages PR
+  **#371** is what publishes them.
+- **#371 state at handoff:** OPEN / MERGEABLE / **BLOCKED**, head **`75c711a`**, 15 checks SUCCESS
+  and **1 still running** — blocked on the pending check, nothing failed.
+- **`75c711a` is mine**, pushed to the bot branch `changeset-release/main`: it retires the
+  peer-floor prediction (see the investigation block below). Guards **158 pass / 0 fail**;
+  negative control (restore one entry) **157 / 1** on `PREDICTION HAS COME TRUE`'s own assertion,
+  so the retirement is not a blinding.
+- **Audit ladder on #366: rounds 0–5, CLOSED.** Findings 5 → 4 → 5 → 3 → 2 → 2; payload
+  324 → 269 → 256 → 122 → 75; scaffolding 0 for the last two. Every round's claims block is a PR
+  comment on #366. The ladder ended on a **stated criterion** (round 5's own: *"neither needs a new
+  round to verify beyond re-reading the sentences"*), with the sentences verified directly.
+- **#346 CLOSED**, not merged — reasoning + three reopen conditions on the PR, branch preserved.
+- **Base clone is 2 behind `origin/main`** — re-sync with
+  `git -C /home/zach/workspace/civit/civitai-app-starters fetch origin && git -C … merge --ff-only origin/main`.
+- **Worktrees still on disk:** `-launchaudit` (this doc's branch), `-storagefidelity` (#366, merged —
+  removable), `-relfix` (on `zach/tmp-relfix`, the #371 retirement — removable once #371 merges).
+- **IN FLIGHT:** #371's last CI check. Nothing else.
 
 ## Open investigations — live diagnosis state
 
@@ -83,43 +89,79 @@ published `0.55.1` (clean) with a negative control importing `mockParentMessage`
 - **Next probe:** in the `civitai/cli` repo (out of tree, not audited here):
   `find . -name '*.tmpl' -print0 | xargs -0 grep -n "blocks-react/testing"`
 
+### The four `APP_STORAGE_ERROR_*` peer-floor entries are a prediction that came true, NOT yet a measurement
+- as-of: 2026-09-21
+- **Symptom + exact repro:** `packages/civitai-blocks-react/package.json` declares
+  `"@civitai/app-sdk": ">=0.49.0 <1.0.0"`, and `PEER_VALUE_SYMBOL_SINCE` in
+  `tests/guards/blocks-react-peer-floor.test.mjs` records four symbols at `0.49.0`:
+  `APP_STORAGE_ERROR_{REQUEST_FAILED,USER_QUOTA_EXCEEDED,USER_ROW_LIMIT,VALUE_TOO_LARGE}`.
+  Every OTHER entry in that ledger was read off a published tarball. These four could not be —
+  `0.49.0` did not exist when they were written.
+- **Observed (with values):** `npm view @civitai/app-sdk version` → **0.48.0**; `0.49.0` is absent
+  from the registry. `changeset status --verbose` on `#371`'s base computes `@civitai/app-sdk
+  0.49.0` / `@civitai/blocks-react 0.56.0`, which is what the floor was set to match.
+  `via: measurement`.
+- **Ruled out:** "the release-ordering risk materialised" — FALSE. The hazard was that another
+  app-sdk `minor` publishes first, takes `0.49.0`, and pushes these symbols to `0.50.0` while the
+  floor still says `>=0.49.0` (that is #309/#317/#344 a fourth time). It did not happen: `origin/main`
+  carried no other pending changeset and `#371` bumps app-sdk to exactly `0.49.0`. `via: measurement`.
+- **Ruled out:** "the floor should be raised to `0.50.0` now that the guard is red" — FALSE and
+  actively harmful. `0.49.0` genuinely exports all four, so a floor above it excludes a good release
+  and causes spurious peer warnings and `--strict-peer-deps` install failures — the same family with
+  the sign flipped. The guard's own remedy text says this in capitals. `via: doc`.
+- **Leading hypothesis:** nothing is wrong; the prediction is simply unconverted. `PREDICTION HAS
+  COME TRUE` fired on `#371` exactly as designed (its first real occasion), `75c711a` emptied
+  `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH`, and the floor and ledger were deliberately left alone.
+  What remains is to read the four symbols off the real tarball.
+- **Next probe** — run AFTER `#371` merges and the release job publishes; before that the first
+  command answers `E404`, which is the CORRECT answer in that state and not something to chase:
+  ```bash
+  npm view @civitai/app-sdk@0.49.0 version
+  cd "$(mktemp -d)" && printf '{"name":"v","private":true,"type":"module"}' > package.json
+  npm i @civitai/app-sdk@0.49.0 --silent --prefer-online
+  node --input-type=module -e "
+  import * as b from '@civitai/app-sdk/blocks';
+  for (const s of ['APP_STORAGE_ERROR_REQUEST_FAILED','APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED',
+                   'APP_STORAGE_ERROR_USER_ROW_LIMIT','APP_STORAGE_ERROR_VALUE_TOO_LARGE'])
+    console.log(s, s in b ? 'PRESENT' : '🔴 ABSENT');"
+  ```
+  All four PRESENT ⇒ the ledger entries are measurements; retire this block. Any ABSENT ⇒ the floor
+  is wrong and the entries must be corrected to the version that does export them.
+
 ## Next steps (ranked)
 
-1. **Run round 1 (the nine correctness axes) on #366 before merging.** Round 0 REPORTS and does not
-   move the ladder, so #366 has had no correctness audit. Precedent from this arc: round 1 on #359
-   found that its headline measurement credited the components split with deleting another
-   package's CSS — not reachable from a requirements pass.
-   `python3 ~/workspace/devrc/scripts/audit-dispatch.py 366 --round 1`
+1. **Merge #371 once its last check lands — this is the publish.** Verify the bumps by CONTENT
+   first (`@civitai/app-sdk 0.49.0`, `@civitai/blocks-react 0.56.0` on
+   `origin/changeset-release/main`), never `mergeStateStatus`: a Version PR can be stale and still
+   read MERGEABLE, measured on #350 in this arc.
+   IN FLIGHT: civitai/civitai-app-starters#371.
    forcing: gate
-2. **Then merge #366 and publish.** It takes `@civitai/app-sdk` and `@civitai/blocks-react` both
-   `minor`. 🔴 **Re-run `changeset status --verbose` immediately before merging** — the peer floor
-   `>=0.49.0` is a PREDICTION about a version that does not exist on npm, and #367 exists because no
-   CI job checks it. The new `PREDICTED ENTRY` guard reds if the base moved, but read the number
-   yourself too.
+2. **After the publish, do BOTH halves and report the pair.** (a) Verify by RESOLVING —
+   `npm install --dry-run --prefer-online @civitai/app-sdk@0.49.0`, with `0.48.0` as the positive
+   control and a non-existent version as the negative; this pipeline has a recorded history of a
+   version string reading fine while the package would not install. (b) Run the Open-investigations
+   probe above to convert the four ledger entries from prediction to measurement.
    forcing: gate
-3. **Issue #343 closes when #366 merges** — verify by the issue's own condition (mock emits no
-   string the host cannot produce; the contract doc describes a message; kv-storage's branch is
-   reachable), not by the merge.
-   forcing: user
-4. **Batch: everything filed with a closing condition** — #367, #368, #369, #358, #362, #363, #364,
-   #345/#347/#348/#349/#357, and the undecided `@civitai/app-sdk` peer on `@civitai/client` at
-   `^0.2.0-beta.98`.
+3. **Batch: everything filed with a closing condition, plus the doc PR.** #356 (merge this doc's PR
+   so the canonical doc is on `main`), #358, #362, #363, #364, #367 (no CI job runs
+   `changeset status`), #368, #369, #370 (no key-length cap anywhere local), #345/#347/#348/#349/#357,
+   and the undecided `@civitai/app-sdk` peer on `@civitai/client` at `^0.2.0-beta.98`.
    forcing: none
-5. **The 22 HIGH audit findings that were never filed** — they survive only in a prior session's
-   transcript. Reconstruct them or accept the loss explicitly.
+4. **The 22 HIGH audit findings that were never filed** — they survive only in a prior session's
+   transcript and will age out. Reconstruct them from it, or accept the loss explicitly.
    forcing: none
 
 ## Defects (batched)
 
-- 22 HIGH audit findings remain UNFILED (rank 5).
+- 22 HIGH audit findings remain UNFILED (rank 4).
 - `pnpm lint` exits 1 repo-wide (`ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT`). Pre-existing; no CI job gates it.
 - `#361` shipped with round 0 only — the nine correctness axes never ran on it.
-- `styles.generated.ts`'s `.d.ts` is un-annotated, so tsc inlines the sheet as a string-literal type
-  (33 KB); the new slices annotate `: string`.
-- `#366`'s fix commit `4266263` says "three genuinely different remedies" where `App.tsx` has four
-  non-default arms. **Deliberately NOT corrected** — rewording it means force-pushing and detaching
-  the PR's review threads. The correction is in the later commit message, the PR comment and the
-  in-tree README.
+- `packages/civitai-components/test/css-slice.test.ts`'s *"the per-component artifacts are NOT
+  published"* can time out at its 5 s budget under `pnpm -r test` concurrency (it shells out to
+  `npm pack --dry-run`, ~8 s under load); passes standalone at ~2.6 s. Wants a `testTimeout`, not a re-run.
+- `#366`'s commit `4266263` says "three genuinely different remedies" where `App.tsx` has four
+  non-default arms. Deliberately not corrected — rewording means force-pushing and detaching the
+  PR's review threads; the correction is in a later commit, the PR comment and the in-tree README.
 
 ## Gotchas / decisions / dead-ends
 
@@ -340,6 +382,30 @@ published `0.55.1` (clean) with a negative control importing `mockParentMessage`
   the decoy sentinel appears in **0** files at `0.55.1` and **1** file at `0.55.0`, in both the
   direct bundle and the real starter build, with both artifacts non-empty. The *method* is the
   "VERIFY A PUBLISH BY THREE SEPARATE CLAIMS" entry above; the *numbers* are on #360.
+
+- 🔴 **A GUARD WRITTEN FOR A FUTURE STATE MUST BE WATCHED IN THAT STATE, AND THIS ONE WAS.**
+  `PREDICTION HAS COME TRUE` exists because round 3 found the peer-floor guard claimed *"it retires
+  itself"* and did not — it stayed **green** on the Version Packages PR, the exact moment cleanup
+  becomes possible. Round 5 then found its first remedy step would have raised the floor, excluding
+  a good release. Both fixes are visible in the message it actually printed on #371: the runnable
+  steps lead, and it says in capitals **DO NOT raise the floor**. The retirement is `75c711a`.
+- 🔴 **A "prediction that came true" is still not a measurement.** The four ledger entries now name
+  a version that will exist, derived from `changeset status` rather than from a tarball. The ledger's
+  own docblock calls a guess worse than no ledger *because it reads as a measurement*. Converting it
+  is rank 2, not a formality.
+- 🔴 **`grep` PATTERNS ARE A DEPENDENCY YOU DID NOT PIN — TWO INSTRUMENT FAILURES THIS SESSION, BOTH
+  RETURNING A CLEAN-LOOKING ZERO.** (a) A positive control searched `"try reloading"` against a file
+  containing `"Try reloading"` — a **case** mismatch — and returned 0 right beside the result it was
+  meant to validate; the pair would have read as "claim gone, control fine". (b) A results grep used
+  TAP's `^# pass` against `node --test`, which prints `ℹ pass 158` — so BOTH the clean run and the
+  mutant printed nothing, which would have read as "the negative control did not fire". **Validate
+  the pattern against known-present text before reading any zero, and read the runner's actual
+  output format rather than assuming TAP.**
+- 🔴 **`gh api …/actions/runs?head_sha=` NEEDS THE FULL SHA.** A short sha returns
+  `total_count=0` — reproduced — which is indistinguishable from "CI never ran" and would send you
+  to close/reopen a PR whose CI was fine.
+- **Decision: do NOT force-push to correct a commit message on a PR carrying review threads.**
+  Record the correction in a later commit and a PR comment instead.
 
 ## How to verify
 
