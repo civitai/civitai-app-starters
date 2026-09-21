@@ -45,8 +45,8 @@ constant — **import them, never retype a number**:
 | `APP_STORAGE_MAX_BYTES` | total stored bytes per (**app**, viewer) |
 | `APP_STORAGE_MAX_ROWS` | total rows per (**app**, viewer) |
 
-🔴 **They are that budget's ceilings as of the SDK version you installed, not
-live figures.** A constant compiled into a published package is a frozen number
+🔴 **They are the byte/row budget's ceilings as of the SDK version you
+installed, not live figures.** A constant compiled into a published package is a frozen number
 — the same failure mode as the stale figure this example used to print, with
 one copy instead of nine. **`getQuota()` is the authority for those two
 numbers**: render its `limitBytes` / `limitRows` anywhere a viewer sees a number
