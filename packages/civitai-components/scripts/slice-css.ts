@@ -58,7 +58,11 @@
  * What DOES see that is a count of the raw `/* ----- ` occurrences in the sheet
  * against `sections.length`, derived independently of `SECTION_RE` —
  * `test/css-slice.test.ts` carries it as the boundary guard, watched red on
- * exactly the mutant above.
+ * exactly the mutant above. It is not the only red on that mutant today: three
+ * assertions pinned to the literal 14 also fail. It is the only one that keeps
+ * failing once the sheet grows past 14 sections, because it compares two counts
+ * of the same sheet instead of a count against a typed-in number — measured in
+ * that test's docblock.
  *
  * Each emitted slice is `header + LAYER_OPEN + base + <its section> + tail`, so
  * every slice is a STANDALONE, valid, layered stylesheet. Importing two of them

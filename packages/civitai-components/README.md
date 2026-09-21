@@ -105,10 +105,18 @@ you mean, and the two answers are far apart:
 > **12,038 B** between the two pairs belongs to that hypothetical change, not to
 > this one.
 
+> 🔴 **Only the first row is a bundle that exists.** All four split rows replace
+> the whole-pack `componentsCss` with slices, and no shipped code imports the
+> slices — only this repo's measurement script and test suite read them.
+> `@civitai/blocks-react` injects the whole pack, deliberately (below). The four
+> rows price a change; none of them is banked.
+
 Reproduce with `pnpm measure:css-split` from the repo root; run it with
-`MEASURE_CARRIERS=1` to see, per row, how many bytes of each package's sheet
-the row actually removed (expected: `interactive: removed 0 B` on the rows
-labelled `[SHIPPED]`).
+`MEASURE_CARRIERS=1` to see, per row, which package's sheet the row actually
+touched — expected: `interactive: removed 0` on the two middle rows, non-zero
+only on the bottom two. The magnitudes it prints are `String.length` deltas on
+the carrier's *module* source, so they are neither bytes nor stylesheet bytes;
+zero-vs-non-zero is the part that carries the claim.
 
 The split is asserted **byte-identical on reassembly** before anything is
 written (`scripts/slice-css.ts`, guarded with its negative control in
@@ -118,7 +126,10 @@ are exactly the input sheet. It does **not** prove that the sheet was cut in the
 right places: a section marker the slicer fails to recognise merges into the
 previous slice and never gets its own `.css`, and reassembly is still perfect.
 A separate boundary guard counts the raw `/* ----- ` markers in the sheet and
-pins that count against the number of sections, which is what catches that.
+pins that count against the number of sections. Other assertions in that suite
+happen to fail on such a mis-cut today as well, because they pin the literal 14;
+the boundary guard is the one that keeps catching it after the sheet grows,
+since it compares two counts of the same sheet rather than a typed-in number.
 
 The component vocabulary is derived from the `data-civitai-ui` selectors each
 section contains — a test pins that set equal to `COMPONENT_NAMES` in both
@@ -133,7 +144,10 @@ directions.
 - Authored in plain CSS with native nesting (no preprocessor); `src/components.css`
   is the single source of truth (copied to `dist/components.css`, embedded as
   the injectable string, and sliced per component — all three guarded by parity
-  tests, the slicing additionally by a byte-identical-reassembly assertion).
+  tests; the slicing additionally by the boundary guard described above, which
+  is what pins where the sheet was cut. The byte-identical-reassembly assertion
+  also runs before anything is written, but it proves the partition arithmetic
+  only, not the cut points).
 
 ## Markup contract
 

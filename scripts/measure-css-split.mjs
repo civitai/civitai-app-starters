@@ -25,13 +25,17 @@
  * `measure:css-split` script — a measurement kept past the question it answers
  * is upkeep with no reader.
  *
- * 🔴 This measures a path that is NOT taken. `blocks-react` is deliberately
+ * 🔴 EVERY ROW BUT `A` MEASURES A PATH NO SHIPPED CODE TAKES. B, C, D and E
+ * all replace `componentsCss` wholesale, which requires shipped code to import
+ * the per-component slices — and none does; only this script and
+ * `test/css-slice.test.ts` read them. `blocks-react` is deliberately
  * unchanged, because injecting the whole pack is a DOCUMENTED contract
  * (MARKUP.md): rendering any one `/ui` component styles hand-written
  * `data-civitai-ui="…"` markup elsewhere on the page. Whether to break that
- * for the bytes is the decision this number informs — see issue #358.
+ * for the bytes is the decision these numbers inform — see issue #358. Row A
+ * is the only row that is a bundle anything ships.
  *
- * ── 🔴 TWO SPLITS ARE IN PLAY. ONLY ONE OF THEM EXISTS. ───────────────────
+ * ── 🔴 TWO SHEETS ARE IN PLAY. ONLY ONE OF THEM IS SLICED. ────────────────
  * A `blocks-react/ui` Button bundle carries CSS from TWO packages:
  *
  *   `componentsCss`      — `@civitai/components`' whole sheet. THIS is what
@@ -46,21 +50,26 @@
  *                          bundle carries all ~12 KB of it either way.
  *
  * So there are two different questions, and this script answers BOTH rather
- * than one number that quietly answers the wrong one:
+ * than one number that quietly answers the wrong one. 🔴 THE ROWS ARE LABELLED
+ * BY WHICH PACKAGE'S SHEET IS SLICED — not by what ships, because apart from A
+ * none of them ships:
  *
- *   ROWS B, C — the `@civitai/components` split ALONE. `INTERACTIVE_STYLES`
- *               is left fully intact. 🔴 THIS IS WHAT THE COMPONENTS SPLIT
- *               ACTUALLY DELIVERS, and the number issue #358 must decide on.
- *   ROWS D, E — the same, PLUS a hypothetical second split of
+ *   ROWS B, C — ONLY `@civitai/components`' sheet is sliced. `INTERACTIVE_STYLES`
+ *               is left fully intact. These rows ISOLATE what this repo's split
+ *               contributes on its own. They are not a bundle any code
+ *               produces: no shipped code imports the slices.
+ *   ROWS D, E — BOTH sheets sliced — the above PLUS a second split of
  *               `INTERACTIVE_STYLES` in `blocks-react` (modelled at its FLOOR:
  *               blanked entirely, since a Button renders none of the six
- *               components that sheet styles). 🔴 NOT SHIPPED, NOT PROPOSED
- *               HERE, and no code in this repo implements it. These rows exist
- *               only because they are the ones comparable to PR #346's
- *               custom-element row, which never imports `blocks-react`'s
- *               `ui/styles` at all and so carries no `INTERACTIVE_STYLES` by
- *               nature. Quoting D/E as the components split's saving credits
- *               this repo with deleting another package's stylesheet.
+ *               components that sheet styles). No code in this repo implements
+ *               it. This pair is the closer model of what issue #358 is
+ *               deciding — a per-component `useBlocksStyles()` would naturally
+ *               slice `INTERACTIVE_STYLES` too — and it is also the pair
+ *               comparable to PR #346's custom-element row, which never imports
+ *               `blocks-react`'s `ui/styles` at all and so carries no
+ *               `INTERACTIVE_STYLES` by nature. Quoting D/E as the COMPONENTS
+ *               split's saving credits this repo with deleting another
+ *               package's stylesheet; that is what B/C are for.
  *
  * ── METHOD ────────────────────────────────────────────────────────────────
  * For each scenario: feed esbuild a tiny ESM entry (via `stdin`, resolved from
@@ -161,18 +170,20 @@ const SLICED_COMPONENTS = {
 };
 
 /**
- * 🔴 Read the docblock's "TWO SPLITS" section before quoting any of these.
+ * 🔴 Read the docblock's "TWO SHEETS" section before quoting any of these.
  *
- * `COMPONENTS_ONLY` is the `@civitai/components` split on its own — the thing
- * this repo actually built. `INTERACTIVE_STYLES` is deliberately absent from
- * these overrides, so `blocks-react`'s own ~12 KB sheet stays in the bundle
- * exactly as it ships today.
+ * `COMPONENTS_ONLY` slices ONE of the two sheets — `@civitai/components`', the
+ * one this repo cuts into `dist/css/*.css`. `INTERACTIVE_STYLES` is
+ * deliberately absent from these overrides, so `blocks-react`'s own ~12 KB
+ * sheet stays in the bundle exactly as it ships today.
  *
- * `PLUS_BLOCKS_SPLIT` adds a SECOND, UNIMPLEMENTED split — `blocks-react`
- * slicing `INTERACTIVE_STYLES` per component too — modelled at its floor by
- * blanking the constant, because a Button renders none of the six components
- * that sheet styles. Nothing in this repo does this. It is here only to make
- * a row comparable to #346's custom-element measurement.
+ * `PLUS_BLOCKS_SPLIT` slices BOTH — it adds a SECOND, UNIMPLEMENTED split,
+ * `blocks-react` slicing `INTERACTIVE_STYLES` per component too, modelled at
+ * its floor by blanking the constant, because a Button renders none of the six
+ * components that sheet styles. Nothing in this repo does this.
+ *
+ * Neither group is a bundle any current code produces — both replace
+ * `componentsCss` wholesale, and no shipped code imports the slices.
  */
 const COMPONENTS_ONLY = {
   naive: { components: SLICED_COMPONENTS.naive },
@@ -289,6 +300,8 @@ function cssPlugin({ control = null, stub = false, report }) {
             }
           }
           fired.add(carrier.key);
+          // `removed` is UTF-16 code units of MODULE source (String.length), not
+          // bytes and not stylesheet bytes — see the MEASURE_CARRIERS note below.
           report.push({ key: carrier.key, path: args.path, removed: src.length - out.length });
           return { contents: out, loader: 'js' };
         });
@@ -311,24 +324,27 @@ function cssPlugin({ control = null, stub = false, report }) {
 const BUTTON_ENTRY = "import { Button } from '@civitai/blocks-react/ui';\nglobalThis.__k = Button;\n";
 
 const SCENARIOS = [
-  { id: 'A. blocks-react/ui Button — un-split BASELINE (shipped today)', source: BUTTON_ENTRY },
   {
-    id: 'B. components split ONLY — slices CONCATENATED (naive)   [SHIPPED]',
+    id: 'A. blocks-react/ui Button — NEITHER sheet sliced (ships today)',
+    source: BUTTON_ENTRY,
+  },
+  {
+    id: "B. only @civitai/components' sheet sliced — CONCATENATED",
     source: BUTTON_ENTRY,
     control: COMPONENTS_ONLY.naive,
   },
   {
-    id: 'C. components split ONLY — slices MERGED (deduped)       [SHIPPED]',
+    id: "C. only @civitai/components' sheet sliced — MERGED (deduped)",
     source: BUTTON_ENTRY,
     control: COMPONENTS_ONLY.deduped,
   },
   {
-    id: 'D. B + blocks-react ALSO splits INTERACTIVE_STYLES   [NOT SHIPPED]',
+    id: "D. BOTH sheets sliced (also blocks-react's own) — CONCATENATED",
     source: BUTTON_ENTRY,
     control: PLUS_BLOCKS_SPLIT.naive,
   },
   {
-    id: 'E. C + blocks-react ALSO splits INTERACTIVE_STYLES   [NOT SHIPPED]',
+    id: "E. BOTH sheets sliced (also blocks-react's own) — MERGED",
     source: BUTTON_ENTRY,
     control: PLUS_BLOCKS_SPLIT.deduped,
   },
@@ -382,15 +398,26 @@ try {
     const fullReport = [];
     const full = await bundle(s, [cssPlugin({ control, stub: false, report: fullReport })]);
     // 🔴 The control that separates rows B/C from D/E. `MEASURE_CARRIERS=1`
-    // prints how many bytes each carrier's override actually removed, per row.
-    // The claim "B and C leave INTERACTIVE_STYLES intact" is otherwise only
-    // readable off the SOURCE of the override table, and a reader quoting the
-    // table has no way to check it. Expected: `interactive: removed 0 B` on
-    // A/B/C and the barrel, non-zero on D/E only.
+    // prints, per row, how much each carrier's override took off that carrier's
+    // MODULE SOURCE. The claim "B and C leave INTERACTIVE_STYLES intact" is
+    // otherwise only readable off the SOURCE of the override table, and a
+    // reader quoting the table has no way to check it. Expected:
+    // `interactive: removed 0` on A/B/C and the barrel, non-zero on D/E only.
+    //
+    // ZERO-vs-NON-ZERO is the load-bearing part, and it is exact. The magnitude
+    // is NOT a byte count and NOT a count of stylesheet bytes: it is
+    // `String.length` on the module text, i.e. UTF-16 code units, and the
+    // `components` override replaces the whole module rather than one constant,
+    // so its number carries the module's JS wrapper and JSON string escaping
+    // too. Measured on the current tree: `components: 26695` units is a 26,752-
+    // byte module delta over 25,778 bytes of actual sheet, and
+    // `interactive: 11999` units is 12,013 bytes. Do not quote these as bytes.
     if (process.env.MEASURE_CARRIERS) {
       console.error(
         `[carriers] ${s.id}\n           ` +
-          fullReport.map((r) => `${r.key}: removed ${r.removed} B`).join('\n           ')
+          fullReport
+            .map((r) => `${r.key}: removed ${r.removed} UTF-16 units of module source`)
+            .join('\n           ')
       );
     }
     const stubReport = [];
@@ -446,26 +473,28 @@ console.log(
     'JS/CSS split is a stub-differential: each row is bundled twice, the second\n' +
     'time with every CSS string constant blanked. CSS = full - stubbed.\n' +
     '\n' +
-    'ALL FOUR of B/C/D/E are REAL builds of the REAL `dist/css/*.css` artifacts\n' +
-    'this repo emits, asserted lossless against src/components.css at build time.\n' +
-    'They model a `blocks-react` change that is deliberately NOT made — see the\n' +
-    'MARKUP.md whole-pack contract and issue #358.\n' +
+    '🔴 ROW A IS THE ONLY BUNDLE ANY CURRENT CODE PRODUCES. B/C/D/E all replace\n' +
+    '`componentsCss` wholesale, which needs shipped code to import the slices —\n' +
+    'and none does; only this script and the test suite read them. blocks-react\n' +
+    'injects the whole pack, deliberately: see the MARKUP.md whole-pack contract\n' +
+    'and issue #358. What is real about B/C/D/E is the CSS in them — all four are\n' +
+    'builds of the REAL `dist/css/*.css` artifacts this repo emits, asserted\n' +
+    'lossless against src/components.css at build time.\n' +
     '\n' +
-    '🔴 B/C vs D/E IS NOT A DETAIL — they answer different questions:\n' +
-    '  B, C  [SHIPPED]     the @civitai/components split ALONE. blocks-react\n' +
-    '                      keeps its own ~12 KB INTERACTIVE_STYLES sheet, which\n' +
-    '                      this repo does not touch and does not slice. This is\n' +
-    '                      what the components split delivers, and the number\n' +
-    '                      issue #358 is deciding on.\n' +
-    '  D, E  [NOT SHIPPED] the above PLUS a SECOND, unimplemented split of\n' +
-    '                      blocks-react\'s own INTERACTIVE_STYLES, modelled at\n' +
-    '                      its floor (blanked — a Button renders none of the six\n' +
-    '                      components it styles). No code in this repo does this.\n' +
-    '                      These are the rows comparable to PR #346, whose custom\n' +
-    '                      element never imports `ui/styles` and so carries no\n' +
-    '                      INTERACTIVE_STYLES by nature.\n' +
-    `  The gap between them is ${results[1].bytes - results[3].bytes} B — a saving that belongs to a\n` +
-    '  blocks-react change nobody has made, NOT to the components split.'
+    '🔴 B/C vs D/E IS NOT A DETAIL — they differ in WHICH SHEET IS SLICED:\n' +
+    "  B, C  only @civitai/components' sheet. blocks-react keeps its own ~12 KB\n" +
+    '        INTERACTIVE_STYLES sheet, which this repo does not touch and does\n' +
+    "        not slice. These rows ISOLATE this package's own contribution.\n" +
+    '  D, E  BOTH sheets — the above PLUS a SECOND, unimplemented split of\n' +
+    "        blocks-react's own INTERACTIVE_STYLES, modelled at its floor\n" +
+    '        (blanked — a Button renders none of the six components it styles).\n' +
+    '        No code in this repo does this. This pair is the closer model of\n' +
+    '        what #358 is deciding (a per-component useBlocksStyles() would\n' +
+    '        slice INTERACTIVE_STYLES too), and the pair comparable to PR #346,\n' +
+    '        whose custom element never imports `ui/styles` and so carries no\n' +
+    '        INTERACTIVE_STYLES by nature.\n' +
+    `  The gap between them is ${results[1].bytes - results[3].bytes} B — it belongs to the blocks-react half of\n` +
+    '  that change, NOT to the components split.'
 );
 
 if (process.env.MEASURE_JSON) {

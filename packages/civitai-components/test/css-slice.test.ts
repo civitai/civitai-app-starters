@@ -27,10 +27,21 @@
  * count 14 -> 13 with `assertLossless` silent throughout.
  *
  * `every section marker in the sheet becomes a section (BOUNDARY GUARD)` below
- * is what sees it, by counting raw `/* ----- ` occurrences independently of
- * `SECTION_RE`. That independence is the whole point: `MARKERS` (defined below)
- * is built with the SAME regex the slicer uses, so any assertion against it can
+ * sees it, by counting raw `/* ----- ` occurrences independently of
+ * `SECTION_RE`. That independence is the point: `MARKERS` (defined below) is
+ * built with the SAME regex the slicer uses, so any assertion against it can
  * only ever agree with the slicer about which markers exist.
+ *
+ * 🔴 IT IS NOT THE ONLY CHECK THAT GOES RED ON THAT MUTANT, and an earlier
+ * revision of this file said it was. Measured on it (Badge's marker indented by
+ * one space, rebuilt, `vitest run`): FOUR tests fail — this guard plus three
+ * pinned to the literal 14 (`MARKERS.length >= 14` at two sites, and
+ * `expect(slices).toHaveLength(14)`). What this guard has that those three do
+ * not is that it is COUNT-RELATIVE, and the second measurement point is what
+ * shows it: with the sheet legitimately grown to 15 markers (Stack / Group
+ * split in two) and one marker then mis-indented, the three literal-14 checks
+ * are ALL green — 14 >= 14, and 14 is exactly the length one of them pins —
+ * and this guard is the only failure. It carries no number to keep up to date.
  *
  * 🔴 WHAT THIS SUITE DOES **NOT** COVER — read before trusting it.
  * The per-component artifacts are NOT a public surface and are NOT published.
@@ -137,8 +148,12 @@ describe('per-component CSS slicing', () => {
    *
    * This is the guard `assertLossless` was believed to be. A mis-indented
    * marker merges its rules into the previous section, that section never gets
-   * a `.css` file, and reassembly stays byte-perfect — so nothing else in this
-   * suite sees it.
+   * a `.css` file, and reassembly stays byte-perfect.
+   *
+   * 🔴 Other checks in this suite DO fail on that mutant today — see the file
+   * docblock for the measurement. What is unique here is being count-relative
+   * rather than pinned to the literal 14: at 15 markers with one mis-indented,
+   * every literal-14 check passes and this is the only one that fires.
    * ──────────────────────────────────────────────────────────────────────── */
   it('every section marker in the sheet becomes a section (BOUNDARY GUARD)', () => {
     const rawMarkers = (srcCss.match(/\/\* ----- /g) ?? []).length;
@@ -151,7 +166,8 @@ describe('per-component CSS slicing', () => {
         `${split.sections.length} sections. A marker SECTION_RE does not match (wrong indent, ` +
         'a trailing space, a line break in the title) is not an error — its rules merge into ' +
         'the PREVIOUS section, that section never gets its own dist/css/<slug>.css, and ' +
-        'assertLossless still passes. This is the only check that sees it.'
+        'assertLossless still passes. The other checks that also catch this today are pinned ' +
+        'to the literal 14 and stop catching it once the sheet grows; this one is count-relative.'
     ).toBe(rawMarkers);
   });
 

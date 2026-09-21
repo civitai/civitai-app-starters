@@ -61,8 +61,12 @@ writeFileSync(
 /* ── per-component slices ───────────────────────────────────────────────── */
 
 const split = sliceComponentsCss(css);
-// Before ANY slice is written. A slicer that dropped a section would emit
-// per-component CSS missing rules, and nothing downstream could tell.
+// Before ANY slice is written — but read `slice-css.ts` for what this does and
+// does not prove. It pins the PARTITION ARITHMETIC: the pieces `sliceComponentsCss`
+// returns, recomposed by `composeSheet`, are exactly the input. It cannot see a
+// section boundary `SECTION_RE` failed to recognise (those rules merge into the
+// previous slice and reassembly stays byte-perfect); the test suite's boundary
+// guard is what covers that.
 assertLossless(split, css);
 const slices = cssSlices(split);
 
