@@ -742,7 +742,7 @@ a row-limit overrun now fails under `dev:mock` where it previously passed and
 failed only in production. Pass `storage: { quotaBytes, limitRows }` to
 simulate something smaller.
 
-⚠️ The mock is **not** gate-for-gate identical to the host. Four known
+⚠️ The mock is **not** gate-for-gate identical to the host. Five known
 divergences:
 
 - the byte gate refusing a shrinking overwrite that the host admits
@@ -755,12 +755,16 @@ divergences:
   ([#368](https://github.com/civitai/civitai-app-starters/issues/368));
 - lowering `valueCapBytes` moves the **gate** but not the **message**, which
   keeps naming the host's real cap
-  ([#369](https://github.com/civitai/civitai-app-starters/issues/369)).
+  ([#369](https://github.com/civitai/civitai-app-starters/issues/369));
+- 🔴 no key-length cap: the host refuses a `key` over **200 characters**
+  zod-side, and neither the mock nor `useAppStorage` does
+  ([#370](https://github.com/civitai/civitai-app-starters/issues/370)).
 
-Passing under `dev:mock` is evidence, not proof — and note that the second and
-the third are **permissive**: each lets a write pass locally that production
-will reject. (#347 under-counts the bytes; #368 models no app-wide ceiling at
-all, so a write the host would refuse with `app quota exceeded` succeeds here.)
+Passing under `dev:mock` is evidence, not proof — and note that the second, the
+third and the fifth are **permissive**: each lets a write pass locally that
+production will reject. (#347 under-counts the bytes; #368 models no app-wide
+ceiling at all, so a write the host would refuse with `app quota exceeded`
+succeeds here; #370 admits an over-length key the host refuses outright.)
 Size your fixtures against `getQuota()`, not against what the mock accepted.
 
 🔴 **A rejection carries a host-authored MESSAGE, not a code.** There is no
@@ -775,8 +779,19 @@ would send, and `classifyAppStorageError(err)` picks the same branch in both.
 🔴 **Those six are not every string a block can receive — and nothing here
 enumerates the rest.** The bridge catches every rejection out of
 `apps.storage.*` with a *blanket* `catch` and puts its message on the same
-`error` field, so the host's authorization, approval and feature-flag prose all
-travel the identical path. **Every one of them classifies `null`.**
+`error` field, so the host's authorization, approval and feature-flag prose —
+**plus tRPC's own zod input-validation messages, which never reach a handler at
+all** — travel the identical path. **Every one of them classifies `null`.**
+
+🔴 **One of those zod bounds is a ceiling a real block hits with no local
+warning: `key` is capped at 200 characters** (`z.string().min(1).max(200)` on
+the host's `get`/`set`/`delete` input schema; `list` also caps `prefix` at 200
+and `cursor` at 400). Neither `useAppStorage` nor `createMockHost` caps the key
+— both forward it verbatim and the mock has no length gate
+([#370](https://github.com/civitai/civitai-app-starters/issues/370)) — so a key
+built from a URL or a model name can save fine under `dev:mock` and fail
+forever in production, classified `null`. **The reload the `null` arm below
+recommends does not fix it.** Cap or hash long keys in your block.
 
 That is the whole rule, and it is stated structurally on purpose: the SDK owns
 the ceiling vocabulary, not the host's error surface, so the honest claim is

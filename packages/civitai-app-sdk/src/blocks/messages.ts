@@ -778,14 +778,24 @@ export type ParentToBlockMessage =
       // 🔴 THOSE SIX ARE NOT EVERY VALUE THIS FIELD CAN HOLD, AND
       // NOTHING HERE LISTS THE REST. The bridge's catch arms are
       // BLANKET, so every other rejection the host raises —
-      // authorization, approval, the feature-flag kill switch — rides
-      // this same field. ALL of them classify `null`. That rule needs
-      // no enumeration and survives the host rewording a message;
-      // `invalid block token` (an expired token mid-session), `block
-      // instance revoked` and `Apps are not enabled` are
-      // ILLUSTRATIONS, not a bound. Two earlier drafts tried to list
-      // the set and both came up short — see the header of
-      // `appStorageErrors.ts` for why the third does not try.
+      // authorization, approval, the feature-flag kill switch, plus
+      // tRPC's own zod input-validation messages, which never reach a
+      // handler at all — rides this same field. ALL of them classify
+      // `null`. That rule needs no enumeration and survives the host
+      // rewording a message; `invalid block token` (an expired token
+      // mid-session), `block instance revoked` and `Apps are not
+      // enabled` are ILLUSTRATIONS, not a bound. Two earlier drafts
+      // tried to list the set and both came up short — see the header
+      // of `appStorageErrors.ts` for why the third does not try.
+      //
+      // 🔴 ONE ZOD BOUND IS A CEILING NOTHING LOCAL ENFORCES: the
+      // host caps `key` at 200 characters
+      // (`z.string().min(1).max(200)` on the `.input()` schema), and
+      // neither `useAppStorage` nor `createMockHost` caps it. A key
+      // derived from a URL or a model name therefore saves under
+      // `dev:mock` and fails forever live, classified `null` — and a
+      // RELOAD does not fix it. See "Ceilings outside this set" in
+      // `appStorageErrors.ts`.
       //
       // 🔴 AND DO NOT RENDER IT. Server prose, not viewer copy: not
       // localized, not written for an end user, free to move in any

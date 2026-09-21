@@ -52,8 +52,11 @@ describe('APP_STORAGE host error messages', () => {
   // `invalid block token`, `block instance revoked` and `Apps are not enabled`
   // are ILLUSTRATIONS of that, not a bound on it (no list in this repository
   // is; see the header of `src/blocks/appStorageErrors.ts`). This array is the
-  // `PAYLOAD_TOO_LARGE` family plus the bridge fallback, which IS a closed set
-  // because a `code` defines it.
+  // `PAYLOAD_TOO_LARGE` family plus the bridge fallback — a set THIS REPOSITORY
+  // CHOSE, not one the host guarantees closed. The host also enforces size
+  // ceilings zod-side (`key` is capped at 200 chars on the `.input()` schema),
+  // which throw no `TRPCError` and are absent here; see "Ceilings outside this
+  // set" in that header.
   it('the exported set is the six ceiling strings, all distinct', () => {
     expect([...APP_STORAGE_HOST_ERROR_MESSAGES]).toEqual([
       APP_STORAGE_ERROR_VALUE_TOO_LARGE,

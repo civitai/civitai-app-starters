@@ -76,6 +76,17 @@ const DIVERGENCE_LEDGER = [
     what: 'lowering `valueCapBytes` moves the gate but not the message, which still names the host’s real cap',
     direction: 'neither',
   },
+  {
+    // 🔴 PERMISSIVE, same direction as #368 and for the same reason: a gate the
+    // host has and the mock does not. It is a ZOD bound (`apps.router.ts:460`,
+    // `const keyInput = z.string().min(1).max(200)`), so it throws no
+    // `TRPCError` and is invisible to the re-derivation recipe in
+    // `appStorageErrors.ts` — which is how it stayed unlisted while that file
+    // claimed the ceiling set was closed.
+    issue: 370,
+    what: 'neither the mock nor `useAppStorage` caps a storage `key`, while the host refuses one over 200 characters zod-side — an over-length key saves locally, fails forever live, and classifies `null`',
+    direction: 'PERMISSIVE',
+  },
 ];
 
 /** English count words, so the prose and the ledger cannot drift apart. */

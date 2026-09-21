@@ -42,12 +42,20 @@
  *     have NOT been measured; `SHARED_UNAVAILABLE` and friends are deliberately
  *     out of scope, not vouched for.
  *   - It checks the SPELLING a mock emits, not the host's whole error surface.
- *     `appStorageErrors.ts` exports the six CEILING messages; every OTHER
- *     rejection the host raises reaches a block on the same field and is not in
- *     that module (`invalid block token`, `block instance revoked`, `Apps are
- *     not enabled` — illustrations, and deliberately not a list: see that
- *     module's header for why no enumeration of them is authoritative). So
- *     nothing here would notice a mock inventing an auth-shaped string either.
+ *     `appStorageErrors.ts` exports the `PAYLOAD_TOO_LARGE` family plus the
+ *     bridge's fallback — six messages; every OTHER rejection the host raises
+ *     reaches a block on the same field and is not in that module (`invalid
+ *     block token`, `block instance revoked`, `Apps are not enabled` —
+ *     illustrations, and deliberately not a list: see that module's header for
+ *     why no enumeration of them is authoritative). So nothing here would
+ *     notice a mock inventing an auth-shaped string either.
+ *   - 🔴 Those six are NOT "every ceiling". The host caps `key` at 200
+ *     characters zod-side (`apps.router.ts:460`), which throws no `TRPCError`,
+ *     is absent from `appStorageErrors.ts`, and is enforced by NO mock in this
+ *     repository (civitai/civitai-app-starters#370). This guard is blind to it
+ *     in both directions: it cannot see the host's cap and it cannot see the
+ *     mock's failure to model it. `app-storage-mock-divergences.test.mjs` is
+ *     what records that gap.
  *   - The set of files this reads is `MOCKS` + `NOT_MOCKS`, and it is
  *     ENFORCED — a walk of the repository must find rejection sites in exactly
  *     those files. 🔴 It was NOT enforced until #366: `MOCKS` was a fixed list,
@@ -151,13 +159,16 @@ const NOT_MOCKS = [
  *
  * 🔴 `.claude` IS SKIPPED BECAUSE OF NESTED CHECKOUTS, NOT AS HOUSEKEEPING.
  * Agent worktrees live at `.claude/worktrees/<agent>/`, each a FULL second copy
- * of this repository carrying its own `mockHost.ts`, `liveHost.ts` and
- * `Harness.tsx`. Only `.claude/settings.local.json` is gitignored, so the walk
- * reaches them, and the completeness assertion below then reports three extra
- * "unledgered" rejection-carrying files and tells the maintainer to add
+ * of this repository — so it carries a duplicate of EVERY rejection-carrying
+ * file, the {@link NOT_MOCKS} ones included: `mockHost.ts`, `Harness.tsx`,
+ * `liveHost.ts`, `useAppStorage.test.tsx` and this guard itself. Only
+ * `.claude/settings.local.json` is gitignored, so the walk reaches them, and
+ * the completeness assertion below then reports FIVE extra "unledgered"
+ * rejection-carrying files and tells the maintainer to add
  * `.claude/worktrees/agent-xxx/…` to MOCKS — advice that is actively wrong,
- * since the path is transient and belongs to a different checkout. Measured: a
- * single planted worktree takes this file from 8 pass / 0 fail to 7 / 1.
+ * since the path is transient and belongs to a different checkout. Measured
+ * (2026-09-21, one planted worktree): 8 pass / 0 fail becomes 7 / 1, with
+ * exactly five `+` rows in the deepEqual diff.
  * A worktree's `.git` is a FILE, not a directory, so the `.git` entry above
  * gives no protection here.
  */

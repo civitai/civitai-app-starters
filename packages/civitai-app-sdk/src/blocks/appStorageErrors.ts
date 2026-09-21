@@ -37,10 +37,14 @@
  *   2. **Draft 2 (RETRACTED)** kept the six, added a table of eight
  *      authorization messages "measured in the same read", and presented THAT
  *      as the surface. Also wrong. It missed, in the same file: `Apps are not
- *      enabled` (`apps.router.ts:153`, `:255`, `:257` — thrown by the
- *      `enforceAppBlocksFlag` middleware, which is `.use()`d on all five
- *      storage procedures at `:470`, `:509`, `:938`, `:1022`, `:1106`, so it
- *      fires before anything else on every call), `block token subject could
+ *      enabled`, thrown from TWO different gates with one spelling — the
+ *      `enforceAppBlocksFlag` middleware (defined `:249`, throws at `:255`
+ *      query / `:257` mutation), which is `.use()`d on all five storage
+ *      procedures at `:470`, `:509`, `:938`, `:1022`, `:1106` BEFORE their
+ *      `.input()`, so it fires before anything else on every call; and
+ *      `assertAppBlocksEnabledForTokenUser` (`:139-155`, throwing at `:153`),
+ *      reached from `resolveStorageContext`. Grepping `enforceAppBlocksFlag`
+ *      will NOT find `:153`. Also missed: `block token subject could
  *      not be resolved` (`:148`, called unconditionally from
  *      `resolveStorageContext`), `review token subject could not be resolved`
  *      (`:82`) and `Apps authoring is not enabled for this account` (`:89`).
@@ -59,11 +63,14 @@
  * believing otherwise. Do not soften this into "the list below may be
  * incomplete" and restore one. What replaces it needs no completeness at all:
  *
- * - **This module classifies the CEILING family, and that set IS closed and IS
- *   measured** — because it is defined by a `code`, not by a reading of prose.
- *   It is every `PAYLOAD_TOO_LARGE` throw in `apps.router.ts` (`:568`, `:783`,
- *   `:791`, `:845`, `:853`) plus the bridge's fallback. A new ceiling can only
- *   arrive as a new `PAYLOAD_TOO_LARGE` throw, and the recipe below finds it.
+ * - **This module classifies the `PAYLOAD_TOO_LARGE` family plus the bridge's
+ *   fallback — a set THIS REPOSITORY CHOSE, not a set the host guarantees
+ *   closed.** It is the five `PAYLOAD_TOO_LARGE` throws in `apps.router.ts`
+ *   (`:568`, `:783`, `:791`, `:845`, `:853`) and the `'storage request failed'`
+ *   literal at `IframeHost.tsx:287`. Naming what it classifies is a decision
+ *   about scope; it needs no completeness claim to be useful, and it must not
+ *   be dressed as one. 🔴 **A ceiling the host enforces OUTSIDE that family
+ *   already exists** — see "Ceilings outside this set" below.
  * - **Every OTHER host rejection reaches a block on the same `error` field and
  *   classifies `null`.** This is the whole of what a block author needs, it
  *   requires no enumeration, and it stays true when the host adds, rewords or
@@ -74,9 +81,36 @@
  *   `storageErrorMessage()`; and {@link classifyAppStorageError} answers `null`
  *   for everything outside the ceiling patterns, which is checkable in this
  *   file without consulting the host at all.
- * - **The RECIPE is the authority — not any prose in this repository.** It is
- *   strictly wider than every list anyone has written: it found all 21 sites,
- *   including the four draft 2 missed.
+ * - **The RECIPE beats any prose in this repository — and is still NOT a
+ *   completeness check.** It is strictly wider than every list anyone has
+ *   written: it found all 21 `TRPCError` sites, including the four draft 2
+ *   missed. It is NECESSARY, NOT SUFFICIENT — see "What the recipe cannot
+ *   see" under "Re-deriving it".
+ *
+ * ## Ceilings outside this set
+ *
+ * 🔴 **The host enforces size ceilings that are NOT `TRPCError` throws and are
+ * therefore invisible to both the recipe and this module.** They are zod
+ * `.max()` bounds on the procedures' `.input()` schemas, so tRPC refuses the
+ * call with `BAD_REQUEST` before any handler runs. Measured in
+ * `apps.router.ts` on `civitai/civitai` `main`, 2026-09-21:
+ *
+ *   - `const keyInput = z.string().min(1).max(200)` (`:460`) — the `key`
+ *     argument of `get` (`:471`), `set` (`:511`) and `delete` (`:939`);
+ *   - `list` (`:1025-1027`): `prefix: z.string().max(200)`,
+ *     `cursor: z.string().max(400)`, `limit: …int().min(1).max(200)`.
+ *
+ * 🔴 **The 200-character KEY cap is the one a real block hits with no local
+ * warning.** Derive a key from a URL, a model name or a title and 201
+ * characters is ordinary. Nothing in this repository caps it: `useAppStorage`
+ * and `createMockHost` forward the key verbatim and the mock enforces no length
+ * gate (civitai/civitai-app-starters#370), so the write succeeds under
+ * `dev:mock` and fails forever in production. The zod refusal arrives on the
+ * same `error` field as everything else, so {@link classifyAppStorageError}
+ * answers `null` — and the recommended `null` copy ("try reloading the page")
+ * is WRONG for it: reloading re-mints the token and the write fails
+ * identically. If a block builds keys from untrusted-length input, cap or hash
+ * them at the block, and do not rely on a local run to tell you.
  *
  * 🔴 **So: wherever a list of host strings still appears — in this repo's
  * READMEs, in the changeset, in `messages.ts`, or in
@@ -98,7 +132,27 @@
  * # what makes "everything else classifies null" true:
  * gh api repos/civitai/civitai/contents/src/components/AppBlocks/IframeHost.tsx \
  *   --jq '.content' | base64 -d | grep -n "storageErrorMessage" -B12
+ * # …and the zod caps, which throw no TRPCError and so appear in NEITHER of the
+ * # two commands above:
+ * gh api repos/civitai/civitai/contents/src/server/routers/apps.router.ts \
+ *   --jq '.content' | base64 -d | grep -n "z\.string()\|z\.number()\|\.max("
  * ```
+ *
+ * ### What the recipe cannot see
+ *
+ * 🔴 **A clean run of the three commands above is NOT proof of completeness —
+ * do not treat it as one.** Measured blind spots, both of which bit this file:
+ *
+ *   - **zod-enforced caps.** They are `.input()` bounds, not throws, so
+ *     `grep "new TRPCError"` cannot see them at all. That is why the third
+ *     command exists — and why "a new ceiling can only arrive as a new
+ *     `PAYLOAD_TOO_LARGE` throw" was deleted from this header: it was false
+ *     when it was written. See "Ceilings outside this set" above.
+ *   - **the bridge's own literal.** `'storage request failed'` is at
+ *     `IframeHost.tsx:287`, and `grep … -B12` prints the twelve lines BEFORE
+ *     each match — for the definition at `:282` that is 270–282, so line 287
+ *     never appears in the output. The recipe enumerates the CALL SITES of
+ *     `storageErrorMessage`, not its fallback. Read the function body.
  *
  * 🔴 **DO NOT re-derive the ceiling strings from this comment** — re-read the
  * host. These are prose a server engineer wrote, not a published contract: they
@@ -196,16 +250,25 @@ export const APP_STORAGE_ERROR_USER_ROW_LIMIT = 'per-user row limit exceeded';
 export const APP_STORAGE_ERROR_REQUEST_FAILED = 'storage request failed';
 
 /**
- * Every **ceiling** rejection string the host can put on the wire — one per
- * `PAYLOAD_TOO_LARGE` site in `apps.router.ts`, plus the bridge's fallback, as
- * of the measurement in this file's header.
+ * The **`PAYLOAD_TOO_LARGE` family** — one string per `PAYLOAD_TOO_LARGE` site
+ * in `apps.router.ts` — plus the bridge's fallback, as of the measurement in
+ * this file's header.
  *
- * 🔴 **NOT "every string a block can receive".** The bridge's catch arms are
- * blanket, so every other rejection the host raises arrives on the SAME field
- * and is absent here on purpose. `invalid block token`, `block instance
- * revoked`, `Apps are not enabled` and the `storage … scope` template are
- * examples of what that covers — **illustrations, not a bound.** See this
- * file's header for why no list of them lives in this repository.
+ * 🔴 **NOT "every ceiling string the host can put on the wire", and NOT "every
+ * string a block can receive".** Two separate reasons, and both are load-
+ * bearing:
+ *
+ *   - The bridge's catch arms are blanket, so every other rejection the host
+ *     raises arrives on the SAME field and is absent here on purpose. `invalid
+ *     block token`, `block instance revoked`, `Apps are not enabled` and the
+ *     `storage … scope` template are examples of what that covers —
+ *     **illustrations, not a bound.** See this file's header for why no list
+ *     of them lives in this repository.
+ *   - 🔴 The host also enforces **size ceilings zod-side** (`key` capped at 200
+ *     characters on the `.input()` schema, and three more on `list`). Those
+ *     throw no `TRPCError`, so they are invisible to the re-derivation recipe
+ *     AND absent from this array, while being ceilings in every sense a block
+ *     cares about. See "Ceilings outside this set" in this file's header.
  *
  * This is the set `createMockHost` and the starter harnesses must draw from —
  * enforced by `tests/guards/app-storage-error-strings.test.mjs`, so a
@@ -221,7 +284,7 @@ export const APP_STORAGE_ERROR_REQUEST_FAILED = 'storage request failed';
  * test or a guard; a block branches on the classifier's reason.
  *
  * 🔴 **A CLOSED SET IS A CLAIM ABOUT A MEASUREMENT, NOT A CONTRACT — and this
- * measurement is narrow by construction, not merely stale.** Two separate
+ * measurement is narrow by construction, not merely stale.** Three separate
  * gaps, and only the first is about the future:
  *
  *   1. The host can add a `PAYLOAD_TOO_LARGE` site or reword an existing one
@@ -233,6 +296,12 @@ export const APP_STORAGE_ERROR_REQUEST_FAILED = 'storage request failed';
  *      feature-flag prose, not ceiling vocabulary, and enumerating them here
  *      would invite exactly the equality matching the rest of this comment
  *      argues against.
+ *   3. 🔴 **Today, already, a SIZE ceiling the host enforces is missing from
+ *      here too** — the zod caps, which are not `TRPCError` throws at all.
+ *      Unlike gap 2 this one IS ceiling vocabulary, which is why the array's
+ *      scope is spelled as "the `PAYLOAD_TOO_LARGE` family" above rather than
+ *      as "the ceilings". See "Ceilings outside this set" in this file's
+ *      header.
  *
  * So an unrecognised string is "some storage failure, unknown which" — NOT
  * "some ceiling", and never "impossible".
@@ -271,7 +340,8 @@ export type AppStorageRejectionReason =
  * yourself (`console.warn`) and show copy your app owns.
  *
  * 🔴 **`null` IS A REAL OUTCOME, NOT AN ERROR IN YOUR CODE — AND IT DOES NOT
- * MEAN "TRANSIENT".** Two different things land here, and only one is a retry:
+ * MEAN "TRANSIENT".** THREE different things land here, and only one is a
+ * retry:
  *
  *   - a ceiling message this SDK version has not seen (the host reworded one,
  *     or added a site, and your block compiled against an older SDK);
@@ -283,6 +353,16 @@ export type AppStorageRejectionReason =
  *     or `Apps are not enabled` (the feature flag, which fires before anything
  *     else on every storage call). 🔴 **Those are ILLUSTRATIONS, not the set**:
  *     see this module's header for why no list of them lives here.
+ *   - 🔴 **and a zod INPUT-VALIDATION refusal, which never reaches a handler at
+ *     all.** tRPC parses `.input()` before the procedure body, so a bound
+ *     violated there is a `BAD_REQUEST` with a zod-generated message — no
+ *     `TRPCError` anywhere in the router, and nothing this module classifies.
+ *     The one a real block hits: the host caps `key` at **200 characters**
+ *     (`z.string().min(1).max(200)`), and neither `useAppStorage` nor
+ *     `createMockHost` caps it locally, so a key derived from a URL or a model
+ *     name can save fine under `dev:mock` and fail forever in production. 🔴
+ *     **A RELOAD DOES NOT FIX THAT ONE** — see "Ceilings outside this set" in
+ *     this module's header.
  *
  * So **"Please try again" is the wrong copy for the `null` arm.** Retrying an
  * expired token forever is the failure this warning exists to prevent. Write a
@@ -343,12 +423,15 @@ export function classifyAppStorageError(error: unknown): AppStorageRejectionReas
 }
 
 /**
- * Is `message` one of the CEILING rejection strings above?
+ * Is `message` one of the `PAYLOAD_TOO_LARGE`-family strings above (or the
+ * bridge's fallback)?
  *
- * 🔴 Not "a string the host can produce" — it answers `false` for every
- * non-ceiling rejection the host raises, all of which the host produces and the
- * bridge forwards on the same field. It is a membership test over
- * {@link APP_STORAGE_HOST_ERROR_MESSAGES}, nothing wider.
+ * 🔴 Not "a string the host can produce", and not "a ceiling" either — it
+ * answers `false` for every non-ceiling rejection the host raises, all of which
+ * the host produces and the bridge forwards on the same field, AND for the
+ * host's zod-enforced size caps, which are ceilings it does not know about (see
+ * "Ceilings outside this set" in this file's header). It is a membership test
+ * over {@link APP_STORAGE_HOST_ERROR_MESSAGES}, nothing wider.
  *
  * Wider than `APP_STORAGE_HOST_ERROR_MESSAGES.includes(…)` by exactly one
  * case: the per-value message is a template on the host, so any cap spelling

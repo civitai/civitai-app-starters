@@ -80,9 +80,19 @@ branches it CAN reach fire the same way here and in production.
 
 🔴 **Six is the CEILING family, not everything that arrives.** The host's bridge
 wraps each `apps.storage.*` call in a *blanket* `catch` and forwards the message
-on this same field, so authorization, approval and feature-flag failures come
-through it too. **None of those classify — they all land on `null`**, which is
-why the `default:` arm below must not say "please try again".
+on this same field, so authorization, approval and feature-flag failures — and
+tRPC's own zod input-validation messages, which never reach a handler at all —
+come through it too. **None of those classify — they all land on `null`**, which
+is why the `default:` arm below must not say "please try again".
+
+🔴 **And one of those zod bounds is a ceiling this example cannot show you:
+`key` is capped at 200 characters** (`z.string().min(1).max(200)` on the host's
+`get`/`set`/`delete` input; `list` also caps `prefix` at 200 and `cursor` at
+400). Nothing local caps it — `useAppStorage` and the harness forward the key
+verbatim ([#370](https://github.com/civitai/civitai-app-starters/issues/370)) —
+so a key built from a URL or a model name saves fine here and fails forever in
+production, classified `null`. The `default:` arm's reload does **not** fix it.
+Cap or hash long keys in your block.
 
 That rule is deliberately stated without a list of the non-ceiling strings.
 Two earlier drafts tried to enumerate them and both came up short; the honest,
@@ -155,7 +165,7 @@ reported but did not enforce until recently, so a row-limit overrun used to
 pass here and fail only in production. set/get/delete/list/quota all work
 offline.
 
-⚠️ It is a simulation, not a replica. Four known divergences from the host:
+⚠️ It is a simulation, not a replica. Five known divergences from the host:
 
 - whether a shrinking overwrite is admitted when the store is already over the
   byte budget ([#345](https://github.com/civitai/civitai-app-starters/issues/345)
@@ -167,11 +177,15 @@ offline.
   and `app row limit exceeded` can never be produced locally
   ([#368](https://github.com/civitai/civitai-app-starters/issues/368));
 - in `createMockHost`, lowering `valueCapBytes` moves the gate but not the
-  message ([#369](https://github.com/civitai/civitai-app-starters/issues/369)).
+  message ([#369](https://github.com/civitai/civitai-app-starters/issues/369));
+- 🔴 no key-length cap here or in `useAppStorage`, while the host refuses a
+  `key` over **200 characters** zod-side
+  ([#370](https://github.com/civitai/civitai-app-starters/issues/370)).
 
-Passing here is evidence, not proof — and the second and third are both
+Passing here is evidence, not proof — and the second, third and fifth are
 **permissive**: each lets a write through locally that production will reject,
 which is the failure direction that costs you a production incident rather than
 a confusing local error. (#347 under-counts the bytes; #368 models no app-wide
 ceiling at all, so a write the host refuses with `app quota exceeded` succeeds
-here.) See the [root README](../../../README.md) for submit → review → deploy.
+here; #370 admits an over-length key the host refuses outright.)
+See the [root README](../../../README.md) for submit → review → deploy.
