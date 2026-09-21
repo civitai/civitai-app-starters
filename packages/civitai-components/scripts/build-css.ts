@@ -13,10 +13,16 @@
  *     `dist/css/<slug>.css` plus `src/css/<slug>.generated.ts`.
  * A generation-parity test asserts the two never diverge.
  *
- * 🔴 The per-component artifacts ship inside the tarball (`files: ["dist"]`)
- * but are NOT declared in package.json `exports`, so no consumer can name
- * them. Files are reversible; export keys on a published package are not, and
- * nothing imports these yet. Held until issue #358.
+ * 🔴 The per-component artifacts are NEITHER exported NOR published. They are
+ * not declared in package.json `exports` (so no consumer can name them), and
+ * `files` carries `"!dist/css"` (so they do not enter the tarball either).
+ * They exist on disk, in this repo, for `pnpm measure:css-split` and issue
+ * #358. Files on disk are reversible; export keys on a published package are
+ * not, and nothing imports these yet. Held until #358.
+ *
+ * Not exporting them was never a reason to SHIP them: under the earlier
+ * `files: ["dist"]` they added 70 unnameable files (118,744 B unpacked) to
+ * every install. A test runs `npm pack` and asserts zero `dist/css/` entries.
  *
  * 🔴 The whole-sheet outputs above are FROZEN. `componentsCss` and
  * `injectStyles()` still carry every rule, byte-identical to before the split
@@ -93,9 +99,10 @@ for (const slice of slices) {
       ` *\n` +
       ` * Components in this slice: ${slice.slugs.join(', ')}.\n` +
       ` *\n` +
-      ` * 🔴 NOT importable by consumers. This file ships in the tarball but is\n` +
-      ` * not declared in package.json \`exports\`, so \`@civitai/components/css/…\`\n` +
-      ` * does not resolve. The export surface is held until issue #358.\n` +
+      ` * 🔴 NOT importable, and NOT published. This file is not declared in\n` +
+      ` * package.json \`exports\` (so \`@civitai/components/css/…\` does not\n` +
+      ` * resolve) and \`files\` excludes \`dist/css\` (so it never reaches the\n` +
+      ` * tarball). It exists for this repo's own measurement. See issue #358.\n` +
       ` */\n` +
       // `: string` is load-bearing, not decoration. Without it tsc infers the
       // STRING LITERAL type and inlines the whole sheet into the `.d.ts` — the

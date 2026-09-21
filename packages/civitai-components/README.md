@@ -46,14 +46,17 @@ There is **no supported way to import one component's rules**, and no
 `.` and `./styles.css`.
 
 The build does slice the sheet — `scripts/build-css.ts` writes one standalone,
-layered stylesheet per section to `dist/css/<slug>.css`, and those files ship
-inside the tarball — but nothing in `exports` names them, so they are build
-inputs for this repo's own measurement, not an API. Treat them as private and
-unstable; they can be renamed or removed in a patch release.
+layered stylesheet per section to `dist/css/<slug>.css` — but nothing in
+`exports` names them **and they are excluded from the published tarball**
+(`files` carries `"!dist/css"`). They are build inputs for this repo's own
+measurement, not an API, and they are not in your `node_modules`. Treat them as
+private and unstable; they can be renamed or removed in a patch release.
 
-Why hold a surface whose files are already built: the files are reversible, an
-`exports` key on a published package is not, and no consumer imports them today.
-Opening the surface is cheap later and irreversible now.
+Why hold a surface whose files are already built: files on disk are reversible,
+an `exports` key on a published package is not, and no consumer imports them
+today. Opening the surface is cheap later and irreversible now. Not exporting
+them was never a reason to *ship* them, either — under an earlier `files:
+["dist"]` they added 70 unnameable files to every install.
 
 > 🔴 **`@civitai/blocks-react` deliberately injects the whole pack.**
 > [`MARKUP.md`](./MARKUP.md) documents that rendering any one `/ui` component is
@@ -80,14 +83,46 @@ right unit for a consumer is the **transitive** component set, never one name.
 
 Measured with esbuild (minify, ESM, React external), a `@civitai/blocks-react/ui`
 Button bundle is **52,568 B, of which 50,151 B is stylesheet** — 95.4% CSS for
-one component. The same bundle over Button's **and Loader's** slices is 13,480 B.
-Reproduce with `pnpm measure:css-split` from the repo root.
+one component. What the slices would save off that depends on **which** split
+you mean, and the two numbers are far apart:
+
+| what is split | Button bundle | vs baseline |
+|---|---:|---:|
+| nothing — shipped today | 52,568 B | 100.0% |
+| **`@civitai/components` only** — this package's slices, concatenated | **26,556 B** | **50.5%** |
+| **`@civitai/components` only** — merged into one sheet | **25,518 B** | **48.5%** |
+| the above *plus* `@civitai/blocks-react` also splitting its own sheet, concatenated | 14,518 B | 27.6% |
+| the above *plus* `@civitai/blocks-react` also splitting its own sheet, merged | 13,480 B | 25.6% |
+
+> 🔴 **Only the two middle rows are about this package.** A `blocks-react/ui`
+> Button carries CSS from **two** packages: `@civitai/components`' sheet (what
+> this package slices) and `@civitai/blocks-react`'s own `INTERACTIVE_STYLES`
+> — ~12 KB for Modal, Select, Slider, Collapse, SegmentedControl and
+> ResourceCard, which have no `@civitai/components` counterpart. That sheet is
+> **not** one of the `dist/css/*.css` artifacts and is **not** touched by this
+> split; a Button bundle carries all of it either way. The bottom two rows model
+> a **second, unimplemented** split of it in `@civitai/blocks-react`, and the
+> **12,038 B** between the two pairs belongs to that hypothetical change, not to
+> this one.
+
+Reproduce with `pnpm measure:css-split` from the repo root; run it with
+`MEASURE_CARRIERS=1` to see, per row, how many bytes of each package's sheet
+the row actually removed (expected: `interactive: removed 0 B` on the rows
+labelled `[SHIPPED]`).
 
 The split is asserted **byte-identical on reassembly** before anything is
 written (`scripts/slice-css.ts`, guarded with its negative control in
-`test/css-slice.test.ts`), and the component vocabulary is derived from the
-`data-civitai-ui` selectors each section contains — a test pins that set equal
-to `COMPONENT_NAMES` in both directions.
+`test/css-slice.test.ts`). That assertion proves the **partition arithmetic** —
+that the pieces `sliceComponentsCss` hands back, recomposed by `composeSheet`,
+are exactly the input sheet. It does **not** prove that the sheet was cut in the
+right places: a section marker the slicer fails to recognise merges into the
+previous slice and never gets its own `.css`, and reassembly is still perfect.
+A separate boundary guard counts the raw `/* ----- ` markers in the sheet and
+pins that count against the number of sections, which is what catches that.
+
+The component vocabulary is derived from the `data-civitai-ui` selectors each
+section contains — a test pins that set equal to `COMPONENT_NAMES` in both
+directions.
 
 ## Design
 

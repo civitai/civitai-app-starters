@@ -1,35 +1,78 @@
 /**
- * Per-component CSS split — the guard that makes every sliced artifact
- * trustworthy, plus its negative control.
+ * Per-component CSS split — the guards that make every sliced artifact
+ * trustworthy, plus their negative controls.
  *
- * THE CLAIM UNDER TEST is a RELATIONSHIP, not a component: the 14 slices this
- * package emits are a faithful PARTITION of `src/components.css`. A slicer that
- * silently dropped a section would still produce valid-looking CSS files and a
- * green build — the defect would surface as "one element renders unstyled in
- * one app" with nothing pointing back here.
+ * 🔴 WHAT `assertLossless` PROVES, AND WHAT IT DOES NOT. Read this before
+ * citing it as the reason the split is faithful; an earlier revision of this
+ * docblock did exactly that and was wrong.
+ *
+ * `sliceComponentsCss` partitions ONE string BY INDEX. Every piece is therefore
+ * a substring and the boundaries are contiguous BY CONSTRUCTION, so
+ * `header + LAYER_OPEN + base + Σsections.text + tail` reduces to the input
+ * unconditionally. `assertLossless` proves that ARITHMETIC — that
+ * `sliceComponentsCss` and `composeSheet` agree — and nothing else. It is not
+ * vacuous (it pins the two functions to each other, and `composeSheet` is what
+ * every emitted artifact is built with), but it cannot fail on any output of
+ * the real code path, and the two NEGATIVE CONTROLS below say so honestly: they
+ * build mutants BY HAND from an already-successful split, a state production
+ * cannot reach. They prove the string comparison works. They do not prove the
+ * slicing is faithful.
+ *
+ * The failure `assertLossless` was once credited with catching — "a slicer that
+ * silently dropped a section" — is the one thing it structurally cannot see. A
+ * marker `SECTION_RE` does not recognise (three leading spaces instead of two)
+ * is never "dropped": its rules merge into the PREVIOUS section, that section
+ * never gets its own `.css`, and reassembly stays byte-perfect. Measured on
+ * this sheet, indenting one real marker by a single space takes the section
+ * count 14 -> 13 with `assertLossless` silent throughout.
+ *
+ * `every section marker in the sheet becomes a section (BOUNDARY GUARD)` below
+ * is what sees it, by counting raw `/* ----- ` occurrences independently of
+ * `SECTION_RE`. That independence is the whole point: `MARKERS` (defined below)
+ * is built with the SAME regex the slicer uses, so any assertion against it can
+ * only ever agree with the slicer about which markers exist.
  *
  * 🔴 WHAT THIS SUITE DOES **NOT** COVER — read before trusting it.
- * The per-component artifacts are NOT a public surface. `package.json`
- * declares no `./css/*` entries, so `@civitai/components/css/button` does not
- * resolve for any consumer; the files ship inside the tarball (`files:
- * ["dist"]`) and nothing more. That is deliberate — `dist/css/*.css` is
- * reversible, an `exports` key on a package with ~1.4k downloads/month is not,
- * and no consumer imports these yet. The decision is held pending issue #358.
- * An earlier revision of this file asserted set-equality between the slug set
- * and the `./css/*` export keys; there is no export surface left for it to
- * describe, so that assertion is GONE rather than weakened, and
- * `no ./css/* export is declared` below pins the hold so that re-opening the
- * surface is a deliberate edit to this test and not a silent one.
+ * The per-component artifacts are NOT a public surface and are NOT published.
+ * `package.json` declares no `./css/*` entries, so
+ * `@civitai/components/css/button` does not resolve for any consumer; and
+ * `files` carries `"!dist/css"`, so the artifacts do not enter the tarball
+ * either. They exist on disk, in this repo, for `pnpm measure:css-split` and
+ * issue #358 — nothing else. That is deliberate: files on disk are reversible,
+ * an `exports` key on a package with ~1.4k downloads/month is not, and no
+ * consumer imports these yet.
+ *
+ * 🔴 THIS REVERSES AN EARLIER DECISION, AND THE ASSERTION BELOW REVERSED WITH
+ * IT. An earlier revision of this file documented the artifacts as shipping
+ * inside the tarball on the strength of `files: ["dist"]`, which was true and
+ * was the wrong outcome: 70 files no consumer could name, 118,744 B of them
+ * unpacked — measured by `npm pack --dry-run --json`, 84 entries against the
+ * 14 this package had on `main` — on a package installed ~1,451 times a month.
+ * Not exporting them was never a reason to ship them.
+ * `the per-component artifacts are NOT published`
+ * below now asserts the OPPOSITE of what the old prose described, and it asks
+ * npm rather than reading `files`, so the exclusion cannot be satisfied by
+ * spelling and then defeated by a later `files` entry that re-adds them.
+ *
+ * An earlier revision also asserted set-equality between the slug set and the
+ * `./css/*` export keys; there is no export surface left for it to describe, so
+ * that assertion is GONE rather than weakened, and `no ./css/* export is
+ * declared` below pins the hold so that re-opening the surface is a deliberate
+ * edit to this test and not a silent one.
  *
  * So the suite asserts:
  *   - reassembly is BYTE-identical to the source sheet (and a deliberately
- *     lossy slice FAILS, naming the byte gap — the negative control below);
+ *     lossy slice FAILS, naming the gap — the negative controls below);
+ *   - every raw `/* ----- ` marker in the sheet became its own section, counted
+ *     WITHOUT `SECTION_RE` (the boundary guard);
  *   - every emitted `dist/css/<slug>.css` is exactly the composed slice;
  *   - every emitted `src/css/<slug>.generated.ts` string equals that file;
  *   - the slug vocabulary the slicer derives EQUALS `COMPONENT_NAMES`, in both
  *     directions — the assertion that would have caught the phantom `tabs`
  *     component the old prose-derived vocabulary invented;
  *   - `package.json` declares no `./css/*` export (the hold, pinned);
+ *   - `npm pack` puts NO `dist/css/` entry in the tarball (the exclusion,
+ *     pinned against npm itself rather than against the `files` spelling);
  *   - `pnpm build` prunes only its OWN generated files from the TRACKED
  *     `src/css/` directory;
  *   - `componentsCss` (the whole-pack contract) still carries EVERY section.
@@ -82,6 +125,36 @@ describe('per-component CSS slicing', () => {
     expect(slices).toHaveLength(MARKERS.length);
   });
 
+  /* ── the BOUNDARY GUARD ──────────────────────────────────────────────────
+   * 🔴 DERIVED INDEPENDENTLY OF `SECTION_RE`, ON PURPOSE.
+   *
+   * `MARKERS` above uses the slicer's own pattern, so `split.sections.length
+   * === MARKERS.length` is a tautology dressed as a check: both sides ask the
+   * same regex which markers exist, and both get the same wrong answer when
+   * one is malformed. This counts the bare token `/* -----` — no anchor, no
+   * indent requirement, no title shape — so a marker the slicer fails to
+   * recognise is still counted HERE and the two numbers disagree.
+   *
+   * This is the guard `assertLossless` was believed to be. A mis-indented
+   * marker merges its rules into the previous section, that section never gets
+   * a `.css` file, and reassembly stays byte-perfect — so nothing else in this
+   * suite sees it.
+   * ──────────────────────────────────────────────────────────────────────── */
+  it('every section marker in the sheet becomes a section (BOUNDARY GUARD)', () => {
+    const rawMarkers = (srcCss.match(/\/\* ----- /g) ?? []).length;
+    // Positive control: the token is really present, so a zero here would be a
+    // broken pattern rather than a sheet with no sections.
+    expect(rawMarkers).toBeGreaterThanOrEqual(14);
+    expect(
+      split.sections.length,
+      `the sheet contains ${rawMarkers} \`/* ----- \` markers but the slicer found ` +
+        `${split.sections.length} sections. A marker SECTION_RE does not match (wrong indent, ` +
+        'a trailing space, a line break in the title) is not an error — its rules merge into ' +
+        'the PREVIOUS section, that section never gets its own dist/css/<slug>.css, and ' +
+        'assertLossless still passes. This is the only check that sees it.'
+    ).toBe(rawMarkers);
+  });
+
   it('reassembles BYTE-identically to src/components.css', () => {
     const reassembled = composeSheet(split, split.sections);
     // Three claims, deliberately separate. `String.length` counts UTF-16 code
@@ -97,14 +170,20 @@ describe('per-component CSS slicing', () => {
     expect(() => assertLossless(split, srcCss)).not.toThrow();
   });
 
-  /* ── the NEGATIVE CONTROL ────────────────────────────────────────────────
-   * A guard nobody has watched fail proves nothing. These two cases mutate the
-   * split the exact way a broken slicer would and assert THIS guard's own
-   * error fires — matched on its `[slice] LOSSY` prefix and the byte gap, so a
-   * different check throwing first (missing `@layer` opener, zero sections)
-   * would NOT satisfy them. Reachability: both mutants are built FROM the
-   * real, successfully-parsed split, so every earlier check has already run
-   * and passed by the time `assertLossless` is reached.
+  /* ── the NEGATIVE CONTROLS, and their honest scope ───────────────────────
+   * These mutate the split by hand and assert THIS guard's own error fires —
+   * matched on its `[slice] LOSSY` prefix and the exact gap, so a different
+   * check throwing first (missing `@layer` opener, zero sections) would NOT
+   * satisfy them.
+   *
+   * 🔴 What they prove is that the STRING COMPARISON in `assertLossless`
+   * works — no more. Both mutants are built FROM an already-successful split,
+   * which is a state the production path cannot reach: `sliceComponentsCss`
+   * partitions one string by index, so its own output ALWAYS recomposes. Do
+   * not read a green here as "the slicer is faithful"; the boundary guard
+   * above is what carries that claim.
+   *
+   * Gaps are in UTF-16 code units, matching the message — see `assertLossless`.
    * ──────────────────────────────────────────────────────────────────────── */
 
   function lossyBy(bytes: number): CssSplit {
@@ -113,12 +192,12 @@ describe('per-component CSS slicing', () => {
     return { ...split, sections: [{ ...first, text: first.text.slice(0, -bytes) }, ...rest] };
   }
 
-  it('NEGATIVE CONTROL: a 13-byte-lossy slice fails, naming the gap', () => {
+  it('NEGATIVE CONTROL: a 13-unit-lossy slice fails, naming the gap', () => {
     const mutant = lossyBy(13);
     expect(() => assertLossless(mutant, srcCss)).toThrowError(
       new RegExp(
-        `^\\[slice\\] LOSSY: reassembled sheet is ${srcCss.length - 13} B, ` +
-          `source is ${srcCss.length} B \\(gap 13 B\\)\\.`
+        `^\\[slice\\] LOSSY: reassembled sheet is ${srcCss.length - 13} UTF-16 code units, ` +
+          `source is ${srcCss.length} \\(gap 13;`
       )
     );
   });
@@ -133,8 +212,8 @@ describe('per-component CSS slicing', () => {
     expect(dropped.text.length).toBeGreaterThan(0);
     expect(() => assertLossless(mutant, srcCss)).toThrowError(
       new RegExp(
-        `^\\[slice\\] LOSSY: reassembled sheet is ${srcCss.length - dropped.text.length} B, ` +
-          `source is ${srcCss.length} B \\(gap ${dropped.text.length} B\\)\\.`
+        `^\\[slice\\] LOSSY: reassembled sheet is ${srcCss.length - dropped.text.length} ` +
+          `UTF-16 code units, source is ${srcCss.length} \\(gap ${dropped.text.length};`
       )
     );
   });
@@ -235,12 +314,12 @@ describe('the slug vocabulary is derived from SELECTORS, not from comment prose'
   });
 });
 
-describe('the ./css/* export surface is deliberately UNSHIPPED (issue #358)', () => {
+describe('the ./css/* artifacts are deliberately UNEXPORTED and UNPUBLISHED (issue #358)', () => {
   /**
-   * The artifacts exist and are complete; nothing can NAME them. Files are
-   * reversible, `exports` keys on a published package are not, and no consumer
-   * imports these. Deleting this test to add exports back is the point: it
-   * makes re-opening the surface a deliberate edit.
+   * The artifacts exist and are complete; nothing can NAME them, and nothing
+   * SHIPS them. Files on disk are reversible, `exports` keys on a published
+   * package are not, and no consumer imports these. Deleting these tests to
+   * open the surface is the point: it makes that a deliberate edit.
    */
   it('declares no ./css/* export', () => {
     const declared = Object.keys(pkg.exports).filter((k) => k.startsWith('./css/'));
@@ -248,6 +327,51 @@ describe('the ./css/* export surface is deliberately UNSHIPPED (issue #358)', ()
     // Positive control that the filter is wired to a real, non-empty map —
     // a zero from a mis-read `exports` would otherwise look identical.
     expect(Object.keys(pkg.exports)).toContain('./styles.css');
+  });
+
+  /**
+   * 🔴 THIS ASSERTS THE OPPOSITE OF WHAT AN EARLIER REVISION DOCUMENTED.
+   *
+   * `files: ["dist"]` swept `dist/css/` into every install: 70 files, none of
+   * them nameable by any consumer, 118,744 B unpacked, on a package installed
+   * ~1,451 times a month. `"!dist/css"` removes them. The artifacts
+   * stay on disk — `pnpm measure:css-split` and the tests above read them from
+   * the working tree, which `files` has no bearing on.
+   *
+   * Asked of NPM, not of `files`. Reading `files` for the literal string
+   * `"!dist/css"` would be a spelled guard: it stays green while a later entry
+   * re-adds the directory in a different shape (`"dist/css/button.css"`, a
+   * `.npmignore`, a changed negation order). This runs the real packer and
+   * counts what it would actually put in the tarball.
+   */
+  it('the per-component artifacts are NOT published (npm pack ships no dist/css)', () => {
+    const raw = execFileSync('npm', ['pack', '--dry-run', '--json'], {
+      cwd: pkgRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const entries = (JSON.parse(raw) as [{ files: { path: string }[] }])[0].files.map(
+      (f) => f.path
+    );
+    // Positive control FIRST: a zero below must mean "npm packs no dist/css",
+    // never "npm printed something this test failed to parse". The whole-pack
+    // stylesheet is the thing the package exists to ship, so its absence here
+    // means the read is broken, not that the exclusion worked.
+    expect(entries, 'npm pack output did not parse into a real file list').toContain(
+      'dist/components.css'
+    );
+    expect(entries.length).toBeGreaterThan(5);
+    // And there are real artifacts on disk for it to have shipped, so the zero
+    // is a decision rather than an empty directory.
+    expect(existsSync(join(pkgRoot, 'dist/css', `${slices[0]?.slug}.css`))).toBe(true);
+
+    const shipped = entries.filter((p) => p.startsWith('dist/css/'));
+    expect(
+      shipped,
+      `npm would publish ${shipped.length} dist/css/ entries. These are private, unnameable ` +
+        'artifacts (no `./css/*` export resolves), so shipping them adds install weight no ' +
+        'consumer can use. Keep `"!dist/css"` in package.json `files`.'
+    ).toEqual([]);
   });
 
   it('every slice still has BOTH artifacts on disk, complete', () => {

@@ -17,11 +17,13 @@
  * text. The slices are what `pnpm measure:css-split` prices that against, and
  * what a future `/ui` refactor (issue #358) would import.
  *
- * 🔴 NOT A PUBLIC SURFACE (yet). The emitted artifacts ship inside the tarball
- * but are NOT reachable through package.json `exports` — no consumer can name
- * them. `dist/css/*.css` is reversible; an `exports` key on a package with
- * ~1.4k downloads/month is not, and nothing imports these yet. The export
- * block is deliberately held until #358 decides the shape. See the README.
+ * 🔴 NOT A PUBLIC SURFACE (yet), AND NOT PUBLISHED. The emitted artifacts are
+ * not reachable through package.json `exports` — no consumer can name them —
+ * and `files` carries `"!dist/css"`, so they do not enter the tarball either.
+ * They exist on disk, in this repo, for `pnpm measure:css-split` and #358.
+ * Files on disk are reversible; an `exports` key on a package with ~1.4k
+ * downloads/month is not, and nothing imports these yet. The export block is
+ * deliberately held until #358 decides the shape. See the README.
  *
  * HOW
  * ===
@@ -37,10 +39,26 @@
  *
  * `header + LAYER_OPEN + base + every section + tail` must reproduce the input
  * BYTE-FOR-BYTE. `assertLossless()` checks exactly that and is called by every
- * consumer of this module before any output is written. Without it a slicer
- * that silently dropped a section would emit per-component CSS missing rules —
- * a defect that renders as "one unstyled element in one app" and is untraceable
- * back to here.
+ * consumer of this module before any output is written.
+ *
+ * 🔴 STATED NARROWLY, BECAUSE IT USED TO BE STATED WIDELY. `assertLossless`
+ * proves the PARTITION ARITHMETIC of {@link sliceComponentsCss} and
+ * {@link composeSheet} — that the pieces handed back, recomposed in order, are
+ * exactly the string handed in. That is all it proves. It does NOT prove the
+ * sheet was cut in the right PLACES, and the failure it was once documented as
+ * catching — "a slicer that silently dropped a section" — is precisely the one
+ * it cannot see: this function partitions ONE string BY INDEX, so every piece
+ * is a substring and the boundaries are contiguous by construction. A marker
+ * `SECTION_RE` does not recognise (three leading spaces instead of two, say) is
+ * not "dropped" — its rules simply merge into the PREVIOUS section, that
+ * section never gets its own `.css`, and reassembly is still byte-perfect.
+ * Measured on this sheet: indenting one real marker by a single space takes the
+ * section count from 14 to 13 while `assertLossless` does not throw.
+ *
+ * What DOES see that is a count of the raw `/* ----- ` occurrences in the sheet
+ * against `sections.length`, derived independently of `SECTION_RE` —
+ * `test/css-slice.test.ts` carries it as the boundary guard, watched red on
+ * exactly the mutant above.
  *
  * Each emitted slice is `header + LAYER_OPEN + base + <its section> + tail`, so
  * every slice is a STANDALONE, valid, layered stylesheet. Importing two of them
@@ -196,16 +214,27 @@ export function composeSheet(split: CssSplit, sections: CssSection[]): string {
 }
 
 /**
- * Reassembly must be byte-identical or every artifact derived from the split is
- * wrong. Throws naming BOTH byte counts so the gap is in the failure itself.
+ * Reassembly must be exact or every artifact derived from the split is wrong.
+ *
+ * Scope: this proves the PARTITION ARITHMETIC only — see the module docblock.
+ * It cannot see a section boundary the slicer failed to recognise.
+ *
+ * The message names both SIZES and the gap between them, in UTF-16 code units
+ * (`String.length`), which is what the comparison itself runs on. It does NOT
+ * say "B": the sheet carries em dashes, so its byte length and its code-unit
+ * length genuinely differ (31,970 vs 31,900 at the time of writing) and a ` B`
+ * suffix on `String.length` is a wrong number that looks right. A maintainer
+ * reading this error is about to go count bytes on disk; the unit has to match.
  */
 export function assertLossless(split: CssSplit, original: string): void {
   const all = composeSheet(split, split.sections);
   if (all !== original) {
     throw new Error(
-      `[slice] LOSSY: reassembled sheet is ${all.length} B, source is ${original.length} B ` +
-        `(gap ${original.length - all.length} B). The per-component split is not a faithful ` +
-        'partition of the stylesheet; every artifact derived from it would be missing rules.'
+      `[slice] LOSSY: reassembled sheet is ${all.length} UTF-16 code units, source is ` +
+        `${original.length} (gap ${original.length - all.length}; these are String.length, ` +
+        'NOT bytes — the sheet has multi-byte characters). The per-component split is not a ' +
+        'faithful partition of the stylesheet; every artifact derived from it would be ' +
+        'missing rules.'
     );
   }
 }

@@ -8,9 +8,10 @@
  *
  * Components in this slice: radio-group.
  *
- * 🔴 NOT importable by consumers. This file ships in the tarball but is
- * not declared in package.json `exports`, so `@civitai/components/css/…`
- * does not resolve. The export surface is held until issue #358.
+ * 🔴 NOT importable, and NOT published. This file is not declared in
+ * package.json `exports` (so `@civitai/components/css/…` does not
+ * resolve) and `files` excludes `dist/css` (so it never reaches the
+ * tarball). It exists for this repo's own measurement. See issue #358.
  */
 export const css: string = "/*\n * @civitai/components — attribute-driven, framework-agnostic component CSS.\n *\n * Contract: style is selected by `data-civitai-ui=\"<name>\"` + `data-variant` +\n * `data-size` (+ a few component-specific `data-*`). Theme via an ancestor\n * `[data-theme='light'|'dark']`. Tokens come from @civitai/theme's `--civitai-*`\n * custom properties (link `@civitai/theme/styles.css` alongside this file, or\n * call `injectStyles()` which injects both).\n *\n * ALL rules live in `@layer civitai.components` so a consumer's own unlayered\n * CSS always wins the cascade WITHOUT specificity fights. State colors are\n * derived with `color-mix()` from base tokens (no shade enumeration), and\n * structure uses native CSS nesting (no preprocessor).\n *\n * See MARKUP.md for the full per-component markup + ARIA contract.\n */\n@layer civitai.components {\n  [data-civitai-ui] {\n    box-sizing: border-box;\n    font-family: var(--civitai-font);\n\n    & *,\n    & *::before,\n    & *::after {\n      box-sizing: border-box;\n    }\n  }\n\n  /* ----- RadioGroup (issue #181 F6) — role=radiogroup layout ----- */\n  [data-civitai-ui='radio-group'] {\n    display: flex;\n    flex-direction: column;\n    gap: 8px;\n  }\n  [data-civitai-ui-radio-options] {\n    display: flex;\n    flex-direction: column;\n    gap: 8px;\n\n    &[data-orientation='horizontal'] {\n      flex-direction: row;\n      flex-wrap: wrap;\n      gap: 16px;\n    }\n  }\n  /*\n   * RadioGroup group-level error (0.2.0): mirrors the field `-error` treatment.\n   * The message reuses the shared `[data-civitai-ui-error]` styling (12px, error\n   * token); the invalid state (`data-invalid` on the group, set alongside\n   * `aria-invalid`) tints the child radios' `accent-color` to the error token so\n   * the invalid cue reads on the group, not just the message text — the group\n   * analogue of a field control's error-colored border.\n   */\n  [data-civitai-ui='radio-group'] [data-civitai-ui-error] {\n    font-size: 12px;\n    color: var(--civitai-color-error);\n  }\n  [data-civitai-ui='radio-group'][data-invalid] input[type='radio'] {\n    accent-color: var(--civitai-color-error);\n  }\n\n}\n";
 

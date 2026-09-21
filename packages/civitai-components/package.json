@@ -15,6 +15,7 @@
   },
   "files": [
     "dist",
+    "!dist/css",
     "demo",
     "styles.css",
     "MARKUP.md",
