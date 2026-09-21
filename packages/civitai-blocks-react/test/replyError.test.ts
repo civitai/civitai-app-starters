@@ -66,10 +66,14 @@ describe('throwOnFailedReply — for replies carrying the `{ ok, error }` pair',
     expect(() => throwOnFailedReply({ ok: true, error: '' }, FB)).toThrow(/^fallback copy$/);
   });
 
+  // The string is ARBITRARY on purpose — this helper is protocol-agnostic and
+  // passes through whatever the host sent. It used to read `PAYLOAD_TOO_LARGE`,
+  // which is a value no host can put on an App Storage reply: that is the TRPC
+  // CODE and the bridge forwards the MESSAGE (#343). A fixture that spells a
+  // fiction teaches the fiction; the real strings are
+  // `APP_STORAGE_HOST_ERROR_MESSAGES` in `@civitai/app-sdk/blocks`.
   it('throws the host text on ok:false with a non-empty error', () => {
-    expect(() => throwOnFailedReply({ ok: false, error: 'PAYLOAD_TOO_LARGE' }, FB)).toThrow(
-      /^PAYLOAD_TOO_LARGE$/,
-    );
+    expect(() => throwOnFailedReply({ ok: false, error: 'host text' }, FB)).toThrow(/^host text$/);
   });
 
   // Host text wins over the fallback even when `ok` would also have rejected —

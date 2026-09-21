@@ -57,6 +57,30 @@ export {
   APP_STORAGE_MAX_ROWS,
 } from './appStorageLimits.js';
 
+/**
+ * The host's storage-rejection MESSAGES, and the classifier that turns one
+ * into a branchable reason. The wire carries a message, never the TRPC code —
+ * see `appStorageErrors.ts` for the measurement, and #343 for the bug it
+ * closes.
+ *
+ * `appStorageValueTooLargeMessage` is deliberately NOT re-exported: it exists
+ * so a test can prove the per-value string is DERIVED from
+ * `APP_STORAGE_MAX_VALUE_BYTES` rather than hardcoded. Blocks want the
+ * constant and the classifier.
+ */
+export {
+  APP_STORAGE_ERROR_VALUE_TOO_LARGE,
+  APP_STORAGE_ERROR_APP_QUOTA_EXCEEDED,
+  APP_STORAGE_ERROR_APP_ROW_LIMIT,
+  APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED,
+  APP_STORAGE_ERROR_USER_ROW_LIMIT,
+  APP_STORAGE_ERROR_REQUEST_FAILED,
+  APP_STORAGE_HOST_ERROR_MESSAGES,
+  classifyAppStorageError,
+  isAppStorageHostErrorMessage,
+} from './appStorageErrors.js';
+export type { AppStorageRejectionReason } from './appStorageErrors.js';
+
 export {
   BLOCK_INIT_FRAGMENT_MARKER_KEY,
   BLOCK_INIT_FRAGMENT_VERSION,

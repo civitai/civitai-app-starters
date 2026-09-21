@@ -50,11 +50,22 @@ export interface UseAppStorage {
    */
   get<T = unknown>(key: string): Promise<T | null>;
   /**
-   * Upsert a value. Resolves on host ack. Rejects with the host's `error`
-   * string when the value exceeds `APP_STORAGE_MAX_VALUE_BYTES`, when the
-   * per-(app, viewer) byte or ROW ceiling would be crossed
-   * (`APP_STORAGE_MAX_BYTES` / `APP_STORAGE_MAX_ROWS`), or when the viewer is
-   * anonymous. All from `@civitai/app-sdk/blocks`.
+   * Upsert a value. Resolves on host ack. Rejects when the value exceeds
+   * `APP_STORAGE_MAX_VALUE_BYTES`, when the per-(app, viewer) byte or ROW
+   * ceiling would be crossed (`APP_STORAGE_MAX_BYTES` /
+   * `APP_STORAGE_MAX_ROWS`), or when the viewer is anonymous. All from
+   * `@civitai/app-sdk/blocks`.
+   *
+   * 🔴 THE REJECTION CARRIES A HOST-AUTHORED MESSAGE, NOT A CODE. The thrown
+   * `Error`'s `message` is verbatim whatever the host's bridge put on the
+   * wire — one of `APP_STORAGE_HOST_ERROR_MESSAGES`, e.g. `per-user row limit
+   * exceeded`. There is no `PAYLOAD_TOO_LARGE` to match: that is the TRPC
+   * CODE, and the bridge forwards `err.message` instead
+   * (civitai/civitai-app-starters#343).
+   *
+   * So: branch with `classifyAppStorageError(err)` from
+   * `@civitai/app-sdk/blocks`, handle its `null` with a generic arm, and never
+   * render the raw message to a viewer — it is server prose, not copy.
    */
   set<T = unknown>(key: string, value: T): Promise<{ ok: true; sizeBytes?: number }>;
   /**
@@ -110,7 +121,7 @@ export interface UseAppStorage {
  *
  * @example
  * const storage = useAppStorage();
- * await storage.set('key', { any: 'json' });   // throws "PAYLOAD_TOO_LARGE" over a limit
+ * await storage.set('key', { any: 'json' });   // throws the host's message over a limit
  * const v = await storage.get<{ any: string }>('key'); // null if unset / anon
  * await storage.delete('key');                  // idempotent
  * const { keys } = await storage.list({ prefix: 'note-' });

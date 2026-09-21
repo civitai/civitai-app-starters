@@ -1,7 +1,15 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { APP_STORAGE_MAX_BYTES, APP_STORAGE_MAX_ROWS } from '@civitai/app-sdk/blocks';
+import {
+  APP_STORAGE_ERROR_REQUEST_FAILED,
+  APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED,
+  APP_STORAGE_ERROR_USER_ROW_LIMIT,
+  APP_STORAGE_ERROR_VALUE_TOO_LARGE,
+  APP_STORAGE_MAX_BYTES,
+  APP_STORAGE_MAX_ROWS,
+  classifyAppStorageError,
+} from '@civitai/app-sdk/blocks';
 
 import {
   useBuzzWorkflow,
@@ -721,12 +729,112 @@ describe('createMockHost — storage scenario (in-memory KV)', () => {
     await expect(result.current.delete('k')).resolves.toEqual({ ok: true, deleted: false });
   });
 
-  it('per-value cap rejects an oversized value with PAYLOAD_TOO_LARGE', async () => {
+  /**
+   * Install a FRESH host + transport, drive it into a rejection, and hand back
+   * the message the block actually caught.
+   *
+   * Throws when the write is ACCEPTED — the positive control. A helper that
+   * quietly returned `''` on success would make the assertions below vacuous
+   * for any scenario whose gate stopped firing.
+   */
+  async function rejectionMessage(
+    storage: { valueCapBytes?: number; quotaBytes?: number; limitRows?: number },
+    drive: (s: ReturnType<typeof useAppStorage>) => Promise<unknown>,
+  ): Promise<string> {
+    cleanup();
+    uninstall?.();
+    resetTransport();
+    getTransport({ allowedParentOrigins: [ORIGIN] });
+    host = createMockHost({ storage });
+    uninstall = host.install();
+    const { result } = renderHook(() => useAppStorage());
+    await ready();
+    try {
+      await drive(result.current);
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+    throw new Error(
+      'the write was ACCEPTED — the ceiling under test did not fire, so nothing was measured',
+    );
+  }
+
+  /**
+   * 🔴 REGRESSION (civitai/civitai-app-starters#343). Watched to FAIL at
+   * `e06173f`, where all three ceilings answered the single literal
+   * `'PAYLOAD_TOO_LARGE'` — a string the host CANNOT send, because its bridge
+   * forwards the TRPCError's `message` and never its `code`. A block branching
+   * on it therefore took the actionable arm under `dev:mock` and the generic
+   * arm in production, and no local run could tell.
+   *
+   * Three properties, and all three are needed:
+   *   1. each gate answers the message the HOST's matching throw site sends;
+   *   2. the three are DISTINCT — without this, a mutant returning one
+   *      constant from every gate passes (1) and survives;
+   *   3. the shared classifier separates them, which is what a block branches
+   *      on.
+   *
+   * 🔴 THE FIXTURE BOUNDS ARE PAIRWISE DISTINCT AND EACH SCENARIO OVERSHOOTS
+   * THE TWO GATES IT IS NOT TESTING, so exactly one gate can fire per
+   * scenario. A fixture sitting on two boundaries at once would let the
+   * earliest gate answer for all three and read as a pass.
+   */
+  it('each ceiling answers its OWN host-authored message, and none answers a code', async () => {
+    // Value bigger than the 48-byte cap; 9,000 bytes and 37 rows of headroom,
+    // so neither budget can be what refused it.
+    const valueTooLarge = await rejectionMessage(
+      { valueCapBytes: 48, quotaBytes: 9_000, limitRows: 37 },
+      (s) => s.set('note-alpha', 'A'.repeat(300)),
+    );
+
+    // 702 wire bytes: comfortably UNDER the 4,000-byte per-value cap, over the
+    // 220-byte budget. One insert against a 37-row ceiling.
+    const quotaExceeded = await rejectionMessage(
+      { valueCapBytes: 4_000, quotaBytes: 220, limitRows: 37 },
+      (s) => s.set('note-beta', 'B'.repeat(700)),
+    );
+
+    // Four tiny inserts against a 3-row ceiling, with both byte budgets far
+    // away — the only gate that can fire is the row one.
+    const rowLimit = await rejectionMessage(
+      { valueCapBytes: 4_000, quotaBytes: 9_000, limitRows: 3 },
+      async (s) => {
+        await s.set('note-gamma', 11);
+        await s.set('note-delta', 22);
+        await s.set('note-epsilon', 33);
+        await s.set('note-zeta', 44);
+      },
+    );
+
+    expect(valueTooLarge).toBe(APP_STORAGE_ERROR_VALUE_TOO_LARGE);
+    expect(quotaExceeded).toBe(APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED);
+    expect(rowLimit).toBe(APP_STORAGE_ERROR_USER_ROW_LIMIT);
+
+    // (2) — the half that kills "one constant for every gate".
+    expect(new Set([valueTooLarge, quotaExceeded, rowLimit]).size).toBe(3);
+
+    // (3) — what a block actually branches on.
+    expect([valueTooLarge, quotaExceeded, rowLimit].map(classifyAppStorageError)).toEqual([
+      'value-too-large',
+      'user-quota-exceeded',
+      'user-row-limit',
+    ]);
+
+    // And the string that used to be here is gone from every arm. Spelled, not
+    // structural — which is why it is the LAST assertion and not the test.
+    for (const message of [valueTooLarge, quotaExceeded, rowLimit]) {
+      expect(message).not.toMatch(/payload_too_large/i);
+    }
+  });
+
+  it('per-value cap rejects an oversized value with the host per-value message', async () => {
     host = createMockHost({ storage: { valueCapBytes: 16 } });
     uninstall = host.install();
     const { result } = renderHook(() => useAppStorage());
     await ready();
-    await expect(result.current.set('big', 'x'.repeat(1000))).rejects.toThrow('PAYLOAD_TOO_LARGE');
+    await expect(result.current.set('big', 'x'.repeat(1000))).rejects.toThrow(
+      APP_STORAGE_ERROR_VALUE_TOO_LARGE,
+    );
   });
 
   it('quotaBytes rejects a write that would cross the quota', async () => {
@@ -737,7 +845,9 @@ describe('createMockHost — storage scenario (in-memory KV)', () => {
     // First small write fits.
     await expect(result.current.set('a', 'x'.repeat(10))).resolves.toMatchObject({ ok: true });
     // Second write blows the 50-byte quota.
-    await expect(result.current.set('b', 'y'.repeat(100))).rejects.toThrow('PAYLOAD_TOO_LARGE');
+    await expect(result.current.set('b', 'y'.repeat(100))).rejects.toThrow(
+      APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED,
+    );
   });
 
   /**
@@ -767,7 +877,7 @@ describe('createMockHost — storage scenario (in-memory KV)', () => {
     expect(q.usedBytes).toBeLessThan(100); // nowhere near any byte ceiling
 
     // The third INSERT is refused.
-    await expect(result.current.set('c', 3)).rejects.toThrow('PAYLOAD_TOO_LARGE');
+    await expect(result.current.set('c', 3)).rejects.toThrow(APP_STORAGE_ERROR_USER_ROW_LIMIT);
     expect((await result.current.getQuota()).rowCount).toBe(2);
   });
 
@@ -789,7 +899,7 @@ describe('createMockHost — storage scenario (in-memory KV)', () => {
     await expect(result.current.set('only', 'second')).resolves.toMatchObject({ ok: true });
     await expect(result.current.get('only')).resolves.toBe('second');
     // A genuinely new key is still refused.
-    await expect(result.current.set('other', 'x')).rejects.toThrow('PAYLOAD_TOO_LARGE');
+    await expect(result.current.set('other', 'x')).rejects.toThrow(APP_STORAGE_ERROR_USER_ROW_LIMIT);
   });
 
   /**
@@ -826,7 +936,11 @@ describe('createMockHost — storage scenario (in-memory KV)', () => {
     uninstall = host.install();
     const { result } = renderHook(() => useAppStorage());
     await ready();
-    await expect(result.current.set('k', 'v')).rejects.toThrow('STORAGE_UNAVAILABLE');
+    // The BRIDGE's fallback, not an invented code. `storageErrorMessage()`
+    // returns this whenever the failure carries no message of its own, so it
+    // is the generic a block really sees — and the only one of the six that
+    // retrying can fix, which is why the next line is the point of the test.
+    await expect(result.current.set('k', 'v')).rejects.toThrow(APP_STORAGE_ERROR_REQUEST_FAILED);
     await expect(result.current.set('k', 'v')).resolves.toMatchObject({ ok: true });
   });
 

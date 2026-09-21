@@ -742,21 +742,56 @@ a row-limit overrun now fails under `dev:mock` where it previously passed and
 failed only in production. Pass `storage: { quotaBytes, limitRows }` to
 simulate something smaller.
 
-⚠️ The mock is **not** gate-for-gate identical to the host. Three known
+⚠️ The mock is **not** gate-for-gate identical to the host. Two known
 divergences:
 
-- the error string a rejection carries
-  ([#343](https://github.com/civitai/civitai-app-starters/issues/343));
 - the byte gate refusing a shrinking overwrite that the host admits
   ([#345](https://github.com/civitai/civitai-app-starters/issues/345));
 - 🔴 the byte gate counting **wire** bytes where the host counts **stored**
   bytes — `octet_length(value::jsonb::text)`, larger for every container, up to
   ~1.5x ([#347](https://github.com/civitai/civitai-app-starters/issues/347)).
 
-Passing under `dev:mock` is evidence, not proof — and note the third one is
-**permissive**: unlike the other two, it lets a write pass locally that
-production will reject. Size your fixtures against `getQuota()`, not against
-what the mock accepted.
+Passing under `dev:mock` is evidence, not proof — and note the second is
+**permissive**: unlike the other, it lets a write pass locally that production
+will reject. Size your fixtures against `getQuota()`, not against what the mock
+accepted.
+
+🔴 **A rejection carries a host-authored MESSAGE, not a code.** There is no
+`PAYLOAD_TOO_LARGE` on the wire — that is the TRPC *code*, and the host's
+bridge forwards `err.message`. The six strings a block can receive (five
+rejection sites plus the bridge's `storage request failed` fallback) are
+exported as `APP_STORAGE_HOST_ERROR_MESSAGES` from `@civitai/app-sdk/blocks`,
+and `createMockHost` draws its rejections from the same module — so each
+ceiling answers the message production would send, and
+`classifyAppStorageError(err)` picks the same branch in both:
+
+```ts
+import { classifyAppStorageError } from '@civitai/app-sdk/blocks';
+
+let status = 'Saved.';
+try {
+  await storage.set(key, note);
+} catch (err) {
+  console.warn('[my-block] save failed:', err);  // log the host's words
+  switch (classifyAppStorageError(err)) {        // never render them
+    case 'value-too-large':
+      status = 'That note is too long to save. Try shortening it.';
+      break;
+    case 'user-row-limit':
+      status = 'You have no note slots left. Delete one to make room.';
+      break;
+    default:
+      status = 'Could not save that note. Please try again.';
+  }
+}
+```
+
+Keep the `default` arm: `classifyAppStorageError` answers `null` for a message
+this SDK version does not know, and the host can reword one in any deploy. The
+mock emitted the *code* until
+[#343](https://github.com/civitai/civitai-app-starters/issues/343), which is
+how a block's error branch could pass every local run and never fire in
+production.
 
 ### `useSharedStorage()`
 

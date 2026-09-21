@@ -67,21 +67,29 @@ exhausts `APP_STORAGE_MAX_ROWS` while using a small fraction of
 right up to the rejection. This example prints both.
 
 On a write that would cross any of the three, `set()` rejects — and whichever
-one it was, do not assume it was the value's size. **Under `dev:mock` and this
-example's harness the error string is `"PAYLOAD_TOO_LARGE"` for all three, so
-the mock does not distinguish them.** That is a property of the mock. The real
-host forwards its own per-gate message instead, which would make them
-distinguishable in production; reconciling the two is tracked in
-[#343](https://github.com/civitai/civitai-app-starters/issues/343).
+one it was, do not assume it was the value's size.
 
-🔴 **So `storageFailureMessage()` in `src/App.tsx` is MOCK-ONLY today, and the
-example is honest about it.** Its `/payload_too_large/i` arm matches the mock's
-string and nothing the live host sends, so in production that function has one
-branch — the generic fallback. Copy its **shape** (own your viewer copy, log
-the host's words with `console.warn`, never render them); do not copy the
-pattern expecting it to fire against the host. Widening it means guessing at
-host prose nobody has enumerated, which fails the same way while looking
-handled — do it in the change that closes #343, against the real strings.
+🔴 **The rejection carries a host-authored MESSAGE, not a code.** There is no
+`PAYLOAD_TOO_LARGE` on the wire: that is the TRPC *code*, and the host's bridge
+forwards `err.message` (`per-user row limit exceeded`, `value exceeds 64KB
+cap`, …). The six strings a block can receive are exported as
+`APP_STORAGE_HOST_ERROR_MESSAGES` from `@civitai/app-sdk/blocks`, and this
+example's harness draws its rejections from the same module — so every branch
+below fires the same way here and in production.
+
+`storageFailureMessage()` in `src/App.tsx` is the shape to copy: it calls
+`classifyAppStorageError(err)`, branches on the REASON, logs the host's words
+with `console.warn` and renders copy the app owns. Note which remedies it keeps
+apart — "too long, shorten it" and "no slots left, delete one" are different
+sentences because they are different fixes, and a `bytes`-only readout gives no
+warning about the second. Keep its `default:` arm: the classifier answers
+`null` for a message it does not recognise, and the host can reword one in any
+deploy.
+
+It did not always work this way. The arm used to be `/payload_too_large/i`,
+matching the mock's invented string and nothing the live host sends — so the
+useful copy was unreachable in production while passing every local run
+([#343](https://github.com/civitai/civitai-app-starters/issues/343)).
 
 Surface `getQuota()` in your UI (`"X of {limitBytes}"`, `"N of {limitRows}
 rows"`) rather than hard-coding anything: the ceilings move.
@@ -105,10 +113,8 @@ reported but did not enforce until recently, so a row-limit overrun used to
 pass here and fail only in production. set/get/delete/list/quota all work
 offline.
 
-⚠️ It is a simulation, not a replica. Three known divergences from the host:
+⚠️ It is a simulation, not a replica. Two known divergences from the host:
 
-- the error string a rejection carries
-  ([#343](https://github.com/civitai/civitai-app-starters/issues/343));
 - whether a shrinking overwrite is admitted when the store is already over the
   byte budget ([#345](https://github.com/civitai/civitai-app-starters/issues/345)
   — the host admits it, the harness does not);
@@ -116,7 +122,7 @@ offline.
   value::jsonb::text)` on the host, which is larger for every container — up to
   ~1.5x ([#347](https://github.com/civitai/civitai-app-starters/issues/347)).
 
-Passing here is evidence, not proof — and the third one is **permissive**: it
-lets a write through locally that production will reject, which is the failure
+Passing here is evidence, not proof — and the second is **permissive**: it lets
+a write through locally that production will reject, which is the failure
 direction that costs you a production incident rather than a confusing local
 error. See the [root README](../../../README.md) for submit → review → deploy.

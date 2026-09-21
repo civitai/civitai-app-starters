@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import {
+  APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED,
+  APP_STORAGE_ERROR_USER_ROW_LIMIT,
+  APP_STORAGE_ERROR_VALUE_TOO_LARGE,
   APP_STORAGE_MAX_BYTES,
   APP_STORAGE_MAX_ROWS,
   APP_STORAGE_MAX_VALUE_BYTES,
@@ -105,15 +108,27 @@ export function Harness({ children }: { children: ReactNode }) {
           // whose stored bytes do not increase, and this one does not (nor
           // does it subtract the bytes of the row being replaced). Tracked as
           // civitai/civitai-app-starters#345.
+          //
+          // 🔴 THE REJECTION STRINGS ARE THE HOST'S OWN, IMPORTED, NEVER TYPED
+          // HERE. The wire carries the TRPCError's *message*, not its code, so
+          // the `PAYLOAD_TOO_LARGE` this used to send was a string production
+          // can never produce — and `App.tsx`'s error branch matched it and
+          // nothing else, so the useful copy was unreachable live while
+          // passing every local run (#343). Which gate tripped now selects the
+          // message the host would send for that gate.
           const wouldInsert = !store.has(key);
-          if (
-            bytes > PER_VALUE_CAP ||
-            usedBytes() + bytes > QUOTA_BYTES ||
-            (wouldInsert && store.size + 1 > QUOTA_ROWS)
-          ) {
+          const rejection =
+            bytes > PER_VALUE_CAP
+              ? APP_STORAGE_ERROR_VALUE_TOO_LARGE
+              : usedBytes() + bytes > QUOTA_BYTES
+                ? APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED
+                : wouldInsert && store.size + 1 > QUOTA_ROWS
+                  ? APP_STORAGE_ERROR_USER_ROW_LIMIT
+                  : null;
+          if (rejection) {
             dispatchToBlock({
               type: 'APP_STORAGE_SET_RESULT',
-              payload: { requestId, ok: false, error: 'PAYLOAD_TOO_LARGE' },
+              payload: { requestId, ok: false, error: rejection },
             });
           } else {
             store.set(key, { value: typed.payload?.value, updatedAt: new Date().toISOString(), bytes });

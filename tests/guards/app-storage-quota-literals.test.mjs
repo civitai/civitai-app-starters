@@ -129,6 +129,11 @@ const SCAN_DIRS = ['starters/examples/kv-storage'];
  */
 const SCAN_FILES = [
   SOURCE_OF_TRUTH,
+  // The rejection MESSAGES module, sibling of the source of truth. It derives
+  // the per-value string from `APP_STORAGE_MAX_VALUE_BYTES` and quotes the
+  // host's throw sites in its provenance block, so it is App-Storage surface
+  // like the rest and must not carry the old umbrella either.
+  'packages/civitai-app-sdk/src/blocks/appStorageErrors.ts',
   'packages/civitai-app-sdk/src/blocks/messages.ts',
   'packages/civitai-blocks-react/src/hooks/useAppStorage.ts',
   'packages/civitai-blocks-react/src/internal/mockHost.ts',
@@ -203,6 +208,7 @@ const MIN_SCANNED_CHARS = 80_000;
  */
 const EXPECTED_SCAN_UNITS = [
   'packages/civitai-app-sdk/README.md',
+  'packages/civitai-app-sdk/src/blocks/appStorageErrors.ts',
   'packages/civitai-app-sdk/src/blocks/appStorageLimits.ts',
   'packages/civitai-app-sdk/src/blocks/messages.ts',
   'packages/civitai-blocks-react/README.md',

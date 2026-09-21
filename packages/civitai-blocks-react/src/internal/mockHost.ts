@@ -39,6 +39,10 @@
  */
 
 import {
+  APP_STORAGE_ERROR_REQUEST_FAILED,
+  APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED,
+  APP_STORAGE_ERROR_USER_ROW_LIMIT,
+  APP_STORAGE_ERROR_VALUE_TOO_LARGE,
   APP_STORAGE_MAX_BYTES,
   APP_STORAGE_MAX_ROWS,
   APP_STORAGE_MAX_VALUE_BYTES,
@@ -343,16 +347,16 @@ export interface MockStorageScenario {
   seed?: Record<string, unknown>;
   /**
    * Simulated per-(app, viewer) byte quota. A `set` that would cross it
-   * resolves `{ ok: false, error: 'PAYLOAD_TOO_LARGE' }`. Defaults to
+   * resolves `{ ok: false, error: APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED }` —
+   * the host's own `'per-user storage quota exceeded'`. Defaults to
    * `APP_STORAGE_MAX_BYTES`.
    *
-   * THIS MOCK answers the same string for all three ceilings, so under
-   * `dev:mock` a rejection does not tell you which one tripped. That is a
-   * property of the mock, NOT of the host: the host throws a distinct message
-   * per rejection site and the bridge forwards `err.message`, so a real block
-   * receives e.g. `per-user row limit exceeded`. See
-   * civitai/civitai-app-starters#343 — until it is reconciled, do not write a
-   * block that relies on either behaviour.
+   * Each ceiling answers its OWN host-authored message (#343), so
+   * `classifyAppStorageError()` distinguishes them here exactly as it does in
+   * production. It did not always: for three releases every ceiling answered
+   * the literal `'PAYLOAD_TOO_LARGE'`, a string the bridge can never send,
+   * which made a block's actionable error branch pass locally and take the
+   * generic arm live.
    *
    * 🔴 AND THIS BUDGET IS COUNTED IN A DIFFERENT UNIT FROM THE HOST'S. The
    * mock sums WIRE bytes (`JSON.stringify` as UTF-8); the host sums STORED
@@ -366,17 +370,23 @@ export interface MockStorageScenario {
   quotaBytes?: number;
   /**
    * Per-value byte cap. A `set` whose serialized value exceeds it resolves
-   * `{ ok: false, error: 'PAYLOAD_TOO_LARGE' }`. Defaults to
+   * `{ ok: false, error: APP_STORAGE_ERROR_VALUE_TOO_LARGE }`. Defaults to
    * `APP_STORAGE_MAX_VALUE_BYTES`.
+   *
+   * 🔴 LOWERING THIS DOES NOT CHANGE THE MESSAGE. The emitted string always
+   * names the host's REAL cap (`value exceeds 64KB cap` today), because that
+   * is the string a block has to match in production and the mock exists to
+   * exercise that match. This knob makes the gate cheap to TRIP in a test; it
+   * is not a claim that the host's cap moved.
    */
   valueCapBytes?: number;
   /**
    * Simulated per-(app, viewer) row ceiling. A `set` that would ADD a row past
-   * it resolves `{ ok: false, error: 'PAYLOAD_TOO_LARGE' }` — the same string
-   * the byte gates use, so this mock does not distinguish them (see
-   * {@link MockStorageScenario.quotaBytes} and
-   * civitai/civitai-app-starters#343). Overwriting an existing key adds no row
-   * and is never refused by this gate. Defaults to `APP_STORAGE_MAX_ROWS`.
+   * it resolves `{ ok: false, error: APP_STORAGE_ERROR_USER_ROW_LIMIT }` — the
+   * host's `'per-user row limit exceeded'`, distinct from the byte gates'
+   * message, so a block can tell "no slots left" from "no space left" locally.
+   * Overwriting an existing key adds no row and is never refused by this gate.
+   * Defaults to `APP_STORAGE_MAX_ROWS`.
    *
    * 🔴 THIS WAS REPORTED BUT NOT ENFORCED. `getQuota` returned it from the
    * start while the write path checked only `quotaBytes`, so a row-limit
@@ -387,8 +397,14 @@ export interface MockStorageScenario {
    */
   limitRows?: number;
   /**
-   * Force the next N storage MUTATIONS (`set`/`delete`) to fail with a generic
-   * `STORAGE_UNAVAILABLE` error (counts down) — exercises the error UX.
+   * Force the next N storage MUTATIONS (`set`/`delete`) to fail with the
+   * bridge's generic `'storage request failed'`
+   * ({@link APP_STORAGE_ERROR_REQUEST_FAILED}) — the string the host sends
+   * when the failure carries no message of its own. Counts down; exercises the
+   * retryable arm of a block's error UX, as opposed to the five ceilings,
+   * which retrying cannot fix.
+   *
+   * It used to answer `'STORAGE_UNAVAILABLE'`, which no host has ever sent.
    */
   failNext?: number;
 }
@@ -2462,7 +2478,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               storageFailNext -= 1;
               dispatchToBlock({
                 type: 'APP_STORAGE_SET_RESULT',
-                payload: { requestId, ok: false, error: 'STORAGE_UNAVAILABLE' },
+                payload: { requestId, ok: false, error: APP_STORAGE_ERROR_REQUEST_FAILED },
               });
               return;
             }
@@ -2470,7 +2486,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             if (sizeBytes > valueCapBytes) {
               dispatchToBlock({
                 type: 'APP_STORAGE_SET_RESULT',
-                payload: { requestId, ok: false, error: 'PAYLOAD_TOO_LARGE' },
+                payload: { requestId, ok: false, error: APP_STORAGE_ERROR_VALUE_TOO_LARGE },
               });
               return;
             }
@@ -2509,7 +2525,13 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             if (projected > quotaBytes) {
               dispatchToBlock({
                 type: 'APP_STORAGE_SET_RESULT',
-                payload: { requestId, ok: false, error: 'PAYLOAD_TOO_LARGE' },
+                // The PER-USER message, not the app-wide one: `quotaBytes`
+                // defaults to `APP_STORAGE_MAX_BYTES`, which is the per-(app,
+                // viewer) clamp. The mock models no app-wide umbrella at all,
+                // so it can never emit `APP_STORAGE_ERROR_APP_QUOTA_EXCEEDED`
+                // — a block still has to handle that string, and the only
+                // place it is reachable is production.
+                payload: { requestId, ok: false, error: APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED },
               });
               return;
             }
@@ -2525,7 +2547,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             if (!existing && store.size + 1 > limitRows) {
               dispatchToBlock({
                 type: 'APP_STORAGE_SET_RESULT',
-                payload: { requestId, ok: false, error: 'PAYLOAD_TOO_LARGE' },
+                // Per-user again, and for the same reason as the byte gate
+                // above: `limitRows` defaults to `APP_STORAGE_MAX_ROWS`.
+                payload: { requestId, ok: false, error: APP_STORAGE_ERROR_USER_ROW_LIMIT },
               });
               return;
             }
@@ -2543,7 +2567,12 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               storageFailNext -= 1;
               dispatchToBlock({
                 type: 'APP_STORAGE_DELETE_RESULT',
-                payload: { requestId, ok: false, deleted: false, error: 'STORAGE_UNAVAILABLE' },
+                payload: {
+                  requestId,
+                  ok: false,
+                  deleted: false,
+                  error: APP_STORAGE_ERROR_REQUEST_FAILED,
+                },
               });
               return;
             }

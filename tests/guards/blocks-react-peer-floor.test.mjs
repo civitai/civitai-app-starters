@@ -134,6 +134,26 @@ const APP_STORAGE_CONSTANTS = [
  * here is worse than no ledger, because it reads as a measurement.
  */
 const PEER_VALUE_SYMBOL_SINCE = {
+  // 🔴 NOT MEASURABLE AGAINST A TARBALL — these four ship for the FIRST time in
+  // the app-sdk minor THIS SAME PR publishes (#343), so there is no published
+  // version to probe. The entry is DERIVED the way #344's was, and every step
+  // is a fact rather than an inference from release ordering:
+  //   - in-tree `packages/civitai-app-sdk/package.json` is 0.48.0, and
+  //     `npm view @civitai/app-sdk version` is also 0.48.0 — nothing mid-flight;
+  //   - `git ls-tree -r origin/main .changeset/` shows main carries no other
+  //     `@civitai/app-sdk` changeset;
+  //   - `pnpm exec changeset status --verbose` on this branch prints
+  //     `@civitai/app-sdk 0.49.0` — the tool that will actually run, answering
+  //     with the number it will actually write.
+  //
+  // ⚠️ RELEASE ORDERING IS THE RESIDUAL RISK and it is not removable from here:
+  // if another app-sdk minor merges and publishes before this PR does, 0.49.0
+  // ships WITHOUT these symbols and this PR publishes 0.50.0. RE-RUN
+  // `changeset status --verbose` after any rebase onto a moved main.
+  APP_STORAGE_ERROR_REQUEST_FAILED: '0.49.0',
+  APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED: '0.49.0',
+  APP_STORAGE_ERROR_USER_ROW_LIMIT: '0.49.0',
+  APP_STORAGE_ERROR_VALUE_TOO_LARGE: '0.49.0',
   APP_STORAGE_MAX_BYTES: '0.47.0',
   APP_STORAGE_MAX_ROWS: '0.47.0',
   APP_STORAGE_MAX_VALUE_BYTES: '0.47.0',

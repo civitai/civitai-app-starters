@@ -756,23 +756,30 @@ export type ParentToBlockMessage =
       // reaches first, and it has nothing to do with the size of the
       // value being written.
       //
-      // 🔴 ON WHICH CEILING TRIPPED, THE MOCK AND THE HOST DIFFER, AND
-      // THIS FIELD'S BEHAVIOUR HERE DESCRIBES THE MOCK.
-      // `createMockHost` answers the single string
-      // `"PAYLOAD_TOO_LARGE"` for all three, so under `dev:mock` they
-      // are NOT distinguishable. The real host DOES distinguish them:
-      // measured on `civitai/civitai` `main`, each rejection site
-      // throws its own message (`value exceeds 64KB cap`,
-      // `per-user storage quota exceeded`, `per-user row limit
-      // exceeded`, plus two app-wide variants), and the bridge's
-      // `storageErrorMessage()` forwards `err.message` — not the TRPC
-      // code — so that string is what reaches the block.
+      // 🔴 `error` IS A HOST-AUTHORED MESSAGE, NOT A CODE. The host's
+      // router throws a `TRPCError` carrying BOTH a
+      // `code: 'PAYLOAD_TOO_LARGE'` and a per-site `message`, and the
+      // bridge's `storageErrorMessage()` forwards **`err.message`** —
+      // never the code. So `"PAYLOAD_TOO_LARGE"` is a value this field
+      // CANNOT hold, and a block that branches on it takes the wrong
+      // branch every time. (`createMockHost` emitted exactly that
+      // string for three releases, which is how the mistake survived
+      // every local run; civitai/civitai-app-starters#343.)
       //
-      // Reconciling the mock and this contract is tracked in
-      // civitai/civitai-app-starters#343. Until it lands, do NOT write
-      // a single generic retry arm on the assumption that the cause is
-      // unknowable, and do not hard-code a host string either: the set
-      // above is measured, not contractual.
+      // The strings are enumerated, measured and single-sourced as
+      // `APP_STORAGE_HOST_ERROR_MESSAGES` in
+      // `@civitai/app-sdk/blocks` — five rejection sites plus the
+      // bridge's `'storage request failed'` fallback. Branch with
+      // `classifyAppStorageError(err)` rather than spelling one here;
+      // it is the same module the mock and the starter harnesses draw
+      // their rejections from, so `dev:mock` now exercises the branch
+      // production takes.
+      //
+      // 🔴 AND DO NOT RENDER IT. Server prose, not viewer copy: not
+      // localized, not written for an end user, free to move in any
+      // host deploy. Log it, classify it, show copy your app owns —
+      // and keep a generic arm for `null`, because a reworded or
+      // newly-added host message is a thing that happens.
       //
       // `sizeBytes` is the byte size the row landed at, so the block
       // can update its own quota estimate without another round-trip
