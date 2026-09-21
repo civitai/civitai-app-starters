@@ -26,11 +26,16 @@
  *
  * ## Provenance — measured, not assumed
  *
- * Read from `civitai/civitai` `main` on **2026-09-20** via `gh api` (not a
- * local checkout, which can lag).
+ * 🔴 **WHAT WAS MEASURED IS NARROWER THAN "WHAT A BLOCK CAN RECEIVE" — read
+ * the next section before treating this set as complete.** What follows is
+ * every **`PAYLOAD_TOO_LARGE`** rejection site plus the bridge's fallback. It
+ * is NOT every string the host can put on the `error` field.
  *
- * `src/server/routers/apps.router.ts` — five rejection sites, every one
- * `code: 'PAYLOAD_TOO_LARGE'`, each with its own message:
+ * Read from `civitai/civitai` `main` on **2026-09-20** via `gh api` (not a
+ * local checkout, which can lag), re-confirmed 2026-09-20.
+ *
+ * `src/server/routers/apps.router.ts` — five **`PAYLOAD_TOO_LARGE`** rejection
+ * sites, each with its own message:
  *
  * ```ts
  * :568  throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE',
@@ -59,13 +64,47 @@
  * (a transport fault, a non-`Error` throw), on reads and deletes as well as
  * writes.
  *
- * Re-derive with:
+ * ## 🔴 The set below is NOT closed, and not because the host might change
+ *
+ * The catch arms that call `storageErrorMessage(err)` are **blanket**
+ * `catch (err)` — `IframeHost.tsx:2395` (GET), `:2427` (SET), `:2458`
+ * (DELETE), `:2508` (LIST), `:2535` (QUOTA). They do not filter by TRPC code,
+ * so **every** rejection out of `apps.storage.*` reaches the block on the same
+ * `error` field, carrying whatever `message` it had. The six below are only
+ * the ceiling family; the authorization family travels the identical path and
+ * is at least as common in production. Measured in the same read of
+ * `apps.router.ts`:
+ *
+ * | site | message | code |
+ * | --- | --- | --- |
+ * | `:289` | `invalid block token` | UNAUTHORIZED |
+ * | `:294` | `block id is not a valid storage slug` | INTERNAL_SERVER_ERROR |
+ * | `:321` | `block instance revoked` | FORBIDDEN |
+ * | `:344`, `:422` | `` `storage ${op} requires the ${scope} scope` `` | FORBIDDEN |
+ * | `:372` | `review preview is no longer active for this request` | FORBIDDEN |
+ * | `:406` | `app block not found` | NOT_FOUND |
+ * | `:410` | `app block is not approved` | FORBIDDEN |
+ * | `:528`, `:949` | `storage requires an authenticated viewer` | UNAUTHORIZED |
+ *
+ * plus tRPC's own zod input-validation messages, which never reach a handler
+ * at all. **None of these classify** — {@link classifyAppStorageError} answers
+ * `null` for every one. That is correct (this module owns the ceiling
+ * vocabulary, not the host's whole error surface) but it means `null` is a
+ * BUSY bucket whose dominant real-world occupant is an expired or revoked
+ * token — see the warning on {@link classifyAppStorageError}, and do not write
+ * a `default:` arm that assumes `null` means "transient, retry".
+ *
+ * Re-derive with — 🔴 **not a `PAYLOAD_TOO_LARGE`-only grep**, which is
+ * structurally incapable of seeing the table above and is how this file came
+ * to claim a completeness it had not measured:
  *
  * ```sh
+ * # EVERY throw, not one code. Read the whole list before trusting a count.
  * gh api repos/civitai/civitai/contents/src/server/routers/apps.router.ts \
- *   --jq '.content' | base64 -d | grep -n "PAYLOAD_TOO_LARGE" -A3
+ *   --jq '.content' | base64 -d | grep -n "new TRPCError" -A4
+ * # …and confirm the catch arms are still blanket (no code filter):
  * gh api repos/civitai/civitai/contents/src/components/AppBlocks/IframeHost.tsx \
- *   --jq '.content' | base64 -d | grep -n "storageErrorMessage" -A8
+ *   --jq '.content' | base64 -d | grep -n "storageErrorMessage" -B12
  * ```
  *
  * 🔴 **DO NOT re-derive the strings from this comment** — re-read the host.
@@ -121,8 +160,8 @@ export function appStorageValueTooLargeMessage(
  * A single value exceeded the per-value wire cap
  * ({@link APP_STORAGE_MAX_VALUE_BYTES}). `apps.router.ts:568-569`.
  *
- * The only one of the six that is not a fixed string on the host — see
- * {@link appStorageValueTooLargeMessage}.
+ * The only one of the six ceiling messages that is not a fixed string on the
+ * host — see {@link appStorageValueTooLargeMessage}.
  */
 export const APP_STORAGE_ERROR_VALUE_TOO_LARGE = appStorageValueTooLargeMessage();
 
@@ -159,8 +198,15 @@ export const APP_STORAGE_ERROR_USER_ROW_LIMIT = 'per-user row limit exceeded';
 export const APP_STORAGE_ERROR_REQUEST_FAILED = 'storage request failed';
 
 /**
- * Every storage-rejection string the host can put on the wire, as of the
- * measurement in this file's header.
+ * Every **ceiling** rejection string the host can put on the wire — one per
+ * `PAYLOAD_TOO_LARGE` site in `apps.router.ts`, plus the bridge's fallback, as
+ * of the measurement in this file's header.
+ *
+ * 🔴 **NOT "every string a block can receive".** The bridge's catch arms are
+ * blanket, so the authorization family (`invalid block token`, `block instance
+ * revoked`, `app block is not approved`, the `storage … scope` template,
+ * `storage requires an authenticated viewer`, …) arrives on the SAME field and
+ * is absent here on purpose — see this file's header table.
  *
  * This is the set `createMockHost` and the starter harnesses must draw from —
  * enforced by `tests/guards/app-storage-error-strings.test.mjs`, so a
@@ -175,9 +221,20 @@ export const APP_STORAGE_ERROR_REQUEST_FAILED = 'storage request failed';
  * eliminate, so it must not become public API. Reach it by file path from a
  * test or a guard; a block branches on the classifier's reason.
  *
- * 🔴 **A CLOSED SET IS A CLAIM ABOUT A MEASUREMENT, NOT A CONTRACT.** The host
- * can add a sixth site or reword an existing one in any deploy. Treat an
- * unrecognised string as "some ceiling, unknown which" — never as impossible.
+ * 🔴 **A CLOSED SET IS A CLAIM ABOUT A MEASUREMENT, NOT A CONTRACT — and this
+ * measurement is narrow by construction, not merely stale.** Two separate
+ * gaps, and only the first is about the future:
+ *
+ *   1. The host can add a `PAYLOAD_TOO_LARGE` site or reword an existing one
+ *      in any deploy, and nothing here will notice.
+ *   2. **Today, already**, the authorization/validation family reaches the
+ *      block on the same field and is not in this array. This is not a hole to
+ *      be filled: those strings are the host's session and approval prose, not
+ *      ceiling vocabulary, and enumerating them here would invite exactly the
+ *      equality matching the rest of this comment argues against.
+ *
+ * So an unrecognised string is "some storage failure, unknown which" — NOT
+ * "some ceiling", and never "impossible".
  */
 export const APP_STORAGE_HOST_ERROR_MESSAGES = [
   APP_STORAGE_ERROR_VALUE_TOO_LARGE,
@@ -212,10 +269,24 @@ export type AppStorageRejectionReason =
  * localized, not written for an end user, and free to change. Log it for
  * yourself (`console.warn`) and show copy your app owns.
  *
- * 🔴 **`null` IS A REAL OUTCOME, NOT AN ERROR IN YOUR CODE.** The host can add
- * a rejection site or reword one at any deploy, and a block compiled against
- * an older SDK will see the new string. Give it a retry-ish generic arm; do
- * NOT assume it means "impossible".
+ * 🔴 **`null` IS A REAL OUTCOME, NOT AN ERROR IN YOUR CODE — AND IT DOES NOT
+ * MEAN "TRANSIENT".** Two different things land here, and only one is a retry:
+ *
+ *   - a ceiling message this SDK version has not seen (the host reworded one,
+ *     or added a site, and your block compiled against an older SDK);
+ *   - 🔴 **and, far more often in production, an authorization failure.** The
+ *     bridge's catch arms are blanket, so `invalid block token` (an expired
+ *     token mid-session), `block instance revoked`, `app block is not
+ *     approved`, `storage set requires the apps:storage:write scope` and
+ *     `storage requires an authenticated viewer` all arrive on the same field
+ *     and all classify `null`. See this module's header for the measured list.
+ *
+ * So **"Please try again" is the wrong copy for the `null` arm.** Retrying an
+ * expired token forever is the failure this warning exists to prevent. Write a
+ * generic arm that offers a RELOAD (which re-mints the token, and also covers
+ * a genuine transport blip) and concedes that saving may be unavailable — and
+ * keep `'request-failed'` separate if you want honest retry copy, since that
+ * reason really is the transport one.
  *
  * @example
  * try {
@@ -228,8 +299,13 @@ export type AppStorageRejectionReason =
  *     case 'user-row-limit':
  *     case 'app-row-limit':
  *       return 'You have no note slots left. Delete one to make room.';
- *     default:
+ *     case 'request-failed':
+ *       // The bridge's fallback: genuinely a transport fault. Retry is honest.
  *       return 'Could not save that note. Please try again.';
+ *     default:
+ *       // `null`: an unknown ceiling OR — usually — an expired/revoked token.
+ *       return 'Could not save that note. Try reloading the page; if it keeps ' +
+ *         'happening, saving may be unavailable for this app right now.';
  *   }
  * }
  */
@@ -264,7 +340,12 @@ export function classifyAppStorageError(error: unknown): AppStorageRejectionReas
 }
 
 /**
- * Is `message` a storage-rejection string the host can produce?
+ * Is `message` one of the CEILING rejection strings above?
+ *
+ * 🔴 Not "a string the host can produce" — it answers `false` for every
+ * authorization message in this module's header table, all of which the host
+ * produces and the bridge forwards. It is a membership test over
+ * {@link APP_STORAGE_HOST_ERROR_MESSAGES}, nothing wider.
  *
  * Wider than `APP_STORAGE_HOST_ERROR_MESSAGES.includes(…)` by exactly one
  * case: the per-value message is a template on the host, so any cap spelling

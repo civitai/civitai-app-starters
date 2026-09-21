@@ -958,8 +958,11 @@ describe('createMockHost — storage scenario (in-memory KV)', () => {
     await ready();
     // The BRIDGE's fallback, not an invented code. `storageErrorMessage()`
     // returns this whenever the failure carries no message of its own, so it
-    // is the generic a block really sees — and the only one of the six that
-    // retrying can fix, which is why the next line is the point of the test.
+    // is the generic a block really sees — and the only one of the six CEILING
+    // messages that retrying can fix, which is why the next line is the point
+    // of the test. (NOT the only retryable thing a block can receive: the
+    // bridge's blanket catch forwards the host's authorization messages on the
+    // same field, and those classify `null`. See appStorageErrors.ts.)
     await expect(result.current.set('k', 'v')).rejects.toThrow(APP_STORAGE_ERROR_REQUEST_FAILED);
     await expect(result.current.set('k', 'v')).resolves.toMatchObject({ ok: true });
   });

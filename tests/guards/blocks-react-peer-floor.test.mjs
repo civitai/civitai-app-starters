@@ -701,9 +701,16 @@ test('PREDICTED ENTRY — a ledger entry derived from this branch\'s own release
   //
   // So the rule here is EQUALITY, in both places, and it is deliberately the
   // strict version of the rule the rest of this file avoids: it applies ONLY to
-  // entries explicitly declared as predictions, and it retires itself — once
-  // the release lands, the entries are measurements, the list below empties,
-  // and nothing here constrains anything.
+  // entries explicitly declared as predictions.
+  //
+  // 🔴 IT DOES NOT RETIRE ITSELF. That claim used to be written here and it was
+  // false. Measured on the shape that actually retires the prediction — the
+  // Version Packages PR: in-tree app-sdk 0.49.0, `.changeset` empty, this list
+  // still populated — `next` collapses to the in-tree version, so the entries
+  // still name it, the floor still equals it, and this file scored
+  // 12 pass / 0 fail. Nothing reds at the moment the prediction comes true, so
+  // nothing prompts anyone to empty the list. The `PREDICTION HAS COME TRUE`
+  // test below is what fires there; this one only catches the base MOVING.
   const { inTree, bump, next } = nextAppSdkVersion();
   const nextStr = next.join('.');
 
@@ -725,12 +732,21 @@ test('PREDICTED ENTRY — a ledger entry derived from this branch\'s own release
       `while the floor still admits it — #344's exact shape, and invisible to every other test in\n` +
       `this file (DERIVED FLOOR is satisfied by the stale entry, and the invariant above only\n` +
       `bounds the floor from ABOVE).\n\n` +
-      `Re-run \`pnpm exec changeset status --verbose\`, set every entry above to the number it\n` +
-      `prints, raise the floor to match, and update the derivation in the package's\n` +
-      `\`comment-peerDependencies\` block. Once the release has actually published, MEASURE the\n` +
-      `entries against the real tarball and delete them from\n` +
-      `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH — a prediction that has come true is a measurement,\n` +
-      `and should stop being exempt from the measurement rule.`,
+      `🔴 TWO FIXES, AND THE FIRST ONE IS USUALLY RIGHT. Check which case you are in before\n` +
+      `touching anything — they move the floor in OPPOSITE directions.\n\n` +
+      `  1. THE PREDICTED RELEASE ALREADY PUBLISHED (in-tree app-sdk is ${inTree.join('.')}, the\n` +
+      `     entries say ${PEER_VALUE_SYMBOL_SINCE[drifted[0]] ?? '(the old number)'}). Then the\n` +
+      `     prediction CAME TRUE and these entries are now MEASUREMENTS. Verify against the real\n` +
+      `     tarball (\`npm view @civitai/app-sdk@<v>\`) and DELETE them from\n` +
+      `     PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH. Leave the floor where it is.\n` +
+      `     🔴 DO NOT apply fix 2 here: raising the floor past a version that genuinely exports\n` +
+      `     these symbols excludes a good release, which is spurious peer warnings and\n` +
+      `     --strict-peer-deps install failures — the #309/#317/#344 family this file polices,\n` +
+      `     with the sign flipped.\n\n` +
+      `  2. THE RELEASE HAS NOT PUBLISHED and the base simply moved under an unpublished\n` +
+      `     prediction. Re-run \`pnpm exec changeset status --verbose\`, set every entry above to\n` +
+      `     the number it prints, raise the floor to match, and update the derivation in the\n` +
+      `     package's \`comment-peerDependencies\` block.`,
   );
 
   if (PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH.length === 0) return;
@@ -748,6 +764,64 @@ test('PREDICTED ENTRY — a ledger entry derived from this branch\'s own release
       `them (the release does not exist yet), and npm will not warn, because the range is\n` +
       `SATISFIED. Set the floor to >=${nextStr} <1.0.0.`,
   );
+});
+
+test('PREDICTION HAS COME TRUE — the predicted release is in-tree, so the entries are measurements now', () => {
+  // 🔴 THE RETIREMENT, MADE MECHANICAL. The test above claimed the prediction
+  // "retires itself". It does not: on the Version Packages PR — the exact
+  // commit where the prediction comes true — in-tree app-sdk is bumped to the
+  // predicted version and `.changeset` is emptied, so `next` collapses onto
+  // the in-tree version, every existing assertion is satisfied, and the file
+  // scores 12 pass / 0 fail with the list still populated. Measured. A list
+  // left populated past its release then pins the floor to the NEXT release
+  // forever (the `floor === nextStr` assertion above), which is #344 with the
+  // sign flipped: a floor ABOVE a version that genuinely exports the symbols.
+  //
+  // The trigger is therefore NOT "the base moved" — it is "the in-tree app-sdk
+  // has caught up with the number the prediction names". That is true on the
+  // Version Packages PR and false on this branch, which is exactly the edge
+  // the retirement needs.
+  if (PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH.length === 0) return; // already retired
+
+  const inTree = parseVersion(readJson(APP_SDK_PKG).version);
+
+  for (const symbol of PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH) {
+    const predictedStr = PEER_VALUE_SYMBOL_SINCE[symbol];
+    // A prediction with no ledger entry is a different bug; the DERIVED FLOOR
+    // and drift tests own it. Here it would only produce a confusing message.
+    assert.ok(
+      predictedStr,
+      `${symbol} is listed in PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH but has no\n` +
+        `PEER_VALUE_SYMBOL_SINCE entry to predict anything.`,
+    );
+    const predicted = parseVersion(predictedStr);
+
+    assert.ok(
+      cmp(inTree, predicted) < 0,
+      `THE PREDICTION HAS COME TRUE — retire it.\n\n` +
+        `  in-tree @civitai/app-sdk: ${inTree.join('.')}\n` +
+        `  ${symbol} predicted at:   ${predictedStr}\n\n` +
+        `${PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH.length} entries in PEER_VALUE_SYMBOL_SINCE are\n` +
+        `still marked as PREDICTIONS, but the version they predict is already the version in the\n` +
+        `tree — so it is being released now (this is the Version Packages PR) or it already has.\n` +
+        `A prediction that came true is a MEASUREMENT, and must stop being exempt from the\n` +
+        `measurement rule.\n\n` +
+        `DO THIS:\n` +
+        `  1. Confirm ${predictedStr} really published and really exports them:\n` +
+        `       npm view @civitai/app-sdk@${predictedStr} version\n` +
+        `       # then check the tarball's exports, as the rest of this ledger was measured\n` +
+        `  2. Leave PEER_VALUE_SYMBOL_SINCE alone if the measurement agrees; correct it if not.\n` +
+        `  3. Empty PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH:\n` +
+        `       ${PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH.join(',\n       ')}\n` +
+        `  4. LEAVE THE FLOOR WHERE IT IS.\n\n` +
+        `🔴 DO NOT "fix" this by raising the floor or bumping the entries to a later version.\n` +
+        `${predictedStr} genuinely exports these symbols, so a floor above it excludes a good\n` +
+        `release — spurious peer warnings and --strict-peer-deps install failures. That is the\n` +
+        `#309/#317/#344 family this file polices, with the sign flipped. While the list stays\n` +
+        `populated the \`floor === nextStr\` assertion above will keep dragging the floor up on\n` +
+        `every subsequent release, forever.`,
+    );
+  }
 });
 
 test('DERIVED FLOOR — the floor is at least the lowest app-sdk that exports everything this package imports', () => {

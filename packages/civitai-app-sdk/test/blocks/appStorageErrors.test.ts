@@ -45,7 +45,14 @@ describe('APP_STORAGE host error messages', () => {
     );
   });
 
-  it('the exported set is the six strings a block can receive, all distinct', () => {
+  // 🔴 "the six CEILING strings", NOT "the six a block can receive". The host's
+  // bridge catches every `apps.storage.*` rejection with a blanket `catch` and
+  // forwards its message on the same field, so `invalid block token`, `block
+  // instance revoked`, `app block is not approved`, the `storage … scope`
+  // template and `storage requires an authenticated viewer` reach a block too,
+  // and all classify `null`. This array is the `PAYLOAD_TOO_LARGE` family plus
+  // the bridge fallback — all that was ever measured.
+  it('the exported set is the six ceiling strings, all distinct', () => {
     expect([...APP_STORAGE_HOST_ERROR_MESSAGES]).toEqual([
       APP_STORAGE_ERROR_VALUE_TOO_LARGE,
       APP_STORAGE_ERROR_APP_QUOTA_EXCEEDED,
@@ -126,6 +133,37 @@ describe('APP_STORAGE host error messages', () => {
     expect(classifyAppStorageError('value exceeds cap')).toBeNull();
     expect(classifyAppStorageError('value exceeds KB cap')).toBeNull();
     expect(classifyAppStorageError('value exceeds 64MB cap')).toBeNull();
+  });
+
+  it('the host AUTHORIZATION messages reach a block and classify null (#366)', () => {
+    // 🔴 THE CLAIM THIS PINS: the exported set is the PAYLOAD_TOO_LARGE family
+    // plus the bridge fallback — NOT "every string a block can receive". The
+    // host's bridge wraps each `apps.storage.*` call in a blanket `catch` and
+    // forwards `err.message` on the same `error` field (IframeHost.tsx :2395,
+    // :2427, :2458, :2508, :2535), so these arrive at a block identically to a
+    // ceiling message. Read from `civitai/civitai` `main`, 2026-09-20.
+    //
+    // They answer `null` on purpose — this module owns the ceiling vocabulary,
+    // not the host's whole error surface. The point of asserting it is that
+    // `null` is therefore a BUSY bucket whose dominant production occupant is
+    // an expired or revoked token, so a `default:` arm must not read "please
+    // try again". If someone teaches the classifier these strings, this test
+    // goes red and the docs saying `null` is not "transient" get revisited
+    // with it.
+    for (const hostMessage of [
+      'invalid block token', // apps.router.ts:289  UNAUTHORIZED
+      'block id is not a valid storage slug', // :294  INTERNAL_SERVER_ERROR
+      'block instance revoked', // :321  FORBIDDEN
+      'storage set requires the apps:storage:write scope', // :344/:422  FORBIDDEN
+      'review preview is no longer active for this request', // :372  FORBIDDEN
+      'app block not found', // :406  NOT_FOUND
+      'app block is not approved', // :410  FORBIDDEN
+      'storage requires an authenticated viewer', // :528/:949  UNAUTHORIZED
+    ]) {
+      expect(classifyAppStorageError(hostMessage), hostMessage).toBeNull();
+      expect(classifyAppStorageError(new Error(hostMessage)), hostMessage).toBeNull();
+      expect(isAppStorageHostErrorMessage(hostMessage), hostMessage).toBe(false);
+    }
   });
 
   it('isAppStorageHostErrorMessage agrees with the classifier and rejects non-strings', () => {

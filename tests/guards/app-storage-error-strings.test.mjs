@@ -41,7 +41,23 @@
  *     different protocol served by different host procedures, and its strings
  *     have NOT been measured; `SHARED_UNAVAILABLE` and friends are deliberately
  *     out of scope, not vouched for.
- *   - `internal/liveHost.ts` is deliberately NOT in `MOCKS`, and that is not an
+ *   - It checks the SPELLING a mock emits, not the host's whole error surface.
+ *     `appStorageErrors.ts` exports the six CEILING messages; the host's
+ *     authorization prose (`invalid block token`, `block instance revoked`,
+ *     `app block is not approved`, …) reaches a block on the same field and is
+ *     not in that module, so nothing here would notice a mock inventing an
+ *     auth-shaped string either. See that module's header.
+ *   - The set of files this reads is `MOCKS` + `NOT_MOCKS`, and it is
+ *     ENFORCED — a walk of the repository must find rejection sites in exactly
+ *     those files. 🔴 It was NOT enforced until #366: `MOCKS` was a fixed list,
+ *     so a new file carrying `error: 'PAYLOAD_TOO_LARGE'` in an
+ *     `APP_STORAGE_SET_RESULT` payload — the #343 regression verbatim — left
+ *     the full suite green at pass 156 / fail 0. The walk is what closes that;
+ *     what it still cannot see is a rejection built in a shape
+ *     `rejectionSitesOf` does not parse (see the one-level-`const` limit
+ *     below), which would be invisible to the walk and the membership rule
+ *     alike.
+ *   - `internal/liveHost.ts` is deliberately in `NOT_MOCKS`, and that is not an
  *     omission: it is not a mock. Its `APP_STORAGE_SET_RESULT` error arm
  *     forwards `r.error` — the string the real server sent — so there is no
  *     spelling of its own to check, and the membership rule below would fail it
@@ -62,10 +78,10 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -85,6 +101,95 @@ const MOCKS = [
   { file: 'packages/civitai-blocks-react/src/internal/mockHost.ts', rejections: 5 },
   { file: 'starters/examples/kv-storage/src/Harness.tsx', rejections: 1 },
 ];
+
+/**
+ * Files that DO carry `APP_STORAGE_*_RESULT` rejection sites and are
+ * deliberately not judged by the membership rule, each with the reason.
+ *
+ * 🔴 This list is not decoration: together with {@link MOCKS} it is the
+ * ASSERTED COMPLETE SET of rejection-carrying files in the repository, checked
+ * by the walk below. An exclusion added without a reason here is a hole; an
+ * exclusion added with one is a decision on the record.
+ */
+const NOT_MOCKS = [
+  {
+    file: 'packages/civitai-blocks-react/src/internal/liveHost.ts',
+    why:
+      'not a mock. Its rejection arms forward `r.error` — the string the REAL server sent —\n' +
+      'so it has no spelling of its own to check, and the membership rule would fail it for\n' +
+      'doing exactly the right thing.',
+  },
+  {
+    file: 'packages/civitai-blocks-react/test/useAppStorage.test.tsx',
+    why:
+      'a HOOK unit test, not a mock host. It posts arbitrary strings (`NOT_FOUND`,\n' +
+      "`QUOTA_BACKEND_DOWN`, and `error: ''` for the falsy-but-present validator path) to prove\n" +
+      'the hook forwards a message VERBATIM and that the reply validator handles the edges.\n' +
+      'Pinning those to host vocabulary would destroy what they test.',
+  },
+  {
+    file: 'tests/guards/app-storage-error-strings.test.mjs',
+    why: "this guard's own control fixtures, which must contain the shapes that have to FAIL.",
+  },
+];
+
+/**
+ * Where a rejection site could appear. The walk starts at the repo root — the
+ * point of #343's scaffolding finding is that a NEW file is exactly what a
+ * fixed list cannot see.
+ */
+const SKIP_DIRS = new Set([
+  'node_modules',
+  'dist',
+  'build',
+  '.git',
+  '.direnv',
+  '.turbo',
+  'coverage',
+  '.next',
+  '.svelte-kit',
+  '.venv',
+]);
+const SCAN_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.svelte'];
+
+/**
+ * Coverage floor, in FILES reached by the walk. 469 are read today.
+ *
+ * 🔴 A walk narrowed to nothing finds no rejection sites, and "the discovered
+ * set equals the ledger" would then be satisfiable only by emptying the
+ * ledger — but a walk narrowed to a HANDFUL still finds `mockHost.ts` and
+ * passes while seeing none of the tree. Well below the real figure on purpose:
+ * this catches a collapse, not drift. The `deepEqual` catches drift.
+ */
+const MIN_SCANNED_FILES = 300;
+
+function walk(dir, out) {
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const entry of entries) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (SKIP_DIRS.has(entry.name)) continue;
+      walk(full, out);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    if (!SCAN_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) continue;
+    out.push(full);
+  }
+  return out;
+}
+
+/** Repo-relative, forward-slashed paths of every file the walk reaches. */
+function scannableFiles() {
+  return walk(REPO_ROOT, [])
+    .map((abs) => relative(REPO_ROOT, abs).split(sep).join('/'))
+    .sort();
+}
 
 // ---------------------------------------------------------------------------
 // Loading the real module.
@@ -205,8 +310,8 @@ export function judgeRejection(expr, exported) {
       ok: false,
       why:
         `a hand-typed string literal (${literal[0]}) is the rejection. The host does not send\n` +
-        `        strings this repository invents — it sends its own TRPCError MESSAGE, and the six it\n` +
-        `        can send are exported from ${ERRORS_MODULE}.\n` +
+        `        strings this repository invents — it sends its own TRPCError MESSAGE, and the six\n` +
+        `        CEILING messages a mock is allowed to emit are exported from ${ERRORS_MODULE}.\n` +
         `        Import one (see APP_STORAGE_HOST_ERROR_MESSAGES) instead of typing it here.`,
     };
   }
@@ -384,13 +489,62 @@ test('every storage rejection a mock emits is drawn from the exported set (#343)
         verdict.ok,
         `${file}:${site.line} (${site.messageType}) emits \`error: ${site.expr}\` —\n` +
           `        ${verdict.why}\n\n` +
-          `        The host sends the TRPCError's MESSAGE, never its code. The six it can send are\n` +
-          `        exported from ${ERRORS_MODULE}, measured against civitai/civitai. A string this\n` +
+          `        The host sends the TRPCError's MESSAGE, never its code. The six CEILING messages\n` +
+          `        are exported from ${ERRORS_MODULE}, measured against civitai/civitai. A string this\n` +
           `        repository invents makes \`dev:mock\` exercise a branch production never takes —\n` +
           `        civitai/civitai-app-starters#343.`,
       );
     }
   }
+});
+
+test('MOCKS is the COMPLETE set — #343 cannot reappear in a file nobody listed', () => {
+  // 🔴 WHY A WALK AND NOT A LIST. `MOCKS` was a fixed file list with nothing
+  // enforcing it, so a NEW file carrying `error: 'PAYLOAD_TOO_LARGE'` in an
+  // `APP_STORAGE_SET_RESULT` payload — the #343 regression, verbatim — left
+  // the whole suite green. Measured: dropping such a file in scored
+  // pass 156 / fail 0. A ledger that only the listed files can violate does
+  // not guard the repository; it guards the ledger.
+  const files = scannableFiles();
+
+  // POSITIVE CONTROL on the walk itself, before reading anything off it. A
+  // zero (or a near-zero) here would make the set comparison below vacuous.
+  assert.ok(
+    files.length >= MIN_SCANNED_FILES,
+    `the walk reached only ${files.length} files (floor ${MIN_SCANNED_FILES}) — it is not\n` +
+      `traversing the repository. A walk that finds nothing reports no rejection sites, which\n` +
+      `would read as a PASS.`,
+  );
+
+  const carrying = files.filter(
+    (rel) => rejectionSitesOf(readFileSync(join(REPO_ROOT, rel), 'utf8')).length > 0,
+  );
+
+  // SECOND POSITIVE CONTROL: the walk + extractor together must actually find
+  // the mock everyone knows carries rejections. `files.length` alone proves
+  // the traversal ran, not that `rejectionSitesOf` is still matching it.
+  assert.ok(
+    carrying.includes('packages/civitai-blocks-react/src/internal/mockHost.ts'),
+    `the walk read ${files.length} files but found no rejection sites in\n` +
+      `packages/civitai-blocks-react/src/internal/mockHost.ts, which definitely has five.\n` +
+      `rejectionSitesOf() has stopped matching the real dispatch shape, so every "no offenders\n` +
+      `found" verdict in this file is meaningless.`,
+  );
+
+  const expected = [...MOCKS.map((m) => m.file), ...NOT_MOCKS.map((m) => m.file)].sort();
+  assert.deepEqual(
+    carrying,
+    expected,
+    `the set of files carrying APP_STORAGE_*_RESULT rejections is not MOCKS + NOT_MOCKS.\n\n` +
+      `        MORE means a rejection site appeared in a file no ledger names — and it is NOT being\n` +
+      `        checked against the exported host messages, so #343 can live there in full. Add the\n` +
+      `        file to MOCKS (with its rejection count) if it is a mock host, or to NOT_MOCKS WITH A\n` +
+      `        REASON if it is not.\n\n` +
+      `        FEWER means a mock lost its rejection sites, or a file was renamed and the ledger was\n` +
+      `        not. Either way the coverage this guard claims is no longer the coverage it has.\n\n` +
+      `        Deliberately excluded today:\n` +
+      NOT_MOCKS.map((m) => `          - ${m.file}: ${m.why.split('\n')[0]}`).join('\n'),
+  );
 });
 
 test('the example a reader copies branches on the CLASSIFIER, not on host prose (#343)', () => {

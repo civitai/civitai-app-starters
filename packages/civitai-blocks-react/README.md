@@ -757,19 +757,31 @@ divergences:
   keeps naming the host's real cap
   ([#369](https://github.com/civitai/civitai-app-starters/issues/369)).
 
-Passing under `dev:mock` is evidence, not proof — and note the second is
-**permissive**: alone among them, it lets a write pass locally that production
-will reject. Size your fixtures against `getQuota()`, not against what the mock
-accepted.
+Passing under `dev:mock` is evidence, not proof — and note that the second and
+the third are **permissive**: each lets a write pass locally that production
+will reject. (#347 under-counts the bytes; #368 models no app-wide ceiling at
+all, so a write the host would refuse with `app quota exceeded` succeeds here.)
+Size your fixtures against `getQuota()`, not against what the mock accepted.
 
 🔴 **A rejection carries a host-authored MESSAGE, not a code.** There is no
 `PAYLOAD_TOO_LARGE` on the wire — that is the TRPC *code*, and the host's
-bridge forwards `err.message`. A block can receive six strings: five rejection
-sites plus the bridge's `storage request failed` fallback. They are measured and
-single-sourced in the app-sdk's `blocks/appStorageErrors.ts`, and
-`createMockHost` draws its rejections from that same module — so for the
-ceilings the mock HAS, it answers the message production would send, and
-`classifyAppStorageError(err)` picks the same branch in both.
+bridge forwards `err.message`. Six **ceiling** strings are measured and
+single-sourced in the app-sdk's `blocks/appStorageErrors.ts` — one per
+`PAYLOAD_TOO_LARGE` site in the host's router, plus the bridge's `storage
+request failed` fallback — and `createMockHost` draws its rejections from that
+same module, so for the ceilings the mock HAS it answers the message production
+would send, and `classifyAppStorageError(err)` picks the same branch in both.
+
+🔴 **Those six are not every string a block can receive.** The bridge catches
+every rejection out of `apps.storage.*` with a *blanket* `catch` and puts its
+message on the same `error` field, so the host's authorization prose travels
+the identical path: `invalid block token` (an expired token mid-session),
+`block instance revoked`, `app block not found`, `app block is not approved`,
+`storage set requires the apps:storage:write scope`, `storage requires an
+authenticated viewer`, plus tRPC's zod input-validation messages. **Every one
+of them classifies `null`.** That is deliberate — the SDK owns the ceiling
+vocabulary, not the host's whole error surface — but it means `null` is a busy
+bucket, and see the `default` arm note below before writing copy for it.
 
 ⚠️ **The mock reaches four of the six.** It models no app-wide umbrella
 ([#368](https://github.com/civitai/civitai-app-starters/issues/368)), so
@@ -800,15 +812,30 @@ try {
     case 'user-row-limit':
       status = 'You have no note slots left. Delete one to make room.';
       break;
-    default:
+    case 'request-failed':
+      // The bridge's fallback — a transport fault. Genuinely retryable.
       status = 'Could not save that note. Please try again.';
+      break;
+    default:
+      // `null`: an unknown ceiling, or (more often) an expired/revoked token.
+      status =
+        'Could not save that note. Try reloading the page — if that does not ' +
+        'help, storage may be unavailable for this app right now.';
   }
 }
 ```
 
-Keep the `default` arm: `classifyAppStorageError` answers `null` for a message
-this SDK version does not know, and the host can reword one in any deploy. The
-mock emitted the *code* until
+🔴 **Keep the `default` arm, and do not put "please try again" in it.**
+`classifyAppStorageError` answers `null` both for a ceiling message this SDK
+version does not know (the host can reword one in any deploy) *and* for the
+whole authorization family listed above — an expired block token, a revoked
+instance, an unapproved block, a missing storage scope. Retrying fixes none of
+the second group, so the generic arm should offer a **reload** (which re-mints
+the token, and covers a transport blip too) and concede that storage may be
+unavailable. Split `'request-failed'` out if you want honest retry copy: that
+reason really is the transport one.
+
+The mock emitted the *code* until
 [#343](https://github.com/civitai/civitai-app-starters/issues/343), which is
 how a block's error branch could pass every local run and never fire in
 production.

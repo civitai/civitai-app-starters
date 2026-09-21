@@ -60,9 +60,16 @@ const DIVERGENCE_LEDGER = [
   // divergences" that was short by two. A list that is SHORT is the dangerous
   // shape — it reads as exhaustive. #366 wrote them down; neither is fixed.
   {
+    // 🔴 PERMISSIVE, not restrictive — corrected after the label was read
+    // against this file's own definition (see the `direction` note below).
+    // The host enforces two APP-WIDE gates the mock has no model of at all
+    // (`apps.router.ts:782` bytes, `:790` rows), so the mock ADMITS a write
+    // the host would refuse. That the two messages are also unreachable
+    // locally is the same fact seen from the block's side; the actionable
+    // half is that `dev:mock` says yes where production says no.
     issue: 368,
-    what: 'no mock models the app-wide umbrella, so `app quota exceeded` / `app row limit exceeded` are unreachable outside production',
-    direction: 'restrictive',
+    what: 'no mock models the app-wide umbrella, so a write the host refuses with `app quota exceeded` / `app row limit exceeded` succeeds locally, and neither message is reachable outside production',
+    direction: 'PERMISSIVE',
   },
   {
     issue: 369,

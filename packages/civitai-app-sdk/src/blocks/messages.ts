@@ -766,20 +766,30 @@ export type ParentToBlockMessage =
       // string for three releases, which is how the mistake survived
       // every local run; civitai/civitai-app-starters#343.)
       //
-      // The strings are enumerated, measured and single-sourced in
-      // `blocks/appStorageErrors.ts` — five rejection sites plus the
-      // bridge's `'storage request failed'` fallback. Branch with
-      // `classifyAppStorageError(err)` from `@civitai/app-sdk/blocks`
-      // rather than spelling one here;
+      // The CEILING strings are enumerated, measured and
+      // single-sourced in `blocks/appStorageErrors.ts` — the five
+      // `PAYLOAD_TOO_LARGE` sites plus the bridge's `'storage request
+      // failed'` fallback. Branch with `classifyAppStorageError(err)`
+      // from `@civitai/app-sdk/blocks` rather than spelling one here;
       // it is the same module the mock and the starter harnesses draw
       // their rejections from, so `dev:mock` now exercises the branch
       // production takes.
       //
+      // 🔴 THOSE SIX ARE NOT EVERY VALUE THIS FIELD CAN HOLD. The
+      // bridge's catch arms are BLANKET, so the host's authorization
+      // prose rides the same field: `invalid block token` (an expired
+      // token mid-session), `block instance revoked`, `app block not
+      // found`, `app block is not approved`, `storage <op> requires
+      // the <scope> scope`, `storage requires an authenticated
+      // viewer`, plus tRPC's zod validation messages. All classify
+      // `null`. See `appStorageErrors.ts` for the measured table.
+      //
       // 🔴 AND DO NOT RENDER IT. Server prose, not viewer copy: not
       // localized, not written for an end user, free to move in any
       // host deploy. Log it, classify it, show copy your app owns —
-      // and keep a generic arm for `null`, because a reworded or
-      // newly-added host message is a thing that happens.
+      // and keep a generic arm for `null`. 🔴 Do NOT write "try
+      // again" in that arm: `null` is mostly the authorization family
+      // above, and retrying an expired token never succeeds.
       //
       // `sizeBytes` is the byte size the row landed at, so the block
       // can update its own quota estimate without another round-trip

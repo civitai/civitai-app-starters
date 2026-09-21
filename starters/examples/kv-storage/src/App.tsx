@@ -174,20 +174,32 @@ export function App() {
  * `classifyAppStorageError` is the single matcher; the strings it matches are
  * measured against the host and live in `@civitai/app-sdk/blocks`, where
  * `createMockHost` and this example's harness also read them. That is what
- * makes every arm below reachable BOTH under `dev:harness` and in production —
- * the property this function did not have until #343.
+ * makes an arm that DOES fire under `dev:harness` fire on the same rejection in
+ * production — the property this function did not have until #343. It is NOT a
+ * claim that every arm is reachable locally: this harness reaches three of the
+ * six reasons (see the README's table), and the `default:` arm none at all.
  *
  * What it looked like when it did not: the one arm tested
  * `/payload_too_large/i`, which is the TRPC *code*. The bridge forwards the
  * *message*, so the arm matched the mock's fiction and nothing the host sends.
- * Locally the viewer got actionable copy; live, every rejection — including
- * the two that retrying cannot fix — fell through to "Please try again."
+ * Locally the viewer got actionable copy; live, every rejection — not one of
+ * which retrying can fix — fell through to "Please try again."
  *
- * 🔴 **KEEP THE `default` ARM GENERIC.** `classifyAppStorageError` answers
- * `null` for a string it does not recognise, and that is a REAL outcome: the
- * host can reword a message or add a rejection site in any deploy, and a block
- * compiled against an older SDK sees the new string. Treat it as "something
- * went wrong", never as impossible.
+ * 🔴 **KEEP THE `default` ARM GENERIC — AND DO NOT WRITE "please try again" IN
+ * IT.** `classifyAppStorageError` answers `null` for a string it does not
+ * recognise, and that is a REAL outcome with two very different causes. One is
+ * a reworded or newly-added ceiling message that an older SDK has not seen.
+ * The other — the common one in production — is an AUTHORIZATION failure: the
+ * host's bridge catches every rejection out of `apps.storage.*` with a blanket
+ * `catch` and forwards its message on this same field, so an expired block
+ * token (`invalid block token`), a revoked instance, an unapproved block and a
+ * missing `apps:storage:write` scope all land on `null` too.
+ *
+ * Retrying fixes none of those, so the arm below offers a RELOAD (which
+ * re-mints the token, and also covers a genuine transport blip) and concedes
+ * that saving may simply be unavailable. `'request-failed'` is split out above
+ * it precisely because that reason IS the transport one, and is the only place
+ * honest retry copy belongs.
  *
  * Copy the SHAPE of this function: own your viewer copy, log the host's words,
  * never render them, and branch on the classification rather than on prose.
@@ -214,11 +226,21 @@ function storageFailureMessage(err: unknown, attempted: string): string {
     case 'app-quota-exceeded':
     case 'app-row-limit':
       return 'This app is out of storage space. Saving is unavailable right now.';
-    // `'request-failed'` and `null` (an unrecognised message) share this arm:
-    // both mean "unknown, possibly transient", and retrying is the only advice
-    // that is honest for either.
-    default:
+    // The BRIDGE's fallback, for a failure that carried no message of its own
+    // — a transport fault, a non-`Error` throw. This one really is transient,
+    // so this is the one arm where "try again" is honest advice.
+    case 'request-failed':
       return `Could not ${attempted}. Please try again.`;
+    // `null` — the classifier did not recognise the message. NOT a synonym for
+    // "transient": an expired block token, a revoked instance, an unapproved
+    // block or a missing storage scope all arrive here (the host's bridge
+    // forwards every `apps.storage.*` rejection on the same field), and so
+    // does a ceiling message this SDK version predates. A reload re-mints the
+    // token and also retries, which is the best advice true of the whole set.
+    default:
+      // `attempted` covers loads as well as saves, so the copy says "storage",
+      // not "saving".
+      return `Could not ${attempted}. Try reloading the page — if that does not help, storage may be unavailable for this app right now.`;
   }
 }
 

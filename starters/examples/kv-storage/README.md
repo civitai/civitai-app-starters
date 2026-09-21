@@ -72,10 +72,20 @@ one it was, do not assume it was the value's size.
 🔴 **The rejection carries a host-authored MESSAGE, not a code.** There is no
 `PAYLOAD_TOO_LARGE` on the wire: that is the TRPC *code*, and the host's bridge
 forwards `err.message` (`per-user row limit exceeded`, `value exceeds 64KB
-cap`, …). Six such strings exist; they are measured and single-sourced in the
-app-sdk's `blocks/appStorageErrors.ts`, and this example's harness draws its
-rejections from the same module — so the branches it CAN reach fire the same
-way here and in production.
+cap`, …). Six **ceiling** strings are measured and single-sourced in the
+app-sdk's `blocks/appStorageErrors.ts` — one per `PAYLOAD_TOO_LARGE` site in
+the host's router, plus the bridge's `storage request failed` fallback — and
+this example's harness draws its rejections from the same module, so the
+branches it CAN reach fire the same way here and in production.
+
+🔴 **Six is what was MEASURED, not everything that arrives.** The host's bridge
+wraps each `apps.storage.*` call in a *blanket* `catch` and forwards the
+message on this same field, so authorization failures come through it too:
+`invalid block token` (an expired token mid-session), `block instance revoked`,
+`app block not found`, `app block is not approved`, `storage set requires the
+apps:storage:write scope`, `storage requires an authenticated viewer`, plus
+tRPC's zod validation messages. None of those classify — they all land on
+`null`, which is why the `default:` arm below must not say "please try again".
 
 ⚠️ **It reaches three of the six**, and that is a property of the harness, not
 of your block. It has one rejection site, a three-way choice between the
@@ -87,7 +97,8 @@ per-value cap, the per-user byte budget and the per-user row budget. So:
 | `user-quota-exceeded` | yes |
 | `user-row-limit` | yes |
 | `app-quota-exceeded` / `app-row-limit` | **no** — nothing here models the app-wide umbrella ([#368](https://github.com/civitai/civitai-app-starters/issues/368)) |
-| `request-failed`, and the `default:` arm's `null` | **no** — the harness has no forced-failure knob (`createMockHost` does, via `storage: { failNext }`) |
+| `request-failed` | **no** — the harness has no forced-failure knob (`createMockHost` does, via `storage: { failNext }`) |
+| the `default:` arm's `null` | **no** — nothing local produces an unclassifiable message, and the harness never rejects for auth at all |
 
 Those arms are still correct and still required — a block that drops them
 renders nothing at all for a real production rejection. They are simply not
@@ -97,11 +108,18 @@ polarity reversed: there, a branch fired locally and never live.
 `storageFailureMessage()` in `src/App.tsx` is the shape to copy: it calls
 `classifyAppStorageError(err)`, branches on the REASON, logs the host's words
 with `console.warn` and renders copy the app owns. Note which remedies it keeps
-apart — four of them, because they are four different fixes: shorten the value,
-free a row, free bytes, and "this is the developer's problem, do not send the
-viewer on an errand". A `bytes`-only readout gives no warning about the second.
-Keep its `default:` arm: the classifier answers `null` for a message it does
-not recognise, and the host can reword one in any deploy.
+apart — six of them, because they are six different fixes: shorten the value,
+free a row, free bytes, "this is the developer's problem, do not send the
+viewer on an errand", retry (`request-failed`, the one genuinely transient
+reason), and reload. A `bytes`-only readout gives no warning about the second.
+
+🔴 **Keep its `default:` arm, and note what it does NOT say.** The classifier
+answers `null` for a ceiling message it does not recognise — the host can
+reword one in any deploy — *and* for every authorization failure above. Since
+retrying cannot fix an expired token, a revoked instance or a missing scope,
+that arm offers a **reload** (which re-mints the token, and retries as a side
+effect) instead of "please try again", and `request-failed` is split out to
+carry the honest retry copy.
 
 It did not always work this way. The arm used to be `/payload_too_large/i`,
 matching the mock's invented string and nothing the live host sends — so the
@@ -144,7 +162,9 @@ offline.
 - in `createMockHost`, lowering `valueCapBytes` moves the gate but not the
   message ([#369](https://github.com/civitai/civitai-app-starters/issues/369)).
 
-Passing here is evidence, not proof — and the second is **permissive**: it lets
-a write through locally that production will reject, which is the failure
-direction that costs you a production incident rather than a confusing local
-error. See the [root README](../../../README.md) for submit → review → deploy.
+Passing here is evidence, not proof — and the second and third are both
+**permissive**: each lets a write through locally that production will reject,
+which is the failure direction that costs you a production incident rather than
+a confusing local error. (#347 under-counts the bytes; #368 models no app-wide
+ceiling at all, so a write the host refuses with `app quota exceeded` succeeds
+here.) See the [root README](../../../README.md) for submit → review → deploy.
