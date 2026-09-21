@@ -57,6 +57,46 @@ export {
   APP_STORAGE_MAX_ROWS,
 } from './appStorageLimits.js';
 
+/**
+ * {@link classifyAppStorageError} — the matcher a block branches on — plus the
+ * four rejection messages a MOCK HOST has to emit. The wire carries a
+ * host-authored message, never the TRPC code; see `appStorageErrors.ts` for the
+ * measurement, and #343 for the bug it closes.
+ *
+ * 🔴 **THE PUBLIC BRANCHING SURFACE IS THE REASON, NOT THE STRING.** A block
+ * switches on {@link AppStorageRejectionReason}; it never needs to hold a host
+ * message. So this barrel deliberately exports LESS than
+ * `appStorageErrors.ts` does, and the omissions are each a decision:
+ *
+ * - `APP_STORAGE_HOST_ERROR_MESSAGES` — the frozen array. Publishing it invites
+ *   `MESSAGES.includes(err.message)`, which is EQUALITY against a snapshot and
+ *   stops matching the day the host moves its per-value cap. That is the
+ *   matcher shape #343 exists to eliminate; `classifyAppStorageError` is
+ *   strictly wider (see its note on the per-value FAMILY).
+ * - `isAppStorageHostErrorMessage` — a thin `classifyAppStorageError(…) !==
+ *   null`. Its only caller is `tests/guards/app-storage-error-strings.test.mjs`,
+ *   which imports the module by FILE PATH.
+ * - `APP_STORAGE_ERROR_APP_QUOTA_EXCEEDED` / `_APP_ROW_LIMIT` — the app-wide
+ *   umbrella pair. No mock in this repository can emit them (nothing models the
+ *   umbrella), and a block reaches them through the `'app-quota-exceeded'` /
+ *   `'app-row-limit'` reasons, which ARE exported.
+ * - `appStorageValueTooLargeMessage` — the builder, so a test can prove the
+ *   per-value string is DERIVED from `APP_STORAGE_MAX_VALUE_BYTES` rather than
+ *   hardcoded.
+ *
+ * All five stay exported from `appStorageErrors.ts` itself, so a test or a
+ * guard reaches them by path. Adding one here later is a `minor`; removing one
+ * once published is not.
+ */
+export {
+  APP_STORAGE_ERROR_VALUE_TOO_LARGE,
+  APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED,
+  APP_STORAGE_ERROR_USER_ROW_LIMIT,
+  APP_STORAGE_ERROR_REQUEST_FAILED,
+  classifyAppStorageError,
+} from './appStorageErrors.js';
+export type { AppStorageRejectionReason } from './appStorageErrors.js';
+
 export {
   BLOCK_INIT_FRAGMENT_MARKER_KEY,
   BLOCK_INIT_FRAGMENT_VERSION,

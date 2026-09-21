@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useAppStorage, useBlockContext, useBlockResize } from '@civitai/blocks-react';
 import type { AppStorageKeyEntry, AppStorageQuota } from '@civitai/blocks-react';
-import { isSignedIn } from '@civitai/app-sdk/blocks';
+import { classifyAppStorageError, isSignedIn } from '@civitai/app-sdk/blocks';
 
 /**
  * kv-storage — per-(block instance, viewer) key-value store.
@@ -170,42 +170,87 @@ export function App() {
  * `snapshot.error`, and the same reason not to render it. These lines used to
  * put it straight into the status line.
  *
- * 🔴 **THE SPECIFIC ARM BELOW ONLY FIRES UNDER `dev:mock`. SAY SO OUT LOUD.**
- * `createMockHost` and this example's harness answer the literal string
- * `PAYLOAD_TOO_LARGE` for the per-value cap, the byte budget and the row budget
- * alike — so locally the match succeeds and the viewer gets the actionable
- * copy. The real host does NOT send that code: the bridge forwards the
- * TRPCError's *message*, so a live block receives prose like `per-user row
- * limit exceeded`, `/payload_too_large/i` does not match, and the viewer gets
- * the generic fallback instead. That is civitai/civitai-app-starters#343.
+ * 🔴 **DO NOT SPELL A HOST STRING HERE, AND DO NOT INVENT ONE.**
+ * `classifyAppStorageError` is the single matcher; the strings it matches are
+ * measured against the host and live in `@civitai/app-sdk/blocks`, where
+ * `createMockHost` and this example's harness also read them. That is what
+ * makes an arm that DOES fire under `dev:harness` fire on the same rejection in
+ * production — the property this function did not have until #343. It is NOT a
+ * claim that every arm is reachable locally: this harness reaches three of the
+ * six reasons (see the README's table), and the `default:` arm none at all.
  *
- * So: **in production this function currently has one branch, the fallback.**
- * An earlier revision of this comment claimed the copy "stays correct either
- * way". It does not — the copy is correct, and unreachable.
+ * What it looked like when it did not: the one arm tested
+ * `/payload_too_large/i`, which is the TRPC *code*. The bridge forwards the
+ * *message*, so the arm matched the mock's fiction and nothing the host sends.
+ * Locally the viewer got actionable copy; live, every rejection — not one of
+ * which retrying can fix — fell through to "Please try again."
  *
- * It is left narrow on purpose rather than widened: adding `/row limit/`,
- * `/quota/` and friends means guessing at host prose nobody here has
- * enumerated, and a guessed pattern that misses fails exactly as it does today
- * while *looking* handled — a guard spelled rather than structural. #343 is
- * where the host's real rejection contract gets pinned; widen this arm when it
- * lands, in the same change, against the enumerated strings.
+ * 🔴 **KEEP THE `default` ARM GENERIC — AND DO NOT WRITE "please try again" IN
+ * IT.** `classifyAppStorageError` answers `null` for a string it does not
+ * recognise, and that is a REAL outcome with three very different causes. One
+ * is a reworded or newly-added ceiling message that an older SDK has not seen.
+ * The second — the common one in production — is an AUTHORIZATION failure: the
+ * host's bridge catches every rejection out of `apps.storage.*` with a blanket
+ * `catch` and forwards its message on this same field, so an expired block
+ * token (`invalid block token`), a revoked instance, an unapproved block and a
+ * missing `apps:storage:write` scope all land on `null` too — that list is
+ * ILLUSTRATIVE, not a bound on the bucket. The third is a zod INPUT rejection,
+ * which never reaches a handler at all: the host caps `key` at 200 characters
+ * and nothing in this repo caps it, so a key built from a URL or a title saves
+ * fine in this harness and fails forever in production
+ * (civitai/civitai-app-starters#370).
  *
- * Copy the SHAPE of this function (own your viewer copy, log the host's words,
- * never render them). Do not copy `/payload_too_large/i` expecting it to fire
- * against the host.
+ * Retrying fixes none of those, so the arm below offers a RELOAD (which
+ * re-mints the token, and also covers a genuine transport blip) and concedes
+ * that saving may simply be unavailable. `'request-failed'` is split out above
+ * it precisely because that reason IS the transport one, and is the only place
+ * honest retry copy belongs.
+ *
+ * Copy the SHAPE of this function: own your viewer copy, log the host's words,
+ * never render them, and branch on the classification rather than on prose.
  */
 function storageFailureMessage(err: unknown, attempted: string): string {
   const raw = err instanceof Error ? err.message : String(err);
   console.warn(`[kv-storage] could not ${attempted}:`, raw);
-  // MOCK-ONLY ARM — see the docblock. Matches `createMockHost` / this example's
-  // harness, which answer `PAYLOAD_TOO_LARGE` for all three ceilings, so there
-  // is no second string to select locally and the copy names every possibility.
-  // Against the live host this does not match at all (#343) and the fallback
-  // below is what a viewer sees.
-  if (/payload_too_large/i.test(raw)) {
-    return 'That note is too large, or your storage is full. Try a shorter note or delete one.';
+  switch (classifyAppStorageError(err)) {
+    // The value itself is too big. Nothing to delete — the note has to shrink.
+    case 'value-too-large':
+      return 'That note is too long to save. Try shortening it.';
+    // Out of ROWS, not bytes: the ceiling a notes app hits first, and the one
+    // a bytes-only "x of y used" readout gives no warning about. Deleting any
+    // note frees a slot, however small it is.
+    case 'user-row-limit':
+      return 'You have no note slots left. Delete a note to make room.';
+    // Out of BYTES. Same remedy, different explanation — and here the SIZE of
+    // what gets deleted is what matters, so say so.
+    case 'user-quota-exceeded':
+      return 'Your notes have filled your storage. Delete a long one to make room.';
+    // App-wide ceilings. The viewer is not over any limit of their own and
+    // deleting their notes will not reliably help; this is the developer's
+    // problem, so do not send the viewer on an errand that cannot work.
+    case 'app-quota-exceeded':
+    case 'app-row-limit':
+      return 'This app is out of storage space. Saving is unavailable right now.';
+    // The BRIDGE's fallback, for a failure that carried no message of its own
+    // — a transport fault, a non-`Error` throw. This one really is transient,
+    // so this is the one arm where "try again" is honest advice.
+    case 'request-failed':
+      return `Could not ${attempted}. Please try again.`;
+    // `null` — the classifier did not recognise the message. NOT a synonym for
+    // "transient": an expired block token, a revoked instance, an unapproved
+    // block or a missing storage scope all arrive here (the host's bridge
+    // forwards every `apps.storage.*` rejection on the same field), and so do
+    // a ceiling message this SDK version predates and a zod input rejection
+    // such as the host's 200-character `key` cap. A reload re-mints the token,
+    // so it fixes the token cases and retries a transport blip; it does
+    // nothing for a key that is too long, which fails identically every time.
+    // No one line of advice is right for every `null`, which is why the copy
+    // below hedges instead of promising a remedy.
+    default:
+      // `attempted` covers loads as well as saves, so the copy says "storage",
+      // not "saving".
+      return `Could not ${attempted}. Try reloading the page — if that does not help, storage may be unavailable for this app right now.`;
   }
-  return `Could not ${attempted}. Please try again.`;
 }
 
 function fmtBytes(n: number): string {

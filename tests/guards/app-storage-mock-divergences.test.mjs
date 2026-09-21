@@ -45,9 +45,48 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
  * docs stop listing it.
  */
 const DIVERGENCE_LEDGER = [
-  { issue: 343, what: 'the error string a rejection carries', direction: 'restrictive' },
+  // #343 — "the error string a rejection carries" — was HERE and is CLOSED.
+  // The mock now emits the host's own messages, drawn from
+  // `packages/civitai-app-sdk/src/blocks/appStorageErrors.ts`; that membership
+  // is guarded by `tests/guards/app-storage-error-strings.test.mjs` and the
+  // per-ceiling behaviour by `mockHostScenarios.test.tsx`. Deleting the row is
+  // the point of the ledger: the docs must stop listing it in the same commit,
+  // which is what the tests below enforce.
   { issue: 345, what: 'the byte gate refuses a shrinking overwrite the host admits', direction: 'restrictive' },
   { issue: 347, what: 'the byte budget is counted in wire bytes, the host counts stored bytes', direction: 'PERMISSIVE' },
+  // 🔴 ADDED WITH #343's FIX, NOT BY IT. Both of these were already true before
+  // the mock started emitting the host's own messages; they were simply absent
+  // from this ledger, so both READMEs rendered a list of "two known
+  // divergences" that was short by two. A list that is SHORT is the dangerous
+  // shape — it reads as exhaustive. #366 wrote them down; neither is fixed.
+  {
+    // 🔴 PERMISSIVE, not restrictive — corrected after the label was read
+    // against this file's own definition (see the `direction` note below).
+    // The host enforces two APP-WIDE gates the mock has no model of at all
+    // (`apps.router.ts:782` bytes, `:790` rows), so the mock ADMITS a write
+    // the host would refuse. That the two messages are also unreachable
+    // locally is the same fact seen from the block's side; the actionable
+    // half is that `dev:mock` says yes where production says no.
+    issue: 368,
+    what: 'no mock models the app-wide umbrella, so a write the host refuses with `app quota exceeded` / `app row limit exceeded` succeeds locally, and neither message is reachable outside production',
+    direction: 'PERMISSIVE',
+  },
+  {
+    issue: 369,
+    what: 'lowering `valueCapBytes` moves the gate but not the message, which still names the host’s real cap',
+    direction: 'neither',
+  },
+  {
+    // 🔴 PERMISSIVE, same direction as #368 and for the same reason: a gate the
+    // host has and the mock does not. It is a ZOD bound (`apps.router.ts:460`,
+    // `const keyInput = z.string().min(1).max(200)`), so it throws no
+    // `TRPCError` and is invisible to the re-derivation recipe in
+    // `appStorageErrors.ts` — which is how it stayed unlisted while that file
+    // claimed the ceiling set was closed.
+    issue: 370,
+    what: 'neither the mock nor `useAppStorage` caps a storage `key`, while the host refuses one over 200 characters zod-side — an over-length key saves locally, fails forever live, and classifies `null`',
+    direction: 'PERMISSIVE',
+  },
 ];
 
 /** English count words, so the prose and the ledger cannot drift apart. */
@@ -150,85 +189,103 @@ test('every site states the COUNT, and the count matches the ledger', () => {
 });
 
 // ---------------------------------------------------------------------------
-// #343's consequence in the one example a reader copies from.
+// #343's consequence in the one example a reader copies from — now CLOSED.
+//
+// TWO tests lived here (this file went 7 -> 5), plus the `errorArmPatternOf`
+// helper they shared:
+//   - 'INVARIANT GUARD — the kv-storage example matches the MOCK string and NOT
+//     the host message (#343)'
+//   - 'the kv-storage example DOCUMENTS the arm as mock-only, and no longer
+//     claims otherwise'
+// Both pinned the shape of the defect — that `kv-storage`'s
+// `storageFailureMessage()` matched the MOCK's `PAYLOAD_TOO_LARGE` and nothing
+// the host sends, and that the file said so out loud ("MOCK-ONLY"). Both
+// asserted the bug, correctly, while it existed. They are gone with it — a
+// guard that pins a fixed defect goes red on the fix, and leaving it to be
+// "adjusted" is how a test ends up asserting the opposite of the truth.
+//
+// The count is here so a later reader can verify the deletion was complete
+// against `git show <base>:<this file>`; it said "three" until #366, and it was
+// wrong.
+//
+// The successor claims live in `tests/guards/app-storage-error-strings.test.mjs`:
+// the example branches on `classifyAppStorageError()` and spells no host
+// message of its own, and every rejection the mock emits is drawn from the
+// exported set. Positive claims, not an absence.
 // ---------------------------------------------------------------------------
 
-const KV_APP = 'starters/examples/kv-storage/src/App.tsx';
-
-/** The literal regex `storageFailureMessage()` tests `err.message` against. */
-export function errorArmPatternOf(source) {
-  const fn = source.slice(source.indexOf('function storageFailureMessage'));
-  assert.ok(fn, `${KV_APP} no longer defines storageFailureMessage()`);
-  const m = /if \(\/(.+?)\/([gimsuy]*)\.test\(raw\)\)/.exec(fn);
-  assert.ok(
-    m,
-    `${KV_APP}: could not find the \`if (/…/.test(raw))\` arm in storageFailureMessage().\n` +
-      `If the shape changed, re-read the function and update this guard — do not delete it.`,
-  );
-  return new RegExp(m[1], m[2]);
+/**
+ * The PARAGRAPH of a site's caveat that makes the permissive claim — the block
+ * of non-blank lines around the first line naming "permissive".
+ *
+ * Bounded to the paragraph, not "to the end of the caveat": the claim and the
+ * issue numbers backing it are written as one sentence, and a wider region
+ * would start counting issue references from unrelated prose that happens to
+ * follow.
+ */
+function permissiveClaimOf(site) {
+  const lines = caveatOf(site).split('\n');
+  const at = lines.findIndex((l) => /permissive/i.test(l));
+  if (at < 0) return { at, text: '' };
+  let start = at;
+  while (start > 0 && lines[start - 1].trim() !== '') start -= 1;
+  let end = at;
+  while (end < lines.length - 1 && lines[end + 1].trim() !== '') end += 1;
+  return { at, text: lines.slice(start, end + 1).join('\n') };
 }
 
-test('INVARIANT GUARD — the kv-storage example matches the MOCK string and NOT the host message (#343)', () => {
-  // Labelled an INVARIANT GUARD: it is GREEN at the pre-fix commit too, because
-  // the ARM was already mock-only — only the DOCBLOCK was wrong about it. It is
-  // not regression coverage for that finding; the docs test below is. What it
-  // does is make the docs test's claim machine-checkable from now on: the day
-  // someone widens the arm, this goes red and forces the prose to move with it.
-  //
-  // Behavioural, over the real source: run the example's own predicate against
-  // both sides of the divergence.
-  const arm = errorArmPatternOf(readFileSync(join(REPO_ROOT, KV_APP), 'utf8'));
-
-  assert.ok(arm.test('PAYLOAD_TOO_LARGE'), `${KV_APP}: the arm no longer matches the MOCK's string`);
-
-  // What the live host actually puts on the wire: the bridge forwards the
-  // TRPCError's message, never its code (#343).
-  for (const hostMessage of [
-    'per-user row limit exceeded',
-    'per-user storage quota exceeded',
-    'value exceeds the maximum size',
-  ]) {
-    assert.equal(
-      arm.test(hostMessage),
-      false,
-      `${KV_APP}'s error arm now matches the host message "${hostMessage}".\n` +
-        `If #343 has been closed and the host's strings are enumerated, that is the right change —\n` +
-        `but then the docblock, the example README and this test have to stop saying the arm is\n` +
-        `MOCK-ONLY. Update all four together; that is what this assertion is for.`,
-    );
-  }
-});
-
-test('the kv-storage example DOCUMENTS the arm as mock-only, and no longer claims otherwise', () => {
-  const src = readFileSync(join(REPO_ROOT, KV_APP), 'utf8');
-  assert.ok(
-    /MOCK-ONLY/i.test(src),
-    `${KV_APP} does not say the error arm is mock-only. It is: it matches the mock's\n` +
-      `PAYLOAD_TOO_LARGE and nothing the host sends, so in production the function has one\n` +
-      `branch — the fallback.`,
-  );
-  assert.ok(/#343/.test(src), `${KV_APP} must point at #343, where the host's strings get pinned`);
-  // The exact claim that was false: the copy is correct, and unreachable.
-  assert.ok(
-    !/stays correct either way/i.test(src),
-    `${KV_APP} still claims the copy "stays correct either way". It does not — the arm never\n` +
-      `fires against the host, so the actionable copy is unreachable in production.`,
-  );
-});
-
-test('the PERMISSIVE divergence is called out as such at every site', () => {
+test('every site names EXACTLY the PERMISSIVE divergences the ledger holds', () => {
   // The direction is the actionable half. A restrictive divergence costs a
   // confusing local failure; a permissive one ships a block that fails in
   // production, which is the exact bug this whole change exists to end.
+  //
+  // 🔴 THIS PINS THE COUNT, NOT THE WORD — and the previous version pinned the
+  // word. It asserted `/permissive/i.test(caveat)`, which was green while both
+  // READMEs said #347 was permissive "**alone among them**" — the defect — and
+  // stayed green when #368 was correctly added as a second one. A guard that
+  // cannot tell those two states apart is not guarding the correction; it is
+  // guarding the presence of a word, which any wording satisfies. So the claim
+  // asserted here is the SET: the issue numbers the permissive sentence names
+  // must be exactly the ledger's `direction: 'PERMISSIVE'` rows, failing when
+  // the prose is short (the dangerous direction) and when it is long.
   const permissive = DIVERGENCE_LEDGER.filter((d) => d.direction === 'PERMISSIVE');
   assert.ok(permissive.length > 0, 'ledger records no permissive divergence — update this test with it');
+  const expected = permissive.map((d) => d.issue).sort((a, b) => a - b);
+  const word = COUNT_WORDS[permissive.length];
+
   for (const site of SITES) {
-    const caveat = caveatOf(site);
+    const { at, text } = permissiveClaimOf(site);
     assert.ok(
-      /permissive/i.test(caveat),
-      `${site.file} must list #${permissive.map((d) => d.issue).join('/')} and never says the word\n` +
-        `"permissive". A reader who skims the list has no way to tell that one of these lets a\n` +
-        `write PASS locally and fail live, while the others do the opposite.`,
+      at >= 0,
+      `${site.file} must list #${expected.join('/')} as permissive and never says the word\n` +
+        `"permissive" anywhere in its divergence caveat. A reader who skims the list has no way\n` +
+        `to tell that ${word} of these let a write PASS locally and fail live, while the others\n` +
+        `do the opposite.`,
+    );
+
+    // The paragraph must be a STRICT slice of the caveat, or the set below is
+    // just the full-ledger assertion wearing a different name.
+    assert.ok(
+      text.length < caveatOf(site).length,
+      `${site.file}: the permissive paragraph spans the whole caveat, so comparing its issue\n` +
+        `references to the permissive subset is not reading the claim — it is reading the list.`,
+    );
+
+    assert.deepEqual(
+      issuesIn(text),
+      expected,
+      `${site.file}'s permissive sentence names ${JSON.stringify(issuesIn(text))}, but the ledger\n` +
+        `holds ${permissive.length} permissive divergence(s): ${permissive
+          .map((d) => `#${d.issue} (${d.what})`)
+          .join('; ')}.\n\n` +
+        `        SHORT is the dangerous direction — it was "#347, alone among them", which read as a\n` +
+        `        reassuring singular while #368 lets a write the host refuses with \`app quota\n` +
+        `        exceeded\` succeed locally. Name every permissive row in the sentence that makes the\n` +
+        `        claim, and say how many.\n\n` +
+        `        Paragraph read:\n${text
+          .split('\n')
+          .map((l) => `          ${l}`)
+          .join('\n')}`,
     );
   }
 });

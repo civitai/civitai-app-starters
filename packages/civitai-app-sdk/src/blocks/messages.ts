@@ -748,31 +748,62 @@ export type ParentToBlockMessage =
     }
   | {
       // Reply to APP_STORAGE_SET. A non-empty `error` is the
-      // reject signal, and any of three ceilings can raise it: the
-      // per-value cap (`APP_STORAGE_MAX_VALUE_BYTES`) or either
-      // per-(app, viewer) budget (`APP_STORAGE_MAX_BYTES`,
-      // `APP_STORAGE_MAX_ROWS`). Do not assume a rejection means the
-      // VALUE was too big; the row ceiling is the one a block usually
-      // reaches first, and it has nothing to do with the size of the
-      // value being written.
+      // reject signal, and any of three BYTE/ROW ceilings can raise
+      // it: the per-value cap (`APP_STORAGE_MAX_VALUE_BYTES`) or
+      // either per-(app, viewer) budget (`APP_STORAGE_MAX_BYTES`,
+      // `APP_STORAGE_MAX_ROWS`). They are not the only thing that
+      // can — the host's zod key cap does too, see below. Do not
+      // assume a rejection means the VALUE was too big; the row
+      // ceiling is the one a block usually reaches first, and it has
+      // nothing to do with the size of the value being written.
       //
-      // 🔴 ON WHICH CEILING TRIPPED, THE MOCK AND THE HOST DIFFER, AND
-      // THIS FIELD'S BEHAVIOUR HERE DESCRIBES THE MOCK.
-      // `createMockHost` answers the single string
-      // `"PAYLOAD_TOO_LARGE"` for all three, so under `dev:mock` they
-      // are NOT distinguishable. The real host DOES distinguish them:
-      // measured on `civitai/civitai` `main`, each rejection site
-      // throws its own message (`value exceeds 64KB cap`,
-      // `per-user storage quota exceeded`, `per-user row limit
-      // exceeded`, plus two app-wide variants), and the bridge's
-      // `storageErrorMessage()` forwards `err.message` — not the TRPC
-      // code — so that string is what reaches the block.
+      // 🔴 `error` IS A HOST-AUTHORED MESSAGE, NOT A CODE. The host's
+      // router throws a `TRPCError` carrying BOTH a
+      // `code: 'PAYLOAD_TOO_LARGE'` and a per-site `message`, and the
+      // bridge's `storageErrorMessage()` forwards **`err.message`** —
+      // never the code. So `"PAYLOAD_TOO_LARGE"` is a value this field
+      // CANNOT hold, and a block that branches on it takes the wrong
+      // branch every time. (`createMockHost` emitted exactly that
+      // string for three releases, which is how the mistake survived
+      // every local run; civitai/civitai-app-starters#343.)
       //
-      // Reconciling the mock and this contract is tracked in
-      // civitai/civitai-app-starters#343. Until it lands, do NOT write
-      // a single generic retry arm on the assumption that the cause is
-      // unknowable, and do not hard-code a host string either: the set
-      // above is measured, not contractual.
+      // The CEILING strings are enumerated, measured and
+      // single-sourced in `blocks/appStorageErrors.ts` — the five
+      // `PAYLOAD_TOO_LARGE` sites plus the bridge's `'storage request
+      // failed'` fallback. Branch with `classifyAppStorageError(err)`
+      // from `@civitai/app-sdk/blocks` rather than spelling one here;
+      // it is the same module the mock and the starter harnesses draw
+      // their rejections from, so `dev:mock` now exercises the branch
+      // production takes.
+      //
+      // 🔴 THOSE SIX ARE NOT EVERY VALUE THIS FIELD CAN HOLD, AND
+      // NOTHING HERE LISTS THE REST. The bridge's catch arms are
+      // BLANKET, so every other rejection the host raises —
+      // authorization, approval, the feature-flag kill switch, plus
+      // tRPC's own zod input-validation messages, which never reach a
+      // handler at all — rides this same field. ALL of them classify
+      // `null`. That rule needs no enumeration and survives the host
+      // rewording a message; `invalid block token` (an expired token
+      // mid-session), `block instance revoked` and `Apps are not
+      // enabled` are ILLUSTRATIONS, not a bound. Two earlier drafts
+      // tried to list the set and both came up short — see the header
+      // of `appStorageErrors.ts` for why the third does not try.
+      //
+      // 🔴 ONE ZOD BOUND IS A CEILING NOTHING LOCAL ENFORCES: the
+      // host caps `key` at 200 characters
+      // (`z.string().min(1).max(200)` on the `.input()` schema), and
+      // neither `useAppStorage` nor `createMockHost` caps it. A key
+      // derived from a URL or a model name therefore saves under
+      // `dev:mock` and fails forever live, classified `null` — and a
+      // RELOAD does not fix it. See "Ceilings outside this set" in
+      // `appStorageErrors.ts`.
+      //
+      // 🔴 AND DO NOT RENDER IT. Server prose, not viewer copy: not
+      // localized, not written for an end user, free to move in any
+      // host deploy. Log it, classify it, show copy your app owns —
+      // and keep a generic arm for `null`. 🔴 Do NOT write "try
+      // again" in that arm: `null` is mostly expired or revoked
+      // tokens, and retrying an expired token never succeeds.
       //
       // `sizeBytes` is the byte size the row landed at, so the block
       // can update its own quota estimate without another round-trip
