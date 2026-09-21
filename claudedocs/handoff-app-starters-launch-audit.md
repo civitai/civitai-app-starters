@@ -35,20 +35,39 @@ Audited for code quality, dead code, over-exporting, comment rot, and bloat.
   time and confirm a non-zero count** — otherwise the condition is decorative. That is the
   mistake this entry is repairing.
 
-  🔴 **MEASURED ON REPAIR, AND THE ARC IS NOT CLOSED: the check returns 8, not 0.** Still open:
-  **#322, #323, #324, #325, #327, #328, #329, #333** — eight of the thirteen audited launch
-  blockers, five of them `security`-labelled. Controls run in the same breath: 28 open issues
-  total (positive — the query returns rows), an impossible number range returns 0 (negative).
-  **The old vacuous condition had been reporting this arc as closeable the whole time.** Anyone
-  reading "Round-1 DoD: ADDRESSED" below should read it as *the round-1 write-up was addressed*,
-  never as *the blockers are fixed*.
+  🔴 **ON REPAIR IT RETURNED 8 — AND 7 OF THOSE 8 WERE ALREADY FIXED IN CODE, MERELY NEVER
+  CLOSED.** This is the trap worth carrying forward: **an open-issue count is not a defect count**,
+  and the repaired check measures tracker hygiene, not the tree. Each of the 8 was re-measured
+  against `eed2df5` and 7 were found fixed by a dedicated PR that never said "Closes #N":
+
+  | issue | fixed by | verified how |
+  |---|---|---|
+  | #322 `scryptSync` per call | `d4f9da9` (#320) | `keyCache` memoizes derived keys by secret |
+  | #323 refresh in a Server Component | `3524fd6` (#336) | moved to `proxy.ts` middleware; docblock names the mechanism |
+  | #324 self-fetch → fd exhaustion | `4a3dd95` (#337) | module-relative `DIST_DIR`, boot-time read, `exit(1)`; its own grep returns 0 (control: 4 `fetch` hits) |
+  | #325 no `Secure`/HSTS | `c68cea4` (#338) | `production` from `APP_URL.startsWith('https://')`; `NODE_ENV` now in 4 docs (was 0 of 20) |
+  | #327 `useBlockResize` | `2ffdbc3` (#321) | dep array removed on purpose + `el === observedRef.current` |
+  | #329 `WorkflowStatus` twice | `b3e4f35` (#335) | renamed `OrchestratorWorkflowStatus` |
+  | #333 AES-256-CTR in docs | `d3f4296` (#319) | 0 files say CTR, 8 say GCM (enumerated — a recursive `grep` is `.gitignore`-blind here) |
+
+  All 7 were closed 2026-09-21 with that evidence attached. **The check now returns 1: only #328**
+  (34 duplicate export names) is a live blocker, and it is a design decision rather than a patch —
+  #346 was the attempt and was closed with 33 of 34 collisions standing. Controls on the re-run:
+  21 open issues total (positive), an impossible number range returns 0 (negative), and each
+  closure was confirmed by reading back `state == CLOSED` rather than by trusting an exit code.
+
+  Read "Round-1 DoD: ADDRESSED" below as *the round-1 write-up was addressed*, never as *the
+  blockers are fixed* — though as of this repair they very nearly are.
 
 ## State now
 
-- **Round-1 DoD: the WRITE-UP was addressed. The BLOCKERS were not.** 🔴 Its check was vacuous and
-  has been repaired (see Goal). Re-measured 2026-09-21: **8 of the 13 audited launch blockers are
-  still OPEN** — #322, #323, #324, #325, #327, #328, #329, #333, five of them `security`-labelled.
-  Earlier versions of this line said "That arc is CLOSED", which the repaired check contradicts.
+- **Round-1 DoD: 12 of the 13 audited blockers are fixed and closed. One is live: #328.**
+  🔴 Its check was vacuous and has been repaired (see Goal). The repair first returned **8**, but
+  **7 of those 8 were already fixed in code and merely never closed** — each traced to its fixing
+  PR, re-measured, and closed on 2026-09-21 with the evidence attached. The one live blocker is
+  **#328** (blocks-react/ui and components-react export **34** identical names — computed: 62 ∩ 64,
+  control passes). Earlier versions of this line said "That arc is CLOSED", which was true by
+  accident of a broken instrument; it is now nearly true on the merits.
 
 ### Merged / published so far
 | | |
@@ -249,10 +268,16 @@ harm** — no other app-sdk minor took `0.49.0`.
    #345/#347/#348/#349/#357, and the undecided `@civitai/app-sdk` peer on `@civitai/client` at
    `^0.2.0-beta.98` (#305). All are tracked, none advanced this session.
    forcing: none
-3. **Repair this doc's own closing condition — it still cannot pass.** See the Gotchas entry; the
-   replacement wording is there. Re-measured 2026-09-21: **0** open bug issues contain
-   `launch-blocking` against **11** open bug issues as the positive control.
-   forcing: none
+3. **#328 — the ONE live launch blocker: 34 names exported by both `blocks-react/ui` and
+   `@civitai/components-react`.** Computed on `eed2df5`: 62 ∩ 64 = **34**, control passes. This is
+   a design decision, not a patch — #346 (`@civitai/elements`) was the attempt, was closed, and its
+   own admission was that 33 of 34 collisions stand; #359 shipped the CSS-split control that
+   retired its byte case. Needs a direction chosen before it can be worked.
+   forcing: gate — it is the last thing between this arc and its closing condition.
+   closing-condition: `check` — the Goal's query returns 0.
+
+~~4. Repair this doc's own closing condition~~ ✅ **DONE 2026-09-21** — replacement in Goal,
+   validated with both controls; it now returns 1 (only #328).
 
 ## Defects (batched)
 
@@ -306,11 +331,18 @@ harm** — no other app-sdk minor took `0.49.0`.
   behind node-only `./manifest` and `./vite` subpaths with `ajv`/`vite` as optional peers.
   `./blocks` keeps zero runtime dependencies. 906 hand-written rule lines deleted.
 
-- ✅ **REPAIRED 2026-09-21 — and the repair changed the answer.** The replacement (in Goal) is
-  number-range based, needs no token, and was validated with both controls before being written
-  down. It returns **8**, not 0: eight audited blockers are still open. So this was not a cosmetic
-  defect in a check — **the broken instrument was the only reason the arc looked closeable.** The
-  original entry follows, because the lesson in it is the reusable part:
+- ✅ **REPAIRED 2026-09-21 — and the repair taught a second lesson the first one hid.** The
+  replacement (in Goal) is number-range based, needs no token, and was validated with both controls
+  before being written down. It returned **8**, not 0 — so the broken instrument really had been the
+  only reason the arc looked closeable.
+  🔴 **But 8 open issues turned out to be 1 real defect.** Seven were fixed in code and never
+  closed, because their fixing PRs never wrote "Closes #N". Acting on that 8 as though it were a
+  defect count would have meant re-fixing seven solved problems — and in this session it briefly
+  did: the count was reported as "eight live blockers, five of them security" before any of the
+  eight had been read against the tree. **A tracker query answers a question about the TRACKER.
+  Re-measure each item against the code before believing the total**, and prefer closing-conditions
+  that read the tree over ones that count issues. The original entry follows, because the lesson in
+  it is also still reusable:
 - 🔴 **This doc's own round-1 closing condition is a NON-INSTRUMENT.** It greps issue bodies for
   `launch-blocking`, a marker **nobody ever wrote** — zero occurrences repo-wide, including in the
   13 issues the doc itself calls blockers. It can only ever return green. When writing a
