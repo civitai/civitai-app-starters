@@ -22,43 +22,28 @@ Audited for code quality, dead code, over-exporting, comment rot, and bloat.
 
 ## State now
 
-- **DoD VERDICT (round-1 closing-condition): ADDRESSED, and the check that says so is VACUOUS.**
-  It greps open `bug` issues for "launch-blocking"; that string appears in **ZERO** issues repo-wide,
-  including all 13 the doc designates blockers. Control: a known-present string in #343 returned 16
-  hits, so the zero is real. Substance verified by hand. **That arc is CLOSED.**
-- **The follow-on arc is also complete: shipped AND verified against the published artifacts.**
+- **Round-1 DoD: ADDRESSED (its check is vacuous — see Gotchas). That arc is CLOSED.**
+- **Published 2026-09-21T02:44Z and verified three ways with controls:**
+  `@civitai/blocks-react@0.55.1`, `@civitai/components@0.4.2`, `@civitai/components-react@0.4.2`.
+  Merged #361 (`b22670b`), #359 (`e06173f`), Version PR #365 (`8971ba3`). No partial publish.
 
-### Published 2026-09-21T02:44Z — verified at the REGISTRY, not from the workflow
-| package | version | |
-|---|---|---|
-| `@civitai/blocks-react` | **0.55.1** | detector env-inlining security fix |
-| `@civitai/components` | **0.4.2** | per-component CSS slices (export surface held) |
-| `@civitai/components-react` | **0.4.2** | dependent bump |
+### Open now
+| PR | head | state | what |
+|---|---|---|---|
+| **#366** | `c58038d` | OPEN/MERGEABLE/CLEAN, CI 13/13 | App Storage error fidelity (#343) — **round 0 done, round 1 NOT run** |
+| **#356** | — | OPEN | this handoff doc |
 
-Merged: #361 (`b22670b`), #359 (`e06173f`), Version PR #365 (`8971ba3`). Release run 35555065263
-success; **no partial publish** — all three landed within 2 s of each other. Packument read with
-`python3 json.loads(strict=False)`, because `jq` returns a confident false "absent" on this
-registry's unescaped control chars.
+- **#346 CLOSED** (not merged) with reasoning + 3 checkable reopen conditions; branch preserved.
+- **Issues open:** #343 (being closed by #366), #345, #347, #348, #349, #357, #358, #362, #363,
+  **#367** (no CI `changeset status`), **#368**, **#369** (the two mock divergences), #364.
+  Plus 6 dependabot PRs including `zod 3 → 4` (a major on a published SDK's dep).
+- **IN FLIGHT:** nothing. Worktree `civitai-app-starters-storagefidelity` still exists for #366.
 
-**Validation, all three stages with controls** (a bare pass proves nothing here):
-1. **Resolve** — `0.55.1` and `0.4.2` resolve; `0.55.0`/`0.4.1` resolve (positive control);
-   `0.55.99`/`0.4.99` FAIL (negative control). `--prefer-online` throughout: npm's local cache has
-   given a false `ETARGET` for a live version in this repo before.
-2. **Tarball repro** — published `dist/internal/detector.js`: `0.55.1` has **0** computed-key reads
-   and **5** literal; `0.55.0` has **2**. Direct Vite bundle: decoy sentinel in `0.55.1` = **0**,
-   in `0.55.0` = **1**; legitimate origin present in both; both bundles non-empty (11,585 / 11,475 B).
-3. **Real starter build** — `civitai-block-starter` copied out of the workspace, installed from the
-   registry, its own `vite build`: resolved `0.55.1` via its existing `^0.55.0` pin (so **no
-   consumer action is required**), 304,757 B JS, decoy in **0** files; `0.55.0` control 304,835 B,
-   decoy in **1** file.
-
-- **#346 CLOSED** — not merged. Reasoning recorded on the PR with three checkable reopen conditions;
-  branch `feat/civitai-elements-phase1` deliberately NOT deleted, so reopening costs a rebase.
-- **#360 CLOSED** (auto-closed by the merge) with the full evidence table commented on it.
-- **Still open:** #356 (this doc's PR), #358, #362, #363 (evidence comment added, mechanism
-  demonstrated but not wired), #364, plus #345/#347/#348/#349/#357 and 6 dependabot PRs
-  (including `zod 3 → 4`, a major on a published SDK's dependency).
-- **IN FLIGHT:** nothing. All worktrees removed; base clone re-synced; claim released.
+### Rank 1 of the previous list turned out to be ALREADY DONE
+`civitai/cli`'s `page-money` templates no longer import `createLiveHost` or `mockParentMessage`;
+the pin is `^0.55.0`, not `^0.53.0`. Verified by typechecking the exact template import set against
+published `0.55.1` (clean) with a negative control importing `mockParentMessage` (fails with
+`has no exported member`). **The investigation block for it is retired below.**
 
 ## Open investigations — live diagnosis state
 
@@ -100,39 +85,41 @@ registry's unescaped control chars.
 
 ## Next steps (ranked)
 
-1. **Fix `civitai/cli`'s `page-money` scaffold template before anyone bumps its `^0.53.0` pin**
-   (see Open investigations). Out of this tree. Latent today because a caret on a `0.x` version
-   locks the minor.
-   forcing: regression
-2. **Issue #343 — the host forwards `err.message`, never `err.code`,** so the documented App Storage
-   error codes never reach a block and `kv-storage`'s only error branch is unreachable in
-   production. Docs and mock assert otherwise across ~18 sites.
+1. **Run round 1 (the nine correctness axes) on #366 before merging.** Round 0 REPORTS and does not
+   move the ladder, so #366 has had no correctness audit. Precedent from this arc: round 1 on #359
+   found that its headline measurement credited the components split with deleting another
+   package's CSS — not reachable from a requirements pass.
+   `python3 ~/workspace/devrc/scripts/audit-dispatch.py 366 --round 1`
+   forcing: gate
+2. **Then merge #366 and publish.** It takes `@civitai/app-sdk` and `@civitai/blocks-react` both
+   `minor`. 🔴 **Re-run `changeset status --verbose` immediately before merging** — the peer floor
+   `>=0.49.0` is a PREDICTION about a version that does not exist on npm, and #367 exists because no
+   CI job checks it. The new `PREDICTED ENTRY` guard reds if the base moved, but read the number
+   yourself too.
+   forcing: gate
+3. **Issue #343 closes when #366 merges** — verify by the issue's own condition (mock emits no
+   string the host cannot produce; the contract doc describes a message; kv-storage's branch is
+   reachable), not by the merge.
    forcing: user
-3. **Batch: everything filed with a closing condition.** #358 (should `useBlocksStyles()` move to
-   per-component CSS — note its 13,480 B figure is right for ITS question but assumes `blocks-react`
-   also slices `INTERACTIVE_STYLES`; today's split alone gives 25,518 B), #362 (the `PUBLIC_`
-   SvelteKit reader that has never resolved — drop it or document `$env/static/public`), #363 (wire
-   the demonstrated decoy check into `published-starter-smoke.yml`), #364 (598 lines of TS outside
-   every typecheck gate), #345/#347/#348/#349/#357, and the undecided `@civitai/app-sdk` peer on
-   `@civitai/client` at `^0.2.0-beta.98`.
+4. **Batch: everything filed with a closing condition** — #367, #368, #369, #358, #362, #363, #364,
+   #345/#347/#348/#349/#357, and the undecided `@civitai/app-sdk` peer on `@civitai/client` at
+   `^0.2.0-beta.98`.
    forcing: none
-4. **The 22 HIGH audit findings that were never filed** — they survive only in a prior session's
-   transcript and will age out. Either reconstruct them from that transcript or accept the loss
-   explicitly rather than leaving it implicit.
+5. **The 22 HIGH audit findings that were never filed** — they survive only in a prior session's
+   transcript. Reconstruct them or accept the loss explicitly.
    forcing: none
 
 ## Defects (batched)
 
-- 22 HIGH audit findings remain UNFILED (see rank 4).
+- 22 HIGH audit findings remain UNFILED (rank 5).
 - `pnpm lint` exits 1 repo-wide (`ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT`). Pre-existing; no CI job gates it.
-- The Playwright browser tier does not start unaided on this host — wants
-  `chromium_headless_shell-1223`, `PLAYWRIGHT_BROWSERS_PATH` supplies `-1228`. **Pre-existing,
-  confirmed by discriminating control** (same failure in the unmodified base clone on `main`).
+- `#361` shipped with round 0 only — the nine correctness axes never ran on it.
 - `styles.generated.ts`'s `.d.ts` is un-annotated, so tsc inlines the sheet as a string-literal type
-  (33 KB); the new slices annotate `: string` (99,780 B → 6,570 B across 14).
-- `#361` shipped with round 0 only — the nine correctness axes never ran on it. It carried a
-  measured red/green matrix, a merged-tree negative control and now published-artifact
-  verification, but that is not the same as a correctness audit.
+  (33 KB); the new slices annotate `: string`.
+- `#366`'s fix commit `4266263` says "three genuinely different remedies" where `App.tsx` has four
+  non-default arms. **Deliberately NOT corrected** — rewording it means force-pushing and detaching
+  the PR's review threads. The correction is in the later commit message, the PR comment and the
+  in-tree README.
 
 ## Gotchas / decisions / dead-ends
 
@@ -318,6 +305,32 @@ registry's unescaped control chars.
   checkable reopen conditions are on the PR; the branch is preserved.
 - **Decision (operator): the `./css/*` export surface stays HELD** until #358 picks a vocabulary.
   `dist/css/*` artifacts are reversible; `exports` keys on a published package are not.
+
+- 🔴 **RETRACTED — "the Playwright browser tier does not start on this host" IS FALSE.** An earlier
+  entry in this doc claimed it was broken "pre-existing, confirmed by discriminating control". It is
+  not: the tier passes **7 files / 73 tests**. What I actually hit was **an unbuilt workspace** —
+  `--ff-only` merging into the base clone without reinstalling, then diagnosing with
+  `pnpm --filter @civitai/blocks-react build`, **which does not build workspace dependencies** and
+  emits 17 TS errors (`has no exported member`, `cannot find module @civitai/components`) that read
+  exactly like a broken base branch. **Run the ROOT `pnpm build` before believing any red here.**
+- 🔴 **A LEDGER ENTRY FOR AN UNPUBLISHED VERSION IS A PREDICTION WEARING A MEASUREMENT, AND THE
+  OBVIOUS GUARD FOR IT DISENGAGES EXACTLY WHEN NEEDED.** `blocks-react`'s peer floor on
+  `@civitai/app-sdk` is `>=0.49.0`; **`0.49.0` does not exist on npm** (latest `0.48.0`). If another
+  app-sdk `minor` publishes first it takes `0.49.0`, these symbols land in `0.50.0`, and a consumer
+  installing `app-sdk@0.49.0` + `blocks-react@0.56.0` gets **no peer warning** and dies at module
+  evaluation. That is #309/#317/#344 for a fourth time. 🔴 The proposed fix — *detect a prediction
+  by `entry == next`, then assert `floor === next`* — **is wrong**: after the rebase `next` becomes
+  `0.50.0` while the entry stays `0.49.0`, so the detector stops firing at the moment it matters.
+  The shipped guard instead **declares** the predicted entries and asserts both that each names the
+  tree-derived version and that `floor === next`. Durable gap filed as **#367**: no CI job runs
+  `changeset status`, so prose in a comment is otherwise the only protection.
+- 🔴 **A `git grep` for a symbol counts DECLARATIONS, not CONSUMERS — and a guard that imports a
+  module BY FILE PATH does not justify that module's barrel export.** Round 0 on #366 found four of
+  nine new public exports with zero consumers; one, a frozen message array, invited
+  `MESSAGES.includes(err.message)` — equality against a snapshot, the exact matcher shape the PR
+  exists to eliminate. Not shipping a public export is free; removing one later costs a `minor`.
+- **Decision: do NOT force-push to correct a commit message on a PR with review threads.** Record
+  the correction in a later commit and a PR comment instead.
 
 ## How to verify
 
