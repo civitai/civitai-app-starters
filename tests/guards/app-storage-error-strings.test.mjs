@@ -41,6 +41,11 @@
  *     different protocol served by different host procedures, and its strings
  *     have NOT been measured; `SHARED_UNAVAILABLE` and friends are deliberately
  *     out of scope, not vouched for.
+ *   - `internal/liveHost.ts` is deliberately NOT in `MOCKS`, and that is not an
+ *     omission: it is not a mock. Its `APP_STORAGE_SET_RESULT` error arm
+ *     forwards `r.error` — the string the real server sent — so there is no
+ *     spelling of its own to check, and the membership rule below would fail it
+ *     for doing exactly the right thing.
  *   - Local `const` resolution is ONE level deep. A rejection built through two
  *     locals is not followed — it fails the membership check rather than
  *     passing, which is the safe direction, but the message will point at the
