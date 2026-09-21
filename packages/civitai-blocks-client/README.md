@@ -17,7 +17,6 @@ const { air } = await app.site.get<{ air: string }>(`model-versions/mini/${picke
 if (!(await app.requestGrants(['ai:write:budgeted']))) return;
 
 const submitted = await app.orchestration.submitWorkflow({
-  currencies: [],
   steps: [{ $type: 'textToImage', input: { model: air, prompt: 'A lighthouse at dusk' } }],
 });
 const workflow = await app.orchestration.waitForWorkflow(submitted.id!);
@@ -66,8 +65,12 @@ carrying `status`, the parsed `body`, and the server's own message.
 
 ## The orchestrator
 
-Steps are the orchestrator's own `WorkflowStepTemplate`s, so a step type it
-gains needs no release here.
+Steps are typed by `$type`: `input` is checked against that step's own input,
+and narrowing a returned step on `$type` types its `output`. The union is
+generated from `@civitai/orchestration-client` (`npm run gen:steps`), so a step
+type the orchestrator gains arrives with a client update and no code here.
+
+An output is listed before it exists — check `available` before showing it.
 
 ```ts
 for await (const workflow of app.orchestration.watchWorkflow(id)) {
@@ -83,6 +86,10 @@ of the loop or pass a `signal` to stop.
 
 > An orchestrator without `until=change` holds each read until the workflow
 > finishes or 20s pass, so mid-run progress arrives up to 20s late.
+
+[`examples/generate.ts`](./examples/generate.ts) runs all of it from a server:
+`pnpm build && CIVITAI_TOKEN=… node examples/generate.ts [modelVersionId] [prompt]`,
+with `ORCHESTRATION_URL` / `CIVITAI_SITE_URL` to point it at a local stack.
 
 ## Grants
 
@@ -134,6 +141,8 @@ entry.
   host, checked against a committed snapshot of civitai's handler inventory.
   Refresh it with `npm run snapshot:host`.
 - `npm run check:layering` keeps `core` free of any domain.
+- `npm run check:steps` fails when the step unions no longer match the
+  installed `@civitai/orchestration-client`.
 
 See [`BREAKING.md`](./BREAKING.md) for what an app gives up moving from
 `@civitai/app-sdk` 0.x and `@civitai/blocks-react`.

@@ -16,6 +16,8 @@ export type { SiteClient } from './site/index.js';
 export { isTerminal } from './orchestration/index.js';
 export type {
   OrchestrationClient,
+  Step,
+  StepTemplate,
   WaitOptions,
   Workflow,
   WorkflowPage,

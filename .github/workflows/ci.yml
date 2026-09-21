@@ -111,6 +111,7 @@ jobs:
       - run: pnpm --filter @civitai/blocks-client api:check
       - run: pnpm --filter @civitai/blocks-client check:layering
       - run: pnpm --filter @civitai/blocks-client check:parity
+      - run: pnpm --filter @civitai/blocks-client check:steps
       - run: pnpm --filter @civitai/blocks-client test
       - run: pnpm --filter @civitai/blocks-client build
 

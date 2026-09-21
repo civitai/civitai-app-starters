@@ -28,8 +28,10 @@
     "api:check": "node scripts/api-report.mjs --check",
     "check:layering": "node scripts/check-layering.mjs",
     "check:parity": "node scripts/check-host-parity.mjs",
+    "gen:steps": "node scripts/gen-step-types.mjs",
+    "check:steps": "node scripts/gen-step-types.mjs --check",
     "snapshot:host": "node scripts/snapshot-host-messages.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json && tsc -p tsconfig.examples.json",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -37,6 +39,7 @@
     "node": ">=20"
   },
   "devDependencies": {
+    "@types/node": "^25.9.1",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11"
   },

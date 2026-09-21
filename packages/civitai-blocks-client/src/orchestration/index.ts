@@ -1,14 +1,27 @@
 import type {
-  CursedArrayOfTelemetryCursorAndWorkflow,
-  Workflow,
+  Workflow as GeneratedWorkflow,
   WorkflowStatus,
-  WorkflowTemplate,
+  WorkflowTemplate as GeneratedWorkflowTemplate,
 } from '@civitai/orchestration-client/dist/generated/types.gen.js';
 
 import { ApiError, type Http } from '../http/index.js';
 
-export type { Workflow, WorkflowStatus, WorkflowTemplate };
-export type WorkflowPage = CursedArrayOfTelemetryCursorAndWorkflow;
+import type { Step, StepTemplate } from './steps.generated.js';
+
+export type { Step, StepTemplate, WorkflowStatus };
+
+/** What to run. `currencies` defaults server-side, so it is optional here. */
+export type WorkflowTemplate = Omit<GeneratedWorkflowTemplate, 'steps' | 'currencies'> & {
+  steps: StepTemplate[];
+  currencies?: GeneratedWorkflowTemplate['currencies'];
+};
+
+export type Workflow = Omit<GeneratedWorkflow, 'steps'> & { readonly steps: Step[] };
+
+export interface WorkflowPage {
+  next: string;
+  items: Workflow[];
+}
 
 export const DEFAULT_ORCHESTRATION_URL = 'https://orchestration.civitai.com';
 

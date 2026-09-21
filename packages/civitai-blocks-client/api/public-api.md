@@ -63,7 +63,20 @@ export type TokenSource = string | ((opts: {
 
 export declare function isTerminal(workflow: Workflow): boolean;
 
-export type WorkflowPage = CursedArrayOfTelemetryCursorAndWorkflow;
+/** What to run. `currencies` defaults server-side, so it is optional here. */
+export type WorkflowTemplate = Omit<GeneratedWorkflowTemplate, 'steps' | 'currencies'> & {
+    steps: StepTemplate[];
+    currencies?: GeneratedWorkflowTemplate['currencies'];
+};
+
+export type Workflow = Omit<GeneratedWorkflow, 'steps'> & {
+    readonly steps: Step[];
+};
+
+export interface WorkflowPage {
+    next: string;
+    items: Workflow[];
+}
 
 export interface WaitOptions extends CallOptions {
     /** Seconds the orchestrator may hold the reply. */
