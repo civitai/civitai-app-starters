@@ -1,0 +1,63 @@
+{
+  "name": "@civitai/blocks-client-react",
+  "version": "0.1.0",
+  "description": "Three React primitives over @civitai/blocks-client — one per shape the bridge actually has (promise, Live<T>, async iterable). Not a hook per endpoint.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --project unit",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "dependencies": {
+    "@civitai/blocks-client": "workspace:*"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/react": "^16.0.0",
+    "@types/node": "^25.9.1",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.0",
+    "happy-dom": "^20.9.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^5.9.2",
+    "vitest": "^4.1.11"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "civitai",
+    "blocks",
+    "react",
+    "hooks"
+  ],
+  "homepage": "https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-blocks-client-react#readme",
+  "bugs": "https://github.com/civitai/civitai-app-starters/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/civitai/civitai-app-starters.git",
+    "directory": "packages/civitai-blocks-client-react"
+  },
+  "sideEffects": false
+}
