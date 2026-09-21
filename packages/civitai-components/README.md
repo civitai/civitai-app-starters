@@ -84,7 +84,7 @@ right unit for a consumer is the **transitive** component set, never one name.
 Measured with esbuild (minify, ESM, React external), a `@civitai/blocks-react/ui`
 Button bundle is **52,568 B, of which 50,151 B is stylesheet** — 95.4% CSS for
 one component. What the slices would save off that depends on **which** split
-you mean, and the two numbers are far apart:
+you mean, and the two answers are far apart:
 
 | what is split | Button bundle | vs baseline |
 |---|---:|---:|
