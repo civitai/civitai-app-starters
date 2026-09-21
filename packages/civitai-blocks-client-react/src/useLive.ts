@@ -28,8 +28,11 @@ export interface LiveState<T> {
  * getSnapshot should be cached". Reading each field through its own store keeps
  * every snapshot a stable reference or a primitive.
  *
- * The third argument is `getServerSnapshot`. Without it this throws during SSR,
- * and `next-app` renders blocks on the server.
+ * The third argument is `getServerSnapshot`. Without it `useSyncExternalStore`
+ * throws when the module is evaluated in an SSR bundle. That is the only reason
+ * it is here — a block is an iframe and is never server-rendered. `next-app`
+ * does NOT render blocks: measured, it imports `@civitai/blocks-react` in zero
+ * files.
  */
 export function useLive<T>(live: Live<T>): LiveState<T> {
   const subscribe = useCallback(

@@ -1,19 +1,20 @@
 # `@civitai/blocks-client-react`
 
-React bindings for [`@civitai/blocks-client`](../civitai-blocks-client). **Three
-primitives, not a hook per endpoint.**
+React bindings for [`@civitai/blocks-client`](../civitai-blocks-client). **One
+primitive per call shape, not a hook per endpoint.**
 
 ```bash
 npm install @civitai/blocks-client @civitai/blocks-client-react
 ```
 
-## Why three
+## Why four
 
 `@civitai/blocks-client` is framework-free by construction, and it has exactly
-three call shapes. So this package has exactly three hooks:
+four call shapes. So this package has exactly four hooks:
 
 | Client shape | Hook | Used for |
 |---|---|---|
+| snapshot store | `useBlockSnapshot` | `ready`, `context`, `viewer`, `theme`, `token` — the handshake |
 | `Promise<T>` | `useBridgeCall` | `buzz.getAccounts`, `storage.get`, `orchestration.estimateWorkflow`, … |
 | `Live<T>` | `useLive` | `buzz.watchAccounts` |
 | `AsyncIterable<T>` | `useAsyncIterable` | `buzz.listTransactions`, `orchestration.listWorkflows`, `orchestration.watchWorkflow` |
@@ -25,8 +26,27 @@ The predecessor shipped **38 hooks**, one per capability, each re-implementing
 request sequencing and cancellation — and getting them wrong independently.
 Seven of them had no sequencing guard at all
 ([#392](https://github.com/civitai/civitai-app-starters/issues/392)). Collapsing
-to three primitives fixes that class **once**, in one place, instead of once per
-endpoint.
+to one-per-shape fixes that class **once**, instead of once per endpoint.
+
+## No compatibility shims, and why
+
+A `useBuzzAccounts`-style shim layer was considered and rejected on measurement,
+not preference. Across this repo the only first-party consumer of the blocks
+hooks is `starters/civitai-block-starter/src`, and it uses **three** of the 36:
+`useBlockContext`, `useBlockResize`, `useViewer`. The four OAuth starters import
+`@civitai/blocks-react` in **zero** files (control: `react-pwa` imports
+`@civitai/app-sdk` in 14).
+
+All three port to one line each:
+
+| Old hook | New |
+|---|---|
+| `useBlockContext()` | `useBlockSnapshot()` |
+| `useBlockResize(ref)` | `host.resize(h)` in a `ResizeObserver`, or keep a local hook |
+| `useViewer()` | `useBridgeCall((o) => viewer.getViewer(o), [])` |
+
+A 38-hook shim layer for three call sites is dead code that rebuilds the surface
+this consolidation exists to delete. The migration is a map, not a shim.
 
 ## Usage
 
@@ -88,8 +108,24 @@ tearing mid-render.
 fresh object each call, never compares equal, and re-renders forever. Each field
 gets its own store so every snapshot stays a stable reference or a primitive.
 
-A `getServerSnapshot` is supplied, because `next-app` renders blocks on the
-server and this throws there without one.
+A `getServerSnapshot` is supplied because `useSyncExternalStore` throws without
+one in an SSR bundle. It is not because blocks are server-rendered — they are
+iframes and never are. (An earlier draft of this line claimed `next-app` renders
+blocks; measured, `next-app` imports `@civitai/blocks-react` in zero files.)
+
+### `useBlockSnapshot(transport?)`
+
+The handshake store — `BlockTransport.snapshot` is `{ get(), subscribe() }`,
+already `useSyncExternalStore`'s contract. Identity is stable by construction:
+the transport holds one snapshot field and replaces it wholesale, so `get()`
+returns the same reference until something moves. If that ever changes, this
+hook re-renders forever and `useLive`'s docblock explains the same trap.
+
+Blocks render in an iframe and are never server-rendered; the `getServerSnapshot`
+here exists only so importing the hook into an SSR bundle does not throw. It
+returns a frozen module constant rather than a fresh object, for the same
+identity reason. `@civitai/blocks-client` has an `EMPTY_SNAPSHOT` it does not
+export — exporting it would remove this copy and the chance of drift.
 
 ### `useAsyncIterable(create, deps)`
 
@@ -108,9 +144,10 @@ design and is usually read for its latest item rather than accumulated.
 pnpm --filter @civitai/blocks-client-react test
 ```
 
-17 tests, happy-dom, no browser tier. The five guards above are
+20 tests, happy-dom, no browser tier. The six guards above are
 **mutation-tested**: each is broken on purpose and the sweep asserts a test fails
-with *that test's own* assertion. Two mutants survived the first sweep and both
+with *that test's own* assertion, with the mutation's occurrence count asserted
+before writing and the file restored byte-identical by sha256. Two mutants survived the first sweep and both
 were real gaps, not noise — the `mountedRef` check was unnecessary (deleted), and
 the `cancelled` flag was unreachable through unmount (the test was rewritten to
 supersede while mounted, which is the case that actually needs it). The sweep
