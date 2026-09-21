@@ -187,6 +187,8 @@ const STATIC: readonly Utility[] = [
   { name: 'border', decls: ['border: 1px solid var(--civitai-color-border)'], bootstrap: ['border'] },
   { name: 'border-top', decls: ['border-block-start: 1px solid var(--civitai-color-border)'], bootstrap: ['border-top'] },
   { name: 'border-start', decls: ['border-inline-start: 1px solid var(--civitai-color-border)'], bootstrap: ['border-start'] },
+  { name: 'border-bottom', decls: ['border-block-end: 1px solid var(--civitai-color-border)'], bootstrap: ['border-bottom'] },
+  { name: 'border-end', decls: ['border-inline-end: 1px solid var(--civitai-color-border)'], bootstrap: ['border-end'] },
   { name: 'rounded', decls: ['border-radius: var(--civitai-radius)'], bootstrap: ['rounded'] },
   { name: 'border-2', decls: ['border-width: 2px'], bootstrap: ['border-2'] },
   { name: 'border-primary', decls: ['border-color: var(--civitai-color-primary)'], bootstrap: ['border-primary'] },

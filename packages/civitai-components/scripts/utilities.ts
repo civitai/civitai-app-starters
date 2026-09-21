@@ -35,30 +35,28 @@ export function civitaiSheet(): string {
   const lines: string[] = [
     BANNER,
     '',
-    '/* Fixes the order however the two sheets are loaded: a utility beats a component. */',
-    '@layer civitai.components, civitai.utilities;',
-    '',
-    '@layer civitai.utilities {',
+    '/* NOT in a cascade layer. A layered rule loses to ANY unlayered one, so a',
+    '   utility inside a layer silently loses to legacy CSS it is meant to beat. */',
     rule(
-      '  :root',
+      ':root',
       SPACE.map((value, index) => `--civitai-space-${index}: ${value}`)
     ),
     '',
   ];
 
-  for (const utility of UTILITIES) lines.push(`  ${rule(`.ci-${utility.name}`, utility.decls)}`);
+  for (const utility of UTILITIES) lines.push(rule(`.ci-${utility.name}`, utility.decls));
 
   for (const bp of RESPONSIVE_BP) {
     const responsive = UTILITIES.filter((u) => u.responsive);
     if (responsive.length === 0) continue;
-    lines.push('', `  @media (min-width: ${CIVITAI_BP[bp]}) {`);
+    lines.push('', `@media (min-width: ${CIVITAI_BP[bp]}) {`);
     for (const utility of responsive) {
-      lines.push(`    ${rule(`.ci-${bp}-${utility.name}`, utility.decls)}`);
+      lines.push(`  ${rule(`.ci-${bp}-${utility.name}`, utility.decls)}`);
     }
-    lines.push('  }');
+    lines.push('}');
   }
 
-  lines.push('}', '');
+  lines.push('');
   return lines.join('\n');
 }
 
@@ -66,30 +64,27 @@ export function compatSheet(): string {
   const lines: string[] = [
     BANNER.replace('DO NOT EDIT.', 'DO NOT EDIT.\n   TRANSITIONAL: delete a rule as its markup moves to `.ci-*`.'),
     '',
-    '@layer civitai.components, civitai.compat, civitai.utilities;',
-    '',
-    '@layer civitai.compat {',
   ];
 
   for (const utility of UTILITIES) {
     for (const alias of utility.bootstrap ?? []) {
-      lines.push(`  ${rule(`.${alias.replace('-{bp}', '')}`, utility.decls)}`);
+      lines.push(rule(`.${alias.replace('-{bp}', '')}`, utility.decls));
     }
   }
 
   for (const bp of RESPONSIVE_BP) {
     const responsive = UTILITIES.filter((u) => (u.bootstrap ?? []).some((a) => a.includes('{bp}')));
     if (responsive.length === 0) continue;
-    lines.push('', `  @media (min-width: ${BOOTSTRAP_BP[bp]}) {`);
+    lines.push('', `@media (min-width: ${BOOTSTRAP_BP[bp]}) {`);
     for (const utility of responsive) {
       for (const alias of utility.bootstrap ?? []) {
         if (!alias.includes('{bp}')) continue;
-        lines.push(`    ${rule(`.${alias.replace('{bp}', bp)}`, utility.decls)}`);
+        lines.push(`  ${rule(`.${alias.replace('{bp}', bp)}`, utility.decls)}`);
       }
     }
-    lines.push('  }');
+    lines.push('}');
   }
 
-  lines.push('}', '');
+  lines.push('');
   return lines.join('\n');
 }

@@ -93,10 +93,26 @@ describe('the utility layer', () => {
     expect(ratio).toBeLessThan(2.2);
   });
 
-  it('beats a component default, whichever sheet loaded first', () => {
-    const rule = [...document.styleSheets]
-      .flatMap((sheet) => [...sheet.cssRules])
-      .find((r) => r.cssText.startsWith('@layer civitai.components, civitai.utilities'));
-    expect(rule, 'the layer order statement is what guarantees this').toBeDefined();
+  /* A layered rule loses to ANY unlayered one, so a utility in a layer loses to
+     the legacy CSS it exists to beat — measured against Bootstrap's reboot. */
+  it('beats unlayered legacy CSS, which is the whole job', () => {
+    const legacy = document.createElement('style');
+    legacy.textContent = 'h5 { margin-block-start: 0; margin-block-end: 0.5rem; }';
+    document.head.append(legacy);
+
+    scope ??= document.createElement('div');
+    if (!scope.isConnected) document.body.append(scope);
+    const heading = document.createElement('h5');
+    heading.className = 'ci-mt-6 ci-mb-4';
+    scope.append(heading);
+
+    // Read BEFORE removing the sheet: getComputedStyle is live, so a later
+    // removal would rewrite the very values under test.
+    const { marginBlockStart, marginBlockEnd } = getComputedStyle(heading);
+    const measured = { marginBlockStart, marginBlockEnd };
+    legacy.remove();
+
+    expect(measured.marginBlockStart).toBe('48px');
+    expect(measured.marginBlockEnd).toBe('16px');
   });
 });
