@@ -748,13 +748,14 @@ export type ParentToBlockMessage =
     }
   | {
       // Reply to APP_STORAGE_SET. A non-empty `error` is the
-      // reject signal, and any of three ceilings can raise it: the
-      // per-value cap (`APP_STORAGE_MAX_VALUE_BYTES`) or either
-      // per-(app, viewer) budget (`APP_STORAGE_MAX_BYTES`,
-      // `APP_STORAGE_MAX_ROWS`). Do not assume a rejection means the
-      // VALUE was too big; the row ceiling is the one a block usually
-      // reaches first, and it has nothing to do with the size of the
-      // value being written.
+      // reject signal, and any of three BYTE/ROW ceilings can raise
+      // it: the per-value cap (`APP_STORAGE_MAX_VALUE_BYTES`) or
+      // either per-(app, viewer) budget (`APP_STORAGE_MAX_BYTES`,
+      // `APP_STORAGE_MAX_ROWS`). They are not the only thing that
+      // can — the host's zod key cap does too, see below. Do not
+      // assume a rejection means the VALUE was too big; the row
+      // ceiling is the one a block usually reaches first, and it has
+      // nothing to do with the size of the value being written.
       //
       // 🔴 `error` IS A HOST-AUTHORED MESSAGE, NOT A CODE. The host's
       // router throws a `TRPCError` carrying BOTH a

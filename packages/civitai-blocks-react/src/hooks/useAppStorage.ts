@@ -50,11 +50,24 @@ export interface UseAppStorage {
    */
   get<T = unknown>(key: string): Promise<T | null>;
   /**
-   * Upsert a value. Resolves on host ack. Rejects when the value exceeds
-   * `APP_STORAGE_MAX_VALUE_BYTES`, when the per-(app, viewer) byte or ROW
-   * ceiling would be crossed (`APP_STORAGE_MAX_BYTES` /
-   * `APP_STORAGE_MAX_ROWS`), or when the viewer is anonymous. All from
+   * Upsert a value. Resolves on host ack. Rejects when the viewer is
+   * anonymous, and over any of the three BYTE/ROW ceilings this SDK carries
+   * constants for: the value exceeds `APP_STORAGE_MAX_VALUE_BYTES`, or the
+   * per-(app, viewer) byte or ROW budget would be crossed
+   * (`APP_STORAGE_MAX_BYTES` / `APP_STORAGE_MAX_ROWS`). All from
    * `@civitai/app-sdk/blocks`.
+   *
+   * 🔴 THAT IS THE SET THIS SDK CARRIES, NOT A BOUND ON WHAT REJECTS. The
+   * case it plainly does not cover is the host's **200-character cap on
+   * `key`** (`z.string().min(1).max(200)` on its `get`/`set`/`delete` input
+   * schema). Neither this hook nor `createMockHost` caps a key — both forward
+   * it verbatim (civitai/civitai-app-starters#370) — so a key built from a URL
+   * or a model name saves fine under `dev:mock` and fails forever in
+   * production. Being a zod bound it never reaches a handler, so it arrives on
+   * the same `error` field as everything else and classifies `null`, where the
+   * generic arm's "try reloading" advice is permanently wrong. `getQuota()`
+   * cannot warn you either: its reply carries `limitBytes` / `limitRows` and
+   * no key-length field. Cap or hash long keys here, in the block.
    *
    * 🔴 THE REJECTION CARRIES A HOST-AUTHORED MESSAGE, NOT A CODE. The thrown
    * `Error`'s `message` is verbatim whatever the host's bridge put on the
@@ -83,7 +96,8 @@ export interface UseAppStorage {
     cursor?: string;
   }): Promise<AppStorageListResult>;
   /**
-   * Diagnostic: current usage + the host's ceilings. Build an "X of Y used"
+   * Diagnostic: current usage + the host's BYTE and ROW ceilings — those two
+   * and no others; there is no key-length field. Build an "X of Y used"
    * settings widget against this — taking **both** numbers from the reply, and
    * showing ROWS as well as bytes (see {@link AppStorageQuota.limitRows} for
    * why bytes alone mislead).
@@ -110,13 +124,20 @@ export interface UseAppStorage {
  * are enforced per (APP, viewer): every instance of the same app draws on ONE
  * budget for that viewer.
  *
- * 🔴 THE CONSTANTS ARE A SNAPSHOT; `getQuota()` IS THE AUTHORITY. They are the
- * ceilings as of the `@civitai/app-sdk` version you installed — a figure
- * compiled into a published package is still a frozen figure, and the host can
- * move a ceiling without your lockfile changing. Render `getQuota()`'s reply
- * anywhere a viewer sees a number or a code path decides whether a write will
- * fit; reach for a constant only where no reply is available (a test fixture, a
- * design-time estimate), and re-check after an SDK bump.
+ * 🔴 FOR THE BYTE/ROW BUDGET, THE CONSTANTS ARE A SNAPSHOT AND `getQuota()` IS
+ * THE AUTHORITY. The three are that budget's ceilings as of the
+ * `@civitai/app-sdk` version you installed — a figure compiled into a published
+ * package is still a frozen figure, and the host can move one without your
+ * lockfile changing. Render `getQuota()`'s reply anywhere a viewer sees a
+ * number or a code path decides whether a write will FIT; reach for a constant
+ * only where no reply is available (a test fixture, a design-time estimate),
+ * and re-check after an SDK bump.
+ *
+ * 🔴 THAT AUTHORITY STOPS AT THE BUDGET. `getQuota()` answers
+ * `{ usedBytes, rowCount, limitBytes, limitRows }` and nothing more, so it
+ * cannot report the host's 200-character `key` cap — see {@link UseAppStorage.set}.
+ * A write that fits the quota reply can still be refused on key length, and
+ * nothing local will tell you.
  *
  * @example
  * const storage = useAppStorage();

@@ -113,10 +113,11 @@
  * them at the block, and do not rely on a local run to tell you.
  *
  * 🔴 **So: wherever a list of host strings still appears — in this repo's
- * READMEs, in the changeset, in `messages.ts`, or in
- * `test/blocks/appStorageErrors.test.ts` — it is ILLUSTRATIVE, NOT EXHAUSTIVE,
- * and must be labelled as such.** Its job is to show a reader what the `null`
- * bucket typically contains, never to bound it.
+ * READMEs, in the changeset, in `messages.ts`, in `@civitai/blocks-react`'s
+ * `src/hooks/useAppStorage.ts`, or in `test/blocks/appStorageErrors.test.ts` —
+ * it is ILLUSTRATIVE, NOT EXHAUSTIVE, and must be labelled as such.** Its job
+ * is to show a reader what the `null` bucket typically contains, never to
+ * bound it.
  *
  * ## Re-deriving it
  *

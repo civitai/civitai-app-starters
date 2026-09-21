@@ -36,8 +36,8 @@ future version may turn it into a real declared scope.
 
 ### Limits
 
-Three ceilings. `@civitai/app-sdk/blocks` exports each as a constant —
-**import them, never retype a number**:
+Three **byte/row** ceilings. `@civitai/app-sdk/blocks` exports each as a
+constant — **import them, never retype a number**:
 
 | Constant | Caps |
 |---|---|
@@ -45,15 +45,20 @@ Three ceilings. `@civitai/app-sdk/blocks` exports each as a constant —
 | `APP_STORAGE_MAX_BYTES` | total stored bytes per (**app**, viewer) |
 | `APP_STORAGE_MAX_ROWS` | total rows per (**app**, viewer) |
 
-🔴 **They are the ceilings as of the SDK version you installed, not live
-figures.** A constant compiled into a published package is a frozen number —
-the same failure mode as the stale figure this example used to print, with one
-copy instead of nine. **`getQuota()` is the authority**: render its `limitBytes` /
-`limitRows` anywhere a viewer sees a number or a code path decides whether a
-write will fit, and use the constants only where no reply is available (a test
-fixture, a design-time estimate, this example's offline harness). Re-check
-after an SDK bump; the host sized the clamp against a measured distribution and
-says to expect a re-measure.
+🔴 **They are that budget's ceilings as of the SDK version you installed, not
+live figures.** A constant compiled into a published package is a frozen number
+— the same failure mode as the stale figure this example used to print, with
+one copy instead of nine. **`getQuota()` is the authority for those two
+numbers**: render its `limitBytes` / `limitRows` anywhere a viewer sees a number
+or a code path decides whether a write will fit, and use the constants only
+where no reply is available (a test fixture, a design-time estimate, this
+example's offline harness). Re-check after an SDK bump; the host sized the
+clamp against a measured distribution and says to expect a re-measure.
+
+🔴 **It is the authority for the budget and nothing else.** The reply is
+`{ usedBytes, rowCount, limitBytes, limitRows }` — there is no key-length
+field, so it cannot warn you about the host's 200-character `key` cap below,
+which refuses a write that fits the quota perfectly well.
 
 🔴 **Note the scope difference.** The store above is *namespaced* per (block
 instance, viewer), but the byte and row *budgets* are per (**app**, viewer) —

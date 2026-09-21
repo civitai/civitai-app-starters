@@ -704,18 +704,18 @@ import {
 } from '@civitai/app-sdk/blocks';
 
 const storage = useAppStorage();
-await storage.set('key', { any: 'json' });   // rejects over ANY of the three ceilings
+await storage.set('key', { any: 'json' });   // rejects over ANY of the three — and on a >200-char key
 const v = await storage.get<MyShape>('key'); // null if unset / anon
 await storage.delete('key');                  // idempotent
 const { keys } = await storage.list({ prefix: 'note-' });
 const quota = await storage.getQuota();       // { usedBytes, rowCount, limitBytes, limitRows }
 ```
 
-🔴 **`getQuota()` is the authority; the constants are a snapshot.** These three
-are the ceilings **as of the version of `@civitai/app-sdk` you installed** —
-compiled-in figures, which is the same frozen-number failure mode this page
-used to demonstrate, just with one copy instead of nine. The host can move a
-ceiling without your lockfile changing. So:
+🔴 **For the byte/row budget, `getQuota()` is the authority and the constants
+are a snapshot.** These three are that budget's ceilings **as of the version of
+`@civitai/app-sdk` you installed** — compiled-in figures, which is the same
+frozen-number failure mode this page used to demonstrate, just with one copy
+instead of nine. The host can move one without your lockfile changing. So:
 
 - **Render `getQuota()`'s reply**, never a constant, anywhere a viewer sees a
   number or a code path decides whether a write will fit.
@@ -730,6 +730,14 @@ ceiling without your lockfile changing. So:
 Never hard-code a figure of your own: the docs here used to quote the app-wide
 umbrella instead of the per-viewer clamp and were **25x** out on bytes and
 **1000x** out on rows.
+
+🔴 **That authority stops at the budget, and so does the list above.**
+`getQuota()` answers `{ usedBytes, rowCount, limitBytes, limitRows }` and
+nothing more, so it cannot report the host's **200-character cap on `key`**
+— a write that fits the quota reply is still refused if the key is too long,
+and nothing local catches it
+([#370](https://github.com/civitai/civitai-app-starters/issues/370), detailed
+below). Cap or hash long keys in your block.
 
 🔴 **The ROW ceiling is usually the binding one, and a byte-based "x of y used"
 readout will not see it coming.** A block caching one modest record per item a
