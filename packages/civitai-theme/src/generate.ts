@@ -120,9 +120,12 @@ const TOKEN_SPEC: readonly TokenSpec[] = [
   },
   {
     name: 'color-surface',
-    source: '--mantine-color-body',
+    // Dark parts company with the page: measured against civitai.com, a raised
+    // surface is #25262B where the page is darker. Sharing one value made every
+    // card, menu, modal and input invisible except for its border.
+    source: { light: '--mantine-color-body', dark: '--mantine-color-default' },
     type: 'color',
-    description: 'Primary surface / page background.',
+    description: 'Raised surface — cards, menus, dialogs, inputs.',
   },
   {
     name: 'color-surface-2',
