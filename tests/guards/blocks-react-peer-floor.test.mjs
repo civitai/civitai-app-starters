@@ -134,35 +134,38 @@ const APP_STORAGE_CONSTANTS = [
  * here is worse than no ledger, because it reads as a measurement.
  */
 const PEER_VALUE_SYMBOL_SINCE = {
-  // 🔴 NOT MEASURABLE AGAINST A TARBALL — these four ship for the FIRST time in
-  // the app-sdk minor THIS SAME PR publishes (#343), so there is no published
-  // version to probe. The entry is DERIVED the way #344's was, and every step
-  // is a fact rather than an inference from release ordering:
-  //   - in-tree `packages/civitai-app-sdk/package.json` is 0.48.0, and
-  //     `npm view @civitai/app-sdk version` is also 0.48.0 — nothing mid-flight;
-  //   - `git ls-tree -r origin/main .changeset/` shows main carries NO pending
-  //     changesets at all (#365 consumed them), so this branch's is the only
-  //     input to the next release plan;
-  //   - `pnpm exec changeset status --verbose` on this branch prints
-  //     `@civitai/app-sdk 0.49.0` — the tool that will actually run, answering
-  //     with the number it will actually write.
+  // MEASURED 2026-09-21 against the PUBLISHED 0.49.0 tarball — `npm i
+  // @civitai/app-sdk@0.49.0 --prefer-online` into an empty dir, then
+  // `import * as b from '@civitai/app-sdk/blocks'` and test `s in b`. Same
+  // instrument as the sweep above, one version rather than all 47. All four
+  // PRESENT. The release published at 2026-09-21T15:33:32Z (#371).
   //
-  // ⚠️ These four were PREDICTIONS while #366 was in flight — 0.49.0 did not
-  // exist, so they could not be read off a tarball like every other entry here.
-  // The release-ordering risk they carried (another app-sdk minor publishing
-  // first, taking 0.49.0, and pushing these symbols to 0.50.0) was held by
+  // 🔴 The run is EXACTLY 0.49.0-and-up, which is the contiguity rule this
+  // ledger states, established from BOTH sides rather than assumed:
+  //   - 0.48.0 exports NONE of the four (29 symbols on `./blocks`), so the run
+  //     cannot start lower and the floor is EXACT, not merely sufficient;
+  //   - 0.49.0 exports ALL four (34 symbols) and is the newest published
+  //     version, so the run is unbroken to the top.
+  // Controls, run before these numbers were believed:
+  //   - POSITIVE: the 29 → 34 export-count delta across the two tarballs is the
+  //     probe moving. A reading identical on both versions would be
+  //     indistinguishable from a probe wired to one tarball twice.
+  //   - NEGATIVE: an impossible symbol (`NO_SUCH_SYMBOL_ff3a9c`) read ABSENT on
+  //     both — the probe can say "no", so PRESENT is not its only answer.
+  //   - CROSS-CHECK: the published `@civitai/blocks-react@0.56.0` tarball
+  //     declares `"@civitai/app-sdk": ">=0.49.0 <1.0.0"`, and
+  //     `npm install --dry-run --prefer-online @civitai/blocks-react@0.56.0`
+  //     resolves `@civitai/app-sdk 0.49.0`. The consumer-facing contract and
+  //     this ledger agree.
+  //
+  // History, because the number looked the same before it was true: these four
+  // were PREDICTIONS while #366 was in flight — 0.49.0 did not exist, so they
+  // could not be read off a tarball like every other entry here. The
+  // release-ordering risk (another app-sdk minor publishing first, taking
+  // 0.49.0, and pushing these symbols to 0.50.0) was held by
   // `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH` + the `PREDICTED ENTRY` test, which
   // re-derived the number from the tree on every run rather than trusting it.
-  //
-  // 🔴 RESOLVED 2026-09-21 — the risk did not materialise. The Version Packages
-  // PR (#371) puts app-sdk 0.49.0 in-tree, `PREDICTION HAS COME TRUE` fired
-  // exactly as designed, and the list is now empty. These entries are therefore
-  // ordinary ledger rows again, and the floor stays at `>=0.49.0` — 0.49.0 does
-  // export them, so raising it would exclude a good release.
-  //
-  // Still owed, and the one thing NOT yet measured: re-read these four off the
-  // published 0.49.0 tarball once the release job has run. Until then they are
-  // a prediction that came true, which is not the same as a measurement.
+  // It did not materialise, and the rows above are now ordinary measured ones.
   APP_STORAGE_ERROR_REQUEST_FAILED: '0.49.0',
   APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED: '0.49.0',
   APP_STORAGE_ERROR_USER_ROW_LIMIT: '0.49.0',
@@ -211,11 +214,15 @@ const PEER_VALUE_SYMBOL_SINCE = {
 // `>=0.49.0`: 0.49.0 genuinely exports them, so raising either would exclude a
 // good release — the #309/#317/#344 family with the sign flipped.
 //
-// Their entries are no longer exempt from the measurement rule. Re-measure them
-// against the published tarball once the release job has run:
-//   npm view @civitai/app-sdk@0.49.0 version
-// (Before the publish that answers E404, which is the CORRECT answer in that
-// state and not something to chase.)
+// CONVERSION COMPLETE 2026-09-21: #371 merged (`10db006`), the release job
+// published app-sdk 0.49.0 at 15:33:32Z, and the four entries were re-read off
+// that tarball — with 0.48.0 as the control that shows the probe can answer
+// ABSENT. The numbers and both controls are recorded at the entries themselves.
+// They are no longer exempt from the measurement rule, and nothing here is owed.
+//
+// This list stays EMPTY unless a branch again ledgers a symbol against a version
+// it is itself about to publish; see the docblock above for what declaring one
+// buys you.
 const PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH = [];
 
 /**
