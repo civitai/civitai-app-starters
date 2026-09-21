@@ -37,7 +37,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "check:layering": "node scripts/check-layering.mjs",
-    "test": "vitest run --project node",
+    "test": "vitest run --project node --passWithNoTests",
     "test:browser": "vitest run --project browser",
     "test:watch": "vitest --project node"
   },

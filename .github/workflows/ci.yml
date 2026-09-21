@@ -32,6 +32,16 @@ jobs:
       - run: pnpm --filter @civitai/app-sdk test
       - run: pnpm --filter @civitai/app-sdk build
 
+      # AFTER build, on purpose. The vitest suite imports `src/`; every consumer
+      # imports the PUBLISHED specifier (`@civitai/app-sdk/vite`). Those are two
+      # different resolutions and a green suite says nothing about the second --
+      # a typo in `exports`, a `dist` path never emitted, or a schema file that
+      # `files` does not ship all leave the tests green and a scaffold build red.
+      # This resolves the node-only subpaths BY PACKAGE NAME and runs
+      # `defineBlock` once, which is what proves the vendored schema is reachable
+      # from `dist/`.
+      - run: pnpm --filter @civitai/app-sdk test:exports
+
   schema-drift:
     name: Canonical schema drift-check
     runs-on: ubuntu-latest
@@ -402,6 +412,63 @@ jobs:
         run: pnpm --filter ./starters/${{ matrix.starter }} build
         env:
           SKIP_ENV_VALIDATION: '1'
+
+      # EXPIRED-SESSION PROBE (next-app only). Next.js forbids cookie writes in a
+      # Server Component, and that rule exists only inside a real render — no
+      # unit test can reach it. `getSession()` used to refresh in place, so an
+      # expired session took the whole page render down with
+      # `Cookies can only be modified in a Server Action or Route Handler`, and
+      # the browser was never told to drop the dead cookie. Refresh now lives in
+      # middleware; this drives a real `next start` over HTTP and asserts BOTH
+      # arms — rejected refresh clears the cookie and renders logged-out,
+      # accepted refresh re-seals it and renders signed-in.
+      #
+      # PROBE_SKIP_BUILD reuses the `.next` the Build step above just produced.
+      # timeout-minutes for the same reason the playwright steps have one: a
+      # wedged child process is indistinguishable from a slow one, and would
+      # otherwise burn to GitHub's 6-hour cap.
+      - name: Expired-session probe (next-app)
+        if: matrix.starter == 'next-app'
+        run: pnpm --filter ./starters/next-app probe:expired-session
+        env:
+          PROBE_SKIP_BUILD: '1'
+        timeout-minutes: 5
+
+      # STATIC-SERVING PROBE (the two PWA starters). Their prod entry used to
+      # resolve `./dist` against the PROCESS CWD and serve the SPA fallback by
+      # fetching ITSELF over TCP. Started from any directory other than the
+      # package root — systemd `WorkingDirectory`, a container `WORKDIR`, pm2 —
+      # the static middleware missed, so `/index.html` fell into the same
+      # catch-all that fetched it, recursing without bound. Measured: 25
+      # requests took the process from 20 open descriptors to 92,124, and every
+      # one of them timed out, while the server still logged "Listening".
+      #
+      # The probe starts the built server from a temp directory and asserts a
+      # real asset comes back byte-identical, that a concurrent burst does not
+      # double the socket count, and that a missing dist/index.html exits
+      # non-zero. PROBE_SKIP_BUILD reuses the Build step's output.
+      - name: Static-serving probe (PWA starters)
+        if: matrix.starter == 'react-pwa' || matrix.starter == 'svelte-pwa'
+        run: pnpm --filter ./starters/${{ matrix.starter }} probe:static-serving
+        env:
+          PROBE_SKIP_BUILD: '1'
+        timeout-minutes: 5
+
+      # COOKIE-FLAGS PROBE (the two PWA starters). `production` used to be
+      # `NODE_ENV === 'production'`, and NOTHING SETS NODE_ENV: `pnpm start` is
+      # `node --env-file=.env dist-server/index.js`. So a correctly deployed,
+      # HTTPS-served app took the dev branch — session cookies without `Secure`
+      # and no HSTS — while working perfectly, which is why nobody would notice.
+      # It now derives from APP_URL's scheme. The probe drives the real OAuth
+      # handshake in-process against a stand-in hub and checks BOTH points on
+      # the dimension: https -> Secure + HSTS, http -> neither. One point alone
+      # is passed by `const production = true`.
+      - name: Cookie-flags probe (PWA starters)
+        if: matrix.starter == 'react-pwa' || matrix.starter == 'svelte-pwa'
+        run: pnpm --filter ./starters/${{ matrix.starter }} probe:cookie-flags
+        env:
+          PROBE_SKIP_BUILD: '1'
+        timeout-minutes: 5
 
       - name: Lint (if defined)
         run: |

@@ -1,7 +1,7 @@
 import { useRef } from 'react';
 
 import { useBlockContext, useBlockResize } from '@civitai/blocks-react';
-import { isModelSlotContext, isPageSlotContext } from '@civitai/app-sdk/blocks';
+import { isModelSlotContext, isPageSlotContext, isSignedIn } from '@civitai/app-sdk/blocks';
 
 /**
  * hello-world — the Civitai App lifecycle in one file.
@@ -14,13 +14,12 @@ import { isModelSlotContext, isPageSlotContext } from '@civitai/app-sdk/blocks';
  *    union keyed on `slotId`; narrowing with a guard is what makes a slot's
  *    fields readable, and it is a real runtime check on a value that crossed a
  *    `postMessage` boundary.
- *  - The viewer as a SIGN-IN GATE (`viewer ? … : 'anonymous'`) rather than an
- *    identity read. `viewer.id`/`viewer.username` are deprecated — BLOCK_INIT
- *    discloses them to every block on load, before any interaction. Need the
- *    identity? Call `useViewer()`: scope-gated, audited per call. (Not
- *    `viewer?.signedIn` yet: the dev hosts send it, production does not until
- *    the host counterpart lands (civitai/civitai#3707 — open, unmerged), so
- *    gating on it today would show every signed-in user the anonymous branch.)
+ *  - The viewer as a SIGN-IN GATE (`isSignedIn(viewer)`) rather than an identity
+ *    read. `viewer.id`/`viewer.username` are deprecated — BLOCK_INIT discloses
+ *    them to every block on load, before any interaction. Need the identity?
+ *    Call `useViewer()`: scope-gated, audited per call. Call the predicate
+ *    rather than open-coding the gate: the wire contract has moved once already
+ *    and `isSignedIn` is the single place that tracks it.
  *  - `useBlockResize(ref)` — tells the host how tall the iframe should be
  *    (emits RESIZE_IFRAME on every height change). Attach to the root.
  *  - The host TRUST FRAME — civitai.com draws a bordered chrome bar with a
@@ -37,11 +36,12 @@ export function App() {
   useBlockResize(rootRef);
 
   if (!ready) {
-    // Pre-init: BLOCK_INIT hasn't landed. Render a minimal skeleton so the
-    // iframe has something to measure. The host shows its own loading state
-    // in the trust frame while it waits for our BLOCK_READY.
+    // Pre-init: BLOCK_INIT hasn't landed. The host shows its own loading state
+    // in the trust frame while it waits for our BLOCK_READY, so this skeleton
+    // needs no `rootRef` — `useBlockResize` picks up the real root when it
+    // mounts on a later render.
     return (
-      <div ref={rootRef} data-theme={theme} className="hw-root">
+      <div data-theme={theme} className="hw-root">
         Loading…
       </div>
     );
@@ -77,7 +77,7 @@ export function App() {
       ) : null}
 
       <div className="hw-card">
-        Viewer: <strong>{viewer ? 'signed in' : 'anonymous'}</strong>
+        Viewer: <strong>{isSignedIn(viewer) ? 'signed in' : 'anonymous'}</strong>
       </div>
     </div>
   );

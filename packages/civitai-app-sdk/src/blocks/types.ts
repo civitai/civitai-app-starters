@@ -500,11 +500,8 @@ export interface BlockSettings {
  * The signed-in viewer. `null` in `BlockInitPayload.viewer` means anonymous.
  *
  * 🔴 DATA-MINIMISATION IN PROGRESS — never read `id`/`username` to answer "is
- * someone signed in?". WHICH sign-in gate to write depends on which host you are
- * against, and {@link ViewerInfo.signedIn} states the rule in full. Short
- * version: gate on `viewer !== null` TODAY (that is what production emits, and
- * it means exactly the same thing); move to `viewer?.signedIn === true` once the
- * host counterpart ships.
+ * someone signed in?". Call {@link isSignedIn} instead; it is the one place the
+ * gate is spelled, and its doc states the rule in full.
  *
  * `BLOCK_INIT` discloses the viewer's identity to EVERY block unconditionally
  * on load, before any interaction. Almost every block only needs to know
@@ -547,34 +544,42 @@ export interface ViewerInfo {
    * so that a block reading it keeps compiling, and keeps meaning the same
    * thing, after `id`/`username` go away.
    *
-   * 🔴 WHICH GATE TO WRITE, AND HOW TO TELL WHICH WORLD YOU ARE IN.
+   * 🔴 DO NOT WRITE A GATE ON THIS FIELD — call {@link isSignedIn}. This field
+   * is OPTIONAL and unvalidated at the trust boundary; `isSignedIn` answers the
+   * same question from the property the boundary does enforce, and its doc
+   * carries the three measured reasons.
    *
-   *  - TODAY, against production: write `viewer !== null`. The field is NOT on
-   *    the wire yet. `signedIn` appears ZERO times under
-   *    `src/components/AppBlocks/` on civitai/civitai `main`, and that repo's
-   *    own contract test (`__tests__/projectBlockInit.test.ts`) pins the
-   *    BLOCK_INIT viewer key set as exactly `['id', 'username']`. The field
-   *    arrives with civitai/civitai#3707, which is OPEN and unmerged. A block
-   *    that gates on `viewer?.signedIn` before that lands reads `undefined` —
-   *    i.e. false — and renders its anonymous branch to every signed-in user.
-   *    This is why the migrated starter and `hello-world` use `viewer !== null`.
-   *  - AFTER #3707 ships: the two gates agree, and `signedIn` becomes the one to
-   *    write. `viewer: null` stays the anonymous case, so the field is only ever
-   *    the literal `true` on a present viewer; #3707 moves the host's pinned key
-   *    set to `['id', 'signedIn', 'username']`.
-   *  - HOW TO TELL, at runtime: `viewer !== null && viewer.signedIn === undefined`
-   *    IS the probe — there is no version handshake. 🔴 Do NOT answer it with the
-   *    dev hosts: `createMockHost` and `createLiveHost` both emit `signedIn`
-   *    deliberately, ahead of the host, so the field is exercisable locally.
-   *    Local presence is not evidence of production presence.
+   * The settled facts about the field itself, and where each is checkable:
    *
-   * OPTIONAL for exactly that reason — a host that predates #3707 omits it
-   * entirely, and that must stay assignable.
+   *  - The host stamps it. civitai/civitai `src/components/AppBlocks/
+   *    projectBlockInit.ts` exports `withSignedInFlag()`, which returns `null`
+   *    for an anonymous viewer and `{ id, username, signedIn: true }` otherwise.
+   *    BOTH host surfaces funnel through it — `IframeHost` (the model slot,
+   *    which derives its viewer from the slot context) and `PageBlockHost` (the
+   *    full-page surface, which receives an already-resolved `viewer` prop) —
+   *    so there is no half-covered fleet.
+   *  - That repo's own contract test (`__tests__/projectBlockInit.test.ts`) now
+   *    pins the BLOCK_INIT viewer key set as exactly
+   *    `['id', 'signedIn', 'username']`, and asserts the value is literally
+   *    `true` rather than a computed boolean.
+   *  - It arrived with civitai/civitai#3707 (merged 2026-08-07). Earlier
+   *    revisions of this doc first told authors to write `viewer !== null`
+   *    (correct at the time — the field was not yet on the wire) and then told
+   *    them to write `viewer?.signedIn === true`. Both spellings are now
+   *    confined to {@link isSignedIn}, which is the answer to "which one?".
+   *
+   * OPTIONAL, and it must stay optional: `BlockInitPayload` is also the shape
+   * older host code paths and test fixtures construct, so a REQUIRED field here
+   * would break them at compile time for no wire benefit. That optionality is
+   * also the first reason {@link isSignedIn} does not read it — an omitting host
+   * makes `viewer?.signedIn === true` read `false` for a signed-in viewer.
    *
    * A malformed value is not rejected at the trust boundary — see the note on
    * `isValidBlockInitPayload` in `@civitai/blocks-react`: failing the whole init
-   * over one advisory flag would cost the block every other field. So a block
-   * that reads it should compare to `true` rather than treat it as a boolean.
+   * over one advisory flag would cost the block every other field. So this is
+   * the one viewer property nothing validates, which is the second reason
+   * {@link isSignedIn} gates on presence instead. If a block reads the field
+   * directly anyway, compare it to `true` rather than treating it as a boolean.
    */
   signedIn?: true;
   /**
@@ -590,6 +595,63 @@ export interface ViewerInfo {
   username: string | null;
   /** @deprecated Not sent by the platform to third-party iframes (civitai #2521). */
   status?: 'active' | 'banned' | 'muted';
+}
+
+/**
+ * THE sign-in gate. Pass `useBlockContext().viewer` (or a `BlockInitPayload`'s
+ * `viewer`) and render the signed-in branch when it returns `true`.
+ *
+ * ```ts
+ * import { isSignedIn } from '@civitai/app-sdk/blocks';
+ * // …
+ * return <p>{isSignedIn(viewer) ? 'signed in' : 'anonymous'}</p>;
+ * ```
+ *
+ * It exists so that "is someone signed in?" is spelled ONCE, here, instead of
+ * being open-coded in every block, every doc snippet and every `tiged`-copied
+ * starter. If the wire contract ever changes, this body is the only thing that
+ * has to change with it.
+ *
+ * 🔴 IT DOES NOT READ {@link ViewerInfo.signedIn}, AND THAT IS THE POINT.
+ * `viewer?.signedIn === true` looks like the more precise gate; it is the more
+ * FRAGILE one, for three reasons that are checkable rather than stylistic:
+ *
+ *  1. `signedIn` is OPTIONAL (`signedIn?: true`) and must stay optional — a
+ *     host that predates it omits the field entirely. `viewer?.signedIn === true`
+ *     then reads `false` for a viewer who is genuinely signed in. Presence does
+ *     not have that failure mode: `viewer: null` is the ONLY anonymous value on
+ *     the wire, from every host version.
+ *  2. PRESENCE IS WHAT THE TRUST BOUNDARY ACTUALLY ENFORCES. `@civitai/blocks-
+ *     react`'s `isValidBlockInitPayload` pins `viewer` as object-or-null (that
+ *     shape is a compatibility floor compiled into every already-deployed block
+ *     bundle) and — in the same guard, deliberately — does NOT reject a
+ *     malformed `signedIn`, because failing the whole init over one advisory
+ *     flag would cost the block its token, context and settings too. So a gate
+ *     on `signedIn` is a gate on the one viewer property nothing validates,
+ *     while a gate on presence is a gate on the one property everything does.
+ *  3. THE NAMED FUTURE HAZARD LANDS ON `signedIn`, NOT ON PRESENCE. That same
+ *     guard's comment names the case it refuses to brick for: a host writing
+ *     `signedIn: !!user`. Under it, `viewer?.signedIn === true` shows a sign-in
+ *     CTA to someone already signed in; presence still answers correctly.
+ *
+ * The stated reason to prefer `signedIn` — that it outlives the `@deprecated`
+ * `id`/`username` — is delivered here in full: this predicate reads NEITHER
+ * field, so nothing a block writes through it has to change when they are
+ * removed. That was always the real requirement; reading `signedIn` was one way
+ * to meet it, and the weaker one.
+ *
+ * `signedIn` remains on `ViewerInfo` and is still sent — it is the explicit,
+ * self-describing wire signal, and it is what this function would switch to if
+ * presence ever stopped meaning sign-in. Today it is redundant with presence by
+ * construction: the host's `withSignedInFlag()` returns `null` for an anonymous
+ * viewer and stamps the literal `true` on every present one, so there is no
+ * value of the pair that the two spellings disagree about.
+ *
+ * Accepts `undefined` as well as `null` so it is safe on a pre-`BLOCK_INIT`
+ * snapshot and on a hand-built payload whose `viewer` key is simply absent.
+ */
+export function isSignedIn(viewer: ViewerInfo | null | undefined): boolean {
+  return viewer !== null && viewer !== undefined;
 }
 
 /**
@@ -1024,9 +1086,17 @@ export type WorkflowBodyCustomComfy =
   | WorkflowBodyCustomComfyInline;
 
 /**
- * A **registered orchestrator step**, submitted through the host's step
- * registry — the uniform bridge for step types that are not full generation
- * recipes (image conversion, chat completion, captioning, …).
+ * The REGISTRY ARM of the `kind: 'step'` member — a **registered orchestrator
+ * step**, submitted through the host's step registry, the uniform bridge for
+ * step types that are not full generation recipes (image conversion, chat
+ * completion, captioning, …).
+ *
+ * 🔴 `kind: 'step'` HAS TWO ARMS, discriminated by whether `step` is present.
+ * This one names a REGISTERED id and the host translates it; the other is
+ * {@link WorkflowBodyPassThroughStep}, which omits `step`, names an orchestrator
+ * `$type` directly and has the host forward `input` unmodified. The trust model
+ * below describes THIS arm only — the pass-through arm deliberately drops four
+ * of these controls, and its own doc comment enumerates which.
  *
  * Mirrors the host's `blockStepBodySchema` element-for-element. That schema is
  * `.strict()` with exactly these three fields, so anything else on this object
@@ -1035,9 +1105,13 @@ export type WorkflowBodyCustomComfy =
  * Trust / safety model (all SERVER-ENFORCED, same posture as
  * {@link WorkflowBodyCustomComfy}):
  *  - `step` is a **registered step id** resolved against a code-reviewed,
- *    non-DB-editable registry. The wire enum is DERIVED from the registry keys,
- *    so an unregistered id is rejected **fail-closed at the schema**, before any
- *    translator, any spend reservation, or any orchestrator call.
+ *    non-DB-editable registry. THIS ARM's wire enum is DERIVED from the registry
+ *    keys, so an unregistered id is rejected **fail-closed at the schema**,
+ *    before any translator, any spend reservation, or any orchestrator call.
+ *    🔴 That is a statement about the REGISTRY ARM, not about `kind: 'step'` as
+ *    a whole: a body that omits `step` lands on
+ *    {@link WorkflowBodyPassThroughStep} instead, where an id the registry has
+ *    never heard of is exactly the supported case.
  *  - `params` are **bounded and validated per-step** by that step's own
  *    `.strict()` Zod schema. They are deliberately opaque on the wire (the host
  *    keeps the transport step-agnostic), so this field is `Record<string,
@@ -1059,8 +1133,12 @@ export type WorkflowBodyStep = {
   kind: 'step';
   /**
    * A **registered step id** (e.g. `'chat-completion'`). Resolved server-side
-   * against the code-reviewed step registry; an unregistered id is rejected
-   * fail-closed at the wire schema.
+   * against the code-reviewed step registry; on THIS arm an unregistered id is
+   * rejected fail-closed at the wire schema.
+   *
+   * Its presence is also the ARM DISCRIMINATOR. Omit it and the body is read as
+   * a {@link WorkflowBodyPassThroughStep} instead, where an unregistered id is
+   * not rejected because there is no registry lookup at all.
    */
   step: string;
   /**
@@ -1079,6 +1157,115 @@ export type WorkflowBodyStep = {
 };
 
 /**
+ * The PASS-THROUGH ARM of the `kind: 'step'` member — the block names an
+ * ORCHESTRATOR `$type` directly and the host forwards `input` **unmodified**.
+ * No registry entry, no server-side translator, no per-step param schema.
+ *
+ * Mirrors the host's `blockPassThroughStepBodySchema`. That schema is
+ * `.strict()` with exactly these fields, so anything else on this object is
+ * REJECTED server-side rather than dropped.
+ *
+ * 🔴 **`step` IS THE ARM DISCRIMINATOR AND IT MUST BE ABSENT.** Send
+ * `{ kind: 'step', $type, input, maxBuzz }` with no `step` key at all. It is
+ * typed `step?: undefined` here so that omitting it satisfies the type while
+ * setting it to anything is a compile error — the host's discriminated union
+ * uses `z.undefined()` for the same job, and a body carrying both `step` and
+ * `$type` is rejected by BOTH arms (each is `.strict()`) rather than resolved to
+ * a winner.
+ *
+ * WHAT THIS ARM GIVES UP relative to {@link WorkflowBodyStep}. Four of the
+ * registry's controls are deliberately absent, by operator decision — this is
+ * documented so it reads as a decision rather than an oversight:
+ *  1. **No per-step `.strict()` param schema.** `input` is opaque; the
+ *     orchestrator's own per-`$type` validation is the only shape gate, and it
+ *     runs AFTER the spend reservation rather than at the wire.
+ *  2. **No moderation posture and no prompt audit.** Nothing audits `input`.
+ *     Moderation moved to the PUBLISH boundary — nothing a block generates is
+ *     public until published, and that path is moderated.
+ *  3. **No resource policy / `urn:air:` scan.** AIR resources are ALLOWED here.
+ *     Spend, not entitlement, is the binding control.
+ *  4. **No `billingMode` and no load-time price invariant.** {@link maxBuzz}
+ *     replaces them, exactly as on {@link WorkflowBodyCustomComfyInline}.
+ *
+ * WHAT STILL BOUNDS IT, all server-side:
+ *  - A **denylist** of platform-internal `$type`s (scanners, moderation
+ *    classifiers, hashing/model-ingestion, web egress) is refused by the host
+ *    router before any spend reservation or orchestrator call. It is a DENYLIST,
+ *    not an allowlist: a `$type` the host has never heard of is allowed through
+ *    by construction, which is the point of this arm.
+ *  - `$type` is bounded to **1…64 characters** and `input` to **262144 bytes**
+ *    (256 KB) serialized. Both REJECT; neither truncates.
+ *  - `maxBuzz` is the single spend knob — see its own note below.
+ *
+ * @example A pass-through body for an orchestrator step the registry does not
+ * carry. Note there is no `step` key.
+ * ```ts
+ * const body: WorkflowBody = {
+ *   kind: 'step',
+ *   $type: 'imageBackgroundRemoval',
+ *   input: { image: 'https://image.civitai.com/…/00001.jpeg' },
+ *   maxBuzz: 10,
+ * };
+ * ```
+ */
+export type WorkflowBodyPassThroughStep = {
+  kind: 'step';
+  /**
+   * 🔴 THE ARM DISCRIMINATOR — **omit this key**. It exists in the type only so
+   * that a body which sets it cannot be mistaken for a pass-through body: the
+   * only assignable value is `undefined`, and the wire payload carries no `step`
+   * key at all (JSON cannot express `undefined`).
+   *
+   * To name a REGISTERED step id instead, you want {@link WorkflowBodyStep}.
+   */
+  step?: undefined;
+  /**
+   * The ORCHESTRATOR step type to run, verbatim — e.g. `'imageBackgroundRemoval'`.
+   * Required, 1…64 characters.
+   *
+   * This is the orchestrator's own `$type` discriminator, NOT a Civitai step-
+   * registry id, and it is not resolved against any allowlist. It is refused
+   * only if it names a platform-internal type (the denylist above; the match is
+   * case-insensitive). The host records the submitted value as the subtype of
+   * the generation it stamps, so a `$type` longer than the cap is rejected
+   * rather than silently degraded.
+   */
+  $type: string;
+  /**
+   * The orchestrator step's own input object, **forwarded unmodified**. The host
+   * does not read, rewrite, merge or default any field in here — that is the
+   * whole point of this arm, and the step the orchestrator receives carries an
+   * `input` byte-identical to this value.
+   *
+   * Consequently the orchestrator's per-`$type` schema is the ONLY authority for
+   * what a given `$type` accepts; nothing in this package or on the host mirrors
+   * it. Bounded only by size: at most **262144 bytes** (256 KB) serialized, which
+   * is a payload-DoS bound and not a shape gate.
+   */
+  input: Record<string, unknown>;
+  /**
+   * The per-job Buzz ceiling. Required, an integer in **1…250**.
+   *
+   * 🔴 **IT IS ALSO THE STEP TIMEOUT, IN SECONDS** — identical mechanism to
+   * {@link WorkflowBodyCustomComfyInline.maxBuzz}. The host stamps
+   * `stepTimeoutSeconds = maxBuzz`; there is only one number, which is what makes
+   * the ceiling physically enforceable rather than merely asserted. So
+   * `maxBuzz: 10` does not buy a cheap job; it buys one that is KILLED after 10
+   * seconds and comes back `expired`. Size it to the wall-clock time the step
+   * actually needs.
+   *
+   * You are billed the REAL cost: post-paid against measured GPU seconds,
+   * refunding the unused remainder of the ceiling, so a generous `maxBuzz` costs
+   * nothing extra when the job finishes early. `estimate` on a pass-through body
+   * echoes this number back as `cost.total` — an upper bound, not a price;
+   * surface it as "up to N Buzz".
+   *
+   * The host additionally requires `maxBuzz <= token.buzzBudget` before submit.
+   */
+  maxBuzz: number;
+};
+
+/**
  * Body the block sends to `useBuzzWorkflow().{submit,estimate}`. A real
  * discriminated union keyed by `kind`:
  *  - {@link WorkflowBodyTextToImage} (`kind: 'textToImage'`) — the original
@@ -1088,9 +1275,19 @@ export type WorkflowBodyStep = {
  *    {@link WorkflowBodyCustomComfyRecipe} (the default), or a
  *    {@link WorkflowBodyCustomComfyInline} graph the block ships itself
  *    (`mode: 'inline'`; developer-only).
- *  - {@link WorkflowBodyStep} (`kind: 'step'`) — a bounded, server-registered
- *    orchestrator step (the host's step registry; billing mode and moderation
- *    posture are declared per entry).
+ *  - {@link WorkflowBodyStep} (`kind: 'step'`, `step` PRESENT) — a bounded,
+ *    server-registered orchestrator step (the host's step registry; billing mode
+ *    and moderation posture are declared per entry).
+ *  - {@link WorkflowBodyPassThroughStep} (`kind: 'step'`, `step` ABSENT) — names
+ *    an orchestrator `$type` directly and has the host forward `input`
+ *    unmodified. Bounded by a platform-internal denylist and by `maxBuzz`, not
+ *    by a registry.
+ *
+ * `kind: 'step'` is therefore itself a union, discriminated on the PRESENCE of
+ * `step` — the same nesting {@link WorkflowBodyCustomComfy} has on `mode`.
+ * Narrowing on `kind === 'step'` alone leaves both arms in play; narrow further
+ * with `'$type' in body` (or `body.step === undefined`) before touching
+ * arm-specific fields.
  *
  * New kinds extend this union as the host gains support for them. Narrow on
  * `body.kind` before touching member-specific fields (e.g. `modelId`/`params`
@@ -1104,7 +1301,8 @@ export type WorkflowBodyStep = {
 export type WorkflowBody =
   | WorkflowBodyTextToImage
   | WorkflowBodyCustomComfy
-  | WorkflowBodyStep;
+  | WorkflowBodyStep
+  | WorkflowBodyPassThroughStep;
 
 /**
  * The host-mediated view of an orchestrator workflow that an iframe block
@@ -1245,22 +1443,49 @@ export type ContentRating = 'g' | 'pg' | 'pg13' | 'r' | 'x';
 
 export interface ManifestTarget {
   slotId: string;
-  priority: number;
+  /**
+   * Slot ordering hint. NOT a property of the canonical schema (whose target
+   * items require only `slotId`), so it is optional and shape-checked only.
+   */
+  priority?: number;
   requiredContext?: string[];
 }
 
+/**
+ * iframe envelope. Every field is optional — the canonical schema declares no
+ * `required` list here, and the platform supplies its own defaults.
+ */
 export interface ManifestIframe {
-  src: string;
-  minHeight: number;
-  /** Optional. Omit or set to `null` for no cap. */
+  /**
+   * SERVER-OWNED — the platform stamps the canonical bundle URL at
+   * build/approve time. Typed `never` so setting it is a compile error;
+   * `defineBlock` rejects it at runtime too. Until #330 the SDK REQUIRED this
+   * field, which made every valid manifest fail local validation and every
+   * locally-valid manifest fail `civitai app submit`.
+   */
+  src?: never;
+  /** Canonical bounds: integer, 40–4000 px. */
+  minHeight?: number;
+  /** Optional. Omit or set to `null` for no cap. Canonical bounds: 40–4000 px. */
   maxHeight?: number | null;
-  resizable: boolean;
-  sandbox: string;
+  resizable?: boolean;
+  sandbox?: string;
 }
 
-export interface ManifestAsset {
-  url: string;
-  integrity: string;
+/** Full-page surface descriptor (W10). Page apps mount at `/apps/run/<slug>`. */
+export interface ManifestPage {
+  /** Sub-path the page mounts at; must start with `/`. */
+  path: string;
+  /** Title shown in host chrome. */
+  title: string;
+  icon?: string;
+  /**
+   * Per-generation Buzz SAFETY CEILING for `ai:write:budgeted` tokens — a
+   * ceiling against a drained wallet, NOT a cost forecast. Size it well above
+   * your worst-case generation; a budget set to your estimate becomes a hard
+   * outage the moment real cost drifts up.
+   */
+  buzzBudgetPerGen?: number;
 }
 
 export interface ManifestPreview {
@@ -1272,18 +1497,42 @@ export interface ManifestPreview {
 /**
  * v1 manifest shape. Mirrors `schemas/app-block/v1.json` — keep them in sync.
  *
- * The trailing `renderMode` / `assetBundle` / `trustTier` fields are
- * forward-compat hooks for v2 inline mode; they are accepted but unused
- * by the v1 iframe runtime.
+ * REQUIRED HERE = REQUIRED THERE. Only `blockId`, `version`, `name`,
+ * `contentRating` and `scopes` are required, because those are exactly the five
+ * entries in the canonical schema's `required` array. Before #330 this
+ * interface required eleven (including `appId`, which the canonical does not
+ * declare at all, and `iframe.src`, which the platform REFUSES), so the type
+ * itself rejected every manifest the starters ship.
  */
 export interface BlockManifestV1 {
-  $schema: 'https://civitai.com/schemas/app-block/v1.json';
-  appId: string;
+  /**
+   * Optional JSON-Schema reference. The canonical types it as a plain string
+   * and its own description says it is "ignored by the platform validator", so
+   * `defineBlock` does NOT constrain the value — point it at a vendored copy or
+   * a preview draft if that is what your editor needs. Until #330 a mismatch
+   * was a hard throw, which (once the gate was wired into Vite) failed the
+   * build on a field the server provably ignores.
+   *
+   * The union below is an AUTOCOMPLETE NUDGE, not a rule: `string & {}` keeps
+   * the literal visible in editor suggestions while still admitting any string.
+   */
+  $schema?: 'https://civitai.com/schemas/app-block/v1.json' | (string & {});
+  /**
+   * NOT a canonical manifest property, and NOT validated. Your app id lives in
+   * `civitai.app.json` (`{"appId": "..."}`), which is what the `civitai` CLI
+   * reads. The canonical does not forbid extra top-level keys, so the server
+   * ignores this one; the scaffolds still carry `"app_REPLACE_ME"` and it is
+   * inert.
+   */
+  appId?: string;
   blockId: string;
   version: string;
+  /** Human-readable display name. Non-empty; the canonical imposes NO length cap. */
   name: string;
-  type: 'block' | 'embed';
-  targets: ManifestTarget[];
+  /** Canonical enum — `block` is the only member. */
+  type?: 'block';
+  /** Optional (page-only apps declare none). Canonical cap: 16 entries. */
+  targets?: ManifestTarget[];
   scopes: string[];
   /**
    * Optional per-scope justification: a map of scope-id → free-text rationale
@@ -1295,8 +1544,17 @@ export interface BlockManifestV1 {
    * with the canonical schema's `scopeJustifications` (civitai #3195).
    */
   scopeJustifications?: Record<string, string>;
-  iframe: ManifestIframe;
-  assets?: ManifestAsset[];
+  /** Optional; the canonical declares no required sub-field. */
+  iframe?: ManifestIframe;
+  /** Full-page surface descriptor (W10). */
+  page?: ManifestPage;
+  /**
+   * The app's shipped `index.html` paints its own loading state inside `#root`,
+   * so the full-page run host stands down its branded overlay. Only declare it
+   * if the markup really exists — with the overlay gone, an empty `#root` is a
+   * blank iframe for the whole load.
+   */
+  bootSkeleton?: boolean;
   /**
    * Per-field settings declaration the platform validates user input
    * against AND renders the publisher/viewer settings UI from. v0 shape;
@@ -1317,23 +1575,51 @@ export interface BlockManifestV1 {
    * + detail page. Manifest-governed: it flows to the store listing on
    * moderator-approve and is re-synced from the manifest on every subsequent
    * approved version — for an ON-SITE app the manifest is the ONLY surface that
-   * sets it. Omit it and the store simply shows no tagline. Trimmed and capped at
+   * sets it. Omit it and the store simply shows no tagline. Capped at
    * {@link BLOCK_TAGLINE_MAX_LENGTH} (140) characters, the same bound off-site
    * listings use, so both store kinds render the same slot. Kept in lockstep with
-   * the canonical schema's `tagline` (civitai #3441).
+   * the canonical schema's `tagline` (civitai #3441). NOTE the canonical counts
+   * the RAW string while the server measures the trimmed one, and `defineBlock`
+   * takes the canonical's verdict — so trim before you count.
    */
   tagline?: string;
+  /**
+   * Optional PUBLIC source-repository link rendered as a `Source` row on the
+   * app's store detail page. `https://` root URL on github.com, gitlab.com or
+   * codeberg.org, at most 200 chars. `defineBlock` mirrors the canonical's
+   * COARSE pattern; the server applies stricter per-segment rules, so passing
+   * locally is necessary, not sufficient.
+   */
+  repository?: string;
   preview?: ManifestPreview;
   promotionEligible?: boolean;
-  minApiVersion: string;
+  /** Optional; dot-separated integers (e.g. `"1"` or `"1.0"`). Informational. */
+  minApiVersion?: string;
   /**
    * Author-declared mode preference. `hybrid` is a manifest-only hint that
    * the host resolves to a concrete `iframe` | `inline` value before sending
    * `BLOCK_INIT` — that's why `BlockInitPayload.renderMode` is narrower.
    */
   renderMode?: 'iframe' | 'inline' | 'hybrid';
+  /**
+   * Config-as-code: the command the platform runs to build the static bundle.
+   * One of an allowlisted set (`npm|pnpm|yarn run <script>`, `vite build`,
+   * `npx vite build`). When set, `outputDir` is REQUIRED.
+   */
+  buildCommand?: string;
+  /** Directory `buildCommand` emits into. Safe relative path; required with `buildCommand`. */
+  outputDir?: string;
+  /** Allowlist of settings keys exposed to anonymous viewers. Max 32 keys, 64 chars each. */
+  publicSettingsKeys?: string[];
+  /** Optional v2 surface — a public `https://` URL to a hosted asset bundle. */
+  assetBundleUrl?: string;
   assetBundle?: { url: string | null; sha256: string | null };
-  trustTier?: 'unverified' | 'verified' | 'internal';
+  /**
+   * SERVER-OWNED — the platform assigns the trust tier during review. Typed
+   * `never` so setting it is a compile error; `defineBlock` rejects it at
+   * runtime too.
+   */
+  trustTier?: never;
 }
 
 export type BlockManifest = BlockManifestV1;

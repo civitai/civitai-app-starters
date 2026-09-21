@@ -100,7 +100,7 @@ my-block/
 ```jsonc
 {
   "$schema": "https://civitai.com/schemas/app-block/v1.json",
-  "appId": "app_REPLACE_ME",        // your OauthClient id (created on first approve)
+  "appId": "app_REPLACE_ME",        // NOT a canonical field — see the note below
   "blockId": "my-block",            // /^[a-z][a-z0-9-]*[a-z0-9]$/, 3–40 chars — also your subdomain
   "version": "0.1.0",               // semver; bump on each new submission
   "name": "My Block",
@@ -109,11 +109,13 @@ my-block/
     { "slotId": "model.sidebar_top", "priority": 100,
       "requiredContext": ["modelId", "modelVersionId"] }
   ],
-  "scopes": ["models:read:self"],   // non-empty; domain:verb:target lowercase
+  "scopes": ["models:read:self"],   // domain:verb:target lowercase
   "iframe": {
-    "src": "https://my-block.civit.ai/",   // ROOT of <blockId>.civit.ai (§6)
+    // NO "src" — it is SERVER-OWNED. The platform stamps the canonical bundle
+    // URL (https://<blockId>.civit.ai/, root-served) at build/approve. Declaring
+    // it is refused at submit, and the manifest gate refuses it locally (§6).
     "minHeight": 240,                       // set to your REAL height (§6)
-    "maxHeight": 600,
+    "maxHeight": 600,                       // 40–4000 px, like minHeight
     "resizable": true,
     "sandbox": "allow-scripts allow-forms"  // NOT allow-same-origin / allow-top-navigation
   },
@@ -122,15 +124,39 @@ my-block/
 }
 ```
 
-Validate it any time with `defineBlock` (it throws with a `.field` path on the
-first violation):
+Only five of those are **required** by the
+[canonical schema](https://civitai.com/schemas/app-block/v1.json): `blockId`,
+`version`, `name`, `contentRating`, `scopes`. The rest are optional.
+
+> **`appId` is not a manifest field.** Your app id lives in `civitai.app.json`
+> (`{"appId": "..."}`), which is what the `civitai` CLI reads. The scaffold still
+> carries an `appId` key in the manifest, the platform ignores it, and nothing
+> validates it; a future scaffold will drop it.
+
+**You don't have to run the validator by hand** — the block scaffolds register
+`blockManifestPlugin` from `@civitai/app-sdk/vite` in their `vite.config.ts`,
+which validates `block.manifest.json` on every `pnpm dev`, `pnpm dev:harness` and
+`pnpm build`, and fails with the offending field path. It validates by compiling
+the canonical schema above with Ajv, so what it enforces *is* the schema. It
+needs `ajv` in your devDependencies (an optional peer); the scaffolds already
+declare it.
+
+To run it from your own code instead, call `defineBlock` — note the **node-only**
+`/manifest` subpath, not `/blocks`:
 
 ```ts
 // @ts-skip-readme: imports a project-local ./block.manifest.json that doesn't exist in isolation
-import { defineBlock } from '@civitai/app-sdk/blocks';
+import { defineBlock } from '@civitai/app-sdk/manifest';
 import manifest from './block.manifest.json' with { type: 'json' };
-defineBlock({ manifest });   // call at module scope so mistakes throw at startup
+defineBlock({ manifest });   // throws with a `.field` path on the first violation
 ```
+
+Passing is **necessary, not sufficient**, and it does **not** replace
+`civitai app validate` — run that before you submit. The server checks things the
+schema cannot express: the scope set review granted, whether your `slotId` is a
+registered slot, and the **tier-dependent sandbox allowlist** (the canonical says
+the unverified tier allows only `allow-scripts` and `allow-forms`; other tokens
+pass locally and may be refused at review).
 
 ## 3. Write the block
 
@@ -139,21 +165,24 @@ Read everything from the host with `useBlockContext()`; gate on `ready`:
 ```tsx
 import { useRef } from 'react';
 import { useBlockContext, useBlockResize } from '@civitai/blocks-react';
-import { isModelSlotContext } from '@civitai/app-sdk/blocks';
+import { isModelSlotContext, isSignedIn } from '@civitai/app-sdk/blocks';
 
 export function App() {
   const { ready, context, viewer, theme } = useBlockContext();
   const rootRef = useRef<HTMLDivElement>(null);
   useBlockResize(rootRef);             // host fits the iframe to content
 
-  if (!ready) return <div ref={rootRef} data-theme={theme}>Loading…</div>;
+  // No ref on the pre-init skeleton — useBlockResize observes the real root
+  // whenever it mounts, including on a later render.
+  if (!ready) return <div data-theme={theme}>Loading…</div>;
   // `context` is a union keyed on slotId — narrow with the guard, not a cast.
   if (!isModelSlotContext(context)) return <div ref={rootRef}>Wrong slot.</div>;
 
   return (
     // GOTCHA: data-theme on YOUR root — the host can't set it inside the iframe.
     <div ref={rootRef} data-theme={theme}>
-      Block for {context.modelName}, hi {viewer ? 'there' : 'anon'}
+      {/* Sign-in gate: call `isSignedIn`, never an identity read. */}
+      Block for {context.modelName}, hi {isSignedIn(viewer) ? 'there' : 'anon'}
     </div>
   );
 }

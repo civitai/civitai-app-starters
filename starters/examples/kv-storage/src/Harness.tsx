@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
-import type { BlockInitPayload, ModelSlotContext } from '@civitai/app-sdk/blocks';
+import {
+  APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED,
+  APP_STORAGE_ERROR_USER_ROW_LIMIT,
+  APP_STORAGE_ERROR_VALUE_TOO_LARGE,
+  APP_STORAGE_MAX_BYTES,
+  APP_STORAGE_MAX_ROWS,
+  APP_STORAGE_MAX_VALUE_BYTES,
+  type BlockInitPayload,
+  type ModelSlotContext,
+} from '@civitai/app-sdk/blocks';
 
 const DEV_TOKEN = 'dev.harness.mock.jwt.NOT.A.REAL.RS256';
 const DEV_INSTANCE_ID = 'bki_dev_kv_storage';
@@ -50,9 +59,13 @@ export function Harness({ children }: { children: ReactNode }) {
 
     // In-memory store mocking the host's per-(instance, viewer) KV datastore.
     const store = new Map<string, { value: unknown; updatedAt: string; bytes: number }>();
-    const PER_VALUE_CAP = 64 * 1024;
-    const QUOTA_BYTES = 50 * 1024 * 1024;
-    const QUOTA_ROWS = 1_000_000;
+    // 🔴 THE CEILINGS COME FROM THE SDK, NEVER RE-TYPED. Hand-copied literals
+    // here were 25x too large on bytes and 1000x on rows — the app-wide
+    // umbrella instead of the per-(app, viewer) clamp the host enforces — so a
+    // block that blew the real budget ran perfectly in this harness.
+    const PER_VALUE_CAP = APP_STORAGE_MAX_VALUE_BYTES;
+    const QUOTA_BYTES = APP_STORAGE_MAX_BYTES;
+    const QUOTA_ROWS = APP_STORAGE_MAX_ROWS;
     const usedBytes = () => [...store.values()].reduce((n, e) => n + e.bytes, 0);
 
     const parentMock = {
@@ -85,10 +98,37 @@ export function Harness({ children }: { children: ReactNode }) {
         if (typed.type === 'APP_STORAGE_SET') {
           const key = typed.payload?.key ?? '';
           const bytes = new TextEncoder().encode(JSON.stringify(typed.payload?.value ?? null)).length;
-          if (bytes > PER_VALUE_CAP || usedBytes() + bytes > QUOTA_BYTES) {
+          // The ROW gate is `isInsert`-guarded (`!store.has(key)`), mirroring
+          // the host: a store sitting AT the ceiling must still accept an
+          // overwrite, or an app with no delete affordance would be stuck with
+          // no way back under the cap. It used to be missing entirely — the
+          // row limit was reported by getQuota and enforced by nothing.
+          //
+          // ⚠️ The BYTE gate is NOT the host's shape: the host exempts a write
+          // whose stored bytes do not increase, and this one does not (nor
+          // does it subtract the bytes of the row being replaced). Tracked as
+          // civitai/civitai-app-starters#345.
+          //
+          // 🔴 THE REJECTION STRINGS ARE THE HOST'S OWN, IMPORTED, NEVER TYPED
+          // HERE. The wire carries the TRPCError's *message*, not its code, so
+          // the `PAYLOAD_TOO_LARGE` this used to send was a string production
+          // can never produce — and `App.tsx`'s error branch matched it and
+          // nothing else, so the useful copy was unreachable live while
+          // passing every local run (#343). Which gate tripped now selects the
+          // message the host would send for that gate.
+          const wouldInsert = !store.has(key);
+          const rejection =
+            bytes > PER_VALUE_CAP
+              ? APP_STORAGE_ERROR_VALUE_TOO_LARGE
+              : usedBytes() + bytes > QUOTA_BYTES
+                ? APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED
+                : wouldInsert && store.size + 1 > QUOTA_ROWS
+                  ? APP_STORAGE_ERROR_USER_ROW_LIMIT
+                  : null;
+          if (rejection) {
             dispatchToBlock({
               type: 'APP_STORAGE_SET_RESULT',
-              payload: { requestId, ok: false, error: 'PAYLOAD_TOO_LARGE' },
+              payload: { requestId, ok: false, error: rejection },
             });
           } else {
             store.set(key, { value: typed.payload?.value, updatedAt: new Date().toISOString(), bytes });
@@ -147,7 +187,11 @@ export function Harness({ children }: { children: ReactNode }) {
       token: nextToken(),
       context,
       settings: { publisherSettings: {}, userSettings: {} },
-      viewer: { id: 2, username: 'dev-viewer', status: 'active' },
+      // Byte-for-byte the viewer the production host sends: `signedIn: true` on
+      // every present viewer (civitai/civitai `withSignedInFlag`), and NO
+      // `status` — the platform withholds the viewer's moderation state from
+      // third-party iframes (civitai #2521). Anonymous is `viewer: null`.
+      viewer: { id: 2, username: 'dev-viewer', signedIn: true },
       theme: 'dark',
       renderMode: 'iframe',
     };

@@ -106,6 +106,13 @@ export const WORKFLOW_STEP_TYPES = {
   videoFrameExtraction: 'Extract frames from a video',
   /** Track a prompted foreground object and return a transparent animated WebP. */
   videoBackgroundRemoval: 'Video background removal (prompted object tracking)',
+  /**
+   * Run a ControlNet-style preprocessor over a source video. `kind` selects it —
+   * `canny`, `hed`, `mlsd`, `dwpose` or `depth-anything-v2` — and `resolution`
+   * targets the SHORTER edge (64–4096, default 512). The video-side counterpart
+   * of `preprocessImage`.
+   */
+  preprocessVideo: 'Video preprocessing (ControlNet preprocessors: canny, hed, mlsd, dwpose, depth)',
   /** Read video metadata (duration, codec, dimensions). */
   videoMetadata: 'Read video file metadata',
   /** Transcode video format / codec. */
@@ -128,6 +135,14 @@ export const WORKFLOW_STEP_TYPES = {
    * upper bound, not a target: the model may end the song earlier.
    */
   miniMaxMusic3: 'Music generation from a caption + lyrics (MiniMax Music 3)',
+  /**
+   * Song generation from a `style` description plus `lyrics` (both required,
+   * with `[verse]` / `[chorus]` section markers). `mode` picks how much score
+   * planning runs — `full` (melody and chords), `melody`, or `off` — and an
+   * `abc` score may be supplied instead of generating one, which `off` ignores.
+   * `maxDuration` is an upper bound; generation can stop earlier.
+   */
+  yuE2: 'Generate a song from style and lyrics with YuE2',
   /** Speech-to-text transcription. */
   transcription: 'Speech-to-text transcription',
   /** Generate captions from audio. */
@@ -173,6 +188,14 @@ export const WORKFLOW_STEP_TYPES = {
   ageClassification: 'Age range classification',
   /** xGuard NSFW / safety moderation. */
   xGuardModeration: 'NSFW / safety moderation',
+  /**
+   * One scan over a single image that returns every moderation signal at once:
+   * `nsfwLevel`, AI-generated and anime recognition, WD tag list, human
+   * detection and joint age classification, and a `csam` flag. Prefer it to
+   * chaining `wdTagging` + `ageClassification` + `xGuardModeration` separately.
+   * A URL `image` is imported into orchestrator blob storage before queueing.
+   */
+  imageScanning: 'Unified image moderation scan (NSFW level, AI/anime recognition, tagging, age detection)',
   /** Shieldstral text/prompt safety moderation (`mode: 'prompt' | 'text'`). */
   shieldstralModeration: 'Text / prompt safety moderation (Shieldstral)',
   /** ClamAV scan a model file for malware. */
@@ -239,6 +262,11 @@ export const IMAGE_GEN_ENGINES = {
   openai: 'OpenAI (GPT-Image, DALL-E)',
   /** Flux.1 Kontext (pro/max/dev) — image editing with ref images. */
   'flux1-kontext': 'Flux.1 Kontext (image editing)',
+  /**
+   * The FLUX.1 Pro family. `model` selects the variant — `pro` or `ultra` —
+   * and `quantity` is capped at 4.
+   */
+  'flux1-pro': 'Flux.1 Pro (pro, ultra)',
   /** Flux.2 family (pro/max/dev/flex/klein). */
   flux2: 'Flux.2',
   /** Seedream (ByteDance) — 2K/4K image gen. */
@@ -271,8 +299,19 @@ export type ImageGenEngine = keyof typeof IMAGE_GEN_ENGINES;
  * Orchestrator workflow status. Lowercase — matches what the orchestrator
  * actually returns. Forward-compat: open-ended string union so unknown
  * statuses don't break typing.
+ *
+ * 🔴 PREFIXED BECAUSE THE BARE NAME IS TAKEN BY A DIFFERENT UNION.
+ * `@civitai/app-sdk/blocks` exports its own `WorkflowStatus` — the block-side
+ * hook lifecycle (`'idle' | 'estimating' | 'submitting' | …`), which has 27
+ * call sites across the starters and fleet apps and is NOT this. This one is
+ * the orchestrator's wire status. Because `src/index.ts` re-exports
+ * `./orchestrator/index.js` wholesale, the bare name sat on the DEFAULT import
+ * surface, so `import type { WorkflowStatus } from '@civitai/app-sdk'` and
+ * `… from '@civitai/app-sdk/blocks'` resolved to two unrelated unions that
+ * happened to be assignable to each other — both widen to `string`, so the
+ * compiler could never object.
  */
-export type WorkflowStatus =
+export type OrchestratorWorkflowStatus =
   | 'unassigned'
   | 'pending'
   | 'processing'
@@ -297,7 +336,7 @@ export interface GenerateInput {
 
 export interface WorkflowSnapshot {
   id: string;
-  status: WorkflowStatus;
+  status: OrchestratorWorkflowStatus;
   cost?: { total?: number };
   steps?: Array<{
     output?: {

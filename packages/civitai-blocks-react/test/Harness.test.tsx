@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { useBlockContext } from '../src/hooks/useBlockContext.js';
 import { getTransport } from '../src/internal/singleton.js';
-import { Harness, MockHostProvider, resetTransport } from '../src/testing.js';
+import { Harness, resetTransport } from '../src/testing.js';
 
 /**
  * The React `<Harness>` wrapper: installs a mock host on mount, tears it down
@@ -77,10 +77,6 @@ describe('<Harness>', () => {
     );
     await waitFor(() => expect(screen.getByTestId('probe')).toBeTruthy());
     expect(document.body.textContent).not.toMatch(/DEV HARNESS/);
-  });
-
-  it('MockHostProvider is an alias of Harness', () => {
-    expect(MockHostProvider).toBe(Harness);
   });
 
   /**

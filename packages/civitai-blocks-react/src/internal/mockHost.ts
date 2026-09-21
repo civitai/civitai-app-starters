@@ -39,6 +39,13 @@
  */
 
 import {
+  APP_STORAGE_ERROR_REQUEST_FAILED,
+  APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED,
+  APP_STORAGE_ERROR_USER_ROW_LIMIT,
+  APP_STORAGE_ERROR_VALUE_TOO_LARGE,
+  APP_STORAGE_MAX_BYTES,
+  APP_STORAGE_MAX_ROWS,
+  APP_STORAGE_MAX_VALUE_BYTES,
   BrowsingLevel,
   SFW_LEVELS,
   type BlockContext,
@@ -74,11 +81,13 @@ import { hostContextWithTheme } from './transport.js';
 /**
  * The block's preferred Buzz pool. On a `textToImage` {@link WorkflowBody} it's
  * the top-level `accountType`; on a `customComfy` RECIPE body it lives under
- * `params.accountType`; a `step` body and a `customComfy` INLINE body have NO
- * account preference at all — the host's `blockStepBodySchema` and
- * `blockInlineComfyBodySchema` are both `.strict()` with no `accountType`
- * anywhere, so there is no field to read and `undefined` (let the host pick) is
- * the accurate answer rather than a fallback.
+ * `params.accountType`; a `step` body (EITHER arm) and a `customComfy` INLINE
+ * body have NO account preference at all — the host's `blockStepBodySchema`,
+ * `blockPassThroughStepBodySchema` and `blockInlineComfyBodySchema` are all
+ * `.strict()` with no `accountType` anywhere, so there is no field to read and
+ * `undefined` (let the host pick) is the accurate answer rather than a fallback.
+ * That is why `case 'step'` needs no second narrow on the arm, unlike
+ * `customComfy`: both step arms give the same answer.
  *
  * 🔴 SWITCH ON EVERY MEMBER, NEVER `kind === 'x' ? … : …`. The previous shape
  * was a two-way ternary whose `else` branch assumed "not customComfy therefore
@@ -125,10 +134,23 @@ const ALL_LEVELS =
 const DEV_TOKEN = 'dev.mockhost.mock.jwt.NOT.A.REAL.RS256';
 const BUDGETED_SCOPE = 'ai:write:budgeted';
 
-/** v0 host storage ceilings (mirror civitai/civitai's APP_STORAGE limits). */
-const DEFAULT_STORAGE_QUOTA_BYTES = 50 * 1024 * 1024; // 50 MB per app
-const DEFAULT_STORAGE_VALUE_CAP_BYTES = 64 * 1024; // 64 KB per value
-const DEFAULT_STORAGE_LIMIT_ROWS = 1_000_000;
+/**
+ * Host storage ceilings, taken from the SDK's single definition.
+ *
+ * 🔴 NEVER RE-TYPE THESE AS LITERALS. They were literals once, copied from the
+ * host's APP-WIDE umbrella rather than the per-viewer clamp it actually
+ * enforces — 25x too large on bytes and **1000x** on rows. A block that seeded
+ * 5,000 rows passed
+ * `dev:mock` reporting 0.5% of its row budget used, and failed on the 1,001st
+ * write in production. The mock's job is to fail where production fails, so
+ * the defaults ARE the production values; {@link MockStorageScenario.quotaBytes}
+ * / {@link MockStorageScenario.limitRows} remain for tests that want something
+ * smaller. See `@civitai/app-sdk/blocks`'s `appStorageLimits.ts` for
+ * provenance and the re-derivation command.
+ */
+const DEFAULT_STORAGE_QUOTA_BYTES = APP_STORAGE_MAX_BYTES;
+const DEFAULT_STORAGE_VALUE_CAP_BYTES = APP_STORAGE_MAX_VALUE_BYTES;
+const DEFAULT_STORAGE_LIMIT_ROWS = APP_STORAGE_MAX_ROWS;
 
 /**
  * How submits behave. `'none'` = everything succeeds; `'all'` / `'insufficient'`
@@ -324,21 +346,65 @@ export interface MockStorageScenario {
    */
   seed?: Record<string, unknown>;
   /**
-   * Simulated per-app quota in bytes. A `set` that would cross it resolves
-   * `{ ok: false, error: 'PAYLOAD_TOO_LARGE' }` (the host doesn't leak which
-   * cap tripped). Default 50 MB.
+   * Simulated per-(app, viewer) byte quota. A `set` that would cross it
+   * resolves `{ ok: false, error: APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED }` —
+   * the host's own `'per-user storage quota exceeded'`. Defaults to
+   * `APP_STORAGE_MAX_BYTES`.
+   *
+   * Each ceiling answers its OWN host-authored message (#343), so
+   * `classifyAppStorageError()` distinguishes them here exactly as it does in
+   * production. It did not always: for three releases every ceiling answered
+   * the literal `'PAYLOAD_TOO_LARGE'`, a string the bridge can never send,
+   * which made a block's actionable error branch pass locally and take the
+   * generic arm live.
+   *
+   * 🔴 AND THIS BUDGET IS COUNTED IN A DIFFERENT UNIT FROM THE HOST'S. The
+   * mock sums WIRE bytes (`JSON.stringify` as UTF-8); the host sums STORED
+   * bytes (`octet_length(value::jsonb::text)`), which is larger for every
+   * container — up to ~1.5x for a long array. So this ceiling is up to half
+   * again more generous than production's, and unlike the mock's other known
+   * divergences that error is PERMISSIVE: a fixture that fits here can be
+   * rejected live. civitai/civitai-app-starters#347. Size against
+   * `getQuota()`, and treat a local pass as evidence, not proof.
    */
   quotaBytes?: number;
   /**
    * Per-value byte cap. A `set` whose serialized value exceeds it resolves
-   * `{ ok: false, error: 'PAYLOAD_TOO_LARGE' }`. Default 64 KB.
+   * `{ ok: false, error: APP_STORAGE_ERROR_VALUE_TOO_LARGE }`. Defaults to
+   * `APP_STORAGE_MAX_VALUE_BYTES`.
+   *
+   * 🔴 LOWERING THIS DOES NOT CHANGE THE MESSAGE. The emitted string always
+   * names the host's REAL cap (`value exceeds 64KB cap` today), because that
+   * is the string a block has to match in production and the mock exists to
+   * exercise that match. This knob makes the gate cheap to TRIP in a test; it
+   * is not a claim that the host's cap moved.
    */
   valueCapBytes?: number;
-  /** Simulated row ceiling reported by `getQuota`. Default 1,000,000. */
+  /**
+   * Simulated per-(app, viewer) row ceiling. A `set` that would ADD a row past
+   * it resolves `{ ok: false, error: APP_STORAGE_ERROR_USER_ROW_LIMIT }` — the
+   * host's `'per-user row limit exceeded'`, distinct from the byte gates'
+   * message, so a block can tell "no slots left" from "no space left" locally.
+   * Overwriting an existing key adds no row and is never refused by this gate.
+   * Defaults to `APP_STORAGE_MAX_ROWS`.
+   *
+   * 🔴 THIS WAS REPORTED BUT NOT ENFORCED. `getQuota` returned it from the
+   * start while the write path checked only `quotaBytes`, so a row-limit
+   * overrun — the ceiling a block is most likely to hit, since rows fill long
+   * before bytes do — passed `dev:mock` silently and failed only in
+   * production. Reporting a limit nobody enforces is worse than not reporting
+   * one: it reads as coverage.
+   */
   limitRows?: number;
   /**
-   * Force the next N storage MUTATIONS (`set`/`delete`) to fail with a generic
-   * `STORAGE_UNAVAILABLE` error (counts down) — exercises the error UX.
+   * Force the next N storage MUTATIONS (`set`/`delete`) to fail with the
+   * bridge's generic `'storage request failed'`
+   * ({@link APP_STORAGE_ERROR_REQUEST_FAILED}) — the string the host sends
+   * when the failure carries no message of its own. Counts down; exercises the
+   * retryable arm of a block's error UX, as opposed to the five ceilings,
+   * which retrying cannot fix.
+   *
+   * It used to answer `'STORAGE_UNAVAILABLE'`, which no host has ever sent.
    */
   failNext?: number;
 }
@@ -883,38 +949,27 @@ const DEFAULT_GENERATION_SOURCE_UPLOAD: BlockGenerationSourceImageInfo = {
  * The `BLOCK_INIT.viewer` the mock host sends when {@link MockHostOptions.viewer}
  * is omitted — EXACTLY `{ id, username, signedIn }`.
  *
- * 🔴 The two halves of that key set have DIFFERENT provenance. One mirrors
- * production; one runs ahead of it. Do not read this default as "byte-for-byte
- * what the real host puts on the wire" — today it is not.
+ * Both halves mirror production byte-for-byte, and each is checkable:
  *
- *  - NO `status` — TRUE OF PRODUCTION NOW. On civitai/civitai `main`,
- *    `projectBlockInitViewer` builds `{ id, username }` and nothing else, and
+ *  - NO `status`. The platform deliberately withholds the viewer's coarse
+ *    ban/mute moderation state from third-party iframes (civitai #2521) —
+ *    `ViewerInfo.status` is `@deprecated` for precisely that reason. A fake
+ *    that sends it lets a block read a field production never provides and
+ *    still pass every local test: the same both-wrong-blind shape as the
+ *    over-shared `ModelSlotContext` fields removed from the seven starter
+ *    harnesses. The authoritative self-read (`GET_VIEWER` →
+ *    {@link DEFAULT_VIEWER_RESULT}) is where `status` belongs, and it still
+ *    carries it.
+ *  - WITH `signedIn: true`. civitai/civitai `main`'s `withSignedInFlag`
+ *    (`src/components/AppBlocks/projectBlockInit.ts`) stamps the literal `true`
+ *    on every present viewer, from BOTH host surfaces, and that repo's
  *    `src/components/AppBlocks/__tests__/projectBlockInit.test.ts` pins
- *    `Object.keys(viewer).sort()` as exactly `['id', 'username']`. The platform
- *    deliberately withholds the viewer's coarse ban/mute moderation state from
- *    third-party iframes (civitai #2521) — `ViewerInfo.status` is `@deprecated`
- *    for precisely that reason. A fake that sends it lets a block read a field
- *    production never provides and still pass every local test: the same
- *    both-wrong-blind shape as the over-shared `ModelSlotContext` fields this
- *    release removed from the seven starter harnesses. The authoritative
- *    self-read (`GET_VIEWER` → {@link DEFAULT_VIEWER_RESULT}) is where `status`
- *    belongs, and it still carries it.
- *  - WITH `signedIn: true` — NOT IN PRODUCTION YET. `signedIn` appears ZERO
- *    times under `src/components/AppBlocks/` on civitai/civitai `main`; it
- *    arrives with civitai/civitai#3707, which is OPEN and unmerged and is what
- *    moves the host's pinned key set to `['id', 'signedIn', 'username']`. The
- *    mock emits it AHEAD of the host on purpose — the field only means anything
- *    if a dev can exercise it locally, and a mock that omits it hands every
- *    local run `undefined` for the field this release tells authors to migrate
- *    TO. The cost of running ahead (a block that gates on `viewer?.signedIn`
- *    passing here and rendering its anonymous branch in production) is carried
- *    by {@link ViewerInfo.signedIn}, which documents `viewer !== null` as the
- *    gate to SHIP today.
+ *    `Object.keys(viewer).sort()` as exactly `['id', 'signedIn', 'username']`.
  *
- * 🔴 IF #3707 IS ABANDONED: drop `signedIn` from this default, from
- * `createLiveHost`'s `anonFallbackViewer`, and from the two key-set fences in
- * `test/blockInitV2.test.ts` — in one change. Leaving it would make both dev
- * hosts permanently more generous than the host they exist to imitate.
+ * 🔴 THE PROPERTY THIS FENCE HOLDS: the dev hosts must not be more generous
+ * than the host they imitate. Any change here moves with
+ * `createLiveHost`'s `anonFallbackViewer` and the two key-set fences in
+ * `test/blockInitV2.test.ts` — they are one key set in four places.
  */
 const DEFAULT_VIEWER: ViewerInfo = { id: 2, username: 'dev-viewer', signedIn: true };
 
@@ -2423,7 +2478,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               storageFailNext -= 1;
               dispatchToBlock({
                 type: 'APP_STORAGE_SET_RESULT',
-                payload: { requestId, ok: false, error: 'STORAGE_UNAVAILABLE' },
+                payload: { requestId, ok: false, error: APP_STORAGE_ERROR_REQUEST_FAILED },
               });
               return;
             }
@@ -2431,18 +2486,70 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             if (sizeBytes > valueCapBytes) {
               dispatchToBlock({
                 type: 'APP_STORAGE_SET_RESULT',
-                payload: { requestId, ok: false, error: 'PAYLOAD_TOO_LARGE' },
+                payload: { requestId, ok: false, error: APP_STORAGE_ERROR_VALUE_TOO_LARGE },
               });
               return;
             }
             // Quota check: projected usage after this upsert.
+            //
+            // ⚠️ TWO KNOWN DIVERGENCES FROM THE HOST LIVE ON THIS ONE GATE,
+            // and they run in OPPOSITE directions.
+            //
+            // 1. SHAPE — civitai/civitai-app-starters#345. The host's byte
+            //    gates are `!isNonIncreasing`-guarded: a write whose stored
+            //    bytes do not increase skips them even when the store is
+            //    already over quota, which is how a block with no delete
+            //    affordance gets back under the byte cap. This gate is
+            //    unconditional, so `dev:mock` REFUSES a shrinking overwrite
+            //    production would land. Restrictive: a local failure that is
+            //    not real.
+            //
+            // 2. 🔴 UNIT — civitai/civitai-app-starters#347, and this is the
+            //    dangerous one. `jsonByteSize` counts WIRE bytes; the host
+            //    counts STORED bytes, `octet_length(value::jsonb::text)`.
+            //    `jsonb`'s canonical text inserts a space after every `:` and
+            //    every `,`, so stored > wire for every container — approaching
+            //    1.5x for a long array. This gate therefore ADMITS writes
+            //    production rejects. Permissive: a local pass that is not
+            //    real, which is the direction that ships a bug.
+            //
+            // Neither is fixed here, and #347 is why #345 cannot be: mirroring
+            // the host's gate requires the STORED unit, which this mock does
+            // not have. A stored-size model guessed rather than measured would
+            // be wrong in the permissive direction, i.e. no better than today
+            // — so #347 asks for a fixture table of (value, host
+            // `octet_length`) pairs first, and #345 lands on top of it.
             const existing = store.get(key);
             const existingBytes = existing ? jsonByteSize(existing.value) + key.length : 0;
             const projected = usedBytes() - existingBytes + sizeBytes + key.length;
             if (projected > quotaBytes) {
               dispatchToBlock({
                 type: 'APP_STORAGE_SET_RESULT',
-                payload: { requestId, ok: false, error: 'PAYLOAD_TOO_LARGE' },
+                // The PER-USER message, not the app-wide one: `quotaBytes`
+                // defaults to `APP_STORAGE_MAX_BYTES`, which is the per-(app,
+                // viewer) clamp. The mock models no app-wide umbrella at all,
+                // so it can never emit `APP_STORAGE_ERROR_APP_QUOTA_EXCEEDED`
+                // — a block still has to handle that string, and the only
+                // place it is reachable is production.
+                payload: { requestId, ok: false, error: APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED },
+              });
+              return;
+            }
+            // Row check, mirroring the host's `isInsert && rowCount + 1 >
+            // USER_ROW_LIMIT` gate.
+            //
+            // 🔴 `isInsert` IS LOAD-BEARING, not a micro-optimisation. Without
+            // it, a store sitting exactly AT the ceiling would refuse to
+            // overwrite a key it already holds — and since only the owning
+            // viewer can delete their own rows, an app whose UI has no delete
+            // affordance would be permanently stuck with no way back under the
+            // cap. The host is `isInsert`-guarded for the same reason.
+            if (!existing && store.size + 1 > limitRows) {
+              dispatchToBlock({
+                type: 'APP_STORAGE_SET_RESULT',
+                // Per-user again, and for the same reason as the byte gate
+                // above: `limitRows` defaults to `APP_STORAGE_MAX_ROWS`.
+                payload: { requestId, ok: false, error: APP_STORAGE_ERROR_USER_ROW_LIMIT },
               });
               return;
             }
@@ -2460,7 +2567,12 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               storageFailNext -= 1;
               dispatchToBlock({
                 type: 'APP_STORAGE_DELETE_RESULT',
-                payload: { requestId, ok: false, deleted: false, error: 'STORAGE_UNAVAILABLE' },
+                payload: {
+                  requestId,
+                  ok: false,
+                  deleted: false,
+                  error: APP_STORAGE_ERROR_REQUEST_FAILED,
+                },
               });
               return;
             }

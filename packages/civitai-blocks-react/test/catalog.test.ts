@@ -13,7 +13,7 @@ import {
   CATALOG_API_BASE_BLOCKS,
   DEFAULT_LIMIT,
   type CatalogCard,
-} from '../src/testing.js';
+} from '../src/internal/catalog.js';
 
 /**
  * Unit coverage for the SDK-internal catalog client backing the live host's

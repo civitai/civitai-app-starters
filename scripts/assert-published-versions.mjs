@@ -88,13 +88,29 @@
  * SUCCEEDED. The loop sleeps at the TOP of attempts 2..N, giving exactly
  * TRIES-1 sleeps with none before the first attempt or after the last.
  *
- * BUDGET, measured rather than assumed — a PACKAGE THAT 404s PAYS TWICE, since
- * the name probe retries on the same budget: 2 x (TRIES-1) x DELAY = 24s of
- * sleeping per failing package at the 5/3000 defaults, not 12s. Add TIMEOUT per
- * request and the worst case over 5 packages runs to several minutes, which is
- * why `release.yml` caps this step with `timeout-minutes` — the release
- * `concurrency` lane has no `cancel-in-progress`, so an unbounded step here
- * would park it.
+ * BUDGET — TWO DIFFERENT NUMBERS, AND CONFUSING THEM IS WHAT BROKE THIS GATE.
+ *
+ *   VERSION-PROBE WINDOW = (TRIES-1) x DELAY
+ *       How long a lagging version has to APPEAR. This is the number that must
+ *       beat npm's read-after-write lag.
+ *   WORST-CASE SLEEP     = 2 x (TRIES-1) x DELAY
+ *       Total sleeping for a package that never appears, because a 404 PAYS
+ *       TWICE (version probe, then name probe, on the same budget). This is the
+ *       number `timeout-minutes` in release.yml has to cover.
+ *
+ * An earlier revision of this block quoted only the second and called it the
+ * budget, which reads as twice the patience actually on offer. At the ENV
+ * DEFAULTS here (5/3000) the window is 12s — an order of magnitude under the
+ * measured lag, which is why the gate went red on eight consecutive SUCCESSFUL
+ * publishes. 🔴 CI DOES NOT RUN THE DEFAULTS: `release.yml` sets 25/10000 for a
+ * 240s window against a worst observed lag of 157s. Read the budget from
+ * release.yml, not from the defaults above, and re-derive BOTH numbers if you
+ * change either — they are coupled, and only one of them is the patience.
+ *
+ * 🔴 A BIGGER WINDOW ALONE WOULD NOT HAVE BEEN ENOUGH. Retrying over a CDN-cached
+ * response re-reads one stale document N times, so the extra patience buys
+ * nothing; see `cacheBusted` for the measurement. Patience and cache-busting are
+ * a pair — neither fixes this gate without the other.
  *
  * 🔴 PREMISE: everything above about WHERE the bump lands is a claim about
  * `changesets/action`'s internals — that `prepareBranch()` + `pushChanges()`
@@ -442,6 +458,86 @@ function readPublishablePackages() {
 }
 
 /**
+ * 🔴 CACHE-BUST EVERY READ — WITHOUT THIS THE RETRY LOOP IS WORTHLESS.
+ *
+ * `registry.npmjs.org` sits behind a CDN that serves reads from cache, so a
+ * plain GET can return a packument that predates the publish. Retrying over a
+ * cached response re-reads THE SAME STALE DOCUMENT N times and learns nothing:
+ * the loop burns its whole budget confirming one stale answer, then reports the
+ * version absent. That is a second, independent bug behind the impatience one —
+ * raising TRIES alone would not have fixed it.
+ *
+ * MEASURED 2026-09-19 against the live registry, both arms of the control:
+ *
+ *   plain GET  /@civitai/cli            -> cf-cache-status: HIT
+ *   + no-cache + ?_cb=<unique>          -> cf-cache-status: MISS
+ *
+ * and the response carries `cache-control: public, max-age=300`. That 300s TTL
+ * is the number that matters: it is ALONE larger than the worst read-after-write
+ * lag measured on this repo (157s), so a cached read can hide a successful
+ * publish for longer than any budget this gate could reasonably wait. Confirmed
+ * independently on `@civitai/cli@0.1.105`, whose `time.modified` was five days
+ * stale while the version was live.
+ *
+ * 🔴 THAT MEASUREMENT IS ABOUT THE PACKUMENT, AND AN EARLIER DRAFT OF THIS BLOCK
+ * GENERALISED IT TO THE PER-VERSION ENDPOINT, WHICH IS A DIFFERENT URL AND A
+ * DIFFERENT CACHE KEY. Re-measured 2026-09-20, all plain reads, no headers:
+ *
+ *   /@civitai/app-sdk            (packument)    -> HIT      public, max-age=300
+ *   /@civitai/app-sdk/0.46.0     (per-version)  -> DYNAMIC
+ *   /react/18.3.1                (per-version)  -> DYNAMIC  max-age=300
+ *   /lodash/4.17.21              (per-version)  -> HIT      public, max-age=300
+ *   /@civitai/app-sdk/99.99.99   (absent)       -> no cf-cache-status, no cache-control
+ *
+ * Read those five rows carefully, because two plausible summaries are both wrong.
+ * The per-version route IS cacheable — `lodash@4.17.21` proves it, so "that route
+ * is never cached" is false. But OUR versions measure DYNAMIC, because they are
+ * low-traffic and nothing has warmed the edge for them. And an ABSENT version
+ * carries no cache headers at all, so a 404 cached ahead of a publish — the shape
+ * that would actually defeat a retry loop on this endpoint — was NOT observed.
+ *
+ * So the honest scope: cache-busting is LOAD-BEARING for the packument (the name
+ * probe, measurably cached for 300s) and is CHEAP DEFENCE IN DEPTH for the
+ * per-version probe (cacheable in principle, uncached for our packages today).
+ * It is NOT what fixed the impatience bug — the budget did, in PR #314. Three
+ * releases since resolved lagging versions on attempts 17 / 13 / 6 using PLAIN,
+ * un-cache-busted reads (runs 35424827246, 35462947032, 35483643402), which a
+ * loop pinned to a cached 404 could not have done.
+ *
+ * BOTH mechanisms are used, because they cover different caches:
+ *   - `cache-control: no-cache` asks the CDN to revalidate with the origin.
+ *   - a UNIQUE `?_cb=` query param makes the URL itself a cache key nothing has
+ *     seen, which also defeats any intermediate proxy that ignores the header.
+ *
+ * The param must be unique PER REQUEST, not per run: two attempts of the same
+ * retry loop are exactly the pair that must not share a cache entry. `Date.now()`
+ * alone repeats within a millisecond, which is well inside a retry when DELAY is
+ * 0 (the test suite's setting), so a monotonic counter is mixed in.
+ *
+ * COST, stated rather than assumed: an unknown query param is ignored by
+ * registry.npmjs.org (measured — 200 for a live version, 404 for an absent one,
+ * i.e. cache-busting does NOT conjure versions into existence).
+ *
+ * 🔴 THE WORST CASE IS NOT ALWAYS A SKIPPED ASSERTION, AND AN EARLIER DRAFT SAID
+ * IT WAS. `get()` routes 404/410 to `notFound` — the FAIL path — and only OTHER
+ * non-2xx to `{ error }` -> skip. So a strict mirror that 404s an unknown query
+ * param sends BOTH probes to notFound/unknown, every package reads as "new", and
+ * the zero-confirmed floor fires: a FALSE FAILURE, not a skip. That is
+ * hypothetical for this repo today — `release.yml` sets no `NPM_REGISTRY`, so
+ * REGISTRY is always registry.npmjs.org, which is measured to ignore the param —
+ * and it is stated because the claim it replaces made cache-busting look free
+ * against any registry, which is the kind of unestablished reassurance this file
+ * was corrected for.
+ */
+let cacheBustSeq = 0;
+function cacheBusted(path) {
+  const unique = `${Date.now().toString(36)}-${(cacheBustSeq++).toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 10)}`;
+  return `${path}${path.includes('?') ? '&' : '?'}_cb=${unique}`;
+}
+
+/**
  * GET a registry path. Returns { ok, body } | { notFound } | { error }.
  *
  * 🔴 A BODY-READ failure is an `error`, never an `ok` with a null body. The
@@ -455,8 +551,8 @@ function readPublishablePackages() {
  */
 async function get(path, accept = 'application/json') {
   try {
-    const res = await fetch(`${REGISTRY}${path}`, {
-      headers: { accept },
+    const res = await fetch(`${REGISTRY}${cacheBusted(path)}`, {
+      headers: { accept, 'cache-control': 'no-cache', pragma: 'no-cache' },
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
     if (res.status === 404 || res.status === 410) return { notFound: true, status: res.status };
@@ -774,31 +870,67 @@ async function main() {
       );
     }
     console.error('');
-    console.error('       🔴 CHECK FOR STAGED VERSIONS BEFORE YOU RE-RUN ANYTHING:');
+    // 🔴 STATE THE PATIENCE THAT WAS ACTUALLY SPENT. This gate was red on eight
+    // consecutive SUCCESSFUL publishes because its window (12s) was an order of
+    // magnitude under the real read-after-write lag, and nothing on screen said
+    // how long it had waited — so "it gave up too early" was not checkable from
+    // the log. Printing the window makes the impatience reading falsifiable
+    // instead of a guess, in both directions: a reader who sees 240s of
+    // cache-busted patience can rule it out, and a reader who sees a window
+    // someone has since shrunk can spot that immediately.
+    console.error(
+      `       Each version was re-checked for up to ${((TRIES - 1) * DELAY_MS) / 1000}s` +
+        ` (${TRIES} attempts x ${DELAY_MS}ms), with every read cache-busted.`,
+    );
+    console.error('       So this is NOT the registry lagging a publish — that window is already');
+    console.error('       spent. Something below it is wrong.');
     console.error('');
-    console.error('            https://www.npmjs.com/settings/civitai/staged-packages');
+    console.error('       🔴 THIS GUARD CANNOT TELL YOU WHICH CAUSE THIS IS. DO NOT ASSUME.');
     console.error('');
-    console.error('       (`npm stage list <package>` needs an npm login and returns E401 from a');
-    console.error('       machine that is not logged in — measured 2026-09-03 — so the web page is');
-    console.error('       the route that reliably answers this.)');
+    console.error('       It reads the registry ANONYMOUSLY, and an anonymous 404 is byte-identical');
+    console.error('       for a publish that failed and for a version npm STAGED instead of');
+    console.error('       publishing. Neither is more likely from what is printed above. A mix of');
+    console.error('       published and unpublished packages is NOT a staging signature — a partly');
+    console.error('       failed publish produces exactly the same mix.');
     console.error('');
     console.error('       TWO causes produce this, and they need OPPOSITE fixes:');
     console.error('');
-    console.error('       1. the publish failed  -> re-run the release workflow.');
-    console.error('       2. npm STAGED the version instead of publishing it. A staged version is');
-    console.error('          invisible to anonymous reads and OCCUPIES ITS SEMVER SLOT, so every');
+    console.error('       1. the publish failed        -> re-running the release workflow fixes it.');
+    console.error('       2. npm STAGED the version    -> re-running is a DEAD END. A staged version');
+    console.error('          is invisible to anonymous reads and OCCUPIES ITS SEMVER SLOT, so every');
     console.error('          re-run (and a manual `npm publish`) returns');
-    console.error('          `E409 Cannot publish over previously staged version`. Re-running is a');
-    console.error('          DEAD END. Only a human with 2FA can finish it:');
+    console.error('          `E409 Cannot publish over previously staged version`. Only a human with');
+    console.error('          2FA can clear it.');
     console.error('');
-    console.error('            npm stage approve <stage-id>   # publish it   (2FA)');
-    console.error('            npm stage reject  <stage-id>   # free the slot (2FA)');
+    console.error('       🔴 SETTLE WHICH ONE BEFORE YOU ACT. Staging is directly detectable, but');
+    console.error('       ONLY by an authenticated caller — that is why this guard cannot do it for');
+    console.error('       you. From a machine logged in to npm as a civitai org member:');
+    console.error('');
+    console.error('            npm whoami                     # E401 here => you are NOT logged in');
+    console.error('            npm stage list <package>       # the authoritative answer');
+    console.error('');
+    console.error('       Read `npm whoami` FIRST. `npm stage list` returns E401 from a machine that');
+    console.error('       is not logged in (measured 2026-09-03), and an E401 is an answer about');
+    console.error('       YOUR SESSION, not about whether anything is staged.');
+    console.error('');
+    console.error('            https://www.npmjs.com/settings/civitai/staged-packages');
+    console.error('');
+    console.error('       ⚠ That page is reachable ONLY while logged in as a civitai org member.');
+    console.error('       A 404/403 there does NOT establish that nothing is staged — npm answers');
+    console.error('       the same way for a signed-out or non-member request, so an empty staging');
+    console.error('       area and an unauthorised read are indistinguishable from the browser.');
+    console.error('       Treat the page as useful only when it LOADS; when it does not, the');
+    console.error('       `npm stage list` result above is the one that means something.');
+    console.error('');
+    console.error('       If it IS staged, only these finish it (both 2FA):');
+    console.error('');
+    console.error('            npm stage approve <stage-id>   # publish it');
+    console.error('            npm stage reject  <stage-id>   # free the slot');
     console.error('');
     console.error('       A BLIND RE-RUN OVER A PARTLY-STAGED RELEASE IS WHAT BREAKS CONSUMERS: it');
     console.error('       publishes whichever half is not staged and strands the other, so a live');
     console.error('       dependent exact-pins a staged dependency -> ETARGET on install for');
     console.error('       everyone. That is not a risk, it is what happened on 2026-09-03.');
-    console.error('       Some packages above published and others did not IS the staged signature.');
     console.error('       Approve in DEPENDENCY ORDER; see RELEASING.md § "Staged publishing".');
     console.error('');
   }

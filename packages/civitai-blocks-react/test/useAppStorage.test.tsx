@@ -1,7 +1,10 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { BlockInitPayload } from '@civitai/app-sdk/blocks';
+import {
+  APP_STORAGE_ERROR_USER_ROW_LIMIT,
+  type BlockInitPayload,
+} from '@civitai/app-sdk/blocks';
 
 import { useAppStorage } from '../src/hooks/useAppStorage.js';
 import { getTransport } from '../src/internal/singleton.js';
@@ -136,6 +139,9 @@ describe('useAppStorage', () => {
     await expect(setPromise).resolves.toEqual({ ok: true, sizeBytes: 23 });
   });
 
+  // The reply carries a real host MESSAGE. It used to carry the literal
+  // `PAYLOAD_TOO_LARGE` — the TRPC code, which the bridge never forwards — so
+  // this test asserted a wire value production cannot produce (#343).
   it('set() rejects when the host reports an error', async () => {
     const { result } = renderHook(() => useAppStorage());
 
@@ -150,14 +156,18 @@ describe('useAppStorage', () => {
         new MessageEvent('message', {
           data: {
             type: 'APP_STORAGE_SET_RESULT',
-            payload: { requestId: sent.payload.requestId, ok: false, error: 'PAYLOAD_TOO_LARGE' },
+            payload: {
+              requestId: sent.payload.requestId,
+              ok: false,
+              error: APP_STORAGE_ERROR_USER_ROW_LIMIT,
+            },
           },
           origin: PARENT_ORIGIN,
         }),
       );
     });
 
-    await expect(setPromise).rejects.toThrow('PAYLOAD_TOO_LARGE');
+    await expect(setPromise).rejects.toThrow(APP_STORAGE_ERROR_USER_ROW_LIMIT);
   });
 
   // `error: ''` is FALSY but PRESENT. The reply validator early-accepts on
@@ -316,8 +326,14 @@ describe('useAppStorage', () => {
               requestId: sent.payload.requestId,
               usedBytes: 4096,
               rowCount: 3,
-              limitBytes: 50 * 1024 * 1024,
-              limitRows: 1_000_000,
+              // 🔴 DELIBERATELY NOT the real ceilings. This test asserts the
+              // hook PASSES THE HOST'S REPLY THROUGH — every field distinct,
+              // and distinct from `APP_STORAGE_MAX_BYTES` /
+              // `APP_STORAGE_MAX_ROWS`, so a hook that substituted its own
+              // defaults for the host's numbers would go red here. Using the
+              // real constants would make that mutant survive.
+              limitBytes: 7_654_321,
+              limitRows: 4_321,
             },
           },
           origin: PARENT_ORIGIN,
@@ -328,8 +344,8 @@ describe('useAppStorage', () => {
     await expect(promise).resolves.toEqual({
       usedBytes: 4096,
       rowCount: 3,
-      limitBytes: 50 * 1024 * 1024,
-      limitRows: 1_000_000,
+      limitBytes: 7_654_321,
+      limitRows: 4_321,
     });
   });
 
