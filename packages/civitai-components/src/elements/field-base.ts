@@ -5,6 +5,9 @@ import { hostBaseline } from './shared-styles.js';
 
 let sequence = 0;
 
+/** The same three every other sized element takes, so a toolbar can match. */
+export type FieldSize = 'sm' | 'md' | 'lg';
+
 /** The `[data-civitai-ui-label|description|error|control]` chrome, scoped. */
 export const fieldStyles = css`
   :host {
@@ -51,6 +54,20 @@ export const fieldStyles = css`
     opacity: 0.6;
     cursor: not-allowed;
   }
+  :host([size='sm']) .control {
+    padding: 4px 8px;
+    font-size: 13px;
+  }
+  :host([size='lg']) .control {
+    padding: 11px 14px;
+    font-size: 15px;
+  }
+  :host([size='sm']) label {
+    font-size: 13px;
+  }
+  :host([size='lg']) label {
+    font-size: 15px;
+  }
 `;
 
 /**
@@ -71,6 +88,7 @@ export abstract class CivitaiField extends CivitaiElement {
     error: { reflect: true },
     required: { type: Boolean, reflect: true },
     disabled: { type: Boolean, reflect: true },
+    size: { reflect: true },
   };
 
   declare name: string;
@@ -82,6 +100,7 @@ export abstract class CivitaiField extends CivitaiElement {
   declare error: string;
   declare required: boolean;
   declare disabled: boolean;
+  declare size: FieldSize;
 
   protected readonly internals = this.attachInternals();
   protected readonly fieldId = `ci-field-${(sequence += 1)}`;
@@ -95,6 +114,7 @@ export abstract class CivitaiField extends CivitaiElement {
     this.error = '';
     this.required = false;
     this.disabled = false;
+    this.size = 'md';
   }
 
   get form(): HTMLFormElement | null {

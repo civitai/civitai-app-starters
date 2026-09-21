@@ -24,6 +24,9 @@ export class CivitaiSelect extends CivitaiField {
         cursor: pointer;
         padding-right: 28px;
         line-height: 1.4;
+        /* A floor under the percentage width: squeezed narrow, a select clips
+           its own longest option rather than scrolling, and the value with it. */
+        min-width: max-content;
       }
       select.control:disabled {
         cursor: not-allowed;

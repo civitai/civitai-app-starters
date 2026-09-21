@@ -97,6 +97,30 @@ describe('every field shares one validity contract', () => {
     expect(announced.textContent?.trim()).toBe('Not allowed');
   });
 
+  /** The four that render a `.control` box; a choice control is sized by its glyph. */
+  const BOXED = ['civitai-text-input', 'civitai-textarea', 'civitai-number-input', 'civitai-select'] as const;
+
+  it.each(BOXED)('%s takes the same three sizes every other element does', async (tag) => {
+    const height = async (size: string): Promise<number> => {
+      await mount(`<${tag} size="${size}"></${tag}>`);
+      return field(tag).shadowRoot!.querySelector('.control')!.getBoundingClientRect().height;
+    };
+
+    const [small, medium, large] = [await height('sm'), await height('md'), await height('lg')];
+    expect(small).toBeLessThan(medium);
+    expect(medium).toBeLessThan(large);
+  });
+
+  it.each(BOXED)('%s is medium when nobody says otherwise', async (tag) => {
+    await mount(`<${tag}></${tag}>`);
+    const plain = field(tag).shadowRoot!.querySelector('.control')!.getBoundingClientRect().height;
+
+    await mount(`<${tag} size="md"></${tag}>`);
+    const explicit = field(tag).shadowRoot!.querySelector('.control')!.getBoundingClientRect().height;
+
+    expect(plain).toBe(explicit);
+  });
+
   it.each(FIELDS)('%s renders the label it is given', async (tag) => {
     await mount(`<${tag} label="Sampler"></${tag}>`);
     const labelled = field(tag).shadowRoot!.querySelector('[part="label"]')!;

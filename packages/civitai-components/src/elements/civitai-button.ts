@@ -1,14 +1,28 @@
-import { css, html, type PropertyDeclarations, type TemplateResult } from 'lit';
+import { css, html, unsafeCSS, type PropertyDeclarations, type TemplateResult } from 'lit';
 import { ifDefined } from 'lit/directives/if-defined.js';
 
 import { CivitaiElement } from './base.js';
+import type { Intent } from './civitai-badge.js';
 import { defineElement } from './registry.js';
 import { hostBaseline, spinner } from './shared-styles.js';
+
+export type { Intent } from './civitai-badge.js';
 
 export type ButtonVariant = 'filled' | 'light' | 'outline' | 'subtle';
 export type ButtonSize = 'sm' | 'md' | 'lg';
 
 const TAG = 'civitai-button';
+
+const intent = (value: Intent) => {
+  const name = unsafeCSS(value);
+  return css`
+  :host([color='${name}']) {
+    --civitai-color-primary: var(--civitai-color-${name});
+    --civitai-color-primary-hover: color-mix(in srgb, var(--civitai-color-${name}) 82%, black);
+    --civitai-color-primary-fg: var(--civitai-color-gray-0);
+  }
+  `;
+};
 
 export class CivitaiButton extends CivitaiElement {
   static formAssociated = true;
@@ -16,6 +30,10 @@ export class CivitaiButton extends CivitaiElement {
   static override styles = [
     hostBaseline,
     spinner,
+    intent('info'),
+    intent('success'),
+    intent('warning'),
+    intent('error'),
     css`
       :host {
         display: inline-flex;
@@ -26,7 +44,7 @@ export class CivitaiButton extends CivitaiElement {
         width: 100%;
       }
 
-      button {
+      :is(button, a) {
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -48,51 +66,52 @@ export class CivitaiButton extends CivitaiElement {
         padding: 0 18px;
         font-size: 14px;
       }
-      button:hover:not(:disabled) {
+      :is(button, a):hover:not(:disabled):not([aria-disabled='true']) {
         background: var(--civitai-color-primary-hover);
         border-color: var(--civitai-color-primary-hover);
       }
 
-      :host([size='sm']) button {
+      :host([size='sm']) :is(button, a) {
         height: 30px;
         padding: 0 14px;
         font-size: 13px;
       }
-      :host([size='lg']) button {
+      :host([size='lg']) :is(button, a) {
         height: 44px;
         padding: 0 22px;
         font-size: 16px;
       }
 
-      :host([variant='light']) button {
+      :host([variant='light']) :is(button, a) {
         background: color-mix(in srgb, var(--civitai-color-primary) 12%, transparent);
         color: var(--civitai-color-primary);
         border-color: transparent;
       }
-      :host([variant='light']) button:hover:not(:disabled) {
+      :host([variant='light']) :is(button, a):hover:not(:disabled) {
         background: color-mix(in srgb, var(--civitai-color-primary) 22%, transparent);
         border-color: transparent;
       }
-      :host([variant='outline']) button {
+      :host([variant='outline']) :is(button, a) {
         background: transparent;
         color: var(--civitai-color-primary);
         border-color: var(--civitai-color-primary);
       }
-      :host([variant='outline']) button:hover:not(:disabled) {
+      :host([variant='outline']) :is(button, a):hover:not(:disabled) {
         background: color-mix(in srgb, var(--civitai-color-primary) 10%, transparent);
         border-color: var(--civitai-color-primary);
       }
-      :host([variant='subtle']) button {
+      :host([variant='subtle']) :is(button, a) {
         background: transparent;
         color: var(--civitai-color-primary);
         border-color: transparent;
       }
-      :host([variant='subtle']) button:hover:not(:disabled) {
+      :host([variant='subtle']) :is(button, a):hover:not(:disabled) {
         background: color-mix(in srgb, var(--civitai-color-primary) 10%, transparent);
         border-color: transparent;
       }
 
-      button:disabled,
+      :is(button, a):disabled,
+      a[aria-disabled='true'],
       button[aria-busy='true'] {
         opacity: 0.6;
         cursor: not-allowed;
@@ -110,6 +129,8 @@ export class CivitaiButton extends CivitaiElement {
   // transform: Vite 8's oxc cannot lower standard decorators at all.
   static override properties: PropertyDeclarations = {
     variant: { reflect: true },
+    color: { reflect: true },
+    href: { reflect: true },
     size: { reflect: true },
     loading: { type: Boolean, reflect: true },
     disabled: { type: Boolean, reflect: true },
@@ -119,6 +140,10 @@ export class CivitaiButton extends CivitaiElement {
 
   /** Visual style. */
   declare variant: ButtonVariant;
+  /** Recolours every variant; absent keeps the primary accent. */
+  declare color: Intent | '';
+  /** Renders an anchor instead. Navigation is a link, whatever it looks like. */
+  declare href: string;
   /** Size preset. */
   declare size: ButtonSize;
   /** Shows a spinner and, like the React binding, disables the control. */
@@ -133,6 +158,8 @@ export class CivitaiButton extends CivitaiElement {
   constructor() {
     super();
     this.variant = 'filled';
+    this.color = '';
+    this.href = '';
     this.size = 'md';
     this.loading = false;
     this.disabled = false;
@@ -174,22 +201,41 @@ export class CivitaiButton extends CivitaiElement {
     else if (this.type === 'reset') form.reset();
   }
 
+  #content(): TemplateResult {
+    return html`
+      ${this.loading ? html`<span class="spinner" data-size="sm" aria-hidden="true"></span>` : ''}
+      <slot name="left"></slot>
+      <slot></slot>
+      <slot name="right"></slot>
+    `;
+  }
+
   override render(): TemplateResult {
+    const label = this.getAttribute('aria-label') ?? undefined;
+    const blocked = this.disabled || this.loading;
+
+    /* A disabled anchor is not a thing, so drop the href and say so — the
+       alternative is a link that still navigates while it looks inert. */
+    if (this.href !== '') {
+      return html`<a
+        part="button"
+        href=${ifDefined(blocked ? undefined : this.href)}
+        aria-disabled=${ifDefined(blocked ? 'true' : undefined)}
+        aria-label=${ifDefined(label)}
+        >${this.#content()}</a
+      >`;
+    }
+
     return html`
       <button
         part="button"
         type="button"
-        ?disabled=${this.disabled || this.loading}
+        ?disabled=${blocked}
         aria-busy=${ifDefined(this.loading ? 'true' : undefined)}
-        aria-label=${ifDefined(this.getAttribute('aria-label') ?? undefined)}
+        aria-label=${ifDefined(label)}
         @click=${this.#activate}
       >
-        ${this.loading
-          ? html`<span class="spinner" data-size="sm" aria-hidden="true"></span>`
-          : ''}
-        <slot name="left"></slot>
-        <slot></slot>
-        <slot name="right"></slot>
+        ${this.#content()}
       </button>
     `;
   }

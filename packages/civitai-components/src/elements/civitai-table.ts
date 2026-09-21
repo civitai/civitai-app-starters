@@ -45,6 +45,14 @@ ${TAG} thead th {
   background: var(--civitai-color-surface-2);
   white-space: nowrap;
 }
+/* A sortable grid puts a button in the header, and a button inherits neither
+   font nor colour — so the header treatment would stop at it. */
+${TAG} thead th button {
+  font: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+}
 ${TAG} tbody tr:last-child th,
 ${TAG} tbody tr:last-child td {
   border-block-end: 0;

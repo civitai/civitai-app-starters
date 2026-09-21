@@ -158,6 +158,19 @@ describe('<civitai-table>', () => {
     expect(getComputedStyle(cell).paddingLeft).toBe('12px');
   });
 
+  it('reaches the button a sortable grid puts in its header', async () => {
+    await mount(
+      '<civitai-table><table><thead><tr><th><button type="button">Worker</button></th></tr></thead>' +
+        '<tbody><tr><td>x</td></tr></tbody></table></civitai-table>'
+    );
+    const header = scope!.querySelector('th')!;
+    const button = scope!.querySelector('th button')!;
+
+    expect(getComputedStyle(button).textTransform).toBe(getComputedStyle(header).textTransform);
+    expect(getComputedStyle(button).color).toBe(getComputedStyle(header).color);
+    expect(getComputedStyle(button).fontSize).toBe(getComputedStyle(header).fontSize);
+  });
+
   it('tightens up when asked', async () => {
     await mount('<civitai-table dense><table><tbody><tr><td>x</td></tr></tbody></table></civitai-table>');
     expect(getComputedStyle(scope!.querySelector('td')!).paddingLeft).toBe('8px');

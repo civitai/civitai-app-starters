@@ -260,3 +260,74 @@ describe('<civitai-button> form participation', () => {
     expect(submits).toBe(0);
   });
 });
+
+describe('<civitai-button> intent', () => {
+  const button = async (markup: string): Promise<CivitaiButton> => {
+    const el = mount('dark', markup).firstElementChild as CivitaiButton;
+    return rendered(el);
+  };
+
+  it.each(['info', 'success', 'warning', 'error'])('color=%s recolours the filled button', async (color) => {
+    const el = await button(`<civitai-button color="${color}">Go</civitai-button>`);
+    const inner = el.shadowRoot!.querySelector('button')!;
+
+    expect(getComputedStyle(inner).backgroundColor).toBe(solid(darkTokens[`color${color[0]!.toUpperCase()}${color.slice(1)}` as keyof typeof darkTokens] as string));
+  });
+
+  it('recolours every variant from the one intent, not just filled', async () => {
+    const el = await button('<civitai-button color="error" variant="outline">Go</civitai-button>');
+    const inner = el.shadowRoot!.querySelector('button')!;
+
+    expect(getComputedStyle(inner).color).toBe(solid(darkTokens.colorError as string));
+    expect(getComputedStyle(inner).borderColor).toBe(solid(darkTokens.colorError as string));
+  });
+
+  it('keeps the primary accent when no intent is given', async () => {
+    const el = await button('<civitai-button>Go</civitai-button>');
+    const inner = el.shadowRoot!.querySelector('button')!;
+
+    expect(getComputedStyle(inner).backgroundColor).toBe(solid(darkTokens.colorPrimary as string));
+  });
+});
+
+describe('<civitai-button> as a link', () => {
+  const button = async (markup: string): Promise<CivitaiButton> =>
+    rendered(mount('dark', markup).firstElementChild as CivitaiButton);
+
+  it('renders an anchor when given an href, because navigation is a link', async () => {
+    const el = await button('<civitai-button href="/jobs">Jobs</civitai-button>');
+    const inner = el.shadowRoot!.querySelector('[part="button"]')!;
+
+    expect(inner.tagName).toBe('A');
+    expect(inner.getAttribute('href')).toBe('/jobs');
+  });
+
+  /* Both in ONE scope: `mount` replaces the previous one, so measuring across
+     two calls reads a detached element and every value comes back empty. */
+  it('looks the same as the button it replaces', async () => {
+    const scoped = mount(
+      'dark',
+      '<civitai-button href="/jobs" variant="outline" size="sm">Jobs</civitai-button>' +
+        '<civitai-button variant="outline" size="sm">Jobs</civitai-button>'
+    );
+    const [link, plain] = [...scoped.children] as CivitaiButton[];
+    await rendered(link!);
+    await rendered(plain!);
+
+    const look = (el: CivitaiButton): string[] => {
+      const s = getComputedStyle(el.shadowRoot!.querySelector('[part="button"]')!);
+      return [s.height, s.padding, s.fontSize, s.color, s.borderColor, s.borderRadius];
+    };
+    expect(look(link!)).toEqual(look(plain!));
+  });
+
+  /* An anchor has no disabled state, so it must lose its href — otherwise it
+     still navigates while looking inert. */
+  it('stops being a link when disabled', async () => {
+    const el = await button('<civitai-button href="/jobs" disabled>Jobs</civitai-button>');
+    const inner = el.shadowRoot!.querySelector('[part="button"]')!;
+
+    expect(inner.hasAttribute('href')).toBe(false);
+    expect(inner.getAttribute('aria-disabled')).toBe('true');
+  });
+});

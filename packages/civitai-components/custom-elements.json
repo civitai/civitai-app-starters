@@ -786,6 +786,30 @@
             },
             {
               "kind": "field",
+              "name": "color",
+              "privacy": "public",
+              "type": {
+                "text": "Intent | ''"
+              },
+              "description": "Recolours every variant; absent keeps the primary accent.",
+              "default": "''",
+              "attribute": "color",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "href",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Renders an anchor instead. Navigation is a link, whatever it looks like.",
+              "default": "''",
+              "attribute": "href",
+              "reflects": true
+            },
+            {
+              "kind": "field",
               "name": "size",
               "privacy": "public",
               "type": {
@@ -873,6 +897,16 @@
                 }
               },
               "description": "A form does not cross a shadow boundary, so the inner button's implicit\nsubmit never reaches the outer form. Form association gives it back."
+            },
+            {
+              "kind": "method",
+              "name": "#content",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "TemplateResult"
+                }
+              }
             }
           ],
           "attributes": [
@@ -884,6 +918,24 @@
               "description": "Visual style.",
               "default": "'filled'",
               "fieldName": "variant"
+            },
+            {
+              "name": "color",
+              "type": {
+                "text": "Intent | ''"
+              },
+              "description": "Recolours every variant; absent keeps the primary accent.",
+              "default": "''",
+              "fieldName": "color"
+            },
+            {
+              "name": "href",
+              "type": {
+                "text": "string"
+              },
+              "description": "Renders an anchor instead. Navigation is a link, whatever it looks like.",
+              "default": "''",
+              "fieldName": "href"
             },
             {
               "name": "size",
@@ -963,6 +1015,14 @@
         }
       ],
       "exports": [
+        {
+          "kind": "js",
+          "name": "Intent",
+          "declaration": {
+            "name": "Intent",
+            "module": "./civitai-badge.js"
+          }
+        },
         {
           "kind": "js",
           "name": "CivitaiButton",

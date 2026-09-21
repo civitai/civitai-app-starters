@@ -177,6 +177,25 @@ describe('<civitai-select>', () => {
     expect(el.shadowRoot!.querySelector('select')!.value).toBe('sdxl');
   });
 
+  /* A select CLIPS rather than scrolls, so `scrollWidth` reports nothing —
+     the only way to see it is to compare against an unsqueezed render. */
+  it('refuses to shrink below its longest option', async () => {
+    const OPTIONS = [
+      { value: 'a', label: 'All' },
+      { value: 'b', label: 'A considerably longer option than the others' },
+    ];
+    const widthIn = async (boxStyle: string): Promise<number> => {
+      await mount(`<div style="${boxStyle}"><civitai-select></civitai-select></div>`);
+      const el = scope!.querySelector<CivitaiSelect>('civitai-select')!;
+      el.data = OPTIONS;
+      await el.updateComplete;
+      return el.shadowRoot!.querySelector('select')!.getBoundingClientRect().width;
+    };
+
+    expect(await widthIn('width: 600px')).toBeCloseTo(600, 0);
+    expect(await widthIn('width: 60px')).toBeGreaterThan(200);
+  });
+
   it('submits the chosen value and change reaches document', async () => {
     const el = await mountSelect();
     const form = scope!.querySelector('form')!;
