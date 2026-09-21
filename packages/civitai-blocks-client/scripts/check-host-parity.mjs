@@ -52,6 +52,16 @@ for (const [type, reply] of Object.entries(legacy)) {
   }
 }
 
+const declared = readFileSync('src/session/index.ts', 'utf8').match(/export const SCOPES = \[([\s\S]*?)\] as const;/);
+if (!declared) fail('SCOPES not found in src/session/index.ts — the shape changed.');
+const ours = [...declared[1].matchAll(/'([a-z:]+)'/g)].map((m) => m[1]).sort();
+for (const scope of host.scopes) {
+  if (!ours.includes(scope)) problems.push(`the host grants ${scope}, but SCOPES does not name it.`);
+}
+for (const scope of ours) {
+  if (!host.scopes.includes(scope)) problems.push(`SCOPES names ${scope}, which the host does not grant.`);
+}
+
 if (problems.length > 0) {
   for (const problem of problems) console.error(problem);
   console.error(`\nSnapshot is civitai/civitai ${host.capturedFrom} (${host.capturedAt}).`);
@@ -59,4 +69,6 @@ if (problems.length > 0) {
   process.exit(1);
 }
 
-console.log(`host parity ok: ${sent.length} messages (snapshot ${host.capturedFrom}).`);
+console.log(
+  `host parity ok: ${sent.length} messages, ${ours.length} scopes (snapshot ${host.capturedFrom}).`,
+);

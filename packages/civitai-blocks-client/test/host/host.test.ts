@@ -59,6 +59,41 @@ describe('host chrome', () => {
   });
 });
 
+describe('host.autoResize', () => {
+  it('reports the element’s height now and whenever it changes, once per height', () => {
+    const callbacks: (() => void)[] = [];
+    let disconnected = false;
+    const original = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class {
+      constructor(callback: () => void) {
+        callbacks.push(callback);
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {
+        disconnected = true;
+      }
+    } as unknown as typeof ResizeObserver;
+
+    try {
+      let height = 300.4;
+      const element = { getBoundingClientRect: () => ({ height }) } as unknown as Element;
+      const t = createFakeTransport();
+
+      const stop = createHost(t).autoResize(element);
+      height = 480;
+      callbacks[0]!();
+      callbacks[0]!();
+      stop();
+
+      expect(t.sent.map((m) => m.payload)).toEqual([{ height: 301 }, { height: 480 }]);
+      expect(disconnected).toBe(true);
+    } finally {
+      globalThis.ResizeObserver = original;
+    }
+  });
+});
+
 describe('host.onVisibilityChange', () => {
   it('reports the page hiding and returning', () => {
     const t = createFakeTransport();

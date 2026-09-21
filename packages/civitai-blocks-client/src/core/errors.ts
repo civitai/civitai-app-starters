@@ -15,7 +15,15 @@ export type BridgeErrorCode =
   /** The transport got an answer it could not read as a result. */
   | 'malformed';
 
-export class BridgeError extends Error {
+/** Anything this package throws on purpose, so one `catch` can tell it from a bug. */
+export class CivitaiError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'CivitaiError';
+  }
+}
+
+export class BridgeError extends CivitaiError {
   readonly code: BridgeErrorCode;
   /** The message type that failed, e.g. `SAVE_IMAGE`. */
   readonly operation: string;

@@ -72,6 +72,9 @@ describe('initialize() in a block', () => {
     transport.setSnapshot({ token: token('wider', ['ai:write:budgeted']) });
 
     await expect(pending).resolves.toBe(true);
+
+    // @ts-expect-error a scope the site does not grant is a typo, not a request
+    void app.requestGrants(['ai:write:unbudgeted']);
   });
 });
 

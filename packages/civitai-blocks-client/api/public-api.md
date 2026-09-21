@@ -19,7 +19,7 @@ export interface AppClient {
     /** The orchestrator's workflows, as the viewer. */
     readonly orchestration: OrchestrationClient;
     /** Asks for more scopes. `false` when they cannot be granted — a refusal is an answer. */
-    requestGrants(scopes: readonly string[], opts?: GrantOptions): Promise<boolean>;
+    requestGrants(scopes: readonly Scope[], opts?: GrantOptions): Promise<boolean>;
     /** For a call this client does not make itself. */
     getToken(opts?: TokenOptions): Promise<string>;
 }
@@ -46,6 +46,11 @@ export interface BlockInitializeOptions extends ClientOptions {
 
 export interface TokenInitializeOptions extends ClientOptions, TokenSessionOptions {
 }
+
+/** Every scope an app can hold, as the site names them. */
+export declare const SCOPES: readonly ['ai:write:budgeted', 'apps:storage:read', 'apps:storage:shared:read', 'apps:storage:shared:write', 'apps:storage:write', 'buzz:read:self', 'collections:read:private', 'collections:read:self', 'collections:write:self', 'models:read:self', 'posts:write:self', 'social:tip:self', 'user:read:self'];
+
+export type Scope = (typeof SCOPES)[number];
 
 export interface TokenOptions {
     /** Skip the held token and get a new one, e.g. after the API refused it. */
@@ -122,6 +127,8 @@ export interface HostCallOptions {
 export interface Host {
     /** Resizes the frame, clamped to the manifest's bounds. */
     resize(height: number): void;
+    /** Keeps the frame as tall as `element` (the body by default). Returns a stop function. */
+    autoResize(element?: Element): () => void;
     /** `fatal` swaps the block for the host's fallback, for a block that cannot continue. */
     reportError(message: string, args?: {
         fatal?: boolean;
@@ -154,7 +161,7 @@ export interface Host {
     }>;
 }
 
-export declare class ApiError extends Error {
+export declare class ApiError extends CivitaiError {
     readonly status: number;
     /** The response body, parsed as JSON when it was JSON. */
     readonly body: unknown;
@@ -171,7 +178,12 @@ export interface RequestOptions {
     signal?: AbortSignal;
 }
 
-export declare class BridgeError extends Error {
+/** Anything this package throws on purpose, so one `catch` can tell it from a bug. */
+export declare class CivitaiError extends Error {
+    constructor(message: string, options?: ErrorOptions);
+}
+
+export declare class BridgeError extends CivitaiError {
     readonly code: BridgeErrorCode;
     /** The message type that failed, e.g. `SAVE_IMAGE`. */
     readonly operation: string;

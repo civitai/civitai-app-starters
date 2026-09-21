@@ -93,6 +93,9 @@ with `ORCHESTRATION_URL` / `CIVITAI_SITE_URL` to point it at a local stack.
 
 ## Grants
 
+Scopes are typed (`Scope`, and the list as `SCOPES`), so a misspelt scope fails
+to compile rather than being quietly refused.
+
 In a block, `requestGrants` opens the host's consent dialog and resolves once
 the re-minted token carries the scopes. A viewer who closes the dialog sends
 nothing, so pass a `signal` to bound the wait. Given a token, `requestGrants`
@@ -104,6 +107,7 @@ wider scope — and refuses without one.
 | Call | What the host does |
 |---|---|
 | `resize(height)` | Resizes the frame, clamped to the manifest |
+| `autoResize(element?)` | Keeps the frame as tall as the body (or `element`); returns a stop function |
 | `reportError(message, { fatal })` | `fatal` swaps the block for the host's fallback |
 | `navigate(path, { target })` | Deep-links within this app's own sub-paths |
 | `onVisibilityChange(handler)` | Reports the page hiding and returning |
@@ -114,7 +118,8 @@ wider scope — and refuses without one.
 
 Host failures reject with a `BridgeError` carrying a `code` (`forbidden`,
 `unauthenticated`, `rate-limited`, …). Timeouts are the host's to set; pass a
-`signal` to cancel.
+`signal` to cancel. `ApiError` and `BridgeError` both extend `CivitaiError`, so
+one `catch` can tell a refusal from a bug.
 
 ## Parent origins
 

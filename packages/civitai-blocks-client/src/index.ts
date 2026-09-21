@@ -11,7 +11,8 @@ export type {
   TokenInitializeOptions,
 } from './app/index.js';
 
-export type { GrantOptions, TokenOptions, TokenSource } from './session/index.js';
+export { SCOPES } from './session/index.js';
+export type { GrantOptions, Scope, TokenOptions, TokenSource } from './session/index.js';
 export type { SiteClient } from './site/index.js';
 export { isTerminal } from './orchestration/index.js';
 export type {
@@ -37,7 +38,7 @@ export type {
 
 export { ApiError } from './http/index.js';
 export type { Query, QueryValue, RequestOptions } from './http/index.js';
-export { BridgeError } from './core/errors.js';
+export { BridgeError, CivitaiError } from './core/errors.js';
 export type { BridgeErrorCode, BridgeFailureCode } from './core/errors.js';
 
 export { getTransport } from './core/get-transport.js';

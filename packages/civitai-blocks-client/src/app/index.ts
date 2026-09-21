@@ -12,6 +12,7 @@ import {
 import {
   createTokenSession,
   type GrantOptions,
+  type Scope,
   type Session,
   type TokenOptions,
   type TokenSessionOptions,
@@ -27,7 +28,7 @@ export interface AppClient {
   /** The orchestrator's workflows, as the viewer. */
   readonly orchestration: OrchestrationClient;
   /** Asks for more scopes. `false` when they cannot be granted — a refusal is an answer. */
-  requestGrants(scopes: readonly string[], opts?: GrantOptions): Promise<boolean>;
+  requestGrants(scopes: readonly Scope[], opts?: GrantOptions): Promise<boolean>;
   /** For a call this client does not make itself. */
   getToken(opts?: TokenOptions): Promise<string>;
 }

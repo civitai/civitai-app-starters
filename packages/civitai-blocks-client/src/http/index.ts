@@ -1,3 +1,4 @@
+import { CivitaiError } from '../core/errors.js';
 import type { Session } from '../session/index.js';
 
 export type QueryValue = string | number | boolean | null | undefined;
@@ -9,7 +10,7 @@ export interface RequestOptions {
   signal?: AbortSignal;
 }
 
-export class ApiError extends Error {
+export class ApiError extends CivitaiError {
   readonly status: number;
   /** The response body, parsed as JSON when it was JSON. */
   readonly body: unknown;

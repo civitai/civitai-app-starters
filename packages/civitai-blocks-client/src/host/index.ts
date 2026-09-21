@@ -1,6 +1,6 @@
 import { createCaller, createListener, createNotifier } from '../core/messaging.js';
 import { tokenFromWrapped, type BlockTransport } from '../core/transport.js';
-import type { GrantOptions, Session, TokenOptions } from '../session/index.js';
+import type { GrantOptions, Scope, Session, TokenOptions } from '../session/index.js';
 
 import type {
   DownloadRequest,
@@ -30,6 +30,8 @@ export interface HostCallOptions {
 export interface Host {
   /** Resizes the frame, clamped to the manifest's bounds. */
   resize(height: number): void;
+  /** Keeps the frame as tall as `element` (the body by default). Returns a stop function. */
+  autoResize(element?: Element): () => void;
   /** `fatal` swaps the block for the host's fallback, for a block that cannot continue. */
   reportError(message: string, args?: { fatal?: boolean }): void;
   /** Deep-links within this app's own sub-paths; the host refuses anything else. */
@@ -58,6 +60,21 @@ export interface Host {
 export function createHost(transport: BlockTransport): Host {
   return {
     resize: (height) => notify('RESIZE_IFRAME', { height }, { transport }),
+    autoResize(element) {
+      const target = element ?? globalThis.document?.body;
+      if (!target || typeof ResizeObserver === 'undefined') return () => {};
+      let sent = -1;
+      const report = () => {
+        const height = Math.ceil(target.getBoundingClientRect().height);
+        if (height === sent) return;
+        sent = height;
+        notify('RESIZE_IFRAME', { height }, { transport });
+      };
+      const observer = new ResizeObserver(report);
+      observer.observe(target);
+      report();
+      return () => observer.disconnect();
+    },
     reportError: (message, args = {}) =>
       notify('BLOCK_ERROR', { message, fatal: args.fatal ?? false }, { transport }),
     navigate: (path, args = {}) =>
@@ -104,7 +121,7 @@ export function createHostSession(transport: BlockTransport): Session {
  */
 function requestGrants(
   transport: BlockTransport,
-  scopes: readonly string[],
+  scopes: readonly Scope[],
   { signal }: GrantOptions,
 ): Promise<boolean> {
   const granted = () => {

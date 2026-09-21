@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { BridgeError } from '../../src/index.js';
+import { BridgeError, CivitaiError } from '../../src/index.js';
 import { createHost } from '../../src/host/index.js';
 import { createFakeTransport } from '../../src/testing.js';
 
@@ -31,7 +31,9 @@ describe('createFakeTransport().handle', () => {
       throw new BridgeError('forbidden', 'OPEN_BUZZ_PURCHASE', 'review-mode');
     });
 
-    await expect(createHost(t).openBuzzPurchase()).rejects.toMatchObject({ code: 'forbidden' });
+    const refused = await createHost(t).openBuzzPurchase().catch((e: unknown) => e);
+    expect(refused).toMatchObject({ code: 'forbidden' });
+    expect(refused).toBeInstanceOf(CivitaiError);
   });
 
   it('lets a queued reply depart from the standing answer for one call', async () => {

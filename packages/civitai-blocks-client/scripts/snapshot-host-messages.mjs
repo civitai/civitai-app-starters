@@ -9,6 +9,7 @@ const DEFAULT_SOURCE = resolve(
   '../../../../civitai/repo/src/components/AppBlocks/hostHandlerParity.ts',
 );
 const OUT = 'snapshots/host-messages.json';
+const SCOPES_SOURCE = '../../shared/constants/block-scope.constants.ts';
 
 const source = resolve(process.argv[2] ?? DEFAULT_SOURCE);
 const text = readFileSync(source, 'utf8');
@@ -40,6 +41,11 @@ try {
   // A source tree without git still snapshots; provenance is best-effort.
 }
 
+const scopeSource = readFileSync(resolve(dirname(source), SCOPES_SOURCE), 'utf8');
+const scopeTable = scopeSource.match(/BLOCK_SCOPE_TO_OAUTH_BIT[^=]*= \{([\s\S]*?)^\};$/m);
+if (!scopeTable) throw new Error(`BLOCK_SCOPE_TO_OAUTH_BIT not found in ${SCOPES_SOURCE} — the shape changed`);
+const scopes = [...scopeTable[1].matchAll(/^ {2}'([a-z:]+)':/gm)].map((m) => m[1]).sort();
+
 writeFileSync(
   OUT,
   `${JSON.stringify(
@@ -48,10 +54,11 @@ writeFileSync(
       capturedFrom,
       capturedAt: new Date().toISOString().slice(0, 10),
       messages: Object.fromEntries(Object.entries(messages).sort(([a], [b]) => a.localeCompare(b))),
+      scopes,
     },
     null,
     2,
   )}\n`,
 );
 
-console.log(`Wrote ${OUT} — ${Object.keys(messages).length} messages from ${capturedFrom}`);
+console.log(`Wrote ${OUT} — ${Object.keys(messages).length} messages, ${scopes.length} scopes from ${capturedFrom}`);

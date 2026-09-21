@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { CivitaiError } from '../../src/core/errors.js';
 import { ApiError, createHttp } from '../../src/http/index.js';
 import { createTokenSession } from '../../src/session/index.js';
 import { fakeFetch, json } from '../support/fake-fetch.js';
@@ -64,6 +65,7 @@ describe('createHttp', () => {
 
     const first = await http('GET', 'images').catch((e: unknown) => e);
     expect(first).toBeInstanceOf(ApiError);
+    expect(first).toBeInstanceOf(CivitaiError);
     expect(first).toMatchObject({ status: 400, message: 'limit must be <= 200' });
     await expect(http('POST', 'bugs')).rejects.toMatchObject({ message: 'Method not allowed' });
     await expect(http('POST', 'workflows')).rejects.toMatchObject({
