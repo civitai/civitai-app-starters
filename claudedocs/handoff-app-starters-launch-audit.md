@@ -127,29 +127,54 @@ will age out". **They were recovered on 2026-09-21 and no longer decay.**
 
 **Triage against `origin/main` @ `eed2df5`, 2026-09-21** — verdicts measured, not inferred:
 
+✅ **TRIAGE COMPLETE AND ALL 25 LIVE FINDINGS FILED — 2026-09-21.** 28 numbered entries, minus one
+duplicate (**20 is the same finding as 13**) = **27 distinct**. Every row resolves:
+
 | Verdict | Count | Which |
 |---|---|---|
-| **CONFIRMED LIVE** | 9 | 1 (duplicate co-installs), 2 (post-mortem prose published), 3 (dangling sourcemaps), 4 (half-barrel), 5 (`internal/` on main entry), 8 (`WorkflowBody` 4-vs-THREE), 9 (50-vs-47 step types), 10 (README wide-floor claim), 18 (`tiged`'d vulnerable `cookie`) |
+| **FILED AS ISSUES** | **25** | **#374–#398** — see the mapping below |
 | **FIXED since audit** | 1 | 16 (whole `VITE_*` env inlined) — died with #361 → `0.55.1` |
-| **LIVE, partial** | 3 | 17 (SSR ships `me` whole), 22 (no unmount guard), 24 (`requestId` spellings) |
 | **ALREADY FILED** | 1 | 26 → #328 + #247 |
-| **NOT YET VERIFIED** | 12 | 6, 7, 11, 12, 13/20, 14, 15, 19, 21, 23, 25, 27, 28 |
-| **FILED AS ISSUES** | **0** | ← the open work |
+| **NOT YET VERIFIED** | **0** | — |
 
-🔴 **Two of the confirmed-live findings were made WORSE by this arc, which is why they are cheap
-wins and should go first:**
-- **#2** — `comment-peerDependencies` is **79%** of blocks-react's published `package.json`
+| finding → issue | | finding → issue |
+|---|---|---|
+| 1 exact pins / duplicate co-installs → **#374** | | 14 liveHost stale enumerations → **#387** |
+| 2 `comment-peerDependencies` 79% → **#375** | | 15 `waitSeconds` "advisory" → **#388** |
+| 3 dangling sourcemaps → **#376** | | 17 SSR ships whole `me` → **#389** |
+| 4 half-barrel root export → **#377** | | 18 `tiged`'d vulnerable `cookie` → **#390** |
+| 5 `internal/` on main entry → **#378** | | 19 picker drops `modelType` → **#391** |
+| 6 internal types in public sigs → **#379** | | 21 seven hooks unsequenced → **#392** |
+| 7 `UseX` coin flip (17/36) → **#380** | | 22 `useImageUpload` unmount → **#393** |
+| 8 `WorkflowBody` THREE vs four → **#381** | | 23 `payloadValidatorFor` totality → **#394** |
+| 9 "47" step types are 50 → **#382** | | 24 `requestId` three spellings → **#395** |
+| 10 README wide-floor claim → **#383** | | 25 `SettingsForm` seeds once → **#396** |
+| 11 hidden-guard spelled not structural → **#384** | | 27 trailing-slash allowlist → **#397** |
+| 12 `SECURITY INVARIANT` unenforced → **#385** | | 28 `useTipAllowance` spins → **#398** |
+| 13 (= 20) liveHost missing 3 handlers → **#386** | | |
+
+Each issue body carries the **2026-09-21 re-measurement against `eed2df5`**, not the audit's
+original numbers, plus the controls that were run, a proposed fix and its own closing condition.
+Filing verified by read-back: 25 of 25 open in range `374–398`, negative control (`>= 99000`)
+returns 0.
+
+🔴 **Two of them were made WORSE by this arc — cheapest wins, do them first:**
+- **#375** — `comment-peerDependencies` is **79%** of blocks-react's published `package.json`
   (10,071 B of 12,717 B), up from the audited 67% (4,827 of 7,231). The peer-floor incident
   narrative this arc kept appending is what grew it. Every external developer installs it.
-- **#10** — `README.md:1589-1590` still tells readers the floor "stays" the deliberately-wide
+- **#383** — `README.md:1589-1590` still tells readers the floor "stays" the deliberately-wide
   `>=0.29.0 <1.0.0` so "npm will not warn you". Raising the floor to `>=0.49.0` in #371 made that
   sentence more wrong, not less.
 
-🔴 **Two notes that save the next pass real work:** **13 and 20 are the SAME finding** seen by two
-sub-audits (liveHost dropping three block→parent bridges) — count it once; and **23 may already be
-fixed** — both CHANGELOGs describe a mutation sweep that killed "an unmapped `payloadValidatorFor`
-case". Check before filing. Where a triage instrument failed it is recorded as a failure in that
-file, not as a clean result.
+🔴 **Two corrections the triage made to the audit itself, both carried into the issues:**
+- **#392 is SEVEN hooks, not eight** — `useTipAllowance` already sequences via
+  `inFlight: Set<AbortController>` (`:60`, `:78`). It is cited in the issue as the pattern to copy
+  *and* as the positive control for the fix.
+- **#394 was NOT already fixed**, though both CHANGELOGs' mutation-sweep line ("an unmapped
+  `payloadValidatorFor` case") makes it look so. The `default:` arm still returns `null` — a
+  structural pass — and the gate is still 19 hand-written assertions. The issue says this
+  explicitly so nobody re-closes it on that evidence. **This is why the triage was worth doing:
+  acting on the CHANGELOG would have dropped a real defect.**
 
 ## Open investigations — live diagnosis state
 
@@ -255,18 +280,21 @@ harm** — no other app-sdk minor took `0.49.0`.
 
 ## Next steps (ranked)
 
-1. **Finish triaging the 12 unverified recovered findings, then file every confirmed-live one**
-   (9 confirmed + whatever the 12 yield), each with its own closing condition. Start with **#2** and
-   **#10** — both are confirmed, both were made worse by this arc, and both are small.
-   🔴 **Do NOT file a finding you have not re-measured**: 1 of the first 2 spot-checks was already
-   fixed, so the base rate of staleness in this set is real.
-   closing-condition: `check` — every finding in the recovered file's triage table reads either
-   FILED (with an issue number), FIXED, or NOT-A-DEFECT, with no row left at NOT YET VERIFIED.
+~~1. Finish triaging the 12 unverified recovered findings, then file every confirmed-live one~~
+   ✅ **DONE 2026-09-21.** All 27 distinct findings resolved; 25 filed as **#374–#398**. Its
+   closing-condition — "no row left at NOT YET VERIFIED" — is satisfied.
+
+1. **Start fixing the filed findings. Two are self-inflicted by this arc and cost almost nothing:
+   #375** (published `package.json` is 79% internal post-mortem prose) **and #383** (README asserts
+   a peer floor that #371 contradicted). Both are pure deletions of text we wrote.
+   🔴 Each issue carries its own closing condition; several ask for a test **watched to fail**
+   first. Do not skip that — #394 is the cautionary case: it *looked* fixed from a CHANGELOG line
+   and was not.
    forcing: none
-2. **Batch: everything already filed with a closing condition.** #358, #362, #363, #364, #367 (no CI
-   job runs `changeset status`), #368, #369, #370 (no key-length cap anywhere local),
-   #345/#347/#348/#349/#357, and the undecided `@civitai/app-sdk` peer on `@civitai/client` at
-   `^0.2.0-beta.98` (#305). All are tracked, none advanced this session.
+2. **Batch: everything already filed with a closing condition, from before this arc.** #358, #362,
+   #363, #364, #367 (no CI job runs `changeset status`), #368, #369, #370 (no key-length cap
+   anywhere local), #345/#347/#348/#349/#357, and the undecided `@civitai/app-sdk` peer on
+   `@civitai/client` at `^0.2.0-beta.98` (#305). All tracked, none advanced this session.
    forcing: none
 3. **#328 — the ONE live launch blocker: 34 names exported by both `blocks-react/ui` and
    `@civitai/components-react`.** Computed on `eed2df5`: 62 ∩ 64 = **34**, control passes. This is
