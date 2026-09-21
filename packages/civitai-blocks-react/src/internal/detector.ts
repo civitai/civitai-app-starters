@@ -16,11 +16,9 @@ import type { BlockTransport } from './transport.js';
  * `detect({ allowedParentOrigins })` explicitly.
  */
 export function readAllowedOriginsFromEnv(): string[] {
-  const candidates = [
-    readEnv('VITE_BLOCK_ALLOWED_PARENT_ORIGINS'),
-    readEnv('NEXT_PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS'),
-    readEnv('PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS'),
-  ].filter((v): v is string => !!v);
+  const candidates = [readViteVar(), readNextPublicVar(), readPublicVar()].filter(
+    (v): v is string => !!v,
+  );
   if (!candidates.length) return [];
   return candidates[0]!
     .split(',')
@@ -28,19 +26,85 @@ export function readAllowedOriginsFromEnv(): string[] {
     .filter(Boolean);
 }
 
-function readEnv(key: string): string | undefined {
-  // Vite injects import.meta.env at build time; Node exposes process.env.
-  // Read each independently, swallowing access errors (e.g. process undefined in browser).
+/**
+ * 🔴 EVERY ENV READ BELOW MUST SPELL ITS KEY AS A LITERAL MEMBER ACCESS.
+ * Never reintroduce a `readEnv(key)` helper, a `Record<string, …>` index, or any
+ * other computed-key form — `import.meta.env[k]` / `process.env[k]`. Both halves
+ * of that break, in opposite directions, and neither is visible to a unit test
+ * that only asserts the returned array (see `test/detectorEnvBundle.test.ts`,
+ * which bundles this file and asserts on the EMITTED code):
+ *
+ * 1. LEAK (`import.meta.env[k]`). Vite substitutes `import.meta.env.SOME_LITERAL`
+ *    at build time by static analysis. A computed key cannot be analysed, so Vite
+ *    falls back to inlining the ENTIRE env object — putting every `VITE_*` var the
+ *    block app has defined into its production bundle, `VITE_LIVE_BLOCK_TOKEN`
+ *    included. Measured against published `@civitai/blocks-react@0.55.0`, whose
+ *    `dist/internal/detector.js:33` reads `import.meta.env?.[key]`.
+ *    Optional chaining is FINE: `import.meta.env?.VITE_X` is still substituted
+ *    (measured with Vite 8) — it is the computed KEY that defeats the analysis.
+ *
+ * 2. SILENT MISS (`process.env[k]`). webpack/Next.js `DefinePlugin` replaces the
+ *    literal member expression `process.env.NEXT_PUBLIC_FOO` and nothing else. A
+ *    computed read is left alone, and a browser bundle has no real `process` to
+ *    fall back to — so `NEXT_PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS` never resolved
+ *    for a Next.js block app at all. Note the bare `process.env.X` spelling is
+ *    load-bearing too: `globalThis.process.env.X` is NOT a DefinePlugin key
+ *    either, so it would keep the bug. The `try`/`catch` is what makes a bare
+ *    `process` safe — an unsubstituted reference throws `ReferenceError` in the
+ *    browser and is swallowed here, exactly as before.
+ */
+interface BlockOriginEnv {
+  readonly VITE_BLOCK_ALLOWED_PARENT_ORIGINS?: string;
+  readonly NEXT_PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS?: string;
+  readonly PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS?: string;
+}
+
+/** `VITE_…` — Vite / the PWA starters. import.meta first, then process.env. */
+function readViteVar(): string | undefined {
   try {
-    const fromImportMeta = (import.meta as { env?: Record<string, string | undefined> }).env?.[key];
-    if (fromImportMeta) return fromImportMeta;
+    const v = (import.meta as { env?: BlockOriginEnv }).env?.VITE_BLOCK_ALLOWED_PARENT_ORIGINS;
+    if (v) return v;
   } catch {
     /* ignore */
   }
   try {
-    const fromProcess = (globalThis as { process?: { env?: Record<string, string | undefined> } })
-      .process?.env?.[key];
-    if (fromProcess) return fromProcess;
+    const v = process.env.VITE_BLOCK_ALLOWED_PARENT_ORIGINS;
+    if (v) return v;
+  } catch {
+    /* ignore */
+  }
+  return undefined;
+}
+
+/** `NEXT_PUBLIC_…` — Next.js. import.meta first, then process.env. */
+function readNextPublicVar(): string | undefined {
+  try {
+    const v = (import.meta as { env?: BlockOriginEnv }).env
+      ?.NEXT_PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS;
+    if (v) return v;
+  } catch {
+    /* ignore */
+  }
+  try {
+    const v = process.env.NEXT_PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS;
+    if (v) return v;
+  } catch {
+    /* ignore */
+  }
+  return undefined;
+}
+
+/** `PUBLIC_…` — SvelteKit. import.meta first, then process.env. */
+function readPublicVar(): string | undefined {
+  try {
+    const v = (import.meta as { env?: BlockOriginEnv }).env?.PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS;
+    if (v) return v;
+  } catch {
+    /* ignore */
+  }
+  try {
+    const v = process.env.PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS;
+    if (v) return v;
   } catch {
     /* ignore */
   }
