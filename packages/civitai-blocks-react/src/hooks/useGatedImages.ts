@@ -51,6 +51,14 @@ export interface UseGatedImages {
  * who can't see the image, and the block must render a placeholder for any
  * `hidden` entry.
  *
+ * 🔴 A `hidden` ENTRY IS NARROWED TO `{ imageId, status }` BEFORE IT REACHES
+ * HERE, and that is enforced in code rather than asserted in prose: the
+ * transport runs `projectInboundPayload` on every `IMAGES_RESULT` before
+ * delivery (`src/internal/validate.ts`), so a `previewUrl`, `src`, `imageUrl` or
+ * any other key a host attaches to a withheld image is DROPPED, not forwarded.
+ * Fields are dropped rather than the reply rejected so a future host-side field
+ * addition cannot hang this call — see `projectGatedImage`'s docblock.
+ *
  * 🔴 `nsfwLevel` AND `contentRating` ARE OPTIONAL, AND A MISSING ONE IS NOT "G".
  * They are absent exactly when `ratingPending` is present. Treating absent as a
  * safe default is the bug this state exists to stop: an image published seconds

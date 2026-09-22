@@ -641,10 +641,12 @@ describe('IframeTransport', () => {
     //
     // 🔴 A HAPPY-PATH-ONLY TEST HERE PROVES NOTHING, and this is the exact shape
     // that makes it so. `payloadValidatorFor`'s `default:` arm returns `null` —
-    // a STRUCTURAL PASS — so a reply type with NO switch entry sails through
-    // unvalidated and the resolve arm goes green anyway. The drop arm is what
-    // distinguishes "the validator is wired" from "there is no validator". And a
-    // drop is not a rejection: the transport `return`s BEFORE the pending-map
+    // a STRUCTURAL PASS — and since #394 a union member can still reach it by
+    // being mapped to `return null` (the `never` bind proves the case EXISTS,
+    // not that it names a validator), so a reply type mapped that way sails
+    // through unvalidated and the resolve arm goes green anyway. The drop arm is
+    // what distinguishes "the validator is wired" from "there is no validator".
+    // And a drop is not a rejection: the transport `return`s BEFORE the pending-map
     // lookup, so the promise is left untouched and only its own timer ends it —
     // in production, for this consent-gated message, TEN MINUTES later.
     //

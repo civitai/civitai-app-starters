@@ -5,7 +5,11 @@ import type { BlockGatedImage, BlockInitPayload } from '@civitai/app-sdk/blocks'
 
 import { useGatedImages } from '../src/hooks/useGatedImages.js';
 import { getTransport } from '../src/internal/singleton.js';
-import { isValidImagesResult, isValidPublishResult } from '../src/internal/validate.js';
+import {
+  isValidImagesResult,
+  isValidPublishResult,
+  projectInboundPayload,
+} from '../src/internal/validate.js';
 import { resetTransport } from '../src/testing.js';
 
 const PARENT_ORIGIN = 'https://civitai.com';
@@ -113,6 +117,58 @@ describe('useGatedImages', () => {
     // The hidden entry never carries a url.
     const hidden = (resolved as unknown as BlockGatedImage[]).find((i) => i.status === 'hidden')!;
     expect(hidden).not.toHaveProperty('url');
+  });
+
+  /**
+   * REGRESSION (#384) — the `hidden` allowlist is STRUCTURAL, not a ban on one
+   * spelling.
+   *
+   * `isValidGatedImage` rejects the literal key `url` and nothing else, while its
+   * docblock claimed "`hidden` → ONLY `imageId` + `status`". Every other
+   * url-carrying spelling a host could attach to a WITHHELD image — `previewUrl`,
+   * `src`, `imageUrl` — sailed through to the consumer, as did any unknown key.
+   *
+   * 🔴 `url` IS DELIBERATELY NOT IN THIS TABLE. It is the one case that passes on
+   * pre-change code (the predicate already bans it), so a test built from it is
+   * vacuous — it would go green against the exact implementation this pins.
+   *
+   * Asserted at the HOOK, i.e. what a block actually receives, not at the
+   * predicate: the guarantee is "cannot reach a consumer", and the mechanism is
+   * projection at the transport boundary rather than rejection (rejecting would
+   * drop the WHOLE batch and hang `getImages()` on any future host field).
+   */
+  it.each([
+    ['previewUrl', 'https://image.civitai.com/x/9002.jpeg'],
+    ['src', 'https://image.civitai.com/x/9002.jpeg'],
+    ['imageUrl', 'https://image.civitai.com/x/9002.jpeg'],
+    ['zqxTelemetryBlob', { leaked: true }],
+  ])('a HIDDEN entry carrying `%s` never reaches the consumer', async (key, value) => {
+    const { result } = renderHook(() => useGatedImages());
+
+    let resolved: BlockGatedImage[] | null = null;
+    act(() => {
+      void result.current.getImages([9001, 9002]).then((v) => {
+        resolved = v;
+      });
+    });
+
+    const sent = lastGet(postMessageMock);
+    const leaky = { imageId: 9002, status: 'hidden', [key]: value };
+    dispatch('IMAGES_RESULT', {
+      requestId: sent.payload.requestId,
+      result: { images: [VISIBLE, leaky] },
+    });
+
+    // The batch must still RESOLVE — a rejection here would mean the whole reply
+    // was dropped, which is the hang this design exists to avoid.
+    await waitFor(() => expect(resolved).not.toBeNull());
+    const images = resolved as unknown as BlockGatedImage[];
+    const hidden = images.find((i) => i.status === 'hidden')!;
+    expect(hidden).not.toHaveProperty(key);
+    // …narrowed to EXACTLY the allowlist, not merely missing this one key.
+    expect(Object.keys(hidden).sort()).toEqual(['imageId', 'status']);
+    // The visible entry is untouched, so the drop is scoped to `hidden`.
+    expect(images.find((i) => i.status === 'visible')).toEqual(VISIBLE);
   });
 
   it('rejects with the host FREE-TEXT error string (error, no result)', async () => {
@@ -237,6 +293,62 @@ describe('isValidImagesResult (defense-in-depth)', () => {
 
   it('REJECTS a reply with neither result nor error', () => {
     expect(isValidImagesResult({ requestId: 'r' })).toBe(false);
+  });
+});
+
+describe('projectInboundPayload (the hidden-entry allowlist)', () => {
+  const hidden = (extra: Record<string, unknown>) => ({
+    requestId: 'r',
+    result: { images: [{ imageId: 9002, status: 'hidden', ...extra }] },
+  });
+  const firstImage = (p: unknown) =>
+    (p as { result: { images: Record<string, unknown>[] } }).result.images[0]!;
+
+  it('drops every key beyond imageId/status on a HIDDEN entry', () => {
+    for (const extra of [
+      { previewUrl: 'https://image.civitai.com/x/9002.jpeg' },
+      { src: 'https://image.civitai.com/x/9002.jpeg' },
+      { imageUrl: 'https://image.civitai.com/x/9002.jpeg' },
+      { nsfwLevel: 31, contentRating: 'xxx' },
+      { zqxTelemetryBlob: { leaked: true } },
+    ]) {
+      const projected = projectInboundPayload('IMAGES_RESULT', hidden(extra));
+      expect(Object.keys(firstImage(projected)).sort()).toEqual(['imageId', 'status']);
+      expect(firstImage(projected)).toEqual({ imageId: 9002, status: 'hidden' });
+    }
+  });
+
+  it('leaves a VISIBLE entry untouched — by identity, not merely by value', () => {
+    const payload = { requestId: 'r', result: { images: [VISIBLE] } };
+    const projected = projectInboundPayload('IMAGES_RESULT', payload);
+    // Identity: the common path must neither allocate nor perturb the object.
+    expect(projected).toBe(payload);
+    expect(firstImage(projected)).toBe(VISIBLE);
+  });
+
+  it('returns an already-clean HIDDEN entry by identity', () => {
+    const payload = { requestId: 'r', result: { images: [HIDDEN] } };
+    expect(projectInboundPayload('IMAGES_RESULT', payload)).toBe(payload);
+  });
+
+  /**
+   * POSITIVE/NEGATIVE CONTROL PAIR for the type gate. The projector is scoped to
+   * `IMAGES_RESULT`; a version wired to every type (or to none) would fail one of
+   * these. The two fixtures are the SAME object shape, so only `type` can explain
+   * the difference.
+   */
+  it('is identity for every OTHER message type (scope control)', () => {
+    const shaped = hidden({ previewUrl: 'https://image.civitai.com/x/9002.jpeg' });
+    expect(projectInboundPayload('IMAGES_RESULT', shaped)).not.toBe(shaped); // it CAN move
+    expect(projectInboundPayload('PUBLISH_RESULT', shaped)).toBe(shaped);
+    expect(projectInboundPayload('VIEWER_RESULT', shaped)).toBe(shaped);
+    expect(projectInboundPayload('SOME_FUTURE_TYPE', shaped)).toBe(shaped);
+  });
+
+  it('passes through a payload with no images array', () => {
+    const err = { requestId: 'r', error: 'nope' };
+    expect(projectInboundPayload('IMAGES_RESULT', err)).toBe(err);
+    expect(projectInboundPayload('IMAGES_RESULT', null)).toBeNull();
   });
 });
 

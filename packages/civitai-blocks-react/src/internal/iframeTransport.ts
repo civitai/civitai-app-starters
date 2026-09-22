@@ -22,7 +22,7 @@ import {
 } from './transport.js';
 import { OriginMatcher } from './originMatcher.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from './requestTimeouts.js';
-import { payloadValidatorFor } from './validate.js';
+import { payloadValidatorFor, projectInboundPayload } from './validate.js';
 
 import type { WrappedToken } from '@civitai/app-sdk/blocks';
 
@@ -620,7 +620,27 @@ export class IframeTransport implements BlockTransport {
     }
 
     // For request/response replies, look up the pending entry by `requestId`.
-    const payload = data.payload as { requestId?: unknown } | undefined;
+    //
+    // 🔴 PROJECTED, NOT RAW. This is the last point before an inbound payload
+    // crosses into block code — `pending.resolve` below and the push handlers
+    // further down are the only two deliveries, and BOTH read this binding.
+    // `projectInboundPayload` drops fields a consumer is not allowed to see
+    // (today: every key beyond `imageId`/`status` on a `hidden` gated image) and
+    // is identity for every other type. Validation said "deliver this message";
+    // this says "deliver these fields".
+    //
+    // The `TOKEN_REFRESH_RESPONSE` branch below still reads `data.payload` on
+    // purpose: it applies to the SNAPSHOT rather than handing anything to block
+    // code, and it needs the narrowing `isMessage` gave `data`. Every DELIVERY
+    // must read this binding instead — the raw object still carries whatever the
+    // host sent.
+    //
+    // It runs on the block's side of the boundary rather than in the hook
+    // because `getTransport` + `sendTypedRequest` are PUBLIC exports: a consumer
+    // that bypasses `useGatedImages()` still gets the projection.
+    const payload = projectInboundPayload(data.type, data.payload) as
+      | { requestId?: unknown }
+      | undefined;
     let pending: PendingRequest | undefined;
     let matchedRequestId: string | null = null;
     if (payload && typeof payload.requestId === 'string') {
@@ -659,7 +679,8 @@ export class IframeTransport implements BlockTransport {
     // listeners, so they fall through to the no-op tail below unchanged.
     const handlers = this.pushListeners.get(data.type);
     if (handlers && handlers.size > 0) {
-      for (const handler of [...handlers]) handler(data.payload);
+      // `payload`, not `data.payload`: the projected view — see the binding above.
+      for (const handler of [...handlers]) handler(payload);
       return;
     }
 

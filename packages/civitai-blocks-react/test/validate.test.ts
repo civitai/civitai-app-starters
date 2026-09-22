@@ -1000,18 +1000,41 @@ describe('isValidCreatePostResult', () => {
   });
 });
 
+/**
+ * 🔴 WHAT THIS BLOCK DOES **NOT** COVER ANY MORE, AND WHY IT STILL EXISTS (#394).
+ *
+ * "Union member with no `case` in the switch" is now a COMPILE error — the
+ * `default:` arm binds the switch subject to `never`, so adding a type to
+ * `ParentToBlockMessage` without a validator entry fails `tsc`, not a test. The
+ * list below used to be the only thing catching that, and it was a hand-written
+ * list, which is to say it caught it only for the types somebody remembered.
+ *
+ * What the `never` bind does NOT catch, and what this block is now scoped to:
+ *   - a case that satisfies exhaustiveness by returning `null`
+ *     (`case 'NEW_TYPE': return null;` type-checks perfectly);
+ *   - a case wired to the WRONG validator.
+ * Hence: `toBeTypeOf('function')` for "has a validator at all", and identity
+ * (`toBe(...)`) for the few whose mis-wiring is worst.
+ *
+ * ⚠️ IT IS STILL A HAND-MAINTAINED LIST AND CANNOT BE MADE OTHERWISE HERE. The
+ * union is a TYPE — there is no runtime array of `ParentToBlockMessage` members
+ * to enumerate (the sibling `BLOCK_TO_PARENT_MESSAGE_TYPES` exists only for the
+ * other direction), and a compile-enforced array declared in THIS file would be
+ * inert: `tsconfig.json` excludes `test/`, so nothing type-checks it. The
+ * compile-time gate in `validate.ts` is what makes the omission case
+ * unforgettable; this list is the residual.
+ */
 describe('payloadValidatorFor', () => {
-  it('returns a validator for each documented inbound type', () => {
+  it('maps every payload-carrying type to a validator (not null, not the wrong one)', () => {
     expect(payloadValidatorFor('BLOCK_INIT')).toBeTypeOf('function');
     expect(payloadValidatorFor('TOKEN_REFRESH')).toBeTypeOf('function');
     expect(payloadValidatorFor('TOKEN_REFRESH_RESPONSE')).toBeTypeOf('function');
-    // 🔴 The mapping is the whole guard. `payloadValidatorFor`'s `default:` arm
-    // returns null (a STRUCTURAL PASS), so a THEME_CHANGE with no entry here
-    // would reach the snapshot UNVALIDATED — writing the validator and
-    // forgetting the switch is the bug this line exists to catch.
+    // 🔴 Identity, not presence: the `never` bind proves THEME_CHANGE is mapped,
+    // it does not prove it is mapped to the right guard. A THEME_CHANGE routed
+    // to someone else's validator reaches the snapshot effectively unchecked.
     expect(payloadValidatorFor('THEME_CHANGE')).toBe(isValidThemeChange);
-    // Same reason, same trap: a CONSENT_UNAVAILABLE with no entry here hits the
-    // `default:` arm and reaches the block's push listener UNVALIDATED.
+    // Same reason: a mis-wired CONSENT_UNAVAILABLE reaches the block's push
+    // listener having been shape-checked against the wrong contract.
     expect(payloadValidatorFor('CONSENT_UNAVAILABLE')).toBe(isValidConsentUnavailable);
     expect(payloadValidatorFor('ESTIMATE_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('WORKFLOW_SUBMITTED')).toBeTypeOf('function');
@@ -1028,20 +1051,17 @@ describe('payloadValidatorFor', () => {
     expect(payloadValidatorFor('CANCEL_APP_WORKFLOW_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('IMAGE_UPLOAD_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('SHARED_UPDATE_RESULT')).toBeTypeOf('function');
-    // 🔴 Identity, not `toBeTypeOf`. The `default:` arm is a STRUCTURAL PASS, so
-    // an unmapped COLLECTION_FOLLOW_RESULT reaches the pending-request table
-    // unvalidated — and this reply settles an ACCOUNT WRITE, so a malformed one
-    // would resolve a follow toggle against a shape nothing checked.
+    // 🔴 Identity, not `toBeTypeOf`. This reply settles an ACCOUNT WRITE, so a
+    // mis-wired validator would resolve a follow toggle against a shape checked
+    // under a different contract. (Omission itself is now a build error.)
     expect(payloadValidatorFor('COLLECTION_FOLLOW_RESULT')).toBe(isValidCollectionFollowResult);
-    // 🔴 Identity, and the highest-stakes entry in this list. The `default:` arm
-    // is a STRUCTURAL PASS, so omitting the switch case is NOT a build error and
-    // NOT a typecheck error — the compiler-enforced ledger is the timeout
-    // bucket, not this. An unmapped CREATE_POST_RESULT reaches the pending-
-    // request table unvalidated and settles a PUBLIC POST against a shape
-    // nothing checked. See `iframe-transport.test.ts` for the behavioural half
-    // (a well-formed reply RESOLVES, a malformed one is DROPPED).
+    // 🔴 Identity, and the highest-stakes entry in this list: this reply settles
+    // a PUBLIC POST. Omitting the case is a typecheck error as of #394; naming
+    // the wrong validator, or `return null`, still is not — that is this line's
+    // job. See `iframe-transport.test.ts` for the behavioural half (a
+    // well-formed reply RESOLVES, a malformed one is DROPPED).
     expect(payloadValidatorFor('CREATE_POST_RESULT')).toBe(isValidCreatePostResult);
-    // The 15 reply types added in this PR (previously `default: null`).
+    // The 15 reply types added in the storage/shared PR (previously `default: null`).
     for (const t of [
       'APP_STORAGE_GET_RESULT',
       'APP_STORAGE_SET_RESULT',
