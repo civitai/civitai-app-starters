@@ -1,5 +1,54 @@
 # @civitai/theme
 
+## 0.4.0
+
+### Minor Changes
+
+- 266a021: `--civitai-color-surface` is a raised surface in dark mode: `#25262B`, measured
+  against civitai.com. It derived from `--mantine-color-body` in both schemes, so
+  in dark it was the page colour itself — every card, menu, modal, toast and input
+  was invisible against the page except for its border. Light mode is unchanged,
+  since `surface` and `surface-2` are the same `#fefefe` there.
+- 266a021: Follow `prefers-color-scheme` when no `data-theme` is set. The dark token values
+  are now also emitted under `@media (prefers-color-scheme: dark)`, scoped to
+  `:root:not([data-theme])`, so a page that never picks a theme starts in the one
+  the OS asks for. An app that sets the attribute — including a block acting on the
+  host's `THEME_CHANGE` — never matches the new block and is unaffected; every
+  pre-existing byte of the stylesheet is unchanged.
+- 266a021: Express "gray in light, surface in dark" as tokens instead of descendant selectors.
+
+  Four rules in `components.css` were written as `[data-theme='dark'] <descendant>`.
+  An ancestor selector cannot cross a shadow boundary and `:host-context()` has
+  never shipped in Firefox, so those four decisions were unreachable from a custom
+  element. They are now `--civitai-card-border-width`, `--civitai-color-track`,
+  `--civitai-color-segmented-bg` and `--civitai-color-media-placeholder`, which
+  inherit into a shadow root like any custom property.
+
+  Mantine has no variable carrying either side of these pairs, so `TokenSpec.source`
+  and `.literal` now each accept a `{ light, dark }` pair resolved against its own
+  scheme's variable map. `--civitai-card-border-width` is a width rather than a
+  colour: dark removes the default hairline's box, and a transparent colour would
+  leave 1px of it on every card.
+
+  No visual change — computed styles are unchanged in both themes. Existing tokens
+  and artifact bytes are untouched; the new tokens are appended.
+
+### Patch Changes
+
+- 266a021: Declare `color-scheme` alongside the tokens.
+
+  A dark surface with no `color-scheme` leaves the browser painting every NATIVE
+  control in light mode: a number input's spinner, a `<select>`'s disclosure
+  caret, checkbox and radio defaults, scrollbars and the text caret all render
+  pale against a dark background. It is not a token — it is the instruction that
+  makes the UA's own widgets match the surface they sit on.
+
+  Emitted in `:root` and `[data-theme='light']` as `light`, in
+  `[data-theme='dark']` as `dark`. It inherits, so it also reaches native
+  controls inside a shadow root, which is where the custom elements put theirs.
+
+  Nothing consumers wrote changes; existing attribute markup gets the same fix.
+
 ## 0.3.2
 
 ### Patch Changes
@@ -18,10 +67,10 @@
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-      before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-               @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-      after    @civitai/theme       0.3.1                   — 1 copy
-               @civitai/components  0.4.2                   — 1 copy
+        before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                 @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+        after    @civitai/theme       0.3.1                   — 1 copy
+                 @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
