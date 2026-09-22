@@ -40,6 +40,15 @@ export const EVENTS: Record<string, EventBinding[]> = {
   'civitai-modal': [{ prop: 'onClose', event: 'close' }],
   'civitai-reaction': [{ prop: 'onReact', event: 'react', detail: 'ReactionDetail' }],
   'civitai-tabs': [{ prop: 'onChange', event: 'change' }],
+  'civitai-workflow-button': [
+    { prop: 'onPriced', event: 'priced' },
+    { prop: 'onSubmitted', event: 'submitted' },
+    { prop: 'onProgress', event: 'progress' },
+    { prop: 'onFinished', event: 'finished' },
+    { prop: 'onCanceled', event: 'canceled' },
+    // onError, like onLoad, is one React wires itself on any host element.
+    { prop: 'onWorkflowError', event: 'error' },
+  ],
   'civitai-tag': [{ prop: 'onVote', event: 'vote', detail: 'TagVoteDetail' }],
   'civitai-toast': [{ prop: 'onClose', event: 'close' }],
 };

@@ -13,3 +13,5 @@ It has its own entry points, `@civitai/components/civitai-sign-in-button` and
 `/define`, and is left out of `register`, `elements.js` and `site-elements.js`,
 so a page that wants only the look never bundles the SDK. `@civitai/sdk` is an
 optional peer dependency: install it only to use this element.
+
+`variant`, `size` and `full-width` pass through to the button it wraps.
