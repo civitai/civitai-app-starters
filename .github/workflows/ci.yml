@@ -442,3 +442,38 @@ jobs:
       - run: pnpm check:shipped-sourcemaps:selftest
 
       - run: pnpm check:shipped-sourcemaps
+
+  # What a CONSUMER can NAME, as opposed to what the packages export by
+  # accident. Every typecheck job above resolves `src/` or the workspace link
+  # and sees every local declaration, so none of them can tell that
+  # `responseToResources`'s parameter type had no name on the published surface
+  # (#379). Its own job, and not a `tests/guards/` unit test, because it needs
+  # the installed `typescript` AND a built `dist/` — `pnpm test:guards` runs in
+  # the required matrix job BEFORE the install.
+  public-types:
+    name: Public type closure (built .d.ts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The `.d.ts` barrels only exist after a build; the checker FAILS on an
+      # unbuilt or half-built tree rather than reporting a vacuous "0 violations"
+      # over nothing scanned.
+      - run: pnpm -r --filter "./packages/*" build
+
+      # NEGATIVE + POSITIVE control FIRST — a deliberately unexported type that
+      # must be reported, and the same fixture exported that must report zero
+      # over a non-zero number of walked references. Ordered like the sibling
+      # `packaging` and `readme-snippets` jobs, and for the same reason.
+      - run: pnpm check:public-types:selftest
+
+      - run: pnpm check:public-types
