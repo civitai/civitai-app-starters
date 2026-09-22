@@ -44,7 +44,8 @@
  * alone:
  *
  *   1. a pattern matching NO file is still the unbuilt case, and still fails;
- *   2. more than one `*` is REFUSED (Node allows exactly one);
+ *   2. the key/target PAIR must hold exactly one `*` EACH — the four mismatched
+ *      shapes are refused, not repaired (Node rejects them too);
  *   3. a `*` that spans directories is REFUSED rather than silently scanning a
  *      subset of what Node would resolve;
  *   4. an empty (0-byte) match is skipped, exactly as an empty plain target is.
@@ -52,6 +53,14 @@
  * Plus a fifth: the NON-pattern branch is unchanged in both directions, since
  * every package on `main` uses it and a fix that perturbed it would be a
  * regression in the other direction.
+ *
+ * Property 2 started out as "more than one `*` in the target is refused", which
+ * inspected ONE SIDE of a relationship its own comment described. CodeQL
+ * (`js/incomplete-sanitization`) caught it on #433: the entry label substitutes
+ * into the KEY, `String.replace` with a string rewrites only the FIRST match,
+ * and the key was never validated — so a two-`*` key leaked a `*` into a label
+ * no consumer can import, and a zero-`*` key made the substitution a no-op that
+ * gave every expanded file the SAME label. Widened to pin the pair.
  *
  * ## 🔴 WHICH TIER THIS RUNS IN, AND WHAT THE OTHER TIER CANNOT SEE
  *
@@ -345,18 +354,45 @@ describe('check-public-type-closure — exports subpath patterns', { skip: TS_PA
     assert.ok(!r.out.includes('hollow'), ctx('the 0-byte match was scanned', r));
   });
 
-  test('more than one `*` is REFUSED, not silently half-resolved', async () => {
-    const r = await run({
-      pkgExports: { [TARGET]: { './elements/*': { types: './dist/*/elements/*.d.ts' } } },
-      files: { [`${TARGET}/dist/elements/alpha.d.ts`]: fillerDts('Alpha') },
-    });
+  /**
+   * The key/target pair. Node requires exactly one `*` in EACH half, and the
+   * guard's refusal originally inspected only the target — a check whose
+   * comment claimed a relationship while the code read one side. CodeQL's
+   * `js/incomplete-sanitization` caught the consequence on #433: the label is
+   * built by substituting into the KEY, and `replace` rewrites only the first
+   * match, so an unvalidated key is wrong two silent ways.
+   *
+   * Each row is a shape Node itself rejects, so refusing is not conservatism —
+   * repairing it would mean guessing which half the author meant.
+   */
+  for (const [what, subpath, dts, keyN, dtsN] of [
+    ['two `*` in the TARGET', './elements/*', './dist/*/elements/*.d.ts', 1, 2],
+    ['two `*` in the KEY', './a*/b*', './dist/elements/*.d.ts', 2, 1],
+    ['no `*` in the KEY (substitution would be a silent no-op)', './elements', './dist/elements/*.d.ts', 0, 1],
+    ['no `*` in the TARGET (a `*` key over a plain file)', './elements/*', './dist/index.d.ts', 1, 0],
+  ]) {
+    test(`a mismatched key/target pair is REFUSED — ${what}`, async () => {
+      const r = await run({
+        pkgExports: { [TARGET]: { [subpath]: { types: dts } } },
+        files: {
+          [`${TARGET}/dist/elements/alpha.d.ts`]: fillerDts('Alpha'),
+          [`${TARGET}/dist/index.d.ts`]: fillerDts('Root'),
+        },
+      });
 
-    assert.equal(r.code, 1, ctx('a two-`*` pattern must be refused', r));
-    assert.ok(
-      r.out.includes('has more than one `*`'),
-      ctx('a two-`*` pattern was not refused by name', r),
-    );
-  });
+      assert.equal(r.code, 1, ctx(`${what} must be refused`, r));
+      assert.ok(
+        r.out.includes('is not a valid subpath pattern'),
+        ctx(`${what} was not refused by name`, r),
+      );
+      // The diagnosis must NAME both counts — "invalid" without saying which
+      // half is off is a refusal nobody can act on.
+      assert.ok(
+        r.out.includes(`the key has ${keyN} \`*\` and the target has ${dtsN}`),
+        ctx(`the refusal did not report the actual star counts (${keyN}/${dtsN})`, r),
+      );
+    });
+  }
 
   test('a `*` that spans directories is REFUSED rather than scanning a subset', async () => {
     // Node's `*` matches across `/`, so `./dist/*.d.ts` with a nested tree

@@ -290,14 +290,56 @@ function fail(message) {
   process.exit(1);
 }
 
+const countStars = (s) => s.split('*').length - 1;
+
+/**
+ * A subpath pattern is a RELATIONSHIP between the exports KEY and its TARGET,
+ * and Node requires exactly one `*` in each: the key's `*` is what the target's
+ * `*` is substituted from. So validate the pair, in one place, before either
+ * half is used.
+ *
+ * 🔴 The first revision of this checked only the TARGET, and that is a guard
+ * whose comment claimed a relationship while the code inspected one side.
+ * CodeQL's `js/incomplete-sanitization` caught the consequence on PR #433:
+ * `subpath.replace('*', star)` rewrites only the FIRST match, so an unvalidated
+ * key went wrong two silent ways —
+ *
+ *   key `./a*\/b*` + one-`*` target: the second `*` survives into the label and
+ *     the entry is reported under a subpath no consumer can import;
+ *   key `./elements` + one-`*` target: `replace` is a NO-OP, so every expanded
+ *     file gets the IDENTICAL label — N entries collapse to one name and a
+ *     finding cannot be traced back to the file it came from.
+ *
+ * Both are REFUSED rather than repaired. A manifest in either shape is invalid
+ * to Node too, and guessing which half the author meant is how a guard starts
+ * lying about what it scanned.
+ */
+function assertPatternPair(subpath, dts) {
+  const keyStars = countStars(subpath);
+  const dtsStars = countStars(dts);
+  if (keyStars === 0 && dtsStars === 0) return false;
+  if (keyStars !== 1 || dtsStars !== 1) {
+    fail(
+      `exports pattern \`${subpath}\` -> \`${dts}\` is not a valid subpath pattern:\n` +
+        `  the key has ${keyStars} \`*\` and the target has ${dtsStars}.\n` +
+        'Node requires EXACTLY ONE in each, and the key\'s `*` is what the target\n' +
+        'substitutes. Refusing to guess which half is wrong.',
+    );
+  }
+  return true;
+}
+
 /**
  * Expand ONE `exports` subpath pattern against the built tree.
  *
- * Node allows a single `*` in a subpath pattern, and it matches across `/`. Only
- * a single-directory expansion is implemented here because that is the only shape
- * this repo declares; a pattern whose `*` spans directories would silently match
- * less than Node does, so it is REFUSED rather than under-reported — a guard that
- * quietly scans a subset is the failure this whole script exists to avoid.
+ * Node's `*` matches across `/`. Only a single-directory expansion is implemented
+ * here because that is the only shape this repo declares; a pattern whose `*`
+ * spans directories would silently match less than Node does, so it is REFUSED
+ * rather than under-reported — a guard that quietly scans a subset is the failure
+ * this whole script exists to avoid.
+ *
+ * The key/target pair is already validated by {@link assertPatternPair}, so `dts`
+ * holds exactly one `*` by the time it gets here.
  *
  * Returns `[{ abs, star }]` — the resolved file, and what `*` bound to, so the
  * caller can label the entry the way a consumer would actually import it.
@@ -306,9 +348,6 @@ function expandPattern(pkgDir, dts) {
   const star = dts.indexOf('*');
   const prefix = dts.slice(0, star);
   const suffix = dts.slice(star + 1);
-  if (dts.indexOf('*', star + 1) !== -1) {
-    fail(`exports pattern \`${dts}\` has more than one \`*\` — Node allows exactly one.`);
-  }
   if (suffix.includes('/')) {
     fail(
       `exports pattern \`${dts}\` expands across directories (\`*\` before a \`/\`).\n` +
@@ -349,7 +388,12 @@ function collectEntries() {
       // `.d.ts` files and `index.d.ts` at 2,413 B while this said "missing or empty".
       // Expand it instead, and keep the guard's teeth — a pattern matching NOTHING is
       // exactly the unbuilt case it exists to catch, so that still fails.
-      if (dts.includes('*')) {
+      //
+      // Branch on the validated PAIR, not on `dts` alone: a `*` in either half
+      // makes this a pattern, and a `*` in only one half is a refusal. Branching
+      // on the target alone would let a `*`-bearing KEY with a plain target slip
+      // through as an ordinary entry and be labelled with a literal `*`.
+      if (assertPatternPair(subpath, dts)) {
         const matches = expandPattern(pkgDir, dts);
         if (matches.length === 0) {
           unbuilt.push(`${manifest.name}${subpath.slice(1)} -> ${dts} (pattern matched no file)`);
@@ -358,7 +402,10 @@ function collectEntries() {
         for (const m of matches) {
           entries.push({
             pkg: manifest.name,
-            label: `${manifest.name}${subpath.slice(1).replace('*', m.star)}`,
+            // `replaceAll` on a string with EXACTLY ONE `*` (assertPatternPair
+            // guarantees it) — spelled so neither a reader nor a scanner has to
+            // reconstruct that proof to see the substitution is total.
+            label: `${manifest.name}${subpath.slice(1).replaceAll('*', m.star)}`,
             dts: m.abs,
           });
         }
