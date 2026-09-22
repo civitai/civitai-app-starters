@@ -36,6 +36,13 @@ export function resolveBlockTier(width: number): BlockSizeTier {
   return tier;
 }
 
+/**
+ * What {@link useBlockBreakpoint} returns. An alias for the long-standing
+ * {@link BlockBreakpoint} name, which stays exported and unchanged — see
+ * `./returnTypeLedger.js`.
+ */
+export type UseBlockBreakpoint = BlockBreakpoint;
+
 export interface BlockBreakpoint {
   /**
    * The current tier. `'base'` while unmeasured — see `measured`.
@@ -102,7 +109,7 @@ export interface BlockBreakpoint {
  *   </div>
  * );
  */
-export function useBlockBreakpoint(ref?: RefObject<HTMLElement | null>): BlockBreakpoint {
+export function useBlockBreakpoint(ref?: RefObject<HTMLElement | null>): UseBlockBreakpoint {
   // `null` means UNMEASURED — distinct from a measured `'base'`. See `measured`.
   const [tier, setTier] = useState<BlockSizeTier | null>(null);
 

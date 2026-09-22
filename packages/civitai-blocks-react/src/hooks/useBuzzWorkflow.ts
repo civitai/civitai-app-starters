@@ -31,7 +31,7 @@ const TERMINAL_STATUSES: ReadonlySet<BlockWorkflowSnapshot['status']> = new Set(
 const WORKFLOW_REQUEST_TIMEOUT_MS = 120_000;
 
 /**
- * Default orchestrator-side hold per {@link UseBuzzWorkflowReturn.watch} poll,
+ * Default orchestrator-side hold per {@link UseBuzzWorkflow.watch} poll,
  * in SECONDS.
  *
  * 🔴 THE UNIT IS SECONDS, matching the orchestrator's `?wait=` parameter — not
@@ -59,7 +59,7 @@ const DEFAULT_WATCH_TIMEOUT_MS = 10 * 60_000;
 /** How many CONSECUTIVE transport failures `watch` absorbs before rejecting. */
 const DEFAULT_WATCH_MAX_RETRIES = 3;
 
-/** Optional controls for {@link UseBuzzWorkflowReturn.watch}. */
+/** Optional controls for {@link UseBuzzWorkflow.watch}. */
 export interface WatchWorkflowOptions {
   /**
    * Called with EVERY snapshot the host returns, intermediate ones included, in
@@ -76,7 +76,7 @@ export interface WatchWorkflowOptions {
    *
    * 🔴 This does NOT cancel the workflow — it stops watching it. Buzz is already
    * spent and the orchestrator keeps running. To actually stop the work, call
-   * {@link UseBuzzWorkflowReturn.cancel}.
+   * {@link UseBuzzWorkflow.cancel}.
    */
   signal?: AbortSignal;
   /**
@@ -137,7 +137,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 /**
- * Thrown by {@link UseBuzzWorkflowReturn.estimate} when the host's reply does not
+ * Thrown by {@link UseBuzzWorkflow.estimate} when the host's reply does not
  * carry a usable price — either because the estimate ERRORED, or because it came
  * back without a numeric `cost.total`.
  *
@@ -312,13 +312,13 @@ export class WorkflowEstimateError extends Error {
 const HOST_SYNTHESISED_WORKFLOW_ID = 'failed';
 
 /**
- * Why {@link UseBuzzWorkflowReturn.submit} rejected. **The two differ on whether
+ * Why {@link UseBuzzWorkflow.submit} rejected. **The two differ on whether
  * money may already have moved** — see {@link WorkflowSubmitError.code}.
  */
 export type WorkflowSubmitErrorCode = 'exception' | 'workflow-failed';
 
 /**
- * Thrown by {@link UseBuzzWorkflowReturn.submit} when the host's reply carries no
+ * Thrown by {@link UseBuzzWorkflow.submit} when the host's reply carries no
  * usable workflow outcome — either the submit ERRORED before anything was queued,
  * or a workflow-shaped reply came back already failed with no price.
  *
@@ -454,7 +454,7 @@ export class WorkflowSubmitError extends Error {
    *   `'whatif'` lands here — correctly, because the cautious money reading still
    *   applies — but there is nothing to poll. Guard with
    *   `err.snapshot.workflowId !== 'whatif'` before calling
-   *   {@link UseBuzzWorkflowReturn.watch} / {@link UseBuzzWorkflowReturn.poll} to
+   *   {@link UseBuzzWorkflow.watch} / {@link UseBuzzWorkflow.poll} to
    *   learn the workflow's actual fate before spending again.
    *
    * A union rather than a boolean so a future producer gets its own code without
@@ -516,7 +516,7 @@ export interface SubmitWorkflowOptions {
   idempotencyKey?: string;
 }
 
-interface UseBuzzWorkflowReturn {
+export interface UseBuzzWorkflow {
   /**
    * Price a workflow without queueing it. Resolves ONLY with a snapshot that
    * carries a numeric `cost.total`.
@@ -583,7 +583,7 @@ interface UseBuzzWorkflowReturn {
   ) => Promise<BlockWorkflowSnapshot>;
   /**
    * ONE host round-trip. The low-level pull primitive — you almost certainly
-   * want {@link UseBuzzWorkflowReturn.watch} instead, which owns the loop.
+   * want {@link UseBuzzWorkflow.watch} instead, which owns the loop.
    */
   poll: (workflowId: string) => Promise<BlockWorkflowSnapshot>;
   /**
@@ -591,7 +591,7 @@ interface UseBuzzWorkflowReturn {
    * `onUpdate` with every intermediate snapshot along the way.
    *
    * This is the replacement for the `useEffect` + `setTimeout` backoff every
-   * block used to hand-write around {@link UseBuzzWorkflowReturn.poll}. The app
+   * block used to hand-write around {@link UseBuzzWorkflow.poll}. The app
    * consumes a promise and/or a callback; the loop lives here.
    *
    * 🔴 THE LOOP IS SEQUENTIAL AND NON-OVERLAPPING BY CONSTRUCTION — each poll is
@@ -741,7 +741,7 @@ interface UseBuzzWorkflowReturn {
  *   }
  * }
  */
-export function useBuzzWorkflow(): UseBuzzWorkflowReturn {
+export function useBuzzWorkflow(): UseBuzzWorkflow {
   const [status, setStatus] = useState<WorkflowStatus>('idle');
   const [result, setResult] = useState<BlockWorkflowSnapshot | null>(null);
   const [error, setError] = useState<Error | null>(null);

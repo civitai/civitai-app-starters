@@ -3,6 +3,12 @@ import type { Theme } from '@civitai/app-sdk/blocks';
 import { useTransportSnapshot } from './useBlockContext.js';
 
 /**
+ * What {@link useBlockTheme} returns. An alias — see `./returnTypeLedger.js` for why
+ * every hook on the entry has one of these.
+ */
+export type UseBlockTheme = Theme;
+
+/**
  * The host's CURRENT site theme (`'light' | 'dark'`), kept live for the whole
  * life of the block ON THE IFRAME TRANSPORT.
  *
@@ -38,6 +44,6 @@ import { useTransportSnapshot } from './useBlockContext.js';
  * const theme = useBlockTheme();
  * return <div data-theme={theme}>…</div>;
  */
-export function useBlockTheme(): Theme {
+export function useBlockTheme(): UseBlockTheme {
   return useTransportSnapshot().theme;
 }

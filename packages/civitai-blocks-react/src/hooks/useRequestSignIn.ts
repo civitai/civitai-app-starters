@@ -2,6 +2,11 @@ import { useCallback } from 'react';
 
 import { getTransport } from '../transport/singleton.js';
 
+/** What {@link useRequestSignIn} returns. */
+export interface UseRequestSignIn {
+  requestSignIn: (payload?: { returnUrl?: string }) => void;
+}
+
 /**
  * Anonymous conversion. Asks the host to start civitai.com's login flow when a
  * logged-out viewer (`useBlockContext().viewer === null`) clicks an action that
@@ -20,9 +25,7 @@ import { getTransport } from '../transport/singleton.js';
  * const { requestSignIn } = useRequestSignIn();
  * if (viewer === null) return <button onClick={() => requestSignIn()}>Sign in</button>;
  */
-export function useRequestSignIn(): {
-  requestSignIn: (payload?: { returnUrl?: string }) => void;
-} {
+export function useRequestSignIn(): UseRequestSignIn {
   const requestSignIn = useCallback((payload?: { returnUrl?: string }) => {
     getTransport().sendMessage({
       type: 'REQUEST_SIGN_IN',

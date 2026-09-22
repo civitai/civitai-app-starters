@@ -9,6 +9,11 @@ import {
 import { useHostOrigin } from './useHostOrigin.js';
 import { useBlockToken } from './useBlockToken.js';
 
+/** What {@link useGenerationResources} returns. */
+export interface UseGenerationResources {
+  fetch: (versionIds: number[]) => Promise<BlockResourceInfo[]>;
+}
+
 /**
  * Backstop timeout for the direct REST fetch. Unlike the postMessage hooks
  * (which inherit the transport's 30s request timeout), this hook talks to the
@@ -39,9 +44,7 @@ const GENERATION_RESOURCES_TIMEOUT_MS = 30_000;
  * const resources = await fetch([691639, 666002]);   // by saved versionIds
  * // resources[0].strength / .minStrength / .maxStrength / .trainedWords / .clipSkip
  */
-export function useGenerationResources(): {
-  fetch: (versionIds: number[]) => Promise<BlockResourceInfo[]>;
-} {
+export function useGenerationResources(): UseGenerationResources {
   const host = useHostOrigin();
   const { raw } = useBlockToken();
 

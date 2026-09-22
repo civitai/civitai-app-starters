@@ -3,6 +3,11 @@ import { useCallback } from 'react';
 import { armConsentRefusalLatch } from '../internal/consentRefusalLatch.js';
 import { getTransport } from '../transport/singleton.js';
 
+/** What {@link useRequestConsent} returns. */
+export interface UseRequestConsent {
+  requestConsent: (payload?: { scopes?: string[] }) => void;
+}
+
 /**
  * Lazy consent. Asks the host to open civitai.com's consent UI when a
  * LOGGED-IN viewer clicks an action whose consent-gated scope the block token
@@ -44,9 +49,7 @@ import { getTransport } from '../transport/singleton.js';
  * // viewer is logged in but the token lacks the spend scopes:
  * requestConsent({ scopes: ['ai:write:budgeted', 'buzz:read:self'] });
  */
-export function useRequestConsent(): {
-  requestConsent: (payload?: { scopes?: string[] }) => void;
-} {
+export function useRequestConsent(): UseRequestConsent {
   const requestConsent = useCallback((payload?: { scopes?: string[] }) => {
     const transport = getTransport();
     // Arm the refusal buffer BEFORE the request goes out. A `CONSENT_UNAVAILABLE`

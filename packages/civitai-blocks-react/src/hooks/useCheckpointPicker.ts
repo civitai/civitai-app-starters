@@ -7,6 +7,22 @@ import { throwOnFailedReply } from '../internal/replyError.js';
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
 
+/** What {@link useCheckpointPicker} returns. */
+export interface UseCheckpointPicker {
+  open: (opts: {
+    /**
+     * Ecosystem key (e.g. 'Flux1', 'SDXL'). Get it from
+     * `useBlockContext().context.checkpoint?.baseModel` — but for the
+     * picker filter the host will collapse to the ecosystem family, so
+     * any baseModel in the family works as a hint.
+     */
+    baseModelGroup: string;
+    /** Currently-selected versionId so the picker can pre-highlight it. */
+    currentVersionId?: number;
+  }) => Promise<{ selected?: BlockCheckpointInfo }>;
+  persist: (versionId: number | null) => Promise<void>;
+}
+
 /**
  * Drives the platform-side Checkpoint picker and the persist-override flow.
  *
@@ -28,20 +44,7 @@ import { sendTypedRequest } from '../transport/transport.js';
  * const { selected } = await open({ baseModelGroup: 'SDXL', currentVersionId });
  * if (selected) await persist(selected.versionId);   // null clears the override
  */
-export function useCheckpointPicker(): {
-  open: (opts: {
-    /**
-     * Ecosystem key (e.g. 'Flux1', 'SDXL'). Get it from
-     * `useBlockContext().context.checkpoint?.baseModel` — but for the
-     * picker filter the host will collapse to the ecosystem family, so
-     * any baseModel in the family works as a hint.
-     */
-    baseModelGroup: string;
-    /** Currently-selected versionId so the picker can pre-highlight it. */
-    currentVersionId?: number;
-  }) => Promise<{ selected?: BlockCheckpointInfo }>;
-  persist: (versionId: number | null) => Promise<void>;
-} {
+export function useCheckpointPicker(): UseCheckpointPicker {
   const open = useCallback(
     async (opts: { baseModelGroup: string; currentVersionId?: number }) => {
       const { selected } = await sendTypedRequest(

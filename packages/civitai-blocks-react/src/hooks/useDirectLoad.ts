@@ -3,6 +3,13 @@ import { useEffect, useState } from 'react';
 import { DIRECT_LOAD_TIMEOUT_MS } from '../transport/directLoad.js';
 import { useTransportSnapshot } from './useBlockContext.js';
 
+/**
+ * What {@link useDirectLoad} returns: `true` once the block is known to be
+ * loaded directly rather than embedded. #380 — the options type has been
+ * exported since this hook shipped; the RETURN type had no name at all.
+ */
+export type UseDirectLoad = boolean;
+
 export interface UseDirectLoadOptions {
   /**
    * Milliseconds to wait for `BLOCK_INIT` before treating a top-level load as a
@@ -55,7 +62,7 @@ function isTopLevel(): boolean {
  * Once `ready` flips it stays authoritative: this can never return `true` while
  * `ready` is `true`, so a late init can't leave a stuck fallback.
  */
-export function useDirectLoad(options?: UseDirectLoadOptions): boolean {
+export function useDirectLoad(options?: UseDirectLoadOptions): UseDirectLoad {
   const timeoutMs = options?.timeoutMs ?? DIRECT_LOAD_TIMEOUT_MS;
   const ready = useTransportSnapshot().ready;
   // Sampled once per mount — top-level-ness doesn't change during a page's life.
