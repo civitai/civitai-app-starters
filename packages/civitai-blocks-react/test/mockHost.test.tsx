@@ -10,7 +10,7 @@ import { useRequestConsent } from '../src/hooks/useRequestConsent.js';
 import { useBlockToken } from '../src/hooks/useBlockToken.js';
 import { useAppWorkflows } from '../src/hooks/useAppWorkflows.js';
 import { useGatedImages } from '../src/hooks/useGatedImages.js';
-import { getTransport } from '../src/internal/singleton.js';
+import { getTransport } from '../src/transport/singleton.js';
 import { createMockHost, resetTransport } from '../src/testing.js';
 
 /**

@@ -61,29 +61,77 @@ Audited for code quality, dead code, over-exporting, comment rot, and bloat.
 
 ## State now
 
-- **Branch/PR:** base clone on `main` @ `38a0b5d`, clean. One open PR of mine from this
-  session: **#400** (`zach/blocks-client-react` → **`feat/blocks-client`**, not `main`).
-  Worktree `civitai-app-starters-clientreact` holds it, clean.
-- ✅ **The launch-audit arc is one item from its closing condition.** The repaired check
-  returns **1**: only **#328** remains of the 13 audited blockers. Control: 48 open issues
-  total, so the query does return rows.
-- ✅ **Seven blockers closed 2026-09-21** — #322, #323, #324, #325, #327, #329, #333 — each
-  already fixed in code by a PR that never wrote "Closes #N", each traced to its fixing sha,
-  re-measured against `eed2df5`, and closed with that evidence attached. Closures confirmed
-  by reading back `state == CLOSED`, not by exit codes.
-- ✅ **All 28 recovered audit findings resolved; 25 filed as #374–#398.** 1 was already fixed
-  (#16 → #361/0.55.1), 1 already filed (#26 → #328/#247), 0 left unverified.
-- ✅ **Merged this session:** #372 (peer-floor ledger → measurement), #356 (this doc onto
-  `main`), #373 (recovery record + repaired closing condition), #399 (filing record).
-- 🔴 **NEW ARC OPENED, and it now dominates: Koen's SDK/components consolidation** on
-  `origin/feat/blocks-client` (34 ahead of `main`, **36 behind**, author Koen, **no PR**).
-  Reviewed in full; review filed as **#402**, sunset blocker as **#401**.
-- **#400 is red on 3 checks and NONE is attributable to it** — proven, see the investigation
-  block. Its own package: typecheck 0, build 0, **20 tests**, **6/6 mutants killed**.
-- **Deploy/verify status:** `@civitai/app-sdk@0.49.0` + `@civitai/blocks-react@0.56.0`
-  published 2026-09-21T15:33:32Z and verified by three claims with controls (registry
-  packument, `--dry-run` resolve, symbols read off the tarball). Nothing else deployed.
-- **IN FLIGHT:** nothing of mine. Everything now waits on Koen.
+**The arc's two open PRs are resolved and the two ungated CI jobs now gate.** Closing
+condition still returns **1** — only #328, Koen's move. Measured with controls in the
+same breath: open in `322–334` = **1**; open in `374–398` = **0**; positive control
+(total open issues) = **25**; negative control (`>= 99000`) = **0**.
+
+- Branch: `main` @ `827eccc`. Base clone in sync; tree clean (untracked `.claude/`,
+  `.venv/`, `opencode.json` only).
+- **No `clawgate-task:` field, again deliberately.** `clawgate_handoff.sh resolve`
+  exited **5**. Its positive control shows the board is reachable and the token
+  accepted, but a wrong session id also answers 200 with an empty array — so the zero
+  cannot distinguish "touched no task" from "wrong id". No field was invented.
+
+### Shipped this session
+
+- **#421 MERGED `827eccc`** — the publish-assert budget. Verified **by content on
+  `main`**, not by the merge's report: the workflow YAML re-parses, and the gate's
+  knobs `PUBLISH_CHECK_TRIES: '60'` / `PUBLISH_CHECK_DELAY: '10000'` derive a
+  **590.0s** window against the measured 369s worst lag (1.6×), `timeout-minutes: 40`.
+  The Release run on that merge concluded **success**. The one surviving `240` in the
+  file is prose in the rationale comment, not a knob.
+- **#420 CLOSED as superseded, not merged** — see the new gotcha below. It was a race
+  artifact of #408's own merge, not a pending release.
+- **Branch protection: 9 → 11 required contexts.** Added `Packaging (shipped
+  sourcemaps)` and `Public type closure (built .d.ts)` — the two jobs that ran but
+  gated nothing. Re-read back from the API rather than trusting the POST echo;
+  negative control (a bogus context name) = 0.
+- **#422 and #423 filed**, both with a closing condition and a positive control.
+
+### Carried forward — durable facts this replace would otherwise drop
+
+- **Seven of the original 13 blockers were closed 2026-09-21** — #322, #323, #324, #325,
+  #327, #329, #333 — each already fixed in code by a PR that never wrote "Closes #N", each
+  traced to its fixing sha, re-measured against `eed2df5`, and closed with that evidence
+  attached. Closures confirmed by reading back `state == CLOSED`, not by exit codes.
+- **`@civitai/app-sdk@0.49.0` published 2026-09-21T15:33:32Z** and verified by three claims
+  with controls (registry packument, `--dry-run` resolve, symbols off the real tarball with
+  `0.48.0` as the below-floor control that makes the floor EXACT rather than merely
+  sufficient).
+- **#385 CLOSED as `NOT_PLANNED`**, not fixed — its premise did not survive re-derivation
+  (evidence on the issue).
+- **The batched release published and verified**: app-sdk `0.50.0`, blocks-react `0.57.0`,
+  components + components-react `0.4.3`, theme `0.3.2` — all five live on the registry.
+
+⚠ **Size: this doc sits at the 65,536 B readability cap.** The **4,410 B retired
+`APP_STORAGE_ERROR_*` block** under *Open investigations* was evicted in the same commit as
+this update — it is an APPEND bucket, so a handoff delta structurally cannot remove it and
+it needed a deliberate edit. Its outcome table is preserved in the #372 issue thread. The
+next session should evict before appending, not after.
+
+### Required-status-checks change — what it cost
+
+Added with the **additive** endpoint (`POST …/required_status_checks/contexts`), not a
+PATCH, which would have replaced the list. The prior 9 contexts are snapshotted for
+rollback.
+
+Checked the real hazard first — a required context that does not always report blocks
+every PR forever. Both jobs have **no `if:`, no `needs:`**, and `ci.yml` has **no path
+filter** on `pull_request`, so they always report. No permanently-pending gate.
+
+**Blast radius, measured per PR head:** 10 of 11 open PRs lack ≥1 of the two contexts
+because their heads predate the jobs, and will read BLOCKED until CI re-runs on a push
+or reopen. Only #269 has both.
+
+| PR | newly-required contexts present |
+|---|---|
+| #269 | 2/2 |
+| #415, #272, #270 | 1/2 |
+| #400, #291, #271, #268, #267, #34, #32 | 0/2 |
+
+`strict: false` is unchanged — branches still need not be current with `main`, so the
+merged-tree checks this arc ran by hand remain load-bearing.
 
 ## Open investigations — live diagnosis state
 
@@ -123,70 +171,17 @@ Audited for code quality, dead code, over-exporting, comment rot, and bloat.
 - **Next probe:** in the `civitai/cli` repo (out of tree, not audited here):
   `find . -name '*.tmpl' -print0 | xargs -0 grep -n "blocks-react/testing"`
 
-### ✅ RETIRED 2026-09-21 — the four `APP_STORAGE_ERROR_*` peer-floor entries, converted to measurement
-**Outcome, so the numbers outlive this block.** #371 merged `10db006`; app-sdk `0.49.0` published
-15:33:32Z; the four symbols were read off the published tarball with `0.48.0` as the control:
-
-| symbol | `0.48.0` | `0.49.0` |
-|---|---|---|
-| `APP_STORAGE_ERROR_REQUEST_FAILED` | ABSENT | **PRESENT** |
-| `APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED` | ABSENT | **PRESENT** |
-| `APP_STORAGE_ERROR_USER_ROW_LIMIT` | ABSENT | **PRESENT** |
-| `APP_STORAGE_ERROR_VALUE_TOO_LARGE` | ABSENT | **PRESENT** |
-| total exports on `./blocks` | 29 | 34 |
-
-🔴 **The `0.48.0` column is the load-bearing half and is easy to skip.** Measuring only `0.49.0`
-proves the floor SUFFICIENT while leaving open that it is too HIGH — which is #309/#317/#344 with
-the sign flipped (a floor above the truth excludes a good release: spurious peer warnings,
-`--strict-peer-deps` install failures). `0.48.0` exporting none of the four is what makes
-`>=0.49.0` **EXACT**. Controls: the `29 → 34` delta is the probe moving (positive); an impossible
-symbol read ABSENT on both (negative); published `blocks-react@0.56.0` declares
-`>=0.49.0 <1.0.0` and `--dry-run` resolves app-sdk `0.49.0` under it (cross-check).
-Landed as **#372**, comment-only, guards 158/0 unchanged. **The prediction never materialised into
-harm** — no other app-sdk minor took `0.49.0`.
-
-<details><summary>Original investigation block (superseded — kept for the reasoning trail)</summary>
-
-- as-of: 2026-09-21
-- **Symptom + exact repro:** `packages/civitai-blocks-react/package.json` declares
-  `"@civitai/app-sdk": ">=0.49.0 <1.0.0"`, and `PEER_VALUE_SYMBOL_SINCE` in
-  `tests/guards/blocks-react-peer-floor.test.mjs` records four symbols at `0.49.0`:
-  `APP_STORAGE_ERROR_{REQUEST_FAILED,USER_QUOTA_EXCEEDED,USER_ROW_LIMIT,VALUE_TOO_LARGE}`.
-  Every OTHER entry in that ledger was read off a published tarball. These four could not be —
-  `0.49.0` did not exist when they were written.
-- **Observed (with values):** `npm view @civitai/app-sdk version` → **0.48.0**; `0.49.0` is absent
-  from the registry. `changeset status --verbose` on `#371`'s base computes `@civitai/app-sdk
-  0.49.0` / `@civitai/blocks-react 0.56.0`, which is what the floor was set to match.
-  `via: measurement`.
-- **Ruled out:** "the release-ordering risk materialised" — FALSE. The hazard was that another
-  app-sdk `minor` publishes first, takes `0.49.0`, and pushes these symbols to `0.50.0` while the
-  floor still says `>=0.49.0` (that is #309/#317/#344 a fourth time). It did not happen: `origin/main`
-  carried no other pending changeset and `#371` bumps app-sdk to exactly `0.49.0`. `via: measurement`.
-- **Ruled out:** "the floor should be raised to `0.50.0` now that the guard is red" — FALSE and
-  actively harmful. `0.49.0` genuinely exports all four, so a floor above it excludes a good release
-  and causes spurious peer warnings and `--strict-peer-deps` install failures — the same family with
-  the sign flipped. The guard's own remedy text says this in capitals. `via: doc`.
-- **Leading hypothesis:** nothing is wrong; the prediction is simply unconverted. `PREDICTION HAS
-  COME TRUE` fired on `#371` exactly as designed (its first real occasion), `75c711a` emptied
-  `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH`, and the floor and ledger were deliberately left alone.
-  What remains is to read the four symbols off the real tarball.
-- **Next probe** — run AFTER `#371` merges and the release job publishes; before that the first
-  command answers `E404`, which is the CORRECT answer in that state and not something to chase:
-  ```bash
-  npm view @civitai/app-sdk@0.49.0 version
-  cd "$(mktemp -d)" && printf '{"name":"v","private":true,"type":"module"}' > package.json
-  npm i @civitai/app-sdk@0.49.0 --silent --prefer-online
-  node --input-type=module -e "
-  import * as b from '@civitai/app-sdk/blocks';
-  for (const s of ['APP_STORAGE_ERROR_REQUEST_FAILED','APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED',
-                   'APP_STORAGE_ERROR_USER_ROW_LIMIT','APP_STORAGE_ERROR_VALUE_TOO_LARGE'])
-    console.log(s, s in b ? 'PRESENT' : '🔴 ABSENT');"
-  ```
-  All four PRESENT ⇒ the ledger entries are measurements; retire this block. Any ABSENT ⇒ the floor
-  is wrong and the entries must be corrected to the version that does export them.
-
-</details>
-
+### ✅ RETIRED 2026-09-21, EVICTED 2026-09-22 — the four `APP_STORAGE_ERROR_*` peer-floor entries
+**Closed, and evicted for size (4,410 B) once this doc hit its 65,536 B ceiling.** Outcome, so the
+one load-bearing fact survives: #371 merged `10db006`, app-sdk `0.49.0` published 15:33:32Z, and all
+four symbols were read off the published tarball with **`0.48.0` as the below-floor control** — it
+exports NONE of them, which is what makes `>=0.49.0` **EXACT** rather than merely sufficient; total
+`./blocks` exports moved 29 → 34, the delta proving the probe read two different tarballs. Landed as
+**#372**, comment-only. The full tables and the reasoning trail are on the **#372** issue thread,
+which outlives this doc. 🔴 The reusable rule, kept because it is the half everyone skips: **a
+one-sided read of a boundary cannot tell you the boundary is in the right place** — measuring only
+the target version leaves "too high" wide open, and too-high is a real defect with the sign flipped
+(excludes a good release ⇒ spurious peer warnings, `--strict-peer-deps` install failures).
 ### `feat/blocks-client`'s `buzz` and `orchestration` are NON-FUNCTIONAL — no host handlers exist
 - as-of: 2026-09-21
 - **Symptom + exact repro:** the new client's two most important domains cannot work against
@@ -250,37 +245,85 @@ harm** — no other app-sdk minor took `0.49.0`.
 - **Next probe:** re-run the intersection against the branch after it syncs; and re-measure
   #247 rather than assuming shadow DOM closed it.
 
+### #328 — 34 duplicate export names across `blocks-react/ui` and `components-react`
+- as-of: 2026-09-22
+- **Symptom + exact repro:** the two packages export the same names with **drifted
+  contracts** — `Stack gap="md"` emits invalid CSS, and `Select`/`SegmentedControl`/`Alert`
+  differ in controlled-ness, prop names and a11y roles. A consumer importing from both gets
+  silently different components under one name.
+- **Observed (with values):** `feat/blocks-client` (the branch #328's port depends on) is
+  `b451d79`, **14 behind `main`, 38 ahead**, and `git merge-tree --write-tree origin/main
+  origin/feat/blocks-client` exits **1** — it still conflicts. `via: measurement`.
+- **Ruled out:** "the branch has come up to main since the review" — FALSE. It moved
+  (36 behind → 14) but still conflicts. `via: measurement`.
+- 🔴 **My own recount of the collision returned a VACUOUS ZERO and must not be quoted:**
+  scanning `dist/*.d.ts` in an unbuilt base clone printed `ui:0 components-react:0
+  intersection:0`. The last real figure is **62 ∩ 64 = 34** at `eed2df5`. `via: measurement`.
+- **Leading hypothesis:** unchanged — this is a design decision, not a patch. #346
+  (`@civitai/elements`) was the attempt, was closed, and admitted 33 of 34 collisions stood.
+- **Next probe** — run the ROOT build first or the zero is meaningless:
+  ```bash
+  pnpm build && node -e "
+  const fs=require('fs'),rd=p=>fs.readFileSync(p,'utf8');
+  const N=s=>new Set([...s.matchAll(/export\s+(?:declare\s+)?(?:const|function|class|interface|type)\s+([A-Za-z_\$][\w\$]*)/g)].map(m=>m[1]));
+  const a=N(rd('packages/civitai-blocks-react/dist/ui/index.d.ts'));
+  const b=N(rd('packages/civitai-components-react/dist/index.d.ts'));
+  console.log(a.size,b.size,[...a].filter(x=>b.has(x)).length);"
+  ```
+  A zero here with a non-zero `a.size`/`b.size` is a real reading; a zero with `0 0` is not.
+
+### ~~Two new CI jobs run but gate NOTHING~~ RESOLVED 2026-09-22 — both are now required (9 → 11 contexts)
+🔴 **The `Next probe` this block used to carry named `-X PATCH` on
+`…/branches/main/protection/required_status_checks`, and that endpoint REPLACES the whole
+contexts list — following it literally would have wiped the other nine required checks.**
+The additive endpoint is `POST …/required_status_checks/contexts`, which is what was used.
+Verify by re-reading the endpoint, never by the write's own echo, with a bogus context name
+as the negative control. Blast radius, measured after the change: 10 of 11 open PRs lack ≥1
+of the two contexts because their heads predate the jobs, and read BLOCKED until CI re-runs.
+`strict: false` is UNCHANGED, so the merged-tree checks remain load-bearing. The measurements
+below are kept as the pre-change baseline.
+- as-of: 2026-09-22
+- **Symptom + exact repro:** `main` has **9 required status checks**; neither
+  `Packaging (shipped sourcemaps)` (merged in #414) nor `Public type closure (built .d.ts)`
+  (merged in #418) is among them. Both run and display; a red one does **not** block a merge.
+- **Observed (with values):** `gh api repos/civitai/civitai-app-starters/branches/main/protection`
+  → `strict: false`, 9 contexts: SDK, blocks-react, README snippets, the five Starters,
+  design-system. `via: measurement`.
+- **Ruled out:** "the jobs aren't wired" — FALSE, both are in `ci.yml` (the closure job at
+  `:454`) and both passed on their PRs. `via: measurement`.
+- **Leading hypothesis:** they were added as jobs without anyone updating branch protection,
+  which is a repo-settings change no PR can make.
+- 🔴 **`strict: false` also means branches need NOT be current with `main` before merging** —
+  which is why the merged-tree checks this session ran by hand were load-bearing, not ceremony.
+- **Next probe:** ✅ DONE — see the resolution note at the top of this block.
+
 ## Next steps (ranked)
 
-1. **#402 / #328 — hand back to Koen; we are not blocked on ourselves.** The review is filed
-   and @-mentions him. The branch must come up to `main` before anything else: it is 36 behind,
-   `git merge-tree --write-tree origin/main origin/feat/blocks-client` exits **1**, and 8 files
-   are touched by both sides including `packages/civitai-components/scripts/build-css.ts` (the
-   #359 slicer). The textual conflict is the small half — both sides changed what
-   `@civitai/components` *is*.
-   IN FLIGHT: civitai/civitai-app-starters#400 (targets that branch), #401, #402.
+1. **#328 — the ONE live blocker, and it is not ours to move.** `feat/blocks-client`
+   must come up to `main` before the port; last measured 14 behind with
+   `git merge-tree --write-tree origin/main origin/feat/blocks-client` exiting **1**.
+   Re-measure the collision count with the probe in the #328 block **after a root
+   `pnpm build`** before acting on any number — an unbuilt clone returns a vacuous
+   `0 0 0`. IN FLIGHT: civitai/civitai-app-starters#400 targets that branch.
    forcing: gate — it is the last item between this arc and its closing condition.
-2. **Fix the filed findings, starting #375 and #383** — both are deletions of prose this arc
-   itself wrote: the published `package.json` is **79%** internal post-mortem narrative (up from
-   the audited 67%), and the README still asserts a peer floor that #371 contradicted.
-   🔴 Several of the 25 ask for a test **watched to fail** first; #394 is the cautionary case —
-   it *looked* fixed from a CHANGELOG line and was not.
-   forcing: none
-3. **Batch: the pre-arc filed issues, plus the block-starter port once the branch is green.**
-   #358, #362, #363, #364, #367, #368, #369, #370, #345/#347/#348/#349/#357, #305. And
-   `civitai-block-starter` is the right proof port (5 src files; uses 3 hooks, all
-   host-functional today) — **not** `react-pwa`, which never used the bridge.
+2. **Batch: everything filed but not advanced.** Newly filed this session: **#422**
+   (`packages/civitai-components-react/src/internal/field.tsx` — 7 public prop
+   interfaces extend an unnameable `FieldBaseProps`) and **#423**
+   (`packages/civitai-blocks-react/src/internal/liveHost.ts` — 35 sites fabricate
+   `requestId: requestId ?? ''` where 13 drop via `isRoutableRequestId`). Plus the
+   pre-arc set #358, #362, #363, #364, #367, #368, #369, #370,
+   #345/#347/#348/#349/#357, and #305.
    forcing: none
 
 ## Defects (batched)
 
-- **#400 carries 3 red checks that are the base branch's**, not its own — diagnosed above;
-  a reader who trusts the rollup will misattribute them.
+- **10 of 11 open PRs now read BLOCKED** on the two newly-required contexts until CI
+  re-runs on them (table above). Expected and recoverable by a push or close/reopen;
+  listed so nobody diagnoses it as a new CI failure.
+- **#400 carries 3 red checks that are the BASE branch's**, not its own — a reader who
+  trusts the rollup will misattribute them.
 - **`feat/blocks-client` has no PR**, so nothing runs CI on it and nobody has seen it red.
-- 25 filed findings (#374–#398) are all unfixed; 22 confirmed live, 3 live-but-partial.
 - `pnpm lint` exits 1 repo-wide (`ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT`). Pre-existing, ungated.
-- **#372, #373, #399 and #400 all merged or shipped with round 0 only** — the nine correctness
-  axes never ran on any of them.
 
 ## Gotchas / decisions / dead-ends
 
@@ -622,40 +665,158 @@ harm** — no other app-sdk minor took `0.49.0`.
 - **Dead end:** `find-session --arc` exited 5 on this doc until #356 merged — the doc was only
   in a worktree, and `--arc` resolves against repo handles. Merging it fixed that.
 
+- 🔴 **AN ISSUE'S OWN PREMISE IS A HYPOTHESIS. Four of the 25 were measurably wrong, and
+  acting on any of them as written would have done damage.** This is the single most
+  reusable lesson of the arc.
+  - **#379 claimed 47 sites; the real count of consumer-visible friction is ONE.** The
+    total 47 reproduced, but it is *not the same 47* — 20 `extends` bases, 20 alias-RHS,
+    3 type-param constraints, 2 properties, 1 contextually-typed callback param, and
+    exactly **1 `parameter`** position. TypeScript inlines an `extends` base's members into
+    the exported derived type, so a consumer never needs to name it. Proved with an external
+    consumer built from real `pnpm pack` tarballs: name-free probe **0 errors**, direct
+    import of the 8 hidden names **8 errors**, dropping to **7** after the fix.
+  - **#395 claimed the three spellings disagree on `null`. They do not** — all 64 sites
+    reject it, because the check is compound (`p.requestId !== undefined && typeof
+    p.requestId !== 'string'`). The real disagreement is the **empty string**.
+  - **#377 called `./cookies` consumerless. It has a consumer** —
+    `starters/next-app/scripts/probe-expired-session.mjs:36` (positive control: `./orchestrator`
+    has 12). Deleting it as dead would have broken a working script.
+  - **#388's host-side claim was three days old and unverified.** Measured directly against
+    `/home/zach/workspace/civit/civitai` @ `b0eb2820b5`: `MAX_BLOCK_POLL_WAIT_SECONDS = 15`,
+    `resolveBlockPollWaitSeconds` floors *before* the bounds check, and it is genuinely
+    called at `blocks.router.ts:3965` — a declaration is not a code path.
+- 🔴 **RETRACTED — "#392 is SEVEN hooks; `useTipAllowance` already sequences" IS FALSE.**
+  This doc asserted it and it is wrong. `inFlight: Set<AbortController>` is added to on every
+  `refetch()` and drained ONLY by the unmount cleanup; a new request never aborts its
+  predecessor and nothing correlates a reply to the latest one, so a slow earlier reply
+  overwrites newer state — the very defect. The cited `:60`/`:78` point at where the SYMBOL
+  APPEARS, not where it does work. **The original audit's EIGHT was right.** Full correction
+  posted to #392. Generalises: **confirming a field exists is not confirming anything
+  branches on it** — and that is exactly how this doc's own triage row got it wrong.
+- 🔴 **A GUARD THAT PINS A RELATIONSHIP IS SATISFIED BY SHRINKING BOTH SIDES.** #412's M5
+  mutant (removing the `./oauth` re-export) **SURVIVED** the first design: it took the
+  symbols off the root *and* the subpath, so "root ⊆ union of subpaths" still held while the
+  package silently lost 3 published types. Fixed with an **enumerated** `ROOT_SURFACE` ledger.
+  Re-verified independently: M5 now dies on *"publishes exactly the enumerated root surface"*
+  with `- "OAuthTokens"` in the diff.
+- 🔴 **A GUARD ON A ONE-HOP RELATION IS WALKABLE BY A BARREL.** #378's checker walks
+  re-export edges **transitively**; routing `internal/mockHost` onto the entry through a new
+  2-hop barrel under `transport/` is caught (`+ 'internal/mockHost.ts'`). Its positive control
+  uses the REAL tree — `./live` genuinely re-exports from `internal/` — so the walk is proven
+  capable of seeing such a reference rather than being wired to nothing.
+- 🔴 **A NEGATIVE-CONTROL FIXTURE CAN PASS VACUOUSLY, AND #418's FIRST ONE DID.** In an
+  ambient `.d.ts` **without** a trailing `export {};`, every top-level declaration is exported,
+  so a fixture spelled the obvious way reports ZERO violations and the control passes while
+  testing nothing. Measured: the first revision returned all six names and findings `[]`.
+  `tsc` emits the marker only for files that have a non-exported top-level declaration.
+- 🔴 **SURVIVED MUTANTS ARE FINDINGS, AND THREE WERE KEPT RATHER THAN KILLED.** #413's
+  `mountedRef.current &&` is unkillable because React 18+ makes a post-unmount `setState` a
+  silent no-op — kept and **labelled defensive, not counted as a guard**. #416's re-inlined
+  `useBlockAnalytics(): UseBlockAnalytics` survives because `Exact` is structural — answered
+  with a third check reading the return ANNOTATION as text. #417 pins its aliased-local blind
+  spot with a test asserting the hole IS a hole, failing if it ever closes.
+- 🔴 **CODEQL EXISTS ONLY IN CI AND CAUGHT WHAT LOCAL VERIFICATION STRUCTURALLY COULD NOT.**
+  #409 went red on `js/incomplete-url-substring-sanitization` (high) at
+  `test/iframe-transport.test.ts:140` — `String(m).includes(OTHER_ORIGIN)`. Semantically a
+  false positive (a test assertion, not a sanitizer), fixed by **strengthening** not
+  suppressing: whole-string `toEqual` also kills the weaker assertion.
+- 🔴 **`changeset version` REWRITES A STARTER'S `@civitai/*` CARET PIN**, so #405 and #406
+  both touched `starters/civitai-block-starter/package.json`. A clean `git merge` would not
+  have told you they were compatible; the test-merge did.
+- **Decisions (operator):** standing merge authority (land CI-green independently-verified
+  PRs; stop only on a real fork) · batch releases until the arc ends · ship #410's
+  `SHARED_GET`/`SHARED_REPORT` as implemented, accepting that `apps.shared.get`/`report` were
+  never exercised against a live backend and that `SHARED_GET`'s envelope is a documented
+  guess handled defensively — fails safe vs the 30 s hang, but is the one path that could
+  return a wrong answer rather than an error.
+- **Decision: #384 ships PROJECTION, not REJECTION.** Its closing condition says a `hidden`
+  entry with an extra key "is rejected", but one failing entry drops the ENTIRE
+  `GET_IMAGES_BY_IDS` batch and hangs the block to its transport timeout — literal rejection
+  would turn any future host-side field addition into a block-wide hang. `url` stays fatal;
+  every other key is dropped.
+- **Decision: #383 ships NO guard**; the README states no current peer floor at all, so there
+  is nothing to go stale. **#390 ships an offline override-mirroring check, NOT the tiged+audit
+  CI job** — that would key on the mutable npm advisory DB and go red on days nobody touched
+  the repo. (`@sveltejs/kit@2.70.3` is *latest* and still wants `cookie ^0.6.0`, so "bump the
+  dependency" was never available.)
+- **My own instrument failures this session, all of which printed a reassuring blank rather
+  than an error:** a wrong test filename; two paths passed through an unquoted `$T` (**zsh
+  does not word-split** — it became one bogus path and matched nothing, briefly reading as
+  "mutant E survived"); `PIPESTATUS` inside a subshell; a hook-type recount whose predicate
+  matched `Use*Options` as well as `Use*` return types (**19/18 reported where the truth was
+  17/20** — the issue was right and I corrected it wrongly into a brief); and an overlap check
+  that diffed `origin/main..branch` for branches *behind* main, inventing a 13-file overlap
+  that the merge-base diff showed was zero.
+
+- 🔴 **A `Version Packages` PR can be a RACE ARTIFACT OF ITS OWN PREDECESSOR'S MERGE,
+  and it looks exactly like a pending release: `CLEAN`, `MERGEABLE`, a full changeset
+  list, correct-looking bumps.** #420's head was committed **18 seconds after #408
+  merged** (`20:51:29Z` vs `20:51:11Z`) on the same `changeset-release/main` branch —
+  the action re-ran against a checkout of `main` that predated #408's squash. It
+  deleted the same 10 changesets #408 had already consumed and computed the versions
+  `main` and npm already carried.
+  **The discriminating check is CONTENT, and it is one command:**
+  ```bash
+  git merge-tree --write-tree origin/main refs/remotes/pr/<n>   # rc 0 ⇒ no conflict
+  git diff --stat origin/main <that-tree>                        # EMPTY ⇒ merging is a no-op
+  git diff --stat origin/main~1 <that-tree>                      # POSITIVE CONTROL, must be non-empty
+  ```
+  Empty against `main` with a non-empty control ⇒ superseded; close it. Merging it
+  would push an empty commit and re-trigger Release against already-published
+  versions. This is the #350 gotcha's sibling: #350 was STALE-and-mergeable, this one
+  is REDUNDANT-and-mergeable, and `mergeStateStatus` is blind to both.
+- 🔴 **Adding a required status check is safe only if the job is UNCONDITIONAL — check
+  `if:`, `needs:` and workflow-level `paths:` BEFORE adding it.** A required context
+  that does not report on some PRs leaves them pending forever, which is the
+  permanently-red gate everyone learns to click through. Use the **additive**
+  `POST …/required_status_checks/contexts`; the PATCH on
+  `…/required_status_checks` **replaces** the whole list. Verify by re-reading the
+  endpoint, not by the POST's echo, and keep a snapshot of the prior contexts. Then
+  **measure the blast radius on already-open PRs** — heads that predate the job lack
+  the context and go BLOCKED.
+- 🔴 **THE HANDOFF'S OWN GREP STRING WAS THE INSTRUMENT THAT FAILED.** This doc told
+  the next session `liveHost.ts` fabricates `requestId: ''` at **37** sites. Grepping
+  that literal returns **0** — while the file contains **91** `requestId` mentions as
+  the positive control. The real shape is `requestId: requestId ?? ''` at **35** sites,
+  and the path in the other finding was `field.tsx`, not `field.ts`. Both would have
+  read as "already fixed" to a session that ran the doc's own string and stopped.
+  **A pattern quoted from prose is an unpinned dependency; re-derive the shape from the
+  file before believing any zero it produces.**
+- 🔴 **`gh issue create --body-file $VAR` is REFUSED by the closing-condition hook** —
+  the argument is a shell substitution the gate cannot evaluate, so it cannot read the
+  body and blocks rather than failing open. Write the body with the `Write` tool to a
+  **literal path** and pass that, or use a heredoc. The body must carry a
+  `## Closing condition` (or `## Acceptance criteria`) heading naming what ends the
+  issue and who or what checks it.
+- 🔴 **`requestId: requestId ?? ''` and `if (!isRoutableRequestId(requestId)) return;`
+  are two conventions living in one file**, and #417 only consolidated the predicate —
+  it did not reconcile the call sites. 0 of the 35 fabrication sites sit downstream of
+  a guard (computed by walking back from each occurrence to its enclosing `case`
+  label). `''` is precisely the value the predicate rejects, so each fabricated reply
+  is dropped on arrival by the block: no reply, no error, no log — the same observable
+  as a handler that was never wired.
+
 ## How to verify
 
-The arc's own closing condition, with both controls in the same breath:
-
 ```bash
-gh issue list --repo civitai/civitai-app-starters --state open --limit 200 \
-  --json number -q '[.[] | select(.number >= 322 and .number <= 334)] | length'   # => 1 (only #328)
-gh issue list --repo civitai/civitai-app-starters --state open --limit 200 \
-  --json number -q 'length'                                                        # => non-zero (positive control)
-```
+# 1. #421 landed and the gate's window is what it claims (content, not the merge report)
+git show origin/main:.github/workflows/release.yml | grep -E "PUBLISH_CHECK_TRIES|PUBLISH_CHECK_DELAY|timeout-minutes"
+#    => TRIES '60', DELAY '10000'  ⇒ (60-1) x 10s = 590s ; timeout-minutes 40
 
-That #400's red is the base branch's, not its own — run from a checkout of `587764a`:
+# 2. Branch protection really carries 11 contexts (re-read, never trust a write's echo)
+gh api repos/civitai/civitai-app-starters/branches/main/protection/required_status_checks \
+  -q '{strict:.strict, n:(.contexts|length), contexts:.contexts}'
+#    => n = 11, including "Packaging (shipped sourcemaps)" and "Public type closure (built .d.ts)"
+# NEGATIVE CONTROL, same breath:
+gh api repos/civitai/civitai-app-starters/branches/main/protection/required_status_checks \
+  -q '[.contexts[]|select(.=="Totally Bogus Check")]|length'     # => 0
 
-```bash
-R=/home/zach/workspace/civit/civitai-app-starters
-git -C $R worktree add --detach /tmp/basectl origin/feat/blocks-client
-cd /tmp/basectl
-node scripts/check-starter-pins.mjs >/tmp/pins.out 2>&1;  echo "pins rc=$?"   # => 1
-node scripts/check-orchestrator-catalogs.mjs >/tmp/cat.out 2>&1; echo "cat rc=$?" # => 1
-# 🔴 do NOT pipe to tail — that reports rc=0, which is tail's status
-```
+# 3. The arc's closing condition, with BOTH controls or the zero means nothing
+gh issue list --state open --limit 100 --json number -q '[.[]|select(.number>=322 and .number<=334)]|length'  # => 1 (only #328)
+gh issue list --state open --limit 100 --json number -q 'length'                                              # => non-zero (positive)
+gh issue list --state open --limit 100 --json number -q '[.[]|select(.number>=99000)]|length'                 # => 0 (negative)
 
-The React primitives, including the sweep:
-
-```bash
-cd /home/zach/workspace/civit/civitai-app-starters-clientreact/packages/civitai-blocks-client-react
-npx tsc -p tsconfig.json --noEmit && npx vitest run --project unit   # => 20 passed
-# mutation sweep (6/6 killed, tree restored byte-identical):
-python3 /tmp/claude-1000/-home-zach-workspace-civit-civitai-app-starters/\
-e358e8a1-b161-4d89-8516-b730681b6b6d/scratchpad/mutate_react.py
-```
-
-The branch conflict, by exit code rather than a marker grep:
-
-```bash
-git -C $R merge-tree --write-tree origin/main origin/feat/blocks-client >/dev/null; echo "rc=$?"  # => 1
+# 4. #423's finding, with its control (a bare zero here is NOT evidence)
+git grep -c "requestId: requestId ?? ''" -- packages/civitai-blocks-react/src/internal/liveHost.ts  # => 35 today, 0 when fixed
+git grep -c "requestId" -- packages/civitai-blocks-react/src/internal/liveHost.ts                    # => 91 (positive control)
 ```

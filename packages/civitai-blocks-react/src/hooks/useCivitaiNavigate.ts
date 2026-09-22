@@ -1,6 +1,11 @@
 import { useCallback } from 'react';
 
-import { getTransport } from '../internal/singleton.js';
+import { getTransport } from '../transport/singleton.js';
+
+/** What {@link useCivitaiNavigate} returns. */
+export interface UseCivitaiNavigate {
+  navigate: (path: string, target?: 'current' | 'new_tab') => void;
+}
 
 /**
  * Requests a navigation within civitai.com. The host mediates — `target:
@@ -13,9 +18,7 @@ import { getTransport } from '../internal/singleton.js';
  * const { navigate } = useCivitaiNavigate();
  * navigate('/models/12345', 'new_tab');   // 'new_tab' needs allow-popups* in the manifest sandbox
  */
-export function useCivitaiNavigate(): {
-  navigate: (path: string, target?: 'current' | 'new_tab') => void;
-} {
+export function useCivitaiNavigate(): UseCivitaiNavigate {
   const navigate = useCallback((path: string, target: 'current' | 'new_tab' = 'current') => {
     getTransport().sendMessage({ type: 'NAVIGATE', payload: { path, target } });
   }, []);

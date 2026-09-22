@@ -1,6 +1,11 @@
 import { useCallback } from 'react';
 
-import { getTransport } from '../internal/singleton.js';
+import { getTransport } from '../transport/singleton.js';
+
+/** What {@link useBlockAnalytics} returns. */
+export interface UseBlockAnalytics {
+  track: (eventName: string, properties?: Record<string, unknown>) => void;
+}
 
 /**
  * Fire-and-forget analytics tracking. The host forwards events to its
@@ -11,9 +16,7 @@ import { getTransport } from '../internal/singleton.js';
  * const { track } = useBlockAnalytics();
  * track('generate_clicked', { modelId });
  */
-export function useBlockAnalytics(): {
-  track: (eventName: string, properties?: Record<string, unknown>) => void;
-} {
+export function useBlockAnalytics(): UseBlockAnalytics {
   const track = useCallback((eventName: string, properties?: Record<string, unknown>) => {
     getTransport().sendMessage({ type: 'TRACK_EVENT', payload: { eventName, properties } });
   }, []);

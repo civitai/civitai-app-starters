@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { OriginMatcher } from '../src/internal/originMatcher.js';
+import { OriginMatcher } from '../src/transport/originMatcher.js';
 
 describe('OriginMatcher', () => {
   describe('exact entries', () => {

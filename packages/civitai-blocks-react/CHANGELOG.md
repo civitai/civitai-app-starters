@@ -1,5 +1,512 @@
 # @civitai/blocks-react
 
+## 0.57.0
+
+### Minor Changes
+
+- cab0ee5: Name the `responseToResources` parameter, and gate the public type surface on the built `.d.ts` (#379).
+
+  **`minor`, and the only reason it is not `patch`: two types gain a public name.**
+  `@civitai/blocks-react` now exports `RawGenerationResourcesResponse` and
+  `RawGenerationResource`. Nothing is removed, nothing is renamed, no existing
+  import can break.
+
+  ## What #379 actually was, re-measured
+
+  The issue reported **47 reference sites where a public export names a type the
+  consumer cannot import**, measured at `eed2df5`. Re-derived at `e993cf0` through
+  the TypeScript API over the built `.d.ts` of every `exports` key, the count is
+  still 47 — but it is **not the same 47**. #416 had already closed every
+  `Use<Hook>Return` the issue named; six further names it listed (`ScanEntry`,
+  `OriginMatcher`, `PendingRequest`, `ActiveToast`, and `liveHost`'s three trpc
+  result types) are local-variable and private-field types that never reach a
+  `.d.ts` at all; and `UseImageUploadOptions` is exported today. The matching total
+  is coincidence.
+
+  Classified by POSITION, **46 of the 47 are not friction**, and that was measured
+  rather than argued. An external consumer project — outside the workspace,
+  installed from the real `pnpm pack` tarballs — constructs, reads, stores and
+  wraps every affected exported type without ever naming the hidden one, at **0
+  type errors**, while a companion file importing the 8 hidden names directly
+  errors on **all 8** (`TS2305` / `TS2459` / `TS2724`). An exported interface that
+  `extends` a non-exported base inlines every member: a consumer writes
+  `ExchangeCodeOpts` and gets `clientId` / `clientSecret` / `baseUrl` /
+  `fallbackScope`, and `Pick<RefreshTokenOpts, …>` names the shared half.
+  `Extract<ResourceCardProps, { variant: 'card' }>` names a union arm.
+  `keyof WorkflowStepTemplates` is `keyof StepTemplateMap` — which is
+  non-exported **by design**, with an invariant and a test in
+  `@civitai/app-sdk/orchestrator/steps` that exporting it would break.
+
+  ## The one real defect
+
+  `responseToResources(raw: RawGenerationResourcesResponse | null | undefined)` —
+  an exported function's **parameter**. A caller doing its own fetch has to produce
+  that value, and the only way to type the fetch was
+  `Parameters<typeof responseToResources>[0]`: naming the function in order to name
+  its input. Both the response and its row type are exported now, because a
+  response type whose `items` element had no name would move the same problem one
+  level down. They are the WIRE shape — every field optional and unvalidated, so
+  the mapper survives a malformed row. Type a fetch with them; the checked shape is
+  the `BlockResourceInfo[]` the mapper returns.
+
+  ## The guard
+
+  `pnpm check:public-types` resolves every type reference in every built `.d.ts`
+  entry against what the `exports` map actually publishes. Return types, function
+  parameters and callback returns must be exported outright; every other position
+  is on an audited exemption ledger that records the name-free route a consumer
+  takes, asserted as an exact multiset so a new violation fails until someone
+  writes the route down. It fails loudly on an unbuilt tree rather than reporting a
+  vacuous zero, and `--self-test` runs a deliberately-unexported fixture and its
+  exported twin before the real scan is believed.
+
+- 95e8d8f: Make two `src/internal/validate.ts` guards do what their comments claimed (#384, #394).
+
+  **`hidden` gated images are now narrowed structurally, not by banning one spelling (#384).**
+  `isValidGatedImage`'s docblock said a `hidden` entry is "ONLY `imageId` + `status`"; the
+  code rejected exactly one key, the literal `url`. A host attaching `previewUrl`, `src`,
+  `imageUrl` or any other field to a WITHHELD image forwarded it straight to
+  `useGatedImages().getImages()` — measured, not inferred: each of those four spellings
+  reached the consumer on the previous release.
+
+  The fix is PROJECTION, not rejection. `projectInboundPayload` runs on every
+  `IMAGES_RESULT` at the transport boundary — before `pending.resolve`, so a consumer using
+  the public `getTransport()` + `sendTypedRequest()` is covered as well as one using the
+  hook — and narrows each `hidden` entry to exactly `{ imageId, status }`. A `url` on a
+  `hidden` entry stays fatal, because the contract explicitly forbids that key and its
+  presence is a live moderation breach worth surfacing loudly.
+
+  **Consumer-visible behaviour change, and the reason this is a `minor`:** a block that was
+  reading an extra field off a `hidden` entry stops seeing it. That is the point of the
+  change, but it is a change. Nothing in the documented `BlockGatedImage` contract ever
+  promised those fields, and `visible` entries are untouched (returned by identity).
+
+  Rejection was the literal ask in #384; projection was chosen instead because rejection
+  fails the WHOLE batch — `isValidImagesResult` returns false for one bad entry,
+  `handleMessage` drops the reply before correlation, and `getImages()` then hangs to its
+  transport timeout rather than rejecting. The host is a separate repo on a separate release
+  cadence, so an allowlist-by-rejection would turn any future host-side field addition into a
+  block-wide hang. Dropping the key gives the same guarantee at no forward-compat cost.
+
+  **`payloadValidatorFor` is now exhaustive over `ParentToBlockMessage` at compile time (#394).**
+  Adding a member to the union without a validator entry previously type-checked, built, and
+  shipped an unvalidated path that reached `pending.resolve` and push handlers. The
+  `default:` arm now binds the switch subject to `never`, so the omission fails `tsc`:
+
+  ```
+  error TS2322: Type '"SYNTHETIC_MUTANT_RESULT"' is not assignable to type 'never'.
+  ```
+
+  The runtime `default:` still returns `null` for a type the union does not declare, which is
+  now a documented choice rather than an accident: such a type cannot reach `pending.resolve`
+  or a push listener (both keyed to the union) and matches none of the `isMessage` branches,
+  so failing closed would protect nothing while making every older block in the fleet warn
+  and emit a rejection beacon the first time a newer host ships a new message type.
+
+- a07f7e9: Give every auto-fetching hook a latest-wins request guard, settle `useImageUpload`'s pending scan promises on unmount, and stop `useTipAllowance` spinning forever without a host origin (#392, #393, #398).
+
+  **#392 — a slow earlier reply could overwrite newer state, in EIGHT hooks.**
+  `useAppWorkflows`, `useBuzzAccounts`, `useBuzzBalance`, `useBuzzTransactions`,
+  `useDailyCompensation`, `useTipAllowance`, `useViewer` and `useWildcardPack` each
+  guarded only _unmount_. Nothing correlated a reply with the request that produced
+  it, so an out-of-order resolution silently won. The concrete shape: a `params`
+  change (the viewer clicks "next page") changes `refetch`'s identity, the mount
+  effect re-runs, and request B goes out while A is still in flight — B paints page
+  2, then A lands and repaints page 1 **and** rewinds `cursor` to page 2's value,
+  so "next" re-fetches the page already on screen and the viewer is wedged. The
+  transport correlated each reply to its own request correctly throughout; the
+  defect was purely in which reply the hooks let write state.
+
+  All eight now share ONE guard, `useRequestSequencer`, rather than eight copies of
+  a predicate that was wrong in the same direction at all eight sites. It supersedes
+  `mountedRef` instead of sitting beside it: `isCurrent(token)` is false for a
+  superseded request AND after unmount.
+
+  🔴 **The issue filed this as SEVEN hooks**, excluding `useTipAllowance` because
+  its `inFlight: Set<AbortController>` was read as already sequencing. It is not:
+  that set is drained only by the unmount cleanup, so two overlapping `refetch()`es
+  neither abort each other nor correlate their replies. It is in the fixed set, and
+  the regression test for it fails on the previous release exactly like the other
+  seven.
+
+  **#393 — `useImageUpload`'s pending `scanStatus()` promise never settled on
+  unmount.** The cleanup cleared each waiter's backstop timer and stopped there,
+  which removed the only remaining path to a settled promise: the verdict listener
+  was gone, so nothing could arrive, and the timeout that would have resolved it had
+  just been cancelled. An `await scanStatus(handle)` in flight at unmount hung for
+  the life of the page. Unmount now RESOLVES every waiter with the hook's existing
+  retryable shape — `{ status: 'error', message: 'scan status unavailable (the
+upload hook unmounted)' }` — never a rejection, so no caller needs a new
+  `try`/`catch`. The tracking map is dropped too, so a `scanStatus()` call made
+  after unmount takes the immediate unknown-handle path instead of arming a
+  ten-minute wait against a listener that no longer exists.
+
+  **#398 — `useTipAllowance` spun forever with no error when the host origin never
+  arrived.** `loading` initialises `true` and `refetch` bailed on `!host` before
+  touching it, so on any surface where `BLOCK_INIT` never lands (a direct or
+  unembedded load, `InlineTransport` before bootstrap) the documented
+  `if (loading) return <Spinner/>` pattern rendered forever with no diagnostic. The
+  hook now waits a bounded 30s — the origin is absent during every healthy boot too,
+  so an immediate error would flash on every embedded block — and then settles to
+  `loading: false` with a named `Error`. The sibling divergence the issue flagged is
+  deliberate and kept: `useTip` and `useGenerationResources` are imperative (the
+  caller holds a promise) so they reject immediately with their own named errors;
+  `useWildcardPack`'s early `setLoading(false)` is a `modelVersionId` validity guard
+  and that hook never reads the host origin at all.
+
+  **Why `minor`, not `patch`:** two of the three change what a CORRECT consumer
+  observes, not just what a broken one does. A `scanStatus()` promise that used to
+  hang now resolves with an `'error'` verdict, so code awaiting it proceeds where it
+  previously stopped; and `useTipAllowance` now surfaces an `error` where an
+  un-embedded block previously stayed `loading: true`, so a consumer branching on
+  `error` renders an error state where it used to render a spinner. The #392 half
+  alone would be a patch.
+
+- e993cf0: Name every hook's return type, move the entry's transport modules out of `internal/`, and replace two stale docblock claims (#378, #380, #381, #388).
+
+  **`minor`, because the public type surface GREW (#380).** 19 hooks gained an exported `Use<Hook>` return type and roughly 25 new type exports landed on the package entry. Nothing was removed and nothing changed shape, so no consumer needs to do anything — but new exported API is a feature, not a patch. `@civitai/app-sdk` takes a `patch`: a comment-only correction that nevertheless ships, because JSDoc travels in `.d.ts`.
+
+  **Every hook exported from `@civitai/blocks-react` now ships a named, exported return type (#380).** Whether one existed was a coin flip — measured on `bcc24bf`: 37 files under `src/hooks/use*.ts`, 17 with an exported `Use<Hook>`, 20 without. A consumer wrapping `useBlockContext()` had to hand-copy a ten-field `Pick<BlockSnapshot, …>` that existed only on the function's own return annotation. `UseBuzzWorkflowReturn` — which existed but was never exported, the same defect from the other side — is now `UseBuzzWorkflow`.
+
+  The rule is "every hook **exported from the package entry**", not "every `use*.ts` file". `useRequestSequencer` is a hook-shaped file that #413 added as the shared request sequencer the public hooks build on; publishing a return type for it would publish an implementation detail to satisfy a guard. It is recorded as internal with that reason, and a separate assertion fails if it ever reaches the entry.
+
+  Inside the rule there are no exceptions: `UseBlockResize = void` and `UseBlockTheme = Theme` are aliases, because an exception list is a thing to remember and get wrong. `useImageUpload` is overloaded, so its return type is a family — each public overload names its own, and the implementation signature's type is asserted to stay OFF the entry.
+
+  Three checks, three different failure modes, none subsuming another: a guard asserts the hook SET against written ledgers (failing when the set **grows** as well as when a type is deleted), the same guard reads the return **annotation** and requires the name, and `src/hooks/returnTypeLedger.ts` asserts `Exact<ReturnType<typeof useX>, UseX>` for all 36 entry hooks. The third does not subsume the second — measured, not assumed: re-inlining an annotation as a literal of the same shape leaves `tsc` completely green.
+
+  **Nine modules moved from `src/internal/` to `src/transport/` (#378).** `src/index.ts` published 14 symbols out of a directory named `internal/`, six of them deliberately public per README § "Lower-level transport". The name told contributors that `IframeTransport`, `sendTypedRequest`, `getTransport` and `RequestTimeoutError` were private and free to move. **Nothing is removed and no import path a consumer can legitimately write has changed** — the exports map publishes `.`, `./ui`, `./testing` and `./live`, and all four are unchanged. Only the layout under `dist/` moved, which is not a supported import surface.
+
+  `src/internal/` keeps what the main entry does not reach — the mock host, the live host, the picker overlay, the catalog client, consent, the reply-error shaper — so the split now matches the export reality rather than a wholesale rename that would have filed the live host under `transport/`.
+
+  **Two stale docblock claims, both about things a reader would believe (#381, #388).** `useBuzzWorkflow`'s docblock said `WorkflowBody` has "THREE members" and then certified the list "otherwise unchanged"; it has four — `WorkflowBodyPassThroughStep` landed in #310. The count is now stated structurally or not at all: the prose states none, and a mutual-assignability assertion against the union fails `tsc` when it changes in either direction.
+
+  And `waitSeconds` was documented as "🔴 CURRENTLY ADVISORY … a host that does not yet read the field simply answers immediately". The deployed host honours and clamps it. The real contract is now written down, read off `civitai/civitai` @ `b0eb2820b5` (5.1.120): `MAX_BLOCK_POLL_WAIT_SECONDS = 15`, `Math.floor` applied **first** (so `0.9` is no hold at all, not a short one), a floored value `<= 0` meaning no hold, and otherwise `Math.min(floored, 15)`. Practically: only whole seconds are expressible, and asking for more than 15 buys nothing — `intervalMs` remains what bounds your request rate. The sha is quoted because this is prose about another repo and no guard in this one can check it; the honest check is a human read at a named revision.
+
+- f913811: Normalise `allowedParentOrigins` entries, and name the origins actually seen when `BLOCK_INIT` times out (#397).
+
+  `OriginMatcher` only `.trim()`ed each entry and then compared it to `event.origin`
+  by raw string equality. A browser reports an origin with no trailing slash, a
+  lowercase scheme and host, and default ports elided — so `https://civitai.com/`,
+  `HTTPS://CIVITAI.COM` and `https://civitai.com:443` each produced an allowlist
+  that matched nothing, a block that sat blank for ten seconds, and a timeout error
+  that named neither the origin that arrived nor the allowlist it was checked
+  against.
+
+  Entries are now canonicalised with the URL parser. Accepted as equivalent: a
+  trailing slash, scheme/host case, an explicit **default** port, and an IDN host
+  (normalised to the punycode a browser reports). Deliberately still significant: a
+  **non-default** port, the scheme, a trailing-dot host, and the exact host — a
+  prefix collision such as `https://civitai.com.evil.com` never matches
+  `https://civitai.com`. Wildcard entries (`https://*.civitaic.com`) go through the
+  same canonicalisation, so they obey the same rules instead of a second copy of
+  them.
+
+  🔴 Only ENTRIES are normalised. The candidate handed to `matches()` is still
+  compared as given, because a real `event.origin` is already canonical and a
+  `.origin` round-trip on the candidate could only add accepts (`new
+URL('https://civitai.com/evil').origin` is `https://civitai.com`).
+
+  An entry that is not a bare origin now **throws at construction** instead of being
+  silently kept as an entry that can never match: no scheme, a path/query/fragment,
+  credentials, or a scheme whose origin serialises to the literal `"null"` (which is
+  also what a sandboxed opaque frame reports, so accepting it would allowlist every
+  opaque frame at once).
+
+  The init-timeout error now reports which origins were received and rejected, which
+  were accepted without yielding a valid `BLOCK_INIT`, or that nothing arrived at
+  all — bounded to five distinct origins per bucket, and labelled as truncated past
+  that. A pre-init rejection also warns once per distinct origin.
+
+  **Why `minor`, not `patch`:** the permissive half accepts allowlist spellings that
+  previously matched nothing, which changes observable behaviour for existing
+  configs; and the strict half turns four classes of malformed entry from a silent
+  no-op into a constructor throw. Both are behaviour changes rather than fixes to a
+  crash, so this is not a bugfix-only release even though the permissive direction is
+  what motivated it.
+
+- d2b9ef5: Close the two ways `dev:live` diverged from the protocol it claims to mirror: three
+  block→parent messages that got no reply at all, and a picker that dropped a required
+  field (#386, #391).
+
+  **MINOR, not patch, and for two separate reasons.** `createLiveHost` gains capability it
+  did not have — `SHARED_GET` and `SHARED_REPORT` are now SERVED — which is new
+  functionality rather than a repair of existing functionality. And `#391` changes a
+  payload consumers RECEIVE: `RESOURCE_PICKER_RESULT.selected.modelType` was `undefined`
+  in `dev:live` and now carries the resolved type. No public API is removed or narrowed;
+  `@civitai/blocks-react/live` still exports exactly `createLiveHost` + `LiveHostOptions`.
+
+  ***
+
+  ### `SAVE_IMAGE`, `SHARED_GET` and `SHARED_REPORT` no longer hang for 30 seconds (#386)
+
+  `liveHost.ts`'s dispatch switch ends in `default: return` — a fall-through that sends
+  NOTHING back. Three block→parent types had no `case` at all, so a block calling
+  `useSaveImage().saveImage(…)`, `useSharedStorage().get(key)` or `.report(key, reason)`
+  under `dev:live` got silence, then a generic `RequestTimeoutError` after the 30 s
+  `DEFAULT_REQUEST_TIMEOUT_MS` — while the identical call resolved under `dev:mock`. The
+  developer's only evidence was "live is broken, somehow, after 30 seconds".
+
+  They were also the only three silent ones. Every other capability the live host cannot
+  serve already refuses explicitly, with a `logOnce` and an honest reply.
+
+  Two of the three are now **served**, one is **refused**, and the split is not arbitrary:
+
+  - **`SHARED_GET` → `apps.shared.get`** and **`SHARED_REPORT` → `apps.shared.report`**,
+    on the same block-token convention as the eight `SHARED_*` bridges already forwarded.
+    Neither needs host chrome or a session, so refusing them would have been a limitation
+    this host does not actually have. `SHARED_GET` resolves a missing / hidden / withdrawn
+    row to `item: null` with **no** `error` — a `?g=<key>` deep-link must not be able to
+    tell "hidden from you" from "does not exist". The row mapper is now ONE function
+    shared with `SHARED_LIST` instead of an open-coded copy, and it forwards `viewerVoted`
+    when the server sends it, so a deep-linked row hydrates its vote button instead of
+    guessing.
+
+  - **`SAVE_IMAGE` is REFUSED, and refusing is the point.** The real bridge is a security
+    boundary, not a convenience: the host fetches the blob in its UNSANDBOXED top frame,
+    allowlisting a `url`'s origin to the civitai image/blob CDN, and routing an `imageId`
+    through the same per-viewer gated read that backs `GET_IMAGES_BY_IDS`. This harness
+    has neither gate — the allowlist is the production host's, not this SDK's. A dev-side
+    "download it anyway" would accept URLs production refuses and let a block ship having
+    never once handled the refusal; inventing a divergent allowlist would be a security
+    posture nobody reviewed, exercised only in dev. So it replies immediately with an
+    actionable error naming `dev:mock`, rather than the silent 30 s hang.
+
+  The gap is now **structural**. `tests/guards/livehost-message-coverage.test.mjs` asserts
+  that every member of the protocol's own `BLOCK_TO_PARENT_MESSAGE_TYPES` is a `case` in
+  `liveHost.ts` (except `BLOCK_HELLO` / `BLOCK_MESSAGE_REJECTED`, which the protocol
+  documents as having no reply at all), that neither host cases on a label the protocol
+  does not declare, and that the live-vs-mock case-set difference is EXACTLY the declared
+  fire-and-forget ledger. `tsc` cannot make any of those claims: the switch subject is a
+  widened `string`, so the switch is exhaustive by construction and a typo'd label
+  type-checks.
+
+  🔴 The ledger fails on **GROW and SHRINK** — it is a set equality against a declared
+  expected difference, not a one-directional "every mock case exists in live". That
+  one-directional shape is exactly what let an extra `./css/tabs` subpath ship in #359.
+  Both directions were mutation-tested: adding a spurious live-only case and giving
+  `mockHost` a case for a live-only type each fail on the ledger's own assertion.
+
+  `liveHost.ts`'s header claimed `OPEN_BUZZ_PURCHASE` was "the ONE capability live mode
+  still cannot SERVE". That was already false when it was written — five other handlers
+  refused — and it is now corrected to the full list, with the reason each one refuses
+  ([#14](https://github.com/civitai/civitai-app-starters/issues/14)).
+
+  ### The live picker no longer drops the required `modelType` (#391)
+
+  `OPEN_RESOURCE_PICKER` with `resourceType: 'Checkpoint'` replied on
+  `RESOURCE_PICKER_RESULT` with a `cardToCheckpoint()` projection — five fields, **no
+  `modelType`** — while `BlockResourceInfo.modelType` is **required** and every consumer
+  reads it. The overlay branched its converter on the picker's REQUESTED TYPE
+  (`opts.type === 'Checkpoint'`), never on the channel it was replying to, and the live
+  host never passed the channel down at all.
+
+  The fix separates the two facts rather than patching the symptom: the reply channel now
+  travels with the request (`OpenPickerOptions.resultChannel`, required) and `selectCard`
+  branches on THAT. `cardToResource` already resolved `modelType` correctly — preferring
+  the card's own REST-reported type, falling back to the requested type — so a Checkpoint
+  asked for on the resource channel now comes back `modelType: 'Checkpoint'`.
+
+  **This is now a compile error, not just a test.** `PickerSelection` is discriminated by
+  `channel` and keyed to the shape that channel's consumers expect, so reintroducing the
+  bug — pairing `RESOURCE_PICKER_RESULT` with a `BlockCheckpointInfo` — fails `tsc` with
+  `Property 'modelType' is missing in type 'BlockCheckpointInfo' but required in type
+'BlockResourceInfo'`. Measured, by reapplying the original branch.
+
+  🔴 The compiler covers ONE direction. The mirror mistake — a `BlockResourceInfo` sent
+  down the CHECKPOINT channel — is structurally assignable and `tsc` reports nothing
+  (measured: 0 errors). A runtime test pins that half instead, asserting the
+  checkpoint-channel payload still has exactly its five keys. The two channels keep two
+  contracts; they were deliberately not collapsed into one shape.
+
+  `PickerSelection`'s discriminant changed from `kind` (`'Checkpoint' | 'LORA'`) to
+  `channel`. Both it and `OpenPickerOptions` live in `src/internal/` and are not part of
+  any published subpath's export surface.
+
+- 4e905e5: `SettingsForm` now tracks its props instead of seeding once on mount, and `liveHost.ts`'s
+  header enumerations are measured rather than typed (#396, #387).
+
+  **MINOR, not patch.** #396 is a bug fix, but it changes two things a consumer can observe
+  and may have built around, so it is not a silent repair:
+
+  - `initialValues` goes from **mount-only to live**. Passing a new object after mount now
+    re-seeds every visible field the user has not edited. A host that deliberately mutated
+    the prop between renders while relying on the form ignoring it will see different
+    values on screen.
+  - **The submitted key set is now scoped to the current `forScope` slice.** `onSubmit`
+    previously received whatever keys were visible at MOUNT; it now receives exactly the
+    keys visible NOW. A host reading a key outside the current slice off that payload will
+    find it absent.
+
+  The defects both came from one cause: `values` was a `useState` lazy initializer (runs
+  exactly once) while `visibleFields` was a `useMemo` (recomputes). They drifted, two ways:
+
+  1. **Async `initialValues` were dropped.** The normal shape is `{}` while a fetch is in
+     flight, then the stored row. The form rendered manifest defaults for ever, and Save
+     wrote those defaults back **over** the user's stored value.
+  2. **A `forScope` flip submitted the wrong slice.** Flipping `publisher` → `viewer` on a
+     mounted form recomputed `visibleFields` to the viewer slice while `values` still held
+     the publisher keys — so the viewer fields rendered blank (the manifest `default` was
+     skipped, the seed had already run) and `onSubmit` posted the **publisher slice's keys
+     under a viewer-scope save**.
+
+  `values` is now derived — a re-seed from `(visibleFields, initialValues)` overlaid with
+  the user's own edits — so (1) fixes itself and (2) is closed **structurally**: the merge
+  walks the seed's keys, so a key outside the current slice has no path into the submitted
+  object at all, whatever is left in edit state.
+
+  #387 is documentation and a guard, no runtime change. `liveHost.ts`'s header claimed "the
+  only network it does is (a) `GET /api/v1/blocks/me` and (b) the four
+  `blocks.{estimate,submit,poll,cancel}Workflow` tRPC mutations" while the file called 29
+  tRPC procedures — several of them documented twenty lines further down in the same
+  header. That claim is replaced by a description of the two real fetch chokepoints plus a
+  `--- BEGIN DERIVED ---` block that `tests/guards/livehost-header-enumerations.test.mjs`
+  regenerates from the source and asserts, so the counts cannot go stale again unnoticed.
+  The refusal bullet list under SCOPE is pinned the same way, by set equality against the
+  handlers that actually refuse.
+
+### Patch Changes
+
+- 6317fca: One predicate decides `requestId` routability, in one place (#395).
+
+  **`patch`, and the reasoning is the interesting part.** Nothing is added to or
+  removed from the published surface — `isRoutableRequestId` / `isWireRequestIdShape`
+  live in `src/transport/requestId.ts` and are deliberately NOT re-exported from the
+  entry. Every validator behaves exactly as before. Two behaviours _did_ move, and
+  both are on values the SDK itself cannot produce (`sendRequest` always assigns a
+  non-empty id from `nextRequestId()`), reachable only by a hand-built message or a
+  buggy peer:
+
+  - **The dev/mock hosts now decline a request carrying `requestId: ''`** instead of
+    answering it with an equally uncorrelatable `requestId: ''` reply. The block's
+    end state is unchanged — that reply never settled anything and the request timed
+    out either way — so this removes an unroutable message from the wire rather than
+    changing an outcome.
+  - **A non-string `requestId` is no longer echoed onto `TOKEN_REFRESH_RESPONSE`.**
+    The old `...(requestId ? { requestId } : {})` was a _truthiness_ test, so a
+    numeric id was spread straight back — and then failed the block's own
+    `isValidTokenRefreshResponse`, dropping the whole message _including the token
+    update it exists to deliver_. The field is now omitted and the message validates.
+    This is strictly a repair.
+
+  Because the second bullet is a repair on a malformed-input path and the first is
+  observable only through `createMockHost`, this is not a behaviour consumers can be
+  relying on. Both are pinned by tests that are **red against the previous host
+  sources and green here**.
+
+  ## What was actually wrong
+
+  "A reply with no `requestId` is unroutable" was stated in prose and open-coded at
+  **64 sites in five spellings**, measured on `e993cf0`:
+
+  ```
+  33 x  p.requestId !== undefined && typeof p.requestId !== 'string'   validate.ts
+   1 x  !isNonEmptyString(p.requestId)                                 validate.ts
+  26 x  typeof requestId !== 'string'                                  liveHost/mockHost
+   2 x  typeof <expr>.requestId === 'string'                           iframeTransport.ts
+   2 x  ...(requestId ? { requestId } : {})                            liveHost/mockHost
+  ```
+
+  #395 was filed on the theory that these disagreed about `null`. **They did not** —
+  every one of the 64 rejects `null`. The two spellings the issue counted as
+  differing on `null` were TYPE ANNOTATIONS on the _payload_
+  (`{ requestId?: unknown } | undefined` vs `… | null | undefined`), not runtime
+  predicates, and both of those sites runtime-guard the payload anyway. What they
+  genuinely disagreed about is the **empty string**: three spellings accepted `''`
+  as a correlation id, one (`isValidImageScanResolved`) required non-empty, and the
+  two truthiness spreads dropped it.
+
+  ## The two questions, kept apart on purpose
+
+  Collapsing them would have been the real regression:
+
+  - `isRoutableRequestId` — "can this correlate a reply to a pending request?"
+    **Non-empty string.** `''` can never be a key in the `pending` table, so this is
+    free at both routing sites and now agrees with the one validator that already
+    said so.
+  - `isWireRequestIdShape` — "is the field well-formed on the wire?" **Absent, or any
+    string, `''` included.** Deliberately looser: a validator returning `false` drops
+    the whole message at the trust boundary, and
+    `isValidTokenRefreshResponse`'s docblock spells out what that costs against a
+    pre-v2 host. Routability is decided later, and an unroutable-but-well-formed
+    reply is delivered to push listeners rather than discarded.
+
+  `isRoutableRequestId(v) ⇒ isWireRequestIdShape(v)`, strictly — `''` and `undefined`
+  sit in the gap, and a test asserts exactly those two are in it.
+
+  Enforced by `tests/guards/blocks-react-requestid-routability.test.mjs`, which
+  detects the decision **shape** rather than a spelling (a `typeof` before the
+  operand, a comparison / logical / ternary operator beside it, a boolean coercion
+  around it) and names in its own docblock what it cannot see — chiefly an aliased
+  local, which has a test of its own pinning the hole as a hole.
+
+- bcc24bf: Publish first-party deps as caret ranges instead of exact pins, and stop shipping sourcemaps that cannot resolve their sources (#374, #376).
+
+  **#374 — exact inter-package pins duplicated `@civitai/theme` and `@civitai/components`.**
+  `@civitai/components`, `@civitai/components-react` and `@civitai/blocks-react` declared
+  their first-party deps as `workspace:*`. pnpm rewrites the workspace protocol at pack
+  time, and `*` publishes an **exact** pin — measured off the real tarballs:
+  `@civitai/components@0.4.2` shipped `"@civitai/theme": "0.3.1"`, not `"^0.3.1"`.
+
+  Two exact pins from two different releases can never intersect, so co-installing
+  adjacent releases produced duplicate physical copies. Measured outside this workspace
+  with a real `npm install --package-lock-only` over a closed registry built from the
+  actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
+  `@civitai/blocks-react@0.56.1`:
+
+      before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+               @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+      after    @civitai/theme       0.3.1                   — 1 copy
+               @civitai/components  0.4.2                   — 1 copy
+
+  That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
+  wins**, so the first token bump that changes a _value_ would have shipped stale tokens
+  underneath new component CSS — silently, and only in the duplicated install.
+
+  The three manifests now use `workspace:^`, which publishes `^<version>`.
+
+  **Scope of the fix, stated rather than implied.** `^` on a `0.x` version locks the
+  minor, so this removes duplication across patch-adjacent releases only. Measured at
+  the second point too: an app on `@civitai/components-react@0.3.1` (theme `0.2.1`)
+  alongside `@civitai/blocks-react@0.56.1` (theme `0.3.1`) still resolves 2 copies,
+  before and after. That is correct and deliberate — a `0.x` minor is a breaking change
+  under this repo's own convention, so those two releases genuinely disagree about which
+  theme they need, and widening the range to `>=x.y.z <1.0.0` would trade a duplicate
+  copy for an incompatible pairing of component CSS with theme tokens.
+
+  One consequence worth knowing at release time: because `^0.3.1` already admits
+  `0.3.2`, `changeset version` no longer cascades a re-release of every dependent on a
+  theme patch bump (verified against both manifest shapes — with `workspace:*` a theme
+  `0.3.1 → 0.3.2` bump dragged `@civitai/components` and `@civitai/components-react` to
+  `0.4.3`; with `workspace:^` it leaves them at `0.4.2`).
+
+  **#376 — every shipped sourcemap dangled.**
+  All five packages build with `sourceMap` + `declarationMap`, so `dist/` fills with
+  `*.js.map` and `*.d.ts.map` whose `sources` point at `../src/*.ts`. No package lists
+  `src` in `files`. Measured off the real packed file lists at the previous state: **270
+  shipped maps, 270 dangling source references, zero resolvable** — `@civitai/blocks-react`
+  160, `@civitai/app-sdk` 46, `@civitai/components-react` 48, `@civitai/theme` 12,
+  `@civitai/components` 4. A consumer's devtools loaded each map and then had nothing to
+  show.
+
+  The maps are now excluded from the tarballs (`"!dist/**/*.map"`) and still emitted into
+  `dist/`, where they are _not_ dangling — inside this repo `src` sits right beside them,
+  so go-to-definition from a starter still lands in the real `.ts`. **No consumer
+  debuggability is lost, because there was none.** Shipping `src` instead was measured
+  and rejected: `packages/civitai-blocks-react/src` alone is 879,895 B, in a package
+  whose design constraint is that every app inherits its install graph.
+
+  Tarball delta across the five packages: **−114,574 B gzipped, −580,786 B unpacked**
+  (`@civitai/blocks-react` alone: −77,441 B gzipped, −413,492 B unpacked).
+
+  Enforced going forward by `scripts/check-shipped-sourcemaps.mjs` (`pnpm
+check:shipped-sourcemaps`), which reads the real packed file list and every real map's
+  `sources` rather than grepping for the `files` entry — so shipping `src` or inlining
+  `sourcesContent` satisfies it equally.
+
+- Updated dependencies [bcc24bf]
+  - @civitai/components@0.4.3
+  - @civitai/theme@0.3.2
+
 ## 0.56.1
 
 ### Patch Changes

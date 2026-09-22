@@ -64,9 +64,22 @@ export function buildGenerationResourcesUrl(
 // ---------------------------------------------------------------------------
 // Response shape (minimal — only the fields we read). Tolerant of missing
 // fields (a malformed row is skipped, never throws).
+//
+// EXPORTED (#379) because {@link responseToResources} takes it as a PARAMETER.
+// A caller doing its own fetch has to PRODUCE this value, and without the name
+// the only way to type that fetch was
+// `Parameters<typeof responseToResources>[0]` — naming the function to name its
+// input. Both halves are exported: a `RawGenerationResourcesResponse` whose
+// `items` element type had no name would move the same problem one level down.
+//
+// 🔴 It is the WIRE shape, not a contract: every field is optional and
+// unvalidated on purpose, because the mapper's job is to survive a malformed
+// row. Type a fetch with it; do not treat a value of it as checked. The checked
+// shape is `BlockResourceInfo[]`, which is what the mapper returns.
 // ---------------------------------------------------------------------------
 
-interface RawGenerationResource {
+/** One row of the rehydrate response. See the note above: wire shape, not a contract. */
+export interface RawGenerationResource {
   versionId?: number;
   modelId?: number;
   modelName?: string;
@@ -80,7 +93,8 @@ interface RawGenerationResource {
   clipSkip?: number | null;
 }
 
-interface RawGenerationResourcesResponse {
+/** The rehydrate response body — the parameter {@link responseToResources} takes. */
+export interface RawGenerationResourcesResponse {
   items?: RawGenerationResource[];
   maturity?: { browsingLevel?: number; sfwOnly?: boolean };
 }

@@ -2,8 +2,8 @@ import { useCallback } from 'react';
 
 import type { BlockGatedImage } from '@civitai/app-sdk/blocks';
 
-import { getTransport } from '../internal/singleton.js';
-import { sendTypedRequest } from '../internal/transport.js';
+import { getTransport } from '../transport/singleton.js';
+import { sendTypedRequest } from '../transport/transport.js';
 
 export type { BlockGatedImage };
 
@@ -54,7 +54,7 @@ export interface UseGatedImages {
  * 🔴 A `hidden` ENTRY IS NARROWED TO `{ imageId, status }` BEFORE IT REACHES
  * HERE, and that is enforced in code rather than asserted in prose: the
  * transport runs `projectInboundPayload` on every `IMAGES_RESULT` before
- * delivery (`src/internal/validate.ts`), so a `previewUrl`, `src`, `imageUrl` or
+ * delivery (`src/transport/validate.ts`), so a `previewUrl`, `src`, `imageUrl` or
  * any other key a host attaches to a withheld image is DROPPED, not forwarded.
  * Fields are dropped rather than the reply rejected so a future host-side field
  * addition cannot hang this call — see `projectGatedImage`'s docblock.

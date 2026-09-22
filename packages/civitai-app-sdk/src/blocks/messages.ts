@@ -122,7 +122,7 @@ export interface WrappedToken {
  * Mirrors `BlockInitPayload` in civitai/civitai's
  * `src/components/AppBlocks/types.ts`. Adding a field here without a
  * matching change on the platform side (or vice versa) is the bug class
- * `internal/validate.ts` exists to surface — keep the validator in lockstep
+ * `transport/validate.ts` exists to surface — keep the validator in lockstep
  * with both sides.
  */
 export interface BlockInitPayload {
@@ -359,7 +359,7 @@ export interface ConsentUnavailablePayload {
  * success-only sibling such as `deleted` — is OPTIONAL, because an error reply
  * is `{ requestId, error }` on its own: the host is not obliged to also send
  * `ok: false`. This mirrors the block-side guards in `@civitai/blocks-react`'s
- * `src/internal/validate.ts`, which early-accept any reply carrying an `error`
+ * `src/transport/validate.ts`, which early-accept any reply carrying an `error`
  * and only then require `ok`. Keep the two in lockstep: a guard that admits a
  * payload the type declares as guaranteed hands the consuming hook a lie.
  *
@@ -971,7 +971,7 @@ export type BlockToParentMessage =
   // that has ALREADY happened, so there is nothing for the host to answer.
   //
   // 🔴 WHY THIS EXISTS — IT IS THE ONE BRIDGE SILENCE THE HOST CANNOT SEE.
-  // `@civitai/blocks-react`'s `internal/validate.ts` shape-checks every inbound
+  // `@civitai/blocks-react`'s `transport/validate.ts` shape-checks every inbound
   // payload and DROPS a failure with nothing but a `console.warn`. That check runs
   // in the iframe, AFTER the host has already replied, so from the host's side the
   // exchange completed: its own dispatcher counts it `handled`. The block's pending
@@ -1023,6 +1023,14 @@ export type BlockToParentMessage =
   // (an immediate read). Additive/backward-compatible in BOTH directions: an
   // older host that ignores the field answers immediately, and a block that
   // never sends it is unaffected by a host that honors it.
+  //
+  // 🔴 THE CURRENT HOST HONOURS IT, AND CLAMPS IT (#388). Do not read the
+  // paragraph above as "the host ignores this" — it describes an OLDER host.
+  // Measured contract (flooring first, `<= 0` meaning no hold, and a
+  // `MAX_BLOCK_POLL_WAIT_SECONDS = 15` ceiling), with the host sha it was read
+  // at: `WatchWorkflowOptions.waitSeconds` in `@civitai/blocks-react`'s
+  // `useBuzzWorkflow.ts`. Stated in ONE place on purpose; a second copy is what
+  // went stale here in the first place.
   //
   // 🔴 ONLY SEND THIS FROM A LOOP THAT AWAITS EACH POLL BEFORE ISSUING THE NEXT.
   // A fixed `setInterval` against a host holding 15s stacks ~7 concurrent

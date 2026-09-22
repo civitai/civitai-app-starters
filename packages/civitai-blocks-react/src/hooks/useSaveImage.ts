@@ -1,8 +1,8 @@
 import { useCallback } from 'react';
 
-import { getTransport } from '../internal/singleton.js';
+import { getTransport } from '../transport/singleton.js';
 import { throwOnFailedReply } from '../internal/replyError.js';
-import { sendTypedRequest } from '../internal/transport.js';
+import { sendTypedRequest } from '../transport/transport.js';
 
 /**
  * Input to {@link UseSaveImage.saveImage}. Exactly ONE of `url` / `imageId` is

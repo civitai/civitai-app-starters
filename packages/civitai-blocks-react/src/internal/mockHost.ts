@@ -76,7 +76,8 @@ import {
 } from '@civitai/app-sdk/blocks';
 
 import { consentUnavailablePayload, resolveUngrantableConsentNotice } from './consent.js';
-import { hostContextWithTheme } from './transport.js';
+import { hostContextWithTheme } from '../transport/transport.js';
+import { isRoutableRequestId } from '../transport/requestId.js';
 
 /**
  * The block's preferred Buzz pool. On a `textToImage` {@link WorkflowBody} it's
@@ -1745,7 +1746,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           case 'REQUEST_TOKEN':
             dispatchToBlock({
               type: 'TOKEN_REFRESH_RESPONSE',
-              payload: { ...(requestId ? { requestId } : {}), token: nextToken() },
+              payload: { ...(isRoutableRequestId(requestId) ? { requestId } : {}), token: nextToken() },
             });
             return;
 
@@ -2080,7 +2081,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // exactly. Drop a request with no requestId — the block correlates
             // the reply by it, so a reply without one is unroutable (matches
             // the sibling request cases + createLiveHost).
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             // Simulated read failure: reply with the error shape
             // (`{ requestId, error }`, no `balance`) — byte-for-byte
             // createLiveHost's failure reply — so the block's error UI fires.
@@ -2104,7 +2105,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // with no requestId — the block correlates the reply by it, so a
             // reply without one is unroutable (matches the sibling request cases
             // + createLiveHost).
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             // Simulated read failure: reply with the error shape
             // (`{ requestId, error }`, no `viewer`) — byte-for-byte
             // createLiveHost's failure reply — so the block's error UI fires.
@@ -2126,7 +2127,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // Buzz-dashboard ledger read. Drop a request with no requestId
             // (unroutable). A forced read error replies with the FREE-TEXT error
             // variant (mirrors the real host forwarding err.message).
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             if (buzzReadError !== undefined) {
               dispatchToBlock({
                 type: 'BUZZ_TRANSACTIONS_RESULT',
@@ -2150,7 +2151,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           }
 
           case 'GET_BUZZ_ACCOUNTS': {
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             if (buzzReadError !== undefined) {
               dispatchToBlock({
                 type: 'BUZZ_ACCOUNTS_RESULT',
@@ -2166,7 +2167,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           }
 
           case 'GET_DAILY_COMPENSATION': {
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             if (buzzReadError !== undefined) {
               dispatchToBlock({
                 type: 'DAILY_COMPENSATION_RESULT',
@@ -2190,7 +2191,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           case 'GET_WILDCARD_PACK': {
             // Token-INDEPENDENT import. A forced error replies with the
             // DISCRIMINATED enum code (NOT free-text) — mirrors the real host.
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             if (wildcardPackError !== undefined) {
               dispatchToBlock({
                 type: 'WILDCARD_PACK_RESULT',
@@ -2209,7 +2210,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // App generator SUBQUEUE read. Drop a request with no requestId
             // (unroutable). A forced error replies with the FREE-TEXT error
             // variant (mirrors the real host forwarding err.message).
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             if (appWorkflowsError !== undefined) {
               dispatchToBlock({
                 type: 'APP_WORKFLOWS_RESULT',
@@ -2232,7 +2233,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // requestId or a missing/empty workflowId (mirrors the real host
             // dropping those without a reply). A forced error replies with the
             // FREE-TEXT error variant (mirrors a FORBIDDEN / transport failure).
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             const cancelId = typed.payload?.workflowId;
             if (typeof cancelId !== 'string' || cancelId.length === 0) return;
             if (appWorkflowsError !== undefined) {
@@ -2266,7 +2267,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           case 'SET_COLLECTION_FOLLOW': {
             // Follow / unfollow a collection for the viewer. Drop a request with
             // no requestId (unroutable) — same as every REQUEST-style handler.
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             if (collectionFollowError !== undefined) {
               dispatchToBlock({
                 type: 'COLLECTION_FOLLOW_RESULT',
@@ -2305,7 +2306,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // outputs. Drop a request with no requestId (unroutable) — same as
             // every REQUEST-style handler, and the ONLY safe drop: after the id
             // is known, every path must reply or the block hangs TEN MINUTES.
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             if (createPostError !== undefined) {
               dispatchToBlock({
                 type: 'CREATE_POST_RESULT',
@@ -2338,7 +2339,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // real-scanned public Image rows. Drop a request with no requestId
             // (unroutable). A forced error replies with the FREE-TEXT error variant
             // (mirrors the real host forwarding err.message).
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             if (publishError !== undefined) {
               dispatchToBlock({
                 type: 'PUBLISH_RESULT',
@@ -2359,7 +2360,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // (mirrors the real host forwarding err.message). The canned images
             // include at least one `hidden` (no-url) entry so the block's
             // blurred/placeholder path is exercised.
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             if (gatedImagesError !== undefined) {
               dispatchToBlock({
                 type: 'IMAGES_RESULT',
@@ -2917,7 +2918,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // explicit null (clear); anything else is a bad-input NACK, same as
             // the real IframeHost. Without this reply `useCheckpointPicker().
             // persist()` hung to its 30s timeout under the mock host.
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             const rawVersionId = typed.payload?.versionId;
             const versionId =
               rawVersionId === null

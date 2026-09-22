@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { build, type Rollup } from 'vite';
 
 /**
- * 🔴 BUILD-LEVEL guard for `src/internal/detector.ts`'s env reads.
+ * 🔴 BUILD-LEVEL guard for `src/transport/detector.ts`'s env reads.
  *
  * WHY THIS IS NOT A UNIT TEST. The defect this pins is a property of the
  * EMITTED BUNDLE, not of the return value. `readAllowedOriginsFromEnv()`
@@ -65,7 +65,7 @@ function packageRoot(): string {
   }
 }
 
-const DETECTOR_SRC = join(packageRoot(), 'src', 'internal', 'detector.ts');
+const DETECTOR_SRC = join(packageRoot(), 'src', 'transport', 'detector.ts');
 if (!existsSync(DETECTOR_SRC)) throw new Error(`detector source not found at ${DETECTOR_SRC}`);
 
 // The legitimate values. Distinct per prefix so we can tell which of the three

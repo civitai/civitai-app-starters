@@ -128,7 +128,8 @@ import {
 } from '@civitai/app-sdk/blocks';
 
 import { consentUnavailablePayload, resolveUngrantableConsentNotice } from './consent.js';
-import { hostContextWithTheme } from './transport.js';
+import { hostContextWithTheme } from '../transport/transport.js';
+import { isRoutableRequestId } from '../transport/requestId.js';
 import type { MockHost, MockHostScenarioPatch, MockBuzzHandle } from './mockHost.js';
 import {
   openPickerOverlay,
@@ -843,7 +844,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             dispatchToBlock({
               type: 'TOKEN_REFRESH_RESPONSE',
               payload: {
-                ...(requestId ? { requestId } : {}),
+                ...(isRoutableRequestId(requestId) ? { requestId } : {}),
                 token: wrappedTokenFrom(rawToken ?? '', decoded),
               },
             });
@@ -991,7 +992,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             // Mirrors the `APP_STORAGE_SET` value-or-error convention. Drop a
             // request with no `requestId` — the block correlates the reply by it,
             // so a reply without one is unroutable.
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             void callTrpcData(
               'blocks.getMyBuzzBalance',
               { blockToken: rawToken },
@@ -1016,7 +1017,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             // TEXT error on failure (anon / banned viewer). Drop a request with
             // no `requestId` — the block correlates the reply by it, so a reply
             // without one is unroutable.
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             void callTrpcData(
               'blocks.getMyViewer',
               { blockToken: rawToken },
@@ -1037,7 +1038,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             // MUTATION (POST). params are spread FIRST so the host-authoritative
             // `blockToken` (spread LAST) can never be overridden — mirrors the
             // real host. FREE-TEXT error on failure. Unroutable without requestId.
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             void callTrpcData(
               'blocks.getMyBuzzTransactions',
               { ...(typed.payload?.params ?? {}), blockToken: rawToken },
@@ -1054,7 +1055,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           }
 
           case 'GET_BUZZ_ACCOUNTS': {
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             void callTrpcData(
               'blocks.getMyBuzzAccounts',
               { blockToken: rawToken },
@@ -1071,7 +1072,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           }
 
           case 'GET_DAILY_COMPENSATION': {
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             void callTrpcData(
               'blocks.getMyDailyCompensation',
               { ...(typed.payload?.params ?? {}), blockToken: rawToken },
@@ -1109,7 +1110,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             // loop against a harness that has no sign-in. Use dev:mock (its
             // `collectionFollowError` knob covers `declined` and the rest) to
             // exercise the real refusal set.
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             logOnce(
               'collection-follow',
               'SET_COLLECTION_FOLLOW is not supported in dev:live (it needs the session-authed ' +
@@ -1145,7 +1146,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             // surfaces it as `.code === undefined`, i.e. a message worth showing.
             // Use dev:mock (its `createPostError` knob covers `declined` and the
             // rest) to exercise the refusal set.
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             logOnce(
               'create-post',
               'CREATE_POST_FROM_APP is not supported in dev:live (it needs the server-resolved ' +
@@ -1171,7 +1172,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             // honest `parse-failed` (never a fabricated pack) so the block's hook
             // surfaces a typed error rather than hanging. Use dev:mock for the
             // full wildcard-import path.
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             logOnce(
               'wildcard-pack',
               'GET_WILDCARD_PACK is not supported in dev:live (it needs the session-authed ' +
@@ -1193,7 +1194,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             // per-app tag filter server-side (the input carries no `tags`). It
             // returns a plain `{ workflows, cursor }`, unwrapped with `callTrpcData`.
             // FREE-TEXT error on failure. Unroutable without requestId.
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             void callTrpcData(
               'blocks.queryAppWorkflows',
               { ...(typed.payload?.params ?? {}), blockToken: rawToken },
@@ -1216,7 +1217,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             // terminal projection), unwrapped with `callTrpcData`. FREE-TEXT error
             // on failure (FORBIDDEN / transport). Drop a request with no requestId
             // or a missing/empty workflowId (mirrors the real host).
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             const cancelId = typed.payload?.workflowId;
             if (typeof cancelId !== 'string' || cancelId.length === 0) return;
             void callTrpcData(
@@ -1242,7 +1243,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             // re-derives ownership, re-uploads + FULL-scans server-side. Returns a
             // plain `{ imageIds }`, unwrapped with `callTrpcData`. FREE-TEXT error
             // on failure. Unroutable without requestId.
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             void callTrpcData(
               'blocks.publishGenerationOutputs',
               {
@@ -1271,7 +1272,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             // browsing-level clamp server-side and returns a plain `{ images }`
             // (`BlockGatedImage[]` — visible/hidden), unwrapped with `callTrpcData`.
             // FREE-TEXT error on failure. Unroutable without requestId.
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             void callTrpcData(
               'blocks.getImagesByIds',
               { blockToken: rawToken, imageIds: typed.payload?.imageIds ?? [] },
@@ -1884,7 +1885,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             // failure strings ("disallowed origin", "hidden") would be true
             // here. Use dev:mock to exercise the resolve path, and the real
             // site to exercise the gates.
-            if (typeof requestId !== 'string') return;
+            if (!isRoutableRequestId(requestId)) return;
             logOnce(
               'save-image',
               'SAVE_IMAGE is not supported in dev:live (the download bridge is the production ' +

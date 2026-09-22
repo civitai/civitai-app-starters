@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BlockInitPayload, ParentToBlockMessage } from '@civitai/app-sdk/blocks';
 
-import { IframeTransport } from '../src/internal/iframeTransport.js';
+import { IframeTransport } from '../src/transport/iframeTransport.js';
 import { mockParentMessage } from './helpers/mockParentMessage.js';
 
 /**

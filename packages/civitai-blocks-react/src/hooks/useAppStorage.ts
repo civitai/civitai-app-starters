@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
 
-import { getTransport } from '../internal/singleton.js';
+import { getTransport } from '../transport/singleton.js';
 import { throwOnFailedReply, throwOnReplyError } from '../internal/replyError.js';
-import { sendTypedRequest } from '../internal/transport.js';
+import { sendTypedRequest } from '../transport/transport.js';
 
 /**
  * Public shape of one entry returned by `list()` — `updatedAt` is a real

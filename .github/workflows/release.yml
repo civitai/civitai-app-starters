@@ -187,29 +187,49 @@ jobs:
       # inside is only the first term. At the 5/3000 defaults that window is 12s.
       #
       # Measured read-after-write lag on THIS repo, publish-step success -> version
-      # visible on the registry: 76s, 126s, 127s, 157s. So the gate was failing with
-      # ~12s of patience against a worst case of 157s, then reporting
+      # visible on the registry: 76s, 126s, 127s, 157s, 187s, and 🔴 369s. So the gate
+      # was failing with ~12s of patience against a worst case of 157s, then reporting
       # "PUBLISH DID NOT HAPPEN" for a publish that had already succeeded and pushed
       # its git tag. Worked example, 2026-09-19: step 8 logged
       # `success packages published successfully` at 01:35:53 and pushed
       # `@civitai/blocks-react@0.52.0`; this step 404'd at 01:36:08; the registry
       # served 0.52.0 at 01:37:59 — 127s.
       #
-      # 25/10000 gives a 240s window, ~1.5x the worst observed. The cost is paid ONLY
-      # by a package that never appears: a lagging one resolves as soon as it lands
-      # and sleeps no longer than it had to, and a healthy publish resolves on attempt
-      # 1 with no sleeping at all.
+      # 🔴 2026-09-22, run 35782955125 (the #408 merge, FIVE packages): the tail moved
+      # AGAIN and blew past the 240s the 25/10000 pair bought. Publish logged success
+      # for `@civitai/app-sdk@0.50.0` + `@civitai/blocks-react@0.57.0` and pushed both
+      # tags at 20:52:34.403Z. This step logged `app-sdk@0.50.0 -> HTTP 404 after 25
+      # attempt(s)` and FAILED THE RUN; the registry `time` field puts 0.50.0 at
+      # 20:58:43.366Z = **369.0s**. The sibling landed at 187s, so two packages in one
+      # run straddled the old budget. `gh run rerun --failed` then printed
+      # `warn No unpublished projects to publish` with all five asserts OK — proving
+      # the publish had succeeded and this was propagation, never a silent failure.
+      # That is the ninth consecutive time this gate has been red on a SUCCESSFUL
+      # publish, which is what trains everyone to click through it — and a gate people
+      # click through is blind to the real partial publish it exists to catch.
+      #
+      # 60/10000 gives a 59 x 10s = 590s window, ~1.6x the worst observed (369s). The
+      # cost is paid ONLY by a package that never appears: a lagging one resolves as
+      # soon as it lands and sleeps no longer than it had to, and a healthy publish
+      # resolves on attempt 1 with no sleeping at all.
       #
       # timeout-minutes covers the GENUINE-failure case, where the full budget burns
-      # per package, sequentially: 2 x 24 x 10000 = 480s each, so ~8min for one and
-      # ~16min for two. Three or more total-failure packages trips the cap — accepted,
-      # because that run fails loudly either way and the release `concurrency` lane
-      # has no `cancel-in-progress`, so the cap is what stops a bad run parking it.
+      # per package, sequentially: 2 x 59 x 10000 = 1180s each, so ~19.7min for one and
+      # ~39.3min for two. Three or more total-failure packages trips the cap — accepted
+      # on the same reasoning as before: that run fails loudly either way and the
+      # release `concurrency` lane has no `cancel-in-progress`, so the cap is what
+      # stops a bad run parking it.
       # 🔴 If you raise TRIES or DELAY, re-derive both numbers; they are coupled.
+      # ⚠ A CHEAPER FIX EXISTS AND IS NOT TAKEN HERE: the worst-case sleep is doubled
+      # only because a 404 pays for the name probe on the same budget, every attempt.
+      # Running the name probe ONCE after the version probe gives up would halve it,
+      # and would let the window grow without dragging `timeout-minutes` with it. That
+      # is a change to `assert-published-versions.mjs`, not to these constants, so it
+      # is deliberately out of scope for a budget bump.
       - name: Assert the published versions actually exist on npm
         if: ${{ !cancelled() }}
-        timeout-minutes: 20
+        timeout-minutes: 40
         env:
-          PUBLISH_CHECK_TRIES: '25'
+          PUBLISH_CHECK_TRIES: '60'
           PUBLISH_CHECK_DELAY: '10000'
         run: pnpm assert:published

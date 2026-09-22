@@ -2,9 +2,15 @@ import { useEffect } from 'react';
 
 import type { BlockToken } from '@civitai/app-sdk/blocks';
 
-import { getTransport } from '../internal/singleton.js';
-import { sendTypedRequest } from '../internal/transport.js';
+import { getTransport } from '../transport/singleton.js';
+import { sendTypedRequest } from '../transport/transport.js';
 import { useTransportSnapshot } from './useBlockContext.js';
+
+/**
+ * What {@link useBlockToken} returns: the live block token plus a manual
+ * `refresh`. See `./returnTypeLedger.js`.
+ */
+export type UseBlockToken = BlockToken & { refresh: () => Promise<void> };
 
 /** Refresh fires `REFRESH_LEAD_MS` before the token's `expiresAt`. */
 const REFRESH_LEAD_MS = 2 * 60 * 1000;
@@ -27,7 +33,7 @@ const REFRESH_LEAD_MS = 2 * 60 * 1000;
  * const { raw, scopes, expiresAt, buzzBudget, refresh } = useBlockToken();
  * // after a 401: await refresh(); then retry the request once with the new `raw`.
  */
-export function useBlockToken(): BlockToken & { refresh: () => Promise<void> } {
+export function useBlockToken(): UseBlockToken {
   const snap = useTransportSnapshot();
   const token = snap.token;
   const instanceId = snap.blockInstanceId;

@@ -1,8 +1,8 @@
 import { useCallback } from 'react';
 
-import { HUMAN_INTERACTION_TIMEOUT_MS } from '../internal/requestTimeouts.js';
-import { getTransport } from '../internal/singleton.js';
-import { sendTypedRequest } from '../internal/transport.js';
+import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
+import { getTransport } from '../transport/singleton.js';
+import { sendTypedRequest } from '../transport/transport.js';
 
 /**
  * What {@link usePublishGenerationOutputs} returns.
@@ -77,7 +77,7 @@ export function usePublishGenerationOutputs(): UsePublishGenerationOutputs {
         // on screen. The generation was already billed and a dead publish
         // bridge has no refund path, so the charge stood and the outputs were
         // lost. Every human-gated request opts out the same way — the ledger is
-        // `HUMAN_GATED_REQUEST_TYPES` in `internal/requestTimeouts.ts`.
+        // `HUMAN_GATED_REQUEST_TYPES` in `transport/requestTimeouts.ts`.
         { timeoutMs: HUMAN_INTERACTION_TIMEOUT_MS },
       );
       if (reply.error || !reply.result) {

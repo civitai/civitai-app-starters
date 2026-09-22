@@ -62,6 +62,8 @@ import type {
   WrappedToken,
 } from '@civitai/app-sdk/blocks';
 
+import { isRoutableRequestId, isWireRequestIdShape } from './requestId.js';
+
 const isObject = (v: unknown): v is Record<string, unknown> =>
   v !== null && typeof v === 'object';
 
@@ -363,7 +365,7 @@ export function isValidTokenRefreshResponse(
 ): p is { token: WrappedToken; requestId?: string } {
   if (!isObject(p)) return false;
   if (!isValidWrappedToken(p.token)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   return true;
 }
 
@@ -372,7 +374,7 @@ export function isValidWorkflowReply(
 ): p is { snapshot: BlockWorkflowSnapshot; requestId?: string } {
   if (!isObject(p)) return false;
   if (!isValidWorkflowSnapshot(p.snapshot)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   return true;
 }
 
@@ -382,7 +384,7 @@ export function isValidBuzzPurchaseResult(
   if (!isObject(p)) return false;
   if (typeof p.purchased !== 'boolean') return false;
   if (p.newBalance !== undefined && typeof p.newBalance !== 'number') return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   return true;
 }
 
@@ -403,7 +405,7 @@ export function isValidBuzzBalanceResult(
   requestId?: string;
 } {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.balance !== undefined) {
     if (!isObject(p.balance)) return false;
@@ -439,7 +441,7 @@ export function isValidViewerResult(
   requestId?: string;
 } {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.viewer !== undefined) {
     const v = p.viewer;
@@ -518,7 +520,7 @@ export function isValidImageUploadResult(
     | { status: 'pending'; imageId: number; url: string };
 } {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   // `selected` absent → cancelled upload (valid). When present, it must match
   // one of the purpose-keyed shapes (moderated / generationSource / pending).
   if (p.selected !== undefined) {
@@ -552,7 +554,7 @@ export function isValidImageScanResolved(
     | { status: 'error'; message?: string };
 } {
   if (!isObject(p)) return false;
-  if (!isNonEmptyString(p.requestId)) return false;
+  if (!isRoutableRequestId(p.requestId)) return false;
   if (typeof p.imageId !== 'number' || !Number.isInteger(p.imageId) || p.imageId <= 0) return false;
   if (!isObject(p.result)) return false;
   const r = p.result;
@@ -579,7 +581,7 @@ export function isValidSharedUpdateResult(
   p: unknown,
 ): p is { ok?: boolean; error?: string; requestId?: string } {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.error !== undefined) return true; // hook throws before reading `ok`
   if (typeof p.ok !== 'boolean') return false;
@@ -610,7 +612,7 @@ function isDateLike(v: unknown): boolean {
  */
 export function isValidBuzzTransactionsResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.result !== undefined) {
     const r = p.result;
@@ -640,7 +642,7 @@ export function isValidBuzzTransactionsResult(p: unknown): boolean {
  */
 export function isValidBuzzAccountsResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.result !== undefined) {
     const r = p.result;
@@ -663,7 +665,7 @@ export function isValidBuzzAccountsResult(p: unknown): boolean {
  */
 export function isValidDailyCompensationResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.result !== undefined) {
     const r = p.result;
@@ -694,7 +696,7 @@ const WILDCARD_PACK_ERROR_CODES = new Set<string>([
  */
 export function isValidWildcardPackResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined) {
     if (typeof p.error !== 'string' || !WILDCARD_PACK_ERROR_CODES.has(p.error)) return false;
   }
@@ -771,7 +773,7 @@ function isValidAppWorkflow(w: unknown): boolean {
  */
 export function isValidAppWorkflowsResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.result !== undefined) {
     const r = p.result;
@@ -793,7 +795,7 @@ export function isValidAppWorkflowsResult(p: unknown): boolean {
  */
 export function isValidCancelAppWorkflowResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.result !== undefined) {
     const r = p.result;
@@ -821,7 +823,7 @@ export function isValidCancelAppWorkflowResult(p: unknown): boolean {
  */
 export function isValidPublishResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.result !== undefined) {
     const r = p.result;
@@ -960,7 +962,7 @@ function projectGatedImage(img: unknown): unknown {
  */
 export function isValidImagesResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.result !== undefined) {
     const r = p.result;
@@ -995,7 +997,7 @@ export function isValidImagesResult(p: unknown): boolean {
  */
 export function isValidCollectionFollowResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.result !== undefined) {
     const r = p.result;
@@ -1032,7 +1034,7 @@ export function isValidCollectionFollowResult(p: unknown): boolean {
  */
 export function isValidCreatePostResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.result !== undefined) {
     const r = p.result;
@@ -1071,7 +1073,7 @@ export function isValidCreatePostResult(p: unknown): boolean {
  */
 export function isValidAppStorageGetResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   // `value` may be any JSON value including `null`; a reply carrying neither a
   // `value` key nor an `error` is malformed (would silently resolve to `null`).
@@ -1085,7 +1087,7 @@ export function isValidAppStorageGetResult(p: unknown): boolean {
  */
 export function isValidAppStorageSetResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.error !== undefined) return true; // hook throws before reading `sizeBytes`
   if (typeof p.ok !== 'boolean') return false;
@@ -1099,7 +1101,7 @@ export function isValidAppStorageSetResult(p: unknown): boolean {
  */
 export function isValidAppStorageDeleteResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.error !== undefined) return true; // hook throws before reading `deleted`
   if (typeof p.ok !== 'boolean') return false;
@@ -1114,7 +1116,7 @@ export function isValidAppStorageDeleteResult(p: unknown): boolean {
  */
 export function isValidAppStorageListResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.error !== undefined) return true; // hook throws before reading `keys`
   if (!Array.isArray(p.keys)) return false;
@@ -1130,7 +1132,7 @@ export function isValidAppStorageListResult(p: unknown): boolean {
 /** Reply to `APP_STORAGE_QUOTA`. The four counters are finite numbers (error path zeroes them + adds `error`). */
 export function isValidAppStorageQuotaResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.error !== undefined) return true; // hook throws before reading the counters
   if (!isFiniteNumber(p.usedBytes)) return false;
@@ -1169,7 +1171,7 @@ function isValidSharedValue(v: unknown): boolean {
  */
 export function isValidSharedListResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.error !== undefined) return true; // hook throws before reading `items`
   if (!Array.isArray(p.items)) return false;
@@ -1210,7 +1212,7 @@ function isValidSharedItemWire(it: unknown): boolean {
  */
 export function isValidSharedGetResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.error !== undefined) return true; // hook throws before reading `item`
   // `null` is a valid, non-error result (key not found / hidden).
@@ -1225,7 +1227,7 @@ export function isValidSharedGetResult(p: unknown): boolean {
  */
 export function isValidSharedReportResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.error !== undefined) return true; // hook throws before reading `ok`
   if (typeof p.ok !== 'boolean') return false;
@@ -1240,7 +1242,7 @@ export function isValidSharedReportResult(p: unknown): boolean {
  */
 export function isValidSaveImageResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.error !== undefined) return true; // hook throws before reading `ok`
   if (typeof p.ok !== 'boolean') return false;
@@ -1254,7 +1256,7 @@ export function isValidSaveImageResult(p: unknown): boolean {
  */
 export function isValidSharedCountResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.error !== undefined) return true; // hook throws before reading `count`
   if (!isFiniteNumber(p.count)) return false;
@@ -1264,7 +1266,7 @@ export function isValidSharedCountResult(p: unknown): boolean {
 /** Reply to `SHARED_GET_COUNTS`. `counts` maps each key to a finite vote total. */
 export function isValidSharedCountsResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.error !== undefined) return true; // hook throws before reading `counts`
   if (!isObject(p.counts)) return false;
@@ -1277,7 +1279,7 @@ export function isValidSharedCountsResult(p: unknown): boolean {
 /** Reply to `SHARED_APPEND`. On success `key` is the host-minted (non-empty) entry id. */
 export function isValidSharedAppendResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.error !== undefined) return true; // hook throws before reading `key`
   if (!isNonEmptyString(p.key)) return false;
@@ -1290,7 +1292,7 @@ export function isValidSharedAppendResult(p: unknown): boolean {
  */
 export function isValidSharedWithdrawResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.error !== undefined) return true; // hook throws before reading `deleted`
   if (typeof p.ok !== 'boolean') return false;
@@ -1334,7 +1336,7 @@ function isValidPickerResourceBase(s: Record<string, unknown>): boolean {
  */
 export function isValidCheckpointPickerResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.selected !== undefined) {
     if (!isObject(p.selected)) return false;
     if (!isValidPickerResourceBase(p.selected)) return false;
@@ -1351,7 +1353,7 @@ export function isValidCheckpointPickerResult(p: unknown): boolean {
  */
 export function isValidResourcePickerResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.selected !== undefined) {
     const s = p.selected;
     if (!isObject(s)) return false;
@@ -1381,7 +1383,7 @@ export function isValidResourcePickerResult(p: unknown): boolean {
  */
 export function isValidUserCheckpointSetResult(p: unknown): boolean {
   if (!isObject(p)) return false;
-  if (p.requestId !== undefined && typeof p.requestId !== 'string') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
   if (p.error !== undefined && typeof p.error !== 'string') return false;
   if (p.error !== undefined) return true; // hook throws before reading `ok`
   if (typeof p.ok !== 'boolean') return false;

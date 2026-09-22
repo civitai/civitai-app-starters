@@ -10,7 +10,7 @@ import {
   snapshotFromInit,
   tokenFromWrapped,
   type BlockTransport,
-} from '../src/internal/transport.js';
+} from '../src/transport/transport.js';
 
 /**
  * Pure helpers in transport.ts (snapshotFromInit / tokenFromWrapped /

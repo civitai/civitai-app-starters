@@ -1,9 +1,71 @@
 import { useCallback, useState } from 'react';
 
-import type { BlockWorkflowSnapshot, WorkflowBody, WorkflowStatus } from '@civitai/app-sdk/blocks';
+import type {
+  BlockWorkflowSnapshot,
+  WorkflowBody,
+  WorkflowBodyCustomComfy,
+  WorkflowBodyPassThroughStep,
+  WorkflowBodyStep,
+  WorkflowBodyTextToImage,
+  WorkflowStatus,
+} from '@civitai/app-sdk/blocks';
 
-import { getTransport } from '../internal/singleton.js';
-import { generateIdempotencyKey, sendTypedRequest } from '../internal/transport.js';
+import { getTransport } from '../transport/singleton.js';
+import { generateIdempotencyKey, sendTypedRequest } from '../transport/transport.js';
+
+/**
+ * The members of {@link WorkflowBody}, enumerated ONE WAY so `tsc` can compare
+ * the two (#381).
+ *
+ * 🔴 THIS IS NOT DOCUMENTATION — IT IS THE THING THAT MAKES THE DOCUMENTATION
+ * UNNECESSARY. `useBuzzWorkflow`'s docblock used to hand-type "THREE members as
+ * of `@civitai/app-sdk@0.30.0`" and then certify that list "otherwise
+ * unchanged", at a point when the union already had four:
+ * `WorkflowBodyPassThroughStep` landed in 583e8ba (#310). Prose cannot be
+ * checked, so it rotted, and the rot was invisible because the sentence
+ * asserting currency was itself the stale part.
+ *
+ * `_WorkflowBodyArmsAreExhaustive` below demands MUTUAL assignability between
+ * this list and the union itself, so:
+ *   - ADD a member to `WorkflowBody` and this file fails to compile, at a line
+ *     whose comment says what to do about the docblock.
+ *   - REMOVE one and it fails too — a one-directional `extends` would not.
+ * A count stated in prose would still be a count stated in prose; the docblock
+ * therefore states none and points here.
+ *
+ * ⚠️ WHAT IT CANNOT CATCH, stated rather than assumed: a NEW member that is
+ * structurally assignable to an existing one (a strict subtype) satisfies both
+ * directions and passes. Nothing short of nominal typing would catch that, and
+ * the union's members are pairwise incompatible today.
+ */
+type WorkflowBodyArms =
+  | WorkflowBodyTextToImage
+  | WorkflowBodyCustomComfy
+  | WorkflowBodyStep
+  | WorkflowBodyPassThroughStep;
+
+/** `[A] extends [B]` — bracketed so a union is compared whole, not distributed. */
+type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+
+/**
+ * Compiles only when `T` is `true`. The CONSTRAINT is what fails the build — a
+ * bare `T extends true ? true : never` would quietly evaluate to `never` and
+ * compile clean, which is a guard that cannot go red.
+ */
+type AssertTrue<T extends true> = T;
+
+/**
+ * Compiles only while {@link WorkflowBodyArms} is exactly {@link WorkflowBody}.
+ *
+ * 🔴 IF THIS LINE IS RED, DO NOT JUST ADD THE ARM ABOVE. A new member means
+ * `estimate`/`submit` accept a shape this hook's docblock has never described.
+ * Check whether the docblock's CAPABILITY paragraphs (the `customComfy`
+ * `mode` note) need a sibling, then extend the list. That prompt is the whole
+ * point of the assertion — #381 is a rotted description, not a rotted number.
+ */
+type _WorkflowBodyArmsAreExhaustive = AssertTrue<
+  MutuallyAssignable<WorkflowBody, WorkflowBodyArms>
+>;
 
 /**
  * Snapshot statuses that mean "no further polling is needed."
@@ -31,7 +93,7 @@ const TERMINAL_STATUSES: ReadonlySet<BlockWorkflowSnapshot['status']> = new Set(
 const WORKFLOW_REQUEST_TIMEOUT_MS = 120_000;
 
 /**
- * Default orchestrator-side hold per {@link UseBuzzWorkflowReturn.watch} poll,
+ * Default orchestrator-side hold per {@link UseBuzzWorkflow.watch} poll,
  * in SECONDS.
  *
  * 🔴 THE UNIT IS SECONDS, matching the orchestrator's `?wait=` parameter — not
@@ -47,6 +109,12 @@ const WORKFLOW_REQUEST_TIMEOUT_MS = 120_000;
  *     its own ~12s ceiling, and the two are SEQUENTIAL — so the round trip's
  *     worst case is 15 + 12 = 27s, which must stay inside the host's own
  *     end-to-end response budget.
+ *
+ * 🔴 AND THE HOST ENFORCES THAT SAME 15 (#388) — `MAX_BLOCK_POLL_WAIT_SECONDS`
+ * in `civitai/civitai` @ `b0eb2820b5`. This default therefore sits exactly AT
+ * the host's cap, not under it: raising it here changes nothing on the wire,
+ * because the host clamps. See {@link WatchWorkflowOptions.waitSeconds} for the
+ * full measured contract, including the flooring.
  */
 export const DEFAULT_WATCH_WAIT_SECONDS = 15;
 
@@ -59,7 +127,7 @@ const DEFAULT_WATCH_TIMEOUT_MS = 10 * 60_000;
 /** How many CONSECUTIVE transport failures `watch` absorbs before rejecting. */
 const DEFAULT_WATCH_MAX_RETRIES = 3;
 
-/** Optional controls for {@link UseBuzzWorkflowReturn.watch}. */
+/** Optional controls for {@link UseBuzzWorkflow.watch}. */
 export interface WatchWorkflowOptions {
   /**
    * Called with EVERY snapshot the host returns, intermediate ones included, in
@@ -76,18 +144,48 @@ export interface WatchWorkflowOptions {
    *
    * 🔴 This does NOT cancel the workflow — it stops watching it. Buzz is already
    * spent and the orchestrator keeps running. To actually stop the work, call
-   * {@link UseBuzzWorkflowReturn.cancel}.
+   * {@link UseBuzzWorkflow.cancel}.
    */
   signal?: AbortSignal;
   /**
    * Orchestrator-side hold per poll, in **seconds**. Default
-   * {@link DEFAULT_WATCH_WAIT_SECONDS}. `0` disables long polling and falls back
-   * to a plain read per `intervalMs`.
+   * {@link DEFAULT_WATCH_WAIT_SECONDS}.
    *
-   * 🔴 CURRENTLY ADVISORY. It travels on the `POLL_WORKFLOW` message and a host
-   * that does not yet read the field simply answers immediately, exactly as
-   * today — so `watch` is correct either way, it just polls more often. See the
-   * field's note on `BlockToParentMessage`.
+   * 🔴 THE HOST HONOURS AND CLAMPS THIS — it is NOT advisory (#388). This
+   * docblock said "CURRENTLY ADVISORY … a host that does not yet read the field
+   * simply answers immediately, exactly as today", which was true when written
+   * and is not true of the deployed host. The contract, read off
+   * `civitai/civitai` at **`b0eb2820b5`** (5.1.120, `main`) — two files,
+   * because a constant that nothing calls is not a contract:
+   *
+   *   - `src/server/services/blocks/workflow.service.ts:1263` declares
+   *     `MAX_BLOCK_POLL_WAIT_SECONDS = 15`.
+   *   - `:1286-1292` `resolveBlockPollWaitSeconds(waitSeconds?: number)` applies
+   *     it, and `src/server/routers/blocks.router.ts:3965` is the call site.
+   *
+   * What that function does, in its own order:
+   *   1. a non-`number` or non-finite value → `undefined`, i.e. NO HOLD.
+   *   2. `Math.floor` FIRST. `0.9` is therefore not "a short hold" — it floors
+   *      to `0` and becomes no hold at all, which the host's own comment calls
+   *      out explicitly.
+   *   3. floored `<= 0` → `undefined` (no hold). So `0` — and any fraction
+   *      below 1 — disables long polling and `watch` falls back to a plain read
+   *      per `intervalMs`.
+   *   4. otherwise `Math.min(floored, 15)`. Asking for 60 gets you 15.
+   *
+   * Consequences worth planning for: only whole seconds are expressible, and no
+   * value above `MAX_BLOCK_POLL_WAIT_SECONDS` buys anything — `intervalMs` is
+   * still what bounds request rate, because a clamped hold returns sooner than
+   * the caller asked for.
+   *
+   * 🔴 THIS IS PROSE ABOUT ANOTHER REPO, AND NO GUARD IN THIS ONE CAN CHECK IT.
+   * The host checkout is not present in CI, so the honest check is a human
+   * reading the two files above at a named revision — which is why the sha is
+   * quoted rather than "as of today". A later reader comparing against a newer
+   * host should update the sha along with whatever moved. The `POLL_WORKFLOW`
+   * field's own note on `BlockToParentMessage` in `@civitai/app-sdk` covers the
+   * wire shape and the older-host case; this covers what the current host does
+   * with the value.
    */
   waitSeconds?: number;
   /**
@@ -137,7 +235,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 /**
- * Thrown by {@link UseBuzzWorkflowReturn.estimate} when the host's reply does not
+ * Thrown by {@link UseBuzzWorkflow.estimate} when the host's reply does not
  * carry a usable price — either because the estimate ERRORED, or because it came
  * back without a numeric `cost.total`.
  *
@@ -312,13 +410,13 @@ export class WorkflowEstimateError extends Error {
 const HOST_SYNTHESISED_WORKFLOW_ID = 'failed';
 
 /**
- * Why {@link UseBuzzWorkflowReturn.submit} rejected. **The two differ on whether
+ * Why {@link UseBuzzWorkflow.submit} rejected. **The two differ on whether
  * money may already have moved** — see {@link WorkflowSubmitError.code}.
  */
 export type WorkflowSubmitErrorCode = 'exception' | 'workflow-failed';
 
 /**
- * Thrown by {@link UseBuzzWorkflowReturn.submit} when the host's reply carries no
+ * Thrown by {@link UseBuzzWorkflow.submit} when the host's reply carries no
  * usable workflow outcome — either the submit ERRORED before anything was queued,
  * or a workflow-shaped reply came back already failed with no price.
  *
@@ -454,7 +552,7 @@ export class WorkflowSubmitError extends Error {
    *   `'whatif'` lands here — correctly, because the cautious money reading still
    *   applies — but there is nothing to poll. Guard with
    *   `err.snapshot.workflowId !== 'whatif'` before calling
-   *   {@link UseBuzzWorkflowReturn.watch} / {@link UseBuzzWorkflowReturn.poll} to
+   *   {@link UseBuzzWorkflow.watch} / {@link UseBuzzWorkflow.poll} to
    *   learn the workflow's actual fate before spending again.
    *
    * A union rather than a boolean so a future producer gets its own code without
@@ -516,7 +614,7 @@ export interface SubmitWorkflowOptions {
   idempotencyKey?: string;
 }
 
-interface UseBuzzWorkflowReturn {
+export interface UseBuzzWorkflow {
   /**
    * Price a workflow without queueing it. Resolves ONLY with a snapshot that
    * carries a numeric `cost.total`.
@@ -583,7 +681,7 @@ interface UseBuzzWorkflowReturn {
   ) => Promise<BlockWorkflowSnapshot>;
   /**
    * ONE host round-trip. The low-level pull primitive — you almost certainly
-   * want {@link UseBuzzWorkflowReturn.watch} instead, which owns the loop.
+   * want {@link UseBuzzWorkflow.watch} instead, which owns the loop.
    */
   poll: (workflowId: string) => Promise<BlockWorkflowSnapshot>;
   /**
@@ -591,7 +689,7 @@ interface UseBuzzWorkflowReturn {
    * `onUpdate` with every intermediate snapshot along the way.
    *
    * This is the replacement for the `useEffect` + `setTimeout` backoff every
-   * block used to hand-write around {@link UseBuzzWorkflowReturn.poll}. The app
+   * block used to hand-write around {@link UseBuzzWorkflow.poll}. The app
    * consumes a promise and/or a callback; the loop lives here.
    *
    * 🔴 THE LOOP IS SEQUENTIAL AND NON-OVERLAPPING BY CONSTRUCTION — each poll is
@@ -658,16 +756,23 @@ interface UseBuzzWorkflowReturn {
  * enabled.
  *
  * `estimate`/`submit` take a full {@link WorkflowBody} — the discriminated
- * union keyed by `kind`, with THREE members as of `@civitai/app-sdk@0.30.0`:
- * a `textToImage` body (`{ kind, modelId, modelVersionId, params }`), a
- * `customComfy` body (`kind: 'customComfy'`), or a `step` body
- * (`{ kind: 'step', step, params }` — a server-registered orchestrator step
- * such as `'chat-completion'`), never a bare `{ prompt }`. The hook forwards
- * the body to the host verbatim and never reads variant-specific fields, so
- * every member flows through unchanged, including any member added later.
+ * union keyed by `kind`, never a bare `{ prompt }`. The hook forwards the body
+ * to the host verbatim and never reads variant-specific fields, so every member
+ * flows through unchanged, including any member added later.
+ *
+ * 🔴 THIS COMMENT DELIBERATELY DOES NOT SAY HOW MANY MEMBERS THERE ARE, OR NAME
+ * THEM (#381). It used to open "with THREE members as of
+ * `@civitai/app-sdk@0.30.0`" and close by certifying the list "otherwise
+ * unchanged" — while the union had FOUR, `WorkflowBodyPassThroughStep` having
+ * arrived in 583e8ba (#310). The sentence whose only job was to vouch for the
+ * list was the sentence that went stale. `{@link WorkflowBody}`'s own docblock
+ * is the single description of the member set; the machine-checked copy is
+ * {@link WorkflowBodyArms} below, which fails `tsc` when the union changes in
+ * either direction. A count re-typed here could only ever repeat the defect.
  *
  * 🔴 `customComfy` IS ITSELF A UNION, on `mode` — an app CAN ship its own
- * ComfyUI graph. `WorkflowBodyCustomComfyRecipe` (`mode` omitted or `'recipe'`)
+ * ComfyUI graph, which is a CAPABILITY claim, not a member count, and so is
+ * stated here. `WorkflowBodyCustomComfyRecipe` (`mode` omitted or `'recipe'`)
  * names a server-registered recipe; `WorkflowBodyCustomComfyInline`
  * (`mode: 'inline'`) carries the graph itself, plus its declared AIR
  * `resources` and a `maxBuzz` bound. The inline arm is LIVE in production
@@ -675,8 +780,9 @@ interface UseBuzzWorkflowReturn {
  * recipe-only `{ kind, recipe, params }` shape — written when that was true and
  * never revisited once the arm shipped. A developer working against the live
  * feature read the equivalent claim on the type, believed it over their own
- * instinct, and concluded the capability did not exist. `@civitai/app-sdk`
- * 0.30.0 predates the inline arm; the union above is otherwise unchanged.
+ * instinct, and concluded the capability did not exist. That is the SAME defect
+ * the paragraph above records, one member over: an incomplete description of a
+ * union, trusted because it read as authoritative.
  *
  * @returns `{ estimate, submit, poll, watch, cancel, status, result, error }`.
  *
@@ -741,7 +847,7 @@ interface UseBuzzWorkflowReturn {
  *   }
  * }
  */
-export function useBuzzWorkflow(): UseBuzzWorkflowReturn {
+export function useBuzzWorkflow(): UseBuzzWorkflow {
   const [status, setStatus] = useState<WorkflowStatus>('idle');
   const [result, setResult] = useState<BlockWorkflowSnapshot | null>(null);
   const [error, setError] = useState<Error | null>(null);
@@ -895,7 +1001,7 @@ export function useBuzzWorkflow(): UseBuzzWorkflowReturn {
       //
       // 🔴 NOT CLAIMED TO BE REACHABLE THROUGH `IframeTransport`, WHICH ALREADY
       // FAIL-CLOSES THIS. Its `payloadValidatorFor('WORKFLOW_STATUS')`
-      // (internal/validate.ts) drops a reply whose `snapshot.status` is absent
+      // (transport/validate.ts) drops a reply whose `snapshot.status` is absent
       // or outside the known set, so the request never resolves at all and
       // times out instead. This guard covers the OTHER transports
       // `sendTypedRequest` accepts (mock/test hosts, `dev:live`), and is kept as

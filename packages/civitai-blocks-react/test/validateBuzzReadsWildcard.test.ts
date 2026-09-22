@@ -5,7 +5,7 @@ import {
   isValidBuzzTransactionsResult,
   isValidDailyCompensationResult,
   isValidWildcardPackResult,
-} from '../src/internal/validate.js';
+} from '../src/transport/validate.js';
 
 describe('isValidBuzzTransactionsResult', () => {
   const row = {

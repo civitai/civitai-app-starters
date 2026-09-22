@@ -11,7 +11,7 @@ import { useDailyCompensation } from '../src/hooks/useDailyCompensation.js';
 import { useTipAllowance } from '../src/hooks/useTipAllowance.js';
 import { useViewer } from '../src/hooks/useViewer.js';
 import { useWildcardPack } from '../src/hooks/useWildcardPack.js';
-import { getTransport } from '../src/internal/singleton.js';
+import { getTransport } from '../src/transport/singleton.js';
 import { resetTransport } from '../src/testing.js';
 
 /**

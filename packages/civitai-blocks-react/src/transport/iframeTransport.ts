@@ -22,6 +22,7 @@ import {
 } from './transport.js';
 import { OriginMatcher } from './originMatcher.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from './requestTimeouts.js';
+import { isRoutableRequestId } from './requestId.js';
 import { payloadValidatorFor, projectInboundPayload } from './validate.js';
 
 import type { WrappedToken } from '@civitai/app-sdk/blocks';
@@ -564,7 +565,7 @@ export class IframeTransport implements BlockTransport {
       return { label: OTHER_MESSAGE_TYPE_LABEL, hung: 'pushed' };
     }
     const requestId = (payload as { requestId?: unknown } | null | undefined)?.requestId;
-    if (typeof requestId === 'string') {
+    if (isRoutableRequestId(requestId)) {
       const pending = this.pending.get(requestId);
       // The same predicate `handleMessage` applies before it will SETTLE a reply.
       // An id matching a request awaiting a DIFFERENT reply type names nothing we
@@ -782,7 +783,7 @@ export class IframeTransport implements BlockTransport {
       | undefined;
     let pending: PendingRequest | undefined;
     let matchedRequestId: string | null = null;
-    if (payload && typeof payload.requestId === 'string') {
+    if (payload && isRoutableRequestId(payload.requestId)) {
       const candidate = this.pending.get(payload.requestId);
       if (candidate && candidate.responseType === data.type) {
         pending = candidate;
