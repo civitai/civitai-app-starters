@@ -1,5 +1,5 @@
 ---
-'@civitai/blocks-client': patch
+'@civitai/sdk': patch
 ---
 
 Blocks now start inside civitai.red and civitai.green, and reading the parent

@@ -4,7 +4,7 @@
     "noEmit": true,
     "rootDir": ".",
     "types": ["node"],
-    "paths": { "@civitai/blocks-client": ["./src/index.ts"] }
+    "paths": { "@civitai/sdk": ["./src/index.ts"] }
   },
   "include": ["examples/**/*.ts"],
   "exclude": ["dist", "node_modules"]

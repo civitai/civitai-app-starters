@@ -1,7 +1,7 @@
 {
-  "name": "@civitai/blocks-client",
+  "name": "@civitai/sdk",
   "version": "0.1.0",
-  "description": "The Civitai app SDK, v1 shape: an app holds a token and calls the Civitai API and the orchestrator; a block asks its host only to show host UI.",
+  "description": "The Civitai SDK: an app holds a token and calls the Civitai API and the orchestrator; a block asks its host only to show host UI.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -55,12 +55,12 @@
     "iframe",
     "postmessage"
   ],
-  "homepage": "https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-blocks-client#readme",
+  "homepage": "https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-sdk#readme",
   "bugs": "https://github.com/civitai/civitai-app-starters/issues",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/civitai/civitai-app-starters.git",
-    "directory": "packages/civitai-blocks-client"
+    "directory": "packages/civitai-sdk"
   },
   "dependencies": {
     "@civitai/orchestration-client": "0.2.0-beta.101"

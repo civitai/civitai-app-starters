@@ -1,9 +1,9 @@
 ---
-'@civitai/blocks-client': minor
+'@civitai/sdk': minor
 ---
 
-Add `@civitai/blocks-client` — the v1 shape of the Civitai app SDK, developed
-under a working name until it publishes as `@civitai/app-sdk@1`.
+Add `@civitai/sdk` — the Civitai SDK for block apps and external apps alike,
+and the successor to `@civitai/app-sdk` 0.x, which keeps its own releases.
 
 `const app = await initialize()` is the one entry point. In a block it waits for
 the host to hand over the viewer, the slot and a token, and rejects if no host

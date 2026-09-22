@@ -1,4 +1,4 @@
-import { initialize } from '@civitai/blocks-client';
+import { initialize } from '@civitai/sdk';
 
 const [versionId = '128078', prompt = 'A lighthouse at dusk, oil painting'] = process.argv.slice(2);
 

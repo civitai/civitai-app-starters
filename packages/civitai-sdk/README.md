@@ -1,11 +1,12 @@
-# `@civitai/blocks-client`
+# `@civitai/sdk`
 
-The v1 shape of the Civitai app SDK, developed here under a working name. It
-will publish as `@civitai/app-sdk@1`; the `@civitai/app-sdk` 0.x in this repo is
-a separate codebase and keeps its own releases.
+The Civitai SDK: one client for the public API, the orchestrator and, inside a
+civitai.com page, the host. The same code serves a block app and an app of your
+own. It succeeds `@civitai/app-sdk`, whose 0.x releases continue from this repo
+as a separate codebase.
 
 ```ts
-import { initialize } from '@civitai/blocks-client';
+import { initialize } from '@civitai/sdk';
 
 const app = await initialize();
 
@@ -57,7 +58,7 @@ A browser app signs the viewer in with Civitai itself: PKCE against
 public OAuth client with its origins and redirect URL.
 
 ```ts
-import { createSignIn, initialize } from '@civitai/blocks-client';
+import { createSignIn, initialize } from '@civitai/sdk';
 
 const auth = await createSignIn({ clientId, scopes: ['user:read:self', 'ai:write:budgeted'] });
 if (!auth.signedIn) {
@@ -163,7 +164,7 @@ entry.
 
 ## Testing
 
-`@civitai/blocks-client/testing` has `createFakeTransport()`: pass it as
+`@civitai/sdk/testing` has `createFakeTransport()`: pass it as
 `initialize({ transport })` and script the host's answers.
 
 ## Checks

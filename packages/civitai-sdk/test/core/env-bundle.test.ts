@@ -11,7 +11,7 @@ import { build, type Rollup } from 'vite';
 const ORIGINS = 'https://origins-7f3a91c2.example';
 const SECRET = 'secret-4be2d8e61c0f93a7';
 
-const dir = mkdtempSync(join(tmpdir(), 'blocks-client-env-'));
+const dir = mkdtempSync(join(tmpdir(), 'sdk-env-'));
 writeFileSync(
   join(dir, '.env'),
   `VITE_BLOCK_ALLOWED_PARENT_ORIGINS=${ORIGINS}\nVITE_LIVE_BLOCK_TOKEN=${SECRET}\n`,

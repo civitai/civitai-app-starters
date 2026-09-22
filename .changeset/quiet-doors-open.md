@@ -1,5 +1,5 @@
 ---
-'@civitai/blocks-client': minor
+'@civitai/sdk': minor
 ---
 
 `createSignIn()` signs a viewer in with Civitai from a browser app outside
