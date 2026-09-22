@@ -106,6 +106,9 @@ export type TokenSource = string | ((opts: {
 
 export declare function isTerminal(workflow: Workflow): boolean;
 
+/** True once nothing more will happen to a workflow, or to one of its steps. */
+export declare function isTerminalStatus(status: WorkflowStatus): boolean;
+
 /** What to run. `currencies` defaults server-side, so it is optional here. */
 export type WorkflowTemplate = Omit<GeneratedWorkflowTemplate, 'steps' | 'currencies'> & {
     steps: StepTemplate[];
