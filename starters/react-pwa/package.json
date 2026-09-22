@@ -39,6 +39,44 @@
     "probe:static-serving": "node scripts/probe-static-serving.mjs",
     "probe:cookie-flags": "node scripts/probe-cookie-flags.mjs"
   },
+  "comment-overrides": [
+    "SECURITY CONSTRAINTS ON TRANSITIVE DEPENDENCIES. Declared HERE, in the",
+    "starter's own manifest, because that is what travels: `npx tiged",
+    "civitai/civitai-app-starters/starters/react-pwa my-app` copies this",
+    "directory alone, and the monorepo root's pnpm.overrides is NOT part of the",
+    "copy -- so a constraint kept only there protects the monorepo and nothing a",
+    "developer actually runs. Measured in starters/sveltekit-app before this",
+    "existed: a scaffolded copy resolved cookie@0.6.0 and `npm audit` reported 3",
+    "low advisories (GHSA-pxg6-pf52-xh8x) while the monorepo installed 0.7.x.",
+    "NEITHER ENTRY HAS A REFERENT IN THIS STARTER TODAY: it resolves no `cookie`",
+    "at all, and no `postcss` below 8.5.10 -- both are inert no-ops here. They",
+    "are mirrored anyway so the rule stays mechanical: the alternative is a",
+    "hand-maintained per-starter exception list that goes stale the first time a",
+    "dependency tree shifts.",
+    "BOTH blocks on purpose: `overrides` is npm's key, `pnpm.overrides` is",
+    "pnpm's, and an external developer may reach for either. The `@<range>`",
+    "SELECTOR spelling is used in both -- npm accepts it, and unlike the bare",
+    "spelling it does not trip `EOVERRIDE` where the manifest also depends on",
+    "the package directly (next-app devDepends on postcss).",
+    "EXPECTED NOISE: a workspace `pnpm install` prints `The field",
+    "\"pnpm.overrides\" was found in ... This will not take effect` for this file.",
+    "That warning is correct -- inside the monorepo only the ROOT manifest's",
+    "overrides apply -- and it is not a reason to delete this block: the block is",
+    "for the tiged'd copy, where this manifest IS the root. Measured: pnpm does",
+    "NOT read the plain `overrides` key (a scaffolded copy carrying only that key",
+    "resolved cookie@0.6.0), so both blocks are load-bearing.",
+    "Enforced by scripts/check-starter-workspace-overrides.mjs rule 4."
+  ],
+  "overrides": {
+    "cookie@<0.7.0": "^0.7.0",
+    "postcss@<8.5.10": ">=8.5.10"
+  },
+  "pnpm": {
+    "overrides": {
+      "cookie@<0.7.0": "^0.7.0",
+      "postcss@<8.5.10": ">=8.5.10"
+    }
+  },
   "dependencies": {
     "@civitai/app-sdk": "^0.49.0",
     "@civitai/components-react": "^0.4.2",

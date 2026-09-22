@@ -109,6 +109,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative, resolve } from 'node:path';
+import { stripComments } from './lib/strip-comments.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -257,76 +258,16 @@ function readsViewerFromContext(code) {
 }
 
 /**
- * Remove every comment, replacing it with equivalent whitespace so line numbers
- * survive. String and template literals are tracked so a `//` inside a URL or a
- * quoted example is NOT treated as a comment.
- *
- * 🔴 THIS FUNCTION IS THE FIX FOR THE WALKABLE RULE B. Everything rule B
- * matches, it matches against the OUTPUT of this. A gate quoted in a doc
- * comment is therefore invisible to the "does it call the predicate" check and,
- * equally, cannot trip the "does it open-code one" check — which is what makes
- * the two halves mean what they say.
+ * 🔴 THE COMMENT LEXER NOW LIVES IN `./lib/strip-comments.mjs`, shared with
+ * `starter-me-projection.test.mjs` — whose subject (a `[key: string]: unknown`
+ * index signature) is quoted verbatim in the doc comments of the very files it
+ * scans, so it depends on exactly the same code-versus-prose distinction. One
+ * copy, one fix. The four POSITIVE/NEGATIVE CONTROL tests below are still this
+ * function's controls and are still what proves it does what rule B needs;
+ * it is re-exported here so nothing that reached for it through this module
+ * breaks.
  */
-export function stripComments(src) {
-  let out = '';
-  let i = 0;
-  const blank = (s) => s.replace(/[^\n]/g, ' ');
-  while (i < src.length) {
-    const two = src.slice(i, i + 2);
-    if (two === '//') {
-      const end = src.indexOf('\n', i);
-      const stop = end === -1 ? src.length : end;
-      out += blank(src.slice(i, stop));
-      i = stop;
-      continue;
-    }
-    if (two === '/*') {
-      const end = src.indexOf('*/', i + 2);
-      const stop = end === -1 ? src.length : end + 2;
-      out += blank(src.slice(i, stop));
-      i = stop;
-      continue;
-    }
-    const ch = src[i];
-    if (ch === "'" || ch === '"' || ch === '`') {
-      let j = i + 1;
-      let closed = false;
-      while (j < src.length) {
-        if (src[j] === '\\') {
-          j += 2;
-          continue;
-        }
-        if (src[j] === ch) {
-          closed = true;
-          break;
-        }
-        // A single/double-quoted string cannot span a newline, so a quote with
-        // no partner before the line ends is not a string at all.
-        if (ch !== '`' && src[j] === '\n') break;
-        j += 1;
-      }
-      // 🔴 AN UNPAIRED QUOTE IS ORDINARY TEXT, NOT A ONE-LINE STRING. An
-      // earlier revision stopped the scan at the newline but still COPIED
-      // everything up to it verbatim, so a lone apostrophe in JSX prose
-      // (`<p>Here's the viewer</p>`) or in a regex literal (`/it's/`) shielded
-      // every `//` later on that line from being stripped — and a gate
-      // mentioned in such a comment then satisfied rule B's call check. Emit
-      // the quote as a plain character and resume scanning from the next one
-      // so the rest of the line is still examined.
-      if (!closed) {
-        out += ch;
-        i += 1;
-        continue;
-      }
-      out += src.slice(i, Math.min(j + 1, src.length));
-      i = Math.min(j + 1, src.length);
-      continue;
-    }
-    out += ch;
-    i += 1;
-  }
-  return out;
-}
+export { stripComments };
 
 /**
  * Pull the KEY SET out of a `{ a: 1, b: 'x' }` object-literal body.
