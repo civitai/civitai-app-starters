@@ -381,3 +381,224 @@ describe('SettingsForm — resource_picker integration', () => {
     expect(onSubmit.mock.calls[0]![0].default_checkpoint).toBeNull();
   });
 });
+
+/**
+ * REGRESSION — #396. `values` was a `useState` lazy initializer (runs ONCE, on
+ * mount) while `visibleFields` was a `useMemo` (recomputes). Every test above
+ * mounts with fixed props and never re-renders with changed ones, which is why
+ * the drift was invisible.
+ *
+ * 🔴 PROP SHAPE. `onSubmit` here is a STABLE reference (one `vi.fn()` per test,
+ * passed by identity across every `rerender`) — the shape an idiomatic consumer
+ * produces with `useCallback`. An inline `onSubmit={(v) => spy(v)}` recreates
+ * the callback on every render and can mask a stale-closure defect entirely,
+ * so it is deliberately not used. See the PR body for the measured control.
+ */
+describe('SettingsForm — props change after mount (#396)', () => {
+  it('reflects initialValues that arrive asynchronously', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    // The normal shape when the stored row comes from a fetch: `{}` first.
+    const { rerender } = render(
+      <SettingsForm
+        manifestSettings={sampleManifest}
+        declaredScopes={declaredScopes}
+        forScope="publisher"
+        initialValues={{}}
+        onSubmit={onSubmit}
+      />
+    );
+    expect(
+      (document.querySelector('#setting-buzz_budget_per_gen') as HTMLInputElement).value
+    ).toBe('10'); // the manifest default, correct while the fetch is in flight
+
+    // Fetch resolves with the user's STORED value.
+    rerender(
+      <SettingsForm
+        manifestSettings={sampleManifest}
+        declaredScopes={declaredScopes}
+        forScope="publisher"
+        initialValues={{ buzz_budget_per_gen: 50, greeting: 'stored' }}
+        onSubmit={onSubmit}
+      />
+    );
+
+    expect(
+      (document.querySelector('#setting-buzz_budget_per_gen') as HTMLInputElement).value
+    ).toBe('50');
+    expect((document.querySelector('#setting-greeting') as HTMLInputElement).value).toBe(
+      'stored'
+    );
+  });
+
+  it('saves the async initialValues instead of overwriting them with the defaults', async () => {
+    // The harm, split out so it is reached and proven on its own: seeded-once
+    // means Save posts the manifest default 10 back OVER the user's stored 50.
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const { rerender } = render(
+      <SettingsForm
+        manifestSettings={sampleManifest}
+        declaredScopes={declaredScopes}
+        forScope="publisher"
+        initialValues={{}}
+        onSubmit={onSubmit}
+      />
+    );
+    rerender(
+      <SettingsForm
+        manifestSettings={sampleManifest}
+        declaredScopes={declaredScopes}
+        forScope="publisher"
+        initialValues={{ buzz_budget_per_gen: 50, greeting: 'stored' }}
+        onSubmit={onSubmit}
+      />
+    );
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0]![0].buzz_budget_per_gen).toBe(50);
+    expect(onSubmit.mock.calls[0]![0].greeting).toBe('stored');
+  });
+
+  it('keeps a user edit when initialValues arrive afterwards', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const { rerender } = render(
+      <SettingsForm
+        manifestSettings={sampleManifest}
+        declaredScopes={declaredScopes}
+        forScope="publisher"
+        initialValues={{}}
+        onSubmit={onSubmit}
+      />
+    );
+    fireEvent.change(document.querySelector('#setting-greeting')!, {
+      target: { value: 'typed' },
+    });
+    rerender(
+      <SettingsForm
+        manifestSettings={sampleManifest}
+        declaredScopes={declaredScopes}
+        forScope="publisher"
+        initialValues={{ greeting: 'stored', buzz_budget_per_gen: 50 }}
+        onSubmit={onSubmit}
+      />
+    );
+    // The edit wins for the key the user touched; the rest re-seeds.
+    expect((document.querySelector('#setting-greeting') as HTMLInputElement).value).toBe(
+      'typed'
+    );
+    expect(
+      (document.querySelector('#setting-buzz_budget_per_gen') as HTMLInputElement).value
+    ).toBe('50');
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0]![0].greeting).toBe('typed');
+    expect(onSubmit.mock.calls[0]![0].buzz_budget_per_gen).toBe(50);
+  });
+
+  /**
+   * Split from the key-set test below ON PURPOSE. Sharing one test would let
+   * the render assertion fail first at base and leave the key-set assertion —
+   * the serious half — never executed, i.e. unproven. Each is watched to fail
+   * on its own.
+   */
+  it('a forScope flip renders the new slice seeded from its manifest defaults', () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const { rerender } = render(
+      <SettingsForm
+        manifestSettings={sampleManifest}
+        declaredScopes={declaredScopes}
+        forScope="publisher"
+        initialValues={{ buzz_budget_per_gen: 50 }}
+        onSubmit={onSubmit}
+      />
+    );
+    rerender(
+      <SettingsForm
+        manifestSettings={sampleManifest}
+        declaredScopes={declaredScopes}
+        forScope="viewer"
+        initialValues={{ buzz_budget_per_gen: 50 }}
+        onSubmit={onSubmit}
+      />
+    );
+    // Seeded once on mount, this input renders EMPTY: `visibleFields`
+    // recomputed to the viewer slice but the seed never did.
+    expect((document.querySelector('#setting-viewer_pref') as HTMLInputElement).value).toBe(
+      '5'
+    );
+  });
+
+  it('a forScope flip submits ONLY the new scope’s keys, never the previous slice', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const { rerender } = render(
+      <SettingsForm
+        manifestSettings={sampleManifest}
+        declaredScopes={declaredScopes}
+        forScope="publisher"
+        initialValues={{ buzz_budget_per_gen: 50 }}
+        onSubmit={onSubmit}
+      />
+    );
+    // Touch a publisher field so the edit state is non-empty too — a fix that
+    // re-seeds but still merges stale edits wholesale would leak this key.
+    fireEvent.change(document.querySelector('#setting-greeting')!, {
+      target: { value: 'publisher-only' },
+    });
+
+    // The host flips the slice on the SAME mounted component.
+    rerender(
+      <SettingsForm
+        manifestSettings={sampleManifest}
+        declaredScopes={declaredScopes}
+        forScope="viewer"
+        initialValues={{ buzz_budget_per_gen: 50 }}
+        onSubmit={onSubmit}
+      />
+    );
+
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+
+    // 🔴 The whole point: a viewer-scope save carrying publisher keys is
+    // written against the VIEWER's own settings row — the user saves their
+    // per-account preference and silently ships the publisher slice with it.
+    // Assert the exact key SET, not merely the absence of one name.
+    expect(Object.keys(onSubmit.mock.calls[0]![0]).sort()).toEqual(['viewer_pref']);
+  });
+
+  /**
+   * 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE. Measured green at f913811 too
+   * — seeded-once state happens to survive a publisher→viewer→publisher round
+   * trip because it never changed in the first place. It is here to pin that
+   * the #396 fix does not TRADE the leak for lost edits (the obvious wrong fix
+   * — clearing state on every `visibleFields` change — fails this).
+   */
+  it('restores the publisher slice — with its edits — when forScope flips back', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const publisherProps = {
+      manifestSettings: sampleManifest,
+      declaredScopes,
+      forScope: 'publisher' as const,
+      initialValues: {},
+      onSubmit,
+    };
+    const { rerender } = render(<SettingsForm {...publisherProps} />);
+    fireEvent.change(document.querySelector('#setting-greeting')!, {
+      target: { value: 'kept' },
+    });
+    rerender(<SettingsForm {...publisherProps} forScope="viewer" />);
+    rerender(<SettingsForm {...publisherProps} />);
+    expect((document.querySelector('#setting-greeting') as HTMLInputElement).value).toBe(
+      'kept'
+    );
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(Object.keys(onSubmit.mock.calls[0]![0]).sort()).toEqual([
+      'buzz_budget_per_gen',
+      'default_checkpoint',
+      'ecosystem',
+      'greeting',
+      'show_advanced',
+    ]);
+    expect(onSubmit.mock.calls[0]![0].greeting).toBe('kept');
+  });
+});
