@@ -6,3 +6,6 @@
 civitai.com — PKCE against `auth.civitai.com`, no server, no client secret — and
 is what `initialize()` takes. Tokens stay in memory and refresh themselves;
 `requestGrants` goes back to Civitai for scopes not yet granted.
+
+`isTerminalStatus(status)` is exported alongside `isTerminal(workflow)`, for
+asking the same question about one step.

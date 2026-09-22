@@ -79,7 +79,12 @@ export interface OrchestrationClient {
 }
 
 export function isTerminal(workflow: Workflow): boolean {
-  return TERMINAL.has(workflow.status);
+  return isTerminalStatus(workflow.status);
+}
+
+/** True once nothing more will happen to a workflow, or to one of its steps. */
+export function isTerminalStatus(status: WorkflowStatus): boolean {
+  return TERMINAL.has(status);
 }
 
 export function createOrchestrationClient(http: Http): OrchestrationClient {
