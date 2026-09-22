@@ -124,14 +124,28 @@
  * CI runs `--self-test` BEFORE the real check, like the sibling
  * `check:shipped-sourcemaps` job.
  *
- * 🔴 NOT IN `tests/guards/`, ON PURPOSE — same reason as
+ * 🔴 THE REAL SCAN IS NOT IN `tests/guards/`, ON PURPOSE — same reason as
  * `check-shipped-sourcemaps.mjs`. `pnpm test:guards` runs in the required matrix
  * job BEFORE `pnpm install`, and this needs both the installed `typescript` and
  * a BUILT `dist/`. It fails loudly on an unbuilt or empty tree rather than
  * reporting a vacuous "0 violations" over nothing scanned.
+ *
+ * This file's own LOGIC is unit-tested over synthetic trees, in
+ * `tests/guards/check-public-type-closure-patterns.test.mjs`. That suite needs
+ * the installed `typescript` too, so it SKIPS in the pre-install matrix tier
+ * and is run from the `public-types` job (`pnpm test:guards:public-types`, with
+ * `GUARDS_REQUIRE_INSTALL=1` so it cannot skip there). Both tiers are green;
+ * only the second one can see anything.
  */
 import { createRequire } from 'node:module';
-import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -276,6 +290,46 @@ function fail(message) {
   process.exit(1);
 }
 
+/**
+ * Expand ONE `exports` subpath pattern against the built tree.
+ *
+ * Node allows a single `*` in a subpath pattern, and it matches across `/`. Only
+ * a single-directory expansion is implemented here because that is the only shape
+ * this repo declares; a pattern whose `*` spans directories would silently match
+ * less than Node does, so it is REFUSED rather than under-reported — a guard that
+ * quietly scans a subset is the failure this whole script exists to avoid.
+ *
+ * Returns `[{ abs, star }]` — the resolved file, and what `*` bound to, so the
+ * caller can label the entry the way a consumer would actually import it.
+ */
+function expandPattern(pkgDir, dts) {
+  const star = dts.indexOf('*');
+  const prefix = dts.slice(0, star);
+  const suffix = dts.slice(star + 1);
+  if (dts.indexOf('*', star + 1) !== -1) {
+    fail(`exports pattern \`${dts}\` has more than one \`*\` — Node allows exactly one.`);
+  }
+  if (suffix.includes('/')) {
+    fail(
+      `exports pattern \`${dts}\` expands across directories (\`*\` before a \`/\`).\n` +
+        'Only a single-directory `*` is supported here; widen expandPattern() rather\n' +
+        'than let this scan a subset of what Node would resolve.',
+    );
+  }
+  const dir = resolve(pkgDir, prefix.slice(0, prefix.lastIndexOf('/') + 1));
+  if (!existsSync(dir)) return [];
+  const leaf = prefix.slice(prefix.lastIndexOf('/') + 1);
+  const out = [];
+  for (const name of readdirSync(dir)) {
+    if (!name.startsWith(leaf) || !name.endsWith(suffix)) continue;
+    const abs = join(dir, name);
+    // An empty match is as unscannable as a missing one — same reason as below.
+    if (!existsSync(abs) || statSync(abs).size === 0) continue;
+    out.push({ abs, star: name.slice(leaf.length, name.length - suffix.length) });
+  }
+  return out;
+}
+
 /** Entry points, from the REAL `exports` maps. Fails loudly on an unbuilt tree. */
 function collectEntries() {
   const entries = [];
@@ -286,6 +340,31 @@ function collectEntries() {
     for (const [subpath, target] of Object.entries(manifest.exports ?? {})) {
       const dts = target && typeof target === 'object' ? target.types : null;
       if (!dts) continue;
+
+      // A SUBPATH PATTERN (`"./elements/*": "./dist/elements/*.d.ts"`) names a SET,
+      // not a file. `existsSync` on the literal string — `*` and all — is false for
+      // every built tree there has ever been, so treating it like a plain target
+      // reports UNBUILT over a directory full of `.d.ts` and the gate is red forever.
+      // Measured on #415, the first PR here to declare one: `dist/elements/` held 44
+      // `.d.ts` files and `index.d.ts` at 2,413 B while this said "missing or empty".
+      // Expand it instead, and keep the guard's teeth — a pattern matching NOTHING is
+      // exactly the unbuilt case it exists to catch, so that still fails.
+      if (dts.includes('*')) {
+        const matches = expandPattern(pkgDir, dts);
+        if (matches.length === 0) {
+          unbuilt.push(`${manifest.name}${subpath.slice(1)} -> ${dts} (pattern matched no file)`);
+          continue;
+        }
+        for (const m of matches) {
+          entries.push({
+            pkg: manifest.name,
+            label: `${manifest.name}${subpath.slice(1).replace('*', m.star)}`,
+            dts: m.abs,
+          });
+        }
+        continue;
+      }
+
       const abs = resolve(pkgDir, dts);
       if (!existsSync(abs) || statSync(abs).size === 0) {
         unbuilt.push(`${manifest.name}${subpath.slice(1)} -> ${dts}`);
