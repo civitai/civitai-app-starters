@@ -2,4 +2,4 @@
    Guarded by the generation-parity test. */
 
 /** This package's version, stamped onto every registered element. */
-export const VERSION = "0.4.2";
+export const VERSION = "0.5.0";
