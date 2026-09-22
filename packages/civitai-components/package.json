@@ -4,6 +4,12 @@
   "description": "Attribute-driven, framework-agnostic component CSS for civitai App Blocks. Plain HTML or any framework, themed by @civitai/theme.",
   "license": "MIT",
   "type": "module",
+  "sideEffects": [
+    "**/*.css",
+    "**/*.define.js",
+    "**/elements/register.js",
+    "**/elements/register-site.js"
+  ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -11,7 +17,360 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./styles.css": "./dist/components.css"
+    "./styles.css": "./dist/components.css",
+    "./utilities.css": "./dist/utilities.css",
+    "./bootstrap-compat.css": "./dist/bootstrap-compat.css",
+    "./register": {
+      "types": "./dist/elements/register.d.ts",
+      "import": "./dist/elements/register.js"
+    },
+    "./internals": {
+      "types": "./dist/elements/internals.d.ts",
+      "import": "./dist/elements/internals.js"
+    },
+    "./civitai-button": {
+      "types": "./dist/elements/civitai-button.d.ts",
+      "import": "./dist/elements/civitai-button.js"
+    },
+    "./civitai-button/define": {
+      "types": "./dist/elements/civitai-button.define.d.ts",
+      "import": "./dist/elements/civitai-button.define.js"
+    },
+    "./civitai-text-input": {
+      "types": "./dist/elements/civitai-text-input.d.ts",
+      "import": "./dist/elements/civitai-text-input.js"
+    },
+    "./civitai-text-input/define": {
+      "types": "./dist/elements/civitai-text-input.define.d.ts",
+      "import": "./dist/elements/civitai-text-input.define.js"
+    },
+    "./civitai-segmented-control": {
+      "types": "./dist/elements/civitai-segmented-control.d.ts",
+      "import": "./dist/elements/civitai-segmented-control.js"
+    },
+    "./civitai-segmented-control/define": {
+      "types": "./dist/elements/civitai-segmented-control.define.d.ts",
+      "import": "./dist/elements/civitai-segmented-control.define.js"
+    },
+    "./elements.js": "./dist/elements.js",
+    "./custom-elements.json": "./custom-elements.json",
+    "./civitai-alert": {
+      "types": "./dist/elements/civitai-alert.d.ts",
+      "import": "./dist/elements/civitai-alert.js"
+    },
+    "./civitai-alert/define": {
+      "types": "./dist/elements/civitai-alert.define.d.ts",
+      "import": "./dist/elements/civitai-alert.define.js"
+    },
+    "./civitai-badge": {
+      "types": "./dist/elements/civitai-badge.d.ts",
+      "import": "./dist/elements/civitai-badge.js"
+    },
+    "./civitai-badge/define": {
+      "types": "./dist/elements/civitai-badge.define.d.ts",
+      "import": "./dist/elements/civitai-badge.define.js"
+    },
+    "./civitai-card": {
+      "types": "./dist/elements/civitai-card.d.ts",
+      "import": "./dist/elements/civitai-card.js"
+    },
+    "./civitai-card/define": {
+      "types": "./dist/elements/civitai-card.define.d.ts",
+      "import": "./dist/elements/civitai-card.define.js"
+    },
+    "./civitai-group": {
+      "types": "./dist/elements/civitai-group.d.ts",
+      "import": "./dist/elements/civitai-group.js"
+    },
+    "./civitai-group/define": {
+      "types": "./dist/elements/civitai-group.define.d.ts",
+      "import": "./dist/elements/civitai-group.define.js"
+    },
+    "./civitai-loader": {
+      "types": "./dist/elements/civitai-loader.d.ts",
+      "import": "./dist/elements/civitai-loader.js"
+    },
+    "./civitai-loader/define": {
+      "types": "./dist/elements/civitai-loader.define.d.ts",
+      "import": "./dist/elements/civitai-loader.define.js"
+    },
+    "./civitai-stack": {
+      "types": "./dist/elements/civitai-stack.d.ts",
+      "import": "./dist/elements/civitai-stack.js"
+    },
+    "./civitai-stack/define": {
+      "types": "./dist/elements/civitai-stack.define.d.ts",
+      "import": "./dist/elements/civitai-stack.define.js"
+    },
+    "./civitai-number-input": {
+      "types": "./dist/elements/civitai-number-input.d.ts",
+      "import": "./dist/elements/civitai-number-input.js"
+    },
+    "./civitai-number-input/define": {
+      "types": "./dist/elements/civitai-number-input.define.d.ts",
+      "import": "./dist/elements/civitai-number-input.define.js"
+    },
+    "./civitai-select": {
+      "types": "./dist/elements/civitai-select.d.ts",
+      "import": "./dist/elements/civitai-select.js"
+    },
+    "./civitai-select/define": {
+      "types": "./dist/elements/civitai-select.define.d.ts",
+      "import": "./dist/elements/civitai-select.define.js"
+    },
+    "./civitai-textarea": {
+      "types": "./dist/elements/civitai-textarea.d.ts",
+      "import": "./dist/elements/civitai-textarea.js"
+    },
+    "./civitai-textarea/define": {
+      "types": "./dist/elements/civitai-textarea.define.d.ts",
+      "import": "./dist/elements/civitai-textarea.define.js"
+    },
+    "./civitai-checkbox": {
+      "types": "./dist/elements/civitai-checkbox.d.ts",
+      "import": "./dist/elements/civitai-checkbox.js"
+    },
+    "./civitai-checkbox/define": {
+      "types": "./dist/elements/civitai-checkbox.define.d.ts",
+      "import": "./dist/elements/civitai-checkbox.define.js"
+    },
+    "./civitai-radio-group": {
+      "types": "./dist/elements/civitai-radio-group.d.ts",
+      "import": "./dist/elements/civitai-radio-group.js"
+    },
+    "./civitai-radio-group/define": {
+      "types": "./dist/elements/civitai-radio-group.define.d.ts",
+      "import": "./dist/elements/civitai-radio-group.define.js"
+    },
+    "./civitai-image": {
+      "types": "./dist/elements/civitai-image.d.ts",
+      "import": "./dist/elements/civitai-image.js"
+    },
+    "./civitai-image/define": {
+      "types": "./dist/elements/civitai-image.define.d.ts",
+      "import": "./dist/elements/civitai-image.define.js"
+    },
+    "./civitai-slider": {
+      "types": "./dist/elements/civitai-slider.d.ts",
+      "import": "./dist/elements/civitai-slider.js"
+    },
+    "./civitai-slider/define": {
+      "types": "./dist/elements/civitai-slider.define.d.ts",
+      "import": "./dist/elements/civitai-slider.define.js"
+    },
+    "./civitai-collapse": {
+      "types": "./dist/elements/civitai-collapse.d.ts",
+      "import": "./dist/elements/civitai-collapse.js"
+    },
+    "./civitai-collapse/define": {
+      "types": "./dist/elements/civitai-collapse.define.d.ts",
+      "import": "./dist/elements/civitai-collapse.define.js"
+    },
+    "./civitai-modal": {
+      "types": "./dist/elements/civitai-modal.d.ts",
+      "import": "./dist/elements/civitai-modal.js"
+    },
+    "./civitai-modal/define": {
+      "types": "./dist/elements/civitai-modal.define.d.ts",
+      "import": "./dist/elements/civitai-modal.define.js"
+    },
+    "./civitai-tooltip": {
+      "types": "./dist/elements/civitai-tooltip.d.ts",
+      "import": "./dist/elements/civitai-tooltip.js"
+    },
+    "./civitai-tooltip/define": {
+      "types": "./dist/elements/civitai-tooltip.define.d.ts",
+      "import": "./dist/elements/civitai-tooltip.define.js"
+    },
+    "./civitai-tabs": {
+      "types": "./dist/elements/civitai-tabs.d.ts",
+      "import": "./dist/elements/civitai-tabs.js"
+    },
+    "./civitai-tabs/define": {
+      "types": "./dist/elements/civitai-tabs.define.d.ts",
+      "import": "./dist/elements/civitai-tabs.define.js"
+    },
+    "./civitai-toast": {
+      "types": "./dist/elements/civitai-toast.d.ts",
+      "import": "./dist/elements/civitai-toast.js"
+    },
+    "./civitai-toast/define": {
+      "types": "./dist/elements/civitai-toast.define.d.ts",
+      "import": "./dist/elements/civitai-toast.define.js"
+    },
+    "./civitai-toast-region": {
+      "types": "./dist/elements/civitai-toast-region.d.ts",
+      "import": "./dist/elements/civitai-toast-region.js"
+    },
+    "./civitai-toast-region/define": {
+      "types": "./dist/elements/civitai-toast-region.define.d.ts",
+      "import": "./dist/elements/civitai-toast-region.define.js"
+    },
+    "./register-site": {
+      "types": "./dist/elements/register-site.d.ts",
+      "import": "./dist/elements/register-site.js"
+    },
+    "./site-elements.js": "./dist/site-elements.js",
+    "./civitai-avatar": {
+      "types": "./dist/elements/civitai-avatar.d.ts",
+      "import": "./dist/elements/civitai-avatar.js"
+    },
+    "./civitai-avatar/define": {
+      "types": "./dist/elements/civitai-avatar.define.d.ts",
+      "import": "./dist/elements/civitai-avatar.define.js"
+    },
+    "./civitai-rating-badge": {
+      "types": "./dist/elements/civitai-rating-badge.d.ts",
+      "import": "./dist/elements/civitai-rating-badge.js"
+    },
+    "./civitai-rating-badge/define": {
+      "types": "./dist/elements/civitai-rating-badge.define.d.ts",
+      "import": "./dist/elements/civitai-rating-badge.define.js"
+    },
+    "./civitai-tag": {
+      "types": "./dist/elements/civitai-tag.d.ts",
+      "import": "./dist/elements/civitai-tag.js"
+    },
+    "./civitai-tag/define": {
+      "types": "./dist/elements/civitai-tag.define.d.ts",
+      "import": "./dist/elements/civitai-tag.define.js"
+    },
+    "./civitai-menu": {
+      "types": "./dist/elements/civitai-menu.d.ts",
+      "import": "./dist/elements/civitai-menu.js"
+    },
+    "./civitai-menu/define": {
+      "types": "./dist/elements/civitai-menu.define.d.ts",
+      "import": "./dist/elements/civitai-menu.define.js"
+    },
+    "./civitai-menu-item": {
+      "types": "./dist/elements/civitai-menu-item.d.ts",
+      "import": "./dist/elements/civitai-menu-item.js"
+    },
+    "./civitai-menu-item/define": {
+      "types": "./dist/elements/civitai-menu-item.define.d.ts",
+      "import": "./dist/elements/civitai-menu-item.define.js"
+    },
+    "./civitai-menu-label": {
+      "types": "./dist/elements/civitai-menu-label.d.ts",
+      "import": "./dist/elements/civitai-menu-label.js"
+    },
+    "./civitai-menu-label/define": {
+      "types": "./dist/elements/civitai-menu-label.define.d.ts",
+      "import": "./dist/elements/civitai-menu-label.define.js"
+    },
+    "./civitai-media-card": {
+      "types": "./dist/elements/civitai-media-card.d.ts",
+      "import": "./dist/elements/civitai-media-card.js"
+    },
+    "./civitai-media-card/define": {
+      "types": "./dist/elements/civitai-media-card.define.d.ts",
+      "import": "./dist/elements/civitai-media-card.define.js"
+    },
+    "./civitai-reaction": {
+      "types": "./dist/elements/civitai-reaction.d.ts",
+      "import": "./dist/elements/civitai-reaction.js"
+    },
+    "./civitai-reaction/define": {
+      "types": "./dist/elements/civitai-reaction.define.d.ts",
+      "import": "./dist/elements/civitai-reaction.define.js"
+    },
+    "./civitai-action-button": {
+      "types": "./dist/elements/civitai-action-button.d.ts",
+      "import": "./dist/elements/civitai-action-button.js"
+    },
+    "./civitai-action-button/define": {
+      "types": "./dist/elements/civitai-action-button.define.d.ts",
+      "import": "./dist/elements/civitai-action-button.define.js"
+    },
+    "./civitai-breadcrumb": {
+      "types": "./dist/elements/civitai-breadcrumb.d.ts",
+      "default": "./dist/elements/civitai-breadcrumb.js"
+    },
+    "./civitai-breadcrumb/define": {
+      "types": "./dist/elements/civitai-breadcrumb.define.d.ts",
+      "default": "./dist/elements/civitai-breadcrumb.define.js"
+    },
+    "./civitai-pagination": {
+      "types": "./dist/elements/civitai-pagination.d.ts",
+      "default": "./dist/elements/civitai-pagination.js"
+    },
+    "./civitai-pagination/define": {
+      "types": "./dist/elements/civitai-pagination.define.d.ts",
+      "default": "./dist/elements/civitai-pagination.define.js"
+    },
+    "./civitai-progress": {
+      "types": "./dist/elements/civitai-progress.d.ts",
+      "default": "./dist/elements/civitai-progress.js"
+    },
+    "./civitai-progress/define": {
+      "types": "./dist/elements/civitai-progress.define.d.ts",
+      "default": "./dist/elements/civitai-progress.define.js"
+    },
+    "./civitai-switch": {
+      "types": "./dist/elements/civitai-switch.d.ts",
+      "default": "./dist/elements/civitai-switch.js"
+    },
+    "./civitai-switch/define": {
+      "types": "./dist/elements/civitai-switch.define.d.ts",
+      "default": "./dist/elements/civitai-switch.define.js"
+    },
+    "./civitai-table": {
+      "types": "./dist/elements/civitai-table.d.ts",
+      "default": "./dist/elements/civitai-table.js"
+    },
+    "./civitai-table/define": {
+      "types": "./dist/elements/civitai-table.define.d.ts",
+      "default": "./dist/elements/civitai-table.define.js"
+    },
+    "./civitai-button-group": {
+      "types": "./dist/elements/civitai-button-group.d.ts",
+      "default": "./dist/elements/civitai-button-group.js"
+    },
+    "./civitai-button-group/define": {
+      "types": "./dist/elements/civitai-button-group.define.d.ts",
+      "default": "./dist/elements/civitai-button-group.define.js"
+    },
+    "./civitai-confirm-dialog": {
+      "types": "./dist/elements/civitai-confirm-dialog.d.ts",
+      "default": "./dist/elements/civitai-confirm-dialog.js"
+    },
+    "./civitai-confirm-dialog/define": {
+      "types": "./dist/elements/civitai-confirm-dialog.define.d.ts",
+      "default": "./dist/elements/civitai-confirm-dialog.define.js"
+    },
+    "./civitai-input-group": {
+      "types": "./dist/elements/civitai-input-group.d.ts",
+      "default": "./dist/elements/civitai-input-group.js"
+    },
+    "./civitai-input-group/define": {
+      "types": "./dist/elements/civitai-input-group.define.d.ts",
+      "default": "./dist/elements/civitai-input-group.define.js"
+    },
+    "./civitai-nav-item": {
+      "types": "./dist/elements/civitai-nav-item.d.ts",
+      "default": "./dist/elements/civitai-nav-item.js"
+    },
+    "./civitai-nav-item/define": {
+      "types": "./dist/elements/civitai-nav-item.define.d.ts",
+      "default": "./dist/elements/civitai-nav-item.define.js"
+    },
+    "./civitai-nav-list": {
+      "types": "./dist/elements/civitai-nav-list.d.ts",
+      "default": "./dist/elements/civitai-nav-list.js"
+    },
+    "./civitai-nav-list/define": {
+      "types": "./dist/elements/civitai-nav-list.define.d.ts",
+      "default": "./dist/elements/civitai-nav-list.define.js"
+    },
+    "./civitai-sign-in-button": {
+      "types": "./dist/sdk/civitai-sign-in-button.d.ts",
+      "default": "./dist/sdk/civitai-sign-in-button.js"
+    },
+    "./civitai-sign-in-button/define": {
+      "types": "./dist/sdk/civitai-sign-in-button.define.d.ts",
+      "default": "./dist/sdk/civitai-sign-in-button.define.js"
+    }
   },
   "comment-packaging": "@civitai/* deps use workspace:^ not workspace:* (#374); `!dist/**/*.map` keeps dangling sourcemaps out of the tarball (#376). Rationale: scripts/check-shipped-sourcemaps.mjs.",
   "files": [
@@ -20,26 +379,50 @@
     "!dist/**/*.map",
     "demo",
     "styles.css",
+    "elements.js",
+    "site-elements.js",
+    "custom-elements.json",
     "MARKUP.md",
-    "README.md"
+    "README.md",
+    "utilities.css",
+    "bootstrap-compat.css"
   ],
   "scripts": {
-    "generate": "tsx scripts/build-css.ts",
-    "build": "tsx scripts/build-css.ts && tsc -p tsconfig.json",
+    "dev": "vite",
+    "generate": "tsx scripts/build-css.ts && tsx scripts/build-utilities.ts",
+    "build": "tsx scripts/build-css.ts && tsx scripts/build-utilities.ts && tsc -p tsconfig.json && tsx scripts/build-elements.ts && cem analyze",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "vitest run --project node",
+    "test:watch": "vitest --project node",
+    "test:browser": "vitest run --project browser --project prefers-dark",
+    "test:contract": "vitest run --project contract",
+    "manifest": "cem analyze"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
-    "@civitai/theme": "workspace:^"
+    "@civitai/theme": "workspace:^",
+    "lit": "^3.3.3"
+  },
+  "peerDependencies": {
+    "@civitai/sdk": ">=0.1.0 <1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@civitai/sdk": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@civitai/sdk": "workspace:*",
+    "@custom-elements-manifest/analyzer": "^0.11.0",
     "@types/node": "^25.9.1",
+    "@vitest/browser-playwright": "^4.1.11",
+    "axe-core": "^4.12.1",
+    "playwright": "^1.60.0",
     "tsx": "^4.19.2",
     "typescript": "^5.9.2",
+    "vite": "^8.0.14",
     "vitest": "^4.1.11"
   },
   "publishConfig": {
@@ -59,5 +442,6 @@
     "type": "git",
     "url": "git+https://github.com/civitai/civitai-app-starters.git",
     "directory": "packages/civitai-components"
-  }
+  },
+  "customElements": "custom-elements.json"
 }

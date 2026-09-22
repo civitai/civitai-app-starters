@@ -1,0 +1,68 @@
+{
+  "name": "@civitai/sdk",
+  "version": "0.1.0",
+  "description": "The Civitai SDK: an app holds a token and calls the Civitai API and the orchestrator; a block asks its host only to show host UI.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
+    }
+  },
+  "files": [
+    "BREAKING.md",
+    "README.md",
+    "dist"
+  ],
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "api": "node scripts/api-report.mjs",
+    "api:check": "node scripts/api-report.mjs --check",
+    "check:layering": "node scripts/check-layering.mjs",
+    "check:parity": "node scripts/check-host-parity.mjs",
+    "gen:steps": "node scripts/gen-step-types.mjs",
+    "check:steps": "node scripts/gen-step-types.mjs --check",
+    "snapshot:host": "node scripts/snapshot-host-messages.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json && tsc -p tsconfig.examples.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.0.14",
+    "vitest": "^4.1.11"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "civitai",
+    "sdk",
+    "api",
+    "orchestration",
+    "iframe",
+    "postmessage"
+  ],
+  "homepage": "https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-sdk#readme",
+  "bugs": "https://github.com/civitai/civitai-app-starters/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/civitai/civitai-app-starters.git",
+    "directory": "packages/civitai-sdk"
+  },
+  "dependencies": {
+    "@civitai/orchestration-client": "0.2.0-beta.101"
+  }
+}

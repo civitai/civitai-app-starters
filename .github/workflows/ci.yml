@@ -92,6 +92,32 @@ jobs:
 
       - run: node scripts/check-orchestrator-catalogs.mjs
 
+  civitai-sdk:
+    name: '@civitai/sdk (typecheck + test + build)'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm --filter @civitai/sdk typecheck
+      - run: pnpm --filter @civitai/sdk api:check
+      - run: pnpm --filter @civitai/sdk check:layering
+      - run: pnpm --filter @civitai/sdk check:parity
+      - run: pnpm --filter @civitai/sdk check:steps
+      - run: pnpm --filter @civitai/sdk test
+      - run: pnpm --filter @civitai/sdk build
+
+
   blocks-react:
     name: blocks-react (typecheck + test + build)
     runs-on: ubuntu-latest
@@ -113,6 +139,7 @@ jobs:
       # or missing declarations.
       - run: pnpm --filter @civitai/app-sdk build
       - run: pnpm --filter @civitai/theme build
+      - run: pnpm --filter @civitai/sdk build
       - run: pnpm --filter @civitai/components build
 
       - run: pnpm --filter @civitai/blocks-react typecheck
@@ -167,6 +194,7 @@ jobs:
       # Build in dependency order: theme (Mantine -> --civitai-* tokens) ->
       # components (CSS referencing those tokens) -> components-react (bindings).
       - run: pnpm --filter @civitai/theme build
+      - run: pnpm --filter @civitai/sdk build
       - run: pnpm --filter @civitai/components build
       - run: pnpm --filter @civitai/components-react build
 
@@ -193,6 +221,47 @@ jobs:
       - run: pnpm --filter @civitai/components-react exec playwright install --with-deps chromium
         timeout-minutes: 15
       - run: pnpm --filter @civitai/components-react test:browser
+
+      # The custom elements: real upgrade, ElementInternals and computed styles,
+      # including parity against the attribute markup they replace. Chromium is
+      # already installed by the step above (one shared Playwright cache).
+      - run: pnpm --filter @civitai/components test:browser
+
+  # ADVISORY cross-engine contract. Kept OUT of branch protection because the
+  # cost here is the BROWSER INSTALL, not the tests: `playwright install
+  # --with-deps` was measured wedging for 2h13m on one commit (2026-08-19),
+  # which is why every install step in this file carries a timeout. Three
+  # engines triples that exposure, so a wedge or an upstream apt failure must
+  # not be able to block a PR. The chromium half of this contract already runs
+  # inside the REQUIRED `design-system` job, so nothing is only checked here.
+  design-system-cross-browser:
+    name: design-system cross-browser contract (advisory)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm --filter @civitai/theme build
+      - run: pnpm --filter @civitai/sdk build
+      - run: pnpm --filter @civitai/components build
+
+      - run: pnpm --filter @civitai/components exec playwright install --with-deps chromium firefox webkit
+        timeout-minutes: 25
+
+      # Probes the platform features the elements are built on, then the
+      # cross-engine surface itself: upgrade, token inheritance across the
+      # shadow boundary, form association, `change` escaping, and `::part`.
+      - run: pnpm --filter @civitai/components test:contract
 
   # ADVISORY drift guard — depends on a LIVE external checkout of civitai/civitai
   # (sparse: src/providers + src/utils) to assert the vendored theme.source.ts
@@ -265,6 +334,7 @@ jobs:
       # @civitai/theme and @civitai/components).
       - run: pnpm --filter @civitai/app-sdk build
       - run: pnpm --filter @civitai/theme build
+      - run: pnpm --filter @civitai/sdk build
       - run: pnpm --filter @civitai/components build
       - run: pnpm --filter @civitai/blocks-react build
 

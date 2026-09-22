@@ -10,6 +10,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./elements": {
+      "types": "./dist/elements/index.d.ts",
+      "import": "./dist/elements/index.js"
+    },
+    "./elements/*": {
+      "types": "./dist/elements/*.d.ts",
+      "import": "./dist/elements/*.js"
     }
   },
   "comment-packaging": "@civitai/* deps use workspace:^ not workspace:* (#374); `!dist/**/*.map` keeps dangling sourcemaps out of the tarball (#376). Rationale: scripts/check-shipped-sourcemaps.mjs.",
@@ -19,11 +27,12 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsx scripts/build-react-bindings.ts && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --project unit",
     "test:browser": "vitest run --project browser",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build:bindings": "tsx scripts/build-react-bindings.ts"
   },
   "engines": {
     "node": ">=20"
@@ -34,7 +43,8 @@
   },
   "dependencies": {
     "@civitai/components": "workspace:^",
-    "@civitai/theme": "workspace:^"
+    "@civitai/theme": "workspace:^",
+    "@lit/react": "^1.0.8"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.10.1",
@@ -51,7 +61,8 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "typescript": "^5.9.2",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "tsx": "^4.19.2"
   },
   "publishConfig": {
     "access": "public"
@@ -68,5 +79,8 @@
     "type": "git",
     "url": "git+https://github.com/civitai/civitai-app-starters.git",
     "directory": "packages/civitai-components-react"
-  }
+  },
+  "sideEffects": [
+    "**/elements/*.js"
+  ]
 }

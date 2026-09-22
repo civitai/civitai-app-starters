@@ -13,6 +13,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { componentsCss } from '../src/styles.generated.js';
+import { VERSION } from '../src/version.generated.js';
+import pkg from '../package.json' with { type: 'json' };
 
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const srcCss = readFileSync(join(pkgRoot, 'src/components.css'), 'utf8');
@@ -25,6 +27,10 @@ describe('components CSS integrity', () => {
 
   it('the JS-injectable string embeds the source CSS', () => {
     expect(componentsCss).toBe(srcCss);
+  });
+
+  it('the stamped element version matches package.json', () => {
+    expect(VERSION).toBe(pkg.version);
   });
 
   it('references --civitai-* tokens', () => {

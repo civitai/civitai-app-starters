@@ -34,6 +34,7 @@ After cloning, see the chosen starter's own `AGENTS.md` and `README.md` for the 
 These are validated in production by Civitai's own apps. Don't rewrite them; extend them.
 
 - **OAuth + SDK glue lives in `@civitai/app-sdk`.** PKCE, token exchange, refresh, revoke, encrypted-cookie sessions, scope bitmask, and the orchestrator-client factory are all there. Each starter has a ~30-line framework adapter that calls these primitives. If you find yourself reimplementing any of those, stop — use the package.
+- **`@civitai/sdk` succeeds `@civitai/app-sdk`.** An app holds a token and calls the Civitai API and the orchestrator with it; a block uses the bridge only to ask for host UI, and an app outside civitai.com signs the viewer in with `createSignIn`. It is a separate codebase from `@civitai/app-sdk` 0.x, which keeps evolving here — do not move code between them.
 - **Token exchange runs server-side.** Even in the PWA starters, the BFF (a single Hono route) does the OAuth token exchange. The browser never sees `client_secret` or the raw access token — only an opaque `httpOnly` session cookie.
 - **Encrypted-cookie sessions.** AES-256-GCM via `@civitai/app-sdk`'s `sealCookie` / `unsealCookie`. No JWT-in-localStorage. No external session store.
 - **Buzz is the user's, not the developer's.** When a user authenticates with OAuth and your app submits a generation, the orchestrator debits **the user's Buzz** via their token. App developers don't front the cost. Show the user a cost preview (`estimateWorkflow` from `@civitai/app-sdk` → calls `?whatif=true`) before submitting.
@@ -62,7 +63,11 @@ Each starter ships a deliberately minimal demo (login + balance + cost preview +
 civitai-app-starters/
 ├── packages/
 │   ├── civitai-app-sdk/         # shared OAuth + SDK glue + framework-agnostic blocks contract
-│   └── civitai-blocks-react/    # React hooks + iframe transport for Civitai Apps
+│   ├── civitai-sdk/             # @civitai/sdk: initialize() → site API, orchestrator, host UI
+│   ├── civitai-blocks-react/    # React hooks + iframe transport + the /ui pack
+│   ├── civitai-theme/           # --civitai-* design tokens (generated from Mantine)
+│   ├── civitai-components/      # attribute-driven component CSS
+│   └── civitai-components-react/# React bindings over that CSS
 └── starters/
     ├── next-app/                # Next.js 15 App Router (SSR)
     ├── sveltekit-app/           # SvelteKit 2 (SSR)

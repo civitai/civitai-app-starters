@@ -22,6 +22,38 @@ Components: `Button, TextInput, Textarea, NumberInput, Card, Stack, Group,
 Alert, Loader, Badge`. Each renders the exact markup documented in
 [`@civitai/components/MARKUP.md`](../civitai-components/MARKUP.md).
 
+## Elements
+
+React bindings for every `<civitai-*>` custom element, built on
+[`@lit/react`](https://lit.dev/docs/frameworks/react/). Props and their types
+come from the element class, refs point at the element itself, and values are
+assigned as **properties** — which is what React 19 gets wrong on its own, and
+why these exist at all.
+
+```tsx
+import { CivitaiButton } from '@civitai/components-react/elements/civitai-button';
+import { CivitaiTag } from '@civitai/components-react/elements/civitai-tag';
+
+<CivitaiButton variant="outline" onClick={run}>Generate</CivitaiButton>
+<CivitaiTag name="wolf" confidence={0.82} onVote={(e) => save(e.detail)} />
+```
+
+Import a binding by name and you get that element and nothing else. The
+`@civitai/components-react/elements` barrel is the convenient path and registers
+all 32.
+
+Handlers receive the **DOM event**, not an extracted value —
+`onChange={(e) => e.target.value}`, `onVote={(e) => e.detail}`. The bindings are
+generated from the elements manifest; a parity test fails if a committed file
+stops matching, and two more fail if the event map names an event no element
+fires, or misses one that an element does.
+
+**Server rendering** is best-effort: property assignment happens in effects,
+which do not run on the server, so the wrapper emits a bare tag and the element
+fills in after hydration. The tag written directly in JSX keeps its attributes
+server-side and the elements reflect them, so that is the path to use where
+server output matters.
+
 ## The point of this package
 
 It proves the **dual-consumption** claim: the `html-vs-react-parity` browser

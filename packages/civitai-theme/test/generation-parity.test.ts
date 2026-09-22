@@ -32,6 +32,23 @@ describe('generation parity', () => {
     });
   }
 
+  // `color-scheme` is not a token — it tells the UA which scheme to paint NATIVE
+  // controls in. Without it a number input's spinner and a select's caret stay
+  // light against a dark surface.
+  describe('color-scheme', () => {
+    const css = artifacts['tokens.css'];
+    const block = (selector: string): string =>
+      new RegExp(`${selector} \\{([\\s\\S]*?)\\}`).exec(css)?.[1] ?? '';
+
+    it.each([
+      [':root', 'light'],
+      ["\\[data-theme='light'\\]", 'light'],
+      ["\\[data-theme='dark'\\]", 'dark'],
+    ])('%s declares color-scheme: %s', (selector, scheme) => {
+      expect(block(selector)).toContain(`color-scheme: ${scheme};`);
+    });
+  });
+
   // --- issue #181 F8: the dark theme block must carry --civitai-color-primary-fg
   // for symmetry with light (it was previously omitted because its resolved dark
   // value equals light and the generator skips equal-value dark overrides). It is

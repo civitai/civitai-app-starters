@@ -428,6 +428,7 @@ describe('build-css.ts prunes src/css/ without wiping it', () => {
       mkdirSync(join(sandbox, 'src/css'), { recursive: true });
       cpSync(join(pkgRoot, 'scripts'), join(sandbox, 'scripts'), { recursive: true });
       cpSync(join(pkgRoot, 'src/components.css'), join(sandbox, 'src/components.css'));
+      cpSync(join(pkgRoot, 'package.json'), join(sandbox, 'package.json'));
       const sentinel = join(sandbox, 'src/css/README.md');
       const stale = join(sandbox, 'src/css/deleted-section.generated.ts');
       writeFileSync(sentinel, '# hand-written, tracked, must survive a build\n');

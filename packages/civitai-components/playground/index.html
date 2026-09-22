@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@civitai/components — elements playground</title>
+    <style>
+      .card-kebab {
+        color: #fff;
+        text-shadow: 0 1px 4px rgb(0 0 0 / 0.8);
+      }
+      .kebab {
+        border: 0;
+        border-radius: 3px;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+        padding: 0 2px;
+      }
+      body {
+        margin: 0;
+        padding: 32px;
+        min-height: 100vh;
+        background: var(--civitai-color-body);
+        color: var(--civitai-color-text);
+        font-family: var(--civitai-font);
+        line-height: 1.5;
+      }
+      h1 { font-size: 20px; margin: 0; }
+      h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em;
+           color: var(--civitai-color-text-dimmed); margin: 32px 0 12px; }
+      header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+      .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+      form { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+      output { font-size: 13px; color: var(--civitai-color-text-dimmed); }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>@civitai/components — elements</h1>
+      <civitai-button id="theme" variant="outline" size="sm">Toggle theme</civitai-button>
+    </header>
+
+    <h2>Variants</h2>
+    <div class="row">
+      <civitai-button variant="filled">Filled</civitai-button>
+      <civitai-button variant="light">Light</civitai-button>
+      <civitai-button variant="outline">Outline</civitai-button>
+      <civitai-button variant="subtle">Subtle</civitai-button>
+    </div>
+
+    <h2>Sizes</h2>
+    <div class="row">
+      <civitai-button size="sm">Small</civitai-button>
+      <civitai-button size="md">Medium</civitai-button>
+      <civitai-button size="lg">Large</civitai-button>
+    </div>
+
+    <h2>States</h2>
+    <div class="row">
+      <civitai-button disabled>Disabled</civitai-button>
+      <civitai-button loading>Loading</civitai-button>
+      <civitai-button id="toggle-loading" variant="outline">Start loading</civitai-button>
+    </div>
+
+    <h2>Sections</h2>
+    <div class="row">
+      <civitai-button><span slot="left">&#9733;</span>Left section</civitai-button>
+      <civitai-button>Right section<span slot="right">&#8594;</span></civitai-button>
+    </div>
+
+    <h2>Full width</h2>
+    <civitai-button full-width variant="light">Full width</civitai-button>
+
+    <h2>Text input</h2>
+    <div class="row" style="align-items: flex-start">
+      <civitai-text-input label="Prompt" description="What to draw" placeholder="a cat"
+        style="min-width: 220px"></civitai-text-input>
+      <civitai-number-input label="Seed" value="12345" min="0" step="1" required
+        style="min-width: 160px"></civitai-number-input>
+      <civitai-number-input label="Steps" value="999" min="1" max="150" step="5"
+        error="Max is 150" style="min-width: 160px"></civitai-number-input>
+      <civitai-text-input label="Locked" value="read only" readonly disabled
+        style="min-width: 160px"></civitai-text-input>
+    </div>
+    <p style="font-size: 13px; color: var(--civitai-color-text-dimmed)">
+      Seed and Steps are real number inputs &mdash; spinners, &uarr;/&darr; and
+      min/max/step all come from the native control inside the shadow root.
+    </p>
+
+    <h2>Textarea &amp; select</h2>
+    <div class="row" style="align-items: flex-start">
+      <civitai-textarea label="Prompt" rows="3" placeholder="a cat, oil painting"
+        description="Enter makes a newline here, not a submit"
+        style="min-width: 260px"></civitai-textarea>
+      <civitai-select id="model" label="Model" placeholder="Pick a model"
+        description="Options come from a property, not an attribute"
+        style="min-width: 200px"></civitai-select>
+    </div>
+
+    <h2>Segmented control &mdash; arrow keys, Home/End, one tab stop</h2>
+    <div class="row">
+      <civitai-segmented-control id="sc-sm" size="sm" aria-label="View, small"></civitai-segmented-control>
+      <civitai-segmented-control id="sc-md" aria-label="View"></civitai-segmented-control>
+      <civitai-segmented-control id="sc-lg" size="lg" aria-label="View, large"></civitai-segmented-control>
+      <output id="sc-value">grid</output>
+    </div>
+
+    <h2>Presentational primitives</h2>
+    <civitai-stack gap="md">
+      <civitai-group>
+        <civitai-badge>default</civitai-badge>
+        <civitai-badge variant="light" color="success">ready</civitai-badge>
+        <civitai-badge variant="outline" color="warning">queued</civitai-badge>
+        <civitai-badge size="lg" color="error">failed</civitai-badge>
+        <civitai-loader size="sm" label="Working"></civitai-loader>
+        <civitai-loader></civitai-loader>
+      </civitai-group>
+      <civitai-card padding="md">A card, borderless — a hairline in light, none in dark.</civitai-card>
+      <civitai-card with-border padding="md">A card with an explicit border.</civitai-card>
+      <civitai-alert heading="Heads up">The default info intent.</civitai-alert>
+      <civitai-alert color="success" heading="Saved">Your changes are live.</civitai-alert>
+      <civitai-alert color="error" closable heading="Failed">Dismiss me.</civitai-alert>
+    </civitai-stack>
+
+    <h2>Image &amp; slider</h2>
+    <civitai-group gap="lg" style="align-items: flex-start">
+      <civitai-image id="ok" alt="A generated image" style="width: 140px; aspect-ratio: 1"></civitai-image>
+      <civitai-image id="broken" src="/does-not-exist.png" alt="Broken"
+        fallback="Could not load" style="width: 140px; aspect-ratio: 1"></civitai-image>
+      <civitai-stack style="flex: 1; min-width: 240px">
+        <civitai-slider label="CFG scale" min="1" max="20" step="0.5" value="7" show-value
+          description="How closely to follow the prompt"></civitai-slider>
+        <civitai-slider label="Denoise" min="0" max="1" step="0.05" show-value></civitai-slider>
+        <civitai-slider label="Steps" min="1" max="150" value="200" show-value
+          error="Above the maximum"></civitai-slider>
+      </civitai-stack>
+    </civitai-group>
+
+    <h2>Choice controls</h2>
+    <div class="row" style="align-items: flex-start">
+      <civitai-stack gap="sm">
+        <civitai-checkbox label="Enable upscaling" description="Adds a second pass"></civitai-checkbox>
+        <civitai-checkbox label="Accept terms" required></civitai-checkbox>
+        <civitai-checkbox label="Partial selection" indeterminate></civitai-checkbox>
+        <civitai-checkbox label="Locked" checked disabled></civitai-checkbox>
+      </civitai-stack>
+      <civitai-radio-group id="speed" label="Speed" description="Quality costs time"></civitai-radio-group>
+      <civitai-radio-group id="speed-h" label="Horizontal" orientation="horizontal"
+        error="Pick one"></civitai-radio-group>
+    </div>
+
+    <h2>Tooltip &amp; tabs</h2>
+    <civitai-group gap="lg">
+      <civitai-tooltip label="Spends Buzz from your balance">
+        <civitai-button variant="outline">Hover or focus me</civitai-button>
+      </civitai-tooltip>
+      <span style="font-size: 13px; color: var(--civitai-color-text-dimmed)">
+        Tab to it, then press Escape &mdash; it hides while focus stays put.
+      </span>
+    </civitai-group>
+    <civitai-tabs id="tabs" aria-label="Result view" style="margin-top: 12px">
+      <civitai-tab-panel value="grid">
+        <civitai-card padding="md">The grid panel.</civitai-card>
+      </civitai-tab-panel>
+      <civitai-tab-panel value="list">
+        <civitai-card padding="md">The list panel.</civitai-card>
+      </civitai-tab-panel>
+      <civitai-tab-panel value="feed">
+        <civitai-card padding="md">The feed panel.</civitai-card>
+      </civitai-tab-panel>
+    </civitai-tabs>
+
+    <h2>Modal &amp; collapse</h2>
+    <civitai-group>
+      <civitai-button id="open-modal">Open modal</civitai-button>
+      <civitai-button id="open-sticky" variant="outline">Open (no Escape, no overlay close)</civitai-button>
+    </civitai-group>
+    <civitai-collapse heading="Advanced" style="max-width: 420px; margin-top: 12px">
+      <civitai-stack gap="sm">
+        <civitai-text-input label="Negative prompt"></civitai-text-input>
+        <civitai-checkbox label="Restore faces"></civitai-checkbox>
+      </civitai-stack>
+    </civitai-collapse>
+
+    <civitai-modal id="modal" heading="Confirm generation">
+      <civitai-stack>
+        <span>This will spend Buzz. Tab around &mdash; focus cannot leave the dialog.</span>
+        <civitai-text-input label="Note"></civitai-text-input>
+        <civitai-group>
+          <civitai-button id="modal-ok">Generate</civitai-button>
+          <civitai-button id="modal-cancel" variant="subtle">Cancel</civitai-button>
+        </civitai-group>
+      </civitai-stack>
+    </civitai-modal>
+    <civitai-modal id="sticky" heading="Sticky" close-on-escape="false"
+      close-on-overlay-click="false">
+      Only the &times; closes this one.
+    </civitai-modal>
+
+    <h2>Toasts</h2>
+    <civitai-group>
+      <civitai-button id="toast-info" variant="light">Info</civitai-button>
+      <civitai-button id="toast-success" variant="light">Success</civitai-button>
+      <civitai-button id="toast-error" variant="light">Error (sticky, assertive)</civitai-button>
+      <civitai-button id="toast-clear" variant="subtle">Clear all</civitai-button>
+    </civitai-group>
+    <civitai-toast-region id="toasts"></civitai-toast-region>
+
+    <h2>Civitai vocabulary &mdash; site-elements.js</h2>
+    <civitai-group>
+      <civitai-rating-badge rating="g"></civitai-rating-badge>
+      <civitai-rating-badge rating="pg"></civitai-rating-badge>
+      <civitai-rating-badge rating="pg13"></civitai-rating-badge>
+      <civitai-rating-badge rating="r"></civitai-rating-badge>
+      <civitai-rating-badge rating="x"></civitai-rating-badge>
+      <civitai-rating-badge rating="nc17"></civitai-rating-badge>
+    </civitai-group>
+    <civitai-group>
+      <civitai-avatar size="sm" name="Vladaa"></civitai-avatar>
+      <civitai-avatar name="Jane Q Doe"></civitai-avatar>
+      <civitai-avatar
+        size="lg"
+        name="SinityWAI"
+        frame="linear-gradient(135deg, #f0a, #0af)"
+      ></civitai-avatar>
+      <civitai-avatar size="xl" name="Broken Image" src="/nope.png"></civitai-avatar>
+    </civitai-group>
+    <civitai-group id="tags">
+      <civitai-tag name="wolf" confidence="0.97"></civitai-tag>
+      <civitai-tag name="blonde hair" vote="1" score="128" show-score confidence="0.81"></civitai-tag>
+      <civitai-tag name="full moon" vote="-1" rating="pg13" confidence="0.54"></civitai-tag>
+      <civitai-tag name="oni" rating="r" confidence="0.23"></civitai-tag>
+      <civitai-tag name="anime" readonly></civitai-tag>
+      <civitai-tag name="moderated content" confidence="0.66">
+        <civitai-menu slot="menu" label="Tag actions" placement="bottom-end">
+          <button slot="trigger" aria-label="Tag actions" class="kebab">&#8942;</button>
+          <civitai-menu-item>Hide content with this tag</civitai-menu-item>
+          <civitai-menu-item destructive>Remove tag</civitai-menu-item>
+        </civitai-menu>
+      </civitai-tag>
+    </civitai-group>
+    <p id="tag-log" style="font-size: 13px; color: var(--civitai-color-text-dimmed)">No vote yet.</p>
+
+    <civitai-group>
+      <civitai-menu id="actions" label="Image actions">
+        <civitai-button slot="trigger" variant="outline" size="sm" aria-label="More">&#8942;</civitai-button>
+        <civitai-menu-item>Save image to collection</civitai-menu-item>
+        <civitai-menu-item>View post</civitai-menu-item>
+        <civitai-menu-item>Report image</civitai-menu-item>
+        <civitai-menu-label>Moderator</civitai-menu-label>
+        <civitai-menu-item disabled>Rescan image</civitai-menu-item>
+        <civitai-menu-item destructive>Delete</civitai-menu-item>
+      </civitai-menu>
+      <span id="menu-log" style="font-size: 13px; color: var(--civitai-color-text-dimmed)"
+        >Nothing chosen yet.</span
+      >
+    </civitai-group>
+
+    <h2>Media cards &mdash; every layer at once</h2>
+    <civitai-group id="cards" style="align-items: flex-start">
+      <civitai-media-card href="#image-1" label="Open image 1" style="width: 200px">
+        <img slot="media" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='300'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0%25' stop-color='%23b98b4a'/><stop offset='100%25' stop-color='%231b1f2a'/></linearGradient></defs><rect width='200' height='300' fill='url(%23g)'/></svg>" alt="" />
+        <civitai-rating-badge slot="top-start" rating="pg"></civitai-rating-badge>
+        <civitai-menu slot="top-end" label="Image actions" placement="bottom-end">
+          <button slot="trigger" aria-label="Image actions" class="kebab card-kebab">&#8942;</button>
+          <civitai-menu-item>Save image to collection</civitai-menu-item>
+          <civitai-menu-item>View post</civitai-menu-item>
+          <civitai-menu-item destructive>Report image</civitai-menu-item>
+        </civitai-menu>
+        <civitai-action-button slot="top-end" label="Remix">
+          <span slot="icon" aria-hidden="true">&#10022;</span>
+          <span slot="icon-expanded" aria-hidden="true">&rarr;</span>
+        </civitai-action-button>
+        <civitai-reaction slot="bottom" emoji="&#128077;" label="Like" count="13100"></civitai-reaction>
+        <civitai-reaction slot="bottom" emoji="&#10084;&#65039;" label="Heart" count="5000"></civitai-reaction>
+        <civitai-reaction slot="bottom" emoji="&#128514;" label="Laugh" count="1600"></civitai-reaction>
+        <civitai-reaction slot="bottom" emoji="&#9889;" label="Tipped Buzz" count="964"></civitai-reaction>
+      </civitai-media-card>
+      <civitai-media-card href="#image-2" label="Open image 2" style="width: 200px">
+        <img slot="media" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='300'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0%25' stop-color='%234aa3ff'/><stop offset='100%25' stop-color='%23101820'/></linearGradient></defs><rect width='200' height='300' fill='url(%23g)'/></svg>" alt="" />
+        <civitai-rating-badge slot="top-start" rating="pg13"></civitai-rating-badge>
+        <civitai-menu slot="top-end" label="Image actions" placement="bottom-end">
+          <button slot="trigger" aria-label="Image actions" class="kebab card-kebab">&#8942;</button>
+          <civitai-menu-item>Save image to collection</civitai-menu-item>
+          <civitai-menu-item>View post</civitai-menu-item>
+          <civitai-menu-item destructive>Report image</civitai-menu-item>
+        </civitai-menu>
+        <civitai-action-button slot="top-end" label="Remix">
+          <span slot="icon" aria-hidden="true">&#10022;</span>
+          <span slot="icon-expanded" aria-hidden="true">&rarr;</span>
+        </civitai-action-button>
+        <civitai-reaction slot="bottom" emoji="&#128077;" label="Like" count="812" reacted></civitai-reaction>
+        <civitai-reaction slot="bottom" emoji="&#10084;&#65039;" label="Heart" count="309"></civitai-reaction>
+        <civitai-reaction slot="bottom" emoji="&#128514;" label="Laugh" count="67"></civitai-reaction>
+        <civitai-reaction slot="bottom" emoji="&#9889;" label="Tipped Buzz" count="0"></civitai-reaction>
+      </civitai-media-card>
+    </civitai-group>
+    <p id="card-log" style="font-size: 13px; color: var(--civitai-color-text-dimmed)">
+      Hover the round button; open the kebab; react.
+    </p>
+
+    <h2>Form participation</h2>
+    <form id="demo">
+      <civitai-text-input name="q" label="Query" value="hello"
+        style="min-width: 200px"></civitai-text-input>
+      <civitai-segmented-control id="sc-form" name="view" aria-label="Result view"></civitai-segmented-control>
+      <civitai-button type="submit">Submit</civitai-button>
+      <civitai-button type="reset" variant="subtle">Reset</civitai-button>
+      <output id="result">no submit yet</output>
+    </form>
+    <p style="font-size: 13px; color: var(--civitai-color-text-dimmed)">
+      Tab into the group, then use &larr;/&rarr;. Press Enter in the query field to submit.
+    </p>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

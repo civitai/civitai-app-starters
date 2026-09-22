@@ -569,6 +569,7 @@ describe('styling anchors — Card', () => {
         ),
         (cs, who) => {
           expect(cs.borderTopStyle, who).toBe('solid');
+          expect(cs.borderTopWidth, who).toBe(tokens.cardBorderWidth);
           expect(cs.borderTopWidth, who).toBe('1px');
           expect(cs.borderTopColor, who).toBe(HAIRLINE);
           // Actually visible: not transparent, and NOT the strong border token.
@@ -593,7 +594,7 @@ describe('styling anchors — Card', () => {
       );
     });
 
-    it('borderless dark: UNCHANGED — truly no border box (width 0, style none)', () => {
+    it('borderless dark: no border BOX — width 0, so the card is not inset', () => {
       both(
         pair(
           'dark',
@@ -602,9 +603,9 @@ describe('styling anchors — Card', () => {
           '[data-civitai-ui="card"]'
         ),
         (cs, who) => {
-          // `border: 0` in dark => original behavior exactly (no hairline inset).
+          // The width is the whole contract: a 0px border paints nothing and
+          // takes no space, whatever style/color the shorthand carries.
           expect(cs.borderTopWidth, who).toBe('0px');
-          expect(cs.borderTopStyle, who).toBe('none');
         }
       );
     });
@@ -1120,24 +1121,26 @@ describe('styling anchors — Slider (new primitive)', () => {
   const SL_HTML = (id: string, extra = '', ctrlExtra = '') =>
     `<div data-civitai-ui="slider"${extra}><label data-civitai-ui-label for="${id}">S</label><input type="range" id="${id}" min="0" max="100" value="20"${ctrlExtra} /></div>`;
 
-  it('light: accent-color=primary token, track bg=gray-2, 6px track', () => {
+  it('light: accent-color=primary token, track bg=track token, 6px track', () => {
     both(
       pair('light', <Slider label="S" id="sl1" defaultValue={20} />, SL_HTML('sl1'), 'input[type="range"]'),
       (cs, who) => {
         expect(cs.accentColor, who).toBe(solid(tokens.colorPrimary));
-        expect(cs.backgroundColor, who).toBe(solid(tokens.colorGray2));
+        expect(cs.backgroundColor, who).toBe(solid(tokens.colorTrack));
         expect(cs.height, who).toBe('6px');
         expect(cs.cursor, who).toBe('pointer');
       }
     );
   });
 
-  it('dark: accent-color=dark primary (theme actually switched)', () => {
+  it('dark: accent-color and track both switch (theme actually switched)', () => {
     both(
       pair('dark', <Slider label="S" id="sl2" defaultValue={20} />, SL_HTML('sl2'), 'input[type="range"]'),
       (cs, who) => {
         expect(cs.accentColor, who).toBe(solid(darkTokens.colorPrimary));
         expect(cs.accentColor, who).not.toBe(solid(tokens.colorPrimary));
+        expect(cs.backgroundColor, who).toBe(solid(darkTokens.colorTrack));
+        expect(cs.backgroundColor, who).not.toBe(solid(tokens.colorTrack));
       }
     );
   });
@@ -1185,19 +1188,19 @@ describe('styling anchors — SegmentedControl (new primitive)', () => {
   );
   const SC_TOGGLE_HTML = `<div data-civitai-ui="segmented-control" data-size="md" role="radiogroup" aria-label="Layout"><button type="button" id="tg-grid" data-civitai-ui-segment data-size="md" role="radio" aria-checked="true" tabindex="0">Grid</button><button type="button" id="tg-list" data-civitai-ui-segment data-size="md" role="radio" aria-checked="false" tabindex="-1">List</button></div>`;
 
-  it('container light: bg=gray-1, padding 4px, radius=4px(token)', () => {
+  it('container light: bg=segmented-bg, padding 4px, radius=4px(token)', () => {
     both(pair('light', SC, SC_HTML, '[data-civitai-ui="segmented-control"]'), (cs, who) => {
-      expect(cs.backgroundColor, who).toBe(solid(tokens.colorGray1));
+      expect(cs.backgroundColor, who).toBe(solid(tokens.colorSegmentedBg));
       expect(cs.paddingTop, who).toBe('4px');
       expect(cs.borderTopLeftRadius, who).toBe('4px');
       expect(cs.display, who).toBe('inline-flex');
     });
   });
 
-  it('container dark: bg=surface-2 (theme-tracked)', () => {
+  it('container dark: bg=dark segmented-bg (theme-tracked)', () => {
     both(pair('dark', SC, SC_HTML, '[data-civitai-ui="segmented-control"]'), (cs, who) => {
-      expect(cs.backgroundColor, who).toBe(solid(darkTokens.colorSurface2));
-      expect(cs.backgroundColor, who).not.toBe(solid(tokens.colorGray1));
+      expect(cs.backgroundColor, who).toBe(solid(darkTokens.colorSegmentedBg));
+      expect(cs.backgroundColor, who).not.toBe(solid(tokens.colorSegmentedBg));
     });
   });
 
@@ -1307,11 +1310,11 @@ describe('styling anchors — Tooltip (new primitive)', () => {
 describe('styling anchors — Image (new primitive)', () => {
   const IMG_HTML = `<div data-civitai-ui="image" data-status="loaded"><img data-civitai-ui-image-img data-fit="cover" src="${PIXEL_GIF}" alt="p" /></div>`;
 
-  it('container light: placeholder bg=gray-2, radius=4px(token), overflow hidden', () => {
+  it('container light: placeholder bg token, radius=4px(token), overflow hidden', () => {
     both(
       pair('light', <Image src={PIXEL_GIF} alt="p" />, IMG_HTML, '[data-civitai-ui="image"]'),
       (cs, who) => {
-        expect(cs.backgroundColor, who).toBe(solid(tokens.colorGray2));
+        expect(cs.backgroundColor, who).toBe(solid(tokens.colorMediaPlaceholder));
         expect(cs.borderTopLeftRadius, who).toBe('4px');
         expect(cs.overflow, who).toBe('hidden');
         expect(cs.position, who).toBe('relative');
@@ -1319,12 +1322,12 @@ describe('styling anchors — Image (new primitive)', () => {
     );
   });
 
-  it('container dark: placeholder bg=surface-2 (theme-tracked)', () => {
+  it('container dark: placeholder bg switches (theme-tracked)', () => {
     both(
       pair('dark', <Image src={PIXEL_GIF} alt="p" />, IMG_HTML, '[data-civitai-ui="image"]'),
       (cs, who) => {
-        expect(cs.backgroundColor, who).toBe(solid(darkTokens.colorSurface2));
-        expect(cs.backgroundColor, who).not.toBe(solid(tokens.colorGray2));
+        expect(cs.backgroundColor, who).toBe(solid(darkTokens.colorMediaPlaceholder));
+        expect(cs.backgroundColor, who).not.toBe(solid(tokens.colorMediaPlaceholder));
       }
     );
   });

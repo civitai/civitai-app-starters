@@ -1,0 +1,207 @@
+{
+  "source": "civitai/civitai src/components/AppBlocks/hostHandlerParity.ts",
+  "capturedFrom": "973767bb21",
+  "capturedAt": "2026-09-21",
+  "messages": {
+    "APP_STORAGE_DELETE": {
+      "request": true,
+      "reply": "APP_STORAGE_DELETE_RESULT"
+    },
+    "APP_STORAGE_GET": {
+      "request": true,
+      "reply": "APP_STORAGE_GET_RESULT"
+    },
+    "APP_STORAGE_LIST": {
+      "request": true,
+      "reply": "APP_STORAGE_LIST_RESULT"
+    },
+    "APP_STORAGE_QUOTA": {
+      "request": true,
+      "reply": "APP_STORAGE_QUOTA_RESULT"
+    },
+    "APP_STORAGE_SET": {
+      "request": true,
+      "reply": "APP_STORAGE_SET_RESULT"
+    },
+    "BLOCK_ERROR": {
+      "request": false,
+      "reply": ""
+    },
+    "BLOCK_HELLO": {
+      "request": false,
+      "reply": ""
+    },
+    "BLOCK_READY": {
+      "request": false,
+      "reply": ""
+    },
+    "CANCEL_APP_WORKFLOW": {
+      "request": true,
+      "reply": "CANCEL_APP_WORKFLOW_RESULT"
+    },
+    "CANCEL_WORKFLOW": {
+      "request": true,
+      "reply": "WORKFLOW_CANCELED"
+    },
+    "CREATE_POST_FROM_APP": {
+      "request": true,
+      "reply": "CREATE_POST_RESULT"
+    },
+    "ESTIMATE_WORKFLOW": {
+      "request": true,
+      "reply": "ESTIMATE_RESULT"
+    },
+    "GET_BUZZ_ACCOUNTS": {
+      "request": true,
+      "reply": "BUZZ_ACCOUNTS_RESULT"
+    },
+    "GET_BUZZ_BALANCE": {
+      "request": true,
+      "reply": "BUZZ_BALANCE_RESULT"
+    },
+    "GET_BUZZ_TRANSACTIONS": {
+      "request": true,
+      "reply": "BUZZ_TRANSACTIONS_RESULT"
+    },
+    "GET_DAILY_COMPENSATION": {
+      "request": true,
+      "reply": "DAILY_COMPENSATION_RESULT"
+    },
+    "GET_IMAGES_BY_IDS": {
+      "request": true,
+      "reply": "IMAGES_RESULT"
+    },
+    "GET_VIEWER": {
+      "request": true,
+      "reply": "VIEWER_RESULT"
+    },
+    "GET_WILDCARD_PACK": {
+      "request": true,
+      "reply": "WILDCARD_PACK_RESULT"
+    },
+    "NAVIGATE": {
+      "request": false,
+      "reply": ""
+    },
+    "OPEN_BUZZ_PURCHASE": {
+      "request": true,
+      "reply": "BUZZ_PURCHASE_RESULT"
+    },
+    "OPEN_CHECKPOINT_PICKER": {
+      "request": true,
+      "reply": "CHECKPOINT_PICKER_RESULT"
+    },
+    "OPEN_IMAGE_UPLOAD": {
+      "request": true,
+      "reply": "IMAGE_UPLOAD_RESULT"
+    },
+    "OPEN_RESOURCE_PICKER": {
+      "request": true,
+      "reply": "RESOURCE_PICKER_RESULT"
+    },
+    "POLL_WORKFLOW": {
+      "request": true,
+      "reply": "WORKFLOW_STATUS"
+    },
+    "PUBLISH_GENERATION_OUTPUTS": {
+      "request": true,
+      "reply": "PUBLISH_RESULT"
+    },
+    "QUERY_APP_WORKFLOWS": {
+      "request": true,
+      "reply": "APP_WORKFLOWS_RESULT"
+    },
+    "REQUEST_CONSENT": {
+      "request": false,
+      "reply": ""
+    },
+    "REQUEST_SIGN_IN": {
+      "request": false,
+      "reply": ""
+    },
+    "REQUEST_TOKEN": {
+      "request": true,
+      "reply": "TOKEN_REFRESH_RESPONSE",
+      "replyNote": "TOKEN_REFRESH_RESPONSE (or a TOKEN_REFRESH push when no requestId was sent)"
+    },
+    "RESIZE_IFRAME": {
+      "request": false,
+      "reply": ""
+    },
+    "SAVE_IMAGE": {
+      "request": true,
+      "reply": "SAVE_IMAGE_RESULT"
+    },
+    "SET_COLLECTION_FOLLOW": {
+      "request": true,
+      "reply": "COLLECTION_FOLLOW_RESULT"
+    },
+    "SET_USER_CHECKPOINT": {
+      "request": true,
+      "reply": "USER_CHECKPOINT_SET"
+    },
+    "SHARED_APPEND": {
+      "request": true,
+      "reply": "SHARED_APPEND_RESULT"
+    },
+    "SHARED_GET": {
+      "request": true,
+      "reply": "SHARED_GET_RESULT"
+    },
+    "SHARED_GET_COUNT": {
+      "request": true,
+      "reply": "SHARED_GET_COUNT_RESULT"
+    },
+    "SHARED_GET_COUNTS": {
+      "request": true,
+      "reply": "SHARED_GET_COUNTS_RESULT"
+    },
+    "SHARED_LIST": {
+      "request": true,
+      "reply": "SHARED_LIST_RESULT"
+    },
+    "SHARED_REPORT": {
+      "request": true,
+      "reply": "SHARED_REPORT_RESULT"
+    },
+    "SHARED_UNVOTE": {
+      "request": true,
+      "reply": "SHARED_UNVOTE_RESULT"
+    },
+    "SHARED_UPDATE": {
+      "request": true,
+      "reply": "SHARED_UPDATE_RESULT"
+    },
+    "SHARED_VOTE": {
+      "request": true,
+      "reply": "SHARED_VOTE_RESULT"
+    },
+    "SHARED_WITHDRAW": {
+      "request": true,
+      "reply": "SHARED_WITHDRAW_RESULT"
+    },
+    "SUBMIT_WORKFLOW": {
+      "request": true,
+      "reply": "WORKFLOW_SUBMITTED"
+    },
+    "TRACK_EVENT": {
+      "request": false,
+      "reply": ""
+    }
+  },
+  "scopes": [
+    "ai:write:budgeted",
+    "apps:storage:read",
+    "apps:storage:shared:read",
+    "apps:storage:shared:write",
+    "apps:storage:write",
+    "buzz:read:self",
+    "collections:read:private",
+    "collections:read:self",
+    "collections:write:self",
+    "models:read:self",
+    "posts:write:self",
+    "social:tip:self",
+    "user:read:self"
+  ]
+}
