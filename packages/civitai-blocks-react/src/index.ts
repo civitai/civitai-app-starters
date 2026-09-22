@@ -144,6 +144,10 @@ export {
   buildGenerationResourcesUrl,
   responseToResources,
 } from './api/generationResources.js';
+export type {
+  RawGenerationResource,
+  RawGenerationResourcesResponse,
+} from './api/generationResources.js';
 export { useCivitaiNavigate } from './hooks/useCivitaiNavigate.js';
 export type { UseCivitaiNavigate } from './hooks/useCivitaiNavigate.js';
 export { useRequestSignIn } from './hooks/useRequestSignIn.js';
