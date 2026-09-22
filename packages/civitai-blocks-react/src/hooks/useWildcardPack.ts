@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import type { BlockWildcardPack, BlockWildcardPackErrorCode } from '@civitai/app-sdk/blocks';
 
 import { getTransport } from '../internal/singleton.js';
 import { sendTypedRequest } from '../internal/transport.js';
+import { useRequestSequencer } from './useRequestSequencer.js';
 
 export type { BlockWildcardPack, BlockWildcardPackErrorCode };
 
@@ -52,7 +53,9 @@ export interface UseWildcardPack {
  * to retry a `busy` result). On failure `error` is a {@link WildcardPackError}
  * whose `.code` is the discriminated reason. A non-positive `modelVersionId` is a
  * no-op (nothing to fetch). A host that never answers surfaces as an `error`
- * after the transport timeout; late post-unmount responses are ignored.
+ * after the transport timeout. Only the LATEST request may write state: a reply
+ * superseded by a newer `refetch` / `modelVersionId` change — or one that lands
+ * after unmount — is dropped (#392).
  *
  * @example
  * const { pack, loading, error } = useWildcardPack(modelVersionId);
@@ -63,17 +66,19 @@ export function useWildcardPack(modelVersionId: number): UseWildcardPack {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  // Latest-wins + unmount guard in one predicate (#392): a reply may write state
+  // only if it answers the request this hook is CURRENTLY waiting for. A bare
+  // mount check would let a superseded request's slow reply overwrite newer
+  // state — nothing unmounted, so it passes.
+  const seq = useRequestSequencer();
 
   const valid = Number.isInteger(modelVersionId) && modelVersionId > 0;
 
   const refetch = useCallback(() => {
+    // `begin()` runs BEFORE the validity gate on purpose: moving to a
+    // non-positive id must also SUPERSEDE an in-flight request for the previous
+    // id, or that reply would land and paint a pack the hook no longer wants.
+    const token = seq.begin();
     if (!valid) {
       // Nothing to fetch — don't summon a host round-trip that would only time
       // out (the host drops a non-positive modelVersionId).
@@ -88,7 +93,7 @@ export function useWildcardPack(modelVersionId: number): UseWildcardPack {
       'WILDCARD_PACK_RESULT',
     )
       .then((result) => {
-        if (!mountedRef.current) return;
+        if (!seq.isCurrent(token)) return;
         if (result.error || !result.pack) {
           // 🔴 KEEP `??` HERE — do NOT "fix" this to `||` like the sibling hooks.
           // Unlike every other reply guard, `isValidWildcardPackResult` constrains
@@ -104,11 +109,11 @@ export function useWildcardPack(modelVersionId: number): UseWildcardPack {
         setLoading(false);
       })
       .catch((err: unknown) => {
-        if (!mountedRef.current) return;
+        if (!seq.isCurrent(token)) return;
         setError(err instanceof Error ? err : new Error(String(err)));
         setLoading(false);
       });
-  }, [valid, modelVersionId]);
+  }, [valid, modelVersionId, seq]);
 
   useEffect(() => {
     refetch();

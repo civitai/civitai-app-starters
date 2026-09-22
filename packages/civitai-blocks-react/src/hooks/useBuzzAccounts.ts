@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import type { BlockBuzzAccount } from '@civitai/app-sdk/blocks';
 
 import { getTransport } from '../internal/singleton.js';
 import { sendTypedRequest } from '../internal/transport.js';
+import { useRequestSequencer } from './useRequestSequencer.js';
 
 /**
  * What {@link useBuzzAccounts} returns.
@@ -36,8 +37,9 @@ export interface UseBuzzAccounts {
  * the creator payout pools — as `{ accountType, balance }` rows.
  *
  * Fetches once on mount and exposes `refetch`. A host that never answers surfaces
- * as an `error` after the transport timeout; late post-unmount responses are
- * ignored.
+ * as an `error` after the transport timeout. Only the LATEST request may write
+ * state: a reply superseded by a newer `refetch` — or one that lands after
+ * unmount — is dropped (#392).
  *
  * @example
  * const { accounts, loading, error } = useBuzzAccounts();
@@ -47,15 +49,14 @@ export function useBuzzAccounts(): UseBuzzAccounts {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  // Latest-wins + unmount guard in one predicate (#392): a reply may write state
+  // only if it answers the request this hook is CURRENTLY waiting for. A bare
+  // mount check would let a superseded `refetch`'s slow reply overwrite newer
+  // state — nothing unmounted, so it passes.
+  const seq = useRequestSequencer();
 
   const refetch = useCallback(() => {
+    const token = seq.begin();
     setLoading(true);
     setError(null);
     sendTypedRequest(
@@ -64,7 +65,7 @@ export function useBuzzAccounts(): UseBuzzAccounts {
       'BUZZ_ACCOUNTS_RESULT',
     )
       .then((result) => {
-        if (!mountedRef.current) return;
+        if (!seq.isCurrent(token)) return;
         if (result.error || !result.result) {
           // `||`, not `??`: the reply validator gates `error` on SHAPE only, so a
           // host `error: ''` is a VALID reply that reaches here. `??` replaces only
@@ -77,11 +78,11 @@ export function useBuzzAccounts(): UseBuzzAccounts {
         setLoading(false);
       })
       .catch((err: unknown) => {
-        if (!mountedRef.current) return;
+        if (!seq.isCurrent(token)) return;
         setError(err instanceof Error ? err : new Error(String(err)));
         setLoading(false);
       });
-  }, []);
+  }, [seq]);
 
   useEffect(() => {
     refetch();

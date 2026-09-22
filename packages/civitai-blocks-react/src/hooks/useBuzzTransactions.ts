@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import type { BlockBuzzTransaction, BlockBuzzTransactionsParams } from '@civitai/app-sdk/blocks';
 
 import { getTransport } from '../internal/singleton.js';
 import { sendTypedRequest } from '../internal/transport.js';
+import { useRequestSequencer } from './useRequestSequencer.js';
 
 /**
  * One Buzz-transaction row, REHYDRATED for block consumption: identical to the
@@ -58,8 +59,10 @@ function toIso(v: unknown): string | null {
  *
  * Fetches on mount and whenever `params` change (by value), and exposes `refetch`.
  * A host that never answers surfaces as an `error` after the transport's request
- * timeout — the hook never hangs. Late responses that arrive after unmount are
- * ignored. Transaction `date`s are rehydrated to `Date`; `cursor` is normalized
+ * timeout — the hook never hangs. Only the LATEST request may write state: page
+ * 1's slow reply cannot repaint (or rewind `cursor` behind) the page 2 a newer
+ * request already painted, and a reply that lands after unmount is dropped
+ * (#392). Transaction `date`s are rehydrated to `Date`; `cursor` is normalized
  * to an ISO string for round-tripping.
  *
  * @example
@@ -71,13 +74,10 @@ export function useBuzzTransactions(params?: BlockBuzzTransactionsParams): UseBu
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  // Latest-wins + unmount guard in one predicate (#392). This hook is the one
+  // the issue was audit-verified against: `paramsKey` moving is exactly what
+  // puts two requests in flight, and a bare mount check passes for BOTH of them.
+  const seq = useRequestSequencer();
 
   // Serialize the params to a stable key so `refetch`'s identity only changes
   // when the params VALUE changes (not on every render's fresh object). The
@@ -85,6 +85,7 @@ export function useBuzzTransactions(params?: BlockBuzzTransactionsParams): UseBu
   const paramsKey = params ? JSON.stringify(params) : '';
 
   const refetch = useCallback(() => {
+    const token = seq.begin();
     setLoading(true);
     setError(null);
     const parsed = paramsKey ? (JSON.parse(paramsKey) as BlockBuzzTransactionsParams) : undefined;
@@ -95,7 +96,7 @@ export function useBuzzTransactions(params?: BlockBuzzTransactionsParams): UseBu
       'BUZZ_TRANSACTIONS_RESULT',
     )
       .then((result) => {
-        if (!mountedRef.current) return;
+        if (!seq.isCurrent(token)) return;
         if (result.error || !result.result) {
           // `||`, not `??`: the reply validator gates `error` on SHAPE only, so a
           // host `error: ''` is a VALID reply that reaches here. `??` replaces only
@@ -110,11 +111,11 @@ export function useBuzzTransactions(params?: BlockBuzzTransactionsParams): UseBu
         setLoading(false);
       })
       .catch((err: unknown) => {
-        if (!mountedRef.current) return;
+        if (!seq.isCurrent(token)) return;
         setError(err instanceof Error ? err : new Error(String(err)));
         setLoading(false);
       });
-  }, [paramsKey]);
+  }, [paramsKey, seq]);
 
   useEffect(() => {
     refetch();
