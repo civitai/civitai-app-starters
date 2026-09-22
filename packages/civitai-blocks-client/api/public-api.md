@@ -47,6 +47,44 @@ export interface BlockInitializeOptions extends ClientOptions {
 export interface TokenInitializeOptions extends ClientOptions, TokenSessionOptions {
 }
 
+/**
+ * Sign-in with Civitai for an app outside civitai.com. Completes the return
+ * from Civitai when the page has just come back from it.
+ */
+export declare function createSignIn(options: SignInOptions): Promise<SignIn>;
+
+export interface SignInOptions {
+    /** The OAuth client registered on Civitai as a public (browser) client. */
+    clientId: string;
+    scopes: readonly Scope[];
+    /** Must be registered on the client. Defaults to the current page without its query. */
+    redirectUri?: string;
+    /** Defaults to `https://auth.civitai.com`. */
+    authUrl?: string;
+    /** Holds the sign-in in flight and whether the viewer signed in before; never a token. Defaults to `localStorage`. */
+    storage?: SignInStorage;
+    fetch?: typeof fetch;
+    window?: Window;
+}
+
+/** Pass it to `initialize()` as it is: it is the token, its refresh and the way to ask for grants. */
+export interface SignIn extends TokenSessionOptions {
+    token(): Promise<string>;
+    refresh(): Promise<string>;
+    requestGrants(scopes: readonly Scope[], opts?: GrantOptions): Promise<boolean>;
+    readonly signedIn: boolean;
+    /** Signed in on an earlier visit. Tokens live only in memory, so `signIn()` again; Civitai remembers the consent. */
+    readonly returning: boolean;
+    readonly grantedScopes: readonly Scope[];
+    /** Why the last return from Civitai did not sign in, e.g. the viewer declined. */
+    readonly error: SignInError | null;
+    /** Leaves the page for Civitai's sign-in and consent; it comes back to `redirectUri`. */
+    signIn(opts?: {
+        scopes?: readonly Scope[];
+    }): Promise<never>;
+    signOut(): Promise<void>;
+}
+
 /** Every scope an app can hold, as the site names them. */
 export declare const SCOPES: readonly ['ai:write:budgeted', 'apps:storage:read', 'apps:storage:shared:read', 'apps:storage:shared:write', 'apps:storage:write', 'buzz:read:self', 'collections:read:private', 'collections:read:self', 'collections:write:self', 'models:read:self', 'posts:write:self', 'social:tip:self', 'user:read:self'];
 

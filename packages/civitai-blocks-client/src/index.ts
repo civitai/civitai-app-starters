@@ -1,6 +1,6 @@
 /**
  * `const app = await initialize()`, then `app.site`, `app.orchestration` and,
- * inside a civitai.com page, `app.host`.
+ * inside a civitai.com page, `app.host`. Outside one, `createSignIn()` gets the token.
  */
 
 export { initialize } from './app/index.js';
@@ -10,6 +10,9 @@ export type {
   BlockInitializeOptions,
   TokenInitializeOptions,
 } from './app/index.js';
+
+export { createSignIn, SignInError } from './sign-in/index.js';
+export type { SignIn, SignInOptions } from './sign-in/index.js';
 
 export { SCOPES } from './session/index.js';
 export type { GrantOptions, Scope, TokenOptions, TokenSource } from './session/index.js';

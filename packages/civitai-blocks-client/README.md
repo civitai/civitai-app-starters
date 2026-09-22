@@ -32,6 +32,7 @@ A block additionally asks its host page to show the host's own UI.
 |---|---|---|
 | `initialize()` | A block on civitai.com | Once the host hands over the viewer, the slot and a token. Rejects with `BridgeError` `unavailable` if no host answers within `timeoutMs` (10s) |
 | `initialize({ token, refresh?, requestGrants? })` | Anywhere else, typically your server | At once, with the OAuth access token you hold |
+| `initialize(await createSignIn(...))` | A web app outside civitai.com | At once, as the viewer who signed in; see below |
 
 Both give you:
 
@@ -47,10 +48,37 @@ A block's `app` also has `host`, `viewer`, `context`, `settings`, `theme` and
 
 > **Not yet end to end for blocks.** The host still mints a block-scoped JWT,
 > which `/api/v1` and the orchestrator do not accept; they take API keys and
-> OAuth tokens. Public `/api/v1` routes also answer preflight with
-> `Access-Control-Allow-Headers: *`, which does not cover `Authorization`, so a
-> browser cannot send the token cross-origin yet. Apps calling from their own
-> server work today.
+> OAuth tokens. Apps with one of those work today, from a browser or a server.
+
+## Signing in outside civitai.com
+
+A browser app signs the viewer in with Civitai itself: PKCE against
+`auth.civitai.com`, no server and no client secret. Register the app as a
+public OAuth client with its origins and redirect URL.
+
+```ts
+import { createSignIn, initialize } from '@civitai/blocks-client';
+
+const auth = await createSignIn({ clientId, scopes: ['user:read:self', 'ai:write:budgeted'] });
+if (!auth.signedIn) {
+  button.onclick = () => auth.signIn();
+  if (auth.returning) auth.signIn();
+} else {
+  const app = await initialize(auth);
+}
+```
+
+`createSignIn` finishes the return from Civitai when the page has just come
+back from it, and takes `code` and `state` out of the address bar. Tokens live
+in memory only and refresh themselves; storage holds only the sign-in in flight
+and a flag that the viewer signed in before (`returning`). Signing in again is
+a quick round trip, since Civitai remembers the consent. `requestGrants` goes
+back to Civitai for anything not yet granted.
+
+Only scopes with an OAuth equivalent can be asked for: `user:read:self`,
+`models:read:self`, `ai:write:budgeted`, `buzz:read:self`, `posts:write:self`
+and `social:tip:self`. The storage and collection scopes belong to blocks.
+`/api/v1` and the orchestrator both accept these tokens from any origin.
 
 ## The API
 
