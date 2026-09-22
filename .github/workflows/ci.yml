@@ -517,9 +517,12 @@ jobs:
   # accident. Every typecheck job above resolves `src/` or the workspace link
   # and sees every local declaration, so none of them can tell that
   # `responseToResources`'s parameter type had no name on the published surface
-  # (#379). Its own job, and not a `tests/guards/` unit test, because it needs
-  # the installed `typescript` AND a built `dist/` — `pnpm test:guards` runs in
-  # the required matrix job BEFORE the install.
+  # (#379). The real SCAN gets its own job, and is not a `tests/guards/` unit
+  # test, because it needs the installed `typescript` AND a built `dist/` —
+  # `pnpm test:guards` runs in the required matrix job BEFORE the install. The
+  # checker's own logic IS unit-tested (`tests/guards/
+  # check-public-type-closure-patterns.test.mjs`), and that suite is run from
+  # inside THIS job for the same reason: it needs the install too.
   public-types:
     name: Public type closure (built .d.ts)
     runs-on: ubuntu-latest
@@ -534,6 +537,21 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
+      # The checker's OWN unit tests — `exports` subpath-pattern handling, over
+      # synthetic trees. They live in `tests/guards/` with every other guard
+      # suite, but the required matrix job runs `pnpm test:guards` BEFORE the
+      # install and this suite needs the installed `typescript` (same reason
+      # this job exists at all), so there it SKIPS. Here it must not: the env
+      # flag turns an unresolvable `typescript` into a failure, so the coverage
+      # is enforced in the one tier that can see it rather than quietly
+      # evaporating in the tier that cannot.
+      #
+      # Runs BEFORE the build on purpose — it drives the guard over temp-dir
+      # fixtures, so a red here is the guard's logic, not the tree's state.
+      - run: pnpm test:guards:public-types
+        env:
+          GUARDS_REQUIRE_INSTALL: '1'
 
       # The `.d.ts` barrels only exist after a build; the checker FAILS on an
       # unbuilt or half-built tree rather than reporting a vacuous "0 violations"
