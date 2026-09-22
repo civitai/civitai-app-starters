@@ -1,5 +1,159 @@
 # @civitai/app-sdk
 
+## 0.50.0
+
+### Minor Changes
+
+- ad8cb28: State the root-barrel/subpath relationship and assert it, and derive the workflow step-type counts instead of typing them (#377, #382).
+
+  **`minor`, and the only reason it is not `patch`: three types gain a second
+  import path.** `@civitai/app-sdk/oauth` now re-exports `OAuthTokens`,
+  `OAuthTokenResponse` and `OAuthClientConfig`. Nothing is removed, nothing is
+  renamed, and the root specifier's surface is unchanged — byte for byte, the same
+  68 symbols — so no existing import can break. Everything else here is
+  documentation and tests.
+
+  ## #377 — the root barrel was a half-barrel
+
+  Measured at `f913811`, through the TypeScript API over the built `.d.ts` of every
+  `exports` key: the root exposed **68 symbols, 65 of them also reachable from a
+  subpath**, and 3 — the `types.ts` trio above — reachable from the **root only**,
+  because `src/index.ts` re-exported `src/types.ts` directly and no subpath did.
+  That was nobody's decision; it fell out of which file happened to be re-exported
+  where. The practical cost landed on the subpath: `exchangeCode` and
+  `refreshToken` live on `./oauth` and **return** `OAuthTokens`, so a consumer of
+  that subpath could not name their own return type.
+
+  The fix is additive on purpose — removing a published export costs a major under
+  semver, and this package is pre-1.0, where a minor breaks too. `./oauth`
+  re-exports `types.ts`; the root reaches the trio through that barrel instead of
+  directly. The root is now **exactly** the union of `./oauth` + `./scopes` +
+  `./cookies` + `./orchestrator`, and `src/index.ts` says so, along with why each
+  of the other five subpaths is deliberately _not_ on it (module side effects,
+  node-only APIs, an optional peer that the root would make mandatory).
+
+  The README gains an "Entry points, and what the root barrel is" section, and the
+  three subpaths that had no published-specifier mention anywhere in it — `/oauth`,
+  `/scopes`, `/cookies` — now appear in the subpath-import example.
+
+  `test/export-surface.test.ts` pins all of it: the `exports` key set against a
+  ledger that carries a reason per key (failing when the set grows _or_ shrinks),
+  root-vs-subpath set equality in both directions, the one deliberate name
+  collision (`BuzzAccountType` is a different, narrower type on `./blocks`), and
+  the root's 68 symbols enumerated so a future removal cannot be silent.
+
+  ## #382 — sixteen prose sites said 47; there are 50
+
+  `44a79dc` (#315) synced `WORKFLOW_STEP_TYPES` to the live orchestrator spec and
+  left every prose "47" behind. The stale number was the visible symptom; the real
+  defect was the argument built on it. The docs claimed a `$type`-keyed lookup "is
+  only sound as a lookup if it is total over `WorkflowStepType`" — and the same
+  commit made the map partial, so `WorkflowStepTemplateFor<'imageScanning'>` has
+  been a live `TS2344` for three documented step types, undocumented. The
+  compile-time ledger said "Empty (`never`) today" eleven lines above its own
+  populated gap list.
+
+  The gap cannot be closed here: `@civitai/client@0.2.0-beta.98` generates no
+  template for `imageScanning`, `preprocessVideo` or `yuE2`. So the totality claim
+  is **removed** and replaced with the measured state, stated identically in
+  `src/orchestrator/steps.ts` and the README, and the three `TS2344`s are pinned as
+  `@ts-expect-error` aliases so the consequence is demonstrated rather than
+  asserted.
+
+  No count is typed by hand any more. `test/orchestrator/step-count-prose.test.ts`
+  derives the catalog size from `WORKFLOW_STEP_TYPES`, the map size from
+  `StepTemplateMap`'s own AST, and the gap from the difference, then pins each
+  prose claim **as a whole normalised sentence** with the derived values
+  substituted — a guard on the digits alone is walkable by rewording. A coverage
+  sweep then fails on any remaining integer in `[30, 199]` that no claim or
+  allowlist entry accounts for, so a seventeenth site cannot arrive unpinned.
+
+### Patch Changes
+
+- e993cf0: Name every hook's return type, move the entry's transport modules out of `internal/`, and replace two stale docblock claims (#378, #380, #381, #388).
+
+  **`minor`, because the public type surface GREW (#380).** 19 hooks gained an exported `Use<Hook>` return type and roughly 25 new type exports landed on the package entry. Nothing was removed and nothing changed shape, so no consumer needs to do anything — but new exported API is a feature, not a patch. `@civitai/app-sdk` takes a `patch`: a comment-only correction that nevertheless ships, because JSDoc travels in `.d.ts`.
+
+  **Every hook exported from `@civitai/blocks-react` now ships a named, exported return type (#380).** Whether one existed was a coin flip — measured on `bcc24bf`: 37 files under `src/hooks/use*.ts`, 17 with an exported `Use<Hook>`, 20 without. A consumer wrapping `useBlockContext()` had to hand-copy a ten-field `Pick<BlockSnapshot, …>` that existed only on the function's own return annotation. `UseBuzzWorkflowReturn` — which existed but was never exported, the same defect from the other side — is now `UseBuzzWorkflow`.
+
+  The rule is "every hook **exported from the package entry**", not "every `use*.ts` file". `useRequestSequencer` is a hook-shaped file that #413 added as the shared request sequencer the public hooks build on; publishing a return type for it would publish an implementation detail to satisfy a guard. It is recorded as internal with that reason, and a separate assertion fails if it ever reaches the entry.
+
+  Inside the rule there are no exceptions: `UseBlockResize = void` and `UseBlockTheme = Theme` are aliases, because an exception list is a thing to remember and get wrong. `useImageUpload` is overloaded, so its return type is a family — each public overload names its own, and the implementation signature's type is asserted to stay OFF the entry.
+
+  Three checks, three different failure modes, none subsuming another: a guard asserts the hook SET against written ledgers (failing when the set **grows** as well as when a type is deleted), the same guard reads the return **annotation** and requires the name, and `src/hooks/returnTypeLedger.ts` asserts `Exact<ReturnType<typeof useX>, UseX>` for all 36 entry hooks. The third does not subsume the second — measured, not assumed: re-inlining an annotation as a literal of the same shape leaves `tsc` completely green.
+
+  **Nine modules moved from `src/internal/` to `src/transport/` (#378).** `src/index.ts` published 14 symbols out of a directory named `internal/`, six of them deliberately public per README § "Lower-level transport". The name told contributors that `IframeTransport`, `sendTypedRequest`, `getTransport` and `RequestTimeoutError` were private and free to move. **Nothing is removed and no import path a consumer can legitimately write has changed** — the exports map publishes `.`, `./ui`, `./testing` and `./live`, and all four are unchanged. Only the layout under `dist/` moved, which is not a supported import surface.
+
+  `src/internal/` keeps what the main entry does not reach — the mock host, the live host, the picker overlay, the catalog client, consent, the reply-error shaper — so the split now matches the export reality rather than a wholesale rename that would have filed the live host under `transport/`.
+
+  **Two stale docblock claims, both about things a reader would believe (#381, #388).** `useBuzzWorkflow`'s docblock said `WorkflowBody` has "THREE members" and then certified the list "otherwise unchanged"; it has four — `WorkflowBodyPassThroughStep` landed in #310. The count is now stated structurally or not at all: the prose states none, and a mutual-assignability assertion against the union fails `tsc` when it changes in either direction.
+
+  And `waitSeconds` was documented as "🔴 CURRENTLY ADVISORY … a host that does not yet read the field simply answers immediately". The deployed host honours and clamps it. The real contract is now written down, read off `civitai/civitai` @ `b0eb2820b5` (5.1.120): `MAX_BLOCK_POLL_WAIT_SECONDS = 15`, `Math.floor` applied **first** (so `0.9` is no hold at all, not a short one), a floored value `<= 0` meaning no hold, and otherwise `Math.min(floored, 15)`. Practically: only whole seconds are expressible, and asking for more than 15 buys nothing — `intervalMs` remains what bounds your request rate. The sha is quoted because this is prose about another repo and no guard in this one can check it; the honest check is a human read at a named revision.
+
+- bcc24bf: Publish first-party deps as caret ranges instead of exact pins, and stop shipping sourcemaps that cannot resolve their sources (#374, #376).
+
+  **#374 — exact inter-package pins duplicated `@civitai/theme` and `@civitai/components`.**
+  `@civitai/components`, `@civitai/components-react` and `@civitai/blocks-react` declared
+  their first-party deps as `workspace:*`. pnpm rewrites the workspace protocol at pack
+  time, and `*` publishes an **exact** pin — measured off the real tarballs:
+  `@civitai/components@0.4.2` shipped `"@civitai/theme": "0.3.1"`, not `"^0.3.1"`.
+
+  Two exact pins from two different releases can never intersect, so co-installing
+  adjacent releases produced duplicate physical copies. Measured outside this workspace
+  with a real `npm install --package-lock-only` over a closed registry built from the
+  actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
+  `@civitai/blocks-react@0.56.1`:
+
+      before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+               @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+      after    @civitai/theme       0.3.1                   — 1 copy
+               @civitai/components  0.4.2                   — 1 copy
+
+  That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
+  wins**, so the first token bump that changes a _value_ would have shipped stale tokens
+  underneath new component CSS — silently, and only in the duplicated install.
+
+  The three manifests now use `workspace:^`, which publishes `^<version>`.
+
+  **Scope of the fix, stated rather than implied.** `^` on a `0.x` version locks the
+  minor, so this removes duplication across patch-adjacent releases only. Measured at
+  the second point too: an app on `@civitai/components-react@0.3.1` (theme `0.2.1`)
+  alongside `@civitai/blocks-react@0.56.1` (theme `0.3.1`) still resolves 2 copies,
+  before and after. That is correct and deliberate — a `0.x` minor is a breaking change
+  under this repo's own convention, so those two releases genuinely disagree about which
+  theme they need, and widening the range to `>=x.y.z <1.0.0` would trade a duplicate
+  copy for an incompatible pairing of component CSS with theme tokens.
+
+  One consequence worth knowing at release time: because `^0.3.1` already admits
+  `0.3.2`, `changeset version` no longer cascades a re-release of every dependent on a
+  theme patch bump (verified against both manifest shapes — with `workspace:*` a theme
+  `0.3.1 → 0.3.2` bump dragged `@civitai/components` and `@civitai/components-react` to
+  `0.4.3`; with `workspace:^` it leaves them at `0.4.2`).
+
+  **#376 — every shipped sourcemap dangled.**
+  All five packages build with `sourceMap` + `declarationMap`, so `dist/` fills with
+  `*.js.map` and `*.d.ts.map` whose `sources` point at `../src/*.ts`. No package lists
+  `src` in `files`. Measured off the real packed file lists at the previous state: **270
+  shipped maps, 270 dangling source references, zero resolvable** — `@civitai/blocks-react`
+  160, `@civitai/app-sdk` 46, `@civitai/components-react` 48, `@civitai/theme` 12,
+  `@civitai/components` 4. A consumer's devtools loaded each map and then had nothing to
+  show.
+
+  The maps are now excluded from the tarballs (`"!dist/**/*.map"`) and still emitted into
+  `dist/`, where they are _not_ dangling — inside this repo `src` sits right beside them,
+  so go-to-definition from a starter still lands in the real `.ts`. **No consumer
+  debuggability is lost, because there was none.** Shipping `src` instead was measured
+  and rejected: `packages/civitai-blocks-react/src` alone is 879,895 B, in a package
+  whose design constraint is that every app inherits its install graph.
+
+  Tarball delta across the five packages: **−114,574 B gzipped, −580,786 B unpacked**
+  (`@civitai/blocks-react` alone: −77,441 B gzipped, −413,492 B unpacked).
+
+  Enforced going forward by `scripts/check-shipped-sourcemaps.mjs` (`pnpm
+check:shipped-sourcemaps`), which reads the real packed file list and every real map's
+  `sources` rather than grepping for the `files` entry — so shipping `src` or inlining
+  `sourcesContent` satisfies it equally.
+
 ## 0.49.0
 
 ### Minor Changes
