@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BlockInitPayload, ParentToBlockMessage } from '@civitai/app-sdk/blocks';
 
-import { IframeTransport } from '../src/internal/iframeTransport.js';
-import { sendTypedRequest } from '../src/internal/transport.js';
+import { IframeTransport } from '../src/transport/iframeTransport.js';
+import { sendTypedRequest } from '../src/transport/transport.js';
 import { mockParentMessage } from './helpers/mockParentMessage.js';
 
 const PARENT_ORIGIN = 'https://civitai.com';

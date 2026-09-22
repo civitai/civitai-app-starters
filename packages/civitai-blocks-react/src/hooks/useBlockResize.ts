@@ -1,6 +1,6 @@
 import { useEffect, useRef, type RefObject } from 'react';
 
-import { getTransport } from '../internal/singleton.js';
+import { getTransport } from '../transport/singleton.js';
 
 /**
  * Observes the referenced element's height and asks the host to resize on

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BlockInitPayload, BlockWildcardPack, BlockWildcardPackErrorCode } from '@civitai/app-sdk/blocks';
 
 import { useWildcardPack, WildcardPackError } from '../src/hooks/useWildcardPack.js';
-import { getTransport } from '../src/internal/singleton.js';
+import { getTransport } from '../src/transport/singleton.js';
 import { resetTransport } from '../src/testing.js';
 
 const PARENT_ORIGIN = 'https://civitai.com';

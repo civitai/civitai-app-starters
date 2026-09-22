@@ -2,9 +2,9 @@ import { useCallback } from 'react';
 
 import type { BlockResourceInfo, BlockResourcePickerType } from '@civitai/app-sdk/blocks';
 
-import { HUMAN_INTERACTION_TIMEOUT_MS } from '../internal/requestTimeouts.js';
-import { getTransport } from '../internal/singleton.js';
-import { sendTypedRequest } from '../internal/transport.js';
+import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
+import { getTransport } from '../transport/singleton.js';
+import { sendTypedRequest } from '../transport/transport.js';
 
 /**
  * Drives the platform-side resource picker for PAGE App Blocks (Design 1 —

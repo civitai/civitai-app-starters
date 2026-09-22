@@ -10,7 +10,7 @@ import type {
 } from '@civitai/app-sdk/blocks';
 
 import { useImageUpload } from '../src/hooks/useImageUpload.js';
-import { getTransport } from '../src/internal/singleton.js';
+import { getTransport } from '../src/transport/singleton.js';
 import { resetTransport } from '../src/testing.js';
 
 /**

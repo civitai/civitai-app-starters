@@ -34,7 +34,7 @@ import {
   isValidWorkflowReply,
   isValidWorkflowSnapshot,
   payloadValidatorFor,
-} from '../src/internal/validate.js';
+} from '../src/transport/validate.js';
 
 const validInit = {
   blockInstanceId: 'inst-1',

@@ -9,7 +9,7 @@ import {
   isCollectionFollowErrorCode,
   useCollectionFollow,
 } from '../src/hooks/useCollectionFollow.js';
-import { getTransport } from '../src/internal/singleton.js';
+import { getTransport } from '../src/transport/singleton.js';
 import { resetTransport } from '../src/testing.js';
 
 const PARENT_ORIGIN = 'https://civitai.com';

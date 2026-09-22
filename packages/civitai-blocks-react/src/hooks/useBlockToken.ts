@@ -2,8 +2,8 @@ import { useEffect } from 'react';
 
 import type { BlockToken } from '@civitai/app-sdk/blocks';
 
-import { getTransport } from '../internal/singleton.js';
-import { sendTypedRequest } from '../internal/transport.js';
+import { getTransport } from '../transport/singleton.js';
+import { sendTypedRequest } from '../transport/transport.js';
 import { useTransportSnapshot } from './useBlockContext.js';
 
 /** Refresh fires `REFRESH_LEAD_MS` before the token's `expiresAt`. */

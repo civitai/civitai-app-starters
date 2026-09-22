@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 
 import { armConsentRefusalLatch } from '../internal/consentRefusalLatch.js';
-import { getTransport } from '../internal/singleton.js';
+import { getTransport } from '../transport/singleton.js';
 
 /**
  * Lazy consent. Asks the host to open civitai.com's consent UI when a

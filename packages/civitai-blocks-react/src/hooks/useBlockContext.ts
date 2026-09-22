@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 
-import { getTransport } from '../internal/singleton.js';
-import type { BlockSnapshot } from '../internal/transport.js';
+import { getTransport } from '../transport/singleton.js';
+import type { BlockSnapshot } from '../transport/transport.js';
 
 /**
  * Subscribe a hook to the singleton transport. All hooks build on this —

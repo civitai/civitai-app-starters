@@ -14,22 +14,22 @@
 // before the rest of the app's module graph runs. Inert everywhere else.
 import '@civitai/app-sdk/safe-storage';
 
-export { IframeTransport } from './internal/iframeTransport.js';
-export type { IframeTransportOptions } from './internal/iframeTransport.js';
+export { IframeTransport } from './transport/iframeTransport.js';
+export type { IframeTransportOptions } from './transport/iframeTransport.js';
 
-export { InlineTransport } from './internal/inlineTransport.js';
+export { InlineTransport } from './transport/inlineTransport.js';
 
-export { BlockTransportDetector, readAllowedOriginsFromEnv } from './internal/detector.js';
-export type { DetectOptions } from './internal/detector.js';
+export { BlockTransportDetector, readAllowedOriginsFromEnv } from './transport/detector.js';
+export type { DetectOptions } from './transport/detector.js';
 
-export { getTransport } from './internal/singleton.js';
+export { getTransport } from './transport/singleton.js';
 
-export { sendTypedRequest } from './internal/transport.js';
+export { sendTypedRequest } from './transport/transport.js';
 export type {
   BlockSnapshot,
   BlockTransport,
   OutboundRequest,
-} from './internal/transport.js';
+} from './transport/transport.js';
 
 // Hooks
 export { useBlockContext } from './hooks/useBlockContext.js';
@@ -79,7 +79,7 @@ export type { UseSaveImage, SaveImageInput } from './hooks/useSaveImage.js';
 // Exported because `sendTypedRequest` (also exported) can throw it, and its own
 // JSDoc says consumers need to distinguish "no reply" from "the host said no" —
 // which they cannot do if they cannot name the type.
-export { RequestTimeoutError } from './internal/transport.js';
+export { RequestTimeoutError } from './transport/transport.js';
 export {
   useCollectionFollow,
   CollectionFollowError,
@@ -138,7 +138,7 @@ export { SfwGate } from './hooks/SfwGate.js';
 export type { SfwGateProps } from './hooks/SfwGate.js';
 export { useDirectLoad } from './hooks/useDirectLoad.js';
 export type { UseDirectLoadOptions } from './hooks/useDirectLoad.js';
-export { hostToRunUrl, DIRECT_LOAD_TIMEOUT_MS } from './internal/directLoad.js';
+export { hostToRunUrl, DIRECT_LOAD_TIMEOUT_MS } from './transport/directLoad.js';
 export { useAppStorage } from './hooks/useAppStorage.js';
 export type {
   AppStorageKeyEntry,

@@ -8,9 +8,9 @@ import type {
   BlockUploadPurpose,
 } from '@civitai/app-sdk/blocks';
 
-import { HUMAN_INTERACTION_TIMEOUT_MS } from '../internal/requestTimeouts.js';
-import { getTransport } from '../internal/singleton.js';
-import { sendTypedRequest, subscribeTyped } from '../internal/transport.js';
+import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
+import { getTransport } from '../transport/singleton.js';
+import { sendTypedRequest, subscribeTyped } from '../transport/transport.js';
 
 /**
  * Generous hook-side backstop for {@link BlockImageScanResult} delivery. The

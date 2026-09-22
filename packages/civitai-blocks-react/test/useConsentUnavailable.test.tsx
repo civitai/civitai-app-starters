@@ -5,7 +5,7 @@ import type { BlockInitPayload, ConsentUnavailablePayload } from '@civitai/app-s
 
 import { useConsentUnavailable } from '../src/hooks/useConsentUnavailable.js';
 import { useRequestConsent } from '../src/hooks/useRequestConsent.js';
-import { getTransport } from '../src/internal/singleton.js';
+import { getTransport } from '../src/transport/singleton.js';
 import { resetTransport } from '../src/testing.js';
 
 /**

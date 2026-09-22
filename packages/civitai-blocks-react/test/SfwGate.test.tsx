@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BrowsingLevel } from '@civitai/app-sdk/blocks';
 
 import { SfwGate } from '../src/hooks/SfwGate.js';
-import { getTransport } from '../src/internal/singleton.js';
+import { getTransport } from '../src/transport/singleton.js';
 import { createMockHost, resetTransport } from '../src/testing.js';
 
 const ORIGIN = window.location.origin;

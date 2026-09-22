@@ -75,14 +75,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { isModelSlotContext, isPageSlotContext, isSignedIn } from '@civitai/app-sdk/blocks';
 
 import { useBlockContext } from '../src/hooks/useBlockContext.js';
-import { getTransport } from '../src/internal/singleton.js';
+import { getTransport } from '../src/transport/singleton.js';
 import { createMockHost, resetTransport } from '../src/testing.js';
 import {
   isValidBlockInitPayload,
   isValidTokenRefreshResponse,
   payloadValidatorFor,
-} from '../src/internal/validate.js';
-import { hostContextWithTheme, snapshotFromInit } from '../src/internal/transport.js';
+} from '../src/transport/validate.js';
+import { hostContextWithTheme, snapshotFromInit } from '../src/transport/transport.js';
 
 // ============================================================
 // Fixtures

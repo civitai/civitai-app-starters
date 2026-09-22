@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 
-import { getTransport } from '../internal/singleton.js';
+import { getTransport } from '../transport/singleton.js';
 
 /**
  * Requests a navigation within civitai.com. The host mediates — `target:

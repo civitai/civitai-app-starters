@@ -97,7 +97,7 @@ const EXEMPT_BASENAMES = new Set(['CHANGELOG.md']);
  *
  *   - `hooks/useBuzzWorkflow.ts:824` cites `civitai/civitai#4159` and says a
  *     block recovers by "(open a top-up flow)". `open` as a VERB.
- *   - `internal/requestTimeouts.ts:23` cites `civitai/civitai#4158` and calls
+ *   - `transport/requestTimeouts.ts:23` cites `civitai/civitai#4158` and calls
  *     the human-interaction timeout "a ceiling on abandonment". `abandon` as
  *     an ordinary noun about a USER, not about a PR.
  *

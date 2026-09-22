@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-import { DIRECT_LOAD_TIMEOUT_MS } from '../internal/directLoad.js';
+import { DIRECT_LOAD_TIMEOUT_MS } from '../transport/directLoad.js';
 import { useTransportSnapshot } from './useBlockContext.js';
 
 export interface UseDirectLoadOptions {

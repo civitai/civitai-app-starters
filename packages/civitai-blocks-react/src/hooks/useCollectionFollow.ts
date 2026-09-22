@@ -5,9 +5,9 @@ import type {
   BlockCollectionFollowResult,
 } from '@civitai/app-sdk/blocks';
 
-import { HUMAN_INTERACTION_TIMEOUT_MS } from '../internal/requestTimeouts.js';
-import { getTransport } from '../internal/singleton.js';
-import { RequestTimeoutError, sendTypedRequest } from '../internal/transport.js';
+import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
+import { getTransport } from '../transport/singleton.js';
+import { RequestTimeoutError, sendTypedRequest } from '../transport/transport.js';
 
 export type { BlockCollectionFollowErrorCode, BlockCollectionFollowResult };
 
@@ -205,7 +205,7 @@ export function useCollectionFollow(): UseCollectionFollow {
             payload: { collectionId: args.collectionId, follow: args.follow },
           },
           'COLLECTION_FOLLOW_RESULT',
-          // See the `'human'` bucketing in `internal/requestTimeouts.ts`: the
+          // See the `'human'` bucketing in `transport/requestTimeouts.ts`: the
           // host answers only when the viewer clicks or dismisses its confirm.
           { timeoutMs: HUMAN_INTERACTION_TIMEOUT_MS },
         );

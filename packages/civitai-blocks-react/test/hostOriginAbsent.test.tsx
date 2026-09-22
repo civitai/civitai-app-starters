@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useGenerationResources } from '../src/hooks/useGenerationResources.js';
 import { useTip } from '../src/hooks/useTip.js';
 import { useTipAllowance } from '../src/hooks/useTipAllowance.js';
-import { getTransport } from '../src/internal/singleton.js';
+import { getTransport } from '../src/transport/singleton.js';
 import { resetTransport } from '../src/testing.js';
 
 /**

@@ -2,10 +2,10 @@ import { useCallback } from 'react';
 
 import type { BlockCheckpointInfo } from '@civitai/app-sdk/blocks';
 
-import { HUMAN_INTERACTION_TIMEOUT_MS } from '../internal/requestTimeouts.js';
+import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { throwOnFailedReply } from '../internal/replyError.js';
-import { getTransport } from '../internal/singleton.js';
-import { sendTypedRequest } from '../internal/transport.js';
+import { getTransport } from '../transport/singleton.js';
+import { sendTypedRequest } from '../transport/transport.js';
 
 /**
  * Drives the platform-side Checkpoint picker and the persist-override flow.

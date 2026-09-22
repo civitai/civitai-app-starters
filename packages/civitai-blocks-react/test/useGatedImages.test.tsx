@@ -4,12 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BlockGatedImage, BlockInitPayload } from '@civitai/app-sdk/blocks';
 
 import { useGatedImages } from '../src/hooks/useGatedImages.js';
-import { getTransport } from '../src/internal/singleton.js';
+import { getTransport } from '../src/transport/singleton.js';
 import {
   isValidImagesResult,
   isValidPublishResult,
   projectInboundPayload,
-} from '../src/internal/validate.js';
+} from '../src/transport/validate.js';
 import { resetTransport } from '../src/testing.js';
 
 const PARENT_ORIGIN = 'https://civitai.com';

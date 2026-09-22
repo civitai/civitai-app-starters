@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
-import { getTransport } from '../internal/singleton.js';
+import { getTransport } from '../transport/singleton.js';
 
 /**
  * Returns the validated host (parent) origin the block may safely direct-fetch

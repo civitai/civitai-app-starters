@@ -14,8 +14,8 @@ import {
   DEFAULT_REQUEST_TIMEOUT_MS,
   HUMAN_GATED_REQUEST_TYPES,
   HUMAN_INTERACTION_TIMEOUT_MS,
-} from '../src/internal/requestTimeouts.js';
-import { getTransport } from '../src/internal/singleton.js';
+} from '../src/transport/requestTimeouts.js';
+import { getTransport } from '../src/transport/singleton.js';
 import { resetTransport } from '../src/testing.js';
 
 /**

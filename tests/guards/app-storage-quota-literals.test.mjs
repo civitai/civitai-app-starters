@@ -67,7 +67,7 @@
  *
  * Three mechanisms keep those out without weakening the ban:
  *   1. CODE is scanned per FILE, by name (`SCAN_FILES` + the wholly-App-Storage
- *      `SCAN_DIRS`). `internal/iframeTransport.ts` is simply not in the list.
+ *      `SCAN_DIRS`). `transport/iframeTransport.ts` is simply not in the list.
  *   2. MARKDOWN is scanned per REGION, never whole-file: only sections whose
  *      heading names App Storage, plus individual lines that name an
  *      App-Storage anchor themselves (so a one-row table entry still counts).
@@ -457,7 +457,7 @@ const NEIGHBOUR_TRUE_STATEMENTS = [
 const NEIGHBOUR_TRUE_CODE = {
   label: 'the iframe transport frame cap',
   line: 'export const MAX_FRAME_BYTES = 50 * 1024 * 1024;',
-  file: 'packages/civitai-blocks-react/src/internal/iframeTransport.ts',
+  file: 'packages/civitai-blocks-react/src/transport/iframeTransport.ts',
 };
 
 test('NEGATIVE CONTROL — statements about NEIGHBOURING subsystems do not fail the guard', () => {

@@ -2,8 +2,8 @@ import { useCallback, useState } from 'react';
 
 import type { BlockWorkflowSnapshot, WorkflowBody, WorkflowStatus } from '@civitai/app-sdk/blocks';
 
-import { getTransport } from '../internal/singleton.js';
-import { generateIdempotencyKey, sendTypedRequest } from '../internal/transport.js';
+import { getTransport } from '../transport/singleton.js';
+import { generateIdempotencyKey, sendTypedRequest } from '../transport/transport.js';
 
 /**
  * Snapshot statuses that mean "no further polling is needed."
@@ -895,7 +895,7 @@ export function useBuzzWorkflow(): UseBuzzWorkflowReturn {
       //
       // 🔴 NOT CLAIMED TO BE REACHABLE THROUGH `IframeTransport`, WHICH ALREADY
       // FAIL-CLOSES THIS. Its `payloadValidatorFor('WORKFLOW_STATUS')`
-      // (internal/validate.ts) drops a reply whose `snapshot.status` is absent
+      // (transport/validate.ts) drops a reply whose `snapshot.status` is absent
       // or outside the known set, so the request never resolves at all and
       // times out instead. This guard covers the OTHER transports
       // `sendTypedRequest` accepts (mock/test hosts, `dev:live`), and is kept as
