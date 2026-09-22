@@ -171,70 +171,17 @@ merged-tree checks this arc ran by hand remain load-bearing.
 - **Next probe:** in the `civitai/cli` repo (out of tree, not audited here):
   `find . -name '*.tmpl' -print0 | xargs -0 grep -n "blocks-react/testing"`
 
-### ✅ RETIRED 2026-09-21 — the four `APP_STORAGE_ERROR_*` peer-floor entries, converted to measurement
-**Outcome, so the numbers outlive this block.** #371 merged `10db006`; app-sdk `0.49.0` published
-15:33:32Z; the four symbols were read off the published tarball with `0.48.0` as the control:
-
-| symbol | `0.48.0` | `0.49.0` |
-|---|---|---|
-| `APP_STORAGE_ERROR_REQUEST_FAILED` | ABSENT | **PRESENT** |
-| `APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED` | ABSENT | **PRESENT** |
-| `APP_STORAGE_ERROR_USER_ROW_LIMIT` | ABSENT | **PRESENT** |
-| `APP_STORAGE_ERROR_VALUE_TOO_LARGE` | ABSENT | **PRESENT** |
-| total exports on `./blocks` | 29 | 34 |
-
-🔴 **The `0.48.0` column is the load-bearing half and is easy to skip.** Measuring only `0.49.0`
-proves the floor SUFFICIENT while leaving open that it is too HIGH — which is #309/#317/#344 with
-the sign flipped (a floor above the truth excludes a good release: spurious peer warnings,
-`--strict-peer-deps` install failures). `0.48.0` exporting none of the four is what makes
-`>=0.49.0` **EXACT**. Controls: the `29 → 34` delta is the probe moving (positive); an impossible
-symbol read ABSENT on both (negative); published `blocks-react@0.56.0` declares
-`>=0.49.0 <1.0.0` and `--dry-run` resolves app-sdk `0.49.0` under it (cross-check).
-Landed as **#372**, comment-only, guards 158/0 unchanged. **The prediction never materialised into
-harm** — no other app-sdk minor took `0.49.0`.
-
-<details><summary>Original investigation block (superseded — kept for the reasoning trail)</summary>
-
-- as-of: 2026-09-21
-- **Symptom + exact repro:** `packages/civitai-blocks-react/package.json` declares
-  `"@civitai/app-sdk": ">=0.49.0 <1.0.0"`, and `PEER_VALUE_SYMBOL_SINCE` in
-  `tests/guards/blocks-react-peer-floor.test.mjs` records four symbols at `0.49.0`:
-  `APP_STORAGE_ERROR_{REQUEST_FAILED,USER_QUOTA_EXCEEDED,USER_ROW_LIMIT,VALUE_TOO_LARGE}`.
-  Every OTHER entry in that ledger was read off a published tarball. These four could not be —
-  `0.49.0` did not exist when they were written.
-- **Observed (with values):** `npm view @civitai/app-sdk version` → **0.48.0**; `0.49.0` is absent
-  from the registry. `changeset status --verbose` on `#371`'s base computes `@civitai/app-sdk
-  0.49.0` / `@civitai/blocks-react 0.56.0`, which is what the floor was set to match.
-  `via: measurement`.
-- **Ruled out:** "the release-ordering risk materialised" — FALSE. The hazard was that another
-  app-sdk `minor` publishes first, takes `0.49.0`, and pushes these symbols to `0.50.0` while the
-  floor still says `>=0.49.0` (that is #309/#317/#344 a fourth time). It did not happen: `origin/main`
-  carried no other pending changeset and `#371` bumps app-sdk to exactly `0.49.0`. `via: measurement`.
-- **Ruled out:** "the floor should be raised to `0.50.0` now that the guard is red" — FALSE and
-  actively harmful. `0.49.0` genuinely exports all four, so a floor above it excludes a good release
-  and causes spurious peer warnings and `--strict-peer-deps` install failures — the same family with
-  the sign flipped. The guard's own remedy text says this in capitals. `via: doc`.
-- **Leading hypothesis:** nothing is wrong; the prediction is simply unconverted. `PREDICTION HAS
-  COME TRUE` fired on `#371` exactly as designed (its first real occasion), `75c711a` emptied
-  `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH`, and the floor and ledger were deliberately left alone.
-  What remains is to read the four symbols off the real tarball.
-- **Next probe** — run AFTER `#371` merges and the release job publishes; before that the first
-  command answers `E404`, which is the CORRECT answer in that state and not something to chase:
-  ```bash
-  npm view @civitai/app-sdk@0.49.0 version
-  cd "$(mktemp -d)" && printf '{"name":"v","private":true,"type":"module"}' > package.json
-  npm i @civitai/app-sdk@0.49.0 --silent --prefer-online
-  node --input-type=module -e "
-  import * as b from '@civitai/app-sdk/blocks';
-  for (const s of ['APP_STORAGE_ERROR_REQUEST_FAILED','APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED',
-                   'APP_STORAGE_ERROR_USER_ROW_LIMIT','APP_STORAGE_ERROR_VALUE_TOO_LARGE'])
-    console.log(s, s in b ? 'PRESENT' : '🔴 ABSENT');"
-  ```
-  All four PRESENT ⇒ the ledger entries are measurements; retire this block. Any ABSENT ⇒ the floor
-  is wrong and the entries must be corrected to the version that does export them.
-
-</details>
-
+### ✅ RETIRED 2026-09-21, EVICTED 2026-09-22 — the four `APP_STORAGE_ERROR_*` peer-floor entries
+**Closed, and evicted for size (4,410 B) once this doc hit its 65,536 B ceiling.** Outcome, so the
+one load-bearing fact survives: #371 merged `10db006`, app-sdk `0.49.0` published 15:33:32Z, and all
+four symbols were read off the published tarball with **`0.48.0` as the below-floor control** — it
+exports NONE of them, which is what makes `>=0.49.0` **EXACT** rather than merely sufficient; total
+`./blocks` exports moved 29 → 34, the delta proving the probe read two different tarballs. Landed as
+**#372**, comment-only. The full tables and the reasoning trail are on the **#372** issue thread,
+which outlives this doc. 🔴 The reusable rule, kept because it is the half everyone skips: **a
+one-sided read of a boundary cannot tell you the boundary is in the right place** — measuring only
+the target version leaves "too high" wide open, and too-high is a real defect with the sign flipped
+(excludes a good release ⇒ spurious peer warnings, `--strict-peer-deps` install failures).
 ### `feat/blocks-client`'s `buzz` and `orchestration` are NON-FUNCTIONAL — no host handlers exist
 - as-of: 2026-09-21
 - **Symptom + exact repro:** the new client's two most important domains cannot work against
@@ -325,7 +272,16 @@ harm** — no other app-sdk minor took `0.49.0`.
   ```
   A zero here with a non-zero `a.size`/`b.size` is a real reading; a zero with `0 0` is not.
 
-### Two new CI jobs run but gate NOTHING
+### ~~Two new CI jobs run but gate NOTHING~~ RESOLVED 2026-09-22 — both are now required (9 → 11 contexts)
+🔴 **The `Next probe` this block used to carry named `-X PATCH` on
+`…/branches/main/protection/required_status_checks`, and that endpoint REPLACES the whole
+contexts list — following it literally would have wiped the other nine required checks.**
+The additive endpoint is `POST …/required_status_checks/contexts`, which is what was used.
+Verify by re-reading the endpoint, never by the write's own echo, with a bogus context name
+as the negative control. Blast radius, measured after the change: 10 of 11 open PRs lack ≥1
+of the two contexts because their heads predate the jobs, and read BLOCKED until CI re-runs.
+`strict: false` is UNCHANGED, so the merged-tree checks remain load-bearing. The measurements
+below are kept as the pre-change baseline.
 - as-of: 2026-09-22
 - **Symptom + exact repro:** `main` has **9 required status checks**; neither
   `Packaging (shipped sourcemaps)` (merged in #414) nor `Public type closure (built .d.ts)`
@@ -339,8 +295,7 @@ harm** — no other app-sdk minor took `0.49.0`.
   which is a repo-settings change no PR can make.
 - 🔴 **`strict: false` also means branches need NOT be current with `main` before merging** —
   which is why the merged-tree checks this session ran by hand were load-bearing, not ceremony.
-- **Next probe:** decide whether to add them (operator/admin call, affects every contributor):
-  `gh api -X PATCH repos/civitai/civitai-app-starters/branches/main/protection/required_status_checks -f 'contexts[]=...'`
+- **Next probe:** ✅ DONE — see the resolution note at the top of this block.
 
 ## Next steps (ranked)
 
