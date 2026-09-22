@@ -57,11 +57,41 @@
  * honest error "block token lacks modelId context"; that real outcome is
  * surfaced to the block. With a model-slot token it persists for real.
  *
- * SCOPE — the ONE capability live mode still cannot SERVE is OPEN_BUZZ_PURCHASE:
- * there is NO headless / block-token Buzz-purchase path (buying Buzz strictly
- * requires the interactive Stripe/Paddle host chrome). So it deep-links the real
- * purchase page and replies `purchased: false` — honest-by-design, never a
- * fabricated success. See the per-message handlers below.
+ * SHARED STORAGE (#386): the live host SERVES all TEN `SHARED_*` bridges —
+ * `apps.shared.{list,get,getCount,getCounts,append,update,vote,unvote,withdraw,
+ * report}` — on the same block-token convention as APP_STORAGE. `SHARED_GET`
+ * and `SHARED_REPORT` were the last two missing; until #386 they fell through
+ * the switch's `default: return` with no reply at all, so `useSharedStorage()`
+ * hung to the 30s protocol timeout in dev:live for code that worked in dev:mock.
+ *
+ * 🔴 SCOPE — the capabilities live mode still cannot SERVE. This list is NOT
+ * one item long, and said so until #386; the header claimed OPEN_BUZZ_PURCHASE
+ * "alone" while five other handlers already refused (#14). Each REFUSES on its
+ * own reply channel — `logOnce` plus an honest error, never a fabricated
+ * success and never silence. `tests/guards/livehost-message-coverage.test.mjs`
+ * asserts that no block→parent type is left without a case at all, which is the
+ * failure mode a refusal is not:
+ *
+ *   • OPEN_BUZZ_PURCHASE — no headless / block-token Buzz-purchase path (buying
+ *     Buzz strictly requires the interactive Stripe/Paddle host chrome). Deep-
+ *     links the real purchase page and replies `purchased: false`.
+ *   • SET_COLLECTION_FOLLOW — needs the session-authed follow procedures plus
+ *     host-chrome consent. Replies `collection-unavailable`.
+ *   • CREATE_POST_FROM_APP — needs the server-resolved preview plus host-chrome
+ *     confirm before a PUBLIC post is written. Replies with a refusal.
+ *   • GET_WILDCARD_PACK — needs the session-authed resolve plus the in-tab
+ *     zip/yaml parse that lives in civitai, not this SDK. Replies `parse-failed`.
+ *   • OPEN_IMAGE_UPLOAD — needs the host's native modal + session-authed byte
+ *     pipeline. Replies DISMISSED (the hook resolves `null`).
+ *   • SAVE_IMAGE — the download bridge is the production host's unsandboxed top
+ *     frame plus its CDN origin allowlist / gated per-viewer read. Replies with
+ *     a refusal (#386).
+ *   • REQUEST_CONSENT — live mode cannot grant a scope the token does not carry.
+ *     Pushes `CONSENT_UNAVAILABLE` when the ask is genuinely ungrantable.
+ *
+ * In every case REFUSING IS THE POINT: serving a weakened local imitation would
+ * let a block prove out a flow production does not have, and ship having never
+ * handled the refusal. Use dev:mock for those paths. See the handlers below.
  */
 
 import {
@@ -82,6 +112,7 @@ import {
   openPickerOverlay,
   type PickerOverlayHandle,
   type OpenPickerOptions,
+  type PickerResultChannel,
 } from './pickerOverlay.js';
 
 /** Default civitai backend the live host forwards to. */
@@ -312,6 +343,52 @@ function isTransientHttpStatus(status: number): boolean {
  * block's own poll loop tries again.
  */
 const POLL_RETRY_BACKOFF_MS = [250, 500, 1000] as const;
+
+/**
+ * Map ONE raw `apps.shared.*` row → the `SharedStorageItemWire` shape the
+ * protocol puts on `SHARED_LIST_RESULT.items` and `SHARED_GET_RESULT.item`.
+ *
+ * ONE mapper, not one per case: the two reads return the same row and the
+ * fields are lenient-by-default (a missing `authorUserId`/`count` becomes `0`,
+ * dates are ISO-normalized whether the transport handed back a `Date` or a
+ * string). A second open-coded copy is how the two reads drift.
+ *
+ * `viewerVoted` is forwarded ONLY when the server actually sent a boolean —
+ * the field is OPTIONAL and additive, and the block-side hook defaults a
+ * missing value to `false`. Omitting it when the server omits it keeps a host
+ * that predates the field indistinguishable from today's behaviour; forwarding
+ * it when the server sends it is what lets a `?g=<key>` deep-link hydrate its
+ * vote button instead of guessing.
+ */
+function sharedItemWireFrom(raw: unknown): {
+  key: string;
+  authorUserId: number;
+  value: unknown;
+  count: number;
+  createdAt: string;
+  updatedAt: string;
+  viewerVoted?: boolean;
+} {
+  const e = raw as {
+    key?: unknown;
+    authorUserId?: unknown;
+    value?: unknown;
+    count?: unknown;
+    createdAt?: unknown;
+    updatedAt?: unknown;
+    viewerVoted?: unknown;
+  };
+  const iso = (d: unknown) => (d instanceof Date ? d.toISOString() : String(d));
+  return {
+    key: String(e.key),
+    authorUserId: typeof e.authorUserId === 'number' ? e.authorUserId : 0,
+    value: e.value,
+    count: typeof e.count === 'number' ? e.count : 0,
+    createdAt: iso(e.createdAt),
+    updatedAt: iso(e.updatedAt),
+    ...(typeof e.viewerVoted === 'boolean' ? { viewerVoted: e.viewerVoted } : {}),
+  };
+}
 
 /**
  * Create a LIVE host that forwards the App-Block postMessage protocol to the
@@ -647,11 +724,19 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
      */
     const openPicker = (
       params: Pick<OpenPickerOptions, 'type' | 'baseModelGroup' | 'currentVersionId'>,
-      resultType: 'CHECKPOINT_PICKER_RESULT' | 'RESOURCE_PICKER_RESULT',
+      resultType: PickerResultChannel,
       requestId: string,
     ) => {
       const handle = openPickerOverlay({
         type: params.type,
+        // 🔴 THE REPLY CHANNEL TRAVELS WITH THE REQUEST (#391). It used to stop
+        // here: the overlay only received `params.type` and branched its
+        // converter on THAT, so an `OPEN_RESOURCE_PICKER` asking for a
+        // Checkpoint replied on `RESOURCE_PICKER_RESULT` with the CHECKPOINT
+        // projection — no `modelType`, which `BlockResourceInfo` requires.
+        // Two independent facts (what was asked for, what channel replies) were
+        // conflated into one; passing the channel down is what separates them.
+        resultChannel: resultType,
         baseUrl,
         token: rawToken,
         fetchImpl,
@@ -707,6 +792,8 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             versionId?: number | null;
             params?: Record<string, unknown>;
             modelVersionId?: number;
+            /** SHARED_REPORT — optional free-text reason (bounded server-side). */
+            reason?: string;
           };
         };
 
@@ -1486,26 +1573,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
                 return;
               }
               const rawItems = (r.data as { items?: unknown })?.items;
-              const items = (Array.isArray(rawItems) ? rawItems : []).map((it) => {
-                const e = it as {
-                  key?: unknown;
-                  authorUserId?: unknown;
-                  value?: unknown;
-                  count?: unknown;
-                  createdAt?: unknown;
-                  updatedAt?: unknown;
-                };
-                const iso = (d: unknown) =>
-                  d instanceof Date ? d.toISOString() : String(d);
-                return {
-                  key: String(e.key),
-                  authorUserId: typeof e.authorUserId === 'number' ? e.authorUserId : 0,
-                  value: e.value,
-                  count: typeof e.count === 'number' ? e.count : 0,
-                  createdAt: iso(e.createdAt),
-                  updatedAt: iso(e.updatedAt),
-                };
-              });
+              const items = (Array.isArray(rawItems) ? rawItems : []).map(sharedItemWireFrom);
               const nextCursor = (r.data as { nextCursor?: unknown })?.nextCursor;
               dispatchToBlock({
                 type: 'SHARED_LIST_RESULT',
@@ -1565,6 +1633,58 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
                     string,
                     number
                   >,
+                },
+              });
+            });
+            return;
+          }
+
+          case 'SHARED_GET': {
+            // SERVED, not refused (#386): this is the single-row companion to
+            // SHARED_LIST's paged read and forwards to the SAME block-token
+            // procedure family the other eight `SHARED_*` bridges already use.
+            // Nothing about it needs host chrome or a session — so refusing it
+            // would be a limitation this host does not actually have.
+            //
+            // Before this case existed the message fell through `default:
+            // return` with NO reply, so `useSharedStorage().get(key)` sat for
+            // the full 30s protocol timeout and then threw a generic
+            // RequestTimeoutError — while the identical call resolved under
+            // dev:mock.
+            //
+            // `item: null` on a miss (never an error): the protocol makes a
+            // missing / hidden / withdrawn row resolve cleanly to "not found"
+            // so a `?g=` deep-link to a moderated row cannot distinguish it
+            // from an absent one. Only a HOST-SIDE failure sets `error`.
+            const key = typed.payload?.key ?? '';
+            void callTrpcData('apps.shared.get', { blockToken: rawToken, key }, 'GET').then((r) => {
+              if (r.error) {
+                dispatchToBlock({
+                  type: 'SHARED_GET_RESULT',
+                  payload: { requestId: requestId ?? '', item: null, error: r.error },
+                });
+                return;
+              }
+              // ENVELOPE-LENIENT. The sibling reads are not consistent about
+              // this — `getCount` returns `{ count }` and `list` returns
+              // `{ items }`, but `withdraw` returns the bare `{ deleted }` —
+              // and an envelope guess that is wrong would turn every hit into
+              // a silent `null`, i.e. "the row does not exist" for a row that
+              // does. So accept `{ item: <row> }` OR the bare row, identified
+              // by carrying a `key`. Anything else is a genuine miss.
+              const data = r.data as { item?: unknown; key?: unknown } | null | undefined;
+              const envelope = data?.item;
+              const rawItem =
+                envelope && typeof envelope === 'object'
+                  ? envelope
+                  : data && typeof data.key === 'string'
+                    ? data
+                    : null;
+              dispatchToBlock({
+                type: 'SHARED_GET_RESULT',
+                payload: {
+                  requestId: requestId ?? '',
+                  item: rawItem ? sharedItemWireFrom(rawItem) : null,
                 },
               });
             });
@@ -1680,6 +1800,84 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
                 });
               },
             );
+            return;
+          }
+
+          case 'SHARED_REPORT': {
+            // SERVED, not refused (#386): same block-token procedure family as
+            // the other `SHARED_*` bridges — the trust gate and the rate limit
+            // are SERVER-side, so forwarding here exercises the real bounds
+            // rather than a local imitation of them. Nothing needs host chrome.
+            //
+            // Before this case existed the message fell through `default:
+            // return` with NO reply, so `useSharedStorage().report(key, reason)`
+            // sat for the full 30s protocol timeout.
+            //
+            // `reason` is OPTIONAL free text — forwarded only when the block
+            // actually sent a string, so an omitted reason stays omitted rather
+            // than becoming `''` (the server bounds it either way).
+            const key = typed.payload?.key ?? '';
+            const reportInput: Record<string, unknown> = { blockToken: rawToken, key };
+            if (typeof typed.payload?.reason === 'string') {
+              reportInput.reason = typed.payload.reason;
+            }
+            void callTrpcData('apps.shared.report', reportInput, 'POST').then((r) => {
+              dispatchToBlock({
+                type: 'SHARED_REPORT_RESULT',
+                payload: r.error
+                  ? { requestId: requestId ?? '', ok: false, error: r.error }
+                  : { requestId: requestId ?? '', ok: true },
+              });
+            });
+            return;
+          }
+
+          case 'SAVE_IMAGE': {
+            // 🔴 REFUSED, and refusing is the POINT — the same reasoning as
+            // CREATE_POST_FROM_APP above, one step stronger.
+            //
+            // The real bridge is a SECURITY boundary, not a convenience: the
+            // host fetches the blob in its UNSANDBOXED top frame, and the two
+            // request variants are gated differently.
+            //   • `url` — the host ALLOWLISTS the origin to the civitai
+            //     image/blob CDN and REFUSES an arbitrary host, because an
+            //     unverified block's `url` is untrusted input to a host-side
+            //     fetch.
+            //   • `imageId` — the host resolves it through the SAME per-viewer
+            //     gated read that backs GET_IMAGES_BY_IDS, so a withheld or
+            //     above-ceiling image can never be coerced into a download.
+            //
+            // This harness has NEITHER gate. The allowlist is the production
+            // host's, not this SDK's — there is no origin set here to check
+            // against — so a dev-side "download it anyway" would accept URLs
+            // production refuses and let a block ship having never once handled
+            // the refusal. Inventing a divergent allowlist is worse than having
+            // none: it would be a security posture nobody reviewed, only ever
+            // exercised in dev.
+            //
+            // So: an honest, IMMEDIATE refusal on the type's own channel rather
+            // than the silent 30s hang this case replaces (#386). FREE TEXT,
+            // not a host code — `SAVE_IMAGE_RESULT.error` is an open string and
+            // `useSaveImage()` surfaces it verbatim; none of the host's real
+            // failure strings ("disallowed origin", "hidden") would be true
+            // here. Use dev:mock to exercise the resolve path, and the real
+            // site to exercise the gates.
+            if (typeof requestId !== 'string') return;
+            logOnce(
+              'save-image',
+              'SAVE_IMAGE is not supported in dev:live (the download bridge is the production ' +
+                "host's unsandboxed top frame plus its CDN origin allowlist / gated per-viewer " +
+                'read — neither of which this harness has). Replying with a refusal. Use dev:mock ' +
+                'to exercise the save path.',
+            );
+            dispatchToBlock({
+              type: 'SAVE_IMAGE_RESULT',
+              payload: {
+                requestId,
+                ok: false,
+                error: 'saving images is not supported in dev:live — use dev:mock',
+              },
+            });
             return;
           }
 

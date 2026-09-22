@@ -130,6 +130,7 @@ describe('openPickerOverlay — server-side family filter (no client narrowing)'
     const handle = await new Promise<PickerOverlayHandle>((resolve) => {
       openPickerOverlay({
         type: 'Checkpoint',
+        resultChannel: 'CHECKPOINT_PICKER_RESULT',
         baseUrl: BASE,
         token: 'TOK',
         fetchImpl,
@@ -167,6 +168,7 @@ describe('openPickerOverlay — server-side family filter (no client narrowing)'
     const handle = await new Promise<PickerOverlayHandle>((resolve) => {
       openPickerOverlay({
         type: 'Checkpoint',
+        resultChannel: 'CHECKPOINT_PICKER_RESULT',
         baseUrl: BASE,
         token: 'TOK',
         fetchImpl,
@@ -190,6 +192,7 @@ describe('openPickerOverlay — server-side family filter (no client narrowing)'
     const handle = await new Promise<PickerOverlayHandle>((resolve) => {
       openPickerOverlay({
         type: 'Checkpoint',
+        resultChannel: 'CHECKPOINT_PICKER_RESULT',
         baseUrl: BASE,
         token: 'TOK',
         fetchImpl,
@@ -206,7 +209,7 @@ describe('openPickerOverlay — server-side family filter (no client narrowing)'
     expect(handle.cards.some((c) => c.versionId === 9007)).toBe(true);
     handle.selectByVersionId(9007);
     expect(selection).not.toBeNull();
-    expect(selection!.kind).toBe('Checkpoint');
+    expect(selection!.channel).toBe('CHECKPOINT_PICKER_RESULT');
     expect(selection!.selected.versionId).toBe(9007);
   });
 
@@ -220,6 +223,7 @@ describe('openPickerOverlay — server-side family filter (no client narrowing)'
     const handle = await new Promise<PickerOverlayHandle>((resolve) => {
       openPickerOverlay({
         type: 'Checkpoint',
+        resultChannel: 'CHECKPOINT_PICKER_RESULT',
         baseUrl: BASE,
         token: 'TOK',
         fetchImpl,
@@ -257,6 +261,7 @@ describe('openPickerOverlay — lazy <img> thumbnails (perf fix)', () => {
     const handle = await new Promise<PickerOverlayHandle>((resolve) => {
       openPickerOverlay({
         type: 'Checkpoint',
+        resultChannel: 'CHECKPOINT_PICKER_RESULT',
         baseUrl: BASE,
         token: 'TOK',
         fetchImpl,
@@ -303,6 +308,7 @@ describe('openPickerOverlay — lazy <img> thumbnails (perf fix)', () => {
     const handle = await new Promise<PickerOverlayHandle>((resolve) => {
       openPickerOverlay({
         type: 'Checkpoint',
+        resultChannel: 'CHECKPOINT_PICKER_RESULT',
         baseUrl: BASE,
         token: 'TOK',
         fetchImpl,
@@ -355,6 +361,7 @@ describe('openPickerOverlay — lazy <img> thumbnails (perf fix)', () => {
     await new Promise<PickerOverlayHandle>((resolve) => {
       openPickerOverlay({
         type: 'Checkpoint',
+        resultChannel: 'CHECKPOINT_PICKER_RESULT',
         baseUrl: BASE,
         token: 'TOK',
         fetchImpl,
@@ -382,6 +389,7 @@ describe('openPickerOverlay — lazy <img> thumbnails (perf fix)', () => {
     const handle = await new Promise<PickerOverlayHandle>((resolve) => {
       openPickerOverlay({
         type: 'Checkpoint',
+        resultChannel: 'CHECKPOINT_PICKER_RESULT',
         baseUrl: BASE,
         token: 'TOK',
         fetchImpl,
@@ -430,6 +438,7 @@ describe('openPickerOverlay — labeled video tile (video-only cards)', () => {
     const handle = await new Promise<PickerOverlayHandle>((resolve) => {
       openPickerOverlay({
         type: 'Checkpoint',
+        resultChannel: 'CHECKPOINT_PICKER_RESULT',
         baseUrl: BASE,
         token: 'TOK',
         fetchImpl,
@@ -488,6 +497,7 @@ describe('openPickerOverlay — labeled video tile (video-only cards)', () => {
     const handle = await new Promise<PickerOverlayHandle>((resolve) => {
       openPickerOverlay({
         type: 'Checkpoint',
+        resultChannel: 'CHECKPOINT_PICKER_RESULT',
         baseUrl: BASE,
         token: 'TOK',
         fetchImpl,
@@ -554,6 +564,7 @@ describe('openPickerOverlay — infinite-scroll pagination', () => {
     const handle = await new Promise<PickerOverlayHandle>((resolve) => {
       openPickerOverlay({
         type: 'Checkpoint',
+        resultChannel: 'CHECKPOINT_PICKER_RESULT',
         baseUrl: BASE,
         token: 'TOK',
         fetchImpl,
@@ -584,6 +595,7 @@ describe('openPickerOverlay — infinite-scroll pagination', () => {
     const handle = await new Promise<PickerOverlayHandle>((resolve) => {
       openPickerOverlay({
         type: 'Checkpoint',
+        resultChannel: 'CHECKPOINT_PICKER_RESULT',
         baseUrl: BASE,
         token: 'TOK',
         fetchImpl,
@@ -624,6 +636,7 @@ describe('openPickerOverlay — infinite-scroll pagination', () => {
     const handle = await new Promise<PickerOverlayHandle>((resolve) => {
       openPickerOverlay({
         type: 'Checkpoint',
+        resultChannel: 'CHECKPOINT_PICKER_RESULT',
         baseUrl: BASE,
         token: 'TOK',
         fetchImpl,
@@ -658,6 +671,7 @@ describe('openPickerOverlay — infinite-scroll pagination', () => {
     const handle = await new Promise<PickerOverlayHandle>((resolve) => {
       openPickerOverlay({
         type: 'Checkpoint',
+        resultChannel: 'CHECKPOINT_PICKER_RESULT',
         baseUrl: BASE,
         token: 'TOK',
         fetchImpl,
@@ -716,6 +730,7 @@ describe('openPickerOverlay — infinite-scroll pagination', () => {
     const handle = await new Promise<PickerOverlayHandle>((resolve) => {
       openPickerOverlay({
         type: 'Checkpoint',
+        resultChannel: 'CHECKPOINT_PICKER_RESULT',
         baseUrl: BASE,
         token: 'TOK',
         fetchImpl,

@@ -37,14 +37,63 @@ import {
 } from './catalog.js';
 import type { BlockCheckpointInfo, BlockResourceInfo } from '@civitai/app-sdk/blocks';
 
-/** What the overlay resolves with — the production picker's `selected` shape. */
+/**
+ * The inbound message type a picker's result is dispatched on. TWO CHANNELS,
+ * TWO CONTRACTS — `CHECKPOINT_PICKER_RESULT.selected` is a
+ * {@link BlockCheckpointInfo}, `RESOURCE_PICKER_RESULT.selected` is a
+ * {@link BlockResourceInfo} (which additionally REQUIRES `modelType`).
+ */
+export type PickerResultChannel = 'CHECKPOINT_PICKER_RESULT' | 'RESOURCE_PICKER_RESULT';
+
+/**
+ * What the overlay resolves with — the production picker's `selected` shape,
+ * KEYED TO THE REPLY CHANNEL.
+ *
+ * 🔴 DISCRIMINATED BY `channel`, NOT BY THE REQUESTED MODEL TYPE (#391). Those
+ * are two independent facts and conflating them was the bug: a block asking for
+ * a `Checkpoint`-typed resource on `OPEN_RESOURCE_PICKER` got a
+ * `cardToCheckpoint()` projection — five fields, no `modelType` — dispatched on
+ * `RESOURCE_PICKER_RESULT`, where every consumer reads `resource.modelType` and
+ * found `undefined`. `tsc` could not see it: the branch was a runtime string
+ * comparison on `opts.type` and the two converters return different declared
+ * types, so no call site was ever checked against the channel it replies on.
+ *
+ * Keying the union to the channel is what turns THAT pairing into a COMPILE
+ * error: `{ channel: 'RESOURCE_PICKER_RESULT', selected: cardToCheckpoint(…) }`
+ * now fails `tsc` with "Property 'modelType' is missing in type
+ * 'BlockCheckpointInfo' but required in type 'BlockResourceInfo'". Measured by
+ * reapplying the original branch.
+ *
+ * 🔴 ONE DIRECTION ONLY, and the docblock said otherwise until it was checked.
+ * The MIRROR pairing — a `BlockResourceInfo` on `CHECKPOINT_PICKER_RESULT` — is
+ * structurally assignable (`BlockResourceInfo` has every `BlockCheckpointInfo`
+ * field plus more, and the value is not a fresh object literal, so no
+ * excess-property check applies). Measured: `tsc` reports ZERO errors for it.
+ * That half is pinned by a runtime test in `liveHost.test.tsx` asserting the
+ * checkpoint-channel payload carries exactly its five keys — do not read this
+ * union as covering it.
+ */
 export type PickerSelection =
-  | { kind: 'Checkpoint'; selected: BlockCheckpointInfo }
-  | { kind: 'LORA'; selected: BlockResourceInfo };
+  | { channel: 'CHECKPOINT_PICKER_RESULT'; selected: BlockCheckpointInfo }
+  | { channel: 'RESOURCE_PICKER_RESULT'; selected: BlockResourceInfo };
 
 export interface OpenPickerOptions {
-  /** Which model type the picker is filtered to. */
+  /**
+   * Which model type the picker is FILTERED to — a catalog query parameter, and
+   * the `modelType` fallback when a card's own REST type is blank.
+   *
+   * 🔴 NOT the thing that decides the reply shape. See {@link resultChannel}.
+   */
   type: CatalogModelType;
+  /**
+   * Which message the host will dispatch this pick on — REQUIRED, because it is
+   * the only fact that determines the `selected` shape the block's consumers
+   * expect (#391). A `Checkpoint`-typed request can arrive on EITHER channel:
+   * `OPEN_CHECKPOINT_PICKER` (→ `BlockCheckpointInfo`) and
+   * `OPEN_RESOURCE_PICKER` with `resourceType: 'Checkpoint'`
+   * (→ `BlockResourceInfo`, `modelType` included).
+   */
+  resultChannel: PickerResultChannel;
   /** Backend origin the catalog resolves against (live host's `baseUrl`). */
   baseUrl: string;
   /** The dev block token — authoritative `/blocks/models` read (page token can read it). */
@@ -304,10 +353,21 @@ export function openPickerOverlay(opts: OpenPickerOptions): PickerOverlayHandle 
   };
 
   const selectCard = (card: CatalogCard) => {
-    if (opts.type === 'Checkpoint') {
-      resolve({ kind: 'Checkpoint', selected: cardToCheckpoint(card) });
+    // 🔴 BRANCH ON THE REPLY CHANNEL, NOT ON `opts.type` (#391). The channel is
+    // what the block's consumers read the payload as; the requested type is
+    // only what the catalog was filtered by. Branching on the type sent a
+    // `cardToCheckpoint()` projection — no `modelType` — down
+    // `RESOURCE_PICKER_RESULT` for every `resourceType: 'Checkpoint'` request,
+    // and `BlockResourceInfo.modelType` is REQUIRED.
+    //
+    // `cardToResource` already resolves `modelType` correctly for both: it
+    // prefers the card's own REST-reported type and falls back to `opts.type`,
+    // so a Checkpoint asked for on the resource channel comes back
+    // `modelType: 'Checkpoint'`.
+    if (opts.resultChannel === 'CHECKPOINT_PICKER_RESULT') {
+      resolve({ channel: 'CHECKPOINT_PICKER_RESULT', selected: cardToCheckpoint(card) });
     } else {
-      resolve({ kind: 'LORA', selected: cardToResource(card, opts.type) });
+      resolve({ channel: 'RESOURCE_PICKER_RESULT', selected: cardToResource(card, opts.type) });
     }
   };
 
