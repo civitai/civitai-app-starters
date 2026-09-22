@@ -1586,8 +1586,8 @@ Runnable, minimal blocks — one per feature, each with its own README:
 
 | `@civitai/blocks-react` | pairs with `@civitai/app-sdk` | adds |
 |---|---|---|
-| `0.50.x` | `^0.40.0` | `useCreatePostFromApp()` (`CREATE_POST_FROM_APP`) + the `posts:write:self` scope. 🔴 Same wide `peerDependencies` floor as the row below, so **npm will not warn you**: pairing this with an SDK below `0.40.0` fails at `tsc` with `Cannot find name 'BlockCreatePostHostError'`, not at install. |
-| `0.48.x` | `^0.38.0` | `useCollectionFollow()` + `<FollowButton>` / `<TipButton>` (`SET_COLLECTION_FOLLOW`). 🔴 The `peerDependencies` floor stays the deliberately-wide `>=0.29.0 <1.0.0` (#206 — a per-minor floor forced a major on consumers), so **npm will not warn you**: pairing this with an SDK below `0.38.0` fails at `tsc` with `Cannot find name 'BlockCollectionFollowErrorCode'`, not at install. |
+| `0.50.x` | `^0.40.0` | `useCreatePostFromApp()` (`CREATE_POST_FROM_APP`) + the `posts:write:self` scope. Pairing `0.50.x` with an SDK below `0.40.0` fails at `tsc` with `Cannot find name 'BlockCreatePostHostError'`, not at install. |
+| `0.48.x` | `^0.38.0` | `useCollectionFollow()` + `<FollowButton>` / `<TipButton>` (`SET_COLLECTION_FOLLOW`). Pairing `0.48.x` with an SDK below `0.38.0` fails at `tsc` with `Cannot find name 'BlockCollectionFollowErrorCode'`, not at install — the floor those releases declared was deliberately wide (#206 — a per-minor floor forced a major on consumers). |
 | `0.36.x` | `^0.27.0` | auto-installs the SDK's opaque-origin web-storage shim (`@civitai/app-sdk/safe-storage`) on import |
 | `0.29.x` | `^0.24.0` | `useAppWorkflows()` — app generator subqueue read + cancel (`QUERY_APP_WORKFLOWS` / `CANCEL_APP_WORKFLOW`) |
 | `0.27.x`–`0.28.x` | `^0.23.0` | async-scan image upload; transport validators for all `SHARED_*` / `APP_STORAGE_*` / picker replies |

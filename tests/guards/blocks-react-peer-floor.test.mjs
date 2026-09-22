@@ -72,6 +72,17 @@ const BLOCKS_INDEX = 'packages/civitai-app-sdk/src/blocks/index.ts';
 const BLOCKS_REACT_SRC = 'packages/civitai-blocks-react/src';
 
 /**
+ * Where the derivation PROSE lives. In-repo and unpublished: this package's
+ * `files` is `["dist", "README.md"]`, so a root-level `.md` never reaches the
+ * tarball. It used to live in `package.json`'s `comment-peerDependencies` array,
+ * which ships — see #375 and the byte cap below.
+ */
+const PEER_FLOOR_DOC = 'packages/civitai-blocks-react/PEER_FLOOR.md';
+
+/** #375's own threshold for the total size of `comment*` keys in the published package.json. */
+const COMMENT_KEY_BYTE_CAP = 500;
+
+/**
  * The last PUBLISHED `@civitai/app-sdk` that predates the App Storage
  * constants, measured against the real tarball (see the header). The floor
  * must not admit it.
@@ -125,7 +136,7 @@ const APP_STORAGE_CONSTANTS = [
  *   - NEGATIVE: an impossible symbol (`__THIS_SYMBOL_CANNOT_EXIST__`) was
  *     reported absent in 0 of 46 — the probe can say "no".
  *   - CROSS-CHECK: the sweep independently reproduces the hand measurement
- *     already recorded in `comment-peerDependencies` — 0.46.0 exports none of
+ *     already recorded in `PEER_FLOOR.md` — 0.46.0 exports none of
  *     the three App Storage constants, 0.47.0 exports all three.
  *
  * 🔴 TO ADD AN ENTRY you must MEASURE it, not infer it from release ordering.
@@ -648,8 +659,8 @@ test('REGRESSION (#344) — the peer floor excludes the last app-sdk release wit
       `Blast radius is the './testing' subpath — src/testing.tsx reaches internal/mockHost.ts —\n` +
       `so the main entry still boots and every dev harness and downstream test suite dies.\n` +
       `Raise the floor to the app-sdk version the PENDING changesets publish; derive it with\n` +
-      `\`pnpm exec changeset status --verbose\`, and record the derivation in the package's\n` +
-      `\`comment-peerDependencies\` block. \`changeset version\` will NOT do this for you:\n` +
+      `\`pnpm exec changeset status --verbose\`, and record the derivation in\n` +
+      `${PEER_FLOOR_DOC}. \`changeset version\` will NOT do this for you:\n` +
       `onlyUpdatePeerDependentsWhenOutOfRange only rewrites a range the computed version FAILS.`,
   );
 });
@@ -762,8 +773,8 @@ test('PREDICTED ENTRY — a ledger entry derived from this branch\'s own release
       `     with the sign flipped.\n\n` +
       `  2. THE RELEASE HAS NOT PUBLISHED and the base simply moved under an unpublished\n` +
       `     prediction. Re-run \`pnpm exec changeset status --verbose\`, set every entry above to\n` +
-      `     the number it prints, raise the floor to match, and update the derivation in the\n` +
-      `     package's \`comment-peerDependencies\` block.`,
+      `     the number it prints, raise the floor to match, and update the derivation in\n` +
+      `     ${PEER_FLOOR_DOC}.`,
   );
 
   if (PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH.length === 0) return;
@@ -851,7 +862,7 @@ test('PREDICTION HAS COME TRUE — the predicted release is in-tree, so the entr
 });
 
 test('DERIVED FLOOR — the floor is at least the lowest app-sdk that exports everything this package imports', () => {
-  // THE RULE, stated as the package's own `comment-peerDependencies` states it:
+  // THE RULE, stated as the package's own `PEER_FLOOR.md` states it:
   // "the floor is the lowest published version that exports every symbol this
   // package imports from the peer". Not "the floor equals the in-tree version".
   //
@@ -948,7 +959,7 @@ test('DERIVED FLOOR — the floor is at least the lowest app-sdk that exports ev
       `    SyntaxError: The requested module '@civitai/app-sdk/blocks'\n` +
       `      does not provide an export named '${drivers[0]}'\n\n` +
       `Raise the floor in packages/civitai-blocks-react/package.json to at least\n` +
-      `${required.join('.')} and record the derivation in its \`comment-peerDependencies\` block.\n` +
+      `${required.join('.')} and record the derivation in ${PEER_FLOOR_DOC}.\n` +
       `\`changeset version\` will NOT do this for you: onlyUpdatePeerDependentsWhenOutOfRange\n` +
       `only rewrites a range the computed version FAILS, and a too-LOW floor never fails one.`,
   );
@@ -990,11 +1001,13 @@ test('DERIVED FLOOR — the ledgers describe what the package imports TODAY, wit
 
 test('the package records how the floor was derived', () => {
   // A number with no derivation is the thing #309 and #317 both left behind.
-  // Pin the CLAIM, not the wording: the block must name the tool that produced
+  // Pin the CLAIM, not the wording: the record must name the tool that produced
   // the number and the flag that will not fix it.
-  const comment = readJson(BLOCKS_REACT_PKG)['comment-peerDependencies'];
-  assert.ok(Array.isArray(comment), 'comment-peerDependencies must be an array of lines');
-  const prose = comment.join('\n');
+  //
+  // The record lived in the package's own `comment-peerDependencies` array until
+  // #375 — where it had grown to 142 lines, 83% of the PUBLISHED package.json.
+  // It now lives in PEER_FLOOR.md, which `files` excludes from the tarball.
+  const prose = readText(PEER_FLOOR_DOC);
   for (const needle of [
     'changeset status',
     'onlyUpdatePeerDependentsWhenOutOfRange',
@@ -1003,10 +1016,39 @@ test('the package records how the floor was derived', () => {
   ]) {
     assert.ok(
       prose.includes(needle),
-      `comment-peerDependencies no longer mentions "${needle}" — the derivation record is\n` +
+      `${PEER_FLOOR_DOC} no longer mentions "${needle}" — the derivation record is\n` +
         `incomplete, so the next person re-derives from scratch or, worse, guesses.`,
     );
   }
+});
+
+test('the derivation record is NOT inlined into the published package.json (#375)', () => {
+  // #375: `comment-peerDependencies` was 142 lines of maintainer post-mortem in
+  // a file npm downloads on every install. Measured at 0.56.0 by the `sizeOf`
+  // below: 9,832 B of a 12,734 B package.json; as a raw source slice, 10,574 B
+  // = 83% of the file. After the move: 262 B, in a 2,429 B package.json. The
+  // prose moved to PEER_FLOOR.md (above); the key stays as a POINTER, and this
+  // caps it so it cannot regrow.
+  //
+  // Measured off the workspace package.json, not a `npm pack`. That is sound and
+  // deliberate: pnpm rewrites `dependencies` on pack (a 17 B delta at 0.56.0),
+  // which cannot touch a `comment*` key, and shelling out to `npm pack` inside a
+  // guard blows the per-test budget under `pnpm -r test` concurrency.
+  const pkg = readJson(BLOCKS_REACT_PKG);
+  const keys = Object.keys(pkg).filter((k) => /^comment/.test(k));
+  const sizeOf = (k) => `${JSON.stringify(k)}:${JSON.stringify(pkg[k])}`.length;
+  const total = keys.reduce((n, k) => n + sizeOf(k), 0);
+
+  assert.ok(
+    total < COMMENT_KEY_BYTE_CAP,
+    `the \`comment*\` keys in ${BLOCKS_REACT_PKG} serialize to ${total} B, over the ` +
+      `${COMMENT_KEY_BYTE_CAP} B cap:\n\n` +
+      keys.map((k) => `    ${k}: ${sizeOf(k)} B`).join('\n') +
+      `\n\npackage.json SHIPS — it is in every tarball and every consumer's node_modules,\n` +
+      `and it is not the place for maintainer narrative. Move the prose to\n` +
+      `${PEER_FLOOR_DOC} (excluded from the tarball by \`files\`) and leave a one-line\n` +
+      `pointer here. See #375.`,
+  );
 });
 
 test('STRUCTURAL — the app-sdk peer is not also a hard dependency', () => {
