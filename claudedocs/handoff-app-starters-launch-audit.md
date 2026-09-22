@@ -61,19 +61,35 @@ Audited for code quality, dead code, over-exporting, comment rot, and bloat.
 
 ## State now
 
-**ALL 25 RECOVERED FINDINGS (#374–#398) ARE CLOSED. The arc's closing condition now
-returns 1: only #328.** Measured on `cab0ee5` with both controls in the same breath —
-open in `374–398` = **0**; open in `322–334` = **1**; positive control (total open
-issues) = **23**, so the query can return rows; negative control (`>= 99000`) = **0**.
+**The arc's two open PRs are resolved and the two ungated CI jobs now gate.** Closing
+condition still returns **1** — only #328, Koen's move. Measured with controls in the
+same breath: open in `322–334` = **1**; open in `374–398` = **0**; positive control
+(total open issues) = **25**; negative control (`>= 99000`) = **0**.
 
-- Branch: `main` @ `cab0ee5`. Working tree clean (only untracked `.claude/`, `.venv/`,
-  `opencode.json`).
-- **No `clawgate-task:` field on this doc, deliberately.** `clawgate_handoff.sh resolve`
-  exited **5** (nothing resolved). Its positive control shows the board is reachable and
-  the token accepted, but a wrong session id also answers `200` with an empty array — so
-  that zero is NOT a clean bill of health, and no field was invented to fill the blank.
+- Branch: `main` @ `827eccc`. Base clone in sync; tree clean (untracked `.claude/`,
+  `.venv/`, `opencode.json` only).
+- **No `clawgate-task:` field, again deliberately.** `clawgate_handoff.sh resolve`
+  exited **5**. Its positive control shows the board is reachable and the token
+  accepted, but a wrong session id also answers 200 with an empty array — so the zero
+  cannot distinguish "touched no task" from "wrong id". No field was invented.
 
-### Carried forward — durable facts that would otherwise be dropped by this replace
+### Shipped this session
+
+- **#421 MERGED `827eccc`** — the publish-assert budget. Verified **by content on
+  `main`**, not by the merge's report: the workflow YAML re-parses, and the gate's
+  knobs `PUBLISH_CHECK_TRIES: '60'` / `PUBLISH_CHECK_DELAY: '10000'` derive a
+  **590.0s** window against the measured 369s worst lag (1.6×), `timeout-minutes: 40`.
+  The Release run on that merge concluded **success**. The one surviving `240` in the
+  file is prose in the rationale comment, not a knob.
+- **#420 CLOSED as superseded, not merged** — see the new gotcha below. It was a race
+  artifact of #408's own merge, not a pending release.
+- **Branch protection: 9 → 11 required contexts.** Added `Packaging (shipped
+  sourcemaps)` and `Public type closure (built .d.ts)` — the two jobs that ran but
+  gated nothing. Re-read back from the API rather than trusting the POST echo;
+  negative control (a bogus context name) = 0.
+- **#422 and #423 filed**, both with a closing condition and a positive control.
+
+### Carried forward — durable facts this replace would otherwise drop
 
 - **Seven of the original 13 blockers were closed 2026-09-21** — #322, #323, #324, #325,
   #327, #329, #333 — each already fixed in code by a PR that never wrote "Closes #N", each
@@ -83,52 +99,39 @@ issues) = **23**, so the query can return rows; negative control (`>= 99000`) = 
   with controls (registry packument, `--dry-run` resolve, symbols off the real tarball with
   `0.48.0` as the below-floor control that makes the floor EXACT rather than merely
   sufficient).
+- **#385 CLOSED as `NOT_PLANNED`**, not fixed — its premise did not survive re-derivation
+  (evidence on the issue).
+- **The batched release published and verified**: app-sdk `0.50.0`, blocks-react `0.57.0`,
+  components + components-react `0.4.3`, theme `0.3.2` — all five live on the registry.
 
-⚠ **This doc is 63,815 B of a 65,536 B cap — ~1,700 B left, and the next update goes over.**
-Nothing enforces it; it is a readability note. The measured evictable content is the
-**4,410 B retired `APP_STORAGE_ERROR_*` investigation block** under *Open investigations*,
-which is CLOSED. That section is an APPEND bucket, so a delta cannot remove it — retiring it
-needs a deliberate edit, not a handoff update. Do that before the next update rather than
-after.
+⚠ **Size: this doc sits at the 65,536 B readability cap.** The **4,410 B retired
+`APP_STORAGE_ERROR_*` block** under *Open investigations* was evicted in the same commit as
+this update — it is an APPEND bucket, so a handoff delta structurally cannot remove it and
+it needed a deliberate edit. Its outcome table is preserved in the #372 issue thread. The
+next session should evict before appending, not after.
 
-### Shipped this session — 13 merges, one publish
+### Required-status-checks change — what it cost
 
-`git log --oneline af809c5..cab0ee5` is the authoritative list; each commit subject names its
-issues. In merge order: #404 (#375,#383) · #405 (Version Packages → `blocks-react@0.56.1`) ·
-#406 (#389,#390) · #407 (#384,#394) · #410 (#386,#391) · #409 (#397) · #411 (#387,#396) ·
-#412 (#377,#382) · #413 (#392,#393,#398) · #414 (#374,#376) · #416 (#378,#380,#381,#388) ·
-#417 (#395) · #418 (#379).
+Added with the **additive** endpoint (`POST …/required_status_checks/contexts`), not a
+PATCH, which would have replaced the list. The prior 9 contexts are snapshotted for
+rollback.
 
-**#385 CLOSED as `NOT_PLANNED`**, not fixed — its premise did not survive re-derivation
-(evidence on the issue).
+Checked the real hazard first — a required context that does not always report blocks
+every PR forever. Both jobs have **no `if:`, no `needs:`**, and `ci.yml` has **no path
+filter** on `pull_request`, so they always report. No permanently-pending gate.
 
-**`@civitai/blocks-react@0.56.1` published and verified by three claims, each controlled:**
-registry packument has it (`0.56.0` present / `99.99.99` absent); `npm install --dry-run
---prefer-online` rc 0 (`0.48.0`-style control rc 0, `99.99.99` rc 1); and the defect is
-gone — published `package.json` **2,412 B, `comment*` 268 B (11.1%)** against `0.56.0`'s
-**12,717 B / 10,069 B (79.2%)** as the control proving the probe still sees the bug.
+**Blast radius, measured per PR head:** 10 of 11 open PRs lack ≥1 of the two contexts
+because their heads predate the jobs, and will read BLOCKED until CI re-runs on a push
+or reopen. Only #269 has both.
 
-### Release state — #408 is FRESH, not stale
+| PR | newly-required contexts present |
+|---|---|
+| #269 | 2/2 |
+| #415, #272, #270 | 1/2 |
+| #400, #291, #271, #268, #267, #34, #32 | 0/2 |
 
-Verified by CONTENT, never `mergeStateStatus`: #408's head `cd8259c` (20:09:32Z) post-dates
-`cab0ee5` (20:08:54Z) and its changelog cites `cab0ee5` itself. It consumed all **10**
-pending changesets and computes:
-
-| package | main | #408 |
-|---|---|---|
-| `@civitai/app-sdk` | 0.49.0 | **0.50.0** |
-| `@civitai/blocks-react` | 0.56.1 | **0.57.0** |
-| `@civitai/components` | 0.4.2 | **0.4.3** |
-| `@civitai/components-react` | 0.4.2 | **0.4.3** |
-| `@civitai/theme` | 0.3.1 | **0.3.2** |
-
-Releases were **batched deliberately** (operator, this session) rather than published per
-PR. #408 is the batch.
-
-### IN FLIGHT
-Nothing of ours. External, untouched by this arc: **#415** (`feat/civitai-sdk` — new),
-**#400** (`zach/blocks-client-react` → `feat/blocks-client`), #291, #34, #32, and five
-dependabot PRs.
+`strict: false` is unchanged — branches still need not be current with `main`, so the
+merged-tree checks this arc ran by hand remain load-bearing.
 
 ## Open investigations — live diagnosis state
 
@@ -168,70 +171,17 @@ dependabot PRs.
 - **Next probe:** in the `civitai/cli` repo (out of tree, not audited here):
   `find . -name '*.tmpl' -print0 | xargs -0 grep -n "blocks-react/testing"`
 
-### ✅ RETIRED 2026-09-21 — the four `APP_STORAGE_ERROR_*` peer-floor entries, converted to measurement
-**Outcome, so the numbers outlive this block.** #371 merged `10db006`; app-sdk `0.49.0` published
-15:33:32Z; the four symbols were read off the published tarball with `0.48.0` as the control:
-
-| symbol | `0.48.0` | `0.49.0` |
-|---|---|---|
-| `APP_STORAGE_ERROR_REQUEST_FAILED` | ABSENT | **PRESENT** |
-| `APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED` | ABSENT | **PRESENT** |
-| `APP_STORAGE_ERROR_USER_ROW_LIMIT` | ABSENT | **PRESENT** |
-| `APP_STORAGE_ERROR_VALUE_TOO_LARGE` | ABSENT | **PRESENT** |
-| total exports on `./blocks` | 29 | 34 |
-
-🔴 **The `0.48.0` column is the load-bearing half and is easy to skip.** Measuring only `0.49.0`
-proves the floor SUFFICIENT while leaving open that it is too HIGH — which is #309/#317/#344 with
-the sign flipped (a floor above the truth excludes a good release: spurious peer warnings,
-`--strict-peer-deps` install failures). `0.48.0` exporting none of the four is what makes
-`>=0.49.0` **EXACT**. Controls: the `29 → 34` delta is the probe moving (positive); an impossible
-symbol read ABSENT on both (negative); published `blocks-react@0.56.0` declares
-`>=0.49.0 <1.0.0` and `--dry-run` resolves app-sdk `0.49.0` under it (cross-check).
-Landed as **#372**, comment-only, guards 158/0 unchanged. **The prediction never materialised into
-harm** — no other app-sdk minor took `0.49.0`.
-
-<details><summary>Original investigation block (superseded — kept for the reasoning trail)</summary>
-
-- as-of: 2026-09-21
-- **Symptom + exact repro:** `packages/civitai-blocks-react/package.json` declares
-  `"@civitai/app-sdk": ">=0.49.0 <1.0.0"`, and `PEER_VALUE_SYMBOL_SINCE` in
-  `tests/guards/blocks-react-peer-floor.test.mjs` records four symbols at `0.49.0`:
-  `APP_STORAGE_ERROR_{REQUEST_FAILED,USER_QUOTA_EXCEEDED,USER_ROW_LIMIT,VALUE_TOO_LARGE}`.
-  Every OTHER entry in that ledger was read off a published tarball. These four could not be —
-  `0.49.0` did not exist when they were written.
-- **Observed (with values):** `npm view @civitai/app-sdk version` → **0.48.0**; `0.49.0` is absent
-  from the registry. `changeset status --verbose` on `#371`'s base computes `@civitai/app-sdk
-  0.49.0` / `@civitai/blocks-react 0.56.0`, which is what the floor was set to match.
-  `via: measurement`.
-- **Ruled out:** "the release-ordering risk materialised" — FALSE. The hazard was that another
-  app-sdk `minor` publishes first, takes `0.49.0`, and pushes these symbols to `0.50.0` while the
-  floor still says `>=0.49.0` (that is #309/#317/#344 a fourth time). It did not happen: `origin/main`
-  carried no other pending changeset and `#371` bumps app-sdk to exactly `0.49.0`. `via: measurement`.
-- **Ruled out:** "the floor should be raised to `0.50.0` now that the guard is red" — FALSE and
-  actively harmful. `0.49.0` genuinely exports all four, so a floor above it excludes a good release
-  and causes spurious peer warnings and `--strict-peer-deps` install failures — the same family with
-  the sign flipped. The guard's own remedy text says this in capitals. `via: doc`.
-- **Leading hypothesis:** nothing is wrong; the prediction is simply unconverted. `PREDICTION HAS
-  COME TRUE` fired on `#371` exactly as designed (its first real occasion), `75c711a` emptied
-  `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH`, and the floor and ledger were deliberately left alone.
-  What remains is to read the four symbols off the real tarball.
-- **Next probe** — run AFTER `#371` merges and the release job publishes; before that the first
-  command answers `E404`, which is the CORRECT answer in that state and not something to chase:
-  ```bash
-  npm view @civitai/app-sdk@0.49.0 version
-  cd "$(mktemp -d)" && printf '{"name":"v","private":true,"type":"module"}' > package.json
-  npm i @civitai/app-sdk@0.49.0 --silent --prefer-online
-  node --input-type=module -e "
-  import * as b from '@civitai/app-sdk/blocks';
-  for (const s of ['APP_STORAGE_ERROR_REQUEST_FAILED','APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED',
-                   'APP_STORAGE_ERROR_USER_ROW_LIMIT','APP_STORAGE_ERROR_VALUE_TOO_LARGE'])
-    console.log(s, s in b ? 'PRESENT' : '🔴 ABSENT');"
-  ```
-  All four PRESENT ⇒ the ledger entries are measurements; retire this block. Any ABSENT ⇒ the floor
-  is wrong and the entries must be corrected to the version that does export them.
-
-</details>
-
+### ✅ RETIRED 2026-09-21, EVICTED 2026-09-22 — the four `APP_STORAGE_ERROR_*` peer-floor entries
+**Closed, and evicted for size (4,410 B) once this doc hit its 65,536 B ceiling.** Outcome, so the
+one load-bearing fact survives: #371 merged `10db006`, app-sdk `0.49.0` published 15:33:32Z, and all
+four symbols were read off the published tarball with **`0.48.0` as the below-floor control** — it
+exports NONE of them, which is what makes `>=0.49.0` **EXACT** rather than merely sufficient; total
+`./blocks` exports moved 29 → 34, the delta proving the probe read two different tarballs. Landed as
+**#372**, comment-only. The full tables and the reasoning trail are on the **#372** issue thread,
+which outlives this doc. 🔴 The reusable rule, kept because it is the half everyone skips: **a
+one-sided read of a boundary cannot tell you the boundary is in the right place** — measuring only
+the target version leaves "too high" wide open, and too-high is a real defect with the sign flipped
+(excludes a good release ⇒ spurious peer warnings, `--strict-peer-deps` install failures).
 ### `feat/blocks-client`'s `buzz` and `orchestration` are NON-FUNCTIONAL — no host handlers exist
 - as-of: 2026-09-21
 - **Symptom + exact repro:** the new client's two most important domains cannot work against
@@ -322,7 +272,16 @@ harm** — no other app-sdk minor took `0.49.0`.
   ```
   A zero here with a non-zero `a.size`/`b.size` is a real reading; a zero with `0 0` is not.
 
-### Two new CI jobs run but gate NOTHING
+### ~~Two new CI jobs run but gate NOTHING~~ RESOLVED 2026-09-22 — both are now required (9 → 11 contexts)
+🔴 **The `Next probe` this block used to carry named `-X PATCH` on
+`…/branches/main/protection/required_status_checks`, and that endpoint REPLACES the whole
+contexts list — following it literally would have wiped the other nine required checks.**
+The additive endpoint is `POST …/required_status_checks/contexts`, which is what was used.
+Verify by re-reading the endpoint, never by the write's own echo, with a bogus context name
+as the negative control. Blast radius, measured after the change: 10 of 11 open PRs lack ≥1
+of the two contexts because their heads predate the jobs, and read BLOCKED until CI re-runs.
+`strict: false` is UNCHANGED, so the merged-tree checks remain load-bearing. The measurements
+below are kept as the pre-change baseline.
 - as-of: 2026-09-22
 - **Symptom + exact repro:** `main` has **9 required status checks**; neither
   `Packaging (shipped sourcemaps)` (merged in #414) nor `Public type closure (built .d.ts)`
@@ -336,40 +295,35 @@ harm** — no other app-sdk minor took `0.49.0`.
   which is a repo-settings change no PR can make.
 - 🔴 **`strict: false` also means branches need NOT be current with `main` before merging** —
   which is why the merged-tree checks this session ran by hand were load-bearing, not ceremony.
-- **Next probe:** decide whether to add them (operator/admin call, affects every contributor):
-  `gh api -X PATCH repos/civitai/civitai-app-starters/branches/main/protection/required_status_checks -f 'contexts[]=...'`
+- **Next probe:** ✅ DONE — see the resolution note at the top of this block.
 
 ## Next steps (ranked)
 
-1. **#328 — the ONE live blocker, and it is not ours to move.** `feat/blocks-client` must
-   come up to `main` (14 behind, `merge-tree` rc 1) before the port. Re-measure the collision
-   count with the probe above **after a root build** before acting on any number.
-   IN FLIGHT: civitai/civitai-app-starters#400 targets that branch.
+1. **#328 — the ONE live blocker, and it is not ours to move.** `feat/blocks-client`
+   must come up to `main` before the port; last measured 14 behind with
+   `git merge-tree --write-tree origin/main origin/feat/blocks-client` exiting **1**.
+   Re-measure the collision count with the probe in the #328 block **after a root
+   `pnpm build`** before acting on any number — an unbuilt clone returns a vacuous
+   `0 0 0`. IN FLIGHT: civitai/civitai-app-starters#400 targets that branch.
    forcing: gate — it is the last item between this arc and its closing condition.
-2. **Merge #408 and verify the publish.** It is fresh and consumes all 10 changesets
-   (`app-sdk 0.50.0`, `blocks-react 0.57.0`, components/-react `0.4.3`, theme `0.3.2`).
-   🔴 Merge it BEFORE pushing anything else to `main` — a push mid-release cancels the run
-   (#350's shape). Then verify by the three claims in "How to verify", not by the run's own
-   success. Several closed issues' conditions (#375's especially) are only truly met once
-   the artifact publishes.
-   forcing: none
-3. **Batch: everything filed but not advanced.** Add the two CI jobs to required checks;
-   `packages/civitai-components-react/src/internal/field.ts` feeds public signatures (the
-   #378 shape in a second package, flagged in #418, unfiled); `liveHost.ts` fabricates
-   `requestId: ''` replies at **37** sites where `mockHost` declines (measured in #417, held
-   by an asserted count, none downstream of a guard); plus the pre-arc set #358, #362, #363,
-   #364, #367, #368, #369, #370, #345/#347/#348/#349/#357, and #305.
+2. **Batch: everything filed but not advanced.** Newly filed this session: **#422**
+   (`packages/civitai-components-react/src/internal/field.tsx` — 7 public prop
+   interfaces extend an unnameable `FieldBaseProps`) and **#423**
+   (`packages/civitai-blocks-react/src/internal/liveHost.ts` — 35 sites fabricate
+   `requestId: requestId ?? ''` where 13 drop via `isRoutableRequestId`). Plus the
+   pre-arc set #358, #362, #363, #364, #367, #368, #369, #370,
+   #345/#347/#348/#349/#357, and #305.
    forcing: none
 
 ## Defects (batched)
 
-- **#400 carries 3 red checks that are the base branch's**, not its own — diagnosed above;
-  a reader who trusts the rollup will misattribute them.
+- **10 of 11 open PRs now read BLOCKED** on the two newly-required contexts until CI
+  re-runs on them (table above). Expected and recoverable by a push or close/reopen;
+  listed so nobody diagnoses it as a new CI failure.
+- **#400 carries 3 red checks that are the BASE branch's**, not its own — a reader who
+  trusts the rollup will misattribute them.
 - **`feat/blocks-client` has no PR**, so nothing runs CI on it and nobody has seen it red.
-- 25 filed findings (#374–#398) are all unfixed; 22 confirmed live, 3 live-but-partial.
 - `pnpm lint` exits 1 repo-wide (`ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT`). Pre-existing, ungated.
-- **#372, #373, #399 and #400 all merged or shipped with round 0 only** — the nine correctness
-  axes never ran on any of them.
 
 ## Gotchas / decisions / dead-ends
 
@@ -794,43 +748,75 @@ harm** — no other app-sdk minor took `0.49.0`.
   that diffed `origin/main..branch` for branches *behind* main, inventing a 13-file overlap
   that the merge-base diff showed was zero.
 
+- 🔴 **A `Version Packages` PR can be a RACE ARTIFACT OF ITS OWN PREDECESSOR'S MERGE,
+  and it looks exactly like a pending release: `CLEAN`, `MERGEABLE`, a full changeset
+  list, correct-looking bumps.** #420's head was committed **18 seconds after #408
+  merged** (`20:51:29Z` vs `20:51:11Z`) on the same `changeset-release/main` branch —
+  the action re-ran against a checkout of `main` that predated #408's squash. It
+  deleted the same 10 changesets #408 had already consumed and computed the versions
+  `main` and npm already carried.
+  **The discriminating check is CONTENT, and it is one command:**
+  ```bash
+  git merge-tree --write-tree origin/main refs/remotes/pr/<n>   # rc 0 ⇒ no conflict
+  git diff --stat origin/main <that-tree>                        # EMPTY ⇒ merging is a no-op
+  git diff --stat origin/main~1 <that-tree>                      # POSITIVE CONTROL, must be non-empty
+  ```
+  Empty against `main` with a non-empty control ⇒ superseded; close it. Merging it
+  would push an empty commit and re-trigger Release against already-published
+  versions. This is the #350 gotcha's sibling: #350 was STALE-and-mergeable, this one
+  is REDUNDANT-and-mergeable, and `mergeStateStatus` is blind to both.
+- 🔴 **Adding a required status check is safe only if the job is UNCONDITIONAL — check
+  `if:`, `needs:` and workflow-level `paths:` BEFORE adding it.** A required context
+  that does not report on some PRs leaves them pending forever, which is the
+  permanently-red gate everyone learns to click through. Use the **additive**
+  `POST …/required_status_checks/contexts`; the PATCH on
+  `…/required_status_checks` **replaces** the whole list. Verify by re-reading the
+  endpoint, not by the POST's echo, and keep a snapshot of the prior contexts. Then
+  **measure the blast radius on already-open PRs** — heads that predate the job lack
+  the context and go BLOCKED.
+- 🔴 **THE HANDOFF'S OWN GREP STRING WAS THE INSTRUMENT THAT FAILED.** This doc told
+  the next session `liveHost.ts` fabricates `requestId: ''` at **37** sites. Grepping
+  that literal returns **0** — while the file contains **91** `requestId` mentions as
+  the positive control. The real shape is `requestId: requestId ?? ''` at **35** sites,
+  and the path in the other finding was `field.tsx`, not `field.ts`. Both would have
+  read as "already fixed" to a session that ran the doc's own string and stopped.
+  **A pattern quoted from prose is an unpinned dependency; re-derive the shape from the
+  file before believing any zero it produces.**
+- 🔴 **`gh issue create --body-file $VAR` is REFUSED by the closing-condition hook** —
+  the argument is a shell substitution the gate cannot evaluate, so it cannot read the
+  body and blocks rather than failing open. Write the body with the `Write` tool to a
+  **literal path** and pass that, or use a heredoc. The body must carry a
+  `## Closing condition` (or `## Acceptance criteria`) heading naming what ends the
+  issue and who or what checks it.
+- 🔴 **`requestId: requestId ?? ''` and `if (!isRoutableRequestId(requestId)) return;`
+  are two conventions living in one file**, and #417 only consolidated the predicate —
+  it did not reconcile the call sites. 0 of the 35 fabrication sites sit downstream of
+  a guard (computed by walking back from each occurrence to its enclosing `case`
+  label). `''` is precisely the value the predicate rejects, so each fabricated reply
+  is dropped on arrival by the block: no reply, no error, no log — the same observable
+  as a handler that was never wired.
+
 ## How to verify
 
-The arc's closing condition, with both controls — run them together or the zero means nothing:
-
 ```bash
-gh issue list --repo civitai/civitai-app-starters --state open --limit 100 \
-  --json number -q '[.[] | select(.number >= 322 and .number <= 334)] | length'   # => 1 (#328)
-gh issue list --repo civitai/civitai-app-starters --state open --limit 100 \
-  --json number -q '[.[] | select(.number >= 374 and .number <= 398)] | length'   # => 0
-gh issue list --repo civitai/civitai-app-starters --state open --limit 100 \
-  --json number -q 'length'                                                       # => non-zero (positive)
-gh issue list --repo civitai/civitai-app-starters --state open --limit 100 \
-  --json number -q '[.[] | select(.number >= 99000)] | length'                    # => 0 (negative)
-```
+# 1. #421 landed and the gate's window is what it claims (content, not the merge report)
+git show origin/main:.github/workflows/release.yml | grep -E "PUBLISH_CHECK_TRIES|PUBLISH_CHECK_DELAY|timeout-minutes"
+#    => TRIES '60', DELAY '10000'  ⇒ (60-1) x 10s = 590s ; timeout-minutes 40
 
-Repo gates on `main` (guards were 158 at session start, **207** now):
+# 2. Branch protection really carries 11 contexts (re-read, never trust a write's echo)
+gh api repos/civitai/civitai-app-starters/branches/main/protection/required_status_checks \
+  -q '{strict:.strict, n:(.contexts|length), contexts:.contexts}'
+#    => n = 11, including "Packaging (shipped sourcemaps)" and "Public type closure (built .d.ts)"
+# NEGATIVE CONTROL, same breath:
+gh api repos/civitai/civitai-app-starters/branches/main/protection/required_status_checks \
+  -q '[.contexts[]|select(.=="Totally Bogus Check")]|length'     # => 0
 
-```bash
-pnpm install && pnpm build          # ROOT build — `--filter <pkg> build` does NOT build deps
-pnpm -r typecheck && pnpm -r test && pnpm test:guards && pnpm typecheck:readme
-pnpm check:shipped-sourcemaps && node scripts/check-starter-workspace-overrides.mjs
-nix-shell -p chromium --run 'PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=$(which chromium) \
-  pnpm --filter @civitai/blocks-react test:browser'     # 7 files / 73 tests — NOT run by `pnpm -r test`
-```
+# 3. The arc's closing condition, with BOTH controls or the zero means nothing
+gh issue list --state open --limit 100 --json number -q '[.[]|select(.number>=322 and .number<=334)]|length'  # => 1 (only #328)
+gh issue list --state open --limit 100 --json number -q 'length'                                              # => non-zero (positive)
+gh issue list --state open --limit 100 --json number -q '[.[]|select(.number>=99000)]|length'                 # => 0 (negative)
 
-After merging #408, verify the publish by THREE claims, each with its own control — a
-release run reporting success is a claim about the RUN:
-
-```bash
-python3 - <<'PY'
-import json,urllib.request
-for pkg,want in (('@civitai/app-sdk','0.50.0'),('@civitai/blocks-react','0.57.0')):
-    d=json.loads(urllib.request.urlopen(f'https://registry.npmjs.org/{pkg.replace("/","%2f")}').read().decode(),strict=False)
-    print(pkg, want, want in d['versions'], '| control 99.99.99 absent:', '99.99.99' not in d['versions'], '| latest:', d['dist-tags']['latest'])
-PY
-cd "$(mktemp -d)" && printf '{"name":"v","private":true}' > package.json
-npm i @civitai/blocks-react@0.57.0 --silent --prefer-online
-python3 -c "import json;d=json.load(open('node_modules/@civitai/blocks-react/package.json'));print({k:len(json.dumps(v)) for k,v in d.items() if k.startswith('comment')})"
-# => comment* under 500 B (#375's real closing condition; 0.56.0 shows 10,069 B as the control)
+# 4. #423's finding, with its control (a bare zero here is NOT evidence)
+git grep -c "requestId: requestId ?? ''" -- packages/civitai-blocks-react/src/internal/liveHost.ts  # => 35 today, 0 when fixed
+git grep -c "requestId" -- packages/civitai-blocks-react/src/internal/liveHost.ts                    # => 91 (positive control)
 ```
