@@ -67,9 +67,18 @@ function recordOrigin(tally: OriginTally, origin: string): boolean {
   return true;
 }
 
+/** The quoted, comma-separated list of origins remembered on one bucket. */
 function formatOrigins(tally: OriginTally): string {
-  const list = [...tally.seen].map((o) => `"${o}"`).join(', ');
-  return tally.truncated ? `${list} (first ${MAX_TRACKED_ORIGINS} shown)` : list;
+  return [...tally.seen].map((o) => `"${o}"`).join(', ');
+}
+
+/**
+ * Leading clause for the bucket's parenthetical when it overflowed, so a capped
+ * list is never read as a complete one. Empty when nothing was dropped — the
+ * common case, and the one where the list IS the whole truth.
+ */
+function truncationNote(tally: OriginTally): string {
+  return tally.truncated ? `first ${MAX_TRACKED_ORIGINS} of more; ` : '';
 }
 
 export interface IframeTransportOptions {
@@ -350,13 +359,13 @@ export class IframeTransport implements BlockTransport {
     if (this.rejectedOriginTally.seen.size > 0) {
       parts.push(
         `rejected messages from ${formatOrigins(this.rejectedOriginTally)} ` +
-          '(no allowedParentOrigins entry matched)',
+          `(${truncationNote(this.rejectedOriginTally)}no allowedParentOrigins entry matched)`,
       );
     }
     if (this.acceptedOriginTally.seen.size > 0) {
       parts.push(
-        `accepted messages from ${formatOrigins(this.acceptedOriginTally)}, ` +
-          'but none of them was a valid BLOCK_INIT',
+        `accepted messages from ${formatOrigins(this.acceptedOriginTally)} ` +
+          `(${truncationNote(this.acceptedOriginTally)}none of them was a valid BLOCK_INIT)`,
       );
     }
     if (parts.length === 0) {
