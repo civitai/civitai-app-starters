@@ -3,7 +3,7 @@
  * own generated client (`@civitai/client`).
  *
  * The sibling `@civitai/app-sdk/orchestrator` module gives you the *catalog*
- * (`WORKFLOW_STEP_TYPES` — 47 `$type` names and what each one does) and the
+ * (`WORKFLOW_STEP_TYPES` — 50 `$type` names and what each one does) and the
  * fetch helpers (`submitWorkflow`, `estimateWorkflow`, …), but its body
  * builders take `input: unknown`. This module is the missing half: the actual
  * per-step input shapes, tracked against the orchestrator's OpenAPI spec by
@@ -70,17 +70,46 @@
  * consumer spec, so they are typed here. They are not an invitation.
  *
  * ⚠️ `WORKFLOW_STEP_TYPES` does NOT mark most of them. Counted at this commit:
- * of its 47 entries, exactly TWO sit under its "Platform internals" heading —
+ * of its 50 entries, exactly TWO sit under its "Platform internals" heading —
  * `comfyNodepackSnapshot` and `qwenImageBench`. `training`, `webScrape`,
  * `xGuardModeration`, `modelPickleScan` and the `model*` / `media*` steps are
  * ordinary documented entries under ordinary headings, and `webScrape` carries
  * consumer-facing usage notes. So "the catalog already flags these as internal"
- * is not a reason this map covers all 47, and an earlier version of this
- * docblock claiming it was is wrong. What IS true, and is the reason: the
- * catalog DOCUMENTS all 47, and a lookup keyed by `$type` is only sound as a
- * lookup if it is total over `WorkflowStepType` — a partial map makes
- * `WorkflowStepTemplateFor<'training'>` a compile error for a step type the
- * SDK documents, and makes the key-parity assertion below impossible.
+ * is not a reason this map types them, and an earlier version of this docblock
+ * claiming it was is wrong. What IS true, and is the reason: the catalog
+ * DOCUMENTS them, so a `$type`-keyed lookup that skipped them would make
+ * `WorkflowStepTemplateFor<'training'>` a compile error for a step type the SDK
+ * documents.
+ *
+ * ## 🔴 THIS MAP IS NOT TOTAL OVER THE CATALOG
+ *
+ * An earlier version of this docblock argued that the lookup "is only sound as
+ * a lookup if it is total over `WorkflowStepType`". That argument was made when
+ * the two sets happened to coincide, and it stopped being true in `44a79dc`
+ * (#315) without anything going red. The measured state, derived rather than
+ * typed:
+ *
+ * `WORKFLOW_STEP_TYPES` documents 50 `$type`s; this map covers 47. The 3 with
+ * no generated template in the pinned `@civitai/client` are `imageScanning`,
+ * `preprocessVideo`, `yuE2`, and `WorkflowStepTemplateFor<…>` is a compile
+ * error for each of them.
+ *
+ * That gap is EXPECTED and is not a defect in either surface. The catalog
+ * tracks the LIVE orchestrator spec (`pnpm check:catalogs` and the daily
+ * `sync-orchestrator-catalogs` automation keep it there); these types track
+ * whatever `@civitai/client` was last published from. The catalog syncs ahead;
+ * the client catches up later. What is NOT optional is that the gap stays
+ * stated: it is spelled as a `never` ledger in
+ * `test/orchestrator/step-templates.test-d.ts` (which also pins the compile
+ * error above, one `@ts-expect-error` per gap `$type`), and the sentence naming
+ * the 3 is pinned character for character — here and in the README — by
+ * `test/orchestrator/step-count-prose.test.ts`, which derives all four numbers
+ * from `WORKFLOW_STEP_TYPES` and this file's own AST. Both go red when the gap
+ * moves in either direction.
+ *
+ * The key-parity assertion below is unaffected: it was never a totality check.
+ * It pins both directions with the gap named explicitly, which is what lets the
+ * map be partial without being silently partial.
  *
  * ## Why this is a separate deep entry point
  *
@@ -358,7 +387,7 @@ interface StepTemplateMap {
 }
 
 /**
- * `$type` → its step-template type, for all 47 step types.
+ * `$type` → its step-template type, for 47 of the catalog's 50 step types.
  *
  * Keyed by the WIRE name rather than the generated type name, because the wire
  * name is what you actually have in hand and the generator does not always

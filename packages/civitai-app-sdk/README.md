@@ -23,9 +23,31 @@ pnpm add @civitai/app-sdk
 | `manifest/*` — `defineBlock`, `SCHEMA_DIVERGENCES`, `KNOWN_GAPS` (**Node only**) | Build-time manifest validation. `defineBlock(config)` compiles the vendored canonical schema with [Ajv](https://ajv.js.org) and validates a `BlockManifestV1` against it, so authoring mistakes surface in `pnpm dev` instead of at `civitai app validate`/submit. It is **derived from the schema, not a hand-written mirror of it** — that mirror is what produced [#330](https://github.com/civitai/civitai-app-starters/issues/330). Needs `node:fs` and the optional peer `ajv`, which is why it is not on the browser-facing `./blocks` surface. |
 | `vite/*` — `blockManifestPlugin` (**Node only**) | A Vite plugin wrapping `defineBlock`, firing from `configResolved` — the one hook Vite calls on both the dev-server and the build path. Every block scaffold registers it, so `pnpm dev`, `pnpm dev:harness` and `pnpm build` all fail on a bad manifest with the offending field path. Optional peers: `ajv` (runtime) and `vite` (types only). |
 
+## Entry points, and what the root barrel is
+
+The root — `import … from '@civitai/app-sdk'` — is **exactly the union of four subpaths**: `@civitai/app-sdk/oauth`, `/scopes`, `/cookies` and `/orchestrator`. All of each, and nothing else. Import from the root when you want the OAuth-app surface in one specifier; import a subpath when you want only that slice. The two are the same symbols either way, which is asserted in both directions by `test/export-surface.test.ts` — the root cannot quietly gain a symbol none of those four exports, or miss one they do.
+
+The other five subpaths are **deliberately not on the root**, each for a concrete cost it would push onto every consumer:
+
+| Subpath | Why it is not on the root |
+|---|---|
+| `@civitai/app-sdk/blocks` | Importing it runs `/safe-storage` for its side effect, and it is the Civitai-Apps contract — a disjoint audience from OAuth apps. |
+| `@civitai/app-sdk/safe-storage` | Its purpose *is* the module side effect. A side effect on the root barrel is not something a consumer can opt out of. |
+| `@civitai/app-sdk/orchestrator/steps` | Type-only, and its declarations name `@civitai/client` — an **optional** peer that the root would make mandatory for everyone. |
+| `@civitai/app-sdk/manifest` | **Node only** — needs `node:fs` and the optional peer `ajv`. |
+| `@civitai/app-sdk/vite` | **Node only** — optional peers `ajv` (runtime) and `vite` (types). |
+
+> One name is declared twice on purpose: `BuzzAccountType` is the full set of Civitai Buzz pools on the root and `/oauth`, and a narrower three-pool union on `/blocks` — a block can neither prefer nor read the others. Same name, two subpaths, two types; the divergence is pinned rather than merged.
+
 ## Subpath imports
 
 ```ts
+// The OAuth-app surface, also available whole from the root specifier:
+import { buildAuthorizeUrl, exchangeCode, type OAuthTokens } from '@civitai/app-sdk/oauth';
+import { TokenScope, bitmaskFromScopes } from '@civitai/app-sdk/scopes';
+import { sealCookie, unsealCookie } from '@civitai/app-sdk/cookies';
+import { submitWorkflow, WORKFLOW_STEP_TYPES } from '@civitai/app-sdk/orchestrator';
+// The Civitai Apps contract (a different audience — see above):
 import { BLOCK_SCOPES, isSignedIn } from '@civitai/app-sdk/blocks';
 // Build-time manifest validation (NODE ONLY — needs the optional peer `ajv`).
 // Most projects want the Vite plugin below rather than calling this directly:
@@ -420,7 +442,7 @@ The starters in `civitai/civitai-app-starters` wire this into framework-specific
 
 ## Choosing a workflow step type
 
-The orchestrator is a workflow API: each request submits a list of typed steps. `WORKFLOW_STEP_TYPES` is the in-code catalog of every step `$type` it accepts, with a one-line description for each — `textToImage`, `imageGen`, `videoGen`, `comfy`, `customComfy`, `textToSpeech`, `aceStepAudio`, `transcription`, `imageUpscaler`, and 38 more (47 in total).
+The orchestrator is a workflow API: each request submits a list of typed steps. `WORKFLOW_STEP_TYPES` is the in-code catalog of every step `$type` it accepts, with a one-line description for each — `textToImage`, `imageGen`, `videoGen`, `comfy`, `customComfy`, `textToSpeech`, `aceStepAudio`, `transcription`, `imageUpscaler` among them (50 in total).
 
 The catalog is pinned to the orchestrator's published OpenAPI spec two ways — an offline unit test against a transcribed copy of the spec's `WorkflowStepTemplate` discriminator mapping, and a CI job (`pnpm check:catalogs`) that re-fetches the live spec and diffs it. If a `$type` is listed here, the orchestrator accepts it.
 
@@ -495,11 +517,15 @@ What it exports:
 
 | Export | What |
 |---|---|
-| `WorkflowStepTemplates` | `$type` → template type, for all 47 step types. Keyed by the WIRE name, which the generated type names don't always match (`model3DPreview` → `Model3dPreviewStepTemplate`). |
+| `WorkflowStepTemplates` | `$type` → template type, for 47 of the catalog's 50 step types. Keyed by the WIRE name, which the generated type names don't always match (`model3DPreview` → `Model3dPreviewStepTemplate`). |
 | `WorkflowStepTemplateFor<'videoGen'>` | One step's template. |
 | `WorkflowStepInputFor<'videoGen'>` | One step's `input` shape, without needing the generated `*Input` name. |
-| `AnyWorkflowStepTemplate` | Discriminated union of all 47 — `Extract<…, { $type: 'comfy' }>` and exhaustive `switch` work. `@civitai/client`'s base `WorkflowStepTemplate` has `$type` as a bare `string`, so it narrows nothing. |
+| `AnyWorkflowStepTemplate` | Discriminated union of all 47 mapped templates — `Extract<…, { $type: 'comfy' }>` and exhaustive `switch` work. `@civitai/client`'s base `WorkflowStepTemplate` has `$type` as a bare `string`, so it narrows nothing. |
 | `TypedWorkflowTemplate` | The submit envelope with `steps` narrowed to that union. Pass it straight to `submitWorkflow` / `estimateWorkflow`. |
+
+> 🔴 **The map is not total over the catalog, and that is the expected state.** `WORKFLOW_STEP_TYPES` documents 50 `$type`s; this map covers 47. The 3 with no generated template in the pinned `@civitai/client` are `imageScanning`, `preprocessVideo`, `yuE2`, and `WorkflowStepTemplateFor<…>` is a compile error for each of them.
+>
+> The two surfaces move independently on purpose: the catalog tracks the **live** orchestrator spec (a daily job syncs it), while these types track whatever `@civitai/client` was last published from. So the catalog runs ahead and the client catches up. The gap is never silent — `test/orchestrator/step-templates.test-d.ts` carries it as a `never` ledger plus one `@ts-expect-error` per gap `$type`, and `test/orchestrator/step-count-prose.test.ts` derives all four numbers (50, 47, 3, and the names) from `WORKFLOW_STEP_TYPES` and the map's own AST, then fails if this paragraph or its twin in `src/orchestrator/steps.ts` disagrees by one character.
 
 The generated `*StepTemplate` and `*Input` types are **not** re-exported individually. Using this subpath already requires `@civitai/client` installed, so if you want one by name, import it straight from there — `import type { TextToImageStepTemplate } from '@civitai/client'`.
 
@@ -536,7 +562,7 @@ A `$type` having a type here says nothing about whether you may submit it.
 
 Several of the 47 exist to serve Civitai's own pipelines rather than third-party apps — `modelPickleScan`, `xGuardModeration`, `training`, `comfyNodepackSnapshot`, `qwenImageBench`, the `model*`/`media*` hashing and classification steps. They're in the consumer spec, so they're typed here. They are not an invitation.
 
-Note that `WORKFLOW_STEP_TYPES` does **not** mark most of them: of its 47 entries exactly two — `comfyNodepackSnapshot` and `qwenImageBench` — sit under its "Platform internals" heading, and the rest are ordinary documented entries (`webScrape` even carries usage notes). The reason all 47 are typed is not that the catalog flags the internals; it's that the catalog *documents* all 47 and a `$type`-keyed lookup is only sound as a lookup if it's total — a partial map would make `WorkflowStepTemplateFor<'training'>` a compile error for a step type the SDK documents, and would make the key-parity assertion impossible.
+Note that `WORKFLOW_STEP_TYPES` does **not** mark most of them: of its 50 entries exactly two — `comfyNodepackSnapshot` and `qwenImageBench` — sit under its "Platform internals" heading, and the rest are ordinary documented entries (`webScrape` even carries usage notes). The reason the platform steps are typed anyway is not that the catalog flags them as internal; it's that the catalog *documents* them, so skipping them would make `WorkflowStepTemplateFor<'training'>` a compile error for a step type the SDK documents — which is exactly what is live today for the 3 `$type`s the pinned client cannot type, and is why that gap is spelled out above rather than left to be discovered.
 
 ## Public vs. confidential clients
 
