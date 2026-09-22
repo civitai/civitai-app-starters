@@ -22,25 +22,51 @@ function getClient(session: Session): OrchestratorClient {
   });
 }
 
+/**
+ * The projection of `/api/v1/me` this app is allowed to hold — and therefore the
+ * most it can ever leak.
+ *
+ * 🔴 CLOSED ON PURPOSE: NO `[key: string]: unknown` INDEX SIGNATURE. This object
+ * is built in a Server Component; the moment any route, Server Action or client
+ * component forwards it, every field on it crosses to the browser. With an index
+ * signature that is invisible — neither a reader nor `tsc` can tell you what
+ * ships, because the type admits everything upstream returns.
+ *
+ * `/api/v1/me` returns much more than this, including `email` and
+ * `emailVerified` (every OAuth token carries the `UserRead` baseline scope). If
+ * you need one, add the field HERE and pick it in {@link getMe} in the same
+ * edit — widening this is a security decision, and the type is what makes it
+ * reviewable.
+ *
+ * Enforced structurally by `tests/guards/starter-me-projection.test.mjs`.
+ */
 export interface MeResponse {
-  id?: number;
   username?: string;
-  /** Email address. Returned because every OAuth token carries the `UserRead` baseline scope. */
-  email?: string;
-  /** Whether the email address is verified. */
-  emailVerified?: boolean;
   /** Buzz balance from /api/v1/me. Civitai returns it under `balance` (number). */
   balance?: number;
-  // The endpoint returns many more fields; widen as you use them.
-  [key: string]: unknown;
 }
 
+/**
+ * Fetch the signed-in user's profile and PROJECT it down to the two fields this
+ * starter renders (`username` in the header, `balance` in the Buzz preview).
+ *
+ * 🔴 THE PROJECTION IS THE POINT, AND IT LIVES HERE RATHER THAN AT THE CALL
+ * SITE. Every future route and component in this app now structurally cannot
+ * forward a field nobody asked for, because the unprojected upstream object does
+ * not exist past this function. A `as MeResponse` CAST would not do this: a cast
+ * renames the object, it does not rebuild it, so every upstream field would
+ * still be there at runtime.
+ */
 export async function getMe(session: Session): Promise<MeResponse> {
-  const data = await fetchMe({
+  const raw = (await fetchMe({
     baseUrl: env.CIVITAI_BASE_URL,
     accessToken: session.tokens.access_token,
-  });
-  return data as MeResponse;
+  })) as Record<string, unknown> | null;
+
+  return {
+    username: typeof raw?.username === 'string' ? raw.username : undefined,
+    balance: typeof raw?.balance === 'number' ? raw.balance : undefined,
+  };
 }
 
 /** Preview Buzz cost without spending any (whatif=true). */
