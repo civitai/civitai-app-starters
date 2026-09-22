@@ -270,6 +270,46 @@ const LEDGER = [
   '@civitai/components-react#SelectProps :: extends :: FieldBaseProps',
   '@civitai/components-react#TextInputProps :: extends :: FieldBaseProps',
   '@civitai/components-react#TextareaProps :: extends :: FieldBaseProps',
+
+  // ------------------------------------------------------------------------
+  // `@civitai/components` custom elements (#415). Two routes, both name-free,
+  // both in positions this guard exempts — no nameable-position site is listed
+  // here, so none of these bases needs exporting.
+  //
+  //   extends   — a base class's members INLINE into the derived element's
+  //               declared type. A consumer writes `CivitaiTextInput` and gets
+  //               every `CivitaiField` member without naming `CivitaiField`;
+  //               `HTMLElementBase` likewise for the plain elements. Same shape
+  //               as the `ManifestSettingFieldBase` rows above.
+  //   property  — reachable by indexed access on the owning element:
+  //               `CivitaiSignInButton['transport']`, `['signIn']`, and
+  //               `CivitaiConfirmDialog['styles']`. The consumer never writes
+  //               `BlockTransport`, `SignIn` or `CivitaiModal` itself.
+  //
+  // 🔴 ACCEPTED, not fixed — an operator decision (2026-09-22) to ship #415
+  // without a round of export-surface changes. Recorded rather than waived: the
+  // set equality still fails on GROW, so a base appearing in a return type or a
+  // function parameter — the positions that genuinely cost a consumer — breaks
+  // this guard rather than sliding under these lines.
+  // ------------------------------------------------------------------------
+  '@civitai/components/civitai-button-group#CivitaiButtonGroup :: extends :: HTMLElementBase',
+  '@civitai/components/civitai-checkbox#CivitaiCheckbox :: extends :: CivitaiField',
+  '@civitai/components/civitai-confirm-dialog#CivitaiConfirmDialog :: property :: CivitaiModal.styles',
+  '@civitai/components/civitai-input-group#CivitaiInputGroup :: extends :: HTMLElementBase',
+  '@civitai/components/civitai-number-input#CivitaiNumberInput :: extends :: CivitaiField',
+  '@civitai/components/civitai-radio-group#CivitaiRadioGroup :: extends :: CivitaiField',
+  '@civitai/components/civitai-segmented-control#CivitaiSegmentedControl :: extends :: CivitaiField',
+  '@civitai/components/civitai-select#CivitaiSelect :: extends :: CivitaiField',
+  '@civitai/components/civitai-sign-in-button#CivitaiSignInButton :: property :: BlockTransport',
+  '@civitai/components/civitai-sign-in-button#CivitaiSignInButton :: property :: SignIn',
+  '@civitai/components/civitai-slider#CivitaiSlider :: extends :: CivitaiField',
+  '@civitai/components/civitai-table#CivitaiTable :: extends :: HTMLElementBase',
+  '@civitai/components/civitai-tabs#CivitaiTabPanel :: extends :: HTMLElementBase',
+  '@civitai/components/civitai-tabs#CivitaiTabs :: extends :: HTMLElementBase',
+  '@civitai/components/civitai-textarea#CivitaiTextarea :: extends :: CivitaiField',
+  '@civitai/components/civitai-text-input#CivitaiTextInput :: extends :: CivitaiField',
+  '@civitai/components/civitai-toast-region#CivitaiToastRegion :: extends :: HTMLElementBase',
+  '@civitai/components/civitai-tooltip#CivitaiTooltip :: extends :: HTMLElementBase',
 ];
 
 function loadTypeScript() {
