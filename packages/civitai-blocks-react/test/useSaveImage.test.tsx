@@ -4,8 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BlockInitPayload } from '@civitai/app-sdk/blocks';
 
 import { useSaveImage } from '../src/hooks/useSaveImage.js';
-import { getTransport } from '../src/internal/singleton.js';
-import { isValidSaveImageResult } from '../src/internal/validate.js';
+import { getTransport } from '../src/transport/singleton.js';
+import { isValidSaveImageResult } from '../src/transport/validate.js';
 import { resetTransport } from '../src/testing.js';
 
 const PARENT_ORIGIN = 'https://civitai.com';

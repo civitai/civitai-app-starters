@@ -2,9 +2,9 @@ import { useMemo } from 'react';
 
 import type { SharedStorageValue, SharedStorageItemWire } from '@civitai/app-sdk/blocks';
 
-import { getTransport } from '../internal/singleton.js';
+import { getTransport } from '../transport/singleton.js';
 import { throwOnFailedReply, throwOnReplyError } from '../internal/replyError.js';
-import { sendTypedRequest } from '../internal/transport.js';
+import { sendTypedRequest } from '../transport/transport.js';
 
 /**
  * The value a viewer contributes to the SHARED store: a required `title`, an

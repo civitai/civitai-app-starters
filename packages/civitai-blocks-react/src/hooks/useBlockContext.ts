@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 
-import { getTransport } from '../internal/singleton.js';
-import type { BlockSnapshot } from '../internal/transport.js';
+import { getTransport } from '../transport/singleton.js';
+import type { BlockSnapshot } from '../transport/transport.js';
 
 /**
  * Subscribe a hook to the singleton transport. All hooks build on this —
@@ -17,6 +17,30 @@ function useTransportSnapshot(): BlockSnapshot {
     () => transport.getSnapshot(),
   );
 }
+
+/**
+ * What {@link useBlockContext} returns — the projection of {@link BlockSnapshot}
+ * the hook exposes.
+ *
+ * 🔴 DERIVED FROM `BlockSnapshot`, NOT RETYPED. A hand-written copy of these ten
+ * fields would drift silently the first time the snapshot's shape moved; the
+ * `Pick` re-resolves against the transport's own type on every build. Before
+ * #380 this expression was written inline on the hook's return annotation, so
+ * a consumer wrapping `useBlockContext()` had nothing to name.
+ */
+export type UseBlockContext = Pick<
+  BlockSnapshot,
+  | 'ready'
+  | 'renderMode'
+  | 'context'
+  | 'token'
+  | 'settings'
+  | 'viewer'
+  | 'theme'
+  | 'blockId'
+  | 'blockInstanceId'
+  | 'appId'
+>;
 
 /**
  * Primary hook for a block app. Returns the full per-instance context
@@ -48,19 +72,7 @@ function useTransportSnapshot(): BlockSnapshot {
  * // scheduled for removal. This snippet used to do exactly that.
  * return <div data-theme={theme}>{isSignedIn(viewer) ? 'Hi there' : 'Hi anon'}</div>;
  */
-export function useBlockContext(): Pick<
-  BlockSnapshot,
-  | 'ready'
-  | 'renderMode'
-  | 'context'
-  | 'token'
-  | 'settings'
-  | 'viewer'
-  | 'theme'
-  | 'blockId'
-  | 'blockInstanceId'
-  | 'appId'
-> {
+export function useBlockContext(): UseBlockContext {
   const snap = useTransportSnapshot();
   return {
     ready: snap.ready,

@@ -18,7 +18,7 @@ import {
 } from '../src/hooks/useBuzzWorkflow.js';
 import { useBuzzBalance } from '../src/hooks/useBuzzBalance.js';
 import { useAppStorage } from '../src/hooks/useAppStorage.js';
-import { getTransport } from '../src/internal/singleton.js';
+import { getTransport } from '../src/transport/singleton.js';
 import { createMockHost, resetTransport, readMockHostUrlOptions } from '../src/testing.js';
 import { disallowedAccountError } from '../src/internal/mockHost.js';
 

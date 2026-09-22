@@ -7,7 +7,7 @@ import {
 } from '@civitai/app-sdk/blocks';
 
 import { useAppStorage } from '../src/hooks/useAppStorage.js';
-import { getTransport } from '../src/internal/singleton.js';
+import { getTransport } from '../src/transport/singleton.js';
 import { resetTransport } from '../src/testing.js';
 
 const PARENT_ORIGIN = 'https://civitai.com';

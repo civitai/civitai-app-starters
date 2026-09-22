@@ -128,7 +128,7 @@ import {
 } from '@civitai/app-sdk/blocks';
 
 import { consentUnavailablePayload, resolveUngrantableConsentNotice } from './consent.js';
-import { hostContextWithTheme } from './transport.js';
+import { hostContextWithTheme } from '../transport/transport.js';
 import type { MockHost, MockHostScenarioPatch, MockBuzzHandle } from './mockHost.js';
 import {
   openPickerOverlay,

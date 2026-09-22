@@ -1,6 +1,13 @@
 import { useEffect, useRef, type RefObject } from 'react';
 
-import { getTransport } from '../internal/singleton.js';
+import { getTransport } from '../transport/singleton.js';
+
+/**
+ * What {@link useBlockResize} returns: nothing. It is named anyway so the
+ * convention has NO exceptions to remember — see `./returnTypeLedger.js`. A wrapper
+ * that forwards this hook's result can still annotate it.
+ */
+export type UseBlockResize = void;
 
 /**
  * Observes the referenced element's height and asks the host to resize on
@@ -45,7 +52,7 @@ import { getTransport } from '../internal/singleton.js';
  * if (!ready) return <div>Loading…</div>;   // no ref needed on this branch
  * return <div ref={rootRef}>…</div>;
  */
-export function useBlockResize(ref: RefObject<HTMLElement | null>): void {
+export function useBlockResize(ref: RefObject<HTMLElement | null>): UseBlockResize {
   /** The element the live observer is watching. `null` = watching nothing. */
   const observedRef = useRef<HTMLElement | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);

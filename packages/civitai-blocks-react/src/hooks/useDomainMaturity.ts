@@ -8,8 +8,13 @@ import type { ColorDomain } from '@civitai/app-sdk/blocks';
 import { useTransportSnapshot } from './useBlockContext.js';
 
 /**
- * What {@link useDomainMaturity} returns.
+ * What {@link useDomainMaturity} returns. An alias for the long-standing
+ * {@link DomainMaturity} name, which stays exported and unchanged — see
+ * `./returnTypeLedger.js`.
  */
+export type UseDomainMaturity = DomainMaturity;
+
+/** The domain/viewer maturity projection {@link useDomainMaturity} exposes. */
 export interface DomainMaturity {
   /**
    * The color-domain the block is rendered inside (`green`|`blue`|`red`), or
@@ -101,7 +106,7 @@ export interface DomainMaturity {
  * const { maxBrowsingLevel, effectiveBrowsingLevel } = useDomainMaturity();
  * const hiddenByYourSettings = effectiveBrowsingLevel !== maxBrowsingLevel;
  */
-export function useDomainMaturity(): DomainMaturity {
+export function useDomainMaturity(): UseDomainMaturity {
   const snap = useTransportSnapshot();
   const maxBrowsingLevel = snap.maxBrowsingLevel;
   // The one number every gate below is computed from. `effectiveBrowsingCeiling`

@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 
-import { hostToRunUrl } from '../internal/directLoad.js';
+import { hostToRunUrl } from '../transport/directLoad.js';
 import { useDirectLoad } from '../hooks/useDirectLoad.js';
 import { Card } from './Card.js';
 import { Stack } from './Stack.js';

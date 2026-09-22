@@ -15,7 +15,7 @@
  *
  * ## Why the optionality is load-bearing
  *
- * `@civitai/blocks-react`'s `src/internal/validate.ts` early-accepts an error
+ * `@civitai/blocks-react`'s `src/transport/validate.ts` early-accepts an error
  * reply BEFORE requiring `ok`:
  *
  *     if (p.error !== undefined) return true;   // accepted with no `ok` at all
@@ -46,7 +46,7 @@
  * new `{ ok, error }` reply landed without a pin) and when it shrinks.
  *
  * 🔴 KEEP IN LOCKSTEP with the block-side guards in
- * `@civitai/blocks-react`'s `src/internal/validate.ts` and the union header
+ * `@civitai/blocks-react`'s `src/transport/validate.ts` and the union header
  * note in `src/blocks/messages.ts`. If a validator ever stops early-accepting
  * an error reply, THAT is the change that makes `ok` required again — and it
  * must be made in `validate.ts` and here in the same commit.

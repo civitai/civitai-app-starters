@@ -2,9 +2,25 @@ import { useCallback } from 'react';
 
 import type { BlockResourceInfo, BlockResourcePickerType } from '@civitai/app-sdk/blocks';
 
-import { HUMAN_INTERACTION_TIMEOUT_MS } from '../internal/requestTimeouts.js';
-import { getTransport } from '../internal/singleton.js';
-import { sendTypedRequest } from '../internal/transport.js';
+import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
+import { getTransport } from '../transport/singleton.js';
+import { sendTypedRequest } from '../transport/transport.js';
+
+/** What {@link useResourcePicker} returns. */
+export interface UseResourcePicker {
+  open: (opts: {
+    /** Which resource type to pick. v1: `'Checkpoint' | 'LORA'` only — the
+     * host rejects any other type (the modal never opens). */
+    resourceType: BlockResourcePickerType;
+    /**
+     * Optional base-model family hint — an ecosystem key (e.g. 'Flux1', 'SDXL')
+     * OR a baseModel name (e.g. 'Flux.1 D'); the host collapses it to the
+     * ecosystem family. Use the chosen checkpoint's `baseModel` to constrain a
+     * LoRA pick to the same family. Omit for an unconstrained pick of the type.
+     */
+    baseModelGroup?: string;
+  }) => Promise<BlockResourceInfo | null>;
+}
 
 /**
  * Drives the platform-side resource picker for PAGE App Blocks (Design 1 —
@@ -34,20 +50,7 @@ import { sendTypedRequest } from '../internal/transport.js';
  * if (!picked) return;                 // user dismissed
  * // feed picked.versionId into body.additionalResources and submit
  */
-export function useResourcePicker(): {
-  open: (opts: {
-    /** Which resource type to pick. v1: `'Checkpoint' | 'LORA'` only — the
-     * host rejects any other type (the modal never opens). */
-    resourceType: BlockResourcePickerType;
-    /**
-     * Optional base-model family hint — an ecosystem key (e.g. 'Flux1', 'SDXL')
-     * OR a baseModel name (e.g. 'Flux.1 D'); the host collapses it to the
-     * ecosystem family. Use the chosen checkpoint's `baseModel` to constrain a
-     * LoRA pick to the same family. Omit for an unconstrained pick of the type.
-     */
-    baseModelGroup?: string;
-  }) => Promise<BlockResourceInfo | null>;
-} {
+export function useResourcePicker(): UseResourcePicker {
   const open = useCallback(
     async (opts: { resourceType: BlockResourcePickerType; baseModelGroup?: string }) => {
       const { selected } = await sendTypedRequest(

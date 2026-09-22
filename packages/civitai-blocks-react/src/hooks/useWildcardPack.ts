@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 
 import type { BlockWildcardPack, BlockWildcardPackErrorCode } from '@civitai/app-sdk/blocks';
 
-import { getTransport } from '../internal/singleton.js';
-import { sendTypedRequest } from '../internal/transport.js';
+import { getTransport } from '../transport/singleton.js';
+import { sendTypedRequest } from '../transport/transport.js';
 import { useRequestSequencer } from './useRequestSequencer.js';
 
 export type { BlockWildcardPack, BlockWildcardPackErrorCode };

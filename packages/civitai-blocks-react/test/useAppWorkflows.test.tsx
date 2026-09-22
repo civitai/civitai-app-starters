@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppWorkflow, BlockInitPayload } from '@civitai/app-sdk/blocks';
 
 import { useAppWorkflows } from '../src/hooks/useAppWorkflows.js';
-import { getTransport } from '../src/internal/singleton.js';
+import { getTransport } from '../src/transport/singleton.js';
 import { resetTransport } from '../src/testing.js';
 
 const PARENT_ORIGIN = 'https://civitai.com';

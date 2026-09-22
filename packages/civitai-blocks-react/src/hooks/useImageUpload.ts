@@ -8,9 +8,9 @@ import type {
   BlockUploadPurpose,
 } from '@civitai/app-sdk/blocks';
 
-import { HUMAN_INTERACTION_TIMEOUT_MS } from '../internal/requestTimeouts.js';
-import { getTransport } from '../internal/singleton.js';
-import { sendTypedRequest, subscribeTyped } from '../internal/transport.js';
+import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
+import { getTransport } from '../transport/singleton.js';
+import { sendTypedRequest, subscribeTyped } from '../transport/transport.js';
 
 /**
  * Generous hook-side backstop for {@link BlockImageScanResult} delivery. The
@@ -27,6 +27,53 @@ import { sendTypedRequest, subscribeTyped } from '../internal/transport.js';
  * independent bounds so that tuning either silently retunes the other.
  */
 const SCAN_STATUS_TIMEOUT_MS = 10 * 60_000;
+
+/**
+ * What {@link useImageUpload} returns for the DEFAULT (`purpose: 'display'`,
+ * blocking-scan) call — `useImageUpload()` with no arguments.
+ *
+ * 🔴 THIS HOOK IS OVERLOADED, SO ITS RETURN TYPE IS A FAMILY, NOT A SINGLETON
+ * (#380). Each overload names its own: {@link UseImageUploadGenerationSource},
+ * {@link UseImageUploadAsyncScan}, and this one. A single union would be worse
+ * than the anonymous literals it replaces — it would hand every caller a
+ * `scanStatus` that only one overload actually provides.
+ */
+export interface UseImageUpload {
+  open: () => Promise<BlockUploadedImageInfo | null>;
+}
+
+/** What {@link useImageUpload} returns for `{ purpose: 'generationSource' }`. */
+export interface UseImageUploadGenerationSource {
+  open: () => Promise<BlockGenerationSourceImageInfo | null>;
+}
+
+/** What {@link useImageUpload} returns for `{ asyncScan: true }`. */
+export interface UseImageUploadAsyncScan {
+  /** Early-resolve handle (image persisted, NOT yet scanned) or `null` (dismissed). */
+  open: () => Promise<BlockPendingImageInfo | null>;
+  /**
+   * Resolve the async scan verdict for a handle returned by `open()`. Re-callable
+   * for retry: the host emits the verdict once and the hook buffers it, so a
+   * re-call after an `'error'`/timeout re-awaits (or immediately returns) the same
+   * verdict. An unknown/expired handle resolves to a retryable `'error'`, and so
+   * does a call that is still awaiting when the component UNMOUNTS — the promise
+   * always settles, never rejects, so no caller needs a `try`/`catch` (#393).
+   */
+  scanStatus: (handle: BlockPendingImageInfo) => Promise<BlockImageScanResult>;
+}
+
+/**
+ * The IMPLEMENTATION signature's return — not a call signature any consumer can
+ * reach, and deliberately not on the package entry. `scanStatus` is optional
+ * here so the two non-async overloads (which return `{ open }` only) stay
+ * compatible; the async overload types it required.
+ */
+export interface UseImageUploadImplementation {
+  open: () => Promise<
+    BlockUploadedImageInfo | BlockGenerationSourceImageInfo | BlockPendingImageInfo | null
+  >;
+  scanStatus?: (handle: BlockPendingImageInfo) => Promise<BlockImageScanResult>;
+}
 
 /** Options for {@link useImageUpload}. */
 export interface UseImageUploadOptions {
@@ -141,33 +188,15 @@ function isTerminalVerdict(v: BlockImageScanResult): boolean {
  * await submit({ kind: 'textToImage', modelId, modelVersionId,
  *   sourceImage: src, params: { prompt } });
  */
-export function useImageUpload(options: { purpose: 'generationSource' }): {
-  open: () => Promise<BlockGenerationSourceImageInfo | null>;
-};
-export function useImageUpload(options: { purpose?: 'display'; asyncScan: true }): {
-  /** Early-resolve handle (image persisted, NOT yet scanned) or `null` (dismissed). */
-  open: () => Promise<BlockPendingImageInfo | null>;
-  /**
-   * Resolve the async scan verdict for a handle returned by `open()`. Re-callable
-   * for retry: the host emits the verdict once and the hook buffers it, so a
-   * re-call after an `'error'`/timeout re-awaits (or immediately returns) the same
-   * verdict. An unknown/expired handle resolves to a retryable `'error'`, and so
-   * does a call that is still awaiting when the component UNMOUNTS — the promise
-   * always settles, never rejects, so no caller needs a `try`/`catch` (#393).
-   */
-  scanStatus: (handle: BlockPendingImageInfo) => Promise<BlockImageScanResult>;
-};
-export function useImageUpload(options?: { purpose?: 'display' }): {
-  open: () => Promise<BlockUploadedImageInfo | null>;
-};
-export function useImageUpload(options?: UseImageUploadOptions): {
-  open: () => Promise<
-    BlockUploadedImageInfo | BlockGenerationSourceImageInfo | BlockPendingImageInfo | null
-  >;
-  // Optional on the IMPLEMENTATION signature so the non-async overloads (which
-  // return `{ open }` only) stay compatible; the async overload types it required.
-  scanStatus?: (handle: BlockPendingImageInfo) => Promise<BlockImageScanResult>;
-} {
+export function useImageUpload(options: {
+  purpose: 'generationSource';
+}): UseImageUploadGenerationSource;
+export function useImageUpload(options: {
+  purpose?: 'display';
+  asyncScan: true;
+}): UseImageUploadAsyncScan;
+export function useImageUpload(options?: { purpose?: 'display' }): UseImageUpload;
+export function useImageUpload(options?: UseImageUploadOptions): UseImageUploadImplementation {
   const purpose = options?.purpose;
   const asyncScan = options?.asyncScan === true && purpose !== 'generationSource';
 

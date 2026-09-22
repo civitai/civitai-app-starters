@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useHostOrigin } from './useHostOrigin.js';
 import { useBlockToken } from './useBlockToken.js';
-import { generateIdempotencyKey } from '../internal/transport.js';
+import { generateIdempotencyKey } from '../transport/transport.js';
 
 /**
  * Backstop timeout for the direct REST tip POST. Like {@link useGenerationResources}

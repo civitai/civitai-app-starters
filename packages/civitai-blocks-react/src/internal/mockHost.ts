@@ -76,7 +76,7 @@ import {
 } from '@civitai/app-sdk/blocks';
 
 import { consentUnavailablePayload, resolveUngrantableConsentNotice } from './consent.js';
-import { hostContextWithTheme } from './transport.js';
+import { hostContextWithTheme } from '../transport/transport.js';
 
 /**
  * The block's preferred Buzz pool. On a `textToImage` {@link WorkflowBody} it's

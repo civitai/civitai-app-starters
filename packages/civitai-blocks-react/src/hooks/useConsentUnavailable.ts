@@ -7,8 +7,8 @@ import {
   clearConsentRefusalLatch,
   readConsentRefusalLatch,
 } from '../internal/consentRefusalLatch.js';
-import { getTransport } from '../internal/singleton.js';
-import { subscribeTyped } from '../internal/transport.js';
+import { getTransport } from '../transport/singleton.js';
+import { subscribeTyped } from '../transport/transport.js';
 
 export type { ConsentUnavailablePayload };
 

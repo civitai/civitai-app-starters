@@ -1,7 +1,7 @@
 import type { ConsentUnavailablePayload } from '@civitai/app-sdk/blocks';
 
-import type { BlockTransport } from './transport.js';
-import { subscribeTyped } from './transport.js';
+import type { BlockTransport } from '../transport/transport.js';
+import { subscribeTyped } from '../transport/transport.js';
 
 /**
  * A one-slot buffer for the host's `CONSENT_UNAVAILABLE` push.

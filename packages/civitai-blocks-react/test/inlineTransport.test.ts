@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { BlockInitPayload } from '@civitai/app-sdk/blocks';
 
-import { InlineTransport } from '../src/internal/inlineTransport.js';
+import { InlineTransport } from '../src/transport/inlineTransport.js';
 
 /**
  * `InlineTransport` is the v1 inline-mode stub. Only the DETECTOR pick is

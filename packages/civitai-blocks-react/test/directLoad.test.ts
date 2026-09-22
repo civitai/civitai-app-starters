@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { DIRECT_LOAD_TIMEOUT_MS, hostToRunUrl } from '../src/internal/directLoad.js';
+import { DIRECT_LOAD_TIMEOUT_MS, hostToRunUrl } from '../src/transport/directLoad.js';
 
 /**
  * Pure-unit coverage for the slug → run-URL derivation. `hostToRunUrl` is the

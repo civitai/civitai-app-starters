@@ -5,7 +5,7 @@ import { BrowsingLevel } from '@civitai/app-sdk/blocks';
 import type { BlockInitPayload } from '@civitai/app-sdk/blocks';
 
 import { useDomainMaturity } from '../src/hooks/useDomainMaturity.js';
-import { getTransport } from '../src/internal/singleton.js';
+import { getTransport } from '../src/transport/singleton.js';
 import { createMockHost, resetTransport } from '../src/testing.js';
 
 /**

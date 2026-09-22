@@ -1,6 +1,13 @@
 import { useSyncExternalStore } from 'react';
 
-import { getTransport } from '../internal/singleton.js';
+import { getTransport } from '../transport/singleton.js';
+
+/**
+ * What {@link useHostOrigin} returns: the validated host origin, or
+ * `undefined` before `BLOCK_INIT` lands. Named so a consumer can write it —
+ * see `./returnTypeLedger.js`.
+ */
+export type UseHostOrigin = string | undefined;
 
 /**
  * Returns the validated host (parent) origin the block may safely direct-fetch
@@ -34,7 +41,7 @@ import { getTransport } from '../internal/singleton.js';
  * same tick it applies `BLOCK_INIT`, so the hook re-renders with the origin the
  * moment init lands.
  */
-export function useHostOrigin(): string | undefined {
+export function useHostOrigin(): UseHostOrigin {
   const transport = getTransport();
   const origin = useSyncExternalStore(
     (cb) => transport.subscribe(cb),

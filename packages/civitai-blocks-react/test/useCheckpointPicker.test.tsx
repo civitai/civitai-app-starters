@@ -4,8 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BlockInitPayload } from '@civitai/app-sdk/blocks';
 
 import { useCheckpointPicker } from '../src/hooks/useCheckpointPicker.js';
-import { HUMAN_INTERACTION_TIMEOUT_MS } from '../src/internal/requestTimeouts.js';
-import { getTransport } from '../src/internal/singleton.js';
+import { HUMAN_INTERACTION_TIMEOUT_MS } from '../src/transport/requestTimeouts.js';
+import { getTransport } from '../src/transport/singleton.js';
 import { resetTransport } from '../src/testing.js';
 
 /**

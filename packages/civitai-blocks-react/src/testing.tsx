@@ -19,7 +19,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
-import { __resetTransport } from './internal/singleton.js';
+import { __resetTransport } from './transport/singleton.js';
 import {
   createMockHost,
   readMockHostUrlOptions,
