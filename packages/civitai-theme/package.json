@@ -14,8 +14,10 @@
     "./styles.css": "./dist/tokens.css",
     "./tokens.json": "./dist/tokens.dtcg.json"
   },
+  "comment-packaging": "`!dist/**/*.map` keeps dangling sourcemaps out of the tarball (#376). Rationale: scripts/check-shipped-sourcemaps.mjs.",
   "files": [
     "dist",
+    "!dist/**/*.map",
     "styles.css",
     "README.md"
   ],

@@ -27,8 +27,10 @@
       "import": "./dist/live.js"
     }
   },
+  "comment-packaging": "@civitai/* deps use workspace:^ not workspace:* (#374); `!dist/**/*.map` keeps dangling sourcemaps out of the tarball (#376). Rationale: scripts/check-shipped-sourcemaps.mjs.",
   "files": [
     "dist",
+    "!dist/**/*.map",
     "README.md"
   ],
   "scripts": {
@@ -42,8 +44,8 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@civitai/components": "workspace:*",
-    "@civitai/theme": "workspace:*"
+    "@civitai/components": "workspace:^",
+    "@civitai/theme": "workspace:^"
   },
   "comment-peerDependencies": "This floor is DERIVED, not chosen — the lowest published app-sdk that exports every symbol this package imports. Do not edit it without reading ./PEER_FLOOR.md (in-repo, unpublished) and tests/guards/blocks-react-peer-floor.test.mjs.",
   "peerDependencies": {

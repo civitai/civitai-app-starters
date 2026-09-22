@@ -53,8 +53,10 @@
     },
     "./schemas/app-block/v1.json": "./schemas/app-block/v1.json"
   },
+  "comment-packaging": "`!dist/**/*.map` keeps dangling sourcemaps out of the tarball (#376). Rationale: scripts/check-shipped-sourcemaps.mjs.",
   "files": [
     "dist",
+    "!dist/**/*.map",
     "schemas",
     "README.md"
   ],

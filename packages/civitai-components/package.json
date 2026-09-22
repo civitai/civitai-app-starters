@@ -13,9 +13,11 @@
     },
     "./styles.css": "./dist/components.css"
   },
+  "comment-packaging": "@civitai/* deps use workspace:^ not workspace:* (#374); `!dist/**/*.map` keeps dangling sourcemaps out of the tarball (#376). Rationale: scripts/check-shipped-sourcemaps.mjs.",
   "files": [
     "dist",
     "!dist/css",
+    "!dist/**/*.map",
     "demo",
     "styles.css",
     "MARKUP.md",
@@ -32,7 +34,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@civitai/theme": "workspace:*"
+    "@civitai/theme": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
