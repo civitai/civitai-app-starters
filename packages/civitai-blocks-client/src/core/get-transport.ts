@@ -3,33 +3,61 @@ import type { BlockTransport } from './transport.js';
 
 /** First match wins across the VITE_ / NEXT_PUBLIC_ / PUBLIC_ spellings. */
 function readAllowedOriginsFromEnv(): string[] {
-  const candidates = [
-    readEnv('VITE_BLOCK_ALLOWED_PARENT_ORIGINS'),
-    readEnv('NEXT_PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS'),
-    readEnv('PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS'),
-  ].filter((v): v is string => !!v);
-  if (!candidates.length) return [];
-  return candidates[0]!
+  const raw = readViteVar() ?? readNextPublicVar() ?? readPublicVar();
+  if (!raw) return [];
+  return raw
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
 }
 
-function readEnv(key: string): string | undefined {
+interface BlockOriginEnv {
+  readonly VITE_BLOCK_ALLOWED_PARENT_ORIGINS?: string;
+  readonly NEXT_PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS?: string;
+  readonly PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS?: string;
+}
+
+declare const process: { env: BlockOriginEnv };
+
+// Every key is spelled as a literal member access. Bundlers substitute only that
+// form: a computed `import.meta.env[key]` makes Vite inline the whole env object,
+// every VITE_* secret included, and `process.env[key]` is never replaced at all.
+// The try/catch is what makes a bare `process` safe in a browser.
+
+function readViteVar(): string | undefined {
   try {
-    const fromImportMeta = (import.meta as { env?: Record<string, string | undefined> }).env?.[key];
-    if (fromImportMeta) return fromImportMeta;
-  } catch {
-    /* ignore */
-  }
+    const v = (import.meta as { env?: BlockOriginEnv }).env?.VITE_BLOCK_ALLOWED_PARENT_ORIGINS;
+    if (v) return v;
+  } catch {}
   try {
-    const fromProcess = (globalThis as { process?: { env?: Record<string, string | undefined> } })
-      .process?.env?.[key];
-    if (fromProcess) return fromProcess;
+    return process.env.VITE_BLOCK_ALLOWED_PARENT_ORIGINS || undefined;
   } catch {
-    /* ignore */
+    return undefined;
   }
-  return undefined;
+}
+
+function readNextPublicVar(): string | undefined {
+  try {
+    const v = (import.meta as { env?: BlockOriginEnv }).env?.NEXT_PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS;
+    if (v) return v;
+  } catch {}
+  try {
+    return process.env.NEXT_PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readPublicVar(): string | undefined {
+  try {
+    const v = (import.meta as { env?: BlockOriginEnv }).env?.PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS;
+    if (v) return v;
+  } catch {}
+  try {
+    return process.env.PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -39,6 +67,8 @@ function readEnv(key: string): string | undefined {
  */
 const DEFAULT_ALLOWED_PARENT_ORIGINS: readonly string[] = [
   'https://civitai.com',
+  'https://civitai.red',
+  'https://civitai.green',
   'https://*.civitai.com',
   'https://*.civitaic.com',
 ];
