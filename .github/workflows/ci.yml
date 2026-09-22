@@ -95,6 +95,8 @@ jobs:
   civitai-sdk:
     name: '@civitai/sdk (typecheck + test + build)'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
 
@@ -235,6 +237,8 @@ jobs:
   design-system-cross-browser:
     name: design-system cross-browser contract (advisory)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
 

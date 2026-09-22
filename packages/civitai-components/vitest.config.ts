@@ -45,10 +45,15 @@ export default defineConfig({
             enabled: true,
             headless: true,
             screenshotFailures: false,
-            provider: playwright({
-              launchOptions: { args: CHROMIUM_ARGS, ...CONTRACT_EXECUTABLE },
-            }),
-            instances: CONTRACT_BROWSERS.map((browser) => ({ browser })),
+            provider: playwright({}),
+            // Per instance: firefox and webkit refuse chromium's flags outright
+            // ("Unknown option --no-sandbox"), which closes the whole run.
+            instances: CONTRACT_BROWSERS.map((browser) => ({
+              browser,
+              ...(browser === 'chromium'
+                ? { provider: playwright({ launchOptions: { args: CHROMIUM_ARGS, ...CONTRACT_EXECUTABLE } }) }
+                : {}),
+            })),
           },
         },
       },

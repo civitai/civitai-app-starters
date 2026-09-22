@@ -33,7 +33,8 @@ export type Http = <T>(method: string, path: string, opts?: RequestOptions) => P
 
 /** A JSON client that sends the session's token and survives one expired token. */
 export function createHttp(options: HttpOptions): Http {
-  const baseUrl = options.baseUrl.replace(/\/+$/, '');
+  let baseUrl = options.baseUrl;
+  while (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
 
   const send = (method: string, path: string, opts: RequestOptions, token: string) => {
     const doFetch = options.fetch ?? globalThis.fetch;
