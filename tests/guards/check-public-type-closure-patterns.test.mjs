@@ -149,11 +149,15 @@ if (!TS_PATH && process.env.GUARDS_REQUIRE_INSTALL === '1') {
  * (300) and `MIN_REFERENCE_NODES` (400) are floors checked AFTER
  * `collectEntries()`. Tripping one is a different exit path with different
  * prose, so the fixture clears both by a wide margin and the assertions can
- * read the real summary line instead of a floor complaint. MEASURED: 170
- * interfaces yields 172 exported symbols and 340 references, which clears the
- * symbol floor but NOT the reference floor in a ONE-entry fixture — so this is
- * sized for the single-entry cases, not just the three-file pattern tree.
- * 320 interfaces is ~322 symbols / ~640 references per file.
+ * read the real summary line instead of a floor complaint.
+ *
+ * Sized for the SINGLE-entry cases, not just the three-file pattern tree.
+ * MEASURED at 170: the one-entry fixture reported `only 172 exported symbol(s)
+ * across 1 entries (floor 300)` — the symbol floor, tripped before the
+ * reference floor is ever reached. Each interface after the first contributes
+ * one exported symbol and two type references, so 320 clears both; the
+ * `N built entries` assertions are what prove it, since a tripped floor is a
+ * different exit path that never prints that line.
  */
 const FILLER_INTERFACES = 320;
 
