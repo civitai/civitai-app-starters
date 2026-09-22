@@ -101,9 +101,15 @@
  * An earlier revision of this block quoted only the second and called it the
  * budget, which reads as twice the patience actually on offer. At the ENV
  * DEFAULTS here (5/3000) the window is 12s — an order of magnitude under the
- * measured lag, which is why the gate went red on eight consecutive SUCCESSFUL
- * publishes. 🔴 CI DOES NOT RUN THE DEFAULTS: `release.yml` sets 25/10000 for a
- * 240s window against a worst observed lag of 157s. Read the budget from
+ * measured lag, which is why the gate went red on NINE consecutive SUCCESSFUL
+ * publishes. 🔴 CI DOES NOT RUN THE DEFAULTS: `release.yml` sets 60/10000 for a
+ * 590s window against a worst observed lag of 369s (2026-09-22, run 35782955125,
+ * `@civitai/app-sdk@0.50.0` — the tail has now moved TWICE, 157s then 369s, so
+ * treat any sizing here as good until the next measurement, not as settled. When
+ * this goes red again, measure the ACTUAL lag from the registry `time` field
+ * before assuming a silent publish failure: a 404 is a reading with a timestamp,
+ * not a state, and reading it as a state cost one needless `gh run rerun`).
+ * Read the budget from
  * release.yml, not from the defaults above, and re-derive BOTH numbers if you
  * change either — they are coupled, and only one of them is the patience.
  *
