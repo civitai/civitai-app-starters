@@ -418,7 +418,7 @@
     "@custom-elements-manifest/analyzer": "^0.11.0",
     "@types/node": "^25.9.1",
     "@vitest/browser-playwright": "^4.1.11",
-    "axe-core": "^4.12.1",
+    "axe-core": "^4.13.0",
     "playwright": "^1.60.0",
     "tsx": "^4.19.2",
     "typescript": "^5.9.2",
