@@ -24,12 +24,31 @@
  *     viewer, decodes the token JWT payload for the block identity / scopes /
  *     budget / maturity, and dispatches `BLOCK_INIT`.
  *
- * REAL NETWORK, REAL MONEY: unlike the mock host, this calls `fetch`. The only
- * network it does is (a) `GET /api/v1/blocks/me` and (b) the four
- * `blocks.{estimate,submit,poll,cancel}Workflow` tRPC mutations — each with the
- * Bearer dev token. A successful submit SPENDS the dev's OWN real Buzz against
- * real compute. The token's per-call budget + the per-user daily cap are the
- * server-side bounds (scope doc §4).
+ * REAL NETWORK, REAL MONEY: unlike the mock host, this calls `fetch`. Every
+ * call is Bearer-authed with the dev token and leaves this file through one of
+ * exactly two chokepoints — {@link rawTrpcCall} (every tRPC procedure) and the
+ * `/api/v1/blocks/me` viewer read in `resolveViewer`. A successful submit
+ * SPENDS the dev's OWN real Buzz against real compute. The token's per-call
+ * budget + the per-user daily cap are the server-side bounds (scope doc §4).
+ * (The picker overlay does its own catalog fetch — that lives in
+ * `pickerOverlay.ts`, not here; see PICKERS below.)
+ *
+ * 🔴 THE BLOCK BELOW IS DERIVED FROM THIS FILE. DO NOT HAND-EDIT IT — and do
+ * not re-introduce a typed "the only X is …" list anywhere in this header.
+ * This file grew from 5 network calls to 30 and from 1 refusal to 7 while the
+ * header still said "the only network it does is … the four `blocks.*Workflow`
+ * mutations" and "the ONE capability live mode cannot SERVE" (#387, #14). An
+ * exhaustive count typed into a 2,100-line file that grows every release is a
+ * claim nobody re-measures. So it is measured:
+ * `tests/guards/livehost-header-enumerations.test.mjs` regenerates the block
+ * from the code and fails with the exact replacement text when it drifts.
+ *
+ * --- BEGIN DERIVED ---
+ * fetch chokepoints ..... 2
+ * REST endpoints ........ GET /api/v1/blocks/me
+ * tRPC procedures ....... 29 = blocks.* (14) + apps.shared.* (10) + apps.storage.* (5)
+ * switch case labels .... 45, of which 7 REFUSE (enumerated under SCOPE below)
+ * --- END DERIVED ---
  *
  * PICKERS (Phase 1 of "make dev:live a faithful local host"): the live host
  * SERVES the resource pickers locally. On `OPEN_CHECKPOINT_PICKER` /
@@ -64,13 +83,16 @@
  * the switch's `default: return` with no reply at all, so `useSharedStorage()`
  * hung to the 30s protocol timeout in dev:live for code that worked in dev:mock.
  *
- * 🔴 SCOPE — the capabilities live mode still cannot SERVE. This list is NOT
- * one item long, and said so until #386; the header claimed OPEN_BUZZ_PURCHASE
- * "alone" while five other handlers already refused (#14). Each REFUSES on its
- * own reply channel — `logOnce` plus an honest error, never a fabricated
- * success and never silence. `tests/guards/livehost-message-coverage.test.mjs`
- * asserts that no block→parent type is left without a case at all, which is the
- * failure mode a refusal is not:
+ * 🔴 SCOPE — the capabilities live mode still cannot SERVE. Each REFUSES on its
+ * own reply channel — `logOnce` (or `console.info`) plus an honest error, never
+ * a fabricated success and never silence. Two guards stand behind this list:
+ * `tests/guards/livehost-message-coverage.test.mjs` asserts that no block→parent
+ * type is left without a case at all (the failure mode a refusal is NOT), and
+ * `tests/guards/livehost-header-enumerations.test.mjs` derives the refusal set
+ * from the handlers below and asserts these bullets are exactly it — so the
+ * list cannot silently go stale again the way it did through #14/#387. Add a
+ * refusal handler without a bullet, or leave a bullet whose handler now serves,
+ * and that guard fails naming the difference.
  *
  *   • OPEN_BUZZ_PURCHASE — no headless / block-token Buzz-purchase path (buying
  *     Buzz strictly requires the interactive Stripe/Paddle host chrome). Deep-

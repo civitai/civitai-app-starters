@@ -41,8 +41,14 @@ export interface SettingsFormProps {
   /** Which slice of fields to render. */
   forScope: SettingScope;
   /**
-   * Initial values keyed by field name. Missing keys fall back to the
-   * manifest field's `default`. Unknown keys are ignored.
+   * Values keyed by field name. Missing keys fall back to the manifest
+   * field's `default`. Unknown keys are ignored.
+   *
+   * LIVE, not mount-only (#396): passing a different object after mount
+   * re-seeds every visible field the user has not yet edited, so values that
+   * arrive from an in-flight fetch land in the form instead of being dropped.
+   * Fields the user HAS edited keep the edit. The name is kept for API
+   * compatibility.
    */
   initialValues: Record<string, unknown>;
   /**
@@ -107,7 +113,30 @@ export function SettingsForm(props: SettingsFormProps): React.JSX.Element {
     [props.manifestSettings, props.forScope, props.declaredScopes]
   );
 
-  const [values, setValues] = useState<Record<string, unknown>>(() => {
+  /**
+   * The seed for the CURRENTLY visible fields: `initialValues` where present,
+   * otherwise the manifest `default`, otherwise `null`.
+   *
+   * 🔴 DERIVED, NOT SEEDED-ONCE STATE (#396). This used to be a `useState` lazy
+   * initializer, which runs exactly once — while `visibleFields` above is a
+   * `useMemo` that recomputes. The two drifted, in two ways that both reached
+   * the user:
+   *
+   *   1. `initialValues` that arrive ASYNCHRONOUSLY (the normal case: `{}`
+   *      while a fetch is in flight, then the stored row) were ignored. The
+   *      form rendered manifest defaults for ever, and Save wrote those
+   *      defaults back OVER the user's stored value.
+   *   2. A `forScope` flip on a mounted form recomputed `visibleFields` to the
+   *      new slice while `values` still held the OLD slice's keys — so the
+   *      viewer-scope form rendered blank inputs and `onSubmit` posted the
+   *      PUBLISHER slice's keys under a viewer-scope save.
+   *
+   * Recomputing instead of seeding closes both, and closes (2) STRUCTURALLY
+   * rather than by remembering to clear: `values` below is built by walking
+   * `seeded`'s keys, so a key outside the current `visibleFields` has no way
+   * into the submitted object at all.
+   */
+  const seeded = useMemo(() => {
     const seed: Record<string, unknown> = {};
     for (const [key, def] of visibleFields) {
       if (Object.prototype.hasOwnProperty.call(props.initialValues, key)) {
@@ -119,14 +148,39 @@ export function SettingsForm(props: SettingsFormProps): React.JSX.Element {
       }
     }
     return seed;
-  });
+  }, [visibleFields, props.initialValues]);
+
+  /**
+   * The user's own edits, keyed by field. Kept SEPARATE from the seed so that
+   * a later `initialValues`/`forScope` change re-seeds without discarding what
+   * the user typed, and so that an edit can never outlive its field's
+   * visibility (see `values`).
+   */
+  const [edits, setEdits] = useState<Record<string, unknown>>({});
+
+  /**
+   * Seed overlaid with edits — the rendered AND submitted value set.
+   *
+   * 🔴 The iteration order is load-bearing: this walks `seeded`'s keys, NOT
+   * `edits`'. An edit to a field that is no longer visible (a `forScope` flip,
+   * or a manifest change) is therefore simply not present here, so it cannot
+   * be rendered and cannot be submitted. Spreading `edits` in wholesale would
+   * reintroduce exactly the cross-scope leak this fix exists to close.
+   */
+  const values = useMemo(() => {
+    const merged: Record<string, unknown> = {};
+    for (const key of Object.keys(seeded)) {
+      merged[key] = Object.prototype.hasOwnProperty.call(edits, key) ? edits[key] : seeded[key];
+    }
+    return merged;
+  }, [seeded, edits]);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const setFieldValue = useCallback((key: string, value: unknown) => {
-    setValues((prev) => ({ ...prev, [key]: value }));
+    setEdits((prev) => ({ ...prev, [key]: value }));
     setErrors((prev) => {
       if (!prev[key]) return prev;
       const { [key]: _drop, ...rest } = prev;
