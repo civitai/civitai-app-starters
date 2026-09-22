@@ -323,23 +323,37 @@ an app brings its own and pays for nothing it does not use.
 ### Acting as the viewer
 
 `<civitai-sign-in-button>` does something rather than showing something: it
-starts the host's sign-in flow, through [`@civitai/sdk`](../civitai-sdk). That
-makes the SDK an **optional peer dependency** — install it only if you use an
-element like this one.
+signs the viewer in, through [`@civitai/sdk`](../civitai-sdk). That makes the
+SDK an **optional peer dependency** — install it only if you use an element
+like this one.
 
 ```ts
 import '@civitai/components/civitai-sign-in-button/define';
 ```
 
+Inside a civitai.com page it asks the host, and `return-url` is where the
+viewer lands afterwards:
+
 ```html
 <civitai-sign-in-button return-url="/gallery">Sign in to continue</civitai-sign-in-button>
 ```
 
+An app of its own hands it `createSignIn()`'s result instead, and the same
+button leaves for Civitai itself:
+
+```ts
+const auth = await createSignIn({ clientId, scopes: ['user:read:self'] });
+document.querySelector('civitai-sign-in-button').signIn = auth;
+```
+
+Either way it disappears once the viewer is signed in.
+
 These elements are not in `register`, `register-site`, `elements.js` or
 `site-elements.js`, so a page that wants only the look never bundles the SDK;
 `test/entry-points.test.ts` fails if one of them becomes reachable from there.
-The button is inert until the host's `BLOCK_INIT` lands: with no validated host
-origin a press sends nothing, and it renders disabled.
+Waiting for the host applies only to the host path: with no validated host
+origin a press sends nothing and the button renders disabled. Given a `signIn`
+it is usable at once, since no handshake is involved.
 
 ## Utilities
 

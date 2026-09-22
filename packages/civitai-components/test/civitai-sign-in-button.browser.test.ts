@@ -1,4 +1,5 @@
 import { createFakeTransport, type FakeTransport } from '@civitai/sdk/testing';
+import type { SignIn } from '@civitai/sdk';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { CivitaiSignInButton } from '../src/sdk/civitai-sign-in-button.js';
@@ -142,5 +143,42 @@ describe('<civitai-sign-in-button> reuses the components base', () => {
     const el = await mount(beforeInit());
     const ctor = el.constructor as { civitaiElementsVersion?: string };
     expect(ctor.civitaiElementsVersion).toBeTypeOf('string');
+  });
+});
+
+/** What an app outside civitai.com passes in: `createSignIn()`'s result. */
+function ownSignIn(signedIn: boolean) {
+  const presses: number[] = [];
+  const signIn = {
+    signedIn,
+    signIn: async () => {
+      presses.push(Date.now());
+      return new Promise<never>(() => {});
+    },
+  } as unknown as SignIn;
+  return { signIn, presses };
+}
+
+describe('<civitai-sign-in-button> in an app of its own', () => {
+  it('leaves for Civitai on a press, with no host to wait for', async () => {
+    const transport = beforeInit();
+    const own = ownSignIn(false);
+    const el = await mount(transport);
+    el.signIn = own.signIn;
+    await el.updateComplete;
+
+    expect((inner(el) as HTMLElement & { disabled: boolean }).disabled).toBe(false);
+    inner(el)!.click();
+
+    expect(own.presses).toHaveLength(1);
+    expect(transport.sent, 'the host is not part of this sign-in').toEqual([]);
+  });
+
+  it('is gone for a viewer who is already signed in', async () => {
+    const el = await mount(beforeInit());
+    el.signIn = ownSignIn(true).signIn;
+    await el.updateComplete;
+
+    expect(inner(el)).toBeNull();
   });
 });

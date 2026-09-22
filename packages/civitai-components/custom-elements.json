@@ -7004,7 +7004,7 @@
       "declarations": [
         {
           "kind": "class",
-          "description": "Starts the host's sign-in flow. Inert until `BLOCK_INIT` lands: there is no\nvalidated host origin before then, so a press must send nothing at all.",
+          "description": "Given a `signIn` from `createSignIn()`, leaves for Civitai itself; otherwise\nasks the host page, and stays inert until `BLOCK_INIT` lands, since there is\nno validated host origin before then.",
           "name": "CivitaiSignInButton",
           "members": [
             {
@@ -7063,6 +7063,15 @@
             },
             {
               "kind": "field",
+              "name": "signIn",
+              "privacy": "public",
+              "type": {
+                "text": "SignIn | undefined"
+              },
+              "description": "An app of its own signs the viewer in itself; without one, the host does."
+            },
+            {
+              "kind": "field",
               "name": "transport",
               "type": {
                 "text": "BlockTransport | undefined"
@@ -7075,6 +7084,26 @@
               "privacy": "private",
               "type": {
                 "text": "() => void | undefined"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "#follow",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "#unfollow",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
               }
             },
             {
@@ -7107,7 +7136,7 @@
             },
             {
               "kind": "method",
-              "name": "#signIn",
+              "name": "#press",
               "privacy": "private",
               "return": {
                 "type": {

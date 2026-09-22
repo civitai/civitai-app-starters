@@ -1,4 +1,4 @@
-import { createHost, getTransport, type BlockTransport } from '@civitai/sdk';
+import { createHost, getTransport, type BlockTransport, type SignIn } from '@civitai/sdk';
 import { CivitaiElement, defineElement } from '../elements/internals.js';
 import '../elements/civitai-button.define.js';
 import { css, html, nothing, type PropertyDeclarations, type TemplateResult } from 'lit';
@@ -6,8 +6,9 @@ import { css, html, nothing, type PropertyDeclarations, type TemplateResult } fr
 const TAG = 'civitai-sign-in-button';
 
 /**
- * Starts the host's sign-in flow. Inert until `BLOCK_INIT` lands: there is no
- * validated host origin before then, so a press must send nothing at all.
+ * Given a `signIn` from `createSignIn()`, leaves for Civitai itself; otherwise
+ * asks the host page, and stays inert until `BLOCK_INIT` lands, since there is
+ * no validated host origin before then.
  */
 export class CivitaiSignInButton extends CivitaiElement {
   static override styles = [
@@ -25,6 +26,7 @@ export class CivitaiSignInButton extends CivitaiElement {
     returnUrl: { reflect: true, attribute: 'return-url' },
     variant: { reflect: true },
     size: { reflect: true },
+    signIn: { attribute: false },
     ready: { state: true },
     signedIn: { state: true },
   };
@@ -35,6 +37,9 @@ export class CivitaiSignInButton extends CivitaiElement {
   declare size: string;
   declare ready: boolean;
   declare signedIn: boolean;
+
+  /** An app of its own signs the viewer in itself; without one, the host does. */
+  declare signIn?: SignIn;
 
   /** Injectable so a test can drive it without a real parent frame. */
   transport?: BlockTransport;
@@ -52,13 +57,33 @@ export class CivitaiSignInButton extends CivitaiElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    if (this.hasUpdated) this.#follow();
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this.#unfollow();
+  }
+
+  // Not connectedCallback: `signIn` is set after the element is in the document,
+  // and writing state after a render would cost a second one.
+  protected override willUpdate(changed: Map<string, unknown>): void {
+    if (!this.hasUpdated || changed.has('signIn')) this.#follow();
+  }
+
+  #follow(): void {
+    this.#unfollow();
+    if (this.signIn) {
+      this.ready = true;
+      this.signedIn = this.signIn.signedIn;
+      return;
+    }
     const transport = this.#transport();
     this.#read(transport);
     this.#unsubscribe = transport.snapshot.subscribe(() => this.#read(transport));
   }
 
-  override disconnectedCallback(): void {
-    super.disconnectedCallback();
+  #unfollow(): void {
     this.#unsubscribe?.();
     this.#unsubscribe = undefined;
   }
@@ -73,10 +98,15 @@ export class CivitaiSignInButton extends CivitaiElement {
     this.signedIn = snapshot.viewer != null;
   }
 
-  #signIn(): void {
+  #press(): void {
+    const signIn = this.signIn;
+    // Re-read rather than trusting the rendered state: the disabled control is
+    // a courtesy, this is the thing that must hold.
+    if (signIn) {
+      if (!signIn.signedIn) void signIn.signIn();
+      return;
+    }
     const transport = this.#transport();
-    // Re-read the snapshot rather than trusting the rendered state: the
-    // disabled control is a courtesy, this is the thing that must hold.
     const snapshot = transport.snapshot.get();
     if (!snapshot.ready || snapshot.viewer != null) return;
     createHost(transport).requestSignIn(
@@ -92,7 +122,7 @@ export class CivitaiSignInButton extends CivitaiElement {
         .variant=${this.variant}
         .size=${this.size}
         .disabled=${!this.ready}
-        @click=${this.#signIn}
+        @click=${this.#press}
       >
         <slot>Sign in</slot>
       </civitai-button>

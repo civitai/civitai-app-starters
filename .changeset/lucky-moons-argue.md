@@ -3,9 +3,11 @@
 ---
 
 Add `<civitai-sign-in-button>`, the first element that acts as the viewer
-through `@civitai/sdk`. It starts the host's sign-in flow inside a civitai.com
-page and is inert until `BLOCK_INIT`: with no validated host origin a press
-sends nothing, and the control renders disabled.
+through `@civitai/sdk`. Inside a civitai.com page it asks the host, and is
+inert until `BLOCK_INIT`: with no validated host origin a press sends nothing,
+and the control renders disabled. Given a `signIn` from the SDK's
+`createSignIn()`, the same button leaves for Civitai itself, so an app outside
+civitai.com gets one button for both.
 
 It has its own entry points, `@civitai/components/civitai-sign-in-button` and
 `/define`, and is left out of `register`, `elements.js` and `site-elements.js`,
