@@ -1,9 +1,71 @@
 import { useCallback, useState } from 'react';
 
-import type { BlockWorkflowSnapshot, WorkflowBody, WorkflowStatus } from '@civitai/app-sdk/blocks';
+import type {
+  BlockWorkflowSnapshot,
+  WorkflowBody,
+  WorkflowBodyCustomComfy,
+  WorkflowBodyPassThroughStep,
+  WorkflowBodyStep,
+  WorkflowBodyTextToImage,
+  WorkflowStatus,
+} from '@civitai/app-sdk/blocks';
 
 import { getTransport } from '../transport/singleton.js';
 import { generateIdempotencyKey, sendTypedRequest } from '../transport/transport.js';
+
+/**
+ * The members of {@link WorkflowBody}, enumerated ONE WAY so `tsc` can compare
+ * the two (#381).
+ *
+ * 🔴 THIS IS NOT DOCUMENTATION — IT IS THE THING THAT MAKES THE DOCUMENTATION
+ * UNNECESSARY. `useBuzzWorkflow`'s docblock used to hand-type "THREE members as
+ * of `@civitai/app-sdk@0.30.0`" and then certify that list "otherwise
+ * unchanged", at a point when the union already had four:
+ * `WorkflowBodyPassThroughStep` landed in 583e8ba (#310). Prose cannot be
+ * checked, so it rotted, and the rot was invisible because the sentence
+ * asserting currency was itself the stale part.
+ *
+ * `_WorkflowBodyArmsAreExhaustive` below demands MUTUAL assignability between
+ * this list and the union itself, so:
+ *   - ADD a member to `WorkflowBody` and this file fails to compile, at a line
+ *     whose comment says what to do about the docblock.
+ *   - REMOVE one and it fails too — a one-directional `extends` would not.
+ * A count stated in prose would still be a count stated in prose; the docblock
+ * therefore states none and points here.
+ *
+ * ⚠️ WHAT IT CANNOT CATCH, stated rather than assumed: a NEW member that is
+ * structurally assignable to an existing one (a strict subtype) satisfies both
+ * directions and passes. Nothing short of nominal typing would catch that, and
+ * the union's members are pairwise incompatible today.
+ */
+type WorkflowBodyArms =
+  | WorkflowBodyTextToImage
+  | WorkflowBodyCustomComfy
+  | WorkflowBodyStep
+  | WorkflowBodyPassThroughStep;
+
+/** `[A] extends [B]` — bracketed so a union is compared whole, not distributed. */
+type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+
+/**
+ * Compiles only when `T` is `true`. The CONSTRAINT is what fails the build — a
+ * bare `T extends true ? true : never` would quietly evaluate to `never` and
+ * compile clean, which is a guard that cannot go red.
+ */
+type AssertTrue<T extends true> = T;
+
+/**
+ * Compiles only while {@link WorkflowBodyArms} is exactly {@link WorkflowBody}.
+ *
+ * 🔴 IF THIS LINE IS RED, DO NOT JUST ADD THE ARM ABOVE. A new member means
+ * `estimate`/`submit` accept a shape this hook's docblock has never described.
+ * Check whether the docblock's CAPABILITY paragraphs (the `customComfy`
+ * `mode` note) need a sibling, then extend the list. That prompt is the whole
+ * point of the assertion — #381 is a rotted description, not a rotted number.
+ */
+type _WorkflowBodyArmsAreExhaustive = AssertTrue<
+  MutuallyAssignable<WorkflowBody, WorkflowBodyArms>
+>;
 
 /**
  * Snapshot statuses that mean "no further polling is needed."
@@ -47,6 +109,12 @@ const WORKFLOW_REQUEST_TIMEOUT_MS = 120_000;
  *     its own ~12s ceiling, and the two are SEQUENTIAL — so the round trip's
  *     worst case is 15 + 12 = 27s, which must stay inside the host's own
  *     end-to-end response budget.
+ *
+ * 🔴 AND THE HOST ENFORCES THAT SAME 15 (#388) — `MAX_BLOCK_POLL_WAIT_SECONDS`
+ * in `civitai/civitai` @ `b0eb2820b5`. This default therefore sits exactly AT
+ * the host's cap, not under it: raising it here changes nothing on the wire,
+ * because the host clamps. See {@link WatchWorkflowOptions.waitSeconds} for the
+ * full measured contract, including the flooring.
  */
 export const DEFAULT_WATCH_WAIT_SECONDS = 15;
 
@@ -81,13 +149,43 @@ export interface WatchWorkflowOptions {
   signal?: AbortSignal;
   /**
    * Orchestrator-side hold per poll, in **seconds**. Default
-   * {@link DEFAULT_WATCH_WAIT_SECONDS}. `0` disables long polling and falls back
-   * to a plain read per `intervalMs`.
+   * {@link DEFAULT_WATCH_WAIT_SECONDS}.
    *
-   * 🔴 CURRENTLY ADVISORY. It travels on the `POLL_WORKFLOW` message and a host
-   * that does not yet read the field simply answers immediately, exactly as
-   * today — so `watch` is correct either way, it just polls more often. See the
-   * field's note on `BlockToParentMessage`.
+   * 🔴 THE HOST HONOURS AND CLAMPS THIS — it is NOT advisory (#388). This
+   * docblock said "CURRENTLY ADVISORY … a host that does not yet read the field
+   * simply answers immediately, exactly as today", which was true when written
+   * and is not true of the deployed host. The contract, read off
+   * `civitai/civitai` at **`b0eb2820b5`** (5.1.120, `main`) — two files,
+   * because a constant that nothing calls is not a contract:
+   *
+   *   - `src/server/services/blocks/workflow.service.ts:1263` declares
+   *     `MAX_BLOCK_POLL_WAIT_SECONDS = 15`.
+   *   - `:1286-1292` `resolveBlockPollWaitSeconds(waitSeconds?: number)` applies
+   *     it, and `src/server/routers/blocks.router.ts:3965` is the call site.
+   *
+   * What that function does, in its own order:
+   *   1. a non-`number` or non-finite value → `undefined`, i.e. NO HOLD.
+   *   2. `Math.floor` FIRST. `0.9` is therefore not "a short hold" — it floors
+   *      to `0` and becomes no hold at all, which the host's own comment calls
+   *      out explicitly.
+   *   3. floored `<= 0` → `undefined` (no hold). So `0` — and any fraction
+   *      below 1 — disables long polling and `watch` falls back to a plain read
+   *      per `intervalMs`.
+   *   4. otherwise `Math.min(floored, 15)`. Asking for 60 gets you 15.
+   *
+   * Consequences worth planning for: only whole seconds are expressible, and no
+   * value above `MAX_BLOCK_POLL_WAIT_SECONDS` buys anything — `intervalMs` is
+   * still what bounds request rate, because a clamped hold returns sooner than
+   * the caller asked for.
+   *
+   * 🔴 THIS IS PROSE ABOUT ANOTHER REPO, AND NO GUARD IN THIS ONE CAN CHECK IT.
+   * The host checkout is not present in CI, so the honest check is a human
+   * reading the two files above at a named revision — which is why the sha is
+   * quoted rather than "as of today". A later reader comparing against a newer
+   * host should update the sha along with whatever moved. The `POLL_WORKFLOW`
+   * field's own note on `BlockToParentMessage` in `@civitai/app-sdk` covers the
+   * wire shape and the older-host case; this covers what the current host does
+   * with the value.
    */
   waitSeconds?: number;
   /**
@@ -658,16 +756,23 @@ export interface UseBuzzWorkflow {
  * enabled.
  *
  * `estimate`/`submit` take a full {@link WorkflowBody} — the discriminated
- * union keyed by `kind`, with THREE members as of `@civitai/app-sdk@0.30.0`:
- * a `textToImage` body (`{ kind, modelId, modelVersionId, params }`), a
- * `customComfy` body (`kind: 'customComfy'`), or a `step` body
- * (`{ kind: 'step', step, params }` — a server-registered orchestrator step
- * such as `'chat-completion'`), never a bare `{ prompt }`. The hook forwards
- * the body to the host verbatim and never reads variant-specific fields, so
- * every member flows through unchanged, including any member added later.
+ * union keyed by `kind`, never a bare `{ prompt }`. The hook forwards the body
+ * to the host verbatim and never reads variant-specific fields, so every member
+ * flows through unchanged, including any member added later.
+ *
+ * 🔴 THIS COMMENT DELIBERATELY DOES NOT SAY HOW MANY MEMBERS THERE ARE, OR NAME
+ * THEM (#381). It used to open "with THREE members as of
+ * `@civitai/app-sdk@0.30.0`" and close by certifying the list "otherwise
+ * unchanged" — while the union had FOUR, `WorkflowBodyPassThroughStep` having
+ * arrived in 583e8ba (#310). The sentence whose only job was to vouch for the
+ * list was the sentence that went stale. `{@link WorkflowBody}`'s own docblock
+ * is the single description of the member set; the machine-checked copy is
+ * {@link WorkflowBodyArms} below, which fails `tsc` when the union changes in
+ * either direction. A count re-typed here could only ever repeat the defect.
  *
  * 🔴 `customComfy` IS ITSELF A UNION, on `mode` — an app CAN ship its own
- * ComfyUI graph. `WorkflowBodyCustomComfyRecipe` (`mode` omitted or `'recipe'`)
+ * ComfyUI graph, which is a CAPABILITY claim, not a member count, and so is
+ * stated here. `WorkflowBodyCustomComfyRecipe` (`mode` omitted or `'recipe'`)
  * names a server-registered recipe; `WorkflowBodyCustomComfyInline`
  * (`mode: 'inline'`) carries the graph itself, plus its declared AIR
  * `resources` and a `maxBuzz` bound. The inline arm is LIVE in production
@@ -675,8 +780,9 @@ export interface UseBuzzWorkflow {
  * recipe-only `{ kind, recipe, params }` shape — written when that was true and
  * never revisited once the arm shipped. A developer working against the live
  * feature read the equivalent claim on the type, believed it over their own
- * instinct, and concluded the capability did not exist. `@civitai/app-sdk`
- * 0.30.0 predates the inline arm; the union above is otherwise unchanged.
+ * instinct, and concluded the capability did not exist. That is the SAME defect
+ * the paragraph above records, one member over: an incomplete description of a
+ * union, trusted because it read as authoritative.
  *
  * @returns `{ estimate, submit, poll, watch, cancel, status, result, error }`.
  *

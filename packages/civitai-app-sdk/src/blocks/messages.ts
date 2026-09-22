@@ -1024,6 +1024,14 @@ export type BlockToParentMessage =
   // older host that ignores the field answers immediately, and a block that
   // never sends it is unaffected by a host that honors it.
   //
+  // 🔴 THE CURRENT HOST HONOURS IT, AND CLAMPS IT (#388). Do not read the
+  // paragraph above as "the host ignores this" — it describes an OLDER host.
+  // Measured contract (flooring first, `<= 0` meaning no hold, and a
+  // `MAX_BLOCK_POLL_WAIT_SECONDS = 15` ceiling), with the host sha it was read
+  // at: `WatchWorkflowOptions.waitSeconds` in `@civitai/blocks-react`'s
+  // `useBuzzWorkflow.ts`. Stated in ONE place on purpose; a second copy is what
+  // went stale here in the first place.
+  //
   // 🔴 ONLY SEND THIS FROM A LOOP THAT AWAITS EACH POLL BEFORE ISSUING THE NEXT.
   // A fixed `setInterval` against a host holding 15s stacks ~7 concurrent
   // requests per workflow — which is why this is a per-message hint rather than
