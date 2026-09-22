@@ -12,8 +12,10 @@
       "import": "./dist/index.js"
     }
   },
+  "comment-packaging": "@civitai/* deps use workspace:^ not workspace:* (#374); `!dist/**/*.map` keeps dangling sourcemaps out of the tarball (#376). Rationale: scripts/check-shipped-sourcemaps.mjs.",
   "files": [
     "dist",
+    "!dist/**/*.map",
     "README.md"
   ],
   "scripts": {
@@ -31,8 +33,8 @@
     "react-dom": "^18.0.0 || ^19.0.0"
   },
   "dependencies": {
-    "@civitai/components": "workspace:*",
-    "@civitai/theme": "workspace:*"
+    "@civitai/components": "workspace:^",
+    "@civitai/theme": "workspace:^"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.10.1",

@@ -408,3 +408,37 @@ jobs:
           else
             echo "No lint script for ${{ matrix.starter }} — skipping."
           fi
+
+  # What the TARBALLS contain, as opposed to what the tests import. Every job
+  # above resolves `src/` or the workspace link; none of them has ever looked at
+  # the artifact npm actually receives, which is how all five packages came to
+  # ship 270 sourcemaps that could not resolve a single one of their `sources`
+  # (#376). Its own job because it needs the built `dist/` AND shells out to
+  # `npm pack --dry-run` per package — deliberately NOT a `tests/guards/` unit
+  # test, whose per-test budget a sibling guard already records that call
+  # blowing.
+  packaging:
+    name: Packaging (shipped sourcemaps)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The maps only exist after a build; the checker FAILS on an unbuilt tree
+      # rather than reporting a vacuous "0 dangling" over an empty scan.
+      - run: pnpm -r --filter "./packages/*" build
+
+      # NEGATIVE + POSITIVE control FIRST, so the check below cannot report a
+      # reassuring zero from a checker wired to nothing. Ordered like the
+      # sibling `readme-snippets` job's selftest, and for the same reason.
+      - run: pnpm check:shipped-sourcemaps:selftest
+
+      - run: pnpm check:shipped-sourcemaps
