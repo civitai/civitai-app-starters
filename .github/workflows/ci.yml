@@ -92,8 +92,8 @@ jobs:
 
       - run: node scripts/check-orchestrator-catalogs.mjs
 
-  blocks-client:
-    name: blocks-client (typecheck + test + build)
+  civitai-sdk:
+    name: '@civitai/sdk (typecheck + test + build)'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -107,13 +107,13 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - run: pnpm --filter @civitai/blocks-client typecheck
-      - run: pnpm --filter @civitai/blocks-client api:check
-      - run: pnpm --filter @civitai/blocks-client check:layering
-      - run: pnpm --filter @civitai/blocks-client check:parity
-      - run: pnpm --filter @civitai/blocks-client check:steps
-      - run: pnpm --filter @civitai/blocks-client test
-      - run: pnpm --filter @civitai/blocks-client build
+      - run: pnpm --filter @civitai/sdk typecheck
+      - run: pnpm --filter @civitai/sdk api:check
+      - run: pnpm --filter @civitai/sdk check:layering
+      - run: pnpm --filter @civitai/sdk check:parity
+      - run: pnpm --filter @civitai/sdk check:steps
+      - run: pnpm --filter @civitai/sdk test
+      - run: pnpm --filter @civitai/sdk build
 
 
   blocks-react:
@@ -137,6 +137,7 @@ jobs:
       # or missing declarations.
       - run: pnpm --filter @civitai/app-sdk build
       - run: pnpm --filter @civitai/theme build
+      - run: pnpm --filter @civitai/sdk build
       - run: pnpm --filter @civitai/components build
 
       - run: pnpm --filter @civitai/blocks-react typecheck
@@ -191,6 +192,7 @@ jobs:
       # Build in dependency order: theme (Mantine -> --civitai-* tokens) ->
       # components (CSS referencing those tokens) -> components-react (bindings).
       - run: pnpm --filter @civitai/theme build
+      - run: pnpm --filter @civitai/sdk build
       - run: pnpm --filter @civitai/components build
       - run: pnpm --filter @civitai/components-react build
 
@@ -223,14 +225,6 @@ jobs:
       # already installed by the step above (one shared Playwright cache).
       - run: pnpm --filter @civitai/components test:browser
 
-      # @civitai/block-components — the bridge-bound elements. The layering
-      # guard runs FIRST and is the load-bearing one: @civitai/components has to
-      # stay usable by an external OAuth app, which has no host frame at all.
-      - run: pnpm --filter @civitai/blocks-client build
-      - run: pnpm --filter @civitai/block-components check:layering
-      - run: pnpm --filter @civitai/block-components typecheck
-      - run: pnpm --filter @civitai/block-components test:browser
-
   # ADVISORY cross-engine contract. Kept OUT of branch protection because the
   # cost here is the BROWSER INSTALL, not the tests: `playwright install
   # --with-deps` was measured wedging for 2h13m on one commit (2026-08-19),
@@ -254,6 +248,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm --filter @civitai/theme build
+      - run: pnpm --filter @civitai/sdk build
       - run: pnpm --filter @civitai/components build
 
       - run: pnpm --filter @civitai/components exec playwright install --with-deps chromium firefox webkit
@@ -335,6 +330,7 @@ jobs:
       # @civitai/theme and @civitai/components).
       - run: pnpm --filter @civitai/app-sdk build
       - run: pnpm --filter @civitai/theme build
+      - run: pnpm --filter @civitai/sdk build
       - run: pnpm --filter @civitai/components build
       - run: pnpm --filter @civitai/blocks-react build
 

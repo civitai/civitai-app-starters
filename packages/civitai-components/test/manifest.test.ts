@@ -28,10 +28,13 @@ const declarations = (manifest.modules as { declarations?: Declaration[] }[]).fl
 const documented = declarations.filter((d) => d.customElement);
 
 /** Tags the package actually registers, read from the element sources. */
-const registered = readdirSync(elementsDir)
-  .filter((file) => /^civitai-.*(?<!\.define)\.ts$/.test(file))
-  .flatMap((file) => {
-    const source = readFileSync(join(elementsDir, file), 'utf8');
+const elementSources = [elementsDir, join(pkgRoot, 'src/sdk')]
+  .flatMap((dir) => readdirSync(dir).map((file) => join(dir, file)))
+  .filter((path) => /\/civitai-[^/]*(?<!\.define)\.ts$/.test(path));
+
+const registered = elementSources
+  .flatMap((path) => {
+    const source = readFileSync(path, 'utf8');
     const tags = Object.fromEntries(
       [...source.matchAll(/const (\w+)\s*=\s*'(civitai-[a-z-]+)'/g)].map((m) => [m[1], m[2]!])
     );
@@ -56,8 +59,8 @@ describe('custom-elements.json', () => {
    */
   const sourceFor = (tag: string): string => {
     const declares = new RegExp(`const \\w+\\s*=\\s*'${tag}'`);
-    for (const file of readdirSync(elementsDir).filter((f) => /^civitai-.*(?<!\.define)\.ts$/.test(f))) {
-      const source = readFileSync(join(elementsDir, file), 'utf8');
+    for (const path of elementSources) {
+      const source = readFileSync(path, 'utf8');
       if (declares.test(source)) return source;
     }
     throw new Error(`no source declares ${tag}`);

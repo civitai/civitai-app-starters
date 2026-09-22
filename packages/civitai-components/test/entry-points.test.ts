@@ -2,7 +2,7 @@
  * The `.` entry is what the Svelte starters import for `injectStyles()`. Lit
  * reaching it would put a renderer in every non-element consumer's bundle.
  */
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -71,6 +71,15 @@ describe('entry points', () => {
       "from './register.js'"
     );
     expect(source).toContain('registerAll()');
+  });
+
+  it('lets @civitai/sdk in only through the elements that act as the viewer', () => {
+    const generic = readdirSync(join(pkgRoot, 'dist/elements')).filter((f) => f.endsWith('.js'));
+    const reachingSdk = generic.filter((f) =>
+      [...reachableSpecifiers(`dist/elements/${f}`)].some((s) => s.startsWith('@civitai/sdk'))
+    );
+    expect(reachingSdk).toEqual([]);
+    expect(reachableSpecifiers('dist/sdk/civitai-sign-in-button.js')).toContain('@civitai/sdk');
   });
 
   it('keeps the registration entries out of tree-shaking', () => {

@@ -57,8 +57,8 @@ const civitaiElements = {
 };
 
 export default {
-  globs: ['src/elements/civitai-*.ts'],
-  exclude: ['src/elements/*.define.ts'],
+  globs: ['src/elements/civitai-*.ts', 'src/sdk/civitai-*.ts'],
+  exclude: ['src/elements/*.define.ts', 'src/sdk/*.define.ts'],
   outdir: '.',
   litelement: true,
   plugins: [civitaiElements],

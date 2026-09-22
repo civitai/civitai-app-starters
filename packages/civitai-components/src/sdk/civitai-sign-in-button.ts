@@ -1,6 +1,6 @@
-import { createHost, getTransport, type BlockTransport } from '@civitai/blocks-client';
-import { CivitaiElement, defineElement } from '@civitai/components/internals';
-import '@civitai/components/civitai-button/define';
+import { createHost, getTransport, type BlockTransport } from '@civitai/sdk';
+import { CivitaiElement, defineElement } from '../elements/internals.js';
+import '../elements/civitai-button.define.js';
 import { css, html, nothing, type PropertyDeclarations, type TemplateResult } from 'lit';
 
 const TAG = 'civitai-sign-in-button';

@@ -362,6 +362,14 @@
     "./civitai-nav-list/define": {
       "types": "./dist/elements/civitai-nav-list.define.d.ts",
       "default": "./dist/elements/civitai-nav-list.define.js"
+    },
+    "./civitai-sign-in-button": {
+      "types": "./dist/sdk/civitai-sign-in-button.d.ts",
+      "default": "./dist/sdk/civitai-sign-in-button.js"
+    },
+    "./civitai-sign-in-button/define": {
+      "types": "./dist/sdk/civitai-sign-in-button.define.d.ts",
+      "default": "./dist/sdk/civitai-sign-in-button.define.js"
     }
   },
   "files": [
@@ -395,7 +403,16 @@
     "@civitai/theme": "workspace:*",
     "lit": "^3.3.3"
   },
+  "peerDependencies": {
+    "@civitai/sdk": ">=0.1.0 <1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@civitai/sdk": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@civitai/sdk": "workspace:*",
     "@custom-elements-manifest/analyzer": "^0.11.0",
     "@types/node": "^25.9.1",
     "@vitest/browser-playwright": "^4.1.11",

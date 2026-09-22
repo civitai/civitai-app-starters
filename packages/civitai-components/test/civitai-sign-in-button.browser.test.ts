@@ -1,8 +1,8 @@
-import { createFakeTransport, type FakeTransport } from '@civitai/blocks-client/testing';
+import { createFakeTransport, type FakeTransport } from '@civitai/sdk/testing';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { CivitaiSignInButton } from '../src/elements/civitai-sign-in-button.js';
-import '../src/elements/register.js';
+import type { CivitaiSignInButton } from '../src/sdk/civitai-sign-in-button.js';
+import '../src/sdk/civitai-sign-in-button.define.js';
 
 let scope: HTMLElement | undefined;
 

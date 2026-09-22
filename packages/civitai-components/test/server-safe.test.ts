@@ -10,9 +10,12 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const elementsDir = join(here, '..', 'src', 'elements');
-const entries = readdirSync(elementsDir)
-  .filter((name) => name.endsWith('.define.ts') || name === 'register.ts' || name === 'register-site.ts')
+const entries = ['elements', 'sdk']
+  .flatMap((dir) =>
+    readdirSync(join(here, '..', 'src', dir))
+      .filter((name) => name.endsWith('.define.ts') || name === 'register.ts' || name === 'register-site.ts')
+      .map((name) => join(dir, name))
+  )
   .sort();
 
 describe('server-safe imports', () => {
@@ -25,6 +28,6 @@ describe('server-safe imports', () => {
   });
 
   it.each(entries)('%s imports with no DOM', async (name) => {
-    await expect(import(join(elementsDir, name))).resolves.toBeDefined();
+    await expect(import(join(here, '..', 'src', name))).resolves.toBeDefined();
   });
 });

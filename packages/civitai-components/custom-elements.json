@@ -6997,6 +6997,211 @@
           }
         }
       ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/sdk/civitai-sign-in-button.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "Starts the host's sign-in flow. Inert until `BLOCK_INIT` lands: there is no\nvalidated host origin before then, so a press must send nothing at all.",
+          "name": "CivitaiSignInButton",
+          "members": [
+            {
+              "kind": "field",
+              "name": "returnUrl",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "A path within this app; the host sanitises it.",
+              "default": "''",
+              "attribute": "return-url",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "variant",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'filled'",
+              "attribute": "variant",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "size",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'md'",
+              "attribute": "size",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "ready",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "ready"
+            },
+            {
+              "kind": "field",
+              "name": "signedIn",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "signedIn"
+            },
+            {
+              "kind": "field",
+              "name": "transport",
+              "type": {
+                "text": "BlockTransport | undefined"
+              },
+              "description": "Injectable so a test can drive it without a real parent frame."
+            },
+            {
+              "kind": "field",
+              "name": "#unsubscribe",
+              "privacy": "private",
+              "type": {
+                "text": "() => void | undefined"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "#transport",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "BlockTransport"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "#read",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "transport",
+                  "type": {
+                    "text": "BlockTransport"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "#signIn",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "return-url",
+              "type": {
+                "text": "string"
+              },
+              "description": "A path within this app; the host sanitises it.",
+              "default": "''",
+              "fieldName": "returnUrl"
+            },
+            {
+              "name": "variant",
+              "type": {
+                "text": "string"
+              },
+              "default": "'filled'",
+              "fieldName": "variant"
+            },
+            {
+              "name": "size",
+              "type": {
+                "text": "string"
+              },
+              "default": "'md'",
+              "fieldName": "size"
+            },
+            {
+              "name": "ready",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "ready"
+            },
+            {
+              "name": "signedIn",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "signedIn"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/internals.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-sign-in-button"
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiSignInButton",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiSignInButton",
+          "declaration": {
+            "name": "CivitaiSignInButton",
+            "module": "src/sdk/civitai-sign-in-button.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiSignInButton",
+          "declaration": {
+            "name": "defineCivitaiSignInButton",
+            "module": "src/sdk/civitai-sign-in-button.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-sign-in-button",
+          "declaration": {
+            "name": "CivitaiSignInButton",
+            "module": "src/sdk/civitai-sign-in-button.ts"
+          }
+        }
+      ]
     }
   ]
 }

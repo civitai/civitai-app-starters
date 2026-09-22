@@ -320,6 +320,27 @@ an app brings its own and pays for nothing it does not use.
 | `<civitai-button-group>` · `<civitai-input-group>` | **Light DOM**, because joining controls means reaching their `::part(button)` / `::part(control)`, and a part crosses exactly one boundary — reachable from the document, never from a shadow root the controls were slotted into. |
 | `<civitai-confirm-dialog>` | Extends `<civitai-modal>`, so the focus trap and the top layer come from one implementation. `await dialog.ask()` resolves `true`, `false` on cancel, and `false` on a dismissal — a caller is never left waiting. Destructive confirmations land focus on Cancel. |
 
+### Acting as the viewer
+
+`<civitai-sign-in-button>` does something rather than showing something: it
+starts the host's sign-in flow, through [`@civitai/sdk`](../civitai-sdk). That
+makes the SDK an **optional peer dependency** — install it only if you use an
+element like this one.
+
+```ts
+import '@civitai/components/civitai-sign-in-button/define';
+```
+
+```html
+<civitai-sign-in-button return-url="/gallery">Sign in to continue</civitai-sign-in-button>
+```
+
+These elements are not in `register`, `register-site`, `elements.js` or
+`site-elements.js`, so a page that wants only the look never bundles the SDK;
+`test/entry-points.test.ts` fails if one of them becomes reachable from there.
+The button is inert until the host's `BLOCK_INIT` lands: with no validated host
+origin a press sends nothing, and it renders disabled.
+
 ## Utilities
 
 Elements cover the components. They cannot cover the markup *between* them —
