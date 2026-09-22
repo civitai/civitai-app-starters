@@ -4,6 +4,7 @@ import type { AppWorkflow, AppWorkflowsParams } from '@civitai/app-sdk/blocks';
 
 import { getTransport } from '../internal/singleton.js';
 import { sendTypedRequest } from '../internal/transport.js';
+import { useRequestSequencer } from './useRequestSequencer.js';
 
 export type { AppWorkflow, AppWorkflowsParams };
 
@@ -51,8 +52,11 @@ export interface UseAppWorkflows {
  *
  * Fetches on mount and whenever `params` change (by value), and exposes `refetch`.
  * A host that never answers surfaces as an `error` after the transport's request
- * timeout — the hook never hangs. Late responses that arrive after unmount are
- * ignored.
+ * timeout — the hook never hangs. Only the LATEST list request may write state:
+ * a reply superseded by a newer `refetch` / params change — or one that lands
+ * after unmount — is dropped (#392). `cancel` is caller-driven and keeps its own
+ * mount guard: its functional `setWorkflows` splice is order-independent, so it
+ * is not a sequencing hazard.
  *
  * @example
  * const { workflows, cursor, loading, error, cancel } = useAppWorkflows({ limit: 20 });
@@ -64,6 +68,9 @@ export function useAppWorkflows(params?: AppWorkflowsParams): UseAppWorkflows {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
+  // `cancel` is caller-driven, not auto-issued, and its state write is a
+  // functional splice that is safe in any order — so it keeps a plain mount
+  // guard rather than joining the list request's sequence.
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -72,12 +79,17 @@ export function useAppWorkflows(params?: AppWorkflowsParams): UseAppWorkflows {
     };
   }, []);
 
+  // Latest-wins + unmount guard for the LIST request (#392): a reply may write
+  // state only if it answers the request this hook is CURRENTLY waiting for.
+  const seq = useRequestSequencer();
+
   // Serialize the params to a stable key so `refetch`'s identity only changes
   // when the params VALUE changes (not on every render's fresh object). The
   // callback re-parses the key so it closes over NOTHING but the key.
   const paramsKey = params ? JSON.stringify(params) : '';
 
   const refetch = useCallback(() => {
+    const token = seq.begin();
     setLoading(true);
     setError(null);
     const parsed = paramsKey ? (JSON.parse(paramsKey) as AppWorkflowsParams) : undefined;
@@ -88,7 +100,7 @@ export function useAppWorkflows(params?: AppWorkflowsParams): UseAppWorkflows {
       'APP_WORKFLOWS_RESULT',
     )
       .then((result) => {
-        if (!mountedRef.current) return;
+        if (!seq.isCurrent(token)) return;
         if (result.error || !result.result) {
           // `||`, not `??`: the reply validator gates `error` on SHAPE only, so a
           // host `error: ''` is a VALID reply that reaches here. `??` replaces only
@@ -102,11 +114,11 @@ export function useAppWorkflows(params?: AppWorkflowsParams): UseAppWorkflows {
         setLoading(false);
       })
       .catch((err: unknown) => {
-        if (!mountedRef.current) return;
+        if (!seq.isCurrent(token)) return;
         setError(err instanceof Error ? err : new Error(String(err)));
         setLoading(false);
       });
-  }, [paramsKey]);
+  }, [paramsKey, seq]);
 
   useEffect(() => {
     refetch();

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import type {
   BlockDailyCompensationParams,
@@ -7,6 +7,7 @@ import type {
 
 import { getTransport } from '../internal/singleton.js';
 import { sendTypedRequest } from '../internal/transport.js';
+import { useRequestSequencer } from './useRequestSequencer.js';
 
 /**
  * What {@link useDailyCompensation} returns.
@@ -44,8 +45,10 @@ export interface UseDailyCompensation {
  * `blocks.getMyDailyCompensation` mutation (scope `buzz:read:self`).
  *
  * Fetches on mount and whenever `params` change (by value), and exposes `refetch`.
- * A host that never answers surfaces as an `error` after the transport timeout;
- * late post-unmount responses are ignored.
+ * A host that never answers surfaces as an `error` after the transport timeout.
+ * Only the LATEST request may write state: a reply superseded by a newer
+ * `refetch` / params change — or one that lands after unmount — is dropped
+ * (#392).
  *
  * @example
  * const { resources, hasPublishedResources } = useDailyCompensation({ date: '2026-07-01' });
@@ -56,19 +59,18 @@ export function useDailyCompensation(params: BlockDailyCompensationParams): UseD
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  // Latest-wins + unmount guard in one predicate (#392): a reply may write state
+  // only if it answers the request this hook is CURRENTLY waiting for. A bare
+  // mount check would let a superseded request's slow reply overwrite newer
+  // state — nothing unmounted, so it passes.
+  const seq = useRequestSequencer();
 
   // Stable params key so `refetch`'s identity only changes when the params VALUE
   // changes; the callback re-parses it so it closes over nothing but the key.
   const paramsKey = JSON.stringify(params);
 
   const refetch = useCallback(() => {
+    const token = seq.begin();
     setLoading(true);
     setError(null);
     const parsed = JSON.parse(paramsKey) as BlockDailyCompensationParams;
@@ -78,7 +80,7 @@ export function useDailyCompensation(params: BlockDailyCompensationParams): UseD
       'DAILY_COMPENSATION_RESULT',
     )
       .then((result) => {
-        if (!mountedRef.current) return;
+        if (!seq.isCurrent(token)) return;
         if (result.error || !result.result) {
           // `||`, not `??`: the reply validator gates `error` on SHAPE only, so a
           // host `error: ''` is a VALID reply that reaches here. `??` replaces only
@@ -92,11 +94,11 @@ export function useDailyCompensation(params: BlockDailyCompensationParams): UseD
         setLoading(false);
       })
       .catch((err: unknown) => {
-        if (!mountedRef.current) return;
+        if (!seq.isCurrent(token)) return;
         setError(err instanceof Error ? err : new Error(String(err)));
         setLoading(false);
       });
-  }, [paramsKey]);
+  }, [paramsKey, seq]);
 
   useEffect(() => {
     refetch();

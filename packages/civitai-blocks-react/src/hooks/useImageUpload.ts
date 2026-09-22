@@ -60,7 +60,12 @@ interface ScanEntry {
   requestId: string;
   /** The buffered verdict once it arrives (host emits AT MOST ONCE per request). */
   verdict?: BlockImageScanResult;
-  /** `scanStatus()` callers awaiting a verdict that hasn't landed yet. */
+  /**
+   * `scanStatus()` callers awaiting a verdict that hasn't landed yet. Settled by
+   * the host push, by each waiter's own backstop timeout, or — if the hook
+   * unmounts first — by the unmount cleanup, which resolves them retryable
+   * (#393). A waiter is never left pending.
+   */
   waiters: Array<{
     resolve: (r: BlockImageScanResult) => void;
     timeoutId: ReturnType<typeof setTimeout>;
@@ -146,7 +151,9 @@ export function useImageUpload(options: { purpose?: 'display'; asyncScan: true }
    * Resolve the async scan verdict for a handle returned by `open()`. Re-callable
    * for retry: the host emits the verdict once and the hook buffers it, so a
    * re-call after an `'error'`/timeout re-awaits (or immediately returns) the same
-   * verdict. An unknown/expired handle resolves to a retryable `'error'`.
+   * verdict. An unknown/expired handle resolves to a retryable `'error'`, and so
+   * does a call that is still awaiting when the component UNMOUNTS — the promise
+   * always settles, never rejects, so no caller needs a `try`/`catch` (#393).
    */
   scanStatus: (handle: BlockPendingImageInfo) => Promise<BlockImageScanResult>;
 };
@@ -200,9 +207,30 @@ export function useImageUpload(options?: UseImageUploadOptions): {
     );
     return () => {
       unsubscribe();
+      // 🔴 #393 — SETTLE, DON'T JUST DISARM. This cleanup used to `clearTimeout`
+      // each waiter and stop there, which removed the ONLY remaining path to a
+      // settled promise: the listener is gone, so no verdict can ever arrive,
+      // and the backstop that would have resolved it has just been cancelled.
+      // An `await scanStatus(handle)` in flight at unmount therefore hung for
+      // the life of the page.
+      //
+      // RESOLVE, never reject: every other terminal path in this hook hands the
+      // caller a `BlockImageScanResult`, so rejecting here would be a new failure
+      // mode requiring a `try`/`catch` no existing caller has. `'error'` is the
+      // hook's RETRYABLE status, which is the honest verdict — the scan itself
+      // may well still be running server-side; this block just stopped watching.
       for (const entry of scans.values()) {
-        for (const w of entry.waiters) clearTimeout(w.timeoutId);
+        for (const w of entry.waiters) {
+          clearTimeout(w.timeoutId);
+          w.resolve({ status: 'error', message: 'scan status unavailable (the upload hook unmounted)' });
+        }
+        entry.waiters = [];
       }
+      // Drop the tracking map too, so a `scanStatus()` call made AFTER unmount
+      // takes the immediate unknown-handle path rather than registering a waiter
+      // against a listener that no longer exists (which would sit for the full
+      // SCAN_STATUS_TIMEOUT_MS — settled, but ten minutes late).
+      scans.clear();
     };
   }, []);
 
