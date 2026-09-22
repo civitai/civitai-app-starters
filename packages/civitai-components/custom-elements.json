@@ -7386,7 +7386,7 @@
               "name": "phase",
               "privacy": "public",
               "type": {
-                "text": "Phase"
+                "text": "WorkflowButtonPhase"
               },
               "default": "'idle'",
               "attribute": "phase"
@@ -7788,7 +7788,7 @@
             {
               "name": "phase",
               "type": {
-                "text": "Phase"
+                "text": "WorkflowButtonPhase"
               },
               "default": "'idle'",
               "fieldName": "phase"

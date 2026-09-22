@@ -300,6 +300,11 @@ const LEDGER = [
   '@civitai/components/civitai-radio-group#CivitaiRadioGroup :: extends :: CivitaiField',
   '@civitai/components/civitai-segmented-control#CivitaiSegmentedControl :: extends :: CivitaiField',
   '@civitai/components/civitai-select#CivitaiSelect :: extends :: CivitaiField',
+  // `AppClient` and `WorkflowTemplate` reach a consumer from `@civitai/sdk`,
+  // the optional peer this element needs anyway; the element's own `phase` type
+  // IS exported beside it.
+  '@civitai/components/civitai-workflow-button#CivitaiWorkflowButton :: property :: AppClient',
+  '@civitai/components/civitai-workflow-button#CivitaiWorkflowButton :: property :: WorkflowTemplate',
   '@civitai/components/civitai-sign-in-button#CivitaiSignInButton :: property :: BlockTransport',
   '@civitai/components/civitai-sign-in-button#CivitaiSignInButton :: property :: SignIn',
   '@civitai/components/civitai-slider#CivitaiSlider :: extends :: CivitaiField',

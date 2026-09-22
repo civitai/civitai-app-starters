@@ -25,7 +25,8 @@ const RUNNING_TEXT: Record<string, string> = {
   processing: 'working…',
 };
 
-type Phase = 'idle' | 'pricing' | 'running' | 'canceling' | 'settled';
+/** Where a run has got to. Exported so a consumer can name `phase`. */
+export type WorkflowButtonPhase = 'idle' | 'pricing' | 'running' | 'canceling' | 'settled';
 
 /** What a finished workflow says before the button offers its price again. */
 const SETTLED_TEXT: Record<string, string> = {
@@ -151,7 +152,7 @@ export class CivitaiWorkflowButton extends CivitaiElement {
   /** Defaults to `initialize()`, which only resolves inside a civitai.com page. */
   declare app?: AppClient;
   declare cost: number | null;
-  declare phase: Phase;
+  declare phase: WorkflowButtonPhase;
   declare status: string;
   declare copied: boolean;
   declare progress: number | null;
