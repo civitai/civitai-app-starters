@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { elements } from '../scripts/bindings.js';
+import { elements, usesSdk } from '../scripts/bindings.js';
 
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 // Both `import x from 'y'` / `export … from 'y'` AND a bare `import 'y'`, which
@@ -41,11 +41,27 @@ describe('entry points', () => {
     expect(external).not.toContain('@civitai/components/register');
   });
 
-  it('the `./elements` barrel registers every element', () => {
+  it('the `./elements` barrel registers every presentational element, and reaches no SDK', () => {
     const external = new Set(reachableSpecifiers('dist/elements/index.js'));
-    for (const { specifier } of elements()) {
-      expect(external, `the barrel must pull ${specifier}/define`).toContain(
-        `@civitai/components/${specifier}/define`
+    for (const entry of elements().filter((e) => !usesSdk(e))) {
+      expect(external, `the barrel must pull ${entry.specifier}/define`).toContain(
+        `@civitai/components/${entry.specifier}/define`
+      );
+    }
+    for (const { specifier } of elements().filter(usesSdk)) {
+      expect(
+        [...external].filter((s) => s.startsWith(`@civitai/components/${specifier}`)),
+        `the barrel must not reach ${specifier}, which pulls @civitai/sdk in`
+      ).toEqual([]);
+    }
+  });
+
+  it('binds the elements that act as the viewer, behind their own entry', () => {
+    const sdkBound = elements().filter(usesSdk);
+    expect(sdkBound.map((e) => e.tag)).toContain('civitai-sign-in-button');
+    for (const { specifier } of sdkBound) {
+      expect(reachableSpecifiers(`dist/elements/${specifier}.js`)).toContain(
+        `@civitai/components/${specifier}`
       );
     }
   });

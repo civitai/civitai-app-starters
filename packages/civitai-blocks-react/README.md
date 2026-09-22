@@ -1313,6 +1313,38 @@ For non-React or advanced use, the transport primitives are exported too:
 `readAllowedOriginsFromEnv`, `getTransport`, and `sendTypedRequest`. Hooks are the
 recommended surface; reach for these only when a hook doesn't fit.
 
+### How `allowedParentOrigins` entries are read
+
+Each entry is canonicalised with the URL parser before it is compared to
+`event.origin`, so these spellings all mean the same thing and all match a host
+frame at `https://civitai.com`:
+
+| Written as | Also matches |
+|---|---|
+| `https://civitai.com/` | trailing slash is ignored |
+| `HTTPS://CIVITAI.COM` | scheme and host are case-insensitive |
+| `https://civitai.com:443`, `http://x:80` | an explicit **default** port is ignored |
+| `https://пример.com` | normalised to the punycode a browser reports |
+
+These stay **significant** — they are different origins, not spellings:
+
+- a **non-default** port: `https://civitai.com:8443` does not match `https://civitai.com`
+- the scheme: `http://` never matches `https://`
+- a trailing-dot host: `https://civitai.com.` is its own origin
+- any host that merely *contains* an allowed one: `https://civitai.com.evil.com`
+  never matches `https://civitai.com`
+
+An entry that is not a bare origin **throws at construction** rather than being
+quietly skipped — no scheme (`civitai.com`), a path/query/fragment
+(`https://civitai.com/embed`), credentials (`https://u:p@civitai.com`), or a
+scheme with no origin of its own (`file://…`). A silently dropped entry is the
+failure this rule exists to prevent: the allowlist would be missing an origin
+you believe is on it.
+
+If `BLOCK_INIT` never lands, the 10s timeout error names the origins that
+actually arrived and were rejected, next to the allowlist it checked them
+against — start there.
+
 ## The `/testing` subexport
 
 `@civitai/blocks-react/testing` is the **host-simulation** entry point: it stands
@@ -1586,8 +1618,8 @@ Runnable, minimal blocks — one per feature, each with its own README:
 
 | `@civitai/blocks-react` | pairs with `@civitai/app-sdk` | adds |
 |---|---|---|
-| `0.50.x` | `^0.40.0` | `useCreatePostFromApp()` (`CREATE_POST_FROM_APP`) + the `posts:write:self` scope. 🔴 Same wide `peerDependencies` floor as the row below, so **npm will not warn you**: pairing this with an SDK below `0.40.0` fails at `tsc` with `Cannot find name 'BlockCreatePostHostError'`, not at install. |
-| `0.48.x` | `^0.38.0` | `useCollectionFollow()` + `<FollowButton>` / `<TipButton>` (`SET_COLLECTION_FOLLOW`). 🔴 The `peerDependencies` floor stays the deliberately-wide `>=0.29.0 <1.0.0` (#206 — a per-minor floor forced a major on consumers), so **npm will not warn you**: pairing this with an SDK below `0.38.0` fails at `tsc` with `Cannot find name 'BlockCollectionFollowErrorCode'`, not at install. |
+| `0.50.x` | `^0.40.0` | `useCreatePostFromApp()` (`CREATE_POST_FROM_APP`) + the `posts:write:self` scope. Pairing `0.50.x` with an SDK below `0.40.0` fails at `tsc` with `Cannot find name 'BlockCreatePostHostError'`, not at install. |
+| `0.48.x` | `^0.38.0` | `useCollectionFollow()` + `<FollowButton>` / `<TipButton>` (`SET_COLLECTION_FOLLOW`). Pairing `0.48.x` with an SDK below `0.38.0` fails at `tsc` with `Cannot find name 'BlockCollectionFollowErrorCode'`, not at install — the floor those releases declared was deliberately wide (#206 — a per-minor floor forced a major on consumers). |
 | `0.36.x` | `^0.27.0` | auto-installs the SDK's opaque-origin web-storage shim (`@civitai/app-sdk/safe-storage`) on import |
 | `0.29.x` | `^0.24.0` | `useAppWorkflows()` — app generator subqueue read + cancel (`QUERY_APP_WORKFLOWS` / `CANCEL_APP_WORKFLOW`) |
 | `0.27.x`–`0.28.x` | `^0.23.0` | async-scan image upload; transport validators for all `SHARED_*` / `APP_STORAGE_*` / picker replies |

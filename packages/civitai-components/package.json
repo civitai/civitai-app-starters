@@ -372,9 +372,11 @@
       "default": "./dist/sdk/civitai-sign-in-button.define.js"
     }
   },
+  "comment-packaging": "@civitai/* deps use workspace:^ not workspace:* (#374); `!dist/**/*.map` keeps dangling sourcemaps out of the tarball (#376). Rationale: scripts/check-shipped-sourcemaps.mjs.",
   "files": [
     "dist",
     "!dist/css",
+    "!dist/**/*.map",
     "demo",
     "styles.css",
     "elements.js",
@@ -400,7 +402,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@civitai/theme": "workspace:*",
+    "@civitai/theme": "workspace:^",
     "lit": "^3.3.3"
   },
   "peerDependencies": {

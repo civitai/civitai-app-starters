@@ -20,6 +20,8 @@
     "check:starter-pins": "node scripts/check-starter-pins.mjs",
     "check:starter-overrides": "node scripts/check-starter-workspace-overrides.mjs",
     "check:catalogs": "node scripts/check-orchestrator-catalogs.mjs",
+    "check:shipped-sourcemaps": "node scripts/check-shipped-sourcemaps.mjs",
+    "check:shipped-sourcemaps:selftest": "node scripts/check-shipped-sourcemaps.mjs --self-test",
     "sync:catalogs": "node scripts/sync-orchestrator-catalogs.mjs",
     "assert:published": "node scripts/assert-published-versions.mjs",
     "smoke:published-starters": "node scripts/smoke-published-starters.mjs",

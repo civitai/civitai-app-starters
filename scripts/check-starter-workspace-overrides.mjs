@@ -42,7 +42,64 @@
  * churn when changesets bumps the caret. The caret in package.json is still
  * what a tiged'd copy sees.
  *
- * FAILS (exit 1) on any of THREE conditions:
+ * SECOND QUESTION, SAME MECHANISM: THIRD-PARTY OVERRIDES (#390)
+ * ==============================================================
+ * `pnpm.overrides` is also where this repo pins SECURITY constraints on
+ * transitive third-party packages — today `"cookie@<0.7.0": "^0.7.0"`, because
+ * `@sveltejs/kit` declares `cookie: ^0.6.0` and `cookie <0.7.0` carries
+ * GHSA-pxg6-pf52-xh8x. And `pnpm.overrides` in THIS root manifest is read by
+ * pnpm only for THIS workspace.
+ *
+ * So the monorepo installs a safe `cookie` and CI is green, while the thing
+ * developers actually consume — `npx tiged
+ * civitai/civitai-app-starters/starters/sveltekit-app my-app` — copies the
+ * starter directory ALONE. The root manifest is not part of the copy. The
+ * scaffolded project resolves `cookie@0.6.0` and `npm audit` reports the
+ * advisory the monorepo appeared to have fixed. MEASURED, before the fix: a
+ * copy of `starters/sveltekit-app` installs `cookie@0.6.0` and audits 3 low,
+ * all rooted in that one package.
+ *
+ * Rule 4 below is the deterministic, offline form of "the constraint must
+ * travel": every third-party `pnpm.overrides` entry in the root has to be
+ * mirrored in each tiged-consumed starter's OWN manifest, under both
+ * `pnpm.overrides` (pnpm) and `overrides` (npm), so a scaffolded copy carries
+ * it whichever of the two the developer reaches for.
+ *
+ * 🔴 DELIBERATE DEPARTURE FROM #390's STATED CLOSING CONDITION, which asked for
+ * "a CI job that `tiged`s each starter into a temp dir, installs, and runs an
+ * audit". That job would key on the npm ADVISORY DATABASE, which is mutable and
+ * not under this repo's control: new advisories land constantly in transitive
+ * dependencies, and — as `kit`/`cookie` demonstrates — there may be NO upstream
+ * fix available when one does (`@sveltejs/kit@2.70.3` is latest and still wants
+ * `cookie: ^0.6.0`; there is no 2.70.4 to bump to). It would go red on days
+ * nobody touched the repo, for things nobody here can fix: a permanently-red
+ * gate, which is worse than no gate because it trains everyone to click
+ * through. This rule instead guards the MECHANISM that actually failed — an
+ * override that does not travel — with no network and no database.
+ *
+ * 🔴 IT OVER-APPLIES ON PURPOSE, and that is the trade. Only `sveltekit-app`
+ * resolves `cookie` at all (measured: `next-app`, `react-pwa`, `svelte-pwa` and
+ * `civitai-block-starter` resolve none), and NO starter resolves a `postcss`
+ * below the root's floor (measured: 8.5.15 inside this workspace, 8.5.28 in a
+ * standalone npm resolve — both above 8.5.10), so most of the mirrored entries
+ * are constraints with no referent: harmless no-ops that pnpm and npm simply
+ * never apply. The alternative is a per-package or per-starter exception list,
+ * which is hand-maintained machinery that goes stale the first time a dependency
+ * tree shifts — and shipping one would mean deciding, by hand, which of today's
+ * no-ops is still a no-op next month. An offline rule that over-applies
+ * harmlessly beats one that needs a resolver (or a network) to know where it
+ * applies.
+ *
+ * The no-ops are only harmless because the SELECTOR spelling is used rather
+ * than the bare one — see MIRROR_TARGETS for the measured `EOVERRIDE` this
+ * avoids in `next-app`, which devDepends on `postcss` directly.
+ *
+ * KNOWN GAP: yarn's `resolutions` is NOT required. Its matching semantics
+ * differ from both override formats, no starter documents a yarn workflow, and
+ * a third copy of the same constant in five manifests is more drift surface
+ * than the residual risk justifies. State it rather than imply coverage.
+ *
+ * FAILS (exit 1) on any of FOUR conditions:
  *
  *   1. MISSING OVERRIDE -- a starter declares a semver-range `@civitai/*` dep
  *      with no `workspace:` override, i.e. the next release would deadlock.
@@ -68,13 +125,22 @@
  *      deleted, a starter directory renamed out of the scan). An unasserted
  *      count is indistinguishable from a checker wired to nothing.
  *
+ *   4. UNMIRRORED THIRD-PARTY OVERRIDE -- a root `pnpm.overrides` entry for a
+ *      package that is NOT a `@civitai/*` workspace package is missing from
+ *      some tiged-consumed starter's own manifest (`pnpm.overrides` for pnpm
+ *      AND `overrides` for npm), or is mirrored with a different value. See
+ *      "SECOND QUESTION" above. Carries its own coverage floor
+ *      (MIN_MIRRORED_CONSTRAINTS) for the same reason rule 3 exists: with zero
+ *      third-party overrides in the root there is nothing to mirror and the
+ *      rule reports a clean run while checking nothing.
+ *
  * USAGE
  *   node scripts/check-starter-workspace-overrides.mjs   # or: pnpm check:starter-overrides
  *
  * TESTS
  *   tests/guards/check-starter-workspace-overrides.test.mjs  (node --test)
  */
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative, sep } from 'node:path';
 
@@ -98,6 +164,79 @@ const DEP_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'opti
  */
 const MIN_COVERED_PINS = 15;
 
+/**
+ * Floor for the number of (tiged-consumed starter x third-party root override)
+ * pairs rule 4 verifies. The tree carries 10: five starters mirroring the two
+ * third-party constraints (`cookie@<0.7.0`, `postcss@<8.5.10`).
+ *
+ * GROWTH always passes. A DROP means either a starter left the scan or the root
+ * stopped constraining a third-party package -- lower it in the SAME commit so
+ * the drop is reviewed rather than silent. Without it, deleting the root's
+ * `cookie` entry leaves rule 4 with nothing to check and a clean exit 0.
+ */
+const MIN_MIRRORED_CONSTRAINTS = 10;
+
+/**
+ * The manifest keys a tiged'd copy's package manager actually reads for an
+ * override. `pnpm.overrides` and `overrides` are BOTH required: the starters'
+ * READMEs say `pnpm install`, but an external developer who reaches for `npm
+ * install` gets a project pnpm's key cannot help. Yarn's `resolutions` is a
+ * stated gap -- see the docblock.
+ *
+ * 🔴 BOTH TAKE THE ROOT'S KEY VERBATIM, INCLUDING THE `@<range>` SELECTOR, and
+ * that is a MEASURED choice rather than a tidy one. npm accepts pnpm's
+ * selector-key spelling in its own `overrides` block -- measured on npm 11.16.0:
+ * `{"overrides": {"cookie@<0.7.0": "^0.7.0"}}` against `@sveltejs/kit@2.70.3`
+ * resolved `cookie@0.7.2`, 0 advisories. The BARE spelling (`{"cookie":
+ * "^0.7.0"}`) also works, but it is UNCONDITIONAL, and npm refuses an
+ * unconditional override of a package the manifest also depends on directly:
+ *
+ *     npm error code EOVERRIDE
+ *     npm error Override for postcss@^8.5.15 conflicts with direct dependency
+ *
+ * `next-app` devDepends on `postcss: ^8.5.15`, so the bare spelling of the
+ * root's `postcss@<8.5.10` constraint would make `npm install` FAIL in a
+ * scaffolded next-app -- while the selector spelling installs clean (measured:
+ * postcss@8.5.28, 0 advisories). One key for both managers also means one
+ * constant, so a value can never drift between the two blocks.
+ *
+ * The selector key form requires npm >= 8.3 (Node 16); these starters target
+ * Node 20+, which ships npm 10+.
+ *
+ * 🔴 BOTH ARE LOAD-BEARING, NOT BELT-AND-BRACES. Measured on pnpm 10.28.1: a
+ * scaffolded copy carrying ONLY the plain `overrides` key resolved
+ * `cookie@0.6.0` -- pnpm does not read it. With `pnpm.overrides` present:
+ * `cookie@0.7.2`. So neither block is redundant.
+ *
+ * 🔴 AND EXPECT A WARNING IN THIS WORKSPACE. `pnpm install` at the monorepo
+ * root prints, once per starter:
+ *
+ *     WARN  The field "pnpm.overrides" was found in
+ *           starters/<name>/package.json. This will not take effect. You should
+ *           configure "pnpm.overrides" at the root of the workspace instead.
+ *
+ * That is correct and harmless -- inside the workspace only the ROOT manifest's
+ * overrides apply, which is exactly why the root entry still exists -- and it
+ * is NOT a reason to delete the starter blocks. It is stated here, and in every
+ * starter's own `comment-overrides`, because an unexplained new warning on
+ * every install is precisely the thing someone "fixes" by removing the fix.
+ */
+const MIRROR_TARGETS = [
+  { label: 'pnpm.overrides', read: (json) => json?.pnpm?.overrides, manager: 'pnpm' },
+  { label: 'overrides', read: (json) => json?.overrides, manager: 'npm' },
+];
+
+/**
+ * Package name of an override KEY. pnpm keys may carry a version selector
+ * (`cookie@<0.7.0`), npm's are usually bare (`cookie`), and a scoped name
+ * contains an `@` of its own (`@civitai/app-sdk`) -- so the selector `@` is the
+ * first one after position 0.
+ */
+function overrideKeyPackageName(key) {
+  const at = key.indexOf('@', key.startsWith('@') ? 1 : 0);
+  return at === -1 ? key : key.slice(0, at);
+}
+
 /** Recursively collect package.json paths under `dir`, skipping node_modules/.git/dist. */
 function findPackageJsons(dir, out = []) {
   let entries;
@@ -113,6 +252,32 @@ function findPackageJsons(dir, out = []) {
     else if (e.isFile() && e.name === 'package.json') out.push(full);
   }
   return out;
+}
+
+/**
+ * The tiged-consumed starters' OWN root manifests -- `starters/<name>/package.json`
+ * for every directory under `starters/` except `examples/`.
+ *
+ * Rule 4's scope, and deliberately NOT the recursive `findPackageJsons` walk: a
+ * `npx tiged civitai/civitai-app-starters/starters/<name> my-app` copy makes
+ * exactly THIS file the new project's root manifest, and the root manifest is
+ * the only place an override can be declared. A nested package.json deeper in a
+ * starter would never be read as the project root.
+ */
+function tigedStarterManifests() {
+  let entries;
+  try {
+    entries = readdirSync(STARTERS_DIR, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const e of entries) {
+    if (!e.isDirectory() || e.name === 'examples' || e.name === 'node_modules') continue;
+    const file = join(STARTERS_DIR, e.name, 'package.json');
+    if (existsSync(file)) out.push(file);
+  }
+  return out.sort();
 }
 
 function readJson(file) {
@@ -173,8 +338,50 @@ function main() {
     }
   }
 
+  // ---- RULE 4: third-party root overrides must TRAVEL with a tiged copy ----
+  // Every root override key whose package is not a first-party @civitai/*
+  // workspace package. These exist for security posture, and the root manifest
+  // is not part of a `npx tiged starters/<name>` copy.
+  const thirdPartyOverrides = Object.entries(overrides).filter(
+    ([k, v]) => typeof v === 'string' && !overrideKeyPackageName(k).startsWith(SCOPE),
+  );
+
+  const mirrorMissing = []; // { file, key, pkg, want, target, found }
+  const mirrored = []; // { file, key } -- one per (starter x constraint) pair verified
+
+  for (const file of tigedStarterManifests()) {
+    const json = readJson(file);
+    for (const [key, want] of thirdPartyOverrides) {
+      const pkg = overrideKeyPackageName(key);
+      let ok = true;
+      for (const target of MIRROR_TARGETS) {
+        const block = target.read(json) ?? {};
+        // EXACT KEY, EXACT VALUE. Both managers accept the root's spelling
+        // verbatim (see MIRROR_TARGETS), so an exact match is achievable — and
+        // it pins the whole constraint rather than just the package name. A
+        // by-name comparison would pass a mirror that narrowed the selector.
+        if (block[key] !== want) {
+          ok = false;
+          const byName = Object.entries(block).find(([k]) => overrideKeyPackageName(k) === pkg);
+          mirrorMissing.push({
+            file,
+            key,
+            pkg,
+            want,
+            target,
+            found: key in block ? `"${key}": "${block[key]}"` : byName ? `"${byName[0]}": "${byName[1]}"` : null,
+          });
+        }
+      }
+      if (ok) mirrored.push({ file, key });
+    }
+  }
+
   for (const c of covered) {
     console.log(`OK   ${c.pkg} "${c.range}" is workspace-overridden  (${rel(c.file)})`);
+  }
+  for (const m of mirrored) {
+    console.log(`OK   root override "${m.key}" is mirrored for pnpm + npm  (${rel(m.file)})`);
   }
 
   let failed = false;
@@ -266,10 +473,76 @@ function main() {
     console.error('');
   }
 
+  if (mirrorMissing.length > 0) {
+    failed = true;
+    console.error('');
+    console.error('ERROR: A THIRD-PARTY ROOT OVERRIDE DOES NOT TRAVEL WITH `npx tiged`.');
+    console.error('');
+    console.error('       The root package.json "pnpm.overrides" constrains a third-party');
+    console.error('       package, but a starter does not declare that constraint in its OWN');
+    console.error('       manifest. `npx tiged civitai/civitai-app-starters/starters/<name>`');
+    console.error('       copies the starter DIRECTORY ONLY — the root manifest is not part of');
+    console.error('       the copy — so the scaffolded project resolves the unconstrained');
+    console.error('       version while this monorepo installs the safe one and CI stays green.');
+    console.error('');
+    console.error('       Measured for cookie@<0.7.0 before this rule existed: a copy of');
+    console.error('       starters/sveltekit-app resolved cookie@0.6.0 and `npm audit` reported');
+    console.error('       3 low advisories, all rooted in that one package.');
+    console.error('');
+    for (const m of mirrorMissing) {
+      console.error(
+        `  ${rel(m.file)} ["${m.target.label}"] — ${m.target.manager}\n` +
+          (m.found === null
+            ? `    no constraint on ${m.pkg}; the root declares "${m.key}": "${m.want}"`
+            : `    has ${m.found}; the root declares "${m.key}": "${m.want}"`),
+      );
+    }
+    console.error('');
+    console.error('  fix: add the root\'s entry VERBATIM to BOTH blocks of the starter\'s own');
+    console.error('  package.json, so the copy is covered whichever manager the developer uses:');
+    console.error('');
+    console.error('    "overrides": {          // npm');
+    for (const [key, want] of thirdPartyOverrides) console.error(`      "${key}": "${want}",`);
+    console.error('    },');
+    console.error('    "pnpm": { "overrides": {  // pnpm');
+    for (const [key, want] of thirdPartyOverrides) console.error(`      "${key}": "${want}",`);
+    console.error('    } }');
+    console.error('');
+    console.error('  Inside this workspace both are inert — only the ROOT manifest\'s overrides');
+    console.error('  are read — so this is not a second source of truth for the monorepo. It is');
+    console.error('  the constraint the tiged\'d copy needs, where the copy can see it.');
+    console.error('');
+  }
+
+  // Rule 4's own count assertion. With no third-party override in the root
+  // there is nothing to mirror, and rule 4 reports a clean run over an empty
+  // set — identical output to a fully mirrored tree.
+  if (mirrored.length < MIN_MIRRORED_CONSTRAINTS) {
+    failed = true;
+    console.error('');
+    console.error('ERROR: COVERAGE FLOOR — third-party override mirroring dropped.');
+    console.error('');
+    console.error(
+      `       ${mirrored.length} verified (starter x third-party override) pair(s) < floor ${MIN_MIRRORED_CONSTRAINTS}.`,
+    );
+    console.error('');
+    console.error('       Either a starter left the scan, or the root stopped constraining a');
+    console.error('       third-party package. Both leave rule 4 checking nothing while');
+    console.error('       exiting 0.');
+    console.error('');
+    console.error('  If the drop is deliberate, lower MIN_MIRRORED_CONSTRAINTS in');
+    console.error(`  ${rel(join(HERE, 'check-starter-workspace-overrides.mjs'))} in the SAME`);
+    console.error('  commit, so it is reviewed rather than silent.');
+    console.error('');
+  }
+
   if (failed) process.exit(1);
 
   console.log(
     `\nOK: ${covered.length} published-range @civitai/* starter pin(s) are all workspace-overridden — a version bump cannot deadlock the release. (floor ${MIN_COVERED_PINS})`,
+  );
+  console.log(
+    `OK: ${thirdPartyOverrides.length} third-party root override(s) mirrored into every tiged-consumed starter for both pnpm and npm — ${mirrored.length} pair(s) verified. (floor ${MIN_MIRRORED_CONSTRAINTS})`,
   );
 }
 

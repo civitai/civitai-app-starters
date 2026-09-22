@@ -525,4 +525,87 @@ describe('useImageUpload — asyncScan (non-blocking display)', () => {
       message: 'unknown or expired upload handle',
     });
   });
+
+  /**
+   * #393 — UNMOUNT MUST SETTLE PENDING `scanStatus()` CALLERS.
+   *
+   * The unmount cleanup used to `clearTimeout` every waiter's backstop and then
+   * walk away, which REMOVED the only future settle path: an `await
+   * scanStatus(handle)` in flight when the block unmounted hung for the life of
+   * the page. A caller awaiting a verdict needs a SETTLED promise more than it
+   * needs a correct one, so unmount resolves every waiter with the RETRYABLE
+   * `'error'` shape the hook already uses for a timeout / an unknown handle —
+   * never a rejection, so no caller needs a new `try`/`catch`.
+   */
+  it('UNMOUNT settles every pending scanStatus() promise (#393)', async () => {
+    const { result, unmount } = renderHook(() => useImageUpload({ asyncScan: true }));
+    let pick!: Promise<BlockPendingImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    const requestId = lastSent().payload.requestId;
+    replyResult(requestId, PENDING);
+    const handle = (await pick)!;
+
+    let verdict!: Promise<BlockImageScanResult>;
+    let second!: Promise<BlockImageScanResult>;
+    act(() => {
+      verdict = result.current.scanStatus!(handle);
+      second = result.current.scanStatus!(handle);
+    });
+
+    // Positive control on the harness: BOTH are genuinely pending beforehand, so
+    // a later settle cannot be an artifact of the promise never having waited.
+    let settledEarly = false;
+    void verdict.then(() => {
+      settledEarly = true;
+    });
+    await Promise.resolve();
+    expect(settledEarly).toBe(false);
+
+    act(() => {
+      unmount();
+    });
+
+    const UNMOUNTED = {
+      status: 'error',
+      message: 'scan status unavailable (the upload hook unmounted)',
+    };
+    await expect(settleWithin(verdict, 50)).resolves.toEqual(UNMOUNTED);
+    await expect(settleWithin(second, 50)).resolves.toEqual(UNMOUNTED);
+  });
+
+  it('scanStatus() AFTER unmount resolves immediately rather than arming a 10-minute wait (#393)', async () => {
+    const { result, unmount } = renderHook(() => useImageUpload({ asyncScan: true }));
+    let pick!: Promise<BlockPendingImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyResult(lastSent().payload.requestId, PENDING);
+    const handle = (await pick)!;
+
+    act(() => {
+      unmount();
+    });
+
+    // The tracking map is dropped on unmount, so a post-unmount call takes the
+    // existing unknown-handle path (retryable, immediate) instead of registering
+    // a waiter nothing will ever resolve.
+    await expect(settleWithin(result.current.scanStatus!(handle), 50)).resolves.toEqual({
+      status: 'error',
+      message: 'unknown or expired upload handle',
+    });
+  });
 });
+
+/**
+ * Resolve to `STILL_PENDING` if `p` has not settled within `ms`. Makes "the
+ * promise hangs" a readable assertion failure instead of a suite-level timeout.
+ */
+const STILL_PENDING = { __stillPending: true } as const;
+function settleWithin<T>(p: Promise<T>, ms: number): Promise<T | typeof STILL_PENDING> {
+  return Promise.race([
+    p,
+    new Promise<typeof STILL_PENDING>((resolve) => setTimeout(() => resolve(STILL_PENDING), ms)),
+  ]);
+}

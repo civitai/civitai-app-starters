@@ -57,6 +57,7 @@
 import type {
   BlockInitPayload,
   BlockWorkflowSnapshot,
+  ParentToBlockMessageType,
   Theme,
   WrappedToken,
 } from '@civitai/app-sdk/blocks';
@@ -841,9 +842,18 @@ const GATED_IMAGE_STATUSES = new Set<string>(['visible', 'hidden']);
  * `imageId` is always a finite number and `status` one of `visible`/`hidden`.
  *  - `visible` → `url` a non-empty string and `width`/`height` each
  *    `number | null`, PLUS exactly one of two rating shapes (below).
- *  - `hidden`  → ONLY `imageId` + `status`. A `hidden` entry carrying a `url` is
- *    REJECTED — defense in depth against a buggy/hostile host leaking an
- *    unclamped url on an image the viewer isn't allowed to see.
+ *  - `hidden`  → `imageId` + `status`, and a `url` on one is REJECTED — defense
+ *    in depth against a buggy/hostile host leaking an unclamped url on an image
+ *    the viewer isn't allowed to see.
+ *
+ * 🔴 THIS PREDICATE DOES **NOT** ENFORCE AN ALLOWLIST ON A `hidden` ENTRY, AND AN
+ * EARLIER VERSION OF THIS DOCBLOCK CLAIMED IT DID ("ONLY imageId + status").
+ * It bans exactly one SPELLING — the literal key `url`. `previewUrl`, `src`,
+ * `imageUrl` or any other key sails through here. The allowlist is real, but it
+ * lives one step later, in {@link projectGatedImage}: every `hidden` entry is
+ * narrowed to `{ imageId, status }` at the transport boundary, so no extra key
+ * can reach a consumer. See that function for why the split is PROJECTION for
+ * unknown keys and REJECTION for `url`.
  *
  * 🔴 THE TWO `visible` SHAPES ARE MUTUALLY EXCLUSIVE, AND THAT IS ENFORCED.
  * A RATED entry carries `nsfwLevel` + `contentRating` and NO `ratingPending`; an
@@ -888,10 +898,53 @@ function isValidGatedImage(img: unknown): boolean {
     }
     return true;
   }
-  // status === 'hidden': ONLY imageId + status. A leaked `url` on a hidden entry
-  // is the exact cross-user moderation-boundary breach this guard exists to catch.
+  // status === 'hidden'. A leaked `url` is the exact cross-user moderation-
+  // boundary breach this guard exists to catch, and the contract forbids the key
+  // outright, so it is fatal here. Every OTHER key is left to
+  // `projectGatedImage`, which drops it — see that function's docblock for why
+  // the two cases are handled differently. This line is NOT an allowlist.
   if ('url' in img) return false;
   return true;
+}
+
+/**
+ * Narrow ONE already-validated gated-image entry to the keys its `status`
+ * permits: a `hidden` entry becomes exactly `{ imageId, status }`; a `visible`
+ * entry is returned unchanged.
+ *
+ * 🔴 THIS IS WHERE THE `hidden` ALLOWLIST ACTUALLY LIVES. `isValidGatedImage`
+ * bans one spelling (`url`); this drops every key that is not `imageId` or
+ * `status`, so `previewUrl` / `src` / `imageUrl` / anything a future host adds
+ * cannot reach a consumer of `IMAGES_RESULT`.
+ *
+ * 🔴 WHY PROJECTION AND NOT REJECTION, for everything except `url`. A `false`
+ * from `isValidGatedImage` fails the WHOLE batch: `isValidImagesResult` returns
+ * false for one bad entry, `handleMessage` drops the entire `IMAGES_RESULT`
+ * before the pending-request lookup, and `useGatedImages().getImages()` then
+ * hangs to its transport timeout rather than rejecting. That failure mode is
+ * already documented in `useGatedImages.test.tsx` — it is what the
+ * `ratingPending` shape had to be admitted to avoid. The host is
+ * `civitai/civitai`, a separate repo on a separate release cadence, so an
+ * allowlist-by-rejection would convert ANY future host-side field addition into
+ * a block-wide hang. Dropping the key delivers the same moderation guarantee
+ * (nothing extra reaches a consumer) and costs a forward-compatible host
+ * nothing.
+ *
+ * `url` stays fatal because it is the one key the contract explicitly forbids on
+ * a `hidden` entry: a host can never legitimately add it, so it carries no
+ * forward-compat risk, and its presence is a live moderation breach worth
+ * surfacing loudly (`console.warn` + a `BLOCK_MESSAGE_REJECTED` report) rather
+ * than silently papering over.
+ *
+ * Identity-preserving: an entry that already satisfies the allowlist is returned
+ * as-is, so the common path allocates nothing.
+ */
+function projectGatedImage(img: unknown): unknown {
+  if (!isObject(img)) return img;
+  if (img.status !== 'hidden') return img;
+  const keys = Object.keys(img);
+  if (keys.length === 2 && 'imageId' in img && 'status' in img) return img;
+  return { imageId: img.imageId, status: img.status };
 }
 
 /**
@@ -900,6 +953,10 @@ function isValidGatedImage(img: unknown): boolean {
  * with neither is malformed and dropped. Each image is shape-checked via
  * {@link isValidGatedImage} — a `hidden` entry that carries a `url` DROPS the whole
  * reply (defense in depth against a leaked unclamped url).
+ *
+ * Validation only. The `hidden` ALLOWLIST is applied separately, by
+ * {@link projectInboundPayload} → {@link projectGatedImage}, after this returns
+ * true.
  */
 export function isValidImagesResult(p: unknown): boolean {
   if (!isObject(p)) return false;
@@ -1332,16 +1389,67 @@ export function isValidUserCheckpointSetResult(p: unknown): boolean {
 }
 
 /**
+ * Narrow an already-VALIDATED inbound payload to the fields a consumer is
+ * allowed to see, immediately before `iframeTransport` hands it to a pending
+ * request or a push listener.
+ *
+ * Validation answers "may this message be delivered at all"; projection answers
+ * "which of its fields may cross". They are deliberately separate steps: a
+ * predicate can only ever say yes/no about the WHOLE reply, so expressing an
+ * allowlist as a predicate makes one unexpected key fatal to every entry in the
+ * batch. See {@link projectGatedImage} for the concrete case and the hang it
+ * avoids.
+ *
+ * 🔴 SCOPE, STATED HONESTLY: `IMAGES_RESULT` is the ONLY type projected today.
+ * Every other type is returned by identity — this is not a general sanitizer and
+ * must not be read as one. Add a case here (and say so in the type's validator
+ * docblock) if another message ever needs one.
+ */
+export function projectInboundPayload(type: string, payload: unknown): unknown {
+  if (type !== 'IMAGES_RESULT') return payload;
+  if (!isObject(payload)) return payload;
+  const result = payload.result;
+  if (!isObject(result) || !Array.isArray(result.images)) return payload;
+  let changed = false;
+  const images = result.images.map((img) => {
+    const projected = projectGatedImage(img);
+    if (projected !== img) changed = true;
+    return projected;
+  });
+  // Identity when nothing was dropped, so the overwhelmingly common path neither
+  // allocates nor perturbs object identity for anything downstream.
+  if (!changed) return payload;
+  return { ...payload, result: { ...result, images } };
+}
+
+/**
  * Returns the validator for an inbound message type, or `null` for types
  * that don't carry a payload requiring shape checks (SUSPEND/RESUME).
  *
  * Falsy result from the validator means "drop the message"; `iframeTransport`
  * pairs that with a `console.warn` carrying the type name.
+ *
+ * 🔴 EXHAUSTIVE OVER `ParentToBlockMessage` AT COMPILE TIME. The `default:` arm
+ * binds the switch subject to `never`, so a union member with no `case` above
+ * fails `tsc` with `Type '"NEW_TYPE"' is not assignable to type 'never'`. Adding
+ * a message type to the protocol and forgetting its validator is therefore a
+ * BUILD error, not a silent unvalidated path.
+ *
+ * ⚠️ The gate proves the type is MAPPED, not that it is mapped to the RIGHT
+ * validator, and not that it is mapped to a validator at all rather than to
+ * `null` — `case 'NEW_TYPE': return null;` satisfies it. `validate.test.ts`
+ * covers that residual by asserting a validator (not `null`) for every
+ * payload-carrying type, plus identity for the highest-stakes few.
  */
 export function payloadValidatorFor(
   type: string,
 ): ((payload: unknown) => boolean) | null {
-  switch (type) {
+  // Widened to `string` on the parameter so a JavaScript caller — and a block
+  // running under a NEWER host than it was built against — reaches the
+  // `default:` arm rather than bypassing the lookup. Narrowed here so the switch
+  // has a union subject for the exhaustiveness check to bind.
+  const messageType = type as ParentToBlockMessageType;
+  switch (messageType) {
     case 'BLOCK_INIT':
       return isValidBlockInitPayload;
     case 'TOKEN_REFRESH':
@@ -1381,11 +1489,10 @@ export function payloadValidatorFor(
       return isValidImagesResult;
     case 'COLLECTION_FOLLOW_RESULT':
       return isValidCollectionFollowResult;
-    // 🔴 THIS ENTRY IS NOT COMPILER-ENFORCED — the `default:` arm below returns
-    // `null`, which is a STRUCTURAL PASS. Omitting it would not fail the build
-    // and would not fail typecheck; it would ship an UNVALIDATED path, and
-    // there is a test (`payloadValidatorFor` mapping pin) that exists only
-    // because that failure is otherwise invisible.
+    // 🔴 PRESENCE of this entry IS compiler-enforced (the `never` bind in
+    // `default:`); WHICH validator it names is not. This reply settles a PUBLIC
+    // POST, so the identity is pinned by test as well — see the mapping pin in
+    // `validate.test.ts`.
     case 'CREATE_POST_RESULT':
       return isValidCreatePostResult;
     case 'IMAGE_UPLOAD_RESULT':
@@ -1431,9 +1538,38 @@ export function payloadValidatorFor(
     case 'SUSPEND':
     case 'RESUME':
       return null;
-    default:
-      // Unknown type names get a structural pass; handleMessage's earlier
-      // `isMessage` branches won't match them anyway.
+    default: {
+      // ── COMPILE-TIME TOTALITY GATE ─────────────────────────────────────────
+      // Every `ParentToBlockMessage` member is handled above, so the subject
+      // narrows to `never` here. Add a member to the union without a `case` and
+      // this assignment fails:
+      //   Type '"NEW_TYPE"' is not assignable to type 'never'.
+      // Do NOT "fix" that by widening this binding — the error IS the gate.
+      const exhaustive: never = messageType;
+      void exhaustive;
+
+      // ── RUNTIME: a type the union does not declare ─────────────────────────
+      // 🔴 THIS ARM IS A STRUCTURAL PASS, AND THAT IS A DELIBERATE CHOICE
+      // RATHER THAN AN OVERSIGHT — an earlier comment here justified it with
+      // "handleMessage's earlier `isMessage` branches won't match them anyway",
+      // which is true but is only a third of the reason and reads as if the
+      // other paths had been checked. They have been, so state it: a type
+      // outside the union cannot reach `pending.resolve` (`sendRequest`'s
+      // `responseType` is keyed to the union), cannot reach a push listener
+      // (`onMessage`'s `type` is too), and matches none of the three `isMessage`
+      // branches. It is a no-op in `handleMessage` either way, so returning a
+      // rejecting validator would protect nothing and would cost real
+      // forward-compatibility: a host that has shipped a new message type ahead
+      // of this package would make every older block in the fleet emit a
+      // `console.warn` reading "dropping malformed …" (it is not malformed, it
+      // is unrecognised) plus an unbudgeted `BLOCK_MESSAGE_REJECTED` beacon
+      // labelled `other` on every delivery.
+      //
+      // The residual hole this leaves is narrow and worth naming: an UNTYPED
+      // JavaScript consumer that registers `onMessage('SOME_FUTURE_TYPE', …)`
+      // receives that payload unvalidated. Nothing in this package can validate
+      // a type it does not know; such a consumer must validate for itself.
       return null;
+    }
   }
 }

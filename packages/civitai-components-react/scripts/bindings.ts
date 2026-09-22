@@ -55,9 +55,6 @@ function bodyOf(file: string, className: string): string {
   return source.slice(start, next === -1 ? undefined : next);
 }
 
-const inElements = (specifier: string): string =>
-  join(componentsRoot, 'src', 'elements', `${specifier}.ts`);
-
 /**
  * This class's body AND every superclass in the package: a subclass inherits
  * the events its base dispatches, and a React prop for them either way.
@@ -66,7 +63,7 @@ export function classBody(tag: string): string {
   const entry = elements().find((e) => e.tag === tag);
   if (!entry) return '';
 
-  const bodies = [bodyOf(inElements(entry.specifier), entry.className)];
+  const bodies = [bodyOf(join(componentsRoot, entry.path), entry.className)];
   let superclass = entry.superclass;
   const seen = new Set<string>();
   while (superclass?.module?.startsWith('/src/') && !seen.has(superclass.name)) {
@@ -107,6 +104,8 @@ export interface ElementEntry {
   className: string;
   /** The package export the class and its `/define` live behind. */
   specifier: string;
+  /** Where the source sits: elements are not all in one folder. */
+  path: string;
   superclass?: { name: string; module?: string };
 }
 
@@ -123,11 +122,15 @@ export function elements(): ElementEntry[] {
           tag: declaration.tagName!,
           className: declaration.name!,
           specifier: basename(module.path, '.ts'),
+          path: module.path,
           superclass: declaration.superclass,
         }))
     )
     .sort((a, b) => a.tag.localeCompare(b.tag));
 }
+
+/** Acts as the viewer through @civitai/sdk, so it stays out of the barrel. */
+export const usesSdk = (entry: ElementEntry): boolean => entry.path.startsWith('src/sdk/');
 
 export const pascal = (tag: string): string =>
   tag.replace(/(^|-)([a-z])/g, (_, __, letter: string) => letter.toUpperCase());
@@ -177,9 +180,10 @@ ${eventLines}
   out.set(
     'index.ts',
     `${BANNER}
-// Importing this barrel registers EVERY element. Import a single binding
-// instead when bundle size matters.
+// Importing this barrel registers every presentational element. Import a single
+// binding instead when bundle size matters, or for one that needs @civitai/sdk.
 ${elements()
+  .filter((entry) => !usesSdk(entry))
   .map(({ tag }) => `export { ${pascal(tag)} } from './${tag}.js';`)
   .join('\n')}
 `

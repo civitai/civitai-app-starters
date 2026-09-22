@@ -916,6 +916,68 @@ describe('createLiveHost — picker (serves the catalog locally, no longer a stu
     expect(String(catalogCall![0])).toContain('types=LORA');
   });
 
+  // ── #391 ────────────────────────────────────────────────────────────────
+  // The live picker branched its converter on the REQUESTED MODEL TYPE, not on
+  // the channel it replies to. So `OPEN_RESOURCE_PICKER { resourceType:
+  // 'Checkpoint' }` — a legitimate, common request — took the `Checkpoint`
+  // branch and dispatched a `cardToCheckpoint()` projection (5 fields) under
+  // `RESOURCE_PICKER_RESULT`, where consumers read `BlockResourceInfo`. The
+  // REQUIRED `modelType` was therefore `undefined` and failed at use.
+  //
+  // RED AT BASE with "expected undefined to be 'Checkpoint'". `tsc` could not
+  // see it: the branch is a runtime string comparison and the two converters
+  // return different declared types, so no call site was ever checked against
+  // the channel it replies on.
+  it('OPEN_RESOURCE_PICKER (Checkpoint) dispatches a BlockResourceInfo WITH modelType (#391)', async () => {
+    install([CKPT_MODEL], (h) => h.selectFirst());
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('OPEN_RESOURCE_PICKER', { requestId: 'r-res-ckpt', resourceType: 'Checkpoint' });
+    const payload = await waitForMessage(inbound, 'RESOURCE_PICKER_RESULT');
+
+    expect(payload.requestId).toBe('r-res-ckpt');
+    const selected = payload.selected as BlockResourceInfo;
+    // The single field the bug dropped, asserted on its own first so a failure
+    // names it rather than printing a whole-object diff.
+    expect(selected.modelType).toBe('Checkpoint');
+    // And the WHOLE payload, so a future converter swap that adds or drops a
+    // field is loud too.
+    expect(selected).toEqual({
+      versionId: 9001,
+      modelId: 100,
+      modelName: 'Awesome XL',
+      versionName: 'v2.0',
+      baseModel: 'SDXL 1.0',
+      modelType: 'Checkpoint',
+    });
+  });
+
+  // The other half of #391's fix: passing the channel down must not make the
+  // two channels return the SAME shape. A Checkpoint-typed request on the
+  // CHECKPOINT channel still gets the narrow `BlockCheckpointInfo` projection —
+  // no `modelType`, which that interface does not declare.
+  //
+  // GREEN AT BASE AND AT HEAD by design: this is the no-regression half, and it
+  // is an invariant guard, not regression coverage. It is what would have gone
+  // red had the fix been "just make `cardToCheckpoint` populate `modelType`".
+  it('CHECKPOINT channel still gets the narrow BlockCheckpointInfo (no modelType) (#391)', async () => {
+    install([CKPT_MODEL], (h) => h.selectFirst());
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('OPEN_CHECKPOINT_PICKER', { requestId: 'r-ckpt-shape', baseModelGroup: 'SDXL' });
+    const payload = await waitForMessage(inbound, 'CHECKPOINT_PICKER_RESULT');
+
+    const selected = payload.selected as Record<string, unknown>;
+    expect(Object.keys(selected).sort()).toEqual([
+      'baseModel',
+      'modelId',
+      'modelName',
+      'versionId',
+      'versionName',
+    ]);
+    expect('modelType' in selected).toBe(false);
+  });
+
   it('OPEN_RESOURCE_PICKER dismissal yields NO selected', async () => {
     install([LORA_MODEL], (h) => h.dismiss());
     await waitForMessage(inbound, 'BLOCK_INIT');
@@ -1588,6 +1650,236 @@ describe('createLiveHost — SHARED storage (served via apps.shared.*)', () => {
     const payload = await waitForMessage(inbound, 'SHARED_VOTE_RESULT');
     expect(payload.error).toBe('FORBIDDEN');
     expect(payload.count).toBe(0);
+  });
+
+  // ── #386 ────────────────────────────────────────────────────────────────
+  // SHARED_GET and SHARED_REPORT had NO case in liveHost at all. They fell
+  // through the switch's `default: return` with no reply, so every one of the
+  // assertions below timed out instead of failing: the block sat for the full
+  // 30s protocol timeout and then threw a generic RequestTimeoutError, while
+  // the identical call resolved under dev:mock.
+  it('SHARED_GET → apps.shared.get (GET) → the row, ISO-normalized (#386)', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('apps.shared.get?') || url.includes('apps.shared.get&')) {
+        return trpcData({
+          item: {
+            key: 'req:1',
+            authorUserId: 7,
+            value: { title: 'Dark mode' },
+            count: 3,
+            createdAt: '2026-05-01T00:00:00.000Z',
+            updatedAt: '2026-05-02T00:00:00.000Z',
+            viewerVoted: true,
+          },
+        });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('SHARED_GET', { requestId: 'r-g', key: 'req:1' });
+    const payload = await waitForMessage(inbound, 'SHARED_GET_RESULT');
+    expect(payload.requestId).toBe('r-g');
+    expect(payload.error).toBeUndefined();
+    const item = payload.item as Record<string, unknown>;
+    expect(item.key).toBe('req:1');
+    expect(item.count).toBe(3);
+    expect(item.createdAt).toBe('2026-05-01T00:00:00.000Z');
+    // The field that exists so a `?g=` deep-link can hydrate its vote button
+    // instead of guessing — forwarded, not dropped.
+    expect(item.viewerVoted).toBe(true);
+
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('apps.shared.get'))!;
+    expect((call[1] as RequestInit).method).toBe('GET');
+    expect(decodeInputParam(String(call[0]))).toEqual({
+      json: { blockToken: TOKEN, key: 'req:1' },
+    });
+  });
+
+  it('SHARED_GET on a missing/hidden row → item: null and NO error (#386)', async () => {
+    // A miss must resolve cleanly to "not found" rather than erroring — that is
+    // what stops a deep-link to a withdrawn or moderated row from leaking the
+    // difference between "hidden from you" and "does not exist".
+    installWithFetch(async (url) => {
+      if (url.includes('apps.shared.get')) return trpcData({ item: null });
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARED_GET', { requestId: 'r-gm', key: 'gone' });
+    const payload = await waitForMessage(inbound, 'SHARED_GET_RESULT');
+    expect(payload.item).toBeNull();
+    expect(payload.error).toBeUndefined();
+  });
+
+  it('SHARED_GET accepts a BARE row as well as an `{ item }` envelope (#386)', async () => {
+    // The sibling reads disagree about envelopes (`getCount` → `{ count }`,
+    // `withdraw` → bare `{ deleted }`), so an envelope guess that was wrong
+    // would turn every hit into a silent `item: null` — "the row does not
+    // exist" for a row that does. Both shapes resolve to the same item.
+    installWithFetch(async (url) => {
+      if (url.includes('apps.shared.get')) {
+        return trpcData({
+          key: 'req:2',
+          authorUserId: 9,
+          value: { title: 'bare' },
+          count: 1,
+          createdAt: '2026-05-03T00:00:00.000Z',
+          updatedAt: '2026-05-03T00:00:00.000Z',
+        });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARED_GET', { requestId: 'r-gb', key: 'req:2' });
+    const payload = await waitForMessage(inbound, 'SHARED_GET_RESULT');
+    const item = payload.item as Record<string, unknown>;
+    expect(item.key).toBe('req:2');
+    expect(item.authorUserId).toBe(9);
+    expect(item.count).toBe(1);
+  });
+
+  it('SHARED_LIST forwards a server-sent viewerVoted, and omits it otherwise (#386)', async () => {
+    // The row mapper is now ONE function shared with SHARED_GET. That
+    // consolidation is what carries `viewerVoted` onto the list path too —
+    // additive and optional, so a host that predates the field is unchanged.
+    installWithFetch(async (url) => {
+      if (url.includes('apps.shared.list')) {
+        return trpcData({
+          items: [
+            { key: 'a', authorUserId: 1, value: {}, count: 0, createdAt: 'x', updatedAt: 'y', viewerVoted: true },
+            { key: 'b', authorUserId: 2, value: {}, count: 0, createdAt: 'x', updatedAt: 'y' },
+          ],
+          nextCursor: null,
+        });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARED_LIST', { requestId: 'r-lv', limit: 5 });
+    const payload = await waitForMessage(inbound, 'SHARED_LIST_RESULT');
+    const items = payload.items as Array<Record<string, unknown>>;
+    expect(items[0].viewerVoted).toBe(true);
+    expect('viewerVoted' in items[1]).toBe(false);
+  });
+
+  it('SHARED_GET backend error → error reply (never hangs) (#386)', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('apps.shared.get')) return trpcErr('FORBIDDEN', 403);
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARED_GET', { requestId: 'r-ge', key: 'req:1' });
+    const payload = await waitForMessage(inbound, 'SHARED_GET_RESULT');
+    expect(payload.error).toBe('FORBIDDEN');
+    expect(payload.item).toBeNull();
+  });
+
+  it('SHARED_REPORT → apps.shared.report (POST) → ok, forwarding `reason` (#386)', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('apps.shared.report')) return trpcData({ ok: true });
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('SHARED_REPORT', { requestId: 'r-rep', key: 'req:1', reason: 'spam' });
+    const payload = await waitForMessage(inbound, 'SHARED_REPORT_RESULT');
+    expect(payload.requestId).toBe('r-rep');
+    expect(payload.ok).toBe(true);
+    expect(payload.error).toBeUndefined();
+
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('apps.shared.report'))!;
+    expect((call[1] as RequestInit).method).toBe('POST');
+    expect(JSON.parse(String((call[1] as RequestInit).body))).toEqual({
+      json: { blockToken: TOKEN, key: 'req:1', reason: 'spam' },
+    });
+  });
+
+  it('SHARED_REPORT without a reason omits the field entirely (#386)', async () => {
+    // Not `reason: ''`. The field is optional free text; sending an empty
+    // string is a different input from sending none, and the server bounds it.
+    installWithFetch(async (url) => {
+      if (url.includes('apps.shared.report')) return trpcData({ ok: true });
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARED_REPORT', { requestId: 'r-rep2', key: 'req:1' });
+    await waitForMessage(inbound, 'SHARED_REPORT_RESULT');
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('apps.shared.report'))!;
+    expect(JSON.parse(String((call[1] as RequestInit).body))).toEqual({
+      json: { blockToken: TOKEN, key: 'req:1' },
+    });
+  });
+
+  it('SHARED_REPORT backend error → ok:false + error (never hangs) (#386)', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('apps.shared.report')) return trpcErr('NOT_FOUND', 404);
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SHARED_REPORT', { requestId: 'r-repe', key: 'nope' });
+    const payload = await waitForMessage(inbound, 'SHARED_REPORT_RESULT');
+    expect(payload.ok).toBe(false);
+    expect(payload.error).toBe('NOT_FOUND');
+  });
+});
+
+describe('createLiveHost — SAVE_IMAGE (refused, honest-by-design) (#386)', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+
+  beforeEach(() => {
+    inbound = collectInbound();
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  function install() {
+    const host = createLiveHost({
+      blockToken: fakeJwt(DEFAULT_CLAIMS),
+      viewer: { id: 42, username: 'dev' },
+      fetchImpl: vi.fn(async () => {
+        throw new Error('SAVE_IMAGE must not touch the network');
+      }) as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+  }
+
+  // Before #386, SAVE_IMAGE had no case at all: it fell through `default:
+  // return` and `useSaveImage().saveImage(...)` hung for 30s before throwing a
+  // generic RequestTimeoutError. The refusal is IMMEDIATE and names the
+  // harness, so the dev learns what to do instead.
+  it('replies ok:false with an actionable error instead of hanging', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('SAVE_IMAGE', { requestId: 'r-save', url: 'https://image.civitai.com/x.jpeg' });
+    const payload = await waitForMessage(inbound, 'SAVE_IMAGE_RESULT');
+
+    expect(payload.requestId).toBe('r-save');
+    expect(payload.ok).toBe(false);
+    // A PRESENT error is the reject signal — presence, not truthiness — so it
+    // must be a non-empty string, and it must point at dev:mock.
+    expect(typeof payload.error).toBe('string');
+    expect(String(payload.error).length).toBeGreaterThan(0);
+    expect(String(payload.error)).toMatch(/dev:mock/);
+
+    // …and the console warning fired once, naming the capability.
+    expect(warnSpy.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(/SAVE_IMAGE/);
+  });
+
+  it('refuses the imageId variant too — neither gate exists in this harness', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('SAVE_IMAGE', { requestId: 'r-save-id', imageId: 12345 });
+    const payload = await waitForMessage(inbound, 'SAVE_IMAGE_RESULT');
+    expect(payload.ok).toBe(false);
+    expect(String(payload.error)).toMatch(/dev:mock/);
   });
 });
 

@@ -68,13 +68,50 @@ export const DEFAULT_EXAMPLES = {
   'kv-storage': { '@civitai/app-sdk': 'workspace:^', '@civitai/blocks-react': 'workspace:^' },
 };
 
+/**
+ * The root's THIRD-PARTY overrides — security constraints on transitive
+ * packages, mirrored exactly from the real repo. These are the subject of
+ * check-starter-workspace-overrides rule 4: the root manifest is not part of a
+ * `npx tiged starters/<name>` copy, so each constraint has to be declared in
+ * the starter's own manifest too or it does not travel.
+ *
+ * Kept SEPARATE from the `@civitai/*` half because the two groups are governed
+ * by opposite rules — the first-party ones must be `workspace:` in the ROOT and
+ * must NOT appear in a starter, these must appear in EVERY tiged starter.
+ */
+export const DEFAULT_THIRD_PARTY_OVERRIDES = {
+  'cookie@<0.7.0': '^0.7.0',
+  'postcss@<8.5.10': '>=8.5.10',
+};
+
 export const DEFAULT_OVERRIDES = {
   '@civitai/app-sdk': 'workspace:*',
   '@civitai/blocks-react': 'workspace:*',
   '@civitai/components': 'workspace:*',
   '@civitai/components-react': 'workspace:*',
   '@civitai/theme': 'workspace:*',
+  ...DEFAULT_THIRD_PARTY_OVERRIDES,
 };
+
+/**
+ * The compliant mirror blocks: every tiged-consumed starter carries every
+ * third-party root override under BOTH `overrides` (npm) and `pnpm.overrides`
+ * (pnpm), keyed and valued exactly as the root does.
+ *
+ * Derived from the two arguments rather than hard-coded, so a test that adds a
+ * root override or a starter gets a compliant baseline and can then break
+ * exactly one thing.
+ */
+export function defaultStarterMirrors(starters = DEFAULT_STARTERS, overrides = DEFAULT_OVERRIDES) {
+  const thirdParty = Object.fromEntries(
+    Object.entries(overrides ?? {}).filter(([k]) => !k.startsWith('@civitai/')),
+  );
+  const out = {};
+  for (const name of Object.keys(starters ?? {})) {
+    out[name] = { overrides: clone(thirdParty), pnpm: { overrides: clone(thirdParty) } };
+  }
+  return out;
+}
 
 /** Local workspace package versions, matching the DEFAULT_STARTERS pins. */
 export const DEFAULT_PACKAGES = {
@@ -98,6 +135,12 @@ const clone = (v) => JSON.parse(JSON.stringify(v));
  * @param {object|null} [opts.packages]   { <dir>: { name, version } }
  * @param {string[]}    [opts.scripts]    guard filenames to copy in
  * @param {string}      [opts.depField]   dependency field to write pins into
+ * @param {object|null} [opts.starterMirrors] per-starter manifest fields merged
+ *   in verbatim — `{ <dir>: { overrides, pnpm } }`. Defaults to a COMPLIANT
+ *   mirror of every third-party root override (see defaultStarterMirrors), so a
+ *   test that wants a rule-4 failure breaks exactly one entry rather than
+ *   starting from a tree that fails for several reasons at once. Pass `null` for
+ *   the pre-#390 shape: no starter mirrors anything.
  */
 export function createFixture(opts = {}) {
   const {
@@ -107,6 +150,7 @@ export function createFixture(opts = {}) {
     packages = DEFAULT_PACKAGES,
     scripts = ['check-starter-workspace-overrides.mjs', 'check-starter-pins.mjs'],
     depField = 'dependencies',
+    starterMirrors = defaultStarterMirrors(starters, overrides),
   } = opts;
 
   const dir = mkdtempSync(join(tmpdir(), 'starter-guard-'));
@@ -128,7 +172,17 @@ export function createFixture(opts = {}) {
     mkdirSync(d, { recursive: true });
     writeFileSync(
       join(d, 'package.json'),
-      JSON.stringify({ name, version: '0.0.0', private: true, [depField]: clone(deps) }, null, 2) + '\n',
+      JSON.stringify(
+        {
+          name,
+          version: '0.0.0',
+          private: true,
+          ...clone(starterMirrors?.[name] ?? {}),
+          [depField]: clone(deps),
+        },
+        null,
+        2,
+      ) + '\n',
     );
   }
 

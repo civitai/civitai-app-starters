@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { getTransport } from '../internal/singleton.js';
 import { sendTypedRequest } from '../internal/transport.js';
+import { useRequestSequencer } from './useRequestSequencer.js';
 
 /**
  * The viewer's per-pool Buzz balance, in the domain-clamped set a Civitai App
@@ -42,8 +43,9 @@ export interface UseBuzzBalance {
  *
  * Fetches once on mount and exposes `refetch` for on-demand refreshes (e.g.
  * after a generation debits the balance). A host that never answers surfaces as
- * an `error` after the transport's request timeout — the hook never hangs. Late
- * responses that arrive after unmount are ignored (no state update).
+ * an `error` after the transport's request timeout — the hook never hangs. Only
+ * the LATEST request may write state: a reply superseded by a newer `refetch` —
+ * or one that lands after unmount — is dropped (#392).
  *
  * @example
  * const { balance, loading, error, refetch } = useBuzzBalance();
@@ -56,18 +58,14 @@ export function useBuzzBalance(): UseBuzzBalance {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
-  // Guards against a late response resolving after the component unmounted
-  // (React would warn about a state update on an unmounted component, and the
-  // work is wasted anyway).
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  // Latest-wins + unmount guard in one predicate (#392): a reply may write state
+  // only if it answers the request this hook is CURRENTLY waiting for. A bare
+  // mount check would let a superseded `refetch`'s slow reply overwrite newer
+  // state — nothing unmounted, so it passes.
+  const seq = useRequestSequencer();
 
   const refetch = useCallback(() => {
+    const token = seq.begin();
     setLoading(true);
     setError(null);
     sendTypedRequest(
@@ -76,7 +74,7 @@ export function useBuzzBalance(): UseBuzzBalance {
       'BUZZ_BALANCE_RESULT',
     )
       .then((result) => {
-        if (!mountedRef.current) return;
+        if (!seq.isCurrent(token)) return;
         if (result.error || !result.balance) {
           // `||`, not `??`: the reply validator gates `error` on SHAPE only, so a
           // host `error: ''` is a VALID reply that reaches here. `??` replaces only
@@ -89,11 +87,11 @@ export function useBuzzBalance(): UseBuzzBalance {
         setLoading(false);
       })
       .catch((err: unknown) => {
-        if (!mountedRef.current) return;
+        if (!seq.isCurrent(token)) return;
         setError(err instanceof Error ? err : new Error(String(err)));
         setLoading(false);
       });
-  }, []);
+  }, [seq]);
 
   useEffect(() => {
     refetch();

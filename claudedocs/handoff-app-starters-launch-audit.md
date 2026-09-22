@@ -61,120 +61,29 @@ Audited for code quality, dead code, over-exporting, comment rot, and bloat.
 
 ## State now
 
-- **Round-1 DoD: 12 of the 13 audited blockers are fixed and closed. One is live: #328.**
-  🔴 Its check was vacuous and has been repaired (see Goal). The repair first returned **8**, but
-  **7 of those 8 were already fixed in code and merely never closed** — each traced to its fixing
-  PR, re-measured, and closed on 2026-09-21 with the evidence attached. The one live blocker is
-  **#328** (blocks-react/ui and components-react export **34** identical names — computed: 62 ∩ 64,
-  control passes). Earlier versions of this line said "That arc is CLOSED", which was true by
-  accident of a broken instrument; it is now nearly true on the merits.
-
-### Merged / published so far
-| | |
-|---|---|
-| `@civitai/blocks-react` | **0.55.1** published 2026-09-21T02:44Z (detector env-inlining security fix) |
-| `@civitai/components` / `-react` | **0.4.2** published same run (per-component CSS slices, exports held) |
-| **#366** | **MERGED `d057664`** — App Storage error fidelity; **#343 auto-closed** |
-
-- ✅ **#371 MERGED `10db0064` 2026-09-21T15:28:40Z; the release job published both packages.**
-  `@civitai/app-sdk` **0.49.0** and `@civitai/blocks-react` **0.56.0**, registry `time`
-  **2026-09-21T15:33:32Z**, `latest` moved to both. Release run `35619202423` green end-to-end
-  including its own post-publish `assert-published-versions` step.
-- **Publish verified by THREE claims, each with its own control** (a release run reporting success
-  is a claim about the RUN): (1) registry HAS it — packument via `json.loads(strict=False)`, both
-  targets PRESENT, prior versions PRESENT as positive control, `99.99.99` ABSENT as negative;
-  (2) it RESOLVES — `npm install --dry-run --prefer-online` rc 0 for both, `0.48.0` rc 0
-  (positive), `99.99.99` rc 1 `ETARGET` (negative); (3) the symbols are really in the tarball —
-  the table in the retired investigation below.
-- ✅ **The four `APP_STORAGE_ERROR_*` peer-floor entries are now MEASUREMENTS, not predictions.**
-  Converted in **#372** (comment-only, guards 158/0 unchanged). Floor proved **EXACT** from both
-  sides: `0.49.0` exports all four (34 symbols on `./blocks`), `0.48.0` exports **none** (29).
-- **`75c711a` was mine**, pushed to the bot branch `changeset-release/main`: it retired the
-  peer-floor prediction. Guards **158 pass / 0 fail**; negative control (restore one entry)
-  **157 / 1** on `PREDICTION HAS COME TRUE`'s own assertion, so the retirement was not a blinding.
-- **Audit ladder on #366: rounds 0–5, CLOSED.** Findings 5 → 4 → 5 → 3 → 2 → 2; payload
-  324 → 269 → 256 → 122 → 75; scaffolding 0 for the last two. Every round's claims block is a PR
-  comment on #366. The ladder ended on a **stated criterion** (round 5's own: *"neither needs a new
-  round to verify beyond re-reading the sentences"*), with the sentences verified directly.
-- **#346 CLOSED**, not merged — reasoning + three reopen conditions on the PR, branch preserved.
-- ✅ **#372 MERGED `24db9c3`** (the ledger conversion) and **#356 MERGED `eed2df5`** (this doc
-  reached `main`). Both verified by CONTENT, not ancestry — a squash merge never makes the branch
-  head an ancestor.
-- **Base clone re-synced.** Worktrees `-launchaudit`, `-peermeasure`, `-storagefidelity`, `-relfix`
-  all **removed** after proving each HEAD was byte-identical to its merged PR head sha.
-- **IN FLIGHT:** nothing.
-
-### 🔴 THE 28 RECOVERED AUDIT FINDINGS — WHERE THEY LIVE
-
-The doc used to say the unfiled HIGH findings "survive only in a prior session's transcript and
-will age out". **They were recovered on 2026-09-21 and no longer decay.**
-
-- **Source:** Claude Code transcript `c5ec3943-03ce-4e46-8c4d-b1a8518411e6` (session opened
-  2026-09-20 21:39), transcript lines `[372, 413, 434, 450, 474, 497]` — six separate sub-audits
-  (packaging, export surface, comment rot, starter security, second-pass, SDK+hooks).
-- **Recovered to:** `/home/zach/workspace/civit/audit-findings-app-starters-2026-09-19.md`
-  (~167 KB: the six reports **verbatim**, plus the triage table below). Extraction was
-  positive- and negative-controlled.
-- 🔴 **DELIBERATELY OUTSIDE THIS REPO, and it must stay outside.** This repo is PUBLIC and the file
-  holds unfiled security findings in raw form. Filing them here as curated issues is the plan
-  (#322–#325 set that precedent); bulk-pasting 167 KB of raw findings is not the same act. **Do not
-  copy that file into the repo.**
-- 🔴 **It is on ONE host's disk and nothing but this bullet points at it.** If it is gone, the
-  transcript above is the re-derivation path — but transcripts age out, so re-recover before
-  relying on that.
-- **The count is 28, not 22.** The "22" in earlier versions of this doc was one round's tally; six
-  sub-audits were merged on recovery.
-
-**Triage against `origin/main` @ `eed2df5`, 2026-09-21** — verdicts measured, not inferred:
-
-✅ **TRIAGE COMPLETE AND ALL 25 LIVE FINDINGS FILED — 2026-09-21.** 28 numbered entries, minus one
-duplicate (**20 is the same finding as 13**) = **27 distinct**. Every row resolves:
-
-| Verdict | Count | Which |
-|---|---|---|
-| **FILED AS ISSUES** | **25** | **#374–#398** — see the mapping below |
-| **FIXED since audit** | 1 | 16 (whole `VITE_*` env inlined) — died with #361 → `0.55.1` |
-| **ALREADY FILED** | 1 | 26 → #328 + #247 |
-| **NOT YET VERIFIED** | **0** | — |
-
-| finding → issue | | finding → issue |
-|---|---|---|
-| 1 exact pins / duplicate co-installs → **#374** | | 14 liveHost stale enumerations → **#387** |
-| 2 `comment-peerDependencies` 79% → **#375** | | 15 `waitSeconds` "advisory" → **#388** |
-| 3 dangling sourcemaps → **#376** | | 17 SSR ships whole `me` → **#389** |
-| 4 half-barrel root export → **#377** | | 18 `tiged`'d vulnerable `cookie` → **#390** |
-| 5 `internal/` on main entry → **#378** | | 19 picker drops `modelType` → **#391** |
-| 6 internal types in public sigs → **#379** | | 21 seven hooks unsequenced → **#392** |
-| 7 `UseX` coin flip (17/36) → **#380** | | 22 `useImageUpload` unmount → **#393** |
-| 8 `WorkflowBody` THREE vs four → **#381** | | 23 `payloadValidatorFor` totality → **#394** |
-| 9 "47" step types are 50 → **#382** | | 24 `requestId` three spellings → **#395** |
-| 10 README wide-floor claim → **#383** | | 25 `SettingsForm` seeds once → **#396** |
-| 11 hidden-guard spelled not structural → **#384** | | 27 trailing-slash allowlist → **#397** |
-| 12 `SECURITY INVARIANT` unenforced → **#385** | | 28 `useTipAllowance` spins → **#398** |
-| 13 (= 20) liveHost missing 3 handlers → **#386** | | |
-
-Each issue body carries the **2026-09-21 re-measurement against `eed2df5`**, not the audit's
-original numbers, plus the controls that were run, a proposed fix and its own closing condition.
-Filing verified by read-back: 25 of 25 open in range `374–398`, negative control (`>= 99000`)
-returns 0.
-
-🔴 **Two of them were made WORSE by this arc — cheapest wins, do them first:**
-- **#375** — `comment-peerDependencies` is **79%** of blocks-react's published `package.json`
-  (10,071 B of 12,717 B), up from the audited 67% (4,827 of 7,231). The peer-floor incident
-  narrative this arc kept appending is what grew it. Every external developer installs it.
-- **#383** — `README.md:1589-1590` still tells readers the floor "stays" the deliberately-wide
-  `>=0.29.0 <1.0.0` so "npm will not warn you". Raising the floor to `>=0.49.0` in #371 made that
-  sentence more wrong, not less.
-
-🔴 **Two corrections the triage made to the audit itself, both carried into the issues:**
-- **#392 is SEVEN hooks, not eight** — `useTipAllowance` already sequences via
-  `inFlight: Set<AbortController>` (`:60`, `:78`). It is cited in the issue as the pattern to copy
-  *and* as the positive control for the fix.
-- **#394 was NOT already fixed**, though both CHANGELOGs' mutation-sweep line ("an unmapped
-  `payloadValidatorFor` case") makes it look so. The `default:` arm still returns `null` — a
-  structural pass — and the gate is still 19 hand-written assertions. The issue says this
-  explicitly so nobody re-closes it on that evidence. **This is why the triage was worth doing:
-  acting on the CHANGELOG would have dropped a real defect.**
+- **Branch/PR:** base clone on `main` @ `38a0b5d`, clean. One open PR of mine from this
+  session: **#400** (`zach/blocks-client-react` → **`feat/blocks-client`**, not `main`).
+  Worktree `civitai-app-starters-clientreact` holds it, clean.
+- ✅ **The launch-audit arc is one item from its closing condition.** The repaired check
+  returns **1**: only **#328** remains of the 13 audited blockers. Control: 48 open issues
+  total, so the query does return rows.
+- ✅ **Seven blockers closed 2026-09-21** — #322, #323, #324, #325, #327, #329, #333 — each
+  already fixed in code by a PR that never wrote "Closes #N", each traced to its fixing sha,
+  re-measured against `eed2df5`, and closed with that evidence attached. Closures confirmed
+  by reading back `state == CLOSED`, not by exit codes.
+- ✅ **All 28 recovered audit findings resolved; 25 filed as #374–#398.** 1 was already fixed
+  (#16 → #361/0.55.1), 1 already filed (#26 → #328/#247), 0 left unverified.
+- ✅ **Merged this session:** #372 (peer-floor ledger → measurement), #356 (this doc onto
+  `main`), #373 (recovery record + repaired closing condition), #399 (filing record).
+- 🔴 **NEW ARC OPENED, and it now dominates: Koen's SDK/components consolidation** on
+  `origin/feat/blocks-client` (34 ahead of `main`, **36 behind**, author Koen, **no PR**).
+  Reviewed in full; review filed as **#402**, sunset blocker as **#401**.
+- **#400 is red on 3 checks and NONE is attributable to it** — proven, see the investigation
+  block. Its own package: typecheck 0, build 0, **20 tests**, **6/6 mutants killed**.
+- **Deploy/verify status:** `@civitai/app-sdk@0.49.0` + `@civitai/blocks-react@0.56.0`
+  published 2026-09-21T15:33:32Z and verified by three claims with controls (registry
+  packument, `--dry-run` resolve, symbols read off the tarball). Nothing else deployed.
+- **IN FLIGHT:** nothing of mine. Everything now waits on Koen.
 
 ## Open investigations — live diagnosis state
 
@@ -278,47 +187,100 @@ harm** — no other app-sdk minor took `0.49.0`.
 
 </details>
 
+### `feat/blocks-client`'s `buzz` and `orchestration` are NON-FUNCTIONAL — no host handlers exist
+- as-of: 2026-09-21
+- **Symptom + exact repro:** the new client's two most important domains cannot work against
+  production. Read it from the branch itself:
+  `git show origin/feat/blocks-client:packages/civitai-blocks-client/BREAKING.md | sed -n '/Not yet spoken/,/^## /p'`
+- **Observed (with values):** Koen's own words — *"`buzz` and `orchestration` were rebuilt on a
+  protocol this package owns (`BUZZ_*`, `ORCHESTRATION_*`). **No host handler exists for any of
+  it**, so both domains are non-functional against production until the host implements them."*
+  20 of the host's 46 block→host messages are carried; 9 of those (4 buzz + 5 orchestration)
+  await host work. `storage` (5), `viewer` (4), `host` lifecycle and `media.SAVE_IMAGE` work
+  today. `via: doc` (his file), cross-checked against the protocol files themselves.
+- **Ruled out:** "a starter can be ported end-to-end now" — FALSE. Every OAuth starter's demo is
+  login → balance → estimate → generate; balance is buzz, estimate/submit are orchestration.
+  `via: code`.
+- **Ruled out:** "port `react-pwa` as the proof" — FALSE, and it was the plan until measured.
+  `react-pwa` imports `@civitai/blocks-react` in **0** files; so do `next-app`,
+  `sveltekit-app`, `svelte-pwa`. Only `civitai-block-starter` does (6 files). Positive control:
+  `react-pwa` imports `@civitai/app-sdk` in **14**. `via: measurement`.
+- **Leading hypothesis:** nothing is wrong with the branch; the host simply has not implemented
+  the new protocol. The consequence is about SEQUENCING, not correctness — "declare the API
+  stable by Friday" cannot cover the two domains an app author cares about most.
+- **Next probe:** `cd packages/civitai-blocks-client && npm run check:parity` — his own guard
+  against a committed snapshot of the host's `hostHandlerParity.ts`. When buzz/orchestration
+  stop being listed as awaiting a host, that half is real.
+
+### #400's three red checks are the BASE branch's, caused by this session's own publish
+- as-of: 2026-09-21
+- **Symptom + exact repro:** PR #400 shows 3 FAILURE checks. `feat/blocks-client` has no PR, so
+  CI has never run on it and there is no rollup to compare against.
+- **Observed (with values):** failing steps are `scripts/check-starter-pins.mjs`,
+  `scripts/check-orchestrator-catalogs.mjs`, and `@civitai/components test:contract` — none
+  touches `packages/civitai-blocks-client-react`. Checked out base `587764a` with none of my
+  commits and ran them directly: **both exit 1**. The pin failure names the cause:
+  `@civitai/app-sdk: "^0.42.0" does NOT admit published 0.49.0` and
+  `@civitai/blocks-react: "^0.51.0" does NOT admit published 0.56.0`. `via: measurement`.
+- **Ruled out:** "PR #400 broke them" — FALSE, they are red on the base without it.
+  `via: measurement`.
+- 🔴 **Instrument trap hit here:** piping either script to `tail` reports `rc=0`, because that is
+  `tail`'s status. Both nearly recorded as passing. Capture the rc with a redirect, not a pipe.
+- **Leading hypothesis:** the branch is 36 commits behind `main`, and **#371 — the publish
+  merged earlier in this same session** — is what made its starter pins stale. Two of three go
+  green on a sync; the third (`@civitai/components` cross-browser contract) is the Lit rewrite
+  and needs a decision, not a sync.
+- **Next probe:** after Koen syncs — `git merge-tree --write-tree origin/main origin/feat/blocks-client`
+  must exit **0** (it exits **1** today), then re-read #400's rollup.
+
+### #328 — the last live launch blocker, and it needs a DIRECTION, not a patch
+- as-of: 2026-09-21
+- **Symptom + exact repro:** `blocks-react/ui` and `@civitai/components-react` export 34
+  identical names with drifted contracts.
+- **Observed (with values):** computed on `eed2df5` — ui exports **62**, components-react
+  **64**, intersection **34**. Control: `ui ∩ ui == |ui|` → true. `via: measurement`.
+- **Ruled out:** "reopen #346 (`@civitai/elements`)" — its conditions 1 and 3 ARE met (the
+  orchestration dashboard is a real non-React consumer; the one-implementation plan exists), but
+  reopening would stand a SECOND web-components implementation beside Koen's, which is the exact
+  failure #328 describes. Recorded on #346 as **superseded, not reversed**; branch preserved.
+  `via: code`.
+- **Leading hypothesis:** `feat/blocks-client` resolves it — `@civitai/components` becomes Lit
+  elements, `components-react` becomes `@lit/react` bindings of the same elements, so the 34
+  names stop being two implementations. Blocked on the branch being reconciled with `main`.
+- **Next probe:** re-run the intersection against the branch after it syncs; and re-measure
+  #247 rather than assuming shadow DOM closed it.
+
 ## Next steps (ranked)
 
-~~1. Finish triaging the 12 unverified recovered findings, then file every confirmed-live one~~
-   ✅ **DONE 2026-09-21.** All 27 distinct findings resolved; 25 filed as **#374–#398**. Its
-   closing-condition — "no row left at NOT YET VERIFIED" — is satisfied.
-
-1. **Start fixing the filed findings. Two are self-inflicted by this arc and cost almost nothing:
-   #375** (published `package.json` is 79% internal post-mortem prose) **and #383** (README asserts
-   a peer floor that #371 contradicted). Both are pure deletions of text we wrote.
-   🔴 Each issue carries its own closing condition; several ask for a test **watched to fail**
-   first. Do not skip that — #394 is the cautionary case: it *looked* fixed from a CHANGELOG line
-   and was not.
+1. **#402 / #328 — hand back to Koen; we are not blocked on ourselves.** The review is filed
+   and @-mentions him. The branch must come up to `main` before anything else: it is 36 behind,
+   `git merge-tree --write-tree origin/main origin/feat/blocks-client` exits **1**, and 8 files
+   are touched by both sides including `packages/civitai-components/scripts/build-css.ts` (the
+   #359 slicer). The textual conflict is the small half — both sides changed what
+   `@civitai/components` *is*.
+   IN FLIGHT: civitai/civitai-app-starters#400 (targets that branch), #401, #402.
+   forcing: gate — it is the last item between this arc and its closing condition.
+2. **Fix the filed findings, starting #375 and #383** — both are deletions of prose this arc
+   itself wrote: the published `package.json` is **79%** internal post-mortem narrative (up from
+   the audited 67%), and the README still asserts a peer floor that #371 contradicted.
+   🔴 Several of the 25 ask for a test **watched to fail** first; #394 is the cautionary case —
+   it *looked* fixed from a CHANGELOG line and was not.
    forcing: none
-2. **Batch: everything already filed with a closing condition, from before this arc.** #358, #362,
-   #363, #364, #367 (no CI job runs `changeset status`), #368, #369, #370 (no key-length cap
-   anywhere local), #345/#347/#348/#349/#357, and the undecided `@civitai/app-sdk` peer on
-   `@civitai/client` at `^0.2.0-beta.98` (#305). All tracked, none advanced this session.
+3. **Batch: the pre-arc filed issues, plus the block-starter port once the branch is green.**
+   #358, #362, #363, #364, #367, #368, #369, #370, #345/#347/#348/#349/#357, #305. And
+   `civitai-block-starter` is the right proof port (5 src files; uses 3 hooks, all
+   host-functional today) — **not** `react-pwa`, which never used the bridge.
    forcing: none
-3. **#328 — the ONE live launch blocker: 34 names exported by both `blocks-react/ui` and
-   `@civitai/components-react`.** Computed on `eed2df5`: 62 ∩ 64 = **34**, control passes. This is
-   a design decision, not a patch — #346 (`@civitai/elements`) was the attempt, was closed, and its
-   own admission was that 33 of 34 collisions stand; #359 shipped the CSS-split control that
-   retired its byte case. Needs a direction chosen before it can be worked.
-   forcing: gate — it is the last thing between this arc and its closing condition.
-   closing-condition: `check` — the Goal's query returns 0.
-
-~~4. Repair this doc's own closing condition~~ ✅ **DONE 2026-09-21** — replacement in Goal,
-   validated with both controls; it now returns 1 (only #328).
 
 ## Defects (batched)
 
-- **0 of the 28 recovered findings are FILED** (rank 1), and 12 are still unverified.
-- **#372 and #361 both merged with round 0 only** — the nine correctness axes never ran on either.
-- `pnpm lint` exits 1 repo-wide (`ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT`). Pre-existing; no CI job gates it.
-- `#361` shipped with round 0 only — the nine correctness axes never ran on it.
-- `packages/civitai-components/test/css-slice.test.ts`'s *"the per-component artifacts are NOT
-  published"* can time out at its 5 s budget under `pnpm -r test` concurrency (it shells out to
-  `npm pack --dry-run`, ~8 s under load); passes standalone at ~2.6 s. Wants a `testTimeout`, not a re-run.
-- `#366`'s commit `4266263` says "three genuinely different remedies" where `App.tsx` has four
-  non-default arms. Deliberately not corrected — rewording means force-pushing and detaching the
-  PR's review threads; the correction is in a later commit, the PR comment and the in-tree README.
+- **#400 carries 3 red checks that are the base branch's**, not its own — diagnosed above;
+  a reader who trusts the rollup will misattribute them.
+- **`feat/blocks-client` has no PR**, so nothing runs CI on it and nobody has seen it red.
+- 25 filed findings (#374–#398) are all unfixed; 22 confirmed live, 3 live-but-partial.
+- `pnpm lint` exits 1 repo-wide (`ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT`). Pre-existing, ungated.
+- **#372, #373, #399 and #400 all merged or shipped with round 0 only** — the nine correctness
+  axes never ran on any of them.
 
 ## Gotchas / decisions / dead-ends
 
@@ -585,43 +547,115 @@ harm** — no other app-sdk minor took `0.49.0`.
 - **Decision: do NOT force-push to correct a commit message on a PR carrying review threads.**
   Record the correction in a later commit and a PR comment instead.
 
+- 📍 **THE 28 RECOVERED AUDIT FINDINGS — WHERE THEY LIVE. Moved here from `State now`, which is
+  REPLACED on every update; it would have been deleted by this one.**
+  **Recovered to `/home/zach/workspace/civit/audit-findings-app-starters-2026-09-19.md`** (~172 KB:
+  six sub-audits verbatim + the triage + the filing map), from Claude Code transcript
+  `c5ec3943-03ce-4e46-8c4d-b1a8518411e6`, lines `[372, 413, 434, 450, 474, 497]`.
+  🔴 **DELIBERATELY OUTSIDE THIS REPO and it must stay outside** — the repo is PUBLIC and the file
+  holds unfiled security findings in raw form. Filing them as curated issues is the plan; bulk
+  pasting 172 KB is not the same act. 🔴 **It is on ONE host's disk and this bullet is the only
+  pointer** — if it is gone, the transcript above is the re-derivation path, but transcripts age
+  out, so re-recover before relying on it.
+  **Filed 2026-09-21, 25 of 27 distinct findings** (28 numbered, 20 duplicates 13):
+  1→#374 · 2→#375 · 3→#376 · 4→#377 · 5→#378 · 6→#379 · 7→#380 · 8→#381 · 9→#382 · 10→#383 ·
+  11→#384 · 12→#385 · 13(=20)→#386 · 14→#387 · 15→#388 · 17→#389 · 18→#390 · 19→#391 · 21→#392 ·
+  22→#393 · 23→#394 · 24→#395 · 25→#396 · 27→#397 · 28→#398. Not filed: **16** FIXED by #361 →
+  0.55.1; **26** already filed as #328 + #247.
+  🔴 Two corrections the triage made to the audit, carried into the issues: **#392 is SEVEN hooks,
+  not eight** (`useTipAllowance` already sequences via `inFlight: Set<AbortController>`), and
+  **#394 was NOT already fixed** though both CHANGELOGs' mutation-sweep line makes it look so —
+  the `default:` arm still returns `null`, a structural pass.
+- 📍 **THE RELEASE LEDGER, moved here because `State now` is REPLACED on every update and this
+  is the third time these facts have been at risk of deletion.** Published from this arc:
+  `@civitai/blocks-react` **0.55.1** (2026-09-21T02:44Z, detector env-inlining security fix) ·
+  `@civitai/components` + `-react` **0.4.2** (same run, per-component CSS slices with the
+  `./css/*` exports HELD) · `@civitai/app-sdk` **0.49.0** + `@civitai/blocks-react` **0.56.0**
+  (2026-09-21T15:33:32Z, from #371 `10db0064`, release run `35619202423`, verified by three
+  claims with controls). Merged along the way: **#366 `d057664`** (App Storage error fidelity,
+  auto-closed #343), **#372 `24db9c3`**, **#356 `eed2df5`**, **#373 `6be8ed5`**, **#399 `38a0b5d`**.
+- 📍 **The #366 audit ladder, rounds 0–5, CLOSED** — findings 5 → 4 → 5 → 3 → 2 → 2; payload
+  324 → 269 → 256 → 122 → 75; scaffolding 0 for the last two. Every round's claims block is a PR
+  comment on #366. It ended on a STATED criterion (round 5's own), not on a round count.
+  The three-stage `0.55.1` release validation lives as a comment on issue **#360**, which outlives
+  this doc.
+- 🔴 **AN OPEN-ISSUE COUNT IS A FACT ABOUT THE TRACKER, NOT THE TREE — and this session
+  reported eight live launch blockers, five of them "security", before reading one against the
+  code.** Seven of the eight were already fixed by PRs that never wrote "Closes #N". The
+  repaired closing condition is a better instrument than the token-grep it replaced and still
+  measures issue hygiene. **Re-measure every item against the code before believing a total.**
+- 🔴 **`git merge-tree --write-tree <a> <b>` — BRANCH ON THE EXIT CODE.** It prints only a tree
+  OID on success and emits no conflict markers, so grepping for `<<<<<<<` finds nothing whether
+  or not a conflict exists. Used correctly here it exits **1** on `main` vs `feat/blocks-client`.
+- 🔴 **A PIPE EATS THE EXIT CODE, AND IT NEARLY INVERTED A DIAGNOSIS.** `node script.mjs 2>&1 |
+  tail -6; echo rc=$?` prints **`rc=0`** for a script that exits **1** — that is `tail`'s status.
+  Both CI scripts were briefly recorded as passing on the base branch. Redirect to a file and
+  read `$?` immediately.
+- 🔴 **A MUTATION SWEEP'S SURVIVORS ARE THE POINT — two of six were real, and one killed a
+  guard rather than a test.** (a) The `mountedRef` check that all 38 old hooks carry SURVIVED
+  deletion with every test green: React 18 makes `setState` after unmount a silent no-op, so it
+  pins a hazard that no longer exists. **Deleted, not test-justified.** (b) `useAsyncIterable`'s
+  `cancelled` flag was UNREACHABLE — not via unmount (same React no-op) and not via a fixture
+  that honours its `AbortSignal` and stops on its own. **Breakability is not reachability: ask
+  which case executes the guard.** The reaching case is supersede-while-mounted by a
+  signal-ignoring generator.
+- 🔴 **`BlockTransport.snapshot` is `{ get(), subscribe() }` and `Live<T>` is an `EventTarget`
+  dispatching `change` with stable identity — both are `useSyncExternalStore` stores already.**
+  Koen does not use React and built this by accident of good design. Consequence: read
+  `value`/`error`/`loading` through THREE stores, never one composed snapshot — a composed
+  object is a fresh identity per `getSnapshot`, never `Object.is`-equal, and re-renders forever.
+- 🔴 **`@civitai/app-sdk` CANNOT BE SUNSET — `blocks-client` replaces the BRIDGE half only.**
+  Files matching `exchangeCode|refreshToken|sealCookie|pkce`: `blocks-client` **0**, `app-sdk`
+  **5** (control). The four OAuth starters import `blocks-react` in **0** files (control:
+  `react-pwa` imports `app-sdk` in 14) across 26 sites in `app-sdk`, `/orchestrator`, `/scopes`.
+  `app-sdk/vite`'s `blockManifestPlugin` has no equivalent either. Filed as **#401**.
+- **Decision: NO per-endpoint React shims.** Measured, not preferred: the only first-party
+  consumer of the blocks hooks is `starters/civitai-block-starter/src`, using **3** of 36
+  (`useBlockContext`, `useBlockResize`, `useViewer`), each a one-line port. A 38-hook shim layer
+  for three call sites rebuilds the surface the consolidation exists to delete. The migration is
+  a map, not a shim.
+- **Decision: FOUR React primitives, not three.** `useBlockSnapshot` (handshake store),
+  `useBridgeCall` (promise), `useLive` (`Live<T>`), `useAsyncIterable`. The snapshot is a
+  genuinely distinct shape and the one a block touches first.
+- 🔴 **A hook count from `grep` over a starter counts its README.** The block starter's *docs*
+  name 10 hooks; its *code* uses 3. Scope the grep to `src/`.
+- **Dead end:** `find-session --arc` exited 5 on this doc until #356 merged — the doc was only
+  in a worktree, and `--arc` resolves against repo handles. Merging it fixed that.
+
 ## How to verify
 
-`4a359be` — that the release hazard is actually gone (the point of the change):
+The arc's own closing condition, with both controls in the same breath:
+
+```bash
+gh issue list --repo civitai/civitai-app-starters --state open --limit 200 \
+  --json number -q '[.[] | select(.number >= 322 and .number <= 334)] | length'   # => 1 (only #328)
+gh issue list --repo civitai/civitai-app-starters --state open --limit 200 \
+  --json number -q 'length'                                                        # => non-zero (positive control)
+```
+
+That #400's red is the base branch's, not its own — run from a checkout of `587764a`:
 
 ```bash
 R=/home/zach/workspace/civit/civitai-app-starters
-git -C $R show origin/feat/civitai-elements-phase1:packages/civitai-blocks-react/package.json \
-  | python3 -c "import json,sys;print(json.load(sys.stdin)['dependencies'])"
-# => {'@civitai/components': 'workspace:*', '@civitai/theme': 'workspace:*'}  — no elements
-
-git -C $R diff --stat main..origin/feat/civitai-elements-phase1 \
-  -- packages/civitai-blocks-react/src/ui/Stack.tsx      # => empty (identical to main)
+git -C $R worktree add --detach /tmp/basectl origin/feat/blocks-client
+cd /tmp/basectl
+node scripts/check-starter-pins.mjs >/tmp/pins.out 2>&1;  echo "pins rc=$?"   # => 1
+node scripts/check-orchestrator-catalogs.mjs >/tmp/cat.out 2>&1; echo "cat rc=$?" # => 1
+# 🔴 do NOT pipe to tail — that reports rc=0, which is tail's status
 ```
 
-Registry state, with its control (a 404 alone cannot distinguish "unpublished" from "probe broken"):
+The React primitives, including the sweep:
 
 ```bash
-for p in @civitai/elements @civitai/elements-react @civitai/blocks-react @civitai/components; do
-  printf '%s -> %s\n' "$p" "$(curl -s -o /dev/null -w '%{http_code}' \
-    "https://registry.npmjs.org/$(python3 -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=""))' "$p")")"
-done   # => 404 404 200 200
+cd /home/zach/workspace/civit/civitai-app-starters-clientreact/packages/civitai-blocks-client-react
+npx tsc -p tsconfig.json --noEmit && npx vitest run --project unit   # => 20 passed
+# mutation sweep (6/6 killed, tree restored byte-identical):
+python3 /tmp/claude-1000/-home-zach-workspace-civit-civitai-app-starters/\
+e358e8a1-b161-4d89-8516-b730681b6b6d/scratchpad/mutate_react.py
 ```
 
-Rank 1, reproduce the leak against the PUBLISHED tarball (not the workspace):
+The branch conflict, by exit code rather than a marker grep:
 
 ```bash
-cd "$(mktemp -d)" && printf '{"name":"v","private":true,"type":"module"}' > package.json
-npm i @civitai/blocks-react@0.55.0 --silent --prefer-online
-find node_modules/@civitai/blocks-react/dist -name 'detector*' -print0 \
-  | xargs -0 grep -nE 'import\.meta\.env'
-# => dist/internal/detector.js:33:  const fromImportMeta = import.meta.env?.[key];
-```
-
-Repo-side, and note `pnpm -r test` runs ONLY blocks-react's `unit` project:
-
-```bash
-pnpm -r typecheck && pnpm -r test && pnpm test:guards && pnpm typecheck:readme
-nix-shell -p chromium --run 'PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=$(which chromium) \
-  pnpm --filter @civitai/blocks-react test:browser'
+git -C $R merge-tree --write-tree origin/main origin/feat/blocks-client >/dev/null; echo "rc=$?"  # => 1
 ```

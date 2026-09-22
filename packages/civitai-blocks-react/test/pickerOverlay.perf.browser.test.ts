@@ -300,6 +300,7 @@ async function openAndSettle() {
   const handle = await new Promise<PickerOverlayHandle>((resolve) => {
     openPickerOverlay({
       type: 'Checkpoint',
+      resultChannel: 'CHECKPOINT_PICKER_RESULT',
       baseUrl: '',
       token: 'PERF_TOK', // authoritative /api/v1/blocks/models path
       fetchImpl,
