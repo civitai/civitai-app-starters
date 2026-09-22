@@ -1,5 +1,143 @@
 # @civitai/components-react
 
+## 0.5.0
+
+### Minor Changes
+
+- 266a021: Three more: `<civitai-button-group>`, `<civitai-input-group>` and
+  `<civitai-confirm-dialog>`.
+
+  The two grouping elements are **light DOM**, for a reason worth recording:
+  joining controls means reaching their `::part(button)` and `::part(control)`,
+  and a part crosses exactly one shadow boundary. From the document those parts
+  are reachable; from a shadow root the controls had been slotted into they are
+  not. So the grouping element styles children the page owns.
+
+  `<civitai-confirm-dialog>` extends `<civitai-modal>` — the focus trap, the top
+  layer and Escape all come from one implementation, and the modal grew two
+  render hooks for it. `await dialog.ask()` resolves `true`, `false` on cancel,
+  and `false` on a dismissal, so a caller is never left waiting on a promise that
+  will not settle. A destructive confirmation lands focus on Cancel.
+
+  The React binding map now follows the superclass chain. That fixed a gap nobody
+  had noticed: `<civitai-switch>` extends `<civitai-checkbox>` rather than the
+  field base directly, so it had been generated **without** `onChange` or
+  `onInvalid` despite dispatching both.
+
+- 266a021: Add `@civitai/components-react/elements` — React bindings for the custom
+  elements.
+
+  `ButtonElement`, `TextInputElement` and `SegmentedControlElement` are separate
+  from the existing `Button`/`TextInput`/`SegmentedControl`, which keep rendering
+  the attribute markup. Nothing an existing consumer imports changes, and the `.`
+  entry still reaches neither Lit nor an element module — a test asserts it.
+
+  Props are assigned as properties after mount rather than left to React's own
+  prop handling. React decides between attribute and property by whether the
+  element has upgraded yet, so an un-upgraded element takes a boolean as the
+  string `""` and Lit's converter never runs — `loading` would be truthy but not
+  `true`. Assigning directly behaves the same on React 18 and 19, and is the only
+  way to pass the segmented control's `data` array at all.
+
+- 266a021: React bindings for all 32 elements, built on `@lit/react`'s `createComponent`
+  instead of hand-written wrappers. It derives the props AND their types from the
+  element class, forwards refs to the element instance, and always assigns
+  properties rather than attributes — which is the React 19 behaviour the previous
+  wrappers had to work around by hand.
+
+  Each binding is its own module, so importing `@civitai/components-react/elements/civitai-button`
+  reaches that element and nothing else; the `./elements` barrel registers all of
+  them and is the convenient-but-larger path.
+
+  Breaking within this unreleased entry point: the wrappers are named after their
+  tags (`CivitaiButton`, not `ButtonElement`) and handlers receive the DOM Event
+  rather than an extracted value — `onChange={(e) => e.target.value}`,
+  `onVote={(e) => e.detail}`.
+
+- 266a021: `<civitai-image>` is bindable: `onImageLoad` and `onImageError`. They are not
+  called `onLoad`/`onError` because React wires those itself on any host element,
+  so sharing the name would run the handler twice.
+
+  `onSelect` on `CivitaiMenu` is typed with `MenuSelectDetail` now that the event
+  carries a value rather than a DOM node.
+
+  Which elements get `onChange`/`onInvalid` is read off the field base rather than
+  listed by hand, so a control that joins that base cannot silently miss them —
+  which is exactly what happened to the checkbox, radio group and segmented
+  control in this release.
+
+- 266a021: Five elements a real consumer needed and the vocabulary had no answer for.
+
+  `<civitai-switch>` **extends** `<civitai-checkbox>` rather than restating it —
+  the payoff from folding every control onto one field base last release, since
+  the form participation, validity and error chrome all arrive for free and
+  `role="switch"` is the only difference that matters.
+
+  `<civitai-progress>` drops `aria-valuenow` entirely when `indeterminate`,
+  because a bar that does not know its extent should not claim one.
+  `<civitai-pagination>` keeps the first and last page either side of an ellipsis
+  so the buttons do not move under the pointer as you page, and emits `change`.
+  `<civitai-breadcrumb>` renders its separator as a pseudo-element, which is what
+  keeps it out of the trail a screen reader reads.
+
+  `<civitai-table>` is **light DOM on purpose**: a slotted `<tr>` inside a shadow
+  `<table>` leaves the table formatting context and stops being a row. It styles a
+  table the page already owns, so it works over a data grid's generated markup
+  instead of asking anyone to give up sorting and virtualization.
+
+  The CDN bundle budgets move to 32 kB and 38 kB gzip. No element is an outlier
+  to shave — an all-in-one bundle simply grows with the vocabulary, and a page
+  that counts bytes imports `@civitai/components/<tag>/define` instead.
+
+- 266a021: `<civitai-nav-list>` and `<civitai-nav-item>` — navigation primitives rather
+  than an app shell, because the reusable part of a sidebar is the nav tree's
+  behaviour and not the chrome around it. Lay the page out with the utilities.
+
+  `current` on the list is an `href`, matched exactly. It marks that item and
+  opens every group above it, however deep — the part sidebars usually get
+  wrong, landing on a nested route with the section containing it still
+  collapsed. An item is a link when it has an `href` and a disclosure when it
+  has children; an `href` _with_ children is still a disclosure, never an anchor
+  that also toggles. Depth is counted by the item itself, so nesting indents
+  without anyone tracking levels in markup.
+
+  Icons stay slotted. The package ships no icon set, so an app brings its own and
+  pays for nothing it does not use.
+
+### Patch Changes
+
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+  - @civitai/components@0.5.0
+  - @civitai/theme@0.4.0
+
 ## 0.4.3
 
 ### Patch Changes
@@ -18,10 +156,10 @@
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-      before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-               @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-      after    @civitai/theme       0.3.1                   — 1 copy
-               @civitai/components  0.4.2                   — 1 copy
+        before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                 @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+        after    @civitai/theme       0.3.1                   — 1 copy
+                 @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
