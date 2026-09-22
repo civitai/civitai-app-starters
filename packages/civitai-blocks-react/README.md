@@ -1313,6 +1313,38 @@ For non-React or advanced use, the transport primitives are exported too:
 `readAllowedOriginsFromEnv`, `getTransport`, and `sendTypedRequest`. Hooks are the
 recommended surface; reach for these only when a hook doesn't fit.
 
+### How `allowedParentOrigins` entries are read
+
+Each entry is canonicalised with the URL parser before it is compared to
+`event.origin`, so these spellings all mean the same thing and all match a host
+frame at `https://civitai.com`:
+
+| Written as | Also matches |
+|---|---|
+| `https://civitai.com/` | trailing slash is ignored |
+| `HTTPS://CIVITAI.COM` | scheme and host are case-insensitive |
+| `https://civitai.com:443`, `http://x:80` | an explicit **default** port is ignored |
+| `https://пример.com` | normalised to the punycode a browser reports |
+
+These stay **significant** — they are different origins, not spellings:
+
+- a **non-default** port: `https://civitai.com:8443` does not match `https://civitai.com`
+- the scheme: `http://` never matches `https://`
+- a trailing-dot host: `https://civitai.com.` is its own origin
+- any host that merely *contains* an allowed one: `https://civitai.com.evil.com`
+  never matches `https://civitai.com`
+
+An entry that is not a bare origin **throws at construction** rather than being
+quietly skipped — no scheme (`civitai.com`), a path/query/fragment
+(`https://civitai.com/embed`), credentials (`https://u:p@civitai.com`), or a
+scheme with no origin of its own (`file://…`). A silently dropped entry is the
+failure this rule exists to prevent: the allowlist would be missing an origin
+you believe is on it.
+
+If `BLOCK_INIT` never lands, the 10s timeout error names the origins that
+actually arrived and were rejected, next to the allowlist it checked them
+against — start there.
+
 ## The `/testing` subexport
 
 `@civitai/blocks-react/testing` is the **host-simulation** entry point: it stands

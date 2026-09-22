@@ -28,11 +28,73 @@ import type { WrappedToken } from '@civitai/app-sdk/blocks';
 
 const INIT_TIMEOUT_MS = 10_000;
 
+/**
+ * How many DISTINCT inbound origins are remembered for the init-timeout
+ * diagnostic, per bucket (accepted / rejected).
+ *
+ * Bounded on purpose: a framing page — or any browser extension sharing the
+ * window — can postMessage from an unbounded number of origins, and the host
+ * itself re-sends `BLOCK_INIT` on a ~400ms tick, so an uncapped set would let a
+ * hostile or merely noisy page grow an error string without limit. Five is
+ * enough to name the misconfigured origin next to the configured allowlist,
+ * which is the whole diagnostic; past that the message says it is truncated
+ * rather than pretending the list is complete.
+ */
+const MAX_TRACKED_ORIGINS = 5;
+
+/** Bounded record of the distinct origins seen on one bucket. */
+interface OriginTally {
+  readonly seen: Set<string>;
+  truncated: boolean;
+}
+
+function newTally(): OriginTally {
+  return { seen: new Set<string>(), truncated: false };
+}
+
+/**
+ * Remembers `origin` if there is room. Returns true only the FIRST time an
+ * origin is recorded, so callers can attach a one-shot log to it without
+ * turning the host's 400ms init retry into a console flood.
+ */
+function recordOrigin(tally: OriginTally, origin: string): boolean {
+  if (tally.seen.has(origin)) return false;
+  if (tally.seen.size >= MAX_TRACKED_ORIGINS) {
+    tally.truncated = true;
+    return false;
+  }
+  tally.seen.add(origin);
+  return true;
+}
+
+/** The quoted, comma-separated list of origins remembered on one bucket. */
+function formatOrigins(tally: OriginTally): string {
+  return [...tally.seen].map((o) => `"${o}"`).join(', ');
+}
+
+/**
+ * Leading clause for the bucket's parenthetical when it overflowed, so a capped
+ * list is never read as a complete one. Empty when nothing was dropped — the
+ * common case, and the one where the list IS the whole truth.
+ */
+function truncationNote(tally: OriginTally): string {
+  return tally.truncated ? `first ${MAX_TRACKED_ORIGINS} of more; ` : '';
+}
+
 export interface IframeTransportOptions {
   /**
    * Origins from which `BLOCK_INIT` (and any other inbound message) is
    * accepted. MUST contain at least one entry. Messages from any other
-   * origin — including the local origin — are dropped silently.
+   * origin — including the local origin — are dropped; a drop that happens
+   * before init warns ONCE per distinct origin and is named in the
+   * init-timeout error (see {@link MAX_TRACKED_ORIGINS}).
+   *
+   * Entries are canonicalised by `OriginMatcher`, so a trailing slash, a
+   * mixed-case scheme/host and an explicit DEFAULT port all match the
+   * equivalent `event.origin` — while a non-default port, the scheme and the
+   * exact host stay significant. An entry that is not a bare origin THROWS
+   * here rather than being silently skipped. Read that file's docblock before
+   * changing anything about the comparison: it is a security boundary.
    *
    * Typically wired from `import.meta.env.VITE_BLOCK_ALLOWED_PARENT_ORIGINS`
    * (or the framework's equivalent) at block-app startup.
@@ -70,13 +132,35 @@ interface PendingRequest {
 export class IframeTransport implements BlockTransport {
   private readonly originMatcher: OriginMatcher;
   /**
-   * The EXACT (non-wildcard) entries of `allowedParentOrigins`, usable as a
-   * `postMessage` `targetOrigin`. A wildcard entry (`https://*.civitaic.com`)
-   * is not a concrete origin and cannot be a target, so it is excluded here —
-   * see {@link announceReady} for what happens when nothing exact remains.
+   * The EXACT (non-wildcard) entries of `allowedParentOrigins`, NORMALISED by
+   * `OriginMatcher` and usable as a `postMessage` `targetOrigin`. A wildcard
+   * entry (`https://*.civitaic.com`) is not a concrete origin and cannot be a
+   * target, so it is excluded there — see {@link announceReady} for what
+   * happens when nothing exact remains.
    */
   private readonly exactAllowedOrigins: readonly string[];
+  /**
+   * The allowlist AS CONFIGURED (trimmed, not normalised). Named in the
+   * init-timeout error so the operator sees the strings they actually wrote
+   * next to the origins that actually arrived.
+   */
+  private readonly configuredOrigins: readonly string[];
   private readonly window: Window;
+
+  /**
+   * Origins observed BEFORE init resolved, split by what the allowlist gate did
+   * with them. Both bounded — see {@link MAX_TRACKED_ORIGINS}.
+   *
+   * 🔴 THE TWO BUCKETS ARE DIFFERENT DIAGNOSES AND AN EMPTY PAIR IS A THIRD.
+   * "rejected" says the host is talking and the allowlist is wrong; "accepted,
+   * but nothing was a valid BLOCK_INIT" says the allowlist is right and the
+   * payload or the message type is wrong; neither means the host frame never
+   * posted at all. Collapsing them would send the one person reading this error
+   * to the wrong half of the system — the failure this whole diagnostic exists
+   * to prevent.
+   */
+  private readonly acceptedOriginTally = newTally();
+  private readonly rejectedOriginTally = newTally();
 
   private snapshot: BlockSnapshot = EMPTY_SNAPSHOT;
   private readonly listeners = new Set<() => void>();
@@ -114,9 +198,15 @@ export class IframeTransport implements BlockTransport {
     // `https://*.example.com` entries match any subdomain on a dot boundary
     // (mirrors the host-side CSP frame-ancestors convention).
     this.originMatcher = new OriginMatcher(opts.allowedParentOrigins);
-    this.exactAllowedOrigins = opts.allowedParentOrigins
+    // From the matcher, NOT re-derived here: a second copy of "which entries are
+    // concrete origins, and how is one spelled" is a second place for the
+    // trailing-slash/case/default-port bug this class just fixed to come back —
+    // and it would come back specifically as a `postMessage` targetOrigin, where
+    // the failure is a silently dropped announce.
+    this.exactAllowedOrigins = this.originMatcher.exactOrigins;
+    this.configuredOrigins = opts.allowedParentOrigins
       .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0 && !entry.includes('*'));
+      .filter((entry) => entry.length > 0);
     this.window = opts.window ?? (globalThis as { window?: Window }).window!;
     if (!this.window) {
       throw new Error('IframeTransport: no window available; cannot mount on the server.');
@@ -132,6 +222,10 @@ export class IframeTransport implements BlockTransport {
         this.rejectInit(
           new Error(
             `IframeTransport: timed out waiting for BLOCK_INIT after ${INIT_TIMEOUT_MS}ms. ` +
+              `${this.describeObservedOrigins()} ` +
+              `Configured allowedParentOrigins: ${
+                this.configuredOrigins.map((o) => `"${o}"`).join(', ') || '(none)'
+              }. ` +
               'Verify the host frame is sending the init message and that its origin is in allowedParentOrigins.',
           ),
         );
@@ -251,6 +345,33 @@ export class IframeTransport implements BlockTransport {
         // anyway so one bad allowlist entry can't abort the remaining posts.
       }
     }
+  }
+
+  /**
+   * One sentence naming the origins this transport actually heard from before
+   * init timed out — the single fact that turns "BLOCK_INIT never arrived" from
+   * a guess into a diagnosis.
+   *
+   * Three outcomes, deliberately worded apart (see {@link acceptedOriginTally}).
+   */
+  private describeObservedOrigins(): string {
+    const parts: string[] = [];
+    if (this.rejectedOriginTally.seen.size > 0) {
+      parts.push(
+        `rejected messages from ${formatOrigins(this.rejectedOriginTally)} ` +
+          `(${truncationNote(this.rejectedOriginTally)}no allowedParentOrigins entry matched)`,
+      );
+    }
+    if (this.acceptedOriginTally.seen.size > 0) {
+      parts.push(
+        `accepted messages from ${formatOrigins(this.acceptedOriginTally)} ` +
+          `(${truncationNote(this.acceptedOriginTally)}none of them was a valid BLOCK_INIT)`,
+      );
+    }
+    if (parts.length === 0) {
+      return 'No inbound message was received from any origin.';
+    }
+    return `Origins seen: ${parts.join('; ')}.`;
   }
 
   getSnapshot(): BlockSnapshot {
@@ -533,7 +654,25 @@ export class IframeTransport implements BlockTransport {
   }
 
   private handleMessage(event: MessageEvent): void {
-    if (!this.originMatcher.matches(event.origin)) return;
+    if (!this.originMatcher.matches(event.origin)) {
+      // Still a DROP — nothing below this line runs. What changed is that the
+      // drop is no longer invisible: an origin rejected before init lands is the
+      // single fact that diagnoses a misspelled allowlist entry, and it is
+      // otherwise unobservable from inside the iframe. Bounded to
+      // MAX_TRACKED_ORIGINS distinct origins, and `recordOrigin` returns true
+      // only on the first sighting, so the host's ~400ms init retry warns ONCE
+      // rather than 25 times per ready window.
+      if (!this.initResolved && recordOrigin(this.rejectedOriginTally, event.origin)) {
+        // eslint-disable-next-line no-console -- developer-facing diagnostic at a trust boundary
+        console.warn(
+          `IframeTransport: dropping a message from "${event.origin}" — no ` +
+            'allowedParentOrigins entry matched. Configured: ' +
+            `${this.configuredOrigins.map((o) => `"${o}"`).join(', ') || '(none)'}.`,
+        );
+      }
+      return;
+    }
+    if (!this.initResolved) recordOrigin(this.acceptedOriginTally, event.origin);
     const data = event.data as { type?: unknown; payload?: unknown };
     if (data == null || typeof data !== 'object' || typeof data.type !== 'string') return;
 

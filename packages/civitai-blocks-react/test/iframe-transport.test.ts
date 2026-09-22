@@ -101,7 +101,29 @@ describe('IframeTransport', () => {
     transport.dispose();
   });
 
-  it('silently drops BLOCK_INIT from a disallowed origin', async () => {
+  // #397, end to end: the reported symptom was an env var written with a
+  // trailing slash, which made every BLOCK_INIT drop and the block sit blank
+  // for 10s. Pinned at the transport, not just the matcher.
+  it('inits from a host origin when the allowlist entry carries a trailing slash', async () => {
+    const transport = new IframeTransport({ allowedParentOrigins: ['https://civitai.com/'] });
+    const initPromise = transport.waitForInit();
+    window.dispatchEvent(
+      mockParentMessage({ type: 'BLOCK_INIT', payload: buildInitPayload() }, PARENT_ORIGIN),
+    );
+    await initPromise;
+    expect(transport.getSnapshot().ready).toBe(true);
+    expect(transport.getHostOrigin()).toBe(PARENT_ORIGIN);
+    transport.dispose();
+  });
+
+  it('announces BLOCK_HELLO to the NORMALISED exact origin, not the raw entry', () => {
+    const transport = new IframeTransport({ allowedParentOrigins: ['HTTPS://CIVITAI.COM:443/'] });
+    expect(postMessageMock).toHaveBeenCalledWith({ type: 'BLOCK_HELLO' }, PARENT_ORIGIN);
+    transport.dispose();
+  });
+
+  it('drops BLOCK_INIT from a disallowed origin (and says so once)', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const transport = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
     const initPromise = transport.waitForInit();
 
@@ -111,9 +133,132 @@ describe('IframeTransport', () => {
     // Snapshot stays not-ready because the wrong-origin message was dropped.
     expect(transport.getSnapshot().ready).toBe(false);
 
+    // The host re-sends BLOCK_INIT on a ~400ms tick until BLOCK_READY, so the
+    // warn is one-shot per distinct origin, not per message.
+    //
+    // 🔴 THE WHOLE CALL LIST, PINNED WHOLE — not a substring probe. A
+    // `.includes(OTHER_ORIGIN)` filter passes on any message that merely
+    // MENTIONS the origin among others, so it could not tell this warn from one
+    // naming five origins at once; it also read to CodeQL as an incomplete URL
+    // sanitization (`js/incomplete-url-substring-sanitization`), which is the
+    // right instinct on origin-matching code even though this is an assertion.
+    // Exact equality on the array pins the count AND the text in one claim.
+    window.dispatchEvent(mockParentMessage(init, OTHER_ORIGIN));
+    window.dispatchEvent(mockParentMessage(init, OTHER_ORIGIN));
+    expect(warnSpy.mock.calls).toEqual([
+      [
+        'IframeTransport: dropping a message from "https://evil.example.com" — no ' +
+          'allowedParentOrigins entry matched. Configured: "https://civitai.com".',
+      ],
+    ]);
+
     vi.advanceTimersByTime(11_000);
     await expect(initPromise).rejects.toThrow(/timed out waiting for BLOCK_INIT/);
+    warnSpy.mockRestore();
     transport.dispose();
+  });
+
+  // #397 — the init timeout used to name neither the origins that arrived nor
+  // the allowlist it checked them against, which is the one fact that diagnoses
+  // a misspelled allowlist entry from inside a sandboxed iframe.
+  describe('init-timeout error names the origins actually seen (#397)', () => {
+    async function timeoutError(opts: {
+      allow: string[];
+      send?: Array<[ParentToBlockMessage, string]>;
+    }): Promise<string> {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const transport = new IframeTransport({ allowedParentOrigins: opts.allow });
+      const initPromise = transport.waitForInit();
+      for (const [msg, origin] of opts.send ?? []) {
+        window.dispatchEvent(mockParentMessage(msg, origin));
+      }
+      vi.advanceTimersByTime(11_000);
+      const err = await initPromise.then(
+        () => {
+          throw new Error('expected waitForInit to reject');
+        },
+        (e: Error) => e,
+      );
+      warnSpy.mockRestore();
+      transport.dispose();
+      return err.message;
+    }
+
+    // 🔴 EACH EXPECTATION IS THE WHOLE MESSAGE, SPELLED OUT. A substring probe on
+    // an error that embeds origins is walkable by rewording and — on exactly this
+    // subject matter — is the `js/incomplete-url-substring-sanitization` shape.
+    // Pinning the normalised string costs a test edit on a cosmetic reword; that
+    // is the price of a machine-readable claim about what the operator is told.
+    it('names the REJECTED origin alongside the configured allowlist', async () => {
+      const msg = await timeoutError({
+        allow: [PARENT_ORIGIN],
+        send: [[{ type: 'BLOCK_INIT', payload: buildInitPayload() }, OTHER_ORIGIN]],
+      });
+      expect(msg).toBe(
+        'IframeTransport: timed out waiting for BLOCK_INIT after 10000ms. ' +
+          'Origins seen: rejected messages from "https://evil.example.com" ' +
+          '(no allowedParentOrigins entry matched). ' +
+          'Configured allowedParentOrigins: "https://civitai.com". ' +
+          'Verify the host frame is sending the init message and that its origin is in allowedParentOrigins.',
+      );
+    });
+
+    it('distinguishes "nothing arrived at all" from a rejected origin', async () => {
+      const msg = await timeoutError({ allow: [PARENT_ORIGIN] });
+      expect(msg).toBe(
+        'IframeTransport: timed out waiting for BLOCK_INIT after 10000ms. ' +
+          'No inbound message was received from any origin. ' +
+          'Configured allowedParentOrigins: "https://civitai.com". ' +
+          'Verify the host frame is sending the init message and that its origin is in allowedParentOrigins.',
+      );
+    });
+
+    it('distinguishes an ACCEPTED origin that never sent a valid BLOCK_INIT', async () => {
+      const msg = await timeoutError({
+        allow: [PARENT_ORIGIN],
+        // Origin is fine; the payload is not — a different half of the system.
+        send: [
+          [
+            {
+              type: 'BLOCK_INIT',
+              payload: buildInitPayload({ viewer: { id: 7, username: 'x', status: 'bogus' as never } }),
+            },
+            PARENT_ORIGIN,
+          ],
+        ],
+      });
+      expect(msg).toBe(
+        'IframeTransport: timed out waiting for BLOCK_INIT after 10000ms. ' +
+          'Origins seen: accepted messages from "https://civitai.com" ' +
+          '(none of them was a valid BLOCK_INIT). ' +
+          'Configured allowedParentOrigins: "https://civitai.com". ' +
+          'Verify the host frame is sending the init message and that its origin is in allowedParentOrigins.',
+      );
+    });
+
+    it('caps the rejected-origin list rather than growing an unbounded string', async () => {
+      const init: ParentToBlockMessage = { type: 'BLOCK_INIT', payload: buildInitPayload() };
+      const msg = await timeoutError({
+        allow: [PARENT_ORIGIN],
+        send: Array.from(
+          { length: 9 },
+          (_, i) => [init, `https://evil-${i}.example.com`] as [ParentToBlockMessage, string],
+        ),
+      });
+      // Nine distinct origins arrived; exactly the first five are named, the
+      // parenthetical says so, and origins 5..8 appear NOWHERE in the string —
+      // which whole-string equality asserts far more tightly than a `not.toContain`
+      // per origin ever did.
+      expect(msg).toBe(
+        'IframeTransport: timed out waiting for BLOCK_INIT after 10000ms. ' +
+          'Origins seen: rejected messages from "https://evil-0.example.com", ' +
+          '"https://evil-1.example.com", "https://evil-2.example.com", ' +
+          '"https://evil-3.example.com", "https://evil-4.example.com" ' +
+          '(first 5 of more; no allowedParentOrigins entry matched). ' +
+          'Configured allowedParentOrigins: "https://civitai.com". ' +
+          'Verify the host frame is sending the init message and that its origin is in allowedParentOrigins.',
+      );
+    });
   });
 
   it('drops a well-formed IMAGE_SCAN_RESOLVED push from a disallowed origin (async-scan invariant #4)', async () => {
