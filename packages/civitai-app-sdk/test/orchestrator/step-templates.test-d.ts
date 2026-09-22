@@ -128,17 +128,23 @@ expectTypeOf<Exclude<keyof WorkflowStepTemplates, WorkflowStepType>>().toEqualTy
 /**
  * Direction B — catalog entries that have NO generated type yet.
  *
- * 🔴 A LEDGER, NOT A TOGGLE. Empty (`never`) today: the catalog's 47 `$type`s
- * and `@civitai/client@0.2.0-beta.98`'s 47 generated step templates are the
- * same set, verified by enumeration, not by sampling.
+ * 🔴 A LEDGER, NOT A TOGGLE. NON-EMPTY today, and the comment that used to say
+ * "Empty (`never`) today" eleven lines above a populated ledger is exactly the
+ * rot #382 is about. The catalog carries 50 `$type`s;
+ * `@civitai/client@0.2.0-beta.98` generates step templates for 47 of them. The
+ * three below are the difference, verified by enumeration, not by sampling.
  *
  * The two surfaces move independently and are allowed to disagree for a while:
  * the catalog tracks the LIVE orchestrator spec (`pnpm check:catalogs` and the
  * `sync-orchestrator-catalogs` automation keep it there), while these types
- * track whatever `@civitai/client` was last published from. At the time of
- * writing the live spec already had three step types — `imageScanning`,
- * `preprocessVideo`, `yuE2` — that neither the catalog nor the pinned client
- * carried.
+ * track whatever `@civitai/client` was last published from. `44a79dc` (#315)
+ * synced `imageScanning`, `preprocessVideo` and `yuE2` into the catalog; the
+ * client has not republished with them yet.
+ *
+ * `test/orchestrator/step-count-prose.test.ts` derives the same gap from
+ * `WORKFLOW_STEP_TYPES` and `StepTemplateMap`'s AST and asserts it equals the
+ * union below — so this ledger cannot go stale in EITHER direction, and neither
+ * can the prose in `steps.ts` and the README that names the same three.
  *
  * So when the catalog syncs ahead of the client, list the not-yet-typed
  * `$type`s HERE in the same PR, and delete them when the client republishes.
@@ -164,6 +170,30 @@ type CatalogStepTypesWithoutAGeneratedType = 'imageScanning' | 'preprocessVideo'
 expectTypeOf<Exclude<WorkflowStepType, keyof WorkflowStepTemplates>>().toEqualTypeOf<
   CatalogStepTypesWithoutAGeneratedType
 >();
+
+/**
+ * …and what that ledger COSTS a caller, spelled as a live compile error rather
+ * than as prose.
+ *
+ * The `never` above is a claim about a SET. It says nothing about what happens
+ * when someone writes `WorkflowStepTemplateFor<'imageScanning'>` for a `$type`
+ * the SDK's own catalog documents — which is the whole user-visible
+ * consequence of the map being partial, and which #382 found undocumented.
+ * Each alias below is a `TS2344` pinned by `@ts-expect-error`: delete one and
+ * the unused directive is itself a compile error, so this cannot pass
+ * vacuously.
+ *
+ * One alias per ledger entry, named `_NoGeneratedTemplateFor_<$type>`.
+ * `test/orchestrator/step-count-prose.test.ts` reads these names off the AST
+ * and asserts the set equals the derived gap, so the ledger cannot grow or
+ * shrink without this block moving with it.
+ */
+// @ts-expect-error — documented `$type`, no generated template in the pinned peer
+export type _NoGeneratedTemplateFor_imageScanning = WorkflowStepTemplateFor<'imageScanning'>;
+// @ts-expect-error — documented `$type`, no generated template in the pinned peer
+export type _NoGeneratedTemplateFor_preprocessVideo = WorkflowStepTemplateFor<'preprocessVideo'>;
+// @ts-expect-error — documented `$type`, no generated template in the pinned peer
+export type _NoGeneratedTemplateFor_yuE2 = WorkflowStepTemplateFor<'yuE2'>;
 
 // Every member of the map really is a step template (not, say, an `*Input`).
 expectTypeOf<WorkflowStepTemplates['comfy']>().toEqualTypeOf<ComfyStepTemplate>();
