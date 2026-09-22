@@ -314,6 +314,18 @@
       Tab into the group, then use &larr;/&rarr;. Press Enter in the query field to submit.
     </p>
 
+    <h2>Workflow button &mdash; needs @civitai/sdk</h2>
+    <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap">
+      <civitai-workflow-button id="wf-fast" label="Bake"></civitai-workflow-button>
+      <civitai-workflow-button id="wf-blind" label="Run" variant="outline"></civitai-workflow-button>
+      <civitai-sign-in-button id="sign-in" variant="subtle">Sign in with Civitai</civitai-sign-in-button>
+    </div>
+    <p id="wf-log" style="font-size: 13px; color: var(--civitai-color-text-dimmed)">
+      Both run against a fake orchestrator &mdash; no token, no Buzz. The first is a
+      two-step workflow reporting progress, so it counts steps as they finish; the second
+      reports none, so it only spins. Press a running button to cancel.
+    </p>
+
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

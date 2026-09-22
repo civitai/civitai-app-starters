@@ -159,3 +159,80 @@ document.querySelector('#cards')?.addEventListener('react', (event) => {
   ).detail;
   if (cardLog) cardLog.textContent = `${reacted ? 'reacted' : 'un-reacted'} ${emoji} \u2192 ${count}`;
 });
+
+// ─ Workflow button ─ a fake orchestrator, so the playground spends nothing.
+import '../src/sdk/civitai-workflow-button.define.js';
+import '../src/sdk/civitai-sign-in-button.define.js';
+import type { CivitaiWorkflowButton } from '../src/sdk/civitai-workflow-button.js';
+import type { CivitaiSignInButton } from '../src/sdk/civitai-sign-in-button.js';
+
+const wfLog = document.getElementById('wf-log') as HTMLElement;
+
+function fakeApp(opts: { cost: number; reportsProgress: boolean; steps?: number }) {
+  let canceled = false;
+  return {
+    requestGrants: async () => true,
+    getToken: async () => 'playground',
+    orchestration: {
+      estimateWorkflow: async () => {
+        await new Promise((r) => setTimeout(r, 500));
+        return { cost: { total: opts.cost } };
+      },
+      submitWorkflow: async () => {
+        canceled = false;
+        return { id: `wf_${Date.now()}` };
+      },
+      cancelWorkflow: async () => {
+        canceled = true;
+      },
+      async *watchWorkflow() {
+        const statuses = ['unassigned', 'preparing', 'scheduled'];
+        for (const status of statuses) {
+          await new Promise((r) => setTimeout(r, 900));
+          if (canceled) return yield { status: 'canceled', steps: [] };
+          yield { status, steps: [] };
+        }
+        // Each step runs in turn, the way a mesh then a rig does.
+        const total = opts.steps ?? 1;
+        for (let step = 0; step < total; step++) {
+          for (let rate = 0.05; rate <= 1; rate += 0.05) {
+            await new Promise((r) => setTimeout(r, 400));
+            if (canceled) return yield { status: 'canceled', steps: [] };
+            yield {
+              status: 'processing',
+              steps: Array.from({ length: total }, (_, i) => ({
+                status: i < step ? 'succeeded' : i === step ? 'processing' : 'unassigned',
+                estimatedProgressRate: i === step && opts.reportsProgress ? rate : null,
+              })),
+            };
+          }
+        }
+        yield { status: 'succeeded', steps: [] };
+      },
+    },
+  } as never;
+}
+
+for (const [id, app] of [
+  ['wf-fast', fakeApp({ cost: 185, reportsProgress: true, steps: 2 })],
+  ['wf-blind', fakeApp({ cost: 44, reportsProgress: false })],
+] as const) {
+  const button = document.getElementById(id) as CivitaiWorkflowButton;
+  button.app = app;
+  button.template = { steps: [{ $type: 'echo', input: {} }] } as never;
+  for (const event of ['priced', 'submitted', 'progress', 'finished', 'canceled', 'error']) {
+    button.addEventListener(event, (e) => {
+      const detail = (e as CustomEvent).detail as Record<string, unknown> | undefined;
+      const status = detail?.status ? ` ${String(detail.status)}` : '';
+      wfLog.textContent = `${id}: ${event}${status}`;
+    });
+  }
+}
+
+(document.getElementById('sign-in') as CivitaiSignInButton).signIn = {
+  signedIn: false,
+  signIn: async () => {
+    wfLog.textContent = 'sign-in: would leave for auth.civitai.com';
+    return new Promise<never>(() => {});
+  },
+} as never;

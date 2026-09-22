@@ -351,6 +351,40 @@ Either way it disappears once the viewer is signed in.
 These elements are not in `register`, `register-site`, `elements.js` or
 `site-elements.js`, so a page that wants only the look never bundles the SDK;
 `test/entry-points.test.ts` fails if one of them becomes reachable from there.
+`<civitai-workflow-button>` is the other one: give it a workflow and it prices
+it, runs it on the viewer's Buzz, and says where the workflow is while it runs.
+
+```ts
+import type { CivitaiWorkflowButton } from '@civitai/components/civitai-workflow-button';
+import '@civitai/components/civitai-workflow-button/define';
+
+const button = document.querySelector<CivitaiWorkflowButton>('civitai-workflow-button')!;
+button.app = app;                   // from initialize(); a block may omit it
+button.template = { steps: [{ $type: 'imageGen', input }] };
+button.addEventListener('finished', (event) => show((event as CustomEvent).detail.workflow));
+```
+
+```html
+<civitai-workflow-button label="Bake"></civitai-workflow-button>
+```
+
+It is one control, not three. The label carries the price
+(`Bake for 185 Buzz`) as soon as the estimate lands, so no one spends without
+seeing it. While the workflow runs, the button spins, says what stage it is at,
+and fills its own background with the workflow's own estimate — the lowest rate
+any step reports, since that is what the workflow is waiting on, whether its
+steps run in turn or together. A workflow of several steps also counts them off
+(`working… 1/2`) as each one finishes. Pressing it again asks whether to
+cancel, warning that work already under way may finish anyway and offering the
+workflow id to copy, since that is what support asks for; if the run ends while
+that question is on screen, the question goes away with it. When the run
+ends the button says so — `Done!`, `Failed`, `Canceled` — for a moment before
+offering its price again. It emits `priced`, `submitted`,
+`progress`, `finished`, `canceled` and `error`, and asks for
+`ai:write:budgeted` first — set `scopes=""` to leave consent to the app.
+`variant`, `size`, `full-width` and `disabled` pass through to the button it
+wraps, so it behaves like one.
+
 Waiting for the host applies only to the host path: with no validated host
 origin a press sends nothing and the button renders disabled. Given a `signIn`
 it is usable at once, since no handshake is involved.
