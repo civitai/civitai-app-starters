@@ -97,8 +97,14 @@ theme 0.4.0 · **`@civitai/sdk` 0.2.0**.
   Wrapping it would change nothing. `via: code`
 - **Leading hypothesis:** a host-side REST proxy is the smallest fix — it touches neither the
   `appblk-*` OAuth bar nor the orchestrator. **Built as #5068.**
-- **Next probe:** sync #5068 onto `main` (now that `2fd658d77` landed), re-run CI, then
-  `/audit-pr 5068` Round 0 with the brief already at `<scratchpad>/brief-5068-r0.md`.
+- ~~**Next probe:** sync #5068 onto `main`, re-run CI, then `/audit-pr 5068` Round 0.~~
+  ✅ **ALL THREE DONE 2026-09-23 — do NOT re-run this instruction.** #5068 was rebased onto main
+  (head `298db52c89`, now containing `2fd658d775` and `3a1e090924`), CI re-ran and settled fully
+  green on both surfaces, and Round 0 AND Round 1 have both completed. The pre-generated
+  `brief-5068-r0.md` referenced here was **stale on arrival** — it anchored on the pre-rebase head
+  `05592c96fb`; a rebase re-points the anchor and nothing in the tooling notices. Regenerate with
+  `audit-dispatch.py <pr> --round N` rather than reusing a brief across a rebase.
+  The live state for this arc is now the two Round-1 blocks lower in this section.
 
 ### `app-requests` cannot port either — anon reads 403, and the UI surface is missing
 - as-of: 2026-09-23
