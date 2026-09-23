@@ -30,6 +30,25 @@ no host handler today either** — `hostHandlerParity.ts` marks both hosts N/A, 
 host-side sink wired (dropped, never hangs)"*. So those 40 call sites are already no-ops; this is net-new
 capability rather than a migration gap.
 
+## 🔴 Before you call ANY block REST route: the scope-binding trap
+
+The request-time scope-binding check runs over **every scope on your block token**, not just the one the route
+requires. So a scope you declared for an unrelated feature can reject a call that has nothing to do with it,
+with an error naming a scope you never invoked.
+
+The common case: an app declaring **`models:read:self`** calls `GET /api/v1/blocks/buzz`. That scope's binding
+wants `query.id` (or `query.modelId`) to match the model in your block context; a buzz request carries neither,
+so it **403s** with `models:read:self bound to different modelId`.
+
+**Workaround — pass a param the handler ignores:**
+
+```ts
+await app.site.get('blocks/buzz', { query: { id: context.modelId } });
+```
+
+Applies to all ten current block REST routes (`blocks/buzz` and the nine under `blocks/shared-storage/`).
+Tracked as civitai/civitai#5063. The anon-read case below is the same bug with no workaround.
+
 ## Shared storage
 
 Nine routes under `/api/v1/blocks/shared-storage/`. Reads take `apps:storage:shared:read`, writes take
@@ -48,9 +67,21 @@ Nine routes under `/api/v1/blocks/shared-storage/`. Reads take `apps:storage:sha
 These rules are enforced server-side and are **not** new policy — the REST routes call the same functions the
 bridge already called, so behaviour is identical on both transports.
 
-- **Anonymous viewers MAY read.** `list`, `item`, `counts` and `top` skip the subject check entirely. An anon
-  read still requires: a valid block token, the `apps:storage:shared:read` scope, an approved app, a
-  non-revoked instance, and the feature flag enabled.
+- **Anonymous viewers MAY read** — by design. `list`, `item`, `counts` and `top` skip the subject check
+  entirely. An anon read still requires: a valid block token, the `apps:storage:shared:read` scope, an
+  approved app, a non-revoked instance, and the feature flag enabled.
+
+  🔴 **BUT NOT TODAY, if your app also declares `apps:storage:shared:write`.** An anon token still carries
+  that scope (it is consent-exempt, so the anon mint does not strip it), and the request-time scope-binding
+  check runs over **every** scope on the token rather than the one the route needs — so it reaches the write
+  scope's "requires authenticated subject" rule and returns **403 for an anonymous read**.
+
+  There is no call-site workaround: an app cannot un-declare the write scope it needs in order to make its
+  read path work. Tracked as civitai/civitai#5063.
+
+  ⚠ **This is a behaviour change from the bridge, so check it before porting.** `SHARED_*` over `postMessage`
+  gates anonymity **per operation** — an anon read passes there today. On REST it currently does not. If your
+  app's premise is signed-out browsing, that path breaks on migration until #5063 lands.
 - **Anonymous viewers may NEVER write or vote.** Every write resolves to `401` for an anon subject.
 - **Authenticated writers must clear a minimum-trust gate.** After the anon check, writes call
   `assertSharedWriteTrust` — account age, paid tier, and verified email *or* a linked OAuth account. A signed-in
