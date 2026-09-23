@@ -37,24 +37,25 @@ that protocol."*
 
 ## State now
 
-**#5067 is MERGED — the ten block REST routes are live-usable for the first time. #5068 is rebased,
-fully green on both CI surfaces, and Round 0 is done: verdict `requirement questioned`, NOT
-`close, do not audit`. Still nothing ported; the closing condition still returns non-zero.**
+**#5067 is MERGED. The security finding is ROUTED — `civitai/civitai-orchestration#363`, assigned.
+#5068 is green, its premise is corrected, and Round 1 is done: 6 findings, 1 of them 🔴, verdict
+"merge after fixing 🔴". Still nothing ported; the closing condition still returns non-zero.**
 
-- Repos: `civitai-app-starters` @ `90b4967` (branch `docs/handoff-app-platform-migration`) ·
-  `civitai` @ `f5499803b0` (main, clean, base clone re-synced after the merge).
-- **No `clawgate-task:` field**, deliberately. `clawgate_handoff.sh resolve` exited **5** again this
-  session. Its own positive control fired (2 links for a different session), so the board is
-  reachable — but a wrong session id ALSO answers 200 with an empty array, so the zero is not a
-  clean bill of health.
+- Repos: `civitai-app-starters` @ `59458d9` (branch `docs/handoff-app-platform-migration`) ·
+  `civitai` @ `f5499803b0` (main, clean).
+- **No `clawgate-task:` field**, deliberately. `clawgate_handoff.sh resolve` exited **5**; its own
+  positive control fired, but a wrong session id also answers 200 with an empty array.
 
-### Merged this session
+### Done this session
 
-| repo | commit | what |
-|---|---|---|
-| civitai | `3a1e090924` | **#5067** — `enforceContextBinding` now binds the ROUTE's `requiredScope` only |
-
-`#5063` auto-closed on that merge.
+| what | where |
+|---|---|
+| **#5067 merged** | `3a1e090924` — binds the ROUTE's `requiredScope` only. `#5063` auto-closed. |
+| **Security finding ROUTED** | `civitai/civitai-orchestration#363` (PRIVATE repo), label `bug`, **assigned `koenbeuk`** — author of all 5 recent commits to `WorkflowsController.cs`. Carries a closing condition. |
+| **#5068 rebased** | `298db52c89`, onto main incl. `2fd658d775` + `3a1e090924`. 7/7 statuses, 13/13 check-runs. |
+| **#5068 premise corrected** | PR body now opens with a dated retraction blockquote linking `#issuecomment-5800758557`; the 4 false clauses are gone. Head sha unchanged, CI untouched. |
+| **#5068 comment posted** | `#issuecomment-5800758557` — consolidation framing only, leak-scanned before posting. |
+| **Round 1 audit** | 6 findings (1🔴 / 5🟡). Full text in the session transcript. |
 
 ### Merged in EARLIER sessions of this arc (carried forward — do not re-derive)
 
@@ -73,32 +74,7 @@ fully green on both CI surfaces, and Round 0 is done: verdict `requirement quest
 | civitai | `2fd658d77` | #5070 fixed a live `main` breakage (`ctx.domain` in a sessionless fn) |
 
 **Published:** app-sdk 0.50.0 · blocks-react 0.57.1 · components + components-react 0.5.0 ·
-theme 0.4.0 · **`@civitai/sdk` 0.2.0** (first publish — verified by three claims with controls).
-
-### IN FLIGHT
-
-- **civitai/civitai#5068** — `/api/v1/blocks/workflows` REST proxy. `IN FLIGHT: civitai/civitai#5068`.
-  Head `298db52c89`, rebased onto main (now carries `2fd658d775` and `3a1e090924`).
-  **Fully settled green: 7/7 statuses** (`preview/{deploy,render-check,component-tests,auth-tests,smoke-tests}`
-  + `tekton/{typecheck,fixture-bootstrap}`) **and 13/13 check-runs.** `tekton / typecheck` went red →
-  green on the rebase alone, confirming the break was inherited, not the PR's.
-  Round 0 complete. Worktree: `/home/zach/workspace/civit/civitai-workflows-rest`.
-  **Blocked on nothing mechanical — it needs the premise correction below, then the nine-axis round 1.**
-
-### Verified this session, with the controls
-
-- **#5067's merged tree was measured, not assumed.** It was 9 commits behind main and branched at
-  `0cd25bb226e5` — before both the `ctx.domain` break AND its fix — so its 20/20 green described a
-  tree that had neither. Merged tree vs main baseline in the same environment: **identical failure
-  sets, zero merged-tree-only failures**.
-- **The new guard is a REGRESSION test, not an invariant guard.** Reverting only
-  `block-scope.middleware.ts` to `0cd25bb226e5` turns 2 of its 7 cases red with the exact
-  `AssertionError: expected 403 to be 200`; the 5 counter-tests stay green. Red at pre-change,
-  green at HEAD.
-- **#5068 is on the HARDENED path.** Its routes build a tRPC caller over `blocksRouter`
-  (`block-workflow-rest.ts:92-96`) and delegate to the real procedures; `assertBlockWorkflowMintedForViewer`
-  is genuinely called at `blocks.router.ts:3963` (poll) and `:4252` (cancel) — call sites, not
-  docblocks. A concern recorded in the operator's non-public note does **not** apply to this PR.
+theme 0.4.0 · **`@civitai/sdk` 0.2.0**.
 
 ## Open investigations — live diagnosis state
 
@@ -245,32 +221,104 @@ theme 0.4.0 · **`@civitai/sdk` 0.2.0** (first publish — verified by three cla
   `handoff:245-248` that the unsettled question is about direct-to-orchestrator generation and NOT
   about a host-side proxy — otherwise the next reader re-litigates it.
 
+### 🔴 F1 — every poll/estimate/cancel will render as "Submit AI workflow" in the viewer's activity feed
+- as-of: 2026-09-23
+- **Symptom + exact repro:** one generation through a REST block renders in `/apps/activity` as
+  "Generated an image" (the money row) **plus** "Submit AI workflow" (the `withBlockScope` access
+  row), then one further "Submit AI workflow" per poll. At the SDK's ~0.5 Hz short-poll cadence a
+  60-second generation yields ~30 rows each asserting the app submitted a workflow.
+- **Observed (with values):** VERIFIED FIRST-HAND, not taken from the auditor.
+  `AppActivityPanel.tsx:92` is `'ai:write:budgeted': 'Submit AI workflow'` inside
+  `SCOPE_ACTION_LABELS`. `humaniseScopeInvocation` (`:96-121`) tries four `endpoint` arms
+  (`workflow:submit`, `user-settings:write`, `storage:set`, `storage:delete`), then
+  `READ_SCOPE_LABELS`, then **falls through to `SCOPE_ACTION_LABELS`**. The endpoint on these rows
+  is `normalizeEndpoint(req.url)` (`block-scope.middleware.ts:1304`) = `/api/v1/blocks/workflows/poll`,
+  which matches no arm. Render path `AppActivityPanel.tsx:529`: `item.detail` null →
+  `humaniseScopeInvocation(item.scope, item.endpoint)`. `via: code`
+- **Ruled out:** *"the detail-less row falls back to a technical `scope · endpoint · status` line"* —
+  FALSE, and this is the PR's own docblock at `submit.ts:69-75`. Its stated reason is
+  *"`ai:write:budgeted` is not in `READ_SCOPE_LABELS`"*, which is true and **irrelevant**: the
+  function falls through that map into the next one. The reasoning is exactly one map short.
+  A COMMENT IS A CLAIM — this one is load-bearing for a design decision. `via: code`
+- **Leading hypothesis:** the no-stash decision is still right; the label resolution is what is wrong.
+- **Next probe:** 🔴 **FORK, needs an operator call before the fix lands** — the two fix sites have
+  different blast radii. (a) add an `endpoint?.startsWith('/api/v1/blocks/workflows/')` arm to
+  `humaniseScopeInvocation`: one line, but edits a SHARED component outside #5068's diff and changes
+  what every other caller renders; (b) stash a read-shaped detail on the three non-spend routes:
+  confined to the PR, but spends a `withBlockScope` option and leaves the shared function still
+  wrong for any future `ai:write:budgeted` route. Recommend (a) plus a pinning test.
+
+### 🟡 F2/F6 — the long-poll hold path and its per-poll DB write, both unbounded
+- as-of: 2026-09-23
+- **Symptom + exact repro:** #5068 makes `waitSeconds` reachable from the wire for the first time,
+  and converts a zero-write path into one primary-DB INSERT per poll.
+- **Observed (with values):** `block-catalog-rate-limit.ts:207-212` states as MEASURED that "neither
+  host passes `waitSeconds` … the server sees no hold"; the auditor re-verified that measurement
+  (no `waitSeconds` under `src/components/`) and #5068 falsifies it — `poll.ts:74,106` takes it off
+  the wire, and `@civitai/blocks-react`'s `watch` defaults it to 15. The same comment names the
+  required control at `:236-241`: *"~300 simultaneously-held request slots per (install, viewer) by
+  Little's law … the control for it is a concurrency cap, not a smaller rate."* No cap is added and
+  the comment is not updated. Separately `block-scope.middleware.ts:1300-1320` fires
+  `dbWrite.blockScopeInvocation.create` on every non-anon request — the bridge's `pollWorkflow`
+  writes none (`block-catalog-rate-limit.ts:245-248`) — ceilinged only by
+  `BLOCK_POLL_RATE_LIMIT_MAX = 1200`/60s per (install, viewer). The whole block REST surface was
+  ~1,037 requests over 15 days across 4 apps; one viewer at 0.5 Hz matches that in ~35 minutes.
+  `via: code`
+- **Ruled out:** *"the hold path is pre-existing, so #5068 does not change it"* — FALSE. The hold was
+  unreachable before: enumerating `src/components/` for `waitSeconds` returns NO hit, which is what
+  made `block-catalog-rate-limit.ts:207-212`'s "the server sees no hold" true. #5068 is what makes
+  it reachable, so this is a NEW exposure rather than an inherited one.
+  `via: command`
+- **Leading hypothesis:** both are capacity, not correctness, and neither blocks the merge **if the
+  decision is written down**. They become real when a block actually adopts the surface.
+- **Next probe:** 🔴 **UNVERIFIED and not resolvable from this host** — the pod/ingress read timeout
+  was never read, so where the holds actually break is unknown. Read the ingress/pod timeout, then
+  decide (i) a concurrency cap on the held path and (ii) whether poll should write an audit row at
+  all. Both are operator decisions.
+
+### 🟡 F3/F4/F5 — three smaller gaps from Round 1, independent of each other
+- as-of: 2026-09-23
+- **Symptom + exact repro:** F3 the tRPC context literal is cast out of type-checking; F4 an
+  unenumerated third divergence; F5 a docblock claims retry-safety the code only conditionally gives.
+- **Observed (with values):** F3 — `block-workflow-rest.ts:88,96` uses
+  `as unknown as (ctx: unknown) => unknown`, so the 20-field literal at `:116-137` is checked against
+  nothing, unlike `public-api-context.ts:17`. The auditor's paired control (`tsc --noEmit --strict`
+  on a 20-line probe) errored `TS2345 … Property 'c' is missing` on the checked shape only; no test
+  pins the two literals equal. F4 — `features: getFeatureFlagsLazy({ req })` with no user makes
+  every caller evaluate Flipt as entity `'anonymous'`; `ctx.features.wildcards` IS read, at
+  `blocks.router.ts:5428,5786,8449`, feeding `wildcardsEnabled` into `resolveCanGenerateForVersions`.
+  F5 — `idempotencyKey` is `.optional()` (`submit.ts:91`) while the docblock lists the idempotency
+  claim among controls that "run verbatim"; `blocks.router.ts:5578-5588` says a server-minted key
+  does NOT dedupe a client retry. `via: code`
+- **Ruled out:** F4 *"the divergence reaches no control"* — that is the PR's own claim and it is
+  FALSE for `ctx.features`; the docblock enumerates only two divergences. `via: code`
+- **Leading hypothesis:** F3 is drift risk not present divergence (the literal matches today, field
+  for field). F4's live impact depends on the `wildcards` Flipt rule, UNREAD. F5 is a real
+  double-charge path for any HTTP client that retries on timeout, which is most of them.
+- **Next probe:** read the live `wildcards` Flipt rule to settle whether F4 changes behaviour today;
+  for F5 decide between making the key required on this route or documenting the retry contract.
+
 ## Next steps (ranked)
 
-1. **Route the security finding held in the operator's local-only note.** The note lives OUTSIDE
-   every repo, one level above this checkout, dated 2026-09-23; ask the operator for the path.
-   🔴 **Its contents are deliberately absent from this repo and MUST STAY absent — this repo is
-   PUBLIC.** Do not restate, summarise or quote the finding here, in a commit message, or in a PR
-   title; that includes naming the affected component or verbs. A prior revision of this line did,
-   and had to be redacted.
-   Routing answers were returned by the question tool last session but a system notice flagged them
-   as not genuine human input, so **nothing was filed and no probe was fired. RE-CONFIRM WITH THE
-   OPERATOR BEFORE ANY OUTWARD-FACING ACTION.**
-   forcing: security — an unremediated finding with no owner and no tracked object.
-2. **Correct #5068's premise, then run the nine-axis round 1** (`/audit-pr 5068`). The four false
-   clauses are in the Open-investigations block above. Touches
-   `civitai/src/server/services/blocks/block-workflow-rest.ts` and the four
-   `src/pages/api/v1/blocks/workflows/*.ts`. `IN FLIGHT: civitai/civitai#5068`.
-   forcing: gate — it is the only thing that unblocks generation apps, i.e. most of the fleet.
-3. **Ratify or reject R14** — #5068 reaches tRPC via a `blocksRouter` caller, diverging from the
-   body-extraction precedent #5054/#5055 set eight days earlier. Unattributed; left as-is the repo
-   has two rules for REST/bridge seams.
-   forcing: user — needs an operator call, not an engineering one.
-4. **Answer whether `app-blocks-runtime-enabled` is lit in production.** Round 0 could not read the
-   Flipt value from the repo; fail-safe off means all four #5068 routes 401. Decides whether the
-   merge ships live or dark.
+1. **Fix Round 1's 🔴 F1, then run the Round 2 delta audit.** Needs the fork call in the F1 block
+   above first. `IN FLIGHT: civitai/civitai#5068`. A fix round frequently introduces the next
+   finding — re-audit the delta against `298db52c89`, not the whole PR.
+   forcing: gate — #5068 is the only thing unblocking generation apps, and it should not reach a
+   viewer with a false activity-feed record.
+2. **Decide F2 and F6** — a concurrency cap on the held poll path, and whether poll writes an audit
+   row at all. Read the ingress/pod read timeout first; it was never measured.
+   forcing: user — capacity decisions, not engineering ones.
+3. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
+   `civitai/civitai-app-starters` — force-pushed off the branch but still reachable by sha.
+   Only the operator can file it.
+   forcing: security — residual exposure on a public repo from this session's own leak.
+4. **Ratify or reject R14** — #5068 reaches tRPC via a `blocksRouter` caller, diverging from the
+   body-extraction precedent #5054/#5055 set eight days earlier. Unattributed.
+   forcing: user — needs an operator call.
+5. **Answer whether `app-blocks-runtime-enabled` is lit in production.** Fail-safe off means all
+   four #5068 routes 401.
    forcing: gate — blocks any claim that #5068 is verified in production.
-5. **Batch: filed but not advanced.** civitai#5059, civitai#5060, civitai#5064 (close when #5068
+6. **Batch: filed but not advanced.** civitai#5059, civitai#5060, civitai#5064 (close when #5068
    merges), starters #425–#432, #422, #423.
    forcing: none
 
@@ -381,6 +429,31 @@ theme 0.4.0 · **`@civitai/sdk` 0.2.0** (first publish — verified by three cla
   push** — the original blob stays reachable by sha through the GitHub API until GC. Scan the delta
   yourself before `--confirm --push`, and keep security content out of the `forcing:` field, which
   is the one line the tool QUOTES back in its own warning output.
+
+- 🔴 **THE SECURITY FINDING IS ROUTED — `civitai/civitai-orchestration#363`, assigned `koenbeuk`,
+  filed 2026-09-23. DO NOT RE-FILE IT.** Recorded here rather than under `State now`, because that
+  heading is REPLACED on every update and this fact must outlive one. The operator's fuller
+  local-only note still exists OUTSIDE every repo, one level above this checkout, dated 2026-09-23 —
+  ask the operator for the path; its contents must stay out of this PUBLIC repo. The issue carries
+  the closing condition, so `#363` is the thing to check, not the note.
+- 🔴 **`civitai/civitai` IS PUBLIC, and so is `civitai-app-starters`. `civitai-orchestration` is
+  the only PRIVATE one of the three.** Verified with `gh repo view --json visibility`. Anything
+  written on a #5068 PR comment, in a commit message, or in a starters handoff is PUBLISHED.
+- 🔴 **The orchestrator ownership gap was ALREADY public before this session** — the phrase
+  "caller-vs-workflow ownership" appears in two files in `civitai/civitai`
+  (`src/server/routers/blocks.router.ts`, `src/server/services/blocks/block-workflows.service.ts`),
+  and #5068's own public PR body says "the orchestrator does not verify workflow ownership itself".
+  It was known, written down publicly, and never routed to anyone. That is the argument for an
+  ASSIGNEE rather than just a tracked object — #363 has one.
+- 🔴 **A `gh issue create` is REFUSED without a `## Closing condition` heading**, and the gate
+  cannot read a `--body-file "$VAR"` shell substitution — pass a LITERAL path.
+- 🔴 **An agent's finding is a claim to CHECK, not a result to relay.** Round 1's 🔴 was re-derived
+  first-hand before being acted on: the three links (`SCOPE_ACTION_LABELS` membership, the
+  fall-through order, the rendered `endpoint` value) were each read directly. It held — but the
+  check is what makes it reportable.
+- 🔴 **A removed worktree emits a burst of `Cannot find module` diagnostics that are NOT findings** —
+  they are the editor resolving a tree whose `node_modules` has gone. Confirm the worktree is
+  deregistered (`git worktree list`) and no stray file landed in a real repo before reacting.
 
 ## How to verify
 
