@@ -30,6 +30,18 @@ function steps(...given: [string, number | null][]): Workflow {
   } as unknown as Workflow;
 }
 
+/** A workflow whose steps are waiting in a queue, as jobs ahead of each (null: not queued). */
+function queued(...ahead: (number | null)[]): Workflow {
+  return {
+    id: 'wf_1',
+    status: 'unassigned',
+    steps: ahead.map((precedingJobs) => ({
+      status: 'unassigned',
+      queuePosition: precedingJobs === null ? undefined : { support: 'available', precedingJobs },
+    })),
+  } as unknown as Workflow;
+}
+
 /** A hand-driven orchestrator: each `push` is one reading of the workflow. */
 function fakeApp(cost: number | { variable: true } = 120) {
   const calls: string[] = [];
@@ -284,6 +296,51 @@ describe('<civitai-workflow-button> running', () => {
 
     expect(fill(el)).toBe('40%');
     expect(run(el).textContent).toContain('1/2');
+  });
+
+  it('says how far back in the queue it is, and stays the same width as that counts down', async () => {
+    const { app, push } = fakeApp();
+    const el = await mount(app);
+    await settle(el);
+
+    run(el).click();
+    push(queued(12));
+    await settle(el);
+
+    expect(run(el).textContent).toContain('queued… 12 ahead');
+    const width = run(el).getBoundingClientRect().width;
+
+    push(queued(9));
+    await settle(el);
+
+    expect(run(el).textContent).toContain('queued… 9 ahead');
+    expect(run(el).getBoundingClientRect().width).toBe(width);
+
+    push(queued(0));
+    await settle(el);
+
+    expect(run(el).textContent, 'nothing ahead is still waiting, not running').toContain('next up');
+
+    push(workflow('processing', 0.1));
+    await settle(el);
+
+    const label = el.shadowRoot!.querySelector('[part~="label"]')!.textContent;
+    expect(label, 'a running step carries no position').toBe('working…');
+  });
+
+  it('waits on the step with the most ahead of it', async () => {
+    const { app, push } = fakeApp();
+    const el = await mount(app);
+    await settle(el);
+    const seen: number[] = [];
+    el.addEventListener('progress', (e) => seen.push((e as CustomEvent).detail.queued));
+
+    run(el).click();
+    push(queued(2, 5, null));
+    await settle(el);
+
+    expect(run(el).textContent).toContain('5 ahead');
+    expect(seen).toEqual([5]);
   });
 
   it('ignores a step that reports no progress yet', async () => {

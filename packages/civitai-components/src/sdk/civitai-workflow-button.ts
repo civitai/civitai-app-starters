@@ -39,6 +39,10 @@ const SETTLED_TEXT: Record<string, string> = {
 /** Long enough to read, short enough that nobody waits for it. */
 const SETTLED_MS = 1600;
 
+function queueText(ahead: number): string {
+  return ahead === 0 ? 'queued… next up' : `queued… ${ahead} ahead`;
+}
+
 /**
  * Prices a workflow, runs it on the viewer's Buzz and reports it, so an app
  * does not rebuild submit-watch-cancel around every generate button.
@@ -100,6 +104,7 @@ export class CivitaiWorkflowButton extends CivitaiElement {
       .labels > * {
         grid-area: 1 / 1;
         white-space: nowrap;
+        font-variant-numeric: tabular-nums;
       }
       .labels > .ghost {
         visibility: hidden;
@@ -132,6 +137,7 @@ export class CivitaiWorkflowButton extends CivitaiElement {
     status: { state: true },
     copied: { state: true },
     progress: { state: true },
+    queued: { state: true },
     stepsDone: { state: true },
     stepsTotal: { state: true },
   };
@@ -156,6 +162,8 @@ export class CivitaiWorkflowButton extends CivitaiElement {
   declare status: string;
   declare copied: boolean;
   declare progress: number | null;
+  /** Jobs ahead of this workflow in the queue, while it is in one. */
+  declare queued: number | null;
   declare stepsDone: number;
   declare stepsTotal: number;
 
@@ -163,6 +171,7 @@ export class CivitaiWorkflowButton extends CivitaiElement {
   #settledTimer?: ReturnType<typeof setTimeout>;
   #workflowId?: string;
   #priced?: WorkflowTemplate;
+  #queuedWidest = 0;
 
   constructor() {
     super();
@@ -180,6 +189,7 @@ export class CivitaiWorkflowButton extends CivitaiElement {
     this.status = '';
     this.copied = false;
     this.progress = null;
+    this.queued = null;
     this.stepsDone = 0;
     this.stepsTotal = 0;
   }
@@ -213,6 +223,7 @@ export class CivitaiWorkflowButton extends CivitaiElement {
   #fail(error: unknown): void {
     this.phase = 'idle';
     this.progress = null;
+    this.queued = null;
     this.status = '';
     this.dispatchEvent(
       new CustomEvent('error', {
@@ -259,6 +270,8 @@ export class CivitaiWorkflowButton extends CivitaiElement {
     this.phase = 'running';
     this.status = 'submitting…';
     this.progress = null;
+    this.queued = null;
+    this.#queuedWidest = 0;
 
     try {
       const app = await this.#client();
@@ -301,6 +314,13 @@ export class CivitaiWorkflowButton extends CivitaiElement {
       .map((step) => step.estimatedProgressRate)
       .filter((rate): rate is number => typeof rate === 'number' && rate > 0);
     this.progress = rates.length > 0 ? Math.min(...rates) : null;
+    // The orchestrator drops a step's position once it runs, so any position
+    // left is a step still waiting, and the longest wait is the workflow's.
+    const waits = workflow.steps
+      .map((step) => step.queuePosition?.precedingJobs)
+      .filter((ahead): ahead is number => typeof ahead === 'number');
+    this.queued = waits.length > 0 ? Math.max(...waits) : null;
+    this.#queuedWidest = Math.max(this.#queuedWidest, this.queued ?? 0);
     this.dispatchEvent(
       new CustomEvent('progress', {
         bubbles: true,
@@ -309,6 +329,7 @@ export class CivitaiWorkflowButton extends CivitaiElement {
           workflow,
           status: workflow.status,
           progress: this.progress,
+          queued: this.queued,
           stepsDone: this.stepsDone,
           steps: this.stepsTotal,
         },
@@ -332,6 +353,7 @@ export class CivitaiWorkflowButton extends CivitaiElement {
     this.status = SETTLED_TEXT[status] ?? status;
     // A succeeded run leaves the button full rather than snapping empty.
     this.progress = status === 'succeeded' ? 1 : null;
+    this.queued = null;
     this.stepsTotal = 0;
     this.stepsDone = 0;
     this.#workflowId = undefined;
@@ -374,7 +396,13 @@ export class CivitaiWorkflowButton extends CivitaiElement {
 
   /** What this button may yet say, so the widest of them can fix its width. */
   #labels(): { text: string; spun: boolean }[] {
-    const running = [...Object.values(RUNNING_TEXT), 'canceling…', 'submitting…'];
+    const running = [
+      ...Object.values(RUNNING_TEXT),
+      'canceling…',
+      'submitting…',
+      queueText(0),
+      queueText(this.#queuedWidest),
+    ];
     return [
       { text: this.#idleText(), spun: false },
       ...Object.values(SETTLED_TEXT).map((text) => ({ text, spun: false })),
@@ -408,7 +436,11 @@ export class CivitaiWorkflowButton extends CivitaiElement {
 
   #text(): string {
     if (this.phase === 'settled') return this.status;
-    if (this.phase === 'running' || this.phase === 'canceling') return `${this.status}${this.#steps()}`;
+    if (this.phase === 'canceling') return `${this.status}${this.#steps()}`;
+    if (this.phase === 'running') {
+      const status = this.queued === null ? this.status : queueText(this.queued);
+      return `${status}${this.#steps()}`;
+    }
     return this.#idleText();
   }
 

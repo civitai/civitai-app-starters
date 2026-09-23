@@ -7423,6 +7423,17 @@
             },
             {
               "kind": "field",
+              "name": "queued",
+              "privacy": "public",
+              "type": {
+                "text": "number | null"
+              },
+              "description": "Jobs ahead of this workflow in the queue, while it is in one.",
+              "default": "null",
+              "attribute": "queued"
+            },
+            {
+              "kind": "field",
               "name": "stepsDone",
               "privacy": "public",
               "type": {
@@ -7472,6 +7483,15 @@
               "type": {
                 "text": "WorkflowTemplate | undefined"
               }
+            },
+            {
+              "kind": "field",
+              "name": "#queuedWidest",
+              "privacy": "private",
+              "type": {
+                "text": "number"
+              },
+              "default": "0"
             },
             {
               "kind": "field",
@@ -7816,6 +7836,15 @@
               },
               "default": "null",
               "fieldName": "progress"
+            },
+            {
+              "name": "queued",
+              "type": {
+                "text": "number | null"
+              },
+              "description": "Jobs ahead of this workflow in the queue, while it is in one.",
+              "default": "null",
+              "fieldName": "queued"
             },
             {
               "name": "stepsDone",
