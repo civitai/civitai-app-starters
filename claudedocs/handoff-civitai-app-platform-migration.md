@@ -37,44 +37,43 @@ that protocol."*
 
 ## State now
 
-**#5067 is MERGED. The security finding is ROUTED — `civitai/civitai-orchestration#363`, assigned.
-#5068 is green, its premise is corrected, and Round 1 is done: 6 findings, 1 of them 🔴, verdict
-"merge after fixing 🔴". Still nothing ported; the closing condition still returns non-zero.**
+**#5067 merged · security finding routed and ASSIGNED · #5068 through Round 1 with its 🔴 and two
+🟡 fixed, green, and awaiting a Round 2 delta audit.** Still nothing ported; the closing condition
+still returns non-zero.
 
-- Repos: `civitai-app-starters` @ `59458d9` (branch `docs/handoff-app-platform-migration`) ·
+- Repos: `civitai-app-starters` @ `4e2d8d5` (branch `docs/handoff-app-platform-migration`) ·
   `civitai` @ `f5499803b0` (main, clean).
-- **No `clawgate-task:` field**, deliberately. `clawgate_handoff.sh resolve` exited **5**; its own
-  positive control fired, but a wrong session id also answers 200 with an empty array.
+- **No `clawgate-task:` field**, deliberately — `clawgate_handoff.sh resolve` exited **5**.
 
 ### Done this session
 
 | what | where |
 |---|---|
-| **#5067 merged** | `3a1e090924` — binds the ROUTE's `requiredScope` only. `#5063` auto-closed. |
-| **Security finding ROUTED** | `civitai/civitai-orchestration#363` (PRIVATE repo), label `bug`, **assigned `koenbeuk`** — author of all 5 recent commits to `WorkflowsController.cs`. Carries a closing condition. |
-| **#5068 rebased** | `298db52c89`, onto main incl. `2fd658d775` + `3a1e090924`. 7/7 statuses, 13/13 check-runs. |
-| **#5068 premise corrected** | PR body now opens with a dated retraction blockquote linking `#issuecomment-5800758557`; the 4 false clauses are gone. Head sha unchanged, CI untouched. |
-| **#5068 comment posted** | `#issuecomment-5800758557` — consolidation framing only, leak-scanned before posting. |
-| **Round 1 audit** | 6 findings (1🔴 / 5🟡). Full text in the session transcript. |
+| **#5067 merged** | `3a1e090924`. `#5063` auto-closed. |
+| **Security finding ROUTED + ASSIGNED** | `civitai/civitai-orchestration#363` — see the Gotchas entry, which is where this fact durably lives. |
+| **#5068 rebased** | `298db52c89` onto main incl. `2fd658d775` + `3a1e090924`. |
+| **#5068 premise corrected** | PR body opens with a dated retraction blockquote; 4 false clauses gone. |
+| **#5068 Round 0** | `requirement questioned` — NOT `close, do not audit`. |
+| **#5068 Round 1** | 6 findings (1🔴/5🟡). Comment `#issuecomment-5801298384`. |
+| **#5068 Round 1 FIXES** | `850bf03f65` — F1, F3, F5 fixed + 2 falsified comments retired. |
+| **#5068 CI after the fixes** | **GREEN: 7/7 statuses, 12 success + 1 skipped of 13 check-runs, `MERGEABLE`/`CLEAN`.** Counts quoted because an empty non-success list alone cannot distinguish green from an empty rollup. |
 
-### Merged in EARLIER sessions of this arc (carried forward — do not re-derive)
+### The Round 1 fixes, and how each was proven
 
-| repo | commit | what |
-|---|---|---|
-| starters | `827eccc` | #421 publish-assert budget → 590s window |
-| starters | `266a021` | #415 `@civitai/sdk` + 41 custom elements (Koen's) |
-| starters | `d675b63` | #434 Version Packages |
-| starters | `6daa51e` | #438 BREAKING.md records the new routes + auth rules |
-| starters | `8b3fce3` | #439 corrects the anon-read claim #438 shipped wrong |
-| civitai | `ca57ac0fb` | #5051 restored `GET /api/v1/blocks/buzz` |
-| civitai | `600bcdc40` | #5052 REST-ward direction recorded, `blocks/me` un-deprecated |
-| civitai | `0c945284d` | #5053 batch image `?ids=` (cap 100) |
-| civitai | `e2a07767c` | #5054 shared-storage READ routes |
-| civitai | `0cd25bb22` | #5055 shared-storage WRITE routes |
-| civitai | `2fd658d77` | #5070 fixed a live `main` breakage (`ctx.domain` in a sessionless fn) |
-
-**Published:** app-sdk 0.50.0 · blocks-react 0.57.1 · components + components-react 0.5.0 ·
-theme 0.4.0 · **`@civitai/sdk` 0.2.0**.
+- **🔴 F1** — `poll`/`estimate`/`cancel` rendered as *"Submit AI workflow"* in the viewer's activity
+  feed, ~30 false rows per generation. Fixed in the SHARED `humaniseScopeInvocation`
+  (operator's call, over a per-route stash) so no future `ai:write:budgeted` route inherits it.
+  `/workflows/submit` deliberately has NO arm — for that route the label is true, and the asymmetry
+  is pinned by its own test.
+- **🟡 F3** — the caller factory was `(ctx: unknown) => unknown`, so the 20-field context literal was
+  checked against nothing. Now `(ctx: Context) => BlocksCaller`, return cast removed.
+- **🟡 F5** — `idempotencyKey` made REQUIRED on the REST submit route. This broke 10 tests, one of
+  which pinned the OPTIONAL behaviour; that test was INVERTED rather than the change weakened.
+- **Both regression tests watched RED on pre-change code**, not merely green after:
+  F1 → `expected 'Submit AI workflow' to be 'Checked an AI workflow'`;
+  F5 → `expected 200 to be 400` with `.optional()` restored. Restores digest-verified via `cp -a`.
+- **F3's guard proven LIVE, not just compiling:** deleting one required context field now fails
+  `TS2345` naming the missing property; before the change it compiled silently.
 
 ## Open investigations — live diagnosis state
 
@@ -304,27 +303,58 @@ theme 0.4.0 · **`@civitai/sdk` 0.2.0**.
 - **Next probe:** read the live `wildcards` Flipt rule to settle whether F4 changes behaviour today;
   for F5 decide between making the key required on this route or documenting the retry contract.
 
+### 🟡 F4 — the REST transport evaluates Flipt as entity `'anonymous'`, and it DOES reach a control
+- as-of: 2026-09-23
+- **Symptom + exact repro:** `ctx.user` is `undefined` on this transport, so
+  `features: getFeatureFlagsLazy({ req })` builds with no user and every caller evaluates Flipt as
+  the literal entity `'anonymous'` with an empty attribute bag, while the bridge evaluates as the
+  viewer.
+- **Observed (with values):** `hasFeature` calls
+  `isFliptSync(feature.fliptKey, user ? String(user.id) : 'anonymous', fliptContext)` with
+  `buildFliptContext(undefined)` (`feature-flags.service.ts:825,883-886`). `ctx.features.wildcards`
+  IS read — `blocks.router.ts:5428` (estimate), `:5786` (submit), `:8449` (customComfy) — and feeds
+  `wildcardsEnabled` into `resolveCanGenerateForVersions` (`generation.service.ts:1152`), where
+  `false` empties `wildcardVersionIds` so every `Wildcards`-type version returns
+  `canGenerate: false` and `assertViewerCanGeneratePageResources` refuses. The static
+  `availability: ['public']` half is identical on both paths
+  (`feature-flags.service.ts:546,910`), so the divergence is confined to the Flipt layer.
+  `via: code`
+- **Ruled out:** *"the two divergences reach no control above"* — that is the PR's own docblock and
+  it is FALSE as written. It enumerates TWO divergences (`ctx.user`, the `browsingLevel` write) and
+  there are THREE; the third is this one, and unlike the other two it is read on the money path.
+  `via: code`
+- **Leading hypothesis:** harmless if the `wildcards` rule is a plain on/off, a real behaviour split
+  between the two transports if it is a percentage rollout or carries any user-attribute segment.
+  🔴 **The INPUT provably differs; the OUTPUT is UNVERIFIED and must not be reported either way.**
+- **Next probe:** read the live `wildcards` Flipt rule — needs Flipt access this host does not have.
+  If it segments on anything user-shaped, either thread a real subject into the context or refuse
+  wildcard resources on this transport deliberately. Then fix the docblock's "two divergences" count.
+
 ## Next steps (ranked)
 
-1. **Fix Round 1's 🔴 F1, then run the Round 2 delta audit.** Needs the fork call in the F1 block
-   above first. `IN FLIGHT: civitai/civitai#5068`. A fix round frequently introduces the next
-   finding — re-audit the delta against `298db52c89`, not the whole PR.
-   forcing: gate — #5068 is the only thing unblocking generation apps, and it should not reach a
-   viewer with a false activity-feed record.
-2. **Decide F2 and F6** — a concurrency cap on the held poll path, and whether poll writes an audit
-   row at all. Read the ingress/pod read timeout first; it was never measured.
-   forcing: user — capacity decisions, not engineering ones.
-3. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
-   `civitai/civitai-app-starters` — force-pushed off the branch but still reachable by sha.
-   Only the operator can file it.
+1. **Run the Round 2 DELTA audit on #5068**, against `298db52c89..850bf03f65` — NOT the whole PR.
+   A fix round frequently introduces the next finding, and this one rewrote prose in three files,
+   which is the highest-yield place for it. Dispatch BLIND; frame prior findings as *what was
+   claimed fixed*, never *why it is correct*. `IN FLIGHT: civitai/civitai#5068`.
+   forcing: gate — a clean round is the stop condition and this round has not run.
+2. **Get F4 decided by someone with Flipt access** (block above). It is the last unresolved Round 1
+   finding and the only one whose live impact is unknown rather than merely unfixed.
+   forcing: gate — an unknown behaviour split on the money path between two transports.
+3. **Decide F2 and F6** — a concurrency cap on the held poll path, and whether poll writes an audit
+   row at all. Both are now RECORDED in `block-catalog-rate-limit.ts` and on the PR, so this is a
+   decision to take, not a discovery to repeat. Read the ingress/pod read timeout first.
+   forcing: user — capacity decisions.
+4. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
+   `civitai/civitai-app-starters` — force-pushed off the branch, still reachable by sha. Only the
+   operator can file it.
    forcing: security — residual exposure on a public repo from this session's own leak.
-4. **Ratify or reject R14** — #5068 reaches tRPC via a `blocksRouter` caller, diverging from the
-   body-extraction precedent #5054/#5055 set eight days earlier. Unattributed.
+5. **Ratify or reject R14** — #5068 reaches tRPC via a `blocksRouter` caller, diverging from the
+   #5054/#5055 body-extraction precedent. Unattributed.
    forcing: user — needs an operator call.
-5. **Answer whether `app-blocks-runtime-enabled` is lit in production.** Fail-safe off means all
+6. **Answer whether `app-blocks-runtime-enabled` is lit in production.** Fail-safe off means all
    four #5068 routes 401.
    forcing: gate — blocks any claim that #5068 is verified in production.
-6. **Batch: filed but not advanced.** civitai#5059, civitai#5060, civitai#5064 (close when #5068
+7. **Batch: filed but not advanced.** civitai#5059, civitai#5060, civitai#5064 (close when #5068
    merges), starters #425–#432, #422, #423.
    forcing: none
 
@@ -460,6 +490,33 @@ theme 0.4.0 · **`@civitai/sdk` 0.2.0**.
 - 🔴 **A removed worktree emits a burst of `Cannot find module` diagnostics that are NOT findings** —
   they are the editor resolving a tree whose `node_modules` has gone. Confirm the worktree is
   deregistered (`git worktree list`) and no stray file landed in a real repo before reacting.
+
+- 🔴 **A COMMENT CAUSED THE ONLY DEPLOY-BLOCKING FINDING OF ROUND 1.** `submit.ts` justified a real
+  design decision with *"`ai:write:budgeted` is not in `READ_SCOPE_LABELS`"* — true, and one map
+  short: `humaniseScopeInvocation` falls THROUGH that map into `SCOPE_ACTION_LABELS`. The decision
+  survived; the three READ-shaped twins did not. **The retracted reasoning is now recorded IN the
+  docblock** so the next reader cannot re-derive it. Generalises: when a comment argues from a
+  registry's membership, check what the code does AFTER that registry misses.
+- 🔴 **MAKING A FIELD REQUIRED BREAKS THE TEST THAT PINNED IT OPTIONAL — and the honest move is to
+  INVERT that test, never to relax the change.** F5 broke 10 tests; one was literally named *"omits
+  idempotencyKey entirely when the caller sent none"*. Rewritten to assert the 400 and to assert the
+  mock is NOT called, so the refusal is pinned at the schema rather than somewhere downstream.
+- 🔴 **THREE IDENTICAL STRINGS, ONE OF WHICH MUST NOT CHANGE.** Three call sites read exactly
+  `createMocks({ body: { body: TXT2IMG_BODY } })`; two needed a key added and the third was the NEW
+  refusal test that must stay keyless. A `replace_all` would have silently green-washed it. Count
+  occurrences first, then anchor each edit on unique surrounding lines — and where all N genuinely
+  do need the same change (the 5 seam call sites), count them BEFORE using `replace_all`.
+- 🔴 **A PASSING TYPECHECK IS NOT A LIVE GUARD.** F3's fix was only believable after deleting a
+  required context field and watching `TS2345` name it. The same edit against the PRE-fix tree
+  compiled clean — that pair is the evidence, not the green.
+- 🔴 **`[exited with code 0]` FROM A CI WAIT-LOOP IS A CLAIM ABOUT THE LOOP.** An empty
+  "non-success" list is indistinguishable from an empty rollup, so quote the TOTALS beside it:
+  `statuses total=7 success=7`, `check-runs total=13 success=12 skipped=1`.
+- 🔴 **THE SECURITY FINDING IS ROUTED — `civitai/civitai-orchestration#363`, assigned `koenbeuk`,
+  2026-09-23. DO NOT RE-FILE.** Recorded under this APPEND heading on purpose: `State now` is
+  REPLACED on every update and this must outlive one. The operator's fuller local-only note is
+  OUTSIDE every repo, one level above this checkout — ask the operator; its contents stay out of
+  this PUBLIC repo. `#363` carries the closing condition, so check the issue, not the note.
 
 ## How to verify
 
