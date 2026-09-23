@@ -37,48 +37,49 @@ that protocol."*
 
 ## State now
 
-**#5067 merged · security finding routed and ASSIGNED · #5068 audit ladder CLOSED after 5 rounds,
-green, awaiting three DECISIONS (not more audit).** Still nothing ported; the closing condition
-still returns non-zero.
+**#5067 merged · security finding routed and ASSIGNED · #5068 audit ladder CLOSED (5 rounds) ·
+F4 REPRODUCED against production and FIXED · NOT MERGED — one red check is unexplained.**
+Still nothing ported; the closing condition still returns non-zero.
 
-- Repos: `civitai-app-starters` @ `d66ae72` + this update (branch `docs/handoff-app-platform-migration`) ·
+- Repos: `civitai-app-starters` @ `c532778b96` + this update (branch `docs/handoff-app-platform-migration`) ·
   `civitai` @ `f5499803b0` (main, clean).
 - **No `clawgate-task:` field**, deliberately — `clawgate_handoff.sh resolve` exited **5**.
 
-### #5068 — the audit ladder, closed
+### #5068 — head `f02e3ef8c8`, and why it is NOT merged
 
-Head `b72e008f24`. **CI green on every one of the five fix commits** (7/7 statuses, 12 success +
-1 skipped of 13 check-runs each time). `MERGEABLE`/`CLEAN`.
+| commit | what | CI |
+|---|---|---|
+| `850bf03f65` … `b72e008f24` | the five audit-ladder fix commits | all green |
+| `ecdf81ae74` | **F4 fix** — target Flipt with the token's subject | 🔴 2 red |
+| `f02e3ef8c8` | prettier the new guard | in flight at handoff time |
 
-| round | verdict | findings | fix commit | payload lines |
-|---|---|---|---|---|
-| 0 | `requirement questioned` | premise false in 4 clauses | (PR body) | — |
-| 1 | merge after fixing 🔴 | 6 (1🔴/5🟡) | `850bf03f65` | 102 |
-| 2 | safe to merge | 6 (0🔴/5🟡/1🟢) | `1e36c8b983` | 67 |
-| 3 | safe to merge | 5 (0🔴/5🟡) | `447cafbc58` | 30 (**0 executable**) |
-| 4 | safe to merge | 3 (0🔴/0🟡/3🟢) | `d93df0447f` | 85 (**0 executable**) |
-| 5 | safe to merge | 4 (0🔴/1🟡/3🟢) | `b72e008f24` | **0** (scaffolding only) |
+🔴 **`preview / component-tests` was GREEN on all five earlier heads of this PR and RED only on
+`ecdf81ae74`.** Its description says *"report-only, not blocking"* — irrelevant: a check that goes
+red because of my commit is a signal about my commit. **Do not merge until this is explained.**
+The `ESLint + Prettier` red on the same commit WAS mine (formatting in the new test file only) and
+is fixed in `f02e3ef8c8`; that push also re-triggers the pipeline, which is the discriminator for
+whether component-tests was a flake.
 
-🔴 **What the ladder bought, stated honestly: ROUND 1 ONLY.** One deploy-blocking behaviour defect
-(the activity-feed label), two should-fix code defects (an unchecked context literal; an optional
-`idempotencyKey` that allowed a double-charge), plus the round-0 premise correction. **Rounds 2–5
-produced 18 findings and NOT ONE was in the shipped code** — every one was in prose or test
-scaffolding a previous round had written while fixing the round before it.
+**What is established about the component red:** it is not reproducible on this host (the
+`component` project needs a Playwright browser that is not installed; the accompanying
+`Failed to scan for dependencies` is a cascade from that, NOT a resolve error). The `component`
+project matches only `src/**/*.browser.test.tsx`, so the new `.test.ts` guard is not in it, and the
+only module-scope change to `block-workflow-rest.ts` is an `import type` (erased), with the new
+imports dynamic and inside a function. **No mechanism has been found by which the change could break
+a browser suite — but an absence of imagination is not evidence, so it is unresolved, not dismissed.**
 
-### 🔴 THE THREE OPEN DECISIONS — none needs another audit round
+### 🔴 CLOSED THIS SESSION: `app-blocks-runtime-enabled` IS LIT IN PRODUCTION
 
-1. **The Flipt context divergence (round 1 F4, CONFIRMED this session).** A moderator or enumerated
-   tester generating through this surface with a Wildcards resource is **REFUSED**, where the same
-   generation over the bridge succeeds. Needs a decision on how the REST transport identifies the
-   viewer to the flag evaluator. Full chain in the Open-investigations block below.
-2. **No concurrency cap on the held poll path**, and the `HOLD STATUS` box in
-   `block-catalog-rate-limit.ts` cannot go red on its own when a block adopts the route. Needs the
-   ingress/pod read timeout, never measured.
-3. **One primary-DB row per poll** — whether `/workflows/poll` should write an audit row at all.
-   A security-relevant removal, so not to be taken as a performance tweak.
+Round 0 could not read it. Answered both ways: `enabled: true` in the definition at `origin`, **and**
+a live global evaluation returns **`true`** (`DEFAULT_EVALUATION_REASON`, `segments: []`). Control on
+the same call shape: `wildcards` returns `false`, so the probe discriminates rather than answering
+true for everything.
 
-Plus one filed-not-fixed: the `HOLD STATUS` box says "none of it restates the status below" and one
-residual restatement sits 26 lines down, on the bridge half, which does not decay.
+**Consequence: #5068 ships LIVE, not dark.** The F4 fix matters at merge time, not eventually, and
+the unexplained component red matters more than "report-only" suggests.
+⚠ Round 0's characterisation — *"fail-safe off means all four routes 401"* — is right in effect but
+wrong in mechanism: with the flag off the middleware **falls through to the legacy auth path**
+(`block-scope.middleware.ts:979`), and the 401 then comes from each route's own claims guard.
 
 ## Open investigations — live diagnosis state
 
@@ -369,23 +370,47 @@ residual restatement sits 26 lines down, on the bridge half, which does not deca
   blast radius before it is treated as final. ⚠ My local `flipt-state` clone was **behind origin**
   when I first read it; re-read from `origin` and the definition was identical. Do the same.
 
+### 🔴 `preview / component-tests` red on the F4 commit — cause unknown
+- as-of: 2026-09-23
+- **Symptom + exact repro:** the status is `success` on `298db52c89`, `850bf03f65`, `1e36c8b983`,
+  `447cafbc58`, `b72e008f24` and **`failure` on `ecdf81ae74`**. Not reproducible locally.
+- **Observed (with values):** `gh api repos/civitai/civitai/commits/<sha>/status` per head gives the
+  sequence above. The status is a COMMIT STATUS from the preview pipeline, not a check-run, and its
+  `target_url` is `https://pr-5068.civitaic.com` — a host, **not a log**, so there is no log to grep
+  from the GitHub side. Description: `Component suite failed (report-only, not blocking)`. Locally
+  `npx vitest run --project component` dies at
+  `browserType.launch: Executable doesn't exist at …chrome-headless-shell` — environmental.
+  `via: command`
+- **Ruled out:** *"inherited from the base branch"* — NOT supported: three other open PRs (5069,
+  5066, 5043) carry **no** `preview / component-tests` status at all, so there is no cross-PR signal,
+  and this PR's own five earlier heads were green. *"the new guard file is in the component
+  project"* — FALSE: `vitest.config.mts:529` includes only `src/**/*.browser.test.tsx`.
+  `via: command`
+- **Leading hypothesis:** a flake, because no mechanism connects an `import type` plus two
+  in-function dynamic imports in a server module to a browser component suite. **Held loosely** —
+  five greens then one red is weak evidence either way.
+- **Next probe:** read `preview / component-tests` on `f02e3ef8c8`. **Green ⇒ flake, proceed to
+  merge.** Red again ⇒ it is real: get the preview pipeline's own log (it is Tekton-side, not
+  GitHub Actions, so `gh run view` will not have it), or install the Playwright browser
+  (`npx playwright install chromium-headless-shell`) and reproduce locally against both heads.
+
 ## Next steps (ranked)
 
-1. **Decide the three open items above** (Flipt context · concurrency cap · poll audit row). All
-   three are recorded on the PR and in code comments, so this is a decision to take, not a discovery
-   to repeat. `IN FLIGHT: civitai/civitai#5068`.
-   forcing: gate — #5068 is green and audit-closed; these are the only things between it and merge.
-2. **Merge #5068 once those land**, then close civitai#5064.
-   forcing: gate — it is the only thing unblocking generation apps, i.e. most of the fleet.
+1. **Read `preview / component-tests` on `f02e3ef8c8`, then merge #5068 or chase the red.** The
+   operator's standing decision is that I merge once green. `IN FLIGHT: civitai/civitai#5068`.
+   forcing: gate — it is the only thing between a green, audit-closed PR and the fleet unblock.
+2. **Close civitai#5064** when #5068 merges.
+   forcing: gate — the issue #5068 was built to answer.
 3. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
    `civitai/civitai-app-starters` — force-pushed off the branch, still reachable by sha. Operator only.
    forcing: security — residual exposure on a public repo from this session's own leak.
-4. **Ratify or reject R14** — #5068 reaches tRPC via a `blocksRouter` caller, diverging from the
+4. **Decide F2 and F6** — a concurrency cap on the held poll path, and whether poll writes an audit
+   row at all. Operator's call this session was **ship as-is, decisions recorded**; revisit when a
+   block actually adopts the surface. Both are written into `block-catalog-rate-limit.ts`.
+   forcing: user — capacity decisions, deferred not dropped.
+5. **Ratify or reject R14** — #5068 reaches tRPC via a `blocksRouter` caller, diverging from the
    #5054/#5055 body-extraction precedent. Unattributed.
    forcing: user — needs an operator call.
-5. **Answer whether `app-blocks-runtime-enabled` is lit in production.** Fail-safe off ⇒ all four
-   routes 401.
-   forcing: gate — blocks any claim that #5068 is verified in production.
 6. **Batch: filed but not advanced.** civitai#5059, civitai#5060, starters #425–#432, #422, #423.
    forcing: none
 
@@ -585,6 +610,34 @@ residual restatement sits 26 lines down, on the bridge half, which does not deca
 - **Decision (operator):** F1's fix went in the SHARED `humaniseScopeInvocation` rather than a
   per-route stash, so no future `ai:write:budgeted` route inherits the bug; `idempotencyKey` was made
   REQUIRED on the REST submit route; F2/F6 recorded rather than implemented.
+
+- 🔴 **A PROD FLIPT READ PATH ALREADY EXISTS ON THIS HOST, VIA ANOTHER SESSION'S PORT-FORWARD.**
+  `kubectl port-forward -n flipt svc/flipt-v2 18081:8080`, started with
+  `KUBECONFIG=/home/zach/workspace/civit/datapacket-talos/prod-kubeconfig` (read its `/proc/<pid>/environ`
+  to confirm which cluster before trusting it). My own kube contexts are LOCAL ONLY — `colima`,
+  `k3d-diffsona*` — so without that forward there is no Civitai cluster access from here.
+  🔴 **It is NOT mine: read through it, never kill it.** Evaluate with
+  `POST localhost:18081/evaluate/v1/boolean {"namespaceKey":"default","flagKey":…,"entityId":…,"context":{…}}`.
+- 🔴 **THE FLIPT NAMESPACE KEY IS `default`, NOT `civitai-app`.** `civitai-app` is the INSTANCE
+  DIRECTORY in `flipt-state` (`civitai-app/default/features.yaml`). A probe using `civitai-app`
+  answers `namespace "civitai-app" not found`, which reads exactly like "no access" and will send
+  the next session looking for credentials it already has. My own source-only analysis had this
+  wrong and would have misled anyone following it.
+- 🔴 **`hasFeature` RETURNS THE FLIPT ANSWER AND NEVER REACHES STATIC EVALUATION** — so a flag
+  declared `availability: ['public']` is NOT a backstop; a missed segment overrides it to false.
+  That is what turned an empty Flipt context into a REFUSED generation rather than a no-op.
+- 🔴 **VERIFY A FLAG BOTH WAYS, AND PAIR IT WITH A CONTROL.** Definition at `origin` AND a live
+  evaluation — my local `flipt-state` clone was **behind origin** when first read. And run a second
+  flag whose expected answer DIFFERS on the same call shape (`wildcards` false beside
+  `app-blocks-runtime-enabled` true), or a probe wired to nothing returns a confident `true`.
+- 🔴 **A CI CHECK'S OWN DESCRIPTION IS NOT AUTHORITY ON WHETHER TO IGNORE IT.**
+  `preview / component-tests` says *"report-only, not blocking"*. The discriminator is the
+  PER-HEAD HISTORY of that status on the same PR — green on five heads, red on one — which says it
+  responded to a change regardless of whether it gates. Read the sequence, not the adjective.
+- 🔴 **DO NOT MOCK THE FUNCTION UNDER TEST AT A SEAM.** Leaving the real `parseSubjectUserId`
+  unmocked is what caught a wrong fixture: it returns null for the literal `anon` and THROWS
+  `malformed sub claim` on anything else. A mock would have encoded my own wrong guess and shipped
+  a fix that threw on anon requests.
 
 ## How to verify
 
