@@ -37,43 +37,48 @@ that protocol."*
 
 ## State now
 
-**#5067 merged · security finding routed and ASSIGNED · #5068 through Round 1 with its 🔴 and two
-🟡 fixed, green, and awaiting a Round 2 delta audit.** Still nothing ported; the closing condition
+**#5067 merged · security finding routed and ASSIGNED · #5068 audit ladder CLOSED after 5 rounds,
+green, awaiting three DECISIONS (not more audit).** Still nothing ported; the closing condition
 still returns non-zero.
 
-- Repos: `civitai-app-starters` @ `4e2d8d5` (branch `docs/handoff-app-platform-migration`) ·
+- Repos: `civitai-app-starters` @ `d66ae72` + this update (branch `docs/handoff-app-platform-migration`) ·
   `civitai` @ `f5499803b0` (main, clean).
 - **No `clawgate-task:` field**, deliberately — `clawgate_handoff.sh resolve` exited **5**.
 
-### Done this session
+### #5068 — the audit ladder, closed
 
-| what | where |
-|---|---|
-| **#5067 merged** | `3a1e090924`. `#5063` auto-closed. |
-| **Security finding ROUTED + ASSIGNED** | `civitai/civitai-orchestration#363` — see the Gotchas entry, which is where this fact durably lives. |
-| **#5068 rebased** | `298db52c89` onto main incl. `2fd658d775` + `3a1e090924`. |
-| **#5068 premise corrected** | PR body opens with a dated retraction blockquote; 4 false clauses gone. |
-| **#5068 Round 0** | `requirement questioned` — NOT `close, do not audit`. |
-| **#5068 Round 1** | 6 findings (1🔴/5🟡). Comment `#issuecomment-5801298384`. |
-| **#5068 Round 1 FIXES** | `850bf03f65` — F1, F3, F5 fixed + 2 falsified comments retired. |
-| **#5068 CI after the fixes** | **GREEN: 7/7 statuses, 12 success + 1 skipped of 13 check-runs, `MERGEABLE`/`CLEAN`.** Counts quoted because an empty non-success list alone cannot distinguish green from an empty rollup. |
+Head `b72e008f24`. **CI green on every one of the five fix commits** (7/7 statuses, 12 success +
+1 skipped of 13 check-runs each time). `MERGEABLE`/`CLEAN`.
 
-### The Round 1 fixes, and how each was proven
+| round | verdict | findings | fix commit | payload lines |
+|---|---|---|---|---|
+| 0 | `requirement questioned` | premise false in 4 clauses | (PR body) | — |
+| 1 | merge after fixing 🔴 | 6 (1🔴/5🟡) | `850bf03f65` | 102 |
+| 2 | safe to merge | 6 (0🔴/5🟡/1🟢) | `1e36c8b983` | 67 |
+| 3 | safe to merge | 5 (0🔴/5🟡) | `447cafbc58` | 30 (**0 executable**) |
+| 4 | safe to merge | 3 (0🔴/0🟡/3🟢) | `d93df0447f` | 85 (**0 executable**) |
+| 5 | safe to merge | 4 (0🔴/1🟡/3🟢) | `b72e008f24` | **0** (scaffolding only) |
 
-- **🔴 F1** — `poll`/`estimate`/`cancel` rendered as *"Submit AI workflow"* in the viewer's activity
-  feed, ~30 false rows per generation. Fixed in the SHARED `humaniseScopeInvocation`
-  (operator's call, over a per-route stash) so no future `ai:write:budgeted` route inherits it.
-  `/workflows/submit` deliberately has NO arm — for that route the label is true, and the asymmetry
-  is pinned by its own test.
-- **🟡 F3** — the caller factory was `(ctx: unknown) => unknown`, so the 20-field context literal was
-  checked against nothing. Now `(ctx: Context) => BlocksCaller`, return cast removed.
-- **🟡 F5** — `idempotencyKey` made REQUIRED on the REST submit route. This broke 10 tests, one of
-  which pinned the OPTIONAL behaviour; that test was INVERTED rather than the change weakened.
-- **Both regression tests watched RED on pre-change code**, not merely green after:
-  F1 → `expected 'Submit AI workflow' to be 'Checked an AI workflow'`;
-  F5 → `expected 200 to be 400` with `.optional()` restored. Restores digest-verified via `cp -a`.
-- **F3's guard proven LIVE, not just compiling:** deleting one required context field now fails
-  `TS2345` naming the missing property; before the change it compiled silently.
+🔴 **What the ladder bought, stated honestly: ROUND 1 ONLY.** One deploy-blocking behaviour defect
+(the activity-feed label), two should-fix code defects (an unchecked context literal; an optional
+`idempotencyKey` that allowed a double-charge), plus the round-0 premise correction. **Rounds 2–5
+produced 18 findings and NOT ONE was in the shipped code** — every one was in prose or test
+scaffolding a previous round had written while fixing the round before it.
+
+### 🔴 THE THREE OPEN DECISIONS — none needs another audit round
+
+1. **The Flipt context divergence (round 1 F4, CONFIRMED this session).** A moderator or enumerated
+   tester generating through this surface with a Wildcards resource is **REFUSED**, where the same
+   generation over the bridge succeeds. Needs a decision on how the REST transport identifies the
+   viewer to the flag evaluator. Full chain in the Open-investigations block below.
+2. **No concurrency cap on the held poll path**, and the `HOLD STATUS` box in
+   `block-catalog-rate-limit.ts` cannot go red on its own when a block adopts the route. Needs the
+   ingress/pod read timeout, never measured.
+3. **One primary-DB row per poll** — whether `/workflows/poll` should write an audit row at all.
+   A security-relevant removal, so not to be taken as a performance tweak.
+
+Plus one filed-not-fixed: the `HOLD STATUS` box says "none of it restates the status below" and one
+residual restatement sits 26 lines down, on the bridge half, which does not decay.
 
 ## Open investigations — live diagnosis state
 
@@ -330,32 +335,58 @@ still returns non-zero.
   If it segments on anything user-shaped, either thread a real subject into the context or refuse
   wildcard resources on this transport deliberately. Then fix the docblock's "two divergences" count.
 
+### 🔴 CONFIRMED: the REST transport evaluates Flipt as an empty context, and it refuses real users
+- as-of: 2026-09-23
+- **Symptom + exact repro:** a **moderator, or one of the enumerated testers**, generating through
+  `/api/v1/blocks/workflows/*` with a **Wildcards-type resource** is refused by
+  `assertViewerCanGeneratePageResources`. The identical generation over the postMessage bridge
+  succeeds. Every other viewer gets the same answer on both paths, so the blast radius is exactly
+  that population — **which is also who would exercise a new REST surface first**, so it presents as
+  "the REST routes are broken for the people testing them".
+- **Observed (with values):** every link read first-hand.
+  (a) `blockWorkflowCaller` sets `user: undefined` and `features: getFeatureFlagsLazy({ req })`.
+  (b) `buildFliptContext(undefined)` returns **`{ isLoggedIn: 'false' }`** — no `userId`, no
+  `isModerator` (`packages/civitai-flipt/src/context.ts:21-33`).
+  (c) `wildcards` is declared `{ availability: ['public'], fliptKey: 'wildcards' }`
+  (`feature-flags.service.ts:546`); the flag itself is `enabled: false` with rollouts ONLY for the
+  `moderators` and `testers` segments, and BOTH match on `STRING_COMPARISON_TYPE` **context**
+  properties (`isModerator`, `userId`) — read from `flipt-state` at **origin**, `civitai-app/default/features.yaml`.
+  (d) empty context ⇒ neither segment matches ⇒ falls to `enabled: false` ⇒ **`wildcards = false`**.
+  (e) `hasFeature` returns the Flipt answer and **never reaches static evaluation** — *"Flipt
+  overrides role checks (both enable AND disable)"* (`feature-flags.service.ts:880-896`), so
+  `availability: ['public']` is NOT a backstop.
+  (f) `ctx.features.wildcards` → `wildcardsEnabled` → `resolveCanGenerateForVersions`
+  (`generation.service.ts:1152`) → `false` empties `wildcardVersionIds`. `via: code`
+- **Ruled out:** *"a `FEATURE_FLAG_WILDCARDS` env override makes Flipt irrelevant here"* — FALSE, no
+  such override is set; and *"the flag has no context-reading segments"* — FALSE, it has two.
+  Both checked before the finding was reported. `via: command`
+- **Leading hypothesis:** the REST path already HAS the viewer — `parseSubjectUserId(claims.sub)` off
+  the verified token, which every other viewer binding on this path uses. It simply is not passed to
+  the flag evaluator.
+- **Next probe:** 🔴 **NOT REPRODUCED LIVE — this is "the definitions say so".** Flipt state can be
+  pushed through its UI without going through `flipt-state`, so one live evaluation
+  (`svc/flipt-v2` in ns `flipt`, `POST /evaluate/v1/boolean`, both context arms) should confirm the
+  blast radius before it is treated as final. ⚠ My local `flipt-state` clone was **behind origin**
+  when I first read it; re-read from `origin` and the definition was identical. Do the same.
+
 ## Next steps (ranked)
 
-1. **Run the Round 2 DELTA audit on #5068**, against `298db52c89..850bf03f65` — NOT the whole PR.
-   A fix round frequently introduces the next finding, and this one rewrote prose in three files,
-   which is the highest-yield place for it. Dispatch BLIND; frame prior findings as *what was
-   claimed fixed*, never *why it is correct*. `IN FLIGHT: civitai/civitai#5068`.
-   forcing: gate — a clean round is the stop condition and this round has not run.
-2. **Get F4 decided by someone with Flipt access** (block above). It is the last unresolved Round 1
-   finding and the only one whose live impact is unknown rather than merely unfixed.
-   forcing: gate — an unknown behaviour split on the money path between two transports.
-3. **Decide F2 and F6** — a concurrency cap on the held poll path, and whether poll writes an audit
-   row at all. Both are now RECORDED in `block-catalog-rate-limit.ts` and on the PR, so this is a
-   decision to take, not a discovery to repeat. Read the ingress/pod read timeout first.
-   forcing: user — capacity decisions.
-4. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
-   `civitai/civitai-app-starters` — force-pushed off the branch, still reachable by sha. Only the
-   operator can file it.
+1. **Decide the three open items above** (Flipt context · concurrency cap · poll audit row). All
+   three are recorded on the PR and in code comments, so this is a decision to take, not a discovery
+   to repeat. `IN FLIGHT: civitai/civitai#5068`.
+   forcing: gate — #5068 is green and audit-closed; these are the only things between it and merge.
+2. **Merge #5068 once those land**, then close civitai#5064.
+   forcing: gate — it is the only thing unblocking generation apps, i.e. most of the fleet.
+3. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
+   `civitai/civitai-app-starters` — force-pushed off the branch, still reachable by sha. Operator only.
    forcing: security — residual exposure on a public repo from this session's own leak.
-5. **Ratify or reject R14** — #5068 reaches tRPC via a `blocksRouter` caller, diverging from the
+4. **Ratify or reject R14** — #5068 reaches tRPC via a `blocksRouter` caller, diverging from the
    #5054/#5055 body-extraction precedent. Unattributed.
    forcing: user — needs an operator call.
-6. **Answer whether `app-blocks-runtime-enabled` is lit in production.** Fail-safe off means all
-   four #5068 routes 401.
+5. **Answer whether `app-blocks-runtime-enabled` is lit in production.** Fail-safe off ⇒ all four
+   routes 401.
    forcing: gate — blocks any claim that #5068 is verified in production.
-7. **Batch: filed but not advanced.** civitai#5059, civitai#5060, civitai#5064 (close when #5068
-   merges), starters #425–#432, #422, #423.
+6. **Batch: filed but not advanced.** civitai#5059, civitai#5060, starters #425–#432, #422, #423.
    forcing: none
 
 ## Defects (batched)
@@ -517,6 +548,43 @@ still returns non-zero.
   REPLACED on every update and this must outlive one. The operator's fuller local-only note is
   OUTSIDE every repo, one level above this checkout — ask the operator; its contents stay out of
   this PUBLIC repo. `#363` carries the closing condition, so check the issue, not the note.
+
+- 🔴 **I TWICE CLAIMED THE ATTRIBUTION GATE HAD FIRED WHEN IT HAD NOT, AND BOTH TIMES IT WAS MY
+  ARITHMETIC WEARING THE MACHINE'S AUTHORITY.** `audit-dispatch.py --round N` exits **0** and
+  assembles a brief; it does NOT refuse. Two independent reasons, both worth knowing before anyone
+  plans a stop around it: (a) its ledger reads **`COULD NOT MEASURE`** whenever the assembling
+  checkout is not standing on the PR head — and a failed command is NOT a zero; (b) its classifier
+  counts **block comments and docstrings as EXECUTABLE on purpose** (over-counting keeps the gate
+  silent — the fail-open direction), so a round of pure JSDoc edits still reads non-zero. The gate
+  also needs **both** of the two most recent blocks to read zero, and a ladder that honestly keeps
+  one unit across rounds will usually have a non-zero stated count in one of them.
+  **A ladder stop is a JUDGEMENT. Say so, and show the measurement it rests on.**
+- 🔴 **DO NOT RECLASSIFY THE PAYLOAD UNIT MID-LADDER TO FORCE A STOP.** The temptation was live and
+  explicit: switching to "executable lines only" at round 4 would have produced the gate refusal I
+  wanted. Kept the line-count unit across all five rounds and reported the executable-zero as a
+  SECOND count under its own name, saying which the stop was taken on. That is the shape the rule
+  asks for, and it is what made the retraction above possible rather than embarrassing.
+- 🔴 **COPYING HALF A SIBLING GUARD'S SHAPE LEFT A GAP IN THREE CONSECUTIVE ROUNDS, ON THREE AXES.**
+  The same enumeration guard was blind to `.tsx` (round 3), then to directory-shaped routes
+  (round 4), then to routes NESTED UNDER AN ALREADY-LABELLED DIRECTORY (round 5) — where
+  `submit/retry.ts` collapsed to `submit`, which the assertion loop filters out, so it was never
+  checked at all. Each round I mutated only the case I had imagined. **The sibling
+  (`block-scope.normalize-endpoint.test.ts`) had the correct full-relative-path shape from the
+  start; take the WHOLE predicate, not the half you need.**
+- 🔴 **A MUTATION PROVES THE CASE YOU IMAGINED, NOT THE CASE THAT EXISTS.** Round 2's guard was
+  "proven" by a `.ts` mutant and was blind to `.tsx`. Vary the SHAPE of the mutant, not just its
+  presence — and prefer a predicate the repo already uses over one you derive.
+- 🔴 **REMOVING A FALSIFIABLE NUMBER IS NOT A CORRECTION.** "already maps all four endpoint tokens"
+  (false) → "maps the synthetic endpoint tokens" (still false, and now unfalsifiable) → **"FOUR of
+  the FIVE, `post:create` has none"**. A vaguer sentence is harder to check, not safer. State the
+  count AND name its exception, then pin it — nothing asserted on the arm count for three rounds.
+- 🔴 **A STATUS WITH SIX HOMES HAS SIX EDIT SITES AND NO GREPPABLE ANCHOR.** The hold status was
+  restated six ways in one comment block; two successive rounds each corrected one copy and left the
+  rest, and they then contradicted each other ten lines apart. Consolidated into one delimited box
+  that the surrounding evidence supports but never restates.
+- **Decision (operator):** F1's fix went in the SHARED `humaniseScopeInvocation` rather than a
+  per-route stash, so no future `ai:write:budgeted` route inherits the bug; `idempotencyKey` was made
+  REQUIRED on the REST submit route; F2/F6 recorded rather than implemented.
 
 ## How to verify
 
