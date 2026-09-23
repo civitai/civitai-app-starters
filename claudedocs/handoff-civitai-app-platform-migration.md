@@ -37,49 +37,37 @@ that protocol."*
 
 ## State now
 
-**#5067 merged · security finding routed and ASSIGNED · #5068 audit ladder CLOSED (5 rounds) ·
-F4 REPRODUCED against production and FIXED · NOT MERGED — one red check is unexplained.**
-Still nothing ported; the closing condition still returns non-zero.
+**#5068 IS MERGED — `2a2eb0fe2f` on `civitai` main. #5067 merged. Security finding routed and
+assigned. The audit ladder is closed. `#5064` closed.** The REST spend surface now exists and is
+LIVE, so the generation-app blocker is gone.
 
-- Repos: `civitai-app-starters` @ `c532778b96` + this update (branch `docs/handoff-app-platform-migration`) ·
-  `civitai` @ `f5499803b0` (main, clean).
-- **No `clawgate-task:` field**, deliberately — `clawgate_handoff.sh resolve` exited **5**.
+🔴 **The arc's closing condition is still UNMET: no fleet app has been ported.** Every dependency
+is now cleared — that is the whole of what remains.
 
-### #5068 — head `f02e3ef8c8`, and why it is NOT merged
+- Repos: `civitai-app-starters` @ `a6ddb7b` + this update (branch `docs/handoff-app-platform-migration`) ·
+  `civitai` @ `2a2eb0fe2f` (main, clean, base clone re-synced).
+- **No `clawgate-task:` field**, deliberately — `clawgate_handoff.sh resolve` exited **5** again.
+  An unknown session id also answers 200 with an empty array, so that zero is not a clean bill.
+- All six ladder worktrees removed; `git worktree list` carries none of them.
 
-| commit | what | CI |
+### Shipped across this arc
+
+| repo | commit | what |
 |---|---|---|
-| `850bf03f65` … `b72e008f24` | the five audit-ladder fix commits | all green |
-| `ecdf81ae74` | **F4 fix** — target Flipt with the token's subject | 🔴 2 red |
-| `f02e3ef8c8` | prettier the new guard | in flight at handoff time |
+| civitai | `3a1e090924` | **#5067** — bind the ROUTE's `requiredScope` only (`#5063` auto-closed) |
+| civitai | `2a2eb0fe2f` | **#5068** — the four `/api/v1/blocks/workflows/*` REST twins (`#5064` closed) |
+| civitai-orchestration | issue **#363** | the security finding, ROUTED and **assigned `koenbeuk`** |
 
-🔴 **`preview / component-tests` was GREEN on all five earlier heads of this PR and RED only on
-`ecdf81ae74`.** Its description says *"report-only, not blocking"* — irrelevant: a check that goes
-red because of my commit is a signal about my commit. **Do not merge until this is explained.**
-The `ESLint + Prettier` red on the same commit WAS mine (formatting in the new test file only) and
-is fixed in `f02e3ef8c8`; that push also re-triggers the pipeline, which is the discriminator for
-whether component-tests was a flake.
+Earlier-session commits for this arc are in the tables above this one — not repeated.
 
-**What is established about the component red:** it is not reproducible on this host (the
-`component` project needs a Playwright browser that is not installed; the accompanying
-`Failed to scan for dependencies` is a cascade from that, NOT a resolve error). The `component`
-project matches only `src/**/*.browser.test.tsx`, so the new `.test.ts` guard is not in it, and the
-only module-scope change to `block-workflow-rest.ts` is an `import type` (erased), with the new
-imports dynamic and inside a function. **No mechanism has been found by which the change could break
-a browser suite — but an absence of imagination is not evidence, so it is unresolved, not dismissed.**
+### What the #5068 review actually bought, stated once
 
-### 🔴 CLOSED THIS SESSION: `app-blocks-runtime-enabled` IS LIT IN PRODUCTION
-
-Round 0 could not read it. Answered both ways: `enabled: true` in the definition at `origin`, **and**
-a live global evaluation returns **`true`** (`DEFAULT_EVALUATION_REASON`, `segments: []`). Control on
-the same call shape: `wildcards` returns `false`, so the probe discriminates rather than answering
-true for everything.
-
-**Consequence: #5068 ships LIVE, not dark.** The F4 fix matters at merge time, not eventually, and
-the unexplained component red matters more than "report-only" suggests.
-⚠ Round 0's characterisation — *"fail-safe off means all four routes 401"* — is right in effect but
-wrong in mechanism: with the flag off the middleware **falls through to the legacy auth path**
-(`block-scope.middleware.ts:979`), and the 401 then comes from each route's own claims guard.
+**Round 1 only.** One deploy-blocking defect (the activity-feed label — three READ-shaped twins
+rendering as "Submit AI workflow" ~30x per generation on the viewer's consent surface), two
+should-fix code defects (a context literal checked against nothing; an optional `idempotencyKey`
+that allowed a double-charge on a public HTTP surface), plus the round-0 premise correction — and
+later the Flipt divergence. **Rounds 2–5 produced 18 findings and NOT ONE was in the shipped code.**
+Payload by round: 102 → 67 → 30 → 85 → 0.
 
 ## Open investigations — live diagnosis state
 
@@ -394,24 +382,45 @@ wrong in mechanism: with the flag off the middleware **falls through to the lega
   GitHub Actions, so `gh run view` will not have it), or install the Playwright browser
   (`npx playwright install chromium-headless-shell`) and reproduce locally against both heads.
 
+### RESOLVED: `preview / component-tests` red on the F4 commit was a FLAKE
+- as-of: 2026-09-23
+- **Symptom + exact repro:** the status read `failure` on `ecdf81ae74` after five consecutive
+  `success` readings on this PR's earlier heads — the sequence that made it look caused.
+- **Observed (with values):** on the very next head `f02e3ef8c8`, which changed **only** prettier
+  formatting inside one test file, the status returned **`success`**, and the commit settled
+  7/7 statuses plus 12 success + 1 skipped of 13 check-runs, zero non-success on either surface.
+  `via: measurement`
+- **Ruled out:** *"the F4 change broke a browser suite"* — no mechanism, and now no symptom: the
+  `component` project includes only `src/**/*.browser.test.tsx` (`vitest.config.mts:529`) so the new
+  `.test.ts` guard is not in it, and the only module-scope change to `block-workflow-rest.ts` was an
+  `import type` (erased), with the new imports dynamic and inside a function. `via: code`
+- **Leading hypothesis:** resolved — flake.
+- **Next probe:** none. 🔴 **The reusable half is the METHOD, not the verdict:** a check's own
+  description (`"report-only, not blocking"`) is not authority on whether to ignore it; the
+  discriminator was the PER-HEAD HISTORY of that status on the same PR, and the re-run came free
+  because a fix was needed anyway. Do not merge past a red on the strength of its adjective.
+
 ## Next steps (ranked)
 
-1. **Read `preview / component-tests` on `f02e3ef8c8`, then merge #5068 or chase the red.** The
-   operator's standing decision is that I merge once green. `IN FLIGHT: civitai/civitai#5068`.
-   forcing: gate — it is the only thing between a green, audit-closed PR and the fleet unblock.
-2. **Close civitai#5064** when #5068 merges.
-   forcing: gate — the issue #5068 was built to answer.
-3. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
-   `civitai/civitai-app-starters` — force-pushed off the branch, still reachable by sha. Operator only.
-   forcing: security — residual exposure on a public repo from this session's own leak.
-4. **Decide F2 and F6** — a concurrency cap on the held poll path, and whether poll writes an audit
-   row at all. Operator's call this session was **ship as-is, decisions recorded**; revisit when a
-   block actually adopts the surface. Both are written into `block-catalog-rate-limit.ts`.
-   forcing: user — capacity decisions, deferred not dropped.
-5. **Ratify or reject R14** — #5068 reaches tRPC via a `blocksRouter` caller, diverging from the
-   #5054/#5055 body-extraction precedent. Unattributed.
-   forcing: user — needs an operator call.
-6. **Batch: filed but not advanced.** civitai#5059, civitai#5060, starters #425–#432, #422, #423.
+1. **PORT THE FIRST FLEET APP — this is now the whole arc.** Every blocker is cleared: the REST
+   spend surface is merged and live, and #5067 fixed the scope binding. `civitai-app-requests` was
+   the cheapest candidate and its 403 is fixed; its remaining work is a UI rebind onto
+   `@civitai/components-react` plus a replacement for the e2e `Harness`
+   (`@civitai/sdk` has no `/ui`). Verify with the closing-condition command in `How to verify`.
+   forcing: gate — it IS the closing condition; nothing else closes this arc.
+2. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
+   `civitai/civitai-app-starters` — force-pushed off the branch, still reachable by sha. Operator
+   only; I cannot file it.
+   forcing: security — residual exposure on a PUBLIC repo from this session's own leak.
+3. **Ratify or reject R14** — #5068 reached tRPC via a `blocksRouter` caller, diverging from the
+   body-extraction precedent #5054/#5055 set. Unattributed, and now MERGED, so the repo has two
+   rules for REST/bridge seams until someone picks one.
+   forcing: user — an operator call, not an engineering one.
+4. **Revisit F2/F6 when a block actually adopts the poll surface.** Operator's call this session was
+   ship-as-is with the decisions recorded; both are written into `block-catalog-rate-limit.ts`.
+   The trigger is adoption: today no shipped client calls `/api/v1/blocks/workflows/*`.
+   forcing: user — deferred deliberately, not dropped.
+5. **Batch: filed but not advanced.** civitai#5059, civitai#5060, starters #425–#432, #422, #423.
    forcing: none
 
 ## Defects (batched)
@@ -639,35 +648,60 @@ wrong in mechanism: with the flag off the middleware **falls through to the lega
   `malformed sub claim` on anything else. A mock would have encoded my own wrong guess and shipped
   a fix that threw on anon requests.
 
+- 🔴 **`app-blocks-runtime-enabled` IS LIT IN PRODUCTION, SO THE BLOCK REST SURFACE SHIPS LIVE, NOT
+  DARK.** Recorded here rather than under `State now`, because that heading is REPLACED on every
+  update and this outlives one. Confirmed BOTH ways on 2026-09-23: `enabled: true` in the definition
+  at `origin` (`flipt-state`, `civitai-app/default/features.yaml`) **and** a live global evaluation
+  returning `true` with `DEFAULT_EVALUATION_REASON`, `segments: []`. Control on the identical call
+  shape: `wildcards` returns `false`, so the probe discriminates rather than answering true for
+  everything. ⚠ Round 0's characterisation — *"fail-safe off means all four routes 401"* — is right
+  in effect but WRONG in mechanism: with the flag off the middleware **falls through to the legacy
+  auth path** (`block-scope.middleware.ts:979`), and the 401 then comes from each route's own
+  claims guard. This is what made the F4 Flipt fix matter at merge time rather than eventually.
+- 🔴 **A CI CHECK'S OWN DESCRIPTION IS NOT AUTHORITY ON WHETHER TO IGNORE IT, AND THE PER-HEAD
+  HISTORY IS.** `preview / component-tests` says *"report-only, not blocking"*; it was green on five
+  heads of this PR and red on one, which is what made it worth chasing regardless of whether it
+  gates. It resolved as a flake — but the sequence was right: decline to merge, use a push that was
+  needed anyway as the re-run, and get an answer instead of a guess. **Do not merge past a red on
+  the strength of an adjective in its description.**
+- 🔴 **VERIFY A SQUASH BY CONTENT, NEVER BY ANCESTRY** — `git cat-file -e origin/main:<path>` per
+  shipped file, plus a grep for the specific symbol the last fix added (`blockFliptUser` → 3 hits).
+  `merge-base --is-ancestor` is false after every squash, forever, and reads as "not merged".
+- 🔴 **RE-SYNC THE BASE CLONE AND REMOVE THE MERGED WORKTREE IN THE SAME BREATH AS THE MERGE.** The
+  base clone is write-only during worktree work and silently falls behind; a merged worktree keeps
+  holding its branch repo-globally. `git -C <repo> fetch origin && git merge --ff-only origin/main`,
+  then `git worktree remove … --force && git worktree prune`.
+- **Decision (operator, 2026-09-23):** F4 fixed by threading the token's subject into the flag
+  context; the live Flipt probe was run and confirmed the divergence; F2/F6 shipped as-is with the
+  decisions recorded; I merged #5068 myself once green.
+
 ## How to verify
 
 ```bash
-# 1. #5067 landed — by CONTENT, never ancestry (a squash is never an ancestor of main)
+# 1. #5068 landed — by CONTENT, never ancestry (a squash is never an ancestor of main)
 git -C $CIVITAI fetch origin --quiet
-gh pr view 5067 --repo civitai/civitai --json state,mergeCommit --jq '"\(.state) \(.mergeCommit.oid)"'
-#    => MERGED 3a1e090924fbdfe3f68924afab53b3bded7ea5c5
-git -C $CIVITAI cat-file -e origin/main:src/server/middleware/__tests__/block-scope.required-scope-binding.test.ts && echo PRESENT
+gh pr view 5068 --repo civitai/civitai --json state,mergeCommit --jq '"\(.state) \(.mergeCommit.oid)"'
+#    => MERGED 2a2eb0fe2f8b4066906271a1d014e2db678abd71
+git -C $CIVITAI cat-file -e origin/main:src/server/services/blocks/block-workflow-rest.ts && echo PRESENT
+git -C $CIVITAI show origin/main:src/server/services/blocks/block-workflow-rest.ts | grep -c blockFliptUser
+#    => 3   (the Flipt-subject fix is really on main, not just the file)
 
-# 2. the scope-binding fix is a REGRESSION test, not an invariant guard (red at pre-change)
-#    in a scratch worktree with a REAL node_modules (a symlinked one inflates the failures):
-#    git -C $CIVITAI checkout 0cd25bb226e5 -- src/server/middleware/block-scope.middleware.ts
-#    npx vitest run --project 'unit*' src/server/middleware/__tests__/block-scope.required-scope-binding.test.ts
-#    => 2 failed | 5 passed, both with "AssertionError: expected 403 to be 200"
-#    then restore, and cross-check with TWO tools: cmp -s AND diff -q
+# 2. the block REST surface is LIVE, not dark — evaluate, never read `enabled`
+#    (needs the prod Flipt port-forward; see the Gotchas entry for where it comes from)
+curl -s -X POST http://localhost:18081/evaluate/v1/boolean -H 'Content-Type: application/json' \
+  -d '{"namespaceKey":"default","flagKey":"app-blocks-runtime-enabled","entityId":"global","context":{}}'
+#    => enabled:true
+#    CONTROL, same call shape, must DIFFER or the probe is wired to nothing:
+#    flagKey "wildcards" => enabled:false
 
-# 3. #5068 is settled green on BOTH surfaces — neither is a superset of the other
-SHA=$(gh pr view 5068 --repo civitai/civitai --json headRefOid --jq .headRefOid)
-gh api "repos/civitai/civitai/commits/$SHA/status"     --jq '"total=\(.total_count)"'   # => 7, all success
-gh api "repos/civitai/civitai/commits/$SHA/check-runs" --jq '"total=\(.total_count)"'   # => 13, all success
-
-# 4. the closing condition — NO app meets it yet
+# 3. THE CLOSING CONDITION — still UNMET, and this is the one that matters
 F=<scratchpad>/fleet/civitai-app-requests   # re-clone if the scratchpad is gone
 find "$F" \( -name '*.ts' -o -name '*.tsx' \) | grep -v node_modules | xargs grep -l "@civitai/blocks-react" | wc -l
 #    => non-zero today. 0 = that app has ported.
 #    POSITIVE CONTROL, same breath: the same grep for "@civitai/sdk" must be non-zero after a
 #    port, or the zero above just means the files moved.
 
-# 5. @civitai/sdk really is published
+# 4. @civitai/sdk really is published
 npm view @civitai/sdk version --prefer-online     # => 0.2.0
 npm view @civitai/blocks-react version            # => 0.57.1  (control: the probe can see npm)
 ```
