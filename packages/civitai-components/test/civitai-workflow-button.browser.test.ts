@@ -31,7 +31,7 @@ function steps(...given: [string, number | null][]): Workflow {
 }
 
 /** A hand-driven orchestrator: each `push` is one reading of the workflow. */
-function fakeApp(cost = 120) {
+function fakeApp(cost: number | { variable: true } = 120) {
   const calls: string[] = [];
   let deliver: ((value: IteratorResult<Workflow>) => void) | undefined;
   const pending: Workflow[] = [];
@@ -52,7 +52,7 @@ function fakeApp(cost = 120) {
     orchestration: {
       estimateWorkflow: async () => {
         calls.push('estimate');
-        return { cost: { total: cost } };
+        return { cost: typeof cost === 'number' ? { total: cost } : { total: 0, variable: true } };
       },
       submitWorkflow: async () => {
         calls.push('submit');
@@ -121,6 +121,21 @@ describe('<civitai-workflow-button> pricing', () => {
     await settle(el);
 
     expect(run(el).textContent).toContain('Bake for 185 Buzz');
+  });
+
+  it('offers a metered workflow without a price rather than as free', async () => {
+    const { app } = fakeApp({ variable: true });
+    const priced: unknown[] = [];
+    const record = (e: Event) => priced.push((e as CustomEvent).detail);
+    document.addEventListener('priced', record);
+    const el = await mount(app, { label: 'Paint' });
+
+    await settle(el);
+    document.removeEventListener('priced', record);
+
+    expect(run(el).textContent).toContain('Paint');
+    expect(run(el).textContent).not.toContain('Buzz');
+    expect(priced).toEqual([{ cost: null, variable: true }]);
   });
 
   it('prices again when the workflow changes', async () => {
@@ -221,6 +236,21 @@ describe('<civitai-workflow-button> running', () => {
     await settle(el);
 
     expect(fill(el)).toBe('42%');
+  });
+
+  it('hands each reading of the workflow to the app, which may want its outputs early', async () => {
+    const { app, push } = fakeApp();
+    const el = await mount(app);
+    await settle(el);
+    const seen: Workflow[] = [];
+    el.addEventListener('progress', (e) => seen.push((e as CustomEvent).detail.workflow));
+
+    run(el).click();
+    const reading = workflow('processing', 0.5);
+    push(reading);
+    await settle(el);
+
+    expect(seen).toEqual([reading]);
   });
 
   it('spins while it works, so a workflow that estimates nothing still looks alive', async () => {

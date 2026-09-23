@@ -234,10 +234,16 @@ export class CivitaiWorkflowButton extends CivitaiElement {
       const estimate = await app.orchestration.estimateWorkflow(template);
       // A later template wins: pricing is slow enough for a second edit to land.
       if (this.#priced !== template) return;
-      this.cost = estimate.cost?.total ?? 0;
+      // A metered workflow is billed as it runs, so its estimate is no price at all.
+      const variable = estimate.cost?.variable === true;
+      this.cost = variable ? null : (estimate.cost?.total ?? 0);
       this.phase = 'idle';
       this.dispatchEvent(
-        new CustomEvent('priced', { bubbles: true, composed: true, detail: { cost: this.cost } })
+        new CustomEvent('priced', {
+          bubbles: true,
+          composed: true,
+          detail: { cost: this.cost, variable },
+        })
       );
     } catch (error) {
       if (this.#priced === template) this.#fail(error);
@@ -300,6 +306,7 @@ export class CivitaiWorkflowButton extends CivitaiElement {
         bubbles: true,
         composed: true,
         detail: {
+          workflow,
           status: workflow.status,
           progress: this.progress,
           stepsDone: this.stepsDone,

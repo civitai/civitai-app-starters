@@ -9,7 +9,8 @@ runs it spins, names the stage the workflow is at, counts its steps off as they
 finish and fills its own background with the lowest progress rate any step
 reports; a second press asks whether to cancel,
 offering the workflow id to copy. A finished run
-says how it ended before the button offers its price again. It
+says how it ended before the button offers its price again. A metered workflow,
+billed as it runs, is offered without a price rather than as free. It
 emits `priced`, `submitted`, `progress`, `finished`, `canceled` and `error`, so
 an app stops rebuilding submit-watch-cancel around every generate button.
 
