@@ -33,41 +33,59 @@ that protocol."*
   remaining `@civitai/blocks-react` import, verified by
   `find <app> -name '*.ts*' -print0 | xargs -0 grep -l "@civitai/blocks-react" | wc -l` → **0**,
   with a positive control (the same grep on an unported app returning non-zero) so the zero is
-  a real reading. **No app has met this yet.**
+  a real reading.
+- 🔴 **VERDICT 2026-09-23: ADDRESSED — the arc is CLOSED.** `civitai-app-requests` runs on
+  `@civitai/sdk`. Measured against the **committed** tree, not the working tree: **0** importers,
+  control `@civitai/sdk` **12**, the same command on unported `civitai-block-gen-matrix` **5**,
+  and `@civitai/blocks-react` absent from `package.json`. Commit `f422773`.
+  ⚠ The condition is about IMPORTS and says nothing about the app working against the real
+  platform — that is unverified and is ranked item 2, not part of this verdict.
 
 ## State now
 
-**#5068 IS MERGED — `2a2eb0fe2f` on `civitai` main. #5067 merged. Security finding routed and
-assigned. The audit ladder is closed. `#5064` closed.** The REST spend surface now exists and is
-LIVE, so the generation-app blocker is gone.
+🔴 **THE ARC'S CLOSING CONDITION IS MET.** The first fleet app is ported. What remains is
+delivery (push + PR) and a first real-platform run — neither is part of the closing condition.
 
-🔴 **The arc's closing condition is still UNMET: no fleet app has been ported.** Every dependency
-is now cleared — that is the whole of what remains.
+- Repos: `civitai-app-requests` @ `f422773` on branch `zach/port-to-civitai-sdk`, **ahead 1 of
+  `origin/main`, NOT PUSHED, no PR** · worktree `/home/zach/workspace/civit/app-requests-sdk-port`
+  (clean) · `civitai-app-starters` @ `4245f4e` + this update · `civitai` @ `2a2eb0fe2f`.
+- **No `clawgate-task:` field** — `clawgate_handoff.sh resolve` exited **5** again. An unknown
+  session id also answers 200 with an empty array, so that zero is not a clean bill.
+- `claim-work civitai-app-platform-migration-1` is **HELD** (rc 0, first mover) and stays held
+  until the PR lands. Release with
+  `claim-work --release civitai-app-platform-migration-1`.
+- Verified this session: `pnpm run typecheck` 0 errors (instrument validated — 2 errors on a
+  deliberate break, 0 restored), **414 tests pass across 26 files** (was 413; one added, none
+  lost), `pnpm run build` clean, dev-harness module graph resolves.
+- NOT verified: the app against real civitai.com. No request with a real block token has been
+  fired at a running server.
+- 🔴 **The subsystem-index entry for this work is WRITTEN BUT NOT LANDED — it needs one operator
+  decision.** `cairn create` refused: scope `civitai-app-requests` is not in
+  `~/.config/subsystem-store/routes.json`, and the table is **genuinely split** between the two
+  instances for sibling fleet apps (`civitai-app-model-benchmarking` → `civitai`, but
+  `civitai-app-playable-collections` → `personal`; `civitai-app-starters` → `personal`,
+  `civitai-app-sensei` → `civitai`). It is not derivable from the name, and it decides which store
+  client-confidential content lands in, so I did not guess. The validated entry is at
+  `<scratchpad>/platform.md` (scratchpad is session-scoped — **re-create it from the three
+  lessons in `Gotchas` below if it is gone**). To land it:
+  add `"civitai-app-requests": "<personal|civitai>"` to that table, then
+  `cairn create --scope civitai-app-requests --ref platform --file <file>`.
 
-- Repos: `civitai-app-starters` @ `a6ddb7b` + this update (branch `docs/handoff-app-platform-migration`) ·
-  `civitai` @ `2a2eb0fe2f` (main, clean, base clone re-synced).
-- **No `clawgate-task:` field**, deliberately — `clawgate_handoff.sh resolve` exited **5** again.
-  An unknown session id also answers 200 with an empty array, so that zero is not a clean bill.
-- All six ladder worktrees removed; `git worktree list` carries none of them.
+### What the port actually was
 
-### Shipped across this arc
+The handoff predicted *"a UI rebind onto `@civitai/components-react` plus a replacement for the
+e2e Harness"*. That was **two scope errors**, both now corrected:
 
-| repo | commit | what |
-|---|---|---|
-| civitai | `3a1e090924` | **#5067** — bind the ROUTE's `requiredScope` only (`#5063` auto-closed) |
-| civitai | `2a2eb0fe2f` | **#5068** — the four `/api/v1/blocks/workflows/*` REST twins (`#5064` closed) |
-| civitai-orchestration | issue **#363** | the security finding, ROUTED and **assigned `koenbeuk`** |
+1. It was also a **data-layer rewrite**. `@civitai/sdk` has **zero** shared-storage surface
+   (enumerated: 0 of 18 files, control `orchestration` 4; blocks-react control `useSharedStorage`
+   7). The board's seven ops were rebuilt on `/api/v1/blocks/shared-storage/*`.
+2. It was measured against a **19-commit-stale branch**. The local checkout sat on
+   `zach/app-requests-0.2.0-ga`; `origin/main` had **22** blocks-react files, not 11, plus
+   `useBlockBreakpoint`/`resolveBlockTier`, `Modal`, and pnpm+nix.
 
-Earlier-session commits for this arc are in the tables above this one — not repeated.
-
-### What the #5068 review actually bought, stated once
-
-**Round 1 only.** One deploy-blocking defect (the activity-feed label — three READ-shaped twins
-rendering as "Submit AI workflow" ~30x per generation on the viewer's consent surface), two
-should-fix code defects (a context literal checked against nothing; an optional `idempotencyKey`
-that allowed a double-charge on a public HTTP surface), plus the round-0 premise correction — and
-later the Flipt divergence. **Rounds 2–5 produced 18 findings and NOT ONE was in the shipped code.**
-Payload by round: 102 → 67 → 30 → 85 → 0.
+Shape of the fix: everything platform-shaped lives behind `src/platform/`, the only directory
+importing `@civitai/sdk`. The hooks keep their old signatures, so a 1,300-line `App.tsx` changed
+at its import block rather than throughout.
 
 ## Open investigations — live diagnosis state
 
@@ -400,27 +418,60 @@ Payload by round: 102 → 67 → 30 → 85 → 0.
   discriminator was the PER-HEAD HISTORY of that status on the same PR, and the re-run came free
   because a fix was needed anyway. Do not merge past a red on the strength of its adjective.
 
+<!-- SUPERSEDES the earlier block "`app-requests` cannot port either — anon reads 403, and the UI
+     surface is missing". BOTH halves are now closed: the 403 by #5067, and the UI/Harness half by
+     commit f422773. Do NOT re-run its "Next probe" or re-derive its UI-surface inventory. Its
+     live remnant — that no request with a real block token has been fired — is the block below. -->
+### The ported app has never run against the REAL platform
+- as-of: 2026-09-23
+- **Symptom + exact repro:** not a failure — an UNMEASURED path. Everything green so far is
+  green against a **fake server** (`src/platform/testing.ts`), which I wrote. A fake passing is
+  evidence about the fake.
+- **Observed (with values):** typecheck 0 errors; 414/414 tests; `pnpm run build` emits
+  `dist/assets/index-DFoHZN0l.js 292.74 kB`; dev server serves `/src/platform/*` as JS. The
+  REST contract was read first-hand rather than assumed: all 7 routes the app calls exist under
+  `src/pages/api/v1/blocks/shared-storage/`, each carries `allowOpaqueOrigin` (count 3), and each
+  is *"a thin adapter over the SAME function"* its bridge op called. `via: measurement`
+- **Ruled out:** *"CORS will block the direct fetch"* — FALSE for these 7 routes; all carry
+  `allowOpaqueOrigin`, with `me.ts` returning **0** as the control that proves the probe
+  discriminates (that gap is this doc's own recorded defect). `via: command`
+- **Ruled out:** *"the error copy will break because the REST routes return `{ message }` where
+  the older siblings return `{ error }`"* — FALSE. `@civitai/sdk`'s http client normalises BOTH
+  into `ApiError.message` (`src/http/index.ts`, `messageOf`), which is what `classifyWriteError`
+  matches on, so that recorded defect is absorbed by the SDK. `via: code`
+- **Leading hypothesis:** it works. Every link was read rather than assumed, and the routes
+  delegate to the same server functions. The untested half is the live token + preflight.
+- **Next probe:** deploy the branch to a preview origin and load it in a real civitai.com page
+  slot; watch the network tab for `GET /api/v1/blocks/shared-storage/list` returning **200** with
+  `items[].viewerVoted` present, then cast one vote and confirm `POST .../vote` returns the new
+  count. Anonymous first (proves #5067's fix live, the probe this doc has wanted since #5067
+  merged), then signed in.
+
 ## Next steps (ranked)
 
-1. **PORT THE FIRST FLEET APP — this is now the whole arc.** Every blocker is cleared: the REST
-   spend surface is merged and live, and #5067 fixed the scope binding. `civitai-app-requests` was
-   the cheapest candidate and its 403 is fixed; its remaining work is a UI rebind onto
-   `@civitai/components-react` plus a replacement for the e2e `Harness`
-   (`@civitai/sdk` has no `/ui`). Verify with the closing-condition command in `How to verify`.
-   forcing: gate — it IS the closing condition; nothing else closes this arc.
-2. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
+1. **Confirm the three gap decisions, then push `zach/port-to-civitai-sdk` and open the PR.**
+   Branch is ahead 1, unpushed, no PR. 🔴 The analytics-shim and fetch-level-fake decisions came
+   from an `AskUserQuestion` whose answers a system notice flagged as **NOT genuine human input**
+   — the exact trap this doc already records at "Decision (operator, superseded-pending)". They
+   are my assumptions, not the operator's; confirm before anything outward-facing.
+   forcing: user — an operator call, and the answers that shaped the work are unconfirmed.
+2. **Run the ported app against the real platform** — the "Next probe" above, verbatim.
+   Until this happens "ported" means "imports nothing from the bridge", not "works".
+   forcing: gate — nothing may be submitted to the store on a fake-server-only green.
+3. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
    `civitai/civitai-app-starters` — force-pushed off the branch, still reachable by sha. Operator
    only; I cannot file it.
-   forcing: security — residual exposure on a PUBLIC repo from this session's own leak.
-3. **Ratify or reject R14** — #5068 reached tRPC via a `blocksRouter` caller, diverging from the
-   body-extraction precedent #5054/#5055 set. Unattributed, and now MERGED, so the repo has two
-   rules for REST/bridge seams until someone picks one.
+   forcing: security — residual exposure on a PUBLIC repo from an earlier session's leak.
+4. **Ratify or reject R14** — #5068 reached tRPC via a `blocksRouter` caller, diverging from the
+   body-extraction precedent #5054/#5055 set. Unattributed, and MERGED, so the repo has two rules
+   for REST/bridge seams until someone picks one.
    forcing: user — an operator call, not an engineering one.
-4. **Revisit F2/F6 when a block actually adopts the poll surface.** Operator's call this session was
-   ship-as-is with the decisions recorded; both are written into `block-catalog-rate-limit.ts`.
-   The trigger is adoption: today no shipped client calls `/api/v1/blocks/workflows/*`.
+5. **Revisit F2/F6 when a block actually adopts the poll surface.** Both decisions are written
+   into `block-catalog-rate-limit.ts`. 🔴 The trigger has MOVED CLOSER: a fleet app now ships on
+   the REST surface, so "no shipped client calls `/api/v1/blocks/workflows/*`" stays true only
+   until a GENERATION app ports. `app-requests` does not generate.
    forcing: user — deferred deliberately, not dropped.
-5. **Batch: filed but not advanced.** civitai#5059, civitai#5060, starters #425–#432, #422, #423.
+6. **Batch: filed but not advanced.** civitai#5059, civitai#5060, starters #425–#432, #422, #423.
    forcing: none
 
 ## Defects (batched)
@@ -675,33 +726,99 @@ Payload by round: 102 → 67 → 30 → 85 → 0.
   context; the live Flipt probe was run and confirmed the divergence; F2/F6 shipped as-is with the
   decisions recorded; I merged #5068 myself once green.
 
+- 🔴 **A MUTATION SWEEP FOUND THE ONE THING 413 GREEN TESTS COULD NOT SEE.** Against the new REST
+  client, three mutants died (wrong route path, date revival returning the raw string, `viewerVoted`
+  hardcoded true) and **one SURVIVED THE ENTIRE SUITE: deleting the `cursor` query parameter from
+  `list()`**. The reason generalises past this repo: the board's paging tests live in
+  `App.test.tsx`, which **MOCKS the client**, so they assert the board ASKS for the next page and
+  never that the client SENDS the ask — and every e2e seed was smaller than one page, so the real
+  client was never asked to page. **A test that mocks the seam cannot guard the seam.** Fixed by
+  seeding 40 rows with the winner at index 30 (page size 25): green at HEAD, red under the mutant.
+- 🔴 **"VERIFIED IN ISOLATION" AGAIN — AND THE HANDOFF'S OWN SCOPE CLAIM WAS THE CASUALTY.** The
+  predicted scope ("UI rebind + e2e harness") was derived from reading the app; it missed that
+  `@civitai/sdk` has no shared-storage surface at all. **Measure the TARGET's surface, not just
+  the SOURCE's usage** — the question is not "what does the app use" but "what does the thing I
+  am porting TO actually have".
+- 🔴 **THE CHECKOUT WAS 19 COMMITS STALE AND EVERY MEASUREMENT BEFORE I NOTICED WAS WRONG** —
+  11 files vs the real 22, `blocks-react@0.37` vs `0.51`, no `Modal`, no `useBlockBreakpoint`, npm
+  vs pnpm. Nothing announced it; `git status` was clean because the branch was clean. **Before
+  measuring an app, `git -C <repo> fetch` and `rev-list --left-right --count origin/main...HEAD`.**
+  A clean tree says nothing about whether it is the CURRENT tree.
+- 🔴 **TWO INSTRUMENTS FAILED THEIR OWN CONTROLS THIS SESSION, AND ONE WOULD HAVE SHIPPED A FALSE
+  CLAIM.** (a) A dev-server probe read `http=200` for all five modules — and **200 for a module
+  that does not exist**, because vite serves the SPA fallback; the status was no discriminator at
+  all. The body is (`<!DOCTYPE html>` = unresolved). (b) A CSS grep returned 0 for
+  `data-civitai-ui="button"` because that stylesheet uses **single** quotes; the positive control
+  (`grep -c button` = 7) is what caught it. **Both were caught by running the control, neither by
+  reading the result.**
+- 🔴 **`find` DOES NOT FOLLOW pnpm's SYMLINKS — use `find -L`.** `find node_modules/@civitai/… -name '*.d.ts'`
+  returned NOTHING for a package that was installed and working, because pnpm links every package
+  into `.pnpm/`. It reads exactly like "the export does not exist" and sent me looking for a
+  missing type that was there all along.
+- 🔴 **A TEST HARDCODED THE OLD MOCK'S INTERNALS AND WOULD HAVE GONE ON PASSING.** The e2e
+  moderation case targeted key `'shared_2'` — the retired mock host's minting convention. The REAL
+  server mints a **ULID** (`apps-shared.router.ts:511`, *"the server GENERATES a ULID key"*), so
+  the test was asserting against a fake's implementation detail, not the platform's contract.
+  Seeds can now pin their own key. **When a fixture names an id, ask which system actually mints it.**
+- 🔴 **PORTING FOUND THREE PACK GAPS THAT ARE NOT IN ANY LEDGER**, each handled explicitly and all
+  three recorded in the app's README: (a) `@civitai/sdk` has **no analytics** and there is no REST
+  route for one — six `track()` events are now a no-op shim; (b) the components pack ships a modal
+  only as a **Lit custom element**, which under jsdom leaves children in the DOM **while closed**
+  and exposes no `role="dialog"` — "present while closed" is a real defect for a modal holding a
+  composer, so it is reimplemented; (c) its `SegmentedControl` defaults to `radiogroup` where the
+  old pack rendered `tablist` — pinned to `tabs`, because **a transport port must not silently
+  change what a screen-reader user hears**.
+- 🔴 **CORRECTION TO THIS DOC: the published `@civitai/components-react@0.4.0` has NO `Modal` and
+  NO `./elements` subpath.** This doc recorded *"`Modal`/`SegmentedControl` are reachable via its
+  `./elements/*` subpath"* — true of the starters **source**, false of the version the app
+  installed. `./elements` first appears in **0.5.0**; the port bumps `components` and
+  `components-react` 0.4.0 → 0.5.0. **Check the PUBLISHED artifact, not the monorepo source.**
+- 🔴 **AN EXISTING GUARD CAUGHT MY OWN INVENTED DESIGN TOKENS.** A destructive-button style used
+  `var(--civitai-color-on-error, #fff)`; `theme.test.tsx`'s "no hex in inline styles" assertion
+  went red. The theme defines **exactly one** error token, `--civitai-color-error` — there is no
+  `on-error` and no `*-surface` variant. The fallback was what made the invention invisible.
+  **A `var(--x, <literal>)` fallback silently converts a missing token into a shipped hardcoded colour.**
+- 🔴 **A `grep -c` OF ZERO EXITS 1 AND KILLED AN `&&` CHAIN**, so a verification run reported only
+  "TYPECHECK: 0" and stopped before the tests ever ran — a *passing* measurement that truncated the
+  rest of the verification. Same family as this doc's existing "count the runner's own result
+  lines" entry: **never chain verification steps with `&&` through a `grep -c`.**
+- 🔴 **THE CAIRN ROUTING TABLE IS NOT DERIVABLE FROM THE SCOPE NAME, AND `cairn create` REFUSES
+  RATHER THAN GUESSING.** A first entry for a new scope needs `~/.config/subsystem-store/routes.json`
+  to name its instance, and the fleet apps already in it go BOTH ways — `civitai-app-model-benchmarking`
+  and `civitai-app-sensei` → `civitai`, while `civitai-app-playable-collections` and
+  `civitai-app-starters` → `personal`. **Any session porting a fleet app will hit this**, and the
+  refusal arrives at the END of `/handoff` when the window is tight. Resolve the routing BEFORE the
+  index write, not after — and never pick by name similarity; two sibling app repos disagree.
+- **Decision (mine, UNCONFIRMED — see ranked item 1):** analytics kept as a no-op shim rather than
+  deleted, so re-wiring later is one function and not six call sites; the e2e harness rebuilt as a
+  **fetch-level** fake rather than a transport-level one, because after the port the board's real
+  boundary IS `fetch` — a mock host would answer a conversation nobody is having and the suite
+  would pass while exercising nothing.
+
 ## How to verify
 
 ```bash
-# 1. #5068 landed — by CONTENT, never ancestry (a squash is never an ancestor of main)
-git -C $CIVITAI fetch origin --quiet
-gh pr view 5068 --repo civitai/civitai --json state,mergeCommit --jq '"\(.state) \(.mergeCommit.oid)"'
-#    => MERGED 2a2eb0fe2f8b4066906271a1d014e2db678abd71
-git -C $CIVITAI cat-file -e origin/main:src/server/services/blocks/block-workflow-rest.ts && echo PRESENT
-git -C $CIVITAI show origin/main:src/server/services/blocks/block-workflow-rest.ts | grep -c blockFliptUser
-#    => 3   (the Flipt-subject fix is really on main, not just the file)
+W=/home/zach/workspace/civit/app-requests-sdk-port   # worktree; branch zach/port-to-civitai-sdk
 
-# 2. the block REST surface is LIVE, not dark — evaluate, never read `enabled`
-#    (needs the prod Flipt port-forward; see the Gotchas entry for where it comes from)
-curl -s -X POST http://localhost:18081/evaluate/v1/boolean -H 'Content-Type: application/json' \
-  -d '{"namespaceKey":"default","flagKey":"app-blocks-runtime-enabled","entityId":"global","context":{}}'
-#    => enabled:true
-#    CONTROL, same call shape, must DIFFER or the probe is wired to nothing:
-#    flagKey "wildcards" => enabled:false
+# 1. THE CLOSING CONDITION — against the COMMITTED tree, not the working tree
+git -C $W grep -l "@civitai/blocks-react" -- '*.ts' '*.tsx' | wc -l
+#    => 0
+git -C $W grep -l "@civitai/sdk" -- '*.ts' '*.tsx' | wc -l
+#    => 12   POSITIVE CONTROL: a zero above with a zero here would just mean the files moved
+find /home/zach/workspace/civit/civitai-block-gen-matrix \( -name '*.ts' -o -name '*.tsx' \) \
+  | grep -v node_modules | xargs grep -l "@civitai/blocks-react" | wc -l
+#    => 5    POSITIVE CONTROL: the same command on an UNPORTED app; proves the grep works
+grep -c "blocks-react" $W/package.json || echo "absent from package.json"
 
-# 3. THE CLOSING CONDITION — still UNMET, and this is the one that matters
-F=<scratchpad>/fleet/civitai-app-requests   # re-clone if the scratchpad is gone
-find "$F" \( -name '*.ts' -o -name '*.tsx' \) | grep -v node_modules | xargs grep -l "@civitai/blocks-react" | wc -l
-#    => non-zero today. 0 = that app has ported.
-#    POSITIVE CONTROL, same breath: the same grep for "@civitai/sdk" must be non-zero after a
-#    port, or the zero above just means the files moved.
+# 2. the suite, the typecheck and the build
+cd $W && pnpm run typecheck 2>&1 | grep -c "error TS"   # => 0  (|| true — grep -c 0 exits 1)
+cd $W && pnpm test 2>&1 | grep -E "^ *(Test Files|Tests) "
+#    => Test Files 26 passed (26) / Tests 414 passed (414)
+cd $W && pnpm run build                                  # => built, dist/ emitted
 
-# 4. @civitai/sdk really is published
-npm view @civitai/sdk version --prefer-online     # => 0.2.0
-npm view @civitai/blocks-react version            # => 0.57.1  (control: the probe can see npm)
+# 3. the REST client is really in the loop — re-run the mutation that once SURVIVED
+sed -i "s|...(opts.cursor != null ? { cursor: opts.cursor } : {}),||" $W/src/platform/sharedStorage.ts
+cd $W && pnpm test 2>&1 | grep -E "^ *Tests "   # => 1 failed  (restore with: git -C $W checkout -- src/platform/sharedStorage.ts)
+
+# 4. STILL UNMET — the app against the real platform. See "Open investigations".
 ```
