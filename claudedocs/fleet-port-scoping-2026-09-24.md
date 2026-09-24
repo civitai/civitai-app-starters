@@ -508,3 +508,58 @@ Re-probed 2026-09-24T04:18Z: all four → **404 `text/html`**; controls `/blocks
 routes — it only lets it rot behind `main` while five sibling ports queue behind the same platform
 work. Merge with the "not verified" statement intact (it is in the PR body, the README and
 `workflows.ts:19-24`) and keep the re-probe as the closing condition. **Operator's call.**
+
+---
+
+# 🔴 RULES-CLASS FINDING: a CACHED verdict replays a PASS computed before the condition changed
+
+Surfaced while removing the now-inert `minimumReleaseAge` exemption from `civitai-app-requests`
+(PR #22). The deletion is trivial; **the instrument nearly lied three different ways**, and every one
+of them produces a confident green.
+
+**1. `direnv exec <dir> <cmd>` does not cd — and pnpm SELF-SWITCHES on the cwd's pin.**
+`direnv exec $W pnpm --version` reported **10.28.1**, not the flake's 11.25.0, because pnpm read the
+*cwd's* `package.json` (the starters repo, pinning `"packageManager": "pnpm@10.28.1"`) and switched
+itself. 🔴 **On pnpm 10 the `minimumReleaseAge` policy does not exist at all**, so the whole check
+passes for the wrong reason. `pnpm -C $W` gives 11.25.0. This is the second independent hit on the
+`direnv exec` trap today.
+
+**2. With `node_modules` present, pnpm prints `Already up to date` and never runs the policy.**
+The first install "passed" having verified nothing.
+
+**3. 🔴 `~/.cache/pnpm/lockfile-verified.jsonl` replays a STORED verdict** as
+`✓ … (verified 2h ago)`. The cached entry here was written at **02:00Z — before the 24h window
+closed at 03:49:30Z**. A replayed pass is a fact about a computation run under *different
+conditions*.
+
+**The tell, and it is in the CONTENT not the exit code:** a real run prints
+`(185 entries in 637ms)`; a replay prints `(verified Xh ago)`. Same rc 0. **Read the line, never the
+status.**
+
+**How it was done correctly** — four readings, one of them cache-free:
+
+| # | config | result |
+|---|---|---|
+| 1 | exclude deleted | `✓ passes (185 entries in 637ms)` rc 0 |
+| 2 | **negative control** — deleted + `minimumReleaseAge: 100000` | `✗ failed`, rc 1, 8 violations, naming `@civitai/sdk@0.2.0 … published at 2026-09-23T03:49:30.004Z` |
+| 3 | restored final state, **re-read from disk** | `✓ passes (185 entries in 767ms)` |
+| 4 | **CI's cold runner** — no local cache at all | `✓ passes (185 entries in 1.9s)` |
+
+The negative control fired and named the exact package, so 1/3/4 are real verdicts rather than a
+policy that is simply switched off. And pnpm's own violation message in (2) printed the identical
+publish timestamp `npm view` gave — the window arithmetic confirmed twice, independently.
+
+⚠ The agent backed up the cache before clearing and confirmed **0 of 19 other repos' entries** were
+lost. Clearing a shared cache is a write to something other sessions use.
+
+**Generalise past pnpm:** any tool that memoises a verdict — a lockfile checker, a scanner, a test
+runner with a result cache — can replay a PASS from before the thing you changed. Ask what the tool
+CACHES before believing its green, and prefer an output line that proves work was done over an exit
+code that proves only that nothing crashed.
+
+⚠ **Also recorded: `git grep -c <symbol>` counts lines CONTAINING the symbol, including the comment
+that explains the symbol's removal.** It reported `1` on both the fix branch and `main` here, reading
+as "the deletion did not land". The discriminating query is the ACTIVE construct —
+`grep -cE "^minimumReleaseAgeExclude:"` → branch **0**, main **1**. Second hit on this shape today
+(the first was `enforceAppBlocksFlag` appearing inside the comment explaining its absence).
+**Grep for the construct, not the token.**
