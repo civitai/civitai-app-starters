@@ -43,11 +43,16 @@ that protocol."*
 
 ## State now
 
-🔴 **BOTH TRACKS ARE DONE (2026-09-24). Their results are the two `TRACK … RESULT` blocks at the
-end of "Open investigations", and they rewrote the ranked list.** Headlines: the block REST
-surface answered a real token for the first time (`/blocks/me` → **200**), the Track A probe plan
-is structurally impossible as written (a dev token can never carry `apps:storage:shared:*`), the
-four `/workflows/*` routes **404** in production because the #5068 deploy has not landed, and
+✅ **THE PORT IS VERIFIED AGAINST THE REAL PLATFORM (2026-09-24).** Driven end to end through
+`civitai app dev-tunnel` → `civitai.com/apps/dev/app-requests`: the ported app's own
+`GET /api/v1/blocks/shared-storage/list?limit=25` returned **200**, with a validated instrument
+(same route unauthenticated → 401) and an equivalence check against the still-deployed bridge
+build. Details + what is still unproven (`viewerVoted`, every write, the anon path) are in the
+`✅ RESOLVED` block at the end of "Open investigations".
+
+Other results from the same session, in the `TRACK … RESULT` blocks: the dev-token mint can never
+carry `apps:storage:shared:*` (the doc's original probe plan was impossible as written), the four
+`/workflows/*` routes **404** in production because the #5068 deploy has not landed, and
 `useAppStorage` **cannot** be dropped — the fleet needs a platform PR. Claims
 `civitai-app-platform-migration-1` and `-2` were taken and released.
 
@@ -761,27 +766,72 @@ four `/workflows/*` routes **404** in production because the #5068 deploy has no
   inside the real host at `civitai.com/apps/dev/app-requests`, the host mints a real page token
   carrying `apps:storage:shared:read|write`, and the port is exercisable end-to-end with no
   platform change at all.
-- **Next probe:** 🔴 **NOT RUN — it needs the operator, on two counts.** (1) It raises a PUBLIC
-  reverse tunnel from this host to `sish.civitai.com:2224` exposing the local dev server on a
-  `*.civit.ai` host; (2) the page mint is COOKIE-authed, so it can only be driven from the
-  operator's logged-in browser — which takes their screen. The run is:
-  ```bash
-  # terminal 1, in the ported app-requests checkout
-  npm run dev:tunnel                       # serves 127.0.0.1:5186, embeddable
-  # terminal 2
-  civitai app dev-tunnel                   # blockId from block.manifest.json; Ctrl-C tears down
-  # then open the printed civitai.com/apps/dev/app-requests and watch the network tab
-  ```
-  Expect `GET /api/v1/blocks/shared-storage/list` → **200** with `items[].viewerVoted` present;
-  the **403** recorded in the Track A block is the positive control that the probe discriminates.
-  ⚠ The tunnel is cohort-gated (*"limited to invited Apps authors / moderators"*); a non-enrolled
-  account gets *"not available"* from the mint.
+- **Next probe:** none — ✅ **RUN 2026-09-24, and it passed.** See the block below.
+
+### ✅ RESOLVED — the ported app READ THE REAL PLATFORM. `shared-storage/list` → 200
+- as-of: 2026-09-24
+- **Symptom + exact repro:** the arc's last unmeasured path. Ran the dev-tunnel probe end to end
+  with the operator's authorization: local dev server → `civitai app dev-tunnel` → the real host
+  page at `civitai.com/apps/dev/app-requests`, logged in as `zachlowdenzx` (id 8753561).
+- **Observed (with values):** the page mint granted the scopes the dev-token mint strips. Read off
+  `__NEXT_DATA__.props.pageProps` on the dev host page:
+  `{"scopes":["apps:storage:shared:read","apps:storage:shared:write","user:read:self"],`
+  `"status":"approved","trustTier":"unverified","appBlockId":"apb_01KXBZR1VB0F70QY4TF6AFK9K3"}`.
+  `status: "approved"` is the field the whole prediction turned on — it is what makes
+  `tryDevTunnelScopedMint` return `'continue'`. Then, measured INSIDE the app's own OOPIF via
+  `performance.getEntriesByType('resource')`:
+
+  **`GET /api/v1/blocks/shared-storage/list?limit=25` → `responseStatus: 200`, `initiatorType:
+  fetch`, 284 ms.** The app rendered its real UI — header, Top/Newest tabs, "Request an app" —
+  with no error surface. `via: measurement`
+- **Instrument validated BOTH ways before the 200 was believed** (the flows file warns that a
+  block's network is unobservable from the isolated world, so this needed proving, not assuming):
+  **positive** — 48 resource entries present, including the app's own bundle
+  (`dev-c26cbf20b8108604.civit.ai/src/main.tsx`, 200); **negative** — the SAME route fetched from
+  the same frame WITHOUT auth returned **401** `{"error":"Block token required"}` and its timing
+  entry read `responseStatus: 401`. So the field discriminates on this exact route; the 200 is a
+  real reading, not a default. A first bogus-URL control returned `responseStatus: 0` — that is the
+  no-`Timing-Allow-Origin` case, NOT a status, and it is why the control was re-run against a real
+  route. `via: measurement`
+- **Ruled out:** *"the empty board means the read silently failed"* — FALSE, and this was the
+  `EMPTY RESULT` trap sitting right on top of the result. The app shows "No requests yet", which is
+  the observable shared by a 200-with-no-rows and a swallowed 403. Discriminated by loading the
+  **DEPLOYED, still-bridge-based** build at `civitai.com/apps/run/app-requests` (frame
+  `app-requests.civit.ai`) in the same session: it renders the **identical** board state. Two
+  different transports, same data, same answer — the board is genuinely empty. `via: measurement`
+- **Ruled out:** *"CORS will block the direct fetch from the opaque block origin"* — FALSE, now
+  EMPIRICALLY not just by reading `allowOpaqueOrigin`: the cross-origin fetch from the block frame
+  to `civitai.com` completed and its body was readable. `via: measurement`
+- **Side observation, NOT introduced by the port:** the host page renders *"App Requests is missing
+  permissions it needs to work fully / Review permissions"* — on the dev page **and** on the
+  deployed run page. Present on both builds, so it is a consent-ledger state
+  (`user:read:self` is consent-gated; `apps:storage:*` are consent-exempt), not a regression. It
+  did not stop the storage read.
+- **Leading hypothesis:** the signed-in REST path works. The port is verified against the real
+  platform for the read the whole board rests on.
+- 🔴 **STILL UNPROVEN — do not let the 200 be read as more than it is:** (1) **`items[].viewerVoted`**
+  — the board has no rows, so no item carried the field; (2) **every WRITE** (`vote`, `append`,
+  `unvote`, `withdraw`) — none was fired, deliberately: they mutate the PUBLIC board of a
+  published app and that is an operator call, not mine; (3) the **ANON** path #5067 fixed — the
+  tunnel session is signed in, so this is untouched and still unit-level-only.
+- **Next probe:** to close (1) and (2) together, post one request through the UI, confirm it
+  appears with `viewerVoted`, vote, then withdraw it. ⚠ That writes to the live public board of a
+  published app — needs an explicit go-ahead.
+- **Two operational gotchas, both cost a cycle:** (a) `civitai app dev-tunnel` defaults to
+  `--port 5186` but this app's `dev:tunnel` script serves **5187** (`vite --port 5187
+  --strictPort`), so the port must be passed explicitly; (b) **`direnv exec <dir> <cmd>` does NOT
+  change directory** — it loads that dir's env and runs in the CURRENT cwd, so `pnpm run dev:tunnel`
+  resolved against the WRONG `package.json` and failed `ERR_PNPM_NO_SCRIPT Missing script:
+  dev:tunnel`, which reads exactly like a missing script. Use `pnpm -C <dir> run …`. The same
+  mismatch explains a `pnpm --version` of 10.28.1 (starters) vs 11.25.0 (this repo).
 
 ## Next steps (ranked)
 
-1. **Run the `dev-tunnel` live probe** (commands in the block directly above). No platform PR, no
-   preview deploy. 🔴 Needs the operator: a public reverse tunnel plus a logged-in browser.
-   forcing: gate — the only unmeasured thing left in the port, and now the cheapest it will ever be.
+1. **Decide whether to write to the LIVE board to close the last two gaps.** The read is verified
+   (200); `items[].viewerVoted` and every write path are not, and both need one real post to the
+   public board of a published app — post → check `viewerVoted` → vote → withdraw.
+   🔴 Operator call: it is a user-visible mutation on a live app.
+   forcing: user — the only thing between "the read works" and "the port works".
 2. **Port `civitai-block-generate-from-model`** (0 `useAppStorage` files, 23 blocks-react
    importers, 11 distinct hooks). The only remaining app free of the app-storage gap.
    ⚠ **It is NOT free of the workflows gap** — an earlier revision of this line claimed it needed
