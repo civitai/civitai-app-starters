@@ -871,29 +871,35 @@ carry `apps:storage:shared:*` (the doc's original probe plan was impossible as w
 
 ## Next steps (ranked)
 
-1. **Prove the ANON read against a deployed build of the ported app** — the last unmeasured path in
-   this port. `#5067`'s fix still rests on unit evidence alone; no dev-token or dev-tunnel session
-   can produce a signed-out viewer, so it needs a deployed build loaded in a signed-out browser.
-   Expect `GET /api/v1/blocks/shared-storage/list` → **200** for an anonymous viewer; the
-   pre-`3a1e090924` behaviour (**403**) is the positive control.
-   forcing: gate — the app's stated premise is *"Anyone can read the board signed out"*.
-2. **Port `civitai-block-generate-from-model`** (0 `useAppStorage` files, 23 blocks-react
-   importers, 11 distinct hooks). The only remaining app free of the app-storage gap.
-   ⚠ **It is NOT free of the workflows gap** — an earlier revision of this line claimed it needed
-   neither, and that was wrong: `useBuzzWorkflow` is used in 4 files (`src/App.tsx`,
-   `src/test/test-utils.ts`, and the two queue tests), so it lands on the `/api/v1/blocks/workflows/*`
-   routes that 404 in production today (item 4). Sequencing, not a blocker — the deploy will land
-   long before the port is written — but the port cannot be declared live-verified until it does.
-   forcing: gate — the fleet's next port, and the only one unblocked on storage today.
-3. **Decide the app-storage platform PR** — 4 REST adapters over `appsStorageRouter`
+1. **Port `civitai-block-generate-from-model`** — the fleet's next app and the only one unblocked on
+   storage (0 `useAppStorage` files, 23 blocks-react importers, 11 hooks). The REST pattern is now
+   proven end to end by `app-requests`, so this is a repeat of a known shape rather than a bet.
+   ⚠ It uses `useBuzzWorkflow` in 4 files, so it lands on the `/workflows/*` routes that are still
+   undeployed (item 3) — sequencing, not a blocker: port now, verify when the deploy lands.
+   forcing: gate — the migration's actual next step.
+2. **Decide the app-storage platform PR** — 4 REST adapters over `appsStorageRouter`
    (`get`/`set`/`delete`/`list`), #5068-shaped, plus whether `@civitai/sdk` grows a `storage`
    client or each app hand-rolls one like `app-requests` did.
    forcing: gate — five of the six remaining apps are blocked behind it.
-4. **Re-probe `/api/v1/blocks/workflows/*` once a deploy carries `2a2eb0fe2f`.** All four returned
-   **404 `text/html`** on 2026-09-24T02:40Z, ~5h after #5068 merged, against a `/shared-storage/vote`
-   control returning 403 JSON. 404→403 is the deploy landing; 404 surviving a deploy that contains
-   the commit is a real defect.
-   forcing: gate — #5068's surface is unverified in production.
+3. **Re-probe `/api/v1/blocks/workflows/*` until #5068 deploys.** 🔴 **The check needs NO token and
+   no browser** — an UNAUTHENTICATED POST discriminates: a route that exists answers **401
+   `{"error":"Block token required"}`** (`application/json`), an absent one answers **404
+   `text/html`**. Control: `/shared-storage/list` unauthenticated → 401 JSON. Read
+   2026-09-24T03:0xZ: all four still **404**, ~5.5h after `2a2eb0fe2f` merged.
+   ```bash
+   for r in estimate submit poll cancel; do
+     curl -s -o /dev/null -w "$r %{http_code} %{content_type}\n" -X POST \
+       "https://civitai.com/api/v1/blocks/workflows/$r" -H 'Content-Type: application/json' -d '{}'
+   done
+   ```
+   forcing: gate — #5068's surface is unverified in production, and item 1 lands on it.
+4. **DEFERRED (operator, 2026-09-24) — prove the ANON read.** The last unmeasured path in the
+   `app-requests` port. `#5067`'s fix rests on unit evidence alone; no dev-token or dev-tunnel
+   session can produce a signed-out viewer, so it needs a deployed build of the PORTED app loaded
+   in a signed-out browser. Expect **200**; the pre-`3a1e090924` **403** is the positive control.
+   🔴 Deferred, NOT dropped — the app's stated premise is *"Anyone can read the board signed out"*,
+   so this is the one remaining way the port could be wrong for real users.
+   forcing: user — deliberately deferred.
 5. **Merge devrc #1862, `home-manager switch`, then land the cairn entry** from
    `/home/zach/workspace/civit/cairn-entry-civitai-app-requests-platform.md` with
    `cairn create --scope civitai-app-requests --ref platform --file <file>`. 🔴 Check its Tekton
@@ -911,10 +917,15 @@ carry `apps:storage:shared:*` (the doc's original probe plan was impossible as w
 9. **Revisit F2/F6 when a GENERATION app adopts the poll surface.** Still unfired: `app-requests`
    does not generate. Track A could not fire it at all — `/workflows/poll` 404s in production today.
    forcing: user — deferred deliberately, not dropped.
-10. **Prune this document.** ~90 KB against a 65,536 B ceiling, with ~7.5 KB of resolved
-    investigation blocks the tool measures as evictable, plus the two superseded TRACK A/TRACK B
-    blocks this session replaced.
-    forcing: none
+10. **Prune this document.** 🔴 **The "65,536 B ceiling" this item used to cite is WRONG.**
+    `handoff-audit.py` reports **target 12,288 B · hard cap 40,960 B**, and says plainly that
+    NEITHER is enforced here — this repo ships no `scripts/tests/test_handoff_doc_size.py`, so
+    nothing can go red and the numbers are judgement, not a gate. Measured 2026-09-24:
+    **113,670 B — 9.3× target**, of which the tool measures **16,129 B (14.2%)** evictable
+    (6 resolved investigation blocks, 2 retracted bullets; **0** completed ranked items).
+    `Open investigations` alone is **62,739 B**. Evicting everything the tool finds still leaves
+    ~97 KB, so the real lever is summarising resolved arcs, not deleting the marked bullets.
+    forcing: none — but this session added ~11 KB, so the trend is the wrong way.
 
 ## Defects (batched)
 
