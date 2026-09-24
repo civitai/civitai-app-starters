@@ -936,7 +936,43 @@ worktree (a worktree carries neither `.envrc` nor submodules), and `git stash` w
 
 Claims `civitai-app-platform-migration-1` (A) and `-2` (B) were held and are now RELEASED.
 
-### ✅ ALL THREE PRs ARE REVIEW-READY (2026-09-24T05:0xZ). None merged.
+### ✅✅ TWO MERGED (2026-09-24T05:05Z). #11 has one change left, then merges.
+
+**Operator decisions, all four taken 2026-09-24:**
+1. **R4** — ship #11 with the degradation **visible at the seam**, not a README note. In flight.
+2. **#5085** — merge as-is; the three refinements filed as follow-ups, not folded in.
+3. **The red status** — merge past it, recorded as a deliberate acceptance.
+4. **Storage client** — it goes on **`@civitai/sdk`'s `AppClient`**, not a separate package and not
+   hand-rolled per app. Design in flight → `claudedocs/design-sdk-storage-client.md`.
+
+| PR | outcome | verified by CONTENT, not by rc |
+|---|---|---|
+| `civitai/civitai#5085` | **MERGED** `1abd6539` (merge commit — repo convention) | `app-storage/` route files on `origin/main` **0 → 5**; control `shared-storage/` **11**, unchanged |
+| `ZacxDev/civitai-app-requests#22` | **MERGED** `a4193066` (squash — repo convention) | active `minimumReleaseAgeExclude` keys on `origin/main` **1 → 0** |
+| `…/civitai-block-generate-from-model#11` | open, awaiting the R4 change | `5750a67`, `MERGEABLE`/`CLEAN` |
+
+⚠ The two repos use **different merge conventions** — `civitai/civitai` takes merge commits
+(`Merge pull request #NNNN from …`), `ZacxDev/*` are squash-only (0 merge commits in the last 20).
+Read the history before picking a flag; both repos allow all three methods, so `gh` will not stop you.
+Base clones re-synced `--ff-only`, both fast-forwarded.
+
+**Follow-ups filed on `civitai/civitai`**, each with a closing condition (a repo hook refuses an issue
+without one — correctly):
+- **#5087** — drop `enforceAppBlocksFlag` from the five storage procedures (wrong identity; a live
+  bridge behaviour change, which is why it is not in #5085).
+- **#5088** — settle the `updatedAt` wire shape; closes only on a test exercising **both sides**, since
+  a fake that keeps returning a `Date` is exactly what makes this ship green.
+- **#5089** — decide anon 403 vs bridge-parity `null` per operation and write it down. 🔴 `list` must
+  keep throwing regardless — an empty-looking scan disarms `model-benchmarking`'s double-spend backstop.
+- *(not filed, recommended)* the real bearer consolidation **20 → 1**, which touches eleven
+  `/shared-storage/*` routes plus six other sites and wants its own review.
+
+🔴 **One thing to check now that #5085 is on `main`:** the acceptance comment
+(`#5085#issuecomment-5808030308`) states that if `preview / component-tests` is red on `main` after
+this lands, that is the shared cause showing itself and is worth chasing from the Tekton dashboard.
+Nobody has looked yet.
+
+### Pre-merge state (kept for the reasoning, not the status)
 
 | PR | head | state | notes |
 |---|---|---|---|
