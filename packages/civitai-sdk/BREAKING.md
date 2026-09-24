@@ -104,28 +104,16 @@ clients against `{ message }`; treat `{ error }` as legacy.
 Five routes under `/api/v1/blocks/app-storage/` — `get`, `set`, `delete`, `list`, `quota` (civitai#5085).
 Reads take `apps:storage:read`, writes take `apps:storage:write`. The SDK wraps them as `AppClient.storage`.
 
-🔴 **Block token only.** App storage is keyed to the block token's `(app, viewer)` identity. An app that
-authenticated with an **OAuth access token has no per-viewer app storage** and every call is refused — so a
-manifest that sets `auth: "oauth"` is choosing to give this surface up.
+⚠ **The migration delta: anonymous viewers get 403, where the bridge resolved an anonymous read to `null`.**
+Gate on `viewer` rather than reading an empty result as "nothing stored". Whether 403 is the intended policy
+per operation is open as civitai#5089.
 
-🔴 **Anonymous viewers get 403**, where the bridge resolved an anonymous read to `null`. Gate on `viewer`
-rather than reading an empty result as "nothing stored". Open per operation as civitai#5089.
+`updatedAt` is still revived to a `Date` by the client, as `useAppStorage` did, so consumers need no change.
 
-🔴 **EVERY FAILURE REJECTS.** There is no path that resolves to mean "not written", and none that resolves to
-mean "could not read". A caller that must not act on a partial view branches on the rejection, never on an
-empty result. Concretely: `list` never resolves empty on failure, so the **absence of `nextCursor` is proof a
-scan completed** — for one fleet app that is a money decision.
-
-🔴 **`sizeBytes` from `set` is the WIRE unit and is NOT the quota unit.** It is
-`Buffer.byteLength(JSON.stringify(value))`, which predicts a `PAYLOAD_TOO_LARGE` and nothing else. The quota
-counters are Postgres' `octet_length(value::text)` over JSONB, **measured at up to 44.4× the wire size** for
-numeric-heavy payloads. Summing `sizeBytes` to track quota **will** under-count; call `getQuota()`, whose
-`usedBytes` is the stored unit. Note `getQuota` reports neither the key-length cap nor the per-value cap, so a
-write that fits its numbers can still be refused.
-
-Two smaller contract notes: `nextCursor` is passed through untouched, present exactly when more rows may
-exist; and `updatedAt` is revived to a `Date` by the client, as `useAppStorage` did, so consumers need no
-change.
+The client's own contract — block-token-only, every-failure-rejects, `nextCursor`, and the wire-vs-stored
+distinction between `set`'s `sizeBytes` and `getQuota`'s `usedBytes` — is in **README.md § App storage** and
+in the TSDoc that generates `api/public-api.md`. That TSDoc is regenerated and diffed by `api:check` in CI, so
+it is the copy that cannot rot; this file deliberately does not restate it.
 
 ## Batch image fetch
 
@@ -252,8 +240,8 @@ For a block to use the API at all, civitai has to:
 
    ⚠ Still true, and still the cheaper route for most apps: the block JWT is **not** limited to
    `/api/v1/blocks/*` by any route or claim check — it works wherever a handler is wrapped. Today that is
-   every `/api/v1/blocks/*` route plus `/api/v1/me` and `/api/v1/models/{id}` (35 routes carry
-   `withBlockScope`). Widening what the existing block token is accepted on reaches most destinations without
+   every `/api/v1/blocks/*` route plus `/api/v1/me` and `/api/v1/models/{id}` — the routes wrapped in
+   `withBlockScope`. Widening what the existing block token is accepted on reaches most destinations without
    OAuth at all. The question that decides between the two is whether a block must act **without an open host
    page**: the block JWT lives ~15 minutes and is refreshed by the host page's session, so the block holds no
    refresh credential of its own. If background work is required, OAuth becomes necessary rather than
@@ -268,7 +256,7 @@ For a block to use the API at all, civitai has to:
 
    Largely done — shared storage, Buzz balance, batch images, collections, gated images, generation
    resources, tips, the workflow routes and **per-app-user storage** (`APP_STORAGE_*`, civitai#5085) have all
-   landed. 37 route files now sit under `/api/v1/blocks/`.
+   landed.
 
    What remains is not storage: `GET_BUZZ_ACCOUNTS` / `GET_BUZZ_TRANSACTIONS`, `GET_DAILY_COMPENSATION`,
    `GET_WILDCARD_PACK`, and `OPEN_IMAGE_UPLOAD` (no REST twin and no SDK host request — in flight).
