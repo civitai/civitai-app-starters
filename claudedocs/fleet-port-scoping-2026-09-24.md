@@ -610,3 +610,57 @@ service over a tRPC caller.
 `civitai-app-starters`. **Not dispatched yet** — the storage-client agent is live in
 `packages/civitai-sdk` and both would edit `src/app/index.ts` and the export barrel. Sequence them
 after `feat/sdk-storage-client` lands.
+
+---
+
+# ✅ THE STORAGE CLIENT IS BUILT — `civitai/civitai-app-starters#441`, 20/20 CI, not merged
+
+`AppClient.storage` on `@civitai/sdk`: `packages/civitai-sdk/src/storage/index.ts`
+(`StorageClient`, `createStorageClient(http)`, `isQuotaRefusal`), attached in `src/app/index.ts` on
+the **same `http` instance `site` uses** — so `siteUrl` redirects it and the one-shot 401 refresh is
+inherited rather than re-spelled. Plus `createFakeAppStorage()` in `@civitai/sdk/testing`, a
+regenerated `api/public-api.md`, a README section, and a changeset (`minor` → `0.3.0`).
+
+🔴 **The agent's one open caveat is CLOSED.** It reported *"Server PR #5085 is still OPEN and can
+move; if the merged envelope differs, `list`'s reply shape needs re-reading."* Verified:
+`git diff 58cb93144e origin/main` over the app-storage routes and service is **EMPTY** — positive
+control, the same command from the pre-merge base `438223aad9` shows **5 files / 552 insertions**.
+The client was built against exactly what shipped.
+
+## The mutation sweep is the verification, and it is honest about why
+**16 mutants, all killed**, with real hygiene: unmutated tree green first, `node_modules/.vite`
+cleared between mutants, and **each patch's occurrence count asserted before running — a
+non-matching patch prints `NOT RUN`, never `SURVIVED`**. That last one is the instrument-validation
+step most sweeps skip. A wrong-route-path mutant was carried as the known-caught positive control
+(18 tests red).
+
+🔴 **It states plainly that there is NO red→green matrix and why**: every test is new coverage for a
+new module, so "red at base" is *undefined* — there is no pre-change code to be red against. The
+sweep is the substitute. The seam test and the bounds guard are labelled **invariant guards**, not
+counted as regression coverage. That is the correct call and the rarer one.
+
+Mutants worth noting because they encode the money constraint: `keys ?? []` not throwing;
+`nextCursor ?? ''`; always emitting `nextCursor`; translating 403 → `null`/`[]`. Each died on its
+own assertion. And `toEntry` trusting the NaN check alone dies on `updatedAt: null`, because
+`new Date(null)` is **the epoch**, not `Invalid Date`.
+
+## Four deviations from the design, each argued
+1. `get` **throws** on a 2xx carrying no `value` (design said `?? null`) — the design's own rule 3
+   forbids a resolution meaning "could not read", and `null` is this method's word for *unset*, an
+   answer the money path acts on.
+2. `set` **asserts** `sizeBytes` is a number (design cast it) — the same argument the design makes
+   for `delete`'s `deleted`; applying it to one of two typed scalars was arbitrary.
+3. `isTransient` **not shipped** — it would class an `AbortError` and a malformed-2xx
+   `CivitaiError` as transient, wrong in both, and serves no listed consumer.
+4. The fake's ledger carries `path` and `token` — §8.4's own mutants are not assertable without them.
+
+## 🔴 Still unverified, and it is the same gap the whole arc carries
+**No route on this surface has been exercised live against a real server by anyone.** The suite is
+green against a fake mirroring a *reading* of the server — a claim about the fake's fidelity, not
+the server's behaviour. Also: `packages/civitai-sdk/README.md` is **not** covered by
+`pnpm typecheck:readme` (`DEFAULT_DOCS` names other packages), so the new README prose is
+gate-unverified; the agent hand-checked both snippets against built `dist/` with a negative control
+proving that check can go red, but widening the gate is a separate change.
+
+**Round 0 dispatched** — this adds a PUBLIC API surface to a published package, where every exported
+name is a versioning commitment, and round 0 found real problems on both prior PRs.
