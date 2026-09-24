@@ -43,24 +43,29 @@ that protocol."*
 
 ## State now
 
-🔴 **THE ARC IS CLOSED AND MERGED.** `civitai-app-requests` runs on `@civitai/sdk` **on `main`**.
+🔴 **THE ARC IS CLOSED AND MERGED. NEXT SESSION RUNS TWO TRACKS IN PARALLEL** (operator,
+2026-09-24) — ranked items 1 and 2. They are independent: Track A needs the network and a real
+API key, Track B is local reading. Claim them SEPARATELY (`--slug-for <this doc> 1` and `… 2`)
+so two sessions can take one each.
 
-- **PR #21 MERGED** 2026-09-24T02:12:19Z, squash `52b7e1b1` on `ZacxDev/civitai-app-requests` main.
-  Verified BY CONTENT, never ancestry: all four shipped files present on `origin/main`,
-  `radiogroup` present in `ui.tsx` (2 hits), the exemption present in `pnpm-workspace.yaml`
-  (2 hits). `merge-base --is-ancestor` is **false**, which is correct after every squash.
-- 🔴 **CLOSING CONDITION, re-measured ON `origin/main` itself** (not a branch, not a worktree):
-  `@civitai/blocks-react` importers **0** · control `@civitai/sdk` **13** · same command on
-  unported `civitai-block-gen-matrix` **5** · the dependency absent from main's `package.json`.
-- `claim-work civitai-app-platform-migration-1` **RELEASED**. Base clone re-synced to `52b7e1b`
-  on `main`; the port worktree is removed and `git worktree list` carries only the base clone.
-- **`innovation-upstream/devrc` PR #1862** — the cairn route. **REBASED onto current main**
-  (`fd3aaed9`) because its CI red was inherited from a stale branch point, see below. Still
-  OPEN; CI re-running at the time of writing.
-- The subsystem-index entry is still NOT landed: it needs #1862 merged AND a `home-manager
-  switch`. It survives at
-  `/home/zach/workspace/civit/cairn-entry-civitai-app-requests-platform.md`.
-- Still NOT verified: the app against real civitai.com. This has not moved.
+- **PR #21 MERGED** — squash `52b7e1b1` on `ZacxDev/civitai-app-requests` main. Closing condition
+  re-measured ON `origin/main`: blocks-react importers **0** · control `@civitai/sdk` **13** ·
+  unported control **10** · dependency absent from `package.json`. Claim released; base clone at
+  `52b7e1b`; no worktrees left.
+- **`innovation-upstream/devrc` PR #1862** (cairn route) — OPEN, `MERGEABLE`, rebased onto current
+  main as `fd3aaed9`. 🔴 **Its 4 Tekton statuses have been `pending` since 02:16:04Z with
+  `created == updated` and no movement for ~25 min, where the PRE-rebase run reached terminal
+  state in ~2.5 min.** That asymmetry is the only evidence; it may be queued or stuck. Read the
+  statuses before assuming it merely needs more time.
+- The subsystem-index entry is still NOT landed — needs #1862 merged AND a `home-manager switch`.
+  It survives at `/home/zach/workspace/civit/cairn-entry-civitai-app-requests-platform.md`, updated
+  this session with the merge sha and the direnv finding.
+  ⚠ **`cairn-validate --validate` on that path reports MALFORMED, and that is an artifact of the
+  ASIDE FILENAME, not a defect in the content**: the validator requires the filename stem to equal
+  `service:` (`platform`). Copied to `platform.md` it validates `OK — 1 of 1 entry file(s) parse`,
+  and `cairn create --ref platform` names it correctly on the pod. Do not "fix" the entry.
+- **No `clawgate-task:` field** — `clawgate_handoff.sh resolve` exited **5** again.
+- Still NOT verified: the app against real civitai.com. Track A is exactly this.
 
 ## Open investigations — live diagnosis state
 
@@ -505,34 +510,121 @@ that protocol."*
   `git worktree add`. Run `direnv allow <path>` at worktree creation, and check
   `pnpm --version` before quoting any result that depends on the toolchain.
 
+### TRACK A — the REST surface has never been exercised with a real block token
+- as-of: 2026-09-24
+- **Symptom + exact repro:** not a failure — an UNMEASURED path. Every green reading in this arc
+  came from `src/platform/testing.ts`, a fake server written in the same PR as the code it tests.
+- **Observed (with values):** a way in exists and needs **no preview deploy**.
+  `POST /api/v1/blocks/dev-token` (`civitai/src/pages/api/v1/blocks/dev-token.ts`) mints a
+  short-lived scoped **page token** so a logged-in developer can drive local code against the
+  REAL backend. Request schema (`:287`): `{ appBlockId?, slug? }`, slug `min(3).max(40)` +
+  `SLUG_REGEX`. Success (`:1003`) returns
+  `{ token, expiresAt, scopes, buzzBudget, maxBrowsingLevel, blockInstanceId }`. Mode 1
+  ("existing-app") applies because `app-requests` is an approved, published app. Refusals to
+  expect: 401 `Missing or malformed Bearer token`, 403 `Apps are restricted to the Civitai team`,
+  503 `Apps are not enabled`. `via: code`
+- **Ruled out:** *"this needs a preview deploy of the app"* — FALSE for the surface itself. The
+  question is whether the REST routes answer a real block token; the app is just one client of
+  them, and `dev-token` + `curl` answers it directly. `via: code`
+- **Ruled out:** *"one probe covers the anon read too"* — **FALSE, and this is the trap.**
+  `dev-token` requires a logged-in developer and mints a token bound to that user, so it exercises
+  the SIGNED-IN path only. The anon read that **#5067** fixed is mint-by-the-host-for-a-signed-out
+  viewer and is NOT reachable this way. It still has only unit-level evidence. `via: code`
+- **Leading hypothesis:** the signed-in path works — every link was read first-hand and the routes
+  delegate to the same server functions the bridge ops used.
+- **Next probe:** run it, in this order.
+  ```bash
+  # 1. mint (needs the operator's civitai API key; 403 if the account lacks team access)
+  curl -s -X POST https://civitai.com/api/v1/blocks/dev-token \
+    -H "Authorization: Bearer $CIVITAI_API_KEY" -H 'Content-Type: application/json' \
+    -d '{"slug":"app-requests"}'
+  # => 200 { token, expiresAt, scopes, buzzBudget, maxBrowsingLevel, blockInstanceId }
+
+  # 2. the read the whole port rests on
+  curl -s -i -X GET 'https://civitai.com/api/v1/blocks/shared-storage/list?limit=25' \
+    -H "Authorization: Bearer <token from step 1>"
+  # => 200, body { items: [...], metadata: { nextCursor } }, and items[].viewerVoted PRESENT
+  ```
+  🔴 **Also probe `/api/v1/blocks/workflows/estimate`** in the same session even though
+  `app-requests` never calls it — see Track B: it is the untested dependency of FIVE of the six
+  remaining apps, and this is the cheapest moment anyone will ever have to find out it is broken.
+
+### TRACK B — gen-matrix is NOT the cheap next port, and file count is the wrong metric
+- as-of: 2026-09-24
+- **Symptom + exact repro:** I recommended `gen-matrix` as next-cheapest on a file count of 10.
+  Measuring the PLATFORM SURFACE instead refutes that.
+- **Observed (with values):** `civitai-app-gen-matrix` on `origin/main` imports **14 platform
+  hooks** — `useAppStorage useAppWorkflows useBlockContext useBlockResize useBlockToken
+  useBuzzPurchase useBuzzWorkflow useDomainMaturity useGatedImages usePublishGenerationOutputs
+  useRequestConsent useRequestSignIn useResourcePicker useSharedStorage` — against
+  `app-requests`'s six. Two hard blockers, both measured with controls:
+  **(1) `useAppStorage` has NO REST twin** — `0` route files match `appStorage|app-storage` under
+  `civitai/src/pages/api`, control `sharedStorage|shared-storage` = **12**. 8 gen-matrix files use
+  it. **(2) `ResourceCard` and `ReportButton` are absent from `@civitai/components-react`** —
+  control `export { Button` hits `src/index.ts`. `via: measurement`
+- **Ruled out:** *"gen-matrix does not generate"* — FALSE, and it was my own reading. A narrow grep
+  for `submitWorkflow|SUBMIT_WORKFLOW|pollWorkflow` returned nothing; the app actually uses
+  `useAppWorkflows`/`useBuzzWorkflow`/`useBuzzPurchase`. **A zero from a name list you invented is
+  a fact about the list.** `via: command`
+- **Ruled out:** *"the fleet control is 5 files"* — FALSE. That number came from
+  `civitai-block-gen-matrix`, which is a SECOND CHECKOUT of the same repo
+  (`ZacxDev/civitai-app-gen-matrix`) sitting on a stale `feat/production-hardening` branch. On
+  `origin/main` it is **10**. Two directories, one repo, different branches. `via: command`
+- **Leading hypothesis:** the cheapest remaining app is **`civitai-block-generate-from-model`** —
+  the ONLY one of the six with **zero** `useAppStorage` files, and 11 distinct hooks. It still
+  needs the workflows surface (4 files), which is why Track A should probe that too.
+  Fleet measured 2026-09-24 (`files` = blocks-react importers; the last two columns are FILE
+  COUNTS using those hooks):
+
+  | app | files | appStorage | workflows/buzz |
+  |---|---|---|---|
+  | generate-from-model | 23 | **0** | 4 |
+  | custom-generators | 30 | 2 | 4 |
+  | playable-collections | 33 | 5 | 1 |
+  | gen-matrix | 10 | 8 | 5 |
+  | model-benchmarking | 44 | 10 | 2 |
+  | sensei | 47 | 24 | 28 |
+
+- **Next probe:** before choosing ANY next app, settle the platform question that gates five of
+  them: **does `useAppStorage` need REST twins (an #5068-shaped platform PR), or can each app drop
+  it the way `app-requests` did?** `app-requests` only escaped because the server already returns
+  `viewerVoted`, making its local voted-set redundant. Read what the 2 `custom-generators` files
+  and the 5 `playable-collections` files actually STORE — if it is all derivable server-side, the
+  gap is avoidable; if not, the fleet needs the platform PR first.
+
 ## Next steps (ranked)
 
-1. **Merge devrc #1862 once green, `home-manager switch`, then land the cairn entry** from
+1. **TRACK A — probe the REST surface with a real block token.** Run the three commands in the
+   Track A block verbatim (`dev-token` → `shared-storage/list` → `workflows/estimate`). Needs the
+   operator's civitai API key and team access. 🔴 Report the SIGNED-IN result and say plainly that
+   the ANON read is still unproven — one probe does not cover both.
+   forcing: gate — nothing may be submitted to the store on a fake-server-only green, and this is
+   the last thing between a merged port and a submittable one.
+2. **TRACK B — settle the `useAppStorage` platform question, then pick the next app.** Read what
+   `custom-generators` (2 files) and `playable-collections` (5 files) store in it. Outcome is
+   either "each app can drop it" or "the fleet needs an #5068-shaped REST-twin PR first". Then
+   scope `civitai-block-generate-from-model` (0 appStorage, 23 files) as the likely next port.
+   forcing: gate — five of the six remaining apps are blocked behind this answer.
+3. **Merge devrc #1862, `home-manager switch`, then land the cairn entry** from
    `/home/zach/workspace/civit/cairn-entry-civitai-app-requests-platform.md` with
-   `cairn create --scope civitai-app-requests --ref platform --file <file>`. The route is inert
-   until the switch — `routes.json` is a `home.file` copy resolving into `/nix/store`.
+   `cairn create --scope civitai-app-requests --ref platform --file <file>`. 🔴 Check its Tekton
+   statuses first — they were stuck `pending` for ~25 min.
    forcing: gate — the index write is blocked until the route is live.
-2. **Run the ported app against the real platform.** Mint an anon block token and
-   `GET /api/v1/blocks/shared-storage/list` against a preview deploy, expecting 200 with
-   `items[].viewerVoted`; then a signed-in vote. 🔴 This is now the ONLY thing standing between a
-   merged port and a submitted one — "ported" currently means "imports nothing from the bridge",
-   not "works". `src/pages/api/v1/blocks/dev-token.ts` exists and is the likely way in.
-   forcing: gate — nothing may be submitted to the store on a fake-server-only green.
-3. **Delete the `minimumReleaseAgeExclude` entry when `@civitai/sdk` moves past 0.2.0.**
-   `pnpm-workspace.yaml` carries the condition; it is an exemption from a supply-chain control and
-   must not outlive its reason.
-   forcing: security — a standing supply-chain exemption with an expiry.
-4. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
+4. **Delete the `minimumReleaseAgeExclude` entry when `@civitai/sdk` moves past 0.2.0.**
+   `civitai-app-requests/pnpm-workspace.yaml` carries the condition.
+   forcing: security — a standing supply-chain exemption with a written expiry.
+5. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
    `civitai/civitai-app-starters` — force-pushed off the branch, still reachable by sha.
    forcing: security — residual exposure on a PUBLIC repo from an earlier session's leak.
-5. **Ratify or reject R14** — #5068 reached tRPC via a `blocksRouter` caller, diverging from the
+6. **Ratify or reject R14** — #5068 reached tRPC via a `blocksRouter` caller, diverging from the
    body-extraction precedent #5054/#5055 set.
    forcing: user — an operator call, not an engineering one.
-6. **Revisit F2/F6 when a GENERATION app adopts the poll surface.** `app-requests` does not
-   generate. The pattern for porting one now exists and is merged, so this is closer than it was.
+7. **Revisit F2/F6 when a GENERATION app adopts the poll surface.** Still unfired: `app-requests`
+   does not generate. Track A probing `workflows/estimate` does NOT fire it either — that is one
+   call, not the sustained polling F2/F6 are about.
    forcing: user — deferred deliberately, not dropped.
-7. **Prune this document.** It is ~76 KB against a 65,536 B ceiling with ~5 KB of resolved
-   investigation blocks the tool measures as evictable. Advisory, no gate here, but drifting.
+8. **Prune this document.** ~80 KB against a 65,536 B ceiling, with ~7.5 KB of resolved
+   investigation blocks the tool measures as evictable.
    forcing: none
 
 ## Defects (batched)
@@ -962,30 +1054,56 @@ that protocol."*
   the three-part structure — transport port, a11y change, supply-chain exemption — because the
   commits were deliberately separated and the reasoning for each is worth keeping.
 
+- 🔴 **FILE COUNT IS THE WRONG METRIC FOR PORTING COST — COUNT THE PLATFORM SURFACE.** I ranked
+  `gen-matrix` next-cheapest at 10 files; it imports **14 platform hooks** to `app-requests`'s six
+  and carries two hard blockers, while `generate-from-model` at **23** files is the genuinely
+  cheapest because it is the only one using **zero** `useAppStorage`. The file count measures how
+  much TEXT changes; the hook set measures how many PLATFORM CAPABILITIES must exist first — and
+  only the second can be blocked on a PR in another repo. **Rank ports by surface, not by diff.**
+- 🔴 **TWO DIRECTORIES CAN BE ONE REPO ON DIFFERENT BRANCHES, AND THE FLEET NUMBERS LIE IF YOU
+  MISS IT.** `civitai-app-gen-matrix` and `civitai-block-gen-matrix` both have origin
+  `ZacxDev/civitai-app-gen-matrix`; the first is `main` (10 importers), the second a stale
+  `feat/production-hardening` (5). I quoted the 5 as a positive control. It was still a valid
+  control — non-zero is all a control needs — but it is NOT that app's state. **`git -C <dir>
+  remote get-url origin` before treating two directories as two apps**, and measure against
+  `origin/main`, not whatever branch a checkout was left on.
+- 🔴 **A ZERO FROM A NAME LIST YOU INVENTED IS A FACT ABOUT THE LIST.** I grepped gen-matrix for
+  `submitWorkflow|SUBMIT_WORKFLOW|estimateWorkflow|pollWorkflow`, got nothing, and concluded "it
+  does not generate". It uses `useAppWorkflows`/`useBuzzWorkflow`/`useBuzzPurchase` — none of which
+  I had imagined. The fix that caught it was reading the actual import block instead of testing a
+  hypothesis about it. **When a grep for a CAPABILITY returns zero, enumerate what the file
+  imports before believing the capability is absent.**
+- 🔴 **`useAppStorage` IS A FLEET-WIDE PLATFORM GAP, NOT A PER-APP PROBLEM.** There is no REST twin
+  for the per-viewer KV (0 routes; control 12 for shared-storage) and five of the six remaining
+  apps use it — 24 files in `sensei` alone. `app-requests` escaped only because the server already
+  returns `viewerVoted`, which made its local voted-set redundant and deletable. **That was luck,
+  not a pattern**, and assuming the next app can do the same is the mistake this note exists to
+  prevent. It is ranked item 2 precisely because it may require a platform PR before most of the
+  fleet can move at all.
+- **Decision (operator, 2026-09-24):** next session runs Track A and Track B **in parallel**. They
+  share no files and no repo: A is network + `curl` against civitai.com, B is local reading across
+  fleet checkouts. Claim ranks 1 and 2 separately.
+
 ## How to verify
 
 ```bash
-W=/home/zach/workspace/civit/app-requests-sdk-port   # worktree; branch zach/port-to-civitai-sdk
+# 1. THE ARC — closed on main, with both controls (this should not regress)
+R=/home/zach/workspace/civit/civitai-app-requests
+git -C $R fetch origin --quiet
+git -C $R grep -l "@civitai/blocks-react" origin/main -- '*.ts' '*.tsx' | wc -l   # => 0
+git -C $R grep -l "@civitai/sdk"          origin/main -- '*.ts' '*.tsx' | wc -l   # => 13  (control)
+P=/home/zach/workspace/civit/civitai-app-gen-matrix
+git -C $P grep -l "@civitai/blocks-react" origin/main -- '*.ts' '*.tsx' | wc -l   # => 10  (control: an UNPORTED app)
 
-# 1. THE CLOSING CONDITION — against the COMMITTED tree, not the working tree
-git -C $W grep -l "@civitai/blocks-react" -- '*.ts' '*.tsx' | wc -l
-#    => 0
-git -C $W grep -l "@civitai/sdk" -- '*.ts' '*.tsx' | wc -l
-#    => 12   POSITIVE CONTROL: a zero above with a zero here would just mean the files moved
-find /home/zach/workspace/civit/civitai-block-gen-matrix \( -name '*.ts' -o -name '*.tsx' \) \
-  | grep -v node_modules | xargs grep -l "@civitai/blocks-react" | wc -l
-#    => 5    POSITIVE CONTROL: the same command on an UNPORTED app; proves the grep works
-grep -c "blocks-react" $W/package.json || echo "absent from package.json"
+# 2. the merge landed by CONTENT, never ancestry (a squash is never an ancestor)
+gh pr view 21 --repo ZacxDev/civitai-app-requests --json state,mergeCommit \
+  --jq '"\(.state) \(.mergeCommit.oid)"'        # => MERGED 52b7e1b1…
+git -C $R show origin/main:src/platform/ui.tsx | grep -c radiogroup     # => 2
 
-# 2. the suite, the typecheck and the build
-cd $W && pnpm run typecheck 2>&1 | grep -c "error TS"   # => 0  (|| true — grep -c 0 exits 1)
-cd $W && pnpm test 2>&1 | grep -E "^ *(Test Files|Tests) "
-#    => Test Files 26 passed (26) / Tests 414 passed (414)
-cd $W && pnpm run build                                  # => built, dist/ emitted
+# 3. the local toolchain is the PINNED one (this is what CI runs)
+direnv exec $R bash -c 'pnpm --version'          # => 11.25.0, NOT the host's 10.28.1
+#    🔴 `direnv exec $R pnpm --version` answers 10.28.1 — the outer shell resolves `pnpm`
+#    first. Wrap it in a shell or you measure the corepack shim.
 
-# 3. the REST client is really in the loop — re-run the mutation that once SURVIVED
-sed -i "s|...(opts.cursor != null ? { cursor: opts.cursor } : {}),||" $W/src/platform/sharedStorage.ts
-cd $W && pnpm test 2>&1 | grep -E "^ *Tests "   # => 1 failed  (restore with: git -C $W checkout -- src/platform/sharedStorage.ts)
-
-# 4. STILL UNMET — the app against the real platform. See "Open investigations".
+# 4. STILL UNMET — the real-platform probe. See "TRACK A" for the exact commands.
 ```
