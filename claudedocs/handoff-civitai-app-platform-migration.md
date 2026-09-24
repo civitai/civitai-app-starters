@@ -1086,12 +1086,21 @@ re-derive them. Per-PR detail and every correction lives in
 **second** ported app; 0 blocks-react importers on main, control `@civitai/sdk` 12, unported control
 `gen-matrix` 10).
 
-1. 🔴 **Decide issue `civitai#5092` — does the developer gate stay on `updateUserSettings`?**
-   `blocks.router.ts:7140` calls `assertViewerIsAppDeveloper`, so **`civitai#5093` (open) ships a
-   write surface no ordinary viewer can use** and cannot delete `generate-from-model`'s
-   *"Applies to this session only"* notice. Keep the gate ⇒ #5093 is a developer-only convenience;
-   drop it ⇒ the notice goes and the port is whole. **#5093 must not merge before this is answered.**
-   forcing: user — nobody else can settle it.
+1. 🔴 **`civitai#5092` — ANSWERED: keep the gate, and the issue is really `bound-then-ungate`.**
+   Two facts read off `origin/main` reframe it, both recorded at `#5092#issuecomment-5820387879`:
+   (a) `updateUserSettings` takes `settings: settingsSchema` — **any 4KB JSON record**, not "a
+   checkpoint"; (b) the procedure carries `RATE LIMIT: NONE, DELIBERATELY` and names the developer
+   gate as what bounds it instead — a catalog limit was **removed** because the gate was there.
+   **So the gate IS the rate limit**, and dropping it alone leaves an unbounded arbitrary 4KB-per-write
+   surface open to every viewer. Sequence: add a bound (rate limit, or narrow `settings` to a declared
+   key set) → *then* ungate. Nobody has scoped that.
+   ✅ **`civitai#5093` can therefore merge as it stands** — it achieves TRANSPORT PARITY, which is what
+   the migration is for; the bridge op is developer-gated too.
+   ⚠ **My briefing was wrong**: I told that PR's author deleting `generate-from-model`'s *"Applies to
+   this session only"* notice was the acceptance target. The bridge never let ordinary viewers persist
+   this either, so the notice is **honest on both transports** and stays until bound-then-ungate lands.
+   The author found the discrepancy and correctly refused to decide it.
+   forcing: gate — #5093 is unblocked; the bound-then-ungate work is unscoped.
 2. **Port the fleet.** The platform now has app-storage, workflows-query, gated-images and an
    `AppClient.storage` client. Five apps remain, each with a read plan in the scoping doc:
    `custom-generators` (30 files, smallest storage surface) → `playable-collections` (33, soft
@@ -1104,14 +1113,19 @@ re-derive them. Per-PR detail and every correction lives in
    `@civitai/sdk` host-protocol additions. **In flight** on `feat/sdk-host-image-upload-and-publish`
    (one PR, two commits). The host already implements both; this exposes them.
    forcing: gate — blocks `custom-generators` (upload) and `gen-matrix`/`model-benchmarking` (publish).
-4. 🔴 **Two gates are red repo-wide and neither is anyone's PR — both are the
-   "permanently-red gate trains everyone to click through" hazard, live in two repos at once.**
-   (a) `preview / component-tests` in `civitai/civitai` — all 5 suites fail on one
-   `showWarningNotification` import error, reproduced in an unmodified base clone. **Unowned; not
-   filed.** (b) `Canonical schema drift-check` in the starters repo — the live schema gained an
-   `auth` property the vendored copy lacks; filed as **`civitai-app-starters#443`**.
-   ⚠ Three PRs have now been merged past (a) with the acceptance recorded each time.
-   forcing: gate — every future PR in both repos reads these as noise.
+4. 🔴 **Two gates red repo-wide, both now FILED, neither anyone's PR.**
+   (a) **`civitai#5102`** — `preview / component-tests`: all 5 suites fail on one
+   `showWarningNotification` import error. 🔴 **The cheap explanation is ruled out** — that symbol
+   IS exported (exactly 1 export in `src/utils/notifications.tsx`, 16 importers), so this is a
+   resolution/transform problem in the `component` vitest project, **not** a missing symbol. Do not
+   start from "someone deleted the export". Closing condition: the check green on a PR head whose
+   diff touches no `src/components/` file — a PR head because the pipeline never posts on `main`.
+   ⚠ **Merged past three times (5085, 5090, 5091), each with a written acceptance.** That is the
+   cost: the fourth reader stops reading the reasoning.
+   (b) **`civitai-app-starters#443`** — `Canonical schema drift-check`: the live schema gained an
+   `auth` property the vendored copy lacks. **Decision taken: revendor.** PR in flight on
+   `chore/revendor-app-block-schema`.
+   forcing: gate — a permanently-red gate is worse than no gate, and this is two of them at once.
 5. **`civitai#5087`** drop `enforceAppBlocksFlag` from the five storage procedures ·
    **`civitai#5088`** the `updatedAt` revival, closing only on a test whose fake sends an ISO string ·
    **`civitai#5089`** anon 403 vs bridge-parity null, per operation · **`civitai#5094`** the
