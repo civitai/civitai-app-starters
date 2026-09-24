@@ -1,3 +1,4 @@
+import { BridgeError } from '../core/errors.js';
 import { createCaller, createListener, createNotifier } from '../core/messaging.js';
 import { tokenFromWrapped, type BlockTransport } from '../core/transport.js';
 import type { GrantOptions, Scope, Session, TokenOptions } from '../session/index.js';
@@ -100,6 +101,30 @@ export interface Host {
     args?: { purpose?: 'display' },
     opts?: HostCallOptions,
   ): Promise<PendingImage | null>;
+  /**
+   * Publishes outputs of ONE of this app's own workflows as public images, and
+   * resolves with the ids of the rows the host created. Needs
+   * `ai:write:budgeted`: an app trusted to spend the viewer's Buzz on a
+   * generation is trusted to publish what that generation produced.
+   *
+   * 🔴 Outputs are named by INDEX into the workflow, never by url. The host
+   * re-derives that this viewer and this app own `workflowId`, then resolves
+   * the urls itself — which is the whole guarantee, because a frame at an
+   * opaque origin naming its own blob to publish would be a different feature.
+   *
+   * The host shows the viewer a confirmation first and answers only when they
+   * act, so this waits on a person. Nothing here bounds that wait; pass a
+   * `signal` for the bound your app wants.
+   *
+   * ⚠ Publishing is best-effort per image. An output that fails to publish is
+   * skipped rather than failing the call, so `imageIds` can be SHORTER than
+   * the selection and nothing says which index dropped. Compare lengths rather
+   * than pairing ids to indexes.
+   */
+  publishGenerationOutputs(
+    args: { workflowId: string; imageIndexes?: number[] },
+    opts?: HostCallOptions,
+  ): Promise<number[]>;
 }
 
 export function createHost(transport: BlockTransport): Host {
@@ -143,6 +168,26 @@ export function createHost(transport: BlockTransport): Host {
       const { purchased } = await call('OPEN_BUZZ_PURCHASE', args, { ...opts, transport });
       return { purchased };
     },
+    async publishGenerationOutputs(args, opts = {}) {
+      const { imageIds } = await call('PUBLISH_GENERATION_OUTPUTS', publishParams(args), {
+        ...opts,
+        transport,
+      });
+      // The host spells "no failure" as `error: ''`, which the transport reads
+      // as a success — so a reply carrying neither the ids nor a message gets
+      // this far, and returning it would resolve `undefined` from a promise
+      // that says `number[]`. A caller reading that as "nothing published"
+      // would be guessing: images may well have been.
+      if (!Array.isArray(imageIds) || !imageIds.every((id) => typeof id === 'number')) {
+        throw new BridgeError(
+          'malformed',
+          'PUBLISH_GENERATION_OUTPUTS',
+          'PUBLISH_GENERATION_OUTPUTS reply carried no image ids. Whether anything ' +
+            'was published is unknown; read the workflow back rather than assuming.',
+        );
+      }
+      return imageIds;
+    },
     // Cast scoped to this one member: the interface overloads it so each
     // `purpose` names its own return, which one implementation signature cannot
     // express. Every other member here is still checked against `Host`.
@@ -154,6 +199,55 @@ export function createHost(transport: BlockTransport): Host {
         ? openSourceUpload(transport, opts)
         : openDisplayUpload(transport, opts)) as Host['openImageUpload'],
   };
+}
+
+/**
+ * Everything that goes on the `PUBLISH_GENERATION_OUTPUTS` wire, built field by
+ * field.
+ *
+ * 🔴 NAMED FIELDS, NEVER A SPREAD. The message's guarantee is that a block
+ * cannot say WHICH bytes to publish — it names a workflow it owns and indexes
+ * into it, and the host resolves the urls. Spreading the caller's object here
+ * would put whatever else it carries on the wire, so the one line that makes
+ * `url` unreachable is the two assignments below being the only ones.
+ *
+ * The two refusals are hangs and escalations the host cannot save us from:
+ *
+ * - A missing `workflowId` is DROPPED by the host with no reply at all, and
+ *   nothing in this package bounds a request, so the call would simply never
+ *   settle.
+ * - An `imageIndexes` the host cannot read — empty, or holding anything that is
+ *   not a whole index — is stripped, and a stripped `imageIndexes` means
+ *   PUBLISH EVERY OUTPUT. "Publish these two" quietly becoming "publish all
+ *   twenty" is not a failure a viewer can take back.
+ */
+function publishParams(args: { workflowId: string; imageIndexes?: number[] }): {
+  workflowId: string;
+  imageIndexes?: number[];
+} {
+  const { workflowId, imageIndexes } = args;
+  if (typeof workflowId !== 'string' || workflowId === '') {
+    throw new BridgeError(
+      'invalid',
+      'PUBLISH_GENERATION_OUTPUTS',
+      'publishGenerationOutputs needs the workflowId of a workflow this app ran.',
+    );
+  }
+  if (imageIndexes === undefined) return { workflowId };
+  if (
+    !Array.isArray(imageIndexes) ||
+    imageIndexes.length === 0 ||
+    !imageIndexes.every((index) => Number.isInteger(index) && index >= 0)
+  ) {
+    throw new BridgeError(
+      'invalid',
+      'PUBLISH_GENERATION_OUTPUTS',
+      'imageIndexes must be a non-empty list of output indexes. The host reads an ' +
+        'unusable list as "publish every output", so this refuses rather than publish ' +
+        'more than you asked for.',
+    );
+  }
+  return { workflowId, imageIndexes: [...imageIndexes] };
 }
 
 async function openSourceUpload(

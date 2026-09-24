@@ -94,6 +94,21 @@ export type HostRequests = {
       selected?: UploadedImage | SourceImage | { status: 'pending'; imageId: number; url: string };
     };
   };
+  /**
+   * Publish outputs of ONE of this app's own workflows as scanned public
+   * images, behind the host's own confirmation.
+   *
+   * 🔴 `imageIndexes` INDEX the workflow's outputs, and there is no url on this
+   * message — there must never be one. The host re-derives ownership of
+   * `workflowId` from the token and resolves the orchestrator urls itself,
+   * which is what stops a frame at an opaque origin from naming an arbitrary
+   * blob to publish. A shape that accepted a url would be a different, weaker
+   * feature wearing this one's name.
+   */
+  PUBLISH_GENERATION_OUTPUTS: {
+    params: { workflowId: string; imageIndexes?: number[] };
+    result: { imageIds: number[] };
+  };
   REQUEST_TOKEN: { params: { blockInstanceId: string }; result: { token: WrappedToken } };
 };
 

@@ -338,6 +338,30 @@ export interface Host {
     openImageUpload(args?: {
         purpose?: 'display';
     }, opts?: HostCallOptions): Promise<PendingImage | null>;
+    /**
+     * Publishes outputs of ONE of this app's own workflows as public images, and
+     * resolves with the ids of the rows the host created. Needs
+     * `ai:write:budgeted`: an app trusted to spend the viewer's Buzz on a
+     * generation is trusted to publish what that generation produced.
+     *
+     * 🔴 Outputs are named by INDEX into the workflow, never by url. The host
+     * re-derives that this viewer and this app own `workflowId`, then resolves
+     * the urls itself — which is the whole guarantee, because a frame at an
+     * opaque origin naming its own blob to publish would be a different feature.
+     *
+     * The host shows the viewer a confirmation first and answers only when they
+     * act, so this waits on a person. Nothing here bounds that wait; pass a
+     * `signal` for the bound your app wants.
+     *
+     * ⚠ Publishing is best-effort per image. An output that fails to publish is
+     * skipped rather than failing the call, so `imageIds` can be SHORTER than
+     * the selection and nothing says which index dropped. Compare lengths rather
+     * than pairing ids to indexes.
+     */
+    publishGenerationOutputs(args: {
+        workflowId: string;
+        imageIndexes?: number[];
+    }, opts?: HostCallOptions): Promise<number[]>;
 }
 
 export declare class ApiError extends CivitaiError {
