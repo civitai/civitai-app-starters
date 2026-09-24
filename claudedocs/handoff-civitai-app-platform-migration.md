@@ -739,9 +739,13 @@ four `/workflows/*` routes **404** in production because the #5068 deploy has no
    the clamp fires on every mode — confirm that reading with the author before widening it.
    forcing: gate — this is now the cheapest path to the only unmeasured thing left in the port.
 2. **Port `civitai-block-generate-from-model`** (0 `useAppStorage` files, 23 blocks-react
-   importers, 11 distinct hooks). It is the ONLY remaining app that needs neither the app-storage
-   platform PR nor the workflows surface to be deployed. Track B settled that the other five wait.
-   forcing: gate — the fleet's next port, and the only one unblocked today.
+   importers, 11 distinct hooks). The only remaining app free of the app-storage gap.
+   ⚠ **It is NOT free of the workflows gap** — an earlier revision of this line claimed it needed
+   neither, and that was wrong: `useBuzzWorkflow` is used in 4 files (`src/App.tsx`,
+   `src/test/test-utils.ts`, and the two queue tests), so it lands on the `/api/v1/blocks/workflows/*`
+   routes that 404 in production today (item 4). Sequencing, not a blocker — the deploy will land
+   long before the port is written — but the port cannot be declared live-verified until it does.
+   forcing: gate — the fleet's next port, and the only one unblocked on storage today.
 3. **Decide the app-storage platform PR** — 4 REST adapters over `appsStorageRouter`
    (`get`/`set`/`delete`/`list`), #5068-shaped, plus whether `@civitai/sdk` grows a `storage`
    client or each app hand-rolls one like `app-requests` did.
