@@ -869,6 +869,33 @@ carry `apps:storage:shared:*` (the doc's original probe plan was impossible as w
   dev:tunnel`, which reads exactly like a missing script. Use `pnpm -C <dir> run …`. The same
   mismatch explains a `pnpm --version` of 10.28.1 (starters) vs 11.25.0 (this repo).
 
+## 🔴 IN FLIGHT — seven agents dispatched 2026-09-24, fleet-wide
+
+Operator decision, 2026-09-24: run the whole remaining fleet in parallel, with the five
+storage-blocked apps getting SCOPING rather than a port that would have to drop `useAppStorage`.
+Autonomy granted: **branch + PR, no merge** — review is the operator's.
+
+| # | repo | branch | shape |
+|---|---|---|---|
+| A | `ZacxDev/civitai-block-generate-from-model` | `feat/civitai-sdk-port` | full port (0 appStorage) |
+| B | `civitai/civitai` | `feat/app-storage-rest` | 4 REST adapters over `appsStorageRouter` |
+| C | `civitai-app-custom-generators` | — | read-only scoping |
+| D | `civitai-app-playable-collections` | — | read-only scoping |
+| E | `civitai-app-gen-matrix` | — | read-only scoping |
+| F | `civitai-app-model-benchmarking` | — | read-only scoping |
+| G | `civitai-app-sensei` (branch `trunk`) | — | read-only scoping |
+
+**B is the unblocker** — C–G all plan against the tRPC `appsStorageRouter` contract
+(`get`/`set`/`delete`/`list`/`getQuota`) on the assumption B's routes will mirror it. If B's shape
+diverges, re-read C–G's plans against what B actually shipped before acting on them.
+
+🔴 **The two ports (A, B) were told to build their OWN worktrees with `git -C <repo> worktree add`,
+NOT to take a worktree-isolation flag** — this session's cwd is `civitai-app-starters`, so a flag
+would have worktreed the WRONG repo. They were also told to `cp .envrc` + `direnv allow` into the
+worktree (a worktree carries neither `.envrc` nor submodules), and `git stash` was forbidden.
+
+Claims `civitai-app-platform-migration-1` (A) and `-2` (B) are HELD while this runs.
+
 ## Next steps (ranked)
 
 1. **Port `civitai-block-generate-from-model`** — the fleet's next app and the only one unblocked on
