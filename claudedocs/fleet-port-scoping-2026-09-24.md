@@ -998,3 +998,59 @@ naming:
 
 **The mechanism to remember: an append (`>>`) to a path another branch does not track silently
 becomes a CREATE.** No error, no warning, and the result reads as a successful write.
+
+---
+
+# ✅ THE PLATFORM IS COMPLETE — six PRs merged, every surface the fleet needs now exists
+
+| PR | surface | merged |
+|---|---|---|
+| `civitai#5085` | app-storage REST (5 routes) | `1abd6539` |
+| `civitai#5090` | workflows query | `67c1fcdf` |
+| `civitai#5091` | gated images | `1b965b3d` |
+| `civitai-app-starters#441` | `AppClient.storage` | `eea19074` |
+| `civitai-app-starters#445` | canonical schema re-vendor (`auth`) | `b79e12fa` |
+| `civitai-app-starters#446` | `host.openImageUpload` + `host.publishGenerationOutputs` | `81bd1b4f` |
+
+**#446 verified on `origin/main` by content:** `host.openImageUpload` (4) and
+`host.publishGenerationOutputs` (3) in `src/host/index.ts`; `OPEN_IMAGE_UPLOAD` (2) and
+`PUBLISH_GENERATION_OUTPUTS` (1) in `host/protocol.ts`, control `OPEN_RESOURCE_PICKER` (1); and the
+re-vendored schema still carries `auth`, so the merge did not revert `#445`.
+
+Host parity moved **9 → 11 messages, 13 scopes unchanged**. The scan-verdict PUSH deliberately does
+not move the count — the host's own ledger says *"Do NOT 'add' IMAGE_SCAN_RESOLVED to this map."*
+
+## The `#446` finding I had to refute PUBLICLY, twice
+Its body claims the schema endpoint *"serves different bytes to different clients"* — 17028 with
+`auth` locally, 16671 on the runner — and warns that syncing the file would break CI. **False.**
+Corrected at `#446#issuecomment-5821066534`. Measured: live returns 17028 stable over three uncached
+fetches; `origin/main`'s copy is `cmp`-identical to a fresh fetch; the drift check on `main` is
+success. **The branch forked at `eea19074` and `b79e12fa` is not an ancestor of it**, so it carried
+the 16671-byte pre-re-vendor copy. Two trees, both behaving correctly — Actions evaluates the PR's
+MERGE commit, which has main's copy.
+⚠ Its *"I reproduced it on a detached `origin/main` worktree"* does not rule this out either: a
+worktree off a **stale local `origin/main` ref** carries the same old file. Fetch first or the
+reproduction means nothing.
+
+## Its best self-catch, worth keeping
+Its **first mutation harness scored all 9 mutants SURVIVED** — it passed `--reporter=basic`, which
+vitest 4 does not have, so the runner crashed before executing anything and its "did anything fail"
+grep read the silence as survival. Rewritten with a positive control per sweep and a refusal to infer
+a verdict from an absence: **20 mutants, 20 killed.**
+Two more of its own findings: `typecheck:readme` was **blind to its snippets** (a misspelled method
+stayed green because `app` was a free identifier shimmed to `any`) — and once made real, that gate
+caught a genuine doc error, the orchestrator's `sourceImage` being a url string rather than the
+`{url,width,height}` object the bridge used. And four new types **never reached the package entry**;
+no gate caught it, and it measured that adding the package to `check:public-types` would not have
+either.
+
+## Process correction adopted mid-session
+`civitai-app-starters/AGENTS.md` gained a **"work in a worktree, never the primary clone"** section
+while this session ran, and it lands exactly on the near-miss recorded above. Two of its points
+correct briefs I had been giving agents:
+- 🔴 **`.envrc` is TRACKED in this repo** — `git worktree add` provides it, and copying it in is
+  wrong. Correct for the app repos, wrong here.
+- 🔴 **A stale primary clone makes files LOOK ABSENT.** Read from the ref (`git show origin/main:<path>`)
+  for any load-bearing claim.
+
+This entry was written from a worktree, per that rule.
