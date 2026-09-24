@@ -936,7 +936,39 @@ worktree (a worktree carries neither `.envrc` nor submodules), and `git stash` w
 
 Claims `civitai-app-platform-migration-1` (A) and `-2` (B) were held and are now RELEASED.
 
-### ✅✅ TWO MERGED (2026-09-24T05:05Z). #11 has one change left, then merges.
+### ✅✅✅ ALL THREE MERGED (2026-09-24T05:16Z). The arc's second port is ON MAIN.
+
+🔴 **`civitai-block-generate-from-model` closing condition, measured on `origin/main` AFTER the
+merge:** `@civitai/blocks-react` importers **0** · positive control `@civitai/sdk` **12** ·
+unported control `gen-matrix` **10** · dependency absent from `package.json`. Merged as squash
+`200617ef`, so **never check this by ancestry** — a squash is never an ancestor of main.
+
+⚠ **The `generate-from-model` base clone could NOT be re-synced, and the refusal is correct.** It
+sits on `zach/wildcard-parent-origins` — 4 months old, **1 ahead / 9 behind** `origin/main`, with
+three untracked files (`.venv/`, `opencode.json`, `pnpm-lock.yaml`). `--ff-only` refused because the
+command asked to merge main INTO a feature branch. **Left untouched on purpose**: that one commit
+(`2197fa7 fix(env): trust prod + wildcard preview parent origins for BLOCK_INIT`) is not on main and
+may be real unreviewed work rather than a stale orphan. Someone should decide which — do not assume.
+
+### The `updatedAt` seam: RESOLVED, and my own issue #5088 was filed on a false dichotomy
+🔴 **`Date` was never a superjson wire artefact — it is the CLIENT layer's own choice**, and the
+bridge already made it. Verified first-hand:
+`packages/civitai-blocks-react/src/hooks/useAppStorage.ts:212` does `updatedAt: new Date(k.updatedAt)`,
+and `transport/validate.ts:601-604`'s `isDateLike` accepts `v instanceof Date` **or**
+`isParseableDateString(v)` — deliberately agnostic about the wire form — applied to `k.updatedAt` at
+`:1126`.
+
+So the REST routes emitting an ISO string is **not a divergence at all**. The fix is that the SDK
+storage client revives to a `Date` exactly as `useAppStorage` does, and the **migration cost across
+all five apps is zero** — `gen-matrix`'s `updatedAt: Date` and its `.getTime()` calls stay as
+written. Issue #5088 corrected publicly (`#5088#issuecomment-5808147403`) with a revised closing
+condition: the revival must be pinned by a test whose fake sends an **ISO string**, because a fake
+handing the client a `Date` is precisely the mutant that would survive.
+⚠ The hazard itself was real and the issue stays open: with no SDK client yet, an app hand-rolling an
+adapter that passes the string through **does** break `gen-matrix`, quietly, because
+`historyAgeLabel` absorbs it.
+
+### Pre-merge state (kept for the reasoning, not the status)
 
 **Operator decisions, all four taken 2026-09-24:**
 1. **R4** — ship #11 with the degradation **visible at the seam**, not a README note. In flight.
