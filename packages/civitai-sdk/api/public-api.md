@@ -378,11 +378,7 @@ export interface BlockSettings {
     userSettings: Record<string, unknown>;
 }
 
-/**
- * Which token the host minted: a block-scoped JWT only the host accepts, or an
- * OAuth access token the Civitai API and orchestrator accept too. A host that
- * predates the field sends none.
- */
+/** `block` is accepted only by the host; `oauth` also by the API and orchestrator. Older hosts send none. */
 export type TokenKind = 'block' | 'oauth';
 
 export interface BlockToken {
