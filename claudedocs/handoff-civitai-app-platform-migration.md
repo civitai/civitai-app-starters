@@ -43,49 +43,32 @@ that protocol."*
 
 ## State now
 
-🔴 **THE ARC'S CLOSING CONDITION IS MET.** The first fleet app is ported. What remains is
-delivery (push + PR) and a first real-platform run — neither is part of the closing condition.
+🔴 **THE ARC'S CLOSING CONDITION IS MET AND THE WORK IS ON GITHUB.** Both PRs are open; one CI
+red remains and it is a TIME GATE, not a code defect (below).
 
-- Repos: `civitai-app-requests` @ `f422773` on branch `zach/port-to-civitai-sdk`, **ahead 1 of
-  `origin/main`, NOT PUSHED, no PR** · worktree `/home/zach/workspace/civit/app-requests-sdk-port`
-  (clean) · `civitai-app-starters` @ `4245f4e` + this update · `civitai` @ `2a2eb0fe2f`.
-- **No `clawgate-task:` field** — `clawgate_handoff.sh resolve` exited **5** again. An unknown
-  session id also answers 200 with an empty array, so that zero is not a clean bill.
-- `claim-work civitai-app-platform-migration-1` is **HELD** (rc 0, first mover) and stays held
-  until the PR lands. Release with
-  `claim-work --release civitai-app-platform-migration-1`.
-- Verified this session: `pnpm run typecheck` 0 errors (instrument validated — 2 errors on a
-  deliberate break, 0 restored), **414 tests pass across 26 files** (was 413; one added, none
-  lost), `pnpm run build` clean, dev-harness module graph resolves.
-- NOT verified: the app against real civitai.com. No request with a real block token has been
-  fired at a running server.
-- 🔴 **The subsystem-index entry for this work is WRITTEN BUT NOT LANDED — it needs one operator
-  decision.** `cairn create` refused: scope `civitai-app-requests` is not in
-  `~/.config/subsystem-store/routes.json`, and the table is **genuinely split** between the two
-  instances for sibling fleet apps (`civitai-app-model-benchmarking` → `civitai`, but
-  `civitai-app-playable-collections` → `personal`; `civitai-app-starters` → `personal`,
-  `civitai-app-sensei` → `civitai`). It is not derivable from the name, and it decides which store
-  client-confidential content lands in, so I did not guess. The validated entry is at
-  `<scratchpad>/platform.md` (scratchpad is session-scoped — **re-create it from the three
-  lessons in `Gotchas` below if it is gone**). To land it:
-  add `"civitai-app-requests": "<personal|civitai>"` to that table, then
-  `cairn create --scope civitai-app-requests --ref platform --file <file>`.
+- **`ZacxDev/civitai-app-requests` PR #21** — the port. Branch `zach/port-to-civitai-sdk`, two
+  commits: `f422773` (the transport port) and `122c60d` (the a11y change, deliberately separate).
+  `MERGEABLE`, **`UNSTABLE` — the single `build` check is RED**, see the gate below.
+- **`innovation-upstream/devrc` PR #1862** — one line routing scope `civitai-app-requests` to the
+  `civitai` cairn instance. `MERGEABLE`, `UNSTABLE`. 🔴 **Not live until a `home-manager switch`**:
+  `~/.config/subsystem-store/routes.json` is a `home.file` copy (`home.nix:1688`) resolving into
+  `/nix/store`, so the source edit alone changes nothing on the running host.
+- The subsystem-index entry is written and validated but **still not landed** — it needs #1862
+  merged AND the switch, then
+  `cairn create --scope civitai-app-requests --ref platform --file <file>`. The entry survives the
+  scratchpad at **`/home/zach/workspace/civit/cairn-entry-civitai-app-requests-platform.md`**
+  (deliberately outside every repo — it is client-confidential and `devrc` is PUBLIC).
+- `claim-work civitai-app-platform-migration-1` is **still HELD**; release when #21 merges.
+- Verified at `122c60d`: typecheck 0 errors, **414 tests pass**, `pnpm run build` clean — but see
+  the pnpm-major finding below for what that local green could NOT see.
+- Still NOT verified: the app against real civitai.com.
 
-### What the port actually was
-
-The handoff predicted *"a UI rebind onto `@civitai/components-react` plus a replacement for the
-e2e Harness"*. That was **two scope errors**, both now corrected:
-
-1. It was also a **data-layer rewrite**. `@civitai/sdk` has **zero** shared-storage surface
-   (enumerated: 0 of 18 files, control `orchestration` 4; blocks-react control `useSharedStorage`
-   7). The board's seven ops were rebuilt on `/api/v1/blocks/shared-storage/*`.
-2. It was measured against a **19-commit-stale branch**. The local checkout sat on
-   `zach/app-requests-0.2.0-ga`; `origin/main` had **22** blocks-react files, not 11, plus
-   `useBlockBreakpoint`/`resolveBlockTier`, `Modal`, and pnpm+nix.
-
-Shape of the fix: everything platform-shaped lives behind `src/platform/`, the only directory
-importing `@civitai/sdk`. The hooks keep their old signatures, so a 1,300-line `App.tsx` changed
-at its import block rather than throughout.
+### Operator decisions taken 2026-09-23 (these were the UNCONFIRMED ones — now confirmed)
+- Analytics: **keep the no-op shim**, call sites intact.
+- Test harness: **fetch-level fake**, as built.
+- Cairn route: **`civitai`**.
+- Sort control a11y: **switch to `radiogroup` NOW** — this REVERSED my recommendation, so the port
+  carries a deliberate behaviour change (`122c60d`), not just a transport swap.
 
 ## Open investigations — live diagnosis state
 
@@ -447,31 +430,58 @@ at its import block rather than throughout.
   count. Anonymous first (proves #5067's fix live, the probe this doc has wanted since #5067
   merged), then signed in.
 
+### PR #21's `build` check is red on a SUPPLY-CHAIN TIME GATE, not on the code
+- as-of: 2026-09-23
+- **Symptom + exact repro:** `gh pr view 21 --repo ZacxDev/civitai-app-requests` reports
+  `mergeable=MERGEABLE mergeStateStatus=UNSTABLE`; the single check-run `build` is
+  `COMPLETED FAILURE`. It fails at `pnpm install --frozen-lockfile`, before a single test runs.
+- **Observed (with values):** run `35943955997`. The log's own numbers:
+  `✗ Lockfile failed supply-chain policy check (185 entries in 2.2s)` then
+  `[ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION] 1 lockfile entries failed verification:`
+  `@civitai/sdk@0.2.0 was published at 2026-09-23T03:49:30.004Z, within the minimumReleaseAge
+  cutoff (2026-09-23T01:40:35.444Z)`. The run started `2026-09-24T01:40:35Z`, so the window is
+  exactly **24h**. `via: command`
+- **Ruled out:** *"the port broke the build"* — FALSE. The failure is at INSTALL, before
+  `pnpm test`/`pnpm build` execute; the lockfile itself is accepted
+  (*"Lockfile is up to date, resolution step is skipped"*). Only ONE entry is rejected and it is
+  the newly-added `@civitai/sdk@0.2.0`. `via: command`
+- **Ruled out:** *"the repo configures this policy and I can find it"* — no `minimumReleaseAge`
+  anywhere in the repo or in `.github/workflows/`; there is no `.npmrc` and no
+  `pnpm-workspace.yaml`. It comes from pnpm 11's own defaults, not from this repo. `via: command`
+- **Leading hypothesis:** it clears itself at **2026-09-24T03:49:30Z** (24h after the package was
+  published) and a re-run then goes green with **no code change**.
+- **Next probe:** after that timestamp, `gh run rerun <id> --repo ZacxDev/civitai-app-requests`
+  (or push any commit) and read the `build` check. 🔴 **DO NOT relax or disable the policy to go
+  green** — it is a supply-chain control doing exactly its job on a package published yesterday,
+  and this doc already carries the rule that a gate merged through is a gate nobody reads again.
+
 ## Next steps (ranked)
 
-1. **Confirm the three gap decisions, then push `zach/port-to-civitai-sdk` and open the PR.**
-   Branch is ahead 1, unpushed, no PR. 🔴 The analytics-shim and fetch-level-fake decisions came
-   from an `AskUserQuestion` whose answers a system notice flagged as **NOT genuine human input**
-   — the exact trap this doc already records at "Decision (operator, superseded-pending)". They
-   are my assumptions, not the operator's; confirm before anything outward-facing.
-   forcing: user — an operator call, and the answers that shaped the work are unconfirmed.
-2. **Run the ported app against the real platform** — the "Next probe" above, verbatim.
-   Until this happens "ported" means "imports nothing from the bridge", not "works".
+1. **Re-run PR #21's `build` after 2026-09-24T03:49:30Z, then merge.** The red is a 24h
+   supply-chain time gate on `@civitai/sdk@0.2.0`, not a defect. Do not touch the policy.
+   forcing: gate — a red required check, which clears on its own.
+2. **Run the ported app against the real platform** — mint an anon block token and
+   `GET /api/v1/blocks/shared-storage/list` against a preview deploy, expecting 200 with
+   `items[].viewerVoted`; then a signed-in vote. Until this happens "ported" means "imports
+   nothing from the bridge", not "works".
    forcing: gate — nothing may be submitted to the store on a fake-server-only green.
-3. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
-   `civitai/civitai-app-starters` — force-pushed off the branch, still reachable by sha. Operator
-   only; I cannot file it.
+3. **Merge devrc #1862, `home-manager switch`, then land the cairn entry** from
+   `/home/zach/workspace/civit/cairn-entry-civitai-app-requests-platform.md`.
+   forcing: gate — the index write is blocked until the route is live.
+4. **Reconcile the pnpm major: local is 10.28.1, the flake pins 11.** See the Gotcha below; the
+   flake's own comment says a local shell and CI must not run different majors.
+   forcing: regression — a local green is structurally blind to CI's install policy until fixed.
+5. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
+   `civitai/civitai-app-starters` — force-pushed off the branch, still reachable by sha.
    forcing: security — residual exposure on a PUBLIC repo from an earlier session's leak.
-4. **Ratify or reject R14** — #5068 reached tRPC via a `blocksRouter` caller, diverging from the
-   body-extraction precedent #5054/#5055 set. Unattributed, and MERGED, so the repo has two rules
-   for REST/bridge seams until someone picks one.
+6. **Ratify or reject R14** — #5068 reached tRPC via a `blocksRouter` caller, diverging from the
+   body-extraction precedent #5054/#5055 set. Now MERGED, so the repo has two rules for
+   REST/bridge seams until someone picks one.
    forcing: user — an operator call, not an engineering one.
-5. **Revisit F2/F6 when a block actually adopts the poll surface.** Both decisions are written
-   into `block-catalog-rate-limit.ts`. 🔴 The trigger has MOVED CLOSER: a fleet app now ships on
-   the REST surface, so "no shipped client calls `/api/v1/blocks/workflows/*`" stays true only
-   until a GENERATION app ports. `app-requests` does not generate.
+7. **Revisit F2/F6 when a GENERATION app adopts the poll surface.** `app-requests` does not
+   generate, so the trigger is still unfired — but it is closer now that a fleet app ships on REST.
    forcing: user — deferred deliberately, not dropped.
-6. **Batch: filed but not advanced.** civitai#5059, civitai#5060, starters #425–#432, #422, #423.
+8. **Batch: filed but not advanced.** civitai#5059, civitai#5060, starters #425–#432, #422, #423.
    forcing: none
 
 ## Defects (batched)
@@ -794,6 +804,40 @@ at its import block rather than throughout.
   **fetch-level** fake rather than a transport-level one, because after the port the board's real
   boundary IS `fetch` — a mock host would answer a conversation nobody is having and the suite
   would pass while exercising nothing.
+
+- 🔴 **MY LOCAL GREEN RAN A DIFFERENT PNPM MAJOR THAN CI, AND THAT IS WHY IT COULD NOT SEE THE
+  FAILURE.** Local `pnpm --version` is **10.28.1**; `flake.nix` pins `pnpmMajor = "11"` and the
+  workflow sets `pnpm/action-setup@v4 version: 11`. `minimumReleaseAge` is a **pnpm 11** supply-chain
+  policy — `pnpm config get minimumReleaseAge` under 10 answers `undefined` — so the install-policy
+  tier was STRUCTURALLY INVISIBLE locally while typecheck, 414 tests and the build all passed.
+  This repo has **no `.envrc`**, so nothing puts the flake's toolchain on PATH automatically and
+  `pnpm` resolves to whatever the host has. The flake's own comment already states the rule —
+  *"a local shell and CI cannot run different pnpm majors. Change both, or neither"* — and it was
+  silently violated by simply running `pnpm`. **Run the repo's pinned toolchain (`nix develop`)
+  before quoting a local green, and when a repo pins a toolchain with no `.envrc`, ASSUME you are
+  not using it until you have checked the version.**
+- 🔴 **A SUPPLY-CHAIN GATE CAN MAKE A CORRECT PR RED FOR A FIXED, PREDICTABLE WINDOW.** #21's only
+  check failed at `pnpm install` because `@civitai/sdk@0.2.0` was ~22h old against a 24h
+  `minimumReleaseAge`. **It is not a flake and not a defect: it has a known clear time** — the log
+  prints both the publish timestamp and the cutoff, so the exact minute it goes green is
+  computable. The trap is that it *reads* like a broken build and the obvious "fix" is to relax the
+  policy. Compute the clear time from the log's own two numbers and wait.
+- 🔴 **`readlink -f` SETTLED WHETHER A CONFIG EDIT WOULD EVEN BE LIVE, BEFORE ANY EDIT.**
+  `~/.config/subsystem-store/routes.json` is read-only and resolves into `/nix/store` — a
+  `home.file` COPY, not an `mkOutOfStoreSymlink` — so editing the devrc source does nothing until
+  a `home-manager switch`. The first write attempt failed `[Errno 30] Read-only file system`,
+  which names the symptom but not the remedy; `readlink -f` names the remedy.
+- 🔴 **`cairn create` REFUSES AN UNREGISTERED SCOPE RATHER THAN GUESSING AN INSTANCE, AND THE
+  ROUTING TABLE IS NOT DERIVABLE FROM THE NAME.** Civitai fleet apps go BOTH ways —
+  `civitai-app-model-benchmarking`/`civitai-app-sensei` → `civitai`, while
+  `civitai-app-playable-collections`/`civitai-app-starters` → `personal`. Any session porting a
+  fleet app hits this, and it arrives at the END of `/handoff` when the window is tight. **Resolve
+  the routing BEFORE the index write**, and never pick by name similarity.
+- **Decision (operator, 2026-09-23):** the sort switcher becomes a `radiogroup`, reversing my
+  recommendation to preserve `tablist`. The old role was wrong on its own terms — a tab promises an
+  `aria-controls` panel that control has never had. The assertion was **inverted, not relaxed**,
+  and additionally pins that the element does not still claim to be a tab set; mutating the adapter
+  back to `mode="tabs"` turns exactly that test red with its own error.
 
 ## How to verify
 
