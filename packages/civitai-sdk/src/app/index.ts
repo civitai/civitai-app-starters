@@ -1,4 +1,4 @@
-import { BridgeError } from '../core/errors.js';
+import { BridgeError, CivitaiError } from '../core/errors.js';
 import { getTransport } from '../core/get-transport.js';
 import type { BlockContext, BlockSettings, Theme, ViewerInfo } from '../core/handshake.js';
 import type { BlockTransport } from '../core/transport.js';
@@ -78,6 +78,12 @@ export async function initialize(
   await ready(transport, options.timeoutMs ?? DEFAULT_INIT_TIMEOUT_MS, options.signal);
 
   const snapshot = () => transport.snapshot.get();
+  if (snapshot().viewer !== null && snapshot().token.kind === 'block') {
+    throw new CivitaiError(
+      'This block receives a block-scoped token, which the Civitai API and the orchestrator ' +
+        'do not accept. Declare `auth: "oauth"` in block.manifest.json to use @civitai/sdk.',
+    );
+  }
   return {
     ...createAppClient(createHostSession(transport), options),
     host: createHost(transport),

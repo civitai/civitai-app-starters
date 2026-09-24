@@ -59,6 +59,7 @@ export type {
   PageSlotId,
   ShowcaseImage,
   Theme,
+  TokenKind,
   UnknownSlotContext,
   ViewerInfo,
 } from './core/handshake.js';

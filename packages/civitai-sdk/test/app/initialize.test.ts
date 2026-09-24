@@ -76,6 +76,31 @@ describe('initialize() in a block', () => {
     // @ts-expect-error a scope the site does not grant is a typo, not a request
     void app.requestGrants(['ai:write:unbudgeted']);
   });
+
+  it('refuses a block-scoped token for a signed-in viewer, naming the manifest opt-in', async () => {
+    const transport = createFakeTransport({
+      token: { ...token('jwt'), kind: 'block' },
+      viewer: { id: 7, username: 'koen' },
+    });
+
+    await expect(initialize({ transport })).rejects.toMatchObject({
+      name: 'CivitaiError',
+      message: expect.stringContaining('auth: "oauth"'),
+    });
+  });
+
+  it('accepts an OAuth token, a token from a host that predates kinds, and a block token for an anonymous viewer', async () => {
+    const viewer = { id: 7, username: 'koen' };
+
+    for (const snapshot of [
+      { token: { ...token('oauth'), kind: 'oauth' as const }, viewer },
+      { token: token('unkinded'), viewer },
+      { token: { ...token('jwt'), kind: 'block' as const }, viewer: null },
+    ]) {
+      const app = await initialize({ transport: createFakeTransport(snapshot) });
+      await expect(app.getToken()).resolves.toBe(snapshot.token.raw);
+    }
+  });
 });
 
 describe('initialize({ token })', () => {
