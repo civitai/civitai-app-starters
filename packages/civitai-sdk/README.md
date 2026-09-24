@@ -11,16 +11,20 @@ import { initialize } from '@civitai/sdk';
 const app = await initialize();
 
 const picked = await app.host.openResourcePicker({ resourceType: 'Checkpoint' });
-if (!picked) return;
+if (picked && (await app.requestGrants(['ai:write:budgeted']))) {
+  const { air } = await app.site.get<{ air: string }>(`model-versions/mini/${picked.versionId}`);
 
-const { air } = await app.site.get<{ air: string }>(`model-versions/mini/${picked.versionId}`);
-
-if (!(await app.requestGrants(['ai:write:budgeted']))) return;
-
-const submitted = await app.orchestration.submitWorkflow({
-  steps: [{ $type: 'textToImage', input: { model: air, prompt: 'A lighthouse at dusk' } }],
-});
-const workflow = await app.orchestration.waitForWorkflow(submitted.id!);
+  const submitted = await app.orchestration.submitWorkflow({
+    steps: [
+      {
+        $type: 'textToImage',
+        input: { model: air, prompt: 'A lighthouse at dusk', cfgScale: 7, seed: 1234 },
+      },
+    ],
+  });
+  const workflow = await app.orchestration.waitForWorkflow(submitted.id!);
+  render(workflow);
+}
 ```
 
 An app calls the Civitai API and the orchestrator as the viewer, with a token.
@@ -91,6 +95,50 @@ const images = await app.site.get('images', { query: { limit: 20, username: 'civ
 
 A `401` is retried once with a fresh token. Any other failure is an `ApiError`
 carrying `status`, the parsed `body`, and the server's own message.
+
+## App storage
+
+`app.storage` is the viewer's own key/value store, scoped to this app and this
+block instance. It needs the block token the host mints — an app holding an
+OAuth access token has no per-viewer app storage — and an anonymous viewer is
+refused, so gate on `app.viewer` rather than reading an empty page as "nothing
+stored".
+
+```ts
+await app.storage.set('draft:latest', { prompt, steps: 30 });
+const draft = await app.storage.get<Draft>('draft:latest'); // null when unset
+const { keys, nextCursor } = await app.storage.list({ prefix: 'draft:' });
+const quota = await app.storage.getQuota();
+```
+
+Three properties the surface is built around:
+
+- **Every failure rejects.** Nothing here resolves to mean "not written", and
+  nothing resolves to mean "could not read". A malformed success throws a
+  `CivitaiError`; a refusal is an `ApiError` carrying `status`. A caller that
+  must not act on a partial view branches on the rejection, never on an empty
+  result.
+- **`nextCursor` is present exactly when there may be more rows**, and is passed
+  through untouched. Its absence is your proof a scan completed. Page it
+  yourself, with a bound — the client adds no iterator, because the truncation
+  policy is the caller's to choose.
+- **`set`'s `sizeBytes` is the wire unit; `getQuota`'s `usedBytes` is the stored
+  unit.** They are not a fixed multiple — measured, a numeric-heavy value stores
+  up to 44.4x its wire size — so summing `sizeBytes` under-counts your quota.
+  `getQuota()` is the authority, and it reports neither the key-length cap nor
+  the per-value cap.
+
+A write refused for size or quota arrives as `413`, whichever ceiling fired — the
+server names which one only in prose, so test the status, not the message:
+
+```ts
+try {
+  await app.storage.set('draft:latest', huge);
+} catch (error) {
+  if (error instanceof ApiError && error.status === 413) askTheUserToFreeSpace();
+  else throw error;
+}
+```
 
 ## The orchestrator
 
@@ -166,6 +214,24 @@ entry.
 
 `@civitai/sdk/testing` has `createFakeTransport()`: pass it as
 `initialize({ transport })` and script the host's answers.
+
+There is no published fake for app storage, on purpose. The seam is `fetch`, so
+pass your own `fetch` to `initialize({ token, fetch })` and the client's URLs,
+bodies, statuses and date revival are all real — which a fake replacing the
+`storage` client would not be. Two things to get right in one you write:
+
+- **Make the page size small** (2 or 3, not the server's 50). A page that holds
+  every fixture is exactly how a caller that never forwards `cursor` passes a
+  whole green suite.
+- **Put `updatedAt` on the wire as an ISO string**, as `res.json()` does. Hand
+  the client a `Date` and its revival becomes unobservable, since
+  `new Date(aDate)` is a `Date`.
+
+This SDK's own suite keeps one at
+[`test/support/fake-app-storage.ts`](./test/support/fake-app-storage.ts); it is
+not exported, because four of the five fleet apps that store per-viewer state
+need knobs it does not have (injected latency, prefix-targeted refusals, quota
+overrides, a cursor it ignores, a read that never settles). Copy it if it helps.
 
 ## Checks
 

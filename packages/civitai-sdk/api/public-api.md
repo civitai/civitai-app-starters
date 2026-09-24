@@ -16,6 +16,15 @@ export declare function initialize(options: TokenInitializeOptions): Promise<App
 export interface AppClient {
     /** The public Civitai REST API (`/api/v1`), as the viewer. */
     readonly site: SiteClient;
+    /**
+     * The viewer's own per-app key/value store.
+     *
+     * 🔴 Requires the block token the host mints: an app that authenticated with
+     * an OAuth access token has no per-viewer app storage, and every call here is
+     * refused. An anonymous viewer is refused too — gate on `viewer` rather than
+     * reading an empty result as "nothing stored".
+     */
+    readonly storage: StorageClient;
     /** The orchestrator's workflows, as the viewer. */
     readonly orchestration: OrchestrationClient;
     /** Asks for more scopes. `false` when they cannot be granted — a refusal is an answer. */
@@ -103,6 +112,101 @@ export interface GrantOptions {
 export type TokenSource = string | ((opts: {
     signal?: AbortSignal;
 }) => string | Promise<string>);
+
+export interface StorageCallOptions {
+    signal?: AbortSignal;
+}
+
+/** One row of a key listing. Values are not returned — `get(key)` fetches them. */
+export interface StorageKeyEntry {
+    key: string;
+    /**
+     * When this key was last written. The wire carries an ISO string; it is
+     * revived here, once, so a caller can do date arithmetic without knowing the
+     * transport.
+     */
+    updatedAt: Date;
+}
+
+export interface StorageListResult {
+    keys: StorageKeyEntry[];
+    /**
+     * 🔴 PRESENT EXACTLY WHEN THERE MAY BE MORE ROWS, and passed through
+     * untouched. The server sets it iff the page it returned was full. A caller
+     * uses its ABSENCE as proof a scan completed, and for one caller that is a
+     * money decision. Never default it, never normalise it, never re-derive it
+     * from `keys.length`.
+     */
+    nextCursor?: string;
+}
+
+export interface StorageListQuery {
+    /** Narrows to keys starting with this. Escaped server-side against LIKE wildcards. */
+    prefix?: string;
+    /** The server bounds this and applies its own default; this client sends none. */
+    limit?: number;
+    /** An opaque `nextCursor` from a previous page. */
+    cursor?: string;
+}
+
+export interface StorageQuota {
+    /**
+     * 🔴 THE STORED UNIT — Postgres `octet_length(value::text)` over JSONB, the
+     * unit both ceilings are enforced in, and the authority for "how close am I
+     * to my cap". It is NOT {@link StorageClient.set}'s `sizeBytes`: measured, a
+     * numeric-heavy payload stores up to 44.4x its wire size.
+     */
+    usedBytes: number;
+    rowCount: number;
+    /** Render this, never a compiled-in figure — the ceiling can move. */
+    limitBytes: number;
+    /** Usually the BINDING one: many small rows exhaust this long before bytes. */
+    limitRows: number;
+}
+
+/**
+ * The viewer's own per-(app, block instance) key/value store.
+ *
+ * 🔴 Requires the block token the host mints. An app that authenticated with an
+ * OAuth access token instead has no per-viewer app storage — every call is
+ * refused.
+ *
+ * 🔴 EVERY FAILURE REJECTS. There is no path here that resolves to mean "not
+ * written", and none that resolves to mean "could not read". A caller that must
+ * not act on a partial view branches on the rejection, never on an empty result.
+ */
+export interface StorageClient {
+    /** The value, or `null` when the key is unset. Rejects on any refusal. */
+    get<T = unknown>(key: string, opts?: StorageCallOptions): Promise<T | null>;
+    /**
+     * Upsert one key. Resolves only when the write landed.
+     *
+     * `sizeBytes` is the WIRE unit — the byte length of the serialised value — so
+     * it predicts the per-value cap and nothing else. 🔴 Do not sum it to track
+     * quota; call {@link StorageClient.getQuota}. See {@link StorageQuota.usedBytes}.
+     *
+     * A value of `undefined` is stored as `null`: it does not survive JSON, and
+     * the server writes `null` for an absent value rather than refusing.
+     */
+    set<T = unknown>(key: string, value: T, opts?: StorageCallOptions): Promise<{
+        ok: true;
+        sizeBytes: number;
+    }>;
+    /** Idempotent. `deleted: false` means the key was already absent — a success. */
+    delete(key: string, opts?: StorageCallOptions): Promise<{
+        ok: true;
+        deleted: boolean;
+    }>;
+    /** One page of keys, ordered by key ascending. Values are not returned. */
+    list(query?: StorageListQuery, opts?: StorageCallOptions): Promise<StorageListResult>;
+    /**
+     * This viewer's usage against this viewer's caps, in the stored unit.
+     *
+     * It reports neither the key-length cap nor the per-value cap, so a write
+     * that fits the numbers here can still be refused.
+     */
+    getQuota(opts?: StorageCallOptions): Promise<StorageQuota>;
+}
 
 export declare function isTerminal(workflow: Workflow): boolean;
 
