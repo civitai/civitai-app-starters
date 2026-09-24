@@ -877,7 +877,7 @@ Autonomy granted: **branch + PR, no merge** — review is the operator's.
 
 | # | repo | branch | shape |
 |---|---|---|---|
-| A | `ZacxDev/civitai-block-generate-from-model` | `feat/civitai-sdk-port` | full port (0 appStorage) |
+| A | `ZacxDev/civitai-block-generate-from-model` | `feat/civitai-sdk-port` | ✅ **DONE — PR #11** |
 | B | `civitai/civitai` | `feat/app-storage-rest` | 4 REST adapters over `appsStorageRouter` |
 | C | `civitai-app-custom-generators` | — | read-only scoping |
 | D | `civitai-app-playable-collections` | — | read-only scoping |
@@ -901,6 +901,15 @@ positive control — `submitWorkflow` → **1** of the **30** route files under
 | `useGatedImages` | 0 | no | gen-matrix, custom-generators, model-benchmarking |
 | `useAppWorkflows` | 0 | no | gen-matrix |
 | `useImageUpload` / `OPEN_IMAGE_UPLOAD` | 0 | no | custom-generators |
+| `SET_USER_CHECKPOINT` | 0 | no | **generate-from-model — already shipped degraded in PR #11** |
+
+The sixth was found by the PORT, not a scoping pass, and it carries the strongest evidence of the
+set: **0** REST routes and **0** in `HostRequests`, but **5 files in the blocks-react bridge
+package** implement it. The capability demonstrably exists on the old transport and has no home on
+the new one. Consequence already merged into a PR: `useCheckpointPicker().persist` is a **no-op** —
+the viewer's checkpoint override survives the session but not a remount. It resolves rather than
+rejects deliberately, because rejecting fires the call site's rollback and shows an error banner on
+every swap.
 
 `HostRequests` is four ops (`SAVE_IMAGE`, `OPEN_RESOURCE_PICKER`, `OPEN_BUZZ_PURCHASE`,
 `REQUEST_TOKEN`), so the bridge is no escape hatch for any of them.
@@ -929,12 +938,25 @@ Claims `civitai-app-platform-migration-1` (A) and `-2` (B) are HELD while this r
 
 ## Next steps (ranked)
 
-1. **Port `civitai-block-generate-from-model`** — the fleet's next app and the only one unblocked on
-   storage (0 `useAppStorage` files, 23 blocks-react importers, 11 hooks). The REST pattern is now
-   proven end to end by `app-requests`, so this is a repeat of a known shape rather than a bet.
-   ⚠ It uses `useBuzzWorkflow` in 4 files, so it lands on the `/workflows/*` routes that are still
-   undeployed (item 3) — sequencing, not a blocker: port now, verify when the deploy lands.
-   forcing: gate — the migration's actual next step.
+1. ✅ **DONE — `civitai-block-generate-from-model` is ported. Review + merge PR #11.**
+   `https://github.com/ZacxDev/civitai-block-generate-from-model/pull/11` — branch
+   `feat/civitai-sdk-port`, 42 files, +2419/−205, `MERGEABLE`/`CLEAN`, `build` **pass**.
+   **Closing condition re-measured by me on the COMMITTED tree (`bba558b`), not taken from the
+   agent:** blocks-react **importers 0** · the string survives in exactly **1** file,
+   `src/platform-seam.test.ts`, which is the guard enforcing the zero and must name what it forbids
+   · positive control `@civitai/sdk` **11** · unported control `gen-matrix` **10** · dependency
+   absent from `package.json`.
+   ⚠ **Not verified against production and cannot be**: all four `/workflows/*` routes still
+   **404** (re-probed 03:56Z; controls `/blocks/buzz` and `/blocks/shared-storage/list` → 401 JSON).
+   The generation path is green only against a fake server — the agent stated this in the PR body,
+   the README and `workflows.ts`. Also unclicked: the dev harness, the picker and purchase modals
+   against a real host.
+   ⚠ **Behaviour loss shipped deliberately**: `useCheckpointPicker().persist` is a no-op (surface 6
+   above). Also no picker pre-highlight and no `newBalance` from the purchase modal.
+   ⚠ `pnpm-workspace.yaml` carries another narrow `minimumReleaseAgeExclude` for `@civitai/sdk@0.2.0`
+   — same written-expiry condition as item 6.
+   The agent recommends `/audit-pr 11`, Round 0 first, while the merge decision is still open.
+   forcing: user — review is the operator's; the agent was told not to merge.
 2. **Decide the app-storage platform PR** — 4 REST adapters over `appsStorageRouter`
    (`get`/`set`/`delete`/`list`), #5068-shaped, plus whether `@civitai/sdk` grows a `storage`
    client or each app hand-rolls one like `app-requests` did.
