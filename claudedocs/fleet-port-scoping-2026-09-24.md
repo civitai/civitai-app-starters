@@ -946,3 +946,55 @@ work"* rule at agents all day while sitting on the violation.
   cannot delete `generate-from-model`'s session-only note for ordinary viewers.
 - **No route in this arc has been exercised live against a real server.** The only live evidence
   remains the `app-requests` dev-tunnel probe.
+
+---
+
+# 🔴 "The canonical endpoint serves different bytes to different clients" — RETRACTED, it was two TREES
+
+PR #446's agent reported the schema endpoint returning **17028 bytes with `auth`** to this host and
+**16671 without** to the CI runner, and warned *"before anyone 'fixes' #443 by syncing the file and
+breaking CI."* **That diagnosis is wrong and the warning is backwards.** Measured:
+
+- Live endpoint to this host: **17028 / `auth` present, stable across 3 uncached fetches** (`?cb=`
+  busted, `Cache-Control: no-cache`).
+- `origin/main`'s vendored copy: **17028**, and `cmp` against a fresh fetch is **IDENTICAL**.
+- `Canonical schema drift-check` on `main` `b79e12fa`: **success**.
+- 🔴 **#446's BRANCH carries the old 16671-byte copy without `auth`** — its merge-base is
+  `eea19074`, and `b79e12fa` (#445's revendor) is **not an ancestor of its head**.
+
+So: the drift check run **in that worktree** compares the branch's *stale vendored file* against the
+live schema → correctly RED. **GitHub Actions evaluates the PR's MERGE commit**, which carries
+`main`'s re-vendored copy → correctly GREEN. Two different trees, both behaving correctly.
+
+**16671 is the byte count of a FILE IN THE BRANCH, not of anything the runner fetched.** The error
+was reading a size out of a log and attributing it to the transport.
+
+**#443 is correctly fixed and stays closed.** Nothing about the endpoint is non-deterministic.
+
+⚠ The generalisable form, which is worth more than the incident: **when two runs of the same check
+disagree, suspect the two TREES before the network.** A CDN explanation is available for almost any
+byte difference and it is almost never the cause — and here it would have sent someone to reopen a
+correctly-closed issue and un-revendor a correct file.
+
+## ⚠ And the near-miss that produced this entry
+
+While writing the retraction above, a subagent ran `git checkout main` **in the shared base clone** —
+reflog: `HEAD@{1}: checkout: moving from docs/handoff-app-platform-migration to main`. This file is
+not tracked on `main`, so the checkout DELETED it, and the `cat >>` that appended the retraction
+**recreated it containing only those 29 lines** — the 948-line document replaced by its own last
+paragraph, in the working tree.
+
+Nothing was lost: the full file was committed and **pushed** (`54b5b8b`), so recovery was `cp` the
+fragment aside, `checkout` back, re-append. But the two things that made it survivable are worth
+naming:
+
+1. 🔴 **The `never commit to main` hook is what surfaced it at all.** The `git commit` refused, and
+   only then did the branch get checked. Without that guard the retraction would have been committed
+   onto `main` in a shared checkout — the silent failure, where `git log` afterwards shows exactly
+   what you expect because you are reading the branch you landed on.
+2. **Push, don't just commit.** The rule says docs in a working tree are unsaved work; this is the
+   sharper version — a COMMITTED-but-unpushed file still lives in a tree another agent can check out
+   from under you. Earlier this session 27 commits sat unpushed for hours.
+
+**The mechanism to remember: an append (`>>`) to a path another branch does not track silently
+becomes a CREATE.** No error, no warning, and the result reads as a successful write.
