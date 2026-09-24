@@ -43,12 +43,14 @@ that protocol."*
 
 ## State now
 
-✅ **THE PORT IS VERIFIED AGAINST THE REAL PLATFORM (2026-09-24).** Driven end to end through
-`civitai app dev-tunnel` → `civitai.com/apps/dev/app-requests`: the ported app's own
-`GET /api/v1/blocks/shared-storage/list?limit=25` returned **200**, with a validated instrument
-(same route unauthenticated → 401) and an equivalence check against the still-deployed bridge
-build. Details + what is still unproven (`viewerVoted`, every write, the anon path) are in the
-`✅ RESOLVED` block at the end of "Open investigations".
+✅ **THE PORT IS VERIFIED AGAINST THE REAL PLATFORM, READS AND WRITES (2026-09-24).** Driven end to
+end through `civitai app dev-tunnel` → `civitai.com/apps/dev/app-requests`, with a validated
+instrument (the same route unauthenticated → 401) and an equivalence check against the
+still-deployed bridge build: `list` **200**, `append` **200**, `vote` **200**, `withdraw` **200**,
+and `items[].viewerVoted` proven from the wire by a full page reload rather than from optimistic
+UI state. The test row was withdrawn and its removal re-confirmed from the deployed build.
+🔴 **One path remains unmeasured: the ANON read** — no signed-in session can produce it. Details in
+the two `✅ RESOLVED` blocks at the end of "Open investigations".
 
 Other results from the same session, in the `TRACK … RESULT` blocks: the dev-token mint can never
 carry `apps:storage:shared:*` (the doc's original probe plan was impossible as written), the four
@@ -809,14 +811,56 @@ carry `apps:storage:shared:*` (the doc's original probe plan was impossible as w
   did not stop the storage read.
 - **Leading hypothesis:** the signed-in REST path works. The port is verified against the real
   platform for the read the whole board rests on.
-- 🔴 **STILL UNPROVEN — do not let the 200 be read as more than it is:** (1) **`items[].viewerVoted`**
-  — the board has no rows, so no item carried the field; (2) **every WRITE** (`vote`, `append`,
-  `unvote`, `withdraw`) — none was fired, deliberately: they mutate the PUBLIC board of a
-  published app and that is an operator call, not mine; (3) the **ANON** path #5067 fixed — the
-  tunnel session is signed in, so this is untouched and still unit-level-only.
-- **Next probe:** to close (1) and (2) together, post one request through the UI, confirm it
-  appears with `viewerVoted`, vote, then withdraw it. ⚠ That writes to the live public board of a
-  published app — needs an explicit go-ahead.
+- ✅ **THE WRITE PATHS AND `viewerVoted` ARE NOW PROVEN TOO** — see the block below, run with the
+  operator's explicit go-ahead. What remains unproven is only the **ANON** path #5067 fixed: the
+  tunnel session is signed in, so that is untouched and still unit-level-only.
+
+### ✅ RESOLVED — every write path round-trips, and `items[].viewerVoted` is real
+- as-of: 2026-09-24
+- **Symptom + exact repro:** the two gaps the read-only probe left. Closed by driving the app's own
+  UI through a second dev-tunnel session (`dev-358847038648629d.civit.ai`): post → vote → reload →
+  withdraw, with the operator's authorization for a user-visible write to a LIVE published board.
+- **Observed (with values):** every call read from `performance.getEntriesByType('resource')`
+  inside the app's OOPIF, same validated instrument as the block above.
+
+  | step | call | status |
+  |---|---|---|
+  | initial load | `GET /shared-storage/list?limit=25` | **200** |
+  | post the request | `POST /shared-storage/append` | **200** (530 ms) |
+  | app re-reads | `GET /shared-storage/list?limit=25` | **200** |
+  | up-vote | `POST /shared-storage/vote` | **200** |
+  | withdraw | `POST /shared-storage/withdraw` | **200** |
+
+  The row rendered with author *"A Civitai member · just now"*; the vote control moved
+  `aria-pressed="false"` / `aria-label="Up-vote (0)"` → `aria-pressed="true"` /
+  `"Remove your vote (1)"` / `"✓ Voted · 1"`. `via: measurement`
+- 🔴 **`items[].viewerVoted` proven from the SERVER, not from optimistic local state** — this is the
+  discriminator that makes the claim worth anything. After voting, the whole page was re-navigated
+  so the iframe was destroyed and rebuilt: on that fresh load the ONLY shared-storage call was
+  `GET /list?limit=25 → 200`, and the button still read `aria-pressed="true"` / `"✓ Voted · 1"`.
+  No write, no cached component state — the pressed state can only have come off the wire.
+  `via: measurement`
+- **Ruled out:** *"the vote button state is just an optimistic UI update"* — FALSE by the reload
+  above. Without it, the post-vote reading is exactly what an optimistic update looks like.
+- **Synthetic-input control, per `flows/civitai.com.md`:** every `click`/`type` inside `--frame`
+  reports `trusted: false`, which is a standing excuse for any null result. Pre-empted: the
+  composer opened from a synthetic click, `title-input` read the typed string back VERBATIM, and
+  `submit-btn.disabled` moved `true → false` on type — a moving signal, not a constant. So the
+  ops demonstrably reach this app.
+- **Cleaned up — verified, not assumed:** the test row was withdrawn (`/withdraw → 200`, board back
+  to "No requests yet"), and the removal was re-confirmed from the **independent deployed
+  bridge-based build** at `/apps/run/app-requests`, which also shows an empty board. Nothing was
+  left on the live board.
+- **Side observation:** the row rendered its author as *"A Civitai member"* rather than the
+  posting user. Consistent with the ungranted `user:read:self` consent the host banner reports
+  (`apps:storage:*` are consent-exempt, `user:read:self` is not) — worth a look before submitting,
+  but it did not affect any storage call.
+- **Leading hypothesis:** the port is verified end to end for a signed-in viewer. Read, append,
+  vote and withdraw all round-trip against the real platform, and the app's UI reflects real
+  server state.
+- **Next probe:** the ANON path only — `#5067`'s fix still has unit-level evidence alone, and no
+  dev/tunnel session can produce a signed-out viewer. It needs a real signed-out browser against a
+  deployed build of the ported app.
 - **Two operational gotchas, both cost a cycle:** (a) `civitai app dev-tunnel` defaults to
   `--port 5186` but this app's `dev:tunnel` script serves **5187** (`vite --port 5187
   --strictPort`), so the port must be passed explicitly; (b) **`direnv exec <dir> <cmd>` does NOT
@@ -827,11 +871,12 @@ carry `apps:storage:shared:*` (the doc's original probe plan was impossible as w
 
 ## Next steps (ranked)
 
-1. **Decide whether to write to the LIVE board to close the last two gaps.** The read is verified
-   (200); `items[].viewerVoted` and every write path are not, and both need one real post to the
-   public board of a published app — post → check `viewerVoted` → vote → withdraw.
-   🔴 Operator call: it is a user-visible mutation on a live app.
-   forcing: user — the only thing between "the read works" and "the port works".
+1. **Prove the ANON read against a deployed build of the ported app** — the last unmeasured path in
+   this port. `#5067`'s fix still rests on unit evidence alone; no dev-token or dev-tunnel session
+   can produce a signed-out viewer, so it needs a deployed build loaded in a signed-out browser.
+   Expect `GET /api/v1/blocks/shared-storage/list` → **200** for an anonymous viewer; the
+   pre-`3a1e090924` behaviour (**403**) is the positive control.
+   forcing: gate — the app's stated premise is *"Anyone can read the board signed out"*.
 2. **Port `civitai-block-generate-from-model`** (0 `useAppStorage` files, 23 blocks-react
    importers, 11 distinct hooks). The only remaining app free of the app-storage gap.
    ⚠ **It is NOT free of the workflows gap** — an earlier revision of this line claimed it needed
