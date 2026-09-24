@@ -31,9 +31,14 @@ export const EVENTS: Record<string, EventBinding[]> = {
   ],
   // Not `onLoad`/`onError`: React wires those itself on any host element, so
   // sharing the name would call the handler twice.
+  'civitai-audio': [
+    { prop: 'onAudioLoad', event: 'load' },
+    { prop: 'onAudioError', event: 'error' },
+  ],
   'civitai-image': [
     { prop: 'onImageLoad', event: 'load' },
     { prop: 'onImageError', event: 'error' },
+    { prop: 'onOpen', event: 'open' },
   ],
   'civitai-menu': [{ prop: 'onSelect', event: 'select', detail: 'MenuSelectDetail' }],
   'civitai-pagination': [{ prop: 'onChange', event: 'change' }],
@@ -42,6 +47,11 @@ export const EVENTS: Record<string, EventBinding[]> = {
   'civitai-tabs': [{ prop: 'onChange', event: 'change' }],
   'civitai-tag': [{ prop: 'onVote', event: 'vote', detail: 'TagVoteDetail' }],
   'civitai-toast': [{ prop: 'onClose', event: 'close' }],
+  'civitai-video': [
+    { prop: 'onVideoLoad', event: 'load' },
+    { prop: 'onVideoError', event: 'error' },
+    { prop: 'onOpen', event: 'open' },
+  ],
 };
 
 /** The field base re-dispatches both out of every field's shadow root (R4). */

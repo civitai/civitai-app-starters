@@ -317,6 +317,96 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/elements/civitai-audio.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiAudio",
+          "members": [
+            {
+              "kind": "field",
+              "name": "loop",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "loop",
+              "reflects": true
+            },
+            {
+              "kind": "method",
+              "name": "renderMedia",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "TemplateResult"
+                }
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "loop",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "loop"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiMediaElement",
+            "module": "/src/elements/media-base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-audio",
+          "cssParts": [
+            {
+              "name": "audio"
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiAudio",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiAudio",
+          "declaration": {
+            "name": "CivitaiAudio",
+            "module": "src/elements/civitai-audio.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiAudio",
+          "declaration": {
+            "name": "defineCivitaiAudio",
+            "module": "src/elements/civitai-audio.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-audio",
+          "declaration": {
+            "name": "CivitaiAudio",
+            "module": "src/elements/civitai-audio.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/elements/civitai-avatar.ts",
       "declarations": [
         {
@@ -2221,28 +2311,6 @@
           "members": [
             {
               "kind": "field",
-              "name": "src",
-              "privacy": "public",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "attribute": "src",
-              "reflects": true
-            },
-            {
-              "kind": "field",
-              "name": "alt",
-              "privacy": "public",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "attribute": "alt",
-              "reflects": true
-            },
-            {
-              "kind": "field",
               "name": "fit",
               "privacy": "public",
               "type": {
@@ -2254,88 +2322,58 @@
             },
             {
               "kind": "field",
-              "name": "fallback",
+              "name": "openable",
               "privacy": "public",
               "type": {
-                "text": "string"
+                "text": "boolean"
               },
-              "description": "Text shown when the image fails; the `fallback` slot wins over it.",
-              "default": "''",
-              "attribute": "fallback",
+              "description": "The image becomes a button that emits `open`, for a viewer or a detail page.",
+              "default": "false",
+              "attribute": "openable",
               "reflects": true
             },
             {
               "kind": "field",
-              "name": "status",
+              "name": "label",
               "privacy": "public",
               "type": {
-                "text": "ImageStatus"
+                "text": "string"
               },
-              "default": "'loading'",
-              "attribute": "status",
+              "description": "Names the open button when it should say more than `alt`.",
+              "default": "''",
+              "attribute": "label",
               "reflects": true
             },
             {
               "kind": "method",
-              "name": "#reconcile",
+              "name": "#open",
               "privacy": "private",
               "return": {
                 "type": {
                   "text": "void"
                 }
-              },
-              "description": "A cached image can already be `complete` before the listeners attach, so\nneither `load` nor `error` ever fires. The failed arm is defensive and\nmirrors the React binding: every failure observed here settles via the\n`error` event first, so mutating it does not fail a test."
+              }
             },
             {
               "kind": "method",
-              "name": "#settle",
-              "privacy": "private",
+              "name": "renderMedia",
+              "privacy": "protected",
               "return": {
                 "type": {
-                  "text": "void"
+                  "text": "TemplateResult"
                 }
-              },
-              "parameters": [
-                {
-                  "name": "next",
-                  "type": {
-                    "text": "'loaded' | 'error'"
-                  }
-                }
-              ]
+              }
             }
           ],
           "events": [
             {
-              "name": "error",
-              "type": {
-                "text": "Event"
-              }
-            },
-            {
-              "name": "load",
+              "name": "open",
               "type": {
                 "text": "Event"
               }
             }
           ],
           "attributes": [
-            {
-              "name": "src",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "fieldName": "src"
-            },
-            {
-              "name": "alt",
-              "type": {
-                "text": "string"
-              },
-              "default": "''",
-              "fieldName": "alt"
-            },
             {
               "name": "fit",
               "type": {
@@ -2345,26 +2383,27 @@
               "fieldName": "fit"
             },
             {
-              "name": "fallback",
+              "name": "openable",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "The image becomes a button that emits `open`, for a viewer or a detail page.",
+              "default": "false",
+              "fieldName": "openable"
+            },
+            {
+              "name": "label",
               "type": {
                 "text": "string"
               },
-              "description": "Text shown when the image fails; the `fallback` slot wins over it.",
+              "description": "Names the open button when it should say more than `alt`.",
               "default": "''",
-              "fieldName": "fallback"
-            },
-            {
-              "name": "status",
-              "type": {
-                "text": "ImageStatus"
-              },
-              "default": "'loading'",
-              "fieldName": "status"
+              "fieldName": "label"
             }
           ],
           "superclass": {
-            "name": "CivitaiElement",
-            "module": "/src/elements/base.js"
+            "name": "CivitaiMediaElement",
+            "module": "/src/elements/media-base.js"
           },
           "customElement": true,
           "tagName": "civitai-image",
@@ -2373,12 +2412,7 @@
               "name": "image"
             },
             {
-              "name": "fallback"
-            }
-          ],
-          "slots": [
-            {
-              "name": "fallback"
+              "name": "open"
             }
           ]
         },
@@ -6994,6 +7028,254 @@
           "declaration": {
             "name": "CivitaiTooltip",
             "module": "src/elements/civitai-tooltip.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-video.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiVideo",
+          "members": [
+            {
+              "kind": "field",
+              "name": "poster",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "poster",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "fit",
+              "privacy": "public",
+              "type": {
+                "text": "VideoFit"
+              },
+              "default": "'cover'",
+              "attribute": "fit",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "loop",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "loop",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "preview",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Plays muted and looping, without controls, only while hovered or focused: a thumbnail that moves.",
+              "default": "false",
+              "attribute": "preview",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "openable",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "A `preview` becomes a button that emits `open`; a full video keeps its controls instead.",
+              "default": "false",
+              "attribute": "openable",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Names the open button when it should say more than `alt`.",
+              "default": "''",
+              "attribute": "label",
+              "reflects": true
+            },
+            {
+              "kind": "method",
+              "name": "#open",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "#play",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "event",
+                  "type": {
+                    "text": "Event"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "#pause",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "event",
+                  "type": {
+                    "text": "Event"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "renderMedia",
+              "privacy": "protected",
+              "return": {
+                "type": {
+                  "text": "TemplateResult"
+                }
+              }
+            }
+          ],
+          "events": [
+            {
+              "name": "open",
+              "type": {
+                "text": "Event"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "poster",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "poster"
+            },
+            {
+              "name": "fit",
+              "type": {
+                "text": "VideoFit"
+              },
+              "default": "'cover'",
+              "fieldName": "fit"
+            },
+            {
+              "name": "loop",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "loop"
+            },
+            {
+              "name": "preview",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Plays muted and looping, without controls, only while hovered or focused: a thumbnail that moves.",
+              "default": "false",
+              "fieldName": "preview"
+            },
+            {
+              "name": "openable",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "A `preview` becomes a button that emits `open`; a full video keeps its controls instead.",
+              "default": "false",
+              "fieldName": "openable"
+            },
+            {
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "description": "Names the open button when it should say more than `alt`.",
+              "default": "''",
+              "fieldName": "label"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiMediaElement",
+            "module": "/src/elements/media-base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-video",
+          "cssParts": [
+            {
+              "name": "video"
+            },
+            {
+              "name": "open"
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiVideo",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiVideo",
+          "declaration": {
+            "name": "CivitaiVideo",
+            "module": "src/elements/civitai-video.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiVideo",
+          "declaration": {
+            "name": "defineCivitaiVideo",
+            "module": "src/elements/civitai-video.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-video",
+          "declaration": {
+            "name": "CivitaiVideo",
+            "module": "src/elements/civitai-video.ts"
           }
         }
       ]
