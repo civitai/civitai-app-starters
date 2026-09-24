@@ -43,39 +43,38 @@ that protocol."*
 
 ## State now
 
-✅ **THE PORT IS VERIFIED AGAINST THE REAL PLATFORM, READS AND WRITES (2026-09-24).** Driven end to
-end through `civitai app dev-tunnel` → `civitai.com/apps/dev/app-requests`, with a validated
-instrument (the same route unauthenticated → 401) and an equivalence check against the
-still-deployed bridge build: `list` **200**, `append` **200**, `vote` **200**, `withdraw` **200**,
-and `items[].viewerVoted` proven from the wire by a full page reload rather than from optimistic
-UI state. The test row was withdrawn and its removal re-confirmed from the deployed build.
-🔴 **One path remains unmeasured: the ANON read** — no signed-in session can produce it. Details in
-the two `✅ RESOLVED` blocks at the end of "Open investigations".
+🏁 **THE PLATFORM ARC IS COMPLETE (2026-09-24). Every surface the fleet needs now exists on
+`main`.** Next session ports apps; it does not build platform.
 
-Other results from the same session, in the `TRACK … RESULT` blocks: the dev-token mint can never
-carry `apps:storage:shared:*` (the doc's original probe plan was impossible as written), the four
-`/workflows/*` routes **404** in production because the #5068 deploy has not landed, and
-`useAppStorage` **cannot** be dropped — the fleet needs a platform PR. Claims
-`civitai-app-platform-migration-1` and `-2` were taken and released.
+| # | PR | surface | merged |
+|---|---|---|---|
+| 1 | `civitai#5085` | app-storage REST (5 routes) | `1abd6539` |
+| 2 | `civitai#5090` | workflows query | `67c1fcdf` |
+| 3 | `civitai#5091` | gated images | `1b965b3d` |
+| 4 | `civitai#5093` | user checkpoint | `1dbb5200` |
+| 5 | `starters#441` | `AppClient.storage` on `@civitai/sdk` | `eea19074` |
+| 6 | `starters#445` | canonical schema re-vendor (`auth`) | `b79e12fa` |
+| 7 | `starters#446` | `host.openImageUpload` + `host.publishGenerationOutputs` | `81bd1b4f` |
+| — | `app-requests#22` · `generate-from-model#11` | the two ported apps | `a4193066` · `200617ef` |
 
-- **PR #21 MERGED** — squash `52b7e1b1` on `ZacxDev/civitai-app-requests` main. Closing condition
-  re-measured ON `origin/main`: blocks-react importers **0** · control `@civitai/sdk` **13** ·
-  unported control **10** · dependency absent from `package.json`. Claim released; base clone at
-  `52b7e1b`; no worktrees left.
-- **`innovation-upstream/devrc` PR #1862** (cairn route) — OPEN, `MERGEABLE`, rebased onto current
-  main as `fd3aaed9`. 🔴 **Its 4 Tekton statuses have been `pending` since 02:16:04Z with
-  `created == updated` and no movement for ~25 min, where the PRE-rebase run reached terminal
-  state in ~2.5 min.** That asymmetry is the only evidence; it may be queued or stuck. Read the
-  statuses before assuming it merely needs more time.
-- The subsystem-index entry is still NOT landed — needs #1862 merged AND a `home-manager switch`.
-  It survives at `/home/zach/workspace/civit/cairn-entry-civitai-app-requests-platform.md`, updated
-  this session with the merge sha and the direnv finding.
-  ⚠ **`cairn-validate --validate` on that path reports MALFORMED, and that is an artifact of the
-  ASIDE FILENAME, not a defect in the content**: the validator requires the filename stem to equal
-  `service:` (`platform`). Copied to `platform.md` it validates `OK — 1 of 1 entry file(s) parse`,
-  and `cairn create --ref platform` names it correctly on the pod. Do not "fix" the entry.
-- **No `clawgate-task:` field** — `clawgate_handoff.sh resolve` exited **5** again.
-- Still NOT verified: the app against real civitai.com. Track A is exactly this.
+Every merge verified **by content with a positive control**, never by exit code and never by
+ancestry (a squash is never an ancestor). Route counts on `origin/main` moved 30 → 37 with
+`shared-storage/` (11) unchanged throughout as the control.
+
+**Issues filed, all with closing conditions:** `civitai#5087` `#5088` `#5089` `#5092` `#5094`
+`#5095` `#5102` · `starters#443` (**CLOSED** — condition met by the route it named).
+
+**Docs deliverable:** `claudedocs/refactor-docs-for-sdk-pattern.md` — the brief for
+`/manage-appblocks-docs`, written against its four-repo surface map.
+
+🔴 **IN FLIGHT:** one agent fixing `civitai#5102` on branch `fix/component-tests-showwarning`.
+Dispatched at hand-off; **no PR existed yet when this doc was written.** Check
+`gh pr list --repo civitai/civitai --search "component-tests"` before starting anything.
+
+⚠ **Deployed ≠ verified. NOTHING in this arc has been exercised live against a real server except
+`app-requests`** — one dev-tunnel probe (`list`/`append`/`vote`/`withdraw`, all **200**, with
+`items[].viewerVoted` proven off the wire by a full page reload) is the only end-to-end evidence any
+of it works. Every other green is against a fake.
 
 ## Open investigations — live diagnosis state
 
@@ -869,6 +868,44 @@ carry `apps:storage:shared:*` (the doc's original probe plan was impossible as w
   dev:tunnel`, which reads exactly like a missing script. Use `pnpm -C <dir> run …`. The same
   mismatch explains a `pnpm --version` of 10.28.1 (starters) vs 11.25.0 (this repo).
 
+### `preview / component-tests` is red on EVERY PR in `civitai/civitai` — unowned, four merges past it
+- as-of: 2026-09-24
+- **Symptom + exact repro:** the status is `failure` on every PR head. It self-describes as
+  *"Component suite failed (report-only, not blocking)"*, which is why it keeps getting merged past.
+- **Observed (with values):** all **5** component suites fail on **one identical
+  `showWarningNotification` import error**, in files unrelated to any PR that carried the red.
+  Established by `#5093`'s run, which got the tier EXECUTING locally via this repo's documented
+  NixOS escape hatch and confirmed the **unmodified base clone fails identically**. `via: measurement`
+- **Ruled out:** *"someone deleted/renamed the export"* — FALSE. `showWarningNotification` has
+  exactly **one** export, `src/utils/notifications.tsx`, and **16** files import it. So it is a
+  module-resolution / transform problem inside the `component` vitest project, not a missing symbol.
+  `via: command`
+- **Ruled out:** *"it is red on `main`"* — FALSE, and two independent agents asserted it. They cited
+  `58cb93144e` / `d97753136a`, which are merged PR **heads** made ancestors of `main` by a merge
+  commit, so `git log main` lists them carrying their own PR's statuses. Every genuine `main` commit
+  has `total_count=0`; the preview pipeline posts on PR heads only. `via: command`
+- **Leading hypothesis:** a resolution/transform config problem in the `component` project.
+- **Next probe:** the dispatched agent's PR. If it has not landed, reproduce with the NixOS escape
+  hatch — 🔴 two earlier agents could not run the tier at all and correctly reported `Tests no tests`
+  as *a vacuous zero, not a pass*. Do not infer from that.
+
+### A semantic conflict survived a clean textual merge — the arc's most transferable finding
+- as-of: 2026-09-24
+- **Symptom + exact repro:** merging three PRs that add rows to the same **asserted ledgers** while a
+  fourth sat open. `git merge` reported no conflict in the file that mattered.
+- **Observed (with values):** `block-token-access.call-site-ledger.test.ts` asserts a call count for
+  `blocks.router.ts`. Merge-base **17** → `#5091` extracted `getImagesByIds` → **16** → `#5093`
+  extracted `updateUserSettings` → **16**. Git's textual resolution keeps **16**; both moves
+  happened, so the truth is **15**. The ledger's own positive control has the same shape: base 2,
+  each side 3, merged **4**. `via: measurement`
+- **Ruled out:** *"a clean git merge means the merge is clean"* — FALSE, proven not argued: mutating
+  the numbers back to git's resolution (16 / 3) made **both** assertions fail. Accepting the
+  clean-looking merge would have shipped a red gate. `via: measurement`
+- **Leading hypothesis:** resolved. `origin/main` now reads `calls: 15`.
+- **Next probe:** none. The durable rule: **merge PRs that share an asserted ledger together, or
+  expect to union by hand — and never take a wholesale side**, because `--ours` drops the other
+  routes' rows and takes their fail-closed guards offline.
+
 ## 🔴 IN FLIGHT — seven agents dispatched 2026-09-24, fleet-wide
 
 Operator decision, 2026-09-24: run the whole remaining fleet in parallel, with the five
@@ -1075,112 +1112,45 @@ and each was named in its brief as do-not-touch:
 
 ## Next steps (ranked)
 
-🔴 **REWRITTEN 2026-09-24 end of session. Items 1–4 as previously written are DONE** — do not
-re-derive them. Per-PR detail and every correction lives in
-`claudedocs/fleet-port-scoping-2026-09-24.md`; this list is only what is still OPEN.
-
-**Shipped this session** (all verified by CONTENT, with controls, never by rc or ancestry):
-`civitai#5085` app-storage REST `1abd6539` · `civitai#5090` workflows-query `67c1fcdf` ·
-`civitai#5091` gated-images `1b965b3d` · `civitai-app-starters#441` the SDK storage client
-`eea19074` · `app-requests#22` `a4193066` · `generate-from-model#11` `200617ef` (the fleet's
-**second** ported app; 0 blocks-react importers on main, control `@civitai/sdk` 12, unported control
-`gen-matrix` 10).
-
-1. 🔴 **`civitai#5092` — ANSWERED: keep the gate, and the issue is really `bound-then-ungate`.**
-   Two facts read off `origin/main` reframe it, both recorded at `#5092#issuecomment-5820387879`:
-   (a) `updateUserSettings` takes `settings: settingsSchema` — **any 4KB JSON record**, not "a
-   checkpoint"; (b) the procedure carries `RATE LIMIT: NONE, DELIBERATELY` and names the developer
-   gate as what bounds it instead — a catalog limit was **removed** because the gate was there.
-   **So the gate IS the rate limit**, and dropping it alone leaves an unbounded arbitrary 4KB-per-write
-   surface open to every viewer. Sequence: add a bound (rate limit, or narrow `settings` to a declared
-   key set) → *then* ungate. Nobody has scoped that.
-   ✅ **`civitai#5093` can therefore merge as it stands** — it achieves TRANSPORT PARITY, which is what
-   the migration is for; the bridge op is developer-gated too.
-   ⚠ **My briefing was wrong**: I told that PR's author deleting `generate-from-model`'s *"Applies to
-   this session only"* notice was the acceptance target. The bridge never let ordinary viewers persist
-   this either, so the notice is **honest on both transports** and stays until bound-then-ungate lands.
-   The author found the discrepancy and correctly refused to decide it.
-   forcing: gate — #5093 is unblocked; the bound-then-ungate work is unscoped.
-2. **Port the fleet.** The platform now has app-storage, workflows-query, gated-images and an
-   `AppClient.storage` client. Five apps remain, each with a read plan in the scoping doc:
-   `custom-generators` (30 files, smallest storage surface) → `playable-collections` (33, soft
-   storage dependency) → `gen-matrix` (10 importers but 3,550-line App) → `model-benchmarking` (41,
-   🔴 money path) → `sensei` (47, stage it in two).
-   🔴 **`gen-matrix` and `model-benchmarking` still cannot reach 0 importers** until the two
-   messaging surfaces land (item 3).
+1. **Fix `civitai#5102`, or record the decision to delete the check.** An agent was dispatched at
+   hand-off on `fix/component-tests-showwarning`; **verify whether a PR exists before re-doing it.**
+   🔴 Four PRs merged past this today, each with a written acceptance — the fifth reader will not
+   read the reasoning.
+   forcing: gate — a permanently-red gate trains everyone to click through, and it is unowned.
+2. **Port `civitai-app-custom-generators`** — the cheapest remaining app. 30 importers; its
+   `useAppStorage` use is only 2 files (`src/App.tsx`, `src/lib/drafts.ts`) behind an already-
+   structural `DraftStore` interface. 🔴 Blocked ONLY on `host.openImageUpload`, which
+   **`starters#446` just shipped** — confirm the published `@civitai/sdk` version carries it before
+   starting (`npm view @civitai/sdk version`; the changeset ships `0.3.0`, and a Version PR may not
+   have run). Plan: `claudedocs/fleet-port-scoping-2026-09-24.md`.
    forcing: gate — the arc's actual remaining work.
-3. **The two messaging surfaces** — `OPEN_IMAGE_UPLOAD` and `PUBLISH_GENERATION_OUTPUTS` as
-   `@civitai/sdk` host-protocol additions. **In flight** on `feat/sdk-host-image-upload-and-publish`
-   (one PR, two commits). The host already implements both; this exposes them.
-   forcing: gate — blocks `custom-generators` (upload) and `gen-matrix`/`model-benchmarking` (publish).
-4. 🔴 **Two gates red repo-wide, both now FILED, neither anyone's PR.**
-   (a) **`civitai#5102`** — `preview / component-tests`: all 5 suites fail on one
-   `showWarningNotification` import error. 🔴 **The cheap explanation is ruled out** — that symbol
-   IS exported (exactly 1 export in `src/utils/notifications.tsx`, 16 importers), so this is a
-   resolution/transform problem in the `component` vitest project, **not** a missing symbol. Do not
-   start from "someone deleted the export". Closing condition: the check green on a PR head whose
-   diff touches no `src/components/` file — a PR head because the pipeline never posts on `main`.
-   ⚠ **Merged past three times (5085, 5090, 5091), each with a written acceptance.** That is the
-   cost: the fourth reader stops reading the reasoning.
-   (b) ✅ **`civitai-app-starters#443` — FIXED by `#445`, merged `b79e12fa`.** Verified by content:
-   the vendored `app-block/v1.json` on `origin/main` is now **byte-identical to the live schema**
-   (`cmp` clean; control — main's pre-merge copy DIFFERS). ⚠ **The delta was WIDER than #443 quoted**:
-   the live property carries `enum: ["block-token", "oauth"]`, which the issue's snippet (and my
-   brief, from a truncated `curl`) omitted — the enum is what made this more than a JSON copy.
-   🔴 **And "schema accepts, types reject" was REAL**: the canonical declares no
-   `additionalProperties`, so it already tolerated `auth` with ANY value while `BlockManifestV1`
-   rejected it outright. Measured with a 4-arm typed probe (control clean · before `TS2353` ·
-   after clean · mutation `TS2322`), and fixed by adding `auth?: 'block-token' | 'oauth'` to
-   `packages/civitai-app-sdk/src/blocks/types.ts`. Shipped `minor`, matching all three prior
-   re-vendors.
-   **#443 stays OPEN by design** — its closing condition is the check-run green on a **`main`**
-   commit after merge, and that run was still in progress at hand-off. Close it on that evidence,
-   not on the merge event.
-   forcing: gate — a permanently-red gate is worse than no gate, and this is two of them at once.
-5. **`civitai#5087`** drop `enforceAppBlocksFlag` from the five storage procedures ·
-   **`civitai#5088`** the `updatedAt` revival, closing only on a test whose fake sends an ISO string ·
-   **`civitai#5089`** anon 403 vs bridge-parity null, per operation · **`civitai#5094`** the
-   `/apps/activity` sentinel, now scoped to five routes · **`civitai#5095`** the rate-limit ledger.
-   All filed with closing conditions.
+3. **Port `civitai-app-playable-collections`** — 33 importers; its storage dependency is SOFT
+   (`browse-prefs.ts` never writes over a record it did not read), so it can ship gated even if
+   storage misbehaves. One product decision first: collection **follow** needs
+   `collections:write:self`, which its manifest deliberately does not declare.
+   forcing: gate — second-cheapest, and it de-risks the pattern before the hard three.
+4. **Then `gen-matrix` → `model-benchmarking` → `sensei`**, in that order. `sensei` should be
+   STAGED IN TWO (everything-but-workflows, then workflows) — 47 importers, but **0** of its 30 test
+   files drive the bridge; 23 use `vi.mock` against an existing `AppDeps` seam.
+   forcing: gate — the remaining fleet.
+5. **`bound-then-ungate` on `updateUserSettings`** (`civitai#5092`). 🔴 The developer gate **IS** the
+   rate limit — the procedure carries `RATE LIMIT: NONE, DELIBERATELY` and names the gate as what
+   bounds it. Add a bound (rate limit, or narrow `settings` from an arbitrary 4KB record to a
+   declared key set), THEN ungate. Dropping the gate alone opens an unbounded write to every viewer.
+   forcing: security — an ungated arbitrary write is the failure mode.
+6. **Hand `claudedocs/refactor-docs-for-sdk-pattern.md` to `/manage-appblocks-docs`.** 🔴 It records
+   that the **CLI's `//go:embed`'d schema mirror is still drifted** on `auth` while the canonical and
+   the starters mirror carry it.
+   forcing: gate — the public developer contract documents a model the fleet is leaving.
+7. **Prove the ANON read** — `#5067`'s fix still rests on unit evidence. No dev-token or dev-tunnel
+   session can produce a signed-out viewer; it needs a deployed build of a ported app in a
+   signed-out browser. Expect **200**; pre-`3a1e090924` **403** is the positive control.
+   forcing: user — deferred by the operator, not dropped.
+8. **Close the remaining follow-ups:** `civitai#5087` (drop `enforceAppBlocksFlag` from the five
+   storage procedures) · `#5088` (`updatedAt` revival, closing only on a test whose fake sends an ISO
+   string) · `#5089` (anon 403 vs bridge-parity null, per operation) · `#5094` (the `/apps/activity`
+   sentinel, now scoped to five routes) · `#5095` (the rate-limit ledger).
    forcing: gate — each has a named checker.
-6. 🔴 **Nothing in this arc has been exercised live against a real server except `app-requests`.**
-   Every other green is against a fake. The one live probe (dev-tunnel: list/append/vote/withdraw,
-   all 200) remains the only evidence any of this works end to end.
-   forcing: gate — the arc's standing blind spot.
-7. **DEFERRED (operator) — prove the ANON read.** `#5067`'s fix still rests on unit evidence; no
-   dev-token or dev-tunnel session can produce a signed-out viewer, so it needs a deployed build of
-   a ported app in a signed-out browser. Expect 200; pre-`3a1e090924` 403 is the positive control.
-   forcing: user — deliberately deferred.
-
-⚠ **Removed from this list 2026-09-24: the `minimumReleaseAgeExclude` item.** It is DONE in
-BOTH repos — `app-requests#22` (`a4193066`) and `generate-from-model#11` (`200617ef`). Its stated
-condition ("when `@civitai/sdk` moves past 0.2.0") was never the real expiry; the 24h clock was,
-and it closed 2026-09-24T03:49:30Z. One of the two blocks was inert 7 minutes BEFORE the commit
-that added it.
-
-8. **Merge devrc #1862, `home-manager switch`, then land the cairn entry** from
-   `/home/zach/workspace/civit/cairn-entry-civitai-app-requests-platform.md` with
-   `cairn create --scope civitai-app-requests --ref platform --file <file>`. 🔴 Check its Tekton
-   statuses first — they were stuck `pending` for ~25 min.
-   forcing: gate — the index write is blocked until the route is live.
-9. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
-   `civitai/civitai-app-starters` — force-pushed off the branch, still reachable by sha.
-   forcing: security — residual exposure on a PUBLIC repo from an earlier session's leak.
-10. **Ratify or reject R14** — #5068 reached tRPC via a `blocksRouter` caller, diverging from the
-   body-extraction precedent #5054/#5055 set.
-   forcing: user — an operator call, not an engineering one.
-11. **Revisit F2/F6 when a GENERATION app adopts the poll surface.** Still unfired: `app-requests`
-   does not generate. Track A could not fire it at all — `/workflows/poll` 404s in production today.
-   forcing: user — deferred deliberately, not dropped.
-12. **Prune this document.** 🔴 **The "65,536 B ceiling" this item used to cite is WRONG.**
-    `handoff-audit.py` reports **target 12,288 B · hard cap 40,960 B**, and says plainly that
-    NEITHER is enforced here — this repo ships no `scripts/tests/test_handoff_doc_size.py`, so
-    nothing can go red and the numbers are judgement, not a gate. Measured 2026-09-24:
-    **113,670 B — 9.3× target**, of which the tool measures **16,129 B (14.2%)** evictable
-    (6 resolved investigation blocks, 2 retracted bullets; **0** completed ranked items).
-    `Open investigations` alone is **62,739 B**. Evicting everything the tool finds still leaves
-    ~97 KB, so the real lever is summarising resolved arcs, not deleting the marked bullets.
-    forcing: none — but this session added ~11 KB, so the trend is the wrong way.
 
 ## Defects (batched)
 
@@ -1639,26 +1609,75 @@ that added it.
   share no files and no repo: A is network + `curl` against civitai.com, B is local reading across
   fleet checkouts. Claim ranks 1 and 2 separately.
 
+- 🔴 **`civitai-app-starters/AGENTS.md` now forbids committing in the PRIMARY CLONE** — every change
+  goes through a throwaway worktree off the REMOTE tip. Two of its points correct briefs given to
+  agents all session: **`.envrc` is TRACKED in that repo** (so `git worktree add` provides it and
+  copying it in is wrong — the opposite of `civitai/civitai`), and **a stale primary clone makes
+  files LOOK ABSENT** (read from the ref: `git show origin/main:<path>`).
+- 🔴 **An append (`>>`) to a path another branch does not track silently becomes a CREATE.** A
+  subagent ran `git checkout main` in the shared base clone; a 948-line doc is untracked there, so
+  the checkout deleted it and the next `cat >>` recreated it containing only the 29 appended lines.
+  Recovered only because the file had been **pushed**. The `never commit to main` hook is what
+  surfaced it — the commit refused, and only then was the branch checked.
+- 🔴 **Merge conventions differ and `gh` will not stop you.** `civitai/civitai` takes **merge
+  commits**; `civitai-app-starters` and the `ZacxDev/*` app repos are **squash**. Read first-parent
+  history before picking a flag. A merge commit also makes the PR's head an ancestor of `main`,
+  which is what produces the `git log main` status misreading above.
+- 🔴 **A cached verdict replays a PASS computed before the condition changed.** `pnpm` prints
+  `Already up to date` and skips its lockfile policy entirely when `node_modules` exists, and
+  `~/.cache/pnpm/lockfile-verified.jsonl` replays a stored result as `(verified 2h ago)`. The tell is
+  in the CONTENT: a real run prints `(185 entries in 637ms)`. Same exit code either way.
+- **`gh api .../actions/jobs/<id>/logs --allow-escape-sequences` does not exist in `gh 2.96.0`** and
+  returns **0 bytes**. Use `gh run view <run> --job <job> --log-failed`, and assert a non-zero byte
+  count before believing any grep over a CI log.
+- **Grep for the CONSTRUCT, not the token.** Twice in one session a symbol appeared inside the
+  comment explaining its own absence — `enforceAppBlocksFlag` and `minimumReleaseAgeExclude` both
+  read as PRESENT to a naive grep. Use an anchored pattern (`^\s*\.use\(X\)`, `^key:`).
+- **`direnv exec <dir> <cmd>` does NOT change directory** — pnpm then reads the CWD's
+  `packageManager` pin and self-switches. Use `pnpm -C <dir> …` and report the version you ran under.
+- 🔴 **THIS DOC'S OWN SIZE CEILING WAS MISQUOTED, AND THE CORRECTION MATTERS FOR PRUNING.** An
+  earlier ranked item cited "a 65,536 B ceiling". `handoff-audit.py` actually reports **target
+  12,288 B · hard cap 40,960 B**, and says plainly that **NEITHER is enforced here** — this repo
+  ships no `scripts/tests/test_handoff_doc_size.py`, so nothing can go red and the numbers are
+  judgement, not a build to fix. Measured 2026-09-24: **133,320 B**, with ~15 KB of resolved
+  investigation blocks the tool marks evictable. Evicting every marked block still leaves ~118 KB,
+  so the lever is **summarising resolved arcs**, not deleting the marked bullets.
+- 🔴 **A SUPPLY-CHAIN EXEMPTION'S STATED EXPIRY WAS NEVER THE REAL ONE.** Both repos'
+  `minimumReleaseAgeExclude` blocks are now deleted (`app-requests#22` `a4193066`,
+  `generate-from-model#11` `200617ef`). Their written condition — *"remove once `@civitai/sdk` moves
+  past 0.2.0"* — could never have fired: only `0.2.0` was ever published. The real expiry was pnpm
+  11's **24-hour clock**, which closed `2026-09-24T03:49:30Z`. 🔴 **One of the two blocks was INERT
+  SEVEN MINUTES BEFORE THE COMMIT THAT ADDED IT** (`6d03c5c` authored `03:56:34Z`) — carried across
+  from the sibling repo without re-reading the clock. When you write a removal condition, write the
+  one that actually governs, and check it is still unmet at the moment you commit.
+- **Two PRs merged past `preview / component-tests` with the reasoning recorded each time; two more
+  followed.** The acceptance comments are on `#5085` `#5090` `#5091` `#5093` — read one before
+  merging past it a fifth time, or fix `#5102`.
+
 ## How to verify
 
 ```bash
-# 1. THE ARC — closed on main, with both controls (this should not regress)
-R=/home/zach/workspace/civit/civitai-app-requests
-git -C $R fetch origin --quiet
-git -C $R grep -l "@civitai/blocks-react" origin/main -- '*.ts' '*.tsx' | wc -l   # => 0
-git -C $R grep -l "@civitai/sdk"          origin/main -- '*.ts' '*.tsx' | wc -l   # => 13  (control)
-P=/home/zach/workspace/civit/civitai-app-gen-matrix
-git -C $P grep -l "@civitai/blocks-react" origin/main -- '*.ts' '*.tsx' | wc -l   # => 10  (control: an UNPORTED app)
+# 1. the platform surfaces are on main (37 block routes; controls in the same command)
+git -C /home/zach/workspace/civit/civitai fetch origin
+for d in "" app-storage/ workflows/ shared-storage/ user-checkpoint/; do
+  printf '%-18s %s\n' "${d:-TOTAL}" \
+    "$(git -C /home/zach/workspace/civit/civitai ls-tree -r --name-only origin/main \
+        -- "src/pages/api/v1/blocks/$d" | grep -c '\.ts$')"
+done   # TOTAL 37 · app-storage 5 · workflows 5 · shared-storage 11 (control) · user-checkpoint 1
 
-# 2. the merge landed by CONTENT, never ancestry (a squash is never an ancestor)
-gh pr view 21 --repo ZacxDev/civitai-app-requests --json state,mergeCommit \
-  --jq '"\(.state) \(.mergeCommit.oid)"'        # => MERGED 52b7e1b1…
-git -C $R show origin/main:src/platform/ui.tsx | grep -c radiogroup     # => 2
+# 2. the SDK storage client and both host ops are on the starters main
+R=/home/zach/workspace/civit/civitai-app-starters; git -C $R fetch origin
+git -C $R show origin/main:packages/civitai-sdk/src/host/index.ts | grep -c openImageUpload   # 4
+git -C $R show origin/main:packages/civitai-sdk/src/host/protocol.ts | grep -c OPEN_RESOURCE_PICKER  # 1 = control
 
-# 3. the local toolchain is the PINNED one (this is what CI runs)
-direnv exec $R bash -c 'pnpm --version'          # => 11.25.0, NOT the host's 10.28.1
-#    🔴 `direnv exec $R pnpm --version` answers 10.28.1 — the outer shell resolves `pnpm`
-#    first. Wrap it in a shell or you measure the corepack shim.
+# 3. the semantic-conflict fix held (must be 15, NOT git's textual 16)
+git -C /home/zach/workspace/civit/civitai show \
+  origin/main:src/server/services/blocks/__tests__/block-token-access.call-site-ledger.test.ts \
+  | grep -A8 "'src/server/routers/blocks.router.ts':" | grep -oE "calls: *[0-9]+"
 
-# 4. STILL UNMET — the real-platform probe. See "TRACK A" for the exact commands.
+# 4. a fleet app's port is complete — run in the app repo, on the COMMITTED tree
+find <app> -name '*.ts*' -print0 | xargs -0 grep -l "@civitai/blocks-react" | wc -l   # 0
+find <app> -name '*.ts*' -print0 | xargs -0 grep -l "@civitai/sdk"          | wc -l   # non-zero = the control
 ```
+🔴 `gen-matrix` and `model-benchmarking` **cannot reach 0** until they adopt `starters#446`'s two
+host ops — check #4 against a reduced count with the retained surfaces NAMED, not against zero.
