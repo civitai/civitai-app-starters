@@ -1,11 +1,11 @@
 import { css, html, type PropertyDeclarations, type TemplateResult } from 'lit';
 import { ifDefined } from 'lit/directives/if-defined.js';
 
-import { CivitaiMediaElement, type MediaStatus } from './media-base.js';
+import { CivitaiMediaElement } from './media-base.js';
 import { defineElement } from './registry.js';
 
 export type ImageFit = 'cover' | 'contain';
-export type ImageStatus = MediaStatus;
+export type ImageStatus = 'loading' | 'loaded' | 'error' | 'blocked';
 
 const TAG = 'civitai-image';
 
