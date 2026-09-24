@@ -889,3 +889,60 @@ this arc, and unowned.
 | SDK storage client (#441) | open — D1/D2 fix in flight |
 | `OPEN_IMAGE_UPLOAD` (messaging) | not started — sequence after #441 |
 | `PUBLISH_GENERATION_OUTPUTS` (messaging) | not started — sequence after #441 |
+
+---
+
+# ✅ THE PLATFORM SIDE IS DONE — four PRs merged, two surfaces deliberately left
+
+| PR | merged as | verified by CONTENT |
+|---|---|---|
+| `civitai#5085` app storage | `1abd6539` | block routes 30→35, `app-storage/` 0→5, controls unchanged |
+| `civitai#5090` workflows query | `67c1fcdf` | `workflows/` 4→5 (`query.ts`), control `app-storage/` 5 |
+| `civitai#5091` gated images | `1b965b3d` | `gated-images` route present on main |
+| `civitai-app-starters#441` SDK client | `eea19074` (squash) | `src/storage/` present · `AppClient.storage` wired · `isQuotaRefusal` **0** in the barrel (D1) · `createFakeAppStorage` **0** in public testing (D2) · control: the fake still present under `test/support/` |
+
+⚠ **Merge conventions differ and `gh` will not stop you:** `civitai/civitai` takes merge commits;
+`civitai-app-starters` is squash for recent PRs (its 8 merge commits are all from #1–#22). Read
+first-parent history before picking a flag.
+
+## The one gate now red repo-wide, and it is nobody's PR
+`Canonical schema drift-check`. Verified independently: the vendored blob `50629ec8bce2` is
+**identical** on `origin/main`, on #441's previous head (where the check PASSED) and on its merged
+head; #441's diff touches **0** schema files (control: 10 files overall); and the **live** published
+schema now carries `"auth": "block-token" | "oauth"` which the vendored copy lacks. `main`'s last
+green was 2026-09-23T16:49Z — **stale, not contradicting**.
+
+Filed as **civitai-app-starters#443** with a closing condition that refuses a green obtained without
+a revendor. 🔴 Until it lands the gate says nothing about any PR — the permanently-red-gate hazard,
+now live in two repos at once (`preview / component-tests` in `civitai/civitai` for the
+`showWarningNotification` breakage, and this one).
+
+## Two findings from #441's fix round that outlive it
+1. 🔴 **`pnpm check:public-types` is structurally BLIND to `@civitai/sdk`.** Its `PACKAGES` list
+   (`scripts/check-public-type-closure.mjs:157-163`) names five packages and this is not one — so the
+   PR's cited *"64 on the ledger, exact set match"* was a fact about a check that **never looked at
+   the surface being added**. Verified first-hand. The script's own comment at `:165` warns that *"a
+   scan that walks nothing reports zero violations, which reads exactly like a clean tree"* — the
+   floors it built were for the packages it does scan. Widening surfaces 6 pre-existing violations,
+   none from #441; left as a separate change.
+2. 🔴 **A mutant SURVIVED the rebuilt sweep**, exposing a pre-existing coverage hole: the
+   `Number.isNaN(at.getTime())` guard in `toEntry` was executed by **no test** — every fixture fed a
+   missing or null `updatedAt`, caught by the shared shape gate, never a string that parses to NaN.
+   Deleting the guard left the suite fully green. **That predates #441's own sweep**, so its original
+   "all 16 KILLED" did not cover this guard. Now 17/17.
+
+## And one of mine
+🔴 **27 commits of this session's documentation were never pushed** — the design doc, this scoping
+record, every correction — found only because #441's agent tried to pin the design doc's sha for its
+PR body and discovered the ref did not contain the path. Pushed; verified by reading
+`ls-remote` rather than the push output. I had been quoting the *"docs in a working tree are unsaved
+work"* rule at agents all day while sitting on the violation.
+
+## What remains
+- **`OPEN_IMAGE_UPLOAD`** and **`PUBLISH_GENERATION_OUTPUTS`** — messaging surfaces, SDK
+  host-protocol additions. Now unblocked: #441 has merged, so `packages/civitai-sdk` is free.
+- **`civitai#5093`** (user checkpoint) — open, **blocked on issue #5092**: `updateUserSettings`
+  calls `assertViewerIsAppDeveloper` (`blocks.router.ts:7140`), so the route is developer-only and
+  cannot delete `generate-from-model`'s session-only note for ordinary viewers.
+- **No route in this arc has been exercised live against a real server.** The only live evidence
+  remains the `app-requests` dev-tunnel probe.
