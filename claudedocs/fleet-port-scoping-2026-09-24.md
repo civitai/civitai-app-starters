@@ -855,3 +855,37 @@ the rewrite kills it plus 2 more.
 #5093 also kept `authorizeBlockBridgeToken` inside the router while extracting the rest to
 `user-settings.service.ts`, splitting at the claims boundary — the third independent agent to
 converge on the constraint my brief had backwards.
+
+---
+
+# ✅ #5090 MERGED — `67c1fcdfafe6`. Four platform PRs are now on main.
+
+Verified by CONTENT: `src/pages/api/v1/blocks/workflows/` went **4 → 5** on `origin/main`
+(`cancel, estimate, poll, query, submit`), control `app-storage/` unchanged at **5**. Base clone
+re-synced `--ff-only`.
+
+The `component-tests` red was accepted deliberately again (`#5090#issuecomment-5819245513`), this
+time on **materially better evidence than #5085 had**: PR #5093's agent got the component tier
+*executing* locally via the repo's documented NixOS escape hatch and found all 5 suites failing on
+one identical `showWarningNotification` import error outside its diff, with the **unmodified base
+clone failing identically** — a named failing TEST plus a clean-base control, which is what the rule
+asks for and what the earlier acceptance lacked.
+
+⚠ Recorded on that comment: merging with a merge commit places **this** head, with its own red, into
+`main`'s history too — so the `git log main` misreading stays available. A property of the repo's
+merge convention, not of the change.
+
+🔴 **Still nobody's**: the `showWarningNotification` breakage itself is real, outside every PR in
+this arc, and unowned.
+
+## Where the platform stands
+
+| surface | state |
+|---|---|
+| app storage (5 routes) | **merged** `1abd6539` |
+| workflows query | **merged** `67c1fcdf` |
+| gated images (#5091) | open — round 0 in flight |
+| user checkpoint (#5093) | open — **held on issue #5092** |
+| SDK storage client (#441) | open — D1/D2 fix in flight |
+| `OPEN_IMAGE_UPLOAD` (messaging) | not started — sequence after #441 |
+| `PUBLISH_GENERATION_OUTPUTS` (messaging) | not started — sequence after #441 |
