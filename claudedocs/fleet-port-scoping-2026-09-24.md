@@ -441,3 +441,70 @@ for a net movement of one copy. Either finish the consolidation or drop the just
 *"Five fleet apps are blocked on this"* is true. *"Merging this unblocks them"* is **not** —
 `@civitai/sdk` still has **no storage client at all**, so these five routes unblock nobody until the
 SDK grows one or five apps hand-roll adapters.
+
+---
+
+# ROUND 0 on PR #11 — verdict: `requirement questioned — R4`
+
+Ledger: `round 0 · requirements: 9 (unattributed: 7) · deletion candidates: 5`. **7 of 9
+requirements unattributed** is the headline number: this port made most of its own rules.
+
+## The questioned requirement — R4, and it is not the one it looks like
+Not *"remove the `persist` no-op"* — removing it only restores the hang its docblock correctly
+rejects. The requirement to drop is: **"the port may silently degrade a viewer-visible behaviour,
+provided it is written down in the README."** A README is not a UI. The viewer swaps a checkpoint,
+sees the label change, and gets no signal that the choice dies on remount.
+
+Its author of record is **the PR, not the operator**. The nearest operator precedent covers a
+strictly weaker case — the analytics no-op, i.e. telemetry nobody sees — not a viewer-visible
+persistence feature. The handoff line recording this as *"already shipped degraded in PR #11"* is a
+**status line written after the fact, not an authorisation**, and the merge decision is still open.
+Either hold it behind a platform surface, or make the degradation visible **at the seam it
+degrades** — the call site knows `persist` is a no-op and shows nothing.
+
+## 🟡 The concrete half: `App.tsx:1143-1150` is unreachable
+`useCheckpointPicker().persist` (`platform/hooks.ts:429-437`) is an `async` arrow whose only body is
+a DEV `console.debug`. It **cannot reject**. So the `catch` — rollback plus
+`setCheckpointError('could not save checkpoint')` — is dead in production, and no test exercises it
+(`checkpointPersist` appears at 4 sites, all in `test/test-utils.ts`, always
+`mockResolvedValue(undefined)`). It reads as *"persistence failure is handled"* while persistence
+does not happen at all: **a guard that stops anyone looking.**
+
+## Requirements that survived, and one that earns its keep
+`src/platform-seam.test.ts` was examined for deletion and **KEPT**, measured not assumed: it matches
+vitest's include and CI runs it; extracted into a `.git`-less copy of base `b110a214` it goes
+**4/4 RED**, and **4/4 GREEN** at `bba558b`; nothing else checks the property; both zero-valued
+assertions carry positive controls; and `importsPackage()` matches the module specifier rather than a
+substring, so the file's own prose naming the forbidden package does not self-trip.
+
+🔴 **Forward-looking caveat before that guard is rolled to the fleet:** `gen-matrix` and
+`model-benchmarking` **cannot reach 0 blocks-react importers** even after the app-storage PR lands
+(three and one missing platform surfaces respectively). Copying this file to those repos installs a
+**permanently-red gate** — which `RULES.md` says is worse than no gate.
+
+## 🟡 `src/dev/harnessServer.ts` — the leak it prevents is real; 110 of its 140 lines are a feature
+The leak is verified: `@civitai/sdk@0.2.0`'s `dist/site/index.js:1` sets
+`DEFAULT_SITE_URL = 'https://civitai.com/api/v1'` and nothing else redirects it, so after the port
+`dev:harness` would fire money-shaped POSTs at production from localhost. **But preventing that costs
+~1 line** — `__configurePlatform({ siteUrl: 'http://localhost:5173/api/v1' })`, the same override the
+tests already use. The other ~110 lines implement *demonstrate a full generation locally* (R7), which
+nobody asked for and which **nobody has yet run** — the PR body says so plainly. Not a recommended
+cut; recorded so the operator knows 140 lines of payload rest on an unattributed requirement.
+
+## Other deletion candidates
+- 🟢 `@civitai/app-sdk` should move to `devDependencies` — all 7 files that name it use `import type`
+  only, so it contributes zero runtime bytes while being declared a runtime dependency.
+- 🟢 `__tests__/harness-server.test.ts` (108 lines) falls with `harnessServer.ts`; independently
+  justified while it stands, since it pins the join neither half tests alone.
+
+## Corrections to the PR's own numbers — neither changes a decision
+The red-matrix claims **26** bridge importers at base; two independent methods count **25**. And
+*"4/4 RED"* is true, but one of the four reds is the file's own positive control failing because
+`platform/workflows.ts` does not exist yet — so the matrix names three causes for four reds.
+
+## On holding the PR for the `/workflows/*` deploy — round 0 says NO
+Re-probed 2026-09-24T04:18Z: all four → **404 `text/html`**; controls `/blocks/buzz` and
+`/blocks/shared-storage/list` → **405 `application/json`**. Holding the branch does not deploy the
+routes — it only lets it rot behind `main` while five sibling ports queue behind the same platform
+work. Merge with the "not verified" statement intact (it is in the PR body, the README and
+`workflows.ts:19-24`) and keep the re-probe as the closing condition. **Operator's call.**

@@ -985,9 +985,23 @@ Claims `civitai-app-platform-migration-1` (A) and `-2` (B) are HELD while this r
    `cairn create --scope civitai-app-requests --ref platform --file <file>`. 🔴 Check its Tekton
    statuses first — they were stuck `pending` for ~25 min.
    forcing: gate — the index write is blocked until the route is live.
-6. **Delete the `minimumReleaseAgeExclude` entry when `@civitai/sdk` moves past 0.2.0.**
-   `civitai-app-requests/pnpm-workspace.yaml` carries the condition.
-   forcing: security — a standing supply-chain exemption with a written expiry.
+6. 🔴 **Delete BOTH `minimumReleaseAgeExclude` blocks NOW — the stated condition is the WRONG one
+   and they are already inert.** This item used to read *"when `@civitai/sdk` moves past 0.2.0"*.
+   That is not the expiry: the real one was pnpm 11's **24-hour clock**, and it ran out at
+   **2026-09-24T03:49:30Z** (`@civitai/sdk@0.2.0` published `2026-09-23T03:49:30.004Z`, confirmed via
+   `npm view @civitai/sdk time`). Two repos carry one — `civitai-app-requests/pnpm-workspace.yaml:31`
+   and the `generate-from-model` port (PR #11).
+   🔴 **PR #11's was inert 7 MINUTES BEFORE THE COMMIT THAT ADDED IT**: commit `6d03c5c` is authored
+   `2026-09-23T22:56:34-05:00` = `2026-09-24T03:56:34Z`, seven minutes after the window shut. It was
+   carried across from `app-requests` without re-reading the clock and has never had any effect in
+   that repo. Round 0 proved this with both controls — exclude removed + default policy → **PASS**;
+   negative control (`minimumReleaseAge: 100000`, no exclude) → **4 violations** naming
+   `@civitai/sdk@0.2.0`; positive control (same, exclude present) → **3**, the package gone. The
+   timestamps re-verified first-hand.
+   Left in place, 28 lines documenting a supply-chain exemption that does nothing will read to the
+   next maintainer as an ACTIVE HOLE in a security control, expiring on a condition that will never
+   be the reason.
+   forcing: security — a standing exemption that is now pure misinformation.
 7. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
    `civitai/civitai-app-starters` — force-pushed off the branch, still reachable by sha.
    forcing: security — residual exposure on a PUBLIC repo from an earlier session's leak.
