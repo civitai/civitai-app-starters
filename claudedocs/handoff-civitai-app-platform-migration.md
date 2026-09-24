@@ -885,9 +885,40 @@ Autonomy granted: **branch + PR, no merge** — review is the operator's.
 | F | `civitai-app-model-benchmarking` | — | read-only scoping |
 | G | `civitai-app-sensei` (branch `trunk`) | — | read-only scoping |
 
-**B is the unblocker** — C–G all plan against the tRPC `appsStorageRouter` contract
-(`get`/`set`/`delete`/`list`/`getQuota`) on the assumption B's routes will mirror it. If B's shape
-diverges, re-read C–G's plans against what B actually shipped before acting on them.
+**All five scoping agents (C–G) are DONE.** Their plans live in
+`claudedocs/fleet-port-scoping-2026-09-24.md`, deliberately NOT in this doc.
+
+🔴 **THEIR COLLECTIVE HEADLINE CORRECTS TRACK B: app-storage is NECESSARY BUT NOT SUFFICIENT.**
+Track B concluded the fleet needs "the app-storage platform PR". Five agents reading five apps
+independently surfaced **five** missing platform surfaces. Verified first-hand with one shared
+positive control — `submitWorkflow` → **1** of the **30** route files under
+`src/pages/api/v1/blocks`:
+
+| surface | REST routes | in SDK `HostRequests`? | blocks |
+|---|---|---|---|
+| `useAppStorage` | 0 | no | 5 apps — **being built** (agent B) |
+| `usePublishGenerationOutputs` | 0 | no | gen-matrix, model-benchmarking |
+| `useGatedImages` | 0 | no | gen-matrix, custom-generators, model-benchmarking |
+| `useAppWorkflows` | 0 | no | gen-matrix |
+| `useImageUpload` / `OPEN_IMAGE_UPLOAD` | 0 | no | custom-generators |
+
+`HostRequests` is four ops (`SAVE_IMAGE`, `OPEN_RESOURCE_PICKER`, `OPEN_BUZZ_PURCHASE`,
+`REQUEST_TOKEN`), so the bridge is no escape hatch for any of them.
+
+**Two apps cannot reach 0 blocks-react importers even after B lands** — `gen-matrix` (three
+surfaces) and `model-benchmarking` (publish). Their PRs must state a reduced count with the
+retained surfaces NAMED, not claim the closing condition.
+
+🔴 **The sharpest single finding is `useAppWorkflows`.** A plausible substitute exists
+(`app.orchestration.queryWorkflows({tags})`) and it is **wrong in a way that type-checks and passes
+tests**: the bridge's host FORCES the per-app tag filter server-side, while the orchestrator client
+takes tags from the caller — so substituting it relocates a trust boundary into the iframe.
+
+**B remains the other coupling** — C–G all planned against the tRPC `appsStorageRouter` contract
+(`get`/`set`/`delete`/`list`/`getQuota`) assuming B's routes mirror it; if B's shape diverges,
+re-read their plans against what B shipped. B was sent F's money-safety constraints mid-flight:
+`list` must **401 on auth failure, never 200-with-empty**, or `model-benchmarking`'s double-spend
+backstop silently disarms and every reload double-charges.
 
 🔴 **The two ports (A, B) were told to build their OWN worktrees with `git -C <repo> worktree add`,
 NOT to take a worktree-isolation flag** — this session's cwd is `civitai-app-starters`, so a flag
