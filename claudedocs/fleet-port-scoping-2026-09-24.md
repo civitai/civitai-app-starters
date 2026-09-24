@@ -1054,3 +1054,52 @@ correct briefs I had been giving agents:
   for any load-bearing claim.
 
 This entry was written from a worktree, per that rule.
+
+---
+
+# 🏁 ARC COMPLETE — `#5093` merged `1dbb5200`. Every platform surface the fleet needs now exists.
+
+| # | PR | surface | merged |
+|---|---|---|---|
+| 1 | `civitai#5085` | app-storage REST (5 routes) | `1abd6539` |
+| 2 | `civitai#5090` | workflows query | `67c1fcdf` |
+| 3 | `civitai#5091` | gated images | `1b965b3d` |
+| 4 | `civitai#5093` | user checkpoint | `1dbb5200` |
+| 5 | `starters#441` | `AppClient.storage` | `eea19074` |
+| 6 | `starters#445` | canonical schema re-vendor (`auth`) | `b79e12fa` |
+| 7 | `starters#446` | `host.openImageUpload` + `host.publishGenerationOutputs` | `81bd1b4f` |
+| — | `app-requests#22` · `generate-from-model#11` | the two ported apps | `a4193066` · `200617ef` |
+
+`#5093` verified on `origin/main`: route present, control `app-storage` unchanged at 5, and the
+call-site ledger reads **`calls: 15`** — the union, not git's textual 16.
+
+## The merge-sequencing lesson, which is the arc's most transferable finding
+Merging three PRs that all add rows to the same **asserted ledgers** while a fourth sat open created a
+**semantic** conflict that survives a clean textual merge:
+
+> merge-base **17** → `#5091` extracts `getImagesByIds` → **16** → `#5093` extracts
+> `updateUserSettings` → **16**. Git keeps **16**. Both moves happened, so the truth is **15**.
+
+Proven, not argued: mutating back to git's resolution made **both** assertions fail. The positive
+control has the same shape (base 2, each side 3, merged **4**).
+🔴 **My sequencing created the hazard.** Merge PRs that share an asserted ledger together, or expect
+to resolve a union by hand — and never take a wholesale side, because `--ours` drops the other
+routes' rows and takes their fail-closed guards offline.
+
+## The settle discipline that stopped a premature merge
+`#5093`'s 13 check-runs went green while **only 3 of the repo's 7 statuses had posted**.
+`mergeStateStatus` reports on statuses that EXIST and knows nothing of the four the preview pipeline
+had not emitted. Waiting for **7/7, zero pending** is what made the final read a real one — six
+success, `component-tests` the known shared red.
+
+## What is still open, in priority order
+1. 🔴 **`civitai#5102`** — `preview / component-tests` red repo-wide, **unowned**. **Four** PRs merged
+   past it today, each with a written acceptance. The fifth reader will not read the reasoning.
+2. **Port the five remaining apps.** Plans per app above; `custom-generators` is the cheapest entry.
+3. **`bound-then-ungate`** on `updateUserSettings` (`civitai#5092`) — add a bound, THEN drop the
+   developer gate. Unscoped.
+4. **Docs**: `claudedocs/refactor-docs-for-sdk-pattern.md` is the brief for `/manage-appblocks-docs`.
+   🔴 The **CLI's embedded schema mirror is still drifted** on `auth`.
+5. Open follow-ups: `civitai#5087` · `#5088` · `#5089` · `#5094` · `#5095`.
+6. 🔴 **Nothing in this arc has been exercised live except `app-requests`.** One dev-tunnel probe —
+   list/append/vote/withdraw, all 200 — remains the only end-to-end evidence.
