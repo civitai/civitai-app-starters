@@ -730,14 +730,58 @@ four `/workflows/*` routes **404** in production because the #5068 deploy has no
   `storage` client or each app keeps hand-rolling. Operator call on sequencing — it is a platform PR
   that unblocks 5 apps, against porting the 1 app that needs nothing.
 
+<!-- SUPERSEDES ranked item 1 as first written after Track A ("widen DEV_TOKEN_SCOPE_ALLOWLIST").
+     🔴 DO NOT WRITE THAT PLATFORM PR — it is not needed. The route below already exists. -->
+### NO PLATFORM PR NEEDED — `dev-tunnel` on an APPROVED app takes the PROD page mint, which grants the shared scopes
+- as-of: 2026-09-24
+- **Symptom + exact repro:** Track A concluded the live probe needed a platform change, because
+  `DEV_TOKEN_SCOPE_ALLOWLIST` strips `apps:storage:shared:*`. That conclusion was right about the
+  **bearer** mint and wrong about the fleet: a second, unclamped mint path already exists.
+- **Observed (with values):** the storage-stripping tunnel branch is `tryDevTunnelScopedMint`
+  (`src/pages/api/v1/block-tokens/index.ts`), and it is gated to PRE-APPROVAL apps by **two
+  independent guards**, either of which alone excludes `app-requests`:
+  `if (!appBlockId.startsWith(EPHEMERAL_APP_ID_PREFIX)) return 'continue'` (`:411`, prefix
+  `'ephemeral-'` at `:173`) and `if (!app || app.status !== 'ephemeral') return 'continue'`
+  (`:461`). The token minted this session decodes to
+  `appBlockId = apb_01KXBZR1VB0F70QY4TF6AFK9K3` — not `ephemeral-` — and `civitai app view
+  app-requests` reports the app APPROVED and live at `https://app-requests.civit.ai`, author
+  `zachlowdenzx` (the same account). So the branch returns `'continue'` and the request falls
+  through to the PROD page mint, `BlockRegistry.resolvePageBlock(appBlockId)` (`:835`), whose only
+  scope clamp is the OAuth ceiling `validateBlockScopesAgainstOauthClient` (`:1002`). Both storage
+  scopes are `SKIP_OAUTH_CHECK` (`block-scope.constants.ts:76-86`), and `:1088` states it directly:
+  *"Publisher/ambient scopes (`block:settings:*`, `apps:storage:*`) are consent-exempt and always
+  pass through"*. `via: code`
+- **Ruled out:** *"the tunnel mint also strips storage, so it is no better than `dev-token`"* —
+  **FALSE, and it was my own reading.** I took it from `dev-scoped-mint.service.ts`'s docblock
+  (*"WITHOUT apps:storage:* — Decision 1: App Storage stays 403 until approval"*) and stopped at the
+  summary. The docblock is accurate; the clause that matters is **"until approval"**, and the code
+  implements it as an `ephemeral`-only branch. A COMMENT IS A CLAIM — this one was true and I read
+  half of it. `via: code`
+- **Leading hypothesis:** `civitai app dev-tunnel` from the ported branch renders the LOCAL build
+  inside the real host at `civitai.com/apps/dev/app-requests`, the host mints a real page token
+  carrying `apps:storage:shared:read|write`, and the port is exercisable end-to-end with no
+  platform change at all.
+- **Next probe:** 🔴 **NOT RUN — it needs the operator, on two counts.** (1) It raises a PUBLIC
+  reverse tunnel from this host to `sish.civitai.com:2224` exposing the local dev server on a
+  `*.civit.ai` host; (2) the page mint is COOKIE-authed, so it can only be driven from the
+  operator's logged-in browser — which takes their screen. The run is:
+  ```bash
+  # terminal 1, in the ported app-requests checkout
+  npm run dev:tunnel                       # serves 127.0.0.1:5186, embeddable
+  # terminal 2
+  civitai app dev-tunnel                   # blockId from block.manifest.json; Ctrl-C tears down
+  # then open the printed civitai.com/apps/dev/app-requests and watch the network tab
+  ```
+  Expect `GET /api/v1/blocks/shared-storage/list` → **200** with `items[].viewerVoted` present;
+  the **403** recorded in the Track A block is the positive control that the probe discriminates.
+  ⚠ The tunnel is cohort-gated (*"limited to invited Apps authors / moderators"*); a non-enrolled
+  account gets *"not available"* from the mint.
+
 ## Next steps (ranked)
 
-1. **Widen `DEV_TOKEN_SCOPE_ALLOWLIST` to carry `apps:storage:shared:*` on the APPROVED-app mint
-   mode**, then re-run the Track A probe and expect **200** with `items[].viewerVoted`. The live
-   403 recorded above is the positive control. 🔴 The allowlist's own comment justifies the
-   withholding by *pre-approval namespace collision*, which does not apply to an approved app, but
-   the clamp fires on every mode — confirm that reading with the author before widening it.
-   forcing: gate — this is now the cheapest path to the only unmeasured thing left in the port.
+1. **Run the `dev-tunnel` live probe** (commands in the block directly above). No platform PR, no
+   preview deploy. 🔴 Needs the operator: a public reverse tunnel plus a logged-in browser.
+   forcing: gate — the only unmeasured thing left in the port, and now the cheapest it will ever be.
 2. **Port `civitai-block-generate-from-model`** (0 `useAppStorage` files, 23 blocks-react
    importers, 11 distinct hooks). The only remaining app free of the app-storage gap.
    ⚠ **It is NOT free of the workflows gap** — an earlier revision of this line claimed it needed
