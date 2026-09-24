@@ -124,6 +124,22 @@
       <civitai-alert color="error" closable heading="Failed">Dismiss me.</civitai-alert>
     </civitai-stack>
 
+    <h2>Image, video &amp; audio</h2>
+    <civitai-group gap="lg" style="align-items: flex-start">
+      <civitai-image id="media-open" openable alt="A generated image" style="width: 140px; aspect-ratio: 1"></civitai-image>
+      <civitai-image pending style="width: 140px; aspect-ratio: 1"></civitai-image>
+      <civitai-image blocked style="width: 140px; aspect-ratio: 1"><span slot="blocked">Hidden: mature content</span></civitai-image>
+    </civitai-group>
+    <civitai-group gap="lg" style="align-items: flex-start; margin-top: 16px">
+      <civitai-video id="video-preview" pending preview openable alt="A drifting orb, preview" style="width: 140px; aspect-ratio: 1"></civitai-video>
+      <civitai-video id="video-full" pending loop fit="contain" alt="A drifting orb" style="width: 240px"></civitai-video>
+      <civitai-video src="/does-not-exist.mp4" fallback="This clip is gone" style="width: 140px; aspect-ratio: 1"></civitai-video>
+    </civitai-group>
+    <civitai-group gap="lg" style="align-items: flex-start; margin-top: 16px">
+      <civitai-audio id="audio-sample" alt="An arpeggio" style="width: 280px"></civitai-audio>
+      <civitai-audio src="/does-not-exist.mp3" alt="A jingle" fallback="This track is gone" style="width: 280px"></civitai-audio>
+    </civitai-group>
+
     <h2>Image &amp; slider</h2>
     <civitai-group gap="lg" style="align-items: flex-start">
       <civitai-image id="ok" alt="A generated image" style="width: 140px; aspect-ratio: 1"></civitai-image>
