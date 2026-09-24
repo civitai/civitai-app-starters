@@ -17,7 +17,6 @@ export type { SignIn, SignInOptions } from './sign-in/index.js';
 export { SCOPES } from './session/index.js';
 export type { GrantOptions, Scope, TokenOptions, TokenSource } from './session/index.js';
 export type { SiteClient } from './site/index.js';
-export { isQuotaRefusal } from './storage/index.js';
 export type {
   StorageCallOptions,
   StorageClient,

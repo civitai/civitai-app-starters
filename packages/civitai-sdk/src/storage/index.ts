@@ -1,5 +1,5 @@
 import { CivitaiError } from '../core/errors.js';
-import { ApiError, type Http } from '../http/index.js';
+import type { Http } from '../http/index.js';
 
 /** Where the five routes live under the site base URL. */
 const BASE = 'blocks/app-storage';
@@ -100,15 +100,6 @@ export interface StorageClient {
    */
   getQuota(opts?: StorageCallOptions): Promise<StorageQuota>;
 }
-
-/**
- * "This write can never succeed as-is" — every quota and per-value refusal, and
- * the request-parser's own, arrive under one status. Structural on purpose: the
- * server distinguishes which ceiling fired only in prose, and matching prose is
- * a guard that any rewording walks through.
- */
-export const isQuotaRefusal = (error: unknown): boolean =>
-  error instanceof ApiError && error.status === 413;
 
 export function createStorageClient(http: Http): StorageClient {
   const post = <T>(op: string, body: unknown, signal?: AbortSignal) =>

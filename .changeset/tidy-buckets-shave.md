@@ -22,8 +22,14 @@ decision:
 - **`updatedAt` is revived to a `Date` once, here**, which is where
   `@civitai/blocks-react` already put it, so the consumers compile unchanged.
 
-Also adds `isQuotaRefusal(error)` — the structural test for "this write can
-never succeed as-is" (HTTP 413), so apps do not match on server prose — and
-`createFakeAppStorage()` in `@civitai/sdk/testing`, a `fetch`-shaped stand-in
-for the five routes whose page size defaults to 3 and whose ledger records what
-the *client* sent.
+The public surface this adds is exactly `AppClient.storage` plus its six types
+(`StorageClient`, `StorageCallOptions`, `StorageKeyEntry`, `StorageListQuery`,
+`StorageListResult`, `StorageQuota`). Nothing else.
+
+No `isQuotaRefusal` helper: a size or quota refusal arrives as the already-public
+`ApiError` carrying `status`, so `error instanceof ApiError && error.status ===
+413` is the same one-liner at the call site, and no consumer in the fleet
+branches on a storage status today. `@civitai/sdk/testing` is unchanged — the
+app-storage fake stays in this package's own test suite, because four of the five
+apps that store per-viewer state need knobs it does not have. Either can be
+promoted later; neither can be un-shipped.

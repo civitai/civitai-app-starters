@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import { initialize } from '../../src/app/index.js';
 import type { StorageClient } from '../../src/storage/index.js';
-import { createFakeAppStorage } from '../../src/testing.js';
+import { createFakeAppStorage } from '../support/fake-app-storage.js';
 
 /**
  * 🔴 THE SEAM NOBODY OWNS.
@@ -111,8 +111,15 @@ describe('the client ↔ fleet-app seam', () => {
  * the default page size, and answers 400/413 with its own message when one is
  * hit. A second copy here is the thing that drifts, so the storage module must
  * contain no number except the HTTP statuses it branches on.
+ *
+ * It now branches on NONE: the 413 left with `isQuotaRefusal`, because a caller
+ * spells `e instanceof ApiError && e.status === 413` itself and `ApiError` is
+ * already public. So the allowance is empty and the module's expected literal
+ * count is ZERO — which makes the first test's own result unable to prove the
+ * scanner works. That proof lives entirely in the second test below, which runs
+ * the same scanner over a source that DOES carry bounds.
  */
-const ALLOWED_NUMBERS = new Set([413]);
+const ALLOWED_NUMBERS = new Set<number>();
 
 /** Every numeric literal in `source`, with comments and string literals removed. */
 function numericLiterals(source: string): number[] {
@@ -127,7 +134,7 @@ function numericLiterals(source: string): number[] {
 }
 
 describe('the storage module re-spells no server bound', () => {
-  it('contains no number but the status it branches on', () => {
+  it('contains no numeric literal at all', () => {
     const source = readFileSync(
       fileURLToPath(new URL('../../src/storage/index.ts', import.meta.url)),
       'utf8',
@@ -135,8 +142,12 @@ describe('the storage module re-spells no server bound', () => {
 
     const found = numericLiterals(source);
     expect(found.filter((n) => !ALLOWED_NUMBERS.has(n))).toEqual([]);
-    // Positive control on the ZERO above: the scanner really does find numbers.
-    expect(found).toEqual([413]);
+    // 🔴 This zero is only as good as the next test. The scanner CAN return an
+    // empty array for a file it never read, so read it as a claim about the
+    // module only once the synthetic case below has shown the scanner non-inert.
+    expect(found).toEqual([]);
+    // …and that it read THIS file, not an empty one.
+    expect(source).toContain("const BASE = 'blocks/app-storage'");
   });
 
   it('positive control — the scanner flags a bound if one is ever added', () => {

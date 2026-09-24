@@ -11,16 +11,20 @@ import { initialize } from '@civitai/sdk';
 const app = await initialize();
 
 const picked = await app.host.openResourcePicker({ resourceType: 'Checkpoint' });
-if (!picked) return;
+if (picked && (await app.requestGrants(['ai:write:budgeted']))) {
+  const { air } = await app.site.get<{ air: string }>(`model-versions/mini/${picked.versionId}`);
 
-const { air } = await app.site.get<{ air: string }>(`model-versions/mini/${picked.versionId}`);
-
-if (!(await app.requestGrants(['ai:write:budgeted']))) return;
-
-const submitted = await app.orchestration.submitWorkflow({
-  steps: [{ $type: 'textToImage', input: { model: air, prompt: 'A lighthouse at dusk' } }],
-});
-const workflow = await app.orchestration.waitForWorkflow(submitted.id!);
+  const submitted = await app.orchestration.submitWorkflow({
+    steps: [
+      {
+        $type: 'textToImage',
+        input: { model: air, prompt: 'A lighthouse at dusk', cfgScale: 7, seed: 1234 },
+      },
+    ],
+  });
+  const workflow = await app.orchestration.waitForWorkflow(submitted.id!);
+  render(workflow);
+}
 ```
 
 An app calls the Civitai API and the orchestrator as the viewer, with a token.
@@ -124,8 +128,17 @@ Three properties the surface is built around:
   `getQuota()` is the authority, and it reports neither the key-length cap nor
   the per-value cap.
 
-A write refused for size or quota arrives as `413`, whichever ceiling fired;
-`isQuotaRefusal(error)` is that test, structurally, without matching a message.
+A write refused for size or quota arrives as `413`, whichever ceiling fired — the
+server names which one only in prose, so test the status, not the message:
+
+```ts
+try {
+  await app.storage.set('draft:latest', huge);
+} catch (error) {
+  if (error instanceof ApiError && error.status === 413) askTheUserToFreeSpace();
+  else throw error;
+}
+```
 
 ## The orchestrator
 
@@ -202,21 +215,23 @@ entry.
 `@civitai/sdk/testing` has `createFakeTransport()`: pass it as
 `initialize({ transport })` and script the host's answers.
 
-For app storage, `createFakeAppStorage()` is a `fetch`-shaped stand-in for the
-five routes: pass it as `initialize({ token, fetch })` so the client's URLs,
-bodies, statuses and date revival are all real. Its `calls` ledger records what
-the **client** sent, and its page size defaults to **3**, so multi-page is the
-ordinary case rather than the exotic one — a fixture that fits on one page is
-exactly how a client that never sends `cursor` passes a green suite.
+There is no published fake for app storage, on purpose. The seam is `fetch`, so
+pass your own `fetch` to `initialize({ token, fetch })` and the client's URLs,
+bodies, statuses and date revival are all real — which a fake replacing the
+`storage` client would not be. Two things to get right in one you write:
 
-```ts
-const store = createFakeAppStorage({
-  pageSize: 2,
-  seed: [{ key: 'draft:a', value: 1 }, { key: 'draft:b', value: 2 }],
-});
-const app = await initialize({ token: 'block-jwt', fetch: store.fetch });
-const page = await app.storage.list({ prefix: 'draft:' });
-```
+- **Make the page size small** (2 or 3, not the server's 50). A page that holds
+  every fixture is exactly how a caller that never forwards `cursor` passes a
+  whole green suite.
+- **Put `updatedAt` on the wire as an ISO string**, as `res.json()` does. Hand
+  the client a `Date` and its revival becomes unobservable, since
+  `new Date(aDate)` is a `Date`.
+
+This SDK's own suite keeps one at
+[`test/support/fake-app-storage.ts`](./test/support/fake-app-storage.ts); it is
+not exported, because four of the five fleet apps that store per-viewer state
+need knobs it does not have (injected latency, prefix-targeted refusals, quota
+overrides, a cursor it ignores, a read that never settles). Copy it if it helps.
 
 ## Checks
 

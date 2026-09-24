@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { initialize } from '../../src/app/index.js';
 import { CivitaiError } from '../../src/core/errors.js';
 import { ApiError } from '../../src/http/index.js';
-import { isQuotaRefusal, type StorageClient } from '../../src/storage/index.js';
-import { createFakeAppStorage, type FakeAppStorage } from '../../src/testing.js';
+import type { StorageClient } from '../../src/storage/index.js';
+import { createFakeAppStorage, type FakeAppStorage } from '../support/fake-app-storage.js';
 import { fakeFetch, json } from '../support/fake-fetch.js';
 
 const BASE = 'https://civitai.com/api/v1';
@@ -106,12 +106,14 @@ describe('AppClient.storage — set', () => {
     const storage = await storageOf(fake);
 
     const error = await storage.set('k', 'v').catch((e: unknown) => e);
+    // 🔴 The refusal arrives as the PUBLIC `ApiError` carrying its status, which
+    // is what a caller branches on: `e instanceof ApiError && e.status === 413`.
+    // There is no SDK-side predicate wrapping that, and none is needed.
     expect(error).toBeInstanceOf(ApiError);
     expect((error as ApiError).status).toBe(413);
-    expect(isQuotaRefusal(error)).toBe(true);
-    // Positive control on the predicate: it is not simply always true.
-    expect(isQuotaRefusal(new ApiError(403, 'no', {}))).toBe(false);
-    expect(isQuotaRefusal(new Error('network'))).toBe(false);
+    // Positive control on the discriminator: a different refusal is a different
+    // status, so the check above is not simply always true.
+    expect(new ApiError(403, 'no', {}).status).not.toBe(413);
   });
 });
 
@@ -148,6 +150,11 @@ describe('AppClient.storage — list', () => {
       () => json(200, { keys: [{ key: 'a' }] }),
       () => json(200, { keys: [{ key: 'a', updatedAt: null }] }),
       () => json(200, { keys: [{ updatedAt: STAMPS.beta.toISOString() }] }),
+      // A STRING that does not parse. The four above are all caught by the
+      // shape gate; this is the only one that reaches the NaN check, and
+      // without it that check is a guard no test executes — measured: deleting
+      // it left the suite fully green.
+      () => json(200, { keys: [{ key: 'a', updatedAt: 'the day before yesterday' }] }),
     ]);
     const storage = await storageOf({ fetch, calls: [], rows: () => [] });
 
@@ -159,6 +166,9 @@ describe('AppClient.storage — list', () => {
     // `new Date(null)` is the epoch, not Invalid Date — so a null stamp must be
     // refused by its own check, not left to the NaN one.
     await expect(storage.list()).rejects.toThrow(/malformed key entry/);
+    await expect(storage.list()).rejects.toThrow(/malformed key entry/);
+    // …and the NaN check's own case: a string that passes the shape gate and
+    // still yields an Invalid Date.
     await expect(storage.list()).rejects.toThrow(/malformed key entry/);
   });
 

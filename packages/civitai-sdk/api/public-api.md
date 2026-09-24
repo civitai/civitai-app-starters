@@ -113,14 +113,6 @@ export type TokenSource = string | ((opts: {
     signal?: AbortSignal;
 }) => string | Promise<string>);
 
-/**
- * "This write can never succeed as-is" — every quota and per-value refusal, and
- * the request-parser's own, arrive under one status. Structural on purpose: the
- * server distinguishes which ceiling fired only in prose, and matching prose is
- * a guard that any rewording walks through.
- */
-export declare const isQuotaRefusal: (error: unknown) => boolean;
-
 export interface StorageCallOptions {
     signal?: AbortSignal;
 }
@@ -535,77 +527,6 @@ export interface FakeTransport extends BlockTransport {
  * test is one operation.
  */
 export declare function createFakeTransport(snapshot?: Partial<BlockSnapshot>): FakeTransport;
-
-/** A row the fake holds. `updatedAt` is a `Date` here and an ISO STRING on the wire. */
-export interface FakeAppStorageRow {
-    key: string;
-    value: unknown;
-    updatedAt: Date;
-}
-
-export interface FakeAppStorageOptions {
-    /** Seed rows. One without `updatedAt` gets a distinct stamp of its own. */
-    seed?: {
-        key: string;
-        value: unknown;
-        updatedAt?: Date;
-    }[];
-    /**
-     * 🔴 DEFAULT 3, NOT the server's 50, and that is the point. A page size big
-     * enough to hold every realistic fixture is precisely the condition under
-     * which a client that never sends `cursor` passes an entire suite: every
-     * scan finishes on page one, so the bug has nowhere to show. Small makes
-     * multi-page the ordinary case.
-     */
-    pageSize?: number;
-    /** `null` ⇒ every op is refused 403, with the middleware's own body. */
-    viewer?: {
-        id: number;
-    } | null;
-    /** Scripted refusals, consumed in order across all ops: `{status, body}`. */
-    refuse?: {
-        status: number;
-        body: unknown;
-    }[];
-}
-
-/** One request the CLIENT sent, as the server saw it. */
-export interface FakeAppStorageCall {
-    /** The last path segment: `get`, `set`, `delete`, `list`, `quota`. */
-    op: string;
-    /** The whole path, so a test can pin the route and not just the verb. */
-    path: string;
-    /** The bearer, so a token refresh is observable as two different values. */
-    token: string;
-    body: Record<string, unknown>;
-}
-
-export interface FakeAppStorage {
-    fetch: typeof fetch;
-    /**
-     * 🔴 Every request the CLIENT sent, verbatim — not what the caller asked for.
-     * A suite that mocks the client asserts the caller *asks* for the next page
-     * and never that the client *sends* the ask; that gap is how a dropped
-     * `cursor` survives a green run.
-     */
-    calls: FakeAppStorageCall[];
-    rows: () => FakeAppStorageRow[];
-}
-
-/**
- * An in-memory stand-in for the five `/blocks/app-storage/*` routes, behind a
- * `fetch`-shaped function.
- *
- * The seam is `fetch`, not the client: pass it as `initialize({ token, fetch })`
- * and the client's URLs, bodies, status handling and date revival are all real.
- * A fake that replaced the client instead would answer a conversation nobody is
- * having.
- *
- * 🔴 It sends `updatedAt` as an ISO STRING, exactly as `res.json()` does. A fake
- * that put a `Date` on the wire would make the client's revival unobservable —
- * `new Date(aDate)` is a `Date` — so deleting it would survive a green suite.
- */
-export declare function createFakeAppStorage(options?: FakeAppStorageOptions): FakeAppStorage;
 
 /** Test-only. */
 export declare function __resetTransport(): void;
