@@ -265,6 +265,25 @@ export interface HostCallOptions {
     signal?: AbortSignal;
 }
 
+/**
+ * An upload the host has stored but not yet finished moderating. The image
+ * exists and its author can see it; nobody else may until `scan()` answers.
+ */
+export interface PendingImage {
+    imageId: number;
+    /** The author's own preview. Not for any other viewer until `scan()` says `scanned`. */
+    url: string;
+    /**
+     * The host's verdict on this upload. Resolves once the host reaches one and
+     * returns the same answer to every later call, so it is safe to re-read.
+     *
+     * 🔴 It waits as long as the host takes — the host is what bounds the scan,
+     * and this package sets no deadline of its own. Pass a `signal` if your app
+     * needs one; aborting gives up on the verdict, it does not decide it.
+     */
+    scan(opts?: HostCallOptions): Promise<ImageScanResult>;
+}
+
 /** Asking the host page to show its own UI. Data goes over the API, not here. */
 export interface Host {
     /** Resizes the frame, clamped to the manifest's bounds. */
@@ -301,6 +320,48 @@ export interface Host {
     }, opts?: HostCallOptions): Promise<{
         purchased: boolean;
     }>;
+    /**
+     * civitai's own upload modal. The bytes go through the host's session, never
+     * through the frame, and `null` means the viewer closed it without uploading.
+     *
+     * `purpose: 'generationSource'` uploads a PRIVATE img2img source: unscanned
+     * here, scanned by the orchestrator when the workflow runs.
+     */
+    openImageUpload(args: {
+        purpose: 'generationSource';
+    }, opts?: HostCallOptions): Promise<SourceImage | null>;
+    /**
+     * A PUBLIC image. The host stores it and moderates it afterwards, so this
+     * resolves with a {@link PendingImage} — the image, plus the `scan()` that
+     * answers whether anyone but its author may see it.
+     */
+    openImageUpload(args?: {
+        purpose?: 'display';
+    }, opts?: HostCallOptions): Promise<PendingImage | null>;
+    /**
+     * Publishes outputs of ONE of this app's own workflows as public images, and
+     * resolves with the ids of the rows the host created. Needs
+     * `ai:write:budgeted`: an app trusted to spend the viewer's Buzz on a
+     * generation is trusted to publish what that generation produced.
+     *
+     * 🔴 Outputs are named by INDEX into the workflow, never by url. The host
+     * re-derives that this viewer and this app own `workflowId`, then resolves
+     * the urls itself — which is the whole guarantee, because a frame at an
+     * opaque origin naming its own blob to publish would be a different feature.
+     *
+     * The host shows the viewer a confirmation first and answers only when they
+     * act, so this waits on a person. Nothing here bounds that wait; pass a
+     * `signal` for the bound your app wants.
+     *
+     * ⚠ Publishing is best-effort per image. An output that fails to publish is
+     * skipped rather than failing the call, so `imageIds` can be SHORTER than
+     * the selection and nothing says which index dropped. Compare lengths rather
+     * than pairing ids to indexes.
+     */
+    publishGenerationOutputs(args: {
+        workflowId: string;
+        imageIndexes?: number[];
+    }, opts?: HostCallOptions): Promise<number[]>;
 }
 
 export declare class ApiError extends CivitaiError {

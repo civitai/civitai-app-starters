@@ -192,11 +192,102 @@ wider scope — and refuses without one.
 | `download({ url, filename })` | Saves to the viewer's device — a sandboxed frame cannot |
 | `openResourcePicker({ resourceType })` | civitai's own picker; resolves the one pick, or `null` |
 | `openBuzzPurchase({ suggestedAmount })` | The purchase flow; resolves `{ purchased }` |
+| `openImageUpload()` | The upload modal; resolves a `PendingImage`, or `null` |
+| `openImageUpload({ purpose: 'generationSource' })` | The same modal for a private img2img source; resolves `{ url, width, height }` |
+| `publishGenerationOutputs({ workflowId, imageIndexes })` | Publishes your own workflow's outputs, behind the host's confirmation; resolves the new image ids |
 
 Host failures reject with a `BridgeError` carrying a `code` (`forbidden`,
 `unauthenticated`, `rate-limited`, …). Timeouts are the host's to set; pass a
 `signal` to cancel. `ApiError` and `BridgeError` both extend `CivitaiError`, so
 one `catch` can tell a refusal from a bug.
+
+### Uploading an image
+
+The host owns the upload: it opens its own modal, takes the file through the
+viewer's session and hands back what it stored. The frame never sees the bytes.
+
+A **public** image is moderated *after* it is stored, so `openImageUpload()`
+resolves as soon as the image exists and the verdict comes from `scan()`:
+
+```ts
+const app = await initialize();
+
+const image = await app.host.openImageUpload();
+if (image) {
+  showTheAuthorTheirOwnPreview(image.url);
+
+  const verdict = await image.scan({ signal: AbortSignal.timeout(600_000) });
+  if (verdict.status === 'scanned') publish(verdict.image);
+  else if (verdict.status === 'blocked') tellThemWhy(verdict.reason);
+  else offerToTryAgain(verdict.message);
+}
+```
+
+🔴 `scanned` is the only verdict that clears the image for anyone but its
+author. `blocked` is the host refusing it; `error` is the host not answering —
+neither is a pass, so branch on `scanned`, never on "not blocked". `scan()`
+waits as long as the host takes and this package imposes no deadline of its
+own, which is why the snippet passes a signal.
+
+A **generation source** is private and unscanned here — the orchestrator scans
+it when the workflow runs — so it needs no verdict, and comes back as a url and
+the image's real dimensions. A step takes the two separately: `sourceImage` is
+the url, and the dimensions are the step's own:
+
+```ts
+const app = await initialize();
+
+const source = await app.host.openImageUpload({ purpose: 'generationSource' });
+if (source) {
+  await app.orchestration.submitWorkflow({
+    steps: [
+      {
+        $type: 'textToImage',
+        input: {
+          model: 'urn:air:sdxl:checkpoint:civitai:101055@128078',
+          prompt: 'the same lighthouse, at dawn',
+          cfgScale: 7,
+          seed: 1234,
+          sourceImage: source.url,
+          width: source.width,
+          height: source.height,
+        },
+      },
+    ],
+  });
+}
+```
+
+### Publishing a generation
+
+Outputs of a workflow your app ran can become public images, and the host asks
+the viewer first. Needs `ai:write:budgeted` — an app trusted to spend their
+Buzz on a generation is trusted to publish what it produced.
+
+```ts
+const app = await initialize();
+
+const imageIds = await app.host.publishGenerationOutputs(
+  { workflowId, imageIndexes: [0, 2] },
+  { signal: AbortSignal.timeout(600_000) },
+);
+```
+
+🔴 **Outputs are named by index, never by url.** The host re-derives that this
+viewer and this app own the workflow and resolves the urls itself — a frame at
+an opaque origin naming its own blob to publish would be a different feature
+entirely. Omit `imageIndexes` to publish every output; an unusable list is
+refused here rather than sent, because the host reads one it cannot parse as
+*publish everything*.
+
+The host holds its confirmation in front of a person, so this waits as long as
+they take and nothing here cuts it short — pass a `signal`, as above, for the
+bound your app wants. A viewer who declines rejects the call.
+
+⚠ Publishing is best-effort per image: an output that fails is skipped rather
+than failing the call, so `imageIds` can be **shorter** than what you selected
+and nothing says which index dropped. Compare lengths; do not pair ids to
+indexes.
 
 ## Parent origins
 

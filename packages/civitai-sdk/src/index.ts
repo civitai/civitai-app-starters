@@ -43,8 +43,12 @@ export type {
   DownloadRequest,
   Host,
   HostCallOptions,
+  ImageScanResult,
+  PendingImage,
   PickedResource,
   ResourcePickerType,
+  SourceImage,
+  UploadedImage,
 } from './host/index.js';
 
 export { ApiError } from './http/index.js';

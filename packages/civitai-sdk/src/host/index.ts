@@ -1,3 +1,4 @@
+import { BridgeError } from '../core/errors.js';
 import { createCaller, createListener, createNotifier } from '../core/messaging.js';
 import { tokenFromWrapped, type BlockTransport } from '../core/transport.js';
 import type { GrantOptions, Scope, Session, TokenOptions } from '../session/index.js';
@@ -7,15 +8,21 @@ import type {
   HostNotifications,
   HostPushes,
   HostRequests,
+  ImageScanResult,
   PickedResource,
   ResourcePickerType,
+  SourceImage,
+  UploadedImage,
 } from './protocol.js';
 
 export type {
   ConsentRefusal,
   DownloadRequest,
+  ImageScanResult,
   PickedResource,
   ResourcePickerType,
+  SourceImage,
+  UploadedImage,
 } from './protocol.js';
 
 const call = createCaller<HostRequests>();
@@ -24,6 +31,25 @@ const on = createListener<HostPushes>();
 
 export interface HostCallOptions {
   signal?: AbortSignal;
+}
+
+/**
+ * An upload the host has stored but not yet finished moderating. The image
+ * exists and its author can see it; nobody else may until `scan()` answers.
+ */
+export interface PendingImage {
+  imageId: number;
+  /** The author's own preview. Not for any other viewer until `scan()` says `scanned`. */
+  url: string;
+  /**
+   * The host's verdict on this upload. Resolves once the host reaches one and
+   * returns the same answer to every later call, so it is safe to re-read.
+   *
+   * 🔴 It waits as long as the host takes — the host is what bounds the scan,
+   * and this package sets no deadline of its own. Pass a `signal` if your app
+   * needs one; aborting gives up on the verdict, it does not decide it.
+   */
+  scan(opts?: HostCallOptions): Promise<ImageScanResult>;
 }
 
 /** Asking the host page to show its own UI. Data goes over the API, not here. */
@@ -55,6 +81,50 @@ export interface Host {
     args?: { suggestedAmount?: number },
     opts?: HostCallOptions,
   ): Promise<{ purchased: boolean }>;
+  /**
+   * civitai's own upload modal. The bytes go through the host's session, never
+   * through the frame, and `null` means the viewer closed it without uploading.
+   *
+   * `purpose: 'generationSource'` uploads a PRIVATE img2img source: unscanned
+   * here, scanned by the orchestrator when the workflow runs.
+   */
+  openImageUpload(
+    args: { purpose: 'generationSource' },
+    opts?: HostCallOptions,
+  ): Promise<SourceImage | null>;
+  /**
+   * A PUBLIC image. The host stores it and moderates it afterwards, so this
+   * resolves with a {@link PendingImage} — the image, plus the `scan()` that
+   * answers whether anyone but its author may see it.
+   */
+  openImageUpload(
+    args?: { purpose?: 'display' },
+    opts?: HostCallOptions,
+  ): Promise<PendingImage | null>;
+  /**
+   * Publishes outputs of ONE of this app's own workflows as public images, and
+   * resolves with the ids of the rows the host created. Needs
+   * `ai:write:budgeted`: an app trusted to spend the viewer's Buzz on a
+   * generation is trusted to publish what that generation produced.
+   *
+   * 🔴 Outputs are named by INDEX into the workflow, never by url. The host
+   * re-derives that this viewer and this app own `workflowId`, then resolves
+   * the urls itself — which is the whole guarantee, because a frame at an
+   * opaque origin naming its own blob to publish would be a different feature.
+   *
+   * The host shows the viewer a confirmation first and answers only when they
+   * act, so this waits on a person. Nothing here bounds that wait; pass a
+   * `signal` for the bound your app wants.
+   *
+   * ⚠ Publishing is best-effort per image. An output that fails to publish is
+   * skipped rather than failing the call, so `imageIds` can be SHORTER than
+   * the selection and nothing says which index dropped. Compare lengths rather
+   * than pairing ids to indexes.
+   */
+  publishGenerationOutputs(
+    args: { workflowId: string; imageIndexes?: number[] },
+    opts?: HostCallOptions,
+  ): Promise<number[]>;
 }
 
 export function createHost(transport: BlockTransport): Host {
@@ -98,7 +168,236 @@ export function createHost(transport: BlockTransport): Host {
       const { purchased } = await call('OPEN_BUZZ_PURCHASE', args, { ...opts, transport });
       return { purchased };
     },
+    async publishGenerationOutputs(args, opts = {}) {
+      const { imageIds } = await call('PUBLISH_GENERATION_OUTPUTS', publishParams(args), {
+        ...opts,
+        transport,
+      });
+      // The host spells "no failure" as `error: ''`, which the transport reads
+      // as a success — so a reply carrying neither the ids nor a message gets
+      // this far, and returning it would resolve `undefined` from a promise
+      // that says `number[]`. A caller reading that as "nothing published"
+      // would be guessing: images may well have been.
+      if (!Array.isArray(imageIds) || !imageIds.every((id) => typeof id === 'number')) {
+        throw new BridgeError(
+          'malformed',
+          'PUBLISH_GENERATION_OUTPUTS',
+          'PUBLISH_GENERATION_OUTPUTS reply carried no image ids. Whether anything ' +
+            'was published is unknown; read the workflow back rather than assuming.',
+        );
+      }
+      return imageIds;
+    },
+    // Cast scoped to this one member: the interface overloads it so each
+    // `purpose` names its own return, which one implementation signature cannot
+    // express. Every other member here is still checked against `Host`.
+    openImageUpload: ((
+      args: { purpose?: 'display' | 'generationSource' } = {},
+      opts: HostCallOptions = {},
+    ) =>
+      args.purpose === 'generationSource'
+        ? openSourceUpload(transport, opts)
+        : openDisplayUpload(transport, opts)) as Host['openImageUpload'],
   };
+}
+
+/**
+ * Everything that goes on the `PUBLISH_GENERATION_OUTPUTS` wire, built field by
+ * field.
+ *
+ * 🔴 NAMED FIELDS, NEVER A SPREAD. The message's guarantee is that a block
+ * cannot say WHICH bytes to publish — it names a workflow it owns and indexes
+ * into it, and the host resolves the urls. Spreading the caller's object here
+ * would put whatever else it carries on the wire, so the one line that makes
+ * `url` unreachable is the two assignments below being the only ones.
+ *
+ * The two refusals are hangs and escalations the host cannot save us from:
+ *
+ * - A missing `workflowId` is DROPPED by the host with no reply at all, and
+ *   nothing in this package bounds a request, so the call would simply never
+ *   settle.
+ * - An `imageIndexes` the host cannot read — empty, or holding anything that is
+ *   not a whole index — is stripped, and a stripped `imageIndexes` means
+ *   PUBLISH EVERY OUTPUT. "Publish these two" quietly becoming "publish all
+ *   twenty" is not a failure a viewer can take back.
+ */
+function publishParams(args: { workflowId: string; imageIndexes?: number[] }): {
+  workflowId: string;
+  imageIndexes?: number[];
+} {
+  const { workflowId, imageIndexes } = args;
+  if (typeof workflowId !== 'string' || workflowId === '') {
+    throw new BridgeError(
+      'invalid',
+      'PUBLISH_GENERATION_OUTPUTS',
+      'publishGenerationOutputs needs the workflowId of a workflow this app ran.',
+    );
+  }
+  if (imageIndexes === undefined) return { workflowId };
+  if (
+    !Array.isArray(imageIndexes) ||
+    imageIndexes.length === 0 ||
+    !imageIndexes.every((index) => Number.isInteger(index) && index >= 0)
+  ) {
+    throw new BridgeError(
+      'invalid',
+      'PUBLISH_GENERATION_OUTPUTS',
+      'imageIndexes must be a non-empty list of output indexes. The host reads an ' +
+        'unusable list as "publish every output", so this refuses rather than publish ' +
+        'more than you asked for.',
+    );
+  }
+  return { workflowId, imageIndexes: [...imageIndexes] };
+}
+
+async function openSourceUpload(
+  transport: BlockTransport,
+  opts: HostCallOptions,
+): Promise<SourceImage | null> {
+  const { selected } = await call(
+    'OPEN_IMAGE_UPLOAD',
+    { purpose: 'generationSource' },
+    { ...opts, transport },
+  );
+  return asSourceImage(selected);
+}
+
+/**
+ * The public-image upload. Two things make it more than one `call`:
+ *
+ * The verdict is a PUSH the host sends on its own schedule, so the listener has
+ * to be attached BEFORE the request goes out — a scan that finishes quickly can
+ * land before the reply is read, and a verdict nobody heard is a verdict lost.
+ *
+ * And a host that does not know `asyncScan` answers the OLD way: it blocks its
+ * modal on the scan and replies with a moderated image. That reply is a verdict
+ * already reached, so it is stored as one; a caller written against `scan()`
+ * gets its answer rather than waiting on a push no such host will ever send.
+ */
+function openDisplayUpload(
+  transport: BlockTransport,
+  opts: HostCallOptions,
+): Promise<PendingImage | null> {
+  let verdict: ImageScanResult | undefined;
+  let imageId: number | undefined;
+  /** Verdicts that arrived before the reply named our `imageId`, keyed by theirs. */
+  const early = new Map<number, ImageScanResult>();
+  const waiters = new Set<(result: ImageScanResult) => void>();
+
+  const settle = (result: ImageScanResult) => {
+    verdict = result;
+    off();
+    for (const waiter of [...waiters]) waiter(result);
+    waiters.clear();
+  };
+
+  const off = on(transport, 'IMAGE_SCAN_RESOLVED', (push) => {
+    if (verdict !== undefined) return; // the host emits once; honour the first
+    if (typeof push?.imageId !== 'number') return;
+    if (imageId === undefined) early.set(push.imageId, asScanResult(push.result));
+    else if (push.imageId === imageId) settle(asScanResult(push.result));
+  });
+
+  const handle = (id: number, url: string): PendingImage => {
+    imageId = id;
+    const buffered = early.get(id);
+    if (buffered !== undefined && verdict === undefined) settle(buffered);
+    return {
+      imageId: id,
+      url,
+      scan: ({ signal } = {}) =>
+        new Promise<ImageScanResult>((resolve, reject) => {
+          if (verdict !== undefined) return resolve(verdict);
+          if (signal?.aborted) return reject(signal.reason);
+          const deliver = (result: ImageScanResult) => {
+            signal?.removeEventListener('abort', onAbort);
+            resolve(result);
+          };
+          const onAbort = () => {
+            waiters.delete(deliver);
+            reject(signal!.reason);
+          };
+          waiters.add(deliver);
+          signal?.addEventListener('abort', onAbort, { once: true });
+        }),
+    };
+  };
+
+  return (async () => {
+    let selected;
+    try {
+      ({ selected } = await call('OPEN_IMAGE_UPLOAD', { asyncScan: true }, { ...opts, transport }));
+    } catch (error) {
+      off();
+      throw error;
+    }
+
+    const pending = asPendingUpload(selected);
+    if (pending) return handle(pending.imageId, pending.url);
+
+    // A host that ignored `asyncScan` and scanned before replying.
+    const moderated = asUploadedImage(selected);
+    if (moderated) {
+      const image = handle(moderated.imageId, moderated.url);
+      if (verdict === undefined) settle({ status: 'scanned', image: moderated });
+      return image;
+    }
+
+    // Dismissed, or a reply this flow cannot read as an image. Never invent a
+    // handle: its `scan()` would have nothing to answer with.
+    off();
+    return null;
+  })();
+}
+
+function asSourceImage(value: unknown): SourceImage | null {
+  const v = value as Partial<SourceImage> | undefined;
+  return typeof v?.url === 'string' && typeof v.width === 'number' && typeof v.height === 'number'
+    ? { url: v.url, width: v.width, height: v.height }
+    : null;
+}
+
+function asPendingUpload(value: unknown): { imageId: number; url: string } | null {
+  const v = value as { status?: unknown; imageId?: unknown; url?: unknown } | undefined;
+  return v?.status === 'pending' && typeof v.imageId === 'number' && typeof v.url === 'string'
+    ? { imageId: v.imageId, url: v.url }
+    : null;
+}
+
+function asUploadedImage(value: unknown): UploadedImage | null {
+  const v = value as Partial<UploadedImage> | undefined;
+  return typeof v?.imageId === 'number' &&
+    typeof v.url === 'string' &&
+    typeof v.nsfwLevel === 'number' &&
+    typeof v.contentRating === 'string'
+    ? {
+        imageId: v.imageId,
+        url: v.url,
+        nsfwLevel: v.nsfwLevel,
+        contentRating: v.contentRating,
+      }
+    : null;
+}
+
+/**
+ * 🔴 The only way into {@link ImageScanResult}, and it fails CLOSED in both
+ * directions: `blocked` is kept exactly as the host sent it, and nothing
+ * becomes `scanned` without a readable image to back the claim. A verdict this
+ * cannot read is an `error` — which is not a pass — rather than dropped, since
+ * a dropped verdict leaves `scan()` waiting on a push the host has already sent.
+ */
+function asScanResult(value: unknown): ImageScanResult {
+  const v = value as { status?: unknown; image?: unknown; reason?: unknown; message?: unknown };
+  if (v?.status === 'blocked') {
+    return { status: 'blocked', ...(typeof v.reason === 'string' ? { reason: v.reason } : {}) };
+  }
+  if (v?.status === 'scanned') {
+    const image = asUploadedImage(v.image);
+    return image
+      ? { status: 'scanned', image }
+      : { status: 'error', message: 'the host reported a scan with no image' };
+  }
+  return { status: 'error', ...(typeof v?.message === 'string' ? { message: v.message } : {}) };
 }
 
 /** The token the host minted for this block, kept current as the host rotates it. */

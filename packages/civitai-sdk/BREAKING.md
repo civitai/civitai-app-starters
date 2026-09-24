@@ -20,7 +20,8 @@ messages have no destination yet.
 | `SHARED_*` | `GET\|POST /api/v1/blocks/shared-storage/*` | **Route exists** — nine of them; see *Shared storage* below |
 | `GET_BUZZ_BALANCE` | `GET /api/v1/blocks/buzz` | **Route exists.** Returns `{ blue, green, yellow }` — a bare object, three numbers |
 | `GET_BUZZ_ACCOUNTS`, `GET_BUZZ_TRANSACTIONS` | — | No v1 route |
-| `CREATE_POST_FROM_APP`, `PUBLISH_GENERATION_OUTPUTS` | — | No v1 route, **and deliberately staying on the bridge** — see below |
+| `CREATE_POST_FROM_APP` | — | No v1 route, **and deliberately staying on the bridge** — see below |
+| `PUBLISH_GENERATION_OUTPUTS` | `app.host.publishGenerationOutputs` | Same reasoning: it raises host UI, so it stays on the bridge — **carried** rather than replaced |
 | `SET_COLLECTION_FOLLOW` | `POST /api/v1/blocks/collections/{id}/follow` | **Route exists** (scope `collections:write:self`). This row previously said "No v1 route"; that was wrong |
 | `GET_DAILY_COMPENSATION`, `GET_WILDCARD_PACK`, `TRACK_EVENT` | — | Not carried |
 
@@ -122,6 +123,12 @@ one.
 If a REST surface is ever needed, the defensible shape is a route returning a short-lived server-signed publish
 intent that host chrome redeems after showing the preview — so the host stays in the loop by construction.
 
+`PUBLISH_GENERATION_OUTPUTS` is on `app.host` for exactly that reason: staying on the bridge is the decision,
+and `app.host` is where a bridge message lives. Its own version of the binding is the index — the block names a
+workflow and positions in it, and the host resolves the urls from the workflow it has verified the block owns,
+so there is no url for a frame to supply. `CREATE_POST_FROM_APP` is not carried; nothing in the fleet calls it
+that `publishGenerationOutputs` does not already serve.
+
 ## What a direct orchestrator call loses
 
 Submitting through the host went through civitai's own `blocks.submitWorkflow`,
@@ -137,12 +144,35 @@ which added controls a direct call does not get:
 ## Host UI still carried
 
 On `app.host`: `requestSignIn`, `download` (was `SAVE_IMAGE`),
-`openResourcePicker`, `openBuzzPurchase`, `resize`, `reportError`, `navigate`
-and `onVisibilityChange`. Consent is `app.requestGrants` (was `requestConsent`).
+`openResourcePicker`, `openBuzzPurchase`, `openImageUpload`,
+`publishGenerationOutputs`, `resize`, `reportError`, `navigate` and
+`onVisibilityChange`. Consent is `app.requestGrants` (was `requestConsent`).
+
+`publishGenerationOutputs` keeps `usePublishGenerationOutputs`'s wire exactly —
+`workflowId` plus `imageIndexes`, never a url — and drops one field. `title`
+reached the host's validator and was then discarded before the mutation, so
+sending it was a no-op end to end; a field that does nothing is not worth a
+version commitment. Two client-side refusals are new, and both are for
+something the host does silently: a missing `workflowId` is DROPPED with no
+reply at all, which without a client deadline is a hang; and an `imageIndexes`
+the host cannot read is STRIPPED, and a stripped `imageIndexes` means publish
+every output.
+
+`openImageUpload` differs in shape from `useImageUpload`, twice:
+
+- **There is one display mode, the asynchronous one.** The hook also had a
+  blocking variant whose return looked moderated; here a public upload always
+  resolves a `PendingImage` and the verdict comes from its `scan()`, so no
+  caller ends up holding an image that looks cleared without having asked. A
+  host predating `asyncScan` replies with a moderated image instead, and that
+  is read as the verdict it already is — `scan()` answers rather than waiting
+  on a push no such host will send.
+- **`scan()` has no deadline of its own.** The hook gave up after ten minutes
+  and called that a retryable error. Client deadlines left with all the others
+  (see *Behaviour* below) — pass a `signal` for the bound your app wants.
 
 Not carried: `OPEN_CHECKPOINT_PICKER` (use `openResourcePicker` with
-`resourceType: 'Checkpoint'`), `SET_USER_CHECKPOINT` (inert on a page),
-`OPEN_IMAGE_UPLOAD` (image-only; the site's upload takes media).
+`resourceType: 'Checkpoint'`), `SET_USER_CHECKPOINT` (inert on a page).
 
 ## Behaviour
 
