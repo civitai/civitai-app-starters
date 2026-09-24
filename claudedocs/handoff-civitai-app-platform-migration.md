@@ -43,10 +43,13 @@ that protocol."*
 
 ## State now
 
-🔴 **THE ARC IS CLOSED AND MERGED. NEXT SESSION RUNS TWO TRACKS IN PARALLEL** (operator,
-2026-09-24) — ranked items 1 and 2. They are independent: Track A needs the network and a real
-API key, Track B is local reading. Claim them SEPARATELY (`--slug-for <this doc> 1` and `… 2`)
-so two sessions can take one each.
+🔴 **BOTH TRACKS ARE DONE (2026-09-24). Their results are the two `TRACK … RESULT` blocks at the
+end of "Open investigations", and they rewrote the ranked list.** Headlines: the block REST
+surface answered a real token for the first time (`/blocks/me` → **200**), the Track A probe plan
+is structurally impossible as written (a dev token can never carry `apps:storage:shared:*`), the
+four `/workflows/*` routes **404** in production because the #5068 deploy has not landed, and
+`useAppStorage` **cannot** be dropped — the fleet needs a platform PR. Claims
+`civitai-app-platform-migration-1` and `-2` were taken and released.
 
 - **PR #21 MERGED** — squash `52b7e1b1` on `ZacxDev/civitai-app-requests` main. Closing condition
   re-measured ON `origin/main`: blocks-react importers **0** · control `@civitai/sdk` **13** ·
@@ -592,40 +595,183 @@ so two sessions can take one each.
   and the 5 `playable-collections` files actually STORE — if it is all derivable server-side, the
   gap is avoidable; if not, the fleet needs the platform PR first.
 
+<!-- SUPERSEDES the "TRACK A" block above. 🔴 ITS PROBE PLAN IS STRUCTURALLY IMPOSSIBLE AS
+     WRITTEN and must not be re-run expecting a 200: a dev token can never carry
+     `apps:storage:shared:*`. The mint half of that block is CORRECT and was exercised live;
+     only its step-2 expectation is retired. Measured 2026-09-24. -->
+### TRACK A RESULT — the block REST surface answered a REAL token for the first time; the port's own routes did NOT
+- as-of: 2026-09-24
+- **Symptom + exact repro:** ran the Track A plan against production `civitai.com`. The mint works,
+  the transport works, and BOTH of the routes the plan targets refused — for two different and
+  independently interesting reasons.
+- **Observed (with values):** minted via the sanctioned CLI wrapper rather than raw `curl` —
+  `civitai app dev-token app-requests --env` from the app repo (the CLI refreshed the stored OAuth
+  credential itself; `civitai whoami` → `zachlowdenzx` id `8753561`, "Submit Apps: yes"). No
+  personal API key was needed: `dev-token.ts:1b` accepts an OAuth token carrying
+  `TokenScope.AppBlocksSubmit` (bit 25 = 33554432), and the CLI's stored scope `100777985` has that
+  bit set. The minted RS256 JWT decodes to `blockId=app-requests`,
+  `appBlockId=apb_01KXBZR1VB0F70QY4TF6AFK9K3`, `aud=civitai-app-block`, `dev=true`, 4h TTL —
+  and **`scopes = ['user:read:self']` ONLY**, though the manifest declares
+  `apps:storage:shared:read|write`.
+  Then, all against `https://civitai.com`:
+
+  | call | result |
+  |---|---|
+  | `GET /api/v1/blocks/me` | **200** `{id, username, status, buzzBudget}` — the real viewer |
+  | `GET /api/v1/blocks/shared-storage/list?limit=25` | **403** `{"error":"missing required scope: apps:storage:shared:read"}` |
+  | `POST /api/v1/blocks/shared-storage/vote` | **403** JSON (control — route exists, POST routes fine) |
+  | `POST\|GET /api/v1/blocks/workflows/{estimate,submit,poll,cancel}` | **404 `text/html`** ×5 |
+
+  `via: measurement`
+- 🔴 **The 200 on `/blocks/me` is the positive control and it is the headline.** It is the FIRST
+  time in this arc that anything other than `src/platform/testing.ts` answered. Token, signature
+  verification, `withBlockScope`, Cloudflare and the pod all work end-to-end against a real block
+  JWT — so the 403 below is a genuine scope refusal, not a broken probe, and the 404s are genuine
+  absence rather than a transport failure.
+- **Ruled out:** *"a dev token just needs the right request to carry the shared scopes"* — **FALSE,
+  and it is structural.** `DEV_TOKEN_SCOPE_ALLOWLIST`
+  (`src/server/services/blocks/dev-scoped-mint.service.ts:66-124`) lists `apps:storage:read` and
+  `apps:storage:write` but **deliberately withholds `apps:storage:shared:*`** — its own comment at
+  `:73-75` gives the reason: *"deliberately withheld pre-approval because a pre-approval app's
+  storage NAMESPACE is synthetic and could collide across the approve boundary"*. `dev-token.ts`
+  calls `clampDevScopes({… allowlist: DEV_TOKEN_SCOPE_ALLOWLIST})` **once, unconditionally**, so
+  step (b) strips the scope on all three mint modes. `via: code`
+- 🔴 **NEW FINDING — the justification does not cover the case it fires on.** `app-requests` is an
+  APPROVED, published app: its namespace is not synthetic and there is no approve boundary left to
+  cross, yet the clamp stripped both scopes anyway (measured above — approved-snapshot mode, scopes
+  came back `['user:read:self']`). The withholding is written as a pre-approval rule and
+  implemented as an all-modes rule. Widening it to the approved path is a small, well-scoped
+  platform PR and is the cheapest route to the live probe this arc has wanted since #5067.
+  `via: measurement`
+- **Ruled out:** *"the workflows 404 means #5068 shipped broken"* — NOT supported, and it must not
+  be reported that way. #5068 merged `2a2eb0fe2f` at **2026-09-23T21:40:40Z** and is an ancestor of
+  `origin/main`; the probe ran **2026-09-24T02:40Z**, ~5h later. The `/shared-storage/vote` control
+  returning **403 JSON** on the same POST verb proves routing is healthy, so the four 404s say the
+  DEPLOY has not carried `2a2eb0fe2f` to production yet. No version/build header is exposed on
+  `civitai.com` (checked `/api/health` → `{"error":"Unauthorized"}`, no `x-version`/`x-commit`
+  header), so the deploy could not be read directly. `via: command`
+- **Leading hypothesis:** the signed-in REST path works; nothing about it is disproven. What is now
+  known is that the *dev-token* route to proving it is closed by design for shared storage.
+- **Next probe:** two independent options, both cheap.
+  (a) **Platform PR** — add `apps:storage:shared:read|write` to `DEV_TOKEN_SCOPE_ALLOWLIST` for the
+  APPROVED-app mint mode only, then re-run the exact command below and expect **200** with
+  `items[].viewerVoted` present. The 403 above is the positive control that the probe discriminates.
+  (b) **Preview deploy** — the original plan: load the branch in a real civitai.com page slot so the
+  HOST mints a page token off the approved manifest (that path has no dev allowlist).
+  🔴 **Re-probe the four `/workflows/*` routes on any later day** — a 404 that becomes a 403 is the
+  deploy landing; a 404 that survives a deploy containing `2a2eb0fe2f` is a real defect.
+  ```bash
+  # reproduce the whole run (the token is short-lived; never commit it)
+  cd <app-requests repo> && civitai app dev-token app-requests --env   # 200, prints the JWT
+  curl -s -o /dev/null -w '%{http_code}\n' https://civitai.com/api/v1/blocks/me \
+    -H "Authorization: Bearer $T"                                       # 200  <- positive control
+  curl -s 'https://civitai.com/api/v1/blocks/shared-storage/list?limit=25' \
+    -H "Authorization: Bearer $T"                                       # 403  <- the finding
+  ```
+- 🔴 **STILL UNPROVEN, and one probe did not cover them:** (1) the **ANON** read #5067 fixed — the
+  doc already flagged this and it remains unit-level-only; (2) `items[].viewerVoted` on a real
+  response; (3) the app itself in a page slot; (4) every `/workflows/*` route, which could not even
+  be reached.
+
+<!-- SUPERSEDES the "TRACK B" block above. That block's fleet table and its
+     generate-from-model recommendation SURVIVE unchanged. What is added here is the ANSWER to the
+     question it left open, which it correctly framed as the gate on five of the six apps. -->
+### TRACK B RESULT — `useAppStorage` cannot be dropped; the fleet needs a platform PR
+- as-of: 2026-09-24
+- **Symptom + exact repro:** the open question was *"does `useAppStorage` need REST twins, or can
+  each app drop it the way `app-requests` did?"* Read what each app actually stores. **Answer: the
+  fleet needs the platform PR.** Not one of the five stores anything derivable server-side.
+- **Observed (with values):** every file read first-hand.
+  - **`custom-generators`** (`src/lib/drafts.ts`) — per-viewer **DRAFTS**: a not-yet-published
+    `GeneratorConfig` under a `draft:` prefix. User-authored content that exists nowhere else.
+  - **`playable-collections`** (`src/lib/browse-prefs.ts`) — the browse **sort + period**, one JSON
+    record. Its own docblock rules out the obvious alternatives: `localStorage` **throws** at the
+    iframe's opaque origin, the app-sdk shim over it is session-scoped so it *"would read and write
+    perfectly, pass every jsdom test, and PERSIST NOTHING IN PRODUCTION"*, and a URL param buys
+    nothing because the address bar belongs to the host page.
+  - **`gen-matrix`** (`src/persistence.ts`) — the run manifest. Its docblock states the negative
+    result directly: `useAppWorkflows()` returns the workflows but **NOT which (checkpoint ×
+    modifier) CELL each one was**, so *"it can't rebuild the GRID on its own"*. Server-derivable is
+    exactly what this is not.
+  - **`model-benchmarking`** (`src/lib/kv.ts`) — drafts + unpublished rows, and the KV listing feeds
+    a path its own comment marks 🔴 **MONEY SAFETY** (the in-flight rehydrate).
+  - **`sensei`** — chat session transcripts across 24 files.
+  `via: code`
+- **Ruled out:** *"`app-requests` dropped it, so the others can"* — FALSE and not comparable.
+  `app-requests` never used `useAppStorage` at all; it dropped a local *voted-set* that the server
+  already returns as `viewerVoted`. There is no such server-side twin for a draft, a grid manifest
+  or a transcript. `via: code`
+- **Ruled out:** *"the sandbox bans `allow-same-origin`, so web storage is impossible"* — **too
+  strong, and it is `browse-prefs.ts`'s own wording.** The manifest validator bans *combining*
+  `allow-same-origin` with `allow-scripts` outside the `internal` trust tier
+  (`block-manifest-validator.service.ts:320-322`), and `sandbox.ts:44` DOES add it for
+  `TRUSTED_TIERS`. So web storage is tier-dependent, which makes it a worse foundation than the
+  comment's absolute framing suggests — not a better one. `via: code`
+- **Observed — the size of the gap, with controls:** there is **no** per-viewer app-storage REST
+  route. Enumerating `src/pages/api/v1/blocks/` gives 30 files: 11 `shared-storage/*` and **0**
+  `app-storage`-shaped (positive control: the same enumeration lists all 11 shared-storage routes
+  and all 4 `workflows/*` routes, so the zero is a real reading). The server implementation exists
+  and is substantial — `apps.router.ts` `appsStorageRouter` carries `get`/`set`/`delete`/`list`
+  (+`getQuota`) at `:469,508,937,1021,1105` with per-app and per-user quota ceilings. The block
+  scopes exist too: `apps:storage:read|write` are declared at
+  `block-scope.constants.ts:76-77`. **What is missing is only the REST adapter** — the same shape
+  #5068 built for the four workflow procedures. `via: measurement`
+- 🔴 **Second half of the gap, not previously recorded:** `@civitai/sdk` has **no storage client at
+  all**. `AppClient` is `{site, orchestration, host, requestGrants, getToken}`
+  (`packages/civitai-sdk/src/app/index.ts:25-46`); the only `storage` hits in the package are
+  `sign-in/` and `session/` (browser storage for the OAuth session). `app-requests` reaches shared
+  storage through its own hand-rolled `src/platform/` layer. So a fleet-wide fix is TWO pieces —
+  the REST routes and an SDK client — or every app hand-rolls its own. `via: measurement`
+- **Leading hypothesis:** `generate-from-model` (0 appStorage files, 23 blocks-react importers)
+  ports without waiting for any of this, and is the right next app — unchanged from the block above.
+  The other five wait on the platform PR.
+- **Next probe:** scope the app-storage REST PR against #5068 as the worked precedent (4 routes ×
+  thin adapter over the existing `appsStorageRouter` procedures), and decide whether the SDK gets a
+  `storage` client or each app keeps hand-rolling. Operator call on sequencing — it is a platform PR
+  that unblocks 5 apps, against porting the 1 app that needs nothing.
+
 ## Next steps (ranked)
 
-1. **TRACK A — probe the REST surface with a real block token.** Run the three commands in the
-   Track A block verbatim (`dev-token` → `shared-storage/list` → `workflows/estimate`). Needs the
-   operator's civitai API key and team access. 🔴 Report the SIGNED-IN result and say plainly that
-   the ANON read is still unproven — one probe does not cover both.
-   forcing: gate — nothing may be submitted to the store on a fake-server-only green, and this is
-   the last thing between a merged port and a submittable one.
-2. **TRACK B — settle the `useAppStorage` platform question, then pick the next app.** Read what
-   `custom-generators` (2 files) and `playable-collections` (5 files) store in it. Outcome is
-   either "each app can drop it" or "the fleet needs an #5068-shaped REST-twin PR first". Then
-   scope `civitai-block-generate-from-model` (0 appStorage, 23 files) as the likely next port.
-   forcing: gate — five of the six remaining apps are blocked behind this answer.
-3. **Merge devrc #1862, `home-manager switch`, then land the cairn entry** from
+1. **Widen `DEV_TOKEN_SCOPE_ALLOWLIST` to carry `apps:storage:shared:*` on the APPROVED-app mint
+   mode**, then re-run the Track A probe and expect **200** with `items[].viewerVoted`. The live
+   403 recorded above is the positive control. 🔴 The allowlist's own comment justifies the
+   withholding by *pre-approval namespace collision*, which does not apply to an approved app, but
+   the clamp fires on every mode — confirm that reading with the author before widening it.
+   forcing: gate — this is now the cheapest path to the only unmeasured thing left in the port.
+2. **Port `civitai-block-generate-from-model`** (0 `useAppStorage` files, 23 blocks-react
+   importers, 11 distinct hooks). It is the ONLY remaining app that needs neither the app-storage
+   platform PR nor the workflows surface to be deployed. Track B settled that the other five wait.
+   forcing: gate — the fleet's next port, and the only one unblocked today.
+3. **Decide the app-storage platform PR** — 4 REST adapters over `appsStorageRouter`
+   (`get`/`set`/`delete`/`list`), #5068-shaped, plus whether `@civitai/sdk` grows a `storage`
+   client or each app hand-rolls one like `app-requests` did.
+   forcing: gate — five of the six remaining apps are blocked behind it.
+4. **Re-probe `/api/v1/blocks/workflows/*` once a deploy carries `2a2eb0fe2f`.** All four returned
+   **404 `text/html`** on 2026-09-24T02:40Z, ~5h after #5068 merged, against a `/shared-storage/vote`
+   control returning 403 JSON. 404→403 is the deploy landing; 404 surviving a deploy that contains
+   the commit is a real defect.
+   forcing: gate — #5068's surface is unverified in production.
+5. **Merge devrc #1862, `home-manager switch`, then land the cairn entry** from
    `/home/zach/workspace/civit/cairn-entry-civitai-app-requests-platform.md` with
    `cairn create --scope civitai-app-requests --ref platform --file <file>`. 🔴 Check its Tekton
    statuses first — they were stuck `pending` for ~25 min.
    forcing: gate — the index write is blocked until the route is live.
-4. **Delete the `minimumReleaseAgeExclude` entry when `@civitai/sdk` moves past 0.2.0.**
+6. **Delete the `minimumReleaseAgeExclude` entry when `@civitai/sdk` moves past 0.2.0.**
    `civitai-app-requests/pnpm-workspace.yaml` carries the condition.
    forcing: security — a standing supply-chain exemption with a written expiry.
-5. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
+7. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
    `civitai/civitai-app-starters` — force-pushed off the branch, still reachable by sha.
    forcing: security — residual exposure on a PUBLIC repo from an earlier session's leak.
-6. **Ratify or reject R14** — #5068 reached tRPC via a `blocksRouter` caller, diverging from the
+8. **Ratify or reject R14** — #5068 reached tRPC via a `blocksRouter` caller, diverging from the
    body-extraction precedent #5054/#5055 set.
    forcing: user — an operator call, not an engineering one.
-7. **Revisit F2/F6 when a GENERATION app adopts the poll surface.** Still unfired: `app-requests`
-   does not generate. Track A probing `workflows/estimate` does NOT fire it either — that is one
-   call, not the sustained polling F2/F6 are about.
+9. **Revisit F2/F6 when a GENERATION app adopts the poll surface.** Still unfired: `app-requests`
+   does not generate. Track A could not fire it at all — `/workflows/poll` 404s in production today.
    forcing: user — deferred deliberately, not dropped.
-8. **Prune this document.** ~80 KB against a 65,536 B ceiling, with ~7.5 KB of resolved
-   investigation blocks the tool measures as evictable.
-   forcing: none
+10. **Prune this document.** ~90 KB against a 65,536 B ceiling, with ~7.5 KB of resolved
+    investigation blocks the tool measures as evictable, plus the two superseded TRACK A/TRACK B
+    blocks this session replaced.
+    forcing: none
 
 ## Defects (batched)
 
