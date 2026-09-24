@@ -35,9 +35,13 @@ capability rather than a migration gap.
 
 ## Scope binding is per-route
 
-Each block REST route binds **its own** required scope against your block context: `blocks/models` checks that
-`models:read:self` matches the model your block renders beside, `blocks/buzz` checks `buzz:read:self` and does
-not look at your other scopes.
+A route that declares a required scope binds **that scope, and only that one**, against your block context.
+`GET /api/v1/models/{id}` declares `models:read:self` and 403s unless `?id` equals the model your block
+renders beside; `GET /api/v1/blocks/buzz` declares `buzz:read:self` and does not look at your other scopes.
+
+⚠ A route that declares **no** required scope binds nothing. `GET /api/v1/blocks/models` accepts any valid
+block token, clamped only by the token's maturity ceiling — declaring `models:read:self` is not what gates
+it, and requesting it for that route buys consent surface you do not need.
 
 ⚠ **This changed on 2026-09-23** (civitai#5063, fixed by #5067). Before that the check ran over *every* scope on
 the token, so an unrelated declared scope could 403 a call — an app declaring `models:read:self` got
@@ -87,10 +91,22 @@ bridge already called, so behaviour is identical on both transports.
 
 ### Error body
 
-The newer routes return `{ message }` on a 4xx. ⚠ The two oldest siblings (`top`, `increment`) return `{ error }`.
-That divergence is deliberate: the newer routes go through the shared error chokepoint rather than forwarding a
-raw database error string, which on this surface can name the app's schema and the offending row value. Write
-clients against `{ message }`; treat `{ error }` as legacy.
+🔴 **Which key carries the reason depends on WHERE the request died, so read both.** There are three shapes:
+
+| Refused by | Body |
+|---|---|
+| `withBlockScope` — bad token, revoked instance, unapproved app, missing scope, failed binding | `{ error }` **only** |
+| a route's own prologue — wrong method, missing param | `{ error }` only |
+| the service layer, through the shared error chokepoint | `{ message }` |
+| `restErrorBody` | `{ error, message, code }` |
+
+An earlier version of this section said to write clients against `{ message }` and treat `{ error }` as legacy.
+**That is wrong**: every middleware rejection — including the anonymous-write 403 above — carries no `message`
+at all, so a client following it logs `undefined` for the refusals it most needs to see. Read
+`message ?? error`, and treat the HTTP status as the thing you branch on.
+
+The chokepoint does matter for one thing, and that part stands: the newer routes do not forward a raw database
+error string, which on this surface can name the app's schema and the offending row value.
 
 ## App storage
 
@@ -205,7 +221,7 @@ Not carried: `OPEN_CHECKPOINT_PICKER` (use `openResourcePicker` with
 | Host failures | free-text `error` on each reply | `BridgeError` with a `code` |
 | Request deadlines | per-message client timeouts | none; pass an `AbortSignal` |
 | A refused grant | rejected | resolves `false` |
-| React hooks | 38 | none — plain functions; bind them in your framework |
+| React hooks | 37 | none — plain functions; bind them in your framework |
 
 ## Waiting on the host
 
@@ -223,10 +239,12 @@ For a block to use the API at all, civitai has to:
    `.default(false)`. **Wherever it is off, a manifest declaring `auth: "oauth"` silently receives the BLOCK
    token**, and a general `/api/v1` call then fails as unauthorised rather than explaining itself.
 
-   This file ships in the npm tarball and cannot be corrected after publication, so it does not record
-   whether the flag is on in production today. **Check
-   [the manifest reference](https://developer.civitai.com/apps/reference/manifest) before building against
-   `oauth` mode** — that page is correctable.
+   This file ships in the npm tarball and cannot be corrected after publication, so it deliberately does not
+   record whether the flag is on today — that would be frozen into every published version.
+
+   **You can tell from the outside without asking anyone:** declare `auth: "oauth"`, then read the token the
+   host hands you. Get a block-scoped JWT rather than an OAuth access token and the flag is off for you —
+   build on `block-token` until it is not. There is no error to catch; the fallback is silent by design.
 
    ✅ **The phishing finding is not re-opened**, which is why this could ship at all. The token is minted
    **server-side** by the host (`mintOauthAppToken`) against scopes already approved for the app; the
