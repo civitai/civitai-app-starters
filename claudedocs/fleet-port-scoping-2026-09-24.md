@@ -292,3 +292,32 @@ retained surfaces named — not claim the closing condition.
 🔴 **The single most dangerous item is `useAppWorkflows`**, because a plausible substitute exists
 and it is wrong in a way that type-checks and passes tests: swapping the host-forced tag filter for
 a client-supplied one relocates a server-side trust boundary into the iframe.
+
+---
+
+# 🔴 SEAM DEFECT between PR #5085 and `gen-matrix` — nobody owns it, and it fails GREEN
+
+The app-storage REST PR (#5085) flagged one wire difference and explicitly said it did **not**
+verify the app side: `updatedAt` crosses REST as an **ISO string**, where the bridge's superjson
+revives a **`Date`**. Traced to consumers 2026-09-24:
+
+- 🔴 **`civitai-app-gen-matrix` is a live consumer.** `src/history.ts:96` declares the app-storage
+  `list` envelope as `keys: { key: string; updatedAt: Date }[]`, `:68` declares `updatedAt: Date` on
+  its entry type, and `:201` maps `k.updatedAt` straight through. `history.test.ts:105` and `:162`
+  call **`.getTime()`** on it — which a string does not have.
+- ⚠ **It will not necessarily crash, and that is the problem.** The render path is already tolerant:
+  `historyAgeLabel(updatedAt: Date | string | number, …)` (`:386`) routes through `timeOf`, which
+  handles a string. So production degrades quietly while the declared interface becomes a lie.
+- 🔴 **The vacuous-green trap:** if the port's fake server keeps returning a `Date`, the `.getTime()`
+  tests stay green and the only place the mismatch appears is production. **The fake MUST return an
+  ISO string, matching the wire.** This is the "verified in isolation, defect lives in the seam"
+  shape exactly — #5085 tested its side, `gen-matrix` was written against the other side, and no
+  test loads both.
+
+**NOT affected — checked before raising it:** `civitai-app-sensei`'s `s.updatedAt` (`lib/sessions.ts:52,295-297`)
+is a **number** stored inside the session VALUE, not the storage envelope's field. Different thing;
+no action. The other three apps' `updatedAt` hits are shared-storage item fields or test fixtures.
+
+**Fix options:** have #5085 serialise `updatedAt` as the bridge does; or change `gen-matrix`'s
+declared type to `string` and its tests with it. Either is fine — but pick one deliberately and pin
+it with a test that loads BOTH sides, not one that mocks the boundary away.
