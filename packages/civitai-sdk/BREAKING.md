@@ -17,7 +17,7 @@ messages have no destination yet.
 |---|---|---|
 | `GET_VIEWER` | `app.site.get('blocks/me')` | Route exists. 🔴 **Not `site.get('me')`** — that resolves to `/api/v1/me`, an `AuthedEndpoint` that does not accept a block token |
 | `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`, `POLL_WORKFLOW`, `CANCEL_WORKFLOW`, `QUERY_APP_WORKFLOWS`, `CANCEL_APP_WORKFLOW` | `POST /api/v1/blocks/workflows/{submit,estimate,poll,cancel,query}` | **Routes exist.** 🔴 Use these, **not** `app.orchestration` — see *What a direct orchestrator call loses* below |
-| `GET_IMAGES_BY_IDS` | `GET /api/v1/images?ids=1,2,3` | Batch, up to **100** ids per request. Misses are reported by OMISSION — see below |
+| `GET_IMAGES_BY_IDS` | `GET /api/v1/blocks/images?ids=1,2,3` | Batch, up to **100** ids per request. Misses are reported by OMISSION — see below. 🔴 **Not `/api/v1/images`** — that is a `PublicEndpoint`; it ignores your token and answers with anonymous public results rather than erroring |
 | `APP_STORAGE_*` | `POST /api/v1/blocks/app-storage/*` | **Routes exist** — five of them (`get`, `set`, `delete`, `list`, `quota`), civitai#5085. This row said "No v1 route"; that is no longer true. See *App storage* below |
 | `SHARED_*` | `GET\|POST /api/v1/blocks/shared-storage/*` | **Routes exist** — eleven of them; see *Shared storage* below |
 | `GET_BUZZ_BALANCE` | `GET /api/v1/blocks/buzz` | **Route exists.** Returns `{ blue, green, yellow }` — a bare object, three numbers |
@@ -28,7 +28,7 @@ messages have no destination yet.
 | `GET_DAILY_COMPENSATION`, `GET_WILDCARD_PACK`, `TRACK_EVENT` | — | Not carried |
 
 ⚠ `TRACK_EVENT` is filed above beside two one-consumer capabilities, which understates it: it is emitted by
-`useBlockAnalytics`, used by **all 7 fleet apps across 40 files**. It is listed as *not carried* because **it has
+`useBlockAnalytics`, which the fleet apps call widely. It is listed as *not carried* because **it has
 no host handler today either** — `hostHandlerParity.ts` marks both hosts N/A, *"analytics fire-and-forget; no
 host-side sink wired (dropped, never hangs)"*. So those 40 call sites are already no-ops; this is net-new
 capability rather than a migration gap.
@@ -126,7 +126,7 @@ it is the copy that cannot rot; this file deliberately does not restate it.
 
 ## Batch image fetch
 
-`GET /api/v1/images?ids=1,2,3` — up to **100** ids, matching the ceiling the `GET_IMAGES_BY_IDS` bridge message
+`GET /api/v1/blocks/images?ids=1,2,3` — up to **100** ids, matching the ceiling the `GET_IMAGES_BY_IDS` bridge message
 already enforced.
 
 🔴 **Misses are reported by omission.** An id you may not see and an id that does not exist are both simply
@@ -185,8 +185,9 @@ iframe, and nothing about the call site looks different.
 
 On `app.host`: `requestSignIn`, `download` (was `SAVE_IMAGE`),
 `openResourcePicker`, `openBuzzPurchase`, `openImageUpload`,
-`publishGenerationOutputs`, `resize`, `reportError`, `navigate` and
-`onVisibilityChange`. Consent is `app.requestGrants` (was `requestConsent`).
+`publishGenerationOutputs`, `resize`, **`autoResize`**, `reportError`, `navigate`
+and `onVisibilityChange`. Reach for `autoResize(element)` over bare `resize` —
+it wires the `ResizeObserver` for you and returns a stop function. Consent is `app.requestGrants` (was `requestConsent`).
 
 `publishGenerationOutputs` keeps `usePublishGenerationOutputs`'s wire exactly —
 `workflowId` plus `imageIndexes`, never a url — and drops one field. `title`
@@ -212,7 +213,11 @@ every output.
   (see *Behaviour* below) — pass a `signal` for the bound your app wants.
 
 Not carried: `OPEN_CHECKPOINT_PICKER` (use `openResourcePicker` with
-`resourceType: 'Checkpoint'`), `SET_USER_CHECKPOINT` (inert on a page).
+`resourceType: 'Checkpoint'`).
+
+⚠ **`SET_USER_CHECKPOINT` is carried after all**, as `POST /api/v1/blocks/user-checkpoint/set` — the route's
+own docstring calls itself its REST twin. Pass `versionId: null` to clear. It remains inert on a page surface,
+which is what the old "not carried" line was reaching for, but a model-slot block can persist through it.
 
 ## Behaviour
 
@@ -242,9 +247,18 @@ For a block to use the API at all, civitai has to:
    This file ships in the npm tarball and cannot be corrected after publication, so it deliberately does not
    record whether the flag is on today — that would be frozen into every published version.
 
-   **You can tell from the outside without asking anyone:** declare `auth: "oauth"`, then read the token the
-   host hands you. Get a block-scoped JWT rather than an OAuth access token and the flag is off for you —
-   build on `block-token` until it is not. There is no error to catch; the fallback is silent by design.
+   **Read `token.kind`, which the host has always sent** (`'block' | 'oauth'`) — do not infer the mode from
+   the token's shape. 🔴 **And do not read `kind: 'block'` as "the flag is off".** Three different causes
+   produce a block token, and only one of them is the flag:
+
+   | you got | because |
+   |---|---|
+   | `kind: 'block'`, `needsConsent: true` | the flag is ON; the viewer has not granted the scopes yet |
+   | `kind: 'block'`, anonymous viewer | no OAuth token is minted for an anonymous viewer, whatever the flag |
+   | `kind: 'block'`, signed-in, no `needsConsent` | the flag is off |
+
+   Diagnosing the first two as "the flag is off" sends you to the wrong fix — the first needs consent, not a
+   platform change.
 
    ✅ **The phishing finding is not re-opened**, which is why this could ship at all. The token is minted
    **server-side** by the host (`mintOauthAppToken`) against scopes already approved for the app; the
