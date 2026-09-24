@@ -936,6 +936,37 @@ worktree (a worktree carries neither `.envrc` nor submodules), and `git stash` w
 
 Claims `civitai-app-platform-migration-1` (A) and `-2` (B) were held and are now RELEASED.
 
+### ✅ ALL THREE PRs ARE REVIEW-READY (2026-09-24T05:0xZ). None merged.
+
+| PR | head | state | notes |
+|---|---|---|---|
+| `civitai/civitai#5085` | `58cb9314` | **check-runs all green**; lint failure→success | one status red, see below |
+| `…/civitai-block-generate-from-model#11` | `5750a67` | `MERGEABLE`/`CLEAN`, build pass | 2 commits, 2 public corrections |
+| `ZacxDev/civitai-app-requests#22` | — | `MERGEABLE`/`CLEAN`, build pass | 2 files, +16/−33 |
+
+🔴 **#5085's remaining red is `preview / component-tests`, and the two CI surfaces disagree in BOTH
+directions on this PR** — the blocking lint failure appeared ONLY in check-runs, and
+`component-tests` appears ONLY in statuses. Read both or you will believe whichever you checked.
+
+**Is that red #5085's own?** Applied this doc's own discriminator rather than the check's adjective
+(*"report-only, not blocking"* — this doc already records that an adjective is not authority):
+- **Per-head history on this PR: red on BOTH heads** (`d97753136a`, `58cb93144e`). That is NOT
+  #5068's flake signature (five greens then one red).
+- ⚠ **The fix agent called it "pre-existing, failing on the parent commit" — that reasoning does not
+  hold**, because the parent IS this PR's own first head. It establishes "red since this PR began",
+  not "inherited". Same shape as the `pre-existing lint errors` defence that already failed on this
+  PR.
+- **The actual discriminator — a cross-PR signal — supports the conclusion anyway:** open
+  **PR #5077** carries `component-tests=failure` on an unrelated change. Four other open PRs
+  (5080, 5073, 5069, 5043) do not carry the status at all, so they are silent rather than contrary.
+  The base tip has no such status posted.
+- **Mechanism:** #5085's fix commit is comments-only in two SERVER files, and the `component`
+  project includes only `src/**/*.browser.test.tsx`. No mechanism connects them.
+- 🔴 **NOT attributable by the failing TEST**, which is what this doc's rule actually asks for: that
+  status's `target_url` is a HOST, not a log, and it is Tekton-side, so `gh run view` has nothing.
+  Verdict: **consistent with a shared cause, not established as one.** Do not merge past it on the
+  strength of its adjective; get the Tekton log or accept it deliberately.
+
 ### Round-0 FIX batch — three agents dispatched 2026-09-24T04:30Z
 Both PRs passed round 0 with `requirement questioned`, neither with `close`. Fixes dispatched, one
 agent per repo, **push to branch, no merge**:
