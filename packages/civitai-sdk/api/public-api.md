@@ -265,6 +265,25 @@ export interface HostCallOptions {
     signal?: AbortSignal;
 }
 
+/**
+ * An upload the host has stored but not yet finished moderating. The image
+ * exists and its author can see it; nobody else may until `scan()` answers.
+ */
+export interface PendingImage {
+    imageId: number;
+    /** The author's own preview. Not for any other viewer until `scan()` says `scanned`. */
+    url: string;
+    /**
+     * The host's verdict on this upload. Resolves once the host reaches one and
+     * returns the same answer to every later call, so it is safe to re-read.
+     *
+     * 🔴 It waits as long as the host takes — the host is what bounds the scan,
+     * and this package sets no deadline of its own. Pass a `signal` if your app
+     * needs one; aborting gives up on the verdict, it does not decide it.
+     */
+    scan(opts?: HostCallOptions): Promise<ImageScanResult>;
+}
+
 /** Asking the host page to show its own UI. Data goes over the API, not here. */
 export interface Host {
     /** Resizes the frame, clamped to the manifest's bounds. */
@@ -301,6 +320,24 @@ export interface Host {
     }, opts?: HostCallOptions): Promise<{
         purchased: boolean;
     }>;
+    /**
+     * civitai's own upload modal. The bytes go through the host's session, never
+     * through the frame, and `null` means the viewer closed it without uploading.
+     *
+     * `purpose: 'generationSource'` uploads a PRIVATE img2img source: unscanned
+     * here, scanned by the orchestrator when the workflow runs.
+     */
+    openImageUpload(args: {
+        purpose: 'generationSource';
+    }, opts?: HostCallOptions): Promise<SourceImage | null>;
+    /**
+     * A PUBLIC image. The host stores it and moderates it afterwards, so this
+     * resolves with a {@link PendingImage} — the image, plus the `scan()` that
+     * answers whether anyone but its author may see it.
+     */
+    openImageUpload(args?: {
+        purpose?: 'display';
+    }, opts?: HostCallOptions): Promise<PendingImage | null>;
 }
 
 export declare class ApiError extends CivitaiError {

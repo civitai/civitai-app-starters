@@ -137,12 +137,25 @@ which added controls a direct call does not get:
 ## Host UI still carried
 
 On `app.host`: `requestSignIn`, `download` (was `SAVE_IMAGE`),
-`openResourcePicker`, `openBuzzPurchase`, `resize`, `reportError`, `navigate`
-and `onVisibilityChange`. Consent is `app.requestGrants` (was `requestConsent`).
+`openResourcePicker`, `openBuzzPurchase`, `openImageUpload`, `resize`,
+`reportError`, `navigate` and `onVisibilityChange`. Consent is
+`app.requestGrants` (was `requestConsent`).
+
+`openImageUpload` differs in shape from `useImageUpload`, twice:
+
+- **There is one display mode, the asynchronous one.** The hook also had a
+  blocking variant whose return looked moderated; here a public upload always
+  resolves a `PendingImage` and the verdict comes from its `scan()`, so no
+  caller ends up holding an image that looks cleared without having asked. A
+  host predating `asyncScan` replies with a moderated image instead, and that
+  is read as the verdict it already is — `scan()` answers rather than waiting
+  on a push no such host will send.
+- **`scan()` has no deadline of its own.** The hook gave up after ten minutes
+  and called that a retryable error. Client deadlines left with all the others
+  (see *Behaviour* below) — pass a `signal` for the bound your app wants.
 
 Not carried: `OPEN_CHECKPOINT_PICKER` (use `openResourcePicker` with
-`resourceType: 'Checkpoint'`), `SET_USER_CHECKPOINT` (inert on a page),
-`OPEN_IMAGE_UPLOAD` (image-only; the site's upload takes media).
+`resourceType: 'Checkpoint'`), `SET_USER_CHECKPOINT` (inert on a page).
 
 ## Behaviour
 

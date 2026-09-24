@@ -192,11 +192,70 @@ wider scope — and refuses without one.
 | `download({ url, filename })` | Saves to the viewer's device — a sandboxed frame cannot |
 | `openResourcePicker({ resourceType })` | civitai's own picker; resolves the one pick, or `null` |
 | `openBuzzPurchase({ suggestedAmount })` | The purchase flow; resolves `{ purchased }` |
+| `openImageUpload()` | The upload modal; resolves a `PendingImage`, or `null` |
+| `openImageUpload({ purpose: 'generationSource' })` | The same modal for a private img2img source; resolves `{ url, width, height }` |
 
 Host failures reject with a `BridgeError` carrying a `code` (`forbidden`,
 `unauthenticated`, `rate-limited`, …). Timeouts are the host's to set; pass a
 `signal` to cancel. `ApiError` and `BridgeError` both extend `CivitaiError`, so
 one `catch` can tell a refusal from a bug.
+
+### Uploading an image
+
+The host owns the upload: it opens its own modal, takes the file through the
+viewer's session and hands back what it stored. The frame never sees the bytes.
+
+A **public** image is moderated *after* it is stored, so `openImageUpload()`
+resolves as soon as the image exists and the verdict comes from `scan()`:
+
+```ts
+const app = await initialize();
+
+const image = await app.host.openImageUpload();
+if (image) {
+  showTheAuthorTheirOwnPreview(image.url);
+
+  const verdict = await image.scan({ signal: AbortSignal.timeout(600_000) });
+  if (verdict.status === 'scanned') publish(verdict.image);
+  else if (verdict.status === 'blocked') tellThemWhy(verdict.reason);
+  else offerToTryAgain(verdict.message);
+}
+```
+
+🔴 `scanned` is the only verdict that clears the image for anyone but its
+author. `blocked` is the host refusing it; `error` is the host not answering —
+neither is a pass, so branch on `scanned`, never on "not blocked". `scan()`
+waits as long as the host takes and this package imposes no deadline of its
+own, which is why the snippet passes a signal.
+
+A **generation source** is private and unscanned here — the orchestrator scans
+it when the workflow runs — so it needs no verdict, and comes back as a url and
+the image's real dimensions. A step takes the two separately: `sourceImage` is
+the url, and the dimensions are the step's own:
+
+```ts
+const app = await initialize();
+
+const source = await app.host.openImageUpload({ purpose: 'generationSource' });
+if (source) {
+  await app.orchestration.submitWorkflow({
+    steps: [
+      {
+        $type: 'textToImage',
+        input: {
+          model: 'urn:air:sdxl:checkpoint:civitai:101055@128078',
+          prompt: 'the same lighthouse, at dawn',
+          cfgScale: 7,
+          seed: 1234,
+          sourceImage: source.url,
+          width: source.width,
+          height: source.height,
+        },
+      },
+    ],
+  });
+}
+```
 
 ## Parent origins
 
