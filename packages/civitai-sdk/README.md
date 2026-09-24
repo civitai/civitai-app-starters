@@ -70,7 +70,10 @@ so for a signed-in viewer. Such blocks should stay on `@civitai/app-sdk`.
 > The block-scoped token is not useless — it is accepted by the
 > `/api/v1/blocks/*` routes it was minted for, plus `GET /api/v1/models/{id}`.
 > What it does not reach is the rest of `/api/v1` or the orchestrator, which is
-> what this package needs. `BREAKING.md` has the per-message map.
+> what this package needs. ⚠ "Does not reach" does not always mean "refuses":
+> a *public* route such as `/api/v1/images` ignores the token and answers
+> anonymously instead of erroring, so prefer the `blocks/*` twin. `BREAKING.md`
+> has the per-message map.
 
 ## Signing in outside civitai.com
 

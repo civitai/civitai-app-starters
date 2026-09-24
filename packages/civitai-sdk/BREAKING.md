@@ -30,7 +30,7 @@ messages have no destination yet.
 ⚠ `TRACK_EVENT` is filed above beside two one-consumer capabilities, which understates it: it is emitted by
 `useBlockAnalytics`, which the fleet apps call widely. It is listed as *not carried* because **it has
 no host handler today either** — `hostHandlerParity.ts` marks both hosts N/A, *"analytics fire-and-forget; no
-host-side sink wired (dropped, never hangs)"*. So those 40 call sites are already no-ops; this is net-new
+host-side sink wired (dropped, never hangs)"*. So those call sites are already no-ops; this is net-new
 capability rather than a migration gap.
 
 ## Scope binding is per-route
@@ -247,18 +247,15 @@ For a block to use the API at all, civitai has to:
    This file ships in the npm tarball and cannot be corrected after publication, so it deliberately does not
    record whether the flag is on today — that would be frozen into every published version.
 
-   **Read `token.kind`, which the host has always sent** (`'block' | 'oauth'`) — do not infer the mode from
-   the token's shape. 🔴 **And do not read `kind: 'block'` as "the flag is off".** Three different causes
-   produce a block token, and only one of them is the flag:
+   🔴 **You cannot reliably tell from inside the block why you got a block token.** The handshake carries an
+   optional `token.kind` (`'block' | 'oauth'`), but it is optional in both senses — older hosts omit it, and
+   the host also omits it when a re-mint does not match the instance — so its absence means nothing in
+   particular. And `needsConsent` does not disambiguate: it is set for **any** signed-in viewer with an
+   ungranted declared scope, whether or not the flag is on.
 
-   | you got | because |
-   |---|---|
-   | `kind: 'block'`, `needsConsent: true` | the flag is ON; the viewer has not granted the scopes yet |
-   | `kind: 'block'`, anonymous viewer | no OAuth token is minted for an anonymous viewer, whatever the flag |
-   | `kind: 'block'`, signed-in, no `needsConsent` | the flag is off |
-
-   Diagnosing the first two as "the flag is off" sends you to the wrong fix — the first needs consent, not a
-   platform change.
+   So a block token can mean the flag is off, or that consent is outstanding, or that the viewer is
+   anonymous, and the three are not separable from the client. **If you need to know, ask the platform team
+   rather than inferring it.**
 
    ✅ **The phishing finding is not re-opened**, which is why this could ship at all. The token is minted
    **server-side** by the host (`mintOauthAppToken`) against scopes already approved for the app; the

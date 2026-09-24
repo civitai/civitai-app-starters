@@ -27,8 +27,9 @@ Also corrected:
   maturity clamp and the attribution tag, and the substitution type-checks. The
   README quick-start now says so at the call site.
 - **The block token reaches more than `/api/v1/blocks/*`** — 35 routes, including
-  `GET /api/v1/models/{id}`. The README's "`/api/v1` and the orchestrator do not
-  accept it" was wrong.
+  `GET /api/v1/models/{id}`. 🔴 But note `/api/v1/images` is a *public* endpoint:
+  it ignores your token and answers with anonymous results rather than refusing,
+  so use `/api/v1/blocks/images`.
 - **Error bodies are not uniformly `{ message }`.** Middleware rejections carry
   `{ error }` only; read `message ?? error` and branch on the status.
 - **The manifest `auth` field** is documented as built but flag-gated, with a way
