@@ -43,32 +43,29 @@ that protocol."*
 
 ## State now
 
-🔴 **THE ARC'S CLOSING CONDITION IS MET AND THE WORK IS ON GITHUB.** Both PRs are open; one CI
-red remains and it is a TIME GATE, not a code defect (below).
+🔴 **THE ARC'S CLOSING CONDITION IS MET, THE PORT IS ON GITHUB, AND PR #21 IS GREEN AND CLEAN.**
 
-- **`ZacxDev/civitai-app-requests` PR #21** — the port. Branch `zach/port-to-civitai-sdk`, two
-  commits: `f422773` (the transport port) and `122c60d` (the a11y change, deliberately separate).
-  `MERGEABLE`, **`UNSTABLE` — the single `build` check is RED**, see the gate below.
+- **`ZacxDev/civitai-app-requests` PR #21** — the port. Branch `zach/port-to-civitai-sdk`, three
+  commits: `f422773` (transport port) · `122c60d` (the a11y change) · `203328a` (the supply-chain
+  exemption below). **`mergeable=MERGEABLE mergeStateStatus=CLEAN`, `build` SUCCESS, totals
+  `total=1 success=1 failure=0`.** Ready to merge.
 - **`innovation-upstream/devrc` PR #1862** — one line routing scope `civitai-app-requests` to the
-  `civitai` cairn instance. `MERGEABLE`, `UNSTABLE`. 🔴 **Not live until a `home-manager switch`**:
+  `civitai` cairn instance. `MERGEABLE`. 🔴 **Not live until a `home-manager switch`**:
   `~/.config/subsystem-store/routes.json` is a `home.file` copy (`home.nix:1688`) resolving into
   `/nix/store`, so the source edit alone changes nothing on the running host.
 - The subsystem-index entry is written and validated but **still not landed** — it needs #1862
   merged AND the switch, then
-  `cairn create --scope civitai-app-requests --ref platform --file <file>`. The entry survives the
+  `cairn create --scope civitai-app-requests --ref platform --file <file>`. It survives the
   scratchpad at **`/home/zach/workspace/civit/cairn-entry-civitai-app-requests-platform.md`**
-  (deliberately outside every repo — it is client-confidential and `devrc` is PUBLIC).
+  (outside every repo — client-confidential, and `devrc` is PUBLIC).
 - `claim-work civitai-app-platform-migration-1` is **still HELD**; release when #21 merges.
-- Verified at `122c60d`: typecheck 0 errors, **414 tests pass**, `pnpm run build` clean — but see
-  the pnpm-major finding below for what that local green could NOT see.
+- Verified at `203328a`: typecheck 0 errors, **414 tests pass**, build clean, CI green.
 - Still NOT verified: the app against real civitai.com.
 
-### Operator decisions taken 2026-09-23 (these were the UNCONFIRMED ones — now confirmed)
-- Analytics: **keep the no-op shim**, call sites intact.
-- Test harness: **fetch-level fake**, as built.
-- Cairn route: **`civitai`**.
-- Sort control a11y: **switch to `radiogroup` NOW** — this REVERSED my recommendation, so the port
-  carries a deliberate behaviour change (`122c60d`), not just a transport swap.
+### Operator decisions taken 2026-09-23
+- Analytics: **keep the no-op shim**. · Test harness: **fetch-level fake**. · Cairn route:
+  **`civitai`**. · Sort control a11y: **switch to `radiogroup` NOW** (this REVERSED my
+  recommendation — `122c60d`). · The 24h supply-chain gate: **push through it**, narrowly (below).
 
 ## Open investigations — live diagnosis state
 
@@ -455,11 +452,37 @@ red remains and it is a TIME GATE, not a code defect (below).
   green** — it is a supply-chain control doing exactly its job on a package published yesterday,
   and this doc already carries the rule that a gate merged through is a gate nobody reads again.
 
+<!-- SUPERSEDES the block "PR #21's `build` check is red on a SUPPLY-CHAIN TIME GATE, not on the
+     code". 🔴 ITS "Next probe" INSTRUCTION IS NOW WRONG AND MUST NOT BE FOLLOWED: it said to wait
+     for 2026-09-24T03:49:30Z and "DO NOT relax or disable the policy to go green". The operator
+     decided otherwise, and the resolution below is what actually happened. The diagnosis in that
+     block was correct and is kept; only its instruction is retired. -->
+### RESOLVED (`203328a`): the supply-chain gate was pushed through, narrowly and deliberately
+- as-of: 2026-09-23
+- **Symptom + exact repro:** unchanged from the superseded block — `pnpm install --frozen-lockfile`
+  refused `@civitai/sdk@0.2.0` as published inside pnpm 11's 24h `minimumReleaseAge` window.
+- **Observed (with values):** the fix is `pnpm-workspace.yaml` carrying
+  `minimumReleaseAgeExclude: ["@civitai/sdk@0.2.0"]`. Verified in a clean room under the REAL
+  pnpm **11.27.0** (the host's is 10.28.1, which has no such policy): **no exclusion** →
+  `✗ Lockfile failed supply-chain policy check (185 entries)` with CI's exact error;
+  **`@civitai/sdk@0.2.0`** → `✓ Lockfile passes supply-chain policies (185 entries)`;
+  **`@civitai/sdk@0.2.1`** → still fails on 0.2.0. CI then went from `build FAILURE` on `122c60d`
+  to `build SUCCESS` on `203328a`. `via: measurement`
+- **Ruled out:** *"CI went green because the 24h window simply elapsed"* — FALSE, and this was the
+  confound worth excluding before claiming any fix. The passing run started **2026-09-24T02:01:35Z**
+  and the window does not close until **2026-09-24T03:49:30Z** — **1h48m later**. The two runs
+  differ only by the exemption commit. `via: command`
+- **Ruled out:** *"the policy is now off"* — FALSE. It still runs and still verified all **185**
+  lockfile entries in the passing run; exactly one is exempt, pinned to an exact version. `via: measurement`
+- **Leading hypothesis:** resolved.
+- **Next probe:** none. **Delete the `minimumReleaseAgeExclude` entry once `@civitai/sdk` moves
+  past 0.2.0** — it is then dead config that silently weakens the next reader's assumptions.
+
 ## Next steps (ranked)
 
-1. **Re-run PR #21's `build` after 2026-09-24T03:49:30Z, then merge.** The red is a 24h
-   supply-chain time gate on `@civitai/sdk@0.2.0`, not a defect. Do not touch the policy.
-   forcing: gate — a red required check, which clears on its own.
+1. **Merge PR #21.** `CLEAN`, `build` green, `total=1 success=1 failure=0`. Then
+   `claim-work --release civitai-app-platform-migration-1`.
+   forcing: gate — it is the arc's closing condition, delivered and green.
 2. **Run the ported app against the real platform** — mint an anon block token and
    `GET /api/v1/blocks/shared-storage/list` against a preview deploy, expecting 200 with
    `items[].viewerVoted`; then a signed-in vote. Until this happens "ported" means "imports
@@ -468,20 +491,21 @@ red remains and it is a TIME GATE, not a code defect (below).
 3. **Merge devrc #1862, `home-manager switch`, then land the cairn entry** from
    `/home/zach/workspace/civit/cairn-entry-civitai-app-requests-platform.md`.
    forcing: gate — the index write is blocked until the route is live.
-4. **Reconcile the pnpm major: local is 10.28.1, the flake pins 11.** See the Gotcha below; the
-   flake's own comment says a local shell and CI must not run different majors.
+4. **Reconcile the pnpm major: local is 10.28.1, the flake pins 11.** The flake's own comment says
+   a local shell and CI must not run different majors, and this session proved the cost.
    forcing: regression — a local green is structurally blind to CI's install policy until fixed.
-5. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
+5. **Delete the `minimumReleaseAgeExclude` entry when `@civitai/sdk` moves past 0.2.0.**
+   forcing: security — a standing exemption from a supply-chain control outliving its reason.
+6. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
    `civitai/civitai-app-starters` — force-pushed off the branch, still reachable by sha.
    forcing: security — residual exposure on a PUBLIC repo from an earlier session's leak.
-6. **Ratify or reject R14** — #5068 reached tRPC via a `blocksRouter` caller, diverging from the
-   body-extraction precedent #5054/#5055 set. Now MERGED, so the repo has two rules for
-   REST/bridge seams until someone picks one.
+7. **Ratify or reject R14** — #5068 reached tRPC via a `blocksRouter` caller, diverging from the
+   body-extraction precedent #5054/#5055 set.
    forcing: user — an operator call, not an engineering one.
-7. **Revisit F2/F6 when a GENERATION app adopts the poll surface.** `app-requests` does not
-   generate, so the trigger is still unfired — but it is closer now that a fleet app ships on REST.
+8. **Revisit F2/F6 when a GENERATION app adopts the poll surface.** `app-requests` does not
+   generate, so the trigger is still unfired.
    forcing: user — deferred deliberately, not dropped.
-8. **Batch: filed but not advanced.** civitai#5059, civitai#5060, starters #425–#432, #422, #423.
+9. **Batch: filed but not advanced.** civitai#5059, civitai#5060, starters #425–#432, #422, #423.
    forcing: none
 
 ## Defects (batched)
@@ -838,6 +862,40 @@ red remains and it is a TIME GATE, not a code defect (below).
   `aria-controls` panel that control has never had. The assertion was **inverted, not relaxed**,
   and additionally pins that the element does not still claim to be a tab set; mutating the adapter
   back to `mode="tabs"` turns exactly that test red with its own error.
+
+- 🔴 **PUSHING THROUGH A SUPPLY-CHAIN GATE HAS A NARROW FORM AND A CATASTROPHIC ONE, AND THEY ARE
+  ONE LINE APART.** `minimumReleaseAge: 0` turns CI green instantly and removes the protection from
+  **every dependency in the tree, forever** — silently, for everyone after you. The narrow form is
+  `minimumReleaseAgeExclude: ["<pkg>@<exact version>"]`: the policy still RUNS (it verified all 185
+  entries in the passing run) and exactly one pinned version is exempt. 🔴 **The version pin is
+  load-bearing, and MEASURABLY so** — a bare `@civitai/sdk` would exempt every future release
+  including one cut by a compromised token; the control is that pinning `@civitai/sdk@0.2.1`
+  instead leaves 0.2.0 still failing. **When told to bypass a control, bypass the smallest thing
+  that unblocks the work, prove the bypass is that small, and write its expiry into the file.**
+- 🔴 **"CI WENT GREEN" IS NOT "MY FIX WORKED" WHEN THE FAILURE HAD A CLOCK IN IT.** This failure
+  self-clears at a known time, so a passing run AFTER that time cannot distinguish the fix from
+  elapsed time — and the obvious fix would have been credited for free. The discriminator is
+  timestamps, and it has to be read on purpose: the passing run started **2026-09-24T02:01:35Z**,
+  **1h48m BEFORE** the 03:49:30Z window closed. **Whenever a red has an expiry, record both the
+  expiry and the passing run's start time, or the attribution is unproven.**
+- 🔴 **`pnpm --version` LIED THREE DIFFERENT WAYS BEFORE I GOT THE REAL ONE.** Corepack's shim sits
+  ahead of everything on PATH: bare `pnpm` said 10.28.1; `nix-shell -p pnpm_11 --run 'pnpm --version'`
+  ALSO said 10.28.1; and even `node <store>/libexec/pnpm/bin/pnpm.cjs --version` said 10.28.1. Only
+  `node <store>/libexec/pnpm/bin/pnpm.mjs` reported 11.27.0. **A toolchain version read through a
+  shim is a fact about the shim** — when a repo pins a major, verify you are running it before
+  quoting any result that depends on it.
+- 🔴 **THE SETTING NAME CAME FROM THE TOOL'S OWN BINARY, NOT FROM MEMORY.** Grepping pnpm 11's dist
+  for `minimumReleaseAge[A-Za-z]*` returned the real family — `minimumReleaseAgeExclude`,
+  `…ExcludePrune`, `…IgnoreMissingTime`, `…Strict` — and reading `parseVersionPolicyRule` gave the
+  exact grammar (scoped names handled, EXACT versions only, `||` unions, name patterns refused with
+  a version union). A guessed key would have been accepted silently and changed nothing, leaving a
+  red CI and a config file that *looks* like it should work. **A wrong config key fails in the
+  quiet direction; read the parser.**
+- **Decision (operator, 2026-09-23):** push through the 24h `minimumReleaseAge` rather than wait
+  ~2h for it to close. The package is first-party (`@civitai/sdk@0.2.0`, published by hand from
+  this org's own monorepo because npm OIDC cannot create a package that does not yet exist), so the
+  third-party-compromise threat the window guards against does not apply to it. Implemented as an
+  exact-version exemption with its own removal condition, never as a disabled policy.
 
 ## How to verify
 
