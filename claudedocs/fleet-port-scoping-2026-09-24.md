@@ -738,3 +738,32 @@ fallback branch that had computed nothing — the tell was its control failing t
 - The auditor caught its own premise error mid-pass: its first fleet sweep read `origin/main` for all
   six repos, but **`sensei` is on `trunk`** — and `git show <absent-ref>:<path>` reports **empty, not
   missing**, so the absence read as "no dependency". Same shape as the `git diff --quiet` trap.
+
+---
+
+# 🔴 WHY "component-tests is red on main" IS A MISREADING — and why MY OWN MERGE created it
+
+PR #5091's agent reported `preview / component-tests` as *"verified as `failure` on `origin/main`
+itself (both recent main commits carrying the status)"*. **That is wrong, and my retraction on #5085
+stands.** Re-measured after the merge: `1abd6539` (the current tip AND the merge commit),
+`b7dcce9b23`, `438223aad9`, `bded2ec04f` — **all four carry `total_count=0` statuses.**
+
+**The mechanism, and it is subtle:** `58cb93144e` — #5085's PR HEAD — is now an **ancestor of
+`origin/main`**, because I merged with a **merge commit** and that head is a parent. So
+`git log origin/main` lists it, and it carries `component-tests=failure`. Anyone walking main's log
+and reading statuses finds **PR heads inside main's history** and reads them as main commits.
+
+🔴 **My own merge choice created this trap.** Had #5085 been squashed, `58cb9314` would not be in
+main's history and the misreading would not have been available. Merge-commit repos make
+"check it on main" ambiguous in a way squash repos do not — and `civitai/civitai` is a merge-commit
+repo (`ZacxDev/*` are squash-only).
+
+**The conclusion survives anyway, on the evidence that was always load-bearing:** the cross-PR
+signal. Open **PR #5077** carries `component-tests=failure` on an unrelated change. ⚠ The agent also
+cited **#5090**, which does **not carry the status at all** — silent, not supporting; it overstated
+by one. One genuinely unrelated red still supports a shared cause, and the replacement condition on
+#5085 (watch the next unrelated PR that carries the status) is unchanged.
+
+**The reusable rule:** *"is it red on main?"* is not answerable by walking `git log <main>` in a
+merge-commit repo. Ask for statuses on a commit whose ONLY parent is main — or accept that the
+question is only answerable per-PR.
