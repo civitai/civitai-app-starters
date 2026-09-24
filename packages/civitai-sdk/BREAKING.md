@@ -7,17 +7,19 @@ API catch up.
 ## Data moved from the bridge to the API
 
 A block used to ask the host for data over `postMessage`. It now calls the
-public `/api/v1` API (`app.site`) and the orchestrator (`app.orchestration`)
-itself, with the token `initialize()` gives it. Routes are added to `/api/v1` as apps need them, so several old
+public `/api/v1` API (`app.site`) itself, with the token `initialize()` gives
+it. `app.orchestration` reaches the orchestrator directly and is the escape
+hatch for an app that is its own principal — a block submitting generations
+uses the `blocks/workflows/*` routes instead, for the reasons below. Routes are added to `/api/v1` as apps need them, so several old
 messages have no destination yet.
 
 | Old message(s) | Now | Status |
 |---|---|---|
-| `GET_VIEWER` | `app.site.get('me')` | Route exists |
+| `GET_VIEWER` | `app.site.get('blocks/me')` | Route exists. 🔴 **Not `site.get('me')`** — that resolves to `/api/v1/me`, an `AuthedEndpoint` that does not accept a block token |
 | `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`, `POLL_WORKFLOW`, `CANCEL_WORKFLOW`, `QUERY_APP_WORKFLOWS`, `CANCEL_APP_WORKFLOW` | `POST /api/v1/blocks/workflows/{submit,estimate,poll,cancel,query}` | **Routes exist.** 🔴 Use these, **not** `app.orchestration` — see *What a direct orchestrator call loses* below |
 | `GET_IMAGES_BY_IDS` | `GET /api/v1/images?ids=1,2,3` | Batch, up to **100** ids per request. Misses are reported by OMISSION — see below |
-| `APP_STORAGE_*` | `GET\|POST /api/v1/blocks/app-storage/*` | **Routes exist** — five of them (`get`, `set`, `delete`, `list`, `quota`), civitai#5085. This row said "No v1 route"; that is no longer true. See *App storage* below |
-| `SHARED_*` | `GET\|POST /api/v1/blocks/shared-storage/*` | **Route exists** — nine of them; see *Shared storage* below |
+| `APP_STORAGE_*` | `POST /api/v1/blocks/app-storage/*` | **Routes exist** — five of them (`get`, `set`, `delete`, `list`, `quota`), civitai#5085. This row said "No v1 route"; that is no longer true. See *App storage* below |
+| `SHARED_*` | `GET\|POST /api/v1/blocks/shared-storage/*` | **Routes exist** — eleven of them; see *Shared storage* below |
 | `GET_BUZZ_BALANCE` | `GET /api/v1/blocks/buzz` | **Route exists.** Returns `{ blue, green, yellow }` — a bare object, three numbers |
 | `GET_BUZZ_ACCOUNTS`, `GET_BUZZ_TRANSACTIONS` | — | No v1 route |
 | `CREATE_POST_FROM_APP` | — | No v1 route, **and deliberately staying on the bridge** — see below |
@@ -31,28 +33,24 @@ no host handler today either** — `hostHandlerParity.ts` marks both hosts N/A, 
 host-side sink wired (dropped, never hangs)"*. So those 40 call sites are already no-ops; this is net-new
 capability rather than a migration gap.
 
-## 🔴 Before you call ANY block REST route: the scope-binding trap
+## Scope binding is per-route
 
-The request-time scope-binding check runs over **every scope on your block token**, not just the one the route
-requires. So a scope you declared for an unrelated feature can reject a call that has nothing to do with it,
-with an error naming a scope you never invoked.
+Each block REST route binds **its own** required scope against your block context: `blocks/models` checks that
+`models:read:self` matches the model your block renders beside, `blocks/buzz` checks `buzz:read:self` and does
+not look at your other scopes.
 
-The common case: an app declaring **`models:read:self`** calls `GET /api/v1/blocks/buzz`. That scope's binding
-wants `query.id` (or `query.modelId`) to match the model in your block context; a buzz request carries neither,
-so it **403s** with `models:read:self bound to different modelId`.
+⚠ **This changed on 2026-09-23** (civitai#5063, fixed by #5067). Before that the check ran over *every* scope on
+the token, so an unrelated declared scope could 403 a call — an app declaring `models:read:self` got
+`models:read:self bound to different modelId` from `blocks/buzz`. **If you carry a workaround for that — a
+`{ query: { id: context.modelId } }` passed to a route that does not use it — you can drop it.**
 
-**Workaround — pass a param the handler ignores:**
-
-```ts
-await app.site.get('blocks/buzz', { query: { id: context.modelId } });
-```
-
-Applies to all ten current block REST routes (`blocks/buzz` and the nine under `blocks/shared-storage/`).
-Tracked as civitai/civitai#5063. The anon-read case below is the same bug with no workaround.
+One thing remains token-wide, and it is deny-by-default: a token carrying a scope the platform does not
+recognise is rejected outright. That is a registration-time mistake, which the manifest validator catches
+first.
 
 ## Shared storage
 
-Nine routes under `/api/v1/blocks/shared-storage/`. Reads take `apps:storage:shared:read`, writes take
+Eleven routes under `/api/v1/blocks/shared-storage/`. Reads take `apps:storage:shared:read`, writes take
 `apps:storage:shared:write` — both scopes already existed; neither is new.
 
 | Method | Path | Scope |
@@ -72,18 +70,13 @@ bridge already called, so behaviour is identical on both transports.
   entirely. An anon read still requires: a valid block token, the `apps:storage:shared:read` scope, an
   approved app, a non-revoked instance, and the feature flag enabled.
 
-  🔴 **BUT NOT TODAY, if your app also declares `apps:storage:shared:write`.** An anon token still carries
-  that scope (it is consent-exempt, so the anon mint does not strip it), and the request-time scope-binding
-  check runs over **every** scope on the token rather than the one the route needs — so it reaches the write
-  scope's "requires authenticated subject" rule and returns **403 for an anonymous read**.
-
-  There is no call-site workaround: an app cannot un-declare the write scope it needs in order to make its
-  read path work. Tracked as civitai/civitai#5063.
-
-  ⚠ **This is a behaviour change from the bridge, so check it before porting.** `SHARED_*` over `postMessage`
-  gates anonymity **per operation** — an anon read passes there today. On REST it currently does not. If your
-  app's premise is signed-out browsing, that path breaks on migration until #5063 lands.
-- **Anonymous viewers may NEVER write or vote.** Every write resolves to `401` for an anon subject.
+  ⚠ **This was briefly broken and is fixed.** Until 2026-09-23 an app that *also* declared
+  `apps:storage:shared:write` got a **403 on an anonymous read**, because the binding check ran over every
+  scope on the token and reached the write scope's "requires authenticated subject" rule. civitai#5063, fixed
+  by #5067 — binding is now per-route, so the read scope's own (absent) binding is all that applies.
+  **Signed-out browsing works on REST; if you deferred a migration over this, it is unblocked.**
+- **Anonymous viewers may NEVER write or vote.** An anon write is rejected by the write scope's own binding in
+  `withBlockScope`, before the handler runs, so it surfaces as **`403`** rather than the handler's own `401`.
 - **Authenticated writers must clear a minimum-trust gate.** After the anon check, writes call
   `assertSharedWriteTrust` — account age, paid tier, and verified email *or* a linked OAuth account. A signed-in
   viewer is not automatically a permitted writer.
@@ -94,7 +87,7 @@ bridge already called, so behaviour is identical on both transports.
 
 ### Error body
 
-The nine routes return `{ message }` on a 4xx. ⚠ The two oldest siblings (`top`, `increment`) return `{ error }`.
+The newer routes return `{ message }` on a 4xx. ⚠ The two oldest siblings (`top`, `increment`) return `{ error }`.
 That divergence is deliberate: the newer routes go through the shared error chokepoint rather than forwarding a
 raw database error string, which on this surface can name the app's schema and the offending row value. Write
 clients against `{ message }`; treat `{ error }` as legacy.
@@ -225,13 +218,15 @@ For a block to use the API at all, civitai has to:
    (`"block-token"` | `"oauth"`, default `"block-token"`) in the canonical schema; `block-oauth-scope.ts`
    and `/api/v1/block-tokens` mint an OAuth app token when a manifest asks for it.
 
-   🔴 **But the mint is flag-gated and the flag is OFF in production** — the call site is
+   🔴 **But the mint is FLAG-GATED, and the failure is silent.** The call site is
    `manifestWantsOauthToken(app.manifest) && env.APP_BLOCK_OAUTH_TOKENS_ENABLED`, and that env var is
-   `.default(false)` with no value set in the dp-prod deployment manifests or the SOPS `prod-env` secret
-   (measured 2026-09-24 with a positive control: `OTEL_ENABLED` matches in the same decrypted plaintext,
-   `APP_BLOCK_OAUTH` does not). **While it is off, a manifest declaring `auth: "oauth"` silently receives the
-   BLOCK token**, and a general `/api/v1` call then fails as unauthorised rather than explaining itself. Do
-   not build against `oauth` mode yet.
+   `.default(false)`. **Wherever it is off, a manifest declaring `auth: "oauth"` silently receives the BLOCK
+   token**, and a general `/api/v1` call then fails as unauthorised rather than explaining itself.
+
+   This file ships in the npm tarball and cannot be corrected after publication, so it does not record
+   whether the flag is on in production today. **Check
+   [the manifest reference](https://developer.civitai.com/apps/reference/manifest) before building against
+   `oauth` mode** — that page is correctable.
 
    ✅ **The phishing finding is not re-opened**, which is why this could ship at all. The token is minted
    **server-side** by the host (`mintOauthAppToken`) against scopes already approved for the app; the
@@ -240,8 +235,9 @@ For a block to use the API at all, civitai has to:
 
    ⚠ Still true, and still the cheaper route for most apps: the block JWT is **not** limited to
    `/api/v1/blocks/*` by any route or claim check — it works wherever a handler is wrapped. Today that is
-   every `/api/v1/blocks/*` route plus `/api/v1/me` and `/api/v1/models/{id}` — the routes wrapped in
-   `withBlockScope`. Widening what the existing block token is accepted on reaches most destinations without
+   most `/api/v1/blocks/*` routes plus `/api/v1/models/{id}` — the 35 routes wrapped in `withBlockScope`.
+   🔴 **Not `/api/v1/me`**, which is an `AuthedEndpoint`; blocks use `/api/v1/blocks/me`. And four `blocks/*`
+   routes (`dev-token`, `submissions`, `submit-version`, `withdraw`) are not wrapped either. Widening what the existing block token is accepted on reaches most destinations without
    OAuth at all. The question that decides between the two is whether a block must act **without an open host
    page**: the block JWT lives ~15 minutes and is refreshed by the host page's session, so the block holds no
    refresh credential of its own. If background work is required, OAuth becomes necessary rather than
@@ -259,7 +255,8 @@ For a block to use the API at all, civitai has to:
    landed.
 
    What remains is not storage: `GET_BUZZ_ACCOUNTS` / `GET_BUZZ_TRANSACTIONS`, `GET_DAILY_COMPENSATION`,
-   `GET_WILDCARD_PACK`, and `OPEN_IMAGE_UPLOAD` (no REST twin and no SDK host request — in flight).
+   and `GET_WILDCARD_PACK`. `OPEN_IMAGE_UPLOAD` now has an SDK host request (`app.host.openImageUpload`,
+   see *Host UI still carried*); what it has no twin of is a REST route, and it is not getting one.
 
    ⚠ **Scope checks are a separate item and are not a prerequisite for the routes above.** Every block scope
    these routes need already exists, is consent-described and is context-bound, so each route is scope-gated on
