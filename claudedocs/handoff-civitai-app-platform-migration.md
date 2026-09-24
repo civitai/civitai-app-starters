@@ -1122,9 +1122,20 @@ re-derive them. Per-PR detail and every correction lives in
    diff touches no `src/components/` file — a PR head because the pipeline never posts on `main`.
    ⚠ **Merged past three times (5085, 5090, 5091), each with a written acceptance.** That is the
    cost: the fourth reader stops reading the reasoning.
-   (b) **`civitai-app-starters#443`** — `Canonical schema drift-check`: the live schema gained an
-   `auth` property the vendored copy lacks. **Decision taken: revendor.** PR in flight on
-   `chore/revendor-app-block-schema`.
+   (b) ✅ **`civitai-app-starters#443` — FIXED by `#445`, merged `b79e12fa`.** Verified by content:
+   the vendored `app-block/v1.json` on `origin/main` is now **byte-identical to the live schema**
+   (`cmp` clean; control — main's pre-merge copy DIFFERS). ⚠ **The delta was WIDER than #443 quoted**:
+   the live property carries `enum: ["block-token", "oauth"]`, which the issue's snippet (and my
+   brief, from a truncated `curl`) omitted — the enum is what made this more than a JSON copy.
+   🔴 **And "schema accepts, types reject" was REAL**: the canonical declares no
+   `additionalProperties`, so it already tolerated `auth` with ANY value while `BlockManifestV1`
+   rejected it outright. Measured with a 4-arm typed probe (control clean · before `TS2353` ·
+   after clean · mutation `TS2322`), and fixed by adding `auth?: 'block-token' | 'oauth'` to
+   `packages/civitai-app-sdk/src/blocks/types.ts`. Shipped `minor`, matching all three prior
+   re-vendors.
+   **#443 stays OPEN by design** — its closing condition is the check-run green on a **`main`**
+   commit after merge, and that run was still in progress at hand-off. Close it on that evidence,
+   not on the merge event.
    forcing: gate — a permanently-red gate is worse than no gate, and this is two of them at once.
 5. **`civitai#5087`** drop `enforceAppBlocksFlag` from the five storage procedures ·
    **`civitai#5088`** the `updatedAt` revival, closing only on a test whose fake sends an ISO string ·
