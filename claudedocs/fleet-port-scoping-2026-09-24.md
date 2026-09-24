@@ -767,3 +767,45 @@ by one. One genuinely unrelated red still supports a shared cause, and the repla
 **The reusable rule:** *"is it red on main?"* is not answerable by walking `git log <main>` in a
 merge-commit repo. Ask for statuses on a commit whose ONLY parent is main — or accept that the
 question is only answerable per-PR.
+
+---
+
+# 🔴 MY "prefer extraction over a tRPC caller" INSTRUCTION WAS WRONG FOR `blocks.router.ts`
+
+I briefed all three REST agents to *"prefer extraction to a service over a tRPC caller — the
+#5054/#5055 precedent; #5068's caller shape is contested and #5085 deliberately did not follow it."*
+**That generalised a choice made in `apps.router.ts` to a file where a security guard makes it
+wrong.** PR #5090's agent overrode it, correctly, and put the reasoning on the PR.
+
+**Verified first-hand:** `src/server/services/__tests__/no-unguarded-block-bridge-token.test.ts:116`
+states the guard's reachability is *"computed inside `blocks.router.ts` only: a proc that delegates
+to an imported [service]…"*, `:162` pins `ROUTER = 'src/server/routers/blocks.router.ts'`, and
+`queryAppWorkflows` is a `GUARD_CALL_SITE_LEDGER` entry at `:204`. **Extracting it to a service would
+take a fail-closed security guard OFFLINE** — the guard would read the procedure as unguarded.
+
+PR #5091's agent hit the same constraint independently and reached the same answer from the other
+direction: it kept `authorizeBlockBridgeToken` and the rate limiter **spelled at each transport**,
+because both guards walk `blocks.router.ts`'s AST one helper deep and a call leaving the router is
+invisible to them.
+
+**So the rule is location-dependent, and the brief should have said so:** extraction is right in
+`apps.router.ts` (#5085) and wrong in `blocks.router.ts` while these AST guards exist. Two
+independent agents converged on that; I had it backwards in all three briefs.
+
+# 🔴 TWO independent agents hit the merge-commit status trap — it is not a one-off
+
+Both #5090 and #5091 reported `preview / component-tests` as *"red on `main` itself"*, citing
+`58cb93144e` and `d97753136a`. **Measured: both are ancestors of `origin/main` and each carries 7
+statuses — because they are #5085's PR HEADS, made reachable by the merge commit I created.** Every
+genuine main commit carries **0**.
+
+Two independent agents, same wrong route, same session. That makes this a trap worth a rule rather
+than a footnote:
+
+🔴 **In a merge-commit repo, "is it red on main?" cannot be answered by walking `git log <main>`** —
+PR heads are inside that history and carry the PR's statuses. Ask for statuses on a commit whose
+only parent is main, or accept the question is answerable per-PR only. `civitai/civitai` merges;
+`ZacxDev/*` squash, which is why the trap appears here and not there.
+
+Their shared *conclusion* — that the red is not theirs — still holds on the cross-PR signal
+(#5077, unrelated, identical red), which was always the load-bearing evidence.
