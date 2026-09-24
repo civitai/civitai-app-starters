@@ -367,3 +367,77 @@ it happens not to matter here, but it means the local command was not the gate's
 **Fix:** 7 empty arrow functions in one new file. Trivial, and it is the only thing between this PR
 and a settled CI — with the caveat that `preview/*` had not posted yet, so a green lint is
 necessary, not sufficient.
+
+---
+
+# ROUND 0 on PR #5085 — verdict: `requirement questioned — R6`
+
+Ledger: `round 0 · requirements: 9 (unattributed: 2) · deletion candidates: 4`. Trial-record pair:
+`ran: 1 · changed the outcome: 1` — it ran BEFORE the merge decision and surfaced a red gate plus a
+refuted central premise, neither of which the nine correctness axes ask about.
+
+## 🔴 The PR's headline justification is refuted by its own tree — all three limbs re-verified here
+
+PR #5085 rejected #5068's tRPC-caller shape on the claim that *"on **any** REST transport
+`ctx.user` is undefined"*, so a caller would **degrade** the app-blocks gate.
+
+1. **FALSE, and the counter-example is in a file this PR edits.** `block-workflow-rest.ts:154`
+   defines `blockFliptUser(req)` — it reads `claims.sub`, resolves the user, and `:188` passes
+   `user: fliptUser` into the caller context with `:190` feeding `getFeatureFlagsLazy`. #5068 already
+   solved exactly this. **Verified first-hand.**
+2. **The failure direction is stated backwards.** With `ctx.user === undefined` the flag is
+   base-`false` with a `moderators` segment, so a global eval matches nothing and resolves `false` →
+   `UNAUTHORIZED`. That is fail-**closed** — the surface would be **dead**, a wiring bug. "Degrades a
+   gate" reads as a security loosening, which is what made rejecting the caller feel mandatory.
+3. **The repo already decided this for the sibling procedures.** `pollWorkflow:3857`,
+   `cancelWorkflow:4178`, `estimateWorkflow:5241`, `submitWorkflow:5568` are each `publicProcedure`
+   carrying the comment *"Block-JWT-authed (no session for dev:live) — flag evaluated against the
+   TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user."* Yet all five
+   `appsStorageRouter` procedures still `.use(enforceAppBlocksFlag)`
+   (`apps.router.ts:71,83,88,99,131`), redundantly with `assertAppBlocksEnabledForTokenUser`.
+   **Verified first-hand.**
+
+⚠ **My own verification of limb 3 was WRONG on the first pass and the error is worth keeping.** I
+grepped for `enforceAppBlocksFlag` within 12 lines of each proc, got a hit on all four, and was about
+to report the auditor refuted. The hit was the symbol appearing **inside the comment that explains
+its absence**. Reading the lines verbatim showed `publicProcedure` with no `.use(...)`.
+**Grepping for a symbol finds the prose that says the symbol is not used.** Read the construct, not
+the token.
+
+**The one-line fix that dissolves the whole question:** drop `.use(enforceAppBlocksFlag)` from the
+five storage procedures, matching the four workflow procedures. Then extraction-vs-caller is an
+ordinary taste call on the #5054/#5055 grounds — which are sound on their own. ⚠ That deletion is a
+live behaviour change on the bridge path: operator's call.
+
+## 🔴 The `13 → 12` bearer-consolidation claim does not reproduce
+Measured on both trees with one command shape, in both units:
+**files 19 → 19; occurrences 20 → 20.** Net zero. The PR's own docblock enumerates
+*"thirteen call sites (`blockWorkflowBearer` plus a private `bearer()` in each of the eleven
+shared-storage routes)"* — which sums to **12**, contradicting its own total. Eleven open-coded
+copies remain by design and a pass-through wrapper was added, so "One rule, one place" is invoked
+for a net movement of one copy. Either finish the consolidation or drop the justification.
+
+## Deletion candidates (4)
+- 🔴 `enforceAppBlocksFlag` on the five storage procedures — wrong identity, redundant with
+  `assertAppBlocksEnabledForTokenUser`. Dissolves R6.
+- 🔴 `blockWorkflowBearer` — a pure pass-through whose own docblock says *"it adds no behaviour of
+  its own"*; four call sites can import `blockBearerToken` directly.
+- `enforceAppBlocksFlag`'s `type === 'query'` branch — both arms throw the byte-identical error.
+- The second activity row per REST write **and the new access row per REST read** (unattributed).
+  Reads are the sharper half: `get`/`list`/`quota` are polled, and each now writes into the viewer's
+  Activity feed where the bridge wrote none.
+
+## Requirements that SURVIVED scrutiny
+- **The PR should exist** — five apps genuinely blocked, none of it server-derivable. Not a
+  145 KB-listener case.
+- **`quota.ts`** — suspected deletable, checked, **real consumer**:
+  `model-benchmarking/src/drafts.test.tsx:20,397,406,444` makes "the quota line comes from
+  `getQuota()`, never a hard-coded 50 MB" an explicit test criterion.
+- **Anon → 403** — kept, but the *"an audit installed it"* framing does not survive: until this PR
+  the guard had **zero callers**, so it carries no measured incident. Keep it, stop treating it as
+  immovable; bridge-parity nulls for the three reads override no evidence.
+
+## ⚠ The sharpest strategic note
+*"Five fleet apps are blocked on this"* is true. *"Merging this unblocks them"* is **not** —
+`@civitai/sdk` still has **no storage client at all**, so these five routes unblock nobody until the
+SDK grows one or five apps hand-roll adapters.
