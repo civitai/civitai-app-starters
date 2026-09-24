@@ -664,3 +664,77 @@ proving that check can go red, but widening the gate is a separate change.
 
 **Round 0 dispatched** — this adds a PUBLIC API surface to a published package, where every exported
 name is a versioning commitment, and round 0 found real problems on both prior PRs.
+
+---
+
+# ROUND 0 on #441 — verdict: `deletion candidate — isQuotaRefusal (D1) + the PUBLIC export of createFakeAppStorage (D2)`
+
+Ledger: `round 0 · requirements: 16 (unattributed: 3) · deletion candidates: 6`. Not
+`close, do not audit` — the payload's core (five methods, three money rules, the `Date` revival) is
+well-attributed to a measured incident and satisfies consumer types verified by hand. The problem is
+**twelve new public names on a published package**, of which six do not earn the versioning
+commitment.
+
+## 🔴 D1 — `isQuotaRefusal` has ZERO consumers, and the PR's own test retires it
+**Measured first-hand across all six repos: 0. Positive control — the same sweep for
+`useAppStorage` returns 10.** Not one of the five named consumers branches on a storage status, and
+`model-benchmarking` has a docstring committing *not* to: *"a storage engine's vocabulary
+('PAYLOAD_TOO_LARGE', 'QUOTA_EXCEEDED') is not viewer copy."* `ApiError` is already public and
+carries `.status`, so `e instanceof ApiError && e.status === 413` is the identical one-liner.
+
+🔴 **The sharpest part is internal**: the PR **declined** `isTransient` partly because *"no listed
+consumer needs it."* That test fails for `isQuotaRefusal` too. Shipping one and not the other on the
+same evidence is arbitrary.
+
+## 🔴 D2 — `createFakeAppStorage` is public, and FOUR of its five named consumers structurally cannot use it
+Not preferences — each has a named, mechanical reason:
+- **`model-benchmarking`** — its own fake's `latencyMs` puts every KV call on a macrotask, and its
+  docstring records that without it *"an ordering bug … hid a live 🔴 money bug."* No such knob here.
+  Its `refuse` is **prefix-targeted**; this one is a flat positional queue. And this fake's `quota`
+  returns compile-time constants with **no override**, so that app's explicit criterion — *"the quota
+  line comes from `getQuota()`, never a hard-coded 50 MB"* — cannot be expressed against it.
+- **`gen-matrix`** — its eviction guard is verified against *a `list` that ignores `cursor` but still
+  returns `nextCursor`*. This fake always honours the cursor, with no knob to misbehave.
+- **`playable-collections`** — needs a **never-settling** read; this fake always resolves.
+- **`sensei`** — its `staleReadAppStorage` models a React Query cache in the HOST PAGE, which sits
+  *above* the fetch seam and is structurally unreachable from a server fake.
+
+Only `custom-generators` would adopt it, and its double is a 20-line `Map` with no tests riding on it.
+**Recommendation is "unexport", not "delete"** — move it beside the existing
+`test/support/fake-fetch.ts` that seven of this PR's own tests already use. Removes five public names
+at zero cost to coverage.
+
+## Two unattributed requirements worth a sentence each, not rework
+- **R1** — *"this client must exist"* traces to TRACK B, whose deliverable was **an answer to a
+  fork** (*"either each app can drop it, or the fleet needs a REST-twin PR"*). The client is the
+  second arm, built before the fork was recorded as settled. Probably right on the merits; the fix is
+  one paragraph answering Track B in the PR body.
+- **R2** — placement on `AppClient` rather than `BlockAppClient` is explicitly *"decided upstream, not
+  re-litigated"* — no author. Consequence: `verifyBlockToken` requires a block JWT, so an app built
+  with `initialize({token: <OAuth token>})` gets a named, typed, always-present `storage` member that
+  **can never work**. A type that lies about reachability.
+
+## 🔴 The release clock buys nothing today
+`app-requests` pins `"@civitai/sdk": "^0.2.0"` (verified, `package.json:24`). For a 0.x package the
+caret pins the MINOR — `^0.2.3` := `>=0.2.3 <0.3.0` — so **0.3.0 is excluded** and reaches that app
+never without a manifest edit. ⚠ That last step is **npm's documented caret rule, spec-derived, NOT
+measured here** (no semver tool on this host; an earlier attempt printed a confident answer from a
+fallback branch that had computed nothing — the tell was its control failing too).
+
+## Other things the PR body should say
+- *"Porting them off it left them with nothing"* is **prospective**: none of the five is ported, and
+  **zero** depend on `@civitai/sdk` today.
+- The cited design doc lives only on `origin/docs/handoff-app-platform-migration`, not on `main` and
+  not in the PR — **pin the sha or land the doc**.
+- The body still says *"#5085 is still OPEN"*; it merged as `1abd6539` with an empty route diff.
+- README gating: **widen it, don't defer it.** `packages/civitai-sdk/README.md` already carried 4
+  ungated `ts` fences before this PR and now carries 6 — a pre-existing gap the PR GROWS. The script
+  ships a `README_SNIPPET_DOCS` override built for exactly this; one array entry.
+
+## ⚠ Two process notes
+- **My briefing was wrong**: I told the auditor the brief PRINTS a `refs/pull/441/head` worktree
+  recipe. For a PR in the **cwd's own repo** the script emits the `isolation: "worktree"` flag form
+  instead. The agent noticed, built its own detached worktree, and said so.
+- The auditor caught its own premise error mid-pass: its first fleet sweep read `origin/main` for all
+  six repos, but **`sensei` is on `trunk`** — and `git show <absent-ref>:<path>` reports **empty, not
+  missing**, so the absence read as "no dependency". Same shape as the `git diff --quiet` trap.
