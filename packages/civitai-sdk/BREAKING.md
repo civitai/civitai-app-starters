@@ -14,9 +14,9 @@ messages have no destination yet.
 | Old message(s) | Now | Status |
 |---|---|---|
 | `GET_VIEWER` | `app.site.get('me')` | Route exists |
-| `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`, `POLL_WORKFLOW`, `CANCEL_WORKFLOW`, `QUERY_APP_WORKFLOWS`, `CANCEL_APP_WORKFLOW` | `app.orchestration` | Works with an OAuth token |
+| `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`, `POLL_WORKFLOW`, `CANCEL_WORKFLOW`, `QUERY_APP_WORKFLOWS`, `CANCEL_APP_WORKFLOW` | `POST /api/v1/blocks/workflows/{submit,estimate,poll,cancel,query}` | **Routes exist.** 🔴 Use these, **not** `app.orchestration` — see *What a direct orchestrator call loses* below |
 | `GET_IMAGES_BY_IDS` | `GET /api/v1/images?ids=1,2,3` | Batch, up to **100** ids per request. Misses are reported by OMISSION — see below |
-| `APP_STORAGE_*` | — | No v1 route |
+| `APP_STORAGE_*` | `GET\|POST /api/v1/blocks/app-storage/*` | **Routes exist** — five of them (`get`, `set`, `delete`, `list`, `quota`), civitai#5085. This row said "No v1 route"; that is no longer true. See *App storage* below |
 | `SHARED_*` | `GET\|POST /api/v1/blocks/shared-storage/*` | **Route exists** — nine of them; see *Shared storage* below |
 | `GET_BUZZ_BALANCE` | `GET /api/v1/blocks/buzz` | **Route exists.** Returns `{ blue, green, yellow }` — a bare object, three numbers |
 | `GET_BUZZ_ACCOUNTS`, `GET_BUZZ_TRANSACTIONS` | — | No v1 route |
@@ -99,6 +99,34 @@ That divergence is deliberate: the newer routes go through the shared error chok
 raw database error string, which on this surface can name the app's schema and the offending row value. Write
 clients against `{ message }`; treat `{ error }` as legacy.
 
+## App storage
+
+Five routes under `/api/v1/blocks/app-storage/` — `get`, `set`, `delete`, `list`, `quota` (civitai#5085).
+Reads take `apps:storage:read`, writes take `apps:storage:write`. The SDK wraps them as `AppClient.storage`.
+
+🔴 **Block token only.** App storage is keyed to the block token's `(app, viewer)` identity. An app that
+authenticated with an **OAuth access token has no per-viewer app storage** and every call is refused — so a
+manifest that sets `auth: "oauth"` is choosing to give this surface up.
+
+🔴 **Anonymous viewers get 403**, where the bridge resolved an anonymous read to `null`. Gate on `viewer`
+rather than reading an empty result as "nothing stored". Open per operation as civitai#5089.
+
+🔴 **EVERY FAILURE REJECTS.** There is no path that resolves to mean "not written", and none that resolves to
+mean "could not read". A caller that must not act on a partial view branches on the rejection, never on an
+empty result. Concretely: `list` never resolves empty on failure, so the **absence of `nextCursor` is proof a
+scan completed** — for one fleet app that is a money decision.
+
+🔴 **`sizeBytes` from `set` is the WIRE unit and is NOT the quota unit.** It is
+`Buffer.byteLength(JSON.stringify(value))`, which predicts a `PAYLOAD_TOO_LARGE` and nothing else. The quota
+counters are Postgres' `octet_length(value::text)` over JSONB, **measured at up to 44.4× the wire size** for
+numeric-heavy payloads. Summing `sizeBytes` to track quota **will** under-count; call `getQuota()`, whose
+`usedBytes` is the stored unit. Note `getQuota` reports neither the key-length cap nor the per-value cap, so a
+write that fits its numbers can still be refused.
+
+Two smaller contract notes: `nextCursor` is passed through untouched, present exactly when more rows may
+exist; and `updatedAt` is revived to a `Date` by the client, as `useAppStorage` did, so consumers need no
+change.
+
 ## Batch image fetch
 
 `GET /api/v1/images?ids=1,2,3` — up to **100** ids, matching the ceiling the `GET_IMAGES_BY_IDS` bridge message
@@ -131,15 +159,30 @@ that `publishGenerationOutputs` does not already serve.
 
 ## What a direct orchestrator call loses
 
+🔴 **This is the sharpest trap in the migration, because the wrong version compiles.** Substituting
+`app.orchestration` for the block workflow routes **type-checks and passes tests**; what it drops is
+server-side policy that no local check can miss.
+
 Submitting through the host went through civitai's own `blocks.submitWorkflow`,
 which added controls a direct call does not get:
 
 - **Spend caps.** A per-call `buzzBudget`, a per-viewer daily cap and a per-app
   daily cap, all enforced by civitai. A direct call has only the orchestrator's
   per-token budget, taken from the viewer's consent.
+- **The maturity clamp.** The block path applies the viewer's browsing-level
+  ceiling. A direct call does not.
 - **Attribution.** civitai tagged each workflow with the app and block it came
   from. The orchestrator records the token's OAuth client internally but not on
   the workflow, so per-app reporting needs an orchestrator change.
+
+✅ **The `/api/v1/blocks/workflows/*` routes keep all of it** — they delegate to the same procedures the
+bridge called. They are the replacement; `app.orchestration` is the raw orchestrator and is the escape hatch
+for an app that is genuinely its own principal.
+
+⚠ Same shape, one level subtler: `orchestration.queryWorkflows({ tags })` versus
+`POST /api/v1/blocks/workflows/query`. The **route forces the app tag server-side from the verified token**;
+the client takes `tags` from the caller. Swapping one for the other relocates a trust boundary into the
+iframe, and nothing about the call site looks different.
 
 ## Host UI still carried
 
@@ -187,23 +230,34 @@ Not carried: `OPEN_CHECKPOINT_PICKER` (use `openResourcePicker` with
 
 For a block to use the API at all, civitai has to:
 
-1. Mint an OAuth access token for the app's own client (`appblk-<slug>`) and
+1. ~~Mint an OAuth access token for the app's own client (`appblk-<slug>`) and
    send it in `BLOCK_INIT` and `TOKEN_REFRESH`, instead of or beside the block
-   JWT. The auth hub currently bars `appblk-*` clients from its flows.
+   JWT.~~
+   ⚠ **BUILT, AND DARK.** The manifest gained an `auth` field
+   (`"block-token"` | `"oauth"`, default `"block-token"`) in the canonical schema; `block-oauth-scope.ts`
+   and `/api/v1/block-tokens` mint an OAuth app token when a manifest asks for it.
 
-   🔴 **That bar is deliberate security, not an oversight.** App-block clients exist only as the policy ceiling
-   for block-token minting; letting them drive the interactive authorization-code or device flows would mint a
-   real account bearer token, and an app-block owner could phish a viewer through the consent screen into
-   account takeover. The bar is enforced in four places, the load-bearing one being an empty `grants` list
-   written into the client row at approve time. **Removing it is re-opening a signed-off security finding, not
-   a config change.**
+   🔴 **But the mint is flag-gated and the flag is OFF in production** — the call site is
+   `manifestWantsOauthToken(app.manifest) && env.APP_BLOCK_OAUTH_TOKENS_ENABLED`, and that env var is
+   `.default(false)` with no value set in the dp-prod deployment manifests or the SOPS `prod-env` secret
+   (measured 2026-09-24 with a positive control: `OTEL_ENABLED` matches in the same decrypted plaintext,
+   `APP_BLOCK_OAUTH` does not). **While it is off, a manifest declaring `auth: "oauth"` silently receives the
+   BLOCK token**, and a general `/api/v1` call then fails as unauthorised rather than explaining itself. Do
+   not build against `oauth` mode yet.
 
-   ⚠ There may be no need to. The block JWT is **not** limited to `/api/v1/blocks/*` by any route or claim check
-   — it works wherever a handler is wrapped, and `GET /api/v1/models/{id}` is already dual-auth today. Widening
-   what the existing block token is accepted on may reach the same destination without touching OAuth at all.
-   The question that decides between the two paths is whether a block must act **without an open host page**:
-   the block JWT lives ~15 minutes and is refreshed by the host page's session, so the block holds no refresh
-   credential of its own. If background work is required, OAuth becomes necessary rather than optional.
+   ✅ **The phishing finding is not re-opened**, which is why this could ship at all. The token is minted
+   **server-side** by the host (`mintOauthAppToken`) against scopes already approved for the app; the
+   `appblk-*` bar on the auth hub's **interactive** authorization-code and device flows stands untouched.
+   That bar was never the blocker for this path — driving the consent screen was.
+
+   ⚠ Still true, and still the cheaper route for most apps: the block JWT is **not** limited to
+   `/api/v1/blocks/*` by any route or claim check — it works wherever a handler is wrapped. Today that is
+   every `/api/v1/blocks/*` route plus `/api/v1/me` and `/api/v1/models/{id}` (35 routes carry
+   `withBlockScope`). Widening what the existing block token is accepted on reaches most destinations without
+   OAuth at all. The question that decides between the two is whether a block must act **without an open host
+   page**: the block JWT lives ~15 minutes and is refreshed by the host page's session, so the block holds no
+   refresh credential of its own. If background work is required, OAuth becomes necessary rather than
+   optional.
 
 2. ~~Let a browser send `Authorization` to `/api/v1` from the app's registered origins.~~
    ✅ **DONE** — shipped 2026-09-22 (civitai#5028). `Authorization` is named explicitly in the allowed-headers
@@ -212,8 +266,12 @@ For a block to use the API at all, civitai has to:
 
 3. Add the `/api/v1` routes above as apps need them, and scope checks.
 
-   Partially done — shared storage, Buzz balance and batch images have landed; per-app-user storage
-   (`APP_STORAGE_*`) is the largest remaining gap at 5 of 7 fleet apps.
+   Largely done — shared storage, Buzz balance, batch images, collections, gated images, generation
+   resources, tips, the workflow routes and **per-app-user storage** (`APP_STORAGE_*`, civitai#5085) have all
+   landed. 37 route files now sit under `/api/v1/blocks/`.
+
+   What remains is not storage: `GET_BUZZ_ACCOUNTS` / `GET_BUZZ_TRANSACTIONS`, `GET_DAILY_COMPENSATION`,
+   `GET_WILDCARD_PACK`, and `OPEN_IMAGE_UPLOAD` (no REST twin and no SDK host request — in flight).
 
    ⚠ **Scope checks are a separate item and are not a prerequisite for the routes above.** Every block scope
    these routes need already exists, is consent-described and is context-bound, so each route is scope-gated on
