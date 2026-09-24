@@ -809,3 +809,49 @@ only parent is main, or accept the question is answerable per-PR only. `civitai/
 
 Their shared *conclusion* — that the red is not theirs — still holds on the cross-PR signal
 (#5077, unrelated, identical red), which was always the load-bearing evidence.
+
+---
+
+# ✅ ALL THREE REST ROUTES BUILT — and #5093 does NOT deliver its stated motivation
+
+| PR | surface | state |
+|---|---|---|
+| **#5090** | `POST /api/v1/blocks/workflows/query` | ladder rounds 0–3 run by the agent; stopped on the attribution gate |
+| **#5091** | gated images | round 0 NOT run |
+| **#5093** | user checkpoint | round 0 run; found and fixed 3 false claims it had written |
+
+## 🔴 #5093's headline, VERIFIED — the route is developer-only
+`updateUserSettings` (the procedure behind `SET_USER_CHECKPOINT`) calls
+**`assertViewerIsAppDeveloper(userId)` at `blocks.router.ts:7140`**, inside a body spanning
+`7103..7501`, under a comment reading *"developer-only surface — `assertViewerIsAppDeveloper` below
+gates every call"*. So the route **cannot** let `generate-from-model` delete its *"Applies to this
+session only"* note for ordinary viewers — which is the acceptance target I briefed.
+
+⚠ **I nearly reported the agent refuted.** My first check read only 30 lines past the procedure
+start and saw just `authorizeBlockBridgeToken` + `assertAppBlocksEnabledForTokenUser`; the author
+gate sits at +37. **Second time today a too-narrow window produced a false reading** (the first:
+`enforceAppBlocksFlag` inside the comment explaining its absence). Read the whole construct.
+
+**The decision is issue #5092's:** keep the developer gate — and #5093 ships a permanent write
+surface no ordinary viewer can use — or remove it, and the note can go. Shipping now costs the
+former; waiting costs a delay. Not decided.
+
+## #5093 attributed the `component-tests` red the way the RULE asks — the only one of the three that did
+It got the component tier **running locally** via the repo's documented NixOS escape hatch (both
+other agents could not), found all 5 suites failing on one identical `showWarningNotification`
+import error in files its diff does not touch, and confirmed **the unmodified base clone fails
+identically**. That is attribution by the failing TEST plus a clean-base control — not the
+`git log main` misreading #5090 and #5091 both hit.
+
+## Its round 0 found three false claims it had itself written
+*"NAMED ONCE, HERE"* (the key is open-coded at 3 sites); a false collision justification repeated at
+2 tree sites; and a `ctx.user` claim that **#5087 itself records as refuted**. Corrected publicly.
+
+And one of its guards *read as coverage while providing none* — the name claimed a relationship, the
+body inspected one side. **Measured**: the old version **survived** a reader rename (0/17 failures);
+the rewrite kills it plus 2 more.
+
+## The `blocks.router.ts` constraint is now 3-for-3
+#5093 also kept `authorizeBlockBridgeToken` inside the router while extracting the rest to
+`user-settings.service.ts`, splitting at the claims boundary — the third independent agent to
+converge on the constraint my brief had backwards.
