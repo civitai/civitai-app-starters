@@ -563,3 +563,50 @@ as "the deletion did not land". The discriminating query is the ACTIVE construct
 `grep -cE "^minimumReleaseAgeExclude:"` → branch **0**, main **1**. Second hit on this shape today
 (the first was `enforceAppBlocksFlag` appearing inside the comment explaining its absence).
 **Grep for the construct, not the token.**
+
+---
+
+# THE REMAINING PLATFORM SURFACES — classified by the operator's own rule
+
+Operator direction (handoff `:28`): *"default api, and only things that must be via messaging
+(ex. opening resource picker) uses that protocol."* Measured 2026-09-24 against that rule. **All
+five are already implemented HOST-SIDE** — the gap is the SDK and the REST twins, not the feature.
+Host-handler file counts under `civitai/src/components/AppBlocks`, positive control
+`OPEN_RESOURCE_PICKER` = **9**:
+
+| surface | host files | verdict | why |
+|---|---|---|---|
+| `OPEN_IMAGE_UPLOAD` | 12 | **messaging** | raises a host file-picker modal + async scan |
+| `PUBLISH_GENERATION_OUTPUTS` | 6 | **messaging** | `createPostFromAppGate.ts` is a Modal awaiting `onConfirm()`, its own timeout bucket, a consent ceremony |
+| `SET_USER_CHECKPOINT` | 5 | **REST** | `hostHandlerParity.ts:410-414` — a pure write to `block_user_settings`, no UI |
+| `GET_IMAGES_BY_IDS` | 9 | **REST** | data read |
+| `QUERY_APP_WORKFLOWS` | 3 | **REST** | data read |
+
+## Three REST PRs dispatched 2026-09-24T05:3xZ (branch + PR, no merge)
+`feat/app-workflows-rest` · `feat/gated-images-rest` · `feat/user-checkpoint-rest`
+
+Each briefed with #5085's round-0 findings as things NOT to repeat: don't use
+`enforceAppBlocksFlag` (wrong identity on a token transport — issue #5087), don't open-code a
+bearer parser (~20 copies already), decide anon behaviour deliberately and write it down
+(issue #5089), check what the route renders as in `/apps/activity`, and prefer extraction to a
+service over a tRPC caller.
+
+**The per-surface hazard each one carries:**
+- **workflows** — 🔴 the tag filter MUST be derived from the verified JWT, never the body. The host
+  forces it today (*"the block can never widen the filter"*), and the obvious substitute
+  `orchestration.queryWorkflows({tags})` takes tags from the CALLER — relocating a server-enforced
+  trust boundary into the iframe, in a way that type-checks and passes tests.
+- **gated images** — 🔴 must preserve the `visible`/`hidden` discriminator. `/blocks/images` cannot
+  substitute: it reports over-ceiling images **by omission**, which collapses *hidden* and *deleted*
+  into one observable and breaks the "Hidden — rated mature" tile three apps render. Parity with the
+  bridge is the bar; the bridge already discloses `hidden` to the block.
+- **user checkpoint** — has a **shipped consumer waiting**: `generate-from-model` (`200617ef`) now
+  renders *"Applies to this session only"* precisely because this route does not exist. Deleting
+  that note is the acceptance target. Must preserve the model-bound install keying, or the two
+  transports disagree about the same viewer's setting.
+
+## The two messaging surfaces are HELD, deliberately
+`OPEN_IMAGE_UPLOAD` and `PUBLISH_GENERATION_OUTPUTS` are `@civitai/sdk` host-protocol additions in
+`civitai-app-starters`. **Not dispatched yet** — the storage-client agent is live in
+`packages/civitai-sdk` and both would edit `src/app/index.ts` and the export barrel. Sequence them
+after `feat/sdk-storage-client` lands.
