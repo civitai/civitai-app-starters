@@ -43,29 +43,24 @@ that protocol."*
 
 ## State now
 
-🔴 **THE ARC'S CLOSING CONDITION IS MET, THE PORT IS ON GITHUB, AND PR #21 IS GREEN AND CLEAN.**
+🔴 **THE ARC IS CLOSED AND MERGED.** `civitai-app-requests` runs on `@civitai/sdk` **on `main`**.
 
-- **`ZacxDev/civitai-app-requests` PR #21** — the port. Branch `zach/port-to-civitai-sdk`, three
-  commits: `f422773` (transport port) · `122c60d` (the a11y change) · `203328a` (the supply-chain
-  exemption below). **`mergeable=MERGEABLE mergeStateStatus=CLEAN`, `build` SUCCESS, totals
-  `total=1 success=1 failure=0`.** Ready to merge.
-- **`innovation-upstream/devrc` PR #1862** — one line routing scope `civitai-app-requests` to the
-  `civitai` cairn instance. `MERGEABLE`. 🔴 **Not live until a `home-manager switch`**:
-  `~/.config/subsystem-store/routes.json` is a `home.file` copy (`home.nix:1688`) resolving into
-  `/nix/store`, so the source edit alone changes nothing on the running host.
-- The subsystem-index entry is written and validated but **still not landed** — it needs #1862
-  merged AND the switch, then
-  `cairn create --scope civitai-app-requests --ref platform --file <file>`. It survives the
-  scratchpad at **`/home/zach/workspace/civit/cairn-entry-civitai-app-requests-platform.md`**
-  (outside every repo — client-confidential, and `devrc` is PUBLIC).
-- `claim-work civitai-app-platform-migration-1` is **still HELD**; release when #21 merges.
-- Verified at `203328a`: typecheck 0 errors, **414 tests pass**, build clean, CI green.
-- Still NOT verified: the app against real civitai.com.
-
-### Operator decisions taken 2026-09-23
-- Analytics: **keep the no-op shim**. · Test harness: **fetch-level fake**. · Cairn route:
-  **`civitai`**. · Sort control a11y: **switch to `radiogroup` NOW** (this REVERSED my
-  recommendation — `122c60d`). · The 24h supply-chain gate: **push through it**, narrowly (below).
+- **PR #21 MERGED** 2026-09-24T02:12:19Z, squash `52b7e1b1` on `ZacxDev/civitai-app-requests` main.
+  Verified BY CONTENT, never ancestry: all four shipped files present on `origin/main`,
+  `radiogroup` present in `ui.tsx` (2 hits), the exemption present in `pnpm-workspace.yaml`
+  (2 hits). `merge-base --is-ancestor` is **false**, which is correct after every squash.
+- 🔴 **CLOSING CONDITION, re-measured ON `origin/main` itself** (not a branch, not a worktree):
+  `@civitai/blocks-react` importers **0** · control `@civitai/sdk` **13** · same command on
+  unported `civitai-block-gen-matrix` **5** · the dependency absent from main's `package.json`.
+- `claim-work civitai-app-platform-migration-1` **RELEASED**. Base clone re-synced to `52b7e1b`
+  on `main`; the port worktree is removed and `git worktree list` carries only the base clone.
+- **`innovation-upstream/devrc` PR #1862** — the cairn route. **REBASED onto current main**
+  (`fd3aaed9`) because its CI red was inherited from a stale branch point, see below. Still
+  OPEN; CI re-running at the time of writing.
+- The subsystem-index entry is still NOT landed: it needs #1862 merged AND a `home-manager
+  switch`. It survives at
+  `/home/zach/workspace/civit/cairn-entry-civitai-app-requests-platform.md`.
+- Still NOT verified: the app against real civitai.com. This has not moved.
 
 ## Open investigations — live diagnosis state
 
@@ -478,34 +473,66 @@ that protocol."*
 - **Next probe:** none. **Delete the `minimumReleaseAgeExclude` entry once `@civitai/sdk` moves
   past 0.2.0** — it is then dead config that silently weakens the next reader's assumptions.
 
+<!-- SUPERSEDES the ranked item "Reconcile the pnpm major: local is 10.28.1, the flake pins 11"
+     AND the Gotcha claiming "This repo has no `.envrc`". 🔴 THAT GOTCHA IS FALSE — the repo has
+     a TRACKED `.envrc` and has since #18. Do not act on its stated mechanism; the corrected one
+     is below. The rest of that entry (a local green blind to CI's install policy) still holds. -->
+### RESOLVED: the pnpm-major split was an UNAUTHORIZED `.envrc`, not a missing one
+- as-of: 2026-09-23
+- **Symptom + exact repro:** every local `pnpm` ran **10.28.1** while `flake.nix` pins
+  `pnpmMajor = "11"` and CI runs 11, so `minimumReleaseAge` — a pnpm 11 policy — was invisible
+  locally and CI caught it.
+- **Observed (with values):** `direnv status` in the repo prints
+  `Found RC path /home/zach/workspace/civit/civitai-app-requests/.envrc` **and**
+  `Loaded RC allowed 0`; `direnv exec` answered
+  *"is blocked. Run `direnv allow` to approve its content"*. The file is **TRACKED** on
+  `origin/main` (`git cat-file -e origin/main:.envrc` succeeds; added in `9366021`, the same
+  commit that pinned the flake) and contains `use flake`. After `direnv allow`, inside the shell:
+  **node v24.19.0, pnpm 11.25.0**, and `pnpm install --frozen-lockfile` →
+  `✓ Lockfile passes supply-chain policies`. `via: measurement`
+- **Ruled out:** *"this repo has no `.envrc`, so nothing puts the flake on PATH"* — **FALSE, and
+  it was my own claim, now retracted.** Two compounding reasons I believed it: I `ls`'d the BASE
+  CLONE while it was **19 commits stale**, and `.envrc` arrived in #18 which that clone lacked;
+  and the worktree I actually worked in DID carry the file, so the file was never the problem.
+  `via: command`
+- **Ruled out:** *"the flake does not actually provide pnpm 11"* — FALSE.
+  `direnv exec <repo> bash -c 'readlink -f $(command -v pnpm)'` resolves to
+  `/nix/store/…pnpm-11.25.0/…`. `via: command`
+- **Leading hypothesis:** resolved on this host by `direnv allow`. The durable hazard is the
+  AUTHORIZATION, not the file.
+- **Next probe:** none for this host. 🔴 **A new worktree or a second host starts BLOCKED again** —
+  `direnv allow` is per-path, so the same silent-wrong-toolchain state returns on the next
+  `git worktree add`. Run `direnv allow <path>` at worktree creation, and check
+  `pnpm --version` before quoting any result that depends on the toolchain.
+
 ## Next steps (ranked)
 
-1. **Merge PR #21.** `CLEAN`, `build` green, `total=1 success=1 failure=0`. Then
-   `claim-work --release civitai-app-platform-migration-1`.
-   forcing: gate — it is the arc's closing condition, delivered and green.
-2. **Run the ported app against the real platform** — mint an anon block token and
-   `GET /api/v1/blocks/shared-storage/list` against a preview deploy, expecting 200 with
-   `items[].viewerVoted`; then a signed-in vote. Until this happens "ported" means "imports
-   nothing from the bridge", not "works".
-   forcing: gate — nothing may be submitted to the store on a fake-server-only green.
-3. **Merge devrc #1862, `home-manager switch`, then land the cairn entry** from
-   `/home/zach/workspace/civit/cairn-entry-civitai-app-requests-platform.md`.
+1. **Merge devrc #1862 once green, `home-manager switch`, then land the cairn entry** from
+   `/home/zach/workspace/civit/cairn-entry-civitai-app-requests-platform.md` with
+   `cairn create --scope civitai-app-requests --ref platform --file <file>`. The route is inert
+   until the switch — `routes.json` is a `home.file` copy resolving into `/nix/store`.
    forcing: gate — the index write is blocked until the route is live.
-4. **Reconcile the pnpm major: local is 10.28.1, the flake pins 11.** The flake's own comment says
-   a local shell and CI must not run different majors, and this session proved the cost.
-   forcing: regression — a local green is structurally blind to CI's install policy until fixed.
-5. **Delete the `minimumReleaseAgeExclude` entry when `@civitai/sdk` moves past 0.2.0.**
-   forcing: security — a standing exemption from a supply-chain control outliving its reason.
-6. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
+2. **Run the ported app against the real platform.** Mint an anon block token and
+   `GET /api/v1/blocks/shared-storage/list` against a preview deploy, expecting 200 with
+   `items[].viewerVoted`; then a signed-in vote. 🔴 This is now the ONLY thing standing between a
+   merged port and a submitted one — "ported" currently means "imports nothing from the bridge",
+   not "works". `src/pages/api/v1/blocks/dev-token.ts` exists and is the likely way in.
+   forcing: gate — nothing may be submitted to the store on a fake-server-only green.
+3. **Delete the `minimumReleaseAgeExclude` entry when `@civitai/sdk` moves past 0.2.0.**
+   `pnpm-workspace.yaml` carries the condition; it is an exemption from a supply-chain control and
+   must not outlive its reason.
+   forcing: security — a standing supply-chain exemption with an expiry.
+4. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
    `civitai/civitai-app-starters` — force-pushed off the branch, still reachable by sha.
    forcing: security — residual exposure on a PUBLIC repo from an earlier session's leak.
-7. **Ratify or reject R14** — #5068 reached tRPC via a `blocksRouter` caller, diverging from the
+5. **Ratify or reject R14** — #5068 reached tRPC via a `blocksRouter` caller, diverging from the
    body-extraction precedent #5054/#5055 set.
    forcing: user — an operator call, not an engineering one.
-8. **Revisit F2/F6 when a GENERATION app adopts the poll surface.** `app-requests` does not
-   generate, so the trigger is still unfired.
+6. **Revisit F2/F6 when a GENERATION app adopts the poll surface.** `app-requests` does not
+   generate. The pattern for porting one now exists and is merged, so this is closer than it was.
    forcing: user — deferred deliberately, not dropped.
-9. **Batch: filed but not advanced.** civitai#5059, civitai#5060, starters #425–#432, #422, #423.
+7. **Prune this document.** It is ~76 KB against a 65,536 B ceiling with ~5 KB of resolved
+   investigation blocks the tool measures as evictable. Advisory, no gate here, but drifting.
    forcing: none
 
 ## Defects (batched)
@@ -896,6 +923,44 @@ that protocol."*
   this org's own monorepo because npm OIDC cannot create a package that does not yet exist), so the
   third-party-compromise threat the window guards against does not apply to it. Implemented as an
   exact-version exemption with its own removal condition, never as a disabled policy.
+
+- 🔴 **RETRACTION: "this repo has no `.envrc`" WAS WRONG, AND A STALE CHECKOUT MANUFACTURED THE
+  EVIDENCE.** I `ls`'d the base clone, got "No such file", and wrote the conclusion into this
+  doc — but the clone was **19 commits behind** and `.envrc` had been added in `9366021`. The file
+  is tracked and always shipped. **The real mechanism is that `direnv` authorization is PER PATH
+  and the path was `allowed 0`**, so a present, correct `.envrc` sat inert and the host's pnpm 10
+  won silently. The tell is in `direnv status`: `Found RC path …` together with `Loaded RC
+  allowed 0` — *found* and *allowed* are different fields and only the second one matters.
+  Generalises: **a file's PRESENCE is not its ACTIVATION**, and an absence measured on a stale
+  tree is not an absence.
+- 🔴 **A RED CI CHECK ON A ONE-LINE JSON CHANGE WAS INHERITED FROM THE BRANCH POINT, AND THE
+  CONTROL TOOK ONE COMMAND.** devrc #1862 added a single routes entry and
+  `tekton/devrc-pytests` failed `test_no_unallowlisted_public_ip_literal_is_committed` (2 of
+  24,076). The discriminator is **run the failing test at the branch point vs at current main**:
+  it FAILS at `a6e98a3d` (my base) and PASSES on `5273d71b` (current main), so it was fixed
+  upstream while my branch sat 3 commits behind. Rebase, don't investigate. 🔴 Note the local
+  control is only valid if you run it in a tree that HAS the change — my first attempt ran against
+  local `main`, which did not, and proved nothing about my branch.
+- 🔴 **`direnv exec <dir> <cmd>` LETS THE OUTER SHELL RESOLVE `<cmd>` FIRST.** `direnv exec $R pnpm
+  --version` printed **10.28.1** — the corepack shim — while
+  `direnv exec $R bash -c 'pnpm --version'` printed **11.25.0** from the flake. The first form
+  reads as "direnv is not working" and is really "you measured the wrong pnpm". Wrap the command in
+  a shell when you need the environment to apply to resolution as well as to execution.
+- 🔴 **THE FIVE OPERATOR DECISIONS OF THIS ARC, MOVED HERE SO A STATUS REPLACE CANNOT EAT THEM.**
+  They lived under `State now`, which is overwritten on every update, and the write gate flagged
+  them as a durable drop. Taken 2026-09-23/24, each with its alternative explicitly on the table:
+  (1) **analytics** — keep a no-op shim with all six `track()` call sites intact, rather than
+  deleting them or blocking the port on a new SDK surface; (2) **test harness** — a fetch-level
+  fake, because after the port the board's real boundary IS `fetch` and a mock host would answer a
+  conversation nobody is having; (3) **cairn route** — `civitai`, chosen by an operator because the
+  table is genuinely split for sibling fleet apps; (4) **sort-control a11y** — switch to
+  `radiogroup` NOW, which **reversed my recommendation** to preserve `tablist`; (5) **the 24h
+  supply-chain gate** — push through it rather than wait ~2h, implemented as an exact-version
+  exemption and never as a disabled policy.
+- **Decision (operator, 2026-09-24):** PR #21 merged by squash, matching this repo's convention
+  (every mainline commit carries `(#N)`; the repo has no merge commits). The squash body preserves
+  the three-part structure — transport port, a11y change, supply-chain exemption — because the
+  commits were deliberately separated and the reasoning for each is worth keeping.
 
 ## How to verify
 
