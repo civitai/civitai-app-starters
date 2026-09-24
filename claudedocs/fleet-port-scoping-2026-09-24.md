@@ -321,3 +321,49 @@ no action. The other three apps' `updatedAt` hits are shared-storage item fields
 **Fix options:** have #5085 serialise `updatedAt` as the bridge does; or change `gen-matrix`'s
 declared type to `string` and its tests with it. Either is fine — but pick one deliberately and pin
 it with a test that loads BOTH sides, not one that mocks the boundary away.
+
+---
+
+# 🔴 PR #5085 CI IS RED, and the author's "pre-existing" defence does not cover it
+
+Read 2026-09-24 on head `d97753136a`, both CI surfaces, because neither is a superset of the other:
+
+- **Commit statuses:** 3 of the repo's expected 7 posted — `tekton/typecheck` success,
+  `tekton/fixture-bootstrap` success, `preview/deploy` **pending**. NOT settled.
+- **Check-runs:** 13 total, and **`ESLint + Prettier (changed files)` = completed/FAILURE**.
+
+🔴 **The red lives ONLY in check-runs** — the statuses surface shows nothing wrong. This is the
+inverse-blindness case exactly: a reader checking `mergeStateStatus` or the statuses rollup sees
+`MERGEABLE` with no failure and concludes green.
+
+## What actually fails
+The failing step is **`ESLint (added files)`** — `.github/workflows/lint.yml:206`. Its log (fetched
+with `gh run view <run> --job <job> --log-failed`; ⚠ the skill's
+`gh api …/logs --allow-escape-sequences` does NOT exist in `gh 2.96.0` and returns **0 bytes**, so
+assert the byte count or you grep an empty file and read it as clean) reports **35 problems**,
+`Process completed with exit code 123` (that is `xargs`, not eslint):
+
+- **7 Errors** — `no-empty-function`, all in `src/server/services/apps/app-storage.service.ts`
+  (`:828, :929, :952, :974, :1027, :1046, :1052`). **These are the failure.**
+- **28 Warnings** — `no-explicit-any` in `src/tests/api/v1/blocks/app-storage-endpoints.test.ts`.
+  They annotate and do NOT fail; the step's comment ("Errors only, no `--max-warnings`") is
+  **accurate**, checked rather than assumed.
+
+## Why the author's defence misses
+PR #5085's report states: *"`eslint --quiet`: 0 errors. The 7 `no-empty-function` errors in the
+service file are pre-existing — proven by linting `origin/main:apps.router.ts`, which reports the
+identical 7."*
+
+That is **true about the CONTENT and irrelevant to the GATE.** The step is
+**`ESLint (added files)`**, and `app-storage.service.ts` is a NEW file. The workflow says why in its
+own comment at `lint.yml:202-205`: *"New files start clean, so holding them to the rules costs
+nothing."* Moving code out of `apps.router.ts` converted errors that were tolerated in an old file
+into **blocking** errors in a new one. The check that was run locally asked "is this code new?"; the
+gate asks "is this FILE new?" — different populations, and only the second one gates.
+
+Also note `--quiet` **suppresses warnings**, so a local `eslint --quiet` cannot see the 28 either —
+it happens not to matter here, but it means the local command was not the gate's command.
+
+**Fix:** 7 empty arrow functions in one new file. Trivial, and it is the only thing between this PR
+and a settled CI — with the caveat that `preview/*` had not posted yet, so a green lint is
+necessary, not sufficient.
