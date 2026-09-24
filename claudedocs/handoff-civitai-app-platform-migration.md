@@ -1075,80 +1075,79 @@ and each was named in its brief as do-not-touch:
 
 ## Next steps (ranked)
 
-1. ✅ **DONE — `civitai-block-generate-from-model` is ported. Review + merge PR #11.**
-   `https://github.com/ZacxDev/civitai-block-generate-from-model/pull/11` — branch
-   `feat/civitai-sdk-port`, 42 files, +2419/−205, `MERGEABLE`/`CLEAN`, `build` **pass**.
-   **Closing condition re-measured by me on the COMMITTED tree (`bba558b`), not taken from the
-   agent:** blocks-react **importers 0** · the string survives in exactly **1** file,
-   `src/platform-seam.test.ts`, which is the guard enforcing the zero and must name what it forbids
-   · positive control `@civitai/sdk` **11** · unported control `gen-matrix` **10** · dependency
-   absent from `package.json`.
-   ⚠ **Not verified against production and cannot be**: all four `/workflows/*` routes still
-   **404** (re-probed 03:56Z; controls `/blocks/buzz` and `/blocks/shared-storage/list` → 401 JSON).
-   The generation path is green only against a fake server — the agent stated this in the PR body,
-   the README and `workflows.ts`. Also unclicked: the dev harness, the picker and purchase modals
-   against a real host.
-   ⚠ **Behaviour loss shipped deliberately**: `useCheckpointPicker().persist` is a no-op (surface 6
-   above). Also no picker pre-highlight and no `newBalance` from the purchase modal.
-   ⚠ `pnpm-workspace.yaml` carries another narrow `minimumReleaseAgeExclude` for `@civitai/sdk@0.2.0`
-   — same written-expiry condition as item 6.
-   The agent recommends `/audit-pr 11`, Round 0 first, while the merge decision is still open.
-   forcing: user — review is the operator's; the agent was told not to merge.
-2. **Decide the app-storage platform PR** — 4 REST adapters over `appsStorageRouter`
-   (`get`/`set`/`delete`/`list`), #5068-shaped, plus whether `@civitai/sdk` grows a `storage`
-   client or each app hand-rolls one like `app-requests` did.
-   forcing: gate — five of the six remaining apps are blocked behind it.
-3. **Re-probe `/api/v1/blocks/workflows/*` until #5068 deploys.** 🔴 **The check needs NO token and
-   no browser** — an UNAUTHENTICATED POST discriminates: a route that exists answers **401
-   `{"error":"Block token required"}`** (`application/json`), an absent one answers **404
-   `text/html`**. Control: `/shared-storage/list` unauthenticated → 401 JSON. Read
-   2026-09-24T03:0xZ: all four still **404**, ~5.5h after `2a2eb0fe2f` merged.
-   ```bash
-   for r in estimate submit poll cancel; do
-     curl -s -o /dev/null -w "$r %{http_code} %{content_type}\n" -X POST \
-       "https://civitai.com/api/v1/blocks/workflows/$r" -H 'Content-Type: application/json' -d '{}'
-   done
-   ```
-   forcing: gate — #5068's surface is unverified in production, and item 1 lands on it.
-4. **DEFERRED (operator, 2026-09-24) — prove the ANON read.** The last unmeasured path in the
-   `app-requests` port. `#5067`'s fix rests on unit evidence alone; no dev-token or dev-tunnel
-   session can produce a signed-out viewer, so it needs a deployed build of the PORTED app loaded
-   in a signed-out browser. Expect **200**; the pre-`3a1e090924` **403** is the positive control.
-   🔴 Deferred, NOT dropped — the app's stated premise is *"Anyone can read the board signed out"*,
-   so this is the one remaining way the port could be wrong for real users.
+🔴 **REWRITTEN 2026-09-24 end of session. Items 1–4 as previously written are DONE** — do not
+re-derive them. Per-PR detail and every correction lives in
+`claudedocs/fleet-port-scoping-2026-09-24.md`; this list is only what is still OPEN.
+
+**Shipped this session** (all verified by CONTENT, with controls, never by rc or ancestry):
+`civitai#5085` app-storage REST `1abd6539` · `civitai#5090` workflows-query `67c1fcdf` ·
+`civitai#5091` gated-images `1b965b3d` · `civitai-app-starters#441` the SDK storage client
+`eea19074` · `app-requests#22` `a4193066` · `generate-from-model#11` `200617ef` (the fleet's
+**second** ported app; 0 blocks-react importers on main, control `@civitai/sdk` 12, unported control
+`gen-matrix` 10).
+
+1. 🔴 **Decide issue `civitai#5092` — does the developer gate stay on `updateUserSettings`?**
+   `blocks.router.ts:7140` calls `assertViewerIsAppDeveloper`, so **`civitai#5093` (open) ships a
+   write surface no ordinary viewer can use** and cannot delete `generate-from-model`'s
+   *"Applies to this session only"* notice. Keep the gate ⇒ #5093 is a developer-only convenience;
+   drop it ⇒ the notice goes and the port is whole. **#5093 must not merge before this is answered.**
+   forcing: user — nobody else can settle it.
+2. **Port the fleet.** The platform now has app-storage, workflows-query, gated-images and an
+   `AppClient.storage` client. Five apps remain, each with a read plan in the scoping doc:
+   `custom-generators` (30 files, smallest storage surface) → `playable-collections` (33, soft
+   storage dependency) → `gen-matrix` (10 importers but 3,550-line App) → `model-benchmarking` (41,
+   🔴 money path) → `sensei` (47, stage it in two).
+   🔴 **`gen-matrix` and `model-benchmarking` still cannot reach 0 importers** until the two
+   messaging surfaces land (item 3).
+   forcing: gate — the arc's actual remaining work.
+3. **The two messaging surfaces** — `OPEN_IMAGE_UPLOAD` and `PUBLISH_GENERATION_OUTPUTS` as
+   `@civitai/sdk` host-protocol additions. **In flight** on `feat/sdk-host-image-upload-and-publish`
+   (one PR, two commits). The host already implements both; this exposes them.
+   forcing: gate — blocks `custom-generators` (upload) and `gen-matrix`/`model-benchmarking` (publish).
+4. 🔴 **Two gates are red repo-wide and neither is anyone's PR — both are the
+   "permanently-red gate trains everyone to click through" hazard, live in two repos at once.**
+   (a) `preview / component-tests` in `civitai/civitai` — all 5 suites fail on one
+   `showWarningNotification` import error, reproduced in an unmodified base clone. **Unowned; not
+   filed.** (b) `Canonical schema drift-check` in the starters repo — the live schema gained an
+   `auth` property the vendored copy lacks; filed as **`civitai-app-starters#443`**.
+   ⚠ Three PRs have now been merged past (a) with the acceptance recorded each time.
+   forcing: gate — every future PR in both repos reads these as noise.
+5. **`civitai#5087`** drop `enforceAppBlocksFlag` from the five storage procedures ·
+   **`civitai#5088`** the `updatedAt` revival, closing only on a test whose fake sends an ISO string ·
+   **`civitai#5089`** anon 403 vs bridge-parity null, per operation · **`civitai#5094`** the
+   `/apps/activity` sentinel, now scoped to five routes · **`civitai#5095`** the rate-limit ledger.
+   All filed with closing conditions.
+   forcing: gate — each has a named checker.
+6. 🔴 **Nothing in this arc has been exercised live against a real server except `app-requests`.**
+   Every other green is against a fake. The one live probe (dev-tunnel: list/append/vote/withdraw,
+   all 200) remains the only evidence any of this works end to end.
+   forcing: gate — the arc's standing blind spot.
+7. **DEFERRED (operator) — prove the ANON read.** `#5067`'s fix still rests on unit evidence; no
+   dev-token or dev-tunnel session can produce a signed-out viewer, so it needs a deployed build of
+   a ported app in a signed-out browser. Expect 200; pre-`3a1e090924` 403 is the positive control.
    forcing: user — deliberately deferred.
-5. **Merge devrc #1862, `home-manager switch`, then land the cairn entry** from
+
+⚠ **Removed from this list 2026-09-24: the `minimumReleaseAgeExclude` item.** It is DONE in
+BOTH repos — `app-requests#22` (`a4193066`) and `generate-from-model#11` (`200617ef`). Its stated
+condition ("when `@civitai/sdk` moves past 0.2.0") was never the real expiry; the 24h clock was,
+and it closed 2026-09-24T03:49:30Z. One of the two blocks was inert 7 minutes BEFORE the commit
+that added it.
+
+8. **Merge devrc #1862, `home-manager switch`, then land the cairn entry** from
    `/home/zach/workspace/civit/cairn-entry-civitai-app-requests-platform.md` with
    `cairn create --scope civitai-app-requests --ref platform --file <file>`. 🔴 Check its Tekton
    statuses first — they were stuck `pending` for ~25 min.
    forcing: gate — the index write is blocked until the route is live.
-6. 🔴 **Delete BOTH `minimumReleaseAgeExclude` blocks NOW — the stated condition is the WRONG one
-   and they are already inert.** This item used to read *"when `@civitai/sdk` moves past 0.2.0"*.
-   That is not the expiry: the real one was pnpm 11's **24-hour clock**, and it ran out at
-   **2026-09-24T03:49:30Z** (`@civitai/sdk@0.2.0` published `2026-09-23T03:49:30.004Z`, confirmed via
-   `npm view @civitai/sdk time`). Two repos carry one — `civitai-app-requests/pnpm-workspace.yaml:31`
-   and the `generate-from-model` port (PR #11).
-   🔴 **PR #11's was inert 7 MINUTES BEFORE THE COMMIT THAT ADDED IT**: commit `6d03c5c` is authored
-   `2026-09-23T22:56:34-05:00` = `2026-09-24T03:56:34Z`, seven minutes after the window shut. It was
-   carried across from `app-requests` without re-reading the clock and has never had any effect in
-   that repo. Round 0 proved this with both controls — exclude removed + default policy → **PASS**;
-   negative control (`minimumReleaseAge: 100000`, no exclude) → **4 violations** naming
-   `@civitai/sdk@0.2.0`; positive control (same, exclude present) → **3**, the package gone. The
-   timestamps re-verified first-hand.
-   Left in place, 28 lines documenting a supply-chain exemption that does nothing will read to the
-   next maintainer as an ACTIVE HOLE in a security control, expiring on a condition that will never
-   be the reason.
-   forcing: security — a standing exemption that is now pure misinformation.
-7. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
+9. **Ask GitHub Support to purge `9c97491136c4eb0b6bd7c73f3d6abc3f856ab6da`** in
    `civitai/civitai-app-starters` — force-pushed off the branch, still reachable by sha.
    forcing: security — residual exposure on a PUBLIC repo from an earlier session's leak.
-8. **Ratify or reject R14** — #5068 reached tRPC via a `blocksRouter` caller, diverging from the
+10. **Ratify or reject R14** — #5068 reached tRPC via a `blocksRouter` caller, diverging from the
    body-extraction precedent #5054/#5055 set.
    forcing: user — an operator call, not an engineering one.
-9. **Revisit F2/F6 when a GENERATION app adopts the poll surface.** Still unfired: `app-requests`
+11. **Revisit F2/F6 when a GENERATION app adopts the poll surface.** Still unfired: `app-requests`
    does not generate. Track A could not fire it at all — `/workflows/poll` 404s in production today.
    forcing: user — deferred deliberately, not dropped.
-10. **Prune this document.** 🔴 **The "65,536 B ceiling" this item used to cite is WRONG.**
+12. **Prune this document.** 🔴 **The "65,536 B ceiling" this item used to cite is WRONG.**
     `handoff-audit.py` reports **target 12,288 B · hard cap 40,960 B**, and says plainly that
     NEITHER is enforced here — this repo ships no `scripts/tests/test_handoff_doc_size.py`, so
     nothing can go red and the numbers are judgement, not a gate. Measured 2026-09-24:
