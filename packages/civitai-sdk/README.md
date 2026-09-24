@@ -92,6 +92,41 @@ const images = await app.site.get('images', { query: { limit: 20, username: 'civ
 A `401` is retried once with a fresh token. Any other failure is an `ApiError`
 carrying `status`, the parsed `body`, and the server's own message.
 
+## App storage
+
+`app.storage` is the viewer's own key/value store, scoped to this app and this
+block instance. It needs the block token the host mints — an app holding an
+OAuth access token has no per-viewer app storage — and an anonymous viewer is
+refused, so gate on `app.viewer` rather than reading an empty page as "nothing
+stored".
+
+```ts
+await app.storage.set('draft:latest', { prompt, steps: 30 });
+const draft = await app.storage.get<Draft>('draft:latest'); // null when unset
+const { keys, nextCursor } = await app.storage.list({ prefix: 'draft:' });
+const quota = await app.storage.getQuota();
+```
+
+Three properties the surface is built around:
+
+- **Every failure rejects.** Nothing here resolves to mean "not written", and
+  nothing resolves to mean "could not read". A malformed success throws a
+  `CivitaiError`; a refusal is an `ApiError` carrying `status`. A caller that
+  must not act on a partial view branches on the rejection, never on an empty
+  result.
+- **`nextCursor` is present exactly when there may be more rows**, and is passed
+  through untouched. Its absence is your proof a scan completed. Page it
+  yourself, with a bound — the client adds no iterator, because the truncation
+  policy is the caller's to choose.
+- **`set`'s `sizeBytes` is the wire unit; `getQuota`'s `usedBytes` is the stored
+  unit.** They are not a fixed multiple — measured, a numeric-heavy value stores
+  up to 44.4x its wire size — so summing `sizeBytes` under-counts your quota.
+  `getQuota()` is the authority, and it reports neither the key-length cap nor
+  the per-value cap.
+
+A write refused for size or quota arrives as `413`, whichever ceiling fired;
+`isQuotaRefusal(error)` is that test, structurally, without matching a message.
+
 ## The orchestrator
 
 Steps are typed by `$type`: `input` is checked against that step's own input,
@@ -166,6 +201,22 @@ entry.
 
 `@civitai/sdk/testing` has `createFakeTransport()`: pass it as
 `initialize({ transport })` and script the host's answers.
+
+For app storage, `createFakeAppStorage()` is a `fetch`-shaped stand-in for the
+five routes: pass it as `initialize({ token, fetch })` so the client's URLs,
+bodies, statuses and date revival are all real. Its `calls` ledger records what
+the **client** sent, and its page size defaults to **3**, so multi-page is the
+ordinary case rather than the exotic one — a fixture that fits on one page is
+exactly how a client that never sends `cursor` passes a green suite.
+
+```ts
+const store = createFakeAppStorage({
+  pageSize: 2,
+  seed: [{ key: 'draft:a', value: 1 }, { key: 'draft:b', value: 2 }],
+});
+const app = await initialize({ token: 'block-jwt', fetch: store.fetch });
+const page = await app.storage.list({ prefix: 'draft:' });
+```
 
 ## Checks
 

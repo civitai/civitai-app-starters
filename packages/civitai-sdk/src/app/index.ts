@@ -18,6 +18,7 @@ import {
   type TokenSessionOptions,
 } from '../session/index.js';
 import { createSiteClient, DEFAULT_SITE_URL, type SiteClient } from '../site/index.js';
+import { createStorageClient, type StorageClient } from '../storage/index.js';
 
 /** Long enough for a slow host page; short enough that a block opened on its own says so. */
 const DEFAULT_INIT_TIMEOUT_MS = 10_000;
@@ -25,6 +26,15 @@ const DEFAULT_INIT_TIMEOUT_MS = 10_000;
 export interface AppClient {
   /** The public Civitai REST API (`/api/v1`), as the viewer. */
   readonly site: SiteClient;
+  /**
+   * The viewer's own per-app key/value store.
+   *
+   * 🔴 Requires the block token the host mints: an app that authenticated with
+   * an OAuth access token has no per-viewer app storage, and every call here is
+   * refused. An anonymous viewer is refused too — gate on `viewer` rather than
+   * reading an empty result as "nothing stored".
+   */
+  readonly storage: StorageClient;
   /** The orchestrator's workflows, as the viewer. */
   readonly orchestration: OrchestrationClient;
   /** Asks for more scopes. `false` when they cannot be granted — a refusal is an answer. */
@@ -99,8 +109,12 @@ export async function initialize(
 
 function createAppClient(session: Session, options: ClientOptions): AppClient {
   const http = (baseUrl: string) => createHttp({ session, baseUrl, fetch: options.fetch });
+  // One instance for both site-hosted surfaces: `storage`'s routes live under
+  // the same base URL, so a `siteUrl` override redirects them together.
+  const siteHttp = http(options.siteUrl ?? DEFAULT_SITE_URL);
   return {
-    site: createSiteClient(http(options.siteUrl ?? DEFAULT_SITE_URL)),
+    site: createSiteClient(siteHttp),
+    storage: createStorageClient(siteHttp),
     orchestration: createOrchestrationClient(http(options.orchestrationUrl ?? DEFAULT_ORCHESTRATION_URL)),
     requestGrants: (scopes, opts) => session.requestGrants(scopes, opts),
     getToken: (opts) => session.getToken(opts),
