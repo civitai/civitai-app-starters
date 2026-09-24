@@ -999,10 +999,26 @@ without one — correctly):
 - *(not filed, recommended)* the real bearer consolidation **20 → 1**, which touches eleven
   `/shared-storage/*` routes plus six other sites and wants its own review.
 
-🔴 **One thing to check now that #5085 is on `main`:** the acceptance comment
-(`#5085#issuecomment-5808030308`) states that if `preview / component-tests` is red on `main` after
-this lands, that is the shared cause showing itself and is worth chasing from the Tekton dashboard.
-Nobody has looked yet.
+🔴 **RETRACTED — the check I wrote into the acceptance comment was UNFALSIFIABLE, and I wrote it
+without confirming the surface reports there.** It said: *"if `preview / component-tests` is red on
+`main` after this lands, that is the shared cause showing itself."* **The preview pipeline posts
+statuses on PR HEAD COMMITS ONLY, never on `main`.** Measured across the six newest commits on
+`origin/main`: the two carrying 7 statuses (`58cb93144e`, `d97753136a`) are **this PR's own heads**,
+while every genuine main commit — `b7dcce9b23`, `438223aad9`, `bded2ec04f` — carries **0**, and the
+merge commit `1abd6539` is at `total_count=0` and will stay there.
+
+Corrected publicly at `#5085#issuecomment-5808223371`. **The merge decision is unaffected** — it
+rested on #5077's identical red, the absent mechanism, and the `component` project's
+`src/**/*.browser.test.tsx`-only include, none of which came from the main check.
+
+**Replacement condition, which CAN fire:** the next unrelated `civitai/civitai` PR carrying a
+`preview / component-tests` status — **also red** ⇒ shared cause confirmed, chase it from the Tekton
+dashboard; **green** ⇒ the red was specific to #5085's branch and the merged code needs a second
+look. #5077 is already one observation on the red side; one more independent PR settles it.
+
+🔴 **The reusable lesson: a closing condition is only a condition if the surface it names actually
+EMITS the thing.** Check that the surface reports before writing a condition against it — otherwise
+you mint a check that reads as diligence and can never fail.
 
 ### Pre-merge state (kept for the reasoning, not the status)
 
