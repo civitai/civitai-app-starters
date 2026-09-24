@@ -877,7 +877,7 @@ Autonomy granted: **branch + PR, no merge** — review is the operator's.
 
 | # | repo | branch | shape |
 |---|---|---|---|
-| A | `ZacxDev/civitai-block-generate-from-model` | `feat/civitai-sdk-port` | ✅ **DONE — PR #11** |
+| A | `ZacxDev/civitai-block-generate-from-model` | `feat/civitai-sdk-port` | ✅ **DONE — PR #11**, round 0 done, fixes in flight |
 | B | `civitai/civitai` | `feat/app-storage-rest` | 4 REST adapters over `appsStorageRouter` |
 | C | `civitai-app-custom-generators` | — | read-only scoping |
 | D | `civitai-app-playable-collections` | — | read-only scoping |
@@ -934,7 +934,29 @@ NOT to take a worktree-isolation flag** — this session's cwd is `civitai-app-s
 would have worktreed the WRONG repo. They were also told to `cp .envrc` + `direnv allow` into the
 worktree (a worktree carries neither `.envrc` nor submodules), and `git stash` was forbidden.
 
-Claims `civitai-app-platform-migration-1` (A) and `-2` (B) are HELD while this runs.
+Claims `civitai-app-platform-migration-1` (A) and `-2` (B) were held and are now RELEASED.
+
+### Round-0 FIX batch — three agents dispatched 2026-09-24T04:30Z
+Both PRs passed round 0 with `requirement questioned`, neither with `close`. Fixes dispatched, one
+agent per repo, **push to branch, no merge**:
+
+| repo | what |
+|---|---|
+| `civitai/civitai` #5085 | the 7 `no-empty-function` errors reddening CI; correct the unreproducible `13 → 12` bearer claim; PR comment correcting the gate table |
+| `…/civitai-block-generate-from-model` #11 | delete the inert `minimumReleaseAgeExclude`; `@civitai/app-sdk` → `devDependencies`; PR comment correcting 26-vs-25 importers and the 4-reds-3-causes matrix |
+| `ZacxDev/civitai-app-requests` | new PR deleting its now-inert `minimumReleaseAgeExclude` |
+
+🔴 **Four round-0 findings were deliberately WITHHELD from the fix agents as operator decisions**,
+and each was named in its brief as do-not-touch:
+1. **R4 / the checkpoint degradation** — may this port ship a viewer-visible behaviour loss on a
+   README note? `App.tsx:1143-1150`'s unreachable catch is entangled with it: deleting presumes the
+   no-op stays, surfacing an error presumes it does not. Held rather than pre-empted.
+2. **`enforceAppBlocksFlag` on the five storage procedures** — removing it dissolves R6 but is a
+   live behaviour change on the bridge path.
+3. **The `updatedAt` wire shape** — fix in #5085 (emit an epoch number) or in `gen-matrix` (declare
+   `string`). Pin whichever with a test that loads BOTH sides.
+4. **Anon → 403 vs bridge-parity `null`** for the three read routes. Keep 403 for `list` (the money
+   chain needs a throw); `get`/`quota` are a free choice overriding no evidence.
 
 ## Next steps (ranked)
 
