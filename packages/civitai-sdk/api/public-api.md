@@ -543,11 +543,15 @@ export interface BlockSettings {
     userSettings: Record<string, unknown>;
 }
 
+/** `block` is accepted only by the host; `oauth` also by the API and orchestrator. Older hosts send none. */
+export type TokenKind = 'block' | 'oauth';
+
 export interface BlockToken {
     raw: string;
     scopes: string[];
     expiresAt: Date;
     buzzBudget?: number;
+    kind?: TokenKind;
 }
 ```
 

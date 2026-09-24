@@ -75,12 +75,16 @@ export interface BlockSettings {
   userSettings: Record<string, unknown>;
 }
 
+/** `block` is accepted only by the host; `oauth` also by the API and orchestrator. Older hosts send none. */
+export type TokenKind = 'block' | 'oauth';
+
 /** A token on the wire; `expiresAt` is ISO-8601 until the transport parses it. */
 export interface WrappedToken {
   raw: string;
   scopes: string[];
   expiresAt: string;
   buzzBudget?: number;
+  kind?: TokenKind;
 }
 
 export interface BlockToken {
@@ -88,6 +92,7 @@ export interface BlockToken {
   scopes: string[];
   expiresAt: Date;
   buzzBudget?: number;
+  kind?: TokenKind;
 }
 
 /**

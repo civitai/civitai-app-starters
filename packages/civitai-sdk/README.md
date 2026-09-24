@@ -51,9 +51,12 @@ Both give you:
 A block's `app` also has `host`, `viewer`, `context`, `settings`, `theme` and
 `onChange(listener)`. Outside a block they do not exist, and the types say so.
 
-> **Not yet end to end for blocks.** The host still mints a block-scoped JWT,
-> which `/api/v1` and the orchestrator do not accept; they take API keys and
-> OAuth tokens. Apps with one of those work today, from a browser or a server.
+A block opts in by declaring `auth: "oauth"` in its `block.manifest.json`. The
+host then hands it a real OAuth access token that `/api/v1`, the orchestrator
+and the MCP accept, and consent — including `requestGrants` — goes through the
+host's consent dialog. A block that does not opt in keeps the block-scoped
+token, which those APIs reject; `initialize()` throws a `CivitaiError` saying
+so for a signed-in viewer. Such blocks should stay on `@civitai/app-sdk`.
 
 ## Signing in outside civitai.com
 

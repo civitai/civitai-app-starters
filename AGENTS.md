@@ -15,7 +15,7 @@ If you (the AI agent) were pointed here to scaffold a new Civitai app for your u
 | Same as above but the team prefers Svelte | `starters/svelte-pwa` |
 | Unsure | `starters/next-app` |
 
-Civitai Apps are a different shape from the standalone-app starters: no OAuth flow of their own, no BFF, no session cookies. The host civitai.com page mints a short-lived block-scoped JWT and ships it to the iframe via `BLOCK_INIT`. See [`packages/civitai-app-sdk/src/blocks/`](./packages/civitai-app-sdk/src/blocks/) for the contract and [`packages/civitai-blocks-react/`](./packages/civitai-blocks-react/) for the hooks.
+Civitai Apps are a different shape from the standalone-app starters: no OAuth flow of their own, no BFF, no session cookies. The host civitai.com page mints a short-lived block-scoped JWT and ships it to the iframe via `BLOCK_INIT`; a block on `@civitai/sdk` declares `"auth": "oauth"` in its manifest and receives a real OAuth access token instead. See [`packages/civitai-app-sdk/src/blocks/`](./packages/civitai-app-sdk/src/blocks/) for the contract and [`packages/civitai-blocks-react/`](./packages/civitai-blocks-react/) for the hooks.
 
 ## Cloning standalone
 
