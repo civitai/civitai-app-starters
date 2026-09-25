@@ -1,5 +1,12 @@
 # @civitai/sdk
 
+## 0.6.0
+
+### Minor Changes
+
+- c49ade1: `isTerminalStatus(status)` is exported alongside `isTerminal(workflow)`, for
+  asking the same question about one step.
+
 ## 0.5.0
 
 ### Minor Changes
