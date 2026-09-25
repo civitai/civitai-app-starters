@@ -1,6 +1,6 @@
 {
   "name": "@civitai/sdk",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "The Civitai SDK: an app holds a token and calls the Civitai API and the orchestrator; a block asks its host only to show host UI.",
   "license": "MIT",
   "type": "module",
