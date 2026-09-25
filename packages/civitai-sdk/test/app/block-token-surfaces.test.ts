@@ -141,13 +141,34 @@ describe('(b) a surface the block token cannot serve still names the manifest op
     expect((error as ApiError).message).toBe('Not found');
   });
 
-  it('still refuses at initialize() when the block declares it needs OAuth', async () => {
-    await expect(
-      initialize({ transport: blockTokenTransport(), requireOAuthToken: true }),
-    ).rejects.toMatchObject({
-      name: 'CivitaiError',
-      message: expect.stringContaining('auth: "oauth"'),
-    });
+  /**
+   * 🔴 The WHOLE message, not a keyword. The defect this pins was prose: the
+   * message named the accepted surface ("only on its `blocks/*` routes (plus
+   * `GET models/{id}`)") while advising the OAuth opt-in for `models/123` — a
+   * self-contradiction, and an assertion about the server's route table that
+   * this package cannot check and cannot correct once published. A keyword guard
+   * would be walked by any reworded enumeration, so the string is pinned whole.
+   * A cosmetic reword fails this test on purpose; update it deliberately.
+   */
+  it('names no accepted surface beyond the token\'s own namespace — the SDK cannot know the rest', async () => {
+    const { fetch } = fakeFetch([
+      () => json(401, { error: 'Unauthorized' }),
+      () => json(401, { error: 'Unauthorized' }),
+    ]);
+    const app = await initialize({ transport: blockTokenTransport(), fetch });
+
+    // `models/123` is the case that exposed it: the API DOES accept a block
+    // token there — it is the one `withBlockScope` route outside `blocks/` —
+    // so the old message listed it as accepted in the same breath as telling
+    // the caller to opt into OAuth for it.
+    const error = await app.site.get('models/123').catch((e: unknown) => e);
+
+    expect((error as ApiError).message).toBe(
+      'Unauthorized — and this block holds a block-scoped token. The API accepts it on the ' +
+        "`blocks/*` routes it was minted for; which others also accept it is the server's to " +
+        'say and is not known here. If `models/123` needs an OAuth access token, declare ' +
+        '`auth: "oauth"` in block.manifest.json.',
+    );
   });
 });
 
@@ -233,12 +254,11 @@ describe('(c) anonymous viewers and hosts that send no kind are untouched', () =
     expect(calls).toHaveLength(2);
   });
 
-  it('an OAuth token reaches both surfaces, and `requireOAuthToken` is satisfied by it', async () => {
+  it('an OAuth token reaches /api/v1 untouched — the predicate is about the block kind only', async () => {
     const { fetch } = fakeFetch([() => json(200, { id: 7 })]);
     const app = await initialize({
       transport: transportFor({ token: token('oauth-at', 'oauth'), viewer: VIEWER }),
       fetch,
-      requireOAuthToken: true,
     });
 
     await expect(app.site.get('me')).resolves.toEqual({ id: 7 });

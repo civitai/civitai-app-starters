@@ -28,10 +28,11 @@ export interface AppClient {
    * The public Civitai REST API (`/api/v1`), as the viewer.
    *
    * Routes are addressed by path, so this client cannot know in advance which
-   * ones an app will call. A block holding the block-scoped token reaches the
-   * `blocks/*` routes it was minted for plus `GET models/{id}`; anywhere else
-   * the API refuses it, and the refusal carries the manifest fix — see
-   * {@link BlockInitializeOptions.requireOAuthToken} to fail at startup instead.
+   * ones an app will call — nor which of them accept a block-scoped token. That
+   * set is the server's, and `BREAKING.md` records it as it stood when this
+   * version was published. What
+   * this client does instead is EXPLAIN a refusal it actually sees, naming the
+   * `auth: "oauth"` manifest opt-in where the token kind could be the reason.
    */
   readonly site: SiteClient;
   /**
@@ -84,20 +85,6 @@ export interface BlockInitializeOptions extends ClientOptions {
   signal?: AbortSignal;
   /** Replaces the page's own bridge, e.g. with `createFakeTransport()` in a test. */
   transport?: BlockTransport;
-  /**
-   * Refuse to start at all unless a signed-in viewer's token is an OAuth access
-   * token, naming the `auth: "oauth"` manifest opt-in. For a block whose FIRST
-   * screen already needs a surface the block-scoped token cannot serve, so that
-   * "misconfigured" surfaces once at startup rather than as a refusal per call.
-   *
-   * 🔴 Do not set it as a precaution. The host's OAuth mint is flag-gated and
-   * the flag defaults OFF, so wherever it is off this makes the block fail to
-   * load for every signed-in viewer — including a block that only ever calls
-   * `storage` or a `blocks/*` route, which the block token serves and an OAuth
-   * token does not. Anonymous viewers are unaffected: no OAuth token is minted
-   * for one whatever the manifest says, so the manifest is not their fix.
-   */
-  requireOAuthToken?: boolean;
 }
 
 export interface TokenInitializeOptions extends ClientOptions, TokenSessionOptions {}
@@ -118,13 +105,6 @@ export async function initialize(
 
   const snapshot = () => transport.snapshot.get();
   const holdsBlockTokenNow = holdsBlockToken(snapshot);
-  if (options.requireOAuthToken === true && holdsBlockTokenNow()) {
-    throw new CivitaiError(
-      'This block receives a block-scoped token, not the OAuth access token it asked to ' +
-        'require. Declare `auth: "oauth"` in block.manifest.json; if it already does, the ' +
-        "host's OAuth mint is not enabled for it yet.",
-    );
-  }
   return {
     ...createAppClient(createHostSession(transport), options, holdsBlockTokenNow),
     host: createHost(transport),
@@ -176,6 +156,17 @@ const OAUTH_OPT_IN = 'declare `auth: "oauth"` in block.manifest.json';
  * This is the token's own namespace prefix, not a copy of the server's route
  * table: the 35-odd `withBlockScope` routes are the server's to change, and a
  * list of them here would be the thing that drifts.
+ *
+ * 🔴 It is therefore deliberately NARROWER than the surface the token is
+ * accepted on, and that is not a bug to be widened away. Measured on civitai
+ * `main` (02e057b3, 2026-09-24): of the 35 route files wrapping `withBlockScope`,
+ * exactly one — `src/pages/api/v1/models/[id].ts` — sits outside `blocks/`. The
+ * cost of the gap is that a refusal there carries the annotation too, which is
+ * affordable because the advice is CONDITIONAL ("if this path needs an OAuth
+ * token") and because that route can genuinely refuse a block token anyway: it
+ * binds `models:read:self` to the one model the block renders beside. The
+ * alternative — naming the exceptions here — is the second copy this comment
+ * refuses, with nothing in this repo able to notice it going stale.
  */
 const BLOCK_NAMESPACE = /^\/*blocks\//;
 
@@ -233,7 +224,14 @@ function refuseBlockToken(http: Http, holdsBlockTokenNow: () => boolean): Http {
  * `images` ignores an unusable token and answers ANONYMOUSLY instead of
  * refusing. Nothing observable at this seam distinguishes that from a successful
  * authenticated read, so a block that must act as the viewer should prefer the
- * `blocks/*` twin or set `requireOAuthToken`.
+ * `blocks/*` twin.
+ *
+ * 🔴 And the message must not name the surface either way. Which `/api/v1`
+ * routes accept a block-scoped token is a fact about the server, held in the
+ * server's repo; asserting it from here would be a claim this package has no way
+ * to check and no way to correct once published. So the message states the one
+ * thing that IS the token's own (`blocks/*`, its mint namespace), says plainly
+ * that the rest is not known here, and leaves the advice conditional.
  */
 function explainApiRefusal(http: Http, holdsBlockTokenNow: () => boolean): Http {
   return async (method, path, opts) => {
@@ -251,9 +249,10 @@ function explainApiRefusal(http: Http, holdsBlockTokenNow: () => boolean): Http 
         // documented for exactly that), and re-wrapping would drop the stack
         // that says which call failed. The server's own sentence stays first.
         error.message =
-          `${error.message} — and this block holds a block-scoped token, which the API accepts ` +
-          `only on its \`blocks/*\` routes (plus \`GET models/{id}\`). If \`${path}\` needs an ` +
-          `OAuth access token, ${OAUTH_OPT_IN}.`;
+          `${error.message} — and this block holds a block-scoped token. The API accepts it on ` +
+          `the \`blocks/*\` routes it was minted for; which others also accept it is the ` +
+          `server's to say and is not known here. If \`${path}\` needs an OAuth access token, ` +
+          `${OAUTH_OPT_IN}.`;
       }
       throw error;
     }

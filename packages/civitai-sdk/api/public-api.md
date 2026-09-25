@@ -18,10 +18,11 @@ export interface AppClient {
      * The public Civitai REST API (`/api/v1`), as the viewer.
      *
      * Routes are addressed by path, so this client cannot know in advance which
-     * ones an app will call. A block holding the block-scoped token reaches the
-     * `blocks/*` routes it was minted for plus `GET models/{id}`; anywhere else
-     * the API refuses it, and the refusal carries the manifest fix — see
-     * {@link BlockInitializeOptions.requireOAuthToken} to fail at startup instead.
+     * ones an app will call — nor which of them accept a block-scoped token. That
+     * set is the server's, and `BREAKING.md` records it as it stood when this
+     * version was published. What
+     * this client does instead is EXPLAIN a refusal it actually sees, naming the
+     * `auth: "oauth"` manifest opt-in where the token kind could be the reason.
      */
     readonly site: SiteClient;
     /**
@@ -66,20 +67,6 @@ export interface BlockInitializeOptions extends ClientOptions {
     signal?: AbortSignal;
     /** Replaces the page's own bridge, e.g. with `createFakeTransport()` in a test. */
     transport?: BlockTransport;
-    /**
-     * Refuse to start at all unless a signed-in viewer's token is an OAuth access
-     * token, naming the `auth: "oauth"` manifest opt-in. For a block whose FIRST
-     * screen already needs a surface the block-scoped token cannot serve, so that
-     * "misconfigured" surfaces once at startup rather than as a refusal per call.
-     *
-     * 🔴 Do not set it as a precaution. The host's OAuth mint is flag-gated and
-     * the flag defaults OFF, so wherever it is off this makes the block fail to
-     * load for every signed-in viewer — including a block that only ever calls
-     * `storage` or a `blocks/*` route, which the block token serves and an OAuth
-     * token does not. Anonymous viewers are unaffected: no OAuth token is minted
-     * for one whatever the manifest says, so the manifest is not their fix.
-     */
-    requireOAuthToken?: boolean;
 }
 
 export interface TokenInitializeOptions extends ClientOptions, TokenSessionOptions {

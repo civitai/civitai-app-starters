@@ -78,7 +78,7 @@ surface, not at startup:
 | You call | Holding a block token, signed in |
 |---|---|
 | `app.storage.*` | Works. This is the token app storage requires |
-| `app.site` on `blocks/…` or `models/{id}` | Works |
+| `app.site` on `blocks/…` | Works. These are the routes the token was minted for |
 | `app.site.get('me')` and the rest of `/api/v1` | The API's own 401/403, with `auth: "oauth"` named in the message. `status` and `body` are untouched, so a caller can still branch on them |
 | `app.orchestration.*` | Rejects **before** the request with a `CivitaiError` naming `auth: "oauth"` — the orchestrator accepts no block token on any route, so there is nothing to learn from making the call |
 | `app.requestGrants(...)` | Works. Goes to the host's consent dialog, so a `consent_required` fallback can still prompt |
@@ -87,17 +87,23 @@ Anonymous viewers are untouched: no OAuth token is minted for one whatever the
 manifest says, so the manifest is not their fix — `host.requestSignIn()` is. A
 host that predates the `kind` field sends none, and behaves as it always did.
 
-Pass `initialize({ requireOAuthToken: true })` to fail at startup instead, for a
-block whose first screen already needs an OAuth-only surface. 🔴 Not a
-precaution: wherever the host's flag is off it makes the block fail to load for
-every signed-in viewer, including one that only ever uses `storage`.
-
-> ⚠ `/api/v1` cannot always be explained, because the route is a string this
-> client never interprets. "Does not reach" is also not always "refuses": a
-> *public* route such as `/api/v1/images` ignores an unusable token and answers
-> **anonymously** instead of erroring. Nothing at the client seam tells that apart
-> from a successful authenticated read, so prefer the `blocks/*` twin.
-> `BREAKING.md` has the per-message map.
+> ⚠ Two limits on that middle row, and neither is a bug to be tuned away.
+>
+> **The SDK does not know which `/api/v1` routes accept the token**, so its
+> message does not say. The route is a string this client never interprets, and
+> which routes are dual-auth is the server's to change without a release here —
+> so the message names `blocks/*` (the token's own mint namespace) and states
+> plainly that the rest is not known from here, leaving the advice conditional:
+> *if* this path needs an OAuth token, declare it. `GET /api/v1/models/{id}` is
+> in fact accepted — it is the one dual-auth route today — so a refusal there
+> gets the same conditional annotation; `BREAKING.md` records the route map as it
+> stood when this version was published, and the `models:read:self` binding that
+> route applies.
+>
+> **"Does not reach" is not always "refuses."** A *public* route such as
+> `/api/v1/images` ignores an unusable token and answers **anonymously** instead
+> of erroring. Nothing at the client seam tells that apart from a successful
+> authenticated read, so prefer the `blocks/*` twin.
 
 ## Signing in outside civitai.com
 
