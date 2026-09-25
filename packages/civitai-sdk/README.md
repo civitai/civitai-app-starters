@@ -27,6 +27,15 @@ if (picked && (await app.requestGrants(['ai:write:budgeted']))) {
 }
 ```
 
+> 🔴 **If you are a BLOCK, do not copy the `app.orchestration` call above.** That
+> reaches the orchestrator directly and carries none of the controls the block
+> path applies — the per-call Buzz budget, the per-viewer and per-app daily caps,
+> the maturity clamp, and the `app-block:<appId>` attribution tag. Submit through
+> `POST /api/v1/blocks/workflows/submit` instead. The substitution type-checks and
+> passes tests, which is why it is worth saying here: the snippet above is written
+> for an app that is its own principal, not for a block. `BREAKING.md` §*What a
+> direct orchestrator call loses* has the detail.
+
 An app calls the Civitai API and the orchestrator as the viewer, with a token.
 Reading images, creating posts, running a workflow — all of it is an API call.
 A block additionally asks its host page to show the host's own UI.
@@ -57,6 +66,14 @@ and the MCP accept, and consent — including `requestGrants` — goes through t
 host's consent dialog. A block that does not opt in keeps the block-scoped
 token, which those APIs reject; `initialize()` throws a `CivitaiError` saying
 so for a signed-in viewer. Such blocks should stay on `@civitai/app-sdk`.
+
+> The block-scoped token is not useless — it is accepted by the
+> `/api/v1/blocks/*` routes it was minted for, plus `GET /api/v1/models/{id}`.
+> What it does not reach is the rest of `/api/v1` or the orchestrator, which is
+> what this package needs. ⚠ "Does not reach" does not always mean "refuses":
+> a *public* route such as `/api/v1/images` ignores the token and answers
+> anonymously instead of erroring, so prefer the `blocks/*` twin. `BREAKING.md`
+> has the per-message map.
 
 ## Signing in outside civitai.com
 
