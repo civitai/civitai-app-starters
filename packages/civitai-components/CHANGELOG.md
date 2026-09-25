@@ -1,5 +1,34 @@
 # @civitai/components
 
+## 0.6.0
+
+### Minor Changes
+
+- f84cf81: `<civitai-video>` and `<civitai-audio>`, siblings of `<civitai-image>` that
+  follow HTML's own three media elements, and the states a generated file goes
+  through, now on all three:
+
+  - `pending` while the file is still being made: a loader, and nothing requested.
+  - `blocked` when it is withheld from the viewer: the `blocked` slot says why,
+    and the file is never requested.
+  - `fallback` when it fails to load, which is how an expired signed URL shows up;
+    listen for `error` to hand it a fresh `src`.
+
+  `status` gains `blocked` alongside `loading`, `loaded` and `error`, and `load`
+  and `error` still do not bubble, matching the media events they stand in for.
+
+  `openable` turns an image, or a `preview` video, into a real button that emits
+  `open`, so a gallery opens a viewer from the keyboard as well as a click. A
+  `preview` video plays muted and looping, without controls, while hovered or
+  focused; any other video keeps its native controls. `--civitai-media-max-height`
+  caps the height of an image or a video.
+
+  `<civitai-image>` is unchanged unless these are used: same parts, events and
+  look, and its parity test against the legacy markup still passes.
+
+  React: `CivitaiVideo` (`onVideoLoad`, `onVideoError`, `onOpen`), `CivitaiAudio`
+  (`onAudioLoad`, `onAudioError`), and `onOpen` on `CivitaiImage`.
+
 ## 0.5.0
 
 ### Minor Changes
@@ -453,10 +482,10 @@
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-        before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                 @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-        after    @civitai/theme       0.3.1                   — 1 copy
-                 @civitai/components  0.4.2                   — 1 copy
+          before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                   @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+          after    @civitai/theme       0.3.1                   — 1 copy
+                   @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
