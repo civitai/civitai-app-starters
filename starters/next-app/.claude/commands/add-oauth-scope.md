@@ -2,17 +2,22 @@
 description: Add an OAuth scope to the bitmask the app requests at login
 ---
 
-Add OAuth scope `$ARGUMENTS` (e.g. `ImageRead`, `ImageWrite`, `ModelRead`).
+Add OAuth scope `$ARGUMENTS` (e.g. `MediaRead`, `MediaWrite`, `ModelsRead`).
 
 ## Files to touch
 
-1. **`src/lib/scopes.ts`** — `REQUESTED_SCOPES` is a bitmask. OR-in the new
-   constant from `@civitai/app-sdk/scopes`. Example:
+1. **`src/lib/scopes.ts`** — `REQUESTED_SCOPES` is built from a scope-name list.
+   Add the new name from `@civitai/app-sdk/scopes`. Example:
 
    ```ts
-   import { Scope } from '@civitai/app-sdk/scopes';
-   export const REQUESTED_SCOPES =
-     Scope.AIServicesWrite | Scope.BuzzRead | Scope.UserRead | Scope.ImageRead;
+   import { bitmaskFromScopes } from '@civitai/app-sdk/scopes';
+   export const REQUESTED_SCOPES = bitmaskFromScopes([
+     'UserRead',
+     'BuzzRead',
+     'AIServicesRead',
+     'AIServicesWrite',
+     'MediaRead',
+   ]);
    ```
 
 2. **`README.md`** — update the "Register a Civitai OAuth App" scopes list so
