@@ -247,15 +247,17 @@ For a block to use the API at all, civitai has to:
    This file ships in the npm tarball and cannot be corrected after publication, so it deliberately does not
    record whether the flag is on today — that would be frozen into every published version.
 
-   🔴 **You cannot reliably tell from inside the block why you got a block token.** The handshake carries an
-   optional `token.kind` (`'block' | 'oauth'`), but it is optional in both senses — older hosts omit it, and
-   the host also omits it when a re-mint does not match the instance — so its absence means nothing in
-   particular. And `needsConsent` does not disambiguate: it is set for **any** signed-in viewer with an
-   ungranted declared scope, whether or not the flag is on.
+   **What you can tell from inside the block, and what you cannot:**
 
-   So a block token can mean the flag is off, or that consent is outstanding, or that the viewer is
-   anonymous, and the three are not separable from the client. **If you need to know, ask the platform team
-   rather than inferring it.**
+   | signal | means |
+   |---|---|
+   | `viewer === null` | an anonymous viewer. Definitive — no OAuth token is minted for one, whatever the flag. Gate on this; it is a frozen wire field |
+   | signed in, `token.kind === 'oauth'` | the mint succeeded, so the flag is on for you |
+   | signed in, `token.kind` absent or `'block'` | **not separable.** Could be the flag, or a scope this viewer has not granted. `kind` is optional and hosts predating hub-minted OAuth omit it |
+
+   The third row is the one to design around: it is the ordinary case today, and a block cannot tell those two
+   apart. What it CAN do is the thing the platform expects either way — treat the rejection as a prompt to
+   sign in or to request consent, rather than as a configuration question.
 
    ✅ **The phishing finding is not re-opened**, which is why this could ship at all. The token is minted
    **server-side** by the host (`mintOauthAppToken`) against scopes already approved for the app; the

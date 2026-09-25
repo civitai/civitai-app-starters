@@ -32,7 +32,9 @@ Also corrected:
   so use `/api/v1/blocks/images`.
 - **Error bodies are not uniformly `{ message }`.** Middleware rejections carry
   `{ error }` only; read `message ?? error` and branch on the status.
-- **The manifest `auth` field** is documented as built but flag-gated, with a way
-  to tell from the outside which mode you actually got.
+- **The manifest `auth` field** is documented as built but flag-gated, with what a
+  block can and cannot tell about which credential it was handed — `viewer === null`
+  identifies an anonymous viewer outright, but flag-off and consent-outstanding are
+  not separable from the client.
 - Scope binding, shared-storage counts and the anon-write status corrected
   throughout.
