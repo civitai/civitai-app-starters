@@ -776,7 +776,10 @@ export interface UseBuzzWorkflow {
  * names a server-registered recipe; `WorkflowBodyCustomComfyInline`
  * (`mode: 'inline'`) carries the graph itself, plus its declared AIR
  * `resources` and a `maxBuzz` bound. The inline arm is LIVE in production
- * (developer-only) and this comment used to describe `customComfy` as a
+ * (page-tokens-only, and NOT developer-only — this parenthetical said
+ * "developer-only", which is false: no `customComfy` arm runs an app-developer
+ * check. See `WorkflowBodyCustomComfyInline` for the refusals that DO run) and
+ * this comment used to describe `customComfy` as a
  * recipe-only `{ kind, recipe, params }` shape — written when that was true and
  * never revisited once the arm shipped. A developer working against the live
  * feature read the equivalent claim on the type, believed it over their own

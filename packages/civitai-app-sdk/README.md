@@ -150,10 +150,14 @@ own key:
   omits `mode` entirely and still lands here, unchanged.
 - **`WorkflowBodyCustomComfyInline`** (`mode: 'inline'`) — the block ships the ComfyUI graph
   itself as `workflow`, with a declared `resources` AIR manifest and a `maxBuzz` ceiling
-  that is **also the step timeout in seconds**. Server-side this arm is **app-developer-only
-  and page-token-only**, and code review is replaced by three fail-closed gates (AIR
-  containment, entitlement, and a moderation sweep over every string leaf in the graph). A
-  registered recipe remains the way to reach every viewer.
+  that is **also the step timeout in seconds**. Server-side this arm is **page-token-only**,
+  and code review is replaced by three fail-closed gates (AIR containment, entitlement, and a
+  moderation sweep over every string leaf in the graph). 🔴 It is **not** app-developer-only —
+  this line said it was, and nothing on either `customComfy` arm checks app-developer status,
+  so an ordinary viewer of your published block can reach it. `WorkflowBodyCustomComfyInline`'s
+  doc comment enumerates the refusals that DO run. A registered recipe is how you get a
+  reviewed graph you do not have to ship in the body, not a way onto a surface inline cannot
+  reach.
 
 `WorkflowBody`'s `step` member is likewise a union of two arms, mirroring the host's
 `blockStepMemberSchema`. Here the discriminator is the **presence of `step`**, so narrow with

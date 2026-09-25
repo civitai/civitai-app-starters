@@ -931,13 +931,30 @@ export type InlineComfyNode = {
  * graph". That is FALSE and was removed: it predates the inline arm and cost a
  * developer a dogfooding session, who trusted it over a working feature.
  *
- * WHO CAN USE IT. Narrower than the recipe arm, and both gates are server-side:
- *  - **App developers only** — the host runs `assertViewerIsAppDeveloper` on
- *    every `customComfy` estimate AND submit. A non-developer viewer of your
- *    published block cannot submit one.
+ * 🔴 IT IS NOT "APP DEVELOPERS ONLY", AND THAT CLAIM USED TO BE HERE. This
+ * block read "**App developers only** — the host runs
+ * `assertViewerIsAppDeveloper` on every `customComfy` estimate AND submit. A
+ * non-developer viewer of your published block cannot submit one." Both
+ * sentences are FALSE: NEITHER `customComfy` arm runs any app-developer check,
+ * on the estimate or on the submit. The host's own schema module records the
+ * same retraction. Do not reintroduce it, in any wording — it is a SECURITY
+ * claim, and believing it is what makes an author ship an inline graph they
+ * would not ship to every viewer. An ordinary viewer of your published block
+ * CAN reach this arm once the refusals below pass.
+ *
+ * WHO CAN USE IT — stated as the refusals the host actually runs, before either
+ * arm's body is inspected. Each is a path your block has to handle:
  *  - **Page tokens only** — a model-bound token is rejected.
- * So treat inline as a build/iterate primitive today. If you need a graph
- * available to every viewer, get it registered as a recipe.
+ *  - The token must carry the **`ai:write:budgeted`** consent scope.
+ *  - The viewer must be **signed in** — a token whose subject does not resolve
+ *    is refused.
+ *  - The viewer must be **enabled for Apps** (the runtime kill-switch, evaluated
+ *    on the token's subject; this is a closed beta).
+ *  - On **submit** only: the token must carry a **positive per-call Buzz
+ *    budget**. That budget is minted from YOUR OWN manifest
+ *    (`page.buzzBudgetPerGen`) — it is not a property of the viewer.
+ * A registered recipe is how you get a reviewed graph you do not have to ship in
+ * the body. It is not a way onto a surface the inline arm cannot reach.
  *
  * WHAT REPLACED CODE REVIEW. A recipe is reviewed in-repo, and that review was
  * the trust root. An inline graph has none, so the host substitutes three
@@ -1073,8 +1090,10 @@ export type WorkflowBodyCustomComfyInline = {
  *  - {@link WorkflowBodyCustomComfyRecipe} (`mode` omitted, or `'recipe'`) —
  *    names a server-registered, code-reviewed recipe. The default.
  *  - {@link WorkflowBodyCustomComfyInline} (`mode: 'inline'`) — ships the
- *    ComfyUI graph itself. Developer-only, page-tokens-only, and fenced by
- *    three server-side gates instead of code review.
+ *    ComfyUI graph itself. Page-tokens-only, and fenced by three server-side
+ *    gates instead of code review. 🔴 NOT developer-only — this line said it was,
+ *    and no `customComfy` arm runs an app-developer check. See that type's own
+ *    doc comment for the refusals that DO run.
  *
  * Both arms are `.strict()` server-side, so a body naming BOTH `recipe` and
  * `workflow` is rejected by both rather than resolved to a winner. Narrow on
@@ -1274,7 +1293,8 @@ export type WorkflowBodyPassThroughStep = {
  *    itself a union on `mode`: a bounded, server-registered
  *    {@link WorkflowBodyCustomComfyRecipe} (the default), or a
  *    {@link WorkflowBodyCustomComfyInline} graph the block ships itself
- *    (`mode: 'inline'`; developer-only).
+ *    (`mode: 'inline'`; page-tokens-only, and NOT developer-only — that claim
+ *    used to be here and is false).
  *  - {@link WorkflowBodyStep} (`kind: 'step'`, `step` PRESENT) — a bounded,
  *    server-registered orchestrator step (the host's step registry; billing mode
  *    and moderation posture are declared per entry).
