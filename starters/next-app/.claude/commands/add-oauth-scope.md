@@ -6,19 +6,8 @@ Add OAuth scope `$ARGUMENTS` (e.g. `MediaRead`, `MediaWrite`, `ModelsRead`).
 
 ## Files to touch
 
-1. **`src/lib/scopes.ts`** — `REQUESTED_SCOPES` is built from a scope-name list.
-   Add the new name from `@civitai/app-sdk/scopes`. Example:
-
-   ```ts
-   import { bitmaskFromScopes } from '@civitai/app-sdk/scopes';
-   export const REQUESTED_SCOPES = bitmaskFromScopes([
-     'UserRead',
-     'BuzzRead',
-     'AIServicesRead',
-     'AIServicesWrite',
-     'MediaRead',
-   ]);
-   ```
+1. **`src/lib/scopes.ts`** — add the new scope name to the
+   existing `REQUESTED_SCOPES` list, matching the names already there.
 
 2. **`README.md`** — update the "Register a Civitai OAuth App" scopes list so
    users know which to enable when registering their app on civitai.com.
