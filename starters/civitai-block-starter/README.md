@@ -51,12 +51,18 @@ Other hooks ship with `@civitai/blocks-react`:
 - `useBuzzWorkflow()` — `estimate` / `submit` / `poll` against orchestrator workflows
 - `useBlockSettings()` — publisher + per-viewer settings (per-viewer is Phase 2)
 
-`useBuzzPurchase`, `useCivitaiNavigate` and `useBlockAnalytics` are exported and
-bridged. Which host handles which message is a per-host decision that changes, so
-read `hostHandlerParity.ts` in the `civitai` repo — the maintained ledger — rather
-than a snapshot here. `useCivitaiNavigate` and `useBlockAnalytics` are
-fire-and-forget: an unhandled one is dropped, never hung (pinned by
-`tests/guards/livehost-message-coverage.test.mjs`).
+`useBuzzPurchase` is handled by both hosts. `useCivitaiNavigate` is handled by the
+full-page host only, and `useBlockAnalytics` by **neither** — no analytics sink is
+wired, so its event is accepted and dropped. Both are fire-and-forget, so an
+unhandled one is dropped rather than hung: you get silence, not an error.
+
+This starter targets `model.sidebar_top`, so it runs on the model host — expect
+`useCivitaiNavigate` and `useBlockAnalytics` to do nothing as scaffolded.
+
+🔴 Nothing in this repo pins any of that. The authoritative ledger is
+`src/components/AppBlocks/hostHandlerParity.ts` in `civitai/civitai`; read it
+there before relying on a hook, because this paragraph is a snapshot and will go
+stale when a host wires one up.
 
 ## Boot skeleton
 
