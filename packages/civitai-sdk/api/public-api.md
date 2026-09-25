@@ -14,7 +14,16 @@ export declare function initialize(options?: BlockInitializeOptions): Promise<Bl
 export declare function initialize(options: TokenInitializeOptions): Promise<AppClient>;
 
 export interface AppClient {
-    /** The public Civitai REST API (`/api/v1`), as the viewer. */
+    /**
+     * The public Civitai REST API (`/api/v1`), as the viewer.
+     *
+     * Routes are addressed by path, so this client cannot know in advance which
+     * ones an app will call — nor which of them accept a block-scoped token. That
+     * set is the server's, and `BREAKING.md` records it as it stood when this
+     * version was published. What
+     * this client does instead is EXPLAIN a refusal it actually sees, naming the
+     * `auth: "oauth"` manifest opt-in where the token kind could be the reason.
+     */
     readonly site: SiteClient;
     /**
      * The viewer's own per-app key/value store.
@@ -25,7 +34,14 @@ export interface AppClient {
      * reading an empty result as "nothing stored".
      */
     readonly storage: StorageClient;
-    /** The orchestrator's workflows, as the viewer. */
+    /**
+     * The orchestrator's workflows, as the viewer.
+     *
+     * 🔴 The orchestrator accepts no block-scoped token on any route, so unlike
+     * {@link AppClient.site} this destination IS known ahead of the call: a block
+     * holding one is refused here up front, with the manifest fix, rather than
+     * spending a request to be told.
+     */
     readonly orchestration: OrchestrationClient;
     /** Asks for more scopes. `false` when they cannot be granted — a refusal is an answer. */
     requestGrants(scopes: readonly Scope[], opts?: GrantOptions): Promise<boolean>;
