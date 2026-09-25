@@ -1160,6 +1160,7 @@ and each was named in its brief as do-not-touch:
 
 ## Defects (batched)
 
+- 🔴 **`custom-generators`' `minimumReleaseAgeExclude` is now DEAD CONFIG — drop it.** `pnpm-workspace.yaml` pins `["@civitai/sdk@0.3.0"]`, added because 0.3.0 was published inside pnpm 11's 24h window. The app now pins `^0.3.0` and the published line is **0.5.0**, so the exemption protects a version nothing will install. Precedent for the cleanup is this repo's own `#26`. Left in place it silently weakens the next reader's assumptions about what the supply-chain gate is checking. *(Relocated from a pruned RESOLVED block whose closing instruction was never executed.)*
 - **`gh` here has no `--allow-escape-sequences`** — it errors "unknown flag" and writes a **0-byte** log that greps as clean. Use `gh run view --job <id> --log --repo <o>/<r>` and assert a non-zero byte count. Omitting `--repo` infers from cwd and can return **125 bytes of HTTP 404**, which also greps clean.
 - **Bare `npx tsc --noEmit` OOMs in `civitai/civitai`** (exit 134, core dump). Use `npm run typecheck` — the wrapper sets an 8192 MB heap cap.
 - **`Prettier (added files)` is a SEPARATE CI step from the changed-files one**, and from ESLint. eslint-clean is not prettier-clean; an added file can fail alone.
@@ -1663,6 +1664,11 @@ and each was named in its brief as do-not-touch:
 - **An npm trusted publisher is per-package and one-time.** `@civitai/sdk`'s first CI publish failed `E404 PUT` while `app-sdk@0.51.0` succeeded in the same job — the in-job control isolating it. `release.yml`'s comment naming only two packages is what let it slip.
 - **`claim-work` released for this arc** — 0 held. Re-claim before touching a ranked item.
 - **Decisions taken by the operator this session:** leave Koen's `#5120` alone; leave orchestration `#305` and `autolabel-core.ts` alone; write nothing about the orchestrator workflow-ownership finding; narrow the SDK guard rather than warn or fix host-side; delete `requireOAuthToken`; keep `#5111` narrow (5 conversions + a 39-entry ledger) rather than converting all 44; align `custom-generators`' theme forward to `^0.4.0`; prod reads non-blocking.
+
+- 🔴 **RELOCATED OUT OF PRUNED `RESOLVED` BLOCKS — these three were measured, are still live, and were inside blocks an audit classified as evictable.** Their evidence is in git history (the prune commit's parent); what survives here is the rule.
+  - **`direnv allow` is PER-PATH, so every new worktree starts BLOCKED and silently gives the wrong toolchain.** `civitai-app-custom-generators`' `flake.nix` pins `pnpmMajor = "11"` while the ambient pnpm is 10.28.1, and pnpm 11 is what enforces `minimumReleaseAge`. 🔴 **Confirmed again 2026-09-25, and the failure has a SECOND shape the original note lacked:** the dev shell's own banner prints the **invoking** shell's version (`custom-generators: node v24.19.0, pnpm 10.28.1`) while `nix develop <wt> --command` inside it gives **11.25.0** — and `direnv exec <wt>` did **not** pick the flake up either. So `pnpm --version` inside the shell is the only reading that counts, and a banner is not it.
+  - **A check's own description is not authority on whether to ignore it.** `preview / component-tests` self-described as *"report-only, not blocking"* and was merged past four times; the discriminator that settled flake-vs-real was the **per-head history of that status on the same PR**, not its adjective. Do not merge past a red on the strength of how it labels itself.
+  - **A closing instruction inside a RESOLVED block is still an open action.** The `minimumReleaseAgeExclude` cleanup sat in a block marked resolved and was never executed; it is now in `## Defects (batched)` where the list drains. When a block resolves, move its residual action OUT of it.
 
 ## How to verify
 
