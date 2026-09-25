@@ -444,7 +444,7 @@
     "@vitest/browser-playwright": "^4.1.11",
     "axe-core": "^4.12.1",
     "playwright": "^1.60.0",
-    "tsx": "^4.19.2",
+    "tsx": "^4.23.13",
     "typescript": "^5.9.2",
     "vite": "^8.0.14",
     "vitest": "^4.1.11"
