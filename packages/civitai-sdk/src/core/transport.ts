@@ -105,5 +105,6 @@ export function tokenFromWrapped(wrapped: WrappedToken): BlockToken {
     scopes: wrapped.scopes,
     expiresAt: new Date(wrapped.expiresAt),
     buzzBudget: wrapped.buzzBudget,
+    kind: wrapped.kind,
   };
 }

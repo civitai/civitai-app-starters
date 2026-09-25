@@ -17,6 +17,14 @@ export type { SignIn, SignInOptions } from './sign-in/index.js';
 export { SCOPES } from './session/index.js';
 export type { GrantOptions, Scope, TokenOptions, TokenSource } from './session/index.js';
 export type { SiteClient } from './site/index.js';
+export type {
+  StorageCallOptions,
+  StorageClient,
+  StorageKeyEntry,
+  StorageListQuery,
+  StorageListResult,
+  StorageQuota,
+} from './storage/index.js';
 export { isTerminal, isTerminalStatus } from './orchestration/index.js';
 export type {
   OrchestrationClient,
@@ -35,8 +43,12 @@ export type {
   DownloadRequest,
   Host,
   HostCallOptions,
+  ImageScanResult,
+  PendingImage,
   PickedResource,
   ResourcePickerType,
+  SourceImage,
+  UploadedImage,
 } from './host/index.js';
 
 export { ApiError } from './http/index.js';
@@ -59,6 +71,7 @@ export type {
   PageSlotId,
   ShowcaseImage,
   Theme,
+  TokenKind,
   UnknownSlotContext,
   ViewerInfo,
 } from './core/handshake.js';

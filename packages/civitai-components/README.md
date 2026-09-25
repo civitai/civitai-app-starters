@@ -225,6 +225,30 @@ hangs under it — while `top-start` and `bottom` stay in a row, which is where
 the rating and the `POI` badges sit side by side. `<civitai-reaction>`
 abbreviates its count the way the site does.
 
+### Image, video and audio
+
+`<civitai-image>`, `<civitai-video>` and `<civitai-audio>` follow HTML's three
+media elements, and share the states a generated file goes through: `pending`
+while it is still being made (a loader, and nothing requested), `blocked` when
+it is withheld from this viewer (the `blocked` slot says why, and the file is
+never requested), and the `fallback` when it fails to load, which is how an
+expired signed URL shows up. Listen for `error` to hand it a fresh `src`.
+`status` reflects `loading`, `loaded`, `error` or `blocked`.
+
+```html
+<civitai-image openable src="…" alt="A red bike" style="width: 160px; aspect-ratio: 1"></civitai-image>
+<civitai-video preview openable src="…" alt="A paper boat" style="width: 160px; aspect-ratio: 1"></civitai-video>
+<civitai-audio src="…" alt="A jingle">
+  <span slot="blocked">Hidden: mature content</span>
+</civitai-audio>
+```
+
+`openable` makes an image, or a `preview` video, a button that emits `open`, so a
+viewer opens from the keyboard too. A `preview` video is muted, loops and plays
+only while hovered or focused; a full video keeps its native controls, and so
+cannot be a button. Size them from outside; `--civitai-media-max-height` caps a
+tall one without cropping when `fit="contain"`.
+
 [`custom-elements.json`](./custom-elements.json) is the published contract —
 every tag, attribute, property, `::part` and slot. It is generated from the
 element sources (tags from `defineElement(TAG, …)`, parts and slots from the

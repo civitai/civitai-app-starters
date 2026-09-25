@@ -83,6 +83,12 @@ const CASES: { id: string; markup: string; prepare?: (scope: HTMLElement) => voi
     markup:
       '<civitai-image alt="A generated landscape" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></civitai-image>',
   },
+  { id: 'image/openable', markup: `<civitai-image openable alt="A generated landscape" src="${PIXEL}"></civitai-image>` },
+  { id: 'image/pending', markup: '<civitai-image pending alt="A landscape on its way"></civitai-image>' },
+  { id: 'image/blocked', markup: `<civitai-image blocked src="${PIXEL}"></civitai-image>` },
+  { id: 'video', markup: '<civitai-video alt="A paper boat" src="/does-not-exist.mp4"></civitai-video>' },
+  { id: 'video/preview', markup: '<civitai-video preview openable alt="A paper boat" src="/does-not-exist.mp4"></civitai-video>' },
+  { id: 'audio', markup: '<civitai-audio alt="A jingle" src="/does-not-exist.mp3"></civitai-audio>' },
   {
     id: 'tooltip',
     markup: '<civitai-tooltip label="Spends Buzz"><button>Generate</button></civitai-tooltip>',

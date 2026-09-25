@@ -1602,6 +1602,16 @@ export interface BlockManifestV1 {
    */
   renderMode?: 'iframe' | 'inline' | 'hybrid';
   /**
+   * Which credential the host hands the block. OPTIONAL, and the canonical does
+   * NOT list it in `required`: omitting it means `"block-token"` — the
+   * block-scoped JWT that `BLOCK_INIT` already carries. `"oauth"` opts the block
+   * into a real OAuth access token for its own `OauthClient`, accepted unchanged
+   * by `/api/v1`, the orchestrator and the MCP. Kept in lockstep with the
+   * canonical schema's `auth` enum; `defineBlock` derives the runtime check from
+   * the vendored schema, so the two cannot disagree on the accepted values.
+   */
+  auth?: 'block-token' | 'oauth';
+  /**
    * Config-as-code: the command the platform runs to build the static bundle.
    * One of an allowlisted set (`npm|pnpm|yarn run <script>`, `vite build`,
    * `npx vite build`). When set, `outputDir` is REQUIRED.

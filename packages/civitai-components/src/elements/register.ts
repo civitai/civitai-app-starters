@@ -1,5 +1,6 @@
 import { defineCivitaiActionButton } from './civitai-action-button.js';
 import { defineCivitaiAlert } from './civitai-alert.js';
+import { defineCivitaiAudio } from './civitai-audio.js';
 import { defineCivitaiBadge } from './civitai-badge.js';
 import { defineCivitaiBreadcrumb } from './civitai-breadcrumb.js';
 import { defineCivitaiButton } from './civitai-button.js';
@@ -34,11 +35,13 @@ import { defineCivitaiTextarea } from './civitai-textarea.js';
 import { defineCivitaiToast } from './civitai-toast.js';
 import { defineCivitaiToastRegion } from './civitai-toast-region.js';
 import { defineCivitaiTooltip } from './civitai-tooltip.js';
+import { defineCivitaiVideo } from './civitai-video.js';
 
 /** Register every element in this package. Safe to call more than once. */
 export function registerAll(): void {
   defineCivitaiActionButton();
   defineCivitaiAlert();
+  defineCivitaiAudio();
   defineCivitaiBadge();
   defineCivitaiBreadcrumb();
   defineCivitaiButton();
@@ -73,6 +76,7 @@ export function registerAll(): void {
   defineCivitaiToast();
   defineCivitaiToastRegion();
   defineCivitaiTooltip();
+  defineCivitaiVideo();
 }
 
 registerAll();

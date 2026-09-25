@@ -9,8 +9,9 @@
  * a call signature changes, this fails in CI.
  *
  * WHAT IT CHECKS
- *   - Imports from `@civitai/app-sdk` (+ subpaths) and `@civitai/blocks-react`
- *     (+ `/ui`) RESOLVE against the built declarations.
+ *   - Imports from `@civitai/app-sdk` (+ subpaths), `@civitai/blocks-react`
+ *     (+ `/ui`) and `@civitai/sdk` (+ `/testing`) RESOLVE against the built
+ *     declarations.
  *   - The documented exports EXIST and are CALLED with type-compatible args.
  *
  * WHAT IT TOLERATES (so partial doc snippets still pass)
@@ -72,6 +73,7 @@
  *   node scripts/typecheck-readme-snippets.mjs
  *   Requires the SDK packages to be BUILT first (their dist/*.d.ts must exist):
  *     pnpm --filter @civitai/app-sdk build
+ *     pnpm --filter @civitai/sdk build
  *     pnpm --filter @civitai/blocks-react build
  */
 
@@ -86,6 +88,13 @@ const repoRoot = resolve(__dirname, '..');
 
 const SDK_DIST = join(repoRoot, 'packages/civitai-app-sdk/dist');
 const BLOCKS_DIST = join(repoRoot, 'packages/civitai-blocks-react/dist');
+// `@civitai/sdk` — the SUCCESSOR package, a separate codebase from
+// `@civitai/app-sdk` 0.x above. Its README is in `DEFAULT_DOCS`, so its
+// declarations have to resolve: see the two `ENTRYPOINTS` rows and the two
+// `paths` entries in `makeTsconfig` below. Both are needed — the entrypoint
+// rows only feed the auto-import map; `paths` is what resolves a snippet's own
+// `import … from '@civitai/sdk'`.
+const NEXT_SDK_DIST = join(repoRoot, 'packages/civitai-sdk/dist');
 
 // The published subpaths an agent imports from, mapped to the built declaration
 // entry. Used to (a) resolve free identifiers to a REAL import instead of an
@@ -134,6 +143,12 @@ const ENTRYPOINTS = [
   // in-repo consumer of the subpath, not another scanner; see #334.
   { module: '@civitai/blocks-react/testing', dts: join(BLOCKS_DIST, 'testing.d.ts') },
   { module: '@civitai/blocks-react/live', dts: join(BLOCKS_DIST, 'live.d.ts') },
+  // `@civitai/sdk` and its one published subpath. LAST on purpose: the map is
+  // first-wins, and a name spelled by both SDKs (`initialize`, `ApiError`)
+  // must keep resolving to `@civitai/app-sdk` for the 0.x docs above, which
+  // are the ones that reference it without importing it.
+  { module: '@civitai/sdk', dts: join(NEXT_SDK_DIST, 'index.d.ts') },
+  { module: '@civitai/sdk/testing', dts: join(NEXT_SDK_DIST, 'testing.d.ts') },
 ];
 
 /**
@@ -241,6 +256,7 @@ const TMP_PARENT = join(BLOCKS_PKG, '.readme-snippets-tmp');
 const DEFAULT_DOCS = [
   'packages/civitai-app-sdk/README.md',
   'packages/civitai-blocks-react/README.md',
+  'packages/civitai-sdk/README.md',
   'docs/build-your-first-app-block.md',
 ];
 
@@ -397,6 +413,13 @@ function makeTsconfig(dir, isTsx) {
       paths: {
         '@civitai/blocks-react': [BLOCKS_DIST + '/index.d.ts'],
         '@civitai/blocks-react/*': [BLOCKS_DIST + '/*'],
+        // `@civitai/sdk` is not a dependency of civitai-blocks-react, so unlike
+        // `@civitai/app-sdk` there is no node_modules symlink for the snippet
+        // dir to climb into — it needs the same explicit map the SELF import
+        // gets. Carries the same caveat: this BYPASSES `package.json#exports`,
+        // so a deleted subpath key still resolves here.
+        '@civitai/sdk': [NEXT_SDK_DIST + '/index.d.ts'],
+        '@civitai/sdk/*': [NEXT_SDK_DIST + '/*'],
       },
       baseUrl: '.',
     },
@@ -579,10 +602,18 @@ function checkBlock(block, exportMap) {
 }
 
 function main() {
-  if (!existsSync(join(SDK_DIST, 'index.d.ts')) || !existsSync(join(BLOCKS_DIST, 'index.d.ts'))) {
+  // 🔴 `@civitai/sdk` is named here too. Without its build every fence in its
+  // README fails with a bare `TS2307: cannot find module` — a red gate that
+  // reads like doc rot instead of a missing build step.
+  if (
+    !existsSync(join(SDK_DIST, 'index.d.ts')) ||
+    !existsSync(join(BLOCKS_DIST, 'index.d.ts')) ||
+    !existsSync(join(NEXT_SDK_DIST, 'index.d.ts'))
+  ) {
     console.error(
       'ERROR: built declarations missing. Build the SDK packages first:\n' +
         '  pnpm --filter @civitai/app-sdk build\n' +
+        '  pnpm --filter @civitai/sdk build\n' +
         '  pnpm --filter @civitai/blocks-react build',
     );
     process.exit(2);

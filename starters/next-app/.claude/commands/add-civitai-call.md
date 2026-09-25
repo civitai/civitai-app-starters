@@ -7,7 +7,7 @@ Add a Civitai API call named `$ARGUMENTS`.
 ## Files to touch
 
 1. **`src/lib/civitai.ts`** — add a server-only function that takes the
-   `Session` and returns a typed result. Use the SDK's `createAppClient` or
+   `Session` and returns a typed result. Use `createOrchestratorClient` or
    `callOrchestrator` from `@civitai/app-sdk/orchestrator` if you're hitting
    the orchestrator; use `fetch(env.CIVITAI_BASE_URL + ...)` with the access
    token if you're hitting `civitai.com` directly.

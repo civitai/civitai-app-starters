@@ -76,6 +76,42 @@ describe('initialize() in a block', () => {
     // @ts-expect-error a scope the site does not grant is a typo, not a request
     void app.requestGrants(['ai:write:unbudgeted']);
   });
+
+  it('starts on a block-scoped token for a signed-in viewer, and refuses at the surface that cannot serve it', async () => {
+    const transport = createFakeTransport({
+      token: { ...token('jwt'), kind: 'block' },
+      viewer: { id: 7, username: 'koen' },
+    });
+
+    // Not an error in itself: this is the DEFAULT host configuration, and the
+    // block token serves `blocks/*` and app storage. The `fetch` is scripted so
+    // the refusal below is the eager one and not a hung request — without it a
+    // regression here reads as a 5s timeout rather than a verdict.
+    const { fetch } = fakeFetch([() => json(401, { error: 'Unauthorized' })]);
+    const app = await initialize({ transport, fetch });
+    expect(app.viewer).toEqual({ id: 7, username: 'koen' });
+
+    // The diagnosis moved to the call that needs OAuth; it did not go silent.
+    await expect(app.orchestration.submitWorkflow({ steps: [] })).rejects.toMatchObject({
+      name: 'CivitaiError',
+      message: expect.stringContaining('auth: "oauth"'),
+    });
+    // The full surface split, including the `/api/v1` half, is in
+    // `block-token-surfaces.test.ts`.
+  });
+
+  it('accepts an OAuth token, a token from a host that predates kinds, and a block token for an anonymous viewer', async () => {
+    const viewer = { id: 7, username: 'koen' };
+
+    for (const snapshot of [
+      { token: { ...token('oauth'), kind: 'oauth' as const }, viewer },
+      { token: token('unkinded'), viewer },
+      { token: { ...token('jwt'), kind: 'block' as const }, viewer: null },
+    ]) {
+      const app = await initialize({ transport: createFakeTransport(snapshot) });
+      await expect(app.getToken()).resolves.toBe(snapshot.token.raw);
+    }
+  });
 });
 
 describe('initialize({ token })', () => {

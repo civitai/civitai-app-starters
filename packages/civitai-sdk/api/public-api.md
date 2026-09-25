@@ -14,9 +14,34 @@ export declare function initialize(options?: BlockInitializeOptions): Promise<Bl
 export declare function initialize(options: TokenInitializeOptions): Promise<AppClient>;
 
 export interface AppClient {
-    /** The public Civitai REST API (`/api/v1`), as the viewer. */
+    /**
+     * The public Civitai REST API (`/api/v1`), as the viewer.
+     *
+     * Routes are addressed by path, so this client cannot know in advance which
+     * ones an app will call — nor which of them accept a block-scoped token. That
+     * set is the server's, and `BREAKING.md` records it as it stood when this
+     * version was published. What
+     * this client does instead is EXPLAIN a refusal it actually sees, naming the
+     * `auth: "oauth"` manifest opt-in where the token kind could be the reason.
+     */
     readonly site: SiteClient;
-    /** The orchestrator's workflows, as the viewer. */
+    /**
+     * The viewer's own per-app key/value store.
+     *
+     * 🔴 Requires the block token the host mints: an app that authenticated with
+     * an OAuth access token has no per-viewer app storage, and every call here is
+     * refused. An anonymous viewer is refused too — gate on `viewer` rather than
+     * reading an empty result as "nothing stored".
+     */
+    readonly storage: StorageClient;
+    /**
+     * The orchestrator's workflows, as the viewer.
+     *
+     * 🔴 The orchestrator accepts no block-scoped token on any route, so unlike
+     * {@link AppClient.site} this destination IS known ahead of the call: a block
+     * holding one is refused here up front, with the manifest fix, rather than
+     * spending a request to be told.
+     */
     readonly orchestration: OrchestrationClient;
     /** Asks for more scopes. `false` when they cannot be granted — a refusal is an answer. */
     requestGrants(scopes: readonly Scope[], opts?: GrantOptions): Promise<boolean>;
@@ -104,6 +129,101 @@ export type TokenSource = string | ((opts: {
     signal?: AbortSignal;
 }) => string | Promise<string>);
 
+export interface StorageCallOptions {
+    signal?: AbortSignal;
+}
+
+/** One row of a key listing. Values are not returned — `get(key)` fetches them. */
+export interface StorageKeyEntry {
+    key: string;
+    /**
+     * When this key was last written. The wire carries an ISO string; it is
+     * revived here, once, so a caller can do date arithmetic without knowing the
+     * transport.
+     */
+    updatedAt: Date;
+}
+
+export interface StorageListResult {
+    keys: StorageKeyEntry[];
+    /**
+     * 🔴 PRESENT EXACTLY WHEN THERE MAY BE MORE ROWS, and passed through
+     * untouched. The server sets it iff the page it returned was full. A caller
+     * uses its ABSENCE as proof a scan completed, and for one caller that is a
+     * money decision. Never default it, never normalise it, never re-derive it
+     * from `keys.length`.
+     */
+    nextCursor?: string;
+}
+
+export interface StorageListQuery {
+    /** Narrows to keys starting with this. Escaped server-side against LIKE wildcards. */
+    prefix?: string;
+    /** The server bounds this and applies its own default; this client sends none. */
+    limit?: number;
+    /** An opaque `nextCursor` from a previous page. */
+    cursor?: string;
+}
+
+export interface StorageQuota {
+    /**
+     * 🔴 THE STORED UNIT — Postgres `octet_length(value::text)` over JSONB, the
+     * unit both ceilings are enforced in, and the authority for "how close am I
+     * to my cap". It is NOT {@link StorageClient.set}'s `sizeBytes`: measured, a
+     * numeric-heavy payload stores up to 44.4x its wire size.
+     */
+    usedBytes: number;
+    rowCount: number;
+    /** Render this, never a compiled-in figure — the ceiling can move. */
+    limitBytes: number;
+    /** Usually the BINDING one: many small rows exhaust this long before bytes. */
+    limitRows: number;
+}
+
+/**
+ * The viewer's own per-(app, block instance) key/value store.
+ *
+ * 🔴 Requires the block token the host mints. An app that authenticated with an
+ * OAuth access token instead has no per-viewer app storage — every call is
+ * refused.
+ *
+ * 🔴 EVERY FAILURE REJECTS. There is no path here that resolves to mean "not
+ * written", and none that resolves to mean "could not read". A caller that must
+ * not act on a partial view branches on the rejection, never on an empty result.
+ */
+export interface StorageClient {
+    /** The value, or `null` when the key is unset. Rejects on any refusal. */
+    get<T = unknown>(key: string, opts?: StorageCallOptions): Promise<T | null>;
+    /**
+     * Upsert one key. Resolves only when the write landed.
+     *
+     * `sizeBytes` is the WIRE unit — the byte length of the serialised value — so
+     * it predicts the per-value cap and nothing else. 🔴 Do not sum it to track
+     * quota; call {@link StorageClient.getQuota}. See {@link StorageQuota.usedBytes}.
+     *
+     * A value of `undefined` is stored as `null`: it does not survive JSON, and
+     * the server writes `null` for an absent value rather than refusing.
+     */
+    set<T = unknown>(key: string, value: T, opts?: StorageCallOptions): Promise<{
+        ok: true;
+        sizeBytes: number;
+    }>;
+    /** Idempotent. `deleted: false` means the key was already absent — a success. */
+    delete(key: string, opts?: StorageCallOptions): Promise<{
+        ok: true;
+        deleted: boolean;
+    }>;
+    /** One page of keys, ordered by key ascending. Values are not returned. */
+    list(query?: StorageListQuery, opts?: StorageCallOptions): Promise<StorageListResult>;
+    /**
+     * This viewer's usage against this viewer's caps, in the stored unit.
+     *
+     * It reports neither the key-length cap nor the per-value cap, so a write
+     * that fits the numbers here can still be refused.
+     */
+    getQuota(opts?: StorageCallOptions): Promise<StorageQuota>;
+}
+
 export declare function isTerminal(workflow: Workflow): boolean;
 
 /** True once nothing more will happen to a workflow, or to one of its steps. */
@@ -164,6 +284,25 @@ export interface HostCallOptions {
     signal?: AbortSignal;
 }
 
+/**
+ * An upload the host has stored but not yet finished moderating. The image
+ * exists and its author can see it; nobody else may until `scan()` answers.
+ */
+export interface PendingImage {
+    imageId: number;
+    /** The author's own preview. Not for any other viewer until `scan()` says `scanned`. */
+    url: string;
+    /**
+     * The host's verdict on this upload. Resolves once the host reaches one and
+     * returns the same answer to every later call, so it is safe to re-read.
+     *
+     * 🔴 It waits as long as the host takes — the host is what bounds the scan,
+     * and this package sets no deadline of its own. Pass a `signal` if your app
+     * needs one; aborting gives up on the verdict, it does not decide it.
+     */
+    scan(opts?: HostCallOptions): Promise<ImageScanResult>;
+}
+
 /** Asking the host page to show its own UI. Data goes over the API, not here. */
 export interface Host {
     /** Resizes the frame, clamped to the manifest's bounds. */
@@ -200,6 +339,48 @@ export interface Host {
     }, opts?: HostCallOptions): Promise<{
         purchased: boolean;
     }>;
+    /**
+     * civitai's own upload modal. The bytes go through the host's session, never
+     * through the frame, and `null` means the viewer closed it without uploading.
+     *
+     * `purpose: 'generationSource'` uploads a PRIVATE img2img source: unscanned
+     * here, scanned by the orchestrator when the workflow runs.
+     */
+    openImageUpload(args: {
+        purpose: 'generationSource';
+    }, opts?: HostCallOptions): Promise<SourceImage | null>;
+    /**
+     * A PUBLIC image. The host stores it and moderates it afterwards, so this
+     * resolves with a {@link PendingImage} — the image, plus the `scan()` that
+     * answers whether anyone but its author may see it.
+     */
+    openImageUpload(args?: {
+        purpose?: 'display';
+    }, opts?: HostCallOptions): Promise<PendingImage | null>;
+    /**
+     * Publishes outputs of ONE of this app's own workflows as public images, and
+     * resolves with the ids of the rows the host created. Needs
+     * `ai:write:budgeted`: an app trusted to spend the viewer's Buzz on a
+     * generation is trusted to publish what that generation produced.
+     *
+     * 🔴 Outputs are named by INDEX into the workflow, never by url. The host
+     * re-derives that this viewer and this app own `workflowId`, then resolves
+     * the urls itself — which is the whole guarantee, because a frame at an
+     * opaque origin naming its own blob to publish would be a different feature.
+     *
+     * The host shows the viewer a confirmation first and answers only when they
+     * act, so this waits on a person. Nothing here bounds that wait; pass a
+     * `signal` for the bound your app wants.
+     *
+     * ⚠ Publishing is best-effort per image. An output that fails to publish is
+     * skipped rather than failing the call, so `imageIds` can be SHORTER than
+     * the selection and nothing says which index dropped. Compare lengths rather
+     * than pairing ids to indexes.
+     */
+    publishGenerationOutputs(args: {
+        workflowId: string;
+        imageIndexes?: number[];
+    }, opts?: HostCallOptions): Promise<number[]>;
 }
 
 export declare class ApiError extends CivitaiError {
@@ -381,11 +562,15 @@ export interface BlockSettings {
     userSettings: Record<string, unknown>;
 }
 
+/** `block` is accepted only by the host; `oauth` also by the API and orchestrator. Older hosts send none. */
+export type TokenKind = 'block' | 'oauth';
+
 export interface BlockToken {
     raw: string;
     scopes: string[];
     expiresAt: Date;
     buzzBudget?: number;
+    kind?: TokenKind;
 }
 ```
 

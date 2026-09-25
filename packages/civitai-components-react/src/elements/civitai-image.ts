@@ -15,5 +15,6 @@ export const CivitaiImage = createComponent({
   events: {
     onImageLoad: 'load',
     onImageError: 'error',
+    onOpen: 'open',
   },
 });

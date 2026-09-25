@@ -131,6 +131,11 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
     ['iframe additionalProperties:false', valid({ iframe: { minHeight: 137, bogus: 1 } }), 'iframe.bogus'],
     ['minApiVersion pattern', valid({ minApiVersion: '1.0-beta' }), 'minApiVersion'],
     ['renderMode enum', valid({ renderMode: 'canvas' }), 'renderMode'],
+    // RED before this re-vendor: without the canonical's `auth` enum the
+    // top-level object is open (it declares no `additionalProperties`), so Ajv
+    // accepts ANY `auth` value and no rejection happens. This is the regression
+    // case for the schema re-vendor itself.
+    ['auth enum', valid({ auth: 'api-key' }), 'auth'],
     ['bootSkeleton type', valid({ bootSkeleton: 'yes' }), 'bootSkeleton'],
     ['category enum', valid({ category: 'miscellaneous' }), 'category'],
     ['tagline maxLength (RAW, per the canonical)', valid({ tagline: 'x'.repeat(141) }), 'tagline'],

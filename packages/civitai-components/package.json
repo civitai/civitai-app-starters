@@ -1,6 +1,6 @@
 {
   "name": "@civitai/components",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Attribute-driven, framework-agnostic component CSS for civitai App Blocks. Plain HTML or any framework, themed by @civitai/theme.",
   "license": "MIT",
   "type": "module",
@@ -149,6 +149,22 @@
     "./civitai-image/define": {
       "types": "./dist/elements/civitai-image.define.d.ts",
       "import": "./dist/elements/civitai-image.define.js"
+    },
+    "./civitai-audio": {
+      "types": "./dist/elements/civitai-audio.d.ts",
+      "import": "./dist/elements/civitai-audio.js"
+    },
+    "./civitai-audio/define": {
+      "types": "./dist/elements/civitai-audio.define.d.ts",
+      "import": "./dist/elements/civitai-audio.define.js"
+    },
+    "./civitai-video": {
+      "types": "./dist/elements/civitai-video.d.ts",
+      "import": "./dist/elements/civitai-video.js"
+    },
+    "./civitai-video/define": {
+      "types": "./dist/elements/civitai-video.define.d.ts",
+      "import": "./dist/elements/civitai-video.define.js"
     },
     "./civitai-slider": {
       "types": "./dist/elements/civitai-slider.d.ts",

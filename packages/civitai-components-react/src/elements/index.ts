@@ -5,6 +5,7 @@
 // binding instead when bundle size matters, or for one that needs @civitai/sdk.
 export { CivitaiActionButton } from './civitai-action-button.js';
 export { CivitaiAlert } from './civitai-alert.js';
+export { CivitaiAudio } from './civitai-audio.js';
 export { CivitaiAvatar } from './civitai-avatar.js';
 export { CivitaiBadge } from './civitai-badge.js';
 export { CivitaiBreadcrumb } from './civitai-breadcrumb.js';
@@ -45,3 +46,4 @@ export { CivitaiTextarea } from './civitai-textarea.js';
 export { CivitaiToast } from './civitai-toast.js';
 export { CivitaiToastRegion } from './civitai-toast-region.js';
 export { CivitaiTooltip } from './civitai-tooltip.js';
+export { CivitaiVideo } from './civitai-video.js';

@@ -279,6 +279,7 @@ const LEDGER = [
   //   extends   — a base class's members INLINE into the derived element's
   //               declared type. A consumer writes `CivitaiTextInput` and gets
   //               every `CivitaiField` member without naming `CivitaiField`;
+  //               `CivitaiMediaElement` likewise for image, video and audio;
   //               `HTMLElementBase` likewise for the plain elements. Same shape
   //               as the `ManifestSettingFieldBase` rows above.
   //   property  — reachable by indexed access on the owning element:
@@ -292,9 +293,11 @@ const LEDGER = [
   // function parameter — the positions that genuinely cost a consumer — breaks
   // this guard rather than sliding under these lines.
   // ------------------------------------------------------------------------
+  '@civitai/components/civitai-audio#CivitaiAudio :: extends :: CivitaiMediaElement',
   '@civitai/components/civitai-button-group#CivitaiButtonGroup :: extends :: HTMLElementBase',
   '@civitai/components/civitai-checkbox#CivitaiCheckbox :: extends :: CivitaiField',
   '@civitai/components/civitai-confirm-dialog#CivitaiConfirmDialog :: property :: CivitaiModal.styles',
+  '@civitai/components/civitai-image#CivitaiImage :: extends :: CivitaiMediaElement',
   '@civitai/components/civitai-input-group#CivitaiInputGroup :: extends :: HTMLElementBase',
   '@civitai/components/civitai-number-input#CivitaiNumberInput :: extends :: CivitaiField',
   '@civitai/components/civitai-radio-group#CivitaiRadioGroup :: extends :: CivitaiField',
@@ -315,6 +318,7 @@ const LEDGER = [
   '@civitai/components/civitai-text-input#CivitaiTextInput :: extends :: CivitaiField',
   '@civitai/components/civitai-toast-region#CivitaiToastRegion :: extends :: HTMLElementBase',
   '@civitai/components/civitai-tooltip#CivitaiTooltip :: extends :: HTMLElementBase',
+  '@civitai/components/civitai-video#CivitaiVideo :: extends :: CivitaiMediaElement',
 ];
 
 function loadTypeScript() {

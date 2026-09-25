@@ -55,3 +55,15 @@ Thumbs.db
 # (`test/__screenshots__/<spec>/<test-name>.png`). Transient debug output — the
 # sibling of the attachments dir above, which was ignored while this one was not.
 **/test/__screenshots__/
+
+# Python venvs — none of this repo's tooling should create one; these have only
+# ever appeared as residue of misfired shell commands.
+.venv/
+
+# A literal file named `false` is redirect residue from a misfired command
+# (`> false`), not content.
+/false
+
+# Claude Code per-session agent worktrees (isolation: worktree) — session-owned,
+# never committed.
+.claude/worktrees/

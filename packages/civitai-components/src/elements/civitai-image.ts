@@ -1,30 +1,23 @@
-import { css, html, nothing, type PropertyDeclarations, type PropertyValues, type TemplateResult } from 'lit';
+import { css, html, type PropertyDeclarations, type TemplateResult } from 'lit';
 import { ifDefined } from 'lit/directives/if-defined.js';
 
-import { CivitaiElement } from './base.js';
+import { CivitaiMediaElement } from './media-base.js';
 import { defineElement } from './registry.js';
-import { hostBaseline } from './shared-styles.js';
 
 export type ImageFit = 'cover' | 'contain';
-export type ImageStatus = 'loading' | 'loaded' | 'error';
+export type ImageStatus = 'loading' | 'loaded' | 'error' | 'blocked';
 
 const TAG = 'civitai-image';
 
-export class CivitaiImage extends CivitaiElement {
+export class CivitaiImage extends CivitaiMediaElement {
   static override styles = [
-    hostBaseline,
+    CivitaiMediaElement.styles,
     css`
-      :host {
-        position: relative;
-        display: block;
-        overflow: hidden;
-        background: var(--civitai-color-media-placeholder, var(--civitai-color-gray-2));
-        border-radius: var(--civitai-radius);
-      }
       img {
         display: block;
         width: 100%;
         height: 100%;
+        max-height: var(--civitai-media-max-height, none);
         object-fit: cover;
         opacity: 1;
         transition: opacity 200ms ease;
@@ -36,97 +29,45 @@ export class CivitaiImage extends CivitaiElement {
       :host([status='error']) img {
         opacity: 0;
       }
-      .fallback {
-        position: absolute;
-        inset: 0;
-        display: none;
-        align-items: center;
-        justify-content: center;
-        padding: 8px;
-        color: var(--civitai-color-text-dimmed);
-        font-size: 13px;
-        text-align: center;
-      }
-      :host([status='error']) .fallback {
-        display: flex;
-      }
     `,
   ];
 
   static override properties: PropertyDeclarations = {
-    src: { reflect: true },
-    alt: { reflect: true },
     fit: { reflect: true },
-    fallback: { reflect: true },
-    // Derived, not a default anyone resets to, so reflecting it is what lets
-    // `:host([status='error'])` and a consumer's own CSS see the state.
-    status: { reflect: true },
+    openable: { type: Boolean, reflect: true },
+    label: { reflect: true },
   };
 
-  declare src: string;
-  declare alt: string;
   declare fit: ImageFit;
-  /** Text shown when the image fails; the `fallback` slot wins over it. */
-  declare fallback: string;
-  declare status: ImageStatus;
+  /** The image becomes a button that emits `open`, for a viewer or a detail page. */
+  declare openable: boolean;
+  /** Names the open button when it should say more than `alt`. */
+  declare label: string;
 
   constructor() {
     super();
-    this.src = '';
-    this.alt = '';
     this.fit = 'cover';
-    this.fallback = '';
-    this.status = 'loading';
+    this.openable = false;
+    this.label = '';
   }
 
-  protected override updated(changed: PropertyValues): void {
-    super.updated(changed);
-    // After the cycle, not inside it: reading `complete` needs the rendered
-    // <img>, and settling during `updated` schedules a second update.
-    if (changed.has('src')) void this.updateComplete.then(() => this.#reconcile());
+  #open(): void {
+    this.dispatchEvent(new Event('open', { bubbles: true, composed: true }));
   }
 
-  /**
-   * A cached image can already be `complete` before the listeners attach, so
-   * neither `load` nor `error` ever fires. The failed arm is defensive and
-   * mirrors the React binding: every failure observed here settles via the
-   * `error` event first, so mutating it does not fail a test.
-   */
-  #reconcile(): void {
-    const img = this.renderRoot.querySelector('img');
-    if (!img?.complete || !img.currentSrc) {
-      this.status = 'loading';
-      return;
-    }
-    this.#settle(img.naturalWidth > 0 ? 'loaded' : 'error');
-  }
-
-  /* Spelled out rather than computed so the manifest can read the names; a
-     ternary here is what left `custom-elements.json` with a nameless event.
-     Neither bubbles, matching the `<img>` events they stand in for. */
-  #settle(next: 'loaded' | 'error'): void {
-    if (this.status === next) return;
-    this.status = next;
-    if (next === 'error') this.dispatchEvent(new Event('error'));
-    else this.dispatchEvent(new Event('load'));
-  }
-
-  override render(): TemplateResult {
-    return html`
-      <img
-        part="image"
-        src=${ifDefined(this.src || undefined)}
-        alt=${this.alt}
-        data-fit=${this.fit}
-        @load=${() => this.#settle('loaded')}
-        @error=${() => this.#settle('error')}
-      />
-      ${this.status === 'error'
-        ? html`<div class="fallback" part="fallback">
-            <slot name="fallback">${this.fallback || nothing}</slot>
-          </div>`
-        : nothing}
-    `;
+  protected override renderMedia(): TemplateResult {
+    const image = html`<img
+      part="image"
+      src=${ifDefined(this.src || undefined)}
+      alt=${this.alt}
+      data-fit=${this.fit}
+      @load=${this.settleLoaded}
+      @error=${this.settleFailed}
+    />`;
+    if (!this.openable) return image;
+    return html`<button class="open" part="open" type="button" aria-label=${this.label || this.alt || 'Open image'} @click=${this.#open}>
+      ${image}
+    </button>`;
   }
 }
 

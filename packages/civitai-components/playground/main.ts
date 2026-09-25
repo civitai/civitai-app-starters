@@ -5,6 +5,7 @@ import type { CivitaiRadioGroup } from '../src/elements/civitai-radio-group.js';
 import type { CivitaiSelect } from '../src/elements/civitai-select.js';
 import type { CivitaiTabs } from '../src/elements/civitai-tabs.js';
 import type { CivitaiToastRegion } from '../src/elements/civitai-toast-region.js';
+import type { CivitaiVideo } from '../src/elements/civitai-video.js';
 import '../src/elements/register-site.js';
 
 // The legacy attribute CSS, so the playground can sit elements next to the
@@ -62,6 +63,81 @@ const SAMPLE =
      </svg>`
   );
 document.querySelector('#ok')?.setAttribute('src', SAMPLE);
+document.querySelector('#media-open')?.setAttribute('src', SAMPLE);
+
+// Samples made on the page, like the SVG above: a WAV written sample by sample,
+// and a WebM recorded off a canvas, which also shows `pending` giving way to it.
+function sampleAudio(): string {
+  const rate = 22050;
+  const notes = [261.63, 329.63, 392, 523.25, 392, 329.63, 261.63, 196];
+  const noteLength = rate / 4;
+  const samples = new Int16Array(notes.length * noteLength);
+  notes.forEach((frequency, n) => {
+    for (let i = 0; i < noteLength; i += 1) {
+      const envelope = Math.min(1, i / 200) * (1 - i / noteLength);
+      samples[n * noteLength + i] = Math.sin((2 * Math.PI * frequency * i) / rate) * envelope * 0.4 * 32767;
+    }
+  });
+  const header = new DataView(new ArrayBuffer(44));
+  const text = (offset: number, value: string) => [...value].forEach((c, i) => header.setUint8(offset + i, c.charCodeAt(0)));
+  text(0, 'RIFF');
+  header.setUint32(4, 36 + samples.byteLength, true);
+  text(8, 'WAVEfmt ');
+  header.setUint32(16, 16, true);
+  header.setUint16(20, 1, true);
+  header.setUint16(22, 1, true);
+  header.setUint32(24, rate, true);
+  header.setUint32(28, rate * 2, true);
+  header.setUint16(32, 2, true);
+  header.setUint16(34, 16, true);
+  text(36, 'data');
+  header.setUint32(40, samples.byteLength, true);
+  return URL.createObjectURL(new Blob([header, samples], { type: 'audio/wav' }));
+}
+
+async function sampleVideo(): Promise<string> {
+  const canvas = Object.assign(document.createElement('canvas'), { width: 320, height: 320 });
+  const context = canvas.getContext('2d')!;
+  const recorder = new MediaRecorder(canvas.captureStream(30), { mimeType: 'video/webm' });
+  const chunks: Blob[] = [];
+  recorder.addEventListener('dataavailable', (event) => chunks.push(event.data));
+  const stopped = new Promise((resolve) => recorder.addEventListener('stop', resolve));
+  const started = performance.now();
+  const draw = (now: number) => {
+    const t = (now - started) / 2000;
+    const gradient = context.createLinearGradient(0, 0, 320, 320);
+    gradient.addColorStop(0, `hsl(${210 + t * 60} 80% 55%)`);
+    gradient.addColorStop(1, '#326D5C');
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, 320, 320);
+    context.fillStyle = 'rgb(255 255 255 / 0.85)';
+    context.beginPath();
+    context.arc(160 + Math.cos(t * Math.PI * 2) * 90, 160 + Math.sin(t * Math.PI * 2) * 90, 28, 0, Math.PI * 2);
+    context.fill();
+    if (t < 1) requestAnimationFrame(draw);
+    else recorder.stop();
+  };
+  recorder.start();
+  requestAnimationFrame(draw);
+  await stopped;
+  return URL.createObjectURL(new Blob(chunks, { type: 'video/webm' }));
+}
+
+document.querySelector('#audio-sample')?.setAttribute('src', sampleAudio());
+void sampleVideo().then(
+  (url) => {
+    for (const video of document.querySelectorAll<CivitaiVideo>('#video-preview, #video-full')) {
+      video.src = url;
+      video.pending = false;
+    }
+  },
+  () => {
+    for (const video of document.querySelectorAll<CivitaiVideo>('#video-preview, #video-full')) {
+      video.fallback = 'This browser cannot record a sample';
+      video.pending = false;
+    }
+  }
+);
 
 const SPEEDS = [
   { value: 'fast', label: 'Fast' },
@@ -111,6 +187,11 @@ for (const id of ['#modal-ok', '#modal-cancel']) {
 }
 
 const toasts = document.querySelector<CivitaiToastRegion>('#toasts');
+for (const id of ['#media-open', '#video-preview']) {
+  document.querySelector(id)?.addEventListener('open', () => {
+    toasts?.show({ message: `Opened ${id === '#media-open' ? 'the image' : 'the video'}.`, color: 'info' });
+  });
+}
 document.querySelector('#toast-info')?.addEventListener('click', () => {
   toasts?.show({ message: 'Queued for generation.', color: 'info' });
 });
