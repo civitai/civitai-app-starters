@@ -119,6 +119,28 @@ describe('(b) a surface the block token cannot serve still names the manifest op
     expect((error as ApiError).message).toContain('auth: "oauth"');
   });
 
+  it('explains a 403 too — a scope refusal is the other shape this takes', async () => {
+    const { fetch } = fakeFetch([() => json(403, { error: 'Forbidden' })]);
+    const app = await initialize({ transport: blockTokenTransport(), fetch });
+
+    const error = await app.site.get('me').catch((e: unknown) => e);
+
+    expect((error as ApiError).status).toBe(403);
+    expect((error as ApiError).message).toContain('auth: "oauth"');
+  });
+
+  it('says nothing on a failure the token kind cannot explain', async () => {
+    const { fetch } = fakeFetch([() => json(404, { error: 'Not found' })]);
+    const app = await initialize({ transport: blockTokenTransport(), fetch });
+
+    const error = await app.site.get('me').catch((e: unknown) => e);
+
+    // A 404 is a route that does not exist. Advising the manifest here would be
+    // a guess dressed as a diagnosis.
+    expect((error as ApiError).status).toBe(404);
+    expect((error as ApiError).message).toBe('Not found');
+  });
+
   it('still refuses at initialize() when the block declares it needs OAuth', async () => {
     await expect(
       initialize({ transport: blockTokenTransport(), requireOAuthToken: true }),

@@ -242,7 +242,11 @@ For a block to use the API at all, civitai has to:
    🔴 **But the mint is FLAG-GATED, and the failure is silent.** The call site is
    `manifestWantsOauthToken(app.manifest) && env.APP_BLOCK_OAUTH_TOKENS_ENABLED`, and that env var is
    `.default(false)`. **Wherever it is off, a manifest declaring `auth: "oauth"` silently receives the BLOCK
-   token**, and a general `/api/v1` call then fails as unauthorised rather than explaining itself.
+   token**, and a general `/api/v1` call then fails as unauthorised. Since the SDK narrowed its token-kind
+   guard, that refusal carries the explanation: `app.site` appends the `auth: "oauth"` opt-in to the API's own
+   401/403 on any route outside `blocks/*`, and `app.orchestration` refuses before the request. `initialize()`
+   itself no longer rejects — being handed the block token is the DEFAULT here, not a failure, and rejecting it
+   also blocked the `consent_required` prompt below.
 
    This file ships in the npm tarball and cannot be corrected after publication, so it deliberately does not
    record whether the flag is on today — that would be frozen into every published version.
@@ -257,7 +261,8 @@ For a block to use the API at all, civitai has to:
 
    The third row is the one to design around: it is the ordinary case today, and a block cannot tell those two
    apart. What it CAN do is the thing the platform expects either way — treat the rejection as a prompt to
-   sign in or to request consent, rather than as a configuration question.
+   sign in or to request consent, rather than as a configuration question. `app.requestGrants()` reaches the
+   host's consent dialog on a block token, so that prompt is available from a block that holds one.
 
    ✅ **The phishing finding is not re-opened**, which is why this could ship at all. The token is minted
    **server-side** by the host (`mintOauthAppToken`) against scopes already approved for the app; the

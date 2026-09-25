@@ -14,7 +14,15 @@ export declare function initialize(options?: BlockInitializeOptions): Promise<Bl
 export declare function initialize(options: TokenInitializeOptions): Promise<AppClient>;
 
 export interface AppClient {
-    /** The public Civitai REST API (`/api/v1`), as the viewer. */
+    /**
+     * The public Civitai REST API (`/api/v1`), as the viewer.
+     *
+     * Routes are addressed by path, so this client cannot know in advance which
+     * ones an app will call. A block holding the block-scoped token reaches the
+     * `blocks/*` routes it was minted for plus `GET models/{id}`; anywhere else
+     * the API refuses it, and the refusal carries the manifest fix — see
+     * {@link BlockInitializeOptions.requireOAuthToken} to fail at startup instead.
+     */
     readonly site: SiteClient;
     /**
      * The viewer's own per-app key/value store.
@@ -25,7 +33,14 @@ export interface AppClient {
      * reading an empty result as "nothing stored".
      */
     readonly storage: StorageClient;
-    /** The orchestrator's workflows, as the viewer. */
+    /**
+     * The orchestrator's workflows, as the viewer.
+     *
+     * 🔴 The orchestrator accepts no block-scoped token on any route, so unlike
+     * {@link AppClient.site} this destination IS known ahead of the call: a block
+     * holding one is refused here up front, with the manifest fix, rather than
+     * spending a request to be told.
+     */
     readonly orchestration: OrchestrationClient;
     /** Asks for more scopes. `false` when they cannot be granted — a refusal is an answer. */
     requestGrants(scopes: readonly Scope[], opts?: GrantOptions): Promise<boolean>;
@@ -51,6 +66,20 @@ export interface BlockInitializeOptions extends ClientOptions {
     signal?: AbortSignal;
     /** Replaces the page's own bridge, e.g. with `createFakeTransport()` in a test. */
     transport?: BlockTransport;
+    /**
+     * Refuse to start at all unless a signed-in viewer's token is an OAuth access
+     * token, naming the `auth: "oauth"` manifest opt-in. For a block whose FIRST
+     * screen already needs a surface the block-scoped token cannot serve, so that
+     * "misconfigured" surfaces once at startup rather than as a refusal per call.
+     *
+     * 🔴 Do not set it as a precaution. The host's OAuth mint is flag-gated and
+     * the flag defaults OFF, so wherever it is off this makes the block fail to
+     * load for every signed-in viewer — including a block that only ever calls
+     * `storage` or a `blocks/*` route, which the block token serves and an OAuth
+     * token does not. Anonymous viewers are unaffected: no OAuth token is minted
+     * for one whatever the manifest says, so the manifest is not their fix.
+     */
+    requireOAuthToken?: boolean;
 }
 
 export interface TokenInitializeOptions extends ClientOptions, TokenSessionOptions {

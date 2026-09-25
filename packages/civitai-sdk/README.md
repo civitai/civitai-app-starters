@@ -63,17 +63,41 @@ A block's `app` also has `host`, `viewer`, `context`, `settings`, `theme` and
 A block opts in by declaring `auth: "oauth"` in its `block.manifest.json`. The
 host then hands it a real OAuth access token that `/api/v1`, the orchestrator
 and the MCP accept, and consent — including `requestGrants` — goes through the
-host's consent dialog. A block that does not opt in keeps the block-scoped
-token, which those APIs reject; `initialize()` throws a `CivitaiError` saying
-so for a signed-in viewer. Such blocks should stay on `@civitai/app-sdk`.
+host's consent dialog.
 
-> The block-scoped token is not useless — it is accepted by the
-> `/api/v1/blocks/*` routes it was minted for, plus `GET /api/v1/models/{id}`.
-> What it does not reach is the rest of `/api/v1` or the orchestrator, which is
-> what this package needs. ⚠ "Does not reach" does not always mean "refuses":
-> a *public* route such as `/api/v1/images` ignores the token and answers
-> anonymously instead of erroring, so prefer the `blocks/*` twin. `BREAKING.md`
-> has the per-message map.
+### When the token is the block-scoped one
+
+`initialize()` starts either way. A block-scoped token for a signed-in viewer is
+**not** an error in itself: the host's OAuth mint is flag-gated, so an opted-in
+block can legitimately receive the block token, and that token serves the
+`/api/v1/blocks/*` routes it was minted for, `GET /api/v1/models/{id}`, and
+`app.storage` — which an OAuth token cannot reach at all. What it does not reach
+is the rest of `/api/v1`, the orchestrator or the MCP. So the refusal sits at the
+surface, not at startup:
+
+| You call | Holding a block token, signed in |
+|---|---|
+| `app.storage.*` | Works. This is the token app storage requires |
+| `app.site` on `blocks/…` or `models/{id}` | Works |
+| `app.site.get('me')` and the rest of `/api/v1` | The API's own 401/403, with `auth: "oauth"` named in the message. `status` and `body` are untouched, so a caller can still branch on them |
+| `app.orchestration.*` | Rejects **before** the request with a `CivitaiError` naming `auth: "oauth"` — the orchestrator accepts no block token on any route, so there is nothing to learn from making the call |
+| `app.requestGrants(...)` | Works. Goes to the host's consent dialog, so a `consent_required` fallback can still prompt |
+
+Anonymous viewers are untouched: no OAuth token is minted for one whatever the
+manifest says, so the manifest is not their fix — `host.requestSignIn()` is. A
+host that predates the `kind` field sends none, and behaves as it always did.
+
+Pass `initialize({ requireOAuthToken: true })` to fail at startup instead, for a
+block whose first screen already needs an OAuth-only surface. 🔴 Not a
+precaution: wherever the host's flag is off it makes the block fail to load for
+every signed-in viewer, including one that only ever uses `storage`.
+
+> ⚠ `/api/v1` cannot always be explained, because the route is a string this
+> client never interprets. "Does not reach" is also not always "refuses": a
+> *public* route such as `/api/v1/images` ignores an unusable token and answers
+> **anonymously** instead of erroring. Nothing at the client seam tells that apart
+> from a successful authenticated read, so prefer the `blocks/*` twin.
+> `BREAKING.md` has the per-message map.
 
 ## Signing in outside civitai.com
 
