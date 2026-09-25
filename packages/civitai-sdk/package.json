@@ -6,7 +6,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "sideEffects": false,
+  "sideEffects": ["./dist/index.js", "./dist/safe-storage/index.js"],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

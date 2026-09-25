@@ -3,6 +3,22 @@
  * inside a civitai.com page, `app.host`. Outside one, `createSignIn()` gets the token.
  */
 
+// FIRST import, on purpose. A block is framed at an OPAQUE ORIGIN — civitai's
+// `intersectSandbox` withholds `allow-same-origin` for every tier but
+// `internal`/`verified`, and in v1 every approved block is `unverified` — where
+// merely *reading* `localStorage`/`sessionStorage` throws a SecurityError,
+// including from third-party dependencies nobody can guard from the outside.
+// Importing this repairs those globals before anything else in the app's module
+// graph can trip over them. It is inert wherever storage works or is absent
+// (Node/SSR/workers); see `./safe-storage/index.ts`.
+//
+// 🔴 This is why `package.json` carries a `sideEffects` ALLOWLIST naming
+// `./dist/index.js` and `./dist/safe-storage/index.js` rather than `false`. A
+// bare `false` tells every bundler this module has no side effects, and the
+// import below is exactly such a side effect. `test/safe-storage.test.ts` pins
+// both the behaviour and the manifest value.
+import './safe-storage/index.js';
+
 export { initialize } from './app/index.js';
 export type {
   AppClient,

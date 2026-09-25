@@ -374,6 +374,45 @@ not exported, because four of the five fleet apps that store per-viewer state
 need knobs it does not have (injected latency, prefix-targeted refusals, quota
 overrides, a cursor it ignores, a read that never settles). Copy it if it helps.
 
+## Web storage in a block
+
+A block is framed at an **opaque origin**: civitai's `intersectSandbox` adds
+`allow-same-origin` only for the `internal` and `verified` trust tiers, and in
+v1 every approved block is `unverified`. There, `localStorage` and
+`sessionStorage` do not merely come back empty — *reading the property throws*:
+
+```
+SecurityError: Failed to read the 'localStorage' property from 'Window':
+The document is sandboxed and lacks the 'allow-same-origin' flag.
+```
+
+Guarding your own call sites is not enough, because a dependency that touches
+storage while its module body evaluates takes the app down before any of your
+code runs — and libraries routinely mislabel the failure as something else.
+
+So importing `@civitai/sdk` installs a spec-shaped in-memory `Storage` over any
+web-storage global that is present but unusable. You do not call anything; the
+package entry does it. It is inert where storage works and where there is none
+at all (Node/SSR/workers), and it never replaces a healthy store.
+
+🔴 **Import `@civitai/sdk` first in your entry module.** ES imports are hoisted
+and evaluated in order, so a storage-touching dependency imported *above* the
+SDK still evaluates first, and nothing in the SDK can reach it in time:
+
+```
+import '@civitai/sdk'; // or any import from it — just keep it first
+import 'some-library-that-reads-localStorage';
+```
+
+This is why the package declares a `sideEffects` allowlist rather than
+`sideEffects: false`: the install is a genuine import side effect, and `false`
+would license every bundler to drop it.
+
+The fallback is session-scoped — nothing survives a reload, which is the honest
+semantic at an opaque origin, since there is no origin to persist against. Treat
+web storage in a block as a cache, never a source of truth. The durable
+per-viewer store is [app storage](#app-storage).
+
 ## Checks
 
 - `npm run api` regenerates [`api/public-api.md`](./api/public-api.md) from the
