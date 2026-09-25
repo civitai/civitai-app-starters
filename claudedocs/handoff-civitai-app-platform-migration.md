@@ -387,24 +387,7 @@ that protocol."*
   GitHub Actions, so `gh run view` will not have it), or install the Playwright browser
   (`npx playwright install chromium-headless-shell`) and reproduce locally against both heads.
 
-### RESOLVED: `preview / component-tests` red on the F4 commit was a FLAKE
-- as-of: 2026-09-23
-- **Symptom + exact repro:** the status read `failure` on `ecdf81ae74` after five consecutive
-  `success` readings on this PR's earlier heads — the sequence that made it look caused.
-- **Observed (with values):** on the very next head `f02e3ef8c8`, which changed **only** prettier
-  formatting inside one test file, the status returned **`success`**, and the commit settled
-  7/7 statuses plus 12 success + 1 skipped of 13 check-runs, zero non-success on either surface.
-  `via: measurement`
-- **Ruled out:** *"the F4 change broke a browser suite"* — no mechanism, and now no symptom: the
-  `component` project includes only `src/**/*.browser.test.tsx` (`vitest.config.mts:529`) so the new
-  `.test.ts` guard is not in it, and the only module-scope change to `block-workflow-rest.ts` was an
-  `import type` (erased), with the new imports dynamic and inside a function. `via: code`
-- **Leading hypothesis:** resolved — flake.
-- **Next probe:** none. 🔴 **The reusable half is the METHOD, not the verdict:** a check's own
-  description (`"report-only, not blocking"`) is not authority on whether to ignore it; the
-  discriminator was the PER-HEAD HISTORY of that status on the same PR, and the re-run came free
-  because a fix was needed anyway. Do not merge past a red on the strength of its adjective.
-
+<!-- PRUNED 2026-09-25: the RESOLVED `preview / component-tests` FLAKE block. Its durable half — a check's own "report-only" adjective is not authority on whether to ignore it, and the discriminator was the PER-HEAD HISTORY of that status on the same PR — is now under `## Gotchas`. Full evidence in git history (parent of this commit). 🔴 The other FIVE RESOLVED blocks are NOT safely evictable: each is the target of a SUPERSEDES comment that points "below" at it, so deleting one strands a live retraction and can leave a RETIRED instruction as the only surviving guidance. Measured this session: pruning all six left the supply-chain block's overridden "DO NOT relax the policy" as the sole instruction present. Removing them requires rewriting those comments — a read-through, not a regex pass. -->
 <!-- SUPERSEDES the earlier block "`app-requests` cannot port either — anon reads 403, and the UI
      surface is missing". BOTH halves are now closed: the 403 by #5067, and the UI/Harness half by
      commit f422773. Do NOT re-run its "Next probe" or re-derive its UI-surface inventory. Its
