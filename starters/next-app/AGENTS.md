@@ -43,7 +43,7 @@ src/
     ├── env.ts              # validated env access
     ├── session-cookie.ts   # cookie names + pure parse/expiry helpers (no next/headers)
     ├── session.ts          # read the sealed session cookie; write it from routes only
-    └── civitai.ts          # @civitai/app-sdk wiring (createAppClient, fetchMe, etc.)
+    └── civitai.ts          # @civitai/app-sdk wiring (createOrchestratorClient, fetchMe, etc.)
 ```
 
 ## Patterns to keep
@@ -67,7 +67,7 @@ src/
 
 | Task | How |
 |---|---|
-| Add a new Civitai API call | Add a function to `src/lib/civitai.ts` taking the session, returning typed result. Use the SDK's `createAppClient`. |
+| Add a new Civitai API call | Add a function to `src/lib/civitai.ts` taking the session, returning typed result. Use `createOrchestratorClient` from `@civitai/app-sdk/orchestrator`. |
 | Request more OAuth scopes | Edit `src/lib/scopes.ts` (`REQUESTED_SCOPES`). User will need to re-consent on next login. |
 | Add a generation engine option | Edit the workflow body builder. Don't ship 30 engine configs — pick one or two that exemplify the pattern. |
 | Persist generation history | This is **net-new infra** — flag it. Recommend Vercel KV for simple list/get, Postgres for richer queries. Don't silently add Prisma. |

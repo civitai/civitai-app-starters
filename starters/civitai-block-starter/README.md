@@ -51,9 +51,27 @@ Other hooks ship with `@civitai/blocks-react`:
 - `useBuzzWorkflow()` — `estimate` / `submit` / `poll` against orchestrator workflows
 - `useBlockSettings()` — publisher + per-viewer settings (per-viewer is Phase 2)
 
-`useBuzzPurchase`, `useCivitaiNavigate`, and `useBlockAnalytics` are exported
-but the host-side handlers ship in Phase 2 of civitai.com's Civitai Apps
-substrate — calls will reject on the per-request timeout until then.
+`useBuzzPurchase` is handled by both hosts. `useCivitaiNavigate` is handled by the
+full-page host only, and `useBlockAnalytics` by **neither** — no analytics sink is
+wired, so its event is accepted and dropped. Both are fire-and-forget, so an
+unhandled one is dropped rather than hung: you get silence, not an error.
+
+This starter targets `model.sidebar_top`, so it runs on the model host — expect
+`useCivitaiNavigate` and `useBlockAnalytics` to do nothing as scaffolded.
+
+The two halves of that are pinned differently, so treat them differently:
+
+- **Fire-and-forget is pinned here**, by
+  `packages/civitai-blocks-react/test/{useCivitaiNavigate,useBlockAnalytics}.test.tsx`
+  — both assert the hook returns `undefined` and awaits no reply, and both run in
+  CI. Change that shape and the suite goes red.
+- 🔴 **Which host handles which message is pinned by nothing in this repo.** The
+  ledger is `src/components/AppBlocks/hostHandlerParity.ts` in `civitai/civitai` —
+  and read it with one caveat: its test enforces the **`required`** rows by
+  grepping the host for the handler, while an **N/A** row only has to carry a
+  rationale string. So a host *gaining* a handler fails nothing, and the "is this
+  a no-op?" half is the hand-maintained one. Confirm against the host source
+  before depending on a no-op.
 
 ## Boot skeleton
 
