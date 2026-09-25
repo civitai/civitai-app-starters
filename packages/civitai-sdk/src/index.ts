@@ -25,7 +25,7 @@ export type {
   StorageListResult,
   StorageQuota,
 } from './storage/index.js';
-export { isTerminal } from './orchestration/index.js';
+export { isTerminal, isTerminalStatus } from './orchestration/index.js';
 export type {
   OrchestrationClient,
   Step,

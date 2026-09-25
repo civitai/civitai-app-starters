@@ -19,6 +19,13 @@ export class CivitaiSignInButton extends CivitaiElement {
       :host([hidden]) {
         display: none;
       }
+      :host([full-width]) {
+        display: flex;
+        width: 100%;
+      }
+      :host([full-width]) civitai-button {
+        width: 100%;
+      }
     `,
   ];
 
@@ -26,6 +33,7 @@ export class CivitaiSignInButton extends CivitaiElement {
     returnUrl: { reflect: true, attribute: 'return-url' },
     variant: { reflect: true },
     size: { reflect: true },
+    fullWidth: { type: Boolean, reflect: true, attribute: 'full-width' },
     signIn: { attribute: false },
     ready: { state: true },
     signedIn: { state: true },
@@ -35,6 +43,8 @@ export class CivitaiSignInButton extends CivitaiElement {
   declare returnUrl: string;
   declare variant: string;
   declare size: string;
+  /** Passes through to the button this wraps. */
+  declare fullWidth: boolean;
   declare ready: boolean;
   declare signedIn: boolean;
 
@@ -51,6 +61,7 @@ export class CivitaiSignInButton extends CivitaiElement {
     this.returnUrl = '';
     this.variant = 'filled';
     this.size = 'md';
+    this.fullWidth = false;
     this.ready = false;
     this.signedIn = false;
   }
@@ -121,6 +132,7 @@ export class CivitaiSignInButton extends CivitaiElement {
         exportparts="button"
         .variant=${this.variant}
         .size=${this.size}
+        .fullWidth=${this.fullWidth}
         .disabled=${!this.ready}
         @click=${this.#press}
       >

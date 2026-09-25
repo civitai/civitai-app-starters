@@ -7325,6 +7325,18 @@
             },
             {
               "kind": "field",
+              "name": "fullWidth",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Passes through to the button this wraps.",
+              "default": "false",
+              "attribute": "full-width",
+              "reflects": true
+            },
+            {
+              "kind": "field",
               "name": "ready",
               "privacy": "public",
               "type": {
@@ -7454,6 +7466,15 @@
               "fieldName": "size"
             },
             {
+              "name": "full-width",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Passes through to the button this wraps.",
+              "default": "false",
+              "fieldName": "fullWidth"
+            },
+            {
               "name": "ready",
               "type": {
                 "text": "boolean"
@@ -7510,6 +7531,677 @@
           "declaration": {
             "name": "CivitaiSignInButton",
             "module": "src/sdk/civitai-sign-in-button.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/sdk/civitai-workflow-button.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "Prices a workflow, runs it on the viewer's Buzz and reports it, so an app\ndoes not rebuild submit-watch-cancel around every generate button.",
+          "name": "CivitaiWorkflowButton",
+          "members": [
+            {
+              "kind": "field",
+              "name": "label",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "What the button says before the price lands, and before the Buzz amount after it.",
+              "default": "'Run'",
+              "attribute": "label",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "variant",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'filled'",
+              "attribute": "variant",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "size",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'md'",
+              "attribute": "size",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "scopes",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Space-separated; empty asks for nothing and leaves consent to the app.",
+              "default": "'ai:write:budgeted'",
+              "attribute": "scopes",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "cancelable",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "attribute": "cancelable",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "fullWidth",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Both pass through to the button this wraps.",
+              "default": "false",
+              "attribute": "full-width",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "disabled",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "cancelMessage",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "What the cancel dialog says under its heading.",
+              "default": "'Work already under way may finish anyway — not every step can be interrupted.'",
+              "attribute": "cancel-message",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "template",
+              "privacy": "public",
+              "type": {
+                "text": "WorkflowTemplate | undefined"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "app",
+              "privacy": "public",
+              "type": {
+                "text": "AppClient | undefined"
+              },
+              "description": "Defaults to `initialize()`, which only resolves inside a civitai.com page."
+            },
+            {
+              "kind": "field",
+              "name": "cost",
+              "privacy": "public",
+              "type": {
+                "text": "number | null"
+              },
+              "default": "null",
+              "attribute": "cost"
+            },
+            {
+              "kind": "field",
+              "name": "phase",
+              "privacy": "public",
+              "type": {
+                "text": "WorkflowButtonPhase"
+              },
+              "default": "'idle'",
+              "attribute": "phase"
+            },
+            {
+              "kind": "field",
+              "name": "status",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "status"
+            },
+            {
+              "kind": "field",
+              "name": "copied",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "copied"
+            },
+            {
+              "kind": "field",
+              "name": "progress",
+              "privacy": "public",
+              "type": {
+                "text": "number | null"
+              },
+              "default": "null",
+              "attribute": "progress"
+            },
+            {
+              "kind": "field",
+              "name": "queued",
+              "privacy": "public",
+              "type": {
+                "text": "number | null"
+              },
+              "description": "Jobs ahead of this workflow in the queue, while it is in one.",
+              "default": "null",
+              "attribute": "queued"
+            },
+            {
+              "kind": "field",
+              "name": "stepsDone",
+              "privacy": "public",
+              "type": {
+                "text": "number"
+              },
+              "default": "0",
+              "attribute": "stepsDone"
+            },
+            {
+              "kind": "field",
+              "name": "stepsTotal",
+              "privacy": "public",
+              "type": {
+                "text": "number"
+              },
+              "default": "0",
+              "attribute": "stepsTotal"
+            },
+            {
+              "kind": "field",
+              "name": "#run",
+              "privacy": "private",
+              "type": {
+                "text": "AbortController | undefined"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "#settledTimer",
+              "privacy": "private",
+              "type": {
+                "text": "ReturnType<typeof setTimeout> | undefined"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "#workflowId",
+              "privacy": "private",
+              "type": {
+                "text": "string | undefined"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "#priced",
+              "privacy": "private",
+              "type": {
+                "text": "WorkflowTemplate | undefined"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "#queuedWidest",
+              "privacy": "private",
+              "type": {
+                "text": "number"
+              },
+              "default": "0"
+            },
+            {
+              "kind": "field",
+              "name": "workflowId",
+              "type": {
+                "text": "string | undefined"
+              },
+              "description": "The workflow this button is running, if it is running one.",
+              "readonly": true
+            },
+            {
+              "kind": "method",
+              "name": "#scopes",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "Scope[]"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "#client",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "Promise<AppClient>"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "#fail",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "error",
+                  "type": {
+                    "text": "unknown"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "#price",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "Promise<void>"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "#start",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "Promise<void>"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "#read",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "workflow",
+                  "type": {
+                    "text": "Workflow"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "#settle",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "workflow",
+                  "type": {
+                    "text": "Workflow"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "#rest",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "parameters": [
+                {
+                  "name": "status",
+                  "type": {
+                    "text": "string"
+                  }
+                }
+              ],
+              "description": "Holds the outcome briefly, then goes back to offering the price."
+            },
+            {
+              "kind": "method",
+              "name": "#press",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "Promise<void>"
+                }
+              },
+              "description": "One control: press it to start, press it again to ask about cancelling."
+            },
+            {
+              "kind": "method",
+              "name": "#cancel",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "Promise<void>"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "#labels",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "{ text: string; spun: boolean }[]"
+                }
+              },
+              "description": "What this button may yet say, so the widest of them can fix its width."
+            },
+            {
+              "kind": "method",
+              "name": "#steps",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "string"
+                }
+              },
+              "description": "Only worth saying for a workflow that has more than one step."
+            },
+            {
+              "kind": "method",
+              "name": "#idleText",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "string"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "#copyId",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "Promise<void>"
+                }
+              },
+              "description": "Support asks for the workflow id first, and a running one is hard to retype."
+            },
+            {
+              "kind": "method",
+              "name": "#text",
+              "privacy": "private",
+              "return": {
+                "type": {
+                  "text": "string"
+                }
+              }
+            }
+          ],
+          "events": [
+            {
+              "name": "error",
+              "type": {
+                "text": "CustomEvent"
+              }
+            },
+            {
+              "name": "priced",
+              "type": {
+                "text": "CustomEvent"
+              }
+            },
+            {
+              "name": "submitted",
+              "type": {
+                "text": "CustomEvent"
+              }
+            },
+            {
+              "name": "progress",
+              "type": {
+                "text": "CustomEvent"
+              }
+            },
+            {
+              "name": "finished",
+              "type": {
+                "text": "CustomEvent"
+              }
+            },
+            {
+              "name": "canceled",
+              "type": {
+                "text": "CustomEvent"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "description": "What the button says before the price lands, and before the Buzz amount after it.",
+              "default": "'Run'",
+              "fieldName": "label"
+            },
+            {
+              "name": "variant",
+              "type": {
+                "text": "string"
+              },
+              "default": "'filled'",
+              "fieldName": "variant"
+            },
+            {
+              "name": "size",
+              "type": {
+                "text": "string"
+              },
+              "default": "'md'",
+              "fieldName": "size"
+            },
+            {
+              "name": "scopes",
+              "type": {
+                "text": "string"
+              },
+              "description": "Space-separated; empty asks for nothing and leaves consent to the app.",
+              "default": "'ai:write:budgeted'",
+              "fieldName": "scopes"
+            },
+            {
+              "name": "cancelable",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "fieldName": "cancelable"
+            },
+            {
+              "name": "full-width",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Both pass through to the button this wraps.",
+              "default": "false",
+              "fieldName": "fullWidth"
+            },
+            {
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "disabled"
+            },
+            {
+              "name": "cancel-message",
+              "type": {
+                "text": "string"
+              },
+              "description": "What the cancel dialog says under its heading.",
+              "default": "'Work already under way may finish anyway — not every step can be interrupted.'",
+              "fieldName": "cancelMessage"
+            },
+            {
+              "name": "cost",
+              "type": {
+                "text": "number | null"
+              },
+              "default": "null",
+              "fieldName": "cost"
+            },
+            {
+              "name": "phase",
+              "type": {
+                "text": "WorkflowButtonPhase"
+              },
+              "default": "'idle'",
+              "fieldName": "phase"
+            },
+            {
+              "name": "status",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "status"
+            },
+            {
+              "name": "copied",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "copied"
+            },
+            {
+              "name": "progress",
+              "type": {
+                "text": "number | null"
+              },
+              "default": "null",
+              "fieldName": "progress"
+            },
+            {
+              "name": "queued",
+              "type": {
+                "text": "number | null"
+              },
+              "description": "Jobs ahead of this workflow in the queue, while it is in one.",
+              "default": "null",
+              "fieldName": "queued"
+            },
+            {
+              "name": "stepsDone",
+              "type": {
+                "text": "number"
+              },
+              "default": "0",
+              "fieldName": "stepsDone"
+            },
+            {
+              "name": "stepsTotal",
+              "type": {
+                "text": "number"
+              },
+              "default": "0",
+              "fieldName": "stepsTotal"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/internals.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-workflow-button",
+          "cssParts": [
+            {
+              "name": "run"
+            },
+            {
+              "name": "spinner"
+            },
+            {
+              "name": "label"
+            },
+            {
+              "name": "confirm"
+            },
+            {
+              "name": "workflow-id"
+            }
+          ]
+        },
+        {
+          "kind": "function",
+          "name": "defineCivitaiWorkflowButton",
+          "return": {
+            "type": {
+              "text": "void"
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "js",
+          "name": "CivitaiWorkflowButton",
+          "declaration": {
+            "name": "CivitaiWorkflowButton",
+            "module": "src/sdk/civitai-workflow-button.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "defineCivitaiWorkflowButton",
+          "declaration": {
+            "name": "defineCivitaiWorkflowButton",
+            "module": "src/sdk/civitai-workflow-button.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "civitai-workflow-button",
+          "declaration": {
+            "name": "CivitaiWorkflowButton",
+            "module": "src/sdk/civitai-workflow-button.ts"
           }
         }
       ]
