@@ -390,23 +390,39 @@ Guarding your own call sites is not enough, because a dependency that touches
 storage while its module body evaluates takes the app down before any of your
 code runs — and libraries routinely mislabel the failure as something else.
 
-So importing `@civitai/sdk` installs a spec-shaped in-memory `Storage` over any
-web-storage global that is present but unusable. You do not call anything; the
-package entry does it. It is inert where storage works and where there is none
-at all (Node/SSR/workers), and it never replaces a healthy store.
+So the package ships a repair behind its own subpath. Importing
+`@civitai/sdk/safe-storage` installs a spec-shaped in-memory `Storage` over any
+web-storage global that is present but unusable. It is inert where storage works
+and where there is none at all (Node/SSR/workers), and it never replaces a
+healthy store.
 
-🔴 **Import `@civitai/sdk` first in your entry module.** ES imports are hoisted
-and evaluated in order, so a storage-touching dependency imported *above* the
-SDK still evaluates first, and nothing in the SDK can reach it in time:
+🔴 **This is not automatic. Add the import yourself, as the first import in your
+entry module** — `import '@civitai/sdk'` on its own installs nothing:
 
 ```
-import '@civitai/sdk'; // or any import from it — just keep it first
+import '@civitai/sdk/safe-storage'; // side-effect import; keep it FIRST
 import 'some-library-that-reads-localStorage';
 ```
 
-This is why the package declares a `sideEffects` allowlist rather than
-`sideEffects: false`: the install is a genuine import side effect, and `false`
-would license every bundler to drop it.
+One line, and it is the only line. There is nothing to call and nothing to
+configure — the import *is* the install.
+
+Two things about that line:
+
+- **First is the whole point.** ES imports are hoisted and evaluated in order,
+  so a storage-touching dependency imported *above* this one still evaluates
+  first and nothing can reach it in time. Put it above every other import,
+  including your framework's.
+- **It is a side-effect-only import, so bundlers must be told to keep it.** The
+  package declares a `sideEffects` allowlist naming
+  `./dist/safe-storage/index.js` for exactly that reason; `sideEffects: false`
+  would license every bundler to drop it. The package root
+  (`./dist/index.js`) is deliberately *not* in that allowlist — it is pure
+  re-exports and stays fully tree-shakeable.
+
+A block built on `@civitai/app-sdk/blocks` already gets this: that entry imports
+its own copy (`@civitai/app-sdk/safe-storage`). A block that has finished porting
+to `@civitai/sdk` imports neither, which is why this line exists.
 
 The fallback is session-scoped — nothing survives a reload, which is the honest
 semantic at an opaque origin, since there is no origin to persist against. Treat

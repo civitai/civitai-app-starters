@@ -3,21 +3,17 @@
  * inside a civitai.com page, `app.host`. Outside one, `createSignIn()` gets the token.
  */
 
-// FIRST import, on purpose. A block is framed at an OPAQUE ORIGIN — civitai's
-// `intersectSandbox` withholds `allow-same-origin` for every tier but
-// `internal`/`verified`, and in v1 every approved block is `unverified` — where
-// merely *reading* `localStorage`/`sessionStorage` throws a SecurityError,
-// including from third-party dependencies nobody can guard from the outside.
-// Importing this repairs those globals before anything else in the app's module
-// graph can trip over them. It is inert wherever storage works or is absent
-// (Node/SSR/workers); see `./safe-storage/index.ts`.
+// 🔴 NOTHING IS IMPORTED FOR SIDE EFFECTS HERE, on purpose. This entry is pure
+// re-exports, so `./dist/index.js` stays droppable and `import '@civitai/sdk'`
+// stays inert in Node/SSR.
 //
-// 🔴 This is why `package.json` carries a `sideEffects` ALLOWLIST naming
-// `./dist/index.js` and `./dist/safe-storage/index.js` rather than `false`. A
-// bare `false` tells every bundler this module has no side effects, and the
-// import below is exactly such a side effect. `test/safe-storage.test.ts` pins
-// both the behaviour and the manifest value.
-import './safe-storage/index.js';
+// The opaque-origin web-storage repair lives behind its own subpath,
+// `@civitai/sdk/safe-storage` (`./safe-storage/index.ts`), and a block opts in
+// with one line at the top of its entry module. Installing it from here would
+// make every consumer of this package — server runtimes included — pay a side
+// effect it never asked for, and would still not fix the ordering problem: a
+// storage-touching dependency imported ABOVE `@civitai/sdk` evaluates first
+// either way. See the README's "Web storage in a block".
 
 export { initialize } from './app/index.js';
 export type {

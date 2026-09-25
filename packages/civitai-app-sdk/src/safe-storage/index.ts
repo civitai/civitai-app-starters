@@ -1,6 +1,12 @@
 /**
  * `@civitai/app-sdk/safe-storage` — survive an opaque-origin sandbox.
  *
+ * 🔴 `@civitai/sdk`'s `src/safe-storage/index.ts` is a deliberate independent
+ * COPY of this file (the successor must not depend on its predecessor). The two
+ * bodies are held byte-identical modulo comments by
+ * `tests/guards/safe-storage-copy-parity.test.mjs`, so a fix here goes red
+ * until it is applied there too.
+ *
  * Civitai Apps run in an iframe sandboxed as `allow-scripts allow-forms`,
  * deliberately WITHOUT `allow-same-origin`. The document therefore has an
  * **opaque origin**, and there is no origin to key web storage against, so the

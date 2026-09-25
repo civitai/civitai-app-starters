@@ -3,8 +3,11 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 
+// Every subpath in `package.json`'s `exports` map, in the same order. A public
+// entry missing from here is silently absent from the report.
 const ENTRIES = [
   ['.', 'index.d.ts'],
+  ['./safe-storage', 'safe-storage/index.d.ts'],
   ['./testing', 'testing.d.ts'],
 ];
 const REPORT = 'api/public-api.md';

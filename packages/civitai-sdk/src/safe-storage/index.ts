@@ -1,13 +1,17 @@
 /**
- * Survive an opaque-origin sandbox. INTERNAL to `@civitai/sdk`; the package
- * root (`src/index.ts`) imports it first, so every consumer gets it.
+ * Survive an opaque-origin sandbox. Published as the side-effect subpath
+ * `@civitai/sdk/safe-storage`; a block opts in with `import
+ * '@civitai/sdk/safe-storage';` as the first line of its entry module. The
+ * package root does NOT import it — see `src/index.ts`.
  *
  * 🔴 **This is a deliberate independent COPY of `@civitai/app-sdk`'s
  * `src/safe-storage/index.ts`, not a shared module.** The two packages are
  * separate codebases (`@civitai/sdk` succeeds `@civitai/app-sdk`) and must not
  * depend on each other — a successor that imports its predecessor would drag
  * the whole 0.x surface back in. The duplication is the price of that
- * independence. If you fix a bug in one, check the other.
+ * independence. The two bodies are held byte-identical modulo comments by
+ * `tests/guards/safe-storage-copy-parity.test.mjs`, so a fix to one goes red
+ * until it is applied to the other — do not rely on remembering.
  *
  * Why this has to exist here at all: a block that has finished porting to
  * `@civitai/sdk` no longer imports `@civitai/app-sdk/blocks`, which is what
@@ -375,14 +379,13 @@ export function installSafeStorage(scope: object = globalThis): SafeStorageInsta
 // Import order is the whole game: ES module imports are hoisted, so a
 // *statement* can never run before a sibling `import` of a dependency that
 // reads storage while evaluating. Only an import side effect can, which is why
-// this is not opt-in — `src/index.ts`, the package's only public entry,
-// imports this module before anything else, and an app that puts
-// `import '@civitai/sdk';` at the very top of its entry is therefore ahead of
-// every dependency it imports afterwards.
+// this module installs on import rather than exposing a call to make — a block
+// writes `import '@civitai/sdk/safe-storage';` as the FIRST import in its
+// entry module and is then ahead of every dependency it imports afterwards.
 //
 // 🔴 That ordering is the app's job and nothing here can enforce it: a
-// storage-touching dependency imported ABOVE `@civitai/sdk` still evaluates
-// first. Keep the SDK import first.
+// storage-touching dependency imported ABOVE this specifier still evaluates
+// first. Keep it first.
 //
 // The blast radius is bounded by the rules above: it only ever replaces a
 // global that is already *provably* unusable, so in every healthy runtime this
