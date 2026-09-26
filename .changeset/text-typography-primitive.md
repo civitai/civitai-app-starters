@@ -50,9 +50,28 @@ one markup migrates away from, toward these.)
   Both tracks are therefore `color: inherit` and Text does **not** paint
   `--civitai-color-text` itself: a *specified* value beats an *inherited* one at
   any specificity, so a token on the element would silently cancel every ancestor
-  utility and make the sentence above false. The trade is that a bare Text on a
-  page which sets no colour anywhere takes the page's colour rather than the
-  token; `ci-text-default` asks for the token explicitly.
+  utility and make the sentence above false.
+  ⚠️ **The trade, and it applies to pages that DO set a colour — not only to pages
+  that set none.** Text renders in whatever colour it inherits, so wherever an
+  ancestor colour and the token disagree, Text now follows the ancestor. Measured
+  on both tracks, in the shape a block in this repo actually has — a
+  `[data-theme="dark"]` root carrying `color: #e6e6e6` — Text computes
+  `rgb(230, 230, 230)`, while restoring the removed declaration on the same
+  fixture puts both tracks back at the dark token `rgb(193, 194, 197)` with the
+  plain `<p>` beside them still at `rgb(230, 230, 230)`. Dark is where that
+  reads, a soft grey token against a near-white block colour. Light behaves the
+  same: `color: rgb(24, 24, 27)` on `<body>` gives `rgb(24, 24, 27)` where the
+  token `rgb(34, 34, 34)` used to win. Every in-repo consumer is in that
+  population, by two routes — four starters set the colour on `<body>` with
+  Tailwind (`text-zinc-900 dark:text-zinc-100`), and seven set it on a
+  `[data-theme]` root as `#1a1a1a` / `#e6e6e6` (`civitai-block-starter` plus the
+  six apps under `starters/examples/`). The package's own `demo/` and
+  `playground/` still show the token, but by inheriting it from
+  `body { color: var(--civitai-color-text) }` rather than because Text names it.
+  With no colour anywhere Text lands on the UA default `rgb(0, 0, 0)`,
+  `@civitai/theme` shipping tokens and no `color`. `ci-text-default` asks for the
+  token explicitly — see the `utilities.css` note below for what has to be loaded
+  for that class to do anything.
   This ships `minor` on two published packages, so adding the axis later stays
   additive while taking it away would not be.
 - **Margins are reset to `0`.** The UA's heading/paragraph margins are
@@ -60,12 +79,18 @@ one markup migrates away from, toward these.)
   belongs to `stack`/`group`. It is also what makes the two tracks lay out
   identically.
 
-**Tokens: nothing new.** `@civitai/theme` exposes `--civitai-font` and
-`--civitai-font-mono` and no size, weight or leading scale — Mantine expresses
-those per component — so this consumes the existing colour tokens
-(`--civitai-color-text` and, via the utilities, `-text-dimmed` and the intents)
-and states its px scale in `MARKUP.md` as a table, the way every other component
-in this sheet states its metrics.
+**Tokens: nothing new — and 🔴 Text references no colour token in any declaration
+of its own.** `@civitai/theme` exposes `--civitai-font` and `--civitai-font-mono`
+and no size, weight or leading scale — Mantine expresses those per component — so
+Text adds no token and states its px scale in `MARKUP.md` as a table, the way
+every other component in this sheet states its metrics. What it does *not* do is
+read `--civitai-color-text`: both tracks are `color: inherit`, so overriding that
+token does not retheme Text on its own. Measured — with
+`--civitai-color-text: rgb(200, 0, 0)` on a wrapper, both tracks compute
+`rgb(0, 0, 0)` (the inherited page colour), and only adding `ci-text-default`
+moves them to `rgb(200, 0, 0)`. The token still reaches Text, but by inheritance
+from an ancestor that paints with it, or through a `ci-text-*` utility — not
+because Text names it.
 
 **Deliberately NOT in v1** — each already has an implementation one layer down,
 and one predicate decides all three: **colour** → `ci-muted` / `ci-text-*`,
@@ -75,10 +100,19 @@ two reach `<civitai-text>` as well; `overflow` does not, so truncation on the
 element track is a real follow-up rather than an oversight. Adding any of them
 later is additive; removing one would not be.
 
-⚠️ **Colouring Text requires `utilities.css`, which is a separate stylesheet.**
-It is not bundled into `styles.css` and `injectStyles()` does not inject it, so
-load `@civitai/components/utilities.css` alongside `styles.css` if you colour,
-align or truncate text. `demo/index.html` now links all three.
+⚠️ **Colouring Text requires `utilities.css`, which is a separate stylesheet — and
+no injection path in these packages ships it.** It is not bundled into
+`styles.css`; `injectStyles()` injects the tokens and `styles.css` only, and
+`@civitai/blocks-react`'s `injectBlocksStyles()` — reached on mount by 20 of that
+package's 21 `/ui` components (`SettingsForm` is deliberately unstyled) — adds
+that package's interactive CSS on top and still no utilities. So an App Block
+author who hand-writes `<p data-civitai-ui="text">`, which rendering a `/ui`
+component is documented to style, gets the new inherit behaviour together with a
+`ci-text-default` that silently does nothing: measured, that markup under an
+ancestor `color: rgb(24, 24, 27)` with `injectStyles()` alone computes
+`rgb(24, 24, 27)`, the class having no effect. Load
+`@civitai/components/utilities.css` alongside `styles.css` if you colour, align or
+truncate text. `demo/index.html` links all three.
 
 **Both tracks — a choice, not a rule.** Most elements in this package have no
 attribute-track twin, so "every other component ships both" would be false; the

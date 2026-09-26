@@ -109,17 +109,53 @@ const TEMPLATES: Record<TextAs, () => TemplateResult> = Object.assign(
  * The mirror rule in src/components.css had the identical defect, so both tracks
  * were wrong in the same way and both changed together.
  *
- * WHAT IT COSTS, measured rather than assumed: Text no longer paints
- * `--civitai-color-text` itself, so with no colour set anywhere on the page it
- * takes the page's colour. `@civitai/theme` ships tokens only — no `color` on
- * `:root` or `body` — so that case lands on the UA default: in the light theme
- * `rgb(34, 34, 34)` (the token) becomes `rgb(0, 0, 0)`. It still tracks
- * light/dark, because the theme does set `color-scheme`. Every real consumption
- * path in this repo already carries an ancestor colour — the package's own demo
- * and playground set `body { color: var(--civitai-color-text) }`, and each
- * starter sets one on its `[data-theme]` root — and those are exactly the pages
- * where the ancestor used to be ignored. A page wanting the token explicitly
- * writes `ci-text-default`, the same utility route as every other value.
+ * WHAT IT COSTS, measured rather than assumed. Text no longer paints
+ * `--civitai-color-text` itself, so it renders in whatever colour it inherits.
+ * The cost is therefore NOT confined to a page that paints nothing — it is a
+ * behaviour change on every page that DOES set a colour, which is the larger
+ * population and includes every in-repo consumer. Measured on both tracks at
+ * this commit:
+ *
+ *   ANCESTOR COLOUR SET (the common case), in the shape a block here actually
+ *   has — a `[data-theme="dark"]` root carrying `color: #e6e6e6`: Text computes
+ *   `rgb(230, 230, 230)`. Restoring the removed declaration on the SAME fixture
+ *   puts both tracks back at the dark token `rgb(193, 194, 197)` while the plain
+ *   `<p>` beside them stays `rgb(230, 230, 230)` — that pair IS the change, in
+ *   the exact colours a block here ships. Dark is where it reads: a soft grey
+ *   token against a near-white block colour. Light behaves identically — with
+ *   `color: rgb(24, 24, 27)` on `body`, Text computes `rgb(24, 24, 27)` where the
+ *   token `rgb(34, 34, 34)` used to win.
+ *
+ *   NO COLOUR ANYWHERE — lands on the UA default `rgb(0, 0, 0)`, because
+ *   `@civitai/theme` ships tokens only, with no `color` on `:root` or `body`. It
+ *   still tracks light/dark, since the theme does set `color-scheme`.
+ *
+ * WHICH PAGES THOSE ARE, by complete enumeration of this repo. FOUR starters set
+ * the colour on `body` via Tailwind (`text-zinc-900 dark:text-zinc-100`):
+ * starters/next-app/src/app/globals.css, starters/react-pwa/index.html,
+ * starters/svelte-pwa/index.html, starters/sveltekit-app/src/app.html. SEVEN set
+ * it on a `[data-theme]` root as `#1a1a1a` / `#e6e6e6`:
+ * starters/civitai-block-starter/src/index.css, and the src/index.css of each of
+ * the six apps under starters/examples (buzz-purchase, buzz-workflow,
+ * hello-world, kv-storage, scopes-api, settings). A glob is not written here on
+ * purpose: a star-slash inside a block comment ENDS it, and that broke this file
+ * once. All eleven now show Text in their own colour rather than the token. The package's own demo and playground are the exception
+ * and they prove the rule — both set `body { color: var(--civitai-color-text) }`,
+ * so they still render the token, by INHERITING it rather than because Text names
+ * it.
+ *
+ * A page wanting the token explicitly writes `ci-text-default` — but that class
+ * ships in utilities.css, a SEPARATE stylesheet that `injectStyles()` does not
+ * inject and that `@civitai/blocks-react`'s `injectBlocksStyles()` does not add
+ * either. On those paths the class is simply unknown and does nothing: measured,
+ * an attribute-track `<p class="ci-text-default">` under an ancestor
+ * `color: rgb(24, 24, 27)`, with `injectStyles()` alone, still computes
+ * `rgb(24, 24, 27)`. So the remedy needs that sheet loaded, and MARKUP.md now
+ * says so at the point where it states the remedy.
+ *
+ * (utilities.css unbackticked for the same reason as the stylesheet path above:
+ * the three letters c-s-s followed by a backtick read as the start of a tagged
+ * template to test/css-templates.test.ts.)
  *
  * Both halves are pinned in `test/civitai-text.browser.test.ts`: four ancestor
  * shapes on both tracks, and the fall-through case that states the cost.

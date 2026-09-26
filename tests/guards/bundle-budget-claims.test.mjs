@@ -30,19 +30,28 @@
  * cannot tell a fresh figure from a stale one by reading it. So: state the
  * budget (guarded, rule 1) and point at the build for the rest (rule 2).
  *
- * 🔴 SCOPE AND KNOWN LIMITS — read these before trusting a PASS:
- *   - The corpus is the LIVE docs and source of `packages/civitai-components`.
- *     `CHANGELOG.md` is excluded: a changelog legitimately records the figure that
- *     was true at a release, and rewriting history to satisfy a guard would be a
- *     lie. `scripts/build-elements.ts` is excluded from rule 1 because it IS the
- *     authority, and its comment legitimately records the budgets it was raised
- *     FROM.
+ * 🔴 SCOPE AND KNOWN LIMITS — read these before trusting a PASS. They are written
+ * to the width of the code below, not to the width of the intent:
+ *   - The corpus is NOT "every doc and comment in the package". It is the files
+ *     `walk()` reaches: under `packages/civitai-components`, with the extensions
+ *     in `SCANNED_EXTENSIONS` (`.md`, `.ts`, `.tsx`, `.mjs`, `.css` — so no
+ *     `.json`, `.html`, `.js`, `.svelte`, `.yaml`), minus the directories in
+ *     `SKIP_DIRS` (`node_modules`, `dist`, `coverage`, `.turbo`, and
+ *     deliberately `playground/` and `demo/`, which are scratch surfaces), minus
+ *     `CHANGELOG.md`. The changelog is out because it legitimately records the
+ *     figure that was true at a release, and rewriting history to satisfy a guard
+ *     would be a lie. `demo/index.html` would be out on two counts.
+ *   - `scripts/build-elements.ts` is skipped by BOTH rules, not just rule 1. It
+ *     IS the authority, and its comment legitimately records both the budgets it
+ *     was raised FROM and the occupancy it prints.
  *   - It is a text scan over whitespace-normalised file contents, not a Markdown
  *     or TypeScript parse: a figure in a code fence counts the same as one in a
  *     sentence. That direction is safe — it over-reports and names file:figure.
  *   - Rule 1 keys on the word "budget" inside an 80-character window of a `N kB`
  *     figure. A budget stated without ever using that word is invisible to it.
- *     `COVERAGE_FLOOR` is what stops that silently emptying the corpus.
+ *     `COVERAGE_FLOOR` is what stops that silently emptying the corpus — 🔴 and it
+ *     guards RULE 1 ONLY. Rule 2 has its own floor for its own reason; see
+ *     `RULE2_EXPECTED_SUBTREES`.
  *   - Rule 2 is a scan for the SHAPES that rotted. A sufficiently inventive
  *     rewording gets past it. The structural half of the fix is that the figures
  *     were deleted; this rule exists to stop them being pasted back, not to make
@@ -55,7 +64,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const PKG = join(REPO_ROOT, 'packages', 'civitai-components');
@@ -68,6 +77,31 @@ const AUTHORITY = join(PKG, 'scripts', 'build-elements.ts');
  * README past rule 1 entirely while still reporting a pass.
  */
 const COVERAGE_FLOOR = 2;
+
+/**
+ * 🔴 RULE 2'S OWN COVERAGE FLOOR, and why `COVERAGE_FLOOR` above is not it.
+ *
+ * Rule 1 passes by comparing figures it FOUND, so counting them detects an
+ * emptied corpus. Rule 2 passes by finding NOTHING — a clean scan of the real
+ * corpus and a clean scan of an empty one are the same assertion, so no count of
+ * its own output can tell them apart. The corpus itself has to be asserted.
+ *
+ * Demonstrated before this was added: putting `'src'` into `SKIP_DIRS` — a
+ * plausible "scan only the docs" edit — while the sentence "already at 86% of its
+ * gzip budget" is live in `src/elements/civitai-text.ts` left all four tests
+ * GREEN. `COVERAGE_FLOOR` did not fire because `README.md` alone keeps rule 1's
+ * `checked` at 3.
+ *
+ * So rule 2 pins the SHAPE of its corpus as an exact set of subtrees, failing if
+ * one is lost (a `SKIP_DIRS` or `SCANNED_EXTENSIONS` change) *or* gained (a new
+ * scannable directory nobody decided about), plus the two files the occupancy
+ * figure actually rotted in. An exact set rather than a file count because the
+ * count moves with every element added and a count that drifts gets widened until
+ * it means nothing.
+ */
+const RULE2_EXPECTED_SUBTREES = ['(package root)', 'scripts', 'src', 'test'];
+/** The two historical rot sites, spelled posix-style relative to the package. */
+const RULE2_REQUIRED_FILES = ['README.md', 'src/elements/civitai-text.ts'];
 
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'coverage', '.turbo', 'playground', 'demo']);
 const SCANNED_EXTENSIONS = ['.md', '.ts', '.tsx', '.mjs', '.css'];
@@ -86,6 +120,15 @@ function walk(dir) {
   }
   return out;
 }
+
+/** Package-relative, posix-spelled, so the ledger above reads the same anywhere. */
+const relPath = (file) => relative(PKG, file).split(sep).join('/');
+
+/** The top-level subtree a corpus file sits in; a loose file is the root itself. */
+const subtreeOf = (file) => {
+  const parts = relPath(file).split('/');
+  return parts.length === 1 ? '(package root)' : parts[0];
+};
 
 /** Whitespace-normalised, so a claim wrapped across lines still reads as one. */
 const normalise = (text) => text.replace(/\s+/g, ' ');
@@ -178,10 +221,35 @@ test('a kB budget quoted in prose matches the one the build enforces', () => {
 });
 
 test('no doc or comment states how full the bundle is TODAY', () => {
-  const offences = [];
+  const corpus = walk(PKG).filter((file) => file !== AUTHORITY);
 
-  for (const file of walk(PKG)) {
-    if (file === AUTHORITY) continue;
+  // COVERAGE IS ASSERTED FIRST, because this rule's pass condition is a ZERO and
+  // a zero over nothing looks exactly like a zero over everything. See
+  // RULE2_EXPECTED_SUBTREES for the demonstration this exists to catch.
+  const subtrees = [...new Set(corpus.map(subtreeOf))].sort();
+  assert.deepEqual(
+    subtrees,
+    [...RULE2_EXPECTED_SUBTREES].sort(),
+    `rule 2's corpus covers ${JSON.stringify(subtrees)}, not ` +
+      `${JSON.stringify([...RULE2_EXPECTED_SUBTREES].sort())}. A subtree that ` +
+      'DISAPPEARED means SKIP_DIRS or SCANNED_EXTENSIONS stopped this rule reading ' +
+      'part of the package, and every occupancy figure in there now passes ' +
+      'vacuously. One that APPEARED is a new scannable directory nobody has ' +
+      'decided about — add it to RULE2_EXPECTED_SUBTREES to scan it, or to ' +
+      'SKIP_DIRS to exclude it, but do not leave the ledger disagreeing with the walk'
+  );
+  const present = new Set(corpus.map(relPath));
+  const missing = RULE2_REQUIRED_FILES.filter((path) => !present.has(path));
+  assert.deepEqual(
+    missing,
+    [],
+    `rule 2's corpus no longer contains ${JSON.stringify(missing)} — the exact ` +
+      'file(s) the occupancy figure rotted in. A clean scan that cannot reach them ' +
+      'is not evidence the figure stayed out'
+  );
+
+  const offences = [];
+  for (const file of corpus) {
     const text = normalise(readFileSync(file, 'utf8'));
     for (const { id, test: match } of OCCUPANCY_PATTERNS) {
       for (const hit of match(text)) {
@@ -233,4 +301,22 @@ test('NEGATIVE CONTROL: both detectors fire on the text they were written for', 
         `"${sample}" — a clean scan of the real corpus therefore proves nothing`
     );
   }
+
+  // The three checks above run the detectors against synthetic strings, which
+  // proves the PATTERNS work and says nothing about the path rule 2 actually
+  // takes. This one splices the rotted sentence into a REAL corpus file's real
+  // contents, read and normalised exactly as rule 2 reads it, so a break anywhere
+  // in walk → readFileSync → normalise → detector shows up here too.
+  const rotSite = walk(PKG).find((file) => relPath(file) === 'src/elements/civitai-text.ts');
+  assert.ok(rotSite, 'walk() no longer reaches src/elements/civitai-text.ts');
+  const spliced = normalise(
+    `${readFileSync(rotSite, 'utf8')}\n// grow a bundle already at 86% of its gzip budget, to save eight`
+  );
+  const viaCorpus = OCCUPANCY_PATTERNS.flatMap((p) => p.test(spliced));
+  assert.ok(
+    viaCorpus.length > 0,
+    "rule 2's detectors found nothing in a real corpus file with the rotted " +
+      'sentence appended, so the read/normalise path they run over is broken and ' +
+      'the clean scan above measured nothing'
+  );
 });

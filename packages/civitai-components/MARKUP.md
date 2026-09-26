@@ -115,10 +115,52 @@ layer down, and the same predicate decides all three:
   **Text sets `color: inherit`, not the text token**, on both tracks, and that is
   what makes the ancestor half of the sentence above true: a *specified* value
   beats an *inherited* one at any specificity, so a token on the element itself
-  would cancel every ancestor utility. The trade is that Text does not paint
-  `--civitai-color-text` on its own — on a page that sets no colour anywhere it
-  renders in the page's colour. Ask for the token explicitly with
-  `ci-text-default`, which is the same utility route as every other value.
+  would cancel every ancestor utility.
+
+  🔴 **WHAT THAT COSTS, AND WHICH PAGES IT CHANGES.** Text does not paint
+  `--civitai-color-text` on its own, so it renders in whatever colour it
+  inherits. That is a behaviour change on **any** page with an ancestor `color`,
+  not only on a page that paints nothing — and an ancestor `color` is the common
+  case, not the exception. Measured on both tracks at this commit, in the
+  shape a block in this repo actually has: a `[data-theme="dark"]` root carrying
+  `color: #e6e6e6`, which is what `civitai-block-starter` and all six apps under
+  `starters/examples/` set. Text computes `rgb(230, 230, 230)` — the root's
+  colour — against a dark token of `rgb(193, 194, 197)`. Restoring the removed
+  declaration on that same fixture puts both tracks back at `rgb(193, 194, 197)`
+  while the plain `<p>` beside them stays `rgb(230, 230, 230)`; that pair is the
+  change, in the exact colours a block here ships. So Text now follows
+  the page's own colour rather than the design-system token wherever the two
+  disagree, and dark is where that reads, the token being a soft grey next to a
+  near-white block colour. Light theme behaves the same way: with
+  `color: rgb(24, 24, 27)` on `<body>` Text computes `rgb(24, 24, 27)` where it
+  computed the token `rgb(34, 34, 34)` before.
+
+  Every in-repo consumer is in that population, by two different routes: four
+  starters set the colour on `<body>` with Tailwind
+  (`text-zinc-900 dark:text-zinc-100` — `starters/next-app/src/app/globals.css`,
+  `starters/react-pwa/index.html`, `starters/svelte-pwa/index.html`,
+  `starters/sveltekit-app/src/app.html`), and seven set it on a `[data-theme]`
+  root as `#1a1a1a` / `#e6e6e6` (`starters/civitai-block-starter/src/index.css`
+  plus the six `starters/examples/*/src/index.css`). The package's own `demo/`
+  and `playground/` are the exception that proves the rule: both set
+  `body { color: var(--civitai-color-text) }`, so they still show the token —
+  by inheriting it, not because Text names it. With no colour anywhere on the
+  page Text lands on the UA default `rgb(0, 0, 0)`, since `@civitai/theme` ships
+  tokens only and sets no `color`.
+
+  Ask for the token explicitly with `ci-text-default`, the same utility route as
+  every other value — 🔴 **but that class lives in `utilities.css`, which is a
+  separate stylesheet this package does not inject.** `injectStyles()` ships the
+  tokens and `styles.css` and nothing else, and `@civitai/blocks-react`'s
+  `injectBlocksStyles()` — reached on mount by 20 of that package's 21 `/ui`
+  components, `SettingsForm` being deliberately unstyled — adds only its own
+  interactive CSS on top, so on either of those paths `ci-text-default`,
+  `ci-muted` and every `ci-text-*` is an **unknown class that silently does
+  nothing**. Measured: `<p data-civitai-ui="text" class="ci-text-default">`
+  under an ancestor `color: rgb(24, 24, 27)`, with `injectStyles()` alone,
+  computes `rgb(24, 24, 27)` — the class had no effect. Link or import
+  `@civitai/components/utilities.css` alongside `styles.css` if you colour,
+  align or truncate text; `demo/index.html` links all three for this reason.
 - **alignment** → `ci-text-start` / `ci-text-center` / `ci-text-end`.
   `text-align` inherits, same as above.
 - **truncation** → `ci-truncate`. (This one does *not* reach shadow content —

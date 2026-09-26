@@ -968,11 +968,23 @@
      * dimmed a plain `<p>` and left `<p data-civitai-ui="text">` undimmed.
      * `ci-text-center` on that same wrapper always worked, because nothing here
      * re-specifies `text-align`. `<civitai-text>`'s `:host` had the identical
-     * defect; both tracks changed together, as they must. The cost — Text no
-     * longer paints the token itself, so a page setting no colour anywhere gets
-     * the page's colour and must ask with `ci-text-default` — is measured in the
-     * element's own docblock and pinned in
-     * `test/civitai-text.browser.test.ts`.
+     * defect; both tracks changed together, as they must.
+     *
+     * THE COST, and it is NOT limited to a page that paints nothing: Text no
+     * longer paints the token itself, so it takes whatever colour it inherits.
+     * That changes what it renders on every page that DOES set a colour — the
+     * larger population, and the one every in-repo consumer is in (four starters
+     * colour `body` via Tailwind; seven more colour a `[data-theme]` root).
+     * Measured on both tracks, on the shape a block here actually has — a
+     * `[data-theme='dark']` root carrying `color: #e6e6e6` — Text computes
+     * `rgb(230, 230, 230)`, where restoring the removed declaration puts both
+     * tracks back at the dark token `rgb(193, 194, 197)`. With no colour anywhere
+     * it lands on the UA default `rgb(0, 0, 0)`. `ci-text-default` asks for the
+     * token back, but it ships in a separate stylesheet that neither
+     * `injectStyles()` nor `injectBlocksStyles()` injects — see the cost section
+     * in `src/elements/civitai-text.ts` for every measurement and
+     * `packages/civitai-components/MARKUP.md` for what a consumer has to load.
+     * Both tracks are pinned in `test/civitai-text.browser.test.ts`.
      *
      * It is also the direction that stays open: this ships `minor` on a
      * published package, so adding the axis later is additive and taking it

@@ -105,15 +105,20 @@ describe('<civitai-text> semantics', () => {
    * factory. That produced TWO distinct failures, neither of which a single
    * fixture value can pin:
    *
-   *   RENDERS THE WRONG THING — `toString` / `constructor` resolve to functions
-   *   that RETURN A VALUE, so Lit renders that value's string form
-   *   (`[object Undefined]`, `[object Object]`) as the shadow root's only
-   *   content. There is no `<slot>`, so the consumer's copy is not styled
-   *   wrongly, it is GONE from the rendered page.
+   *   RENDERS THE WRONG THING — `toString` / `constructor` / `isPrototypeOf`
+   *   resolve to functions that RETURN A VALUE rather than throwing, so the
+   *   update completes and Lit renders that value instead of a template:
+   *   `[object Undefined]`, `[object Object]`, and `false`. `isPrototypeOf` is
+   *   in THIS bucket and not the one below — measured: called with no argument
+   *   it returns `false` at step 1 of the spec ("if V is not an Object, return
+   *   false"), which is reached BEFORE it touches `this`, so unbinding it is
+   *   harmless. Either way there is no `<slot>`, so the consumer's copy is not
+   *   styled wrongly, it is GONE from the rendered page.
    *
-   *   THROWS INSIDE LIT'S UPDATE — `valueOf` / `hasOwnProperty` /
-   *   `isPrototypeOf` throw when called with `TEMPLATES` unbound from its
-   *   arguments, and `__proto__` is not callable at all. The update rejects and
+   *   THROWS INSIDE LIT'S UPDATE — `valueOf` / `hasOwnProperty` throw when
+   *   called with `TEMPLATES` unbound, because both coerce `this` with
+   *   `ToObject` and `undefined` cannot be coerced; `__proto__` resolves to
+   *   `Object.prototype`, which is not callable at all. The update rejects and
    *   the shadow root stays empty.
    *
    * `as` is a plain reflected attribute, so anything rendering a heading level
@@ -350,11 +355,18 @@ describe('<civitai-text> headings reach the accessibility tree', () => {
  * that failed to load would make every element in the fixture agree at the page
  * default and the case would pass for exactly the wrong reason.
  *
- * WHAT THE FIX COSTS, pinned by the last case: `color: inherit` means Text no
- * longer paints `--civitai-color-text` itself, so on a page that sets no colour
- * anywhere it renders in the page's own colour rather than the token. That is the
- * price of the published promise, and it is what the two tracks must now do
- * IDENTICALLY.
+ * WHAT THE FIX COSTS. `color: inherit` means Text no longer paints
+ * `--civitai-color-text` itself, so it renders in whatever colour it inherits.
+ * Note which cases pin which half, because the smaller one is the easier to
+ * mistake for the whole: the LAST case covers a page with no colour at all, where
+ * Text falls through to the page default. The four ANCESTOR cases above cover the
+ * larger population — a page that DOES set a colour — and those are the cases the
+ * fix CHANGED, since a specified token on the element beat every one of these
+ * ancestors. Every in-repo consumer is in that second group. The full accounting,
+ * with the measured before/after pair, is in the element's own docblock.
+ *
+ * Either way it is the price of the published promise, and it is what the two
+ * tracks must now do IDENTICALLY.
  */
 describe('<civitai-text> colour inherits from an ancestor, on both tracks', () => {
   /** `[data-testid]` inside the fixture, so the selectors do not encode layout. */

@@ -118,9 +118,14 @@ pnpm --filter @civitai/components build
 ```
 
 That output is the only place it cannot rot, so read it there. The guard named
-above also fails any doc or source comment in this package that puts an occupancy
-figure back into prose — a percentage of the budget, or a "currently sits at N
-kB" — because that is the shape that rotted, not the particular number.
+above also fails on an occupancy figure put back into prose — a percentage of the
+budget, or a "currently sits at N kB" — because that is the shape that rotted, not
+the particular number. **It does not read every file in the package**: the scan
+covers `.md`, `.ts`, `.tsx`, `.mjs` and `.css` under this package, and skips
+`demo/`, `playground/`, `dist/`, `CHANGELOG.md` (a changelog may record what was
+true at a release) and `scripts/build-elements.ts` (it is the authority, and it
+prints the figure). The guard's own docblock states the corpus and the limits;
+read it there rather than assuming the wider claim.
 
 ### The civitai vocabulary
 
