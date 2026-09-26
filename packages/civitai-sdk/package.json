@@ -1,13 +1,15 @@
 {
   "name": "@civitai/sdk",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "The Civitai SDK: an app holds a token and calls the Civitai API and the orchestrator; a block asks its host only to show host UI.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "comment-sideEffects": "An ALLOWLIST, not `false`. `./dist/safe-storage/index.js` installs the opaque-origin storage repair when imported, and a bare `false` licenses every bundler to drop it. `./dist/index.js` is deliberately NOT listed: the package root is pure re-exports and must stay droppable. Pinned by test/safe-storage.test.ts.",
-  "sideEffects": ["./dist/safe-storage/index.js"],
+  "sideEffects": [
+    "./dist/safe-storage/index.js"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

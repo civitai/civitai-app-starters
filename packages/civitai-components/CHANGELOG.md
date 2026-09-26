@@ -1,5 +1,21 @@
 # @civitai/components
 
+## 0.7.1
+
+### Patch Changes
+
+- 5c28d23: README: correct the "exactly two exports" claim. The `exports` map has 100 keys, and three of
+  them are CSS (`./styles.css`, `./utilities.css`, `./bootstrap-compat.css`) — two of which this
+  same README documents further down. The true constraint is unchanged and is what the sentence
+  now says: no CSS subpath is per-component.
+- d5f1afa: README: drop the 68-line `#358` CSS-split pricing memo from the published tarball.
+
+  The tables, the two 🔴 row-attribution callouts and the `MEASURE_CARRIERS=1`
+  reproduction recipe priced an open issue for maintainers, not consumers — the
+  slices they measure are excluded from the tarball and nothing imports them. The
+  consumer-facing consequence is unchanged and still stated in full: there is no
+  supported way to import one component's rules. No API or behaviour change.
+
 ## 0.7.0
 
 ### Minor Changes
@@ -507,10 +523,10 @@
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-            before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                     @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-            after    @civitai/theme       0.3.1                   — 1 copy
-                     @civitai/components  0.4.2                   — 1 copy
+              before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                       @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+              after    @civitai/theme       0.3.1                   — 1 copy
+                       @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens

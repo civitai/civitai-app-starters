@@ -1,5 +1,28 @@
 # @civitai/blocks-react
 
+## 0.57.4
+
+### Patch Changes
+
+- c94b40c: README: delete the rotted per-module byte table, the `pnpm pack` diff, and the
+  section re-arguing the `./live` split.
+
+  Documentation only — no API, type or behaviour change. The README ships inside the
+  published tarball and reaches the npm package page and IDE hover, so a stale
+  hand-typed figure there is a defect a consumer reads.
+
+  The byte table and the pack diff were **deleted rather than refreshed**: a
+  hand-typed byte count in prose is unguarded by every check in this repo and rots
+  again on the next build. The facts a reader needs — that these modules ship in
+  every install, that they are tree-shaken out of application bundles, and that
+  `files` plus `tsconfig` (not the `exports` map) decide tarball contents — survive
+  without naming a number. The measured figures remain on the record in
+  `CHANGELOG.md` for `0.55.0`.
+
+- Updated dependencies [5c28d23]
+- Updated dependencies [d5f1afa]
+  - @civitai/components@0.7.1
+
 ## 0.57.3
 
 ### Patch Changes
@@ -530,10 +553,10 @@ URL('https://civitai.com/evil').origin` is `https://civitai.com`).
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-            before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                     @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-            after    @civitai/theme       0.3.1                   — 1 copy
-                     @civitai/components  0.4.2                   — 1 copy
+              before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                       @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+              after    @civitai/theme       0.3.1                   — 1 copy
+                       @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
