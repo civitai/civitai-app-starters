@@ -100,7 +100,17 @@ for anything durable.
 ## The hooks
 
 All hooks build on a singleton transport, so they're safe to call from any
-component without prop-drilling. Below: one minimal snippet each.
+component without prop-drilling. Every hook with a section below gets one
+minimal snippet — but the sections are **not** the full export surface, so treat
+the package's type declarations (IDE hover / autocomplete on the package root) as
+the authoritative list of what exists.
+
+Exported from the package root with no snippet in this section, as of this
+writing: `useGatedImages()`, `usePublishGenerationOutputs()`, `useSaveImage()`,
+`useTip()` and `useTipAllowance()` — for the tip pair, the
+[`TipButton`](#the-ui-subexport) row documents the intended usage and the
+allowance-sharing rule. `useDirectLoad()` is covered under
+[Direct-load fallback](#direct-load-fallback-open-on-civitai) rather than here.
 
 ### `useBlockContext()`
 
