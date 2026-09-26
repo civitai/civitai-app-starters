@@ -28,18 +28,29 @@ const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0
 const EVENT_TIMEOUT_MS = 2000;
 
 /**
- * Per-test timeout for the tests that use {@link eventFired}, DERIVED from its
- * own timeout rather than inherited.
+ * {@link eventFired} only "names its own failure instead of arriving as a bare
+ * suite timeout" while its reject beats the surrounding test timeout. Nothing
+ * stated that relationship, and `vitest.config.ts` sets no `testTimeout`, so a
+ * later `testTimeout: 1500` would silently turn every one of these back into
+ * the bare timeout the helper exists to prevent.
  *
- * 🔴 The helper only "names its own failure instead of arriving as a bare suite
- * timeout" while its 2 s reject beats the test timeout. That relationship was
- * unstated and unpinned: `vitest.config.ts` sets no `testTimeout`, so it rested
- * on vitest's 5 s default, and anyone trimming a slow CI tier to
- * `testTimeout: 1500` would silently turn every one of these back into the bare
- * timeout the helper exists to prevent. Passing this explicitly makes a global
- * change unable to reach them.
+ * 🔴 TWO CORRECTIONS TO EARLIER ATTEMPTS AT THIS, both measured:
+ *
+ *  - The inherited default here is **15000 ms**, not 5000 — vitest resolves
+ *    `testTimeout ??= browser.enabled ? 15e3 : 5e3`, and this file runs only in
+ *    the `browser` project. An earlier draft quoted the node figure and then
+ *    pinned a derived `EVENT_TIMEOUT_MS * 2.5 = 5000` believing it a no-op; it
+ *    was a 3× cut to the budget of the only two tests here that make a
+ *    Playwright round trip. Removed.
+ *  - `ctx.task.timeout` IS readable in browser mode. An earlier commit claimed
+ *    it was not — that was a bad probe (browser mode does not forward
+ *    `console.log` to the terminal, so the value never printed), not a missing
+ *    API. So the relationship gets a real assertion rather than a structural
+ *    workaround, which also covers any future caller of the helper.
  */
-const EVENT_TEST_TIMEOUT_MS = EVENT_TIMEOUT_MS * 2.5;
+it('the event timeout leaves room inside the test timeout', (ctx) => {
+  expect(ctx.task.timeout).toBeGreaterThan(EVENT_TIMEOUT_MS * 2);
+});
 
 /**
  * Await an event instead of a fixed number of task turns. Use this, not
@@ -151,11 +162,15 @@ describe('<civitai-modal>', () => {
     // incremented by the time the await below resolves.
     el.addEventListener('close', () => void (closes += 1));
 
-    // Resolve the button FIRST: nothing may throw between creating the promise
-    // and awaiting it, or the rejection is orphaned and lands 2 s later on an
-    // unrelated test. The `!` here is the only throw site, so it goes above.
+    // 🔴 THE `!` IS ERASED AT RUNTIME, so hoisting the query did NOT close the
+    // orphan window — an earlier comment here claimed it did. If `[part="close"]`
+    // ever stops matching, `querySelector` returns null, the assertion compiles
+    // away, and `.click()` throws BETWEEN the promise's creation and its await.
+    // Mark it handled, exactly as the Escape test does; the `await` below still
+    // throws the timeout error on the real failing path.
     const closeButton = el.shadowRoot!.querySelector<HTMLButtonElement>('[part="close"]')!;
     const closed = eventFired(el, 'close');
+    void closed.catch(() => {});
     closeButton.click();
     await closed;
 
@@ -173,7 +188,7 @@ describe('<civitai-modal>', () => {
     expect(el.open).toBe(false);
     expect(dialogOf(el).open).toBe(false);
     expect(closes).toBe(1);
-  }, EVENT_TEST_TIMEOUT_MS);
+  });
 
   it('a click on the backdrop closes it; a click in the panel does not', async () => {
     const el = await open();
@@ -218,7 +233,7 @@ describe('<civitai-modal>', () => {
     await userEvent.keyboard('{Escape}');
     await closed;
     expect(el.open).toBe(false);
-  }, EVENT_TEST_TIMEOUT_MS);
+  });
 
   it('Escape is refused when turned off', async () => {
     const el = await open();
