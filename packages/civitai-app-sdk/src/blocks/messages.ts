@@ -200,8 +200,9 @@ export interface BlockInitPayload {
    *
    * ```ts
    * const eff = effectiveBrowsingCeiling(maxBrowsingLevel, effectiveBrowsingLevel);
-   * if (isSfwCeiling(eff)) hideMatureAffordances();
-   * if (isLevelAllowed(BrowsingLevel.R, eff)) showR();
+   * // 🔴 OPPOSITE POLARITIES — do not copy these two lines as a uniform pair.
+   * if (isSfwCeiling(eff)) hideMatureAffordances();     // true = SFW  ⇒ HIDE
+   * if (isLevelAllowed(BrowsingLevel.R, eff)) showR();  // true = allowed ⇒ SHOW
    * ```
    *
    * 🔴 `effectiveBrowsingCeiling` returns a BITMASK, not a boolean — an SFW

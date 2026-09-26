@@ -52,7 +52,7 @@ export const SFW_LEVELS = BrowsingLevel.PG | BrowsingLevel.PG13;
 export const NSFW_LEVELS = BrowsingLevel.R | BrowsingLevel.X | BrowsingLevel.XXX;
 
 /**
- * True when the domain's browsing-level ceiling permits NO NSFW content.
+ * True when the given browsing-level ceiling permits NO NSFW content.
  *
  * Derived purely from the BITMASK: SFW ⇔ the ceiling has no NSFW bits set.
  *
@@ -79,14 +79,17 @@ export function isSfwCeiling(maxBrowsingLevel?: number | null): boolean {
 }
 
 /**
- * True when a specific browsing `level` bit is permitted by the domain ceiling.
+ * True when a specific browsing `level` bit is permitted by the given ceiling.
  *
  * **Fail-closed.** A missing / null / non-finite ceiling permits ONLY SFW
  * levels (PG / PG13) — same fail-closed posture as {@link isSfwCeiling}. A
  * non-finite / non-positive `level` returns `false`.
  *
  * @param level a single `BrowsingLevel` bit (e.g. `BrowsingLevel.R`).
- * @param maxBrowsingLevel the domain ceiling bitmask from `BLOCK_INIT`.
+ * @param maxBrowsingLevel the ceiling to test — WHICHEVER you pass. Named for
+ * the domain mask because that was the only ceiling when this shipped; when
+ * gating for a viewer pass {@link effectiveBrowsingCeiling}'s result instead,
+ * or this answers what the DOMAIN permits and not what THIS viewer may see.
  * @example
  * isLevelAllowed(BrowsingLevel.R, BrowsingLevel.PG | BrowsingLevel.PG13); // false
  * isLevelAllowed(BrowsingLevel.PG13, undefined);                          // true
@@ -186,8 +189,9 @@ export function effectiveBrowsingCeiling(
  *
  * ```ts
  * const eff = effectiveBrowsingCeiling(maxBrowsingLevel, effectiveBrowsingLevel);
- * isSfwCeiling(eff);                       // may I show mature at all?
- * isLevelAllowed(BrowsingLevel.R, eff);    // may I show THIS level?
+ * // 🔴 OPPOSITE POLARITIES — do not copy these two lines as a uniform pair.
+ * if (isSfwCeiling(eff)) hideMatureAffordances();     // true = SFW  ⇒ HIDE
+ * if (isLevelAllowed(BrowsingLevel.R, eff)) showR();  // true = allowed ⇒ SHOW
  * ```
  *
  * This docblock used to say *"use `isSfwCeiling` on the accompanying

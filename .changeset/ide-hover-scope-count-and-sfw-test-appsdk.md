@@ -73,8 +73,9 @@ the fix now names the complete recipe rather than a half of it:
 
 ```ts
 const eff = effectiveBrowsingCeiling(maxBrowsingLevel, effectiveBrowsingLevel);
-isSfwCeiling(eff);                     // may I show mature at all?
-isLevelAllowed(BrowsingLevel.R, eff);  // may I show THIS level?
+// 🔴 OPPOSITE POLARITIES — do not copy these two lines as a uniform pair.
+if (isSfwCeiling(eff)) hideMatureAffordances();     // true = SFW  ⇒ HIDE
+if (isLevelAllowed(BrowsingLevel.R, eff)) showR();  // true = allowed ⇒ SHOW
 ```
 
 ⚠ Two retractions of this changeset's own earlier drafts, because both were
