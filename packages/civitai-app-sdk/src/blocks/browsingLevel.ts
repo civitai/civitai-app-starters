@@ -3,9 +3,12 @@
  *
  * The host (civitai/civitai) projects an authoritative `maxBrowsingLevel`
  * BITMASK into `BLOCK_INIT` — the max NSFW levels the surrounding color-domain
- * allows (computed server-side from `domainBrowsingCeiling(color)`). A block
- * reads it via `useDomainMaturity()` to decide whether to surface mature
- * affordances.
+ * allows (computed server-side from `domainBrowsingCeiling(color)`) — and,
+ * alongside it, the viewer-narrowed `effectiveBrowsingLevel`. A block decides
+ * whether to surface mature affordances from the PAIR, via
+ * {@link effectiveBrowsingCeiling}; `@civitai/blocks-react`'s
+ * `useDomainMaturity()` is the React wrapper over exactly that. The domain
+ * ceiling alone is not the answer — see {@link ColorDomain}.
  *
  * The per-level bit VALUES below mirror civitai/civitai's server `NsfwLevel`
  * enum. They are STABLE wire values (a level's bit never changes), so it is
@@ -49,7 +52,7 @@ export const SFW_LEVELS = BrowsingLevel.PG | BrowsingLevel.PG13;
 export const NSFW_LEVELS = BrowsingLevel.R | BrowsingLevel.X | BrowsingLevel.XXX;
 
 /**
- * True when the domain's browsing-level ceiling permits NO NSFW content.
+ * True when the given browsing-level ceiling permits NO NSFW content.
  *
  * Derived purely from the BITMASK: SFW ⇔ the ceiling has no NSFW bits set.
  *
@@ -59,7 +62,17 @@ export const NSFW_LEVELS = BrowsingLevel.R | BrowsingLevel.X | BrowsingLevel.XXX
  * block must therefore treat "unknown" as SFW and hide mature affordances
  * until proven otherwise.
  *
- * @param maxBrowsingLevel the domain ceiling bitmask from `BLOCK_INIT`.
+ * ⚠ A NEGATIVE ceiling is none of those three and fails OPEN:
+ * `isSfwCeiling(-1)` is `false` and `isLevelAllowed(XXX, -1)` is `true`, because
+ * two's complement sets every bit. {@link effectiveBrowsingCeiling} guards a
+ * negative VIEWER level but not a negative DOMAIN ceiling, so the recipe does
+ * not neutralise it either. Stated rather than fixed: adding the guard is a
+ * behaviour change and belongs in its own release.
+ *
+ * @param maxBrowsingLevel the ceiling to test — WHICHEVER you pass. Named for
+ * the domain mask because that was the only ceiling when this shipped; when
+ * gating for a viewer pass {@link effectiveBrowsingCeiling}'s result instead,
+ * or this answers "is the DOMAIN SFW?" and not "may I show THIS viewer".
  * @example
  * isSfwCeiling(BrowsingLevel.PG | BrowsingLevel.PG13); // true  (green/blue)
  * isSfwCeiling(BrowsingLevel.PG | BrowsingLevel.X);     // false (mature)
@@ -73,14 +86,24 @@ export function isSfwCeiling(maxBrowsingLevel?: number | null): boolean {
 }
 
 /**
- * True when a specific browsing `level` bit is permitted by the domain ceiling.
+ * True when a specific browsing `level` bit is permitted by the given ceiling.
  *
  * **Fail-closed.** A missing / null / non-finite ceiling permits ONLY SFW
  * levels (PG / PG13) — same fail-closed posture as {@link isSfwCeiling}. A
  * non-finite / non-positive `level` returns `false`.
  *
+ * ⚠ A NEGATIVE ceiling is none of those three and fails OPEN:
+ * `isSfwCeiling(-1)` is `false` and `isLevelAllowed(XXX, -1)` is `true`, because
+ * two's complement sets every bit. {@link effectiveBrowsingCeiling} guards a
+ * negative VIEWER level but not a negative DOMAIN ceiling, so the recipe does
+ * not neutralise it either. Stated rather than fixed: adding the guard is a
+ * behaviour change and belongs in its own release.
+ *
  * @param level a single `BrowsingLevel` bit (e.g. `BrowsingLevel.R`).
- * @param maxBrowsingLevel the domain ceiling bitmask from `BLOCK_INIT`.
+ * @param maxBrowsingLevel the ceiling to test — WHICHEVER you pass. Named for
+ * the domain mask because that was the only ceiling when this shipped; when
+ * gating for a viewer pass {@link effectiveBrowsingCeiling}'s result instead,
+ * or this answers what the DOMAIN permits and not what THIS viewer may see.
  * @example
  * isLevelAllowed(BrowsingLevel.R, BrowsingLevel.PG | BrowsingLevel.PG13); // false
  * isLevelAllowed(BrowsingLevel.PG13, undefined);                          // true
@@ -169,9 +192,27 @@ export function effectiveBrowsingCeiling(
 }
 
 /**
- * The color-domain a block is rendered inside, as projected by the host. The
- * SFW policy is NOT derived from this — use {@link isSfwCeiling} on the
- * accompanying `maxBrowsingLevel` mask instead. `null` / absent means the host
- * did not project a domain (treat as unknown ⇒ fail-closed SFW).
+ * The color-domain a block is rendered inside, as projected by the host.
+ * Informational ONLY — the SFW policy is server-side, and this string is not
+ * it. `null` / absent means the host did not project a domain (treat as
+ * unknown ⇒ fail-closed SFW).
+ *
+ * 🔴 Never gate on this string, and never on `maxBrowsingLevel` alone. Resolve
+ * the ceiling with {@link effectiveBrowsingCeiling}, then test it with
+ * {@link isSfwCeiling} or {@link isLevelAllowed}:
+ *
+ * ```ts
+ * const eff = effectiveBrowsingCeiling(maxBrowsingLevel, effectiveBrowsingLevel);
+ * // 🔴 OPPOSITE POLARITIES — do not copy these two lines as a uniform pair.
+ * if (isSfwCeiling(eff)) hideMatureAffordances();     // true = SFW  ⇒ HIDE
+ * if (isLevelAllowed(BrowsingLevel.R, eff)) showR();  // true = allowed ⇒ SHOW
+ * ```
+ *
+ * This docblock used to say *"use `isSfwCeiling` on the accompanying
+ * `maxBrowsingLevel` mask instead"*. The predicate was never the problem — both
+ * predicates take WHATEVER CEILING YOU PASS — the problem was passing the
+ * domain one, which is identical for every viewer on `civitai.red` including
+ * one whose own NSFW setting is off, so it cannot answer "may I show THIS
+ * viewer mature content".
  */
 export type ColorDomain = 'green' | 'blue' | 'red';
