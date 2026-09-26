@@ -40,7 +40,8 @@ sibling `domain` docblock and in `ColorDomain`'s own — which matters, because
 hover away from the right one on the same line.
 
 The `domain` and `ColorDomain` docblocks now carry the same recipe;
-`maxBrowsingLevel`'s says what it can and cannot answer and points at them:
+`maxBrowsingLevel`'s says what it can and cannot answer and points at
+`{@link effectiveBrowsingLevel}`:
 
 ```ts
 const eff = effectiveBrowsingCeiling(maxBrowsingLevel, effectiveBrowsingLevel);
