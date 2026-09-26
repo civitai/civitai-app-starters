@@ -17,6 +17,10 @@ import {
   type TokenOptions,
   type TokenSessionOptions,
 } from '../session/index.js';
+import {
+  createSharedStorageClient,
+  type SharedStorageClient,
+} from '../shared-storage/index.js';
 import { createSiteClient, DEFAULT_SITE_URL, type SiteClient } from '../site/index.js';
 import { createStorageClient, type StorageClient } from '../storage/index.js';
 
@@ -44,6 +48,18 @@ export interface AppClient {
    * reading an empty result as "nothing stored".
    */
   readonly storage: StorageClient;
+  /**
+   * This app's CROSS-USER store — one namespace every viewer of this app reads
+   * and writes, which is what makes a shared feed or a "popular" rail possible.
+   *
+   * 🔴 Requires the block token, like {@link AppClient.storage}, but the audience
+   * is NOT the same: an ANONYMOUS viewer MAY read here and may never write. So
+   * `viewer === null` gates the write affordances, not the read — and an anon
+   * write surfaces as 403, refused by the scope binding before the handler runs.
+   * A signed-in viewer is not automatically a permitted writer either: writes
+   * clear a server-side minimum-trust gate.
+   */
+  readonly sharedStorage: SharedStorageClient;
   /**
    * The orchestrator's workflows, as the viewer.
    *
@@ -176,16 +192,19 @@ function createAppClient(
   holdsBlockTokenNow: () => boolean = () => false,
 ): AppClient {
   const http = (baseUrl: string) => createHttp({ session, baseUrl, fetch: options.fetch });
-  // One instance for both site-hosted surfaces: `storage`'s routes live under
-  // the same base URL, so a `siteUrl` override redirects them together.
+  // One instance for all three site-hosted surfaces: the two storage clients'
+  // routes live under the same base URL, so a `siteUrl` override redirects them
+  // together.
   // Wrapped once, so `BLOCK_NAMESPACE` is the single place that decides where the
-  // diagnosis applies. `storage` needs no exemption of its own: every one of its
-  // routes is `blocks/app-storage/*`, which that namespace already excludes, and
-  // `test/storage/seam.test.ts` pins its `BASE` there textually.
+  // diagnosis applies. Neither storage client needs an exemption of its own:
+  // their routes are `blocks/app-storage/*` and `blocks/shared-storage/*`, which
+  // that namespace already excludes, and `test/storage/seam.test.ts` plus
+  // `test/shared-storage/seam.test.ts` pin both `BASE` values there textually.
   const siteHttp = explainApiRefusal(http(options.siteUrl ?? DEFAULT_SITE_URL), holdsBlockTokenNow);
   return {
     site: createSiteClient(siteHttp),
     storage: createStorageClient(siteHttp),
+    sharedStorage: createSharedStorageClient(siteHttp),
     orchestration: createOrchestrationClient(
       refuseBlockToken(http(options.orchestrationUrl ?? DEFAULT_ORCHESTRATION_URL), holdsBlockTokenNow),
     ),

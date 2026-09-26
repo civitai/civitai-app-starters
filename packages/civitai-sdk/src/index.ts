@@ -30,6 +30,16 @@ export { SCOPES } from './session/index.js';
 export type { GrantOptions, Scope, TokenOptions, TokenSource } from './session/index.js';
 export type { SiteClient } from './site/index.js';
 export type {
+  SharedCounter,
+  SharedItem,
+  SharedListQuery,
+  SharedListResult,
+  SharedStorageCallOptions,
+  SharedStorageClient,
+  SharedTopQuery,
+  SharedValue,
+} from './shared-storage/index.js';
+export type {
   StorageCallOptions,
   StorageClient,
   StorageKeyEntry,

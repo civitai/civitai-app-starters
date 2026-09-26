@@ -71,13 +71,14 @@ host's consent dialog.
 **not** an error in itself: the host's OAuth mint is flag-gated, so an opted-in
 block can legitimately receive the block token, and that token serves the
 `/api/v1/blocks/*` routes it was minted for, `GET /api/v1/models/{id}`, and
-`app.storage` — which an OAuth token cannot reach at all. What it does not reach
-is the rest of `/api/v1`, the orchestrator or the MCP. So the refusal sits at the
-surface, not at startup:
+`app.storage` and `app.sharedStorage` — which an OAuth token cannot reach at all.
+What it does not reach is the rest of `/api/v1`, the orchestrator or the MCP. So
+the refusal sits at the surface, not at startup:
 
 | You call | Holding a block token, signed in |
 |---|---|
 | `app.storage.*` | Works. This is the token app storage requires |
+| `app.sharedStorage.*` | Reads work. Writes additionally need a signed-in viewer past the server's minimum-trust gate, so a `403` there is about the VIEWER, not the token |
 | `app.site` on `blocks/…` | Works. These are the routes the token was minted for |
 | `app.site.get('me')` and the rest of `/api/v1` | The API's own 401/403, with `auth: "oauth"` named in the message. `status` and `body` are untouched, so a caller can still branch on them |
 | `app.orchestration.*` | Rejects **before** the request with a `CivitaiError` naming `auth: "oauth"` — the orchestrator accepts no block token on any route, so there is nothing to learn from making the call |
@@ -189,6 +190,55 @@ try {
   else throw error;
 }
 ```
+
+## Shared storage
+
+`app.sharedStorage` is this app's **cross-user** store — one namespace every
+viewer reads and writes, which is what makes a feed or a "popular" rail possible.
+It wraps the eleven `blocks/shared-storage/*` routes: `list`, `get`, `counts`,
+`top`, `append`, `update`, `vote`, `unvote`, `withdraw`, `report`, `increment`.
+
+```ts
+// The cross-user rail: read a page, file a row, vote one up.
+const { items, nextCursor } = await app.sharedStorage.list({ prefix: 'deck:' });
+const { key } = await app.sharedStorage.append({ title: 'My deck', data: { cards } });
+const { count } = await app.sharedStorage.vote(key);
+```
+
+🔴 **Reads and writes have different audiences, and one does not imply the
+other.** This is the opposite of `app.storage`, so do not carry that gate over:
+
+- **An anonymous viewer MAY read** (`list`, `get`, `counts`, `top`) — signed-out
+  browsing is a supported path — and may **never** write. An anon write is a
+  `403` from the scope binding, not the `401` a missing token gives.
+- **A signed-in viewer is not automatically a permitted writer.** Writes clear a
+  server-side minimum-trust gate (account age, paid tier, verified email or a
+  linked OAuth account). Treat a write refusal as a normal outcome with a real
+  message in the UI, not an unexpected error.
+
+So gate the write affordances on `app.viewer`, and render the reads regardless.
+
+Four shape differences from `app.storage`, each of which would otherwise be a bug
+that type-checks:
+
+- **The four reads are `GET`**; only the seven writes are `POST`. A read sent as
+  `POST` is a `405`.
+- **`list` returns `items` with values included** — it is the feed read, so one
+  request renders a page — and its `nextCursor` arrives nested under the reply's
+  `metadata`. The client lifts it for you; the rule is the same as
+  `app.storage`'s, absence proves the scan completed.
+- **`top` returns a bare array**, and it ranks app-defined **counters** (what
+  `increment` bumps), not the vote tallies on feed rows. A most-voted rail is
+  `list` sorted by you.
+- **`append` takes no key.** The server mints a ULID and returns it, so one
+  viewer cannot overwrite another's row. Use `update` for an in-place edit of a
+  row this viewer authored.
+
+`withdraw` answers `{ ok: true, deleted: false }` identically for another
+author's key, an already-withdrawn row and a key that never existed — it is not
+an existence oracle, so do not report that as "someone else owns this". Put every
+string other viewers will read in `title`/`body`, which the server moderates;
+`data` is unmoderated app structure.
 
 ## The orchestrator
 

@@ -57,6 +57,26 @@ first.
 Eleven routes under `/api/v1/blocks/shared-storage/`. Reads take `apps:storage:shared:read`, writes take
 `apps:storage:shared:write` — both scopes already existed; neither is new.
 
+**`app.sharedStorage` now wraps all eleven** — one method per route, same names
+(`get` is the `/item` route, matching its tRPC twin `apps.shared.get`). An app no longer needs to hand-roll
+`app.site.get('blocks/shared-storage/…')`, and the three shape traps below are handled for it. This row
+previously recorded only that the routes exist; a client had to be written per app.
+
+🔴 **It is not the per-viewer client's shape, in four ways.** Each is a real difference in the route table,
+not a stylistic one, and assuming otherwise produces a bug that type-checks:
+
+1. **The four reads are `GET` with a query string**; only the seven writes are `POST`. A read sent as POST is
+   a `405`.
+2. **`list` is enveloped** — `{ items, metadata: { nextCursor } }`. The cursor sits one level deeper than
+   `app-storage/list`'s top-level `nextCursor`; read the wrong level and pagination is silently dead while
+   every page still parses.
+3. **`top` answers a bare array**, `[{ key, count }]` — no `items`, no `metadata`, unlike `list` beside it.
+4. **Anonymous viewers read but never write** — the inverse of per-viewer storage, where a missing subject
+   refuses everything. See *Who may read, and who may write* below.
+
+⚠ `top`/`increment` operate on app-defined **counters** (`playcount:…`), which are a different thing from the
+vote tallies `list` returns on feed rows. A "most-voted" rail is `list` sorted by the caller, not `top`.
+
 | Method | Path | Scope |
 |---|---|---|
 | `GET` | `/list` | `…shared:read` |
