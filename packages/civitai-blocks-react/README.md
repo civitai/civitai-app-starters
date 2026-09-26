@@ -211,12 +211,24 @@ const bp = useBlockBreakpoint();
 ### `useBlockToken()`
 
 Current block-scoped JWT, auto-refreshing ~2 min before expiry. Returns the token
-fields plus a `refresh()` for the 401-retry path.
+fields plus a `refresh()` for the 401-retry path, which **resolves with the new
+token**.
 
 ```tsx
 const { raw, scopes, expiresAt, buzzBudget, refresh } = useBlockToken();
-// after a 401: await refresh(); then retry the request once with the new `raw`.
+
+let res = await fetch(url, { headers: { Authorization: `Bearer ${raw}` } });
+if (res.status === 401) {
+  const fresh = await refresh();   // resolves WITH the new token
+  res = await fetch(url, { headers: { Authorization: `Bearer ${fresh.raw}` } });
+}
 ```
+
+> **Retry with the resolved token, not the `raw` you destructured.** That `raw` is
+> a `const` from the render closure that ran *before* the refresh — awaiting
+> `refresh()` re-renders the component but cannot reassign the binding your
+> in-flight callback is already holding. A retry that re-reads the outer `raw`
+> re-sends the stale JWT and 401s for exactly the reason the first call did.
 
 ### `useHostOrigin()`
 

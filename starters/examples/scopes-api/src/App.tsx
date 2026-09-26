@@ -15,8 +15,9 @@ import manifest from '../block.manifest.json' with { type: 'json' };
  *  1. Declare the scopes you need in `block.manifest.json` (`scopes: [...]`).
  *     A moderator sees them at review; the issued JWT carries the granted
  *     intersection.
- *  2. Read the raw JWT with `useBlockToken().raw` (it auto-refreshes; call
- *     `refresh()` after a 401 and retry once).
+ *  2. Read the raw JWT with `useBlockToken().raw` (it auto-refreshes; after a
+ *     401 call `refresh()`, which resolves WITH the new token, and retry once
+ *     using that resolved `raw` — not the one your closure captured).
  *  3. `fetch('https://civitai.com/api/v1/blocks/me', { headers: { Authorization:
  *     `Bearer ${raw}` } })`.
  *
@@ -51,8 +52,14 @@ export function App() {
       let res = await doFetch(raw);
       if (res.status === 401) {
         // Token may have just rotated — force a fresh mint and retry once.
-        await refresh();
-        res = await doFetch(raw);
+        //
+        // 🔴 RETRY WITH THE RESOLVED TOKEN. `refresh()` resolves WITH the new
+        // `BlockToken`; use `fresh.raw`, NOT the `raw` destructured above. That
+        // `raw` is a const captured by this callback's closure before the
+        // refresh, and awaiting cannot reassign it — re-reading it here would
+        // re-send the stale JWT and 401 again for the same reason.
+        const fresh = await refresh();
+        res = await doFetch(fresh.raw);
       }
       // 🔴 DELIBERATE, AND DELIBERATELY NOT A PRODUCT PATTERN. Showing the raw
       // status + response body IS this example's whole point — it is a developer
