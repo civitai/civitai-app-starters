@@ -81,10 +81,16 @@ import '@civitai/components/civitai-button/define';  // just this one
 ```
 
 ```html
+<civitai-text as="h2" size="xl" weight="bold">Generate an image</civitai-text>
 <civitai-button variant="filled" size="md">Generate</civitai-button>
 <civitai-text-input label="Prompt" name="prompt"></civitai-text-input>
 <civitai-segmented-control aria-label="View"></civitai-segmented-control>
 ```
+
+`<civitai-text>` renders the element `as` names — a real `<h1>`–`<h6>`, `<p>` or
+`<span>` — inside its shadow root, so a heading is a heading to the document
+outline and not a box wearing `role="heading"`. Size and level are independent:
+`as` is the page's structure, `size` is its design.
 
 One script tag, no build:
 
@@ -94,8 +100,36 @@ One script tag, no build:
 ```
 
 `elements.js` is a self-contained bundle at the package root, because jsDelivr
-ignores `exports` — the same reason `styles.css` is copied there. The build
-fails if it exceeds **25 kB gzip**; it currently sits at about 19 kB.
+ignores `exports` — the same reason `styles.css` is copied there.
+
+Each bundle has a hard gzip **budget** the build fails over: **32 kB** for
+`elements.js`, **38 kB** for `site-elements.js`. Those two numbers are the
+contract; they live in `scripts/build-elements.ts`, and
+`tests/guards/bundle-budget-claims.test.mjs` fails if this sentence and that file
+ever disagree.
+
+**What the bundles measure right now is deliberately not written down here.** That
+figure moves with every element added, this paragraph had already stated a stale
+one twice, and it has no reader who needs it — the budget is the promise, the
+current size is build output. The build prints it on every run, for both bundles,
+against the budget:
+
+```sh
+pnpm --filter @civitai/components build
+# [build-elements] dist/elements.js + elements.js — … kB raw, … kB gzip (…% of the 32 kB budget)
+```
+
+That output is the only place it cannot rot, so read it there. The guard named
+above also fails on an occupancy figure put back into prose — a percentage of the
+budget, or a "currently sits at N kB" — because that is the shape that rotted, not
+the particular number. **It does not read every file in the package**: the scan
+covers `.md`, `.ts`, `.tsx`, `.mjs` and `.css` under this package, and skips —
+besides the build and dependency directories — `demo/`, `playground/`,
+`CHANGELOG.md` (a changelog may legitimately record what was true at a release)
+and `scripts/build-elements.ts` (it is the authority, and it prints the figure).
+That list is illustrative, not the definition: the guard's own docblock states
+the corpus and the limits exactly, so read it there rather than assuming either
+a wider or a narrower claim.
 
 ### The civitai vocabulary
 
@@ -452,6 +486,20 @@ here so they're readable on the npm package page.
 (default = light). **Cascade** — every rule lives in `@layer civitai.components`,
 so your own unlayered CSS always wins with no `!important`; override a token
 locally by redeclaring it (`style="--civitai-color-primary: #a259ff"`).
+
+### Text — `data-civitai-ui="text"`
+Headings, paragraphs and inline copy. The one component that prescribes no
+element: **you write the tag the meaning calls for** — `<h1>`–`<h6>`, `<p>` or
+`<span>` — and this styles it. A heading MUST be a real heading element.
+`data-size`: `xs` · `sm` · `md` (default) · `lg` · `xl` · `2xl` · `3xl` · `4xl` ·
+`5xl` (12/13/14/16/20/24/28/32/40px) — **one scale**: `sm`/`md`/`lg` are Button's
+own three, and everything from `lg` up is a value the `ci-fs-*` utilities already
+ship (`lg`=`ci-fs-6` … `5xl`=`ci-fs-1`). `data-weight`: `normal` (default) ·
+`medium` · `semibold` · `bold`. **Size and level are independent** — an `<h2>`
+can be `data-size="xs"`. Margins are reset to `0`; space text with `stack`.
+Colour, alignment and truncation stay in the utilities (`ci-muted` /
+`ci-text-*`, `ci-text-center`, `ci-truncate`) — all three inherit into the
+element track except `ci-truncate`.
 
 ### Button — `data-civitai-ui="button"`
 - Element: **`<button>`** (or `<a role="button">`).

@@ -29,8 +29,9 @@ why the remedy is a claim that stays true across those changes. The row now
 points the reader at `BLOCK_SCOPES` itself, which is the enumerable surface and
 is drift-checked against the canonical schema by CI.
 
-> Not fixed here, and out of scope for a README change: the JSDoc on
-> `BLOCK_SCOPE_PATTERN` in `packages/civitai-app-sdk/src/blocks/scopes.ts` says
-> "the 12 values in {@link BLOCK_SCOPES}" — a third stale figure, in source, on a
-> comment that ships to consumers via the emitted `.d.ts` and therefore reaches
-> IDE hover too.
+> Out of scope for a README change, and **fixed in this same release** — see the
+> entry above: the JSDoc on `BLOCK_SCOPE_PATTERN` in
+> `packages/civitai-app-sdk/src/blocks/scopes.ts` said "the 12 values in
+> {@link BLOCK_SCOPES}", a third stale figure, in source, on a comment that ships
+> to consumers via the emitted `.d.ts` and therefore reaches IDE hover too. It
+> now reads "exactly the values in `BLOCK_SCOPES`".

@@ -41,6 +41,7 @@ export { CivitaiTabPanel } from './civitai-tab-panel.js';
 export { CivitaiTable } from './civitai-table.js';
 export { CivitaiTabs } from './civitai-tabs.js';
 export { CivitaiTag } from './civitai-tag.js';
+export { CivitaiText } from './civitai-text.js';
 export { CivitaiTextInput } from './civitai-text-input.js';
 export { CivitaiTextarea } from './civitai-textarea.js';
 export { CivitaiToast } from './civitai-toast.js';

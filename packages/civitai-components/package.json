@@ -36,6 +36,14 @@
       "types": "./dist/elements/civitai-button.define.d.ts",
       "import": "./dist/elements/civitai-button.define.js"
     },
+    "./civitai-text": {
+      "types": "./dist/elements/civitai-text.d.ts",
+      "import": "./dist/elements/civitai-text.js"
+    },
+    "./civitai-text/define": {
+      "types": "./dist/elements/civitai-text.define.d.ts",
+      "import": "./dist/elements/civitai-text.define.js"
+    },
     "./civitai-text-input": {
       "types": "./dist/elements/civitai-text-input.d.ts",
       "import": "./dist/elements/civitai-text-input.js"

@@ -30,6 +30,7 @@ import { defineCivitaiStack } from './civitai-stack.js';
 import { defineCivitaiSwitch } from './civitai-switch.js';
 import { defineCivitaiTable } from './civitai-table.js';
 import { defineCivitaiTabs } from './civitai-tabs.js';
+import { defineCivitaiText } from './civitai-text.js';
 import { defineCivitaiTextInput } from './civitai-text-input.js';
 import { defineCivitaiTextarea } from './civitai-textarea.js';
 import { defineCivitaiToast } from './civitai-toast.js';
@@ -71,6 +72,7 @@ export function registerAll(): void {
   defineCivitaiSwitch();
   defineCivitaiTable();
   defineCivitaiTabs();
+  defineCivitaiText();
   defineCivitaiTextInput();
   defineCivitaiTextarea();
   defineCivitaiToast();
