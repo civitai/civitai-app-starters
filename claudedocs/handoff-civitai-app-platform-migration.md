@@ -43,36 +43,35 @@ that protocol."*
 
 ## State now
 
-- **Branch / PR:** primary clone on `docs/handoff-app-platform-migration` (PR `starters#440`, open). ⚠ `.gitignore` and `AGENTS.md` are uncommitted in that clone and are **not this session's work** — leave them.
-- 🔴 **THE AUTH ARC IS THE LIVE ONE NOW.** The port arc's closing condition was met earlier; this session's work was the **two-token-kind auth split** and its defects. Nine PRs merged.
+- **Branch / PR:** the doc's own branch is `docs/handoff-app-platform-migration` (PR `starters#440`, still open, **18 behind / 54 ahead** of `main`). ⚠ The primary starters clone now sits on `main`, so this doc **looks absent** there — read it from the ref, not the worktree.
+- 🔴 **THE AUTH ARC CLOSED AND A SKILL-DRIFT ARC OPENED AND CLOSED ON TOP OF IT.** Ranks 1 and 2 of the previous update are DONE; everything below is new.
 
-**Merged this session, each verified BY CONTENT on the target's `main` (never by ancestry — every one was a squash or merge commit):**
+**Rank 1 — `civitai#5127` CLOSED** (`issuecomment-5836949701`). The red arm was BUILT, not taken from `#5129`'s own report: a worktree at `origin/main` with only the three production files reverted to the pre-fix base `57d5ff34`, tests left at HEAD → **6 failed | 12 passed**, each on its own assertion. The same 12 pass on both trees, so the red arm discriminates.
 
-| PR | repo | sha | what |
-|---|---|---|---|
-| `#28` | `ZacxDev/civitai-app-custom-generators` | `7ecbd54` | the `@civitai/sdk` port: **0** real `@civitai/blocks-react` specifiers, control `@civitai/sdk` **4** |
-| `#29` | same | (squash) | `v0.9.0` version bump, both fields in lockstep |
-| `#5111` | `civitai/civitai` | `6ff7aff2` | unbroke `preview / component-tests` (5 suites died at ESM link on a wholesale `vi.mock`) |
-| `#453` | `civitai-app-starters` | `11fe7463` | narrowed the SDK token-kind guard to the surfaces it is about |
-| `#454` | same | `57b13b83` | the auth design analysis, made durable |
-| `#452` | same | `a1b6cac2` | Version PR → **published** `@civitai/sdk@0.5.0`, `components@0.6.0`, `components-react@0.6.0`, `blocks-react@0.57.2` |
-| `#5130` | `civitai/civitai` | `57d5ff34` | validator refuses `auth:"oauth"` + `apps:storage:*` |
-| `#5129` | same | `56fe5330` | the consent bypass (`#5127`), reworked after Round 0 |
-| `#5128` | same | `0c23092e` | `IframeHost` host-side consent notice + the `CONSENT_UNAVAILABLE` path |
-| `#98` | `civitai-developer-docs` | `c5ab2302` | stale `0.4.0` pin + five pages of falsified claims; stale-phrase count **6 → 0** |
+**Rank 2 — the first-ever `auth: "oauth"` Civitai App is LIVE and PROBED.** `oauth-probe@0.1.3`, `https://oauth-probe.civit.ai`, repo `ZacxDev/civitai-app-oauth-probe` (PRs #1–#4 merged). Measured in a real page slot, before → after consent:
 
-**Deploy/verify status, stated separately:**
-- `custom-generators@0.9.0` is **approved and LIVE**, and the port is confirmed **in the served bundle** — `gated-images` 1, `shared-storage` 9, old `GET_IMAGES_BY_IDS` **0**, old `APP_STORAGE_` **0**, control `Custom Generators` 4. The served hash differs from the local build because the platform rebuilds from source, so the hash proves nothing; the marker pair is the evidence.
-- `@civitai/sdk@0.5.0` verified by **artefact diff**, not by the version resolving: `cmp dist/app/index.js` 0.4.0 vs 0.5.0 → DIFFER, and 0.5.0 carries `#453`'s rationale text.
-- 🔴 **Nothing in the auth arc has been exercised against a live civitai host with an `auth: "oauth"` block.** Every green is against a fake or a source read. **0 of 7 fleet manifests declare `auth`.**
+| reading | ungranted | granted |
+|---|---|---|
+| `token kind` | `block` | **`oauth`** |
+| `tokenScope` | — (401) | **65537** = `UserRead(1)｜BuzzRead(65536)` |
+| `/api/v1/me` fields | refused | **`email, emailVerified, isModerator`** |
 
-**Claims released** (all their work landed): `civitai-app-platform-migration-2`, `civitai-5102-component-tests-red`, `civitai-oauth-storage-seam`. **0 held for this arc.**
+`#5128`'s host consent notice rendered; `#5129`'s consent-required fallback behaved as designed; the grant rotated the SAME session to `oauth`. **No screen was taken** — `browser activate` was never called; the whole run used `wake` on a hidden tab.
 
-**Issues filed this session, all with closing conditions:** `civitai#5112` `#5115` `#5119` `#5127`.
+**Four platform gates refused a submit before it deployed**, each real, each found only by submitting: `minimumReleaseAge` · `ERR_PNPM_IGNORED_BUILDS` · `boot-skeleton-gate` · one transient Docker Hub pull timeout (cleared by a same-version `--allow-downgrade` re-submit). 🔴 `civitai app validate` passed all four.
 
-**Carried forward from the PORT arc** (its own `State now` is replaced by this update, so these two survive here):
-- 🏁 **The PLATFORM arc completed 2026-09-24** — every surface the fleet needs exists on `main`: app-storage REST (`civitai#5085`), workflows query (`#5090`), gated images (`#5091`), user checkpoint (`#5093`), `AppClient.storage` (`starters#441`), the canonical schema re-vendor (`#445`), and `host.openImageUpload` + `host.publishGenerationOutputs` (`#446`). Route counts on `origin/main` moved 30 → 37 with `shared-storage/` (11) unchanged as the control.
-- **Earlier issues from that arc:** `civitai#5087` `#5088` `#5089` `#5092` `#5094` `#5095` `#5102` · `starters#443` (**CLOSED** — condition met by the route it named). `#5102` is now closed in practice by `#5111`, but its formal condition (green on a PR touching no `src/components/` file) is still unchecked.
+**Skill-drift audit — 6 read-only agents over ~790 KB, ~77 findings, then 3 fix/verify agents.**
+
+| PR | repo | state |
+|---|---|---|
+| `#457` | `civitai-app-starters` | ✅ **MERGED** `bc154d1` — `@civitai/sdk/safe-storage` subpath |
+| `#23` | `ZacxDev/civitai-app-requests` | ✅ **MERGED** `b8d2b2d` — shim import, first in `main.tsx` |
+| `#1637` | `civitai/talos-infra` | ✅ **MERGED** `207219bce` — app-blocks skill |
+| `#1876` | `innovation-upstream/devrc` | ⏸ **HELD** — see the investigation below |
+
+**Issues filed, all OPEN with closing conditions:** `starters#459` `starters#460` `civitai#5153` `civitai/cli#706`.
+
+**Deploy/verify, stated separately:** `oauth-probe` is live and verified end-to-end. `#457` is merged but **NOT PUBLISHED** — `changeset-release/main` (`starters#461`) is open and cuts `@civitai/sdk@0.7.0`; until it merges the subpath is uninstallable. `#23` is merged but **reaches no viewer** — `package.json` and `block.manifest.json` both stay `0.4.1` deliberately, so it needs a version bump + `civitai app submit`.
 
 ## Open investigations — live diagnosis state
 
@@ -981,6 +980,30 @@ that protocol."*
 - **Leading hypothesis:** two of three caps are **inexpressible** without an orchestrator change — `SubjectType` has no subject for "user across apps" or "app across users".
 - **Next probe:** 🔴 **named human judgement, not a command** — Koen reads the spend sections of `claudedocs/design-app-block-auth-split.md` and answers in writing. His own handoff's closing line invites exactly that.
 
+### `devrc#1876` is held because its gates NEVER RAN — not because they failed
+- as-of: 2026-09-26
+- **Symptom + exact repro:** `gh pr checks 1876 --repo innovation-upstream/devrc` → `MERGEABLE/UNSTABLE`, head `fa0cbd8`. Four Tekton gates, each reporting verbatim: `NO CAPACITY: <name> — the gate never started (queued past its deadline). Not a code failure.`
+- **Observed (with values):** re-fired the webhook by `gh pr close 1876 && gh pr reopen 1876` (no branch change, no commit). All four moved `fail → pending`, so the trigger works and PipelineRuns were created. They then sat `pending` for **10 minutes** with zero movement across 29 polls — `tekton/devrc-{cairn-client-runs,gotests,nodetests,pytests}`. `via: command`
+- **Ruled out:** *"this is a code failure in the PR"* — FALSE. The gates report their own reason, and the one that DID run on the sibling `talos-infra#1637` (`tekton / gitops-ci`) passed. `via: command`
+- 🔴 **Leading hypothesis:** homelab Tekton capacity starvation, unrelated to the change. **A gate that never started is NOT a pass** — merging through four unexecuted suites is exactly the failure this arc kept finding in other people's work, so it is held deliberately rather than clicked through.
+- **Next probe:** `gh pr checks 1876 --repo innovation-upstream/devrc`. All four green ⇒ merge (squash; the repo has 0 merge commits in its last 20 first-parent). Still starved after a few hours ⇒ that is a **`tekton` capacity problem** deserving its own look, not a `#1876` problem. ⚠ The PR is not docs-only — it also touches `preflight.py`.
+
+### The author fee is ARMED, not CHARGING — and my first report of it was wrong
+- as-of: 2026-09-26
+- **Symptom + exact repro:** an additive, author-set, **viewer-paid** per-generation Buzz fee (`fee = max(flatBuzz, pctOfBase × base)`, defaults 1 / 5%) exists on `civitai@origin/main` across four services (`author-fee{,-accrual,-charge,-settlement}.service.ts`), and `gotchas-money-and-spend.md` had **zero** mentions of it.
+- **Observed (with values):** the Flipt flag `app-blocks-author-fee-enabled` is genuinely `enabled: true` with **no rules or rollouts** (live read, controls both ways) — and the civitai **source comment claiming `enabled: false` is stale**. Two unconditional call sites, no second gate, on `origin/release`. **But it has never charged anyone:** `block_author_fee_accrual` = **0 rows** (control: sibling table **609**), and **zero** `block_author_fee_*` metric series (positive control: the bridge counter returns one). `via: measurement`
+- **Ruled out:** *"it is live and debiting viewers"* — **FALSE, and that was my own first report.** The discriminator was run rather than guessed: exactly **one** block generation since the flag flip, at 21:49Z, and that was **mid-rollout** (Available 22:20Z). Zero generations on a settled fleet. The fleet is simply too quiet to have exercised it. `via: measurement`
+- **Leading hypothesis:** it charges on the first real block generation. `#74`'s standing claim that *"the 3 real money gates all live at PAYOUT time"* becomes false at that moment, not now — which is why `#210` went in as ARMED and `#74` got a pointer rather than a rewrite.
+- **Next probe:** `SELECT count(*) FROM block_author_fee_accrual;` on `cnpg-cluster-nvme0-5`. Non-zero ⇒ it is charging; rewrite `#74` and tell app authors their per-generation price moved.
+
+### A MAJORITY of production scope grants are revoked, and nothing documents it
+- as-of: 2026-09-26
+- **Symptom + exact repro:** `app_user_scope_grants.revoked_at` is non-null on **24 of 39** rows. The skill asserted **0 of 33**.
+- **Observed (with values):** all 24 share a single timestamp, `2026-09-17 04:55:26.598962+00` — one operator `UPDATE`, exactly the mechanism gotcha `#203` predicted. Re-verified that **no code writer exists**: greps hit only `__tests__` plus `referral.service.ts:611`, which is a different model (that hit is the positive control proving the pattern matches). `via: measurement`
+- **Ruled out:** *"a service revokes these"* — FALSE, no production writer. `via: command`
+- 🔴 **Leading hypothesis:** *"the app 403s / has no budget"* may be **row state rather than a defect**, for a majority of installs. Nobody has written that down, so the next person to debug a 403 will look at code.
+- **Next probe:** decide whether that mass revocation was intended. If yes, document it where a 403 is debugged (`gotchas-auth-scopes-and-tokens.md`, beside `#203`); if no, it is a data incident.
+
 ## 🔴 IN FLIGHT — seven agents dispatched 2026-09-24, fleet-wide
 
 Operator decision, 2026-09-24: run the whole remaining fleet in parallel, with the five
@@ -1187,29 +1210,28 @@ and each was named in its brief as do-not-touch:
 
 ## Next steps (ranked)
 
-1. ✅ **DONE 2026-09-25 — `civitai#5127` is CLOSED** (`issuecomment-5836949701`). Both commands exit 0 on `origin/main` (8 + 10 = 18, counted from the runner's own `✓` lines), and the red arm was BUILT rather than taken from `#5129`'s own report: a worktree at `origin/main` with only the three production files reverted to the pre-fix base `57d5ff34`, tests left at HEAD → **6 failed | 12 passed**, each failing on its own assertion (`expected { clientId: 'app_sync', scope: 5 } to be null` is the defect as a measurement; two `to deeply equal []` are the "writes no `OauthConsent` row" clause). The 12 granted/flag-off/anonymous cases pass on **both** trees, so the red arm discriminates. Un-mock confirmed structurally at `oauth-mint.test.ts:273-278` (`importActual` + `mockImplementation`). **Do not re-run this.**
-2. ✅✅ **DONE AND PROBED LIVE 2026-09-25 — the OAuth path WORKS, and this arc's standing "nothing has run against a real host" is now FALSE.** `oauth-probe` `0.1.3` is approved and **live** at `https://oauth-probe.civit.ai` (`ZacxDev/civitai-app-oauth-probe`, PRs #1–#4 merged). Driven end to end through the real consent flow in a real page slot. See the two RESOLVED blocks below.
-3. **Consolidate `OauthConsent`'s one-row-two-authorities seam** (the F3 investigation above). Derive on read, or make the row per-block.
-   forcing: security — an unconditional overwrite on a row shared between a block grant and a standalone OAuth authorization can silently narrow a real authorization.
-4. **`civitai#5112` — `blocks/gated-images` is merged but not deployed.** Every ported app's per-viewer image read 404s in production until it ships.
+1. **Merge `devrc#1876` once Tekton capacity returns** — `gh pr checks 1876 --repo innovation-upstream/devrc`, then squash. Everything else in that PR is verified; only the gates are missing.
+   forcing: gate — four required-looking suites never executed, and merging through an unrun gate is the exact failure this arc spent the day finding in other people's work.
+2. **Merge `starters#461` (`changeset-release/main`) to publish `@civitai/sdk@0.7.0`.** Until it lands the `safe-storage` subpath is uninstallable, so `#457` protects nobody.
+   forcing: gate — `#457` is merged but inert without the publish, and `app-requests`' `taste.json` closing condition cannot fire.
+3. **Migrate `civitai-app-requests` to `@civitai/sdk/safe-storage`** once 0.7.0 publishes, then bump both version files + ledger line and `civitai app submit`. Repo `ZacxDev/civitai-app-requests`; files `src/main.tsx`, `taste.json`, `package.json`, `block.manifest.json`.
+   forcing: gate — its `taste.json` entry `safe-storage-from-the-successor-sdk` carries the mechanical closing condition (`./safe-storage` in `npm view @civitai/sdk exports`), and the shim currently reaches no viewer at all.
+4. **`civitai#5112` — `blocks/gated-images` merged but not deployed.** Every ported app's per-viewer image read 404s in production until it ships.
    forcing: gate — `custom-generators@0.9.0` is live and its cover grid, generator header and kept gallery all route through that route.
 5. **Port `civitai-app-playable-collections`** — 33 importers, storage dependency is SOFT. One product decision first: collection **follow** needs `collections:write:self`, which its manifest deliberately does not declare.
-   forcing: gate — the remaining fleet, and the cheapest next port now that `custom-generators` shipped.
-6. **Then `gen-matrix` → `model-benchmarking` → `sensei`.** `gen-matrix` and `model-benchmarking` **cannot** reach 0 importers (three and one surfaces respectively have no REST twin) — their PRs must state a reduced count with the retained surfaces NAMED. `sensei` should be staged in two.
+   forcing: gate — the remaining fleet; 5 of 9 apps are still on `@civitai/blocks-react`.
+6. **Then `gen-matrix` → `model-benchmarking` → `sensei`.** `gen-matrix` and `model-benchmarking` **cannot** reach 0 importers (three and one surfaces have no REST twin) — their PRs must state a reduced count with the retained surfaces NAMED.
    forcing: gate — the rest of the fleet.
-7. **Close the remaining filed follow-ups:** `#5115` (convert the 36 remaining wholesale mocks + register the module; note criterion (a) must also change, not just (c)), `#5119` (12 files call the node tier "blocking"; nothing blocks a merge).
-   forcing: gate — each has a named checker and a pattern-pinned closing condition.
 
 ## Defects (batched)
 
-- 🔴 **`custom-generators`' `minimumReleaseAgeExclude` is now DEAD CONFIG — drop it.** `pnpm-workspace.yaml` pins `["@civitai/sdk@0.3.0"]`, added because 0.3.0 was published inside pnpm 11's 24h window. The app now pins `^0.3.0` and the published line is **0.5.0**, so the exemption protects a version nothing will install. Precedent for the cleanup is this repo's own `#26`. Left in place it silently weakens the next reader's assumptions about what the supply-chain gate is checking. *(Relocated from a pruned RESOLVED block whose closing instruction was never executed.)*
-- **`gh` here has no `--allow-escape-sequences`** — it errors "unknown flag" and writes a **0-byte** log that greps as clean. Use `gh run view --job <id> --log --repo <o>/<r>` and assert a non-zero byte count. Omitting `--repo` infers from cwd and can return **125 bytes of HTTP 404**, which also greps clean.
-- **Bare `npx tsc --noEmit` OOMs in `civitai/civitai`** (exit 134, core dump). Use `npm run typecheck` — the wrapper sets an 8192 MB heap cap.
-- **`Prettier (added files)` is a SEPARATE CI step from the changed-files one**, and from ESLint. eslint-clean is not prettier-clean; an added file can fail alone.
-- **`eventloop-watchdog.capture.test.ts` is a load flake** — a *different* case fails per run at ~12s against a 10s deadline, identical at base, and `zach/3773-watchdog-poll-not-sleep` already exists. All four CI shards pass.
-- **`sharp` is unbuildable in every civitai worktree on this host** — 6 files (not 4, as an older note claimed), identical at `main` alone. Environmental.
-- **`app-requests` still pins `@civitai/sdk ^0.2.0`**; `custom-generators` `^0.3.0`; `generate-from-model` `^0.2.0`. Under 0.x caret rules **none resolves 0.5.0**, so `#453`'s narrowed guard reaches nobody until an app widens its range deliberately.
-- **`prisma/schema.prisma` is GENERATED and gitignored** — cite `packages/civitai-db-schema/prisma/schema.full.prisma` instead.
+- **`starters#459`** — `check:public-types` does not scan `@civitai/sdk` at all (`PACKAGES` omits it). Adding it surfaces **6 nameable-position violations** the guard refuses to ledger plus 4 rows going stale — including a real bug: the root exports a `RequestOptions` that is a **different interface** from the one `BlockTransport.request` accepts, so a consumer importing the exported name gets the wrong type. Filed rather than silenced with ledger rows.
+- **`starters#460`** — `civitai-components/src/version.generated.ts` stamps `0.6.0` while its `package.json` is `0.7.0`; every registered custom element misreports its version. 🔴 The parity test **regenerates** the constant and compares that to the built `package.json` — both operands derived at test time, so the committed artifact is never examined and the drift is structurally invisible.
+- **`civitai#5153`** — the `user:read:self` consent modal says *"Read the viewer's username and account status"*; the granted token returns **email, emailVerified and isModerator**. Mirror of `#5127` (which was *reads email WITHOUT consent*), and outside the existing consent-copy governance, which covers `ai:write:budgeted` only.
+- **`civitai/cli#706`** — `civitai app validate` (0.1.105) passes manifests the server refuses: `auth:"oauth"` + `apps:storage:read`, `auth:"nonsense"`, and unknown top-level keys. Re-verified first-hand with controls after one agent wrongly called it refuted (it had tested the literal `apps:storage:*`, which is not a scope name).
+- **`whats-deployed.md` wants REGENERATING, not patching** — six findings were one class: a hand-maintained table with four machine sources (`civitai app status`, `kubectl -n civitai-apps get deploy`, the Flipt resources API, the npm registry) that all disagree with it. All seven first-party version rows were wrong, `sensei` was described as a pending stub while live since 2026-09-20, 26 deployments not 21, and **15 Flipt flags where it claims THREE**.
+- **`legacy-hackathon-ops.md` is mislabelled, and the label costs a working recipe** — it is banner-labelled `HISTORICAL — will now fail`, yet `whats-deployed.md` points at it as the CURRENT authority for reading a live Flipt flag, and that `flag-status` recipe was verified working. A reader who obeys the banner loses the only working Flipt procedure in the skill. Extract `flag-status`/`flag-flip` into `platform-ops-playbooks.md`.
+- **`#5102`'s formal condition is still unchecked** — closed in practice by `#5111`, but its stated condition (green on a PR touching no `src/components/` file) was never run.
 
 ## Gotchas / decisions / dead-ends
 
@@ -1715,37 +1737,53 @@ and each was named in its brief as do-not-touch:
 - 🔴 **THIS DOC'S OWN CLOSING CONDITION GREPS A TOKEN, NOT A CONSTRUCT, AND READS AS A REGRESSION ON A CLEAN TREE.** The `closing-condition` at the top says `grep -l "@civitai/blocks-react" | wc -l` → 0. Run verbatim on 2026-09-25 it returns **1** for `generate-from-model` and **26** for `custom-generators` — both fully ported, both with the dependency **absent from `package.json`**. The hits are mentions in comments and docs. Anchoring on `(from|import\()\s*'@civitai/blocks-react` returns **0** for both, and `app-requests` is 0 either way (control `@civitai/sdk` 13, positive control `gen-matrix` 10). **The arc IS closed; the command is what is wrong.** This is the doc's own "grep for the CONSTRUCT, not the token" rule firing on the doc — a condition that can go falsely red is the same defect class as one that can never fire.
 - 🔴 **A PRE-SUBMIT GATE CAN PASS EXACTLY WHAT THE SERVER REFUSES, AND ITS GREEN THEN MEANS NOTHING.** `civitai app validate` (CLI 0.1.105) reports `✓ is valid` for `auth: "oauth"` + `apps:storage:read`, which `BlockManifestValidator` refuses — and also for `auth: "nonsense"` and for an unknown top-level key, which is the control proving the field is not validated at all rather than validated leniently. Filed `civitai/cli#706`. **Validate the instrument before quoting its verdict**, and for anything `auth`-shaped treat the SUBMIT as the test.
 
+- 🏁 **CARRIED FORWARD OUT OF `State now` — the PLATFORM arc completed 2026-09-24**, and this fact was about to be deleted by a status replace. Every surface the fleet needs exists on `main`: app-storage REST (`civitai#5085`), workflows query (`#5090`), gated images (`#5091`), user checkpoint (`#5093`), `AppClient.storage` (`starters#441`), the canonical schema re-vendor (`#445`), and `host.openImageUpload` + `host.publishGenerationOutputs` (`#446`). Route counts on `origin/main` moved **30 → 37** with `shared-storage/` (11) unchanged as the control.
+- **CARRIED FORWARD — earlier issues from that arc:** `civitai#5087` `#5088` `#5089` `#5092` `#5094` `#5095` `#5102` · `starters#443` (**CLOSED** — condition met by the route it named). `#5102` is closed in practice by `#5111`, but its formal condition (green on a PR touching no `src/components/` file) is still unchecked.
+- 🔴 **`civitai/talos-infra` IS CLONED ON THIS HOST, AT `/home/zach/workspace/civit/datapacket-talos`.** The directory name is misleading (`git remote -v` → `git@github.com:civitai/talos-infra.git`, branch `trunk`), and the `app-blocks` skill lives INSIDE it at `.claude/skills/app-blocks/`. **I briefed four audit agents that it was NOT cloned**, and two of them marked the builder base image, the runtime image and the install recipe UNVERIFIABLE on my word. Two others checked anyway and read the pipeline directly. A wrong premise in a brief is invisible to the agent receiving it.
+- 🔴 **THE PLATFORM INSTALLS WITH `--ignore-scripts`, SO `ERR_PNPM_IGNORED_BUILDS` IS A CI GATE, NOT A PLATFORM ONE.** `app-blocks-pipeline.yaml:1429` — `corepack enable; pnpm install --frozen-lockfile --ignore-scripts`. My claim that `allowBuilds` was "confirmed against the real platform build" is **WRONG**; it fixed GitHub Actions CI, which passes no such flag. No build can discriminate, because `allowBuilds` and `minimumReleaseAgeExclude` landed in the same commit. The wrong attribution is still in `civitai-app-oauth-probe`'s commit message.
+- 🔴 **`gpu-fleet-infra` IS A FALSE CORROBORATOR.** It carries its own `app-blocks-pipeline.yaml`, still in its kustomization, still on `1.27-alpine` with the retired `npm ci || npm install` — so a second, independent-looking source **confirms the skill's stale text**. talos-infra wins, proven by the live `app-blocks-build-recipe` ConfigMap matching it line-for-line and by today's PipelineRuns being on dp-1.
+- 🔴 **`onlyBuiltDependencies` WAS RETIRED IN pnpm 11 AND IS SILENTLY IGNORED; the live key is `allowBuilds` (a map).** pnpm's own CHANGELOG says so — *"silently ignored since, so a workspace migrated from pnpm 10 kept them around LOOKING ACTIVE"*. 🔴 **Grepping pnpm 12's native binary returns the retired key too**, so binary presence is NOT evidence a key is live; the CHANGELOG was the discriminator. Cost one CI round.
+- 🔴 **A RAW `grep -c` IS THE WRONG INSTRUMENT FOR "DID THE FIX LAND", TWICE IN ONE SESSION.** After `#1637` merged, `1.27-alpine` on trunk read **6**, up from the 4 the fix claimed to correct — which reads as a regression. Reading the LINES shows the agent correctly left four historical strings intact (a 2026-05-30 author-authored-Dockerfile trap chain) and prepended a `STALE TAG AND STALE PREMISE` correction; rewriting them would have falsified history. Same class: this doc's own closing condition greps a token and reports 1 and 26 for two fully-ported apps.
+- 🔴 **`@civitai/sdk` "HAS LARGELY REPLACED" `@civitai/blocks-react` — REFUTED BY THREE AGENTS INDEPENDENTLY.** It is **4 ported / 5 not**, `blocks-react@0.57.2` published **seven seconds after** `sdk@0.5.0`, it is not npm-deprecated, and the default `civitai app create` scaffold still depends on it. A mid-migration fleet is WORSE than either pure state for a fan-out brief, because an assumption is wrong for about half of it either way.
+- 🔴 **`HostRequests` IS SIX OPS, NOT FOUR** — `OPEN_IMAGE_UPLOAD` and `PUBLISH_GENERATION_OUTPUTS` are both present, verified against the PUBLISHED tarball rather than monorepo source.
+- 🔴 **`js --frame` ON A CROSS-ORIGIN OOPIF RUNS IN THE MAIN WORLD, NOT AN ISOLATED ONE.** `cdpFrameEval` forks: same-process → `Page.createIsolatedWorld`; OOPIF → `Runtime.evaluate` with **no `contextId`** = the page's own world. `reference/frames-cdp.md` already said so; `flows/civitai.com.md` carried the blanket claim. The OBSERVATION (a `window.fetch` hook catches nothing) is real; the MECHANISM was wrong — the cause is ordering, and an empty intercept list is **undiagnosed**, not proof.
+- 🔴 **`wake --wait 12000` IS SILENTLY CLAMPED TO 6000** (`WAKE_SETTLE_MAX_MS`, a bare `Math.min`, no warning). The App Block recipe prescribed double the cap, so a working recipe was right about the outcome and wrong about the cause — the settle was 6 s.
+- 🔴 **A HIT-TEST THAT PASSES AND A CLICK THAT DOES NOTHING = a RE-THROTTLED TAB (or a `disabled` control).** Cost a cycle on the consent dialog: `elementFromPoint` returned the button's own span and the click was inert; `wake` then re-click worked immediately. `flows/civitai.com.md` carries **no** re-throttle warning at all (it lives in `SKILL.md`/`spa-wake.md`), and its App Block recipe says `wake … once`. The rival cause is real too — `BlockConsentModal`'s Allow is `disabled` until the Buzz-budget field validates.
+- 🔴 **`div[role="status"]` IS NOT UNIQUE ON `/apps/run/<slug>`** — the host loading veil, `BlockFallback` and the consent notice all use it. It worked only because the veil had already gone; anchoring on it is a race.
+- 🔴 **`flows/civit.ai.md` EXISTS, IS ROUTED, AND IS DEEPER than `civitai.com.md`'s App Block section** — but the bridge routes you there only AFTER your first `--frame` op, by which point every decision that section governs is already made.
+- 🔴 **A PROPOSED GUARD THAT WOULD HAVE CAUGHT NOTHING — MEASURED, AND DECLINED.** Pinning every backticked identifier in `flows/*.md` to the bridge source was justified as catching "three of four" contradicted items. Measured: **1 identifier matched, 15 did not**, and the catch rate against the actual contradicted items was **ZERO** (one was a wrong CASE not a wrong string, one camelCase in another repo, one a number, one an English phrase). It would have needed an allowlist larger than its signal.
+- 🔴 **`civitai app validate` IS A SCHEMA CHECK, NOT A SUBMIT GATE** — and one agent's "REFUTED" of this was itself wrong (it tested the literal `apps:storage:*`, not a real scope). Re-verified first-hand with a working positive control (pristine rc=0) and negative control (`contentRating: banana` rc=1): `auth:"oauth"` + `apps:storage:read` → **rc=0**. ⚠ But its sibling claim about lockfile/`buildCommand` mismatch **was** refuted correctly: validate DOES catch that, at rc=1 with the exact remedy.
+- 🔴 **THE `git archive` / WORKTREE SUBMIT RULE IS OBSOLETE AND NOW COSTS TWO GUARDS.** CLI 0.1.105 drops a `.git` **FILE** as well as a directory (packaged a real worktree: `Skipped … .git`). Following the stale 🔴 loses the dirty-tree refusal AND the `SOURCE` provenance stamp — visible in `civitai app status`: `custom-generators SOURCE=-` (archive export) vs `oauth-probe SOURCE=04e9c8e`.
+- **Decision (operator, 2026-09-25):** push through pnpm's 24h `minimumReleaseAge` with an exact-version `minimumReleaseAgeExclude`, taken with the third-party point stated explicitly — `electron-to-chromium@1.5.439` is NOT first-party, so the "we cut it ourselves" justification does **not** cover it. Implemented as two exact pins with clock expiries written into the file, never a disabled policy.
+- **Decision (operator, 2026-09-25):** `oauth-probe` as a scratch app rather than opting an existing fleet app in — no fleet app could, measured: the validator refuses `auth:"oauth"` + any `apps:storage:*`, and `manifestCanMintOauthToken` silently declines any manifest omitting `user:read:self`.
+- **Decision (operator, 2026-09-26):** `@civitai/sdk/safe-storage` as a **subpath**, not a package-root install; the 31 duplicated tests consolidated into a parity guard; and `app-requests` fixed with a one-line import now rather than waiting on the publish.
+- 🔴 **THREE TIMES AN AGENT WAS TOLD TO PREFER A FIX, RAN IT, FOUND IT DID NOT HOLD, AND REPORTED THAT INSTEAD — each attempt surfacing something nobody was looking for.** Adding `civitai-sdk` to `PACKAGES` exposed the `RequestOptions` type bug. Reshaping `#23`'s assertion 4 revealed a SECOND assertion with the same hardcode that would also have gone red at the correct migration. Extending the parity guard to `dist/` turned out to be unavailable at all (`test:guards` runs BEFORE `pnpm install`), so the honest output was a sized risk, not a self-skipping test.
+- 🔴 **AN AGENT'S OWN HARNESS RENDERED `Tests no tests` AS BLANK RATHER THAN FAILURE** — a literal `*/safe-storage` inside a JSDoc terminated the comment block, vitest ran nothing, and the grep-based runner showed empty. Caught by the agent on itself; runner now fails loudly on `no tests`/`PARSE_ERROR`, and every red/green pair was re-run afterwards.
+- ⚠ **A PR GREEN ON ITS OWN BRANCH SAID NOTHING ABOUT THE MERGED TREE, AND EVERY AUDIT MEASURED THE BRANCH.** `#457` sat 2 commits behind `main` while `main` had moved to `0.6.0` — **already published**. Its auditor reported `changeset status → 0.6.0 minor, correct`: correct against the branch, wrong against the tree the merge creates. Caught before merge; the synced tree reads `0.7.0`, and published tops out at `0.6.0`, so there was no collision. **Sync and re-measure before merging, always.**
+- ⚠ **20 STALE AGENT WORKTREES (2026-09-20 → 09-22) REMAIN REGISTERED in `civitai-app-starters`** from earlier sessions. Each pins whatever branch it stopped on, which is a real trip hazard for branch work in that clone. Not mine, so left alone — `git -C <repo> worktree list | grep agent-`.
+
 ## How to verify
 
 ```bash
-# 1. the auth fixes are on civitai main (each by CONTENT — all merge/squash commits, never ancestry)
-C=/home/zach/workspace/civit/civitai; git -C $C fetch origin main -q
-git -C $C grep -c "if (!block || !grant || grant.revokedAt)" origin/main -- src/server/services/blocks/oauth-consent-sync.service.ts   # 1
-git -C $C grep -c "let scope = 0;"                          origin/main -- src/server/services/blocks/oauth-consent-sync.service.ts   # 1
-git -C $C grep -c "manifestCanMintOauthToken(block.manifest, requestedScopes)" origin/main -- src/pages/api/v1/block-tokens/index.ts  # 1
-git -C $C grep -c "manifestWantsOauthToken," origin/main -- src/server/services/blocks/block-oauth-scope.ts                           # 1 (the merge-break fix)
-git -C $C grep -c "needsConsent" origin/main -- src/components/AppBlocks/BlockHost.tsx                                                # 4 (was 0)
-git -C $C grep -c "CONSENT_UNAVAILABLE" origin/main -- src/components/AppBlocks/IframeHost.tsx                                        # 2 (was 0)
+# 1. the SDK repair is on main and the subpath is real (by CONTENT — squash is never an ancestor)
+S=/home/zach/workspace/civit/civitai-app-starters; git -C $S fetch origin main -q
+git -C $S show origin/main:packages/civitai-sdk/package.json | python3 -c "
+import json,sys;d=json.load(sys.stdin)
+print(' version',d['version'],'| exports',sorted(d['exports']),'| sideEffects',d['sideEffects'])"
+#  => 0.6.0 | ['.', './safe-storage', './testing'] | ['./dist/safe-storage/index.js']
 
-# 2. the published SDK carries #453's narrowing — by ARTEFACT, not by the version resolving
-npm view @civitai/sdk version                                   # 0.5.0
-cd "$(mktemp -d)" && curl -sL "$(npm view @civitai/sdk@0.5.0 dist.tarball)" -o a.tgz && tar xzf a.tgz && mv package p5 \
-  && curl -sL "$(npm view @civitai/sdk@0.4.0 dist.tarball)" -o b.tgz && tar xzf b.tgz \
-  && cmp -s package/dist/app/index.js p5/dist/app/index.js && echo "IDENTICAL (bad)" || echo "DIFFER (expected)"
+# 2. app-requests installs the shim FIRST (order is the mechanism)
+git -C /home/zach/workspace/civit/civitai-app-requests show origin/main:src/main.tsx | grep -nE "^import" | head -2
+#  => line 30 '@civitai/app-sdk/safe-storage', line 32 react
 
-# 3. custom-generators' port is LIVE in the served bundle (marker PAIR; the hash proves nothing — the platform rebuilds)
-B=$(curl -sS "https://custom-generators.civit.ai/" | command grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' | head -1)
-curl -sS "https://custom-generators.civit.ai/$B" -o /tmp/b.js
-for t in gated-images shared-storage GET_IMAGES_BY_IDS APP_STORAGE_ "Custom Generators"; do
-  printf '%-22s %s\n' "$t" "$(command grep -oF -- "$t" /tmp/b.js | wc -l)"   # 1 9 0 0 4
-done
+# 3. the first auth:"oauth" app is live
+civitai app status oauth-probe | grep -E "^Version|^Status|^Deploy state"   # 0.1.3 / approved / live
+curl -s -o /dev/null -w '%{http_code}\n' https://oauth-probe.civit.ai/      # 200
 
-# 4. the app-blocks surface is moderator-only (why signed-out browsing cannot be probed)
-curl -s -o /dev/null -w '%{http_code}\n' https://civitai.com/apps/run/app-requests    # 404
+# 4. 🔴 the publish that makes the subpath INSTALLABLE has not happened yet
+npm view @civitai/sdk version                                   # 0.6.0 until starters#461 merges
+npm view @civitai/sdk@latest exports --json | grep -c safe-storage   # 0 until then
 
-# 5. the fleet has still not opted in (the absence that keeps the auth defects latent)
-for d in /home/zach/workspace/civit/civitai-app-{custom-generators,gen-matrix,sensei,model-benchmarking,playable-collections,requests} \
-         /home/zach/workspace/civit/civitai-block-generate-from-model; do
-  git -C "$d" show origin/main:block.manifest.json 2>/dev/null | grep -c '"auth"'      # 0 for all 7
-done
+# 5. the held PR — a gate that never ran is not a pass
+gh pr checks 1876 --repo innovation-upstream/devrc
 ```
