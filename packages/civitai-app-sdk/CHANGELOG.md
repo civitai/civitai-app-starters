@@ -1,5 +1,131 @@
 # @civitai/app-sdk
 
+## 0.51.2
+
+### Patch Changes
+
+- 203bcef: JSDoc corrections that ship to IDE hover, plus a restored drift guard.
+
+  Documentation only — no API, type or behaviour change. Verified by compiling
+  base and head with
+  `tsc --removeComments --sourceMap false --declarationMap false` and diffing the
+  emitted trees: identical, with a one-line code mutation confirmed to make that
+  comparison go red. `pnpm typecheck` exits 0.
+
+  (The two `false` flags are load-bearing. Without them the `.map` files differ —
+  `--removeComments` strips comments from the OUTPUT while the mappings still
+  encode ORIGINAL line numbers, which added JSDoc lines shift. No map ships:
+  `package.json`'s `files` carries `"!dist/**/*.map"`. Every emitted `.js` and
+  `.d.ts` is byte-identical either way.)
+
+  ⚠ Note for anyone re-running this: comparing the ORDINARY build output does not
+  work and an earlier draft of this note said it did. `tsconfig.json` sets no
+  `removeComments`, so `tsc` emits the JSDoc into both `.js` and `.d.ts` — which
+  is exactly how these corrections reach IDE hover in the first place, so the
+  artifacts differ by construction. The comment-stripping comparison is the one
+  that reproduces.
+
+  **(a) `BLOCK_SCOPE_PATTERN` said "the 12 values in {@link BLOCK_SCOPES}".** There
+  are 13, in the same file fifty lines above. The figure is **removed, not
+  corrected**: a count in prose is unguarded by every check in this repo, and this
+  vocabulary has both gained and lost members (`media:read:owned` and
+  `block:settings:*` were each declared in `BLOCK_SCOPES` and then removed). The
+  sentence now reads "exactly the values in `BLOCK_SCOPES`", which stays true
+  across any future change to the set.
+
+  **(b) The maturity docblocks conflated the DOMAIN ceiling with the VIEWER's.**
+  `maxBrowsingLevel`'s docblock called `isSfwCeiling(maxBrowsingLevel)` "the
+  canonical test" for surfacing mature affordances, eight lines above a warning
+  saying that field _cannot_ answer that question. The same conflation was in the
+  sibling `domain` docblock and in `ColorDomain`'s own — which matters, because
+  `ColorDomain` is the declared type of `domain`, so the wrong advice was one
+  hover away from the right one on the same line.
+
+  The `domain` and `ColorDomain` docblocks now carry the same recipe;
+  `maxBrowsingLevel`'s says what it can and cannot answer and points at
+  `{@link effectiveBrowsingLevel}`:
+
+  ```ts
+  const eff = effectiveBrowsingCeiling(
+    maxBrowsingLevel,
+    effectiveBrowsingLevel
+  );
+  // 🔴 OPPOSITE POLARITIES — do not copy these two lines as a uniform pair.
+  if (isSfwCeiling(eff)) hideMatureAffordances(); // true = SFW  ⇒ HIDE
+  if (isLevelAllowed(BrowsingLevel.R, eff)) showR(); // true = allowed ⇒ SHOW
+  ```
+
+  Two things worth knowing if you gate on these:
+
+  - `effectiveBrowsingCeiling` returns a **bitmask, not a boolean**. An SFW
+    ceiling is `3`, which is truthy — branching on it directly shows mature
+    content to a viewer who may not see it. It needs one of the two predicates.
+  - Both predicates are **ceiling-generic**: they test whatever ceiling you pass.
+    The domain-ness is in the argument, never in the function. Their `@param`
+    docs previously described the parameter as the domain mask, which is how the
+    wrong call site looks right; they now say to pass the effective ceiling when
+    gating for a viewer.
+
+  ⚠ The fail-closed enumeration on both predicates covers missing / null /
+  non-finite ceilings. A **negative** ceiling is none of those and fails OPEN
+  (`isSfwCeiling(-1)` is `false`; `isLevelAllowed(XXX, -1)` is `true`), and
+  `effectiveBrowsingCeiling` guards a negative _viewer_ level but not a negative
+  _domain_ ceiling. That behaviour is unchanged here and is now stated rather than
+  implied; tightening it is a behaviour change and belongs in its own release.
+
+  **(c) A drift guard a refactor dropped is restored.**
+  `test/manifest/canonical-derivation.test.ts` again asserts that `BLOCK_SCOPES`
+  and the vendored canonical schema's `properties.scopes.items.enum` hold exactly
+  the same strings, failing if either side grows or shrinks, plus a duplicate
+  check.
+
+  `test/blocks/schema-parity.test.ts` carried this claim until `d41293d` (#352)
+  deleted that file, rewriting schema-parity as an Ajv-backed differential which
+  judges fixtures rather than constant sets. ⚠ Not byte-for-byte the same
+  assertion: the historic form compared two `Set`s, which structurally cannot see
+  a duplicate.
+
+  It earns its place independently of the docs: `BLOCK_SCOPES` is a live
+  enforcement surface in a second package — `civitai-blocks-react`'s
+  `src/internal/consent.ts` builds `isKnownBlockScope` from
+  `Object.values(BLOCK_SCOPES)` — while the server and `defineBlock` gate on the
+  schema enum. Divergence means a scope the server grants that blocks-react
+  rejects as unknown.
+
+- d0794eb: README: the `BLOCK_SCOPES` row claimed **15** block scope strings. There are
+  **13**, and the number is now gone rather than corrected.
+
+  Documentation only — no API, type or behaviour change. The README ships inside
+  the published tarball and reaches the npm package page and IDE hover, so a stale
+  hand-typed figure there is a defect a consumer reads.
+
+  The true value was derived from three independent authorities, which agree
+  exactly (same 13 strings, same set):
+
+  - `BLOCK_SCOPE_TO_OAUTH_BIT` in civitai/civitai
+    (`src/shared/constants/block-scope.constants.ts`), whose keys are the type
+    `BlockScopeString` — the server-side source of truth;
+  - this package's own `BLOCK_SCOPES` (`src/blocks/scopes.ts`);
+  - the vendored canonical schema at the `./schemas/app-block/v1.json` subpath,
+    whose `properties.scopes.items.enum` is what actually validates a manifest.
+
+  **No figure is quoted in its place, deliberately.** A count in README prose is
+  unguarded by every check in this repo — `pnpm typecheck:readme` typechecks
+  snippets, not assertions about the code — so it rots silently and is then read
+  as authoritative. This particular count has moved repeatedly (scopes were added
+  _and_ retired: `catalog:read`, `media:read:owned` and `block:settings:*` were all
+  declared and then removed, each leaving a NOTE in the server constant), which is
+  why the remedy is a claim that stays true across those changes. The row now
+  points the reader at `BLOCK_SCOPES` itself, which is the enumerable surface and
+  is drift-checked against the canonical schema by CI.
+
+  > Out of scope for a README change, and **fixed in this same release** — see the
+  > entry above: the JSDoc on `BLOCK_SCOPE_PATTERN` in
+  > `packages/civitai-app-sdk/src/blocks/scopes.ts` said "the 12 values in
+  > {@link BLOCK_SCOPES}", a third stale figure, in source, on a comment that ships
+  > to consumers via the emitted `.d.ts` and therefore reaches IDE hover too. It
+  > now reads "exactly the values in `BLOCK_SCOPES`".
+
 ## 0.51.1
 
 ### Patch Changes
@@ -176,10 +302,10 @@
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-          before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                   @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-          after    @civitai/theme       0.3.1                   — 1 copy
-                   @civitai/components  0.4.2                   — 1 copy
+            before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                     @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+            after    @civitai/theme       0.3.1                   — 1 copy
+                     @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
