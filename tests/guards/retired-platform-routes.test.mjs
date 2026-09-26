@@ -163,7 +163,10 @@ function collect(abs, out) {
     // tree today (zero symlinks under packages/), and a name test costs
     // nothing; a followed symlink loop would recurse unbounded.
     if (SKIP_DIRS.has(entry.name)) continue;
-    if (entry.isSymbolicLink()) continue;
+    // Only symlinked DIRECTORIES are skipped — they are the recursion hazard.
+    // Skipping symlinked FILES too lost real coverage: `components/demo/` is in
+    // that package's `files` array, so a symlinked doc there genuinely ships.
+    if (entry.isSymbolicLink() && entry.isDirectory()) continue;
     collect(join(abs, entry.name), out);
   }
 }
@@ -197,7 +200,11 @@ function shippedDocs(pkgDir) {
   // hardcoded list it replaced used to catch: a package listing only
   // `["dist"]` still ships its README to every consumer, and `shippedDocs`
   // returned [] for it. Union the derived set with npm's implicit one.
-  collect(join(pkgDir, 'README.md'), out);
+  // npm's rule is case- and extension-insensitive ("README & LICENSE can have
+  // any case and extension"), so match rather than hardcode `README.md`.
+  for (const name of readdirSync(pkgDir)) {
+    if (/^readme(\.|$)/i.test(name)) collect(join(pkgDir, name), out);
+  }
   for (const entry of files) {
     if (entry.startsWith('!')) continue; // a negation, not a payload
     // Normalise before the prefix test: `./dist` and `/dist` are legal `files`
@@ -242,7 +249,11 @@ function repoDocFiles() {
       return;
     }
     for (const entry of readdirSync(abs, { withFileTypes: true })) {
-      if (entry.isDirectory() && SKIP_DIRS.has(entry.name)) continue;
+      // Same ordering as `collect`: name FIRST, because `isDirectory()` is
+      // false for a symlink-to-directory. An earlier round fixed this in
+      // `collect` and left the identical predicate here.
+      if (SKIP_DIRS.has(entry.name)) continue;
+      if (entry.isDirectory() && entry.isSymbolicLink()) continue;
       walk(join(abs, entry.name));
     }
   };
@@ -267,7 +278,10 @@ const REPO_DOC_FILES = repoDocFiles();
 const SCANNED = [...new Set([...PACKAGE_SRC_FILES, ...SHIPPED_DOC_FILES, ...REPO_DOC_FILES])];
 
 const HITS = [];
+/** Every file the HITS loop actually READ — see the binding assertion below. */
+const READ = new Set();
 for (const file of SCANNED) {
+  READ.add(file);
   const lines = readFileSync(file, 'utf8').split('\n');
   lines.forEach((line, i) => {
     for (const [route, destination] of Object.entries(RETIRED_ROUTES)) {
@@ -351,16 +365,33 @@ test('the scan actually read the published packages (positive control)', () => {
   // BREAKING.md went unreported. So pin the RELATIONSHIP, not the components:
   // everything discovered must actually be in the scanned set.
   const scannedSet = new Set(SCANNED);
-  const missed = [...SHIPPED_DOC_FILES, ...REPO_DOC_FILES].filter((f) => !scannedSet.has(f));
+  const missed = [...PACKAGE_SRC_FILES, ...SHIPPED_DOC_FILES, ...REPO_DOC_FILES].filter(
+    (f) => !scannedSet.has(f),
+  );
   assert.deepEqual(
     missed.map((f) => relative(REPO_ROOT, f)),
     [],
     'these files were DISCOVERED but are not in SCANNED — the floors above are' +
       ' measuring a computation the scan does not use',
   );
-  // Prove the shipped-doc path reaches a NON-README file: the hardcoded list it
-  // replaced missed exactly those, so a regression to it would pass every
-  // count-based floor above.
+
+  // 🔴 AND THE SECOND HOP: being in `SCANNED` is not being READ. The assertion
+  // above pins discovery→SCANNED; the HITS loop is an independent statement, so
+  // pointing it at a different array would relocate the very defect this
+  // assertion exists to close, one step downstream.
+  const unread = SCANNED.filter((f) => !READ.has(f));
+  assert.deepEqual(
+    unread.map((f) => relative(REPO_ROOT, f)),
+    [],
+    'these files are in SCANNED but the scan never read them',
+  );
+  // Name WHICH non-README file was lost. The count floor above already catches
+  // a regression to the old hardcoded ['README.md','MARKUP.md'] list -- measured,
+  // it fails at 7 < 9 -- so these two do not exist because the count is blind.
+  // They exist so the failure says which surface went missing instead of only
+  // that the total moved. (An earlier comment here claimed the count floor would
+  // pass such a regression; that was false, and the correction was made in a
+  // commit message while this sentence stayed in the tree.)
   assert.ok(
     SHIPPED_DOC_FILES.some((f) => f.endsWith('BREAKING.md')),
     'no BREAKING.md among the shipped docs — the files-array lookup has regressed to README-only',
@@ -371,12 +402,22 @@ test('the scan actually read the published packages (positive control)', () => {
   );
   // Prove the files were READ, not merely listed: the entry point of the
   // package this guard was written for must be present and non-empty.
-  const settingsHook = SCANNED.find((f) => f.endsWith('src/hooks/useBlockSettings.ts'));
-  assert.ok(settingsHook, 'useBlockSettings.ts was not scanned — is the walk skipping src/hooks?');
-  assert.ok(
-    readFileSync(settingsHook, 'utf8').includes('useBlockContext'),
-    'useBlockSettings.ts read as empty or unexpected content',
-  );
+  // 🔴 ALL THREE ORIGINAL SITES, not just one. A count floor cannot see a
+  // PARTIAL src loss: measured, adding 'ui' to SKIP_DIRS dropped
+  // `src/ui/SettingsForm.tsx` — one of the three sites this guard was written
+  // for — and the suite stayed 3/3 green.
+  for (const [suffix, marker] of [
+    ['packages/civitai-blocks-react/src/hooks/useBlockSettings.ts', 'useBlockContext'],
+    ['packages/civitai-blocks-react/src/ui/SettingsForm.tsx', 'ManifestSettings'],
+    ['packages/civitai-blocks-react/README.md', 'useBlockSettings'],
+  ]) {
+    const hit = SCANNED.find((f) => f.endsWith(suffix));
+    assert.ok(hit, `${suffix} was not scanned — a site this guard exists for has left the corpus`);
+    assert.ok(
+      readFileSync(hit, 'utf8').includes(marker),
+      `${suffix} read as empty or unexpected content`,
+    );
+  }
 });
 
 test('no published package names a retired /apps/* route', () => {
