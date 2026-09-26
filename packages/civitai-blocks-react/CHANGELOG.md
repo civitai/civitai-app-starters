@@ -1,5 +1,104 @@
 # @civitai/blocks-react
 
+## 0.58.1
+
+### Patch Changes
+
+- e200fb9: The documented settings write path pointed at `/apps/installed`, a route that
+  301s away. Three shipped sites said so; none of them says it now.
+
+  Documentation only — no API, type or behaviour change. Two of the three are
+  JSDoc under `src/`, so they reach **IDE hover for every consumer** through the
+  emitted `.d.ts`. That is worse than a stale docs page: a reader never navigates
+  to it, it arrives unbidden at the call site.
+
+  The sites, enumerated rather than sampled — `/apps/installed` occurred exactly
+  three times in shipped code and prose before this change, all in this package,
+  and occurs **zero** times there now. (It still appears in text _about_ the
+  retraction — this changeset, and the guard that enforces it — both of which sit
+  outside the guard's corpus. Inside the corpus the guard cannot tell a live claim
+  from a quoted retraction, and deliberately fails on either; its header says so):
+
+  - `src/hooks/useBlockSettings.ts` — _"settings are written on the platform
+    `/apps/installed` page"_.
+  - `src/ui/SettingsForm.tsx` — a four-item _"Designed to be used from"_ list.
+  - `README.md` — the `useBlockSettings()` section, repeating the hook's docblock.
+
+  **What is actually true**, verified against civitai/civitai at `origin/main`:
+
+  - `/apps/installed` is retired. `next.config.mjs` 301s it to `/apps/activity`,
+    and `src/__tests__/pages/apps-activity-redirect.test.ts` pins that redirect.
+    There is no `src/pages/apps/installed.tsx`.
+  - Settings are written by civitai's own app settings panel,
+    `src/components/Apps/AppSettingsModal.tsx`, through
+    `trpc.blocks.upsertSubscription`.
+  - That panel builds its form from the same manifest `settings` declaration but
+    with its **own widgets**. It does not render this package's `SettingsForm`:
+    the only occurrence of that name in civitai's tree is a comment in
+    `src/server/schema/blocks/manifest-settings.meta.schema.ts`. The control for
+    that zero is that civitai _does_ import `@civitai/blocks-react` elsewhere
+    (e.g. `src/components/AppBlocks/IframeHost.tsx`), so the absence is real and
+    not an artefact of the package being unused there.
+
+  `SettingsForm`'s four-item list was false in every item, not just in the URL:
+  `/apps/installed` is retired, item 2 depended on it, there is no
+  `/apps/[appBlockId]/settings` page, and no component under `src/components/Model`
+  renders a settings form. The list is replaced by what the component actually is
+  — a headless form for the block author's own UI, whose `onSubmit` persists
+  nothing by itself.
+
+  **No replacement URL is named, deliberately.** Naming one is how this text
+  rotted: the route was correct when written and became a 301 under it. The
+  corrected prose describes the mechanism and the owner instead, reusing the
+  wording an earlier fix to the unpublished example docs already settled on. The
+  one write a block _can_ perform itself — the viewer's checkpoint, via
+  `SET_USER_CHECKPOINT` — is now named, because that is the question a reader who
+  wanted a write path is really asking.
+
+  Guarded by `tests/guards/retired-platform-routes.test.mjs`, which fails if any
+  published package names a retired `/apps/*` route. It was mutation-tested
+  against each of the three pre-change sites individually: every one turns the
+  guard red with its own error, and the guard is green with all three fixed.
+
+- d0794eb: README: "The hooks" promised _"one minimal snippet each"_. It is not one each —
+  six of the hooks exported from the package root have no snippet in that section.
+  The claim is now true, and the gap is named.
+
+  Documentation only — no API, type or behaviour change. The README ships inside
+  the published tarball and reaches the npm package page and IDE hover, so a false
+  coverage claim there is a defect a consumer reads: it tells a reader that a hook
+  absent from the section does not exist.
+
+  Enumerated, not sampled. The package root (`src/index.ts`) value-exports **36**
+  identifiers matching `use[A-Z]…`; the section documents **30** of them with a
+  per-hook heading and a fenced snippet. Of the six remaining:
+
+  - `useGatedImages()`, `usePublishGenerationOutputs()`, `useSaveImage()`,
+    `useTip()` and `useTipAllowance()` have **no snippet anywhere** in the README.
+    `useSaveImage()` was not mentioned in it at all; the tip pair appeared only
+    inside the `/ui` `TipButton` row, and the other two only as prose asides in a
+    neighbouring hook's section.
+  - `useDirectLoad()` **does** have a snippet — under "Direct-load fallback",
+    not under "The hooks" — so the section is the thing that was incomplete, not
+    the documentation.
+
+  **No snippets were invented.** Writing five new examples is new content, not a
+  correction, and each identifier and field in them would need verifying against
+  the built declarations. Instead the headline claim is now scoped to the hooks
+  that have a section, the type declarations are named as the authoritative export
+  surface, and the six are listed with a pointer to where the tip pair's usage
+  rules already live. The `useDirectLoad()` line is a cross-reference, so that hook
+  is now reachable from the section a reader searches first.
+
+  The count itself is kept out of the prose: a coverage figure in a README is
+  unguarded by every check in this repo (`pnpm typecheck:readme` typechecks
+  snippets, not assertions about coverage), so it would rot on the next hook added.
+  The list of uncovered hooks can go stale too — but it goes stale _visibly_, and
+  it is greppable, which a number is not.
+
+- Updated dependencies [4aa3a9f]
+  - @civitai/components@0.8.0
+
 ## 0.58.0
 
 ### Minor Changes
@@ -612,10 +711,10 @@ URL('https://civitai.com/evil').origin` is `https://civitai.com`).
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                         @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                after    @civitai/theme       0.3.1                   — 1 copy
-                         @civitai/components  0.4.2                   — 1 copy
+                  before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                           @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                  after    @civitai/theme       0.3.1                   — 1 copy
+                           @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
