@@ -35,8 +35,10 @@ import { injectStyles } from '@civitai/components';
 injectStyles();
 ```
 
-React authors want [`@civitai/components-react`](../civitai-components-react),
-which renders exactly this markup.
+React authors usually want [`@civitai/components-react`](../civitai-components-react)
+instead — but note it binds the `<civitai-*>` custom elements, which style
+themselves in shadow DOM and so consume neither this sheet nor this markup
+contract. Use the sheet when you are writing the markup yourself.
 
 ### One component's CSS only — not available, on purpose
 

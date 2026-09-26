@@ -1,9 +1,16 @@
 # `@civitai/components` — markup contract
 
 These components are **framework-agnostic**: the styling is driven entirely by
-`data-*` attributes, so any HTML that follows the contract below renders
-identically to the React bindings in `@civitai/components-react`. This document
-is the source of truth for external HTML authors.
+`data-*` attributes, so any HTML that follows the contract below picks up the
+design system without a framework. This document is the source of truth for
+external HTML authors.
+
+This sheet is one of **two independent** ways to consume the design system. The
+other is the `<civitai-*>` custom elements — self-styling in shadow DOM, so they
+need neither this sheet nor this contract — which are what
+`@civitai/components-react` binds for React. Use this document when you write
+the markup yourself; use the elements when you want the behaviour (keyboard
+handling, ARIA wiring, state) supplied for you.
 
 ## Setup
 
@@ -193,9 +200,9 @@ the flexbox spec.)
 `data-nowrap="true"` keeps the row on one line. Use it only where a single line
 is load-bearing, and expect overflow at narrow widths.
 
-Both are plain attributes, so `@civitai/components-react`'s `<Group>` — which
-renders exactly this markup and sets no inline `flex-wrap` — inherits the
-default and accepts `data-nowrap` as a passed-through prop.
+Both are plain attributes, so they are set the same way whoever writes the
+markup. The `<civitai-group>` element exposes the same choice as a `nowrap`
+property (reflected to the `nowrap` attribute), rather than `data-nowrap`.
 
 ### Alert — `data-civitai-ui="alert"`
 - **`role="alert"`** (or `role="status"` for non-urgent).
@@ -267,9 +274,12 @@ keyboard (arrow keys, Home/End, Page Up/Down) + ARIA come from the native contro
 ### SegmentedControl / Tabs — `data-civitai-ui="segmented-control"`
 A row of segment buttons with **roving tabindex** + **arrow-key navigation**,
 in one of **two ARIA role modes**. The CSS is presentational; hand-HTML authors
-MUST implement the keyboard behavior themselves (the `@civitai/components-react`
-`SegmentedControl` binding does it for you — prefer it for interactive use, and
-pick the mode with its `mode` prop: `'toggle'` default, or `'tabs'`).
+MUST implement the keyboard behavior themselves. Prefer an element for
+interactive use, which supplies it: `<civitai-segmented-control>` for the
+panel-less value switch (`radiogroup`/`radio`), and `<civitai-tabs>` when
+segments actually switch panels. They are two elements rather than one with a
+mode, because a `tab`'s `aria-controls` is an IDREF and an IDREF cannot reach a
+panel in the light DOM from inside a shadow root.
 
 **Common to both modes:**
 - Wrapper **`<div data-civitai-ui="segmented-control">`** with an accessible name
@@ -382,9 +392,17 @@ A media container with a token placeholder background (visible while loading),
 
 ---
 
-## React parity
+## Relationship to the elements and to React
 
-`@civitai/components-react` renders exactly this markup. The
-`html-vs-react-parity` browser test asserts `getComputedStyle()` is identical
-between hand-written HTML (per this doc) and the React components, in both
-themes — so this contract is executable, not aspirational.
+`@civitai/components-react` binds the `<civitai-*>` custom elements, **not**
+this sheet: the elements style themselves in shadow DOM, so they do not consume
+the contract above and are not a second renderer of it. Consuming this document
+means writing the markup yourself, in whatever framework or none.
+
+Until `@civitai/components-react@0.8.0` that package also shipped a
+hand-written React layer which DID render this markup, and an
+`html-vs-react-parity` browser test asserted identical `getComputedStyle()`
+between the two arms. That layer was superseded by the elements and the test
+retired with it — there is no longer a second implementation to compare
+against. The contract here remains executable against the sheet itself: the
+`@civitai/components` suites assert the rules in `components.css` directly.

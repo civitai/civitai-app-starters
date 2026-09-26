@@ -89,8 +89,8 @@ civitai-app-starters/
 │   ├── civitai-sdk/             # @civitai/sdk: initialize() → site API, orchestrator, host UI
 │   ├── civitai-blocks-react/    # React hooks + iframe transport + the /ui pack
 │   ├── civitai-theme/           # --civitai-* design tokens (generated from Mantine)
-│   ├── civitai-components/      # attribute-driven component CSS
-│   └── civitai-components-react/# React bindings over that CSS
+│   ├── civitai-components/      # attribute-driven component CSS + the <civitai-*> elements
+│   └── civitai-components-react/# React bindings for those elements (generated)
 └── starters/
     ├── next-app/                # Next.js 15 App Router (SSR)
     ├── sveltekit-app/           # SvelteKit 2 (SSR)
