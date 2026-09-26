@@ -24,7 +24,7 @@ import { describe, expect, it } from 'vitest';
 
 import { defineBlock, loadCanonicalSchema } from '../../src/manifest/defineBlock.js';
 import { BlockManifestError } from '../../src/blocks/manifestError.js';
-import { BLOCK_TAGLINE_MAX_LENGTH } from '../../src/blocks/scopes.js';
+import { BLOCK_SCOPES, BLOCK_TAGLINE_MAX_LENGTH } from '../../src/blocks/scopes.js';
 import type { BlockManifest } from '../../src/blocks/types.js';
 import { canonicalAccepts, shippedManifests, valid, without } from './fixtures.js';
 
@@ -165,7 +165,7 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
 describe('lockstep with the vendored schema (INVARIANT GUARDS — green before this change too)', () => {
   const schema = loadCanonicalSchema() as {
     required: string[];
-    properties: Record<string, { maxLength?: number }>;
+    properties: Record<string, { maxLength?: number; items?: { enum?: string[] } }>;
   };
 
   it('BLOCK_TAGLINE_MAX_LENGTH equals the canonical tagline bound', () => {
@@ -176,5 +176,56 @@ describe('lockstep with the vendored schema (INVARIANT GUARDS — green before t
     expect([...schema.required].sort()).toEqual(
       ['blockId', 'contentRating', 'name', 'scopes', 'version'].sort(),
     );
+  });
+
+  /**
+   * 🔴 RE-INSTATES A GUARD A REFACTOR DROPPED, rather than adding a new one.
+   * `test/blocks/schema-parity.test.ts` carried exactly this assertion until
+   * `d41293d` (#352) — *"DRIFT GUARD: the schema's scope enum is EXACTLY the
+   * SDK's BLOCK_SCOPES set. If either side gains/loses a scope without the
+   * other, this fails"*. That commit rewrote schema-parity as an Ajv-backed
+   * DIFFERENTIAL, which judges FIXTURES rather than constant sets, so this
+   * assertion went as collateral. (`BLOCK_CATEGORIES` ↔ the schema's `category`
+   * enum died in the same move and is NOT restored here.)
+   *
+   * It is not redundant with the `describe('BLOCK_SCOPES')` in
+   * `test/blocks/scopes.test.ts`: that one compares `BLOCK_SCOPES` against
+   * `CANONICAL_BLOCK_SCOPES`, a literal transcription kept in that same file,
+   * so both halves move in a single edit. This crosses to the VENDORED SCHEMA —
+   * a separately re-vendored artifact, and the thing that actually validates a
+   * manifest. Measured: removing a non-shipped scope from the schema alone
+   * fails ONLY this assertion, with the other suite green.
+   *
+   * Why it has teeth beyond documentation: `BLOCK_SCOPES` is a live enforcement
+   * surface in a second package — `civitai-blocks-react`'s
+   * `src/internal/consent.ts` builds `isKnownBlockScope` from
+   * `Object.values(BLOCK_SCOPES)` — while the server and `defineBlock` gate on
+   * the schema enum. Divergence means a scope the server grants that
+   * blocks-react rejects as unknown.
+   */
+  it('the scopes enum holds exactly BLOCK_SCOPES — fails if either side grows OR shrinks', () => {
+    const schemaEnum = schema.properties.scopes?.items?.enum;
+    // Positive control. A moved JSON path yields `undefined`, which would throw
+    // an opaque TypeError below; this names the failure instead. It is a
+    // DIAGNOSTIC, not additional coverage — say so rather than counting it.
+    expect(Array.isArray(schemaEnum)).toBe(true);
+    expect(schemaEnum!.length).toBeGreaterThan(0);
+
+    // Sorted arrays, not Sets: the failure output then names the offending
+    // strings on both sides.
+    expect([...schemaEnum!].sort()).toEqual([...Object.values(BLOCK_SCOPES)].sort());
+  });
+
+  /**
+   * 🔴 NOT SUBSUMED BY THE ASSERTION ABOVE — an audit argued it was, and the
+   * argument is refutable by counter-example, so it is recorded here rather
+   * than re-litigated. Two `BLOCK_SCOPES` KEYS may legally share one VALUE
+   * (`{ X: 'a', Y: 'a' }`), so against a schema enum `['a','a','b']` the sorted
+   * arrays are EQUAL and the equality above passes while a duplicate exists.
+   * This is the only assertion that fires in that state.
+   */
+  it('the scopes enum has no duplicates', () => {
+    const schemaEnum = schema.properties.scopes?.items?.enum ?? [];
+    expect(new Set(schemaEnum).size).toBe(schemaEnum.length);
   });
 });

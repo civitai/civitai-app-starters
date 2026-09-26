@@ -23,21 +23,35 @@ this repo, and this vocabulary has both gained and lost members over time
 and then removed). The sentence now reads "exactly the values in
 `BLOCK_SCOPES`", which stays true across any future change to the set.
 
-Deleting a number only helps if something holds the relationship, so this adds
-that: `packages/civitai-app-sdk/test/blocks/scopes.test.ts` now asserts
-`BLOCK_SCOPES` and the **vendored canonical schema**'s
+Alongside it, `packages/civitai-app-sdk/test/manifest/canonical-derivation.test.ts`
+gains an assertion that `BLOCK_SCOPES` and the **vendored canonical schema**'s
 `properties.scopes.items.enum` hold exactly the same strings, failing if either
 side grows *or* shrinks.
 
-🔴 That is a different claim from the test beside it, which cannot substitute
-for it. The existing test compares `BLOCK_SCOPES` against
-`CANONICAL_BLOCK_SCOPES`, a literal transcription of the server constant
-maintained *in the same file* — both halves move in one edit. The new one
-compares against the vendored schema, a separate artifact re-vendored from the
-deployed `civitai.com/schemas/app-block/v1.json`, and the schema is what
-actually validates a manifest. Proven distinct by mutation: removing a scope
-from the schema alone fails **exactly one** test — the new one — while the
-existing test stays green.
+🔴 **That guard is NOT justified by the comment edit, and an earlier draft of
+this changeset said it was.** It re-instates a guard a refactor dropped:
+`test/blocks/schema-parity.test.ts` carried exactly this assertion — *"DRIFT
+GUARD: the schema's scope enum is EXACTLY the SDK's BLOCK_SCOPES set. If either
+side gains/loses a scope without the other, this fails"* — until `d41293d`
+(#352) rewrote that file as an Ajv-backed **differential**, which judges
+fixtures rather than constant sets, taking this assertion as collateral.
+(`BLOCK_CATEGORIES` ↔ the schema's `category` enum went the same way and is not
+restored here.)
+
+It earns its place independently of any docstring, because `BLOCK_SCOPES` is a
+live enforcement surface in a second package: `civitai-blocks-react`'s
+`src/internal/consent.ts` builds `isKnownBlockScope` from
+`Object.values(BLOCK_SCOPES)`, while the server and `defineBlock` gate on the
+schema enum. Divergence means a scope the server grants that blocks-react
+rejects as unknown.
+
+It is also a different claim from the `describe('BLOCK_SCOPES')` beside it,
+which compares against `CANONICAL_BLOCK_SCOPES` — a literal transcription kept
+in that same file, so both halves move in one edit. Proven distinct by
+mutation: removing a **non-shipped** scope from the schema alone fails exactly
+one test, the new one, with the other suite green. ⚠ "Exactly one" is a
+property of *which* scope is dropped, not of the guard — dropping
+`models:read:self`, which every fixture declares, reddens 68 tests as well.
 
 **(b) `src/blocks/messages.ts` — the `maxBrowsingLevel` docblock said
 `isSfwCeiling(maxBrowsingLevel)` "is the canonical test" for whether to surface
@@ -57,6 +71,14 @@ documented where it is defined.
 
 No new explanation was written for (b): the wording is taken from the sibling
 field's existing docblock, so this is the package agreeing with itself rather
-than a fresh characterisation. This docblock is the upstream source of a defect
-already corrected downstream in the developer docs, so leaving it would let a
-regenerate re-import the error.
+than a fresh characterisation.
+
+⚠ **An earlier draft justified (b) by saying a regenerate would re-import the
+error into the developer docs. That is FALSE and is retracted.** Measured:
+`gen-appblocks-messages.mjs` parses this package's `dist/blocks/messages.d.ts`
+with ts-morph for **payload shapes and directions only** — it has no
+`getJsDocs`/documentation-comment extraction — and neither *"canonical test"*
+nor *"property of the DOMAIN"* appears anywhere in the generated docs (control:
+`maxBrowsingLevel` itself IS found in `apps/`, so the search works). The
+docblock reaches consumers through **IDE hover on the emitted `.d.ts`**, which
+is reason enough; it does not reach the generated pages.
