@@ -15,7 +15,7 @@
  * on what the root implements. A module added at the root that imports only
  * things the barrel already reaches (`react`, `@lit/react`) passes this
  * untouched: MEASURED, by adding a second `dist` module importing only `react`
- * and re-exporting it from `dist/index.js` — 100 passed, 0 failed. It goes red
+ * and re-exporting it from `dist/index.js` — 0 failed, the whole suite green. It goes red
  * only when the root gains a specifier the barrel lacks (control: the same
  * mutant importing `clsx` fails this test by name). **A hand-written React
  * component re-added to the package is caught by `bindings.test.ts`'s

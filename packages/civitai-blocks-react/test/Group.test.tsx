@@ -74,8 +74,9 @@ describe('Group', () => {
    * components-react@0.8.0 deleted the hand-written React layer when the
    * custom elements superseded it, and the parity suite went with it. The bare
    * markup surface is now pinned by `civitai-components`'
-   * `presentational-parity.browser.test.ts` (`group/nowrap`), which compares
-   * `<civitai-group>` against the `data-nowrap` markup. Do not read "non-React
+   * `presentational-parity.browser.test.ts`, case **`group`** — NOT
+   * `group/nowrap`, which sets `nowrap` on both arms and so stays green
+   * through a deletion of the rule. See the note in `components.css`. Do not read "non-React
    * consumer" here as the whole population resolving against the stylesheet;
    * it is not.
    *

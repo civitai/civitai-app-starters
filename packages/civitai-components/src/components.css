@@ -356,8 +356,9 @@
      * fails. WATCHED, not inferred: deleting `flex-wrap: wrap` from this block
      * in `styles.generated.ts` (the string the browser test injects) fails
      * `light / group` and `dark / group` with
-     * `flexWrap: expected 'wrap' to be 'nowrap'` — 2 failed / 66 passed;
-     * restoring it returns 68/68.
+     * `flexWrap: expected 'wrap' to be 'nowrap'` — 2 failed / 108 passed;
+     * restoring it returns 110/110. (Re-measured after #477 added 21 Text
+     * parity cases; the kill is what matters, the totals move with the file.)
      *
      * 🔴 The three-surface distinction is load-bearing for the RELEASE, not just
      * the prose: "existing callers notice" is what `RELEASING.md` reserves

@@ -4,7 +4,17 @@
 ---
 
 Add `Text` — the typography primitive — on both tracks:
-`data-civitai-ui="text"` and `<civitai-text>`, plus the `<Text>` React binding.
+`data-civitai-ui="text"` and `<civitai-text>`.
+
+> 🔴 **Amended before release.** This originally read "plus the `<Text>` React
+> binding", and that binding does not ship. `@civitai/components-react@0.8.0`
+> — in this same release — deletes the hand-written React layer in favour of
+> the generated `@lit/react` element bindings, and `src/Text.tsx` went with the
+> other 21. The React entry point for this component is **`CivitaiText`**,
+> exported from the package root and generated from `<civitai-text>`, so
+> everything below about the element's API is what the React binding exposes.
+> The `@civitai/components-react` bump in the frontmatter is still correct; it
+> is earned by `CivitaiText` rather than by `<Text>`.
 
 **Why.** The pack had no text, heading or paragraph component on either track —
 the only text-named elements were the two form controls, `civitai-text-input`
@@ -121,4 +131,7 @@ relationship that holds is the converse (nearly every attribute slug also has an
 element). Text ships both to stay on the side of that pattern and of a published
 consumption mode.
 
-Additive: no existing component, attribute, token or export changes behaviour.
+Additive **within this component**: no existing component, attribute, token or
+export changes behaviour because of Text. (`@civitai/components-react@0.8.0` is
+separately breaking — see its own changeset — and that is what removes the
+`<Text>` spelling noted at the top.)

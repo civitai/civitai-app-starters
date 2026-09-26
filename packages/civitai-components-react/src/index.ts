@@ -10,7 +10,7 @@
  * ```tsx
  * import { CivitaiButton, CivitaiCard } from '@civitai/components-react';
  *
- * <CivitaiCard>
+ * <CivitaiCard withBorder padding="md">
  *   <CivitaiButton variant="filled" onClick={onGenerate}>Generate</CivitaiButton>
  * </CivitaiCard>
  * ```

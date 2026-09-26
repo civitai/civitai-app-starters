@@ -80,10 +80,12 @@ first — `civitai-toast-region` owns the live region the provider used to,
 and there is no standalone `civitai-radio` (use `<civitai-radio-group>`).
 
 **Why.** The package had been shipping two unrelated implementations behind two
-entry points: 21 hand-written components on `.` that re-rendered the
-`data-civitai-ui` contract and imported no element, and 46 generated bindings on
+entry points: 22 hand-written components on `.` that re-rendered the
+`data-civitai-ui` contract and imported no element, and 47 generated bindings on
 `./elements` that were genuinely downstream of the elements and had no consumer
-at all. Nothing compared the two, so they diverged where it was invisible —
+at all. (Both counts include `Text`/`civitai-text`, which landed on main from
+#477 while this was in flight and was merged in here — the hand-written half
+deleted with the other 21, the element kept.) Nothing compared the two, so they diverged where it was invisible —
 `<Alert onClose>` rendered a dismiss button on one surface and not the other
 with no type error, and `SegmentedControl` carried three different ARIA role
 models and two-of-six keyboard nav across the layers. Collapsing onto the
@@ -106,8 +108,9 @@ would have compared the elements to themselves. The axe a11y sweep was
 retargeted onto the elements and still covers every component family in light
 and dark. The opt-in visual-regression layer was **deleted, not retargeted** —
 an audit found it had never run anywhere: its `VITE_RUN_VR` opt-in was set in
-no workflow, script or `.env`, and no baselines were ever committed. It was 46
-of the package's 99 browser tests, all of them skips. The entry-point guard
+no workflow, script or `.env`, and no baselines were ever committed. It was 50
+of the package's 107 browser tests, all of them skips — the layer enumerated
+`A11Y_CASES` × 2 themes, and that array stood at 25 cases when it was deleted. The entry-point guard
 that required the `.` entry to reach no element module was rewritten rather
 than dropped: it now pins that the root and the presentational barrel reach
 the SAME external specifiers — set equality, so an extra at the root and a gap
