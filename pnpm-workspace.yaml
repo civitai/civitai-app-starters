@@ -2,10 +2,6 @@ packages:
   - 'packages/*'
   - 'starters/*'
   - 'starters/examples/*'
-  # apps/* are internal demo/harness pages (private, never published, no CI job).
-  # They consume the design-system packages via `workspace:^`, which only resolves
-  # once they are workspace members.
-  - 'apps/*'
 
 # Starters depend on the first-party packages via real npm ranges (^0.32.0)
 # so the tiged'd package.json works out of the box for external devs.

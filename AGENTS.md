@@ -91,19 +91,12 @@ civitai-app-starters/
 │   ├── civitai-theme/           # --civitai-* design tokens (generated from Mantine)
 │   ├── civitai-components/      # attribute-driven component CSS
 │   └── civitai-components-react/# React bindings over that CSS
-├── starters/
-│   ├── next-app/                # Next.js 15 App Router (SSR)
-│   ├── sveltekit-app/           # SvelteKit 2 (SSR)
-│   ├── react-pwa/               # Vite + React 19 (SPA + Hono BFF)
-│   └── svelte-pwa/              # Vite + Svelte 5 (SPA + Hono BFF)
-└── apps/
-    └── demo-jev/                # internal demo page over the design system
+└── starters/
+    ├── next-app/                # Next.js 15 App Router (SSR)
+    ├── sveltekit-app/           # SvelteKit 2 (SSR)
+    ├── react-pwa/               # Vite + React 19 (SPA + Hono BFF)
+    └── svelte-pwa/              # Vite + Svelte 5 (SPA + Hono BFF)
 ```
-
-`apps/*` are **internal** pages — private, never published, not tiged by anyone, and
-covered by no CI job. They are workspace members only so `workspace:^` on the
-first-party packages resolves; nothing outside the repo depends on them. A starter is
-the thing to copy; an app under `apps/` is not.
 
 ## Releasing a new SDK version
 
