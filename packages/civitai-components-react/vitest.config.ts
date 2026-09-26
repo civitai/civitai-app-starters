@@ -9,9 +9,10 @@ import { defineConfig } from 'vitest/config';
  *                 `*.browser.test.tsx`). Fast, no browser. `pnpm test` runs it.
  *   - `browser` = real headless Chromium (`*.browser.test.tsx`): the binding
  *                 mechanics (property assignment, refs, typed custom events,
- *                 shadow-root `change` retargeting) and an axe a11y sweep —
- *                 both need a real DOM that can upgrade a custom element,
- *                 which happy-dom cannot. `pnpm test:browser` runs it.
+ *                 shadow-root `change` retargeting) — which need a real DOM
+ *                 that can upgrade a custom element, as happy-dom cannot.
+ *                 `pnpm test:browser` runs it. The axe sweep that used to sit
+ *                 here moved to `@civitai/components`, which owns the elements.
  *                 Until 0.8.0 this also carried HTML-vs-React computed-style
  *                 parity and an opt-in visual-regression layer; the first went
  *                 with the hand-written React layer it compared, the second

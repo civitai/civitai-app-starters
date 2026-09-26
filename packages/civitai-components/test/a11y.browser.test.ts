@@ -77,8 +77,8 @@ const CASES: { id: string; markup: string; prepare?: (scope: HTMLElement) => voi
   },
   // Migrated from `@civitai/components-react`'s axe sweep when that arm was
   // retired as a duplicate of this one (components-react@0.8.0). These nine
-  // were the cases it covered that this suite did not; the other 15 were
-  // already here, testing the same elements through the same axe options.
+  // were the cases it covered that this suite did not; the other 14 of its 23
+  // were already here, testing the same elements through the same axe options.
   { id: 'card', markup: '<civitai-card padding="md" with-border>Card body</civitai-card>' },
   { id: 'stack', markup: '<civitai-stack gap="md"><span>one</span><span>two</span></civitai-stack>' },
   { id: 'group', markup: '<civitai-group gap="md"><span>one</span><span>two</span></civitai-group>' },

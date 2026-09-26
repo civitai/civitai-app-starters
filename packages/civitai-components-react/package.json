@@ -46,13 +46,11 @@
     "@lit/react": "^1.0.8"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.10.1",
     "@types/node": "^25.9.1",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.0",
     "@vitest/browser": "^4.1.11",
     "@vitest/browser-playwright": "^4.1.11",
-    "axe-core": "^4.10.2",
     "happy-dom": "^20.9.0",
     "playwright": "^1.50.0",
     "react": "^19.0.0",

@@ -2,11 +2,21 @@
  * Cascade layer order — declared ONCE, before any layered CSS is imported.
  *
  * Tailwind v4's Preflight reset lives in `@layer base` (it zeroes borders and
- * makes `button { background: transparent }`); the Civitai design system ships
+ * makes `button { background: transparent }`); `@civitai/components` ships
  * every rule in `@layer civitai.components`. Layer order is decided by
- * first-encounter, so listing `civitai.components` LAST guarantees the design
- * system wins over the reset — otherwise the components render silently
- * unstyled (transparent buttons, borderless cards). This is the @layer trap.
+ * first-encounter, so listing `civitai.components` LAST guarantees that sheet
+ * wins over the reset — otherwise those components render silently unstyled
+ * (transparent buttons, borderless cards). This is the @layer trap.
+ *
+ * ⚠ That hazard is currently UNREACHABLE here, and the entry is kept anyway.
+ * Since components-react@0.8.0 the design system arrives as the `<civitai-*>`
+ * custom elements, which style themselves in shadow DOM where Preflight cannot
+ * reach them, so layout.tsx no longer imports the component sheet and nothing
+ * declares into this layer. The order has to be declared BEFORE any layered
+ * CSS is imported, so it stays pre-declared: add `@civitai/components` (or
+ * `@civitai/blocks-react`) and the protection is already in place.
+ * `@civitai/theme/styles.css`, which layout.tsx DOES import, declares no
+ * `@layer` and is unaffected either way.
  *
  * `app` holds this starter's own global rules, kept below civitai.components.
  */

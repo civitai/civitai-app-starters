@@ -1,8 +1,10 @@
 import type { Metadata } from 'next';
 import './globals.css';
 // Civitai design-system TOKENS. Loaded in the layout so the custom properties
-// are present in the SSR HTML on first paint (order-locked by the @layer
-// declaration at the top of globals.css).
+// are present in the SSR HTML on first paint. No cascade-layer ordering is
+// involved: `@civitai/theme/styles.css` declares no `@layer` at all. The
+// `@layer` line in globals.css ordered the COMPONENT sheet, which this starter
+// no longer imports — see below.
 //
 // The component SHEET (`@civitai/components/styles.css`) is deliberately NOT
 // imported. This starter renders the design system through

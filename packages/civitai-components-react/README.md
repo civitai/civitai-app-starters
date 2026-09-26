@@ -74,8 +74,9 @@ headings in plain markup.
   package downstream (nothing but generated bindings under `src/`).
 - `pnpm --filter @civitai/components-react test:browser` — real headless
   Chromium: the binding mechanics (property assignment, refs, typed custom
-  events, shadow-root `change` retargeting) and an axe a11y sweep over every
-  component family in light and dark.
+  events, shadow-root `change` retargeting). The axe a11y sweep lives in
+  `@civitai/components`, which owns the elements — a sweep here would have
+  re-tested the same DOM, since these wrappers add no markup of their own.
 
 On NixOS, point Playwright at a system Chromium:
 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=$(nix-shell -p chromium --run 'command -v chromium') pnpm --filter @civitai/components-react test:browser`.

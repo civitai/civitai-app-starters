@@ -7,8 +7,9 @@
  * supersession: the custom elements are now the only implementation, so the
  * root necessarily reaches Lit and every element it re-exports.
  *
- * What replaces it is the invariant that actually holds now: the root reaches
- * nothing the presentational barrel does not.
+ * What replaces it is the invariant that actually holds now: the root and the
+ * presentational barrel reach the SAME external specifiers — asserted as set
+ * equality, so an extra at the root and a gap at the root both fail.
  *
  * 🔴 READ THE SCOPE — this is a check on the root's EXTERNAL SPECIFIER SET, not
  * on what the root implements. A module added at the root that imports only

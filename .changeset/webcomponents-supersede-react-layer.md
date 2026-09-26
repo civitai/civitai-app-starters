@@ -21,19 +21,24 @@ The import rename is the easy half:
 +import { CivitaiButton, CivitaiCard, CivitaiTextInput } from '@civitai/components-react';
 ```
 
-🔴 **Renaming alone is NOT enough, and the two worst cases are silent — they
-type-check and then quietly do the wrong thing.** The elements' prop names are
-not the React layer's prop names, and `@lit/react` passes anything it does not
+🔴 **Renaming alone is NOT enough, and THREE cases are silent — they type-check
+and then quietly do the wrong thing.** Two are prop NAMES: the elements' names
+are not the React layer's, and `@lit/react` passes anything it does not
 recognise straight to `React.createElement`, where an unknown name becomes a
-plain HTML attribute rather than an error.
+plain HTML attribute rather than an error. The third is a prop DEFAULT, which
+no rename can reveal — the names match and the rendering changes anyway.
 
 | Was (0.7.x) | Is (0.8.0) | What a bare rename does |
 |---|---|---|
 | `<Alert title="Saved">` | `<CivitaiAlert heading="Saved">` | 🔴 `title` is a **global** HTML attribute, so it becomes a mouse-hover tooltip and the bold heading silently disappears. No type error. |
 | `<Alert onClose={fn}>` | `<CivitaiAlert closable onClose={fn}>` | 🔴 `onClose` is in the event map so it type-checks and attaches, but the element renders no dismiss button without `closable`. Dead callback, no button, no error. |
 | `<Toast title=… onClose=…>` | `<CivitaiToast heading=… closable onClose=…>` | 🔴 identical to Alert, same two traps. |
-| `<Card withBorder padding="lg">` | unchanged | ✅ same names |
-| `<Button variant size loading fullWidth>` | unchanged | ✅ same names |
+| `<Card>` (no props) | `<CivitaiCard padding="md" with-border>` | 🔴 SAME NAMES, DIFFERENT DEFAULTS. The React `Card` defaulted `padding='md'` and `withBorder={true}`; `<civitai-card>` defaults to `padding=''` (**0px**) and no border. A bare `<CivitaiCard>` silently loses 16px of padding and its border. Pass them explicitly. `<Card withBorder padding="lg">` with both props stated is unaffected. |
+| `<Button variant size loading fullWidth>` | unchanged | ✅ same names AND same defaults |
+
+`Card` is the only default that moved. Badge, Loader, Slider, RadioGroup,
+SegmentedControl, Image, Stack, Group and Button all carry element constructor
+defaults identical to the React ones they replace.
 
 Everything else:
 
@@ -57,8 +62,15 @@ Everything else:
   **values only**, and the bindings derive their props from the element class
   rather than declaring named interfaces. To name one, go through the
   component: `React.ComponentProps<typeof CivitaiButton>`. Element-level unions
-  (`BadgeVariant`, `LoaderSize`, …) still have named exports on
-  `@civitai/components` itself — import them from there.
+  — `BadgeVariant`, `LoaderSize`, `ButtonVariant`, `ButtonSize`, `CardPadding`
+  and friends — do still have named exports, but on the **per-element
+  subpath**, NOT on the `@civitai/components` root, which exports only
+  `componentsCss`, `COMPONENT_NAMES`, `ComponentName` and `injectStyles`:
+
+  ```ts
+  import type { BadgeVariant } from '@civitai/components/civitai-badge';
+  import type { ButtonVariant, ButtonSize } from '@civitai/components/civitai-button';
+  ```
 
 Not a rename at all: if you were using `TabPanel`, `Toast`/`ToastProvider`/
 `useToast`, `Tooltip`, `Radio` or `Image`, read the element's own contract
