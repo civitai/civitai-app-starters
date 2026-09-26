@@ -140,6 +140,19 @@ function publishedPackageDirs() {
 const SCANNED_EXTENSIONS = new Set(['.ts', '.tsx', '.md', '.html']);
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'test', '__tests__', 'coverage']);
 
+/**
+ * Does this path RESOLVE to a directory? `statSync` follows symlinks, which is
+ * the whole point — see the symlink note in `collect`. An unresolvable link is
+ * treated as a directory so it is skipped rather than walked.
+ */
+function isDirectoryTarget(abs) {
+  try {
+    return statSync(abs).isDirectory();
+  } catch {
+    return true;
+  }
+}
+
 /** Collect scannable files under `abs`, which may be a file or a directory. */
 function collect(abs, out) {
   let stat;
@@ -164,9 +177,17 @@ function collect(abs, out) {
     // nothing; a followed symlink loop would recurse unbounded.
     if (SKIP_DIRS.has(entry.name)) continue;
     // Only symlinked DIRECTORIES are skipped — they are the recursion hazard.
-    // Skipping symlinked FILES too lost real coverage: `components/demo/` is in
-    // that package's `files` array, so a symlinked doc there genuinely ships.
-    if (entry.isSymbolicLink() && entry.isDirectory()) continue;
+    // Symlinked FILES stay in the corpus: `components/demo/` is in that
+    // package's `files` array, so a symlinked doc there genuinely ships.
+    //
+    // 🔴 RESOLVE THE TARGET; DO NOT ASK THE Dirent. A `Dirent` from
+    // `readdirSync` has lstat semantics, so for a symlink-to-directory
+    // `isSymbolicLink()` is true and `isDirectory()` is FALSE — the conjunction
+    // `isSymbolicLink() && isDirectory()` is UNSATISFIABLE. An earlier draft
+    // wrote exactly that, three lines under a comment stating the very fact
+    // that makes it dead, and thereby removed a working symlink guard while
+    // claiming to narrow it.
+    if (entry.isSymbolicLink() && isDirectoryTarget(join(abs, entry.name))) continue;
     collect(join(abs, entry.name), out);
   }
 }
@@ -253,7 +274,7 @@ function repoDocFiles() {
       // false for a symlink-to-directory. An earlier round fixed this in
       // `collect` and left the identical predicate here.
       if (SKIP_DIRS.has(entry.name)) continue;
-      if (entry.isDirectory() && entry.isSymbolicLink()) continue;
+      if (entry.isSymbolicLink() && isDirectoryTarget(join(abs, entry.name))) continue;
       walk(join(abs, entry.name));
     }
   };
@@ -278,10 +299,21 @@ const REPO_DOC_FILES = repoDocFiles();
 const SCANNED = [...new Set([...PACKAGE_SRC_FILES, ...SHIPPED_DOC_FILES, ...REPO_DOC_FILES])];
 
 const HITS = [];
-/** Every file the HITS loop actually READ — see the binding assertion below. */
-const READ = new Set();
+/**
+ * Every file whose lines were actually MATCHED against `RETIRED_ROUTES`.
+ *
+ * 🔴 RECORDED AT THE END OF THE BODY, WHICH IS THE ONLY PLACE THAT MEANS WHAT
+ * THE NAME SAYS. Two earlier drafts got this wrong in the same direction: the
+ * first added it as the loop's FIRST statement (recording enumeration, so a
+ * skip below it was invisible), and the second moved it just below the
+ * `readFileSync` — which fixes nothing, because a skip inserted after it is
+ * still after it. Wherever this sits, everything BELOW it is unguarded; only
+ * the last position leaves nothing below. Measured both times: a `continue`
+ * skipping every `.md`/`.html` — most of the corpus, including one of the three
+ * sites this guard exists for — left the suite 3/3 green.
+ */
+const MATCHED = new Set();
 for (const file of SCANNED) {
-  READ.add(file);
   const lines = readFileSync(file, 'utf8').split('\n');
   lines.forEach((line, i) => {
     for (const [route, destination] of Object.entries(RETIRED_ROUTES)) {
@@ -296,6 +328,7 @@ for (const file of SCANNED) {
       }
     }
   });
+  MATCHED.add(file);
 }
 
 test('the matcher detects a retired route, and only as a whole segment (negative control)', () => {
@@ -379,11 +412,11 @@ test('the scan actually read the published packages (positive control)', () => {
   // above pins discovery→SCANNED; the HITS loop is an independent statement, so
   // pointing it at a different array would relocate the very defect this
   // assertion exists to close, one step downstream.
-  const unread = SCANNED.filter((f) => !READ.has(f));
+  const unmatched = SCANNED.filter((f) => !MATCHED.has(f));
   assert.deepEqual(
-    unread.map((f) => relative(REPO_ROOT, f)),
+    unmatched.map((f) => relative(REPO_ROOT, f)),
     [],
-    'these files are in SCANNED but the scan never read them',
+    'these files are in SCANNED but the scan never matched them against the route list',
   );
   // Name WHICH non-README file was lost. The count floor above already catches
   // a regression to the old hardcoded ['README.md','MARKUP.md'] list -- measured,
