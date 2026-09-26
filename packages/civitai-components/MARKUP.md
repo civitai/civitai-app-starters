@@ -387,8 +387,9 @@ keyboard (arrow keys, Home/End, Page Up/Down) + ARIA come from the native contro
   to the error token). Disabled is the native input state. When you render a
   formatted value read-out (e.g. `20%`, `Large`), also set **`aria-valuetext`**
   on the input to that same string so screen readers announce it instead of the
-  raw `aria-valuenow` (the React binding sets this automatically from a
-  string/number `valueLabel`).
+  raw `aria-valuenow`. (`<civitai-slider>` does this for you when `show-value`
+  is set; the deleted React `<Slider>`'s `valueLabel` prop has no element
+  equivalent.)
 
 ```html
 <div data-civitai-ui="slider">
@@ -454,9 +455,11 @@ panel in the light DOM from inside a shadow root.
 
 ### Toast — `data-civitai-ui="toast-region"` + `data-civitai-ui="toast"`
 An `aria-live` notification host (`toast-region`) plus the individual `toast`
-card. The React binding (`ToastProvider` + `useToast()`) owns the queue,
-auto-dismiss timers and portal; hand-HTML authors render into the region and add
-each toast so the live region announces it.
+card. `<civitai-toast-region>` owns the queue and auto-dismiss timers — call
+its `show(options)` method, which enqueues a toast and returns its id. (Until
+`@civitai/components-react@0.9.0` a React `ToastProvider` + `useToast()` pair
+did this; both were deleted with the hand-written layer.) Hand-HTML authors
+render into the region and add each toast so the live region announces it.
 - Host: **`<div data-civitai-ui="toast-region" role="region" aria-label="Notifications" aria-live="polite">`**
   (fixed bottom-right stack). Use `aria-live="assertive"` for urgent errors.
 - Toast: **`<div data-civitai-ui="toast" role="status">`** (or `role="alert"` for
@@ -481,15 +484,15 @@ each toast so the live region announces it.
 
 ### Tooltip — `data-civitai-ui="tooltip"`
 A hover/focus tooltip: a positioned `role="tooltip"` bubble revealed when the
-wrapper is hovered or contains focus. The React binding also wires the trigger's
-`aria-describedby` to the bubble + Escape-to-dismiss.
+wrapper is hovered or contains focus. `<civitai-tooltip>` wires the trigger's
+`aria-describedby` to the bubble and Escape-to-dismiss for you.
 - Wrapper **`<span data-civitai-ui="tooltip">`** containing, in order:
   - the **trigger** element (button/link/etc.), with **`aria-describedby="TIP_ID"`**.
   - **`<span data-civitai-ui-tooltip-bubble role="tooltip" id="TIP_ID">`** — the
     bubble. Revealed on `:hover`/`:focus-within`, or force-open with
     `data-open="true"`. **`data-dismissed="true"` force-HIDES it** — it overrides
     the hover/focus reveal, so Escape-to-dismiss works even while the pointer
-    still hovers / focus is still within (the React binding sets/clears this).
+    still hovers / focus is still within (`<civitai-tooltip>` sets/clears this).
 - A11y: the trigger must be focusable so keyboard users can reveal the tooltip;
   keep the tooltip text short (it is supplementary, not the accessible name).
 
@@ -502,7 +505,7 @@ wrapper is hovered or contains focus. The React binding also wires the trigger's
 
 ### Image — `data-civitai-ui="image"`
 A media container with a token placeholder background (visible while loading),
-`object-fit` control, and a broken-image fallback. The React binding wires
+`object-fit` control, and a broken-image fallback. `<civitai-image>` wires
 `onLoad`/`onError` to `data-status`; hand-HTML authors set it themselves.
 - Wrapper **`<div data-civitai-ui="image">`** (size it with `width`/`height`/
   `aspect-ratio` inline or via your own class). `data-status`: `loading` ·

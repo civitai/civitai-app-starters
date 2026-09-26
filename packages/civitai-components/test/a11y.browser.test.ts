@@ -91,25 +91,33 @@ const CASES: { id: string; markup: string; prepare?: (scope: HTMLElement) => voi
       ];
     },
   },
-  // Added when `@civitai/components-react`'s axe sweep was retired as a
-  // duplicate of this one (components-react@0.9.0). Most of that arm's cases
-  // were ALREADY here, testing the same elements through the same axe options.
-  // Of the ones that were not, every block below except `alert/closable` is a
-  // migration of one; `alert/closable` is NET-NEW, the retired arm's only
-  // alert case having been a non-closable titled one.
+  // ---- MIGRATED BLOCK: `card` .. `radio-group/invalid` -------------------
+  // Everything from here to `radio-group/invalid` came over when
+  // `@civitai/components-react`'s axe sweep was retired as a duplicate of this
+  // one (components-react@0.9.0). Cases BELOW that boundary — from `collapse`
+  // onward — predate the retirement and were never on that arm.
+  //
+  // Most of the arm's cases were ALREADY here, testing the same elements
+  // through the same axe options. Of this block, every case is a migration of
+  // one of the rest except `alert/closable`, which is NET-NEW: the arm's only
+  // alert case was a non-closable titled one.
   //
   // 🔴 EXACTLY ONE CASE DID NOT COME ACROSS and is not covered here: its
   // standalone `radio-default`. There is no `civitai-radio` element — the
   // radios live inside `<civitai-radio-group>`, which IS swept (`radio-group`,
   // `radio-group/invalid`). Recorded so the drop reads as deliberate.
   //
-  // 🔴 NO COUNT IS QUOTED ANYWHERE ABOVE, deliberately, and that is the third
-  // attempt. The first said "23 cases, 14 already here" — true when written,
-  // stale two commits later once #477 added two Text cases to the arm. The
-  // second rescaled it and lost `radio-default` out of the partition, which is
-  // the one member this comment exists to make visible. The arm no longer
-  // exists to re-count, nothing pins a number in a comment, and the only fact
-  // a reader needs is the LOSS — so it is named and the arithmetic is gone.
+  // 🔴 NO COUNT IS QUOTED, deliberately, and this comment has now been wrong
+  // four different ways — worth recording, because each fix caused the next.
+  // v0 said "nine … the other 15" (9+15=24, off by one). v1 and v2 said
+  // "23 cases, 14 already here" — correct, then stale once #477 added two Text
+  // cases to the arm. v3 rescaled to "eight were not", which was wrong (nine
+  // were) and lost `radio-default` out of the partition — the one member this
+  // comment exists to make visible. v4 dropped the counts entirely and thereby
+  // dropped the BOUNDARY too, so "every block below" silently annexed 26
+  // pre-existing cases. The arm no longer exists to re-count; the boundary is
+  // now named instead of implied, and the only fact a reader needs — the LOSS
+  // — is stated outright.
   { id: 'card', markup: '<civitai-card padding="md" with-border>Card body</civitai-card>' },
   { id: 'stack', markup: '<civitai-stack gap="md"><span>one</span><span>two</span></civitai-stack>' },
   { id: 'group', markup: '<civitai-group gap="md"><span>one</span><span>two</span></civitai-group>' },

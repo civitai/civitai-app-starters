@@ -254,8 +254,9 @@ to write themselves: one tab stop, arrows wrapping across enabled segments,
 Home/End, and selection following focus.
 
 `error` on a field also makes it **invalid**, so the form will not submit while
-the message shows — unlike the React binding, which draws the message but leaves
-`checkValidity()` true despite setting `aria-invalid`.
+the message shows — unlike the bare `data-civitai-ui` markup, where `error`
+draws the message but leaves `checkValidity()` true despite setting
+`aria-invalid`, because an attribute cannot call `setCustomValidity()`.
 
 ### Working on them
 
