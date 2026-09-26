@@ -59,7 +59,7 @@ export type BlockScope = (typeof BLOCK_SCOPES)[BlockScopeKey];
  *
  * NOTE: this regex is **not** the authoritative validity contract. The
  * canonical manifest schema (https://civitai.com/schemas/app-block/v1.json)
- * validates `scopes` by MEMBERSHIP in a fixed enum — i.e. the 12 values in
+ * validates `scopes` by MEMBERSHIP in a fixed enum — i.e. exactly the values in
  * {@link BLOCK_SCOPES}. `defineBlock` therefore gates on membership in
  * `BLOCK_SCOPES`; this pattern is kept only as a FORMAT HEURISTIC to give a
  * pointed error message (e.g. distinguishing a malformed/PascalCase scope from
