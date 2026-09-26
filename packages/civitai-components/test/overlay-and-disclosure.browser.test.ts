@@ -25,6 +25,8 @@ async function mount(markup: string): Promise<HTMLElement> {
 /** The dialog's native `close` event is queued as a task, not a microtask. */
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
+const EVENT_TIMEOUT_MS = 2000;
+
 /**
  * Await an event instead of a fixed number of task turns. Use this, not
  * {@link tick}, whenever the assertion is ABOUT an event: the native `close` is
@@ -35,10 +37,10 @@ const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0
  * as "the event never fired" when the truth is "the test measured too early".
  *
  * Rejects rather than hanging, so a real regression names itself instead of
- * arriving as a bare suite timeout.
+ * arriving as a bare suite timeout. Create it as late as possible and await it
+ * immediately: a throw between creation and `await` orphans the rejection,
+ * which vitest then attributes to whichever test is running 2 s later.
  */
-const EVENT_TIMEOUT_MS = 2000;
-
 function eventFired(target: EventTarget, type: string): Promise<Event> {
   return new Promise((resolve, reject) => {
     const onEvent = (event: Event): void => {
@@ -134,13 +136,25 @@ describe('<civitai-modal>', () => {
     // Registered BEFORE `eventFired`'s listener, so `closes` is already
     // incremented by the time the await below resolves.
     el.addEventListener('close', () => void (closes += 1));
-    const closed = eventFired(el, 'close');
 
-    el.shadowRoot!.querySelector<HTMLButtonElement>('[part="close"]')!.click();
+    // Resolve the button FIRST: nothing may throw between creating the promise
+    // and awaiting it, or the rejection is orphaned and lands 2 s later on an
+    // unrelated test. The `!` here is the only throw site, so it goes above.
+    const closeButton = el.shadowRoot!.querySelector<HTMLButtonElement>('[part="close"]')!;
+    const closed = eventFired(el, 'close');
+    closeButton.click();
     await closed;
+
     // The `once` half needs a budget in which a DUPLICATE could still arrive;
     // awaiting the event only pins the lower bound. This tick is now spent
     // entirely on that, instead of also having to cover the first event.
+    //
+    // ⚠ THAT BUDGET IS EXACTLY ONE TASK TURN — measured, not assumed. A second
+    // `close` dispatched synchronously, one `setTimeout(0)` later, or on the
+    // next frame is caught; one dispatched TWO nested timeouts later is NOT.
+    // "Strictly stronger than before" is a claim about the OLD form, which
+    // missed even the one-task-later case; it is not a claim of unbounded
+    // duplicate detection.
     await tick();
     expect(el.open).toBe(false);
     expect(dialogOf(el).open).toBe(false);
@@ -176,9 +190,12 @@ describe('<civitai-modal>', () => {
     // A real key press: a synthetic `cancel` has no default action, so
     // dispatching one proves nothing about what Escape actually does.
     const el = await open();
+    // Same race as the close-button test: `el.open` only flips once the native
+    // close TASK reaches `#onClose`, so a `tick()` races it rather than waiting
+    // for it. Await the event — the property is already final when it fires.
+    const closed = eventFired(el, 'close');
     await userEvent.keyboard('{Escape}');
-    await el.updateComplete;
-    await tick();
+    await closed;
     expect(el.open).toBe(false);
   });
 
