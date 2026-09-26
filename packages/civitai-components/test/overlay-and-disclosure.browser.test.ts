@@ -28,31 +28,6 @@ const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0
 const EVENT_TIMEOUT_MS = 2000;
 
 /**
- * {@link eventFired} only "names its own failure instead of arriving as a bare
- * suite timeout" while its reject beats the surrounding test timeout. Nothing
- * stated that relationship, and `vitest.config.ts` sets no `testTimeout`, so a
- * later `testTimeout: 1500` would silently turn every one of these back into
- * the bare timeout the helper exists to prevent.
- *
- * 🔴 TWO CORRECTIONS TO EARLIER ATTEMPTS AT THIS, both measured:
- *
- *  - The inherited default here is **15000 ms**, not 5000 — vitest resolves
- *    `testTimeout ??= browser.enabled ? 15e3 : 5e3`, and this file runs only in
- *    the `browser` project. An earlier draft quoted the node figure and then
- *    pinned a derived `EVENT_TIMEOUT_MS * 2.5 = 5000` believing it a no-op; it
- *    was a 3× cut to the budget of the only two tests here that make a
- *    Playwright round trip. Removed.
- *  - `ctx.task.timeout` IS readable in browser mode. An earlier commit claimed
- *    it was not — that was a bad probe (browser mode does not forward
- *    `console.log` to the terminal, so the value never printed), not a missing
- *    API. So the relationship gets a real assertion rather than a structural
- *    workaround, which also covers any future caller of the helper.
- */
-it('the event timeout leaves room inside the test timeout', (ctx) => {
-  expect(ctx.task.timeout).toBeGreaterThan(EVENT_TIMEOUT_MS * 2);
-});
-
-/**
  * Await an event instead of a fixed number of task turns. Use this, not
  * {@link tick}, whenever the assertion is ABOUT an event: the native `close` is
  * queued as a task, so a `tick()` races it rather than waiting for it.
@@ -89,6 +64,35 @@ afterEach(() => {
 describe('<civitai-modal>', () => {
   const dialogOf = (el: CivitaiModal): HTMLDialogElement =>
     el.shadowRoot!.querySelector('dialog')!;
+
+  /**
+   * {@link eventFired} only "names its own failure instead of arriving as a
+   * bare suite timeout" while its 2 s reject beats the surrounding test
+   * timeout. Nothing stated that relationship, and `vitest.config.ts` sets no
+   * `testTimeout`.
+   *
+   * 🔴 SCOPE, STATED EXACTLY, because an earlier draft over-claimed it: this
+   * catches a change to the GLOBAL `testTimeout` and to THIS describe's budget,
+   * because `ctx.task.timeout` resolves per-test and this assertion lives in
+   * the same describe as both `eventFired` callers. It does NOT catch a
+   * per-test override on an individual `it(...)`. The earlier version said it
+   * "covers any future caller" and sat at FILE top level — measured, a
+   * `describe('<civitai-modal>', { timeout: 1000 }, …)` left it reading 15000
+   * and passing green while the real budget was below the helper's own reject.
+   *
+   * 🔴 TWO CORRECTIONS TO EARLIER ATTEMPTS, both measured:
+   *  - The inherited default here is **15000 ms**, not 5000 — vitest resolves
+   *    `testTimeout ??= browser.enabled ? 15e3 : 5e3`, and this file runs only
+   *    in the `browser` project. An earlier draft quoted the node figure, then
+   *    pinned a derived `EVENT_TIMEOUT_MS * 2.5 = 5000` believing it a no-op;
+   *    against the real default that was a 3× cut. Removed.
+   *  - `ctx.task.timeout` IS readable in browser mode. An earlier commit said
+   *    it was not — that was a bad probe (browser mode does not forward
+   *    `console.log`), not a missing API.
+   */
+  it('the event timeout leaves room inside the test timeout', (ctx) => {
+    expect(ctx.task.timeout).toBeGreaterThan(EVENT_TIMEOUT_MS * 2);
+  });
 
   async function open(attrs = ''): Promise<CivitaiModal> {
     await mount(`<civitai-modal heading="Confirm" ${attrs}><p>Costs Buzz.</p></civitai-modal>`);
