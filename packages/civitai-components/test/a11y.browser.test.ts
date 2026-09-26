@@ -114,10 +114,12 @@ const CASES: { id: string; markup: string; prepare?: (scope: HTMLElement) => voi
   // cases to the arm. v3 rescaled to "eight were not", which was wrong (nine
   // were) and lost `radio-default` out of the partition — the one member this
   // comment exists to make visible. v4 dropped the counts entirely and thereby
-  // dropped the BOUNDARY too, so "every block below" silently annexed 26
+  // dropped the BOUNDARY too, so "every block below" silently annexed 28
   // pre-existing cases. The arm no longer exists to re-count; the boundary is
   // now named instead of implied, and the only fact a reader needs — the LOSS
-  // — is stated outright.
+  // — is stated outright. (Measured: 52 entries total — 23 above
+  // this block, 9 in it, 28 after it. The 28 was itself first written as 26;
+  // the boundary is what matters, and it is now named rather than counted.)
   { id: 'card', markup: '<civitai-card padding="md" with-border>Card body</civitai-card>' },
   { id: 'stack', markup: '<civitai-stack gap="md"><span>one</span><span>two</span></civitai-stack>' },
   { id: 'group', markup: '<civitai-group gap="md"><span>one</span><span>two</span></civitai-group>' },

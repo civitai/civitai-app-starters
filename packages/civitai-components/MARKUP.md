@@ -387,9 +387,12 @@ keyboard (arrow keys, Home/End, Page Up/Down) + ARIA come from the native contro
   to the error token). Disabled is the native input state. When you render a
   formatted value read-out (e.g. `20%`, `Large`), also set **`aria-valuetext`**
   on the input to that same string so screen readers announce it instead of the
-  raw `aria-valuenow`. (`<civitai-slider>` does this for you when `show-value`
-  is set; the deleted React `<Slider>`'s `valueLabel` prop has no element
-  equivalent.)
+  raw `aria-valuenow`. 🔴 Nothing does this for you on either track:
+  `<civitai-slider>`'s `show-value` renders a read-out of the RAW value and
+  sets no `aria-valuetext` (the attribute appears nowhere in this package's
+  element sources). The deleted React `<Slider>` DID set it, from its
+  `valueLabel` prop; that prop has no element equivalent, so a formatted
+  read-out now means setting `aria-valuetext` yourself.
 
 ```html
 <div data-civitai-ui="slider">
@@ -505,8 +508,11 @@ wrapper is hovered or contains focus. `<civitai-tooltip>` wires the trigger's
 
 ### Image — `data-civitai-ui="image"`
 A media container with a token placeholder background (visible while loading),
-`object-fit` control, and a broken-image fallback. `<civitai-image>` wires
-`onLoad`/`onError` to `data-status`; hand-HTML authors set it themselves.
+`object-fit` control, and a broken-image fallback. Hand-HTML authors set
+`data-status` themselves. (`<civitai-image>` tracks this from the native
+`load`/`error` events, but reflects it as **`status`**, not `data-status` —
+its CSS keys off `:host([status='loading'])`. The two tracks spell this one
+differently; see the components README.)
 - Wrapper **`<div data-civitai-ui="image">`** (size it with `width`/`height`/
   `aspect-ratio` inline or via your own class). `data-status`: `loading` ·
   `loaded` · `error` (omitted ⇒ the image shows).
