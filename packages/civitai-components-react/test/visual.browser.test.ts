@@ -10,19 +10,15 @@
  * core parity + axe suite so VR flakiness can never block them.
  */
 import { page } from 'vitest/browser';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { A11Y_CASES } from './fixtures.js';
-import { ensureStyles, mountReact } from './render.js';
+import { mountReact, settle } from './render.js';
 
 // Browser context has no `process`; read the opt-in via Vite's import.meta.env.
 // Enable with `VITE_RUN_VR=1 pnpm test:browser`.
 const RUN_VR = import.meta.env.VITE_RUN_VR === '1';
 const THEMES = ['light', 'dark'] as const;
-
-beforeAll(() => {
-  ensureStyles();
-});
 
 describe.skipIf(!RUN_VR)('visual regression', () => {
   for (const theme of THEMES) {
@@ -30,7 +26,10 @@ describe.skipIf(!RUN_VR)('visual regression', () => {
       it(`${c.id} — ${theme}`, async () => {
         const react = mountReact(theme, c.node);
         try {
-          const el = react.mount.querySelector(c.selector) ?? react.mount;
+          // Lit renders async — screenshot before it settles and the baseline
+          // is of an empty element.
+          await settle(react.mount);
+          const el = (c.selector ? react.mount.querySelector(c.selector) : null) ?? react.mount;
           await expect(page.elementLocator(el)).toMatchScreenshot(`${c.id}-${theme}`);
         } finally {
           react.cleanup();
