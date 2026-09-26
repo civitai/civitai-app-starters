@@ -112,6 +112,13 @@ layer down, and the same predicate decides all three:
   `ci-text-default` (the body colour). `color` inherits, so a utility on this
   element — or on any ancestor — reaches `<civitai-text>`'s shadow content as
   well; its inner element is `color: inherit`.
+  **Text sets `color: inherit`, not the text token**, on both tracks, and that is
+  what makes the ancestor half of the sentence above true: a *specified* value
+  beats an *inherited* one at any specificity, so a token on the element itself
+  would cancel every ancestor utility. The trade is that Text does not paint
+  `--civitai-color-text` on its own — on a page that sets no colour anywhere it
+  renders in the page's colour. Ask for the token explicitly with
+  `ci-text-default`, which is the same utility route as every other value.
 - **alignment** → `ci-text-start` / `ci-text-center` / `ci-text-end`.
   `text-align` inherits, same as above.
 - **truncation** → `ci-truncate`. (This one does *not* reach shadow content —

@@ -889,7 +889,13 @@
    */
   [data-civitai-ui='text'] {
     margin: 0;
-    color: var(--civitai-color-text);
+    /*
+     * 🔴 `inherit`, NOT `var(--civitai-color-text)` — see the NO COLOUR AXIS
+     * note at the end of this rule. A SPECIFIED value beats an INHERITED one
+     * whatever the specificity, so the token here silently cancelled the
+     * ancestor route this component's whole colour story rests on.
+     */
+    color: inherit;
     font-size: 14px;
     font-weight: 400;
     line-height: 1.5;
@@ -954,6 +960,19 @@
      * too — the inner element is `color: inherit` — which is exactly why a
      * `data-color` here would be a second copy of a predicate that already has
      * an implementation one layer down.
+     *
+     * 🔴 WHICH IS WHY THE BASE RULE SAYS `color: inherit` AND NOT THE TOKEN.
+     * The ancestor half of that sentence was measurably FALSE while this rule
+     * specified `var(--civitai-color-text)` — a *specified* value beats an
+     * *inherited* one however far up the utility sits, so `ci-muted` on a wrapper
+     * dimmed a plain `<p>` and left `<p data-civitai-ui="text">` undimmed.
+     * `ci-text-center` on that same wrapper always worked, because nothing here
+     * re-specifies `text-align`. `<civitai-text>`'s `:host` had the identical
+     * defect; both tracks changed together, as they must. The cost — Text no
+     * longer paints the token itself, so a page setting no colour anywhere gets
+     * the page's colour and must ask with `ci-text-default` — is measured in the
+     * element's own docblock and pinned in
+     * `test/civitai-text.browser.test.ts`.
      *
      * It is also the direction that stays open: this ships `minor` on a
      * published package, so adding the axis later is additive and taking it

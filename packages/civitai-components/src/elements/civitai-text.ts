@@ -34,20 +34,44 @@ const TAG = 'civitai-text';
 /**
  * One template per `as` value, because a Lit template's tag name cannot be
  * interpolated. The alternative is `lit/static-html.js`, which would widen the
- * dependency allowlist `test/entry-points.test.ts` pins and grow a bundle
- * already at 86% of its gzip budget, to save eight one-line templates. Each
- * arrow is its own template literal, so Lit caches them the way it expects.
+ * dependency allowlist `test/entry-points.test.ts` pins and grow a bundle that
+ * has a hard gzip budget the build FAILS over (`scripts/build-elements.ts` owns
+ * the figure and prints the current size on every build), to save eight one-line
+ * templates. Each arrow is its own template literal, so Lit caches them the way
+ * it expects.
+ *
+ * 🔴 NULL PROTOTYPE, AND IT IS LOAD-BEARING — NOT TIDINESS.
+ *
+ * `render()` looks this table up by an attribute value the consumer controls. On
+ * a plain object literal that lookup walks `Object.prototype`, so
+ * `as="toString"` resolves to a real function, the `?? TEMPLATES.p` fallback
+ * below never fires, and the component renders `[object Undefined]` with no
+ * `<slot>` — the consumer's copy is deleted from the page, which is the exact
+ * failure that fallback exists to prevent. `as="valueOf"` /
+ * `as="hasOwnProperty"` throw inside Lit's update instead, and `as="__proto__"`
+ * is not callable at all. Six keys, two failure modes, no error path.
+ *
+ * Fixed HERE, on the data structure, rather than at the call site with
+ * `Object.hasOwn`: the hazard is that this table has an inherited key space, so
+ * putting the check one layer up would leave the next lookup someone adds
+ * wrong in the same way. With no prototype there is nothing to inherit, `??`
+ * fires for every non-key, and the guard below means what it says.
+ * Pinned by the `Object.prototype key` cases in
+ * `test/civitai-text.browser.test.ts`.
  */
-const TEMPLATES: Record<TextAs, () => TemplateResult> = {
-  p: () => html`<p part="text"><slot></slot></p>`,
-  span: () => html`<span part="text"><slot></slot></span>`,
-  h1: () => html`<h1 part="text"><slot></slot></h1>`,
-  h2: () => html`<h2 part="text"><slot></slot></h2>`,
-  h3: () => html`<h3 part="text"><slot></slot></h3>`,
-  h4: () => html`<h4 part="text"><slot></slot></h4>`,
-  h5: () => html`<h5 part="text"><slot></slot></h5>`,
-  h6: () => html`<h6 part="text"><slot></slot></h6>`,
-};
+const TEMPLATES: Record<TextAs, () => TemplateResult> = Object.assign(
+  Object.create(null) as Record<TextAs, () => TemplateResult>,
+  {
+    p: () => html`<p part="text"><slot></slot></p>`,
+    span: () => html`<span part="text"><slot></slot></span>`,
+    h1: () => html`<h1 part="text"><slot></slot></h1>`,
+    h2: () => html`<h2 part="text"><slot></slot></h2>`,
+    h3: () => html`<h3 part="text"><slot></slot></h3>`,
+    h4: () => html`<h4 part="text"><slot></slot></h4>`,
+    h5: () => html`<h5 part="text"><slot></slot></h5>`,
+    h6: () => html`<h6 part="text"><slot></slot></h6>`,
+  }
+);
 
 /**
  * Text and headings — the typography primitive, and the mirror of the
@@ -70,6 +94,35 @@ const TEMPLATES: Record<TextAs, () => TemplateResult> = {
  * backtick, so a backticked stylesheet path reads as a tagged template and
  * every real literal after it is then parsed from the wrong offset. It caught
  * this file twice while it was being written.)
+ *
+ * 🔴 `color: inherit`, NOT THE TEXT TOKEN — ON BOTH TRACKS.
+ *
+ * The colour story for Text is that it has no colour axis because `ci-muted` /
+ * `ci-text-*` already reach it by inheritance, "on this element — or on any
+ * ancestor". The ancestor half was measurably FALSE: a *specified* value beats
+ * an *inherited* one at any specificity, so while `:host` said
+ * `color: var(--civitai-color-text)` inheritance stopped dead at the host. A
+ * utility ON the host worked; the same utility on a wrapper did not. `ci-muted`
+ * on a `<div>` dimmed a plain `<p>` and left both component tracks undimmed,
+ * while `ci-text-center` on that same `<div>` reached both — colour was the one
+ * axis this component re-specified, which is why the gap read as impossible.
+ * The mirror rule in src/components.css had the identical defect, so both tracks
+ * were wrong in the same way and both changed together.
+ *
+ * WHAT IT COSTS, measured rather than assumed: Text no longer paints
+ * `--civitai-color-text` itself, so with no colour set anywhere on the page it
+ * takes the page's colour. `@civitai/theme` ships tokens only — no `color` on
+ * `:root` or `body` — so that case lands on the UA default: in the light theme
+ * `rgb(34, 34, 34)` (the token) becomes `rgb(0, 0, 0)`. It still tracks
+ * light/dark, because the theme does set `color-scheme`. Every real consumption
+ * path in this repo already carries an ancestor colour — the package's own demo
+ * and playground set `body { color: var(--civitai-color-text) }`, and each
+ * starter sets one on its `[data-theme]` root — and those are exactly the pages
+ * where the ancestor used to be ignored. A page wanting the token explicitly
+ * writes `ci-text-default`, the same utility route as every other value.
+ *
+ * Both halves are pinned in `test/civitai-text.browser.test.ts`: four ancestor
+ * shapes on both tracks, and the fall-through case that states the cost.
  */
 export class CivitaiText extends CivitaiElement {
   static override styles = [
@@ -109,10 +162,14 @@ export class CivitaiText extends CivitaiElement {
        * utility on the host beats a :host([color]) rule under CSS scoping
        * anyway. A duplicate predicate here would be published API that could
        * not be withdrawn.
+       *
+       * WHICH IS WHY color BELOW IS inherit AND NOT THE TOKEN — reasoning and
+       * the cost are in the class docblock above, kept out of this literal
+       * because a comment inside a css template SHIPS in the CDN bundle.
        */
       :host {
         display: block;
-        color: var(--civitai-color-text);
+        color: inherit;
         font-size: 14px;
         font-weight: 400;
         line-height: 1.5;
@@ -173,7 +230,10 @@ export class CivitaiText extends CivitaiElement {
 
   override render(): TemplateResult {
     // An unknown `as` falls back to `p` rather than rendering nothing: a typo in
-    // one attribute must not silently delete the copy on the page.
+    // one attribute must not silently delete the copy on the page. This is only
+    // true because TEMPLATES has a NULL PROTOTYPE — see its docblock; on a plain
+    // object literal `as="toString"` resolves an inherited function here and the
+    // `??` never runs.
     return (TEMPLATES[this.as] ?? TEMPLATES.p)();
   }
 }

@@ -47,6 +47,12 @@ one markup migrates away from, toward these.)
   `-warning` / `-error` the intent enum, `ci-text-default` the body colour, and
   `color` **inherits** — so a utility on the element, or on any ancestor, reaches
   `<civitai-text>`'s shadow content too (its inner element is `color: inherit`).
+  Both tracks are therefore `color: inherit` and Text does **not** paint
+  `--civitai-color-text` itself: a *specified* value beats an *inherited* one at
+  any specificity, so a token on the element would silently cancel every ancestor
+  utility and make the sentence above false. The trade is that a bare Text on a
+  page which sets no colour anywhere takes the page's colour rather than the
+  token; `ci-text-default` asks for the token explicitly.
   This ships `minor` on two published packages, so adding the axis later stays
   additive while taking it away would not be.
 - **Margins are reset to `0`.** The UA's heading/paragraph margins are

@@ -98,11 +98,29 @@ One script tag, no build:
 ```
 
 `elements.js` is a self-contained bundle at the package root, because jsDelivr
-ignores `exports` — the same reason `styles.css` is copied there. The build
-fails if it exceeds **32 kB gzip**; it currently sits at about 28 kB. (Both
-figures were stale — `25 kB` / `about 19 kB` — from before the vocabulary grew;
-read them off a `pnpm --filter @civitai/components build` rather than from here,
-which is the only place they cannot rot.)
+ignores `exports` — the same reason `styles.css` is copied there.
+
+Each bundle has a hard gzip **budget** the build fails over: **32 kB** for
+`elements.js`, **38 kB** for `site-elements.js`. Those two numbers are the
+contract; they live in `scripts/build-elements.ts`, and
+`tests/guards/bundle-budget-claims.test.mjs` fails if this sentence and that file
+ever disagree.
+
+**What the bundles measure right now is deliberately not written down here.** That
+figure moves with every element added, this paragraph had already stated a stale
+one twice, and it has no reader who needs it — the budget is the promise, the
+current size is build output. The build prints it on every run, for both bundles,
+against the budget:
+
+```sh
+pnpm --filter @civitai/components build
+# [build-elements] dist/elements.js + elements.js — … kB raw, … kB gzip (…% of the 32 kB budget)
+```
+
+That output is the only place it cannot rot, so read it there. The guard named
+above also fails any doc or source comment in this package that puts an occupancy
+figure back into prose — a percentage of the budget, or a "currently sits at N
+kB" — because that is the shape that rotted, not the particular number.
 
 ### The civitai vocabulary
 

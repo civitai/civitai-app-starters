@@ -13,8 +13,11 @@ import axe from 'axe-core';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { injectStyles } from '../src/index.js';
+import { utilitiesCss } from '../src/utilities.generated.js';
 import type { CivitaiText, TextAs } from '../src/elements/civitai-text.js';
 import '../src/elements/register.js';
+
+import compatCss from '../dist/bootstrap-compat.css?raw';
 
 let scope: HTMLElement | undefined;
 
@@ -38,6 +41,26 @@ async function mount(markup: string): Promise<HTMLElement> {
 /** The element the host actually rendered, whatever it is. */
 const rendered = (host: CivitaiText): Element =>
   host.shadowRoot!.querySelector('[part="text"]')!;
+
+const UTILITY_MARKER = 'data-civitai-text-test-utilities';
+
+/**
+ * `injectStyles()` ships the TOKENS and `components.css` — and nothing else.
+ * `utilities.css` and `bootstrap-compat.css` are separate files a consumer links
+ * separately, so the colour cases below have to load them or `ci-muted` is an
+ * unknown class, every element in the fixture computes the same default colour,
+ * and the whole block passes while testing nothing. The positive control inside
+ * each case is what actually proves this ran.
+ */
+function injectUtilities(): void {
+  if (document.querySelector(`style[${UTILITY_MARKER}]`)) return;
+  for (const css of [utilitiesCss, compatCss]) {
+    const style = document.createElement('style');
+    style.setAttribute(UTILITY_MARKER, 'true');
+    style.textContent = css;
+    document.head.append(style);
+  }
+}
 
 afterEach(() => {
   scope?.remove();
@@ -70,6 +93,80 @@ describe('<civitai-text> semantics', () => {
     expect(rendered(host).tagName).toBe('P');
     expect(host.textContent?.trim()).toBe('Copy');
   });
+
+  /*
+   * 🔴 THE FALLBACK'S ACTUAL HOLE, AND WHY `marquee` ALONE DID NOT FIND IT.
+   *
+   * The guard is `TEMPLATES[this.as] ?? TEMPLATES.p`. `marquee` is not a key of
+   * `TEMPLATES` and not a key of anything up its prototype chain, so the lookup
+   * is `undefined`, `??` fires, and a `<p>` renders. Every key BELOW is a key of
+   * `Object.prototype`, so the lookup resolves to an inherited function, `??`
+   * never fires, and the component calls something that is not a template
+   * factory. That produced TWO distinct failures, neither of which a single
+   * fixture value can pin:
+   *
+   *   RENDERS THE WRONG THING — `toString` / `constructor` resolve to functions
+   *   that RETURN A VALUE, so Lit renders that value's string form
+   *   (`[object Undefined]`, `[object Object]`) as the shadow root's only
+   *   content. There is no `<slot>`, so the consumer's copy is not styled
+   *   wrongly, it is GONE from the rendered page.
+   *
+   *   THROWS INSIDE LIT'S UPDATE — `valueOf` / `hasOwnProperty` /
+   *   `isPrototypeOf` throw when called with `TEMPLATES` unbound from its
+   *   arguments, and `__proto__` is not callable at all. The update rejects and
+   *   the shadow root stays empty.
+   *
+   * `as` is a plain reflected attribute, so anything rendering a heading level
+   * from data — a CMS field, a JSON manifest, a URL segment — can reach these.
+   * The assertions below are the fallback's own stated purpose applied to them:
+   * a `<p>`, a `<slot>`, and the copy still on the page.
+   */
+  const PROTOTYPE_KEYS = [
+    'toString',
+    'constructor',
+    'valueOf',
+    'hasOwnProperty',
+    'isPrototypeOf',
+    '__proto__',
+  ] as const;
+
+  it.each(PROTOTYPE_KEYS)(
+    'as="%s" — an Object.prototype key — still falls back to <p> with the copy intact',
+    async (as) => {
+      let thrown: unknown;
+      await mount(`<civitai-text as="${as}">Copy</civitai-text>`).catch((error: unknown) => {
+        thrown = error;
+      });
+      const host = scope!.querySelector<CivitaiText>('civitai-text')!;
+      const el = host.shadowRoot!.querySelector('[part="text"]');
+
+      expect(
+        thrown,
+        `as="${as}" threw inside Lit's update. \`${as}\` is inherited from ` +
+          'Object.prototype, so the `?? TEMPLATES.p` fallback never fired and ' +
+          'render() called a non-template — an uncaught error on a page whose only ' +
+          'mistake was a bad attribute value'
+      ).toBeUndefined();
+      expect(
+        el?.tagName,
+        `as="${as}" did not fall back to <p>: the lookup resolved an inherited ` +
+          'Object.prototype member instead of missing, so the guard was bypassed'
+      ).toBe('P');
+      expect(
+        el?.querySelector('slot'),
+        `as="${as}" rendered no <slot>, which is the failure the fallback exists to ` +
+          "prevent: the consumer's copy is silently deleted from the page rather " +
+          'than merely styled wrongly'
+      ).not.toBeNull();
+      expect(
+        el?.textContent,
+        `as="${as}" put rendered content of its own inside [part="text"]; the ` +
+          "element must project the consumer's nodes, never stringify a template " +
+          'factory it resolved off the prototype chain'
+      ).toBe('');
+      expect(host.textContent?.trim()).toBe('Copy');
+    }
+  );
 
   it('slots its content instead of reading it, per the authoring rules', async () => {
     await mount('<civitai-text as="h2">Head <em>up</em></civitai-text>');
@@ -222,5 +319,139 @@ describe('<civitai-text> headings reach the accessibility tree', () => {
 
     const { violations } = await axe.run(scope!, AXE_OPTIONS);
     expect(violations.map((v) => v.id)).toEqual([]);
+  });
+});
+
+/**
+ * 🔴 COLOUR ARRIVES BY INHERITANCE — THE ANCESTOR HALF, ON BOTH TRACKS.
+ *
+ * This is the claim four shipped surfaces make in the same words — `MARKUP.md`,
+ * `src/components.css`, the element's own docblock and the changeset all say a
+ * colour utility "on this element — **or on any ancestor**" reaches Text. It is
+ * also the justification for Text having no colour axis at all, so if the
+ * ancestor route does not work then dropping `data-color` rests on something
+ * false.
+ *
+ * The existing `has no colour attribute` case above tests the ELEMENT half only,
+ * with `style="color: …"` on the host. That half always worked. The ancestor half
+ * did not: both tracks used to declare `color: var(--civitai-color-text)` on the
+ * element itself, and a SPECIFIED value beats an INHERITED one no matter how far
+ * up the utility sits or how specific its selector is. Measured before the fix,
+ * `<div class="ci-muted">` dimmed a plain `<p>` and left both component tracks at
+ * the undimmed token. `ci-text-center` on the same ancestor DID reach both, which
+ * is why the gap read as impossible: colour was the one axis the component
+ * re-specified.
+ *
+ * SHAPE OF THE ASSERTION — each case wraps a plain `<p>` in the same ancestor as
+ * the two component tracks and requires all three to agree. That makes it a
+ * RELATIONSHIP ("Text matches the element beside it") rather than a hard-coded
+ * `rgb()` that a token change would falsify, and it holds in both themes. The
+ * `not.toBe(baseline)` line is the positive control: without it, a utility sheet
+ * that failed to load would make every element in the fixture agree at the page
+ * default and the case would pass for exactly the wrong reason.
+ *
+ * WHAT THE FIX COSTS, pinned by the last case: `color: inherit` means Text no
+ * longer paints `--civitai-color-text` itself, so on a page that sets no colour
+ * anywhere it renders in the page's own colour rather than the token. That is the
+ * price of the published promise, and it is what the two tracks must now do
+ * IDENTICALLY.
+ */
+describe('<civitai-text> colour inherits from an ancestor, on both tracks', () => {
+  /** `[data-testid]` inside the fixture, so the selectors do not encode layout. */
+  const q = <T extends HTMLElement>(id: string): T =>
+    scope!.querySelector<T>(`[data-testid="${id}"]`)!;
+
+  const FIXTURE = (ancestor: string): string =>
+    `<div ${ancestor}>` +
+    '<p data-testid="oracle">plain element, no component</p>' +
+    '<p data-testid="attr" data-civitai-ui="text">attribute track</p>' +
+    '<civitai-text data-testid="element" as="p">element track</civitai-text>' +
+    '</div>' +
+    '<p data-testid="baseline" data-civitai-ui="text">no coloured ancestor</p>';
+
+  /**
+   * The three ancestors a consumer actually writes. `text-muted` is in here
+   * because `ci-muted` aliases it (`src/utilities.spec.ts`) and a container-level
+   * `text-muted` is the commonest idiom in Bootstrap there is — so dropping a
+   * `<p data-civitai-ui="text">` into an existing Bootstrap page is the likeliest
+   * way a consumer meets this at all.
+   */
+  const ANCESTORS: ReadonlyArray<readonly [string, string]> = [
+    ['ci-muted', 'class="ci-muted"'],
+    ['ci-text-error', 'class="ci-text-error"'],
+    ['text-muted (the bootstrap alias)', 'class="text-muted"'],
+    // What every starter in this repo already does: `[data-theme] { color: … }`
+    // on the block's own root. Not a utility at all, and it has to work too, or
+    // Text is the one element in a block that ignores the block's text colour.
+    ['a plain `color` on a wrapper', 'style="color: rgb(9, 8, 7)"'],
+  ];
+
+  it.each(ANCESTORS)('an ancestor with %s colours both tracks', async (_label, ancestor) => {
+    injectUtilities();
+    await mount(FIXTURE(ancestor));
+
+    const inherited = getComputedStyle(q('oracle')).color;
+    const baseline = getComputedStyle(q('baseline')).color;
+
+    expect(
+      inherited,
+      `the ancestor \`${ancestor}\` did not change the colour of a PLAIN <p>. The ` +
+        'utility sheet is not loaded (or the class was renamed), so every assertion ' +
+        'below would compare two identical default colours and pass without ' +
+        'testing anything'
+    ).not.toBe(baseline);
+
+    expect(
+      getComputedStyle(q('attr')).color,
+      'ATTRIBUTE TRACK: MARKUP.md, components.css and the changeset all promise a ' +
+        'colour utility "on this element — or on any ancestor" reaches Text. A ' +
+        `<p data-civitai-ui="text"> inside \`${ancestor}\` did not take that ` +
+        'colour, so that published claim is false and the dropped data-color axis ' +
+        'is justified by a mechanism that does not work'
+    ).toBe(inherited);
+
+    const host = q<CivitaiText>('element');
+    expect(
+      getComputedStyle(host).color,
+      `ELEMENT TRACK, host: <civitai-text> inside \`${ancestor}\` re-specified its ` +
+        'own colour, so the ancestor never reached it. The host is the gate — the ' +
+        'inner element is `color: inherit`, so it can only be as right as this'
+    ).toBe(inherited);
+    expect(
+      getComputedStyle(rendered(host) as HTMLElement).color,
+      `ELEMENT TRACK, shadow content: the element rendered inside ` +
+        `<civitai-text>'s shadow root did not end up at the ancestor's colour, so ` +
+        'the promise that a utility reaches shadow content through the boundary is ' +
+        'false'
+    ).toBe(inherited);
+  });
+
+  it('with no colour anywhere, both tracks fall through to the page — identically', async () => {
+    /*
+     * THE COST OF `color: inherit`, stated as a test rather than left implicit.
+     * Neither track paints `--civitai-color-text` any more, so a bare Text takes
+     * whatever the page gives it. Pinned as a relationship against a plain <p>
+     * for the same reason as above, and as an equality BETWEEN the tracks because
+     * the two laying out and computing identically is the one thing they may not
+     * stop doing.
+     */
+    injectUtilities();
+    await mount(FIXTURE(''));
+
+    const page = getComputedStyle(q('oracle')).color;
+    const attr = getComputedStyle(q('attr')).color;
+    const host = q<CivitaiText>('element');
+
+    expect(
+      attr,
+      'a <p data-civitai-ui="text"> with no coloured ancestor no longer matches a ' +
+        'plain <p>: the attribute track has re-acquired a colour of its own, which ' +
+        'is exactly what blocks the ancestor route'
+    ).toBe(page);
+    expect(
+      getComputedStyle(rendered(host) as HTMLElement).color,
+      'the element track diverged from the attribute track with no colour in play ' +
+        'at all — the two tracks must compute identically'
+    ).toBe(attr);
   });
 });
