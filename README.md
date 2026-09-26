@@ -28,7 +28,7 @@ Starter templates for building on [Civitai](https://civitai.com), plus the share
 - **`starters/civitai-block-starter`** — Vite + React 19 Civitai App scaffold (what `civitai app init` clones).
 - **`starters/examples/*`** — six minimal, runnable Civitai App examples, one per feature (see [Civitai Apps](#civitai-apps)).
 
-The four OAuth starters ship the **same minimal demo:** log in via Civitai OAuth → show your Buzz balance → preview cost of a generation (`whatif`) → submit one image generation → display the result.
+The four OAuth starters ship the **same minimal demo:** log in via Civitai OAuth → show your Buzz balance (read with `fetchBuzzAccount()` — **not** from `/api/v1/me`, which returns none; hidden entirely when `BuzzRead` was not granted) → preview cost of a generation (`whatif`) → submit one image generation → display the result.
 
 ## Pick a starter
 

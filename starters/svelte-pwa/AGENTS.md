@@ -73,7 +73,7 @@ the secret or breaks the auth model.
 
 1. Mount → `onMount` `GET /api/me` → 401 → `<LoginButton>` → form posts `/api/auth/login` → BFF 303 to civitai.com.
 2. Civitai redirects to `GET /api/auth/callback/civitai` → BFF exchanges code + seals session → 303 to `/?notice=connected`.
-3. SPA re-mounts → `GET /api/me` → 200 `{username, balance, grantedScopes}` → `<GenerateForm>`.
+3. SPA re-mounts → `GET /api/me` → 200 `{username, balance, grantedScopes}` → `<GenerateForm>`. 🔴 The BFF reads `balance` from `getBuzzBalance()` (`buzz.getUserAccount`, needs `BuzzRead`), **not** from `/api/v1/me`, which returns none; it is `null` when the scope was not granted and the SPA then renders no row.
 4. "Preview Buzz cost" → `POST /api/generate/estimate` → display cost.
 5. "Generate" → `POST /api/generate` → `workflowId` → SPA polls `GET /api/workflow/[id]` every 2s.
 6. Terminal status → display image blobs.

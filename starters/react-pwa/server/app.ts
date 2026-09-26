@@ -26,6 +26,7 @@ import {
 } from '@civitai/app-sdk/orchestrator';
 import {
   estimateGenerationCost,
+  getBuzzBalance,
   getMe,
   submitGeneration,
   type GenerateInput,
@@ -219,10 +220,16 @@ app.get('/api/me', async (c) => {
   if (!session) return c.json({ authenticated: false }, 401);
   try {
     const me = await getMe(session);
+    // 🔴 SEPARATE CALL, SEPARATE FAILURE MODE. Buzz balance is NOT part of
+    // `/api/v1/me`; it needs the `BuzzRead` scope on a different endpoint, and
+    // a client that was not granted it gets a 403. `getBuzzBalance` turns that
+    // into `null`, which the SPA renders as NO balance row — never a dash, and
+    // never a 502 that would take the whole profile card down with it.
+    const balance = await getBuzzBalance(session);
     return c.json({
       authenticated: true,
       username: me.username,
-      balance: me.balance,
+      balance,
       grantedScopes: scopesFromBitmask(session.tokens.scope),
     });
   } catch (err) {

@@ -1,4 +1,5 @@
-import { fetchMe } from '@civitai/app-sdk';
+import { fetchBuzzAccount, fetchMe } from '@civitai/app-sdk';
+import { hasScope, TokenScope } from '@civitai/app-sdk/scopes';
 import {
   buildTextToImageBody,
   createOrchestratorClient,
@@ -35,19 +36,21 @@ function getClient(session: Session): OrchestratorClient {
  * Widening this is a SECURITY DECISION, not a typing convenience: add a field
  * only when the SPA renders it, and pick it in {@link getMe} in the same edit.
  *
+ * 🔴 THERE IS NO `balance` HERE, AND THERE NEVER CAN BE. `/api/v1/me` does not
+ * return one — see {@link getBuzzBalance}.
+ *
  * Enforced structurally by `tests/guards/starter-me-projection.test.mjs`.
  */
 export interface MeResponse {
   username?: string;
-  balance?: number;
 }
 
 /**
- * Fetch the signed-in user's profile and PROJECT it down to the two fields this
- * starter renders (`username` in the header, `balance` in the Buzz preview).
+ * Fetch the signed-in user's profile and PROJECT it down to the one field this
+ * starter renders from it (`username`, in the header).
  *
  * 🔴 THE PROJECTION IS THE POINT, AND IT LIVES HERE RATHER THAN IN THE ROUTE.
- * `server/app.ts` already picks `username`/`balance` out for `GET /api/me`, but
+ * `server/app.ts` already picks `username` out for `GET /api/me`, but
  * that protects exactly one route; projecting at the fetch boundary means the
  * unprojected upstream object does not exist past this function, so no future
  * route can forward a field nobody asked for. A `as MeResponse` CAST would not
@@ -62,9 +65,59 @@ export async function getMe(session: Session): Promise<MeResponse> {
 
   return {
     username: typeof raw?.username === 'string' ? raw.username : undefined,
-    balance: typeof raw?.balance === 'number' ? raw.balance : undefined,
   };
 }
+
+/**
+ * The signed-in user's spendable Buzz — or `null` when this app cannot read it.
+ *
+ * 🔴 BALANCE DOES NOT COME FROM `/api/v1/me`, AND NEVER HAS. That endpoint
+ * sends `id, username, tier, status, isMember, subscriptions`, plus
+ * conditionally `isModerator`, `email`/`emailVerified` and the token-only
+ * `tokenScope`/`buzzLimit`/`subject` (civitai/civitai
+ * `src/pages/api/v1/me.ts`). Reading `balance` off it yields `undefined`, which
+ * is exactly how every starter used to render `Buzz balance: —`.
+ *
+ * 🔴 `buzzLimit` IS NOT A BALANCE. It is the per-token SPEND CAP chosen at
+ * OAuth consent. Rendering it under a balance label is the same defect wearing
+ * a different field name.
+ *
+ * The real value lives behind the `buzz.getUserAccount` tRPC procedure, which
+ * `.meta({ requiredScope: TokenScope.BuzzRead })` (civitai/civitai
+ * `src/server/routers/buzz.router.ts:42`). With no `accountTypes` input its
+ * handler returns EXACTLY ONE entry — the default account, labelled `yellow`
+ * (`src/server/services/buzz.service.ts:158`) — so this reads that entry
+ * rather than inventing a sum over pools that the route does not return.
+ *
+ * 🔴 `null` IS AN EXPECTED OUTCOME, NOT AN ERROR PATH. `BuzzRead` is optional
+ * at consent and is not guaranteed to a third-party client, and the procedure
+ * answers 403 without it. The caller must HIDE the balance row — never render
+ * a dash, never show an error banner, never throw. Everything else this
+ * starter does works without a balance.
+ *
+ * Must run SERVER-SIDE: `/api/trpc/[trpc].ts` sets no CORS headers, so a
+ * browser fetch to it cannot succeed even with a valid token.
+ */
+export async function getBuzzBalance(session: Session): Promise<number | null> {
+  // Without the scope the request can only 403 — don't spend a round trip on it.
+  if (!hasScope(session.tokens.scope, TokenScope.BuzzRead)) return null;
+  try {
+    const accounts = await fetchBuzzAccount({
+      baseUrl: env.CIVITAI_BASE_URL,
+      accessToken: session.tokens.access_token,
+    });
+    // An EMPTY array is "could not read it", not "zero Buzz". A tRPC error
+    // envelope can arrive with HTTP 200, and `fetchBuzzAccount` unwraps that to
+    // `[]` — rendering `0` there would be a confident wrong number.
+    const account = accounts.find((a) => a.accountType === 'yellow') ?? accounts[0];
+    return typeof account?.balance === 'number' ? account.balance : null;
+  } catch {
+    // 403 (scope not granted) is the expected case. Network/5xx degrade the
+    // same way on purpose: the balance is decorative and the page must render.
+    return null;
+  }
+}
+
 
 export function estimateGenerationCost(
   session: Session,

@@ -10,7 +10,7 @@
 [![Open in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://stackblitz.com/fork/github/civitai/civitai-app-starters/tree/main/starters/react-pwa)
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https%3A%2F%2Fgithub.com%2Fcivitai%2Fcivitai-app-starters)
 
-Minimal Vite + React 19 PWA starter for Civitai apps. Includes OAuth login (via a tiny [Hono](https://hono.dev) BFF), encrypted-cookie sessions, Buzz balance, cost preview, and a single image generation flow.
+Minimal Vite + React 19 PWA starter for Civitai apps. Includes OAuth login (via a tiny [Hono](https://hono.dev) BFF), encrypted-cookie sessions, Buzz balance (read via `fetchBuzzAccount()` — **not** from `/api/v1/me`, which returns none — and hidden entirely when `BuzzRead` was not granted), cost preview, and a single image generation flow.
 
 Built on `@civitai/app-sdk`.
 

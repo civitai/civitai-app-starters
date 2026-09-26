@@ -98,7 +98,7 @@ import { bitmaskFromScopes } from '@civitai/app-sdk/scopes';
 
 export const REQUESTED_SCOPES = bitmaskFromScopes([
   'UserRead',         // /api/v1/me + /userinfo — username, id, email, profile photo (always granted)
-  'BuzzRead',         // user's Buzz balance
+  'BuzzRead',         // buzz.getUserAccount — the user's Buzz balance (NOT on /api/v1/me)
   'AIServicesRead',   // history of past generations
   'AIServicesWrite',  // submit generations / spend Buzz on orchestrator
 ]);
@@ -380,7 +380,7 @@ When your app submits an orchestrator workflow with a user's OAuth access token,
 
 1. **Request `AIServicesWrite` scope at consent time.** Without it the user can't grant their Buzz for generation.
 2. **Show cost before spending.** Always call `estimateWorkflow` first.
-3. **Show the running balance.** With `BuzzRead`, hit `${CIVITAI_BASE_URL}/api/v1/me` (or the dedicated buzz endpoint). Don't surprise users.
+3. **Show the running balance — from the BUZZ endpoint, not `/api/v1/me`.** 🔴 `/api/v1/me` does **not** return a balance and never has; reading `balance` off it yields `undefined`, which is exactly how all four starters shipped a permanent `Buzz balance: —`. Use the SDK's `fetchBuzzAccount()` (`buzz.getUserAccount`, needs `BuzzRead`) **server-side** — that tRPC route sets no CORS headers, so a browser fetch cannot reach it. And note the decoy: `/api/v1/me` *does* return `buzzLimit`, but that is the per-token **spend cap** chosen at consent, **not** a balance. 🔴 `BuzzRead` is not guaranteed to a third-party client: treat a **403 as an ordinary outcome** and hide the balance row entirely — never a dash, never an error banner. Don't surprise users.
 4. **Handle the cap-denial case.** Per-app spending caps (set by the user at consent and again at Account → Connected Apps) can cause a successful `whatif` to be rejected at real submit time with a generic `BAD_REQUEST`. Treat that as "insufficient or denied" in your UI — surface clearly, link the user to their connected-apps page.
 5. **Don't hoard tokens.** Refresh-on-read (Step 4) keeps the user's session warm without you treating their access_token like a resource to optimize. Revoke on disconnect.
 
@@ -402,7 +402,7 @@ If you're swapping from a non-Civitai provider (Gemini, OpenAI Images, Replicate
 The two big shape differences:
 
 - **Async, not sync.** Civitai's orchestrator returns a workflow id immediately and you poll. Either block your handler (`pollWorkflow` with a timeout) or return the workflowId to the client and let it poll a `GET /api/workflow/[id]` endpoint. The starters do the latter.
-- **Per-user Buzz.** Plan the UX. If your previous provider was free-to-the-user (you ate the cost), you now need a balance display, cost preview, and graceful insufficient-Buzz handling. If your previous provider already had user-visible cost (credits / tokens), the lift is smaller.
+- **Per-user Buzz.** Plan the UX. If your previous provider was free-to-the-user (you ate the cost), you now need a balance display (via `fetchBuzzAccount()`, and degrading to no display when `BuzzRead` is absent), cost preview, and graceful insufficient-Buzz handling. If your previous provider already had user-visible cost (credits / tokens), the lift is smaller.
 
 ---
 
@@ -411,7 +411,7 @@ The two big shape differences:
 There's no single "is it ported correctly" check, but the smoke test that every starter passes end-to-end is:
 
 1. Click "Sign in with Civitai" → consent screen → redirected back logged in.
-2. `/api/v1/me` returns your username and balance.
+2. `/api/v1/me` returns your username. (🔴 It returns **no balance** — the balance comes from `fetchBuzzAccount()` / `buzz.getUserAccount`, and is absent by design if `BuzzRead` was not granted.)
 3. Submit a prompt → estimate shows non-zero Buzz cost.
 4. Confirm submit → workflow returns id → polling reaches `succeeded` → image renders.
 5. Sign out → session cookie cleared.
