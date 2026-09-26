@@ -51,12 +51,16 @@ and renders the form from it — same source of truth for both.
 ## Where settings get written
 
 From inside the iframe a block can only **read** the settings the host
-delivered at init — there is no "set settings" postMessage. Persistence
-happens on the platform's `/apps/installed` page (and the model-edit banner),
-which renders this same `SettingsForm` and wires `onSubmit` to the platform
-tRPC. This example renders the viewer form inline so you can see the component,
-but its `onSubmit` only previews the values locally. Use it to prototype the
-field layout; the real write path is the platform page.
+delivered at init — there is no general "set settings" postMessage. Writing
+them is platform-side: Civitai's own app settings panel builds its form from
+the same manifest `settings` declaration, but with its own widgets — **not**
+this `SettingsForm`, which is yours to use in your own UI. The one setting a
+block can write itself is the viewer's checkpoint, via the `SET_USER_CHECKPOINT`
+message (see `useCheckpointPicker`).
+
+This example renders the viewer form inline so you can see the component, but
+its `onSubmit` only previews the values locally. Use it to prototype the field
+layout.
 
 ## `SettingsForm`
 

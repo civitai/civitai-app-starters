@@ -22,7 +22,8 @@ import manifest from '../block.manifest.json' with { type: 'json' };
  *     `Bearer ${raw}` } })`.
  *
  * `/api/v1/blocks/me` is the authoritative who-am-i (the BLOCK_INIT viewer is a
- * coarse hint). It returns only what your granted scopes allow.
+ * coarse hint). It needs `user:read:self` and 403s without it — the check is
+ * all-or-nothing at the route, not a per-field filter on the response.
  *
  * NOTE: a successful call needs a REAL RS256 block JWT — the dev harness mints
  * a mock token, so the live call will 401 locally. The example shows the exact
