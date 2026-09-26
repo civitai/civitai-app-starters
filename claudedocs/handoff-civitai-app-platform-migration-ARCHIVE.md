@@ -361,3 +361,73 @@ rather than about this migration.
   it is re-confirmed here because the tool's own remedy text still points the wrong way. **The
   working move is to write new detail STRAIGHT INTO THIS ARCHIVE and leave a pointer in the doc**,
   which is what this section is.
+
+## Evicted 2026-09-26 (third pass) — the fleet-measurement correction, and #5163's ladder
+
+<!-- Written STRAIGHT HERE rather than into the doc: the doc's size ratchet gates the
+     DELTA of an update, so new detail in an APPEND section is what makes a round
+     unlandable. The doc keeps one-line pointers. -->
+
+### 🔴 THE FLEET IMPORTER NUMBERS IN THIS DOC ARE ALL INFLATED — the anchored pattern PREFIX-MATCHES the subpaths
+- as-of: 2026-09-26
+- **Symptom:** this doc's `How to verify` step 2 and every per-app number it quotes use
+  `(from|import\()[[:space:]]*'@civitai/blocks-react`. That has **no closing quote**, so it matches
+  `'@civitai/blocks-react/ui'` and `'@civitai/blocks-react/testing'` too — three populations counted
+  as one. The doc's own gotcha *"grep for the CONSTRUCT, not the token"* fires on the doc again.
+- **Observed (with values), per app on its own default branch:**
+
+  | app | doc says | bridge (root, closing quote) | **production** bridge | `/ui` | `/testing` |
+  |---|---|---|---|---|---|
+  | `gen-matrix` | 7 | 4 | **3** | 4 | 3 |
+  | `sensei` (`trunk`) | 21 | 12 | **6** | 10 | 2 |
+  | `playable-collections` | 27 | 7 | **3** | 7 | 15 |
+  | `model-benchmarking` | 42 | 22 | **7** | 17 | 19 |
+
+  **Production bridge files across all four remaining apps: 19, not 97.** `via: measurement`
+- 🔴 **The CLOSING CONDITION IS UNAFFECTED and must not be "fixed" on the strength of this** —
+  0 on the prefix pattern implies 0 on the root pattern (the prefix set is a superset), and both
+  ported apps read 0 on every population. `via: command`
+- 🔴 **What it changes is the PORT RANKING, which this doc gets wrong.** `/ui` is the design-system
+  pack — a SEPARATE migration (`starters#328`) — and `/testing` is the harness. By production
+  bridge files `playable-collections` (3) TIES `gen-matrix` (3) as cheapest, and
+  `model-benchmarking` is 7, not six times the cost. Rank by the root pattern with its closing
+  quote, and report the three populations separately.
+- **Next probe:** when the next port lands, re-measure with `'@civitai/blocks-react'` (closing quote
+  included) and state which population each number is.
+
+### Gotchas from this session
+- 🔴 **`civitai/civitai` TAKES SQUASH MERGES, NOT MERGE COMMITS — this doc said the opposite.** Its
+  existing gotcha reads *"`civitai/civitai` takes **merge commits**; `civitai-app-starters` and the
+  `ZacxDev/*` app repos are squash."* Measured 2026-09-26: the last five numbered PRs
+  (`#5156`–`#5160`) each landed as a **single-parent** commit carrying `(#N)`, and 27 of the last 30
+  mainline commits have one parent. `#5163` was merged as a squash accordingly (`de52df5a63`,
+  parent `eb57472dbe`). ⚠ My first attempt to measure this was itself wrong — `rev-list --count
+  --merges -40` and `--no-merges -40` both returned 40, because the `-40` caps each query separately rather
+  than partitioning. The per-PR `mergeCommit` parent count is what settled it.
+- 🔴 **A RENAME SILENTLY INVALIDATES EVERY POINTER IN A cairn INDEX ENTRY, AND NOTHING CHECKS THEM.**
+  `packages/civitai-blocks-client{,-react}/` were renamed to `@civitai/sdk` in `f53f5a8`
+  (2026-09-22). The `civitai-blocks-client-react` index entry still named all four old paths, and a
+  briefing I wrote from it sent an agent to `packages/civitai-blocks-client/BREAKING.md`, which does
+  not exist. The agent found the real ledger at `packages/civitai-sdk/BREAKING.md` and reported the
+  correction. Entry rewritten via `cairn put`; the dead paths are kept NAMED so a reader who followed
+  one knows why it missed. **When a rename lands, sweep the index for the old package name.**
+- 🔴 **A STALE WORKING TREE AND A REF DISAGREE ABOUT DEPENDENCY VERSIONS, AND BOTH READINGS LOOK
+  AUTHORITATIVE.** An agent read `civitai-app-playable-collections/package.json` from the **working
+  tree** (`app-sdk 0.39.0`, `blocks-react 0.49.0`); `origin/main` says `0.42.0` / `0.51.0`. That
+  clone's `main` is **3 commits behind**. Same family as this repo's own `AGENTS.md` warning, and it
+  bit an agent today: **read deps from the ref, not the tree.** Nothing rested on it here — both
+  readings agree the app has **no `@civitai/sdk` dependency at all**, which is the load-bearing fact.
+- **`#5163`'s ladder, in one line each:** round 0 found the first commit fixed a false comment and
+  shipped a false one one sentence over (*"this route has no 403 path at all"* — `withBlockScope`
+  403s at `block-scope.middleware.ts:1279`/`:1343` before the handler); round 1 found the correction
+  still unguarded (no gated-images test can see what the gate throws, so it could go false again with
+  all three suites green) → **deleted** rather than rewritten; round 2 found the round-1 commit
+  message claimed the job done while a second cross-module sentence stood → deleted too; round 3
+  found four more stated numbers wrong and **closed the ladder on the attribution gate** (two
+  consecutive zero-payload rounds). Shipped production change: a **two-line comment deletion**.
+  🔴 The transferable half: **every round after the first found a false claim the PREVIOUS round's
+  fix had written**, and the code was correct from the start.
+- 🔴 **I STATED ONE DIFF'S SIZE WRONG FOUR TIMES** on a PR whose whole thesis is that an unchecked
+  restated number goes wrong (`7` → `13/5` → `12/9` → `12/6`). The durable fix is not care: it is
+  **reading the number off `git diff --numstat <base> <head>` at the moment of writing**, and saying
+  so in the artefact instead of restating a remembered figure.
