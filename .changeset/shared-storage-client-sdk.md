@@ -47,17 +47,31 @@ shape (`vote`) this client does not even carry. `test/shared-storage/seam.test.t
 now says so in place of the mirror, and records what to add when the first app is
 actually ported.
 
-## A second client for these routes already ships here
+## What the port off the bridge actually costs
 
-`@civitai/blocks-react`'s `useSharedStorage` (10 methods) also talks to this
-surface and is the one the fleet uses today. `@civitai/sdk` is its successor, so
-the overlap is **transitional by design** — but they are not drop-in equivalent,
-and `BREAKING.md` now tabulates the divergences. The load-bearing one: a listed
-row's `value` is **`unknown`** here versus the hook's typed `SharedAppendValue`.
-The `unknown` is deliberate and wire-honest — the row was written by another
-viewer's copy of the app, possibly an older version, so its shape is a fact about
-stored data rather than a promise a client can keep. A port therefore rewrites
-call sites; it is not an import swap.
+`@civitai/blocks-react`'s `useSharedStorage` is what the fleet uses today, and it
+is **the bridge** — it sends `SHARED_*` messages over `postMessage` and never
+touches `/api/v1`; the host receives them and calls tRPC `apps.shared.*`, injecting
+the credentials. So it is the LEFT column of `BREAKING.md`'s master table, not a
+rival HTTP client of the right one.
+
+🔴 **The port is therefore a TRANSPORT change, and that is its harder half.** The
+block must now hold and send a block JWT and clear the opaque-origin CORS
+preflight, where the bridge had the host inject both, and refusals arrive as
+`ApiError` with an HTTP status. `BREAKING.md` now leads with that instead of the
+shape table.
+
+Two shape divergences are worth calling out among the five kept methods:
+
+- **`list({ limit })` is validated, not clamped.** The bridge *host* clamped to
+  1…100; the REST route refuses out-of-range input, so a call site keeping
+  `limit: 200` returned 100 rows before and now gets a **`400`**. This client
+  deliberately does not re-clamp — bounds stay the server's, and a guard here
+  enforces that the module carries no numeric literal at all.
+- **A listed row's `value` is `unknown`**, versus the hook's typed
+  `SharedAppendValue`. Deliberate and wire-honest: the row was written by another
+  viewer's copy of the app, possibly an older version, so its shape is a fact
+  about stored data rather than a promise a client can keep.
 
 ## Four ways this is NOT a copy of the per-viewer client
 
@@ -81,7 +95,16 @@ each is pinned by a mutant watched to go red:
 
 Every failure rejects; no path resolves to mean "not written" or "could not
 read". A malformed 200 throws rather than manufacturing an empty store, because a
-caller renders an empty page to every viewer as "this store is empty". Both
+caller renders an empty page to every viewer as "this store is empty".
+
+`list` guards **`metadata` symmetrically with `items`**, rather than defaulting it
+to `{}`. `metadata` is where `nextCursor` lives and the cursor's absence is what
+proves a scan completed, so a lenient default would turn a malformed envelope into
+`nextCursor: undefined` — stopping a caller's paging loop after page one and
+rendering 50 of 5,000 rows as the whole store, while the identical malformation of
+`items` threw. A well-formed empty envelope still resolves; that is the last page.
+
+Both
 timestamps are revived through a type gate *and* a NaN gate, since
 `new Date(null)` is the epoch rather than an Invalid Date and would sort wrong
 forever without throwing.

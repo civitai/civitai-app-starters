@@ -192,7 +192,18 @@ export function createSharedStorageClient(http: Http): SharedStorageClient {
       if (!Array.isArray(res?.items)) {
         throw new CivitaiError('shared-storage list: reply carried no `items` array');
       }
-      const metadata = (res.metadata ?? {}) as { nextCursor?: unknown };
+      // 🔴 GUARDED SYMMETRICALLY WITH `items`, and for the same reason. `metadata`
+      // is where `nextCursor` lives, and this method's contract is that the
+      // cursor's ABSENCE proves a scan completed. A `?? {}` here would turn a
+      // malformed envelope into `nextCursor: undefined` — so a caller's
+      // `do…while (cursor)` loop stops after page one and renders 50 of 5,000 rows
+      // as the whole store, silently. The identical malformation of `items` throws;
+      // treating the container the cursor arrives in as optional would have made
+      // the louder half of this reply strict and the quieter half lenient.
+      if (res.metadata == null || typeof res.metadata !== 'object') {
+        throw new CivitaiError('shared-storage list: reply carried no `metadata` object');
+      }
+      const metadata = res.metadata as { nextCursor?: unknown };
       return {
         items: res.items.map(toItem),
         // 🔴 Lifted out of `metadata` and passed through. Not defaulted, not

@@ -246,6 +246,13 @@ that type-checks:
   viewer's copy of your app, possibly an older version, so its shape is a fact
   about the data rather than a promise the client can make. Narrow it yourself.
 
+⚠ **`limit` is validated, not clamped.** An out-of-range `list({ limit })` is a
+`400` and a rejected promise — not a silently reduced page. Pass a value inside
+the server's range, or omit it and take the server's default. If you are porting
+from `@civitai/blocks-react`'s `useSharedStorage`, note the bridge *host* clamped
+this for you and nothing clamps it here; that section of
+[`BREAKING.md`](./BREAKING.md) covers the rest of the transport change.
+
 `withdraw` answers `{ ok: true, deleted: false }` identically for another
 author's key, an already-withdrawn row and a key that never existed — it is not
 an existence oracle, so do not report that as "someone else owns this". Put every

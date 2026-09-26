@@ -86,26 +86,53 @@ not a stylistic one, and assuming otherwise produces a bug that type-checks:
 4. **Anonymous viewers read but never write** — the inverse of per-viewer storage, where a missing subject
    refuses everything. See *Who may read, and who may write* below.
 
-### ⚠ A second client for these routes still ships here
+### Porting off the bridge: `useSharedStorage` → `app.sharedStorage`
 
-`@civitai/blocks-react`'s [`useSharedStorage`](../civitai-blocks-react/src/hooks/useSharedStorage.ts) hook
-(10 methods) also talks to this surface, and today it is the one the fleet apps actually use — no app depends
-on `@civitai/sdk`'s shared storage yet. `@civitai/sdk` is the successor, so **the overlap is transitional by
-design**, but the two are not drop-in equivalent and the divergences are worth knowing before a port:
+`@civitai/blocks-react`'s `useSharedStorage` hook is what the fleet uses today, and it is **the left column of
+the table at the top of this document, not a rival client of the right one.** It sends `SHARED_LIST`,
+`SHARED_GET`, … over `postMessage` and never touches `/api/v1`; the host receives those messages and calls
+tRPC `apps.shared.*` on the block's behalf. Its own doc says the block *"never sees the datastore credentials
+and never sends its block token (the host injects both)"*.
 
-| | `useSharedStorage` (blocks-react) | `app.sharedStorage` (this package) |
+`app.sharedStorage` is the other side of that migration: it holds the block JWT and direct-fetches
+`/api/v1/blocks/shared-storage/*` cross-origin, from an opaque origin.
+
+🔴 **So the port is a TRANSPORT change, and that is the harder half of it.** What the host used to do for you,
+the block now does itself:
+
+- **It must hold and send a block JWT.** The bridge injected credentials; nothing injects them here. An app
+  authenticated with an OAuth access token instead has no shared storage at all.
+- **It must clear the opaque-origin CORS preflight.** The routes set `allowOpaqueOrigin` for exactly this, but
+  a direct cross-origin fetch is a failure mode `postMessage` simply does not have.
+- **Refusals arrive as HTTP.** An `ApiError` with a status, where the bridge surfaced a rejected message — and
+  the anon-write case is a `403` from the scope binding rather than anything the handler said. Read
+  `message ?? error`; see *Error body* below.
+
+The shape differences are the SMALLER half, but they still rewrite call sites:
+
+| | `useSharedStorage` (bridge) | `app.sharedStorage` (HTTP) |
 |---|---|---|
+| Transport | `postMessage` → host → tRPC `apps.shared.*` | direct `fetch` of `/api/v1/blocks/shared-storage/*` |
+| Credentials | host-injected | the block's own JWT |
 | Methods | 10, including `vote`/`unvote`/`count`/`report` | 5, key/value only |
 | A listed row's `value` | `SharedAppendValue` — the typed write shape | `unknown` |
 | `update` resolves | `void` | `{ ok: true }` |
+| `list({ limit })` out of range | **clamped** to 1…100 (host does `Math.min`/`Math.max`; default 50) | **rejected — `400`** |
 
-🔴 **The `unknown` is the deliberate one, and it is the wire-honest reading.** A row you list was written by
-some OTHER viewer's copy of the app — possibly an older version, possibly a newer one — so its shape is a fact
-about stored data, not a promise a client can keep. Typing it as the *write* shape asserts something nothing
-checked, and it is wrong the moment one viewer ships a schema change. Narrow it at the call site.
+🔴 **`limit` is the one that bites silently.** `list({ limit: 200 })` returned 100 rows over the bridge and now
+**rejects with a `400`**; `limit: 0` was raised to 1 and now rejects too. The clamp was the host's, not the
+route's — the route validates with zod and refuses out-of-range input. Pass a value in range, or omit it and
+take the server's default. This client deliberately does **not** re-clamp: the bounds are the server's, a
+second copy here is the thing that drifts, and a guard in this package enforces that the module carries no
+numeric literal at all.
 
-Consequence: **a port rewrites call sites; it is not an import swap.** Expect to narrow `value` yourself and to
-move any vote/counter/report logic into your app.
+🔴 **The `value: unknown` is deliberate, and it is the wire-honest reading.** A row you list was written by some
+OTHER viewer's copy of the app — possibly an older version, possibly a newer one — so its shape is a fact about
+stored data, not a promise a client can keep. Typing it as the *write* shape asserts something nothing checked,
+and it is wrong the moment one viewer ships a schema change. Narrow it at the call site.
+
+Consequence: **a port is not an import swap.** Budget for the token/CORS work, narrow `value` yourself, move
+any vote/counter/report logic into your app, and check every `limit` you pass.
 
 | Method | Path | Scope |
 |---|---|---|

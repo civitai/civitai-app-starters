@@ -208,9 +208,39 @@ describe('AppClient.sharedStorage — list', () => {
 
     // The paired negative: a cursor at the TOP level is not the envelope's, so a
     // client reading the right place reports none.
-    const flat = await scripted([() => json(200, { items: [], nextCursor: 'shallow' })]);
+    //
+    // 🔴 `metadata` is PRESENT and empty, not omitted. It used to be omitted, which
+    // pinned the lenient `?? {}` the client no longer does — an envelope with no
+    // `metadata` now throws, symmetrically with `items`. Keeping it present-but-empty
+    // preserves what this fixture is for: a client that read `res.nextCursor` would
+    // return 'shallow' here, so the mutant still dies.
+    const flat = await scripted([
+      () => json(200, { items: [], metadata: {}, nextCursor: 'shallow' }),
+    ]);
     const result = await flat.list();
     expect(result.nextCursor).toBeUndefined();
+  });
+
+  it('🔴 throws on an envelope with no usable `metadata` — the cursor lives there', async () => {
+    // The asymmetry this closes: `items` was strict while `metadata` was defaulted,
+    // so a malformed envelope resolved `nextCursor: undefined` and a paging loop
+    // stopped after page one, rendering a fraction of the store as all of it.
+    const shared = await scripted([
+      () => json(200, { items: [] }),
+      () => json(200, { items: [], metadata: null }),
+      () => json(200, { items: [], metadata: 'nope' }),
+    ]);
+
+    for (const _ of [0, 1, 2]) {
+      await expect(shared.list()).rejects.toThrow(
+        /list: reply carried no `metadata` object/,
+      );
+    }
+
+    // The pair, and the reason this is a guard and not a ban: a WELL-FORMED empty
+    // envelope is legal and must still resolve — it is the last page of a scan.
+    const lastPage = await scripted([() => json(200, { items: [], metadata: {} })]);
+    await expect(lastPage.list()).resolves.toEqual({ items: [], nextCursor: undefined });
   });
 
   it('🔴 sends the cursor it was handed, so a row only on page 2 is reachable', async () => {
@@ -253,15 +283,20 @@ describe('AppClient.sharedStorage — list', () => {
   });
 
   it('🔴 throws on a malformed 200 — it never manufactures an empty store', async () => {
+    // 🔴 Every fixture below is a VALID envelope except for the one thing under
+    // test — `metadata: {}` is present throughout. The envelope guards run before
+    // the per-item mapping, so a fixture that also omitted `metadata` would be
+    // rejected by THAT guard and these item checks would never execute: green for
+    // the wrong reason, and the item guards unreachable.
     const shared = await scripted([
       () => json(200, { metadata: {} }),
-      () => json(200, { items: {} }),
-      () => json(200, { items: [{ ...ITEM, key: 7 }] }),
-      () => json(200, { items: [{ ...ITEM, authorUserId: '77' }] }),
-      () => json(200, { items: [{ ...ITEM, count: null }] }),
-      () => json(200, { items: [{ ...ITEM, viewerVoted: 'no' }] }),
+      () => json(200, { items: {}, metadata: {} }),
+      () => json(200, { items: [{ ...ITEM, key: 7 }], metadata: {} }),
+      () => json(200, { items: [{ ...ITEM, authorUserId: '77' }], metadata: {} }),
+      () => json(200, { items: [{ ...ITEM, count: null }], metadata: {} }),
+      () => json(200, { items: [{ ...ITEM, viewerVoted: 'no' }], metadata: {} }),
       // `value` absent entirely — distinct from `value: null`, which is legal.
-      () => json(200, { items: [{ ...ITEM, value: undefined }] }),
+      () => json(200, { items: [{ ...ITEM, value: undefined }], metadata: {} }),
     ]);
 
     const noItems = await shared.list().catch((e: unknown) => e);
@@ -281,12 +316,16 @@ describe('AppClient.sharedStorage — list', () => {
     const shared = await scripted([
       // `new Date(null)` is the EPOCH, not an Invalid Date, so the NaN check
       // cannot catch this — it needs the type gate above it.
-      () => json(200, { items: [{ ...ITEM, createdAt: null }] }),
-      () => json(200, { items: [{ ...ITEM, updatedAt: null }] }),
+      () => json(200, { items: [{ ...ITEM, createdAt: null }], metadata: {} }),
+      () => json(200, { items: [{ ...ITEM, updatedAt: null }], metadata: {} }),
       // …and the NaN check's own case: a string that passes the type gate and
       // still yields an Invalid Date. Without it, that check is a guard no test
       // executes.
-      () => json(200, { items: [{ ...ITEM, updatedAt: 'the day before yesterday' }] }),
+      () =>
+        json(200, {
+          items: [{ ...ITEM, updatedAt: 'the day before yesterday' }],
+          metadata: {},
+        }),
     ]);
 
     await expect(shared.list()).rejects.toThrow(/malformed item timestamp/);
