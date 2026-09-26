@@ -292,3 +292,60 @@ rather than about this migration.
   allowed 0` — *found* and *allowed* are different fields and only the second one matters.
   Generalises: **a file's PRESENCE is not its ACTIVATION**, and an absence measured on a stale
   tree is not an absence.
+
+## Evicted 2026-09-26 (second pass) — this session's detail, held here to keep the doc's delta under its ratchet
+
+<!-- MOVED, NOT DELETED. The main doc carries a one-line pointer per item; the
+     evidence is here. Evicted at write time rather than after, because the size
+     ratchet gates the DELTA of an update and not the total, so trimming the doc
+     afterwards cannot buy room for the same round. -->
+
+### ✅ SUPERSEDES `TRACK B RESULT` — the per-viewer storage gap is CLOSED (full evidence)
+- as-of: 2026-09-26
+- **What changed:** the `TRACK B RESULT` block in the main doc (2026-09-24) records *"no REST twin
+  for the per-viewer KV — **0** routes, against a control of **12** for shared-storage"*, and ranks
+  it as the thing that *"may require a platform PR before most of the fleet can move at all"*.
+  **Both halves now exist.** That block is retained for its reasoning; its blocking conclusion is dead.
+- **Observed (with values):** platform — **5** routes on `civitai@origin/main`:
+  `src/pages/api/v1/blocks/app-storage/{get,set,delete,list,quota}.ts`. Control:
+  `src/pages/api/v1/blocks/shared-storage/` = **11**, which matches the figure the superseded block
+  itself quotes, so the count is a real reading and not a mis-scoped glob. SDK —
+  `AppClient.storage: StorageClient` in the **published** `@civitai/sdk@0.7.0`;
+  `packages/civitai-sdk/src/storage/index.ts` sets `BASE = 'blocks/app-storage'` and issues real
+  calls with per-call error handling; reached from the root export at
+  `packages/civitai-sdk/src/app/index.ts:46`. `via: code`
+- **Ruled out:** *"it is a type with no wiring"* — FALSE. The module issues real calls against
+  `blocks/app-storage`, and `app/index.ts:184` records that `test/storage/seam.test.ts` pins its
+  `BASE` textually. `via: code`
+- ⚠ **NOT verified: that a real block token round-trips through it against production.** The claim
+  is that the surface EXISTS on both sides — which is what unblocks a port, not that a port works
+  first try.
+- **Leading hypothesis:** `playable-collections` (27 importers) is now portable. Its
+  `block.manifest.json` declares `apps:storage:read` + `apps:storage:write` (8 scopes total), which
+  is exactly what the 5 new routes serve.
+- **Next probe:** port it and let the port be the test. If `AppClient.storage` is wrong, that is
+  where it shows.
+
+### Gotchas from this session, evicted with the block above
+- 🔴 **THE HARNESS REPORTED A BACKGROUND RUN AS "exit code 0" WHILE ITS LOG ENDED `ELIFECYCLE
+  Command failed with exit code 2`.** Same family as the doc's existing *"count the runner's own
+  result lines"* entry, but the wrapper was the **task-completion notification** rather than a
+  script, so there was no pipeline to inspect. **Read the log's content; a completion notice is a
+  claim about the runner, not a verdict on the work.**
+- **`src/tests/api/v1/blocks/` has two files red on `civitai@origin/main`** —
+  `workflows-controls-seam.test.ts` and `suspended-app-rest-refusal.test.ts`, 32 tests. Pre-existing
+  and NOT a `#5163` regression: established by running a pristine `origin/main` worktree and
+  comparing failure **SETS** (33 lines each, zero difference in either direction), not counts.
+  Unowned; nobody has filed it.
+- **A propagation test needs a SEPARABILITY control, not just a kill.** After `#5163` corrected its
+  fixture, that case and the anon case share a CODE. Mutation A (rewrite the propagated error in the
+  route's `catch`) killed it on `expect(err.code)`. Mutation B — feed the fixture the anon refusal's
+  MESSAGE with the SAME code — left the code assertion green and turned **exactly** the newly added
+  message assertion red. Only B proves the added line is load-bearing rather than decoration.
+- 🔴 **THE SIZE RATCHET GATES THE DELTA, AND THE TOOL'S OWN OPTION 2 DOES NOT SATISFY IT — CONFIRMED
+  BY ARITHMETIC THIS SESSION.** The refusal offers *"MOVE what has closed out first, then re-run
+  unchanged"*. Measured: total = base + delta (`94,688 + 5,331 = 100,019`), so evicting from the base
+  lowers the total and leaves `+N` identical — the gate checks GROWTH. The doc already recorded this;
+  it is re-confirmed here because the tool's own remedy text still points the wrong way. **The
+  working move is to write new detail STRAIGHT INTO THIS ARCHIVE and leave a pointer in the doc**,
+  which is what this section is.
