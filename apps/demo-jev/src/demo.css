@@ -1,0 +1,61 @@
+/* Page chrome — deliberately UNLAYERED so it beats the @layer civitai.components
+   rules (see packages/civitai-components/MARKUP.md "Cascade / overriding"). */
+body {
+  margin: 0;
+  padding: 32px;
+  font-family: var(--civitai-font);
+  background: var(--civitai-color-body);
+  color: var(--civitai-color-text);
+}
+.wrap {
+  max-width: 760px;
+  margin: 0 auto;
+}
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+h1 {
+  font-size: 18px;
+  margin: 0;
+}
+.sub {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--civitai-color-text-dimmed);
+}
+h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--civitai-color-text-dimmed);
+  margin: 32px 0 12px;
+}
+section p,
+civitai-tab-panel p {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--civitai-color-text-dimmed);
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+civitai-card {
+  display: block;
+}
+code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.92em;
+}
+.overlay-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
