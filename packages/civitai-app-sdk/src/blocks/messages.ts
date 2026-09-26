@@ -195,9 +195,13 @@ export interface BlockInitPayload {
   /**
    * The color-domain the block is rendered inside (`green` | `blue` | `red`),
    * or `null` when the host did not resolve one. Informational ONLY — the SFW
-   * policy is server-side; gate on `useDomainMaturity()`'s `isSfw` /
-   * `isLevelAllowed` (which account for the viewer via
-   * {@link effectiveBrowsingLevel}), never on this string.
+   * policy is server-side; gate on {@link effectiveBrowsingLevel} rather than
+   * on this string — via `effectiveBrowsingCeiling(maxBrowsingLevel,
+   * effectiveBrowsingLevel)` in any runtime, or, in React, the `isSfw` /
+   * `isLevelAllowed` that `@civitai/blocks-react`'s `useDomainMaturity()`
+   * returns. 🔴 Those two are the HOOK'S members; this package also exports a
+   * standalone `isLevelAllowed`, which takes the DOMAIN ceiling and answers a
+   * different question.
    *
    * Sent by civitai/civitai PR #2670. A host that predates it omits this field
    * (reads `undefined`).
@@ -208,8 +212,8 @@ export interface BlockInitPayload {
    * allows, computed server-side from `domainBrowsingCeiling(color)` (green/
    * blue → SFW, red → all). Bits mirror the server `NsfwLevel` (see
    * `browsingLevel.ts`). `isSfwCeiling(maxBrowsingLevel)` answers "is this
-   * DOMAIN SFW?" — not "may I show THIS viewer mature content"; see the
-   * warning below and {@link effectiveBrowsingLevel}.
+   * DOMAIN SFW?" — not "may I show THIS viewer mature content"; for that, see
+   * the warning below and {@link effectiveBrowsingLevel}.
    *
    * Sent by civitai/civitai PR #2670. A host that predates it omits this field
    * (reads `undefined`); the SDK fail-closes to SFW when it is absent.

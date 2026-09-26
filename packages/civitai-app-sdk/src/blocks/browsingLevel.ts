@@ -3,9 +3,12 @@
  *
  * The host (civitai/civitai) projects an authoritative `maxBrowsingLevel`
  * BITMASK into `BLOCK_INIT` — the max NSFW levels the surrounding color-domain
- * allows (computed server-side from `domainBrowsingCeiling(color)`). A block
- * reads it via `useDomainMaturity()` to decide whether to surface mature
- * affordances.
+ * allows (computed server-side from `domainBrowsingCeiling(color)`) — and,
+ * alongside it, the viewer-narrowed `effectiveBrowsingLevel`. A block decides
+ * whether to surface mature affordances from the PAIR, via
+ * {@link effectiveBrowsingCeiling}; `@civitai/blocks-react`'s
+ * `useDomainMaturity()` is the React wrapper over exactly that. The domain
+ * ceiling alone is not the answer — see {@link ColorDomain}.
  *
  * The per-level bit VALUES below mirror civitai/civitai's server `NsfwLevel`
  * enum. They are STABLE wire values (a level's bit never changes), so it is
@@ -169,9 +172,19 @@ export function effectiveBrowsingCeiling(
 }
 
 /**
- * The color-domain a block is rendered inside, as projected by the host. The
- * SFW policy is NOT derived from this — use {@link isSfwCeiling} on the
- * accompanying `maxBrowsingLevel` mask instead. `null` / absent means the host
- * did not project a domain (treat as unknown ⇒ fail-closed SFW).
+ * The color-domain a block is rendered inside, as projected by the host.
+ * Informational ONLY — the SFW policy is server-side, and this string is not
+ * it. `null` / absent means the host did not project a domain (treat as
+ * unknown ⇒ fail-closed SFW).
+ *
+ * 🔴 Gate on {@link effectiveBrowsingCeiling}`(maxBrowsingLevel,
+ * effectiveBrowsingLevel)`, never on this string and never on
+ * `maxBrowsingLevel` alone. This docblock used to say *"use `isSfwCeiling` on
+ * the accompanying `maxBrowsingLevel` mask instead"*, and that was wrong in the
+ * way that matters: `maxBrowsingLevel` is a property of the DOMAIN, identical
+ * for every viewer on `civitai.red` including one whose own NSFW setting is
+ * off, so it cannot answer "may I show THIS viewer mature content".
+ * `isSfwCeiling` is still correct for the question it does answer — "is this
+ * DOMAIN SFW?" — which is not this one.
  */
 export type ColorDomain = 'green' | 'blue' | 'red';

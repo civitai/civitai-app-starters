@@ -180,13 +180,19 @@ describe('lockstep with the vendored schema (INVARIANT GUARDS — green before t
 
   /**
    * 🔴 RE-INSTATES A GUARD A REFACTOR DROPPED, rather than adding a new one.
-   * `test/blocks/schema-parity.test.ts` carried exactly this assertion until
-   * `d41293d` (#352) — *"DRIFT GUARD: the schema's scope enum is EXACTLY the
-   * SDK's BLOCK_SCOPES set. If either side gains/loses a scope without the
-   * other, this fails"*. That commit rewrote schema-parity as an Ajv-backed
-   * DIFFERENTIAL, which judges FIXTURES rather than constant sets, so this
+   * `test/blocks/schema-parity.test.ts` carried this claim — *"DRIFT GUARD: the
+   * schema's scope enum is EXACTLY the SDK's BLOCK_SCOPES set. If either side
+   * gains/loses a scope without the other, this fails"* — until `d41293d`
+   * (#352) deleted that file, rewriting schema-parity as an Ajv-backed
+   * DIFFERENTIAL which judges FIXTURES rather than constant sets. This
    * assertion went as collateral. (`BLOCK_CATEGORIES` ↔ the schema's `category`
    * enum died in the same move and is NOT restored here.)
+   *
+   * ⚠ NOT byte-for-byte the same assertion, and the difference is the one this
+   * block argues about: the historic form compared two `Set`s, which
+   * structurally cannot see a duplicate. The sorted-array form below can, which
+   * is why the duplicate case below it is a real addition rather than something
+   * that was previously guarded and lost.
    *
    * It is not redundant with the `describe('BLOCK_SCOPES')` in
    * `test/blocks/scopes.test.ts`: that one compares `BLOCK_SCOPES` against
@@ -225,7 +231,13 @@ describe('lockstep with the vendored schema (INVARIANT GUARDS — green before t
    * This is the only assertion that fires in that state.
    */
   it('the scopes enum has no duplicates', () => {
-    const schemaEnum = schema.properties.scopes?.items?.enum ?? [];
-    expect(new Set(schemaEnum).size).toBe(schemaEnum.length);
+    // 🔴 NO `?? []` DEFAULT, deliberately. An empty array satisfies
+    // `Set(x).size === x.length` trivially, so defaulting would make this pass
+    // vacuously under exactly the failure its sibling's positive control exists
+    // to catch — a moved JSON path. Measured: with `?? []` and the path moved
+    // to `.oneOfEnum`, this test alone reported PASS.
+    const schemaEnum = schema.properties.scopes?.items?.enum;
+    expect(Array.isArray(schemaEnum)).toBe(true);
+    expect(new Set(schemaEnum!).size).toBe(schemaEnum!.length);
   });
 });
