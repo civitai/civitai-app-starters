@@ -5,9 +5,16 @@
 JSDoc corrections that ship to IDE hover, plus a restored drift guard.
 
 Documentation only — no API, type or behaviour change. Verified by compiling
-base and head with `tsc --removeComments` and diffing the emitted trees:
-identical, with a one-line code mutation confirmed to make that comparison go
-red. `pnpm typecheck` exits 0.
+base and head with
+`tsc --removeComments --sourceMap false --declarationMap false` and diffing the
+emitted trees: identical, with a one-line code mutation confirmed to make that
+comparison go red. `pnpm typecheck` exits 0.
+
+(The two `false` flags are load-bearing. Without them the `.map` files differ —
+`--removeComments` strips comments from the OUTPUT while the mappings still
+encode ORIGINAL line numbers, which added JSDoc lines shift. No map ships:
+`package.json`'s `files` carries `"!dist/**/*.map"`. Every emitted `.js` and
+`.d.ts` is byte-identical either way.)
 
 ⚠ Note for anyone re-running this: comparing the ORDINARY build output does not
 work and an earlier draft of this note said it did. `tsconfig.json` sets no
@@ -20,8 +27,7 @@ that reproduces.
 are 13, in the same file fifty lines above. The figure is **removed, not
 corrected**: a count in prose is unguarded by every check in this repo, and this
 vocabulary has both gained and lost members (`media:read:owned` and
-`block:settings:*` were each declared here and then removed; `catalog:read` is
-recorded as never having been a scope). The
+`block:settings:*` were each declared in `BLOCK_SCOPES` and then removed). The
 sentence now reads "exactly the values in `BLOCK_SCOPES`", which stays true
 across any future change to the set.
 
@@ -33,7 +39,8 @@ sibling `domain` docblock and in `ColorDomain`'s own — which matters, because
 `ColorDomain` is the declared type of `domain`, so the wrong advice was one
 hover away from the right one on the same line.
 
-All three now carry the same recipe:
+The `domain` and `ColorDomain` docblocks now carry the same recipe;
+`maxBrowsingLevel`'s says what it can and cannot answer and points at them:
 
 ```ts
 const eff = effectiveBrowsingCeiling(maxBrowsingLevel, effectiveBrowsingLevel);
