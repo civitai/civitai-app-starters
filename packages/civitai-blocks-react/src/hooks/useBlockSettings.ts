@@ -13,9 +13,16 @@ export type UseBlockSettings = BlockSettings;
  * user-controlled settings the host forwarded at init. Read-only from the
  * iframe — there is no general "set settings" bridge message. Writing them is
  * platform-side, in the settings panel reached from the **Manage** control on
- * an installed app. The one setting a block can write itself is the viewer's
- * checkpoint, via the `SET_USER_CHECKPOINT` message (see
- * `useCheckpointPicker`).
+ * an installed app.
+ *
+ * ⚠ `userSettings` is `{}` from both current hosts — per-viewer settings are
+ * not wired yet — so do not read an empty object as "the viewer changed
+ * nothing".
+ *
+ * The one setting a block can write itself is the viewer's checkpoint, via the
+ * `SET_USER_CHECKPOINT` message (see `useCheckpointPicker`). 🔴 It does NOT
+ * come back through here: the host merges it into `context.checkpoint`, so
+ * reading `userSettings` after `persist()` returns `{}` and no error.
  *
  * @example
  * const { publisherSettings, userSettings } = useBlockSettings();

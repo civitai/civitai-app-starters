@@ -102,6 +102,18 @@ const REPO_DOCS = ['README.md', 'docs'];
 const MIN_PUBLISHED_PACKAGES = 6;
 const MIN_SCANNED_FILES = 50;
 const MIN_REPO_DOCS = 2;
+/**
+ * 🔴 EVERY DISCOVERY PATH NEEDS ITS OWN FLOOR — this one was missing, and the
+ * gap was demonstrated rather than theorised: with the shipped-doc lookup
+ * typo'd, restoring the pre-fix bytes into `blocks-react/README.md` — one of
+ * the three sites this guard exists to protect — still reported CLEAN, because
+ * `MIN_SCANNED_FILES` is dominated ~36:1 by `src/**` and cannot notice nine
+ * docs vanishing. A floor that another path can satisfy is not a floor.
+ *
+ * 9 today: a README in each of the six published packages, plus
+ * `components`' `MARKUP.md` and `demo/index.html`, plus `sdk`'s `BREAKING.md`.
+ */
+const MIN_SHIPPED_DOCS = 9;
 
 /** `true` when the package.json is published to npm (i.e. not `private`). */
 function isPublished(pkgJsonPath) {
@@ -125,37 +137,64 @@ function publishedPackageDirs() {
     });
 }
 
-const SCANNED_EXTENSIONS = new Set(['.ts', '.tsx', '.md']);
+const SCANNED_EXTENSIONS = new Set(['.ts', '.tsx', '.md', '.html']);
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'test', '__tests__', 'coverage']);
 
-/** Every shipped text file under a package: `src/**` plus top-level docs. */
-function filesToScan(pkgDir) {
+/** Collect scannable files under `abs`, which may be a file or a directory. */
+function collect(abs, out) {
+  let stat;
+  try {
+    stat = statSync(abs);
+  } catch {
+    return; // a `files` entry that does not exist on disk
+  }
+  if (stat.isFile()) {
+    const dot = abs.lastIndexOf('.');
+    const ext = dot === -1 ? '' : abs.slice(dot);
+    if (!SCANNED_EXTENSIONS.has(ext)) return;
+    if (abs.endsWith('CHANGELOG.md')) return; // history quotes old names on purpose
+    out.push(abs);
+    return;
+  }
+  for (const entry of readdirSync(abs, { withFileTypes: true })) {
+    if (entry.isDirectory() && SKIP_DIRS.has(entry.name)) continue;
+    collect(join(abs, entry.name), out);
+  }
+}
+
+/**
+ * The docs a package actually SHIPS, derived from its npm `files` array.
+ *
+ * 🔴 DERIVED, NOT HARDCODED — an earlier draft listed `['README.md',
+ * 'MARKUP.md']` and therefore missed two files that reach every consumer:
+ * `@civitai/sdk`'s `BREAKING.md` and `@civitai/components`' `demo/index.html`
+ * (both in their `files` arrays, and `.html` was not even a scanned
+ * extension). A retired-route instruction in either shipped to npm with this
+ * guard green. `files` is the same criterion `doc-cdn-urls.test.mjs` uses to
+ * build its corpus, and it is the only one that tracks what is published
+ * rather than what someone remembered to list.
+ *
+ * `dist` is excluded: it is generated from `src/**`, which is scanned at its
+ * source, and it does not exist in a cold checkout — including it would make
+ * the corpus depend on whether a build has run.
+ */
+function shippedDocs(pkgDir) {
+  const { files = [] } = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'));
   const out = [];
-  const walk = (dir) => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.isDirectory()) {
-        if (SKIP_DIRS.has(entry.name)) continue;
-        walk(join(dir, entry.name));
-        continue;
-      }
-      const dot = entry.name.lastIndexOf('.');
-      const ext = dot === -1 ? '' : entry.name.slice(dot);
-      if (!SCANNED_EXTENSIONS.has(ext)) continue;
-      // A changelog quotes history on purpose — see KNOWN LIMITS.
-      if (entry.name === 'CHANGELOG.md') continue;
-      out.push(join(dir, entry.name));
-    }
-  };
-  walk(join(pkgDir, 'src'));
-  for (const doc of ['README.md', 'MARKUP.md']) {
-    try {
-      statSync(join(pkgDir, doc));
-      out.push(join(pkgDir, doc));
-    } catch {
-      /* not every package ships every doc */
-    }
+  for (const entry of files) {
+    if (entry.startsWith('!')) continue; // a negation, not a payload
+    if (entry === 'dist' || entry.startsWith('dist/')) continue;
+    collect(join(pkgDir, entry), out);
   }
   return out;
+}
+
+/** Every scannable file for a package: `src/**` plus everything it ships. */
+function filesToScan(pkgDir) {
+  const out = [];
+  collect(join(pkgDir, 'src'), out);
+  out.push(...shippedDocs(pkgDir));
+  return [...new Set(out)];
 }
 
 /**
@@ -192,7 +231,10 @@ function repoDocFiles() {
 
 const PACKAGE_DIRS = publishedPackageDirs();
 const REPO_DOC_FILES = repoDocFiles();
-const SCANNED = [...PACKAGE_DIRS.flatMap(filesToScan), ...REPO_DOC_FILES];
+const SHIPPED_DOC_FILES = PACKAGE_DIRS.flatMap(shippedDocs);
+const SCANNED = [
+  ...new Set([...PACKAGE_DIRS.flatMap(filesToScan), ...REPO_DOC_FILES]),
+];
 
 const HITS = [];
 for (const file of SCANNED) {
@@ -263,6 +305,24 @@ test('the scan actually read the published packages (positive control)', () => {
     REPO_DOC_FILES.length >= MIN_REPO_DOCS,
     `expected >= ${MIN_REPO_DOCS} repo-root doc files, got ${REPO_DOC_FILES.length}` +
       ` — did README.md or docs/ move?`,
+  );
+  // And the shipped docs are a THIRD path, dominated ~36:1 by src/** in the
+  // total — so MIN_SCANNED_FILES cannot see them all disappear.
+  assert.ok(
+    SHIPPED_DOC_FILES.length >= MIN_SHIPPED_DOCS,
+    `expected >= ${MIN_SHIPPED_DOCS} shipped package docs, got ${SHIPPED_DOC_FILES.length}` +
+      ` — did a package's "files" array change, or did the lookup break?`,
+  );
+  // Prove the shipped-doc path reaches a NON-README file: the hardcoded list it
+  // replaced missed exactly those, so a regression to it would pass every
+  // count-based floor above.
+  assert.ok(
+    SHIPPED_DOC_FILES.some((f) => f.endsWith('BREAKING.md')),
+    'no BREAKING.md among the shipped docs — the files-array lookup has regressed to README-only',
+  );
+  assert.ok(
+    SHIPPED_DOC_FILES.some((f) => f.endsWith('demo/index.html')),
+    'no demo/index.html among the shipped docs — .html is shipped and must be scanned',
   );
   // Prove the files were READ, not merely listed: the entry point of the
   // package this guard was written for must be present and non-empty.

@@ -10,9 +10,12 @@ JSDoc under `src/`, so they reach **IDE hover for every consumer** through the
 emitted `.d.ts`. That is worse than a stale docs page: a reader never navigates
 to it, it arrives unbidden at the call site.
 
-The sites, enumerated rather than sampled (`/apps/installed` now occurs **zero**
-times anywhere in the repo; it occurred exactly three times before, all in this
-package):
+The sites, enumerated rather than sampled — `/apps/installed` occurred exactly
+three times in shipped code and prose before this change, all in this package,
+and occurs **zero** times there now. (It still appears in text *about* the
+retraction — this changeset, and the guard that enforces it — which is correct
+and is why the guard keys on where a claim is made rather than on the string
+alone):
 
 - `src/hooks/useBlockSettings.ts` — *"settings are written on the platform
   `/apps/installed` page"*.
