@@ -100,6 +100,60 @@ for (const size of ['sm', 'md', 'lg'] as const) {
   });
 }
 
+/*
+ * Text is the one component whose legacy markup is not a fixed element: the
+ * author writes the tag the meaning calls for, so the pair is `as="h2"` against
+ * a real `<h2>`. The chrome sits on the element the host renders, which is why
+ * every case reads through `[part="text"]` — an `<h2>` in a shadow root against
+ * an `<h2>` in the light DOM. What that pins is the VALUES: the sheet and the
+ * element must agree on every size, weight and colour, or the two tracks are not
+ * interchangeable in a consumer's layout. Measured on mutants: dropping
+ * `:host([size='xl'])` from the element fails `text/size-xl` in both themes, and
+ * so does dropping `&[data-size='xl']` from the sheet.
+ *
+ * 🔴 It does NOT pin the element IDENTITY, and this is the one place that could
+ * be mistaken for doing so. Rendering a `<div>` where `as="h2"` promises an
+ * `<h2>` leaves every case here GREEN (verified) — with `font: inherit` and
+ * `margin: 0` the two compute the same box, which is the whole point of the
+ * reset. The semantics are asserted structurally, with an axe positive control,
+ * in `test/civitai-text.browser.test.ts`.
+ */
+const TEXT_TARGET = (host: HTMLElement): HTMLElement =>
+  host.shadowRoot!.querySelector('[part="text"]')!;
+
+for (const as of ['p', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'] as const) {
+  CASES.push({
+    id: `text/as-${as}`,
+    element: `<civitai-text as="${as}">Ready</civitai-text>`,
+    legacy: `<${as} data-civitai-ui="text">Ready</${as}>`,
+    compare: TEXT_TARGET,
+  });
+}
+for (const size of ['xs', 'sm', 'md', 'lg', 'xl'] as const) {
+  CASES.push({
+    id: `text/size-${size}`,
+    element: `<civitai-text as="h2" size="${size}">Ready</civitai-text>`,
+    legacy: `<h2 data-civitai-ui="text" data-size="${size}">Ready</h2>`,
+    compare: TEXT_TARGET,
+  });
+}
+for (const weight of ['normal', 'medium', 'semibold', 'bold'] as const) {
+  CASES.push({
+    id: `text/weight-${weight}`,
+    element: `<civitai-text weight="${weight}">Ready</civitai-text>`,
+    legacy: `<p data-civitai-ui="text" data-weight="${weight}">Ready</p>`,
+    compare: TEXT_TARGET,
+  });
+}
+for (const color of ['dimmed', 'info', 'success', 'warning', 'error'] as const) {
+  CASES.push({
+    id: `text/color-${color}`,
+    element: `<civitai-text color="${color}">Ready</civitai-text>`,
+    legacy: `<p data-civitai-ui="text" data-color="${color}">Ready</p>`,
+    compare: TEXT_TARGET,
+  });
+}
+
 let style: HTMLStyleElement | undefined;
 let scope: HTMLElement | undefined;
 

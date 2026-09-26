@@ -20,6 +20,7 @@ import {
   Slider,
   Stack,
   TabPanel,
+  Text,
   TextInput,
   Textarea,
   Toast,
@@ -48,6 +49,40 @@ const CHOICE = ['accentColor', 'width', 'height', 'cursor'];
 const PIXEL_GIF =
   'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
 
+/*
+ * Text adds `lineHeight` and the four margins to the TEXT set, because both are
+ * part of its type scale rather than inherited accidents.
+ *
+ * 🔴 WHAT THIS SUITE CAN AND CANNOT SEE FOR Text, measured on mutants rather
+ * than assumed. It compares React against hand-written HTML, so it catches a
+ * divergence BETWEEN THE TWO — a dropped `data-size` on the binding fails all
+ * five size cases here (verified). It is structurally blind to a change in the
+ * SHEET, because both arms load the same stylesheet: deleting
+ * `&[data-size='xl']` from `src/components.css` leaves all 22 Text cases green
+ * (also verified). It is likewise blind to the ELEMENT axis — a `<div>` where
+ * the doc says `<h2>` computes identically once the UA reset has done its work.
+ *
+ * So the eight `text-as-*` cases below are not the heading-semantics guard; they
+ * pin that React emits the documented attributes on each of the eight elements,
+ * in real layout, in both themes. The semantics themselves are asserted
+ * structurally in `markup.test.tsx` (React) and `civitai-text.browser.test.ts`
+ * (the element, with an axe positive control), and the sheet-vs-element values in
+ * `@civitai/components`' own `presentational-parity.browser.test.ts`.
+ */
+const TYPE = [
+  ...TEXT,
+  'lineHeight',
+  'marginTop',
+  'marginRight',
+  'marginBottom',
+  'marginLeft',
+];
+
+const textSizes = ['xs', 'sm', 'md', 'lg', 'xl'] as const;
+const textWeights = ['normal', 'medium', 'semibold', 'bold'] as const;
+const textColors = ['dimmed', 'info', 'success', 'warning', 'error'] as const;
+const textElements = ['p', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'] as const;
+
 const buttonVariants = ['filled', 'light', 'outline', 'subtle'] as const;
 const buttonSizes = ['sm', 'md', 'lg'] as const;
 const badgeVariants = ['filled', 'light', 'outline'] as const;
@@ -56,6 +91,51 @@ const loaderSizes = ['sm', 'md', 'lg'] as const;
 const alertColors = ['info', 'success', 'warning', 'error'] as const;
 
 export const CASES: Case[] = [
+  // ---- Text: every element, every size, weight and colour ----
+  // The element axis is not cosmetic here: a UA <h2> is 1.5em bold with an
+  // em-relative margin, so a track that forgot to reset it would diverge on
+  // exactly one of these eight and look fine on the other seven.
+  ...textElements.map(
+    (as): Case => ({
+      id: `text-as-${as}`,
+      node: <Text as={as}>Ready</Text>,
+      html: `<${as} data-civitai-ui="text" data-size="md" data-weight="normal">Ready</${as}>`,
+      selector: '[data-civitai-ui="text"]',
+      compare: TYPE,
+    })
+  ),
+  ...textSizes.map(
+    (size): Case => ({
+      id: `text-size-${size}`,
+      node: (
+        <Text as="h2" size={size}>
+          Ready
+        </Text>
+      ),
+      html: `<h2 data-civitai-ui="text" data-size="${size}" data-weight="normal">Ready</h2>`,
+      selector: '[data-civitai-ui="text"]',
+      compare: TYPE,
+    })
+  ),
+  ...textWeights.map(
+    (weight): Case => ({
+      id: `text-weight-${weight}`,
+      node: <Text weight={weight}>Ready</Text>,
+      html: `<p data-civitai-ui="text" data-size="md" data-weight="${weight}">Ready</p>`,
+      selector: '[data-civitai-ui="text"]',
+      compare: TYPE,
+    })
+  ),
+  ...textColors.map(
+    (color): Case => ({
+      id: `text-color-${color}`,
+      node: <Text color={color}>Ready</Text>,
+      html: `<p data-civitai-ui="text" data-size="md" data-weight="normal" data-color="${color}">Ready</p>`,
+      selector: '[data-civitai-ui="text"]',
+      compare: TYPE,
+    })
+  ),
+
   // ---- Button: every variant (md) + every size (filled) + states ----
   ...buttonVariants.map(
     (variant): Case => ({
@@ -555,6 +635,30 @@ const SEG_TABS_A11Y: React.ReactElement = (
  * html/selector/compare fields are unused by the axe sweep). */
 const A11Y_EXTRA: Case[] = [
   {
+    // A composed page's worth of typography: a heading ladder that does not skip
+    // a level, a paragraph and a dimmed inline aside. axe has rules for all of
+    // it (`heading-order`, `empty-heading`), and they only apply because `as`
+    // renders real heading elements.
+    id: 'text-a11y',
+    node: (
+      <>
+        <Text as="h1" size="xl" weight="bold">
+          Generate an image
+        </Text>
+        <Text as="h2" size="lg" weight="semibold">
+          Settings
+        </Text>
+        <Text>Pick a model, then press Generate.</Text>
+        <Text as="span" size="xs" color="dimmed">
+          Costs Buzz
+        </Text>
+      </>
+    ),
+    html: '',
+    selector: '[data-civitai-ui="text"]',
+    compare: [],
+  },
+  {
     id: 'slider-a11y',
     node: (
       <Slider
@@ -636,6 +740,7 @@ const A11Y_EXTRA: Case[] = [
 
 /** The component families, for the a11y sweep. */
 export const A11Y_CASES: Case[] = [
+  CASES.find((c) => c.id === 'text-as-p')!,
   CASES.find((c) => c.id === 'button-filled-md')!,
   CASES.find((c) => c.id === 'text-input-default')!,
   CASES.find((c) => c.id === 'text-input-invalid')!,

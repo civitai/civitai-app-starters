@@ -23,6 +23,7 @@ import {
   Slider,
   Stack,
   TabPanel,
+  Text,
   TextInput,
   Textarea,
   Toast,
@@ -34,6 +35,39 @@ import {
 afterEach(cleanup);
 
 describe('markup contract', () => {
+  it('Text renders a paragraph by default, with the documented defaults', () => {
+    const { container } = render(<Text>Copy</Text>);
+    const el = container.querySelector('[data-civitai-ui="text"]')!;
+    expect(el.tagName).toBe('P');
+    expect(el.getAttribute('data-size')).toBe('md');
+    expect(el.getAttribute('data-weight')).toBe('normal');
+    // No `color` prop => no data-color attribute, so the body colour wins.
+    expect(el.hasAttribute('data-color')).toBe(false);
+  });
+
+  it('Text `as` renders a REAL heading element, not a styled box', () => {
+    // The whole accessibility claim of this component: a heading is an <hN>, so
+    // it lands in the document outline. A `role="heading"` div would not.
+    for (const as of ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'span'] as const) {
+      const { container } = render(<Text as={as}>Copy</Text>);
+      expect(container.querySelector('[data-civitai-ui="text"]')!.tagName).toBe(as.toUpperCase());
+      cleanup();
+    }
+  });
+
+  it('Text size is independent of the element, so an h2 can be small print', () => {
+    const { container } = render(
+      <Text as="h2" size="xs" weight="semibold" color="dimmed">
+        Caption
+      </Text>
+    );
+    const el = container.querySelector('[data-civitai-ui="text"]')!;
+    expect(el.tagName).toBe('H2');
+    expect(el.getAttribute('data-size')).toBe('xs');
+    expect(el.getAttribute('data-weight')).toBe('semibold');
+    expect(el.getAttribute('data-color')).toBe('dimmed');
+  });
+
   it('Button renders the attribute contract + defaults', () => {
     const { container } = render(<Button>Go</Button>);
     const btn = container.querySelector('[data-civitai-ui="button"]')!;

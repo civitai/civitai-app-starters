@@ -48,6 +48,55 @@ locally by redeclaring the custom property (e.g.
 
 Legend: **bold** = required attribute/element for correct styling + a11y.
 
+### Text — `data-civitai-ui="text"`
+Headings, paragraphs and inline copy. This is the one component that prescribes
+no element of its own — **you write the tag the meaning calls for** and this
+styles it:
+
+- Element: **`<h1>`–`<h6>`** for a heading, **`<p>`** for a paragraph,
+  **`<span>`** for inline text inside a sentence. A heading MUST be a real
+  heading element: that is what puts it in the document outline and in a screen
+  reader's heading list, and a styled `<div>` (or `<span>`) is not a substitute.
+- `data-size`: `xs` · `sm` · `md` (default) · `lg` · `xl`
+- `data-weight`: `normal` (default) · `medium` · `semibold` · `bold`
+- `data-color` (optional): `dimmed` · `info` · `success` · `warning` · `error` —
+  the intent four are the same set as Alert / Badge / Toast, plus `dimmed` for
+  secondary copy. Omit it for the default body colour.
+
+**Size and heading level are independent, on purpose.** `data-size` never
+changes what the element means, and the element never changes the size — so an
+`<h2>` can be the small print of a card (`data-size="xs"`) and a `<p>` can be the
+lede (`data-size="xl"`). Pick the level from the page's structure and the size
+from its design.
+
+The scale — `sm`/`md`/`lg` are the same three sizes Button uses, so a size name
+means one size across the pack:
+
+| `data-size` | `font-size` | `line-height` |
+|---|---|---|
+| `xs` | 12px | 1.5 |
+| `sm` | 13px | 1.5 |
+| `md` (default) | 14px | 1.5 |
+| `lg` | 16px | 1.5 |
+| `xl` | 20px | 1.25 |
+
+**Margins are reset to `0`.** The browser's default heading/paragraph margins are
+em-relative, so they would move with every `data-size`; vertical rhythm in this
+pack belongs to `stack` / `group`. Space your text by wrapping it in one of those,
+not by relying on a UA margin.
+
+Not in this component, deliberately: **alignment** is already the `ci-text-start`
+/ `ci-text-center` / `ci-text-end` utility (and `text-align` inherits, so it
+reaches `<civitai-text>` too), and **truncation** is already `ci-truncate`. A
+`data-align` or `data-truncate` here would be a second copy of a predicate that
+already exists. Adding either later is additive; taking one away would not be.
+
+```html
+<h2 data-civitai-ui="text" data-size="xl" data-weight="bold">Generate an image</h2>
+<p data-civitai-ui="text">Pick a model, then press Generate.</p>
+<span data-civitai-ui="text" data-size="xs" data-color="dimmed">Costs Buzz</span>
+```
+
 ### Button — `data-civitai-ui="button"`
 - Element: **`<button>`** (or `<a role="button">` for links).
 - `data-variant`: `filled` (default) · `light` · `outline` · `subtle`

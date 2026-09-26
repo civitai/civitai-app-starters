@@ -56,6 +56,20 @@
         </button>
       </header>
 
+      <h2>Text</h2>
+      <!--
+        The only component that prescribes no element of its own: the tag is the
+        author's choice and carries the meaning, `data-civitai-ui="text"` carries
+        the style. The heading below is a real <h3>, so it lands in this page's
+        outline; its size says nothing about its level.
+      -->
+      <h3 data-civitai-ui="text" data-size="xl" data-weight="bold">Generate an image</h3>
+      <p data-civitai-ui="text">Pick a model, then press Generate.</p>
+      <p data-civitai-ui="text" data-size="sm" data-color="dimmed">
+        Secondary copy, at <span data-civitai-ui="text" data-size="sm" data-weight="semibold">data-size="sm"</span>.
+      </p>
+      <p data-civitai-ui="text" data-size="xs" data-color="error">Something went wrong.</p>
+
       <h2>Button</h2>
       <div class="row">
         <button data-civitai-ui="button" data-variant="filled" data-size="md" type="button">Filled</button>

@@ -26,6 +26,19 @@ const CASES: { id: string; markup: string; prepare?: (scope: HTMLElement) => voi
     id: 'button/icon-only',
     markup: '<civitai-button aria-label="Close"><span aria-hidden="true">&times;</span></civitai-button>',
   },
+  // A heading is only a heading if it reaches the accessibility tree, and axe is
+  // what says so — `empty-heading` and `heading-order` both have opinions here.
+  // The dedicated positive control (a DELIBERATELY skipped level must be
+  // REPORTED) lives in `civitai-text.browser.test.ts`; this sweep is the
+  // zero-violations half.
+  {
+    id: 'text/headings',
+    markup:
+      '<civitai-text as="h1" size="xl" weight="bold">Generate an image</civitai-text>' +
+      '<civitai-text as="h2" size="lg" weight="semibold">Settings</civitai-text>' +
+      '<civitai-text>Pick a model, then press Generate.</civitai-text>' +
+      '<civitai-text as="span" size="xs" color="dimmed">Costs Buzz</civitai-text>',
+  },
   { id: 'text-input', markup: '<civitai-text-input label="Prompt"></civitai-text-input>' },
   {
     id: 'text-input/described',

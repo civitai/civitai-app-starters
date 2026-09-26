@@ -864,4 +864,69 @@
   [data-civitai-ui='image'][data-status='error'] [data-civitai-ui-image-fallback] {
     display: flex;
   }
+
+  /* ----- Text ----- */
+  /*
+   * The typography primitive. Alone in this sheet it prescribes NO element of
+   * its own: the author writes the tag the meaning calls for — `<h1>`..`<h6>`
+   * for a heading, `<p>` for a paragraph, `<span>` for inline — and this rule
+   * sizes and colours whatever that is. Nothing in the visual scale implies a
+   * heading level and nothing in a heading level implies a size, which is what
+   * lets an `<h2>` be the small caption of a card.
+   *
+   * `display` is deliberately NOT set, so `<p>`/`<h2>` stay block and `<span>`
+   * stays inline: the element's own semantics keep deciding its box.
+   *
+   * `margin: 0` IS set, and it is a decision rather than a reset for tidiness.
+   * The UA gives headings and paragraphs an em-relative margin that moves with
+   * every `data-size`, spacing in this pack is owned by `stack`/`group`, and
+   * without it `<civitai-text as="h2">` and `<h2 data-civitai-ui="text">` lay
+   * out differently — which is the one thing the two tracks may not do.
+   *
+   * Documented DEFAULTS (MARKUP.md): size=md, weight=normal, no `data-color`.
+   * On the BASE rule so BARE markup renders them, exactly as button and badge
+   * do; the explicit `[data-size]`/`[data-weight]` rules below OVERRIDE.
+   */
+  [data-civitai-ui='text'] {
+    margin: 0;
+    color: var(--civitai-color-text);
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 1.5;
+
+    /*
+     * The type scale. `sm`/`md`/`lg` are byte-identical to Button's own
+     * font-size ramp (13/14/16px), so one size name means one size across the
+     * pack; `xs` is the 12px the field description already uses; `xl` is the
+     * single new step, for a section heading. Only `xl` tightens its
+     * line-height — a 20px heading leaded at 1.5 reads as loose.
+     */
+    &[data-size='xs'] { font-size: 12px; }
+    &[data-size='sm'] { font-size: 13px; }
+    &[data-size='md'] { font-size: 14px; }
+    &[data-size='lg'] { font-size: 16px; }
+    &[data-size='xl'] { font-size: 20px; line-height: 1.25; }
+
+    /* `normal` / `semibold` / `bold` are the weights `utilities.css` already
+       spells (`ci-normal` 400, `ci-semibold` 600, `ci-bold` 700); `medium` is
+       the 500 this sheet already uses for a radio-group and a toast title. */
+    &[data-weight='normal'] { font-weight: 400; }
+    &[data-weight='medium'] { font-weight: 500; }
+    &[data-weight='semibold'] { font-weight: 600; }
+    &[data-weight='bold'] { font-weight: 700; }
+
+    /*
+     * `info`/`success`/`warning`/`error` are the same intent enum as Alert,
+     * Badge and Toast. `dimmed` is the one addition, and it is most of the
+     * reason this attribute exists: secondary copy is the commonest thing a
+     * composed page needs, and `--civitai-color-text-dimmed` is already what
+     * four components in this sheet reach for. Omitted => the default
+     * `--civitai-color-text` on the base rule above.
+     */
+    &[data-color='dimmed'] { color: var(--civitai-color-text-dimmed); }
+    &[data-color='info'] { color: var(--civitai-color-info); }
+    &[data-color='success'] { color: var(--civitai-color-success); }
+    &[data-color='warning'] { color: var(--civitai-color-warning); }
+    &[data-color='error'] { color: var(--civitai-color-error); }
+  }
 }

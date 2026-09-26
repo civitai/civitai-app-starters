@@ -8,6 +8,14 @@
  */
 export { injectStyles, useComponentStyles } from './styles.js';
 
+export {
+  Text,
+  type TextProps,
+  type TextAs,
+  type TextSize,
+  type TextWeight,
+  type TextColor,
+} from './Text.js';
 export { Button, type ButtonProps, type ButtonVariant, type ButtonSize } from './Button.js';
 export { TextInput, type TextInputProps } from './TextInput.js';
 export { Textarea, type TextareaProps } from './Textarea.js';

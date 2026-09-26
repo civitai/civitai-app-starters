@@ -107,6 +107,36 @@
       <output id="sc-value">grid</output>
     </div>
 
+    <h2>Text &mdash; every size, and level independent of size</h2>
+    <civitai-stack gap="md">
+      <civitai-text as="h3" size="xl" weight="bold">Generate an image</civitai-text>
+      <civitai-text>A paragraph at the md default.</civitai-text>
+      <civitai-stack gap="sm">
+        <civitai-text size="xl">xl &mdash; 20px, tighter leading</civitai-text>
+        <civitai-text size="lg">lg &mdash; 16px</civitai-text>
+        <civitai-text size="md">md &mdash; 14px, the default</civitai-text>
+        <civitai-text size="sm">sm &mdash; 13px</civitai-text>
+        <civitai-text size="xs">xs &mdash; 12px</civitai-text>
+      </civitai-stack>
+      <civitai-group>
+        <civitai-text weight="normal">normal</civitai-text>
+        <civitai-text weight="medium">medium</civitai-text>
+        <civitai-text weight="semibold">semibold</civitai-text>
+        <civitai-text weight="bold">bold</civitai-text>
+      </civitai-group>
+      <civitai-group>
+        <civitai-text color="dimmed">dimmed</civitai-text>
+        <civitai-text color="info">info</civitai-text>
+        <civitai-text color="success">success</civitai-text>
+        <civitai-text color="warning">warning</civitai-text>
+        <civitai-text color="error">error</civitai-text>
+      </civitai-group>
+      <!-- A real <h4>, deliberately set smaller than the body copy above it:
+           `as` is the outline, `size` is the design, and neither implies the
+           other. Check the accessibility tree — it is still a level-4 heading. -->
+      <civitai-text as="h4" size="xs" color="dimmed">A small-print h4</civitai-text>
+    </civitai-stack>
+
     <h2>Presentational primitives</h2>
     <civitai-stack gap="md">
       <civitai-group>
