@@ -103,11 +103,12 @@ later is additive; removing one would not be.
 ⚠️ **Colouring Text requires `utilities.css`, which is a separate stylesheet — and
 no injection path in these packages ships it.** It is not bundled into
 `styles.css`; `injectStyles()` injects the tokens and `styles.css` only, and
-`@civitai/blocks-react`'s `injectBlocksStyles()` — reached on mount by 20 of that
-package's 21 `/ui` components (`SettingsForm` is deliberately unstyled) — adds
-that package's interactive CSS on top and still no utilities. So an App Block
-author who hand-writes `<p data-civitai-ui="text">`, which rendering a `/ui`
-component is documented to style, gets the new inherit behaviour together with a
+`@civitai/blocks-react`'s `injectBlocksStyles()` — reached on mount by 20 of the
+21 component modules in that package's `/ui`, `SettingsForm` being the one
+exception and deliberately unstyled — adds that package's interactive CSS on top
+and still no utilities. So an App Block author who hand-writes
+`<p data-civitai-ui="text">`, which rendering a `/ui` component is documented to
+style, gets the new inherit behaviour together with a
 `ci-text-default` that silently does nothing: measured, that markup under an
 ancestor `color: rgb(24, 24, 27)` with `injectStyles()` alone computes
 `rgb(24, 24, 27)`, the class having no effect. Load

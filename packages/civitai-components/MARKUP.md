@@ -152,9 +152,10 @@ layer down, and the same predicate decides all three:
   every other value — 🔴 **but that class lives in `utilities.css`, which is a
   separate stylesheet this package does not inject.** `injectStyles()` ships the
   tokens and `styles.css` and nothing else, and `@civitai/blocks-react`'s
-  `injectBlocksStyles()` — reached on mount by 20 of that package's 21 `/ui`
-  components, `SettingsForm` being deliberately unstyled — adds only its own
-  interactive CSS on top, so on either of those paths `ci-text-default`,
+  `injectBlocksStyles()` — reached on mount by 20 of the 21 component modules in
+  that package's `/ui`, `SettingsForm` being the one exception and deliberately
+  unstyled — adds only its own interactive CSS on top. So on either of those
+  paths `ci-text-default`,
   `ci-muted` and every `ci-text-*` is an **unknown class that silently does
   nothing**. Measured: `<p data-civitai-ui="text" class="ci-text-default">`
   under an ancestor `color: rgb(24, 24, 27)`, with `injectStyles()` alone,
