@@ -864,4 +864,100 @@
   [data-civitai-ui='image'][data-status='error'] [data-civitai-ui-image-fallback] {
     display: flex;
   }
+
+  /* ----- Text ----- */
+  /*
+   * The typography primitive. Alone in this sheet it prescribes NO element of
+   * its own: the author writes the tag the meaning calls for — `<h1>`..`<h6>`
+   * for a heading, `<p>` for a paragraph, `<span>` for inline — and this rule
+   * sizes and colours whatever that is. Nothing in the visual scale implies a
+   * heading level and nothing in a heading level implies a size, which is what
+   * lets an `<h2>` be the small caption of a card.
+   *
+   * `display` is deliberately NOT set, so `<p>`/`<h2>` stay block and `<span>`
+   * stays inline: the element's own semantics keep deciding its box.
+   *
+   * `margin: 0` IS set, and it is a decision rather than a reset for tidiness.
+   * The UA gives headings and paragraphs an em-relative margin that moves with
+   * every `data-size`, spacing in this pack is owned by `stack`/`group`, and
+   * without it `<civitai-text as="h2">` and `<h2 data-civitai-ui="text">` lay
+   * out differently — which is the one thing the two tracks may not do.
+   *
+   * Documented DEFAULTS (MARKUP.md): size=md, weight=normal, no `data-color`.
+   * On the BASE rule so BARE markup renders them, exactly as button and badge
+   * do; the explicit `[data-size]`/`[data-weight]` rules below OVERRIDE.
+   */
+  [data-civitai-ui='text'] {
+    margin: 0;
+    color: var(--civitai-color-text);
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 1.5;
+
+    /*
+     * THE TYPE SCALE — ONE scale, and the reason it runs this far is that the
+     * package must not ship two that disagree.
+     *
+     * The bottom half is the UI ramp: `sm`/`md`/`lg` are byte-identical to
+     * Button's own font-size ramp (13/14/16px), so one size name means one size
+     * across the pack, and `xs` is the 12px the field description already uses.
+     *
+     * The top half is the HEADING ramp, and every step of it is a value
+     * `utilities.css` already ships as `ci-fs-N` — so the two are the same
+     * scale under two spellings, not two scales:
+     *
+     *     lg  16px = ci-fs-6      2xl 24px = ci-fs-4      4xl 32px = ci-fs-2
+     *     xl  20px = ci-fs-5      3xl 28px = ci-fs-3      5xl 40px = ci-fs-1
+     *
+     * What that costs: the t-shirt names do not encode the `ci-fs-N` number,
+     * and the two sequences run in OPPOSITE directions (5xl is ci-fs-1), so a
+     * reader needs the mapping above. That was the cheaper trade — naming the
+     * new steps `fs-1`..`fs-4` would have put two naming conventions inside one
+     * attribute and reversed its direction halfway up. Nothing above `ci-fs-1`
+     * is invented here; 40px is the top of both ladders.
+     *
+     * UNIT: this ramp is px (Button's unit), `ci-fs-*` is rem. They agree at
+     * the default 16px root and diverge if a consumer changes it. Deliberate —
+     * mixing units within one ramp would make it non-monotonic under a changed
+     * root, which is worse than this caveat. Already true of `lg`/`xl` before
+     * the ramp was extended.
+     *
+     * Everything from `xl` up tightens its line-height to 1.25 — a 20px-plus
+     * heading leaded at 1.5 reads as loose. Two leading values in total.
+     */
+    &[data-size='xs'] { font-size: 12px; }
+    &[data-size='sm'] { font-size: 13px; }
+    &[data-size='md'] { font-size: 14px; }
+    &[data-size='lg'] { font-size: 16px; }
+    &[data-size='xl'] { font-size: 20px; line-height: 1.25; }
+    &[data-size='2xl'] { font-size: 24px; line-height: 1.25; }
+    &[data-size='3xl'] { font-size: 28px; line-height: 1.25; }
+    &[data-size='4xl'] { font-size: 32px; line-height: 1.25; }
+    &[data-size='5xl'] { font-size: 40px; line-height: 1.25; }
+
+    /* `normal` / `semibold` / `bold` are the weights `utilities.css` already
+       spells (`ci-normal` 400, `ci-semibold` 600, `ci-bold` 700); `medium` is
+       the 500 this sheet already uses for a radio-group and a toast title. */
+    &[data-weight='normal'] { font-weight: 400; }
+    &[data-weight='medium'] { font-weight: 500; }
+    &[data-weight='semibold'] { font-weight: 600; }
+    &[data-weight='bold'] { font-weight: 700; }
+
+    /*
+     * NO COLOUR AXIS, and that is the same predicate this component already
+     * applies to alignment and truncation rather than a separate judgement.
+     * Every value one would carry already exists as a utility that reaches this
+     * element: `ci-muted` (the dimmed token), `ci-text-info` / `-success` /
+     * `-warning` / `-error` (the intent enum), `ci-text-default` (the body
+     * colour). `color` INHERITS, so a utility on this element or any ancestor
+     * reaches the inner element of `<civitai-text>` through its shadow boundary
+     * too — the inner element is `color: inherit` — which is exactly why a
+     * `data-color` here would be a second copy of a predicate that already has
+     * an implementation one layer down.
+     *
+     * It is also the direction that stays open: this ships `minor` on a
+     * published package, so adding the axis later is additive and taking it
+     * away would not be.
+     */
+  }
 }

@@ -100,6 +100,69 @@ for (const size of ['sm', 'md', 'lg'] as const) {
   });
 }
 
+/*
+ * Text is the one component whose legacy markup is not a fixed element: the
+ * author writes the tag the meaning calls for, so the pair is `as="h2"` against
+ * a real `<h2>`. The chrome sits on the element the host renders, which is why
+ * every case reads through `[part="text"]` — an `<h2>` in a shadow root against
+ * an `<h2>` in the light DOM. What that pins is the VALUES: the sheet and the
+ * element must agree on every size and weight, or the two tracks are not
+ * interchangeable in a consumer's layout. Measured on mutants: dropping
+ * `:host([size='xl'])` from the element fails `text/size-xl` in both themes, and
+ * so does dropping `&[data-size='xl']` from the sheet. Re-measured on the
+ * extended ramp: dropping `:host([size='4xl'])` fails `text/size-4xl` in both
+ * themes with `fontSize: expected '14px' to be '32px'`.
+ *
+ * 🔴 It does NOT pin the element IDENTITY, and this is the one place that could
+ * be mistaken for doing so. Rendering a `<div>` where `as="h2"` promises an
+ * `<h2>` leaves every case here GREEN (verified) — with `font: inherit` and
+ * `margin: 0` the two compute the same box, which is the whole point of the
+ * reset. The semantics are asserted structurally, with an axe positive control,
+ * in `test/civitai-text.browser.test.ts`.
+ */
+const TEXT_TARGET = (host: HTMLElement): HTMLElement =>
+  host.shadowRoot!.querySelector('[part="text"]')!;
+
+for (const as of ['p', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'] as const) {
+  CASES.push({
+    id: `text/as-${as}`,
+    element: `<civitai-text as="${as}">Ready</civitai-text>`,
+    legacy: `<${as} data-civitai-ui="text">Ready</${as}>`,
+    compare: TEXT_TARGET,
+  });
+}
+/*
+ * EVERY step of the ramp, both halves. The top four exist because the component
+ * is justified on closing a headline gap, and they are only worth anything if
+ * the two tracks agree on them — a heading is the size a consumer is most likely
+ * to notice diverging.
+ */
+for (const size of ['xs', 'sm', 'md', 'lg', 'xl', '2xl', '3xl', '4xl', '5xl'] as const) {
+  CASES.push({
+    id: `text/size-${size}`,
+    element: `<civitai-text as="h2" size="${size}">Ready</civitai-text>`,
+    legacy: `<h2 data-civitai-ui="text" data-size="${size}">Ready</h2>`,
+    compare: TEXT_TARGET,
+  });
+}
+for (const weight of ['normal', 'medium', 'semibold', 'bold'] as const) {
+  CASES.push({
+    id: `text/weight-${weight}`,
+    element: `<civitai-text weight="${weight}">Ready</civitai-text>`,
+    legacy: `<p data-civitai-ui="text" data-weight="${weight}">Ready</p>`,
+    compare: TEXT_TARGET,
+  });
+}
+/*
+ * There is no `text/color-*` block. There used to be five cases here, and they
+ * were DELETED rather than weakened when the colour axis was dropped: they
+ * existed only to pin `[color]` against `[data-color]`, both of which are gone,
+ * so there is nothing left for them to compare. Colour on Text is now the
+ * `ci-muted` / `ci-text-*` utilities, which are a different package surface
+ * (`utilities.css`) and not part of the two-track parity contract this file
+ * pins. The size and weight axes above are untouched.
+ */
+
 let style: HTMLStyleElement | undefined;
 let scope: HTMLElement | undefined;
 

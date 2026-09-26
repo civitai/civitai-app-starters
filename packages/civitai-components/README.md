@@ -79,10 +79,16 @@ import '@civitai/components/civitai-button/define';  // just this one
 ```
 
 ```html
+<civitai-text as="h2" size="xl" weight="bold">Generate an image</civitai-text>
 <civitai-button variant="filled" size="md">Generate</civitai-button>
 <civitai-text-input label="Prompt" name="prompt"></civitai-text-input>
 <civitai-segmented-control aria-label="View"></civitai-segmented-control>
 ```
+
+`<civitai-text>` renders the element `as` names — a real `<h1>`–`<h6>`, `<p>` or
+`<span>` — inside its shadow root, so a heading is a heading to the document
+outline and not a box wearing `role="heading"`. Size and level are independent:
+`as` is the page's structure, `size` is its design.
 
 One script tag, no build:
 
@@ -93,7 +99,10 @@ One script tag, no build:
 
 `elements.js` is a self-contained bundle at the package root, because jsDelivr
 ignores `exports` — the same reason `styles.css` is copied there. The build
-fails if it exceeds **25 kB gzip**; it currently sits at about 19 kB.
+fails if it exceeds **32 kB gzip**; it currently sits at about 28 kB. (Both
+figures were stale — `25 kB` / `about 19 kB` — from before the vocabulary grew;
+read them off a `pnpm --filter @civitai/components build` rather than from here,
+which is the only place they cannot rot.)
 
 ### The civitai vocabulary
 
@@ -446,6 +455,20 @@ here so they're readable on the npm package page.
 (default = light). **Cascade** — every rule lives in `@layer civitai.components`,
 so your own unlayered CSS always wins with no `!important`; override a token
 locally by redeclaring it (`style="--civitai-color-primary: #a259ff"`).
+
+### Text — `data-civitai-ui="text"`
+Headings, paragraphs and inline copy. The one component that prescribes no
+element: **you write the tag the meaning calls for** — `<h1>`–`<h6>`, `<p>` or
+`<span>` — and this styles it. A heading MUST be a real heading element.
+`data-size`: `xs` · `sm` · `md` (default) · `lg` · `xl` · `2xl` · `3xl` · `4xl` ·
+`5xl` (12/13/14/16/20/24/28/32/40px) — **one scale**: `sm`/`md`/`lg` are Button's
+own three, and everything from `lg` up is a value the `ci-fs-*` utilities already
+ship (`lg`=`ci-fs-6` … `5xl`=`ci-fs-1`). `data-weight`: `normal` (default) ·
+`medium` · `semibold` · `bold`. **Size and level are independent** — an `<h2>`
+can be `data-size="xs"`. Margins are reset to `0`; space text with `stack`.
+Colour, alignment and truncation stay in the utilities (`ci-muted` /
+`ci-text-*`, `ci-text-center`, `ci-truncate`) — all three inherit into the
+element track except `ci-truncate`.
 
 ### Button — `data-civitai-ui="button"`
 - Element: **`<button>`** (or `<a role="button">`).
