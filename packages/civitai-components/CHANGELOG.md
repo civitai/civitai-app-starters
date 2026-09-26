@@ -1,5 +1,30 @@
 # @civitai/components
 
+## 0.7.0
+
+### Minor Changes
+
+- c49ade1: `<civitai-workflow-button>` prices a workflow, runs it on the viewer's Buzz and
+  reports it — as one control. The price is in its label before a press; while it
+  runs it spins, names the stage the workflow is at, says how many jobs are ahead
+  of it while a step still waits in a queue, counts its steps off as they
+  finish and fills its own background with the lowest progress rate any step
+  reports; a second press asks whether to cancel,
+  offering the workflow id to copy. A finished run
+  says how it ended before the button offers its price again. A metered workflow,
+  billed as it runs, is offered without a price rather than as free. It
+  emits `priced`, `submitted`, `progress`, `finished`, `canceled` and `error`, so
+  an app stops rebuilding submit-watch-cancel around every generate button.
+
+  `variant`, `size`, `full-width` and `disabled` pass through to the button it
+  wraps, so an app never needs `::part` CSS for what a plain button already does.
+
+  Like `<civitai-sign-in-button>` it needs `@civitai/sdk` (an optional peer) and
+  sits behind its own entry point, out of `register` and the CDN bundles.
+
+- c49ade1: `<civitai-sign-in-button>` passes `full-width` through to the button it wraps,
+  so an app does not need `::part` CSS for what a plain button already does.
+
 ## 0.6.0
 
 ### Minor Changes
@@ -482,10 +507,10 @@
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-          before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                   @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-          after    @civitai/theme       0.3.1                   — 1 copy
-                   @civitai/components  0.4.2                   — 1 copy
+            before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                     @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+            after    @civitai/theme       0.3.1                   — 1 copy
+                     @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
