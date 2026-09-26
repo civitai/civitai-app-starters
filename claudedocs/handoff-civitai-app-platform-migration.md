@@ -43,35 +43,14 @@ that protocol."*
 
 ## State now
 
-- **Branch / PR:** the doc's own branch is `docs/handoff-app-platform-migration` (PR `starters#440`, still open, **18 behind / 54 ahead** of `main`). ⚠ The primary starters clone now sits on `main`, so this doc **looks absent** there — read it from the ref, not the worktree.
-- 🔴 **THE AUTH ARC CLOSED AND A SKILL-DRIFT ARC OPENED AND CLOSED ON TOP OF IT.** Ranks 1 and 2 of the previous update are DONE; everything below is new.
-
-**Rank 1 — `civitai#5127` CLOSED** (`issuecomment-5836949701`). The red arm was BUILT, not taken from `#5129`'s own report: a worktree at `origin/main` with only the three production files reverted to the pre-fix base `57d5ff34`, tests left at HEAD → **6 failed | 12 passed**, each on its own assertion. The same 12 pass on both trees, so the red arm discriminates.
-
-**Rank 2 — the first-ever `auth: "oauth"` Civitai App is LIVE and PROBED.** `oauth-probe@0.1.3`, `https://oauth-probe.civit.ai`, repo `ZacxDev/civitai-app-oauth-probe` (PRs #1–#4 merged). Measured in a real page slot, before → after consent:
-
-| reading | ungranted | granted |
-|---|---|---|
-| `token kind` | `block` | **`oauth`** |
-| `tokenScope` | — (401) | **65537** = `UserRead(1)｜BuzzRead(65536)` |
-| `/api/v1/me` fields | refused | **`email, emailVerified, isModerator`** |
-
-`#5128`'s host consent notice rendered; `#5129`'s consent-required fallback behaved as designed; the grant rotated the SAME session to `oauth`. **No screen was taken** — `browser activate` was never called; the whole run used `wake` on a hidden tab.
-
-**Four platform gates refused a submit before it deployed**, each real, each found only by submitting: `minimumReleaseAge` · `ERR_PNPM_IGNORED_BUILDS` · `boot-skeleton-gate` · one transient Docker Hub pull timeout (cleared by a same-version `--allow-downgrade` re-submit). 🔴 `civitai app validate` passed all four.
-
-**Skill-drift audit — 6 read-only agents over ~790 KB, ~77 findings, then 3 fix/verify agents.**
-
-| PR | repo | state |
-|---|---|---|
-| `#457` | `civitai-app-starters` | ✅ **MERGED** `bc154d1` — `@civitai/sdk/safe-storage` subpath |
-| `#23` | `ZacxDev/civitai-app-requests` | ✅ **MERGED** `b8d2b2d` — shim import, first in `main.tsx` |
-| `#1637` | `civitai/talos-infra` | ✅ **MERGED** `207219bce` — app-blocks skill |
-| `#1876` | `innovation-upstream/devrc` | ⏸ **HELD** — see the investigation below |
-
-**Issues filed, all OPEN with closing conditions:** `starters#459` `starters#460` `civitai#5153` `civitai/cli#706`.
-
-**Deploy/verify, stated separately:** `oauth-probe` is live and verified end-to-end. `#457` is merged but **NOT PUBLISHED** — `changeset-release/main` (`starters#461`) is open and cuts `@civitai/sdk@0.7.0`; until it merges the subpath is uninstallable. `#23` is merged but **reaches no viewer** — `package.json` and `block.manifest.json` both stay `0.4.1` deliberately, so it needs a version bump + `civitai app submit`.
+- **Branch / PR:** this doc's own branch is `docs/handoff-app-platform-migration` (PR `starters#440`, still open, `MERGEABLE` but `mergeStateStatus: BLOCKED`). ⚠ The primary starters clone sits on `main`, so this doc **looks absent** there — read it from the ref (`git show origin/docs/handoff-app-platform-migration:claudedocs/handoff-civitai-app-platform-migration.md`), never from the worktree.
+- 🔴 **THE ARC'S CLOSING CONDITION WAS RE-VERIFIED AND STILL HOLDS — ADDRESSED, CLOSED.** Measured 2026-09-26 against `origin/main` (not a working copy; the `civitai-app-requests` checkout was 1 behind / 0 ahead, so `git grep origin/main` was used): `app-requests` has **0** `@civitai/blocks-react` importers by the doc's verbatim token grep AND **0** by the anchored construct grep, with `blocks-react` absent from its `package.json`. Positive control `gen-matrix`: **10** verbatim / **7** anchored. Everything in the ranked list below is therefore a NEW arc, not another round of this one.
+- 🔴 **RANK 1'S PREMISE CHANGED UNDER IT, AND THE FIX IS PUSHED BUT NOT YET MERGED.** `devrc#1876` was held because four Tekton gates never started. Capacity returned and the PR is now red on REAL CODE, diagnosed and fixed — see the investigation block below. Commit **`617b8c95`** pushed to `fix/civitai-skill-drift` (`fa0cbd88..617b8c95`); head is now `617b8c95`, `MERGEABLE` / `UNSTABLE`, all four gates re-running `pending` as of 2026-09-26T03:0xZ. **Merge (squash) once all four are green — the repo has 0 merge commits in its last 20 first-parent.**
+- **Deploy/verify, stated separately:** nothing was deployed this session. `617b8c95` is pushed and locally gate-verified (`nix build .#checks.x86_64-linux.pytests` → `failed=0`), but **CI has not yet confirmed it** — pushed ≠ verified by the gate that actually blocks the merge.
+- **Unchanged and still blocking the publish chain:** `starters#461` (`chore(release): version packages`) is **`CLEAN` / `MERGEABLE`** and still open; `npm view @civitai/sdk version` → **0.6.0** with published `exports` of `["." , "./testing"]` only — **no `./safe-storage`**. So `starters#457` remains merged-but-inert and `app-requests`' shim still reaches no viewer.
+- **`claim-work`:** `civitai-app-platform-migration-1` is **HELD** by this session (host nixos, owner-id `ca1b0610f85e`) pending the `#1876` merge. Release it with `claim-work --release civitai-app-platform-migration-1` when that lands or is abandoned.
+- **Merged earlier in this arc, kept for the shas** (this list sits under a REPLACE heading, so carry it forward or lose it): `starters#457` `bc154d1` (`@civitai/sdk/safe-storage` subpath) · `app-requests#23` `b8d2b2d` (shim import, first in `main.tsx`) · `talos-infra#1637` `207219bce` (app-blocks skill) · `devrc#1876` **fix pushed `617b8c95`, merge pending**.
+- ⚠ **Ranks 4–6 were NOT reconciled this session.** `resume-state.sh` resolved no document on its first run (the doc is not on `main`), and the second run — against a copy extracted into a scratchpad — is not a git repo, so **no git/PR reconciliation ran at all**. PR state was checked by hand for ranks 1–3 only.
 
 ## Open investigations — live diagnosis state
 
@@ -1004,6 +983,21 @@ that protocol."*
 - 🔴 **Leading hypothesis:** *"the app 403s / has no budget"* may be **row state rather than a defect**, for a majority of installs. Nobody has written that down, so the next person to debug a 403 will look at code.
 - **Next probe:** decide whether that mass revocation was intended. If yes, document it where a 403 is debugged (`gotchas-auth-scopes-and-tokens.md`, beside `#203`); if no, it is a data incident.
 
+<!-- SUPERSEDES the block "`devrc#1876` is held because its gates NEVER RAN — not because they
+     failed". 🔴 ITS "Next probe" IS NOW WRONG AND MUST NOT BE RUN: it says all four green ⇒
+     merge, and still-starved-after-a-few-hours ⇒ a `tekton` capacity problem. Capacity DID
+     return (02:01Z) and the gate then went red on the PR's OWN code, so "starved" is no longer
+     a live reading and there is no tekton capacity item to open. Its measurements of the
+     starvation window stand as history. -->
+### RESOLVED (`617b8c95`, merge pending) — `devrc#1876`'s red was its own +27 chars, not capacity
+- as-of: 2026-09-26
+- **Symptom + exact repro:** `gh pr checks 1876 --repo innovation-upstream/devrc` at head `fa0cbd8` → three gates green (`cairn-client-runs`, `gotests` 461/461, `nodetests` 1720/1720) and `tekton/devrc-pytests` **`failure`**: `FAILING: test_the_quoted_measurements_match_the_live_tree | TOTAL collected=24185 passed=24177 skipped=5 failed=3`.
+- **Observed (with values):** the per-head status timeline is the discriminator, read from `gh api repos/innovation-upstream/devrc/commits/fa0cbd88.../statuses` — `2026-09-26T00:00:42Z` `error` *"NO CAPACITY: pytests — the gate never started"*; `02:01:22Z` `pending`; **`02:19:37Z` `failure`**. So capacity returned and the gate then produced a real red. Cause: the PR lengthens `claude/skills/civitai-app-fleet/SKILL.md`'s frontmatter `description:` by `panorama-360, oauth-probe` = **+27 chars**, which reds THREE tests — `test_skill_tiers.py::test_the_quoted_measurements_match_the_live_tree` (1) plus `test_skill_descriptions.py::test_the_listing_total_does_not_regrow_past_its_ratchet` and `::test_control_the_total_ratchet_can_go_red` (2). 1 + 2 = CI's `failed=3` exactly. The tier-A ceiling was **never** breached (80 of headroom remained at +27); the ratchet on the **SUM** was, by exactly 27 (`10,859` vs the `10,832` ceiling). `via: measurement`
+- **Ruled out:** *"the red is inherited from the branch point, like `devrc#1862`'s was — rebase, don't investigate"* — **FALSE.** `#1876` IS 3 behind / 1 ahead of `origin/main`, which is what makes the hypothesis attractive, but `git diff fa0cbd88 origin/main -- scripts/tests/test_skill_tiers.py` is **empty** and the same holds for `test_skill_descriptions.py`: both gates are byte-identical across the two trees, so the base cannot be the cause. `via: command`
+- **Ruled out:** *"a green `nix build .#checks.x86_64-linux.pytests` means the tree passes"* — **FALSE ON A 0-BYTE LOG, and this nearly shipped a false claim.** The first such run exited **0** having written **0 bytes** — not even the `BUILD_RC` echo chained after it. Exit 0 was the shell's, not the gate's, and it was reporting on a tree that had three failures. Re-run with a file redirect instead of a pipe: 169 KB and a readable verdict. `via: measurement`
+- **Leading hypothesis:** resolved. Paid per the listing-total gate's OWN eviction playbook step 1 (cut mechanism prose), **not** by raising either ceiling — its step 4 says raising `LISTING_TOTAL_CEILING_CHARS` *"pays the cost back and is what this constant exists to prevent"*. Operator chose the same description as the payer: the clause `— rolling one change through every app repo —` came out, because it restates the opening *"Bulk iteration across the … fleet"* and the skill **BODY** already says *"Most work here is the same change rolled through all of them"*. All nine app names, the release keywords and the talos-infra disambiguation clause were kept, per playbook step 2 (*"do NOT drop a trigger phrase or a disambiguation clause to fit"*). Net **−18** chars vs the pre-PR tree, so the re-pinned measurements are LOWER than before the PR: tier-A `7,510 → 7,491`, under-ledger `7,695 → 7,676`, all-tier-A `11,011 → 10,992`; headroom against the unchanged `7,617` ceiling went `107 → 126`.
+- **Next probe:** `gh pr checks 1876 --repo innovation-upstream/devrc`. All four green ⇒ **squash-merge**, then `claim-work --release civitai-app-platform-migration-1`. Any gate red ⇒ read it before touching anything: the worktree is still at `/tmp/wt-devrc-1876-1870158` (detached at `617b8c95`) and the local gate log at `pytests-gate.log` in this session's scratchpad. ⚠ The PR is not docs-only — it also touches `preflight.py` and `fleet.py`.
+
 ## 🔴 IN FLIGHT — seven agents dispatched 2026-09-24, fleet-wide
 
 Operator decision, 2026-09-24: run the whole remaining fleet in parallel, with the five
@@ -1210,17 +1204,17 @@ and each was named in its brief as do-not-touch:
 
 ## Next steps (ranked)
 
-1. **Merge `devrc#1876` once Tekton capacity returns** — `gh pr checks 1876 --repo innovation-upstream/devrc`, then squash. Everything else in that PR is verified; only the gates are missing.
-   forcing: gate — four required-looking suites never executed, and merging through an unrun gate is the exact failure this arc spent the day finding in other people's work.
-2. **Merge `starters#461` (`changeset-release/main`) to publish `@civitai/sdk@0.7.0`.** Until it lands the `safe-storage` subpath is uninstallable, so `#457` protects nobody.
+1. **Merge `devrc#1876` once its four gates go green** — the fix is pushed (`617b8c95`); nothing remains but the gate verdict. `gh pr checks 1876 --repo innovation-upstream/devrc`, then squash. Then `claim-work --release civitai-app-platform-migration-1` and `git -C /home/zach/workspace/devrc worktree remove --force /tmp/wt-devrc-1876-1870158`.
+   forcing: gate — four required suites must execute and pass; the PR was red on real code as of 02:19Z and merging through an unrun or red gate is the exact failure this arc spent two days finding in other people's work.
+2. **Merge `starters#461` (`changeset-release/main`) to publish `@civitai/sdk@0.7.0`.** Verified `CLEAN` / `MERGEABLE` 2026-09-26. Until it lands the `safe-storage` subpath is uninstallable, so `#457` protects nobody.
    forcing: gate — `#457` is merged but inert without the publish, and `app-requests`' `taste.json` closing condition cannot fire.
 3. **Migrate `civitai-app-requests` to `@civitai/sdk/safe-storage`** once 0.7.0 publishes, then bump both version files + ledger line and `civitai app submit`. Repo `ZacxDev/civitai-app-requests`; files `src/main.tsx`, `taste.json`, `package.json`, `block.manifest.json`.
    forcing: gate — its `taste.json` entry `safe-storage-from-the-successor-sdk` carries the mechanical closing condition (`./safe-storage` in `npm view @civitai/sdk exports`), and the shim currently reaches no viewer at all.
-4. **`civitai#5112` — `blocks/gated-images` merged but not deployed.** Every ported app's per-viewer image read 404s in production until it ships.
+4. **`civitai#5112` — `blocks/gated-images` merged but not deployed.** Every ported app's per-viewer image read 404s in production until it ships. ⚠ Not reconciled this session — re-check its state first.
    forcing: gate — `custom-generators@0.9.0` is live and its cover grid, generator header and kept gallery all route through that route.
-5. **Port `civitai-app-playable-collections`** — 33 importers, storage dependency is SOFT. One product decision first: collection **follow** needs `collections:write:self`, which its manifest deliberately does not declare.
+5. **Port `civitai-app-playable-collections`** — 33 importers, storage dependency is SOFT. One product decision first: collection **follow** needs `collections:write:self`, which its manifest deliberately does not declare. ⚠ Not reconciled this session.
    forcing: gate — the remaining fleet; 5 of 9 apps are still on `@civitai/blocks-react`.
-6. **Then `gen-matrix` → `model-benchmarking` → `sensei`.** `gen-matrix` and `model-benchmarking` **cannot** reach 0 importers (three and one surfaces have no REST twin) — their PRs must state a reduced count with the retained surfaces NAMED.
+6. **Then `gen-matrix` → `model-benchmarking` → `sensei`.** `gen-matrix` and `model-benchmarking` **cannot** reach 0 importers (three and one surfaces have no REST twin) — their PRs must state a reduced count with the retained surfaces NAMED. ⚠ Not reconciled this session.
    forcing: gate — the rest of the fleet.
 
 ## Defects (batched)
@@ -1762,28 +1756,47 @@ and each was named in its brief as do-not-touch:
 - ⚠ **A PR GREEN ON ITS OWN BRANCH SAID NOTHING ABOUT THE MERGED TREE, AND EVERY AUDIT MEASURED THE BRANCH.** `#457` sat 2 commits behind `main` while `main` had moved to `0.6.0` — **already published**. Its auditor reported `changeset status → 0.6.0 minor, correct`: correct against the branch, wrong against the tree the merge creates. Caught before merge; the synced tree reads `0.7.0`, and published tops out at `0.6.0`, so there was no collision. **Sync and re-measure before merging, always.**
 - ⚠ **20 STALE AGENT WORKTREES (2026-09-20 → 09-22) REMAIN REGISTERED in `civitai-app-starters`** from earlier sessions. Each pins whatever branch it stopped on, which is a real trip hazard for branch work in that clone. Not mine, so left alone — `git -C <repo> worktree list | grep agent-`.
 
+- 🔴 **RESCUED FROM A REPLACE HEADING — how `civitai#5127`'s red arm was BUILT, which is the transferable half and was about to be deleted as status.** The red arm was **constructed, not taken from `#5129`'s own report**: a worktree at `origin/main` with **only the three production files** reverted to the pre-fix base `57d5ff34` and the tests left at HEAD → **6 failed | 12 passed**, each failure on its own assertion. The same 12 pass on BOTH trees, which is what makes the arm a discriminator rather than a tree that is merely broken. **Revert the PRODUCTION files only and keep the tests at HEAD** — reverting both proves nothing, and trusting the PR's own report of its red is not a measurement. (`issuecomment-5836949701`.)
+- 🔴 **AN INSTRUMENT REPORTED EXIT 0 HAVING WRITTEN ZERO BYTES, AND ITS "PASS" WAS ABOUT A TREE WITH THREE FAILURES.** `timeout 1800 nix build .#checks… -L 2>&1 | tail -60; echo "BUILD_RC=${PIPESTATUS[0]}"` run in the background completed "exit code 0" with a **0-byte** output file — not even the `BUILD_RC` echo landed, so the 0 was the *shell's* status and nothing about the gate was readable. Re-running with a plain file redirect (`> "$LOG" 2>&1`) gave **169 KB** and a real verdict. 🔴 The tell is the BYTE COUNT, and it must be read BEFORE the exit code: **`wc -c` the log first, and treat a zero-byte log as NO READING, never as a quiet success.** Same family as this doc's existing "count the runner's own result lines, never an exit code" entry, but one level worse — here there were no result lines to count at all.
+- 🔴 **`direnv` IN `devrc` READS `allowed 0`, AND ITS `.envrc` IS NOT A TOOLCHAIN ANYWAY.** `direnv status` in `/home/zach/workspace/devrc` prints `Found RC path …/devrc/.envrc` with **`Found RC allowed 0`**, so nothing from it is on PATH; bare `python3 -m pytest` there is `No module named pytest`. And the file is not the usual flake shim — `.envrc` is **`use opencode`**, a single line, and **is NOT tracked** (`git ls-files --error-unmatch .envrc` errors), which is the opposite of `civitai-app-starters` where it IS tracked. So the general "copy `.envrc` into the worktree" rule buys nothing here. The working instrument is the flake check itself: **`nix build .#checks.x86_64-linux.pytests`**, which is also exactly what CI runs.
+- 🔴 **`nix-shell -p python3Packages.pytest` IS NOT CI's ENVIRONMENT AND FAILS AT COLLECTION, NOT AT ASSERTION.** Running the full `scripts/tests` under it dies with `3 errors during collection` — `ModuleNotFoundError: No module named 'yaml'` in `test_opencode_config.py`, cascading into `test_opencode_engine.py` and `test_ci_claim_matches_reality.py`. The flake's gate env carries `pytest`, `pytest-xdist`, `pyyaml` and more. **A bare `nix-shell -p pytest` is fine for a SINGLE hermetic test file and worthless for the suite** — and a collection error is easy to misread as the suite being broken on that branch.
+- 🔴 **THE DISCRIMINATOR FOR "MY CHANGE OR THE BASE?" IS `git diff <head> origin/main -- <the failing test file>`, NOT THE BEHIND-COUNT.** `#1876` was 3 commits behind `origin/main`, which is precisely the shape of this doc's existing `devrc#1862` entry (*"it FAILS at my base and PASSES on current main — rebase, don't investigate"*). Here the behind-count was a red herring: both failing test files were **byte-identical** across the two trees, so the base could not be the cause and a rebase would have changed nothing. **Check the file, not the distance.**
+- 🔴 **A RATCHET GATE'S OWN FAILURE MESSAGE CAN CARRY AN ORDERED REMEDY — READ IT BEFORE CHOOSING A FIX.** `test_the_listing_total_does_not_regrow_past_its_ratchet` prints a five-step EVICTION PLAYBOOK (0 demote to tier B · 1 cut mechanism prose · 2 never drop a trigger phrase or disambiguation clause · 3 if adding, pay by demoting · 4 raising the ceiling is what this constant exists to prevent), plus the ten costliest entries with their char counts. The obvious fix — bump the constant by 27 — is the one thing step 4 names as forbidden. **When a guard explains how to satisfy it, that text is the spec.**
+- 🔴 **A PINNED-MEASUREMENT GATE MOVES AGAIN WHEN YOU PAY FOR IT, SO RE-MEASURE AFTER THE CUT, NOT BEFORE.** The first failure printed `MEASURED_TIER_A_CHARS = 7_537` as the replacement. Trimming 45 chars to clear the sibling ratchet changed it again, to **`7_491`** — copying the first printed set would have left the gate red for a second round. **Fix the ceiling breach first, then read the pins off a re-run.**
+- **`claude/skills/civitai-app-fleet/SKILL.md`'s description no longer contains *"rolling one change through every app repo"*.** Nothing else in `devrc` referenced that clause (verified by enumeration with a positive control — the same pipeline finds the surviving body phrase *"same change rolled"*, so the zero is a real reading). The routing signal survives in the skill body.
+- **The `bash-guard.py` PreToolUse hook judges the CALLER's cwd when `git -C $VAR` hides the path in a shell variable**, and refused a commit as "on branch `main`" while the target was a detached worktree of a different repo. Its own message names the fix: pass `-C` an **absolute** path, or assign the variable in the same command. It also prefers `git commit -F <file>` over a heredoc, because it parses heredoc lines as real commands.
+- **Decision (operator, 2026-09-26):** pay the listing-total ratchet's 27 chars by trimming `civitai-app-fleet`'s **own** description, rather than trimming the costliest unrelated entry (`clickup`, 550 chars), demoting a skill to tier B, or raising the ceiling. Chosen for blast radius: it is the only option that changes no other skill's always-on routing surface, and it pays 45 against a 27 debt.
+
 ## How to verify
 
 ```bash
-# 1. the SDK repair is on main and the subpath is real (by CONTENT — squash is never an ancestor)
-S=/home/zach/workspace/civit/civitai-app-starters; git -C $S fetch origin main -q
-git -C $S show origin/main:packages/civitai-sdk/package.json | python3 -c "
-import json,sys;d=json.load(sys.stdin)
-print(' version',d['version'],'| exports',sorted(d['exports']),'| sideEffects',d['sideEffects'])"
-#  => 0.6.0 | ['.', './safe-storage', './testing'] | ['./dist/safe-storage/index.js']
+# 1. the arc's closing condition, anchored on the CONSTRUCT (the verbatim token grep is broken —
+#    it reports non-zero for fully-ported apps whose package.json has no such dependency)
+A=/home/zach/workspace/civit/civitai-app-requests; git -C $A fetch origin -q
+git -C $A grep -lE "(from|import\()[[:space:]]*'@civitai/blocks-react" origin/main -- '*.ts' '*.tsx' | wc -l   # => 0
+git -C $A show origin/main:package.json | grep -c blocks-react                                                # => 0
+G=/home/zach/workspace/civit/civitai-app-gen-matrix                                                           # positive control
+git -C $G grep -lE "(from|import\()[[:space:]]*'@civitai/blocks-react" origin/main -- '*.ts' '*.tsx' | wc -l   # => non-zero (7)
 
-# 2. app-requests installs the shim FIRST (order is the mechanism)
-git -C /home/zach/workspace/civit/civitai-app-requests show origin/main:src/main.tsx | grep -nE "^import" | head -2
-#  => line 30 '@civitai/app-sdk/safe-storage', line 32 react
-
-# 3. the first auth:"oauth" app is live
-civitai app status oauth-probe | grep -E "^Version|^Status|^Deploy state"   # 0.1.3 / approved / live
-curl -s -o /dev/null -w '%{http_code}\n' https://oauth-probe.civit.ai/      # 200
-
-# 4. 🔴 the publish that makes the subpath INSTALLABLE has not happened yet
-npm view @civitai/sdk version                                   # 0.6.0 until starters#461 merges
-npm view @civitai/sdk@latest exports --json | grep -c safe-storage   # 0 until then
-
-# 5. the held PR — a gate that never ran is not a pass
+# 2. rank 1 — the held PR's gates. A gate that never started is NOT a pass, and a RED one is not capacity.
 gh pr checks 1876 --repo innovation-upstream/devrc
+gh api repos/innovation-upstream/devrc/commits/$(gh pr view 1876 --repo innovation-upstream/devrc --json headRefOid -q .headRefOid)/statuses \
+  --jq '.[] | "\(.created_at) \(.context) \(.state) \(.description)"'   # per-head timeline; NO CAPACITY vs failure
+
+# 3. the fix is on the branch by CONTENT (squash/force history is never an ancestor)
+git -C /home/zach/workspace/devrc fetch origin -q
+git -C /home/zach/workspace/devrc show origin/fix/civitai-skill-drift:scripts/tests/test_skill_tiers.py \
+  | grep -nE "^MEASURED_(TIER_A_CHARS|UNDER_LEDGER_CHARS|ALL_TIER_A_CHARS)"   # => 7_491 / 7_676 / 10_992
+
+# 4. re-run the gate locally — 🔴 REDIRECT TO A FILE, never a pipe; then read the BYTE COUNT before the rc
+cd /tmp/wt-devrc-1876-1870158 && nix build .#checks.x86_64-linux.pytests --no-link -L > /tmp/g.log 2>&1; echo "rc=$?"
+wc -c /tmp/g.log                                                     # a ZERO here means NO READING, not a pass
+grep -E "TOTAL collected=|RESULT:|SCOPE:" /tmp/g.log
+#  => TOTAL collected=24185  passed=24180  skipped=5  failed=0     (CI's red run: passed=24177 failed=3)
+#  => SCOPE: FULL (30 of 30 hermetic target(s)) / RESULT: PASS (exit=0)
+
+# 5. the publish that makes the safe-storage subpath INSTALLABLE still has not happened
+npm view @civitai/sdk version                                         # 0.6.0 until starters#461 merges
+npm view @civitai/sdk@latest exports --json | grep -c safe-storage    # 0 until then
+gh pr view 461 --repo civitai/civitai-app-starters --json state,mergeable,mergeStateStatus
 ```
