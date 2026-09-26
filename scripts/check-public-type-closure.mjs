@@ -154,6 +154,45 @@ import { NAMEABLE_POSITIONS, ledgerLine, scanEntries } from './lib/dts-public-ty
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '..');
+/**
+ * The packages this guard scans.
+ *
+ * 🔴 `civitai-sdk` IS NOT ON THIS LIST, AND ITS ABSENCE IS NOT AN OVERSIGHT.
+ * `@civitai/sdk` — every subpath of it, `./safe-storage` included — is
+ * UNSCANNED. Read any "check:public-types covers it" claim about that package
+ * as false until this array names it.
+ *
+ * MEASURED on `f2d89b2`, by adding `'civitai-sdk'` here over a fully built tree
+ * and reading what came back. It does not go green: 158 entries -> 161, and
+ *
+ *   6 NAMEABLE-POSITION violations, which this guard refuses to ledger at all:
+ *     @civitai/sdk#BlockTransport      :: parameter :: RequestOptions   (x1)
+ *     @civitai/sdk#OrchestrationClient :: parameter :: CallOptions      (x5)
+ *
+ *   `CallOptions` (`dist/orchestration/index.d.ts:18`) is exported from no
+ *   entry, so a consumer calling `estimateWorkflow(template, opts)` has no name
+ *   to write for `opts`. `RequestOptions` is worse than unexported: the root
+ *   DOES export a `RequestOptions` — `http/index.d.ts`'s — while the one
+ *   `BlockTransport.request` takes is a DIFFERENT interface in
+ *   `core/transport.d.ts`, so a consumer who imports the exported name gets the
+ *   wrong type and a plausible-looking error.
+ *
+ *   + 6 further exempt-position references unrelated to any of that
+ *     (`BlockInitializeOptions`/`TokenInitializeOptions` extends `ClientOptions`,
+ *     `SignIn` extends `TokenSessionOptions`, `SignInOptions.storage`,
+ *     `WaitOptions` extends `CallOptions`), and
+ *   - 4 EXISTING ledger lines go stale, because scanning `@civitai/sdk` makes
+ *     `AppClient`, `WorkflowTemplate`, `BlockTransport` and `SignIn` reachable
+ *     for the two `@civitai/components` elements that name them — exactly the
+ *     route those lines already claim in prose.
+ *
+ * Closing this is a change to `@civitai/sdk`'s public export surface plus a
+ * ledger rewrite — its own PR, not a rider on an unrelated one. Tracked at
+ * https://github.com/civitai/civitai-app-starters/issues/459.
+ *
+ * Adding the package while those 6 are open would leave a REQUIRED gate
+ * permanently red, which is worse than the gap it closes.
+ */
 const PACKAGES = [
   'civitai-app-sdk',
   'civitai-blocks-react',

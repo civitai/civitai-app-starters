@@ -1,14 +1,29 @@
 /**
- * `@civitai/app-sdk/safe-storage` — survive an opaque-origin sandbox.
+ * Survive an opaque-origin sandbox. Published as the side-effect subpath
+ * `@civitai/sdk/safe-storage`; a block opts in with `import
+ * '@civitai/sdk/safe-storage';` as the first line of its entry module. The
+ * package root does NOT import it — see `src/index.ts`.
  *
- * 🔴 `@civitai/sdk`'s `src/safe-storage/index.ts` is a deliberate independent
- * COPY of this file (the successor must not depend on its predecessor). The two
- * bodies are held byte-identical modulo comments by
- * `tests/guards/safe-storage-copy-parity.test.mjs`, so a fix here goes red
- * until it is applied there too.
+ * 🔴 **This is a deliberate independent COPY of `@civitai/app-sdk`'s
+ * `src/safe-storage/index.ts`, not a shared module.** The two packages are
+ * separate codebases (`@civitai/sdk` succeeds `@civitai/app-sdk`) and must not
+ * depend on each other — a successor that imports its predecessor would drag
+ * the whole 0.x surface back in. The duplication is the price of that
+ * independence. The two bodies are held byte-identical modulo comments by
+ * `tests/guards/safe-storage-copy-parity.test.mjs`, so a fix to one goes red
+ * until it is applied to the other — do not rely on remembering.
+ *
+ * Why this has to exist here at all: a block that has finished porting to
+ * `@civitai/sdk` no longer imports `@civitai/app-sdk/blocks`, which is what
+ * used to install the shim. `civitai-app-requests` is exactly that shape today
+ * — its only remaining `@civitai/app-sdk/blocks` import is in a test file — so
+ * without this module its shipped bundle has no repair at all.
  *
  * Civitai Apps run in an iframe sandboxed as `allow-scripts allow-forms`,
- * deliberately WITHOUT `allow-same-origin`. The document therefore has an
+ * deliberately WITHOUT `allow-same-origin` (see civitai's
+ * `src/components/AppBlocks/sandbox.ts`: `intersectSandbox` adds
+ * `allow-same-origin` only for the `internal`/`verified` trust tiers, and in v1
+ * every approved block is `unverified`). The document therefore has an
  * **opaque origin**, and there is no origin to key web storage against, so the
  * platform does not merely return an empty store — merely *reading* the
  * property throws:
@@ -27,8 +42,7 @@
  *
  * So this module installs a spec-shaped in-memory `Storage` over any
  * `localStorage`/`sessionStorage` that is present but unusable. Importing it
- * runs the install (see the bottom of the file); it is also re-exported as a
- * function for explicit use.
+ * runs the install (see the bottom of the file).
  *
  * The fallback is session-scoped — nothing survives a reload — which is the
  * honest semantic at an opaque origin: there is no origin to persist against.
@@ -210,8 +224,8 @@ function isNodeWebStorageStub(scope: object, name: SafeStorageName): boolean {
  * path and cause a *different* class of bug than the one we are fixing.
  *
  * **Never throws.** `installSafeStorage()` runs at module scope, so an escaping
- * error would reject `import '@civitai/app-sdk/blocks'` outright and take down
- * every block that imports it — a worse failure than the one being fixed.
+ * error would reject `import '@civitai/sdk'` outright and take down every app
+ * and block that imports it — a worse failure than the one being fixed.
  */
 function probe(scope: object, name: SafeStorageName): ProbeResult {
   // `in` is the only safe existence check, and it has to come first.
@@ -376,10 +390,13 @@ export function installSafeStorage(scope: object = globalThis): SafeStorageInsta
 // Import order is the whole game: ES module imports are hoisted, so a
 // *statement* can never run before a sibling `import` of a dependency that
 // reads storage while evaluating. Only an import side effect can, which is why
-// this is not opt-in — `@civitai/app-sdk/blocks` and `@civitai/blocks-react`
-// import this module first, and an app can put
-// `import '@civitai/app-sdk/safe-storage';` at the very top of its entry to be
-// ahead of everything.
+// this module installs on import rather than exposing a call to make — a block
+// writes `import '@civitai/sdk/safe-storage';` as the FIRST import in its
+// entry module and is then ahead of every dependency it imports afterwards.
+//
+// 🔴 That ordering is the app's job and nothing here can enforce it: a
+// storage-touching dependency imported ABOVE this specifier still evaluates
+// first. Keep it first.
 //
 // The blast radius is bounded by the rules above: it only ever replaces a
 // global that is already *provably* unusable, so in every healthy runtime this

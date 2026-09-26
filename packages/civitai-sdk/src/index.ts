@@ -3,6 +3,18 @@
  * inside a civitai.com page, `app.host`. Outside one, `createSignIn()` gets the token.
  */
 
+// 🔴 NOTHING IS IMPORTED FOR SIDE EFFECTS HERE, on purpose. This entry is pure
+// re-exports, so `./dist/index.js` stays droppable and `import '@civitai/sdk'`
+// stays inert in Node/SSR.
+//
+// The opaque-origin web-storage repair lives behind its own subpath,
+// `@civitai/sdk/safe-storage` (`./safe-storage/index.ts`), and a block opts in
+// with one line at the top of its entry module. Installing it from here would
+// make every consumer of this package — server runtimes included — pay a side
+// effect it never asked for, and would still not fix the ordering problem: a
+// storage-touching dependency imported ABOVE `@civitai/sdk` evaluates first
+// either way. See the README's "Web storage in a block".
+
 export { initialize } from './app/index.js';
 export type {
   AppClient,

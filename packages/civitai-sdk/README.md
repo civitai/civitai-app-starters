@@ -374,6 +374,91 @@ not exported, because four of the five fleet apps that store per-viewer state
 need knobs it does not have (injected latency, prefix-targeted refusals, quota
 overrides, a cursor it ignores, a read that never settles). Copy it if it helps.
 
+## Web storage in a block
+
+A block is framed at an **opaque origin**: civitai's `intersectSandbox` adds
+`allow-same-origin` only for the `internal` and `verified` trust tiers, and in
+v1 every approved block is `unverified`. There, `localStorage` and
+`sessionStorage` do not merely come back empty — *reading the property throws*:
+
+```
+SecurityError: Failed to read the 'localStorage' property from 'Window':
+The document is sandboxed and lacks the 'allow-same-origin' flag.
+```
+
+Guarding your own call sites is not enough, because a dependency that touches
+storage while its module body evaluates takes the app down before any of your
+code runs — and libraries routinely mislabel the failure as something else.
+
+So the package ships a repair behind its own subpath. Importing
+`@civitai/sdk/safe-storage` installs a spec-shaped in-memory `Storage` over any
+web-storage global that is present but unusable. It is inert where storage works
+and where there is none at all (Node/SSR/workers), and it never replaces a
+healthy store.
+
+🔴 **This is not automatic. Add the import yourself, as the first import in your
+entry module** — `import '@civitai/sdk'` on its own installs nothing:
+
+```
+import '@civitai/sdk/safe-storage'; // side-effect import; keep it FIRST
+import 'some-library-that-reads-localStorage';
+```
+
+The import *is* the install, so for most blocks that line is the whole of it.
+There is nothing to configure. The subpath does export two functions, for the
+cases the import alone cannot cover:
+
+- `installSafeStorage(scope?)` — run the repair at a *specific moment* rather
+  than at module-evaluation time. The one that matters: immediately before an
+  `await import('some-lib')` that reads storage while evaluating. A hoisted
+  static import cannot be placed "after" anything, so a dynamic import is the
+  case the side-effect line does not solve. Returns which globals it replaced.
+- `createMemoryStorage()` — the spec-shaped in-memory `Storage` itself, if you
+  want one without touching any global.
+
+Two things about that line:
+
+- **First is the whole point.** ES imports are hoisted and evaluated in order,
+  so a storage-touching dependency imported *above* this one still evaluates
+  first and nothing can reach it in time. Put it above every other import,
+  including your framework's.
+- **It is a side-effect-only import, so bundlers must be told to keep it.** The
+  package declares a `sideEffects` allowlist naming
+  `./dist/safe-storage/index.js` for exactly that reason; `sideEffects: false`
+  would license every bundler to drop it. The package root
+  (`./dist/index.js`) is deliberately *not* in that allowlist — it is pure
+  re-exports and stays fully tree-shakeable.
+
+### Two things "inert where storage works" hides
+
+Both only ever happen at a **real** origin — neither can occur in the block
+sandbox this subpath exists for.
+
+- **It writes a probe key.** Classifying a store means a real round trip, so at
+  import each of `localStorage` and `sessionStorage` gets one
+  `setItem('__civitai_app_sdk_storage_probe__', '1')` followed immediately by
+  `removeItem`. Net contents are unchanged and neither store object is replaced
+  — but per the Web Storage spec each write queues a `storage` event in the
+  other documents sharing the store, so a cross-tab listener that does not
+  filter by key will see spurious events.
+- **A FULL store counts as broken.** The write probe cannot tell "quota
+  exhausted" from "storage disabled" — a `QuotaExceededError` classifies the
+  store as unusable, and the repair swaps in the in-memory fallback, seeded
+  first from every entry it could still read. Nothing readable is lost, but the
+  store stops persisting: writes after that point are session-scoped and gone
+  on reload. In a block that is the honest semantic regardless. In an app at a
+  real origin with a full `localStorage`, it is a downgrade from persistent to
+  session-scoped that you opted into by importing this subpath.
+
+A block built on `@civitai/app-sdk/blocks` already gets this: that entry imports
+its own copy (`@civitai/app-sdk/safe-storage`). A block that has finished porting
+to `@civitai/sdk` imports neither, which is why this line exists.
+
+The fallback is session-scoped — nothing survives a reload, which is the honest
+semantic at an opaque origin, since there is no origin to persist against. Treat
+web storage in a block as a cache, never a source of truth. The durable
+per-viewer store is [app storage](#app-storage).
+
 ## Checks
 
 - `npm run api` regenerates [`api/public-api.md`](./api/public-api.md) from the

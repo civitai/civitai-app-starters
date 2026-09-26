@@ -6,11 +6,16 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "sideEffects": false,
+  "comment-sideEffects": "An ALLOWLIST, not `false`. `./dist/safe-storage/index.js` installs the opaque-origin storage repair when imported, and a bare `false` licenses every bundler to drop it. `./dist/index.js` is deliberately NOT listed: the package root is pure re-exports and must stay droppable. Pinned by test/safe-storage.test.ts.",
+  "sideEffects": ["./dist/safe-storage/index.js"],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./safe-storage": {
+      "types": "./dist/safe-storage/index.d.ts",
+      "import": "./dist/safe-storage/index.js"
     },
     "./testing": {
       "types": "./dist/testing.d.ts",

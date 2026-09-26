@@ -574,6 +574,120 @@ export interface BlockToken {
 }
 ```
 
+## `@civitai/sdk/safe-storage`
+
+```ts
+/**
+ * Survive an opaque-origin sandbox. Published as the side-effect subpath
+ * `@civitai/sdk/safe-storage`; a block opts in with `import
+ * '@civitai/sdk/safe-storage';` as the first line of its entry module. The
+ * package root does NOT import it — see `src/index.ts`.
+ *
+ * 🔴 **This is a deliberate independent COPY of `@civitai/app-sdk`'s
+ * `src/safe-storage/index.ts`, not a shared module.** The two packages are
+ * separate codebases (`@civitai/sdk` succeeds `@civitai/app-sdk`) and must not
+ * depend on each other — a successor that imports its predecessor would drag
+ * the whole 0.x surface back in. The duplication is the price of that
+ * independence. The two bodies are held byte-identical modulo comments by
+ * `tests/guards/safe-storage-copy-parity.test.mjs`, so a fix to one goes red
+ * until it is applied to the other — do not rely on remembering.
+ *
+ * Why this has to exist here at all: a block that has finished porting to
+ * `@civitai/sdk` no longer imports `@civitai/app-sdk/blocks`, which is what
+ * used to install the shim. `civitai-app-requests` is exactly that shape today
+ * — its only remaining `@civitai/app-sdk/blocks` import is in a test file — so
+ * without this module its shipped bundle has no repair at all.
+ *
+ * Civitai Apps run in an iframe sandboxed as `allow-scripts allow-forms`,
+ * deliberately WITHOUT `allow-same-origin` (see civitai's
+ * `src/components/AppBlocks/sandbox.ts`: `intersectSandbox` adds
+ * `allow-same-origin` only for the `internal`/`verified` trust tiers, and in v1
+ * every approved block is `unverified`). The document therefore has an
+ * **opaque origin**, and there is no origin to key web storage against, so the
+ * platform does not merely return an empty store — merely *reading* the
+ * property throws:
+ *
+ *   SecurityError: Failed to read the 'localStorage' property from 'Window':
+ *   The document is sandboxed and lacks the 'allow-same-origin' flag.
+ *
+ * Guarding your own call sites is not enough: any third-party dependency that
+ * touches storage unguarded takes the whole app down, and libraries routinely
+ * *mislabel* the failure. A real production example — Photo Sphere Viewer's
+ * `SYSTEM.load()` runs an unguarded ``TOUCH_KEY in localStorage`` touch probe,
+ * its `Viewer` constructor catches the resulting SecurityError, reports the
+ * generic "Your browser does not seem to support WebGL", and returns without
+ * rethrowing. The app's own fallback never ran and users with perfectly good
+ * GPUs saw a WebGL error. (The sandbox does not block WebGL — only storage.)
+ *
+ * So this module installs a spec-shaped in-memory `Storage` over any
+ * `localStorage`/`sessionStorage` that is present but unusable. Importing it
+ * runs the install (see the bottom of the file).
+ *
+ * The fallback is session-scoped — nothing survives a reload — which is the
+ * honest semantic at an opaque origin: there is no origin to persist against.
+ * Treat storage in a block as a cache, never a source of truth; the durable
+ * per-user store is the platform's app-storage API.
+ */
+/** Which globals a call to {@link installSafeStorage} actually replaced. */
+export interface SafeStorageInstallResult {
+    /** `true` when `localStorage` was replaced by the in-memory fallback. */
+    localStorage: boolean;
+    /** `true` when `sessionStorage` was replaced by the in-memory fallback. */
+    sessionStorage: boolean;
+}
+
+declare const STORAGE_NAMES: readonly ['localStorage', 'sessionStorage'];
+
+/** The web-storage globals this module can repair. */
+export type SafeStorageName = (typeof STORAGE_NAMES)[number];
+
+/**
+ * A `Storage` work-alike backed by a `Map`.
+ *
+ * Implemented as a **Proxy, not a class**, because real `Storage` is an exotic
+ * object: `s.foo = 1`, `'foo' in s`, `s.foo` and `delete s.foo` are aliases for
+ * `setItem`/`getItem`/`removeItem`. Libraries use exactly that form (PSV's
+ * touch probe is literally ``KEY in localStorage`` then
+ * `localStorage[KEY] === 'true'`), so a plain class would still break them.
+ */
+export declare function createMemoryStorage(): Storage;
+
+/**
+ * Replace any present-but-unusable `localStorage`/`sessionStorage` on `scope`
+ * with an in-memory `Storage`, so third-party code that touches it unguarded
+ * cannot throw.
+ *
+ * - **No-op where storage works — but not a no-TOUCH.** A healthy `Storage` is
+ *   never replaced and its contents are unchanged, but it *is* written to:
+ *   classifying it means a real round trip, so each of `localStorage` and
+ *   `sessionStorage` gets `setItem('__civitai_app_sdk_storage_probe__', '1')`
+ *   immediately followed by `removeItem`. MEASURED against the built artifact
+ *   with instrumented healthy stores: exactly those four operations, the store
+ *   objects not replaced, contents identical before and after. Per the Web
+ *   Storage spec every one of those writes queues a `storage` event in the
+ *   *other* documents that share the store, so at a REAL origin a cross-tab
+ *   listener that does not filter by key sees spurious events (the two
+ *   `localStorage` writes are the ones another tab receives). At the opaque
+ *   origin this module exists for there is no other same-origin document, so
+ *   there is nothing to receive them.
+ * - **No-op where storage is absent** (Node/SSR/workers). Nothing is invented.
+ * - **Never loses readable data.** When the old store reads but refuses writes
+ *   (full / disabled), its entries are copied into the fallback first, so the
+ *   shim cannot shadow a live session.
+ * - **Idempotent.** Once the fallback is installed the round-trip probe
+ *   succeeds, so a second call is a no-op and values already written survive.
+ * - **Never throws.** Every step is guarded; a shim that could fail at import
+ *   would be a worse outage than the bug it fixes.
+ *
+ * This module installs on import, so most apps never need to call it. Call it
+ * explicitly when you want the guarantee at a specific moment — e.g. right
+ * before `await import('some-lib')` that reads storage while evaluating.
+ *
+ * @param scope Object carrying the storage globals. Defaults to `globalThis`.
+ */
+export declare function installSafeStorage(scope?: object): SafeStorageInstallResult;
+```
+
 ## `@civitai/sdk/testing`
 
 ```ts
