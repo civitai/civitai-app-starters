@@ -657,8 +657,19 @@ export declare function createMemoryStorage(): Storage;
  * with an in-memory `Storage`, so third-party code that touches it unguarded
  * cannot throw.
  *
- * - **No-op where storage works.** A healthy `Storage` is never replaced, and
- *   its contents are never touched.
+ * - **No-op where storage works — but not a no-TOUCH.** A healthy `Storage` is
+ *   never replaced and its contents are unchanged, but it *is* written to:
+ *   classifying it means a real round trip, so each of `localStorage` and
+ *   `sessionStorage` gets `setItem('__civitai_app_sdk_storage_probe__', '1')`
+ *   immediately followed by `removeItem`. MEASURED against the built artifact
+ *   with instrumented healthy stores: exactly those four operations, the store
+ *   objects not replaced, contents identical before and after. Per the Web
+ *   Storage spec every one of those writes queues a `storage` event in the
+ *   *other* documents that share the store, so at a REAL origin a cross-tab
+ *   listener that does not filter by key sees spurious events (the two
+ *   `localStorage` writes are the ones another tab receives). At the opaque
+ *   origin this module exists for there is no other same-origin document, so
+ *   there is nothing to receive them.
  * - **No-op where storage is absent** (Node/SSR/workers). Nothing is invented.
  * - **Never loses readable data.** When the old store reads but refuses writes
  *   (full / disabled), its entries are copied into the fallback first, so the

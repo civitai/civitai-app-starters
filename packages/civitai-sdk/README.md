@@ -404,8 +404,17 @@ import '@civitai/sdk/safe-storage'; // side-effect import; keep it FIRST
 import 'some-library-that-reads-localStorage';
 ```
 
-One line, and it is the only line. There is nothing to call and nothing to
-configure — the import *is* the install.
+The import *is* the install, so for most blocks that line is the whole of it.
+There is nothing to configure. The subpath does export two functions, for the
+cases the import alone cannot cover:
+
+- `installSafeStorage(scope?)` — run the repair at a *specific moment* rather
+  than at module-evaluation time. The one that matters: immediately before an
+  `await import('some-lib')` that reads storage while evaluating. A hoisted
+  static import cannot be placed "after" anything, so a dynamic import is the
+  case the side-effect line does not solve. Returns which globals it replaced.
+- `createMemoryStorage()` — the spec-shaped in-memory `Storage` itself, if you
+  want one without touching any global.
 
 Two things about that line:
 
@@ -419,6 +428,27 @@ Two things about that line:
   would license every bundler to drop it. The package root
   (`./dist/index.js`) is deliberately *not* in that allowlist — it is pure
   re-exports and stays fully tree-shakeable.
+
+### Two things "inert where storage works" hides
+
+Both only ever happen at a **real** origin — neither can occur in the block
+sandbox this subpath exists for.
+
+- **It writes a probe key.** Classifying a store means a real round trip, so at
+  import each of `localStorage` and `sessionStorage` gets one
+  `setItem('__civitai_app_sdk_storage_probe__', '1')` followed immediately by
+  `removeItem`. Net contents are unchanged and neither store object is replaced
+  — but per the Web Storage spec each write queues a `storage` event in the
+  other documents sharing the store, so a cross-tab listener that does not
+  filter by key will see spurious events.
+- **A FULL store counts as broken.** The write probe cannot tell "quota
+  exhausted" from "storage disabled" — a `QuotaExceededError` classifies the
+  store as unusable, and the repair swaps in the in-memory fallback, seeded
+  first from every entry it could still read. Nothing readable is lost, but the
+  store stops persisting: writes after that point are session-scoped and gone
+  on reload. In a block that is the honest semantic regardless. In an app at a
+  real origin with a full `localStorage`, it is a downgrade from persistent to
+  session-scoped that you opted into by importing this subpath.
 
 A block built on `@civitai/app-sdk/blocks` already gets this: that entry imports
 its own copy (`@civitai/app-sdk/safe-storage`). A block that has finished porting

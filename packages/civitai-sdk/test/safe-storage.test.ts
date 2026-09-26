@@ -3,14 +3,32 @@
  *
  * `src/safe-storage/index.ts` is a deliberate independent COPY of
  * `@civitai/app-sdk`'s module — comment-stripped, the two bodies are 139 lines
- * each and byte-identical. Its behaviour is therefore already pinned twice:
+ * each and byte-identical. That SOURCE BODY is already covered twice:
  *
  *   - `packages/civitai-app-sdk/test/safe-storage.test.ts` — the full unit
  *     suite over the same 139 lines (the Proxy semantics, the probe, the
  *     seeding, the hostile-object cases).
  *   - `packages/civitai-blocks-react/test/safe-storage-sandbox.browser.test.ts`
- *     — the same shim in a REAL `<iframe sandbox="allow-scripts">` against the
- *     shipped artifact, in a required CI job.
+ *     — a REAL `<iframe sandbox="allow-scripts">`, in a required CI job.
+ *
+ * 🔴 READ THE SECOND ONE NARROWLY — it does not touch this package. It imports
+ * `../../civitai-app-sdk/dist/safe-storage/index.js`: **app-sdk's** built
+ * artifact, never `@civitai/sdk`'s. So the chain that makes it say anything
+ * about this package is source-level and has a seam in it. What is actually
+ * pinned is (a) the two SOURCES are identical —
+ * `tests/guards/safe-storage-copy-parity.test.mjs`, which compares `src/`, not
+ * `dist/` — and (b) APP-SDK's artifact survives a real sandbox. No gate closes
+ * the gap between (a) and (b), and the two packages do not compile the same
+ * way: app-sdk is `module: ESNext` / `moduleResolution: Bundler` /
+ * `lib: ["ES2022"]`, this package is `module: NodeNext` /
+ * `lib: ["ES2022", "DOM"]`. Identical sources are therefore not identical
+ * output by construction.
+ *
+ * MEASURED, so the risk is sized rather than asserted: with both packages built
+ * from their own tsconfigs and both `dist/safe-storage/index.js` comment-
+ * stripped and blank-line-dropped, the artifacts are 156 normalised lines each
+ * and byte-identical. That is one observation of one build. A tsconfig change
+ * on either side can break it and nothing would go red.
  *
  * A third copy of those cases here would re-measure a byte-identical body and
  * report it as coverage. What was genuinely unchecked is that the two copies

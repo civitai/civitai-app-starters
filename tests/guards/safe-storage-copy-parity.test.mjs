@@ -23,9 +23,9 @@
  * BEHAVIOUR is already pinned twice — by
  * `packages/civitai-app-sdk/test/safe-storage.test.ts` (the full unit suite)
  * and by `packages/civitai-blocks-react/test/safe-storage-sandbox.browser.test.ts`
- * (a real `sandbox="allow-scripts"` iframe against the shipped artifact, in a
- * required CI job). Re-asserting those same cases against a byte-identical copy
- * measures nothing new; asserting the copy is still a copy does.
+ * (a real `sandbox="allow-scripts"` iframe, in a required CI job). Re-asserting
+ * those same cases against a byte-identical copy measures nothing new;
+ * asserting the copy is still a copy does.
  *
  * WHAT IT PINS
  * ============
@@ -38,6 +38,20 @@
  *   - This is a TEXT identity check. It cannot tell you the shared body is
  *     CORRECT — only that the two copies agree. Correctness lives in the two
  *     behavioural suites named above.
+ *   - 🔴 IT COMPARES `src/`, NOT `dist/`, and the browser test above runs
+ *     **app-sdk's** artifact (`civitai-app-sdk/dist/safe-storage/index.js`),
+ *     never `@civitai/sdk`'s. So "the sandbox test covers both packages" is a
+ *     SOURCE-LEVEL inference across a seam nothing checks, and the two packages
+ *     compile differently — app-sdk `module: ESNext` / `moduleResolution:
+ *     Bundler` / `lib: ["ES2022"]`, sdk `module: NodeNext` /
+ *     `lib: ["ES2022", "DOM"]`. Measured once, with both built: the two
+ *     artifacts are 156 normalised lines each and byte-identical. A tsconfig
+ *     change on either side can end that silently. Widening this guard to
+ *     `dist/` was considered and NOT done: `pnpm test:guards` runs in the
+ *     required matrix job BEFORE `pnpm install`, so there is no `dist/` to read
+ *     — the choice would be a job that fails on every unbuilt tree or a test
+ *     that skips itself. If the gap is ever closed, close it in the
+ *     `public-types`-style post-build job, not here.
  *   - The comment stripper below is a scanner, not a parser. Its handling of
  *     regex literals uses the usual previous-significant-token heuristic and
  *     a keyword list; a regex literal in a position neither covers could be

@@ -26,6 +26,19 @@ storage-touching dependency imported above it still evaluates first. Importing
 side-effect-free and fully tree-shakeable, so nothing changes for Node/SSR
 consumers.
 
+Two things to know before importing it from an app at a **real** origin, where
+storage works — neither can happen in the block sandbox it is built for:
+
+- Classifying a store is a real round trip, so import writes and immediately
+  removes `__civitai_app_sdk_storage_probe__` on `localStorage` and
+  `sessionStorage`. Contents are unchanged and neither store is replaced, but
+  each write queues a `storage` event in other documents sharing the store — a
+  cross-tab listener that does not filter by key will see spurious events.
+- A **full** store is indistinguishable from a disabled one through a write
+  probe, so a `QuotaExceededError` counts as broken: the repair swaps in the
+  in-memory fallback, seeded from everything it could still read. Nothing
+  readable is lost, but persistence is — later writes are session-scoped.
+
 `package.json` declares `sideEffects: ["./dist/safe-storage/index.js"]` instead
 of `false`, because a bare `false` would let any bundler drop a side-effect-only
 import. `./dist/index.js` is deliberately not in that allowlist.
