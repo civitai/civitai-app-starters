@@ -28,6 +28,20 @@ const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0
 const EVENT_TIMEOUT_MS = 2000;
 
 /**
+ * Per-test timeout for the tests that use {@link eventFired}, DERIVED from its
+ * own timeout rather than inherited.
+ *
+ * 🔴 The helper only "names its own failure instead of arriving as a bare suite
+ * timeout" while its 2 s reject beats the test timeout. That relationship was
+ * unstated and unpinned: `vitest.config.ts` sets no `testTimeout`, so it rested
+ * on vitest's 5 s default, and anyone trimming a slow CI tier to
+ * `testTimeout: 1500` would silently turn every one of these back into the bare
+ * timeout the helper exists to prevent. Passing this explicitly makes a global
+ * change unable to reach them.
+ */
+const EVENT_TEST_TIMEOUT_MS = EVENT_TIMEOUT_MS * 2.5;
+
+/**
  * Await an event instead of a fixed number of task turns. Use this, not
  * {@link tick}, whenever the assertion is ABOUT an event: the native `close` is
  * queued as a task, so a `tick()` races it rather than waiting for it.
@@ -159,7 +173,7 @@ describe('<civitai-modal>', () => {
     expect(el.open).toBe(false);
     expect(dialogOf(el).open).toBe(false);
     expect(closes).toBe(1);
-  });
+  }, EVENT_TEST_TIMEOUT_MS);
 
   it('a click on the backdrop closes it; a click in the panel does not', async () => {
     const el = await open();
@@ -194,10 +208,17 @@ describe('<civitai-modal>', () => {
     // close TASK reaches `#onClose`, so a `tick()` races it rather than waiting
     // for it. Await the event — the property is already final when it fires.
     const closed = eventFired(el, 'close');
+    // 🔴 Here the listener MUST precede the keypress, so the orphan window the
+    // helper's doc warns about is unavoidable rather than removable: if
+    // `userEvent.keyboard` rejects, nothing has awaited `closed` yet and its
+    // rejection surfaces 2 s later against an unrelated test. Marking it
+    // handled costs nothing and does not weaken the `await` below, which still
+    // throws the timeout error on the real failing path.
+    void closed.catch(() => {});
     await userEvent.keyboard('{Escape}');
     await closed;
     expect(el.open).toBe(false);
-  });
+  }, EVENT_TEST_TIMEOUT_MS);
 
   it('Escape is refused when turned off', async () => {
     const el = await open();
