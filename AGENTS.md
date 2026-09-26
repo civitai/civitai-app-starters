@@ -74,7 +74,7 @@ git -C $REPO worktree remove --force "$WT"      # ONLY after the push SUCCEEDED
 
 ## Where to extend
 
-Each starter ships a deliberately minimal demo (login + balance + cost preview + one generation + display). When the user asks you to add features:
+Each starter ships a deliberately minimal demo (login + balance + cost preview + one generation + display). 🔴 The **balance** comes from `getBuzzBalance()` → the SDK's `fetchBuzzAccount()` → `buzz.getUserAccount` (needs `BuzzRead`), **never** from `/api/v1/me`, which returns no balance at all — and it is `null`, with the row hidden, whenever that scope was not granted. When the user asks you to add features:
 
 - **New API call against Civitai** → if it'll be reused across starters, add a helper next to `@civitai/app-sdk/src/orchestrator/` (or a new sibling module). Otherwise inline in the starter using `callOrchestrator` from `@civitai/app-sdk/orchestrator`.
 - **New page / route** → follow the framework's idioms (App Router for `next-app`, `+page.svelte` for `sveltekit-app`, etc.). Keep auth gating consistent with the existing pattern in each starter.

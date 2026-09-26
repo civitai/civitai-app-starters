@@ -76,7 +76,7 @@ src/
 ## Demo flow (read this before changing the home page)
 
 1. Logged out → `<LoginButton>` → `POST /api/auth/login` → 302 to Civitai → user consents → `GET /api/auth/callback/civitai` → session sealed → 302 to `/`.
-2. Logged in → `getSession()` on server → `fetchMe()` → render balance, scope summary, prompt form.
+2. Logged in → `getSession()` on server → `getMe()` (username) **and** `getBuzzBalance()` (balance — a separate endpoint, `null` without `BuzzRead`) → render the profile card, scope summary, prompt form.
 3. Submit prompt → client `POST /api/generate/estimate` → display Buzz cost → user confirms.
 4. Client `POST /api/generate` → returns workflow ID → client polls `GET /api/workflow/[id]` every 2s.
 5. On terminal status → display image(s) or error.

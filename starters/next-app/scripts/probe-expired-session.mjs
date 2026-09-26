@@ -22,6 +22,22 @@
  * `Error: Cookies can only be modified in a Server Action or Route Handler` in
  * the server log.
  *
+ * THREE MORE SCENARIOS, all about the BUZZ BALANCE, all needing the same real
+ * render (the balance is read server-side — `/api/trpc/[trpc].ts` sets no CORS
+ * headers, so it cannot be read from the browser):
+ *
+ *   C. `BuzzRead` granted -> the REAL NUMBER is in the HTML. Not the label: the
+ *      value. The four Playwright specs assert `getByText(/buzz balance/i)` and
+ *      were green for the entire period every user saw `Buzz balance: —`.
+ *   D. `BuzzRead` denied (403) -> the row DISAPPEARS. Not a dash, not an error
+ *      banner, not a broken render. 403 is an ordinary outcome for a
+ *      third-party client, so this is the load-bearing arm.
+ *   E. `BuzzRead` absent from the token scope -> the request is not made at all.
+ *
+ * Measured on `main` @ b25658e, before the fix: C fails on both the row and the
+ * value with ZERO buzz requests (the app never called the endpoint), and D/E
+ * pass vacuously for the same reason.
+ *
  *   node scripts/probe-expired-session.mjs
  *   PROBE_SKIP_BUILD=1 node scripts/probe-expired-session.mjs   # reuse .next
  *
@@ -46,6 +62,22 @@ const LOGGED_OUT_MARKER = 'Sign in with your Civitai account';
 // absence of one string cannot tell those two apart.
 const SIGNED_IN_MARKER = 'probe-user';
 const NEW_ACCESS_TOKEN = 'refreshed-access-token-1234';
+/**
+ * The Buzz balance the stand-in buzz endpoint reports.
+ *
+ * 🔴 DELIBERATELY NOT 1234, AND NOT A ROUND NUMBER. The old `/api/v1/me` stub
+ * invented `balance: 1234`; reusing that value would let a regression that went
+ * back to reading `/api/v1/me` pass by coincidence. It also must not collide
+ * with any other digit string the page renders (the scope bitmask, the port),
+ * or "the number is on the page" stops being evidence about the balance.
+ */
+const BUZZ_BALANCE = 40317;
+/**
+ * The signed-in row's label, WITH the colon. The logged-out copy also contains
+ * the words "Buzz balance" ("…check your Buzz balance and generate one image"),
+ * so the bare phrase would match a page that has no balance row at all.
+ */
+const BALANCE_ROW = 'Buzz balance:';
 
 const children = [];
 /**
@@ -90,6 +122,9 @@ process.on('SIGINT', () => {
  */
 let refreshMode = 'reject';
 let refreshAttempts = 0;
+/** `'grant'` -> 200 + a balance; `'deny'` -> 403, i.e. `BuzzRead` not granted. */
+let buzzMode = 'grant';
+let buzzAttempts = 0;
 
 const authHub = createServer((req, res) => {
   if (req.method === 'POST' && req.url?.startsWith('/api/auth/oauth/token')) {
@@ -113,9 +148,59 @@ const authHub = createServer((req, res) => {
   }
   // /api/v1/me — the signed-in page calls it. Answer so the render reaches its
   // signed-in branch rather than its error branch.
+  //
+  // 🔴 THIS PAYLOAD IS THE REAL ONE, FIELD FOR FIELD. It used to carry
+  // `balance: 1234`, a key `/api/v1/me` has NEVER returned
+  // (civitai/civitai `src/pages/api/v1/me.ts` sends id, username, tier, status,
+  // isMember, subscriptions, and conditionally isModerator / email /
+  // tokenScope+buzzLimit+subject). A stub that invents a field teaches the
+  // wrong contract to everyone who reads it, and it is the reason the starters
+  // read `balance` off this endpoint and rendered `Buzz balance: —` for every
+  // real user while this probe was green. If you widen the stub, copy the real
+  // handler, do not guess.
   if (req.url?.startsWith('/api/v1/me')) {
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ id: 1, username: 'probe-user', balance: 1234 }));
+    res.end(
+      JSON.stringify({
+        id: 1,
+        username: 'probe-user',
+        tier: 'free',
+        status: 'active',
+        isMember: false,
+        subscriptions: [],
+        tokenScope: 65537,
+        buzzLimit: null,
+        subject: { type: 'client', id: 'probe-client' },
+      }),
+    );
+    return;
+  }
+  // buzz.getUserAccount — where the balance ACTUALLY lives. Requires the
+  // `BuzzRead` scope, so 403 is an ordinary outcome for a third-party client,
+  // not an error: `buzzMode = 'deny'` is the arm that proves the page degrades
+  // to NO balance row instead of a dash, an error banner or a failed render.
+  if (req.url?.startsWith('/api/trpc/buzz.getUserAccount')) {
+    buzzAttempts += 1;
+    if (buzzMode === 'deny') {
+      res.writeHead(403, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { json: { message: 'FORBIDDEN', code: -32003 } } }));
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    // superjson envelope, exactly as civitai's tRPC emits it. One entry — the
+    // default account, labelled `yellow` — which is what the handler returns
+    // when no `accountTypes` input is supplied.
+    res.end(
+      JSON.stringify({
+        result: {
+          data: {
+            json: [
+              { id: 1, balance: BUZZ_BALANCE, lifetimeBalance: 99999, accountType: 'yellow' },
+            ],
+          },
+        },
+      }),
+    );
     return;
   }
   res.writeHead(404).end();
@@ -156,6 +241,30 @@ function expiredSessionCookie() {
         refresh_token: 'some-refresh-token',
         expires_at: Date.now() - 3_600_000,
         scope: 65537,
+      },
+    }),
+    SESSION_SECRET,
+  );
+}
+
+/**
+ * A LIVE session — no refresh involved, so the buzz scenarios below measure the
+ * balance path and nothing else.
+ *
+ * `scope` is a TokenScope bitmask: `UserRead` is 1<<0 and `BuzzRead` is 1<<16
+ * (65536), so 65537 is "both" and 1 is "profile only, balance denied at
+ * consent". Written as literals on purpose — importing the SDK's TokenScope
+ * here would let a renumbering move the probe and the app together and keep
+ * this green.
+ */
+function liveSessionCookie(scope = 65537) {
+  return sealCookie(
+    JSON.stringify({
+      tokens: {
+        access_token: 'live-access-token',
+        refresh_token: 'some-refresh-token',
+        expires_at: Date.now() + 3_600_000,
+        scope,
       },
     }),
     SESSION_SECRET,
@@ -311,6 +420,113 @@ async function main() {
     carriedToken === NEW_ACCESS_TOKEN,
     `Set-Cookie does not carry the refreshed access token (got ${carriedToken})`,
   );
+
+  // ---- Buzz balance: C (granted), D (403), E (scope absent) ---------------
+  //
+  // 🔴 WHY THESE EXIST. Every starter rendered `Buzz balance: —` because it
+  // read `balance` off `/api/v1/me`, which has never returned one. The four
+  // Playwright specs "shows balance" asserted only that the LABEL was visible —
+  // true with the value missing — and they do not run in CI at all. These three
+  // arms are the first check anywhere that reads the VALUE, and the first that
+  // exercises the 403 a client without `BuzzRead` actually gets.
+  async function loadSignedIn(cookie) {
+    const r = await fetch(`http://127.0.0.1:${APP_PORT}/`, {
+      headers: { cookie: `civ_session=${cookie}` },
+      redirect: 'manual',
+    });
+    return { status: r.status, body: await r.text() };
+  }
+
+  refreshMode = 'accept';
+  refreshAttempts = 0;
+
+  // C — BuzzRead granted: the real number must be on the page.
+  buzzMode = 'grant';
+  buzzAttempts = 0;
+  let out = await loadSignedIn(liveSessionCookie(65537));
+  const cSignedIn = out.body.includes(SIGNED_IN_MARKER);
+  const cHasRow = out.body.includes(BALANCE_ROW);
+  const cHasValue = out.body.includes(String(BUZZ_BALANCE));
+  const cAttempts = buzzAttempts;
+
+  console.log('\n--- C: BuzzRead GRANTED ---');
+  console.log('status            :', out.status);
+  console.log('buzz requests     :', cAttempts, '(want 1)');
+  console.log('renders signed-in :', cSignedIn, '(want true)');
+  console.log('renders the row   :', cHasRow, '(want true)');
+  console.log(`renders ${BUZZ_BALANCE}     :`, cHasValue, '(want true)');
+
+  check('C', out.status === 200, `expected 200, got ${out.status}`);
+  check('C', cSignedIn, 'the signed-in page never rendered');
+  check(
+    'C',
+    cAttempts === 1,
+    `expected exactly 1 buzz.getUserAccount request, got ${cAttempts}. Zero means the ` +
+      `balance is not being fetched at all — which is the original bug, and a page that ` +
+      `simply omits the row would otherwise look like a pass on the D arm.`,
+  );
+  check('C', cHasRow, 'the Buzz balance row is missing even though BuzzRead was granted');
+  check(
+    'C',
+    cHasValue,
+    `the page does not contain ${BUZZ_BALANCE}. A visible "Buzz balance" LABEL is not ` +
+      `evidence of a balance — that is exactly what the e2e specs asserted while every ` +
+      `user saw an em dash.`,
+  );
+
+  // D — the load-bearing arm: 403 must degrade to NO ROW, not to a dash, an
+  // error banner, or a failed render.
+  buzzMode = 'deny';
+  buzzAttempts = 0;
+  out = await loadSignedIn(liveSessionCookie(65537));
+  const dSignedIn = out.body.includes(SIGNED_IN_MARKER);
+  const dHasRow = out.body.includes(BALANCE_ROW);
+  const dHasDash = /Buzz balance[^<]*<strong>\s*(—|-|null|undefined|NaN)/.test(out.body);
+  const dHasBanner = out.body.includes('load profile');
+  const dAttempts = buzzAttempts;
+
+  console.log('\n--- D: BuzzRead DENIED (403) ---');
+  console.log('status            :', out.status);
+  console.log('buzz requests     :', dAttempts, '(want 1)');
+  console.log('renders signed-in :', dSignedIn, '(want true)');
+  console.log('renders the row   :', dHasRow, '(want false)');
+  console.log('renders a dash    :', dHasDash, '(want false)');
+  console.log('renders an error  :', dHasBanner, '(want false)');
+
+  check('D', out.status === 200, `a 403 from the buzz endpoint broke the page (${out.status})`);
+  check(
+    'D',
+    dAttempts === 1,
+    `expected exactly 1 buzz.getUserAccount request, got ${dAttempts} — with 0 this arm ` +
+      `passes without ever exercising the 403`,
+  );
+  check('D', dSignedIn, 'a 403 on the balance took the whole signed-in page down');
+  check('D', !dHasRow, 'the balance row is still rendered without BuzzRead');
+  check('D', !dHasDash, 'the balance row degraded to a placeholder instead of disappearing');
+  check('D', !dHasBanner, 'a missing balance surfaced as a profile error banner');
+
+  // E — the scope is absent from the token: skip the request entirely. Pins the
+  // pre-check, which the D arm cannot see (D still has the scope).
+  buzzMode = 'grant';
+  buzzAttempts = 0;
+  out = await loadSignedIn(liveSessionCookie(1));
+  const eSignedIn = out.body.includes(SIGNED_IN_MARKER);
+  const eHasRow = out.body.includes(BALANCE_ROW);
+  const eAttempts = buzzAttempts;
+
+  console.log('\n--- E: BuzzRead NOT IN THE TOKEN SCOPE ---');
+  console.log('buzz requests     :', eAttempts, '(want 0 — pre-checked, not attempted)');
+  console.log('renders signed-in :', eSignedIn, '(want true)');
+  console.log('renders the row   :', eHasRow, '(want false)');
+
+  check('E', eSignedIn, 'a token without BuzzRead cannot render the signed-in page');
+  check(
+    'E',
+    eAttempts === 0,
+    `the app asked buzz.getUserAccount ${eAttempts} time(s) with no BuzzRead in the ` +
+      `token — that request can only 403`,
+  );
+  check('E', !eHasRow, 'the balance row is rendered for a token that cannot read a balance');
 
   if (failures.length || process.env.PROBE_DUMP_BODY) {
     console.log('\n--- server log tail ---');

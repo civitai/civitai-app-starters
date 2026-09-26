@@ -102,9 +102,13 @@
         <p class="text-sm">
           Signed in as <strong>{me.username ?? 'unknown'}</strong>
         </p>
-        <p class="mt-1 text-sm">
-          Buzz balance: <strong>{me.balance ?? '—'}</strong>
-        </p>
+        <!-- Hidden entirely when the balance is unknown (no `BuzzRead` -> 403
+             from the BFF's buzz read). A dash is what the pre-fix bug looked like. -->
+        {#if me.balance != null}
+          <p class="mt-1 text-sm">
+            Buzz balance: <strong>{me.balance}</strong>
+          </p>
+        {/if}
         <p class="mt-2 text-xs text-zinc-500">
           Granted scopes: <code class="font-mono">{me.grantedScopes?.join(', ')}</code>
         </p>

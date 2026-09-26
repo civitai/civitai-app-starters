@@ -76,9 +76,14 @@ export function App() {
                 <p className="text-sm">
                   Signed in as <strong>{me.username ?? 'unknown'}</strong>
                 </p>
-                <p className="mt-1 text-sm">
-                  Buzz balance: <strong>{me.balance ?? '—'}</strong>
-                </p>
+                {/* Hidden entirely when the balance is unknown (no `BuzzRead`
+                    -> 403 from the BFF's buzz read). A dash here is what the
+                    pre-fix bug looked like. */}
+                {me.balance != null && (
+                  <p className="mt-1 text-sm">
+                    Buzz balance: <strong>{me.balance}</strong>
+                  </p>
+                )}
                 <p className="mt-2 text-xs text-zinc-500">
                   Granted scopes: <code className="font-mono">{me.grantedScopes?.join(', ')}</code>
                 </p>
