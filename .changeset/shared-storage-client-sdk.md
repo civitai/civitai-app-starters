@@ -55,18 +55,34 @@ touches `/api/v1`; the host receives them and calls tRPC `apps.shared.*`, inject
 the credentials. So it is the LEFT column of `BREAKING.md`'s master table, not a
 rival HTTP client of the right one.
 
-🔴 **The port is therefore a TRANSPORT change, and that is its harder half.** The
-block must now hold and send a block JWT and clear the opaque-origin CORS
-preflight, where the bridge had the host inject both, and refusals arrive as
-`ApiError` with an HTTP status. `BREAKING.md` now leads with that instead of the
-shape table.
+The transport changes from `postMessage` to HTTP, but **the credential and the
+CORS declaration are already handled by code that exists**: `createHttp` sends
+`Authorization: Bearer <token>` on every request and retries once on a `401`, the
+token still comes from the host over the bridge (`REQUEST_TOKEN` — the host keeps
+minting and rotating it), all five routes declare `allowOpaqueOrigin`, and scopes
+are identical on both transports. No token plumbing, no CORS work, no manifest
+change.
 
-Two shape divergences are worth calling out among the five kept methods:
+The remaining work is at the call sites: narrow `value` from `unknown`, move
+vote/counter/report logic into the app layer, branch on `ApiError.status` where
+the bridge surfaced a message, and audit every `limit`.
 
-- **`list({ limit })` is validated, not clamped.** The bridge *host* clamped to
-  1…100; the REST route refuses out-of-range input, so a call site keeping
-  `limit: 200` returned 100 rows before and now gets a **`400`**. This client
-  deliberately does not re-clamp — bounds stay the server's, and a guard here
+⚠ `BREAKING.md` records that this section has had three framings and that two are
+retracted — *"a second client for these same routes"* (false: different
+transports) and *"budget for the token/CORS work"* (false: both already handled) —
+so the ground is not re-walked.
+
+Two divergences worth calling out among the five kept methods:
+
+- **`list({ limit })` is validated, not normalised — three changes, not one.** The
+  bridge *host* clamped out-of-range to 1…100, floored non-integers, and fell back
+  to 50 for anything non-finite. The REST route's
+  `z.coerce.number().int().min(1).max(100)` **`400`s on all three**. The sharp one:
+  `Number(param)` on a missing value is `NaN`, which used to mean "give me the
+  default" and is now a failed request. The `400` body is
+  `{ error: 'Invalid query', details }`, so `ApiError.message` reads only "Invalid
+  query" — the field-level reason is in `ApiError.body.details`. This client
+  deliberately does not re-clamp: bounds stay the server's, and a guard here
   enforces that the module carries no numeric literal at all.
 - **A listed row's `value` is `unknown`**, versus the hook's typed
   `SharedAppendValue`. Deliberate and wire-honest: the row was written by another

@@ -94,45 +94,69 @@ the table at the top of this document, not a rival client of the right one.** It
 tRPC `apps.shared.*` on the block's behalf. Its own doc says the block *"never sees the datastore credentials
 and never sends its block token (the host injects both)"*.
 
-`app.sharedStorage` is the other side of that migration: it holds the block JWT and direct-fetches
-`/api/v1/blocks/shared-storage/*` cross-origin, from an opaque origin.
+`app.sharedStorage` is the other side of that migration: the transport becomes a direct `fetch` of
+`/api/v1/blocks/shared-storage/*`, from the block's opaque origin, instead of a message to the host.
 
-🔴 **So the port is a TRANSPORT change, and that is the harder half of it.** What the host used to do for you,
-the block now does itself:
+**The credential and the CORS declaration are already handled — for both, by code that exists.** `initialize()`
+wires the host session into the client, `createHttp` puts `Authorization: Bearer <token>` on every request and
+retries once on a `401` with a freshly fetched token, and the token still comes **from the host** over the
+bridge (`REQUEST_TOKEN`) — the host continues to mint and rotate it. All five routes declare
+`allowOpaqueOrigin` and the server answers `ACAO: null`. Scopes are unchanged between the two transports (see
+above). So there is no token plumbing, no CORS work and no manifest change to do.
 
-- **It must hold and send a block JWT.** The bridge injected credentials; nothing injects them here. An app
-  authenticated with an OAuth access token instead has no shared storage at all.
-- **It must clear the opaque-origin CORS preflight.** The routes set `allowOpaqueOrigin` for exactly this, but
-  a direct cross-origin fetch is a failure mode `postMessage` simply does not have.
-- **Refusals arrive as HTTP.** An `ApiError` with a status, where the bridge surfaced a rejected message — and
-  the anon-write case is a `403` from the scope binding rather than anything the handler said. Read
-  `message ?? error`; see *Error body* below.
+The work that actually remains is four items, and it is all at the call sites:
 
-The shape differences are the SMALLER half, but they still rewrite call sites:
+1. **Narrow `value` from `unknown`** at every read site — see below.
+2. **Move vote / counter / report logic into your app.** Those methods are not in this client at all; the
+   platform routes still exist. See the deliberate-omission note above.
+3. **Handle refusals as HTTP.** An `ApiError` carrying a `status`, where the bridge surfaced a rejected
+   message — and the anon-write case is a `403` from the scope binding rather than anything the handler said.
+   Read `message ?? error`; see *Error body* below.
+4. **Audit every `limit` you pass** — the normalisation rules changed; see below.
+
+⚠ **This paragraph has had three framings; two are retracted.** Recorded so the ground is not re-walked:
+**(a)** *"a second client for these same routes"* — **false**: the hook is the bridge/tRPC path and never
+calls `/api/v1`, so the two are different transports, not two clients of one surface. **(b)** *"the port is a
+transport change; budget for the token/CORS work"* — **false**: the transport change is real, but both the
+credential and the opaque-origin declaration are already done by the SDK and the routes, so that framing sent
+the reader's effort at finished infrastructure while demoting the real work. The list above is what is
+measured; nothing beyond it is claimed.
 
 | | `useSharedStorage` (bridge) | `app.sharedStorage` (HTTP) |
 |---|---|---|
 | Transport | `postMessage` → host → tRPC `apps.shared.*` | direct `fetch` of `/api/v1/blocks/shared-storage/*` |
-| Credentials | host-injected | the block's own JWT |
+| Credential | host-injected | the SDK sends the host-minted token for you |
 | Methods | 10, including `vote`/`unvote`/`count`/`report` | 5, key/value only |
 | A listed row's `value` | `SharedAppendValue` — the typed write shape | `unknown` |
 | `update` resolves | `void` | `{ ok: true }` |
-| `list({ limit })` out of range | **clamped** to 1…100 (host does `Math.min`/`Math.max`; default 50) | **rejected — `400`** |
+| `list({ limit })`, out of range / non-integer / non-finite | **normalised**: clamped to 1…100, floored, or defaulted to 50 | **rejected — `400`** on all three |
 
-🔴 **`limit` is the one that bites silently.** `list({ limit: 200 })` returned 100 rows over the bridge and now
-**rejects with a `400`**; `limit: 0` was raised to 1 and now rejects too. The clamp was the host's, not the
-route's — the route validates with zod and refuses out-of-range input. Pass a value in range, or omit it and
-take the server's default. This client deliberately does **not** re-clamp: the bounds are the server's, a
-second copy here is the thing that drifts, and a guard in this package enforces that the module carries no
-numeric literal at all.
+🔴 **`limit` is the one that bites silently, and it is three changes, not one.** The bridge HOST normalised;
+the REST route VALIDATES and refuses. Measured against the platform's own schema
+(`z.coerce.number().int().min(1).max(100)`), each of these used to succeed and now `400`s:
+
+- **Out of range** — `200` was clamped to 100, `0` was raised to 1. Both now reject.
+- **Non-integer** — `2.5` was floored to 2. Now rejects.
+- **Non-finite or not a number** — `NaN`, `Infinity`, `"abc"` and `""` all fell back to **50**. All now reject.
+  🔴 **This is the one to grep for**: `Number(searchParams.get('n'))` on a missing param is `NaN`, which used
+  to mean "just give me the default" and is now a failed request.
+
+⚠ The `400` body is `{ error: 'Invalid query', details }`, and the SDK reads `error` first — so
+`ApiError.message` is just **"Invalid query"**, naming neither the field nor the reason. The pointer is not
+missing, only moved: **`ApiError.body.details`** carries zod's flattened field errors. Look there, not at
+`.message`, when a read 400s.
+
+Pass a value in range, or omit it and take the server's default. This client deliberately does **not** re-clamp:
+the bounds are the server's, a second copy here is the thing that drifts, and a guard in this package enforces
+that the module carries no numeric literal at all.
 
 🔴 **The `value: unknown` is deliberate, and it is the wire-honest reading.** A row you list was written by some
 OTHER viewer's copy of the app — possibly an older version, possibly a newer one — so its shape is a fact about
 stored data, not a promise a client can keep. Typing it as the *write* shape asserts something nothing checked,
 and it is wrong the moment one viewer ships a schema change. Narrow it at the call site.
 
-Consequence: **a port is not an import swap.** Budget for the token/CORS work, narrow `value` yourself, move
-any vote/counter/report logic into your app, and check every `limit` you pass.
+Consequence: **a port is not an import swap** — but the cost is call-site work, not infrastructure. Narrow
+`value`, move the vote/counter/report logic into your app, branch on `ApiError.status`, and check every `limit`.
 
 | Method | Path | Scope |
 |---|---|---|

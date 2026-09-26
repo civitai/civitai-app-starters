@@ -246,12 +246,19 @@ that type-checks:
   viewer's copy of your app, possibly an older version, so its shape is a fact
   about the data rather than a promise the client can make. Narrow it yourself.
 
-⚠ **`limit` is validated, not clamped.** An out-of-range `list({ limit })` is a
-`400` and a rejected promise — not a silently reduced page. Pass a value inside
-the server's range, or omit it and take the server's default. If you are porting
-from `@civitai/blocks-react`'s `useSharedStorage`, note the bridge *host* clamped
-this for you and nothing clamps it here; that section of
-[`BREAKING.md`](./BREAKING.md) covers the rest of the transport change.
+⚠ **`limit` is validated, not normalised.** Out of range, non-integer, `NaN` and
+`Infinity` are each a `400` and a rejected promise — not a silently adjusted page.
+Pass a value inside the server's range, or omit it and take the server's default.
+🔴 The sharp edge: `Number(searchParams.get('n'))` on a missing param is `NaN`, so
+a pattern that used to fall through to a default is now a failed request.
+
+The `400` body is `{ error: 'Invalid query', details }` and the SDK reads `error`
+first, so `ApiError.message` says only "Invalid query" — the field-level reason is
+in `ApiError.body.details`.
+
+If you are porting from `@civitai/blocks-react`'s `useSharedStorage`, the bridge
+*host* normalised all of this for you and nothing normalises it here;
+[`BREAKING.md`](./BREAKING.md) covers what the port does and does not cost.
 
 `withdraw` answers `{ ok: true, deleted: false }` identically for another
 author's key, an already-withdrawn row and a key that never existed — it is not
