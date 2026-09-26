@@ -117,26 +117,25 @@ layer down, and the same predicate decides all three:
   beats an *inherited* one at any specificity, so a token on the element itself
   would cancel every ancestor utility.
 
-  🔴 **WHAT THAT COSTS, AND WHICH PAGES IT CHANGES.** Text does not paint
-  `--civitai-color-text` on its own, so it renders in whatever colour it
-  inherits. That is a behaviour change on **any** page with an ancestor `color`,
-  not only on a page that paints nothing — and an ancestor `color` is the common
-  case, not the exception. Measured on both tracks at this commit, in the
+  ⚠️ **THE TRADE, and it applies to pages that DO set a colour — not only to
+  pages that set none.** Text does not paint `--civitai-color-text` on its own,
+  so it renders in whatever colour it inherits: wherever an ancestor `color` and
+  the token disagree, Text follows the ancestor. An ancestor `color` is the
+  common case, not the exception. Measured on both tracks at this commit, in the
   shape a block in this repo actually has: a `[data-theme="dark"]` root carrying
   `color: #e6e6e6`, which is what `civitai-block-starter` and all six apps under
   `starters/examples/` set. Text computes `rgb(230, 230, 230)` — the root's
   colour — against a dark token of `rgb(193, 194, 197)`. Restoring the removed
   declaration on that same fixture puts both tracks back at `rgb(193, 194, 197)`
   while the plain `<p>` beside them stays `rgb(230, 230, 230)`; that pair is the
-  change, in the exact colours a block here ships. So Text now follows
-  the page's own colour rather than the design-system token wherever the two
-  disagree, and dark is where that reads, the token being a soft grey next to a
-  near-white block colour. Light theme behaves the same way: with
-  `color: rgb(24, 24, 27)` on `<body>` Text computes `rgb(24, 24, 27)` where it
-  computed the token `rgb(34, 34, 34)` before.
+  trade, in the exact colours a block here ships. Dark is where it reads, the
+  token being a soft grey next to a near-white block colour. Light theme behaves
+  the same way: with `color: rgb(24, 24, 27)` on `<body>` Text computes
+  `rgb(24, 24, 27)` where it computed the token `rgb(34, 34, 34)` before.
 
-  Every in-repo consumer is in that population, by two different routes: four
-  starters set the colour on `<body>` with Tailwind
+  Every in-repo consumer would be in that population once it renders Text — none
+  does today — by two different routes: four starters set the colour on `<body>`
+  with Tailwind
   (`text-zinc-900 dark:text-zinc-100` — `starters/next-app/src/app/globals.css`,
   `starters/react-pwa/index.html`, `starters/svelte-pwa/index.html`,
   `starters/sveltekit-app/src/app.html`), and seven set it on a `[data-theme]`

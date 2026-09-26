@@ -111,16 +111,15 @@ const TEMPLATES: Record<TextAs, () => TemplateResult> = Object.assign(
  *
  * WHAT IT COSTS, measured rather than assumed. Text no longer paints
  * `--civitai-color-text` itself, so it renders in whatever colour it inherits.
- * The cost is therefore NOT confined to a page that paints nothing — it is a
- * behaviour change on every page that DOES set a colour, which is the larger
- * population and includes every in-repo consumer. Measured on both tracks at
- * this commit:
+ * The trade is therefore NOT confined to a page that paints nothing — it
+ * applies to every page that DOES set a colour, which is the larger population
+ * and includes every in-repo consumer. Measured on both tracks at this commit:
  *
  *   ANCESTOR COLOUR SET (the common case), in the shape a block here actually
  *   has — a `[data-theme="dark"]` root carrying `color: #e6e6e6`: Text computes
  *   `rgb(230, 230, 230)`. Restoring the removed declaration on the SAME fixture
  *   puts both tracks back at the dark token `rgb(193, 194, 197)` while the plain
- *   `<p>` beside them stays `rgb(230, 230, 230)` — that pair IS the change, in
+ *   `<p>` beside them stays `rgb(230, 230, 230)` — that pair IS the trade, in
  *   the exact colours a block here ships. Dark is where it reads: a soft grey
  *   token against a near-white block colour. Light behaves identically — with
  *   `color: rgb(24, 24, 27)` on `body`, Text computes `rgb(24, 24, 27)` where the
@@ -139,10 +138,12 @@ const TEMPLATES: Record<TextAs, () => TemplateResult> = Object.assign(
  * the six apps under starters/examples (buzz-purchase, buzz-workflow,
  * hello-world, kv-storage, scopes-api, settings). A glob is not written here on
  * purpose: a star-slash inside a block comment ENDS it, and that broke this file
- * once. All eleven now show Text in their own colour rather than the token. The package's own demo and playground are the exception
- * and they prove the rule — both set `body { color: var(--civitai-color-text) }`,
- * so they still render the token, by INHERITING it rather than because Text names
- * it.
+ * once. All eleven would show Text in their own colour rather than the token
+ * once one of them renders Text; none does today, so this enumerates where the
+ * trade would land rather than pages that have changed. The package's own demo
+ * and playground are the exception, and they prove the rule — they DO render
+ * Text, and both set `body { color: var(--civitai-color-text) }`, so they still
+ * render the token, by INHERITING it rather than because Text names it.
  *
  * A page wanting the token explicitly writes `ci-text-default` — but that class
  * ships in utilities.css, a SEPARATE stylesheet that `injectStyles()` does not

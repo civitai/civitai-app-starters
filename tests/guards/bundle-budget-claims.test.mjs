@@ -93,15 +93,30 @@ const COVERAGE_FLOOR = 2;
  * `checked` at 3.
  *
  * So rule 2 pins the SHAPE of its corpus as an exact set of subtrees, failing if
- * one is lost (a `SKIP_DIRS` or `SCANNED_EXTENSIONS` change) *or* gained (a new
- * scannable directory nobody decided about), plus the two files the occupancy
- * figure actually rotted in. An exact set rather than a file count because the
- * count moves with every element added and a count that drifts gets widened until
- * it means nothing.
+ * one is lost (a `SKIP_DIRS` change) *or* gained (a new scannable directory
+ * nobody decided about), plus a named list of files. An exact set rather than a
+ * file count because the count moves with every element added and a count that
+ * drifts gets widened until it means nothing.
+ *
+ * 🔴 WHAT THE SUBTREE LEDGER DOES NOT SEE: a `SCANNED_EXTENSIONS` change.
+ * Measured for `'.css'` — dropping it leaves all four tests GREEN, because every
+ * ledgered subtree still stands on its `.md`/`.ts` files. Naming a `.css` file
+ * in `RULE2_REQUIRED_FILES` is what detects that one.
  */
 const RULE2_EXPECTED_SUBTREES = ['(package root)', 'scripts', 'src', 'test'];
-/** The two historical rot sites, spelled posix-style relative to the package. */
-const RULE2_REQUIRED_FILES = ['README.md', 'src/elements/civitai-text.ts'];
+/**
+ * Files named one by one, because the subtree ledger cannot see any of them
+ * dropped. `README.md` and `src/elements/civitai-text.ts` are the two sites the
+ * occupancy figure actually rotted in; `src/components.css` is here so the
+ * corpus's `.css` membership is asserted too — with no `.css` on this list,
+ * dropping that extension takes every stylesheet in the package out of the scan
+ * at no cost to a subtree. Spelled posix-style relative to the package.
+ */
+const RULE2_REQUIRED_FILES = [
+  'README.md',
+  'src/elements/civitai-text.ts',
+  'src/components.css',
+];
 
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'coverage', '.turbo', 'playground', 'demo']);
 const SCANNED_EXTENSIONS = ['.md', '.ts', '.tsx', '.mjs', '.css'];
@@ -232,9 +247,11 @@ test('no doc or comment states how full the bundle is TODAY', () => {
     [...RULE2_EXPECTED_SUBTREES].sort(),
     `rule 2's corpus covers ${JSON.stringify(subtrees)}, not ` +
       `${JSON.stringify([...RULE2_EXPECTED_SUBTREES].sort())}. A subtree that ` +
-      'DISAPPEARED means SKIP_DIRS or SCANNED_EXTENSIONS stopped this rule reading ' +
-      'part of the package, and every occupancy figure in there now passes ' +
-      'vacuously. One that APPEARED is a new scannable directory nobody has ' +
+      'DISAPPEARED means SKIP_DIRS stopped this rule reading part of the ' +
+      'package, and every occupancy figure in there now passes vacuously. (A ' +
+      'SCANNED_EXTENSIONS change is NOT visible here — a subtree survives on ' +
+      'whichever extensions it has left; RULE2_REQUIRED_FILES is what catches ' +
+      'that.) One that APPEARED is a new scannable directory nobody has ' +
       'decided about — add it to RULE2_EXPECTED_SUBTREES to scan it, or to ' +
       'SKIP_DIRS to exclude it, but do not leave the ledger disagreeing with the walk'
   );
@@ -243,8 +260,11 @@ test('no doc or comment states how full the bundle is TODAY', () => {
   assert.deepEqual(
     missing,
     [],
-    `rule 2's corpus no longer contains ${JSON.stringify(missing)} — the exact ` +
-      'file(s) the occupancy figure rotted in. A clean scan that cannot reach them ' +
+    `rule 2's corpus no longer contains ${JSON.stringify(missing)} — file(s) ` +
+      'this rule is required to reach: the two the occupancy figure rotted in, ' +
+      'and src/components.css, whose presence is what asserts the corpus still ' +
+      'includes .css at all — dropping that extension takes every stylesheet out ' +
+      'of the scan at no cost to a subtree. A clean scan that cannot reach them ' +
       'is not evidence the figure stayed out'
   );
 

@@ -970,11 +970,12 @@
      * re-specifies `text-align`. `<civitai-text>`'s `:host` had the identical
      * defect; both tracks changed together, as they must.
      *
-     * THE COST, and it is NOT limited to a page that paints nothing: Text no
+     * THE TRADE, and it is NOT limited to a page that paints nothing: Text no
      * longer paints the token itself, so it takes whatever colour it inherits.
-     * That changes what it renders on every page that DOES set a colour — the
-     * larger population, and the one every in-repo consumer is in (four starters
-     * colour `body` via Tailwind; seven more colour a `[data-theme]` root).
+     * That decides what it renders on every page that DOES set a colour — the
+     * larger population, and the one every in-repo consumer would be in once it
+     * renders Text, which none does today (four starters colour `body` via
+     * Tailwind; seven more colour a `[data-theme]` root).
      * Measured on both tracks, on the shape a block here actually has — a
      * `[data-theme='dark']` root carrying `color: #e6e6e6` — Text computes
      * `rgb(230, 230, 230)`, where restoring the removed declaration puts both
