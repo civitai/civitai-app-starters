@@ -121,11 +121,13 @@ That output is the only place it cannot rot, so read it there. The guard named
 above also fails on an occupancy figure put back into prose — a percentage of the
 budget, or a "currently sits at N kB" — because that is the shape that rotted, not
 the particular number. **It does not read every file in the package**: the scan
-covers `.md`, `.ts`, `.tsx`, `.mjs` and `.css` under this package, and skips
-`demo/`, `playground/`, `dist/`, `CHANGELOG.md` (a changelog may record what was
-true at a release) and `scripts/build-elements.ts` (it is the authority, and it
-prints the figure). The guard's own docblock states the corpus and the limits;
-read it there rather than assuming the wider claim.
+covers `.md`, `.ts`, `.tsx`, `.mjs` and `.css` under this package, and skips —
+besides the build and dependency directories — `demo/`, `playground/`,
+`CHANGELOG.md` (a changelog may legitimately record what was true at a release)
+and `scripts/build-elements.ts` (it is the authority, and it prints the figure).
+That list is illustrative, not the definition: the guard's own docblock states
+the corpus and the limits exactly, so read it there rather than assuming either
+a wider or a narrower claim.
 
 ### The civitai vocabulary
 
