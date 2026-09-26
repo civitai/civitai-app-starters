@@ -92,7 +92,7 @@ const CASES: { id: string; markup: string; prepare?: (scope: HTMLElement) => voi
     },
   },
   // Added when `@civitai/components-react`'s axe sweep was retired as a
-  // duplicate of this one (components-react@0.8.0). Most of that arm's cases
+  // duplicate of this one (components-react@0.9.0). Most of that arm's cases
   // were ALREADY here, testing the same elements through the same axe options;
   // eight were not, and are the eight below other than `alert/closable`, which
   // is NET-NEW (the retired arm's only alert case was a non-closable titled

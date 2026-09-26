@@ -339,7 +339,7 @@
      *     check the wrong case and you will conclude it is unguarded.
      *
      * 🔴 THE MIDDLE SURFACE IS GONE, and so is the test that used to pin it.
-     * `@civitai/components-react@0.8.0` deleted its hand-written `<Group>` when
+     * `@civitai/components-react@0.9.0` deleted its hand-written `<Group>` when
      * the custom elements superseded the React layer, taking
      * `html-vs-react-parity.browser.test.tsx` ("styling anchors — Group") with
      * it. TWO surfaces now resolve against this rule, not three: bare markup,

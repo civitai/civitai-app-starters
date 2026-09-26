@@ -9,7 +9,7 @@
  * SegmentedControl, plus ResourceCard), in light AND dark.
  *
  * Uses the anchor approach `@civitai/components-react`'s `html-vs-react-parity`
- * established (that suite was retired in components-react@0.8.0 along with the
+ * established (that suite was retired in components-react@0.9.0 along with the
  * hand-written React layer it compared; the technique is what survives):
  * a browser PROBE oracle evaluates the same color expression from the LITERAL
  * token hex (`@civitai/theme`'s `tokens` / `darkTokens`, NOT via the stylesheet

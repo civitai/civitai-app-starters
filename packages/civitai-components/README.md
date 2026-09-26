@@ -472,7 +472,7 @@ its own verbs instead — `<civitai-toast-region>` has `show(options)`,
 
 Styling is selected entirely by `data-*` attributes, so any HTML that follows
 the contract below picks up the design system without a framework. It is no
-longer comparable to "the React bindings": since components-react@0.8.0 those
+longer comparable to "the React bindings": since components-react@0.9.0 those
 bind the `<civitai-*>` elements, which style themselves in shadow DOM and do
 not consume this sheet at all. **`legend`:** _bold_ =
 required for correct styling + a11y. [`MARKUP.md`](./MARKUP.md) is the canonical

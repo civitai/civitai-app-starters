@@ -71,7 +71,7 @@ describe('Group', () => {
    * had no `wrap` prop — a React consumer resolving against the CSS exactly as
    * bare markup does — guarded by the absolute `styling anchors — Group` case
    * in that package's `html-vs-react-parity.browser.test.tsx`. BOTH are gone:
-   * components-react@0.8.0 deleted the hand-written React layer when the
+   * components-react@0.9.0 deleted the hand-written React layer when the
    * custom elements superseded it, and the parity suite went with it. The bare
    * markup surface is now pinned by `civitai-components`'
    * `presentational-parity.browser.test.ts`, case **`group`** — NOT

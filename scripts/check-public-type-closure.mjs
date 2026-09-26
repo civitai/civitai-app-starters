@@ -45,7 +45,7 @@
  * One name was a third case worth separating: `FieldBaseProps`, exported from
  * its own module and merely absent from the package barrel — the `internal/`
  * directory feeding public signatures, the shape #378 fixed in blocks-react.
- * 🔴 RESOLVED, and NOT by exporting it: `@civitai/components-react@0.8.0`
+ * 🔴 RESOLVED, and NOT by exporting it: `@civitai/components-react@0.9.0`
  * deleted the hand-written React layer outright when the `<civitai-*>` custom
  * elements superseded it, so `src/internal/field.tsx` and the seven
  * labeled-input prop types that extended it no longer exist, and their seven

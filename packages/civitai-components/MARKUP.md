@@ -528,7 +528,7 @@ this sheet: the elements style themselves in shadow DOM, so they do not consume
 the contract above and are not a second renderer of it. Consuming this document
 means writing the markup yourself, in whatever framework or none.
 
-Until `@civitai/components-react@0.8.0` that package also shipped a
+Until `@civitai/components-react@0.9.0` that package also shipped a
 hand-written React layer which DID render this markup, and an
 `html-vs-react-parity` browser test asserted identical `getComputedStyle()`
 between the two arms. That layer was superseded by the elements and the test

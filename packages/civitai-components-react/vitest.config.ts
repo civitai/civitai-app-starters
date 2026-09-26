@@ -13,7 +13,7 @@ import { defineConfig } from 'vitest/config';
  *                 that can upgrade a custom element, as happy-dom cannot.
  *                 `pnpm test:browser` runs it. The axe sweep that used to sit
  *                 here moved to `@civitai/components`, which owns the elements.
- *                 Until 0.8.0 this also carried HTML-vs-React computed-style
+ *                 Until 0.9.0 this also carried HTML-vs-React computed-style
  *                 parity and an opt-in visual-regression layer; the first went
  *                 with the hand-written React layer it compared, the second
  *                 was deleted never having run (no baselines, no CI opt-in).

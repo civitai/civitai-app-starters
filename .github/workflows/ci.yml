@@ -217,7 +217,7 @@ jobs:
       # (happy-dom cannot upgrade a custom element). NOT the a11y sweep: that
       # lives in the `@civitai/components test:browser` step below, which owns
       # the elements. This step also carried HTML-vs-React computed-style
-      # parity until components-react@0.8.0 deleted the hand-written React
+      # parity until components-react@0.9.0 deleted the hand-written React
       # layer the parity test compared against. Bundled Chromium in CI.
       # Same apt/network wedge hazard as the blocks-react job above — see the
       # measurement recorded there. This is the step that actually hung; both

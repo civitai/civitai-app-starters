@@ -8,7 +8,8 @@ hand-written React layer.** The `.` entry no longer exports `Button`, `Card`,
 `TextInput`, `Alert`, `Badge`, `Loader`, `Stack`, `Group`, `Slider`,
 `SegmentedControl`, `Select`, `Checkbox`, `Radio`, `RadioGroup`, `NumberInput`,
 `Textarea`, `TabPanel`, `Toast`, `ToastProvider`/`useToast`, `Tooltip`, `Image`,
-or `injectStyles`/`useComponentStyles`. It re-exports the generated
+`Text` (with `TextProps`/`TextAs`/`TextSize`/`TextWeight`), or
+`injectStyles`/`useComponentStyles`. It re-exports the generated
 `@lit/react` element bindings instead — `CivitaiButton`, `CivitaiCard`,
 `CivitaiTextInput`, and so on.
 
@@ -28,7 +29,7 @@ recognise straight to `React.createElement`, where an unknown name becomes a
 plain HTML attribute rather than an error. The third is a prop DEFAULT, which
 no rename can reveal — the names match and the rendering changes anyway.
 
-| Was (0.7.x) | Is (0.8.0) | What a bare rename does |
+| Was (0.8.x) | Is (0.9.0) | What a bare rename does |
 |---|---|---|
 | `<Alert title="Saved">` | `<CivitaiAlert heading="Saved">` | 🔴 `title` is a **global** HTML attribute, so it becomes a mouse-hover tooltip and the bold heading silently disappears. No type error. |
 | `<Alert onClose={fn}>` | `<CivitaiAlert closable onClose={fn}>` | 🔴 `onClose` is in the event map so it type-checks and attaches, but the element renders no dismiss button without `closable`. Dead callback, no button, no error. |
@@ -74,6 +75,13 @@ Everything else:
   import type { ButtonVariant, ButtonSize } from '@civitai/components/civitai-button';
   ```
 
+🔴 **`Text` is the one removal with a PUBLISHED predecessor of its own age.**
+It landed in `@civitai/components-react@0.8.0` (#477) on both tracks while this
+change was in flight, so `<Text>` existed publicly for exactly one release.
+Its replacement is `CivitaiText`, generated from `<civitai-text>`; the element,
+its CSS and its a11y coverage are untouched — only the hand-written React twin
+is gone. Anyone who adopted `<Text>` in 0.8.0 renames it like the rest.
+
 Not a rename at all: if you were using `TabPanel`, `Toast`/`ToastProvider`/
 `useToast`, `Tooltip`, `Radio` or `Image`, read the element's own contract
 first — `civitai-toast-region` owns the live region the provider used to,
@@ -117,10 +125,11 @@ the SAME external specifiers — set equality, so an extra at the root and a gap
 at the root both fail — and that the root still reaches no `@civitai/sdk`.
 
 **Release sequencing.** The two starters in this repo import the new names, and
-their `@civitai/components-react` pins are `^0.7.0` — which, being 0.x, admits
-only `0.7.x`. Between merging this and publishing 0.8.0, `npx tiged` of those
-starters scaffolds a project that does not compile. `changeset version` rewrites
-the pins, so the fix is to publish promptly rather than to change anything here;
+their `@civitai/components-react` pins are `^0.8.0` — which, being 0.x, admits
+only `0.8.x`, and 0.8.0 is the release that shipped `Text` on the old layer.
+Between merging this and publishing 0.9.0, `npx tiged` of those starters
+scaffolds a project that does not compile. `changeset version` rewrites the
+pins, so the fix is to publish promptly rather than to change anything here;
 the nightly published-starter smoke job will flag the window while it is open.
 
 `@civitai/components` (patch): stop shipping `dist/utilities.generated.*`, about

@@ -9,7 +9,7 @@
  * (transparent buttons, borderless cards). This is the @layer trap.
  *
  * ⚠ That hazard is currently UNREACHABLE here, and the entry is kept anyway.
- * Since components-react@0.8.0 the design system arrives as the `<civitai-*>`
+ * Since components-react@0.9.0 the design system arrives as the `<civitai-*>`
  * custom elements, which style themselves in shadow DOM where Preflight cannot
  * reach them, so layout.tsx no longer imports the component sheet and nothing
  * declares into this layer. The order has to be declared BEFORE any layered

@@ -1,7 +1,7 @@
 {
   "name": "@civitai/components-react",
-  "version": "0.7.0",
-  "description": "React bindings for the <civitai-*> custom elements published by @civitai/components \u2014 generated @lit/react wrappers, so props, types and events come from the element itself.",
+  "version": "0.8.0",
+  "description": "React bindings for the <civitai-*> custom elements published by @civitai/components — generated @lit/react wrappers, so props, types and events come from the element itself.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",

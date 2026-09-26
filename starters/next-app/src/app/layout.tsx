@@ -8,7 +8,7 @@ import './globals.css';
 //
 // The component SHEET (`@civitai/components/styles.css`) is deliberately NOT
 // imported. This starter renders the design system through
-// `@civitai/components-react`, which since 0.8.0 binds the `<civitai-*>` custom
+// `@civitai/components-react`, which since 0.9.0 binds the `<civitai-*>` custom
 // elements; those style themselves in shadow DOM off these tokens and never
 // read that sheet, so importing it shipped ~32 kB of unused CSS on the critical
 // path of the starter that exists for SEO. Add it back (with the

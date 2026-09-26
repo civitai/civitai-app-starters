@@ -78,8 +78,8 @@
     }
   },
   "dependencies": {
-    "@civitai/app-sdk": "^0.51.1",
-    "@civitai/components-react": "^0.7.0",
+    "@civitai/app-sdk": "^0.51.2",
+    "@civitai/components-react": "^0.8.0",
     "@civitai/theme": "^0.4.0",
     "@t3-oss/env-nextjs": "^0.13.0",
     "next": "^16.2.11",

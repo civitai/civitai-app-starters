@@ -162,7 +162,7 @@ const DEP_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'opti
  * removing a starter or one of its first-party deps should move it, and then
  * lower it in the SAME commit so the drop is reviewed rather than silent.
  *
- * 15 -> 14 when `@civitai/components-react@0.8.0` made the custom elements the
+ * 15 -> 14 when `@civitai/components-react@0.9.0` made the custom elements the
  * only implementation: `starters/next-app` dropped its `@civitai/components`
  * dependency because it no longer renders any `data-civitai-ui` markup — the
  * element bindings style themselves in shadow DOM and never read that sheet,

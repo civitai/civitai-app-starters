@@ -15,7 +15,7 @@
  *    measure the component and call the result a fact about the CSS. Bare
  *    markup is what a non-React consumer gets. It USED to be what
  *    `@civitai/components-react`'s `<Group>` rendered too, but that component
- *    was deleted in components-react@0.8.0 when the custom elements superseded
+ *    was deleted in components-react@0.9.0 when the custom elements superseded
  *    the hand-written React layer, so this case no longer covers a third
  *    surface — `<civitai-group>` styles itself in shadow DOM and never reads
  *    this rule.

@@ -32,7 +32,7 @@ const REAL_SCRIPTS = join(REPO_ROOT, 'scripts');
 /**
  * The real repo's starter pin ledger, mirrored exactly: 5 tiged-consumed
  * starters declaring 14 published-range `@civitai/*` pins between them.
- * (15 until components-react@0.8.0 — `next-app` then dropped
+ * (15 until components-react@0.9.0 — `next-app` then dropped
  * `@civitai/components`, which it no longer renders any markup from.)
  * A test that wants a PASS must start from a tree at or above the guard's
  * coverage floor, so this default is the real shape, not a toy.
