@@ -1497,30 +1497,6 @@ does not publish — open an issue rather than reaching into `dist/internal/`.
 > exists for one caller: a `pnpm dev:live` harness. **It must never appear in a
 > test suite.** The free one is `createMockHost`, on `./testing`.
 
-### Why it has its own subpath
-
-Until `0.55.0` this code was exported from `./testing`. The argument for moving
-it, in full, is that **a client which spends the caller's money should not be
-reachable through an import path named `testing`** — the import line is the one
-piece of context that travels with every call site, and `…/testing` actively
-asserts the opposite of what this module does. That is
-[#334](https://github.com/civitai/civitai-app-starters/issues/334)'s literal
-closing condition.
-
-Two arguments that were made for this change and **do not hold** — recorded so
-they are not made again:
-
-- **It does not shrink the install.** Measured: **+4,447 B**. See
-  [What the host-simulation subpaths cost you](#what-the-host-simulation-subpaths-cost-you).
-- **It does not close a wrong-autocomplete hazard**, because there was none to
-  close. `createMockHost(options: MockHostOptions = {})` is callable bare;
-  `createLiveHost(options: LiveHostOptions)` takes a **required** argument whose
-  `blockToken` is a **required** short-lived RS256 JWT that a human mints and
-  pastes by hand. `createLiveHost()` and `createLiveHost({})` do not compile, so
-  nobody reaches this module by picking the wrong completion. Earlier revisions
-  of this file, of the changeset, and of #334 called the two signatures
-  "near-identical"; none of them had read the signatures.
-
 ### The whole surface
 
 One value and one type. `test/subpathSurfaces.test.ts` pins the runtime export
@@ -1553,6 +1529,10 @@ The same terms as `./testing`: a normal subpath of a `0.x` package where a minor
 may break it, with the runtime symbol set pinned by
 `test/subpathSurfaces.test.ts` so it cannot change silently.
 
+It moved off `./testing` in `0.55.0`: an import path named `testing` asserts the
+opposite of what this module does, and the import line is the one piece of context
+that travels with every call site.
+
 🔴 One cost worth stating plainly: publishing and documenting this subpath makes
 [#334](https://github.com/civitai/civitai-app-starters/issues/334) **item 3** —
 getting the live-host code out of the tarball entirely — *harder*, not easier.
@@ -1562,42 +1542,14 @@ many on a subpath nobody was told to rely on.
 
 ## What the host-simulation subpaths cost you
 
-Seven `dist/` modules — 266,790 B of JavaScript plus 77,338 B of `.d.ts` — are
-reachable only from `./testing` and `./live`, and from nothing under `.` or
-`./ui`. Measured by walking the built module graph:
+The `dist/` modules reachable only from `./testing` and `./live`, and from nothing
+under `.` or `./ui`, **ship in every install**, production dependency trees
+included. They are tree-shaken out of application *bundles* — no block ships a
+mock host to a browser — so this is `node_modules` weight, not bundle weight.
 
-```text
-118,590  dist/internal/mockHost.js        ← ./testing  (createMockHost)
- 86,688  dist/internal/liveHost.js        ← ./live     (createLiveHost)
- 29,508  dist/internal/pickerOverlay.js   ← ./live     (via liveHost)
- 15,351  dist/internal/catalog.js         ← ./live     (via pickerOverlay)
-  9,141  dist/testing.js
-  4,697  dist/internal/consent.js         ← BOTH hosts import it
-  2,815  dist/live.js
-```
-
-**They ship in every install**, production dependency trees included. They are
-tree-shaken out of application *bundles* — no block ships a mock host to a
-browser — so this is `node_modules` weight, not bundle weight.
-
-🔴 **Splitting `createLiveHost` onto its own subpath removed none of this — it
-ADDS 4,447 B of code, and trimming the export list moved nothing either.**
-Measured with `pnpm pack` on both sides of the split, in a detached worktree so
-neither pack is contaminated by the other change in this release: **319 → 323
-entries, 1,590,099 B → 1,597,161 B uncompressed.** The only files that differ are
-
-```text
-+6,048  dist/live.*        (new: .js 2,815, .d.ts 2,839, + maps)
--1,692  dist/testing.*     (the re-export and its docblock leaving)
-   +91  package.json       (the new exports-map key)
-+2,615  README.md          (this section)
-```
-
-`liveHost.js`, `pickerOverlay.js` and `catalog.js` do not appear in that diff at
-all — they are byte-identical and still in the tarball. `files` is
-`["dist", "README.md"]` and `tsconfig` compiles all of `src/**/*`, so the
-`exports` map has no bearing whatsoever on tarball contents; it decides only what
-a consumer can *name*.
+`files` is `["dist", "README.md"]` and `tsconfig` compiles all of `src/**/*`, so
+the `exports` map has no bearing whatsoever on tarball contents; it decides only
+what a consumer can *name*.
 **The `/live` split buys safety, not size.** Moving these bytes needs the code
 deleted or published as a second artifact; that is
 [#334](https://github.com/civitai/civitai-app-starters/issues/334) item 3, and it
