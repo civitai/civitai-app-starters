@@ -332,11 +332,23 @@ rather than about this migration.
   result lines"* entry, but the wrapper was the **task-completion notification** rather than a
   script, so there was no pipeline to inspect. **Read the log's content; a completion notice is a
   claim about the runner, not a verdict on the work.**
-- **`src/tests/api/v1/blocks/` has two files red on `civitai@origin/main`** —
-  `workflows-controls-seam.test.ts` and `suspended-app-rest-refusal.test.ts`, 32 tests. Pre-existing
-  and NOT a `#5163` regression: established by running a pristine `origin/main` worktree and
-  comparing failure **SETS** (33 lines each, zero difference in either direction), not counts.
-  Unowned; nobody has filed it.
+- 🔴 **RETRACTED 2026-09-26, and the retraction is the transferable half. CLAIMED:**
+  *"`src/tests/api/v1/blocks/` has two files red on `civitai@origin/main` —
+  `workflows-controls-seam.test.ts` and `suspended-app-rest-refusal.test.ts`, 32 tests.
+  Pre-existing and NOT a `#5163` regression: established by running a pristine `origin/main`
+  worktree and comparing failure SETS (33 lines each, zero difference in either direction).
+  Unowned; nobody has filed it."* **FALSE.** Those two files pass **41/41** once
+  `event-engine-common` is initialised; there is no base failure and nothing to file.
+  🔴 **A CONTROL THAT SHARES THE STEP YOU DOUBT IS A SECOND SAMPLE, NOT A CONTROL.** Both arms of
+  the comparison were worktrees with the submodule UNINITIALISED, so the identical failure sets
+  could not distinguish *"the base is broken"* from *"both my trees are misconfigured the same
+  way"* — and identical sets read as strong evidence, which is what made it convincing. The
+  set-comparison method was sound for the question *"did my change cause this?"* and worthless for
+  the question I then answered. **Ask which step both arms share before quoting a matched pair**;
+  here the discriminator was one command (`git submodule update --init`) and it inverted the
+  conclusion. Caught by `#5163`'s round-1 auditor, who reported that every failure in its own
+  worktree traced to `Cannot find module '../../../event-engine-common/feeds'` and that CI was
+  green at head — i.e. it could not reproduce my mechanism, and said so instead of confirming it.
 - **A propagation test needs a SEPARABILITY control, not just a kill.** After `#5163` corrected its
   fixture, that case and the anon case share a CODE. Mutation A (rewrite the propagated error in the
   route's `catch`) killed it on `expect(err.code)`. Mutation B — feed the fixture the anon refusal's
