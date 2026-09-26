@@ -19,7 +19,7 @@ messages have no destination yet.
 | `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`, `POLL_WORKFLOW`, `CANCEL_WORKFLOW`, `QUERY_APP_WORKFLOWS`, `CANCEL_APP_WORKFLOW` | `POST /api/v1/blocks/workflows/{submit,estimate,poll,cancel,query}` | **Routes exist.** 🔴 Use these, **not** `app.orchestration` — see *What a direct orchestrator call loses* below |
 | `GET_IMAGES_BY_IDS` | `GET /api/v1/blocks/images?ids=1,2,3` | Batch, up to **100** ids per request. Misses are reported by OMISSION — see below. 🔴 **Not `/api/v1/images`** — that is a `PublicEndpoint`; it ignores your token and answers with anonymous public results rather than erroring |
 | `APP_STORAGE_*` | `POST /api/v1/blocks/app-storage/*` | **Routes exist** — five of them (`get`, `set`, `delete`, `list`, `quota`), civitai#5085. This row said "No v1 route"; that is no longer true. See *App storage* below |
-| `SHARED_*` | `GET\|POST /api/v1/blocks/shared-storage/*` | **Routes exist** — eleven of them; see *Shared storage* below |
+| `SHARED_*` | `app.sharedStorage`, over `GET\|POST /api/v1/blocks/shared-storage/*` | **Routes exist** — eleven of them. `app.sharedStorage` wraps the **five** key/value ones; the higher-level ops are deliberately app-layer. See *Shared storage* below |
 | `GET_BUZZ_BALANCE` | `GET /api/v1/blocks/buzz` | **Route exists.** Returns `{ blue, green, yellow }` — a bare object, three numbers |
 | `GET_BUZZ_ACCOUNTS`, `GET_BUZZ_TRANSACTIONS` | — | No v1 route |
 | `CREATE_POST_FROM_APP` | — | No v1 route, **and deliberately staying on the bridge** — see below |
@@ -57,25 +57,55 @@ first.
 Eleven routes under `/api/v1/blocks/shared-storage/`. Reads take `apps:storage:shared:read`, writes take
 `apps:storage:shared:write` — both scopes already existed; neither is new.
 
-**`app.sharedStorage` now wraps all eleven** — one method per route, same names
-(`get` is the `/item` route, matching its tRPC twin `apps.shared.get`). An app no longer needs to hand-roll
-`app.site.get('blocks/shared-storage/…')`, and the three shape traps below are handled for it. This row
-previously recorded only that the routes exist; a client had to be written per app.
+### `app.sharedStorage` wraps FIVE of the eleven, on purpose
+
+`app.sharedStorage` is a **generic cross-user key/value store**: `list`, `get` (the `/item` route, matching its
+tRPC twin `apps.shared.get`), `append`, `update`, `withdraw`. An app no longer needs to hand-roll
+`app.site.get('blocks/shared-storage/…')`, and the shape traps below are handled for it.
+
+🔴 **`vote`, `unvote`, `counts`, `top`, `increment` and `report` are DELIBERATELY ABSENT from the client.**
+The platform serves all eleven routes and will keep doing so — this is a surface decision, not a gap, and not
+an oversight to be "fixed". Shared storage is scoped to generic key/value operations; the higher-level ops
+belong at the app layer, where an app that wants voting, counters or reporting builds them on top of these
+five. If demand shows up, the platform-side surface can be expanded again and the client can follow — but
+**the routes existing is not a reason to add a method here.** Do not add one back without that decision being
+revisited.
+
+What survives the cut, and why: `SharedItem` still carries **`count` and `viewerVoted`** exactly as the two
+read routes project them. Reading a tally is what makes an app-layer vote feature possible; only the
+vote-casting operation is out of scope.
 
 🔴 **It is not the per-viewer client's shape, in four ways.** Each is a real difference in the route table,
 not a stylistic one, and assuming otherwise produces a bug that type-checks:
 
-1. **The four reads are `GET` with a query string**; only the seven writes are `POST`. A read sent as POST is
-   a `405`.
+1. **The two reads are `GET` with a query string**; the three writes are `POST`. A read sent as POST is a `405`.
 2. **`list` is enveloped** — `{ items, metadata: { nextCursor } }`. The cursor sits one level deeper than
    `app-storage/list`'s top-level `nextCursor`; read the wrong level and pagination is silently dead while
    every page still parses.
-3. **`top` answers a bare array**, `[{ key, count }]` — no `items`, no `metadata`, unlike `list` beside it.
+3. **`append` accepts no key** — the server mints a ULID, so one viewer cannot overwrite another's row.
 4. **Anonymous viewers read but never write** — the inverse of per-viewer storage, where a missing subject
    refuses everything. See *Who may read, and who may write* below.
 
-⚠ `top`/`increment` operate on app-defined **counters** (`playcount:…`), which are a different thing from the
-vote tallies `list` returns on feed rows. A "most-voted" rail is `list` sorted by the caller, not `top`.
+### ⚠ A second client for these routes still ships here
+
+`@civitai/blocks-react`'s [`useSharedStorage`](../civitai-blocks-react/src/hooks/useSharedStorage.ts) hook
+(10 methods) also talks to this surface, and today it is the one the fleet apps actually use — no app depends
+on `@civitai/sdk`'s shared storage yet. `@civitai/sdk` is the successor, so **the overlap is transitional by
+design**, but the two are not drop-in equivalent and the divergences are worth knowing before a port:
+
+| | `useSharedStorage` (blocks-react) | `app.sharedStorage` (this package) |
+|---|---|---|
+| Methods | 10, including `vote`/`unvote`/`count`/`report` | 5, key/value only |
+| A listed row's `value` | `SharedAppendValue` — the typed write shape | `unknown` |
+| `update` resolves | `void` | `{ ok: true }` |
+
+🔴 **The `unknown` is the deliberate one, and it is the wire-honest reading.** A row you list was written by
+some OTHER viewer's copy of the app — possibly an older version, possibly a newer one — so its shape is a fact
+about stored data, not a promise a client can keep. Typing it as the *write* shape asserts something nothing
+checked, and it is wrong the moment one viewer ships a schema change. Narrow it at the call site.
+
+Consequence: **a port rewrites call sites; it is not an import swap.** Expect to narrow `value` yourself and to
+move any vote/counter/report logic into your app.
 
 | Method | Path | Scope |
 |---|---|---|

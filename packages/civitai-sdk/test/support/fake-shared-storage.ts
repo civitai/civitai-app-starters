@@ -1,18 +1,24 @@
 /**
- * A fake for the eleven `/blocks/shared-storage/*` routes — THIS SUITE'S ONLY,
- * and deliberately not part of `@civitai/sdk/testing`, for the same reason
- * `fake-app-storage.ts` is not: one adopter is not enough to freeze names on the
- * published surface. Promote it when a SECOND consumer asks.
+ * A fake for the five `/blocks/shared-storage/*` routes this client wraps —
+ * THIS SUITE'S ONLY, and deliberately not part of `@civitai/sdk/testing`, for the
+ * same reason `fake-app-storage.ts` is not: one adopter is not enough to freeze
+ * names on the published surface. Promote it when a SECOND consumer asks.
+ *
+ * 🔴 It serves FIVE routes, not the platform's eleven, and answers "no route" for
+ * the other six. That is not an omission to be filled in: the higher-level ops
+ * (`vote`, `unvote`, `counts`, `top`, `increment`, `report`) are intentionally
+ * outside this client's surface, so a fake that served them would invite a method
+ * that should not exist and would make its absence untestable.
  *
  * The seam is `fetch`, not the client. Pass it as `initialize({ token, fetch })`
  * and the client's METHODS, URLs, query strings, bodies, status handling and date
  * revival are all real. A fake that replaced the client instead would answer a
  * conversation nobody is having.
  *
- * 🔴 It enforces the ROUTE'S OWN METHOD — GET for the four reads, POST for the
- * seven writes — and answers 405 otherwise. That is the single most important
- * thing it does: the per-viewer client POSTs everything, so a shared-storage
- * client that copied it would be wrong on four routes, and a fake that accepted
+ * 🔴 It enforces the ROUTE'S OWN METHOD — GET for the two reads, POST for the
+ * three writes — and answers 405 otherwise. That is one of the most important
+ * things it does: the per-viewer client POSTs everything, so a shared-storage
+ * client that copied it would be wrong on both reads, and a fake that accepted
  * either verb could not see it.
  *
  * 🔴 It puts ISO STRINGS on the wire for `createdAt`/`updatedAt`, exactly as
@@ -20,6 +26,8 @@
  * revival unobservable — `new Date(aDate)` is a `Date` — so deleting it would
  * survive a fully green suite.
  */
+
+import { fromBase64, jsonResponse, SEED_EPOCH_MS, toBase64 } from './wire.js';
 
 /** A row the fake holds. Both stamps are `Date`s here and ISO STRINGS on the wire. */
 export interface FakeSharedRow {
@@ -38,11 +46,13 @@ export interface FakeSharedStorageOptions {
     authorUserId?: number;
     createdAt?: Date;
     updatedAt?: Date;
-    /** User ids that have up-voted this row. */
+    /**
+     * User ids that have up-voted this row. There is no `vote` ROUTE here — this
+     * seeds the `count` / `viewerVoted` fields the two READ routes project, which
+     * the client still surfaces so an app can build voting at its own layer.
+     */
     votes?: number[];
   }[];
-  /** Seed app-defined counters, as `increment` would have created them. */
-  counters?: Record<string, number>;
   /**
    * 🔴 DEFAULT 2, NOT the server's 50, and that is the point. A page size big
    * enough to hold every fixture is precisely the condition under which a client
@@ -66,7 +76,7 @@ export interface FakeSharedStorageOptions {
 
 /** One request the CLIENT sent, as the server saw it. */
 export interface FakeSharedCall {
-  /** The last path segment: `list`, `item`, `append`, … */
+  /** The last path segment: `list`, `item`, `append`, `update`, `withdraw`. */
   op: string;
   /** The whole path, so a test can pin the route and not just the verb. */
   path: string;
@@ -89,38 +99,17 @@ export interface FakeSharedStorage {
    */
   calls: FakeSharedCall[];
   rows: () => FakeSharedRow[];
-  counters: () => Record<string, number>;
-  votesFor: (key: string) => number[];
-  reports: () => { key: string; reason?: string; reporter: number }[];
 }
 
 /** The base path the fake answers under, matching the site client's default. */
 const SHARED_PATH = '/blocks/shared-storage/';
 
-/** The four routes the server serves over GET. Everything else is POST. */
-const GET_OPS = new Set(['list', 'item', 'counts', 'top']);
-const POST_OPS = new Set([
-  'append',
-  'update',
-  'vote',
-  'unvote',
-  'withdraw',
-  'report',
-  'increment',
-]);
+/** The two routes the server serves over GET, and the three writes over POST. */
+const GET_OPS = new Set(['list', 'item']);
+const POST_OPS = new Set(['append', 'update', 'withdraw']);
 
-/** Arbitrary, non-round, and fixed: seeded stamps are then pairwise distinct. */
-const SEED_EPOCH_MS = 1_756_000_000_123;
 /** Deliberately not 1, so a fixture author id can never collide with the viewer's. */
 const SEED_AUTHOR_ID = 4242;
-
-const utf8 = (text: string) => new TextEncoder().encode(text);
-const toBase64 = (text: string) => btoa(String.fromCharCode(...utf8(text)));
-const fromBase64 = (encoded: string) =>
-  new TextDecoder().decode(Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0)));
-
-const jsonResponse = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
 export function createFakeSharedStorage(
   options: FakeSharedStorageOptions = {},
@@ -134,8 +123,6 @@ export function createFakeSharedStorage(
 
   const store = new Map<string, FakeSharedRow>();
   const votes = new Map<string, Set<number>>();
-  const counters = new Map<string, number>(Object.entries(options.counters ?? {}));
-  const reports: { key: string; reason?: string; reporter: number }[] = [];
 
   (options.seed ?? []).forEach((row, index) => {
     store.set(row.key, {
@@ -154,13 +141,11 @@ export function createFakeSharedStorage(
   const rows = () =>
     [...store.values()].sort((a, b) => (a.key < b.key ? 1 : a.key > b.key ? -1 : 0));
 
-  const countOf = (key: string) => counters.get(key) ?? votes.get(key)?.size ?? 0;
-
   const project = (row: FakeSharedRow) => ({
     key: row.key,
     authorUserId: row.authorUserId,
     value: row.value,
-    count: countOf(row.key),
+    count: votes.get(row.key)?.size ?? 0,
     // 🔴 ISO strings — see the header note.
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -252,25 +237,6 @@ export function createFakeSharedStorage(
         // existed" must be indistinguishable.
         return jsonResponse(200, { item: row ? project(row) : null });
       }
-      case 'counts': {
-        const keys = query.keys ?? [];
-        const counts: Record<string, number> = {};
-        // One entry per REQUESTED key, so a 0/absent distinction cannot probe
-        // for hidden rows.
-        for (const key of keys) counts[key] = store.has(key) ? countOf(key) : 0;
-        return jsonResponse(200, { counts });
-      }
-      case 'top': {
-        const prefix = query.prefix?.[0] ?? '';
-        const limit = query.limit?.[0] ? Number(query.limit[0]) : pageSize;
-        const ranked = [...counters.entries()]
-          .filter(([key]) => key.startsWith(prefix))
-          .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
-          .slice(0, limit)
-          .map(([key, count]) => ({ key, count }));
-        // 🔴 A BARE ARRAY. No `items`, no `metadata` — unlike `list`.
-        return jsonResponse(200, ranked);
-      }
       case 'append': {
         const value = (body?.value ?? {}) as { title?: unknown };
         if (typeof value.title !== 'string' || value.title === '') {
@@ -296,24 +262,6 @@ export function createFakeSharedStorage(
         store.set(row.key, { ...row, value: body?.value, updatedAt: new Date(SEED_EPOCH_MS + 9999) });
         return jsonResponse(200, { ok: true });
       }
-      case 'vote': {
-        const row = one(body?.key);
-        if (!row) return jsonResponse(404, { message: 'not found' });
-        const set = votes.get(row.key) ?? new Set<number>();
-        // Insert-gated: a second vote from the same viewer is a no-op and the
-        // tally does not inflate.
-        set.add(viewer!.id);
-        votes.set(row.key, set);
-        return jsonResponse(200, { count: set.size });
-      }
-      case 'unvote': {
-        const row = one(body?.key);
-        if (!row) return jsonResponse(404, { message: 'not found' });
-        const set = votes.get(row.key) ?? new Set<number>();
-        set.delete(viewer!.id);
-        votes.set(row.key, set);
-        return jsonResponse(200, { count: set.size });
-      }
       case 'withdraw': {
         const row = one(body?.key);
         // 🔴 Another author's key and a missing key answer IDENTICALLY, so this
@@ -325,43 +273,10 @@ export function createFakeSharedStorage(
         }
         return jsonResponse(200, { ok: true, deleted });
       }
-      case 'report': {
-        const key = String(body?.key);
-        const reason = body?.reason as string | undefined;
-        // Deduped per (reporter, key); the reply is identical either way.
-        if (!reports.some((r) => r.key === key && r.reporter === viewer!.id)) {
-          reports.push({ key, reason, reporter: viewer!.id });
-        }
-        return jsonResponse(200, { ok: true });
-      }
-      case 'increment': {
-        const key = String(body?.key);
-        const next = (counters.get(key) ?? 0) + 1;
-        counters.set(key, next);
-        // The anchor row the counters FK needs, created once per key.
-        if (!store.has(key)) {
-          const now = new Date(SEED_EPOCH_MS + counters.size + 7000);
-          store.set(key, {
-            key,
-            authorUserId: viewer!.id,
-            value: {},
-            createdAt: now,
-            updatedAt: now,
-          });
-        }
-        return jsonResponse(200, { key, count: next });
-      }
       default:
         throw new Error(`fake shared storage: no route for ${url.pathname}`);
     }
   }) as typeof globalThis.fetch;
 
-  return {
-    fetch,
-    calls,
-    rows,
-    counters: () => Object.fromEntries(counters),
-    votesFor: (key) => [...(votes.get(key) ?? [])],
-    reports: () => [...reports],
-  };
+  return { fetch, calls, rows };
 }

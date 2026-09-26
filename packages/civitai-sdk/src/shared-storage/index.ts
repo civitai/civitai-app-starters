@@ -1,7 +1,7 @@
 import { CivitaiError } from '../core/errors.js';
 import type { Http, Query } from '../http/index.js';
 
-/** Where the eleven routes live under the site base URL. */
+/** Where the five routes this client wraps live under the site base URL. */
 const BASE = 'blocks/shared-storage';
 
 export interface SharedStorageCallOptions {
@@ -24,19 +24,26 @@ export interface SharedValue {
 }
 
 /**
- * One row of the shared feed, as `list` and `get` both project it.
+ * One row of the shared store, as `list` and `get` both project it.
  *
- * 🔴 `value` is `unknown`, not `SharedValue`. What a row holds is whatever some
- * OTHER user's app version wrote — possibly an older shape, possibly a newer one
- * — so it is the caller's to narrow. Declaring it `SharedValue` would be this
- * client asserting a shape it never checked about data it did not write.
+ * 🔴 `value` is `unknown`, NOT {@link SharedValue}, and that is deliberate: the
+ * row was written by some OTHER viewer's copy of this app — possibly an older
+ * version, possibly a newer one — so its shape is a fact about the data, not a
+ * promise this client can make. Narrow it at the call site. Declaring it
+ * `SharedValue` would assert a shape nothing checked about data we did not write.
  */
 export interface SharedItem {
   key: string;
   /** The row's author. A caller renders "yours" by comparing it to the viewer's id. */
   authorUserId: number;
   value: unknown;
-  /** The aggregate up-vote tally. Never the raw vote rows — those are not listable. */
+  /**
+   * The row's aggregate up-vote tally, as the server projects it.
+   *
+   * ⚠ Reported, not writable from here: the vote OPERATIONS are deliberately not
+   * part of this client (see the module note). Reading the tally is what lets an
+   * app build voting at its own layer, which is why the field stays.
+   */
   count: number;
   /**
    * The wire carries ISO strings; both stamps are revived here, once, so a
@@ -46,7 +53,7 @@ export interface SharedItem {
   updatedAt: Date;
   /**
    * Whether THIS viewer has voted. 🔴 Always `false` for an anonymous viewer —
-   * who may read this feed — so it is not evidence that nobody voted.
+   * who may read this store — so it is not evidence that nobody voted.
    */
   viewerVoted: boolean;
 }
@@ -73,22 +80,18 @@ export interface SharedListResult {
   nextCursor?: string;
 }
 
-/** One app-defined counter. */
-export interface SharedCounter {
-  key: string;
-  count: number;
-}
-
-export interface SharedTopQuery {
-  /** Matches counter keys starting with this, e.g. `playcount:`. */
-  prefix?: string;
-  /** The server bounds this and applies its own default; this client sends none. */
-  limit?: number;
-}
-
 /**
- * This app's CROSS-USER shared store — every viewer of this app reads and writes
- * one namespace, unlike {@link StorageClient}, which is private per viewer.
+ * This app's CROSS-USER key/value store — every viewer of this app reads and
+ * writes one namespace, unlike {@link StorageClient}, which is private per viewer.
+ *
+ * 🔴 DELIBERATELY GENERIC KEY/VALUE, AND DELIBERATELY SMALLER THAN THE ROUTE
+ * TABLE. The platform serves eleven shared-storage routes; this client wraps the
+ * five that are key/value operations. The higher-level ops — `vote`, `unvote`,
+ * `counts`, `top`, `increment`, `report` — are intentionally absent: an app that
+ * needs voting, counters or reporting builds them at its own layer on top of
+ * these five, and the platform surface expands only if demand shows up. **The
+ * routes existing is not a reason to add a method here.** Do not "fix" this
+ * omission.
  *
  * 🔴 Requires the block token the host mints, plus the scopes: every read takes
  * `apps:storage:shared:read` and every write takes `apps:storage:shared:write`.
@@ -97,9 +100,9 @@ export interface SharedTopQuery {
  * 🔴 READS AND WRITES HAVE DIFFERENT AUDIENCES, and a caller must not assume one
  * implies the other:
  *
- * - An ANONYMOUS viewer MAY read (`list`, `get`, `counts`, `top`) and may NEVER
- *   write. An anon write is refused by the scope binding before the handler
- *   runs, so it arrives as **403**, not the 401 a missing token gives.
+ * - An ANONYMOUS viewer MAY read (`list`, `get`) and may NEVER write. An anon
+ *   write is refused by the scope binding before the handler runs, so it arrives
+ *   as **403**, not the 401 a missing token gives.
  * - A signed-in viewer is not automatically a permitted writer: writes clear a
  *   minimum-trust gate (account age, paid tier, verified email or a linked OAuth
  *   account). Treat a write refusal as a normal outcome and say so in the UI.
@@ -112,8 +115,8 @@ export interface SharedStorageClient {
   /**
    * One page of rows, newest-first. `GET blocks/shared-storage/list`.
    *
-   * Values ARE returned, unlike the per-viewer client's `list` — this is the
-   * feed read, so one request renders a page.
+   * Values ARE returned, unlike the per-viewer client's `list` — so one request
+   * renders a page rather than needing a `get` per key.
    */
   list(query?: SharedListQuery, opts?: SharedStorageCallOptions): Promise<SharedListResult>;
 
@@ -125,30 +128,6 @@ export interface SharedStorageClient {
    * existed, so this is not an oracle for either. It is a 200, not a 404.
    */
   get(key: string, opts?: SharedStorageCallOptions): Promise<SharedItem | null>;
-
-  /**
-   * Aggregate vote tallies for many keys at once. `GET blocks/shared-storage/counts`.
-   *
-   * The reply carries one entry per REQUESTED key — a hidden or unknown key
-   * reads `0`, so a 0/absent distinction cannot probe for hidden rows. That
-   * promise is ASSERTED here, because the declared `Record<string, number>` is
-   * what lets a caller write `counts[key]` and get a number rather than
-   * `undefined` typed as one.
-   */
-  counts(
-    keys: readonly string[],
-    opts?: SharedStorageCallOptions,
-  ): Promise<Record<string, number>>;
-
-  /**
-   * Top counters by tally, descending — the "popular" rail read.
-   * `GET blocks/shared-storage/top`.
-   *
-   * 🔴 These are app-defined COUNTERS (what {@link SharedStorageClient.increment}
-   * bumps), NOT the vote tallies on feed rows. A "most-voted" rail is
-   * {@link SharedStorageClient.list} sorted by the caller, not this.
-   */
-  top(query?: SharedTopQuery, opts?: SharedStorageCallOptions): Promise<SharedCounter[]>;
 
   /**
    * Files a new row and resolves its key. `POST blocks/shared-storage/append`.
@@ -173,23 +152,6 @@ export interface SharedStorageClient {
   ): Promise<{ ok: true }>;
 
   /**
-   * Up-votes a row, resolving the new tally. `POST blocks/shared-storage/vote`.
-   *
-   * Idempotent by construction: a second vote from the same viewer is a no-op
-   * and resolves the UNCHANGED count, so a repeat cannot inflate the tally. A
-   * hidden or missing row is a 404.
-   */
-  vote(key: string, opts?: SharedStorageCallOptions): Promise<{ count: number }>;
-
-  /**
-   * Withdraws this viewer's own up-vote. `POST blocks/shared-storage/unvote`.
-   *
-   * Symmetric to `vote` and on the same rate-limit budget. Resolves the new
-   * tally; unvoting when no vote was cast is a no-op, never a negative count.
-   */
-  unvote(key: string, opts?: SharedStorageCallOptions): Promise<{ count: number }>;
-
-  /**
    * Deletes a row the VIEWER AUTHORED. `POST blocks/shared-storage/withdraw`.
    *
    * 🔴 `deleted: false` is a SUCCESS, and it is deliberately ambiguous: another
@@ -201,38 +163,6 @@ export interface SharedStorageClient {
     key: string,
     opts?: SharedStorageCallOptions,
   ): Promise<{ ok: true; deleted: boolean }>;
-
-  /**
-   * Flags a row for moderator review. `POST blocks/shared-storage/report`.
-   *
-   * It does NOT hide the row — a moderator decides. Takes the WRITE scope and
-   * the trust gate, which reads backwards until you see that a report creates a
-   * durable row and an alertable event. `reason` is moderator-facing free text.
-   *
-   * Resolves identically whether the report was newly filed or deduped against
-   * one this viewer already sent, so it cannot reveal who reported what.
-   */
-  report(
-    key: string,
-    reason?: string,
-    opts?: SharedStorageCallOptions,
-  ): Promise<{ ok: true }>;
-
-  /**
-   * Bumps an app-defined counter by one. `POST blocks/shared-storage/increment`.
-   *
-   * Creates the counter on first use and resolves its new value. Counter keys
-   * are APP-GLOBAL — one row per key across all viewers — so give them their own
-   * prefix (`playcount:`) to keep them out of a feed listing.
-   *
-   * 🔴 A write: it takes the write scope and the trust gate, so a sub-trust or
-   * anonymous viewer is refused. Callers treat it as best-effort telemetry —
-   * catch the refusal rather than letting it break a render.
-   */
-  increment(
-    key: string,
-    opts?: SharedStorageCallOptions,
-  ): Promise<{ key: string; count: number }>;
 }
 
 export function createSharedStorageClient(http: Http): SharedStorageClient {
@@ -257,7 +187,7 @@ export function createSharedStorageClient(http: Http): SharedStorageClient {
         signal,
       );
       // 🔴 NO `?? []`. A malformed 200 must throw, never answer "no rows": a
-      // caller reads an empty page as "this feed is empty" and renders that to
+      // caller reads an empty page as "this store is empty" and renders that to
       // every viewer, and a manufactured empty page is indistinguishable.
       if (!Array.isArray(res?.items)) {
         throw new CivitaiError('shared-storage list: reply carried no `items` array');
@@ -285,46 +215,6 @@ export function createSharedStorageClient(http: Http): SharedStorageClient {
       return res.item == null ? null : toItem(res.item);
     },
 
-    async counts(
-      keys: readonly string[],
-      { signal }: SharedStorageCallOptions = {},
-    ): Promise<Record<string, number>> {
-      // Repeated `?keys=` params, which is the only spelling the route accepts:
-      // it deliberately does NOT comma-split, because a comma is legal inside an
-      // app's own counter key.
-      const res = await get<{ counts?: unknown }>('counts', { keys: [...keys] }, signal);
-      const counts = res?.counts;
-      if (counts == null || typeof counts !== 'object' || Array.isArray(counts)) {
-        throw new CivitaiError('shared-storage counts: reply carried no `counts` object');
-      }
-      const table = counts as Record<string, unknown>;
-      const out: Record<string, number> = {};
-      for (const key of keys) {
-        // Asserted, not defaulted to 0. The server promises one entry per
-        // requested key — an absent one means the reply is not what this client
-        // declares, and a silent 0 would read as "nobody voted for this".
-        if (typeof table[key] !== 'number') {
-          throw new CivitaiError(`shared-storage counts: reply carried no count for \`${key}\``);
-        }
-        out[key] = table[key] as number;
-      }
-      return out;
-    },
-
-    async top(
-      query: SharedTopQuery = {},
-      { signal }: SharedStorageCallOptions = {},
-    ): Promise<SharedCounter[]> {
-      // 🔴 A BARE ARRAY, not an enveloped one — this route answers `[{key, count}]`
-      // with no `items` and no `metadata`, unlike `list` next to it. Read from the
-      // handler, not inferred from the neighbour.
-      const res = await get<unknown>('top', { prefix: query.prefix, limit: query.limit }, signal);
-      if (!Array.isArray(res)) {
-        throw new CivitaiError('shared-storage top: reply was not an array');
-      }
-      return res.map(toCounter);
-    },
-
     async append(
       value: SharedValue,
       { signal }: SharedStorageCallOptions = {},
@@ -350,12 +240,6 @@ export function createSharedStorageClient(http: Http): SharedStorageClient {
       return { ok: true as const };
     },
 
-    vote: (key: string, { signal }: SharedStorageCallOptions = {}) =>
-      countOf(post('vote', { key }, signal), 'vote'),
-
-    unvote: (key: string, { signal }: SharedStorageCallOptions = {}) =>
-      countOf(post('unvote', { key }, signal), 'unvote'),
-
     async withdraw(
       key: string,
       { signal }: SharedStorageCallOptions = {},
@@ -366,45 +250,7 @@ export function createSharedStorageClient(http: Http): SharedStorageClient {
       }
       return { ok: true as const, deleted: res.deleted };
     },
-
-    async report(
-      key: string,
-      reason?: string,
-      { signal }: SharedStorageCallOptions = {},
-    ): Promise<{ ok: true }> {
-      // `reason` omitted when undefined, so the server applies its own default
-      // rather than this client shipping a second copy of it.
-      await post<unknown>('report', { key, reason }, signal);
-      return { ok: true as const };
-    },
-
-    async increment(
-      key: string,
-      { signal }: SharedStorageCallOptions = {},
-    ): Promise<{ key: string; count: number }> {
-      const res = await post<{ key?: unknown; count?: unknown }>('increment', { key }, signal);
-      if (typeof res?.count !== 'number') {
-        throw new CivitaiError('shared-storage increment: reply carried no `count`');
-      }
-      // The route echoes the key; prefer its own answer, and fall back to the one
-      // we sent rather than throwing, since the count is the load-bearing half.
-      return { key: typeof res.key === 'string' ? res.key : key, count: res.count };
-    },
   };
-}
-
-/** `vote` and `unvote` answer the same shape, so they read it the same way. */
-async function countOf(
-  pending: Promise<{ count?: unknown }>,
-  op: string,
-): Promise<{ count: number }> {
-  const res = await pending;
-  // 🔴 NOT `?? 0`. This tally is rendered, and a manufactured zero would read as
-  // "your vote did not land" for a vote that did.
-  if (typeof res?.count !== 'number') {
-    throw new CivitaiError(`shared-storage ${op}: reply carried no \`count\``);
-  }
-  return { count: res.count };
 }
 
 function toItem(row: unknown): SharedItem {
@@ -441,12 +287,4 @@ function toDate(raw: unknown): Date {
     throw new CivitaiError('shared-storage: malformed item timestamp');
   }
   return at;
-}
-
-function toCounter(row: unknown): SharedCounter {
-  const r = (row ?? {}) as Record<string, unknown>;
-  if (typeof r.key !== 'string' || typeof r.count !== 'number') {
-    throw new CivitaiError('shared-storage top: malformed counter');
-  }
-  return { key: r.key, count: r.count };
 }

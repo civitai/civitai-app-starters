@@ -52,36 +52,47 @@ const ITEM = {
   viewerVoted: false,
 };
 
+describe('AppClient.sharedStorage — the surface is five key/value methods', () => {
+  it('🔴 exposes exactly `list`, `get`, `append`, `update`, `withdraw` — no higher-level ops', async () => {
+    const { shared } = await withFake();
+
+    // The ledger, pinned so it fails when the surface GROWS or SHRINKS. The
+    // higher-level ops are a deliberate omission, not a gap: an app builds
+    // voting / counters / reporting at its own layer on these five.
+    expect(Object.keys(shared).sort()).toEqual([
+      'append',
+      'get',
+      'list',
+      'update',
+      'withdraw',
+    ]);
+
+    // 🔴 Named individually, so adding one back is a failure here and not a
+    // silent widening. The platform HAS these routes; this client deliberately
+    // does not wrap them.
+    for (const absent of ['vote', 'unvote', 'counts', 'top', 'increment', 'report']) {
+      expect(absent in shared).toBe(false);
+    }
+  });
+});
+
 describe('AppClient.sharedStorage — routes and verbs', () => {
-  it('🔴 sends GET for the four reads and POST for the seven writes, under the site base URL', async () => {
+  it('🔴 sends GET for the two reads and POST for the three writes, under the site base URL', async () => {
     const { fake, shared } = await withFake({
       seed: [{ key: 'r1', value: { title: 'x' }, authorUserId: 1 }],
-      counters: { 'playcount:1': 5 },
     });
 
     await shared.list({ prefix: 'r' });
     await shared.get('r1');
-    await shared.counts(['r1']);
-    await shared.top({ prefix: 'playcount:' });
     await shared.append({ title: 'new' });
     await shared.update('r1', { title: 'edited' });
-    await shared.vote('r1');
-    await shared.unvote('r1');
-    await shared.report('r1', 'spam');
-    await shared.increment('playcount:1');
     await shared.withdraw('r1');
 
     expect(fake.calls.map((c) => `${c.method} ${c.path}`)).toEqual([
       `GET ${ROUTE}/list`,
       `GET ${ROUTE}/item`,
-      `GET ${ROUTE}/counts`,
-      `GET ${ROUTE}/top`,
       `POST ${ROUTE}/append`,
       `POST ${ROUTE}/update`,
-      `POST ${ROUTE}/vote`,
-      `POST ${ROUTE}/unvote`,
-      `POST ${ROUTE}/report`,
-      `POST ${ROUTE}/increment`,
       `POST ${ROUTE}/withdraw`,
     ]);
   });
@@ -108,7 +119,7 @@ describe('AppClient.sharedStorage — routes and verbs', () => {
 
   it('🔴 a write sent as GET is a 405 too — the split is enforced in both directions', async () => {
     const fake = createFakeSharedStorage();
-    const wrongVerb = await fake.fetch(`${BASE}/blocks/shared-storage/vote`, {
+    const wrongVerb = await fake.fetch(`${BASE}/blocks/shared-storage/append`, {
       method: 'GET',
       headers: { Authorization: 'Bearer t' },
     });
@@ -121,7 +132,7 @@ describe('AppClient.sharedStorage — routes and verbs', () => {
     });
 
     await shared.list({ prefix: 'r', limit: 7, cursor: 'cur' });
-    await shared.vote('r1');
+    await shared.withdraw('r1');
 
     expect(fake.calls[0]!.query).toEqual({ prefix: ['r'], limit: ['7'], cursor: ['cur'] });
     // A GET carries no body at all — not an empty one.
@@ -152,8 +163,9 @@ describe('AppClient.sharedStorage — list', () => {
     expect(items).toHaveLength(1);
     expect(items[0]!.key).toBe('k1');
     expect(items[0]!.authorUserId).toBe(77);
-    expect(items[0]!.count).toBe(3);
     expect(items[0]!.value).toEqual({ title: 'a' });
+    // Reported though not writable from here — the vote ops are app-layer.
+    expect(items[0]!.count).toBe(3);
     expect(items[0]!.viewerVoted).toBe(false);
     // 🔴 The two stamps are distinct fixtures, so a client that read one into the
     // other's field cannot pass.
@@ -240,7 +252,7 @@ describe('AppClient.sharedStorage — list', () => {
     expect(fake.calls[1]!.query).toEqual({});
   });
 
-  it('🔴 throws on a malformed 200 — it never manufactures an empty feed', async () => {
+  it('🔴 throws on a malformed 200 — it never manufactures an empty store', async () => {
     const shared = await scripted([
       () => json(200, { metadata: {} }),
       () => json(200, { items: {} }),
@@ -335,6 +347,12 @@ describe('AppClient.sharedStorage — get', () => {
     await expect(shared.get('missing')).resolves.toBeNull();
   });
 
+  it('🔴 hits the `item` route, not `list` — a single read is not a filtered page', async () => {
+    const { fake, shared } = await withFake({ seed: [{ key: 'k1', value: { title: 'x' } }] });
+    await shared.get('k1');
+    expect(fake.calls[0]!.op).toBe('item');
+  });
+
   it('🔴 throws on a 2xx that carried no `item` — `null` means no visible row, not unreadable', async () => {
     const shared = await scripted([() => json(200, { notItem: 1 })]);
 
@@ -343,114 +361,24 @@ describe('AppClient.sharedStorage — get', () => {
     expect((error as Error).message).toMatch(/get: reply carried no `item`/);
   });
 
-  it('reports `viewerVoted` for the viewer who voted, and false for one who did not', async () => {
+  it('reports the vote tally and `viewerVoted` it does not let you write', async () => {
+    // These two fields survive the surface cut on purpose: reading them is what
+    // makes an app-layer vote feature possible.
     const voted = await withFake({
       viewer: { id: 5 },
-      seed: [{ key: 'k1', value: { title: 'x' }, votes: [5] }],
+      seed: [{ key: 'k1', value: { title: 'x' }, votes: [5, 8] }],
     });
-    await expect(voted.shared.get('k1')).resolves.toMatchObject({ viewerVoted: true, count: 1 });
+    await expect(voted.shared.get('k1')).resolves.toMatchObject({ viewerVoted: true, count: 2 });
 
     // The pair, so the flag is not simply always true.
     const notVoted = await withFake({
       viewer: { id: 6 },
-      seed: [{ key: 'k1', value: { title: 'x' }, votes: [5] }],
+      seed: [{ key: 'k1', value: { title: 'x' }, votes: [5, 8] }],
     });
     await expect(notVoted.shared.get('k1')).resolves.toMatchObject({
       viewerVoted: false,
-      count: 1,
+      count: 2,
     });
-  });
-});
-
-describe('AppClient.sharedStorage — counts', () => {
-  it('sends one repeated `keys` param per key and resolves the map', async () => {
-    const { fake, shared } = await withFake({
-      seed: [
-        { key: 'a', value: { title: 'a' }, votes: [1, 2, 3] },
-        { key: 'b', value: { title: 'b' }, votes: [1] },
-      ],
-    });
-
-    // 🔴 Unknown keys resolve to 0, so the caller gets one entry per key asked.
-    await expect(shared.counts(['a', 'b', 'nope'])).resolves.toEqual({ a: 3, b: 1, nope: 0 });
-    // Repeated params, NOT a comma-joined one — a comma is legal inside a key.
-    expect(fake.calls[0]!.query.keys).toEqual(['a', 'b', 'nope']);
-  });
-
-  it('🔴 does not comma-join, so a key containing a comma survives the round trip', async () => {
-    const { fake, shared } = await withFake({
-      seed: [
-        { key: 'a,b', value: { title: 'x' }, votes: [1] },
-        { key: 'c', value: { title: 'y' }, votes: [1, 2] },
-      ],
-    });
-
-    // 🔴 TWO keys, one of which CONTAINS a comma — and that pairing is the whole
-    // control. Measured: with a single `['a,b']` the joined and unjoined spellings
-    // put the SAME bytes on the wire (`?keys=a,b`), so this guard could not see a
-    // client that joined; it survived the mutation until the second key was added.
-    await expect(shared.counts(['a,b', 'c'])).resolves.toEqual({ 'a,b': 1, c: 2 });
-    // Two params, the first holding the comma verbatim. A client that joined would
-    // send ONE param reading `a,b,c`, which no server could split back correctly.
-    expect(fake.calls[0]!.query.keys).toEqual(['a,b', 'c']);
-  });
-
-  it('🔴 throws when a requested key is missing from the reply, rather than reading 0', async () => {
-    // The server promises one entry per requested key. A silent 0 would render as
-    // "nobody voted for this", which is a different claim from "the reply was wrong".
-    const shared = await scripted([
-      () => json(200, { counts: { a: 1 } }),
-      () => json(200, { notCounts: {} }),
-      // An array is an object — the guard must exclude it explicitly.
-      () => json(200, { counts: [] }),
-      () => json(200, { counts: { a: '1' } }),
-    ]);
-
-    await expect(shared.counts(['a', 'b'])).rejects.toThrow(
-      /counts: reply carried no count for `b`/,
-    );
-    await expect(shared.counts(['a'])).rejects.toThrow(/counts: reply carried no `counts` object/);
-    await expect(shared.counts(['a'])).rejects.toThrow(/counts: reply carried no `counts` object/);
-    // A string count is not a number — declaring `number` must not be a cast.
-    await expect(shared.counts(['a'])).rejects.toThrow(/counts: reply carried no count for `a`/);
-  });
-});
-
-describe('AppClient.sharedStorage — top', () => {
-  it('🔴 parses a BARE ARRAY, ranked by count descending', async () => {
-    const { fake, shared } = await withFake({
-      pageSize: 10,
-      counters: { 'playcount:a': 2, 'playcount:b': 9, 'other:c': 100 },
-    });
-
-    const ranked = await shared.top({ prefix: 'playcount:', limit: 5 });
-    expect(ranked).toEqual([
-      { key: 'playcount:b', count: 9 },
-      { key: 'playcount:a', count: 2 },
-    ]);
-    expect(fake.calls[0]!.query).toEqual({ prefix: ['playcount:'], limit: ['5'] });
-  });
-
-  it('🔴 throws when the reply is ENVELOPED rather than bare — the shape `list` uses is wrong here', async () => {
-    // The exact mutation the route comment warns about: inferring `top`'s shape
-    // from its neighbour `list`.
-    const shared = await scripted([
-      () => json(200, { items: [{ key: 'a', count: 1 }] }),
-      () => json(200, { key: 'a', count: 1 }),
-      () => json(200, [{ key: 'a', count: '1' }]),
-      () => json(200, [{ count: 1 }]),
-    ]);
-
-    await expect(shared.top()).rejects.toThrow(/top: reply was not an array/);
-    await expect(shared.top()).rejects.toThrow(/top: reply was not an array/);
-    await expect(shared.top()).rejects.toThrow(/top: malformed counter/);
-    await expect(shared.top()).rejects.toThrow(/top: malformed counter/);
-  });
-
-  it('sends no prefix or limit of its own when the caller gave none', async () => {
-    const { fake, shared } = await withFake({ counters: { x: 1 } });
-    await shared.top();
-    expect(fake.calls[0]!.query).toEqual({});
   });
 });
 
@@ -521,53 +449,6 @@ describe('AppClient.sharedStorage — update', () => {
   });
 });
 
-describe('AppClient.sharedStorage — vote and unvote', () => {
-  it('resolves the new tally, and a second vote does not inflate it', async () => {
-    const { fake, shared } = await withFake({
-      viewer: { id: 4 },
-      seed: [{ key: 'k1', value: { title: 'x' }, votes: [8] }],
-    });
-
-    await expect(shared.vote('k1')).resolves.toEqual({ count: 2 });
-    // 🔴 Idempotent: the same viewer voting twice resolves the UNCHANGED count.
-    await expect(shared.vote('k1')).resolves.toEqual({ count: 2 });
-    expect(fake.calls[0]!.body).toEqual({ key: 'k1' });
-    expect(fake.votesFor('k1').sort()).toEqual([4, 8]);
-  });
-
-  it('unvote removes only this viewer’s vote, and never goes negative', async () => {
-    const { shared } = await withFake({
-      viewer: { id: 4 },
-      seed: [{ key: 'k1', value: { title: 'x' }, votes: [4, 8] }],
-    });
-
-    await expect(shared.unvote('k1')).resolves.toEqual({ count: 1 });
-    // A second unvote is a no-op, not a negative tally.
-    await expect(shared.unvote('k1')).resolves.toEqual({ count: 1 });
-  });
-
-  it('🔴 throws when either reply carried no `count` — a rendered tally is never invented', async () => {
-    // `?? 0` here would read to the viewer as "your vote did not land" for a vote
-    // that did.
-    const shared = await scripted([
-      () => json(200, { ok: true }),
-      () => json(200, { count: '2' }),
-      () => json(200, { ok: true }),
-    ]);
-
-    await expect(shared.vote('k')).rejects.toThrow(/vote: reply carried no `count`/);
-    await expect(shared.vote('k')).rejects.toThrow(/vote: reply carried no `count`/);
-    // 🔴 The message names the OP, so `unvote` cannot be satisfied by `vote`'s
-    // error — a shared helper that hardcoded one name would fail here.
-    await expect(shared.unvote('k')).rejects.toThrow(/unvote: reply carried no `count`/);
-  });
-
-  it('a vote on a hidden or missing row rejects 404 rather than resolving 0', async () => {
-    const { shared } = await withFake({ seed: [] });
-    await expect(shared.vote('gone')).rejects.toMatchObject({ status: 404 });
-  });
-});
-
 describe('AppClient.sharedStorage — withdraw', () => {
   it('reports `deleted: true` for the author’s own row', async () => {
     const { fake, shared } = await withFake({
@@ -599,87 +480,17 @@ describe('AppClient.sharedStorage — withdraw', () => {
   });
 });
 
-describe('AppClient.sharedStorage — report', () => {
-  it('sends the key and the reason, and omits `reason` when none was given', async () => {
-    const { fake, shared } = await withFake({
-      seed: [{ key: 'k1', value: { title: 'x' } }],
-    });
-
-    await expect(shared.report('k1', 'spam')).resolves.toEqual({ ok: true });
-    expect(fake.calls[0]!.body).toEqual({ key: 'k1', reason: 'spam' });
-
-    await shared.report('k1');
-    // 🔴 Omitted, not sent as null — the server applies its own default.
-    expect(fake.calls[1]!.body).toEqual({ key: 'k1' });
-    expect('reason' in fake.calls[1]!.body!).toBe(false);
-  });
-
-  it('resolves identically for a deduped repeat, so it cannot reveal who reported what', async () => {
-    const { fake, shared } = await withFake({ seed: [{ key: 'k1', value: { title: 'x' } }] });
-
-    await expect(shared.report('k1', 'first')).resolves.toEqual({ ok: true });
-    await expect(shared.report('k1', 'again')).resolves.toEqual({ ok: true });
-    // One row filed, two identical answers.
-    expect(fake.reports()).toHaveLength(1);
-  });
-});
-
-describe('AppClient.sharedStorage — increment', () => {
-  it('bumps the counter and resolves its new value', async () => {
-    const { fake, shared } = await withFake({ counters: { 'playcount:7': 41 } });
-
-    await expect(shared.increment('playcount:7')).resolves.toEqual({
-      key: 'playcount:7',
-      count: 42,
-    });
-    expect(fake.calls[0]!.body).toEqual({ key: 'playcount:7' });
-    expect(fake.counters()['playcount:7']).toBe(42);
-  });
-
-  it('creates a counter on first use', async () => {
-    const { shared } = await withFake();
-    await expect(shared.increment('playcount:new')).resolves.toEqual({
-      key: 'playcount:new',
-      count: 1,
-    });
-  });
-
-  it('🔴 throws when the reply carried no `count`, and falls back to the sent key only for the key', async () => {
-    const noCount = await scripted([() => json(200, { key: 'k' })]);
-    await expect(noCount.increment('k')).rejects.toThrow(
-      /increment: reply carried no `count`/,
-    );
-
-    // The key is the recoverable half: the caller already knows what it sent.
-    const noKey = await scripted([() => json(200, { count: 5 })]);
-    await expect(noKey.increment('mine')).resolves.toEqual({ key: 'mine', count: 5 });
-  });
-
-  it('🔴 prefers the server’s echoed key over the one it sent', async () => {
-    // A fixture whose two keys are distinct, so "echoes" and "falls back" are
-    // distinguishable — the control the fallback needs.
-    const shared = await scripted([() => json(200, { key: 'server-said', count: 1 })]);
-    await expect(shared.increment('client-sent')).resolves.toEqual({
-      key: 'server-said',
-      count: 1,
-    });
-  });
-});
-
 describe('AppClient.sharedStorage — an anonymous viewer reads but never writes', () => {
-  it('🔴 SERVES the four reads to an anonymous viewer — unlike per-viewer storage', async () => {
+  it('🔴 SERVES both reads to an anonymous viewer — unlike per-viewer storage', async () => {
     const { shared } = await withFake({
       viewer: null,
       pageSize: 10,
-      counters: { 'playcount:a': 3 },
       seed: [{ key: 'k1', value: { title: 'public' }, votes: [9] }],
     });
 
     // The whole point of this surface: signed-out browsing works.
     await expect(shared.list()).resolves.toMatchObject({ items: [{ key: 'k1' }] });
     await expect(shared.get('k1')).resolves.toMatchObject({ key: 'k1' });
-    await expect(shared.counts(['k1'])).resolves.toEqual({ k1: 1 });
-    await expect(shared.top()).resolves.toEqual([{ key: 'playcount:a', count: 3 }]);
   });
 
   it('🔴 `viewerVoted` is false for an anonymous viewer — not evidence nobody voted', async () => {
@@ -704,11 +515,7 @@ describe('AppClient.sharedStorage — an anonymous viewer reads but never writes
     for (const attempt of [
       shared.append({ title: 't' }),
       shared.update('k1', { title: 't' }),
-      shared.vote('k1'),
-      shared.unvote('k1'),
       shared.withdraw('k1'),
-      shared.report('k1'),
-      shared.increment('c'),
     ]) {
       await expect(attempt).rejects.toMatchObject({ status: 403 });
     }
@@ -727,7 +534,7 @@ describe('AppClient.sharedStorage — a signed-in viewer below the trust gate', 
     // below is the trust gate and not a fake wired to nothing.
     await expect(shared.list()).resolves.toMatchObject({ items: [{ key: 'k1' }] });
 
-    const error = await shared.vote('k1').catch((e: unknown) => e);
+    const error = await shared.append({ title: 't' }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ApiError);
     expect((error as ApiError).status).toBe(403);
     expect((error as ApiError).message).toMatch(/minimum trust/);
@@ -771,10 +578,12 @@ describe('AppClient.sharedStorage — refusal bodies', () => {
     const onlyError = await scripted([
       () => json(403, { error: 'apps:storage:shared:write requires authenticated subject' }),
     ]);
-    await expect(onlyError.vote('k')).rejects.toThrow(/requires authenticated subject/);
+    await expect(onlyError.append({ title: 't' })).rejects.toThrow(
+      /requires authenticated subject/,
+    );
 
     const onlyMessage = await scripted([() => json(404, { message: 'not found' })]);
-    await expect(onlyMessage.vote('k')).rejects.toThrow(/not found/);
+    await expect(onlyMessage.update('k', { title: 't' })).rejects.toThrow(/not found/);
   });
 });
 
@@ -798,7 +607,7 @@ describe('AppClient.sharedStorage — abort', () => {
 
     const writeShared = await sharedOf({ fetch: hang });
     const writeController = new AbortController();
-    const writing = writeShared.vote('k', { signal: writeController.signal });
+    const writing = writeShared.withdraw('k', { signal: writeController.signal });
     writeController.abort(new Error('writer went away'));
     await expect(writing).rejects.toThrow('writer went away');
   });
@@ -852,13 +661,17 @@ describe('the fake itself', () => {
     }
   });
 
-  it('refuses a route it does not serve, so a wrong path cannot look like a refusal', async () => {
+  it('🔴 serves only the five routes, so a removed op cannot look like a refusal', async () => {
     const fake = createFakeSharedStorage();
     await expect(
       fake.fetch(`${BASE}/blocks/shared_storage/list`, { method: 'GET' }),
     ).rejects.toThrow(/no route for/);
-    await expect(
-      fake.fetch(`${BASE}/blocks/shared-storage/quota`, { method: 'GET' }),
-    ).rejects.toThrow(/no route for/);
+    // The six deliberately-absent ops are absent from the FAKE too — so a method
+    // added back would have nothing to talk to, rather than quietly passing.
+    for (const op of ['vote', 'unvote', 'counts', 'top', 'increment', 'report']) {
+      await expect(
+        fake.fetch(`${BASE}/blocks/shared-storage/${op}`, { method: 'POST', body: '{}' }),
+      ).rejects.toThrow(/no route for/);
+    }
   });
 });
