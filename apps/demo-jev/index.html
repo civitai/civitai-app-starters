@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@civitai/components — custom elements demo</title>
+    <!-- Stylesheets are imported from the workspace packages in src/main.ts
+         (@civitai/theme/styles.css + @civitai/components/styles.css); the
+         custom elements come from @civitai/components/register-site. -->
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div>
+          <h1>@civitai/components</h1>
+          <p class="sub">Custom-element gallery — <code>&lt;civitai-*&gt;</code> bundle + <code>data-civitai-ui</code> attribute track</p>
+        </div>
+        <button data-civitai-ui="button" data-variant="outline" data-size="sm" type="button" id="theme-toggle">
+          Toggle theme
+        </button>
+      </header>
+
+      <section id="overview">
+        <p>
+          One page, both consumption forms of <code>@civitai/components</code>: the shadow/light
+          <code>&lt;civitai-*&gt;</code> custom elements from <code>register-site</code>, and the plain
+          <code>data-civitai-ui</code> attribute contract (the header button). Tokens come from
+          <code>@civitai/theme</code>; the toggle flips <code>data-theme</code> on <code>&lt;html&gt;</code>.
+        </p>
+      </section>
+
+      <h2 id="buttons">Button</h2>
+      <div class="row">
+        <civitai-button variant="filled">Filled</civitai-button>
+        <civitai-button variant="light">Light</civitai-button>
+        <civitai-button variant="outline">Outline</civitai-button>
+        <civitai-button variant="subtle">Subtle</civitai-button>
+      </div>
+      <div class="row">
+        <civitai-button variant="filled" size="sm">Small</civitai-button>
+        <civitai-button variant="filled" size="md">Medium</civitai-button>
+        <civitai-button variant="filled" size="lg">Large</civitai-button>
+      </div>
+      <div class="row">
+        <civitai-button variant="filled" color="success">Approve</civitai-button>
+        <civitai-button variant="light" color="warning">Review</civitai-button>
+        <civitai-button variant="outline" color="error">Reject</civitai-button>
+      </div>
+      <div class="row">
+        <civitai-button variant="filled" loading>Loading</civitai-button>
+        <civitai-button variant="outline" disabled>Disabled</civitai-button>
+        <civitai-button id="load-demo" variant="light">Click to load</civitai-button>
+      </div>
+
+      <h2 id="forms">Form controls</h2>
+      <civitai-card padding="md" with-border>
+        <civitai-stack gap="md">
+          <civitai-text-input
+            name="handle"
+            label="Handle"
+            description="Shown on your profile."
+            placeholder="ada"
+            value="ada"
+          ></civitai-text-input>
+          <civitai-text-input
+            name="seed"
+            label="Seed"
+            value="-1"
+            error="Must be a positive integer"
+          ></civitai-text-input>
+          <civitai-number-input name="steps" label="Steps" value="30"></civitai-number-input>
+          <civitai-textarea
+            name="prompt"
+            label="Prompt"
+            description="Describe what to generate."
+            value="a serene mountain lake"
+          ></civitai-textarea>
+          <civitai-select
+            name="model"
+            label="Model"
+            placeholder="Pick a model"
+            value="flux"
+          ></civitai-select>
+          <civitai-checkbox name="tos" label="I agree to the terms" description="Required to publish." checked></civitai-checkbox>
+          <civitai-switch name="nsfw" label="Blur mature content" checked></civitai-switch>
+          <civitai-slider
+            name="cfg"
+            label="CFG scale"
+            min="1"
+            max="30"
+            step="0.5"
+            value="7"
+            show-value
+            description="How strictly the model follows the prompt."
+          ></civitai-slider>
+          <civitai-radio-group name="sampler" label="Sampler" value="euler" orientation="horizontal"></civitai-radio-group>
+        </civitai-stack>
+      </civitai-card>
+
+      <h2 id="surfaces">Cards, badges &amp; alerts</h2>
+      <div class="row">
+        <civitai-badge variant="filled">filled</civitai-badge>
+        <civitai-badge variant="light" color="success">ready</civitai-badge>
+        <civitai-badge variant="outline" color="error">failed</civitai-badge>
+        <civitai-badge variant="light" color="warning">stale</civitai-badge>
+      </div>
+      <div class="row" role="status" aria-label="Loading examples">
+        <civitai-loader size="sm"></civitai-loader>
+        <civitai-loader size="md"></civitai-loader>
+        <civitai-loader size="lg"></civitai-loader>
+      </div>
+      <civitai-card padding="lg" with-border>
+        <h3>Card (lg padding, border)</h3>
+        <civitai-group gap="sm" style="margin-top: 8px">
+          <civitai-button variant="filled" size="sm">Save</civitai-button>
+          <civitai-button variant="subtle" size="sm">Reset</civitai-button>
+        </civitai-group>
+      </civitai-card>
+      <civitai-stack gap="sm">
+        <civitai-alert color="info" heading="Heads up">Your generation is queued.</civitai-alert>
+        <civitai-alert color="success" heading="Saved">Changes are live.</civitai-alert>
+        <civitai-alert color="warning">Low on Buzz.</civitai-alert>
+        <civitai-alert color="error" heading="Failed" closable>The worker rejected the job.</civitai-alert>
+      </civitai-stack>
+
+      <h2 id="tabs">Tabs</h2>
+      <civitai-tabs value="grid" aria-label="Gallery views">
+        <civitai-tab-panel value="grid">
+          <p>Grid view — tab <code>data</code> is set as a property from <code>src/main.ts</code>; panels pair by <code>value</code>.</p>
+        </civitai-tab-panel>
+        <civitai-tab-panel value="list">
+          <p>List view — arrow keys rove, selection follows focus, panels toggle <code>hidden</code>.</p>
+        </civitai-tab-panel>
+        <civitai-tab-panel value="compact">
+          <p>Compact view — its tab is disabled.</p>
+        </civitai-tab-panel>
+      </civitai-tabs>
+
+      <h2 id="dialogs">Modal &amp; confirm dialog</h2>
+      <div class="row">
+        <civitai-button id="open-modal" variant="filled">Open modal</civitai-button>
+        <civitai-button id="ask-confirm" variant="outline" color="error">Ask permission…</civitai-button>
+      </div>
+      <civitai-modal id="demo-modal" heading="Quick actions">
+        <civitai-stack gap="sm">
+          <civitai-button variant="filled" full-width>Regenerate thumbnail</civitai-button>
+          <civitai-button variant="light" full-width>Copy share link</civitai-button>
+          <civitai-button variant="subtle" full-width>Archive</civitai-button>
+        </civitai-stack>
+      </civitai-modal>
+      <civitai-confirm-dialog
+        id="demo-confirm"
+        heading="Delete collection"
+        message="This removes the collection for everyone. It cannot be undone."
+        confirm-label="Delete"
+        cancel-label="Keep it"
+        destructive
+      ></civitai-confirm-dialog>
+
+      <h2 id="toasts">Toasts</h2>
+      <div class="row">
+        <civitai-button id="toast-info" variant="light" size="sm">Info</civitai-button>
+        <civitai-button id="toast-success" variant="light" size="sm">Success</civitai-button>
+        <civitai-button id="toast-warning" variant="light" size="sm">Warning</civitai-button>
+        <civitai-button id="toast-error" variant="light" size="sm" color="error">Error</civitai-button>
+        <civitai-button id="toast-urgent" variant="filled" size="sm">Urgent</civitai-button>
+        <civitai-button id="toast-sticky" variant="outline" size="sm">Sticky</civitai-button>
+      </div>
+
+      <h2 id="table">Table</h2>
+      <civitai-table with-border striped hoverable>
+        <table>
+          <caption>Top models this week</caption>
+          <thead>
+            <tr>
+              <th scope="col">Model</th>
+              <th scope="col">Base</th>
+              <th scope="col" data-numeric>Downloads</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Flux.1 Dev</td>
+              <td>Flux</td>
+              <td data-numeric>1,284,113</td>
+            </tr>
+            <tr>
+              <td>SDXL Turbo</td>
+              <td>SDXL</td>
+              <td data-numeric>832,905</td>
+            </tr>
+            <tr>
+              <td>Pony Diffusion V6</td>
+              <td>SDXL</td>
+              <td data-numeric>771,342</td>
+            </tr>
+          </tbody>
+        </table>
+      </civitai-table>
+
+      <h2 id="nav">Navigation list</h2>
+      <civitai-nav-list label="Demo navigation" current="#surfaces">
+        <civitai-nav-item href="#overview" label="Overview">
+          <svg slot="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1 1 8h2v6h4v-4h2v4h4V8h2L8 1Z" fill="currentColor"/></svg>
+        </civitai-nav-item>
+        <civitai-nav-item href="#buttons" label="Buttons">
+          <svg slot="icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="5" width="14" height="6" rx="3" fill="currentColor"/></svg>
+        </civitai-nav-item>
+        <civitai-nav-item href="#surfaces" label="Surfaces">
+          <svg slot="icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="1" width="14" height="14" rx="3" fill="currentColor"/></svg>
+        </civitai-nav-item>
+        <civitai-nav-item label="Gallery">
+          <civitai-nav-item href="#site" label="Site kit"></civitai-nav-item>
+          <civitai-nav-item href="#media" label="Media card"></civitai-nav-item>
+        </civitai-nav-item>
+      </civitai-nav-list>
+
+      <h2 id="site">Site kit</h2>
+      <div class="row">
+        <civitai-avatar name="Ada Lovelace" size="sm"></civitai-avatar>
+        <civitai-avatar name="Ada Lovelace" size="md"></civitai-avatar>
+        <civitai-avatar name="Vladaa" size="lg" frame="conic-gradient(from 180deg, #a259ff, #ff5c87, #a259ff)"></civitai-avatar>
+        <civitai-avatar
+          name="Pixel Art"
+          size="xl"
+          src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23a259ff'/%3E%3Ccircle cx='16' cy='12' r='6' fill='%23fff' opacity='.85'/%3E%3Cellipse cx='16' cy='30' rx='10' ry='8' fill='%23fff' opacity='.85'/%3E%3C/svg%3E"
+        ></civitai-avatar>
+        <civitai-avatar name="Broken Src" size="md" src="https://invalid.invalid/avatar.png"></civitai-avatar>
+      </div>
+      <div class="row">
+        <civitai-rating-badge rating="g"></civitai-rating-badge>
+        <civitai-rating-badge rating="pg"></civitai-rating-badge>
+        <civitai-rating-badge rating="pg13"></civitai-rating-badge>
+        <civitai-rating-badge rating="r"></civitai-rating-badge>
+        <civitai-rating-badge rating="x"></civitai-rating-badge>
+        <civitai-rating-badge rating="ai"></civitai-rating-badge>
+      </div>
+      <div class="row">
+        <civitai-tag name="anime" score="128" show-score confidence="0.62" rating="pg13"></civitai-tag>
+        <civitai-tag name="photorealistic" score="42" show-score readonly></civitai-tag>
+        <civitai-tag name="flux" score="96" show-score confidence="0.9" readonly rating="r"></civitai-tag>
+      </div>
+      <div class="row">
+        <civitai-reaction emoji="❤️" count="1284" reacted label="Like"></civitai-reaction>
+        <civitai-reaction emoji="😂" count="97" label="Funny"></civitai-reaction>
+        <civitai-reaction emoji="🎉" count="12" disabled label="Celebrate"></civitai-reaction>
+      </div>
+
+      <h2 id="media">Media card</h2>
+      <div class="row">
+        <civitai-media-card href="#media" label="Open the model page" style="width: 280px">
+          <img
+            slot="media"
+            src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 450'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23a259ff'/%3E%3Cstop offset='1' stop-color='%23ff5c87'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='300' height='450' fill='url(%23g)'/%3E%3Ccircle cx='150' cy='170' r='70' fill='%23fff' opacity='.25'/%3E%3Ccircle cx='110' cy='260' r='40' fill='%23fff' opacity='.15'/%3E%3Ccircle cx='205' cy='300' r='55' fill='%23fff' opacity='.2'/%3E%3C/svg%3E"
+            alt="Gradient artwork preview"
+          />
+          <civitai-rating-badge slot="top-start" rating="pg13"></civitai-rating-badge>
+          <civitai-action-button slot="top-end" label="Like">
+            <svg slot="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 14S2 10.3 2 6.3C2 4 3.8 2.5 5.7 2.5 6.9 2.5 8 3.2 8 3.2s1.1-.7 2.3-.7C12.2 2.5 14 4 14 6.3 14 10.3 8 14 8 14Z" fill="currentColor"/></svg>
+          </civitai-action-button>
+          <span slot="bottom" class="overlay-row">
+            <civitai-tag name="flux" score="96" show-score readonly></civitai-tag>
+            <civitai-reaction emoji="❤️" count="96" label="Like"></civitai-reaction>
+          </span>
+        </civitai-media-card>
+      </div>
+    </div>
+
+    <civitai-toast-region id="toasts"></civitai-toast-region>
+  </body>
+</html>
