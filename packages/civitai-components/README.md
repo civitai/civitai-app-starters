@@ -66,75 +66,6 @@ them was never a reason to *ship* them, either — under an earlier `files:
 > [issue #358](https://github.com/civitai/civitai-app-starters/issues/358),
 > which `pnpm measure:css-split` prices.
 
-**A slice is not self-sufficient, so any future surface must say so.** Slices
-are cut along the sheet's `/* ----- Name ----- */` section markers, and the
-sheet contains rules that cross those markers. Measured on the current sheet by
-sweeping every section for references it does not own (method and counts in the
-PR for #358):
-
-| Section | Depends on | Effect of taking the section alone |
-|---|---|---|
-| `button` | `loader` | `[data-civitai-ui='loader']`'s base rule — width, height, border-width, the `civitai-ui-spin` animation — and the `[data-civitai-ui='button'] [data-civitai-ui='loader'] { color: currentColor }` override both live in the **Loader** section. A loading button renders a **0×0, invisible** loader. Nothing errors. |
-| `checkbox` / `radio` | `text-input` | `[data-civitai-ui-label]`'s base typography (14px / 600 / text token) lives in the **TextInput** section; the Checkbox section only overrides `font-weight`/`cursor` on top of it. The label renders in the page's inherited font instead. |
-
-Two is the measured total for the current sheet, not a general guarantee: a
-Button-and-Loader pair is what the measurement below actually bundles, and the
-right unit for a consumer is the **transitive** component set, never one name.
-
-Measured with esbuild (minify, ESM, React external), a `@civitai/blocks-react/ui`
-Button bundle is **52,568 B, of which 50,151 B is stylesheet** — 95.4% CSS for
-one component. What the slices would save off that depends on **which** split
-you mean, and the two answers are far apart:
-
-| what is split | Button bundle | vs baseline |
-|---|---:|---:|
-| nothing — shipped today | 52,568 B | 100.0% |
-| **`@civitai/components` only** — this package's slices, concatenated | **26,556 B** | **50.5%** |
-| **`@civitai/components` only** — merged into one sheet | **25,518 B** | **48.5%** |
-| the above *plus* `@civitai/blocks-react` also splitting its own sheet, concatenated | 14,518 B | 27.6% |
-| the above *plus* `@civitai/blocks-react` also splitting its own sheet, merged | 13,480 B | 25.6% |
-
-> 🔴 **Only the two middle rows are about this package.** A `blocks-react/ui`
-> Button carries CSS from **two** packages: `@civitai/components`' sheet (what
-> this package slices) and `@civitai/blocks-react`'s own `INTERACTIVE_STYLES`
-> — ~12 KB for Modal, Select, Slider, Collapse, SegmentedControl and
-> ResourceCard, which have no `@civitai/components` counterpart. That sheet is
-> **not** one of the `dist/css/*.css` artifacts and is **not** touched by this
-> split; a Button bundle carries all of it either way. The bottom two rows model
-> a **second, unimplemented** split of it in `@civitai/blocks-react`, and the
-> **12,038 B** between the two pairs belongs to that hypothetical change, not to
-> this one.
-
-> 🔴 **Only the first row is a bundle that exists.** All four split rows replace
-> the whole-pack `componentsCss` with slices, and no shipped code imports the
-> slices — only this repo's measurement script and test suite read them.
-> `@civitai/blocks-react` injects the whole pack, deliberately (below). The four
-> rows price a change; none of them is banked.
-
-Reproduce with `pnpm measure:css-split` from the repo root; run it with
-`MEASURE_CARRIERS=1` to see, per row, which package's sheet the row actually
-touched — expected: `interactive: removed 0` on the two middle rows, non-zero
-only on the bottom two. The magnitudes it prints are `String.length` deltas on
-the carrier's *module* source, so they are neither bytes nor stylesheet bytes;
-zero-vs-non-zero is the part that carries the claim.
-
-The split is asserted **byte-identical on reassembly** before anything is
-written (`scripts/slice-css.ts`, guarded with its negative control in
-`test/css-slice.test.ts`). That assertion proves the **partition arithmetic** —
-that the pieces `sliceComponentsCss` hands back, recomposed by `composeSheet`,
-are exactly the input sheet. It does **not** prove that the sheet was cut in the
-right places: a section marker the slicer fails to recognise merges into the
-previous slice and never gets its own `.css`, and reassembly is still perfect.
-A separate boundary guard counts the raw `/* ----- ` markers in the sheet and
-pins that count against the number of sections. Other assertions in that suite
-happen to fail on such a mis-cut today as well, because they pin the literal 14;
-the boundary guard is the one that keeps catching it after the sheet grows,
-since it compares two counts of the same sheet rather than a typed-in number.
-
-The component vocabulary is derived from the `data-civitai-ui` selectors each
-section contains — a test pins that set equal to `COMPONENT_NAMES` in both
-directions.
-
 ## Elements
 
 The same components as **custom elements**, so behaviour ships with the style
@@ -495,7 +426,7 @@ its own verbs instead — `<civitai-toast-region>` has `show(options)`,
 - Authored in plain CSS with native nesting (no preprocessor); `src/components.css`
   is the single source of truth (copied to `dist/components.css`, embedded as
   the injectable string, and sliced per component — all three guarded by parity
-  tests; the slicing additionally by the boundary guard described above, which
+  tests; the slicing additionally by the boundary guard, which
   is what pins where the sheet was cut. The byte-identical-reassembly assertion
   also runs before anything is written, but it proves the partition arithmetic
   only, not the cut points).
