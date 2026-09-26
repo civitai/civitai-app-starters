@@ -75,8 +75,7 @@ headings in plain markup.
 - `pnpm --filter @civitai/components-react test:browser` — real headless
   Chromium: the binding mechanics (property assignment, refs, typed custom
   events, shadow-root `change` retargeting) and an axe a11y sweep over every
-  component family in light and dark, plus an opt-in visual-regression layer
-  (`VITE_RUN_VR=1`).
+  component family in light and dark.
 
 On NixOS, point Playwright at a system Chromium:
 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=$(nix-shell -p chromium --run 'command -v chromium') pnpm --filter @civitai/components-react test:browser`.

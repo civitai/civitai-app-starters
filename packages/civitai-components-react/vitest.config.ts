@@ -3,12 +3,19 @@ import { defineConfig } from 'vitest/config';
 
 /**
  * Two Vitest projects (mirrors @civitai/blocks-react's config shape):
- *   - `unit`    = happy-dom markup/ARIA assertions (`*.test.tsx`, NOT
+ *   - `unit`    = filesystem guards over the generated bindings — generation
+ *                 parity, the event map, entry-point shape, and the guard that
+ *                 keeps `src/` to generated bindings only (`*.test.ts`, NOT
  *                 `*.browser.test.tsx`). Fast, no browser. `pnpm test` runs it.
- *   - `browser` = real headless Chromium (`*.browser.test.tsx`): the
- *                 HTML-vs-React computed-style parity, axe a11y, and (opt-in)
- *                 visual-regression suites — all need real layout + getComputedStyle,
- *                 which happy-dom does not provide. `pnpm test:browser` runs it.
+ *   - `browser` = real headless Chromium (`*.browser.test.tsx`): the binding
+ *                 mechanics (property assignment, refs, typed custom events,
+ *                 shadow-root `change` retargeting) and an axe a11y sweep —
+ *                 both need a real DOM that can upgrade a custom element,
+ *                 which happy-dom cannot. `pnpm test:browser` runs it.
+ *                 Until 0.8.0 this also carried HTML-vs-React computed-style
+ *                 parity and an opt-in visual-regression layer; the first went
+ *                 with the hand-written React layer it compared, the second
+ *                 was deleted never having run (no baselines, no CI opt-in).
  *
  * CI uses Playwright's bundled Chromium (env unset). NixOS can't run that
  * generic binary — point it at a system Chromium via

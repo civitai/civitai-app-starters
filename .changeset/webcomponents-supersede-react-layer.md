@@ -58,7 +58,8 @@ that the root IS the presentational barrel and nothing besides, and that it
 still reaches no `@civitai/sdk`.
 
 `@civitai/components` (patch): stop shipping `dist/utilities.generated.*`, about
-19.5 kB no consumer could reach — nothing imports it and there is no
+39 kB no consumer could reach (19,549 B of `.js` plus 19,383 B of `.d.ts` — the
+glob takes both) — nothing imports it and there is no
 `./utilities` export key, the utility layer being published as `./utilities.css`.
 Unlike `styles.generated`, which `src/index.ts` imports and so ships via the `.`
 entry. Same reasoning as the existing `!dist/css` exclusion; no API change.

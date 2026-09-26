@@ -396,7 +396,7 @@
       "default": "./dist/sdk/civitai-workflow-button.define.js"
     }
   },
-  "comment-packaging": "@civitai/* deps use workspace:^ not workspace:* (#374); `!dist/**/*.map` keeps dangling sourcemaps out of the tarball (#376). Rationale: scripts/check-shipped-sourcemaps.mjs. `!dist/utilities.generated.*` drops ~19.5 kB no consumer can reach: unlike `styles.generated` (which `src/index.ts` imports, so it ships via the `.` entry) nothing imports it and there is no `./utilities` export key — the utility layer is published as `./utilities.css`. Same reasoning as `!dist/css`.",
+  "comment-packaging": "@civitai/* deps use workspace:^ not workspace:* (#374); `!dist/**/*.map` keeps dangling sourcemaps out of the tarball (#376). Rationale: scripts/check-shipped-sourcemaps.mjs. `!dist/utilities.generated.*` drops ~39 kB no consumer can reach (19,549 B .js + 19,383 B .d.ts; the glob takes both): unlike `styles.generated` (which `src/index.ts` imports, so it ships via the `.` entry) nothing imports it and there is no `./utilities` export key — the utility layer is published as `./utilities.css`. Same reasoning as `!dist/css`.",
   "files": [
     "dist",
     "!dist/css",

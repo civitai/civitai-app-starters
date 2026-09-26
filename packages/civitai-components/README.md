@@ -440,7 +440,8 @@ Styling is selected entirely by `data-*` attributes; any HTML that follows the
 contract below renders identically to the React bindings. **`legend`:** _bold_ =
 required for correct styling + a11y. [`MARKUP.md`](./MARKUP.md) is the canonical
 source (with per-component examples + a11y wiring) and the executable contract
-the `html-vs-react-parity` browser test enforces; the essentials are inlined
+this package's own browser suites enforce — `presentational-parity` compares
+each element against the attribute markup it replaces; the essentials are inlined
 here so they're readable on the npm package page.
 
 **Theming** — set `data-theme="light"` or `data-theme="dark"` on any ancestor

@@ -35,13 +35,6 @@ export function mountReact(theme: string, node: React.ReactElement): Mounted {
   };
 }
 
-/** Render plain HTML under a `[data-theme]` ancestor. */
-export function mountHtml(theme: string, html: string): Mounted {
-  const { wrapper, mount } = makeWrapper(theme);
-  mount.innerHTML = html;
-  return { mount, cleanup: () => wrapper.remove() };
-}
-
 /**
  * Lit renders async, so a mounted element is not populated on the same tick —
  * await every upgraded descendant before asserting against its shadow root.
