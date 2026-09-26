@@ -295,6 +295,9 @@ there. Two facts worth keeping:
 
 ## Gotchas / decisions / dead-ends
 
+- **4 closed-arc gotchas EVICTED to the ARCHIVE (2026-09-26), VERBATIM:** the earlier prune's relocation bookkeeping, this arc's five 2026-09-23/24 operator decisions (each superseded by a later `Decision` line here), the twice-wrong attribution-gate claim (which is `audit-pr` ladder bookkeeping, not a fact about this migration), and the `.envrc` retraction (whose investigation block is already archived). Read them there if you need the evidence.
+- 🔴 **10 TOOL-SPECIFIC GOTCHAS EVICTED to `handoff-civitai-app-platform-migration-ARCHIVE.md` (2026-09-26), VERBATIM, not deleted.** They are traps in the `browser` bridge and the `civitai` CLI rather than facts about this migration — `js --frame` on an OOPIF, the `wake --wait` clamp, the inert-click/re-throttle pair, `div[role="status"]` not being unique, `flows/civit.ai.md` routing late, a measured-and-declined guard, the obsolete `git archive` submit rule, `gpu-fleet-infra` as a false corroborator, pnpm 11 retiring `onlyBuiltDependencies`, and the platform installing with `--ignore-scripts`. **Their proper home is the owning SKILL and that move is still outstanding** — read them in the archive until then.
+
 - 🔴 **A `Version Packages` PR can be a RACE ARTIFACT OF ITS OWN PREDECESSOR'S MERGE.** #420's head
   was committed **18s after #408 merged**, on the same branch, and looked identical to a pending
   release (`CLEAN`, `MERGEABLE`, full changeset list). The discriminator is CONTENT:
@@ -436,16 +439,6 @@ there. Two facts worth keeping:
   OUTSIDE every repo, one level above this checkout — ask the operator; its contents stay out of
   this PUBLIC repo. `#363` carries the closing condition, so check the issue, not the note.
 
-- 🔴 **I TWICE CLAIMED THE ATTRIBUTION GATE HAD FIRED WHEN IT HAD NOT, AND BOTH TIMES IT WAS MY
-  ARITHMETIC WEARING THE MACHINE'S AUTHORITY.** `audit-dispatch.py --round N` exits **0** and
-  assembles a brief; it does NOT refuse. Two independent reasons, both worth knowing before anyone
-  plans a stop around it: (a) its ledger reads **`COULD NOT MEASURE`** whenever the assembling
-  checkout is not standing on the PR head — and a failed command is NOT a zero; (b) its classifier
-  counts **block comments and docstrings as EXECUTABLE on purpose** (over-counting keeps the gate
-  silent — the fail-open direction), so a round of pure JSDoc edits still reads non-zero. The gate
-  also needs **both** of the two most recent blocks to read zero, and a ladder that honestly keeps
-  one unit across rounds will usually have a non-zero stated count in one of them.
-  **A ladder stop is a JUDGEMENT. Say so, and show the measurement it rests on.**
 - 🔴 **DO NOT RECLASSIFY THE PAYLOAD UNIT MID-LADDER TO FORCE A STOP.** The temptation was live and
   explicit: switching to "executable lines only" at round 4 would have produced the gate refusal I
   wanted. Kept the line-count unit across all five rounds and reported the executable-zero as a
@@ -659,15 +652,6 @@ there. Two facts worth keeping:
   third-party-compromise threat the window guards against does not apply to it. Implemented as an
   exact-version exemption with its own removal condition, never as a disabled policy.
 
-- 🔴 **RETRACTION: "this repo has no `.envrc`" WAS WRONG, AND A STALE CHECKOUT MANUFACTURED THE
-  EVIDENCE.** I `ls`'d the base clone, got "No such file", and wrote the conclusion into this
-  doc — but the clone was **19 commits behind** and `.envrc` had been added in `9366021`. The file
-  is tracked and always shipped. **The real mechanism is that `direnv` authorization is PER PATH
-  and the path was `allowed 0`**, so a present, correct `.envrc` sat inert and the host's pnpm 10
-  won silently. The tell is in `direnv status`: `Found RC path …` together with `Loaded RC
-  allowed 0` — *found* and *allowed* are different fields and only the second one matters.
-  Generalises: **a file's PRESENCE is not its ACTIVATION**, and an absence measured on a stale
-  tree is not an absence.
 - 🔴 **A RED CI CHECK ON A ONE-LINE JSON CHANGE WAS INHERITED FROM THE BRANCH POINT, AND THE
   CONTROL TOOK ONE COMMAND.** devrc #1862 added a single routes entry and
   `tekton/devrc-pytests` failed `test_no_unallowlisted_public_ip_literal_is_committed` (2 of
@@ -681,17 +665,6 @@ there. Two facts worth keeping:
   `direnv exec $R bash -c 'pnpm --version'` printed **11.25.0** from the flake. The first form
   reads as "direnv is not working" and is really "you measured the wrong pnpm". Wrap the command in
   a shell when you need the environment to apply to resolution as well as to execution.
-- 🔴 **THE FIVE OPERATOR DECISIONS OF THIS ARC, MOVED HERE SO A STATUS REPLACE CANNOT EAT THEM.**
-  They lived under `State now`, which is overwritten on every update, and the write gate flagged
-  them as a durable drop. Taken 2026-09-23/24, each with its alternative explicitly on the table:
-  (1) **analytics** — keep a no-op shim with all six `track()` call sites intact, rather than
-  deleting them or blocking the port on a new SDK surface; (2) **test harness** — a fetch-level
-  fake, because after the port the board's real boundary IS `fetch` and a mock host would answer a
-  conversation nobody is having; (3) **cairn route** — `civitai`, chosen by an operator because the
-  table is genuinely split for sibling fleet apps; (4) **sort-control a11y** — switch to
-  `radiogroup` NOW, which **reversed my recommendation** to preserve `tablist`; (5) **the 24h
-  supply-chain gate** — push through it rather than wait ~2h, implemented as an exact-version
-  exemption and never as a disabled policy.
 - **Decision (operator, 2026-09-24):** PR #21 merged by squash, matching this repo's convention
   (every mainline commit carries `(#N)`; the repo has no merge commits). The squash body preserves
   the three-part structure — transport port, a11y change, supply-chain exemption — because the
@@ -783,11 +756,6 @@ there. Two facts worth keeping:
 - **`claim-work` released for this arc** — 0 held. Re-claim before touching a ranked item.
 - **Decisions taken by the operator this session:** leave Koen's `#5120` alone; leave orchestration `#305` and `autolabel-core.ts` alone; write nothing about the orchestrator workflow-ownership finding; narrow the SDK guard rather than warn or fix host-side; delete `requireOAuthToken`; keep `#5111` narrow (5 conversions + a 39-entry ledger) rather than converting all 44; align `custom-generators`' theme forward to `^0.4.0`; prod reads non-blocking.
 
-- 🔴 **RELOCATED OUT OF PRUNED `RESOLVED` BLOCKS — these three were measured, are still live, and were inside blocks an audit classified as evictable.** Their evidence is in git history (the prune commit's parent); what survives here is the rule.
-  - **`direnv allow` is PER-PATH, so every new worktree starts BLOCKED and silently gives the wrong toolchain.** `civitai-app-custom-generators`' `flake.nix` pins `pnpmMajor = "11"` while the ambient pnpm is 10.28.1, and pnpm 11 is what enforces `minimumReleaseAge`. 🔴 **Confirmed again 2026-09-25, and the failure has a SECOND shape the original note lacked:** the dev shell's own banner prints the **invoking** shell's version (`custom-generators: node v24.19.0, pnpm 10.28.1`) while `nix develop <wt> --command` inside it gives **11.25.0** — and `direnv exec <wt>` did **not** pick the flake up either. So `pnpm --version` inside the shell is the only reading that counts, and a banner is not it.
-  - **A check's own description is not authority on whether to ignore it.** `preview / component-tests` self-described as *"report-only, not blocking"* and was merged past four times; the discriminator that settled flake-vs-real was the **per-head history of that status on the same PR**, not its adjective. Do not merge past a red on the strength of how it labels itself.
-  - **A closing instruction inside a RESOLVED block is still an open action.** The `minimumReleaseAgeExclude` cleanup sat in a block marked resolved and was never executed; it is now in `## Defects (batched)` where the list drains. When a block resolves, move its residual action OUT of it.
-
 - 🔴 **THIS DOC'S OWN CLOSING CONDITION GREPS A TOKEN, NOT A CONSTRUCT, AND READS AS A REGRESSION ON A CLEAN TREE.** The `closing-condition` at the top says `grep -l "@civitai/blocks-react" | wc -l` → 0. Run verbatim on 2026-09-25 it returns **1** for `generate-from-model` and **26** for `custom-generators` — both fully ported, both with the dependency **absent from `package.json`**. The hits are mentions in comments and docs. Anchoring on `(from|import\()\s*'@civitai/blocks-react` returns **0** for both, and `app-requests` is 0 either way (control `@civitai/sdk` 13, positive control `gen-matrix` 10). **The arc IS closed; the command is what is wrong.** This is the doc's own "grep for the CONSTRUCT, not the token" rule firing on the doc — a condition that can go falsely red is the same defect class as one that can never fire.
 - 🔴 **A PRE-SUBMIT GATE CAN PASS EXACTLY WHAT THE SERVER REFUSES, AND ITS GREEN THEN MEANS
   NOTHING.** `civitai app validate` (CLI 0.1.105) reports `✓ is valid` for `auth: "oauth"` +
@@ -803,19 +771,9 @@ there. Two facts worth keeping:
 - 🏁 **CARRIED FORWARD OUT OF `State now` — the PLATFORM arc completed 2026-09-24**, and this fact was about to be deleted by a status replace. Every surface the fleet needs exists on `main`: app-storage REST (`civitai#5085`), workflows query (`#5090`), gated images (`#5091`), user checkpoint (`#5093`), `AppClient.storage` (`starters#441`), the canonical schema re-vendor (`#445`), and `host.openImageUpload` + `host.publishGenerationOutputs` (`#446`). Route counts on `origin/main` moved **30 → 37** with `shared-storage/` (11) unchanged as the control.
 - **CARRIED FORWARD — earlier issues from that arc:** `civitai#5087` `#5088` `#5089` `#5092` `#5094` `#5095` `#5102` · `starters#443` (**CLOSED** — condition met by the route it named). `#5102` is closed in practice by `#5111`, but its formal condition (green on a PR touching no `src/components/` file) is still unchecked.
 - 🔴 **`civitai/talos-infra` IS CLONED ON THIS HOST, AT `/home/zach/workspace/civit/datapacket-talos`.** The directory name is misleading (`git remote -v` → `git@github.com:civitai/talos-infra.git`, branch `trunk`), and the `app-blocks` skill lives INSIDE it at `.claude/skills/app-blocks/`. **I briefed four audit agents that it was NOT cloned**, and two of them marked the builder base image, the runtime image and the install recipe UNVERIFIABLE on my word. Two others checked anyway and read the pipeline directly. A wrong premise in a brief is invisible to the agent receiving it.
-- 🔴 **THE PLATFORM INSTALLS WITH `--ignore-scripts`, SO `ERR_PNPM_IGNORED_BUILDS` IS A CI GATE, NOT A PLATFORM ONE.** `app-blocks-pipeline.yaml:1429` — `corepack enable; pnpm install --frozen-lockfile --ignore-scripts`. My claim that `allowBuilds` was "confirmed against the real platform build" is **WRONG**; it fixed GitHub Actions CI, which passes no such flag. No build can discriminate, because `allowBuilds` and `minimumReleaseAgeExclude` landed in the same commit. The wrong attribution is still in `civitai-app-oauth-probe`'s commit message.
-- 🔴 **`gpu-fleet-infra` IS A FALSE CORROBORATOR.** It carries its own `app-blocks-pipeline.yaml`, still in its kustomization, still on `1.27-alpine` with the retired `npm ci || npm install` — so a second, independent-looking source **confirms the skill's stale text**. talos-infra wins, proven by the live `app-blocks-build-recipe` ConfigMap matching it line-for-line and by today's PipelineRuns being on dp-1.
-- 🔴 **`onlyBuiltDependencies` WAS RETIRED IN pnpm 11 AND IS SILENTLY IGNORED; the live key is `allowBuilds` (a map).** pnpm's own CHANGELOG says so — *"silently ignored since, so a workspace migrated from pnpm 10 kept them around LOOKING ACTIVE"*. 🔴 **Grepping pnpm 12's native binary returns the retired key too**, so binary presence is NOT evidence a key is live; the CHANGELOG was the discriminator. Cost one CI round.
 - 🔴 **A RAW `grep -c` IS THE WRONG INSTRUMENT FOR "DID THE FIX LAND", TWICE IN ONE SESSION.** After `#1637` merged, `1.27-alpine` on trunk read **6**, up from the 4 the fix claimed to correct — which reads as a regression. Reading the LINES shows the agent correctly left four historical strings intact (a 2026-05-30 author-authored-Dockerfile trap chain) and prepended a `STALE TAG AND STALE PREMISE` correction; rewriting them would have falsified history. Same class: this doc's own closing condition greps a token and reports 1 and 26 for two fully-ported apps.
 - 🔴 **`@civitai/sdk` "HAS LARGELY REPLACED" `@civitai/blocks-react` — REFUTED BY THREE AGENTS INDEPENDENTLY.** It is **4 ported / 5 not**, `blocks-react@0.57.2` published **seven seconds after** `sdk@0.5.0`, it is not npm-deprecated, and the default `civitai app create` scaffold still depends on it. A mid-migration fleet is WORSE than either pure state for a fan-out brief, because an assumption is wrong for about half of it either way.
 - 🔴 **`HostRequests` IS SIX OPS, NOT FOUR** — `OPEN_IMAGE_UPLOAD` and `PUBLISH_GENERATION_OUTPUTS` are both present, verified against the PUBLISHED tarball rather than monorepo source.
-- 🔴 **`js --frame` ON A CROSS-ORIGIN OOPIF RUNS IN THE MAIN WORLD, NOT AN ISOLATED ONE.** `cdpFrameEval` forks: same-process → `Page.createIsolatedWorld`; OOPIF → `Runtime.evaluate` with **no `contextId`** = the page's own world. `reference/frames-cdp.md` already said so; `flows/civitai.com.md` carried the blanket claim. The OBSERVATION (a `window.fetch` hook catches nothing) is real; the MECHANISM was wrong — the cause is ordering, and an empty intercept list is **undiagnosed**, not proof.
-- 🔴 **`wake --wait 12000` IS SILENTLY CLAMPED TO 6000** (`WAKE_SETTLE_MAX_MS`, a bare `Math.min`, no warning). The App Block recipe prescribed double the cap, so a working recipe was right about the outcome and wrong about the cause — the settle was 6 s.
-- 🔴 **A HIT-TEST THAT PASSES AND A CLICK THAT DOES NOTHING = a RE-THROTTLED TAB (or a `disabled` control).** Cost a cycle on the consent dialog: `elementFromPoint` returned the button's own span and the click was inert; `wake` then re-click worked immediately. `flows/civitai.com.md` carries **no** re-throttle warning at all (it lives in `SKILL.md`/`spa-wake.md`), and its App Block recipe says `wake … once`. The rival cause is real too — `BlockConsentModal`'s Allow is `disabled` until the Buzz-budget field validates.
-- 🔴 **`div[role="status"]` IS NOT UNIQUE ON `/apps/run/<slug>`** — the host loading veil, `BlockFallback` and the consent notice all use it. It worked only because the veil had already gone; anchoring on it is a race.
-- 🔴 **`flows/civit.ai.md` EXISTS, IS ROUTED, AND IS DEEPER than `civitai.com.md`'s App Block section** — but the bridge routes you there only AFTER your first `--frame` op, by which point every decision that section governs is already made.
-- 🔴 **A PROPOSED GUARD THAT WOULD HAVE CAUGHT NOTHING — MEASURED, AND DECLINED.** Pinning every backticked identifier in `flows/*.md` to the bridge source was justified as catching "three of four" contradicted items. Measured: **1 identifier matched, 15 did not**, and the catch rate against the actual contradicted items was **ZERO** (one was a wrong CASE not a wrong string, one camelCase in another repo, one a number, one an English phrase). It would have needed an allowlist larger than its signal.
-- 🔴 **THE `git archive` / WORKTREE SUBMIT RULE IS OBSOLETE AND NOW COSTS TWO GUARDS.** CLI 0.1.105 drops a `.git` **FILE** as well as a directory (packaged a real worktree: `Skipped … .git`). Following the stale 🔴 loses the dirty-tree refusal AND the `SOURCE` provenance stamp — visible in `civitai app status`: `custom-generators SOURCE=-` (archive export) vs `oauth-probe SOURCE=04e9c8e`.
 - **Decision (operator, 2026-09-25):** push through pnpm's 24h `minimumReleaseAge` with an exact-version `minimumReleaseAgeExclude`, taken with the third-party point stated explicitly — `electron-to-chromium@1.5.439` is NOT first-party, so the "we cut it ourselves" justification does **not** cover it. Implemented as two exact pins with clock expiries written into the file, never a disabled policy.
 - **Decision (operator, 2026-09-25):** `oauth-probe` as a scratch app rather than opting an existing fleet app in — no fleet app could, measured: the validator refuses `auth:"oauth"` + any `apps:storage:*`, and `manifestCanMintOauthToken` silently declines any manifest omitting `user:read:self`.
 - **Decision (operator, 2026-09-26):** `@civitai/sdk/safe-storage` as a **subpath**, not a package-root install; the 31 duplicated tests consolidated into a parity guard; and `app-requests` fixed with a one-line import now rather than waiting on the publish.

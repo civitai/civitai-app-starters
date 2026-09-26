@@ -234,3 +234,61 @@ block here contradicts it, the handoff wins and this file is the older reading.
   failure and it CLEARS on its own, so a PR held on one must be RE-CHECKED rather
   than assumed still starved. That string is documented in no skill; the `tekton`
   skill owns these gates and is where it belongs.
+
+## Evicted 2026-09-26 — gotchas belonging to the `browser` and `civitai-app-fleet` SKILLS
+
+These are tool-specific traps, not facts about this migration. They are here VERBATIM;
+their proper home is the owning skill, and moving them there is still outstanding.
+
+- 🔴 **`js --frame` ON A CROSS-ORIGIN OOPIF RUNS IN THE MAIN WORLD, NOT AN ISOLATED ONE.** `cdpFrameEval` forks: same-process → `Page.createIsolatedWorld`; OOPIF → `Runtime.evaluate` with **no `contextId`** = the page's own world. `reference/frames-cdp.md` already said so; `flows/civitai.com.md` carried the blanket claim. The OBSERVATION (a `window.fetch` hook catches nothing) is real; the MECHANISM was wrong — the cause is ordering, and an empty intercept list is **undiagnosed**, not proof.
+- 🔴 **`wake --wait 12000` IS SILENTLY CLAMPED TO 6000** (`WAKE_SETTLE_MAX_MS`, a bare `Math.min`, no warning). The App Block recipe prescribed double the cap, so a working recipe was right about the outcome and wrong about the cause — the settle was 6 s.
+- 🔴 **A HIT-TEST THAT PASSES AND A CLICK THAT DOES NOTHING = a RE-THROTTLED TAB (or a `disabled` control).** Cost a cycle on the consent dialog: `elementFromPoint` returned the button's own span and the click was inert; `wake` then re-click worked immediately. `flows/civitai.com.md` carries **no** re-throttle warning at all (it lives in `SKILL.md`/`spa-wake.md`), and its App Block recipe says `wake … once`. The rival cause is real too — `BlockConsentModal`'s Allow is `disabled` until the Buzz-budget field validates.
+- 🔴 **`div[role="status"]` IS NOT UNIQUE ON `/apps/run/<slug>`** — the host loading veil, `BlockFallback` and the consent notice all use it. It worked only because the veil had already gone; anchoring on it is a race.
+- 🔴 **`flows/civit.ai.md` EXISTS, IS ROUTED, AND IS DEEPER than `civitai.com.md`'s App Block section** — but the bridge routes you there only AFTER your first `--frame` op, by which point every decision that section governs is already made.
+- 🔴 **A PROPOSED GUARD THAT WOULD HAVE CAUGHT NOTHING — MEASURED, AND DECLINED.** Pinning every backticked identifier in `flows/*.md` to the bridge source was justified as catching "three of four" contradicted items. Measured: **1 identifier matched, 15 did not**, and the catch rate against the actual contradicted items was **ZERO** (one was a wrong CASE not a wrong string, one camelCase in another repo, one a number, one an English phrase). It would have needed an allowlist larger than its signal.
+- 🔴 **THE `git archive` / WORKTREE SUBMIT RULE IS OBSOLETE AND NOW COSTS TWO GUARDS.** CLI 0.1.105 drops a `.git` **FILE** as well as a directory (packaged a real worktree: `Skipped … .git`). Following the stale 🔴 loses the dirty-tree refusal AND the `SOURCE` provenance stamp — visible in `civitai app status`: `custom-generators SOURCE=-` (archive export) vs `oauth-probe SOURCE=04e9c8e`.
+- 🔴 **`gpu-fleet-infra` IS A FALSE CORROBORATOR.** It carries its own `app-blocks-pipeline.yaml`, still in its kustomization, still on `1.27-alpine` with the retired `npm ci || npm install` — so a second, independent-looking source **confirms the skill's stale text**. talos-infra wins, proven by the live `app-blocks-build-recipe` ConfigMap matching it line-for-line and by today's PipelineRuns being on dp-1.
+- 🔴 **`onlyBuiltDependencies` WAS RETIRED IN pnpm 11 AND IS SILENTLY IGNORED; the live key is `allowBuilds` (a map).** pnpm's own CHANGELOG says so — *"silently ignored since, so a workspace migrated from pnpm 10 kept them around LOOKING ACTIVE"*. 🔴 **Grepping pnpm 12's native binary returns the retired key too**, so binary presence is NOT evidence a key is live; the CHANGELOG was the discriminator. Cost one CI round.
+- 🔴 **THE PLATFORM INSTALLS WITH `--ignore-scripts`, SO `ERR_PNPM_IGNORED_BUILDS` IS A CI GATE, NOT A PLATFORM ONE.** `app-blocks-pipeline.yaml:1429` — `corepack enable; pnpm install --frozen-lockfile --ignore-scripts`. My claim that `allowBuilds` was "confirmed against the real platform build" is **WRONG**; it fixed GitHub Actions CI, which passes no such flag. No build can discriminate, because `allowBuilds` and `minimumReleaseAgeExclude` landed in the same commit. The wrong attribution is still in `civitai-app-oauth-probe`'s commit message.
+
+## Evicted 2026-09-26 — closed-arc gotchas and ladder bookkeeping
+
+VERBATIM, not deleted. Each is either superseded by a later entry, duplicated by an
+investigation block already in this archive, or bookkeeping about the audit ladder
+rather than about this migration.
+
+- 🔴 **RELOCATED OUT OF PRUNED `RESOLVED` BLOCKS — these three were measured, are still live, and were inside blocks an audit classified as evictable.** Their evidence is in git history (the prune commit's parent); what survives here is the rule.
+  - **`direnv allow` is PER-PATH, so every new worktree starts BLOCKED and silently gives the wrong toolchain.** `civitai-app-custom-generators`' `flake.nix` pins `pnpmMajor = "11"` while the ambient pnpm is 10.28.1, and pnpm 11 is what enforces `minimumReleaseAge`. 🔴 **Confirmed again 2026-09-25, and the failure has a SECOND shape the original note lacked:** the dev shell's own banner prints the **invoking** shell's version (`custom-generators: node v24.19.0, pnpm 10.28.1`) while `nix develop <wt> --command` inside it gives **11.25.0** — and `direnv exec <wt>` did **not** pick the flake up either. So `pnpm --version` inside the shell is the only reading that counts, and a banner is not it.
+  - **A check's own description is not authority on whether to ignore it.** `preview / component-tests` self-described as *"report-only, not blocking"* and was merged past four times; the discriminator that settled flake-vs-real was the **per-head history of that status on the same PR**, not its adjective. Do not merge past a red on the strength of how it labels itself.
+  - **A closing instruction inside a RESOLVED block is still an open action.** The `minimumReleaseAgeExclude` cleanup sat in a block marked resolved and was never executed; it is now in `## Defects (batched)` where the list drains. When a block resolves, move its residual action OUT of it.
+
+- 🔴 **THE FIVE OPERATOR DECISIONS OF THIS ARC, MOVED HERE SO A STATUS REPLACE CANNOT EAT THEM.**
+  They lived under `State now`, which is overwritten on every update, and the write gate flagged
+  them as a durable drop. Taken 2026-09-23/24, each with its alternative explicitly on the table:
+  (1) **analytics** — keep a no-op shim with all six `track()` call sites intact, rather than
+  deleting them or blocking the port on a new SDK surface; (2) **test harness** — a fetch-level
+  fake, because after the port the board's real boundary IS `fetch` and a mock host would answer a
+  conversation nobody is having; (3) **cairn route** — `civitai`, chosen by an operator because the
+  table is genuinely split for sibling fleet apps; (4) **sort-control a11y** — switch to
+  `radiogroup` NOW, which **reversed my recommendation** to preserve `tablist`; (5) **the 24h
+  supply-chain gate** — push through it rather than wait ~2h, implemented as an exact-version
+  exemption and never as a disabled policy.
+- 🔴 **I TWICE CLAIMED THE ATTRIBUTION GATE HAD FIRED WHEN IT HAD NOT, AND BOTH TIMES IT WAS MY
+  ARITHMETIC WEARING THE MACHINE'S AUTHORITY.** `audit-dispatch.py --round N` exits **0** and
+  assembles a brief; it does NOT refuse. Two independent reasons, both worth knowing before anyone
+  plans a stop around it: (a) its ledger reads **`COULD NOT MEASURE`** whenever the assembling
+  checkout is not standing on the PR head — and a failed command is NOT a zero; (b) its classifier
+  counts **block comments and docstrings as EXECUTABLE on purpose** (over-counting keeps the gate
+  silent — the fail-open direction), so a round of pure JSDoc edits still reads non-zero. The gate
+  also needs **both** of the two most recent blocks to read zero, and a ladder that honestly keeps
+  one unit across rounds will usually have a non-zero stated count in one of them.
+  **A ladder stop is a JUDGEMENT. Say so, and show the measurement it rests on.**
+- 🔴 **RETRACTION: "this repo has no `.envrc`" WAS WRONG, AND A STALE CHECKOUT MANUFACTURED THE
+  EVIDENCE.** I `ls`'d the base clone, got "No such file", and wrote the conclusion into this
+  doc — but the clone was **19 commits behind** and `.envrc` had been added in `9366021`. The file
+  is tracked and always shipped. **The real mechanism is that `direnv` authorization is PER PATH
+  and the path was `allowed 0`**, so a present, correct `.envrc` sat inert and the host's pnpm 10
+  won silently. The tell is in `direnv status`: `Found RC path …` together with `Loaded RC
+  allowed 0` — *found* and *allowed* are different fields and only the second one matters.
+  Generalises: **a file's PRESENCE is not its ACTIVATION**, and an absence measured on a stale
+  tree is not an absence.
