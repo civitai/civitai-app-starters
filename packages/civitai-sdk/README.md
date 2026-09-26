@@ -144,8 +144,11 @@ Routes are addressed by path, so a route `/api/v1` gains needs no release here:
 const images = await app.site.get('images', { query: { limit: 20, username: 'civitai' } });
 ```
 
-A `401` is retried once with a fresh token. Any other failure is an `ApiError`
-carrying `status`, the parsed `body`, and the server's own message.
+A `401` is retried once with a fresh token. Any failure the server answered is an
+`ApiError` carrying `status`, the parsed `body`, and the server's own message —
+while a request the browser never delivered (CORS, DNS, offline) surfaces as a
+fetch `TypeError` with no `status`, so test `error instanceof ApiError` before
+reading one.
 
 ## App storage
 

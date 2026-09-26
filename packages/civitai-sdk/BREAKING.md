@@ -100,9 +100,15 @@ and never sends its block token (the host injects both)"*.
 **The credential and the CORS declaration are already handled — for both, by code that exists.** `initialize()`
 wires the host session into the client, `createHttp` puts `Authorization: Bearer <token>` on every request and
 retries once on a `401` with a freshly fetched token, and the token still comes **from the host** over the
-bridge (`REQUEST_TOKEN`) — the host continues to mint and rotate it. All five routes declare
-`allowOpaqueOrigin` and the server answers `ACAO: null`. Scopes are unchanged between the two transports (see
-above). So there is no token plumbing, no CORS work and no manifest change to do.
+bridge (`REQUEST_TOKEN`) — the host continues to mint and rotate it. Scopes are unchanged between the two
+transports (see above). So there is no token plumbing, no CORS work and no manifest change to do.
+
+⚠ **The CORS mechanism differs by trust tier, though neither tier costs you any work.** An unverified block runs
+without `allow-same-origin`, so it fetches from an **opaque origin** and the five routes' `allowOpaqueOrigin`
+opt-in makes the server answer `ACAO: null`. An `internal`- or `verified`-tier block **does** get
+`allow-same-origin`, so it fetches from its **real origin**, where that arm does not apply — it clears CORS via
+the server's origin allowlist instead, which the platform populates itself from the publish-request approval
+rather than anything an author configures.
 
 The work that actually remains is four items, and it is all at the call sites:
 
@@ -112,14 +118,20 @@ The work that actually remains is four items, and it is all at the call sites:
 3. **Handle refusals as HTTP.** An `ApiError` carrying a `status`, where the bridge surfaced a rejected
    message — and the anon-write case is a `403` from the scope binding rather than anything the handler said.
    Read `message ?? error`; see *Error body* below.
+   🔴 **But not every failure is an `ApiError`.** A request the browser blocks — a CORS rejection, a DNS or
+   network failure — never reaches the response layer, so it surfaces as a **fetch `TypeError` with no
+   `status` and no body**. A `catch` that assumes `ApiError` will read `undefined` for the status and report the
+   wrong thing. The bridge had no such failure mode; this transport does. Branch on
+   `error instanceof ApiError` first and treat the rest as transport failure.
 4. **Audit every `limit` you pass** — the normalisation rules changed; see below.
 
-⚠ **This paragraph has had three framings; two are retracted.** Recorded so the ground is not re-walked:
+⚠ **This paragraph has had three framings; two claims are retracted.** Recorded so the ground is not re-walked,
+and scoped deliberately — each retraction covers only the words quoted, nothing adjacent:
 **(a)** *"a second client for these same routes"* — **false**: the hook is the bridge/tRPC path and never
-calls `/api/v1`, so the two are different transports, not two clients of one surface. **(b)** *"the port is a
-transport change; budget for the token/CORS work"* — **false**: the transport change is real, but both the
-credential and the opaque-origin declaration are already done by the SDK and the routes, so that framing sent
-the reader's effort at finished infrastructure while demoting the real work. The list above is what is
+calls `/api/v1`, so the two are different transports, not two clients of one surface.
+**(b)** *"budget for the token/CORS work"* — **false**: both the credential and the CORS declaration are already
+handled, so that advice sent the reader's effort at finished infrastructure while demoting the real work.
+🔴 The *transport* change is NOT retracted — this document still asserts it, above. The list above is what is
 measured; nothing beyond it is claimed.
 
 | | `useSharedStorage` (bridge) | `app.sharedStorage` (HTTP) |

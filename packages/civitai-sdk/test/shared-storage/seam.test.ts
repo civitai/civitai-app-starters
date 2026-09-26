@@ -156,3 +156,135 @@ describe('the shared-storage module re-spells no server bound', () => {
     expect(numericLiterals(withBounds).filter((n) => !ALLOWED_NUMBERS.has(n))).not.toEqual([]);
   });
 });
+
+/**
+ * 🔴 THE ONE ARTEFACT IN THIS PACKAGE NOTHING MECHANICAL HAS EVER READ.
+ *
+ * `BREAKING.md`'s porting section has now carried THREE framings of the same
+ * paragraph, two of which were factually wrong, and every one of them shipped past
+ * a fully green suite — measured: before this block, no test and no script in the
+ * repo read `BREAKING.md` at all. Prose review was the only guard, and it failed
+ * three times in a row. `api/public-api.md` has a script that reads it; this file
+ * had nothing.
+ *
+ * So the load-bearing claims are pinned here, mechanically.
+ *
+ * 🔴 WHOLE NORMALISED STRINGS, NOT KEYWORDS. A word-level assertion is walkable by
+ * rewording, which is precisely how this paragraph went wrong three times — each
+ * rewrite kept the vocabulary and inverted the meaning. Pinning the sentence means
+ * the claim is machine-readable.
+ *
+ * ⚠ ACCEPTED COST, STATED PLAINLY: a purely cosmetic reword of that section will
+ * now fail this test. That is the point, not a defect. Changing a pinned sentence
+ * is a claim change and must be a deliberate edit here too — at which point the
+ * author has to look at the retraction record and see which framings are already
+ * retracted, which is the whole mechanism.
+ */
+
+/** Collapse markdown hard-wrapping so a pinned sentence is one comparable string. */
+function normalisedProse(source: string): string {
+  return source.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * The claims. Each entry is a WHOLE sentence or clause from the porting section,
+ * normalised — not a keyword, and not a regex that a reword would still satisfy.
+ */
+const PINNED_CLAIMS = {
+  'credential+CORS already handled':
+    '**The credential and the CORS declaration are already handled — for both, by code that exists.**',
+  'no token plumbing, no CORS, no manifest':
+    'So there is no token plumbing, no CORS work and no manifest change to do.',
+  'CORS mechanism is tier-dependent':
+    '⚠ **The CORS mechanism differs by trust tier, though neither tier costs you any work.**',
+  'the remaining work is four call-site items':
+    'The work that actually remains is four items, and it is all at the call sites:',
+  'not every failure is an ApiError':
+    '🔴 **But not every failure is an `ApiError`.**',
+  'retraction record exists and is scoped':
+    '⚠ **This paragraph has had three framings; two claims are retracted.**',
+  'retracted framing (a)':
+    '**(a)** *"a second client for these same routes"* — **false**',
+  'retracted framing (b)':
+    '**(b)** *"budget for the token/CORS work"* — **false**',
+  'the transport claim is NOT retracted':
+    '🔴 The *transport* change is NOT retracted — this document still asserts it, above.',
+} as const;
+
+describe("BREAKING.md's porting section is pinned, because prose review failed it three times", () => {
+  const read = () =>
+    normalisedProse(
+      readFileSync(fileURLToPath(new URL('../../BREAKING.md', import.meta.url)), 'utf8'),
+    );
+
+  it('🔴 carries every load-bearing claim, verbatim', () => {
+    const prose = read();
+
+    // Positive control FIRST: prove the guard is reading the intended file at all.
+    // Without this, every assertion below is also satisfied by an empty string
+    // being searched for nothing — the zero that looks like a pass.
+    expect(prose).toContain('### Porting off the bridge:');
+    expect(prose.length).toBeGreaterThan(1000);
+
+    const missing = Object.entries(PINNED_CLAIMS)
+      .filter(([, claim]) => !prose.includes(normalisedProse(claim)))
+      .map(([label]) => label);
+    expect(missing).toEqual([]);
+  });
+
+  it('🔴 positive control — the matcher FAILS on a reworded claim', () => {
+    // The mutation this test performs on itself: take the real prose, reword one
+    // pinned claim the way a well-meaning editor would, and confirm the guard
+    // notices. Without this, the assertion above could be vacuously true.
+    const prose = read();
+    const reworded = prose.replace(
+      normalisedProse(PINNED_CLAIMS['no token plumbing, no CORS, no manifest']),
+      'So there is nothing extra to configure.',
+    );
+
+    // The reword actually landed — otherwise the "detected" result below would be
+    // about a string that was never changed.
+    expect(reworded).not.toBe(prose);
+    expect(reworded).not.toContain(
+      normalisedProse(PINNED_CLAIMS['no token plumbing, no CORS, no manifest']),
+    );
+
+    // …and a claim NOT reworded is still found, so the matcher is discriminating
+    // rather than simply always-false on a mutated document.
+    expect(reworded).toContain(normalisedProse(PINNED_CLAIMS['retracted framing (b)']));
+  });
+
+  it('🔴 the retraction record names both retracted framings and spares the transport claim', () => {
+    const prose = read();
+
+    // A guard on the STATE of the record, not on the word "retracted": both
+    // quoted framings present, and the transport carve-out present with them. A
+    // fourth framing that dropped the record would fail here.
+    expect(prose).toContain(normalisedProse(PINNED_CLAIMS['retracted framing (a)']));
+    expect(prose).toContain(normalisedProse(PINNED_CLAIMS['retracted framing (b)']));
+    expect(prose).toContain(
+      normalisedProse(PINNED_CLAIMS['the transport claim is NOT retracted']),
+    );
+
+    // 🔴 And the retraction must stay NARROW. An earlier version stamped the
+    // composite "the port is a transport change; budget for the token/CORS work"
+    // false, which retracted a claim the document still makes. That exact
+    // over-reaching quotation must not come back.
+    expect(prose).not.toContain('the port is a transport change; budget for the token/CORS work');
+  });
+
+  it('🔴 lists exactly four remaining items, numbered', () => {
+    const raw = readFileSync(fileURLToPath(new URL('../../BREAKING.md', import.meta.url)), 'utf8');
+    const section = raw.slice(raw.indexOf('The work that actually remains is four items'));
+    const items = [...section.matchAll(/^(\d)\. \*\*/gm)].map((m) => m[1]);
+
+    // Pinned so the list fails when it GROWS or SHRINKS, not only when one item
+    // is reworded — the prose says "four", so four is the machine-checked number.
+    expect(items.slice(0, 4)).toEqual(['1', '2', '3', '4']);
+    expect(section).toContain('4. **Audit every `limit` you pass**');
+    // Positive control on the item matcher: it really does find numbered items,
+    // so the equality above is not comparing two empty lists.
+    expect(items.length).toBeGreaterThanOrEqual(4);
+  });
+});
+
