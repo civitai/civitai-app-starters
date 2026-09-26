@@ -2,18 +2,26 @@
 '@civitai/app-sdk': patch
 ---
 
-Three JSDoc corrections that ship to IDE hover, plus a restored drift guard.
+JSDoc corrections that ship to IDE hover, plus a restored drift guard.
 
-Documentation only — no API, type or behaviour change. Verified two ways: the
-emitted `.js` and `.d.ts` are byte-identical between base and head for all three
-changed source files (`scopes.ts`, `messages.ts`, `browsingLevel.ts`), and
-`pnpm typecheck` exits 0.
+Documentation only — no API, type or behaviour change. Verified by compiling
+base and head with `tsc --removeComments` and diffing the emitted trees:
+identical, with a one-line code mutation confirmed to make that comparison go
+red. `pnpm typecheck` exits 0.
+
+⚠ Note for anyone re-running this: comparing the ORDINARY build output does not
+work and an earlier draft of this note said it did. `tsconfig.json` sets no
+`removeComments`, so `tsc` emits the JSDoc into both `.js` and `.d.ts` — which
+is exactly how these corrections reach IDE hover in the first place, so the
+artifacts differ by construction. The comment-stripping comparison is the one
+that reproduces.
 
 **(a) `BLOCK_SCOPE_PATTERN` said "the 12 values in {@link BLOCK_SCOPES}".** There
 are 13, in the same file fifty lines above. The figure is **removed, not
 corrected**: a count in prose is unguarded by every check in this repo, and this
-vocabulary has both gained and lost members (`catalog:read`,
-`media:read:owned`, `block:settings:*` were each declared and then removed). The
+vocabulary has both gained and lost members (`media:read:owned` and
+`block:settings:*` were each declared here and then removed; `catalog:read` is
+recorded as never having been a scope). The
 sentence now reads "exactly the values in `BLOCK_SCOPES`", which stays true
 across any future change to the set.
 
