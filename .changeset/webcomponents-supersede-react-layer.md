@@ -12,20 +12,58 @@ or `injectStyles`/`useComponentStyles`. It re-exports the generated
 `@lit/react` element bindings instead — `CivitaiButton`, `CivitaiCard`,
 `CivitaiTextInput`, and so on.
 
-Migration is a rename plus two behavioural notes:
+## Migrating
+
+The import rename is the easy half:
 
 ```diff
 -import { Button, Card, TextInput } from '@civitai/components-react';
 +import { CivitaiButton, CivitaiCard, CivitaiTextInput } from '@civitai/components-react';
 ```
 
-- Handlers receive the **DOM event**, not an extracted value:
+🔴 **Renaming alone is NOT enough, and the two worst cases are silent — they
+type-check and then quietly do the wrong thing.** The elements' prop names are
+not the React layer's prop names, and `@lit/react` passes anything it does not
+recognise straight to `React.createElement`, where an unknown name becomes a
+plain HTML attribute rather than an error.
+
+| Was (0.7.x) | Is (0.8.0) | What a bare rename does |
+|---|---|---|
+| `<Alert title="Saved">` | `<CivitaiAlert heading="Saved">` | 🔴 `title` is a **global** HTML attribute, so it becomes a mouse-hover tooltip and the bold heading silently disappears. No type error. |
+| `<Alert onClose={fn}>` | `<CivitaiAlert closable onClose={fn}>` | 🔴 `onClose` is in the event map so it type-checks and attaches, but the element renders no dismiss button without `closable`. Dead callback, no button, no error. |
+| `<Toast title=… onClose=…>` | `<CivitaiToast heading=… closable onClose=…>` | 🔴 identical to Alert, same two traps. |
+| `<Card withBorder padding="lg">` | unchanged | ✅ same names |
+| `<Button variant size loading fullWidth>` | unchanged | ✅ same names |
+
+Everything else:
+
+- **Handlers receive the DOM event**, not an extracted value:
   `onChange={(e) => e.currentTarget.value}`. Field elements re-dispatch the
-  native `change`, which commits on blur/Enter rather than per keystroke.
-- `injectStyles` is gone from this package because nothing here needs it: the
-  elements are self-styling in shadow DOM and inject the `@civitai/theme`
-  tokens themselves. Import it from `@civitai/components` if you also render
-  bare `data-civitai-ui` markup.
+  native `change`, which commits on blur/Enter rather than per keystroke — so a
+  controlled input that previously updated per keystroke now updates on commit.
+- **`injectStyles` / `useComponentStyles` are gone** from this package because
+  nothing here needs them: the elements are self-styling in shadow DOM and
+  inject the `@civitai/theme` tokens themselves. Import `injectStyles` from
+  `@civitai/components` if you also render bare `data-civitai-ui` markup.
+- **`segmentId` is gone.** It existed to wire `aria-controls` for the deleted
+  `SegmentedControl`'s `mode="tabs"`. The elements split that case out:
+  `<civitai-segmented-control>` is the panel-less `radiogroup`, and
+  `<civitai-tabs>` / `<civitai-tab-panel>` own the panel-switching one and do
+  their own wiring.
+- 🔴 **Every PROP TYPE the root used to export is gone** — `ButtonProps`,
+  `ButtonVariant`, `ButtonSize`, `CardPadding`, `Gap`, `AlertColor`,
+  `BadgeColor`, `SegmentedControlMode`, `SegmentItem`, `ImageFit`,
+  `ImageStatus`, `ToastApi`, `ToastOptions` and the rest. `export *` re-exports
+  **values only**, and the bindings derive their props from the element class
+  rather than declaring named interfaces. To name one, go through the
+  component: `React.ComponentProps<typeof CivitaiButton>`. Element-level unions
+  (`BadgeVariant`, `LoaderSize`, …) still have named exports on
+  `@civitai/components` itself — import them from there.
+
+Not a rename at all: if you were using `TabPanel`, `Toast`/`ToastProvider`/
+`useToast`, `Tooltip`, `Radio` or `Image`, read the element's own contract
+first — `civitai-toast-region` owns the live region the provider used to,
+and there is no standalone `civitai-radio` (use `<civitai-radio-group>`).
 
 **Why.** The package had been shipping two unrelated implementations behind two
 entry points: 21 hand-written components on `.` that re-rendered the
@@ -50,12 +88,22 @@ demo now does.
 **Test coverage moved rather than shrank.** The `html-vs-react-parity` suite is
 deleted: it asserted that the React arm and a hand-written HTML arm computed
 identically, and with one implementation there is no second arm — keeping it
-would have compared the elements to themselves. The axe a11y sweep and the
-opt-in visual layer were retargeted onto the elements and still cover every
-component family in light and dark. The entry-point guard that required the `.`
-entry to reach no element module was rewritten rather than dropped: it now pins
-that the root IS the presentational barrel and nothing besides, and that it
-still reaches no `@civitai/sdk`.
+would have compared the elements to themselves. The axe a11y sweep was
+retargeted onto the elements and still covers every component family in light
+and dark. The opt-in visual-regression layer was **deleted, not retargeted** —
+an audit found it had never run anywhere: its `VITE_RUN_VR` opt-in was set in
+no workflow, script or `.env`, and no baselines were ever committed. It was 46
+of the package's 99 browser tests, all of them skips. The entry-point guard
+that required the `.` entry to reach no element module was rewritten rather
+than dropped: it now pins that the root reaches nothing the presentational
+barrel does not, and that it still reaches no `@civitai/sdk`.
+
+**Release sequencing.** The two starters in this repo import the new names, and
+their `@civitai/components-react` pins are `^0.7.0` — which, being 0.x, admits
+only `0.7.x`. Between merging this and publishing 0.8.0, `npx tiged` of those
+starters scaffolds a project that does not compile. `changeset version` rewrites
+the pins, so the fix is to publish promptly rather than to change anything here;
+the nightly published-starter smoke job will flag the window while it is open.
 
 `@civitai/components` (patch): stop shipping `dist/utilities.generated.*`, about
 39 kB no consumer could reach (19,549 B of `.js` plus 19,383 B of `.d.ts` — the

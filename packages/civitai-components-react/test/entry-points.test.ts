@@ -7,12 +7,21 @@
  * supersession: the custom elements are now the only implementation, so the
  * root necessarily reaches Lit and every element it re-exports.
  *
- * What replaces it is the invariant that actually holds now — the root IS the
- * presentational barrel and nothing besides. That still fails loudly if a
- * second implementation is re-added to the root, or if the root starts
- * reaching something the barrel deliberately keeps out (notably `@civitai/sdk`,
- * which the two viewer-bound elements pull in behind their own entry).
- * Per-element bundle discipline is pinned by the single-binding test below.
+ * What replaces it is the invariant that actually holds now: the root reaches
+ * nothing the presentational barrel does not.
+ *
+ * 🔴 READ THE SCOPE — this is a check on the root's EXTERNAL SPECIFIER SET, not
+ * on what the root implements. A module added at the root that imports only
+ * things the barrel already reaches (`react`, `@lit/react`) passes this
+ * untouched: MEASURED, by adding a second `dist` module importing only `react`
+ * and re-exporting it from `dist/index.js` — 100 passed, 0 failed. It goes red
+ * only when the root gains a specifier the barrel lacks (control: the same
+ * mutant importing `clsx` fails this test by name). **A hand-written React
+ * component re-added to the package is caught by `bindings.test.ts`'s
+ * "src holds only the entry and generated bindings", not here.** What this
+ * test does own is the `@civitai/sdk` boundary — the two viewer-bound elements
+ * must stay behind their own entry. Per-element bundle discipline is pinned by
+ * the single-binding test below.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';

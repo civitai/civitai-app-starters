@@ -75,6 +75,40 @@ const CASES: { id: string; markup: string; prepare?: (scope: HTMLElement) => voi
       ];
     },
   },
+  // Migrated from `@civitai/components-react`'s axe sweep when that arm was
+  // retired as a duplicate of this one (components-react@0.8.0). These nine
+  // were the cases it covered that this suite did not; the other 15 were
+  // already here, testing the same elements through the same axe options.
+  { id: 'card', markup: '<civitai-card padding="md" with-border>Card body</civitai-card>' },
+  { id: 'stack', markup: '<civitai-stack gap="md"><span>one</span><span>two</span></civitai-stack>' },
+  { id: 'group', markup: '<civitai-group gap="md"><span>one</span><span>two</span></civitai-group>' },
+  { id: 'alert', markup: '<civitai-alert color="info" heading="Heads up">Your generation is queued.</civitai-alert>' },
+  {
+    id: 'alert/closable',
+    markup:
+      '<civitai-alert color="error" heading="Failed" closable close-label="Dismiss">The workflow was rejected.</civitai-alert>',
+  },
+  { id: 'badge', markup: '<civitai-badge variant="filled" size="md">ready</civitai-badge>' },
+  { id: 'loader', markup: '<civitai-loader size="md" label="Loading"></civitai-loader>' },
+  {
+    id: 'select/invalid',
+    markup: '<civitai-select label="Sampler" error="Pick a sampler"></civitai-select>',
+    prepare: (scope) => {
+      (scope.querySelector('civitai-select') as HTMLElement & { data: unknown }).data = [
+        { value: 'euler', label: 'Euler' },
+      ];
+    },
+  },
+  {
+    id: 'radio-group/invalid',
+    markup: '<civitai-radio-group label="Base model" error="Choose a model"></civitai-radio-group>',
+    prepare: (scope) => {
+      (scope.querySelector('civitai-radio-group') as HTMLElement & { data: unknown }).data = [
+        { value: 'sd15', label: 'SD 1.5' },
+        { value: 'sdxl', label: 'SDXL' },
+      ];
+    },
+  },
   { id: 'collapse', markup: '<civitai-collapse heading="Advanced">body</civitai-collapse>' },
   { id: 'collapse/open', markup: '<civitai-collapse heading="Advanced" open>body</civitai-collapse>' },
   { id: 'slider', markup: '<civitai-slider label="CFG" min="1" max="20" value="7"></civitai-slider>' },

@@ -1,10 +1,19 @@
 import type { Metadata } from 'next';
 import './globals.css';
-// Civitai design system — tokens + component CSS. Loaded in the layout so the
-// styles are present in the SSR HTML on first paint (order-locked by the
-// @layer declaration at the top of globals.css).
+// Civitai design-system TOKENS. Loaded in the layout so the custom properties
+// are present in the SSR HTML on first paint (order-locked by the @layer
+// declaration at the top of globals.css).
+//
+// The component SHEET (`@civitai/components/styles.css`) is deliberately NOT
+// imported. This starter renders the design system through
+// `@civitai/components-react`, which since 0.8.0 binds the `<civitai-*>` custom
+// elements; those style themselves in shadow DOM off these tokens and never
+// read that sheet, so importing it shipped ~32 kB of unused CSS on the critical
+// path of the starter that exists for SEO. Add it back (with the
+// `@civitai/components` dependency) if you write bare `data-civitai-ui` markup
+// — see that package's MARKUP.md. The Svelte starters do exactly that, and
+// import it for real.
 import '@civitai/theme/styles.css';
-import '@civitai/components/styles.css';
 
 export const metadata: Metadata = {
   title: 'Civitai App Starter',

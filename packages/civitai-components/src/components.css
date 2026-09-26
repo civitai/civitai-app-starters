@@ -330,9 +330,13 @@
      *   - `civitai-blocks-react/test/Group.test.tsx` reads the wrap default off
      *     ITS `<Group>` and compares it to this rule, so flipping either alone
      *     fails;
-     *   - `civitai-components/test/presentational-parity.browser.test.ts`
-     *     (`group/nowrap`) compares `<civitai-group nowrap>` against the bare
-     *     `data-nowrap` markup, with `flexWrap` among the properties it reads.
+     *   - `civitai-components/test/presentational-parity.browser.test.ts`,
+     *     case **`group`** — compares `<civitai-group>` against the bare
+     *     `data-civitai-ui="group"` markup with `flexWrap` among the properties
+     *     it reads. 🔴 It is `group`, NOT `group/nowrap`: that case sets
+     *     `nowrap` on BOTH arms, so both resolve to `flex-wrap: nowrap` and it
+     *     stays green through a deletion of the rule below. Mutate the rule and
+     *     check the wrong case and you will conclude it is unguarded.
      *
      * 🔴 THE MIDDLE SURFACE IS GONE, and so is the test that used to pin it.
      * `@civitai/components-react@0.8.0` deleted its hand-written `<Group>` when
@@ -349,9 +353,11 @@
      * them identically and only an absolute anchor could see it.
      * `presentational-parity`'s arms are independent IMPLEMENTATIONS, so
      * deleting `flex-wrap` here moves the legacy arm alone and the comparison
-     * fails. ⚠ That is a STRUCTURAL reading of the two files, not a mutation
-     * run — the browser suites do not run on the machine this was written on,
-     * so nobody has watched that mutant go red.
+     * fails. WATCHED, not inferred: deleting `flex-wrap: wrap` from this block
+     * in `styles.generated.ts` (the string the browser test injects) fails
+     * `light / group` and `dark / group` with
+     * `flexWrap: expected 'wrap' to be 'nowrap'` — 2 failed / 66 passed;
+     * restoring it returns 68/68.
      *
      * 🔴 The three-surface distinction is load-bearing for the RELEASE, not just
      * the prose: "existing callers notice" is what `RELEASING.md` reserves

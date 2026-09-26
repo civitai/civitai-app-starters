@@ -436,8 +436,11 @@ its own verbs instead — `<civitai-toast-region>` has `show(options)`,
 
 ## Markup contract
 
-Styling is selected entirely by `data-*` attributes; any HTML that follows the
-contract below renders identically to the React bindings. **`legend`:** _bold_ =
+Styling is selected entirely by `data-*` attributes, so any HTML that follows
+the contract below picks up the design system without a framework. It is no
+longer comparable to "the React bindings": since components-react@0.8.0 those
+bind the `<civitai-*>` elements, which style themselves in shadow DOM and do
+not consume this sheet at all. **`legend`:** _bold_ =
 required for correct styling + a11y. [`MARKUP.md`](./MARKUP.md) is the canonical
 source (with per-component examples + a11y wiring) and the executable contract
 this package's own browser suites enforce — `presentational-parity` compares
