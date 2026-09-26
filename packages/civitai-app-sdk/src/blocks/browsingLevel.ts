@@ -62,7 +62,10 @@ export const NSFW_LEVELS = BrowsingLevel.R | BrowsingLevel.X | BrowsingLevel.XXX
  * block must therefore treat "unknown" as SFW and hide mature affordances
  * until proven otherwise.
  *
- * @param maxBrowsingLevel the domain ceiling bitmask from `BLOCK_INIT`.
+ * @param maxBrowsingLevel the ceiling to test — WHICHEVER you pass. Named for
+ * the domain mask because that was the only ceiling when this shipped; when
+ * gating for a viewer pass {@link effectiveBrowsingCeiling}'s result instead,
+ * or this answers "is the DOMAIN SFW?" and not "may I show THIS viewer".
  * @example
  * isSfwCeiling(BrowsingLevel.PG | BrowsingLevel.PG13); // true  (green/blue)
  * isSfwCeiling(BrowsingLevel.PG | BrowsingLevel.X);     // false (mature)
@@ -177,14 +180,21 @@ export function effectiveBrowsingCeiling(
  * it. `null` / absent means the host did not project a domain (treat as
  * unknown ⇒ fail-closed SFW).
  *
- * 🔴 Gate on {@link effectiveBrowsingCeiling}`(maxBrowsingLevel,
- * effectiveBrowsingLevel)`, never on this string and never on
- * `maxBrowsingLevel` alone. This docblock used to say *"use `isSfwCeiling` on
- * the accompanying `maxBrowsingLevel` mask instead"*, and that was wrong in the
- * way that matters: `maxBrowsingLevel` is a property of the DOMAIN, identical
- * for every viewer on `civitai.red` including one whose own NSFW setting is
- * off, so it cannot answer "may I show THIS viewer mature content".
- * `isSfwCeiling` is still correct for the question it does answer — "is this
- * DOMAIN SFW?" — which is not this one.
+ * 🔴 Never gate on this string, and never on `maxBrowsingLevel` alone. Resolve
+ * the ceiling with {@link effectiveBrowsingCeiling}, then test it with
+ * {@link isSfwCeiling} or {@link isLevelAllowed}:
+ *
+ * ```ts
+ * const eff = effectiveBrowsingCeiling(maxBrowsingLevel, effectiveBrowsingLevel);
+ * isSfwCeiling(eff);                       // may I show mature at all?
+ * isLevelAllowed(BrowsingLevel.R, eff);    // may I show THIS level?
+ * ```
+ *
+ * This docblock used to say *"use `isSfwCeiling` on the accompanying
+ * `maxBrowsingLevel` mask instead"*. The predicate was never the problem — both
+ * predicates take WHATEVER CEILING YOU PASS — the problem was passing the
+ * domain one, which is identical for every viewer on `civitai.red` including
+ * one whose own NSFW setting is off, so it cannot answer "may I show THIS
+ * viewer mature content".
  */
 export type ColorDomain = 'green' | 'blue' | 'red';

@@ -195,13 +195,20 @@ export interface BlockInitPayload {
   /**
    * The color-domain the block is rendered inside (`green` | `blue` | `red`),
    * or `null` when the host did not resolve one. Informational ONLY — the SFW
-   * policy is server-side; gate on {@link effectiveBrowsingLevel} rather than
-   * on this string — via `effectiveBrowsingCeiling(maxBrowsingLevel,
-   * effectiveBrowsingLevel)` in any runtime, or, in React, the `isSfw` /
-   * `isLevelAllowed` that `@civitai/blocks-react`'s `useDomainMaturity()`
-   * returns. 🔴 Those two are the HOOK'S members; this package also exports a
-   * standalone `isLevelAllowed`, which takes the DOMAIN ceiling and answers a
-   * different question.
+   * policy is server-side; never gate on this string. Resolve the ceiling
+   * first, then test it — in any runtime:
+   *
+   * ```ts
+   * const eff = effectiveBrowsingCeiling(maxBrowsingLevel, effectiveBrowsingLevel);
+   * if (isSfwCeiling(eff)) hideMatureAffordances();
+   * if (isLevelAllowed(BrowsingLevel.R, eff)) showR();
+   * ```
+   *
+   * 🔴 `effectiveBrowsingCeiling` returns a BITMASK, not a boolean — an SFW
+   * ceiling is `3`, which is truthy, so branching on it directly shows mature
+   * content to a viewer who may not see it. It needs one of the two predicates
+   * above. In React, `@civitai/blocks-react`'s `useDomainMaturity()` returns
+   * `isSfw` / `isLevelAllowed` already composed this way.
    *
    * Sent by civitai/civitai PR #2670. A host that predates it omits this field
    * (reads `undefined`).
@@ -244,9 +251,13 @@ export interface BlockInitPayload {
    *      WIDER than the domain permits and is not permission for anything.
    *
    * ADDITIVE + OPTIONAL. A host that predates it omits the field, in which case
-   * `useDomainMaturity()` falls back to `maxBrowsingLevel` — i.e. exactly the
-   * behaviour that host already had. Read it through the hook rather than
-   * directly, so the fallback and the fail-closed defaults are applied for you.
+   * the ceiling falls back to {@link maxBrowsingLevel} — i.e. exactly the
+   * behaviour that host already had. Do not read this field directly: pass it
+   * through `effectiveBrowsingCeiling`, which applies that fallback and the
+   * fail-closed defaults for you. `@civitai/blocks-react`'s
+   * `useDomainMaturity()` is the React wrapper over the same thing — it is one
+   * way to get this right, not the only one, since this module is
+   * runtime-agnostic and two of the starters ship without React.
    */
   effectiveBrowsingLevel?: number;
 }

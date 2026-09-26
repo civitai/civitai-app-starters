@@ -30,13 +30,18 @@ side grows *or* shrinks.
 
 🔴 **That guard is NOT justified by the comment edit, and an earlier draft of
 this changeset said it was.** It re-instates a guard a refactor dropped:
-`test/blocks/schema-parity.test.ts` carried exactly this assertion — *"DRIFT
-GUARD: the schema's scope enum is EXACTLY the SDK's BLOCK_SCOPES set. If either
-side gains/loses a scope without the other, this fails"* — until `d41293d`
-(#352) rewrote that file as an Ajv-backed **differential**, which judges
-fixtures rather than constant sets, taking this assertion as collateral.
-(`BLOCK_CATEGORIES` ↔ the schema's `category` enum went the same way and is not
-restored here.)
+`test/blocks/schema-parity.test.ts` carried this claim — *"DRIFT GUARD: the
+schema's scope enum is EXACTLY the SDK's BLOCK_SCOPES set. If either side
+gains/loses a scope without the other, this fails"* — until `d41293d` (#352)
+**deleted** that file, rewriting schema-parity as an Ajv-backed **differential**
+which judges fixtures rather than constant sets. This assertion went as
+collateral. (`BLOCK_CATEGORIES` ↔ the schema's `category` enum went the same way
+and is not restored here.)
+
+⚠ Not byte-for-byte the same assertion, and the difference is the one this
+section argues about: the historic form compared two `Set`s, which structurally
+cannot see a duplicate. The sorted-array form can — so the duplicate case is a
+real addition, not something previously guarded and lost.
 
 It earns its place independently of any docstring, because `BLOCK_SCOPES` is a
 live enforcement surface in a second package: `civitai-blocks-react`'s
@@ -60,18 +65,30 @@ that field is a property of the DOMAIN, identical for every viewer on
 `civitai.red` including one whose own NSFW setting is off, so it cannot answer
 "may I show THIS viewer mature content".
 
-The same conflation appeared in the sibling `domain` docblock, which told
-readers to derive "is this SFW?" from `maxBrowsingLevel`. Both now defer to
-`useDomainMaturity()` / {@link effectiveBrowsingLevel}, which is what the
-`effectiveBrowsingLevel` field's own docblock in this file — and
-`browsingLevel.ts`'s `isSfwCeiling` and `effectiveBrowsingCeiling` docblocks —
-have said all along. `isSfwCeiling` is still named for the question it does
-answer ("is this DOMAIN SFW?"), because that function is correct and correctly
-documented where it is defined.
+The same conflation appeared in the sibling `domain` docblock, and in
+`ColorDomain`'s own docblock in `browsingLevel.ts` — which matters because
+`ColorDomain` **is** the declared type of `domain`, so the discredited sentence
+was one hover away from the corrected one on the same line. All are swept, and
+the fix now names the complete recipe rather than a half of it:
 
-No new explanation was written for (b): the wording is taken from the sibling
-field's existing docblock, so this is the package agreeing with itself rather
-than a fresh characterisation.
+```ts
+const eff = effectiveBrowsingCeiling(maxBrowsingLevel, effectiveBrowsingLevel);
+isSfwCeiling(eff);                     // may I show mature at all?
+isLevelAllowed(BrowsingLevel.R, eff);  // may I show THIS level?
+```
+
+⚠ Two retractions of this changeset's own earlier drafts, because both were
+wrong in the direction that misleads. (1) It said the standalone
+`isLevelAllowed` "takes the DOMAIN ceiling and answers a different question" —
+false: both predicates are ceiling-GENERIC, and the hook implements its members
+by calling exactly these two with the effective ceiling. The domain-ness is in
+which ceiling you pass, never in the function. (2) It framed
+`effectiveBrowsingCeiling` as something to "gate on" — it returns a BITMASK, and
+an SFW ceiling is `3`, which is truthy, so branching on it directly shows mature
+content to a viewer who may not see it.
+
+This is the third documented instance in this arc of a replacement sentence
+being the next defect, so the recipe above is written as code rather than prose.
 
 ⚠ **An earlier draft justified (b) by saying a regenerate would re-import the
 error into the developer docs. That is FALSE and is retracted.** Measured:
