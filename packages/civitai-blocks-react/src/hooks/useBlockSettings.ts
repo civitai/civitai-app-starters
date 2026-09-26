@@ -12,9 +12,10 @@ export type UseBlockSettings = BlockSettings;
  * Shorthand for `useBlockContext().settings`. Returns the publisher- and
  * user-controlled settings the host forwarded at init. Read-only from the
  * iframe — there is no general "set settings" bridge message. Writing them is
- * platform-side, in Civitai's own app settings panel. The one setting a block
- * can write itself is the viewer's checkpoint, via the `SET_USER_CHECKPOINT`
- * message (see `useCheckpointPicker`).
+ * platform-side, in the settings panel reached from the **Manage** control on
+ * an installed app. The one setting a block can write itself is the viewer's
+ * checkpoint, via the `SET_USER_CHECKPOINT` message (see
+ * `useCheckpointPicker`).
  *
  * @example
  * const { publisherSettings, userSettings } = useBlockSettings();

@@ -34,9 +34,17 @@
  *
  * 🔴 KNOWN LIMITS:
  *   - `RETIRED_ROUTES` is a hand-maintained mirror of civitai's
- *     `next.config.mjs` redirect block. This repo cannot read that file, so a
- *     route retired AFTER this list was written is invisible here. The list is
- *     a floor, not a discovery mechanism.
+ *     `next.config.mjs` redirect block, so a route retired AFTER this list was
+ *     written is invisible here. The list is a floor, not a discovery
+ *     mechanism.
+ *     ⚠ It is hand-maintained by CHOICE, not by constraint — an earlier draft
+ *     of this comment claimed "this repo cannot read that file" and that was
+ *     FALSE. `ci.yml`'s `design-system-drift-guard` job already sparse-checks
+ *     out `civitai/civitai` to `.civitai-src` in cone mode, which always
+ *     includes repository-root files, so `next.config.mjs` — carrying all four
+ *     entries — is on disk in that job today with no config change. Deriving
+ *     the list there would turn this floor into real discovery; it is not done
+ *     here only because this guard runs in a job that has no such checkout.
  *   - It is a text scan. A retired route named inside a RETRACTION ("this used
  *     to say /apps/installed, which was false") would fail this guard even
  *     though it is correct prose. That is deliberate: there are zero such
@@ -69,6 +77,20 @@ const RETIRED_ROUTES = {
 };
 
 /**
+ * Reader-facing docs at the repo root. These do NOT ship to npm, so they are
+ * not "published" in the sense the packages are — but they are the repo's
+ * front door, and a retired route in them misdirects a reader exactly as hard.
+ *
+ * 🔴 THEY ARE IN SCOPE BECAUSE THE ROUTE LIST SAYS THEY MUST BE. An earlier
+ * draft scanned published packages only, while `RETIRED_ROUTES` named four
+ * routes — so the guard reported PASS over three live `/apps/my-submissions`
+ * instructions in these very files, for a route on its own list. A guard that
+ * lists four and enforces one reads as coverage while providing none, which is
+ * worse than not listing them.
+ */
+const REPO_DOCS = ['README.md', 'docs'];
+
+/**
  * Coverage floors. An unasserted count is indistinguishable from a scanner
  * wired to nothing: without these, a bad glob, a renamed `packages/` dir or a
  * discovery step that silently returned [] all read as a clean PASS.
@@ -79,6 +101,7 @@ const RETIRED_ROUTES = {
  */
 const MIN_PUBLISHED_PACKAGES = 6;
 const MIN_SCANNED_FILES = 50;
+const MIN_REPO_DOCS = 2;
 
 /** `true` when the package.json is published to npm (i.e. not `private`). */
 function isPublished(pkgJsonPath) {
@@ -144,8 +167,32 @@ function routeMatcher(route) {
   return new RegExp(`${escaped}(?![a-z0-9-])`, 'g');
 }
 
+/** Markdown under the repo-root doc surfaces, recursively. */
+function repoDocFiles() {
+  const out = [];
+  const walk = (abs) => {
+    let stat;
+    try {
+      stat = statSync(abs);
+    } catch {
+      return; // a listed doc surface that does not exist is caught by the floor
+    }
+    if (stat.isFile()) {
+      if (abs.endsWith('.md') && !abs.endsWith('CHANGELOG.md')) out.push(abs);
+      return;
+    }
+    for (const entry of readdirSync(abs, { withFileTypes: true })) {
+      if (entry.isDirectory() && SKIP_DIRS.has(entry.name)) continue;
+      walk(join(abs, entry.name));
+    }
+  };
+  for (const rel of REPO_DOCS) walk(join(REPO_ROOT, rel));
+  return out;
+}
+
 const PACKAGE_DIRS = publishedPackageDirs();
-const SCANNED = PACKAGE_DIRS.flatMap(filesToScan);
+const REPO_DOC_FILES = repoDocFiles();
+const SCANNED = [...PACKAGE_DIRS.flatMap(filesToScan), ...REPO_DOC_FILES];
 
 const HITS = [];
 for (const file of SCANNED) {
@@ -210,6 +257,13 @@ test('the scan actually read the published packages (positive control)', () => {
     SCANNED.length >= MIN_SCANNED_FILES,
     `expected >= ${MIN_SCANNED_FILES} scanned files, got ${SCANNED.length}`,
   );
+  // The repo-root docs are a SEPARATE discovery path from the packages, so the
+  // package floor above cannot detect it silently returning nothing.
+  assert.ok(
+    REPO_DOC_FILES.length >= MIN_REPO_DOCS,
+    `expected >= ${MIN_REPO_DOCS} repo-root doc files, got ${REPO_DOC_FILES.length}` +
+      ` — did README.md or docs/ move?`,
+  );
   // Prove the files were READ, not merely listed: the entry point of the
   // package this guard was written for must be present and non-empty.
   const settingsHook = SCANNED.find((f) => f.endsWith('src/hooks/useBlockSettings.ts'));
@@ -230,10 +284,14 @@ test('no published package names a retired /apps/* route', () => {
       'These routes 301, so the instruction does not merely read as stale — it',
       'sends the reader to a page that cannot do what the sentence promises.',
       '',
+      'Name the live route, or better, the AFFORDANCE a reader can see — the',
+      '"Manage" control, the submit flow. Naming a live route is fine and this',
+      'repo does it in several places; only a RETIRED one is the defect here.',
+      '',
       'If the sentence is about writing app settings: that happens platform-side,',
-      'in civitai’s own app settings panel, through',
-      '`trpc.blocks.upsertSubscription`. Describe the mechanism and do NOT name a',
-      'URL — naming one is how the previous text rotted.',
+      'in the panel reached from the "Manage" control, through',
+      '`trpc.blocks.upsertSubscription`. Prefer the affordance to a URL there —',
+      'that panel is a modal with three entry points, so no single URL is true.',
       '',
       'A docblock under `src/` reaches IDE hover for every consumer via the',
       'emitted .d.ts, so a wrong one there is worse than a wrong docs page.',
