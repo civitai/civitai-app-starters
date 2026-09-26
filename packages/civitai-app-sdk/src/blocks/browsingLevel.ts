@@ -62,6 +62,13 @@ export const NSFW_LEVELS = BrowsingLevel.R | BrowsingLevel.X | BrowsingLevel.XXX
  * block must therefore treat "unknown" as SFW and hide mature affordances
  * until proven otherwise.
  *
+ * ⚠ A NEGATIVE ceiling is none of those three and fails OPEN:
+ * `isSfwCeiling(-1)` is `false` and `isLevelAllowed(XXX, -1)` is `true`, because
+ * two's complement sets every bit. {@link effectiveBrowsingCeiling} guards a
+ * negative VIEWER level but not a negative DOMAIN ceiling, so the recipe does
+ * not neutralise it either. Stated rather than fixed: adding the guard is a
+ * behaviour change and belongs in its own release.
+ *
  * @param maxBrowsingLevel the ceiling to test — WHICHEVER you pass. Named for
  * the domain mask because that was the only ceiling when this shipped; when
  * gating for a viewer pass {@link effectiveBrowsingCeiling}'s result instead,
@@ -84,6 +91,13 @@ export function isSfwCeiling(maxBrowsingLevel?: number | null): boolean {
  * **Fail-closed.** A missing / null / non-finite ceiling permits ONLY SFW
  * levels (PG / PG13) — same fail-closed posture as {@link isSfwCeiling}. A
  * non-finite / non-positive `level` returns `false`.
+ *
+ * ⚠ A NEGATIVE ceiling is none of those three and fails OPEN:
+ * `isSfwCeiling(-1)` is `false` and `isLevelAllowed(XXX, -1)` is `true`, because
+ * two's complement sets every bit. {@link effectiveBrowsingCeiling} guards a
+ * negative VIEWER level but not a negative DOMAIN ceiling, so the recipe does
+ * not neutralise it either. Stated rather than fixed: adding the guard is a
+ * behaviour change and belongs in its own release.
  *
  * @param level a single `BrowsingLevel` bit (e.g. `BrowsingLevel.R`).
  * @param maxBrowsingLevel the ceiling to test — WHICHEVER you pass. Named for
