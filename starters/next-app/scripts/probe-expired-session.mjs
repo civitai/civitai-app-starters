@@ -34,9 +34,12 @@
  *      third-party client, so this is the load-bearing arm.
  *   E. `BuzzRead` absent from the token scope -> the request is not made at all.
  *
- * Measured on `main` @ b25658e, before the fix: C fails on both the row and the
- * value with ZERO buzz requests (the app never called the endpoint), and D/E
- * pass vacuously for the same reason.
+ * MEASURED at `origin/main` @ 5e071c4 with this probe copied into a clean
+ * worktree of that ref: ALL THREE arms fail, 6 checks in total. `buzz requests`
+ * is 0 in every one (the app never called the endpoint at all), C misses the
+ * value, and D and E both still render the row — as a literal em dash, which is
+ * the bug. At HEAD: C 1 request + the value present, D 1 request + no row + no
+ * dash + no banner, E 0 requests + no row.
  *
  *   node scripts/probe-expired-session.mjs
  *   PROBE_SKIP_BUILD=1 node scripts/probe-expired-session.mjs   # reuse .next
