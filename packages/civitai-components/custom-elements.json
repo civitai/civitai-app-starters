@@ -6433,7 +6433,7 @@
       "declarations": [
         {
           "kind": "class",
-          "description": "Text and headings — the typography primitive, and the mirror of the\n`[data-civitai-ui='text']` rules in src/components.css. Every value here\ncomputes identically to that attribute markup;\n`test/presentational-parity.browser.test.ts` is what says so.\n\n(That one path is deliberately unbackticked. `test/css-templates.test.ts`\nfinds css literals by scanning for the three letters c-s-s followed by a\nbacktick, so a backticked stylesheet path reads as a tagged template and\nevery real literal after it is then parsed from the wrong offset. It caught\nthis file twice while it was being written.)",
+          "description": "Text and headings — the typography primitive, and the mirror of the\n`[data-civitai-ui='text']` rules in src/components.css. Every value here\ncomputes identically to that attribute markup;\n`test/presentational-parity.browser.test.ts` is what says so.\n\nWHY AN ELEMENT AT ALL, stated accurately because the tempting version is\nfalse: it is NOT that every component here ships both tracks. Most do not —\nthe clear majority of the elements in this directory have no\n`[data-civitai-ui=...]` rule at all (`civitai-modal`, `civitai-menu`,\n`civitai-table`, `civitai-tabs`, `civitai-switch`, `civitai-avatar`, ...). The\nrelationship that does hold is the CONVERSE — nearly every attribute slug in\nthe sheet also has an element — and Text keeping both is a CHOICE to stay on\nthe side of that pattern and of a published consumption mode, not a rule the\npack enforces. Measured counts and the date are in the commit message.\n\n(That one path is deliberately unbackticked. `test/css-templates.test.ts`\nfinds css literals by scanning for the three letters c-s-s followed by a\nbacktick, so a backticked stylesheet path reads as a tagged template and\nevery real literal after it is then parsed from the wrong offset. It caught\nthis file twice while it was being written.)",
           "name": "CivitaiText",
           "members": [
             {
@@ -6469,17 +6469,6 @@
               "default": "'normal'",
               "attribute": "weight",
               "reflects": true
-            },
-            {
-              "kind": "field",
-              "name": "color",
-              "privacy": "public",
-              "type": {
-                "text": "TextColor | ''"
-              },
-              "default": "''",
-              "attribute": "color",
-              "reflects": true
             }
           ],
           "attributes": [
@@ -6507,14 +6496,6 @@
               },
               "default": "'normal'",
               "fieldName": "weight"
-            },
-            {
-              "name": "color",
-              "type": {
-                "text": "TextColor | ''"
-              },
-              "default": "''",
-              "fieldName": "color"
             }
           ],
           "superclass": {

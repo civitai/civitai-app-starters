@@ -41,8 +41,21 @@ describe('markup contract', () => {
     expect(el.tagName).toBe('P');
     expect(el.getAttribute('data-size')).toBe('md');
     expect(el.getAttribute('data-weight')).toBe('normal');
-    // No `color` prop => no data-color attribute, so the body colour wins.
-    expect(el.hasAttribute('data-color')).toBe(false);
+    /*
+     * The EXACT set of data-* attributes the binding emits. This replaces a bare
+     * `hasAttribute('data-color') === false`, which was written when the colour
+     * axis existed and would have been vacuous once it was dropped — nothing can
+     * emit `data-color` any more, so the old line could never fail again.
+     *
+     * An exact set is not vacuous: it fails if the emitted set GROWS (colour, or
+     * any other axis, comes back without the docs and the parity fixtures moving
+     * with it) and if it SHRINKS (size or weight silently stops being emitted,
+     * which is how the binding would drift from MARKUP.md).
+     */
+    expect(
+      [...el.attributes].map((a) => a.name).filter((n) => n.startsWith('data-')).sort(),
+      'the Text binding emits a different data-* set than MARKUP.md documents'
+    ).toEqual(['data-civitai-ui', 'data-size', 'data-weight']);
   });
 
   it('Text `as` renders a REAL heading element, not a styled box', () => {
@@ -56,8 +69,11 @@ describe('markup contract', () => {
   });
 
   it('Text size is independent of the element, so an h2 can be small print', () => {
+    // The `color="dimmed"` prop this case used to also pass is gone with the
+    // colour axis; the test's own subject — size not following the element — is
+    // untouched, and it still asserts the tag, the size and the weight.
     const { container } = render(
-      <Text as="h2" size="xs" weight="semibold" color="dimmed">
+      <Text as="h2" size="xs" weight="semibold">
         Caption
       </Text>
     );
@@ -65,7 +81,23 @@ describe('markup contract', () => {
     expect(el.tagName).toBe('H2');
     expect(el.getAttribute('data-size')).toBe('xs');
     expect(el.getAttribute('data-weight')).toBe('semibold');
-    expect(el.getAttribute('data-color')).toBe('dimmed');
+  });
+
+  it('Text carries the headline end of the ramp, which is what it exists for', () => {
+    // The converse of the case above, and the one the component is justified on:
+    // a level-1 heading at the top of the scale. `5xl` is 40px = `ci-fs-1`, the
+    // largest step the pack expresses either way — before the ramp was extended
+    // the maximum was 20px = `ci-fs-5`, so `<Text as="h1">` could not render a
+    // headline at all.
+    const { container } = render(
+      <Text as="h1" size="5xl" weight="bold">
+        Generate an image
+      </Text>
+    );
+    const el = container.querySelector('[data-civitai-ui="text"]')!;
+    expect(el.tagName).toBe('H1');
+    expect(el.getAttribute('data-size')).toBe('5xl');
+    expect(el.getAttribute('data-weight')).toBe('bold');
   });
 
   it('Button renders the attribute contract + defaults', () => {

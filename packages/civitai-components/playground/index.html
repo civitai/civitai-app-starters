@@ -109,11 +109,19 @@
 
     <h2>Text &mdash; every size, and level independent of size</h2>
     <civitai-stack gap="md">
-      <civitai-text as="h3" size="xl" weight="bold">Generate an image</civitai-text>
+      <civitai-text as="h3" size="4xl" weight="bold">Generate an image</civitai-text>
       <civitai-text>A paragraph at the md default.</civitai-text>
+      <!-- The whole ramp, top to bottom. ONE scale: everything from `lg` up is a
+           value `utilities.css` already ships as `ci-fs-N`, counting the other
+           way — `lg`=ci-fs-6, `xl`=ci-fs-5, `2xl`=ci-fs-4, `3xl`=ci-fs-3,
+           `4xl`=ci-fs-2, `5xl`=ci-fs-1. Nothing above ci-fs-1 is invented. -->
       <civitai-stack gap="sm">
-        <civitai-text size="xl">xl &mdash; 20px, tighter leading</civitai-text>
-        <civitai-text size="lg">lg &mdash; 16px</civitai-text>
+        <civitai-text size="5xl">5xl &mdash; 40px = ci-fs-1</civitai-text>
+        <civitai-text size="4xl">4xl &mdash; 32px = ci-fs-2</civitai-text>
+        <civitai-text size="3xl">3xl &mdash; 28px = ci-fs-3</civitai-text>
+        <civitai-text size="2xl">2xl &mdash; 24px = ci-fs-4</civitai-text>
+        <civitai-text size="xl">xl &mdash; 20px = ci-fs-5, tighter leading from here up</civitai-text>
+        <civitai-text size="lg">lg &mdash; 16px = ci-fs-6</civitai-text>
         <civitai-text size="md">md &mdash; 14px, the default</civitai-text>
         <civitai-text size="sm">sm &mdash; 13px</civitai-text>
         <civitai-text size="xs">xs &mdash; 12px</civitai-text>
@@ -124,17 +132,19 @@
         <civitai-text weight="semibold">semibold</civitai-text>
         <civitai-text weight="bold">bold</civitai-text>
       </civitai-group>
-      <civitai-group>
-        <civitai-text color="dimmed">dimmed</civitai-text>
-        <civitai-text color="info">info</civitai-text>
-        <civitai-text color="success">success</civitai-text>
-        <civitai-text color="warning">warning</civitai-text>
-        <civitai-text color="error">error</civitai-text>
-      </civitai-group>
+      <!-- NO COLOUR ROW, and not an omission: this component has no `color`
+           attribute, because `color` inherits and `utilities.css` already ships
+           every value one would take (`ci-muted`, `ci-text-info`/`-success`/
+           `-warning`/`-error`, `ci-text-default`). There is no row here rather
+           than a broken one because THIS PAGE DOES NOT LOAD THAT SHEET —
+           `injectStyles()` injects the tokens and the component CSS only, so a
+           `ci-muted` written here would render as plain body copy and read as a
+           bug in the utility. demo/index.html links utilities.css and shows it
+           working. -->
       <!-- A real <h4>, deliberately set smaller than the body copy above it:
            `as` is the outline, `size` is the design, and neither implies the
            other. Check the accessibility tree — it is still a level-4 heading. -->
-      <civitai-text as="h4" size="xs" color="dimmed">A small-print h4</civitai-text>
+      <civitai-text as="h4" size="xs">A small-print h4</civitai-text>
     </civitai-stack>
 
     <h2>Presentational primitives</h2>

@@ -34,10 +34,13 @@ const CASES: { id: string; markup: string; prepare?: (scope: HTMLElement) => voi
   {
     id: 'text/headings',
     markup:
-      '<civitai-text as="h1" size="xl" weight="bold">Generate an image</civitai-text>' +
-      '<civitai-text as="h2" size="lg" weight="semibold">Settings</civitai-text>' +
+      // `4xl`/`2xl` rather than `xl`/`lg`: a heading sweep should exercise the
+      // sizes a real headline uses. Colour is a `ci-*` utility now, not an
+      // attribute, and it is not part of what axe reads here.
+      '<civitai-text as="h1" size="4xl" weight="bold">Generate an image</civitai-text>' +
+      '<civitai-text as="h2" size="2xl" weight="semibold">Settings</civitai-text>' +
       '<civitai-text>Pick a model, then press Generate.</civitai-text>' +
-      '<civitai-text as="span" size="xs" color="dimmed">Costs Buzz</civitai-text>',
+      '<civitai-text as="span" size="xs">Costs Buzz</civitai-text>',
   },
   { id: 'text-input', markup: '<civitai-text-input label="Prompt"></civitai-text-input>' },
   {

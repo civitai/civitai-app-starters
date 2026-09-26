@@ -57,11 +57,13 @@ styles it:
   **`<span>`** for inline text inside a sentence. A heading MUST be a real
   heading element: that is what puts it in the document outline and in a screen
   reader's heading list, and a styled `<div>` (or `<span>`) is not a substitute.
-- `data-size`: `xs` · `sm` · `md` (default) · `lg` · `xl`
+- `data-size`: `xs` · `sm` · `md` (default) · `lg` · `xl` · `2xl` · `3xl` ·
+  `4xl` · `5xl`
 - `data-weight`: `normal` (default) · `medium` · `semibold` · `bold`
-- `data-color` (optional): `dimmed` · `info` · `success` · `warning` · `error` —
-  the intent four are the same set as Alert / Badge / Toast, plus `dimmed` for
-  secondary copy. Omit it for the default body colour.
+- **Colour is a utility, not an attribute here** — `ci-muted` for secondary copy,
+  `ci-text-info` / `-success` / `-warning` / `-error` for the intent set,
+  `ci-text-default` for the body colour. `color` inherits, so these reach
+  `<civitai-text>`'s shadow content too. See *Not in this component* below.
 
 **Size and heading level are independent, on purpose.** `data-size` never
 changes what the element means, and the element never changes the size — so an
@@ -69,32 +71,61 @@ changes what the element means, and the element never changes the size — so an
 lede (`data-size="xl"`). Pick the level from the page's structure and the size
 from its design.
 
-The scale — `sm`/`md`/`lg` are the same three sizes Button uses, so a size name
-means one size across the pack:
+**The scale — one scale, in two halves.** `xs`–`lg` is the UI ramp:
+`sm`/`md`/`lg` are the same three sizes Button uses, so a size name means one
+size across the pack. `xl`–`5xl` is the heading ramp, and **every value from
+`lg` up is one the `ci-fs-*` utilities already ship** — so the pack has one type
+scale under two spellings, not two that disagree:
 
-| `data-size` | `font-size` | `line-height` |
-|---|---|---|
-| `xs` | 12px | 1.5 |
-| `sm` | 13px | 1.5 |
-| `md` (default) | 14px | 1.5 |
-| `lg` | 16px | 1.5 |
-| `xl` | 20px | 1.25 |
+| `data-size` | `font-size` | `line-height` | same value as |
+|---|---|---|---|
+| `xs` | 12px | 1.5 | — |
+| `sm` | 13px | 1.5 | — |
+| `md` (default) | 14px | 1.5 | — |
+| `lg` | 16px | 1.5 | `ci-fs-6` |
+| `xl` | 20px | 1.25 | `ci-fs-5` |
+| `2xl` | 24px | 1.25 | `ci-fs-4` |
+| `3xl` | 28px | 1.25 | `ci-fs-3` |
+| `4xl` | 32px | 1.25 | `ci-fs-2` |
+| `5xl` | 40px | 1.25 | `ci-fs-1` |
+
+Two caveats worth knowing, both deliberate. **The names do not encode the
+`ci-fs-N` number, and the two sequences run in opposite directions** (`5xl` is
+`ci-fs-1`) — the right-hand column above is the mapping, and it is the price of
+keeping one naming convention across the whole ramp instead of switching to
+`fs-N` halfway up. **The unit differs**: this ramp is px (Button's unit),
+`ci-fs-*` is rem. They are equal at the default 16px root and diverge if a
+consumer changes it; mixing units inside one ramp would make it non-monotonic
+there, which is worse. Nothing above `ci-fs-1` (40px) is invented — that is the
+top of both ladders.
 
 **Margins are reset to `0`.** The browser's default heading/paragraph margins are
 em-relative, so they would move with every `data-size`; vertical rhythm in this
 pack belongs to `stack` / `group`. Space your text by wrapping it in one of those,
 not by relying on a UA margin.
 
-Not in this component, deliberately: **alignment** is already the `ci-text-start`
-/ `ci-text-center` / `ci-text-end` utility (and `text-align` inherits, so it
-reaches `<civitai-text>` too), and **truncation** is already `ci-truncate`. A
-`data-align` or `data-truncate` here would be a second copy of a predicate that
-already exists. Adding either later is additive; taking one away would not be.
+**Not in this component, deliberately** — each already has an implementation one
+layer down, and the same predicate decides all three:
+
+- **colour** → `ci-muted` (secondary copy), `ci-text-info` / `-success` /
+  `-warning` / `-error` (the intent set Alert / Badge / Toast share),
+  `ci-text-default` (the body colour). `color` inherits, so a utility on this
+  element — or on any ancestor — reaches `<civitai-text>`'s shadow content as
+  well; its inner element is `color: inherit`.
+- **alignment** → `ci-text-start` / `ci-text-center` / `ci-text-end`.
+  `text-align` inherits, same as above.
+- **truncation** → `ci-truncate`. (This one does *not* reach shadow content —
+  `overflow` does not inherit — so truncation on the element track is a real
+  follow-up rather than an oversight.)
+
+A `data-color`, `data-align` or `data-truncate` here would be a second copy of a
+predicate that already exists. Adding any of them later is additive; taking one
+away would not be.
 
 ```html
-<h2 data-civitai-ui="text" data-size="xl" data-weight="bold">Generate an image</h2>
+<h2 data-civitai-ui="text" data-size="4xl" data-weight="bold">Generate an image</h2>
 <p data-civitai-ui="text">Pick a model, then press Generate.</p>
-<span data-civitai-ui="text" data-size="xs" data-color="dimmed">Costs Buzz</span>
+<span data-civitai-ui="text" data-size="xs" class="ci-muted">Costs Buzz</span>
 ```
 
 ### Button — `data-civitai-ui="button"`

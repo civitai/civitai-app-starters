@@ -460,12 +460,15 @@ locally by redeclaring it (`style="--civitai-color-primary: #a259ff"`).
 Headings, paragraphs and inline copy. The one component that prescribes no
 element: **you write the tag the meaning calls for** — `<h1>`–`<h6>`, `<p>` or
 `<span>` — and this styles it. A heading MUST be a real heading element.
-`data-size`: `xs` · `sm` · `md` (default) · `lg` · `xl` (12/13/14/16/20px;
-`sm`/`md`/`lg` are Button's own three). `data-weight`: `normal` (default) ·
-`medium` · `semibold` · `bold`. `data-color` (optional): `dimmed` · `info` ·
-`success` · `warning` · `error`. **Size and level are independent** — an `<h2>`
+`data-size`: `xs` · `sm` · `md` (default) · `lg` · `xl` · `2xl` · `3xl` · `4xl` ·
+`5xl` (12/13/14/16/20/24/28/32/40px) — **one scale**: `sm`/`md`/`lg` are Button's
+own three, and everything from `lg` up is a value the `ci-fs-*` utilities already
+ship (`lg`=`ci-fs-6` … `5xl`=`ci-fs-1`). `data-weight`: `normal` (default) ·
+`medium` · `semibold` · `bold`. **Size and level are independent** — an `<h2>`
 can be `data-size="xs"`. Margins are reset to `0`; space text with `stack`.
-Alignment and truncation stay in the utilities (`ci-text-center`, `ci-truncate`).
+Colour, alignment and truncation stay in the utilities (`ci-muted` /
+`ci-text-*`, `ci-text-center`, `ci-truncate`) — all three inherit into the
+element track except `ci-truncate`.
 
 ### Button — `data-civitai-ui="button"`
 - Element: **`<button>`** (or `<a role="button">`).

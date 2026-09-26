@@ -104,6 +104,82 @@ describe('<civitai-text> semantics', () => {
     expect(getComputedStyle(rendered(small) as HTMLElement).fontWeight).toBe('400');
     expect(getComputedStyle(rendered(small) as HTMLElement).marginTop).toBe('0px');
   });
+
+  /*
+   * THE HEADLINE HALF OF THE RAMP, pinned as an EXPLICIT TABLE rather than a
+   * loop over a list the implementation also owns.
+   *
+   * This is the assertion the component's whole justification rests on: it was
+   * added to close a headline gap, and with a ramp topping out at 20px it did
+   * not close one — 20px is `ci-fs-5`, the second-SMALLEST of six heading steps,
+   * so `<civitai-text as="h1" size="xl">` rendered a semantic h1 at half the
+   * size of `ci-fs-1`. These four steps are what make the claim true, and the
+   * right-hand comments are why there is one scale and not two.
+   *
+   * The literals are written out on purpose. Deriving them from `TextSize`, or
+   * from a px-per-step formula, would make the test agree with the element by
+   * construction — the ramp is a CONTRACT with `ci-fs-*`, so its values have to
+   * be stated independently of the code that implements them.
+   */
+  const RAMP: ReadonlyArray<readonly [string, string]> = [
+    ['2xl', '24px'], // = ci-fs-4
+    ['3xl', '28px'], // = ci-fs-3
+    ['4xl', '32px'], // = ci-fs-2
+    ['5xl', '40px'], // = ci-fs-1
+  ];
+
+  it.each(RAMP)(
+    'size="%s" is %s, the value ci-fs-* already ships — one scale, not two',
+    async (size, px) => {
+      await mount(`<civitai-text as="h1" size="${size}">Headline</civitai-text>`);
+      const host = scope!.querySelector<CivitaiText>('civitai-text')!;
+      const style = getComputedStyle(rendered(host) as HTMLElement);
+
+      expect(
+        style.fontSize,
+        `size="${size}" must compute to ${px}: the heading ramp is value-identical ` +
+          'to the ci-fs-* utilities, and a divergence here means the package ships ' +
+          'two type scales that disagree'
+      ).toBe(px);
+      // Everything from xl up tightens its leading; a 24px-plus heading leaded
+      // at 1.5 reads as loose. Asserted as a ratio of the size, so the check
+      // does not silently pass on a line-height that failed to apply.
+      expect(style.lineHeight, `size="${size}" must lead at 1.25`).toBe(
+        `${Number.parseFloat(px) * 1.25}px`
+      );
+    }
+  );
+
+  it('has no colour attribute — colour is a utility, and it inherits in', async () => {
+    /*
+     * The dropped axis, pinned as a RELATIONSHIP rather than as the absence of a
+     * word: `color` is not a property of this element AND the mechanism that
+     * replaces it actually works through the shadow boundary. The second half is
+     * the load-bearing one — "there is no color attribute" alone would stay green
+     * if the utility route were broken too, which is the state that would make
+     * dropping the axis a regression rather than a simplification.
+     */
+    await mount(
+      '<civitai-text as="p" style="color: rgb(1, 2, 3)">inherited</civitai-text>'
+    );
+    const host = scope!.querySelector<CivitaiText>('civitai-text')!;
+
+    // An EXACT SET, so this fails if the observed attributes grow (colour comes
+    // back undocumented) or shrink (an axis is lost) — not a spelled check on
+    // one word.
+    expect(
+      [...(host.constructor as typeof CivitaiText).observedAttributes].sort(),
+      'civitai-text observes a different attribute set than the three documented ' +
+        'axes. `color` in particular was dropped deliberately: ci-muted / ' +
+        'ci-text-* already express every value it would have taken, and they ' +
+        'reach this element by inheritance'
+    ).toEqual(['as', 'size', 'weight']);
+    // A colour set on the HOST reaches the element rendered in the shadow root,
+    // which is exactly how a `ci-*` utility class on the host does it. Without
+    // this, dropping the axis could have been a regression rather than a
+    // simplification and the assertion above would not have noticed.
+    expect(getComputedStyle(rendered(host) as HTMLElement).color).toBe('rgb(1, 2, 3)');
+  });
 });
 
 /**
