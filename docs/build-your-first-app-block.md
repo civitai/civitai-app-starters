@@ -238,7 +238,7 @@ civitai app submit      # validates, ZIPs the project, and uploads it for review
 `civitai app submit` bundles the project (`block.manifest.json`, `index.html`,
 `src/`, `package.json`, `vite.config.ts` — excluding `node_modules`, `dist`,
 `.env`, and any `Dockerfile`/`nginx.conf`; the platform injects its own build)
-and uploads it. You're then redirected to **`/apps/my-submissions`** with status
+and uploads it. You're then redirected to **`/apps/build`** with status
 `pending`.
 
 Prefer the web UI? You can still ZIP the project yourself and attach it at
@@ -256,7 +256,7 @@ A moderator reviews your submission at `/apps/review` (manifest + file diff) and
   IngressRoute) → stamp `iframe.src` + program the `<blockId>.civit.ai` DNS
   record. Within ~5 min your block serves live. Your
   submission flips to `approved` with an "Open live" button.
-- **Rejects** (with a reason) → you see the reason inline on `/apps/my-submissions`,
+- **Rejects** (with a reason) → you see the reason inline on `/apps/build`,
   fix, and resubmit.
 
 **Subsequent versions**: bump `version`, re-ZIP, submit again. Approve updates the
