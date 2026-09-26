@@ -14,17 +14,18 @@ import type {
  *
  * Renders one of seven primitive inputs per field based on the manifest's
  * widget hint, filters by `forScope` + `requires_scope`, and posts the
- * collected values back via `onSubmit`. Designed to be used from:
- *   1. Platform-side `/apps/installed` settings modal (publisher slice).
- *   2. Same page (viewer slice).
- *   3. Per-app settings page (`/apps/[appBlockId]/settings`).
- *   4. Model edit page banner (publisher slice).
+ * collected values back via `onSubmit`.
+ *
+ * This is YOUR component, for your own UI. Civitai's app settings panel
+ * builds its form from the same manifest `settings` declaration, but with its
+ * own widgets — it does not render this one. So `onSubmit` is whatever you
+ * wire it to; mounting this form does not by itself persist anything.
  *
  * Intentionally headless-styled. No design tokens, no Mantine, no CSS
- * imports — the host page applies CSS via wrapper / className. The W6
+ * imports — the embedding page applies CSS via wrapper / className. The W6
  * component pack (when it lands) will own theming for `<Button>` etc.;
- * until then this form ships unstyled native controls so the platform
- * pages can theme them inline.
+ * until then this form ships unstyled native controls so your own page can
+ * theme them inline.
  *
  * Validation note: the form does client-side type / range checks only
  * (NaN, out-of-bounds). Server-side `validateBlockSettings` is the

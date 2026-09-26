@@ -1,0 +1,242 @@
+/**
+ * Guards against a PUBLISHED package telling a reader to go to a civitai
+ * route that no longer exists.
+ *
+ * Rule: no shipped source file or README in a published `@civitai/*` package
+ * may name a retired `/apps/*` route. Those routes 301 elsewhere, so the
+ * instruction is not merely stale — it sends the reader somewhere that cannot
+ * do what the sentence promises.
+ *
+ * WHY THIS EXISTS
+ * ===============
+ * `/apps/installed` was documented as THE settings write path in three places
+ * in `@civitai/blocks-react` — `src/hooks/useBlockSettings.ts`,
+ * `src/ui/SettingsForm.tsx` and `README.md`. The route has 301'd to
+ * `/apps/activity` since the W5 rename, and settings are not written there at
+ * all: civitai's own app settings panel writes them through
+ * `trpc.blocks.upsertSubscription` (`src/components/Apps/AppSettingsModal.tsx`),
+ * built from the same manifest `settings` declaration but with its OWN widgets.
+ * civitai never imports `SettingsForm` — the only occurrence of that name in
+ * its tree is a comment.
+ *
+ * 🔴 THE TWO `src/` SITES ARE DOCBLOCKS, SO THEY REACH IDE HOVER FOR EVERY
+ * CONSUMER via the emitted `.d.ts`. That is strictly worse than a docs page: a
+ * reader never navigates to it, it arrives unbidden at the call site. A
+ * sibling arc had already corrected the same claim in the unpublished example
+ * docs (#470) while these three shipped copies kept asserting it.
+ *
+ * 🔴 THIS GUARD DELIBERATELY DOES **NOT** STRIP COMMENTS, which is the inverse
+ * of `tests/guards/lib/strip-comments.mjs`'s guards. Those ask "does the CODE
+ * call a gate", so prose mentioning it is noise. Here the comment IS the
+ * shipped artifact — the defect lives in the docblock and nowhere else — so
+ * stripping comments would make this guard structurally blind to the entire
+ * class it exists to catch.
+ *
+ * 🔴 KNOWN LIMITS:
+ *   - `RETIRED_ROUTES` is a hand-maintained mirror of civitai's
+ *     `next.config.mjs` redirect block. This repo cannot read that file, so a
+ *     route retired AFTER this list was written is invisible here. The list is
+ *     a floor, not a discovery mechanism.
+ *   - It is a text scan. A retired route named inside a RETRACTION ("this used
+ *     to say /apps/installed, which was false") would fail this guard even
+ *     though it is correct prose. That is deliberate: there are zero such
+ *     occurrences today, over-reporting is the safe direction, and a future
+ *     author who needs one should add it here with its reason rather than have
+ *     the guard quietly stop meaning what it says.
+ *   - CHANGELOG.md is excluded. A changelog legitimately quotes the route
+ *     names as they were; rewriting history to satisfy a guard would be a lie.
+ *     Same carve-out, same reason, as `doc-cdn-urls.test.mjs`.
+ */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join, relative, resolve } from 'node:path';
+
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const PACKAGES_DIR = join(REPO_ROOT, 'packages');
+
+/**
+ * Retired `/apps/*` routes, mirrored from civitai's `next.config.mjs`
+ * `redirects()` block. Each is a real 301 with the destination noted, so a
+ * failure message can say where the reader actually lands.
+ */
+const RETIRED_ROUTES = {
+  '/apps/installed': '/apps/activity',
+  '/apps/mine': '/apps/build',
+  '/apps/get-started': '/apps/build',
+  '/apps/my-submissions': '/apps/build',
+};
+
+/**
+ * Coverage floors. An unasserted count is indistinguishable from a scanner
+ * wired to nothing: without these, a bad glob, a renamed `packages/` dir or a
+ * discovery step that silently returned [] all read as a clean PASS.
+ *
+ * Six packages publish today (app-sdk, blocks-react, components,
+ * components-react, sdk, theme). Raising these is fine; lowering one means a
+ * package stopped publishing, which is a decision worth making on purpose.
+ */
+const MIN_PUBLISHED_PACKAGES = 6;
+const MIN_SCANNED_FILES = 50;
+
+/** `true` when the package.json is published to npm (i.e. not `private`). */
+function isPublished(pkgJsonPath) {
+  return !JSON.parse(readFileSync(pkgJsonPath, 'utf8')).private;
+}
+
+/**
+ * DISCOVER the published packages rather than hardcoding them, so a new
+ * package is covered the day it lands instead of the day someone remembers.
+ */
+function publishedPackageDirs() {
+  return readdirSync(PACKAGES_DIR)
+    .map((name) => join(PACKAGES_DIR, name))
+    .filter((dir) => statSync(dir).isDirectory())
+    .filter((dir) => {
+      try {
+        return isPublished(join(dir, 'package.json'));
+      } catch {
+        return false; // no package.json → not a package
+      }
+    });
+}
+
+const SCANNED_EXTENSIONS = new Set(['.ts', '.tsx', '.md']);
+const SKIP_DIRS = new Set(['node_modules', 'dist', 'test', '__tests__', 'coverage']);
+
+/** Every shipped text file under a package: `src/**` plus top-level docs. */
+function filesToScan(pkgDir) {
+  const out = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (SKIP_DIRS.has(entry.name)) continue;
+        walk(join(dir, entry.name));
+        continue;
+      }
+      const dot = entry.name.lastIndexOf('.');
+      const ext = dot === -1 ? '' : entry.name.slice(dot);
+      if (!SCANNED_EXTENSIONS.has(ext)) continue;
+      // A changelog quotes history on purpose — see KNOWN LIMITS.
+      if (entry.name === 'CHANGELOG.md') continue;
+      out.push(join(dir, entry.name));
+    }
+  };
+  walk(join(pkgDir, 'src'));
+  for (const doc of ['README.md', 'MARKUP.md']) {
+    try {
+      statSync(join(pkgDir, doc));
+      out.push(join(pkgDir, doc));
+    } catch {
+      /* not every package ships every doc */
+    }
+  }
+  return out;
+}
+
+/**
+ * Matches a retired route only when it is the WHOLE path segment, so
+ * `/apps/installed` does not also flag a hypothetical `/apps/installed-apps`.
+ */
+function routeMatcher(route) {
+  const escaped = route.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`${escaped}(?![a-z0-9-])`, 'g');
+}
+
+const PACKAGE_DIRS = publishedPackageDirs();
+const SCANNED = PACKAGE_DIRS.flatMap(filesToScan);
+
+const HITS = [];
+for (const file of SCANNED) {
+  const lines = readFileSync(file, 'utf8').split('\n');
+  lines.forEach((line, i) => {
+    for (const [route, destination] of Object.entries(RETIRED_ROUTES)) {
+      if (routeMatcher(route).test(line)) {
+        HITS.push({
+          file: relative(REPO_ROOT, file),
+          line: i + 1,
+          route,
+          destination,
+          text: line.trim(),
+        });
+      }
+    }
+  });
+}
+
+test('the matcher detects a retired route, and only as a whole segment (negative control)', () => {
+  // Guards the INSTRUMENT. If this stops firing, every "no retired routes
+  // found" result below is a claim about a broken regex, not about the repo.
+  const bad = ` * iframe — settings are *written* on the platform \`/apps/installed\` page,`;
+  assert.equal(
+    [...bad.matchAll(routeMatcher('/apps/installed'))].length,
+    1,
+    'the pattern must match the exact sentence this guard was written for',
+  );
+
+  // The real pre-fix text from each of the three sites, so the control is built
+  // from bytes that actually shipped rather than from a textbook fixture.
+  const shipped = [
+    'settings are *written* on the platform `/apps/installed` page',
+    ' *   1. Platform-side `/apps/installed` settings modal (publisher slice).',
+    'are *written* on the platform `/apps/installed` page, not via a bridge message.',
+  ];
+  for (const s of shipped) {
+    assert.equal([...s.matchAll(routeMatcher('/apps/installed'))].length, 1, `must match: ${s}`);
+  }
+
+  // A live route that merely shares a prefix must NOT be flagged.
+  assert.equal(
+    [...'/apps/installed-apps'.matchAll(routeMatcher('/apps/installed'))].length,
+    0,
+    'a longer path segment must not be flagged',
+  );
+  assert.equal(
+    [...'see /apps/activity for the list'.matchAll(routeMatcher('/apps/installed'))].length,
+    0,
+    'the live replacement route must never be flagged',
+  );
+});
+
+test('the scan actually read the published packages (positive control)', () => {
+  // A reassuring zero is indistinguishable from a probe wired to nothing.
+  assert.ok(
+    PACKAGE_DIRS.length >= MIN_PUBLISHED_PACKAGES,
+    `expected >= ${MIN_PUBLISHED_PACKAGES} published packages, discovered ${PACKAGE_DIRS.length}` +
+      ' — did `packages/` move, or did discovery silently return nothing?',
+  );
+  assert.ok(
+    SCANNED.length >= MIN_SCANNED_FILES,
+    `expected >= ${MIN_SCANNED_FILES} scanned files, got ${SCANNED.length}`,
+  );
+  // Prove the files were READ, not merely listed: the entry point of the
+  // package this guard was written for must be present and non-empty.
+  const settingsHook = SCANNED.find((f) => f.endsWith('src/hooks/useBlockSettings.ts'));
+  assert.ok(settingsHook, 'useBlockSettings.ts was not scanned — is the walk skipping src/hooks?');
+  assert.ok(
+    readFileSync(settingsHook, 'utf8').includes('useBlockContext'),
+    'useBlockSettings.ts read as empty or unexpected content',
+  );
+});
+
+test('no published package names a retired /apps/* route', () => {
+  assert.deepEqual(
+    HITS.map((h) => `${h.file}:${h.line} ${h.route} (301s to ${h.destination})`),
+    [],
+    [
+      'A published package names a civitai route that no longer exists.',
+      '',
+      'These routes 301, so the instruction does not merely read as stale — it',
+      'sends the reader to a page that cannot do what the sentence promises.',
+      '',
+      'If the sentence is about writing app settings: that happens platform-side,',
+      'in civitai’s own app settings panel, through',
+      '`trpc.blocks.upsertSubscription`. Describe the mechanism and do NOT name a',
+      'URL — naming one is how the previous text rotted.',
+      '',
+      'A docblock under `src/` reaches IDE hover for every consumer via the',
+      'emitted .d.ts, so a wrong one there is worse than a wrong docs page.',
+    ].join('\n'),
+  );
+});
