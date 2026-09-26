@@ -117,8 +117,11 @@ retargeted onto the elements and still covers every component family in light
 and dark. The opt-in visual-regression layer was **deleted, not retargeted** —
 an audit found it had never run anywhere: its `VITE_RUN_VR` opt-in was set in
 no workflow, script or `.env`, and no baselines were ever committed. It was 50
-of the package's 107 browser tests, all of them skips — the layer enumerated
-`A11Y_CASES` × 2 themes, and that array stood at 25 cases when it was deleted. The entry-point guard
+tests, every one of them a skip — the layer enumerated `A11Y_CASES` × 2 themes,
+and that array stood at 25 cases when it was deleted. (No share of the browser
+tier is quoted. Two successive drafts of this sentence got that denominator
+wrong in the same way, by omitting the parity suite; the count of inert tests
+is what the deletion rests on, and it needs no ratio.) The entry-point guard
 that required the `.` entry to reach no element module was rewritten rather
 than dropped: it now pins that the root and the presentational barrel reach
 the SAME external specifiers — set equality, so an extra at the root and a gap

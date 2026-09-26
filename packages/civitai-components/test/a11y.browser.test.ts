@@ -93,23 +93,23 @@ const CASES: { id: string; markup: string; prepare?: (scope: HTMLElement) => voi
   },
   // Added when `@civitai/components-react`'s axe sweep was retired as a
   // duplicate of this one (components-react@0.9.0). Most of that arm's cases
-  // were ALREADY here, testing the same elements through the same axe options;
-  // eight were not, and are the eight below other than `alert/closable`, which
-  // is NET-NEW (the retired arm's only alert case was a non-closable titled
-  // one).
+  // were ALREADY here, testing the same elements through the same axe options.
+  // Of the ones that were not, every block below except `alert/closable` is a
+  // migration of one; `alert/closable` is NET-NEW, the retired arm's only
+  // alert case having been a non-closable titled one.
   //
-  // 🔴 ONE CASE DID NOT COME ACROSS and is not covered here: its standalone
-  // `radio-default`. There is no `civitai-radio` element — the radios live
-  // inside `<civitai-radio-group>`, which IS swept (`radio-group`,
+  // 🔴 EXACTLY ONE CASE DID NOT COME ACROSS and is not covered here: its
+  // standalone `radio-default`. There is no `civitai-radio` element — the
+  // radios live inside `<civitai-radio-group>`, which IS swept (`radio-group`,
   // `radio-group/invalid`). Recorded so the drop reads as deliberate.
   //
-  // No total is quoted on purpose. An earlier version of this comment said
-  // "23 cases, 14 already here"; both were right when written and wrong two
-  // commits later, because #477 added two Text cases to the arm before it was
-  // deleted (25/16 by then). Nothing pins a number in a comment, and the arm
-  // it counts no longer exists to re-count — so the partition is stated
-  // qualitatively and the one LOSS, which is the part a reader needs, is
-  // called out rather than left to arithmetic.
+  // 🔴 NO COUNT IS QUOTED ANYWHERE ABOVE, deliberately, and that is the third
+  // attempt. The first said "23 cases, 14 already here" — true when written,
+  // stale two commits later once #477 added two Text cases to the arm. The
+  // second rescaled it and lost `radio-default` out of the partition, which is
+  // the one member this comment exists to make visible. The arm no longer
+  // exists to re-count, nothing pins a number in a comment, and the only fact
+  // a reader needs is the LOSS — so it is named and the arithmetic is gone.
   { id: 'card', markup: '<civitai-card padding="md" with-border>Card body</civitai-card>' },
   { id: 'stack', markup: '<civitai-stack gap="md"><span>one</span><span>two</span></civitai-stack>' },
   { id: 'group', markup: '<civitai-group gap="md"><span>one</span><span>two</span></civitai-group>' },
