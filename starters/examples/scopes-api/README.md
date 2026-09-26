@@ -55,8 +55,9 @@ if (res.status === 401) {              // token may have just rotated
 > JWT and 401s again.
 
 `/api/v1/blocks/me` is the authoritative who-am-i (the BLOCK_INIT viewer is a
-coarse hint). It returns only what your granted scopes allow. Other endpoints
-are gated by their own scopes — e.g. reading the bound model needs
+coarse hint). It needs `user:read:self` and 403s without it — the check is
+all-or-nothing at the route, not a per-field filter on the response. Other
+endpoints are gated by their own scopes — e.g. reading the bound model needs
 `models:read:self`.
 
 > The platform serves your built `dist/` and owns the CSP — it allows

@@ -11,9 +11,9 @@ import manifest from '../block.manifest.json' with { type: 'json' };
  *
  * Civitai Apps declare their settings as a record in `block.manifest.json`
  * (`settings: { field_name: { scope, type, widget, label, … } }`). The
- * platform validates user input against that declaration AND renders the
- * settings UI from it with the headless `SettingsForm` from
- * `@civitai/blocks-react/ui`.
+ * platform validates user input against that declaration AND renders its
+ * settings UI from it. This example uses the headless `SettingsForm` from
+ * `@civitai/blocks-react/ui` to render the same declaration in your own UI.
  *
  * Two scopes:
  *  - `publisher` — set by the model owner / installer (e.g. a watermark, a
@@ -23,14 +23,15 @@ import manifest from '../block.manifest.json' with { type: 'json' };
  *    sampler preference). Read from `BLOCK_INIT.settings.userSettings`.
  *
  * IMPORTANT — where settings get WRITTEN: from inside the iframe, a block can
- * only READ the settings the host delivered at init. There is no "set
- * settings" postMessage. Persisting publisher/viewer settings happens on the
- * platform's `/apps/installed` page (and the model-edit banner), which renders
- * this same `SettingsForm` and wires `onSubmit` to the platform tRPC. This
- * example renders the viewer form inline so you can see the component, but its
+ * only READ the settings the host delivered at init. There is no general "set
+ * settings" postMessage. Writing publisher/viewer settings is platform-side —
+ * Civitai's own app settings panel builds its form from the same manifest
+ * `settings` declaration, but with its own widgets, not this `SettingsForm`.
+ * The one setting a block can write itself is the viewer's checkpoint, via the
+ * `SET_USER_CHECKPOINT` message (see `useCheckpointPicker`). This example
+ * renders the viewer form inline so you can see the component, but its
  * `onSubmit` only echoes the values locally — it does NOT persist (it can't,
- * from the iframe). Use the form here to prototype the field layout; the real
- * persistence path is the platform page.
+ * from the iframe). Use the form here to prototype the field layout.
  */
 const manifestSettings = manifest.settings as ManifestSettings;
 const declaredScopes = manifest.scopes;
@@ -75,8 +76,8 @@ export function App() {
           submitLabel="Preview values"
           onSubmit={async (values) => {
             // From the iframe this is preview-only — it cannot persist.
-            // On the platform `/apps/installed` page the same component's
-            // onSubmit calls the platform tRPC to write userSettings.
+            // Settings are written platform-side, by Civitai's own app
+            // settings panel (its own widgets, not this component).
             setPreviewValues(values);
           }}
         />
