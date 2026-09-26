@@ -42,8 +42,9 @@ which renders exactly this markup.
 
 `componentsCss` / `injectStyles()` / `styles.css` all carry the **whole** sheet.
 There is **no supported way to import one component's rules**, and no
-`@civitai/components/css/*` subpath: the package declares exactly two exports,
-`.` and `./styles.css`.
+`@civitai/components/css/*` subpath: the CSS the `exports` map names is the whole
+sheet (`./styles.css`) plus `./utilities.css` and `./bootstrap-compat.css` — none
+of them per-component.
 
 The build does slice the sheet — `scripts/build-css.ts` writes one standalone,
 layered stylesheet per section to `dist/css/<slug>.css` — but nothing in
