@@ -25,6 +25,41 @@ async function mount(markup: string): Promise<HTMLElement> {
 /** The dialog's native `close` event is queued as a task, not a microtask. */
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
+/**
+ * Resolve when `target` fires `type`. Use this instead of {@link tick} whenever
+ * the assertion is ABOUT an event, so the test waits for the event itself
+ * rather than for a fixed number of task turns.
+ *
+ * 🔴 WHY THIS EXISTS. `<civitai-modal>`'s close button sets `open = false`
+ * DIRECTLY, so Lit re-renders and `updated()` calls `dialog.close()`. The
+ * browser then queues the native `close` as a TASK; only when that task runs
+ * does `#onClose` dispatch the component's own `close` event. So a test that
+ * awaits `updateComplete` + one `tick()` is racing that task with a
+ * `setTimeout(0)`, and the ordering between them is not guaranteed under load.
+ *
+ * That race had a deceptive signature: both `open === false` assertions passed
+ * — because the click handler set the property itself, on an earlier path —
+ * while only the event count read 0. It read like "the event fired twice or
+ * not at all" rather than "the test measured too early".
+ *
+ * Rejects rather than hanging, so a genuine regression fails with this message
+ * instead of a bare suite timeout.
+ */
+function eventFired(target: EventTarget, type: string, timeoutMs = 2000): Promise<Event> {
+  return new Promise((resolve, reject) => {
+    const onEvent = (event: Event): void => {
+      clearTimeout(timer);
+      target.removeEventListener(type, onEvent);
+      resolve(event);
+    };
+    const timer = setTimeout(() => {
+      target.removeEventListener(type, onEvent);
+      reject(new Error(`no "${type}" event after ${timeoutMs}ms`));
+    }, timeoutMs);
+    target.addEventListener(type, onEvent);
+  });
+}
+
 afterEach(() => {
   scope?.remove();
   scope = undefined;
@@ -102,10 +137,17 @@ describe('<civitai-modal>', () => {
   it('the close button closes it and announces close once', async () => {
     const el = await open();
     let closes = 0;
+    // Registered BEFORE `eventFired`'s listener, so `closes` is already
+    // incremented by the time the await below resolves.
     el.addEventListener('close', () => void (closes += 1));
+    const closed = eventFired(el, 'close');
 
     el.shadowRoot!.querySelector<HTMLButtonElement>('[part="close"]')!.click();
+    await closed;
     await el.updateComplete;
+    // The `once` half needs a budget in which a DUPLICATE could still arrive;
+    // awaiting the event only pins the lower bound. This tick is now spent
+    // entirely on that, instead of also having to cover the first event.
     await tick();
     expect(el.open).toBe(false);
     expect(dialogOf(el).open).toBe(false);
