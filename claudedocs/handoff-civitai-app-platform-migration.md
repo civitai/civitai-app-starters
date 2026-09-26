@@ -43,14 +43,16 @@ that protocol."*
 
 ## State now
 
-- **Branch / PR:** `docs/handoff-app-platform-migration` @ `9487ab5` (PR `starters#440`, **still OPEN, never merged**). ⚠ Read from the ref — the primary clone sits on `main` (behind 4; its `M pnpm-workspace.yaml` predates this arc).
-- 🔴 **CLOSING CONDITION HOLDS — ADDRESSED, CLOSED** (`app-requests` **0** anchored importers on `origin/main`, dep absent from `package.json`; control `gen-matrix` **7**)
-- ✅ **RANKS 1–3 CLOSED 2026-09-26.** `devrc#1876` merged `47a76ed3` — its red was its own +27 chars, **not** the capacity starvation this doc recorded (CI `passed=24180 failed=0` vs the red run's `24177`/`3`). `@civitai/sdk@0.7.0` published (`#461` → `338c329`), `./safe-storage` confirmed on the REGISTRY. `app-requests#24` merged `996cf3d` after a round-0 audit.
-- **Deploy/verify, separately:** `0.4.2` **SUBMITTED, NOT LIVE** — re-read 04:45Z: `pending`, live **0.4.1**. `pubreq_01M3DZJH656YDQBAHDH3Q4S9CD`. Waiting on a moderator.
-- 🔴 **ASKS RECONCILED FROM TRANSCRIPTS, NOT THIS DOC — 137 typed messages, 10 sessions. Nothing dropped; two things the doc had wrong:** (a) the requirement stated 3× on 09-25 (*"app oauth tokens short-lived and online-refresh-only"*) is **ALREADY SATISFIED AND MEASURED** — `design-app-block-auth-split.md` §6.1: TTL 15 min / 60 max, and **no refresh credential is ever issued to a block** (`createAppAccessToken` inserts only `type:'Access'`; control — the ordinary flow *does* insert `type:'Refresh'` at 30 days, so the absence is deliberate); renewal authority is the open host page. Verdict: *"the CORRECT design for a block, not a shortfall."* **Do not re-open.** (b) incremental consent is live — `oauth-probe` rotated the SAME session to `oauth` at `tokenScope 65537`.
-- 🔴 **FLEET ~HALF PORTED, MEASURED PER APP ON ITS DEFAULT BRANCH 2026-09-26:** `app-requests` **0** ✅ · `custom-generators` **0** ✅ · `gen-matrix` **7** · `sensei` (`origin/trunk`) **21** · `playable-collections` **27** · `model-benchmarking` **42**. `generate-from-model` has no local checkout (reported ported, unverified)
-- ⚠ **No other session is mid-port** (only open app-repo PR: `model-benchmarking#44`, 09-17, unrelated). ⚠ **The close-out question went to THREE sessions** (`344853d7`, `35e211d1`, `ad781c3f`) — check for duplicate work.
-- **`claim-work`: 0 held.** **Shas:** `#457` `bc154d1` · `#461` `338c329` · `app-requests#23` `b8d2b2d` · `#24` `996cf3d` · `talos-infra#1637` `207219bce` · `devrc#1876` `47a76ed3`
+- **Branch / PR:** `docs/handoff-app-platform-migration` (PR `starters#440`, **OPEN**). ⚠ Read from the ref — the primary clone sits on `main`. **Re-fetch before updating:** another session holds an *"evict blocks from an oversized handoff doc"* claim; an eviction landing between a read and a write is how this doc loses content silently.
+- 🔴 **CLOSING CONDITION HOLDS — ADDRESSED, CLOSED.** 2026-09-26: `app-requests` **0** anchored importers on `origin/main` and the dep **absent from `package.json`**; control `gen-matrix` **7**.
+- ✅ **RANKS 1–4 CLOSED.** **Rank 4: `civitai#5112` was ALREADY DEPLOYED** — condition met live (`gated-images?ids=1` **401** body `{"error":"Block token required"}`; control `blocks/images` **401**; bogus path **404**). Closed, `issuecomment-5847928488`. **No ported app's image read is 404ing.**
+- **IN FLIGHT `civitai#5163`** (`a3e5e65583`) — `gated-images.ts` claimed *"the kill-switch to 403"*; it is **401** at all three refusals and has no 403 path. Cause was that route's own fixture mocking `FORBIDDEN`; fixed both. Comment + fixture only. Typecheck 0, 34/34, two mutation controls. **UNAUDITED**, CI mid-flight.
+- 🔴 **THE `useAppStorage` FLEET BLOCKER IS CLOSED — `TRACK B RESULT` below is SUPERSEDED** (was the reason five of six apps could not move). ⚠ Surface exists both sides; a real block token round-tripping is **NOT** verified.
+- **`app-requests` `0.4.2` SUBMITTED, NOT LIVE** — 16:49Z `pending`, `Deploy state: -`, `pubreq_01M3DZJH656YDQBAHDH3Q4S9CD`. Moderator's action.
+- 🔴 **ASKS RECONCILED FROM TRANSCRIPTS, NOT THIS DOC.** (a) *"app oauth tokens short-lived and online-refresh-only"* is **ALREADY SATISFIED AND MEASURED** (`design-app-block-auth-split.md` §6.1: TTL 15/60 min; `createAppAccessToken` inserts only `type:'Access'`, so no refresh credential is ever issued to a block — control: the ordinary flow *does* insert `type:'Refresh'` at 30 days, making the absence deliberate; renewal authority is the open host page). **Do not re-open.** (b) incremental consent is live — `oauth-probe` rotated the SAME session at `tokenScope 65537`.
+- **FLEET 2026-09-26 (unchanged):** `app-requests` **0** ✅ · `custom-generators` **0** ✅ · `gen-matrix` **7** · `sensei` (`trunk`) **21** · `playable-collections` **27** · `model-benchmarking` **42**. `generate-from-model`: no local checkout, unverified.
+- ⚠ **Open PRs this doc did not know:** `starters#472` — a **REAL** release, not the race artifact this doc warns about (`merge-tree` diff vs `origin/main` non-empty; control vs `main~1` also non-empty) · `custom-generators#25` · `model-benchmarking#44`. *"Only open app-repo PR is model-benchmarking#44"* is stale.
+- **`claim-work`: 0 held.** **No `clawgate-task:`** — `resolve` exited **5**, NOTHING RESOLVED, positive control confirming the board is reachable. A real reading; it does not prove this session's id is right. Not a clean bill.
 
 ## Open investigations — live diagnosis state
 
@@ -250,6 +252,13 @@ that protocol."*
 - 🔴 **Leading hypothesis:** *"the app 403s / has no budget"* may be **row state rather than a defect**, for a majority of installs. Nobody has written that down, so the next person to debug a 403 will look at code.
 - **Next probe:** decide whether that mass revocation was intended. If yes, document it where a 403 is debugged (`gotchas-auth-scopes-and-tokens.md`, beside `#203`); if no, it is a data incident.
 
+### ✅ SUPERSEDES `TRACK B RESULT` — per-viewer storage is CLOSED
+- as-of: 2026-09-26
+- **Observed (with values):** **5** platform routes `src/pages/api/v1/blocks/app-storage/{get,set,delete,list,quota}.ts` on `civitai@origin/main`; control `blocks/shared-storage/` **11** — the figure the superseded block itself quotes, so the count is a real reading. `AppClient.storage: StorageClient` in the published `@civitai/sdk@0.7.0`, `BASE = 'blocks/app-storage'`, at `packages/civitai-sdk/src/app/index.ts:46`. `via: code`
+- **Ruled out:** *"a type with no wiring"* — FALSE; real calls, and `app/index.ts:184` records `test/storage/seam.test.ts` pinning `BASE` textually. `via: code`
+- ⚠ **NOT verified:** a real block token round-tripping against production.
+- **Leading hypothesis / next probe:** `playable-collections` is portable (manifest declares `apps:storage:read`+`write`) — port it and let the port be the test. 📖 full evidence + this session's 4 gotchas: **ARCHIVE, `Evicted 2026-09-26 (second pass)`**.
+
 ## Fleet fan-out, 2026-09-24 — COMPLETE (was `IN FLIGHT`)
 
 Seven agents, operator-authorised branch+PR-no-merge. **All three ports merged
@@ -267,20 +276,23 @@ there. Two facts worth keeping:
   under `## Open investigations`.
 ## Next steps (ranked)
 
-🔴 **Numbering is STABLE — rank is half a `claim-work` slug identity, so closed items keep their numbers.**
+🔴 **Numbering is STABLE — rank is half a `claim-work` slug identity; closed items keep their numbers.**
 
-1. ✅ **DONE — `devrc#1876` merged `47a76ed3`.**
-   forcing: gate — closed.
-2. ✅ **DONE — `@civitai/sdk@0.7.0` published.**
-   forcing: gate — closed.
-3. ✅ **DONE (moderator pending) — `app-requests#24` merged, submitted.**
-   forcing: gate — closed on the submit; the rest is a moderator's action.
-4. **`civitai#5112` — get `blocks/gated-images` DEPLOYED. OPEN as of 2026-09-26.** No new code; the route is merged. **Highest leverage left.**
-   forcing: regression — `custom-generators@0.9.0` and `app-requests` are live and their per-viewer image reads 404 in production until it ships.
-5. **Port `playable-collections` — measured 27 importers** (doc said 33). Storage dep SOFT. One product call first: collection **follow** needs `collections:write:self`, which its manifest omits.
-   forcing: gate — 4 of 9 apps still on the bridge.
-6. **Then `gen-matrix` (7) → `sensei` (21, `origin/trunk`) → `model-benchmarking` (42).** The first and last **cannot** reach 0 — some surfaces have no REST twin — so their PRs must state a reduced count with the retained surfaces NAMED.
+1. ✅ **DONE — `devrc#1876` `47a76ed3`.** forcing: gate — closed.
+2. ✅ **DONE — `@civitai/sdk@0.7.0` published.** forcing: gate — closed.
+3. ✅ **DONE (moderator pending) — `app-requests#24` `996cf3d`.** forcing: gate — closed on the submit.
+4. ✅ **DONE — `civitai#5112` closed; already deployed.** Docblock half `civitai#5163` is open.
+   forcing: regression — closed; the production 404 is gone, both controls run.
+5. **Port `playable-collections` — 27 importers, NO LONGER STORAGE-BLOCKED.** 🔴 **This doc's stated blocker is WRONG, do not re-derive:** *"follow needs `collections:write:self`, which its manifest omits"* — that app's `CLAUDE.md:63` records it *"was dropped in 0.2.10 and must not return."*
+   forcing: gate — 4 of 9 apps still on the bridge; now the cheapest.
+6. **Then `gen-matrix` (7) → `sensei` (21, `trunk`) → `model-benchmarking` (42).** First and last **cannot** reach 0; their PRs must state a reduced count with the retained surfaces NAMED.
    forcing: gate — the rest of the fleet.
+7. **Delete `app-requests`' `minimumReleaseAgeExclude` — NOT BEFORE `2026-09-27T03:45:56Z`** (read off the file). Earlier turns that repo's CI red. Own PR (precedent `#22` `a419306`).
+   forcing: deadline — inert from that timestamp, then it silently weakens the next reader's assumptions.
+8. **`/audit-pr 5163`, round 0 first.**
+   forcing: gate — an unaudited open PR on a public repo.
+9. **PRUNE THIS DOC — 94,688 B vs a 65,536 B ceiling.** Measured: the tool's *"evict then re-run"* remedy does NOT satisfy the ratchet (total = base + delta, so `+N` is unchanged); new detail must go to the ARCHIVE. ⚠ Another session holds the eviction claim — `claim-work --list` first.
+   forcing: gate — the write gate refuses any growing update, so the next session hits this before it can record anything.
 
 ## Defects (batched)
 
@@ -803,27 +815,39 @@ there. Two facts worth keeping:
 
 - 🔴 **`--arc` CANNOT SEE THIS ARC — `extract_user_msgs.py` and `find-session.py` both exit 3, `NOTHING WAS MEASURED`.** The resolver looks for the doc only under `$DEVRC`/`$HOMELAB`/`$DATAPACKET`/`$CIVITAI`, and **`$CIVITAI` is the `civitai` monorepo — no handle points at `civitai-app-starters`**. Seeding a session id does NOT help: it resolves only the doc NAME, which still has no holder. 🔴 **Exit 3 ≠ exit 4 — the instrument never ran, so it must never be read as "the arc is empty".** Workaround — `How to verify` step 5: grep the transcripts for the doc slug, feed `--ids-file`, positive-control your own session id. Gave 10 sessions / 137 messages, but a HAND-BUILT set is a weaker claim than `--arc` and misses the opencode corpus. Real fix: a repo handle for `civitai-app-starters`. **Reconciling asks against the DOC rather than the transcripts would have missed a satisfied requirement and kept two stale importer counts (33 vs 27, 10 vs 7).**
 
+- 🔴 **THIS SESSION'S LESSONS ARE IN THE ARCHIVE (`Evicted 2026-09-26 (second pass)`) AND cairn `civitai/blocks`, NOT HERE — the size ratchet gates the DELTA, so appending them here is what would have made the round unlandable.** Archive: a harness reporting `exit code 0` over a log ending `ELIFECYCLE ... exit code 2`; two pre-existing red test files on `civitai@origin/main`, attributed by comparing failure SETS against a pristine worktree; why a propagation test needs a SEPARABILITY control, not just a kill; the ratchet arithmetic. cairn: the fabricated-fixture-became-a-false-docblock chain, and a fresh `civitai/civitai` worktree typechecking 13 errors purely because `event-engine-common` is an uninitialised submodule.
+
 ## How to verify
 
 ```bash
-# 1. closing condition, anchored on the CONSTRUCT (the token grep false-positives on comments)
+# 1. closing condition — anchored on the CONSTRUCT (a token grep false-positives on comments)
 A=/home/zach/workspace/civit/civitai-app-requests; git -C $A fetch origin -q
 git -C $A grep -lE "(from|import\()[[:space:]]*'@civitai/blocks-react" origin/main -- '*.ts' '*.tsx' | wc -l   # => 0
 
-# 2. the fleet — per app, on its OWN default branch (sensei is `trunk`, not `main`)
+# 2. the fleet — per app, on its OWN default branch (sensei is `trunk`)
 for d in requests custom-generators gen-matrix sensei playable-collections model-benchmarking; do
   D=/home/zach/workspace/civit/civitai-app-$d; git -C $D fetch origin -q
   B=$(git -C $D symbolic-ref --short refs/remotes/origin/HEAD | sed 's|origin/||')
   echo "$d ($B): $(git -C $D grep -lE "(from|import\()[[:space:]]*'@civitai/blocks-react" origin/$B -- '*.ts' '*.tsx' | wc -l)"
-done   # => 0 · 0 · 7 · 21 · 27 · 42   (2026-09-26)
+done   # => 0 · 0 · 7 · 21 · 27 · 42
 
-# 3. rank 3 moderator?   4. rank 4, the highest-leverage item
-cd $A && civitai app status app-requests | grep -E "^Status|^Deploy state"   # pending / -
-gh issue view 5112 --repo civitai/civitai --json state -q .state              # OPEN until deployed
+# 3. rank 4 stays closed — 401, not the HTML 404. Both controls or the reading is worthless.
+for p in 'gated-images?ids=1' 'images?ids=1' 'definitely-not-a-route-xyz'; do
+  curl -s -o /dev/null -w "$p %{http_code}\n" "https://civitai.com/api/v1/blocks/$p"
+done   # => 401 · 401 (pos) · 404 (neg)
 
-# 5. the operator's asks — from TRANSCRIPTS, never this doc (--arc exits 3 here; see Gotchas)
+# 4. the storage blocker is gone — 5 per-viewer routes, control 11 shared
+C=/home/zach/workspace/civit/civitai
+git -C $C ls-tree -r --name-only origin/main -- src/pages/api/v1/blocks/app-storage    | wc -l   # => 5
+git -C $C ls-tree -r --name-only origin/main -- src/pages/api/v1/blocks/shared-storage | wc -l   # => 11
+
+# 5. rank 7's clock · rank 3's moderator · rank 8's PR
+git -C $A show origin/main:pnpm-workspace.yaml | grep -A2 minimumReleaseAgeExclude
+cd $A && civitai app status app-requests | grep -E "^Status|^Deploy state"
+gh pr view 5163 --repo civitai/civitai --json state,mergeStateStatus
+
+# 6. the operator's asks — from TRANSCRIPTS, never this doc (--arc exits 3 here)
 find ~/.claude/projects -maxdepth 2 -name '*.jsonl' -print0 | xargs -0 \
   grep -l "handoff-civitai-app-platform-migration" | sed 's|.*/||; s|\.jsonl$||' | sort -u > /tmp/ids.txt
 python3 $DEVRC/scripts/session-analysis/extract_user_msgs.py --ids-file /tmp/ids.txt -o /tmp/msgs.md
-#  => stderr `sessions=10 msgs=238`; your own session id in /tmp/ids.txt is the positive control
 ```
