@@ -195,9 +195,9 @@ export interface BlockInitPayload {
   /**
    * The color-domain the block is rendered inside (`green` | `blue` | `red`),
    * or `null` when the host did not resolve one. Informational ONLY — the SFW
-   * policy is server-side; gate mature affordances through `useDomainMaturity()`
-   * (which reads {@link effectiveBrowsingLevel}, falling back to
-   * {@link maxBrowsingLevel}), never from this string.
+   * policy is server-side; gate on `useDomainMaturity()`'s `isSfw` /
+   * `isLevelAllowed` (which account for the viewer via
+   * {@link effectiveBrowsingLevel}), never on this string.
    *
    * Sent by civitai/civitai PR #2670. A host that predates it omits this field
    * (reads `undefined`).
