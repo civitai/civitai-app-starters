@@ -212,11 +212,13 @@ jobs:
       - run: pnpm --filter @civitai/components-react typecheck
       - run: pnpm --filter @civitai/components-react test
 
-      # axe a11y over the element bindings, in real headless Chromium
-      # (happy-dom has no layout / getComputedStyle and cannot upgrade a custom
-      # element). This step also carried HTML-vs-React computed-style parity
-      # until components-react@0.8.0 deleted the hand-written React layer the
-      # parity test compared against. Bundled Chromium in CI.
+      # The React BINDING MECHANICS in real headless Chromium — property
+      # assignment, refs, typed custom events, shadow-root `change` retargeting
+      # (happy-dom cannot upgrade a custom element). NOT the a11y sweep: that
+      # lives in the `@civitai/components test:browser` step below, which owns
+      # the elements. This step also carried HTML-vs-React computed-style
+      # parity until components-react@0.8.0 deleted the hand-written React
+      # layer the parity test compared against. Bundled Chromium in CI.
       # Same apt/network wedge hazard as the blocks-react job above — see the
       # measurement recorded there. This is the step that actually hung; both
       # sites get the guard, because fixing only the one that bit us leaves the

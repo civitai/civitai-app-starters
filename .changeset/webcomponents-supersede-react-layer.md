@@ -33,12 +33,14 @@ no rename can reveal — the names match and the rendering changes anyway.
 | `<Alert title="Saved">` | `<CivitaiAlert heading="Saved">` | 🔴 `title` is a **global** HTML attribute, so it becomes a mouse-hover tooltip and the bold heading silently disappears. No type error. |
 | `<Alert onClose={fn}>` | `<CivitaiAlert closable onClose={fn}>` | 🔴 `onClose` is in the event map so it type-checks and attaches, but the element renders no dismiss button without `closable`. Dead callback, no button, no error. |
 | `<Toast title=… onClose=…>` | `<CivitaiToast heading=… closable onClose=…>` | 🔴 identical to Alert, same two traps. |
-| `<Card>` (no props) | `<CivitaiCard padding="md" with-border>` | 🔴 SAME NAMES, DIFFERENT DEFAULTS. The React `Card` defaulted `padding='md'` and `withBorder={true}`; `<civitai-card>` defaults to `padding=''` (**0px**) and no border. A bare `<CivitaiCard>` silently loses 16px of padding and its border. Pass them explicitly. `<Card withBorder padding="lg">` with both props stated is unaffected. |
+| `<Card>` (no props) | `<CivitaiCard withBorder padding="md">` | 🔴 SAME NAMES, DIFFERENT DEFAULTS. The React `Card` defaulted `padding='md'` and `withBorder={true}`; `<civitai-card>` defaults to `padding=''` and `withBorder` unset. A bare `<CivitaiCard>` silently loses **16px of padding** in both themes, and its border weakens: in **dark** it disappears (`--civitai-card-border-width: 0`), in **light** it stays 1px but drops from the opaque `--civitai-color-border` to a 55%-opacity mix — light gives a borderless card a default hairline because surface and body are both `#fefefe` there. Pass both props explicitly. `<Card withBorder padding="lg">` with both already stated is unaffected. |
 | `<Button variant size loading fullWidth>` | unchanged | ✅ same names AND same defaults |
 
 `Card` is the only default that moved. Badge, Loader, Slider, RadioGroup,
 SegmentedControl, Image, Stack, Group and Button all carry element constructor
-defaults identical to the React ones they replace.
+defaults identical to the React ones they replace — which is a statement about
+DEFAULTS only; several of them still need the contract read for other reasons,
+listed below.
 
 Everything else:
 
@@ -107,8 +109,9 @@ an audit found it had never run anywhere: its `VITE_RUN_VR` opt-in was set in
 no workflow, script or `.env`, and no baselines were ever committed. It was 46
 of the package's 99 browser tests, all of them skips. The entry-point guard
 that required the `.` entry to reach no element module was rewritten rather
-than dropped: it now pins that the root reaches nothing the presentational
-barrel does not, and that it still reaches no `@civitai/sdk`.
+than dropped: it now pins that the root and the presentational barrel reach
+the SAME external specifiers — set equality, so an extra at the root and a gap
+at the root both fail — and that the root still reaches no `@civitai/sdk`.
 
 **Release sequencing.** The two starters in this repo import the new names, and
 their `@civitai/components-react` pins are `^0.7.0` — which, being 0.x, admits

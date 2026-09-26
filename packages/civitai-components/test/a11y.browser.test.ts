@@ -75,10 +75,17 @@ const CASES: { id: string; markup: string; prepare?: (scope: HTMLElement) => voi
       ];
     },
   },
-  // Migrated from `@civitai/components-react`'s axe sweep when that arm was
-  // retired as a duplicate of this one (components-react@0.8.0). These nine
-  // were the cases it covered that this suite did not; the other 14 of its 23
-  // were already here, testing the same elements through the same axe options.
+  // Added when `@civitai/components-react`'s axe sweep was retired as a
+  // duplicate of this one (components-react@0.8.0). Of that arm's 23 cases, 14
+  // were ALREADY here testing the same elements through the same axe options,
+  // and 8 of the 9 below are migrations of the rest. `alert/closable` is NET-NEW
+  // — the retired arm's only alert case was a non-closable titled one.
+  //
+  // One case did NOT come across and is not covered here: its standalone
+  // `radio-default`. There is no `civitai-radio` element — the radios live
+  // inside `<civitai-radio-group>`, which IS swept (`radio-group`,
+  // `radio-group/invalid`). Recorded so the drop reads as deliberate rather
+  // than as an oversight the arithmetic hid.
   { id: 'card', markup: '<civitai-card padding="md" with-border>Card body</civitai-card>' },
   { id: 'stack', markup: '<civitai-stack gap="md"><span>one</span><span>two</span></civitai-stack>' },
   { id: 'group', markup: '<civitai-group gap="md"><span>one</span><span>two</span></civitai-group>' },
