@@ -157,7 +157,13 @@ function collect(abs, out) {
     return;
   }
   for (const entry of readdirSync(abs, { withFileTypes: true })) {
-    if (entry.isDirectory() && SKIP_DIRS.has(entry.name)) continue;
+    // 🔴 Name-checked WITHOUT `isDirectory()`, because that is false for a
+    // symlink-to-directory — so a `node_modules` symlink would walk straight
+    // past the skip list and `statSync` would follow it. Unreachable in this
+    // tree today (zero symlinks under packages/), and a name test costs
+    // nothing; a followed symlink loop would recurse unbounded.
+    if (SKIP_DIRS.has(entry.name)) continue;
+    if (entry.isSymbolicLink()) continue;
     collect(join(abs, entry.name), out);
   }
 }
@@ -170,9 +176,14 @@ function collect(abs, out) {
  * `@civitai/sdk`'s `BREAKING.md` and `@civitai/components`' `demo/index.html`
  * (both in their `files` arrays, and `.html` was not even a scanned
  * extension). A retired-route instruction in either shipped to npm with this
- * guard green. `files` is the same criterion `doc-cdn-urls.test.mjs` uses to
- * build its corpus, and it is the only one that tracks what is published
- * rather than what someone remembered to list.
+ * guard green.
+ *
+ * ⚠ An earlier draft justified this by saying `doc-cdn-urls.test.mjs` uses the
+ * same criterion. It does NOT — that guard's corpus is a hardcoded four-path
+ * array, and its own KNOWN LIMITS say it "cannot see a pinned URL added to a
+ * file NOT in SHIPPED_DOCS". The honest argument is the one that stands on its
+ * own: `files` plus npm's implicit set tracks what is PUBLISHED, where a
+ * hand-list tracks what someone remembered.
  *
  * `dist` is excluded: it is generated from `src/**`, which is scanned at its
  * source, and it does not exist in a cold checkout — including it would make
@@ -181,20 +192,30 @@ function collect(abs, out) {
 function shippedDocs(pkgDir) {
   const { files = [] } = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'));
   const out = [];
+  // 🔴 npm ALWAYS publishes README.md regardless of `files`, so `files`
+  // UNDER-states the publish set. Deriving from it alone lost a case the
+  // hardcoded list it replaced used to catch: a package listing only
+  // `["dist"]` still ships its README to every consumer, and `shippedDocs`
+  // returned [] for it. Union the derived set with npm's implicit one.
+  collect(join(pkgDir, 'README.md'), out);
   for (const entry of files) {
     if (entry.startsWith('!')) continue; // a negation, not a payload
-    if (entry === 'dist' || entry.startsWith('dist/')) continue;
-    collect(join(pkgDir, entry), out);
+    // Normalise before the prefix test: `./dist` and `/dist` are legal `files`
+    // spellings that a raw `startsWith('dist/')` waves through, which would
+    // pull a whole built tree into the corpus and make the result depend on
+    // whether a build has run.
+    const normalised = entry.replace(/^\.?\/+/, '');
+    if (normalised === 'dist' || normalised.startsWith('dist/')) continue;
+    collect(join(pkgDir, normalised), out);
   }
-  return out;
+  return [...new Set(out)];
 }
 
-/** Every scannable file for a package: `src/**` plus everything it ships. */
-function filesToScan(pkgDir) {
+/** The `src/**` half of a package's corpus. */
+function srcFiles(pkgDir) {
   const out = [];
   collect(join(pkgDir, 'src'), out);
-  out.push(...shippedDocs(pkgDir));
-  return [...new Set(out)];
+  return out;
 }
 
 /**
@@ -230,11 +251,20 @@ function repoDocFiles() {
 }
 
 const PACKAGE_DIRS = publishedPackageDirs();
-const REPO_DOC_FILES = repoDocFiles();
+const PACKAGE_SRC_FILES = PACKAGE_DIRS.flatMap(srcFiles);
 const SHIPPED_DOC_FILES = PACKAGE_DIRS.flatMap(shippedDocs);
-const SCANNED = [
-  ...new Set([...PACKAGE_DIRS.flatMap(filesToScan), ...REPO_DOC_FILES]),
-];
+const REPO_DOC_FILES = repoDocFiles();
+
+/**
+ * 🔴 BUILT FROM THE SAME ARRAYS THE FLOORS MEASURE — that is the whole point of
+ * this line, and an earlier draft got it wrong in a way that voided the floor
+ * it had just added. `SHIPPED_DOC_FILES` was computed by a SECOND, independent
+ * call and never spread in here; the scan reached the shipped docs by a
+ * different route. Deleting that route left the floor still reading 9 while two
+ * retired routes shipped with the guard green. A floor that measures a
+ * parallel computation is not a floor on the scan.
+ */
+const SCANNED = [...new Set([...PACKAGE_SRC_FILES, ...SHIPPED_DOC_FILES, ...REPO_DOC_FILES])];
 
 const HITS = [];
 for (const file of SCANNED) {
@@ -312,6 +342,21 @@ test('the scan actually read the published packages (positive control)', () => {
     SHIPPED_DOC_FILES.length >= MIN_SHIPPED_DOCS,
     `expected >= ${MIN_SHIPPED_DOCS} shipped package docs, got ${SHIPPED_DOC_FILES.length}` +
       ` — did a package's "files" array change, or did the lookup break?`,
+  );
+
+  // 🔴 A COUNT IS NOT A CONNECTION. The three assertions above measure the
+  // discovery arrays; none of them says those arrays are what gets SCANNED.
+  // Measured: with the shipped docs computed but left out of `SCANNED`, every
+  // count above still passed — 9 ≥ 9 — while a retired route planted in
+  // BREAKING.md went unreported. So pin the RELATIONSHIP, not the components:
+  // everything discovered must actually be in the scanned set.
+  const scannedSet = new Set(SCANNED);
+  const missed = [...SHIPPED_DOC_FILES, ...REPO_DOC_FILES].filter((f) => !scannedSet.has(f));
+  assert.deepEqual(
+    missed.map((f) => relative(REPO_ROOT, f)),
+    [],
+    'these files were DISCOVERED but are not in SCANNED — the floors above are' +
+      ' measuring a computation the scan does not use',
   );
   // Prove the shipped-doc path reaches a NON-README file: the hardcoded list it
   // replaced missed exactly those, so a regression to it would pass every
