@@ -43,16 +43,16 @@ that protocol."*
 
 ## State now
 
-- **Branch / PR:** `docs/handoff-app-platform-migration` (PR `starters#440`, **OPEN**). ⚠ Read from the ref — the primary clone sits on `main`. **Re-fetch before updating:** another session holds an *"evict blocks from an oversized handoff doc"* claim; an eviction landing between a read and a write is how this doc loses content silently.
-- 🔴 **CLOSING CONDITION HOLDS — ADDRESSED, CLOSED.** 2026-09-26: `app-requests` **0** anchored importers on `origin/main` and the dep **absent from `package.json`**; control `gen-matrix` **7**.
-- ✅ **RANKS 1–4 CLOSED.** **Rank 4: `civitai#5112` was ALREADY DEPLOYED** — condition met live (`gated-images?ids=1` **401** body `{"error":"Block token required"}`; control `blocks/images` **401**; bogus path **404**). Closed, `issuecomment-5847928488`. **No ported app's image read is 404ing.**
-- **IN FLIGHT `civitai#5163`** (`a3e5e65583`) — `gated-images.ts` claimed *"the kill-switch to 403"*; it is **401** at all three refusals and has no 403 path. Cause was that route's own fixture mocking `FORBIDDEN`; fixed both. Comment + fixture only. Typecheck 0, 34/34, two mutation controls. **UNAUDITED**, CI mid-flight.
-- 🔴 **THE `useAppStorage` FLEET BLOCKER IS CLOSED — `TRACK B RESULT` below is SUPERSEDED** (was the reason five of six apps could not move). ⚠ Surface exists both sides; a real block token round-tripping is **NOT** verified.
-- **`app-requests` `0.4.2` SUBMITTED, NOT LIVE** — 16:49Z `pending`, `Deploy state: -`, `pubreq_01M3DZJH656YDQBAHDH3Q4S9CD`. Moderator's action.
-- 🔴 **ASKS RECONCILED FROM TRANSCRIPTS, NOT THIS DOC.** (a) *"app oauth tokens short-lived and online-refresh-only"* is **ALREADY SATISFIED AND MEASURED** (`design-app-block-auth-split.md` §6.1: TTL 15/60 min; `createAppAccessToken` inserts only `type:'Access'`, so no refresh credential is ever issued to a block — control: the ordinary flow *does* insert `type:'Refresh'` at 30 days, making the absence deliberate; renewal authority is the open host page). **Do not re-open.** (b) incremental consent is live — `oauth-probe` rotated the SAME session at `tokenScope 65537`.
-- **FLEET 2026-09-26 (unchanged):** `app-requests` **0** ✅ · `custom-generators` **0** ✅ · `gen-matrix` **7** · `sensei` (`trunk`) **21** · `playable-collections` **27** · `model-benchmarking` **42**. `generate-from-model`: no local checkout, unverified.
-- ⚠ **Open PRs this doc did not know:** `starters#472` — a **REAL** release, not the race artifact this doc warns about (`merge-tree` diff vs `origin/main` non-empty; control vs `main~1` also non-empty) · `custom-generators#25` · `model-benchmarking#44`. *"Only open app-repo PR is model-benchmarking#44"* is stale.
-- **`claim-work`: 0 held.** **No `clawgate-task:`** — `resolve` exited **5**, NOTHING RESOLVED, positive control confirming the board is reachable. A real reading; it does not prove this session's id is right. Not a clean bill.
+- **Branch / PR:** `docs/handoff-app-platform-migration` (PR `starters#440`, **OPEN**). Read from the ref — the primary clone sits on `main`. **Re-fetch before updating**: another session holds an eviction claim on this doc.
+- 🔴 **CLOSING CONDITION HOLDS — ADDRESSED, CLOSED.** `app-requests` **0** anchored importers on `origin/main`, dep absent from `package.json`; control `gen-matrix` **7**.
+- ✅ **RANKS 1–4 AND 8 CLOSED.** Rank 4: `civitai#5112` was already deployed (401 live, controls 401/404). Rank 8: `civitai#5163` **MERGED** as squash `de52df5a63` after a **four-round** ladder closing on the attribution gate; shipped change is a two-line comment deletion. 📖 ARCHIVE `Evicted 2026-09-26 (third pass)`.
+- 🔴 **EVERY PER-APP IMPORTER NUMBER IN THIS DOC IS INFLATED** — the anchored pattern has no closing quote, so it prefix-matches `/ui` and `/testing`. **Production bridge files across the four remaining apps: 19, not 97**, and the port ranking changes. The closing condition is UNAFFECTED (the prefix set is a superset). Table + method: ARCHIVE, same section.
+- **IN FLIGHT `starters#479`** — `AppClient.sharedStorage` on `@civitai/sdk`. 🔴 **Operator decision: shared storage is GENERIC KEY-VALUE ONLY** — ships `list`/`get`/`append`/`update`/`withdraw`; `vote`/`unvote`/`counts`/`top`/`increment`/`report` are **deliberately absent**, app-layer until platform demand. The 11 routes existing is **not** a gap; `BREAKING.md` says so and three guards pin it. `SharedItem` keeps `count`/`viewerVoted` on purpose — reading a tally is what makes app-layer voting possible. Round 0 done, round 1 in flight; 19/230 tests, 23/23 mutants.
+- **IN FLIGHT `playable-collections#48`** — findings doc only, **no port yet**, unaudited. Blocked behind `#479`: that app has **no `@civitai/sdk` dep at all**.
+- 🔴 **ONE `/ui` COMPONENT KEEPS THE BRIDGE ALIVE** — of 11 used, only `FollowButton` reaches a transport (via `useCollectionFollow`); `BlockGate` does **not**, despite wrapping the production root. Remedy: `initialize({ transport })` (`civitai-sdk/src/app/index.ts:87,103`) — not pulling `FollowButton` in scope, which that app's `CLAUDE.md` forbids.
+- **`app-requests` `0.4.2` SUBMITTED, NOT LIVE** — `pending`, `pubreq_01M3DZJH656YDQBAHDH3Q4S9CD`. Moderator's action.
+- 🔴 **ASKS COME FROM TRANSCRIPTS, NOT THIS DOC.** *"app oauth tokens short-lived and online-refresh-only"* is **ALREADY SATISFIED AND MEASURED** — `design-app-block-auth-split.md` §6.1 (TTL 15/60 min; `createAppAccessToken` inserts only `type:'Access'`, control: the ordinary flow *does* insert `type:'Refresh'`). **Do not re-open.** Incremental consent is live (`oauth-probe`, `tokenScope 65537`).
+- **`claim-work`:** rank 5 held. **No `clawgate-task:`** — `resolve` exited 5, NOTHING RESOLVED, positive control confirming the board is reachable. Not a clean bill.
 
 ## Open investigations — live diagnosis state
 
@@ -276,23 +276,21 @@ there. Two facts worth keeping:
   under `## Open investigations`.
 ## Next steps (ranked)
 
-🔴 **Numbering is STABLE — rank is half a `claim-work` slug identity; closed items keep their numbers.**
+🔴 **Numbering is STABLE — a rank is half a `claim-work` slug; closed items keep their numbers.**
 
-1. ✅ **DONE — `devrc#1876` `47a76ed3`.** forcing: gate — closed.
-2. ✅ **DONE — `@civitai/sdk@0.7.0` published.** forcing: gate — closed.
-3. ✅ **DONE (moderator pending) — `app-requests#24` `996cf3d`.** forcing: gate — closed on the submit.
-4. ✅ **DONE — `civitai#5112` closed; already deployed.** Docblock half `civitai#5163` is open.
-   forcing: regression — closed; the production 404 is gone, both controls run.
-5. **Port `playable-collections` — 27 importers, NO LONGER STORAGE-BLOCKED.** 🔴 **This doc's stated blocker is WRONG, do not re-derive:** *"follow needs `collections:write:self`, which its manifest omits"* — that app's `CLAUDE.md:63` records it *"was dropped in 0.2.10 and must not return."*
-   forcing: gate — 4 of 9 apps still on the bridge; now the cheapest.
-6. **Then `gen-matrix` (7) → `sensei` (21, `trunk`) → `model-benchmarking` (42).** First and last **cannot** reach 0; their PRs must state a reduced count with the retained surfaces NAMED.
+1. ✅ **DONE** — `devrc#1876` `47a76ed3`. forcing: gate — closed.
+2. ✅ **DONE** — `@civitai/sdk@0.7.0` published. forcing: gate — closed.
+3. ✅ **DONE (moderator pending)** — `app-requests#24` `996cf3d`. forcing: gate — closed.
+4. ✅ **DONE** — `civitai#5112` closed; the route was already deployed. forcing: regression — closed.
+5. **Port `playable-collections` — BLOCKED behind `#479`.** Real scope is **3 production bridge files** (`App.tsx`, `lib/popular.ts`, `lib/viewer-maturity.ts`), not 27. `/ui` out of scope (`starters#328`); the `/testing` harness needs a fetch-level rebuild. 🔴 An older revision of this doc named the wrong blocker — `collections:write:self` was dropped in 0.2.10 and must not return.
+   forcing: gate — 4 of 9 apps still on the bridge; now tied-cheapest.
+6. **Then `gen-matrix` (3) → `sensei` (6, `trunk`) → `model-benchmarking` (7).** The first and last cannot reach 0; their PRs must name what is retained.
    forcing: gate — the rest of the fleet.
 7. **Delete `app-requests`' `minimumReleaseAgeExclude` — NOT BEFORE `2026-09-27T03:45:56Z`** (read off the file). Earlier turns that repo's CI red. Own PR (precedent `#22` `a419306`).
    forcing: deadline — inert from that timestamp, then it silently weakens the next reader's assumptions.
-8. **`/audit-pr 5163`, round 0 first.**
-   forcing: gate — an unaudited open PR on a public repo.
-9. **PRUNE THIS DOC — 94,688 B vs a 65,536 B ceiling.** Measured: the tool's *"evict then re-run"* remedy does NOT satisfy the ratchet (total = base + delta, so `+N` is unchanged); new detail must go to the ARCHIVE. ⚠ Another session holds the eviction claim — `claim-work --list` first.
-   forcing: gate — the write gate refuses any growing update, so the next session hits this before it can record anything.
+8. ✅ **DONE** — `#5163` audited (4 rounds) and merged. forcing: gate — closed.
+9. **PRUNE THIS DOC — 98 KB vs a 65 KB ceiling.** The tool's *"evict then re-run"* remedy does NOT satisfy the ratchet (total = base + delta), so new detail goes to the ARCHIVE instead. ⚠ Another session holds the eviction claim — `claim-work --list` first.
+   forcing: gate — the write gate refuses a growing update, so the next session hits this first.
 
 ## Defects (batched)
 
@@ -820,31 +818,32 @@ there. Two facts worth keeping:
 ## How to verify
 
 ```bash
-# 1. closing condition — anchored on the CONSTRUCT (a token grep false-positives on comments)
+# 1. closing condition — anchored on the CONSTRUCT, and note the CLOSING QUOTE
 A=/home/zach/workspace/civit/civitai-app-requests; git -C $A fetch origin -q
-git -C $A grep -lE "(from|import\()[[:space:]]*'@civitai/blocks-react" origin/main -- '*.ts' '*.tsx' | wc -l   # => 0
+git -C $A grep -lE "(from|import\()[[:space:]]*'@civitai/blocks-react'" origin/main -- '*.ts' '*.tsx' | wc -l   # => 0
 
-# 2. the fleet — per app, on its OWN default branch (sensei is `trunk`)
-for d in requests custom-generators gen-matrix sensei playable-collections model-benchmarking; do
+# 2. the fleet — count the ROOT population only (the closing quote is what excludes /ui + /testing)
+for d in gen-matrix sensei playable-collections model-benchmarking; do
   D=/home/zach/workspace/civit/civitai-app-$d; git -C $D fetch origin -q
   B=$(git -C $D symbolic-ref --short refs/remotes/origin/HEAD | sed 's|origin/||')
-  echo "$d ($B): $(git -C $D grep -lE "(from|import\()[[:space:]]*'@civitai/blocks-react" origin/$B -- '*.ts' '*.tsx' | wc -l)"
-done   # => 0 · 0 · 7 · 21 · 27 · 42
+  echo "$d: $(git -C $D grep -lE "(from|import\()[[:space:]]*'@civitai/blocks-react'" origin/$B -- '*.ts' '*.tsx' | wc -l)"
+done   # => 4 · 12 · 7 · 22 root (prod: 3 · 6 · 3 · 7). Full table: ARCHIVE.
 
-# 3. rank 4 stays closed — 401, not the HTML 404. Both controls or the reading is worthless.
+# 3. rank 4 stays closed — both controls or the reading is worthless
 for p in 'gated-images?ids=1' 'images?ids=1' 'definitely-not-a-route-xyz'; do
   curl -s -o /dev/null -w "$p %{http_code}\n" "https://civitai.com/api/v1/blocks/$p"
 done   # => 401 · 401 (pos) · 404 (neg)
 
-# 4. the storage blocker is gone — 5 per-viewer routes, control 11 shared
-C=/home/zach/workspace/civit/civitai
-git -C $C ls-tree -r --name-only origin/main -- src/pages/api/v1/blocks/app-storage    | wc -l   # => 5
-git -C $C ls-tree -r --name-only origin/main -- src/pages/api/v1/blocks/shared-storage | wc -l   # => 11
+# 4. #479's surface is FIVE methods and stays five
+S=/home/zach/workspace/civit/civitai-app-starters; B=origin/feat/sdk-shared-storage-client
+git -C $S show $B:packages/civitai-sdk/src/shared-storage/index.ts | grep -cE "^  (list|get|append|update|withdraw)\("  # => 5
+git -C $S show $B:packages/civitai-sdk/BREAKING.md | grep -c "DELIBERATELY ABSENT"  # => 1
 
-# 5. rank 7's clock · rank 3's moderator · rank 8's PR
-git -C $A show origin/main:pnpm-workspace.yaml | grep -A2 minimumReleaseAgeExclude
+# 5. rank 7's clock · rank 3's moderator · the two open PRs
+git -C $A show origin/main:pnpm-workspace.yaml | grep -A2 minimumReleaseAgeExclude   # inert 2026-09-27T03:45:56Z
 cd $A && civitai app status app-requests | grep -E "^Status|^Deploy state"
-gh pr view 5163 --repo civitai/civitai --json state,mergeStateStatus
+gh pr view 479 --repo civitai/civitai-app-starters --json state,mergeStateStatus
+gh pr view 48 --repo ZacxDev/civitai-app-playable-collections --json state
 
 # 6. the operator's asks — from TRANSCRIPTS, never this doc (--arc exits 3 here)
 find ~/.claude/projects -maxdepth 2 -name '*.jsonl' -print0 | xargs -0 \
