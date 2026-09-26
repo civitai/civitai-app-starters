@@ -48,6 +48,135 @@ locally by redeclaring the custom property (e.g.
 
 Legend: **bold** = required attribute/element for correct styling + a11y.
 
+### Text — `data-civitai-ui="text"`
+Headings, paragraphs and inline copy. This is the one component that prescribes
+no element of its own — **you write the tag the meaning calls for** and this
+styles it:
+
+- Element: **`<h1>`–`<h6>`** for a heading, **`<p>`** for a paragraph,
+  **`<span>`** for inline text inside a sentence. A heading MUST be a real
+  heading element: that is what puts it in the document outline and in a screen
+  reader's heading list, and a styled `<div>` (or `<span>`) is not a substitute.
+- `data-size`: `xs` · `sm` · `md` (default) · `lg` · `xl` · `2xl` · `3xl` ·
+  `4xl` · `5xl`
+- `data-weight`: `normal` (default) · `medium` · `semibold` · `bold`
+- **Colour is a utility, not an attribute here** — `ci-muted` for secondary copy,
+  `ci-text-info` / `-success` / `-warning` / `-error` for the intent set,
+  `ci-text-default` for the body colour. `color` inherits, so these reach
+  `<civitai-text>`'s shadow content too. See *Not in this component* below.
+
+**Size and heading level are independent, on purpose.** `data-size` never
+changes what the element means, and the element never changes the size — so an
+`<h2>` can be the small print of a card (`data-size="xs"`) and a `<p>` can be the
+lede (`data-size="xl"`). Pick the level from the page's structure and the size
+from its design.
+
+**The scale — one scale, in two halves.** `xs`–`lg` is the UI ramp:
+`sm`/`md`/`lg` are the same three sizes Button uses, so a size name means one
+size across the pack. `xl`–`5xl` is the heading ramp, and **every value from
+`lg` up is one the `ci-fs-*` utilities already ship** — so the pack has one type
+scale under two spellings, not two that disagree:
+
+| `data-size` | `font-size` | `line-height` | same value as |
+|---|---|---|---|
+| `xs` | 12px | 1.5 | — |
+| `sm` | 13px | 1.5 | — |
+| `md` (default) | 14px | 1.5 | — |
+| `lg` | 16px | 1.5 | `ci-fs-6` |
+| `xl` | 20px | 1.25 | `ci-fs-5` |
+| `2xl` | 24px | 1.25 | `ci-fs-4` |
+| `3xl` | 28px | 1.25 | `ci-fs-3` |
+| `4xl` | 32px | 1.25 | `ci-fs-2` |
+| `5xl` | 40px | 1.25 | `ci-fs-1` |
+
+Two caveats worth knowing, both deliberate. **The names do not encode the
+`ci-fs-N` number, and the two sequences run in opposite directions** (`5xl` is
+`ci-fs-1`) — the right-hand column above is the mapping, and it is the price of
+keeping one naming convention across the whole ramp instead of switching to
+`fs-N` halfway up. **The unit differs**: this ramp is px (Button's unit),
+`ci-fs-*` is rem. They are equal at the default 16px root and diverge if a
+consumer changes it; mixing units inside one ramp would make it non-monotonic
+there, which is worse. Nothing above `ci-fs-1` (40px) is invented — that is the
+top of both ladders.
+
+**Margins are reset to `0`.** The browser's default heading/paragraph margins are
+em-relative, so they would move with every `data-size`; vertical rhythm in this
+pack belongs to `stack` / `group`. Space your text by wrapping it in one of those,
+not by relying on a UA margin.
+
+**Not in this component, deliberately** — each already has an implementation one
+layer down, and the same predicate decides all three:
+
+- **colour** → `ci-muted` (secondary copy), `ci-text-info` / `-success` /
+  `-warning` / `-error` (the intent set Alert / Badge / Toast share),
+  `ci-text-default` (the body colour). `color` inherits, so a utility on this
+  element — or on any ancestor — reaches `<civitai-text>`'s shadow content as
+  well; its inner element is `color: inherit`.
+  **Text sets `color: inherit`, not the text token**, on both tracks, and that is
+  what makes the ancestor half of the sentence above true: a *specified* value
+  beats an *inherited* one at any specificity, so a token on the element itself
+  would cancel every ancestor utility.
+
+  ⚠️ **THE TRADE, and it applies to pages that DO set a colour — not only to
+  pages that set none.** Text does not paint `--civitai-color-text` on its own,
+  so it renders in whatever colour it inherits: wherever an ancestor `color` and
+  the token disagree, Text follows the ancestor. An ancestor `color` is the
+  common case, not the exception. Measured on both tracks at this commit, in the
+  shape a block in this repo actually has: a `[data-theme="dark"]` root carrying
+  `color: #e6e6e6`, which is what `civitai-block-starter` and all six apps under
+  `starters/examples/` set. Text computes `rgb(230, 230, 230)` — the root's
+  colour — against a dark token of `rgb(193, 194, 197)`. Restoring the removed
+  declaration on that same fixture puts both tracks back at `rgb(193, 194, 197)`
+  while the plain `<p>` beside them stays `rgb(230, 230, 230)`; that pair is the
+  trade, in the exact colours a block here ships. Dark is where it reads, the
+  token being a soft grey next to a near-white block colour. Light theme behaves
+  the same way: with `color: rgb(24, 24, 27)` on `<body>` Text computes
+  `rgb(24, 24, 27)` where it computed the token `rgb(34, 34, 34)` before.
+
+  Every in-repo consumer would be in that population once it renders Text — none
+  does today — by two different routes: four starters set the colour on `<body>`
+  with Tailwind
+  (`text-zinc-900 dark:text-zinc-100` — `starters/next-app/src/app/globals.css`,
+  `starters/react-pwa/index.html`, `starters/svelte-pwa/index.html`,
+  `starters/sveltekit-app/src/app.html`), and seven set it on a `[data-theme]`
+  root as `#1a1a1a` / `#e6e6e6` (`starters/civitai-block-starter/src/index.css`
+  plus the six `starters/examples/*/src/index.css`). The package's own `demo/`
+  and `playground/` are the exception that proves the rule: both set
+  `body { color: var(--civitai-color-text) }`, so they still show the token —
+  by inheriting it, not because Text names it. With no colour anywhere on the
+  page Text lands on the UA default `rgb(0, 0, 0)`, since `@civitai/theme` ships
+  tokens only and sets no `color`.
+
+  Ask for the token explicitly with `ci-text-default`, the same utility route as
+  every other value — 🔴 **but that class lives in `utilities.css`, which is a
+  separate stylesheet this package does not inject.** `injectStyles()` ships the
+  tokens and `styles.css` and nothing else, and `@civitai/blocks-react`'s
+  `injectBlocksStyles()` — reached on mount by 20 of the 21 component modules in
+  that package's `/ui`, `SettingsForm` being the one exception and deliberately
+  unstyled — adds only its own interactive CSS on top. So on either of those
+  paths `ci-text-default`,
+  `ci-muted` and every `ci-text-*` is an **unknown class that silently does
+  nothing**. Measured: `<p data-civitai-ui="text" class="ci-text-default">`
+  under an ancestor `color: rgb(24, 24, 27)`, with `injectStyles()` alone,
+  computes `rgb(24, 24, 27)` — the class had no effect. Link or import
+  `@civitai/components/utilities.css` alongside `styles.css` if you colour,
+  align or truncate text; `demo/index.html` links all three for this reason.
+- **alignment** → `ci-text-start` / `ci-text-center` / `ci-text-end`.
+  `text-align` inherits, same as above.
+- **truncation** → `ci-truncate`. (This one does *not* reach shadow content —
+  `overflow` does not inherit — so truncation on the element track is a real
+  follow-up rather than an oversight.)
+
+A `data-color`, `data-align` or `data-truncate` here would be a second copy of a
+predicate that already exists. Adding any of them later is additive; taking one
+away would not be.
+
+```html
+<h2 data-civitai-ui="text" data-size="4xl" data-weight="bold">Generate an image</h2>
+<p data-civitai-ui="text">Pick a model, then press Generate.</p>
+<span data-civitai-ui="text" data-size="xs" class="ci-muted">Costs Buzz</span>
+```
+
 ### Button — `data-civitai-ui="button"`
 - Element: **`<button>`** (or `<a role="button">` for links).
 - `data-variant`: `filled` (default) · `light` · `outline` · `subtle`
