@@ -116,7 +116,7 @@ Devs never touch git hosting. The path is:
    build recipe at approve. (If you have no token configured, `submit` writes the
    `.zip` and prints next steps; you can also web-upload at `/apps/submit`.)
 3. **Review** — a moderator reviews the manifest + file diff at **`/apps/review`**
-   and approves (or rejects with a reason you see on `/apps/my-submissions`).
+   and approves (or rejects with a reason you see on `/apps/build`).
 4. **Deploy** — on approve, the platform builds + serves your `dist/` and stamps
    the block's `iframe.src` server-side, serving it at
    **`https://<blockId>.civit.ai/`** (root-served). Within ~5 min your block is

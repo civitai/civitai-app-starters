@@ -265,8 +265,11 @@ if (host) {
 
 ### `useBlockSettings()`
 
-Shorthand for `useBlockContext().settings`. Read-only from the iframe — settings
-are *written* on the platform `/apps/installed` page, not via a bridge message.
+Shorthand for `useBlockContext().settings`. Read-only from the iframe — there is
+no general "set settings" bridge message. Writing them is platform-side, in the
+settings panel reached from the **Manage** control on an installed app. The one
+setting a block can write itself is the viewer's checkpoint, via the
+`SET_USER_CHECKPOINT` message (see `useCheckpointPicker`).
 
 ```tsx
 const { publisherSettings, userSettings } = useBlockSettings();
