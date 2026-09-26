@@ -68,8 +68,8 @@
     }
   },
   "dependencies": {
-    "@civitai/app-sdk": "^0.51.0",
-    "@civitai/blocks-react": "^0.57.2",
+    "@civitai/app-sdk": "^0.51.1",
+    "@civitai/blocks-react": "^0.57.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
