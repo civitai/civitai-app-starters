@@ -152,6 +152,87 @@ describe('useBlockToken', () => {
     expect(result.current.expiresAt.getTime()).toBe(newExpiry.getTime());
   });
 
+  // 🔴 REGRESSION: `refresh()` must RESOLVE WITH the new token.
+  //
+  // The 401-retry pattern this SDK documents is
+  //
+  //     let res = await doFetch(raw);
+  //     if (res.status === 401) { await refresh(); res = await doFetch(raw); }
+  //
+  // and it was BROKEN while `refresh()` resolved `undefined`: `raw` is a const
+  // captured by the closure that was already executing, so awaiting a refresh
+  // re-renders the component but cannot reassign THAT binding. The retry
+  // re-sent the stale JWT and 401'd for the same reason the first call did.
+  // The resolved token is the only in-scope handle on the fresh JWT, so the
+  // assertions below are on the RESOLVED VALUE, not on the snapshot — a
+  // snapshot-only assertion is what let this ship (see the test above, which
+  // passes both before and after this fix).
+  it('refresh() resolves WITH the new token, so a 401 retry can use it', async () => {
+    vi.useRealTimers();
+    getTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+    const { result } = renderHook(() => useBlockToken());
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'BLOCK_INIT', payload: buildInit(60 * 60_000) },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+    postMessageMock.mockClear();
+
+    // Capture `raw` and `refresh` exactly as a consumer's async callback does —
+    // one destructure, then an await. This binding is the stale one.
+    const { raw: rawAtCallTime, refresh } = result.current;
+    expect(rawAtCallTime).toBe('jwt-1');
+
+    const refreshPromise = refresh();
+    const sent = postMessageMock.mock.calls[0][0] as { payload: { requestId: string } };
+    const newExpiry = new Date(Date.now() + 30 * 60_000);
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'TOKEN_REFRESH_RESPONSE',
+            payload: {
+              requestId: sent.payload.requestId,
+              token: {
+                raw: 'jwt-2',
+                scopes: ['models:read:self', 'posts:write:self'],
+                expiresAt: newExpiry.toISOString(),
+              },
+            },
+          },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+
+    const fresh = await refreshPromise;
+
+    // THE CONTRACT: the resolved value is the NEW token, not `undefined`.
+    expect(fresh, 'refresh() must resolve with the new BlockToken, not undefined').toBeDefined();
+    expect(fresh.raw, 'refresh() must resolve with the NEW raw JWT (jwt-2)').toBe('jwt-2');
+
+    // Every wrapped field rides along, not just `raw` — scopes can widen at
+    // refresh time, and a retry that re-reads stale scopes mis-gates its UI.
+    expect(fresh.scopes, 'refresh() must resolve with the new scopes').toEqual([
+      'models:read:self',
+      'posts:write:self',
+    ]);
+    expect(fresh.expiresAt.getTime(), 'refresh() must resolve with the new expiresAt').toBe(
+      newExpiry.getTime(),
+    );
+
+    // The point of the whole fix: the destructured binding is STILL stale, so a
+    // retry built on it would re-send jwt-1. This is the assertion that makes
+    // the returned value load-bearing rather than decorative.
+    expect(rawAtCallTime, 'the pre-refresh closure binding must still be stale').toBe('jwt-1');
+    expect(fresh.raw, 'the resolved token must DIFFER from the stale closure binding').not.toBe(
+      rawAtCallTime,
+    );
+  });
+
   it('dedupes concurrent refresh() calls to a single REQUEST_TOKEN', async () => {
     vi.useRealTimers();
     getTransport({ allowedParentOrigins: [PARENT_ORIGIN] });

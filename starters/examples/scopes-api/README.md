@@ -42,13 +42,17 @@ const { raw, refresh } = useBlockToken();   // raw JWT, auto-refreshing
 let res = await fetch('https://civitai.com/api/v1/blocks/me', {
   headers: { Authorization: `Bearer ${raw}` },
 });
-if (res.status === 401) {       // token may have just rotated
-  await refresh();              // force a fresh mint
+if (res.status === 401) {              // token may have just rotated
+  const fresh = await refresh();       // force a fresh mint; resolves WITH the new token
   res = await fetch('https://civitai.com/api/v1/blocks/me', {
-    headers: { Authorization: `Bearer ${raw}` },
-  });                           // retry once
+    headers: { Authorization: `Bearer ${fresh.raw}` },
+  });                                  // retry once, with the NEW raw
 }
 ```
+
+> Retry with `fresh.raw`, not the `raw` destructured above: that binding belongs
+> to the closure that ran before the refresh, so re-reading it re-sends the stale
+> JWT and 401s again.
 
 `/api/v1/blocks/me` is the authoritative who-am-i (the BLOCK_INIT viewer is a
 coarse hint). It returns only what your granted scopes allow. Other endpoints
