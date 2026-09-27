@@ -35,6 +35,18 @@ export interface AppClient {
      */
     readonly storage: StorageClient;
     /**
+     * This app's CROSS-USER store — one namespace every viewer of this app reads
+     * and writes, which is what makes a shared feed or a "popular" rail possible.
+     *
+     * 🔴 Requires the block token, like {@link AppClient.storage}, but the audience
+     * is NOT the same: an ANONYMOUS viewer MAY read here and may never write. So
+     * `viewer === null` gates the write affordances, not the read — and an anon
+     * write surfaces as 403, refused by the scope binding before the handler runs.
+     * A signed-in viewer is not automatically a permitted writer either: writes
+     * clear a server-side minimum-trust gate.
+     */
+    readonly sharedStorage: SharedStorageClient;
+    /**
      * The orchestrator's workflows, as the viewer.
      *
      * 🔴 The orchestrator accepts no block-scoped token on any route, so unlike
@@ -128,6 +140,163 @@ export interface GrantOptions {
 export type TokenSource = string | ((opts: {
     signal?: AbortSignal;
 }) => string | Promise<string>);
+
+export interface SharedStorageCallOptions {
+    signal?: AbortSignal;
+}
+
+/**
+ * The moderated, user-visible text plus the opaque app-owned blob.
+ *
+ * 🔴 `title` and `body` run the server's BLOCKING content-safety belt on every
+ * write. `data` does NOT — it is unmoderated app structure. Put every string
+ * another viewer will read in `title`/`body`; a text surface smuggled into
+ * `data` reaches other users unmoderated, which is the one thing this split
+ * exists to prevent.
+ */
+export interface SharedValue {
+    title: string;
+    body?: string;
+    data?: unknown;
+}
+
+/**
+ * One row of the shared store, as `list` and `get` both project it.
+ *
+ * 🔴 `value` is `unknown`, NOT {@link SharedValue}, and that is deliberate: the
+ * row was written by some OTHER viewer's copy of this app — possibly an older
+ * version, possibly a newer one — so its shape is a fact about the data, not a
+ * promise this client can make. Narrow it at the call site. Declaring it
+ * `SharedValue` would assert a shape nothing checked about data we did not write.
+ */
+export interface SharedItem {
+    key: string;
+    /** The row's author. A caller renders "yours" by comparing it to the viewer's id. */
+    authorUserId: number;
+    value: unknown;
+    /**
+     * The row's aggregate up-vote tally, as the server projects it.
+     *
+     * ⚠ Reported, not writable from here: the vote OPERATIONS are deliberately not
+     * part of this client (see the module note). Reading the tally is what lets an
+     * app build voting at its own layer, which is why the field stays.
+     */
+    count: number;
+    /**
+     * The wire carries ISO strings; both stamps are revived here, once, so a
+     * caller can sort and diff without knowing the transport.
+     */
+    createdAt: Date;
+    updatedAt: Date;
+    /**
+     * Whether THIS viewer has voted. 🔴 Always `false` for an anonymous viewer —
+     * who may read this store — so it is not evidence that nobody voted.
+     */
+    viewerVoted: boolean;
+}
+
+export interface SharedListQuery {
+    /** Narrows to keys starting with this. Escaped server-side against LIKE wildcards. */
+    prefix?: string;
+    /** The server bounds this and applies its own default; this client sends none. */
+    limit?: number;
+    /** An opaque `nextCursor` from a previous page. */
+    cursor?: string;
+}
+
+export interface SharedListResult {
+    /** Newest-first on the server-generated ULID key. Hidden rows are excluded. */
+    items: SharedItem[];
+    /**
+     * 🔴 PRESENT EXACTLY WHEN THERE MAY BE MORE ROWS, and passed through
+     * untouched. The server sets it iff the page it returned was full, and it
+     * arrives nested under the reply's `metadata` — lifted here, never defaulted,
+     * never normalised, never re-derived from `items.length`. A caller uses its
+     * ABSENCE as proof a scan completed.
+     */
+    nextCursor?: string;
+}
+
+/**
+ * This app's CROSS-USER key/value store — every viewer of this app reads and
+ * writes one namespace, unlike {@link StorageClient}, which is private per viewer.
+ *
+ * 🔴 DELIBERATELY GENERIC KEY/VALUE, AND DELIBERATELY SMALLER THAN THE ROUTE
+ * TABLE. The platform serves eleven shared-storage routes; this client wraps the
+ * five that are key/value operations. The higher-level ops — `vote`, `unvote`,
+ * `counts`, `top`, `increment`, `report` — are intentionally absent: an app that
+ * needs voting, counters or reporting builds them at its own layer on top of
+ * these five, and the platform surface expands only if demand shows up. **The
+ * routes existing is not a reason to add a method here.** Do not "fix" this
+ * omission.
+ *
+ * 🔴 Requires the block token the host mints, plus the scopes: every read takes
+ * `apps:storage:shared:read` and every write takes `apps:storage:shared:write`.
+ * An app that authenticated with an OAuth access token has no shared storage.
+ *
+ * 🔴 READS AND WRITES HAVE DIFFERENT AUDIENCES, and a caller must not assume one
+ * implies the other:
+ *
+ * - An ANONYMOUS viewer MAY read (`list`, `get`) and may NEVER write. An anon
+ *   write is refused by the scope binding before the handler runs, so it arrives
+ *   as **403**, not the 401 a missing token gives.
+ * - A signed-in viewer is not automatically a permitted writer: writes clear a
+ *   minimum-trust gate (account age, paid tier, verified email or a linked OAuth
+ *   account). Treat a write refusal as a normal outcome and say so in the UI.
+ *
+ * 🔴 EVERY FAILURE REJECTS. No path here resolves to mean "not written" or
+ * "could not read". A caller that must not act on a partial view branches on the
+ * rejection, never on an empty result.
+ */
+export interface SharedStorageClient {
+    /**
+     * One page of rows, newest-first. `GET blocks/shared-storage/list`.
+     *
+     * Values ARE returned, unlike the per-viewer client's `list` — so one request
+     * renders a page rather than needing a `get` per key.
+     */
+    list(query?: SharedListQuery, opts?: SharedStorageCallOptions): Promise<SharedListResult>;
+    /**
+     * One row by key, or `null`. `GET blocks/shared-storage/item`.
+     *
+     * 🔴 `null` covers MISSING **and** HIDDEN, deliberately and identically — a
+     * withdrawn or moderator-hidden row is indistinguishable from one that never
+     * existed, so this is not an oracle for either. It is a 200, not a 404.
+     */
+    get(key: string, opts?: SharedStorageCallOptions): Promise<SharedItem | null>;
+    /**
+     * Files a new row and resolves its key. `POST blocks/shared-storage/append`.
+     *
+     * 🔴 THE KEY IS THE SERVER'S — a ULID it generates, returned here. This method
+     * takes no key and there is no create-at-key call, because a client-chosen key
+     * would let one viewer overwrite another's row.
+     */
+    append(value: SharedValue, opts?: SharedStorageCallOptions): Promise<{
+        key: string;
+    }>;
+    /**
+     * Edits a row the VIEWER AUTHORED, in place. `POST blocks/shared-storage/update`.
+     *
+     * Another author's key is a 403 and a missing or hidden one a 404 — neither is
+     * a silent no-op. Preserved: the key, the author, `createdAt`, and the row's
+     * votes, counters and reports. Replaced: the value.
+     */
+    update(key: string, value: SharedValue, opts?: SharedStorageCallOptions): Promise<{
+        ok: true;
+    }>;
+    /**
+     * Deletes a row the VIEWER AUTHORED. `POST blocks/shared-storage/withdraw`.
+     *
+     * 🔴 `deleted: false` is a SUCCESS, and it is deliberately ambiguous: another
+     * author's key, an already-withdrawn row and a key that never existed all
+     * answer the same way, so this cannot probe for other viewers' rows. Do not
+     * report it to the viewer as "someone else owns this".
+     */
+    withdraw(key: string, opts?: SharedStorageCallOptions): Promise<{
+        ok: true;
+        deleted: boolean;
+    }>;
+}
 
 export interface StorageCallOptions {
     signal?: AbortSignal;

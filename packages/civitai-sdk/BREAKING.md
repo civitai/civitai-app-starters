@@ -19,7 +19,7 @@ messages have no destination yet.
 | `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`, `POLL_WORKFLOW`, `CANCEL_WORKFLOW`, `QUERY_APP_WORKFLOWS`, `CANCEL_APP_WORKFLOW` | `POST /api/v1/blocks/workflows/{submit,estimate,poll,cancel,query}` | **Routes exist.** 🔴 Use these, **not** `app.orchestration` — see *What a direct orchestrator call loses* below |
 | `GET_IMAGES_BY_IDS` | `GET /api/v1/blocks/images?ids=1,2,3` | Batch, up to **100** ids per request. Misses are reported by OMISSION — see below. 🔴 **Not `/api/v1/images`** — that is a `PublicEndpoint`; it ignores your token and answers with anonymous public results rather than erroring |
 | `APP_STORAGE_*` | `POST /api/v1/blocks/app-storage/*` | **Routes exist** — five of them (`get`, `set`, `delete`, `list`, `quota`), civitai#5085. This row said "No v1 route"; that is no longer true. See *App storage* below |
-| `SHARED_*` | `GET\|POST /api/v1/blocks/shared-storage/*` | **Routes exist** — eleven of them; see *Shared storage* below |
+| `SHARED_*` | `app.sharedStorage`, over `GET\|POST /api/v1/blocks/shared-storage/*` | **Routes exist** — eleven of them. `app.sharedStorage` wraps the **five** key/value ones; the higher-level ops are deliberately app-layer. See *Shared storage* below |
 | `GET_BUZZ_BALANCE` | `GET /api/v1/blocks/buzz` | **Route exists.** Returns `{ blue, green, yellow }` — a bare object, three numbers |
 | `GET_BUZZ_ACCOUNTS`, `GET_BUZZ_TRANSACTIONS` | — | No v1 route |
 | `CREATE_POST_FROM_APP` | — | No v1 route, **and deliberately staying on the bridge** — see below |
@@ -56,6 +56,119 @@ first.
 
 Eleven routes under `/api/v1/blocks/shared-storage/`. Reads take `apps:storage:shared:read`, writes take
 `apps:storage:shared:write` — both scopes already existed; neither is new.
+
+### `app.sharedStorage` wraps FIVE of the eleven, on purpose
+
+`app.sharedStorage` is a **generic cross-user key/value store**: `list`, `get` (the `/item` route, matching its
+tRPC twin `apps.shared.get`), `append`, `update`, `withdraw`. An app no longer needs to hand-roll
+`app.site.get('blocks/shared-storage/…')`, and the shape traps below are handled for it.
+
+🔴 **`vote`, `unvote`, `counts`, `top`, `increment` and `report` are DELIBERATELY ABSENT from the client.**
+The platform serves all eleven routes and will keep doing so — this is a surface decision, not a gap, and not
+an oversight to be "fixed". Shared storage is scoped to generic key/value operations; the higher-level ops
+belong at the app layer, where an app that wants voting, counters or reporting builds them on top of these
+five. If demand shows up, the platform-side surface can be expanded again and the client can follow — but
+**the routes existing is not a reason to add a method here.** Do not add one back without that decision being
+revisited.
+
+What survives the cut, and why: `SharedItem` still carries **`count` and `viewerVoted`** exactly as the two
+read routes project them. Reading a tally is what makes an app-layer vote feature possible; only the
+vote-casting operation is out of scope.
+
+🔴 **It is not the per-viewer client's shape, in four ways.** Each is a real difference in the route table,
+not a stylistic one, and assuming otherwise produces a bug that type-checks:
+
+1. **The two reads are `GET` with a query string**; the three writes are `POST`. A read sent as POST is a `405`.
+2. **`list` is enveloped** — `{ items, metadata: { nextCursor } }`. The cursor sits one level deeper than
+   `app-storage/list`'s top-level `nextCursor`; read the wrong level and pagination is silently dead while
+   every page still parses.
+3. **`append` accepts no key** — the server mints a ULID, so one viewer cannot overwrite another's row.
+4. **Anonymous viewers read but never write** — the inverse of per-viewer storage, where a missing subject
+   refuses everything. See *Who may read, and who may write* below.
+
+### Porting off the bridge: `useSharedStorage` → `app.sharedStorage`
+
+`@civitai/blocks-react`'s `useSharedStorage` hook is what the fleet uses today, and it is **the left column of
+the table at the top of this document, not a rival client of the right one.** It sends `SHARED_LIST`,
+`SHARED_GET`, … over `postMessage` and never touches `/api/v1`; the host receives those messages and calls
+tRPC `apps.shared.*` on the block's behalf. Its own doc says the block *"never sees the datastore credentials
+and never sends its block token (the host injects both)"*.
+
+`app.sharedStorage` is the other side of that migration: the transport becomes a direct `fetch` of
+`/api/v1/blocks/shared-storage/*`, from the block's opaque origin, instead of a message to the host.
+
+**The credential and the CORS declaration are already handled — for both, by code that exists.** `initialize()`
+wires the host session into the client, `createHttp` puts `Authorization: Bearer <token>` on every request and
+retries once on a `401` with a freshly fetched token, and the token still comes **from the host** over the
+bridge (`REQUEST_TOKEN`) — the host continues to mint and rotate it. Scopes are unchanged between the two
+transports (see above). So there is no token plumbing, no CORS work and no manifest change to do.
+
+⚠ **The CORS mechanism differs by trust tier, though neither tier costs you any work.** An unverified block runs
+without `allow-same-origin`, so it fetches from an **opaque origin** and the five routes' `allowOpaqueOrigin`
+opt-in makes the server answer `ACAO: null`. An `internal`- or `verified`-tier block **does** get
+`allow-same-origin`, so it fetches from its **real origin**, where that arm does not apply — it clears CORS via
+the server's origin allowlist instead, which the platform populates itself from the publish-request approval
+rather than anything an author configures.
+
+The work that actually remains is four items, and it is all at the call sites:
+
+1. **Narrow `value` from `unknown`** at every read site — see below.
+2. **Move vote / counter / report logic into your app.** Those methods are not in this client at all; the
+   platform routes still exist. See the deliberate-omission note above.
+3. **Handle refusals as HTTP.** An `ApiError` carrying a `status`, where the bridge surfaced a rejected
+   message — and the anon-write case is a `403` from the scope binding rather than anything the handler said.
+   Read `message ?? error`; see *Error body* below.
+   🔴 **But not every failure is an `ApiError`.** A request the browser blocks — a CORS rejection, a DNS or
+   network failure — never reaches the response layer, so it surfaces as a **fetch `TypeError` with no
+   `status` and no body**. A `catch` that assumes `ApiError` will read `undefined` for the status and report the
+   wrong thing. The bridge had no such failure mode; this transport does. Branch on
+   `error instanceof ApiError` first and treat the rest as transport failure.
+4. **Audit every `limit` you pass** — the normalisation rules changed; see below.
+
+⚠ **This paragraph has had three framings; two claims are retracted.** Recorded so the ground is not re-walked,
+and scoped deliberately — each retraction covers only the words quoted, nothing adjacent:
+**(a)** *"a second client for these same routes"* — **false**: the hook is the bridge/tRPC path and never
+calls `/api/v1`, so the two are different transports, not two clients of one surface.
+**(b)** *"budget for the token/CORS work"* — **false**: both the credential and the CORS declaration are already
+handled, so that advice sent the reader's effort at finished infrastructure while demoting the real work.
+🔴 The *transport* change is NOT retracted — this document still asserts it, above. The list above is what is
+measured; nothing beyond it is claimed.
+
+| | `useSharedStorage` (bridge) | `app.sharedStorage` (HTTP) |
+|---|---|---|
+| Transport | `postMessage` → host → tRPC `apps.shared.*` | direct `fetch` of `/api/v1/blocks/shared-storage/*` |
+| Credential | host-injected | the SDK sends the host-minted token for you |
+| Methods | 10, including `vote`/`unvote`/`count`/`report` | 5, key/value only |
+| A listed row's `value` | `SharedAppendValue` — the typed write shape | `unknown` |
+| `update` resolves | `void` | `{ ok: true }` |
+| `list({ limit })`, out of range / non-integer / non-finite | **normalised**: clamped to 1…100, floored, or defaulted to 50 | **rejected — `400`** on all three |
+
+🔴 **`limit` is the one that bites silently, and it is three changes, not one.** The bridge HOST normalised;
+the REST route VALIDATES and refuses. Measured against the platform's own schema
+(`z.coerce.number().int().min(1).max(100)`), each of these used to succeed and now `400`s:
+
+- **Out of range** — `200` was clamped to 100, `0` was raised to 1. Both now reject.
+- **Non-integer** — `2.5` was floored to 2. Now rejects.
+- **Non-finite or not a number** — `NaN`, `Infinity`, `"abc"` and `""` all fell back to **50**. All now reject.
+  🔴 **This is the one to grep for**: `Number(searchParams.get('n'))` on a missing param is `NaN`, which used
+  to mean "just give me the default" and is now a failed request.
+
+⚠ The `400` body is `{ error: 'Invalid query', details }`, and the SDK reads `error` first — so
+`ApiError.message` is just **"Invalid query"**, naming neither the field nor the reason. The pointer is not
+missing, only moved: **`ApiError.body.details`** carries zod's flattened field errors. Look there, not at
+`.message`, when a read 400s.
+
+Pass a value in range, or omit it and take the server's default. This client deliberately does **not** re-clamp:
+the bounds are the server's, a second copy here is the thing that drifts, and a guard in this package enforces
+that the module carries no numeric literal at all.
+
+🔴 **The `value: unknown` is deliberate, and it is the wire-honest reading.** A row you list was written by some
+OTHER viewer's copy of the app — possibly an older version, possibly a newer one — so its shape is a fact about
+stored data, not a promise a client can keep. Typing it as the *write* shape asserts something nothing checked,
+and it is wrong the moment one viewer ships a schema change. Narrow it at the call site.
+
+Consequence: **a port is not an import swap** — but the cost is call-site work, not infrastructure. Narrow
+`value`, move the vote/counter/report logic into your app, branch on `ApiError.status`, and check every `limit`.
 
 | Method | Path | Scope |
 |---|---|---|

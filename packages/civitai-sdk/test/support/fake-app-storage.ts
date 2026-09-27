@@ -23,6 +23,8 @@
  * consumer asks for it — not before.
  */
 
+import { fromBase64, jsonResponse, SEED_EPOCH_MS, toBase64, utf8 } from './wire.js';
+
 /** A row the fake holds. `updatedAt` is a `Date` here and an ISO STRING on the wire. */
 export interface FakeAppStorageRow {
   key: string;
@@ -73,20 +75,9 @@ export interface FakeAppStorage {
 /** The base URL the fake answers under, matching the site client's default. */
 const APP_STORAGE_PATH = '/blocks/app-storage/';
 
-/** Arbitrary, non-round, and fixed: seeded stamps are then pairwise distinct. */
-const SEED_EPOCH_MS = 1_756_000_000_123;
-
 /** The per-user ceilings the quota route reports. */
 const USER_QUOTA_BYTES = 2 * 1024 * 1024;
 const USER_ROW_LIMIT = 1000;
-
-const utf8 = (text: string) => new TextEncoder().encode(text);
-const toBase64 = (text: string) => btoa(String.fromCharCode(...utf8(text)));
-const fromBase64 = (encoded: string) =>
-  new TextDecoder().decode(Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0)));
-
-const jsonResponse = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
 /**
  * An in-memory stand-in for the five `/blocks/app-storage/*` routes, behind a

@@ -71,13 +71,14 @@ host's consent dialog.
 **not** an error in itself: the host's OAuth mint is flag-gated, so an opted-in
 block can legitimately receive the block token, and that token serves the
 `/api/v1/blocks/*` routes it was minted for, `GET /api/v1/models/{id}`, and
-`app.storage` — which an OAuth token cannot reach at all. What it does not reach
-is the rest of `/api/v1`, the orchestrator or the MCP. So the refusal sits at the
-surface, not at startup:
+`app.storage` and `app.sharedStorage` — which an OAuth token cannot reach at all.
+What it does not reach is the rest of `/api/v1`, the orchestrator or the MCP. So
+the refusal sits at the surface, not at startup:
 
 | You call | Holding a block token, signed in |
 |---|---|
 | `app.storage.*` | Works. This is the token app storage requires |
+| `app.sharedStorage.*` | Reads work, anonymous included. Writes additionally need a signed-in viewer past the server's minimum-trust gate, so a `403` there is about the VIEWER, not the token |
 | `app.site` on `blocks/…` | Works. These are the routes the token was minted for |
 | `app.site.get('me')` and the rest of `/api/v1` | The API's own 401/403, with `auth: "oauth"` named in the message. `status` and `body` are untouched, so a caller can still branch on them |
 | `app.orchestration.*` | Rejects **before** the request with a `CivitaiError` naming `auth: "oauth"` — the orchestrator accepts no block token on any route, so there is nothing to learn from making the call |
@@ -143,8 +144,11 @@ Routes are addressed by path, so a route `/api/v1` gains needs no release here:
 const images = await app.site.get('images', { query: { limit: 20, username: 'civitai' } });
 ```
 
-A `401` is retried once with a fresh token. Any other failure is an `ApiError`
-carrying `status`, the parsed `body`, and the server's own message.
+A `401` is retried once with a fresh token. Any failure the server answered is an
+`ApiError` carrying `status`, the parsed `body`, and the server's own message —
+while a request the browser never delivered (CORS, DNS, offline) surfaces as a
+fetch `TypeError` with no `status`, so test `error instanceof ApiError` before
+reading one.
 
 ## App storage
 
@@ -189,6 +193,81 @@ try {
   else throw error;
 }
 ```
+
+## Shared storage
+
+`app.sharedStorage` is this app's **cross-user** key/value store — one namespace
+every viewer reads and writes, unlike `app.storage`, which is private per viewer.
+Five methods: `list`, `get`, `append`, `update`, `withdraw`.
+
+```ts
+const { items, nextCursor } = await app.sharedStorage.list({ prefix: 'deck:' });
+const { key } = await app.sharedStorage.append({ title: 'My deck', data: { cards } });
+const row = await app.sharedStorage.get(key);        // null when hidden or absent
+await app.sharedStorage.update(key, { title: 'Renamed' });
+const { deleted } = await app.sharedStorage.withdraw(key);
+```
+
+🔴 **Generic key/value on purpose — and deliberately smaller than the route
+table.** The platform serves eleven shared-storage routes; this client wraps the
+five that are key/value operations. `vote`, `unvote`, `counts`, `top`,
+`increment` and `report` are **intentionally absent**: an app that needs voting,
+counters or reporting builds them at its own layer on top of these five, and the
+platform surface expands only if demand shows up. The routes existing is not a
+reason to expect a method here.
+
+Reading a tally still works — `SharedItem` carries `count` and `viewerVoted` as
+the server projects them, which is exactly what makes an app-layer vote feature
+possible. You just cast the vote yourself.
+
+🔴 **Reads and writes have different audiences, and one does not imply the
+other.** This is the opposite of `app.storage`, so do not carry that gate over:
+
+- **An anonymous viewer MAY read** (`list`, `get`) — signed-out browsing is a
+  supported path — and may **never** write. An anon write is a `403` from the
+  scope binding, not the `401` a missing token gives.
+- **A signed-in viewer is not automatically a permitted writer.** Writes clear a
+  server-side minimum-trust gate (account age, paid tier, verified email or a
+  linked OAuth account). Treat a write refusal as a normal outcome with a real
+  message in the UI, not an unexpected error.
+
+So gate the write affordances on `app.viewer`, and render the reads regardless.
+
+Four shape differences from `app.storage`, each of which would otherwise be a bug
+that type-checks:
+
+- **The two reads are `GET`**; the three writes are `POST`. A read sent as `POST`
+  is a `405`.
+- **`list` returns `items` with values included** — so one request renders a page
+  rather than needing a `get` per key — and its `nextCursor` arrives nested under
+  the reply's `metadata`. The client lifts it for you; the rule is the same as
+  `app.storage`'s, absence proves the scan completed.
+- **`append` takes no key.** The server mints a ULID and returns it, so one
+  viewer cannot overwrite another's row. Use `update` for an in-place edit of a
+  row this viewer authored.
+- **`value` is `unknown` on the way out.** The row was written by some other
+  viewer's copy of your app, possibly an older version, so its shape is a fact
+  about the data rather than a promise the client can make. Narrow it yourself.
+
+⚠ **`limit` is validated, not normalised.** Out of range, non-integer, `NaN` and
+`Infinity` are each a `400` and a rejected promise — not a silently adjusted page.
+Pass a value inside the server's range, or omit it and take the server's default.
+🔴 The sharp edge: `Number(searchParams.get('n'))` on a missing param is `NaN`, so
+a pattern that used to fall through to a default is now a failed request.
+
+The `400` body is `{ error: 'Invalid query', details }` and the SDK reads `error`
+first, so `ApiError.message` says only "Invalid query" — the field-level reason is
+in `ApiError.body.details`.
+
+If you are porting from `@civitai/blocks-react`'s `useSharedStorage`, the bridge
+*host* normalised all of this for you and nothing normalises it here;
+[`BREAKING.md`](./BREAKING.md) covers what the port does and does not cost.
+
+`withdraw` answers `{ ok: true, deleted: false }` identically for another
+author's key, an already-withdrawn row and a key that never existed — it is not
+an existence oracle, so do not report that as "someone else owns this". Put every
+string other viewers will read in `title`/`body`, which the server moderates;
+`data` is unmoderated app structure.
 
 ## The orchestrator
 
