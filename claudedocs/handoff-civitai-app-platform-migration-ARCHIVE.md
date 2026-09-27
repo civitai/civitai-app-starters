@@ -527,3 +527,28 @@ rather than about this migration.
   `git diff --numstat <base> <head>` at the moment of writing** and say so in the artefact, rather
   than restating a remembered figure. Twice this session a **zero from a phrase I invented** also
   read as a real absence — both caught only by a positive control.
+
+## Evicted 2026-09-27 (fifth pass) — this session's detail, held here to keep the doc's delta under its ratchet
+
+The two investigation blocks and three gotchas below were written for the handoff and moved
+here VERBATIM: the ratchet gates the DELTA, so appending them there is what would have made
+the round unlandable. The doc carries a one-line pointer to this heading.
+
+### ✅ RESOLVED — `sdk@0.8.0`'s publish failed E503; attempt 2 fixed it and was NOT mine
+- as-of: 2026-09-27
+- **Symptom:** `main` at `0.8.0` with `sharedStorage` while npm `latest` was `0.7.0`, whose tarball has **no** shared-storage files. Run `36283050923` ended `failure`.
+- **Observed (with values):** the publish step names the cause — `E503 ... PUT https://registry.npmjs.org/@civitai%2fsdk`. **In-job control:** all three publishes launched at `00:38:01` on one OIDC credential; `components@0.8.1` and `components-react@0.9.0` succeeded, only the sdk 503'd at `00:40:52`. `assert:published` then 404'd over 60 cache-busted attempts / 590 s. `via: measurement`
+- **Ruled out:** *"npm STAGED it"* — staging returns success and hides the row, never `E503`; and the re-run worked. 🔴 The authoritative check was unavailable: `npm whoami` is **E401** here, so `npm stage list` would answer about my session. `via: command`
+- **Ruled out:** *"my re-run fixed it"* — FALSE. `run_attempt=2` started `02:03:08Z`, done `02:05:06Z`; my `gh run rerun` was **refused rc=1**. `triggering_actor` `ZacxDev` is the shared account, so it does not separate operator from concurrent session. `via: measurement`
+- **Verified by CONTENT:** `latest`=0.8.0; tarball has `dist/shared-storage/index.{js,d.ts}`; **neg control** 0.7.0 = **0**; `.d.ts` has exactly **5** methods and **0** of the six absent ones; `AppClient.sharedStorage` at `dist/app/index.d.ts:41`.
+
+### 🔴 CORRECTION — `BlockGate` DOES keep the bridge alive; this doc's "FollowButton, not BlockGate" was WRONG
+- as-of: 2026-09-27
+- **Observed (with values):** measured on the **pinned** published `blocks-react@0.51.0` tarball (the app's `node_modules` is a stale **0.48.0** — do not measure there). `dist/ui/BlockGate.js:4` → `dist/hooks/useDirectLoad.js:3` → `useTransportSnapshot` → `getTransport()` at `dist/hooks/useBlockContext.js:8`. **Neg control:** `dist/ui/Card.js` = **0**. `BlockGate` wraps the PRODUCTION root at `src/main.tsx:56`. `via: code`
+- **Consequence:** the blocks-react transport is built on **every production boot** regardless of `FollowButton`, so `initialize({ transport })` is **more** load-bearing than this doc implied — you cannot dodge the two-transport problem by not rendering `FollowButton`. PR #48's original reading was right. `via: code`
+
+### Gotchas from this session
+
+- 🔴 **A PUBLISH FAILURE'S CAUSE WAS IN THE LOG, AND THE IN-JOB CONTROL MADE IT READABLE.** `assert-published-versions.mjs` rightly says an anonymous 404 cannot separate *failed publish* from *staged* — but it reads only the registry. The **publish step** named `E503` on the `PUT`, and the discriminator was **two sibling publishes on the same credential in the same second succeeding**. **Read the step that did the work, not only the step that checked it.** Its staged-vs-failed warning also does not apply once the partial set is published: a re-run then touches one package and fails loudly with `E409`. 🔴 **AND A TOOL REFUSING YOUR ACTION CAN MEAN SOMEONE ELSE ALREADY DID IT** — `gh run rerun` exited 1 ("cannot be retried") because the run had gone green 2 min earlier on an attempt I did not start. Read `run_attempt` + `run_started_at` before claiming credit; `triggering_actor` cannot separate the operator from a concurrent session on a shared account.
+- 🔴 **A SKILL'S SIZE GATE CAN EXIST WITHOUT A TEST FILE NAMED AFTER IT, AND ITS DOCSTRING IS THE SPEC.** `browser-bridge/SKILL.md` is budgeted at **12,038 B** by `test_skill_audit.py` — a filename my `size|ratchet` survey listed but I discounted, so I called five skills ungated and was wrong. Its docstring says the browser skill is the **exemplar** for "a complex tool fits the budget", so growing it is the one forbidden fix: route detail to an **already-referenced** file (it also asserts no `missing_refs`/`orphan_refs`). 12,540 B → red 2 failed/180 passed → moved to `reference/frames-cdp.md` → **182 passed**. **Enumerate the guards that read a file you touched; do not grep their filenames.**
+- 🔴 **MINING THE OPERATOR'S ASKS: `--ids-file` WORKS AND ITS SET OVER-COLLECTS.** `--arc` still exits **3** here. The step-6 workaround gave **12 sessions / 269 messages**, of which only **101 were operator-typed** — filter `<task-notification>` or the corpus reads 2.7× larger. 🔴 Matching is on the doc NAME, so it pulls in adjacent arcs (2 of 12 only MENTION this doc), and it misses the **opencode** corpus — exactly where rank 13's artifact might be.
