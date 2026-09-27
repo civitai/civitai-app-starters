@@ -552,3 +552,101 @@ the round unlandable. The doc carries a one-line pointer to this heading.
 - 🔴 **A PUBLISH FAILURE'S CAUSE WAS IN THE LOG, AND THE IN-JOB CONTROL MADE IT READABLE.** `assert-published-versions.mjs` rightly says an anonymous 404 cannot separate *failed publish* from *staged* — but it reads only the registry. The **publish step** named `E503` on the `PUT`, and the discriminator was **two sibling publishes on the same credential in the same second succeeding**. **Read the step that did the work, not only the step that checked it.** Its staged-vs-failed warning also does not apply once the partial set is published: a re-run then touches one package and fails loudly with `E409`. 🔴 **AND A TOOL REFUSING YOUR ACTION CAN MEAN SOMEONE ELSE ALREADY DID IT** — `gh run rerun` exited 1 ("cannot be retried") because the run had gone green 2 min earlier on an attempt I did not start. Read `run_attempt` + `run_started_at` before claiming credit; `triggering_actor` cannot separate the operator from a concurrent session on a shared account.
 - 🔴 **A SKILL'S SIZE GATE CAN EXIST WITHOUT A TEST FILE NAMED AFTER IT, AND ITS DOCSTRING IS THE SPEC.** `browser-bridge/SKILL.md` is budgeted at **12,038 B** by `test_skill_audit.py` — a filename my `size|ratchet` survey listed but I discounted, so I called five skills ungated and was wrong. Its docstring says the browser skill is the **exemplar** for "a complex tool fits the budget", so growing it is the one forbidden fix: route detail to an **already-referenced** file (it also asserts no `missing_refs`/`orphan_refs`). 12,540 B → red 2 failed/180 passed → moved to `reference/frames-cdp.md` → **182 passed**. **Enumerate the guards that read a file you touched; do not grep their filenames.**
 - 🔴 **MINING THE OPERATOR'S ASKS: `--ids-file` WORKS AND ITS SET OVER-COLLECTS.** `--arc` still exits **3** here. The step-6 workaround gave **12 sessions / 269 messages**, of which only **101 were operator-typed** — filter `<task-notification>` or the corpus reads 2.7× larger. 🔴 Matching is on the doc NAME, so it pulls in adjacent arcs (2 of 12 only MENTION this doc), and it misses the **opencode** corpus — exactly where rank 13's artifact might be.
+
+## Evicted 2026-09-27 (sixth pass) — the devrc audit ladder, and the port adapter's measured contract
+
+Held here VERBATIM because the ratchet gates the DELTA; the doc carries pointers only.
+
+### `devrc#1889` — the 4-round ladder, and what every round after round 0 actually found
+
+MERGED, squash `9b41e398f2`, verified BY CONTENT on `origin/main` (4 patterns + a
+positive control + a negative control; ancestry is FALSE after a squash and that is
+normal, never evidence it failed to land). Gate on the merged head: `pytests
+collected=24297 passed=24291 failed=0`, `gotests 461/461`, `nodetests 1720/1720`.
+
+🔴 **EVERY FINDING AFTER ROUND 0 WAS IN PROSE A PREVIOUS ROUND WROTE WHILE FIXING THE
+ROUND BEFORE IT. Zero were in the 9 lessons the PR shipped.** Round 0 `deletion
+candidate` (2 files retired as duplicates of an auto-loaded `CLAUDE.md`); r1 2🔴/4🟡/2🟢;
+r2 2🔴/4🟡/1🟢; r3 0🔴/2🟡. Merged at `fe509d0a` on operator direction with round 4 owed.
+
+- 🔴 **TWO OF MY FIXES WERE WORSE THAN WHAT THEY REPLACED, AND THE ANSWER WAS TO REVERT,
+  NOT REDRAFT.** (a) I wrote *"nothing is loaded at all: `direnv status` reads `Found RC
+  allowed 0`"* — the reading was right, the inference BACKWARDS. Controls on 2.37.1:
+  never-allowed `1`, **allowed `0`**, denied `2`; devrc reads 0 and `direnv export bash`
+  prints `direnv: loading`. (b) I wrote that the copy-`.envrc` step *"is a no-op here"* —
+  false, and it contradicted `CLAUDE.md:37`, which DOES the copy. Untracked is the REASON
+  it is required. Writing draft 3 is how a ladder reaches draft 5.
+- 🔴 **A RETRACTION IS A TREE-WIDE SWEEP AND I BROKE THAT RULE HAVING BEEN HANDED IT.**
+  I removed the false "four devrc gates" figure from `CLAUDE.md` and left it standing in
+  `pipelines.md` — the file gotcha 11 POINTS AT, and the only occurrence in the tree.
+  The measured truth: ONE gate on **2026-09-21** (`79e0b655`, `d5f8ea99`) posting
+  `NO CAPACITY: <leg>` on all FOUR OF ITS LEGS; devrc posts four contexts per gate, so
+  the number four carries no information about how many PRs were affected.
+- 🔴 **A REVERT CAN DELETE SOMETHING TRUE.** My round-2 revert dropped *"pnpm 12 errors
+  where 10 only warns"* and replaced it with *"no source is cited"* — an unverified
+  negative refuted by a TRACKED file in the repo I was citing three lines later
+  (`civitai-app-oauth-probe/.github/workflows/ci.yml`, plus `8175b31`). pnpm 12 also
+  ships a native binary NixOS CANNOT execute, so that gap is permanent, not a to-do.
+- 🔴 **A "DISCRIMINATOR" THAT DISCRIMINATES NOTHING.** Item 11 named the per-head status
+  timeline as THE discriminator and printed a jq selecting only `created_at/context/state`
+  — dropping `.description`, the field the `NO CAPACITY` text lives in. Live control on the
+  PR's own head: corrected form prints `pending devrc gate running`, the old form stops at
+  `pending`. 🔴 **The fix then caught its own bug on its own PR**: head `8702dc76` shows 4×
+  `error` whose description reads *"superseded by a newer run … this commit was not
+  validated"* — NOT a failure, and on `state` alone indistinguishable from a red.
+- 🔴 **`--emit-claims` REFUSED a corrupted anchor and that refusal is load-bearing.** I
+  passed `--audited <from>..<to>` where it wants a single sha; it would have written
+  `a..b..c` and copied the corruption into the next round. `<from>` = the tip the round
+  READ, `<to>` is stamped from `headRefOid`. And EMITTING IS NOT POSTING — the control is
+  a next-round probe parsing the block back (`round=N` at rc 0).
+- ⚠ **`audit-dispatch.py`'s WHERE TO WORK is WRONG for a cross-repo dispatch, confirmed
+  three times** — it asserts the target "is the repository this session is standing in".
+  Brief every cross-repo auditor that it is wrong, rather than letting it discover it.
+- ⚠ **Round 2 predicted a #1787 textual conflict; round 3 REFUTED it** — `git merge-tree
+  --write-tree` rc 0 in BOTH orders, instrument validated with a real-conflict control
+  (rc 1 + a CONFLICT line). Round 2 had read #1787's diff against its OWN base.
+
+### `playable-collections` port — the adapter's measured contract (commit `b157419`)
+
+The bridge and SDK transports do not line up, and the gap is exactly three things:
+
+1. **SNAPSHOT — one field.** Diffing both `BlockSnapshot` shapes: `hostOrigin` is the ONLY
+   field the SDK wants that the bridge's snapshot lacks (the bridge's extra `appId`/`blockId`
+   are ignored). 🔴 **Identity is load-bearing**: `snapshot.get()` feeds
+   `useSyncExternalStore`, which bails on `Object.is`, so composing `{...snap, hostOrigin}`
+   fresh per call renders FOREVER — memoised on both inputs. 🔴 **`hostOrigin` takes NO
+   fallback**: the bridge documents `getHostOrigin()` as a security invariant because its
+   value becomes the base URL a money-scoped bearer token is sent to, so `null` must stay
+   `null`; substituting `location.origin` converts not-ready into an exfiltration vector.
+2. **REQUEST — one mapping.** The SDK's `request(type, params)` carries no reply type; the
+   bridge REQUIRES one. Only `REQUEST_TOKEN` → `TOKEN_REFRESH_RESPONSE` is needed, verified
+   three ways (`mockHost.js:889`, `useBlockToken.js:11`, `validate.js:326`).
+   `REQUEST_CONSENT`/`REQUEST_SIGN_IN` are **notify**-shaped in the SDK's own host client
+   (`host/index.js:286`, `:37`), and Buzz/storage go over REST. An unmapped type THROWS: a
+   wrong reply type hangs until timeout and reads as a dead host. All SDK traffic funnels
+   through three wrappers in `core/messaging.js`, so the adapter surface is exactly
+   snapshot/request/notify/on.
+3. **ABORT — not castable.** The SDK passes `{signal}`, the bridge takes `{timeoutMs}` —
+   NO common property, caught by the type checker. A cast compiles and silently discards
+   cancellation. The signal is honoured explicitly, with the limitation STATED: it rejects
+   the caller's promise; the bridge cannot recall the in-flight postMessage, so the host
+   still does the work.
+
+🔴 **BOTH `/ui` CONSUMERS REACH THE BRIDGE — the doc's "FollowButton, not BlockGate" was
+WRONG.** Measured on the PINNED published `blocks-react@0.51.0` tarball (the app's install
+is a stale **0.48.0** — do not measure there): `dist/ui/BlockGate.js:4` →
+`hooks/useDirectLoad.js:3` → `useTransportSnapshot` → `getTransport()`
+(`hooks/useBlockContext.js:8`); negative control `dist/ui/Card.js` = 0. `BlockGate` wraps
+the PRODUCTION root at `src/main.tsx:56`, so the bridge transport is built on every
+production boot regardless of `FollowButton`.
+
+🔴 **A VACUOUS GUARD I CAUGHT IN MY OWN TEST.** The security test also asserted
+`not.toContain(globalThis.location?.origin)` — VACUOUS in vitest's `node` environment,
+which defines no `location`, so it reduced to `not.toContain(undefined)`. The mutant was
+killed by `toBeNull()`. Deleted rather than kept: an assertion that reads as covering the
+exfiltration case while covering nothing stops the next reader looking.
+
+**Mutation evidence, both isolated and both restored byte-identical by sha256:** removing
+ONLY the memo early-return → exactly **1** test red on its OWN assertion (`Object.is
+equality`, line 51) with 11 still green; adding a `hostOrigin` fallback → the security test
+red with its own assertion (`expected 'https://evil.example' to be null`).
