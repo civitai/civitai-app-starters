@@ -20,55 +20,72 @@ packages, dead code. Read-only session; the deliverable is the findings below, n
   a verdict of ADDRESSED closes this arc, otherwise name the one item still open.
 
 ## State now
-- **Branch/PR:** #478 MERGED (squash `a65190f`, branch deleted) and #480 `chore(release):
-  version packages` MERGED (squash `0ea7b00`). Primary clone sits on `main` behind
-  origin/main, with the PRE-EXISTING dirty `pnpm-workspace.yaml` (1 line) and untracked
-  `apps/` — still not this work.
-- **DONE 2026-09-26 (session 2):** the component-API half of the audit, run INLINE.
-  Findings C1–C8 + the structural root cause under Defects — see the reconciliation
-  there, which supersedes their disposition.
-- **DONE 2026-09-27 (session 3) — the REMEDIATION shipped, not just the audit.** The
-  operator asked to reconcile the two packages so the web components supersede the React
-  ones, with React downstream, and to audit for dead code. `@civitai/components-react`'s
-  `.` entry now re-exports the generated `@lit/react` element bindings; the 22
-  hand-written components, `internal/field.tsx` and `styles.ts` are deleted, guarded by a
-  new test that fails if anything but a generated binding appears under `src/`.
-- **RELEASED and verified against npm directly:** `@civitai/components-react@0.9.0`,
-  `@civitai/components@0.8.1`, `@civitai/app-sdk@0.51.2`, `@civitai/blocks-react@0.58.1`,
-  `@civitai/theme@0.4.0`. 🔴 **`@civitai/sdk@0.8.0` did NOT publish** — see Open
-  investigations. That one is #479's package, not this work's.
-- **Dead code removed:** a visual-regression suite that had never run anywhere (no
-  `VITE_RUN_VR` in any workflow, no baselines ever committed); an axe sweep duplicating
-  the sibling package's (9 unique cases migrated into `@civitai/components`);
-  `src/utilities.generated.ts` (~39 kB no consumer could reach — this closes the old
-  rank 3); `@civitai/theme` + `@testing-library/*` + `axe-core` from components-react;
-  `@civitai/components` from `next-app`, which renders no `data-civitai-ui` markup.
+- **Branch/PR:** #478 MERGED (squash `a65190f`) and #480 `chore(release): version packages`
+  MERGED (squash `0ea7b00`). 🔴 **This doc itself has never been on mainline** — it lives only
+  on `docs/handoff-ui-component-redundancy-audit` via **PR #473, still OPEN**. Primary clone
+  sits on `main` behind origin/main with the PRE-EXISTING dirty `pnpm-workspace.yaml` (1 line)
+  and untracked `apps/` — still not this work.
+- **DONE 2026-09-26 (session 2):** the component-API half of the audit, run INLINE. Findings
+  C1–C8 + the structural root cause under Defects — see the reconciliation there, which
+  supersedes their disposition.
+- **DONE 2026-09-27 (session 3) — the REMEDIATION shipped, not just the audit.**
+  `@civitai/components-react`'s `.` entry re-exports the generated `@lit/react` element
+  bindings; the 22 hand-written components, `internal/field.tsx` and `styles.ts` are deleted,
+  guarded by a test that fails if anything but a generated binding appears under `src/`.
+- 🔴 **DONE 2026-09-27 (session 4) — THE RELEASE IS COMPLETE. All six packages agree.**
+  `@civitai/sdk@0.8.0` was **NOT staged**; it was a plain E503 publish failure. Re-ran the
+  failed job of Release `36283050923` (attempt 2, `completed/success`): `🦋 success packages
+  published successfully` + `🦋 New tag: @civitai/sdk@0.8.0` at 02:03:58Z, and the run's own
+  `Assert the published versions actually exist on npm` step passed. Verified by RESOLVING in
+  a clean dir — lockfile records `node_modules/@civitai/sdk -> 0.8.0` from
+  `registry.npmjs.org/@civitai/sdk/-/sdk-0.8.0.tgz`; negative control `0.99.0` ETARGETs and
+  writes no lockfile. Live matrix, all OK: app-sdk 0.51.2 · sdk 0.8.0 · blocks-react 0.58.1 ·
+  theme 0.4.0 · components 0.8.1 · components-react 0.9.0.
+- **DONE 2026-09-27 (session 4) — the arc audited ask-by-ask.** All three sessions resolved and
+  every operator-typed message read: opencode `ses_f2483102dffewgcn50h0EisEia` (6 typed,
+  09-26 02:13→17:59), Claude `e13c3ec0-3ff4-4226-b81c-9021398cb37a` (7 typed,
+  09-26 17:59→09-27 01:55), Claude `82a9c2bd-6abd-4188-809b-5e7fe61b59fe` (this one).
+  **Everything the operator asked to SHIP shipped; what never shipped is the audit's own
+  output** — see Next steps 1–2.
+- **Dead code removed:** a visual-regression suite that had never run anywhere; an axe sweep
+  duplicating the sibling package's (9 unique cases migrated into `@civitai/components`);
+  `src/utilities.generated.ts`; `@civitai/theme` + `@testing-library/*` + `axe-core` from
+  components-react; `@civitai/components` from `next-app`.
 - **Audited:** round 0 + seven delta rounds, all claims blocks on PR #478. Ended when the
-  attribution gate fired (`--round 8`, exit 5) on two consecutive comment-only rounds —
-  the documented correct outcome, not an override.
-- **Deploy/verify:** merges verified by CONTENT on `origin/main` (a squash never makes the
-  branch head an ancestor); publishes verified by asking npm, not by reading the workflow.
-- clawgate resolve: **exit 5, NOTHING RESOLVED** (0 tasks). An unknown session id answers
-  200 with an empty array, so that zero cannot distinguish "touched no task" from "wrong
-  id" ⇒ no `clawgate-task:` field, by rule. Not a clean bill of health.
+  attribution gate fired (`--round 8`, exit 5) on two consecutive comment-only rounds.
+- **Deploy/verify:** merges verified by CONTENT on `origin/main`; publishes verified by asking
+  npm and then by RESOLVING, never by reading a version string.
+- clawgate resolve: **exit 5 AGAIN this session, NOTHING RESOLVED** (0 tasks). An unknown
+  session id answers 200 with an empty array, so that zero cannot distinguish "touched no
+  task" from "wrong id" ⇒ no `clawgate-task:` field, by rule. Not a clean bill of health.
 
 ## Next steps (ranked)
-1. **Settle and finish `@civitai/sdk@0.8.0`** per the Next probe above — `npm whoami`,
-   then `npm stage list @civitai/sdk`, then either re-run Release `36283050923` or
-   `npm stage approve`. Repo `civitai/civitai-app-starters`; no files to edit.
-   forcing: incident — a merged release did not publish: `origin/main` says `0.8.0`,
-   npm says `0.7.0`, and `pnpm assert:published` exits 1. Anyone pinning `^0.8.0`
-   cannot install.
-2. Decide single ownership of slider + segmented-control + select styling (the #358
-   decision the components README points at), then fix F1/F2/F3 from Defects. Those are
-   `@civitai/components` vs `@civitai/blocks-react/ui` and are UNAFFECTED by the
-   supersession — neither side was deleted. forcing: none
-3. Re-point and re-triage C1–C8: the supersession deleted only the *components-react*
-   arm of each pair, so most survive against the ELEMENTS (see Defects for which).
-   Files: `packages/civitai-blocks-react/src/ui/{Alert,Badge,SegmentedControl,Stack,
-   Group,TextInput,Textarea,Select,NumberInput,Slider}.tsx`. forcing: none
-4. Fix the stale "8px radius" claim in blocks-react README § W6 (tokens are 4px;
-   `styles.ts:30` itself documents the repaint). forcing: none
+1. **Close the arc: F1/F2/F3.** Decide single ownership of slider + segmented-control + select
+   styling (the #358 decision the components README points at), then fix them — or FILE them as
+   three issues carrying their file:line evidence. Either satisfies the closing-condition.
+   🔴 **Re-verified live on `origin/main` 2026-09-27: neither fixed nor filed.** Both arms of all
+   three survive, and no issue among the repo's 85 covers them (#328/#357 are the C-findings,
+   #358 is the ownership question). Files: `packages/civitai-components/src/components.css`
+   (segmented `:673`, slider `:622-663` — RE-MEASURED, the old `:649`/`:588` have shifted) vs
+   `packages/civitai-blocks-react/src/ui/styles.ts:382-438` (unchanged).
+   forcing: user — the operator asked "dispatch to audit for redundancy" (session 1,
+   2026-09-26 02:16); the findings are the half of that ask that was never delivered.
+2. **Re-point or close #328 and #357 — the supersession made them false, and both are PUBLIC
+   and OPEN.** #328's headline is *"blocks-react/ui and components-react export 34 identical
+   names"*; measured on `origin/main` the overlap is **0** — components-react's `src/` is
+   `index.ts` + `elements/` (49 files) and exports none of `Stack`/`StackProps`/`Gap`/`Alert`/
+   `SegmentedControl`/`Badge`. #357's blocks-react arm survives VERBATIM (`gap?: string | number`
+   at `src/ui/Stack.tsx:7`, `toLength` at `:14`) but its components-react arm is gone.
+   forcing: regression — a merged change (`a65190f`) falsified two open issues in a public repo,
+   and nothing has told a reader.
+3. **Merge PR #473** so this doc reaches mainline. Measured cost of it not being there, this
+   session: `resume-state.sh` returned `NO SUCH FILE` and reconciled NOTHING; `find-session.py
+   --arc` exited unmeasured; `handoff_search` printed `in_scope_docs == indexed_docs == 489`,
+   i.e. never indexed. forcing: none
+4. **Close Dependabot #270 and #272.** Verified moot: `origin/main`'s
+   `packages/civitai-components-react/package.json` has zero `axe`, `@axe-core/*`,
+   `@testing-library/*` or `@civitai/theme` entries — the devDeps they bump are gone.
+   forcing: none
 
 ## Defects (batched)
 
@@ -309,30 +326,66 @@ that have no such ledger and no owner.
 - **~350 leaked headless Brave processes** under `/tmp/audit-pr718-r4 (deleted)` belong to
   a DIFFERENT PR's audit. Left untouched — a `-f` pattern kill would reach sibling agents.
 
+- 🔴 **`npm whoami` is PERMANENTLY E401 on this workbench, so `npm stage list` can NEVER answer
+  staged-vs-failed here.** Re-measured 2026-09-27: `whoami` → `E401 Unauthorized`,
+  `npm stage list @civitai/sdk` → `E401 Unable to authenticate`. Do not spend a session on that
+  probe again. The local instruments are the GIT TAG (above) and the re-run itself; the only
+  authenticated route is a human reading npmjs.com/settings/civitai/staged-packages.
+- 🔴 **`$CIVITAI` is `/home/zach/workspace/civit/civitai` — a DIFFERENT repo.
+  `civitai-app-starters` is in NONE of the four `$DEVRC`/`$HOMELAB`/`$DATAPACKET`/`$CIVITAI`
+  handles**, so `find-session.py --arc` and `handoff_search` cannot resolve this repo's handoff
+  docs *even after PR #473 merges*. Merging #473 fixes the file-not-found half only. Arc
+  resolution here has to be done by keyword: `find-session.py --all-time --all --json
+  "<doc-slug>"` found all three sessions (hits 103/58/12) plus three passing mentions (3/2/1).
+- 🔴 **`extract_user_msgs.py` reads `~/.claude/projects` ONLY, so it reports an opencode session
+  as "NO transcript on this host" when the session is right there in
+  `~/.local/share/opencode/opencode-stable.db`.** Read it directly, read-only:
+  `sqlite3 file:<db>?mode=ro` → `message`/`part` tables joined on `message_id`, `role='user'`,
+  parts where `type='text'`. That recovered session 1's 6 typed messages from 80 records.
+- **zsh no-word-splitting bit a version-matrix loop.** `nm=$(...multi-word...)`, then
+  `set -- $nm` does NOT split in zsh, so a six-package main-vs-npm comparison printed six
+  bogus `MISMATCH` rows with empty values. Parse each field with its own command substitution.
+  The tell was the controls: every row failed identically, which a real drift never does.
+- **Re-measured line numbers (the doc's F1/F2 coordinates had drifted):** on `origin/main`,
+  `components.css` segmented-control is `:673`, slider `:622-663`; the focus-ring declaration
+  `outline: 2px solid var(--civitai-color-primary)` repeats **4× in components.css + 3× in
+  styles.ts = 7**, and `@civitai/theme` still defines **zero** `--civitai-focus-*` tokens.
+  `toLength` is still one copy each in `src/ui/Stack.tsx` and `src/ui/Group.tsx`.
+- **Rank 4 of the old list is still live:** `packages/civitai-blocks-react/README.md:1224`
+  still advertises "8px radius" while `src/ui/styles.ts:30` documents "radius 8px→4px".
+
 ## How to verify
+- **The release is COMPLETE** (this inverts the old check): from a checkout of `origin/main`,
+  at the REPO ROOT, `node scripts/assert-published-versions.mjs` → exit 0, six packages
+  confirmed. 🔴 From elsewhere it refuses with "no publishable package found … Refusing to
+  report success for a check that inspected nothing" — that is the guard working, not a pass.
+- **The publish resolves, not just reads:** in an empty dir with a stub `package.json`,
+  `npm install --prefer-online --package-lock-only @civitai/sdk@0.8.0`, then read
+  `package-lock.json` for `node_modules/@civitai/sdk -> 0.8.0`. Control: the same command with
+  `@0.99.0` must ETARGET and write no lockfile. A clean dir is required — a stale lockfile
+  answers `up to date` and proves nothing.
+- **The closing condition is still open:** `gh issue list --repo civitai/civitai-app-starters
+  --state all --limit 200` contains no F1/F2/F3 issue, and both arms are present —
+  `git show origin/main:packages/civitai-components/src/components.css | grep -n segmented`
+  and `… src/ui/styles.ts | grep -n segmented` both return hits.
 - **The supersession shipped:** `npm view @civitai/components-react version` → `0.9.0`;
-  `npm view @civitai/components-react@0.9.0 dist.tarball` then inspect — `src/` in the
-  repo holds only `index.ts` + `elements/`.
-- **The release is incomplete:** from a checkout of `origin/main`,
-  `node scripts/assert-published-versions.mjs` → exit 1, naming `@civitai/sdk@0.8.0`.
-  🔴 Run it from the REPO ROOT; from elsewhere it refuses with "no publishable package
-  found … Refusing to report success for a check that inspected nothing" and that is the
-  guard working, not a pass.
-- **Re-derive the C-finding reconciliation:** compare
-  `packages/civitai-blocks-react/src/ui/Alert.tsx` (`withCloseButton`) against
-  `packages/civitai-components/src/elements/civitai-alert.ts` (`closable`); same for
-  `Badge.tsx` (`light`) vs `civitai-badge.ts` (`filled`).
+  `git ls-tree -r --name-only origin/main -- packages/civitai-components-react/src/` is
+  `index.ts` + `elements/` only.
 - **Full local gate** (build first or `blocks-react` fails on an unresolvable import):
   `pnpm -r --filter './packages/**' build && pnpm test && pnpm test:guards &&
   pnpm check:public-types && pnpm typecheck`, plus
   `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/run/current-system/sw/bin/brave pnpm --filter
-  @civitai/components test:browser`. Last measured: node 2647 · guards 235 · browser
-  842 + 7 · public-types rc 0.
-- ⚠ RETIRED: the session-2 `tsc` silent-divergence probe (expected matrix "exactly 1 error, the negative control") no longer applies — it compared components-react against blocks-react, and the components-react arm is deleted. Re-point it at the ELEMENTS before reusing it; the shape of the control is still good.
+  @civitai/components test:browser`. Last measured: node 2647 · guards 235 · browser 842 + 7 ·
+  public-types rc 0.
 - Audit the doc: `python3 ~/workspace/devrc/scripts/handoff-audit.py claudedocs/handoff-ui-component-redundancy-audit.md`
 ## Open investigations — live diagnosis state
 
-### `@civitai/sdk@0.8.0` is on main but not on npm — staged vs failed is UNSETTLED
+### ~~`@civitai/sdk@0.8.0` is on main but not on npm — staged vs failed is UNSETTLED~~ RESOLVED 2026-09-27 — NOT staged; see the RESOLVED block at the end of this section
+🔴 **Retired. Its measurements below are kept as the pre-fix baseline; its Next probe was
+DELETED because it cannot be run — `npm whoami` is permanently E401 on this workbench, so
+`npm stage list` can never answer here.** What this block got wrong was treating the
+authenticated registry read as the *only* discriminator: an absent git tag settles it
+locally, and the re-run is itself a safe discriminator when one package remains.
 - as-of: 2026-09-26
 - **Symptom + exact repro:** `npm view @civitai/sdk version` → `0.7.0`, while
   `origin/main:packages/civitai-sdk/package.json` says `0.8.0`. Reproduce the full
@@ -362,19 +415,39 @@ that have no such ledger and no owner.
   workflow; a staged version makes every re-run return
   `E409 Cannot publish over previously staged version` and only a human with 2FA can clear
   it. `RELEASING.md` § "Staged publishing" documents the deadlock.
-- **Leading hypothesis:** plain publish failure, NOT staging — the documented staged
-  signature is a **2xx** plus `🦋 success packages published successfully`, whereas this
-  run got a 503 and printed `packages failed to publish`. That is log evidence, not
-  registry evidence, so it is a hypothesis and not a finding.
-- **Next probe — needs an npm-authenticated human; I could not run it.** `npm whoami`
-  from this machine returns `E401 Unauthorized`, and the guard warns an E401 is an answer
-  about the session, not about staging. In order:
-  ```bash
-  npm whoami                      # E401 => not logged in; stop, the next line lies
-  npm stage list @civitai/sdk     # the authoritative answer
-  ```
-  or read <https://www.npmjs.com/settings/civitai/staged-packages> while logged in as a
-  civitai org member (a 404/403 there proves nothing — signed-out and empty look alike).
-  **Then:** not staged ⇒ re-run Release run `36283050923`. Staged ⇒
-  `npm stage approve <id>` (2FA); never a blind re-run, which the guard says is what
-  breaks consumers.
+- **Leading hypothesis — CONFIRMED 2026-09-27:** plain publish failure, NOT staging. The
+  documented staged signature is a **2xx** plus `🦋 success packages published successfully`,
+  whereas this run got a 503 and printed `packages failed to publish`. It was log evidence
+  only when written; the re-run and the absent git tag turned it into a finding.
+- ~~**Next probe**~~ **DELETED — it was unrunnable.** It asked for `npm whoami` then
+  `npm stage list @civitai/sdk` from this machine; both return E401 and always will. The
+  replacement discriminators are in the RESOLVED block at the end of this section.
+
+### RESOLVED 2026-09-27 — `@civitai/sdk@0.8.0` was NOT staged: a plain E503 publish failure, cured by re-running the failed job
+- as-of: 2026-09-27
+- 🔴 **This SUPERSEDES the block below titled "`@civitai/sdk@0.8.0` is on main but not on npm —
+  staged vs failed is UNSETTLED". Its Next probe is VOID — do not run it**, and its framing
+  "never a blind re-run" is refined rather than refuted: see the discriminator below.
+- **What closed it:** `gh run rerun 36283050923 --failed` → attempt 2 `completed/success`,
+  publish step `🦋 success packages published successfully` + `🦋 New tag: @civitai/sdk@0.8.0`
+  at 02:03:58Z, assert step green. `npm view @civitai/sdk version` → `0.8.0`.
+- **Ruled out — STAGING.** A staged publish would have E409'd (`Cannot publish over previously
+  staged version`) forever; the re-run published first try. `via: command`.
+- 🔴 **NEW registry-independent discriminator, positive-controlled: THE GIT TAG.** Before the
+  re-run, `git ls-remote --tags origin` showed all five published packages' tags PRESENT
+  (`components@0.8.1`, `components-react@0.9.0`, `app-sdk@0.51.2`, `blocks-react@0.58.1`,
+  `theme@0.4.0`) and `@civitai/sdk@0.8.0` **ABSENT**. The documented staged signature pushes
+  the tag anyway (2026-09-03: changesets printed success and pushed all four tags while the
+  registry held two), so an absent tag says `changeset publish` never counted it as published.
+  The five siblings are the positive control proving the tag-push path worked in that run.
+  `via: measurement`.
+- **Ruled out — propagation.** The assert ran a **590s** window (`release.yml:233-234`
+  `PUBLISH_CHECK_TRIES=60`/`DELAY=10000`) and 404'd; still `0.7.0` 69 min post-run. ⚠ The
+  superseded block's "12s (5 × 3000ms)" was the SCRIPT DEFAULT, not what ran. `via: measurement`.
+- **The precondition that made the re-run informed rather than blind** — record it, it is the
+  reusable part: exactly ONE package remained (other five matched main, with absent- and
+  present-version controls both firing); `@civitai/sdk`'s only dependency is
+  `@civitai/orchestration-client@0.2.0-beta.101`, no first-party workspace deps; and nothing
+  live hard-pins `0.8.0` — `@civitai/components`' peer is `>=0.1.0 <1.0.0` **and optional**,
+  satisfied by the then-live `0.7.0`. With no other half to strand, an E409 would have been
+  harmless and informative.
