@@ -404,10 +404,11 @@
       "default": "./dist/sdk/civitai-workflow-button.define.js"
     }
   },
-  "comment-packaging": "@civitai/* deps use workspace:^ not workspace:* (#374); `!dist/**/*.map` keeps dangling sourcemaps out of the tarball (#376). Rationale: scripts/check-shipped-sourcemaps.mjs.",
+  "comment-packaging": "@civitai/* deps use workspace:^ not workspace:* (#374); `!dist/**/*.map` keeps dangling sourcemaps out of the tarball (#376). Rationale: scripts/check-shipped-sourcemaps.mjs. `!dist/utilities.generated.*` is a BELT-AND-BRACES exclusion, not a live one: scripts/build-utilities.ts no longer emits that module at all (see its note — ~39 kB no consumer could reach). It stays because `tsc` does NOT clean dist/, so an incremental local build keeps the stale .js/.d.ts from before it was removed, and `npm pack` ships whatever is in dist/. VERIFIED: dropping this line packs them again from a stale tree.",
   "files": [
     "dist",
     "!dist/css",
+    "!dist/utilities.generated.*",
     "!dist/**/*.map",
     "demo",
     "styles.css",

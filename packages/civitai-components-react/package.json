@@ -1,7 +1,7 @@
 {
   "name": "@civitai/components-react",
   "version": "0.8.0",
-  "description": "Thin React bindings over @civitai/components — forwardRef wrappers that render the framework-agnostic data-civitai-ui markup, themed by @civitai/theme.",
+  "description": "React bindings for the <civitai-*> custom elements published by @civitai/components — generated @lit/react wrappers, so props, types and events come from the element itself.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -43,19 +43,14 @@
   },
   "dependencies": {
     "@civitai/components": "workspace:^",
-    "@civitai/theme": "workspace:^",
     "@lit/react": "^1.0.8"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.10.1",
-    "@testing-library/dom": "^10.4.0",
-    "@testing-library/react": "^16.0.0",
     "@types/node": "^25.9.1",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.0",
     "@vitest/browser": "^4.1.11",
     "@vitest/browser-playwright": "^4.1.11",
-    "axe-core": "^4.10.2",
     "happy-dom": "^20.9.0",
     "playwright": "^1.50.0",
     "react": "^19.0.0",

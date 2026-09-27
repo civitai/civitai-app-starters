@@ -9,23 +9,12 @@ import { CivitaiButton } from '../src/elements/civitai-button.js';
 import { CivitaiSegmentedControl as Segmented } from '../src/elements/civitai-segmented-control.js';
 import { CivitaiTag } from '../src/elements/civitai-tag.js';
 import { CivitaiTextInput as TextInput } from '../src/elements/civitai-text-input.js';
-import { mountReact } from './render.js';
+import { mountReact, settle } from './render.js';
 
 const SEGMENTS = [
   { value: 'grid', label: 'Grid' },
   { value: 'list', label: 'List' },
 ];
-
-/** Lit renders async, so a mounted element is not populated on the same tick. */
-async function settle(mount: HTMLElement): Promise<void> {
-  await Promise.all(
-    [...mount.querySelectorAll('*')]
-      .filter((el): el is HTMLElement & { updateComplete: Promise<boolean> } =>
-        'updateComplete' in el
-      )
-      .map((el) => el.updateComplete)
-  );
-}
 
 describe('React element bindings', () => {
   it('renders a real custom element, upgraded', async () => {

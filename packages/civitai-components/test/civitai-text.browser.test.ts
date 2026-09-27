@@ -13,10 +13,10 @@ import axe from 'axe-core';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { injectStyles } from '../src/index.js';
-import { utilitiesCss } from '../src/utilities.generated.js';
 import type { CivitaiText, TextAs } from '../src/elements/civitai-text.js';
 import '../src/elements/register.js';
 
+import utilitiesCss from '../dist/utilities.css?raw';
 import compatCss from '../dist/bootstrap-compat.css?raw';
 
 let scope: HTMLElement | undefined;

@@ -321,20 +321,44 @@
      *     default that was already shipping.
      *   - `@civitai/components-react`'s `<Group>` writes NO inline style and has
      *     NO `wrap` prop, so it resolves against this rule — a React consumer
-     *     that did NOT wrap before.
+     *     that did NOT wrap before. 🔴 THIS SURFACE NO LONGER EXISTS: see below.
      *   - bare `data-civitai-ui="group"` markup, the framework-agnostic contract
      *     this package exists to serve — likewise.
      * Nothing could see the disagreement, because each surface was only ever
-     * tested against itself. TWO tests now pin it, one per React surface — there
-     * is no single "the parity test":
+     * tested against itself. TWO tests now pin it — there is no single "the
+     * parity test":
      *   - `civitai-blocks-react/test/Group.test.tsx` reads the wrap default off
      *     ITS `<Group>` and compares it to this rule, so flipping either alone
      *     fails;
-     *   - `civitai-components-react/test/html-vs-react-parity.browser.test.tsx`
-     *     ("styling anchors — Group") asserts the COMPUTED value on both the
-     *     React and the bare-markup render, which is what covers the other two
-     *     surfaces. A parity check alone cannot: deleting this rule moves both
-     *     of its arms identically, so only the absolute anchor sees it.
+     *   - `civitai-components/test/presentational-parity.browser.test.ts`,
+     *     case **`group`** — compares `<civitai-group>` against the bare
+     *     `data-civitai-ui="group"` markup with `flexWrap` among the properties
+     *     it reads. 🔴 It is `group`, NOT `group/nowrap`: that case sets
+     *     `nowrap` on BOTH arms, so both resolve to `flex-wrap: nowrap` and it
+     *     stays green through a deletion of the rule below. Mutate the rule and
+     *     check the wrong case and you will conclude it is unguarded.
+     *
+     * 🔴 THE MIDDLE SURFACE IS GONE, and so is the test that used to pin it.
+     * `@civitai/components-react@0.9.0` deleted its hand-written `<Group>` when
+     * the custom elements superseded the React layer, taking
+     * `html-vs-react-parity.browser.test.tsx` ("styling anchors — Group") with
+     * it. TWO surfaces now resolve against this rule, not three: bare markup,
+     * and blocks-react's `<Group>`. `<civitai-group>` is a third surface that
+     * does NOT read this sheet at all — shadow DOM, carrying its own
+     * `flex-wrap` at `src/elements/civitai-group.ts:20`.
+     *
+     * That independence is why the replacement is not the weak kind of parity
+     * check this comment used to warn about. The warning was right about the
+     * OLD test: both its arms consumed THIS sheet, so deleting the rule moved
+     * them identically and only an absolute anchor could see it.
+     * `presentational-parity`'s arms are independent IMPLEMENTATIONS, so
+     * deleting `flex-wrap` here moves the legacy arm alone and the comparison
+     * fails. WATCHED, not inferred: deleting `flex-wrap: wrap` from this block
+     * in `styles.generated.ts` (the string the browser test injects) fails
+     * `light / group` and `dark / group` with
+     * `flexWrap: expected 'wrap' to be 'nowrap'` — 2 failed / 108 passed;
+     * restoring it returns 110/110. (Re-measured after #477 added 21 Text
+     * parity cases; the kill is what matters, the totals move with the file.)
      *
      * 🔴 The three-surface distinction is load-bearing for the RELEASE, not just
      * the prose: "existing callers notice" is what `RELEASING.md` reserves

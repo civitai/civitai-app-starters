@@ -155,14 +155,22 @@ const DEP_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'opti
 
 /**
  * Floor for the number of published-range `@civitai/*` starter pins that must
- * be workspace-overridden. The tree carries 15 (next-app 4, react-pwa 3,
+ * be workspace-overridden. The tree carries 14 (next-app 3, react-pwa 3,
  * svelte-pwa 3, sveltekit-app 3, civitai-block-starter 2).
  *
  * GROWTH always passes -- this is a floor, not an equality. Only DELIBERATELY
  * removing a starter or one of its first-party deps should move it, and then
  * lower it in the SAME commit so the drop is reviewed rather than silent.
+ *
+ * 15 -> 14 when `@civitai/components-react@0.9.0` made the custom elements the
+ * only implementation: `starters/next-app` dropped its `@civitai/components`
+ * dependency because it no longer renders any `data-civitai-ui` markup — the
+ * element bindings style themselves in shadow DOM and never read that sheet,
+ * so the import was ~32 kB of dead CSS on the critical path of the SEO
+ * starter. This guard is what caught the drop; it is reviewed, not silent.
+ * The Svelte starters DO still use that markup and keep their pins.
  */
-const MIN_COVERED_PINS = 15;
+const MIN_COVERED_PINS = 14;
 
 /**
  * Floor for the number of (tiged-consumed starter x third-party root override)

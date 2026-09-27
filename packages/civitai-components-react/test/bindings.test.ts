@@ -3,7 +3,7 @@
  * hand-written event map, where a wrong name is a silently dead callback.
  */
 import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -17,7 +17,8 @@ import {
   pkgRoot,
 } from '../scripts/bindings.js';
 
-const bindingsDir = join(pkgRoot, 'src', 'elements');
+const srcRoot = join(pkgRoot, 'src');
+const bindingsDir = join(srcRoot, 'elements');
 const entries = elements();
 
 const dispatched = (tag: string): string[] =>
@@ -44,6 +45,30 @@ describe('generated React bindings', () => {
         `${name} is stale — run \`pnpm --filter @civitai/components-react build:bindings\``
       ).toBe(contents);
     }
+  });
+
+  /**
+   * The supersession guard. The custom elements are the design system and this
+   * package is strictly downstream of them, so every module under `src/` must
+   * be either the entry barrel or a GENERATED binding. A hand-written React
+   * component re-added here would be a second implementation of a component
+   * that already exists as an element — which is exactly the divergence that
+   * cost us mismatched close-button gating, three different SegmentedControl
+   * role models and two-of-six keyboard nav before the layers were collapsed.
+   *
+   * Asserts the whole file set, so it fails when a file is ADDED as well as
+   * when one goes missing — a guard on a name list would walk past a new file
+   * called something its author picked.
+   */
+  it('src holds only the entry and generated bindings — no second implementation', () => {
+    const walk = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
+        d.isDirectory() ? walk(join(dir, d.name)) : [relative(srcRoot, join(dir, d.name))]
+      );
+    const expected = ['index.ts', join('elements', 'index.ts')]
+      .concat(entries.map((e) => join('elements', `${e.tag}.ts`)))
+      .sort();
+    expect(walk(srcRoot).sort()).toEqual(expected);
   });
 
   it.each(entries.map((e) => e.tag))('%s binds no event its element never fires', (tag) => {

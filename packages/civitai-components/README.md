@@ -35,8 +35,10 @@ import { injectStyles } from '@civitai/components';
 injectStyles();
 ```
 
-React authors want [`@civitai/components-react`](../civitai-components-react),
-which renders exactly this markup.
+React authors usually want [`@civitai/components-react`](../civitai-components-react)
+instead — but note it binds the `<civitai-*>` custom elements, which style
+themselves in shadow DOM and so consume neither this sheet nor this markup
+contract. Use the sheet when you are writing the markup yourself.
 
 ### One component's CSS only — not available, on purpose
 
@@ -252,8 +254,9 @@ to write themselves: one tab stop, arrows wrapping across enabled segments,
 Home/End, and selection following focus.
 
 `error` on a field also makes it **invalid**, so the form will not submit while
-the message shows — unlike the React binding, which draws the message but leaves
-`checkValidity()` true despite setting `aria-invalid`.
+the message shows — unlike the bare `data-civitai-ui` markup, where `error`
+draws the message but leaves `checkValidity()` true despite setting
+`aria-invalid`, because an attribute cannot call `setCustomValidity()`.
 
 ### Working on them
 
@@ -468,11 +471,15 @@ its own verbs instead — `<civitai-toast-region>` has `show(options)`,
 
 ## Markup contract
 
-Styling is selected entirely by `data-*` attributes; any HTML that follows the
-contract below renders identically to the React bindings. **`legend`:** _bold_ =
+Styling is selected entirely by `data-*` attributes, so any HTML that follows
+the contract below picks up the design system without a framework. It is no
+longer comparable to "the React bindings": since components-react@0.9.0 those
+bind the `<civitai-*>` elements, which style themselves in shadow DOM and do
+not consume this sheet at all. **`legend`:** _bold_ =
 required for correct styling + a11y. [`MARKUP.md`](./MARKUP.md) is the canonical
 source (with per-component examples + a11y wiring) and the executable contract
-the `html-vs-react-parity` browser test enforces; the essentials are inlined
+this package's own browser suites enforce — `presentational-parity` compares
+each element against the attribute markup it replaces; the essentials are inlined
 here so they're readable on the npm package page.
 
 **Theming** — set `data-theme="light"` or `data-theme="dark"` on any ancestor

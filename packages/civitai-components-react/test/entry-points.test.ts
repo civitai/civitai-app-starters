@@ -1,6 +1,28 @@
 /**
- * The `.` entry is what every existing consumer imports. Lit reaching it would
- * put a renderer in their bundle for components that do not use one.
+ * Entry-point shape.
+ *
+ * The `.` entry used to be asserted element-free, because it carried a
+ * hand-written React layer and pulling Lit into it would have put a renderer
+ * in the bundle of consumers who used none. That premise died with the
+ * supersession: the custom elements are now the only implementation, so the
+ * root necessarily reaches Lit and every element it re-exports.
+ *
+ * What replaces it is the invariant that actually holds now: the root and the
+ * presentational barrel reach the SAME external specifiers — asserted as set
+ * equality, so an extra at the root and a gap at the root both fail.
+ *
+ * 🔴 READ THE SCOPE — this is a check on the root's EXTERNAL SPECIFIER SET, not
+ * on what the root implements. A module added at the root that imports only
+ * things the barrel already reaches (`react`, `@lit/react`) passes this
+ * untouched: MEASURED, by adding a second `dist` module importing only `react`
+ * and re-exporting it from `dist/index.js` — 0 failed, the whole suite green. It goes red
+ * only when the root gains a specifier the barrel lacks (control: the same
+ * mutant importing `clsx` fails this test by name). **A hand-written React
+ * component re-added to the package is caught by `bindings.test.ts`'s
+ * "src holds only the entry and generated bindings", not here.** What this
+ * test does own is the `@civitai/sdk` boundary — the two viewer-bound elements
+ * must stay behind their own entry. Per-element bundle discipline is pinned by
+ * the single-binding test below.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -34,11 +56,24 @@ function reachableSpecifiers(entry: string): Set<string> {
 }
 
 describe('entry points', () => {
-  it('the `.` entry reaches no element module and no renderer', () => {
-    const external = [...reachableSpecifiers('dist/index.js')];
-    expect(external.filter((s) => s === 'lit' || s.startsWith('lit/'))).toEqual([]);
-    expect(external.filter((s) => s.startsWith('@civitai/components/civitai-'))).toEqual([]);
-    expect(external).not.toContain('@civitai/components/register');
+  it('the `.` entry is the presentational barrel and nothing besides', () => {
+    const root = [...reachableSpecifiers('dist/index.js')].sort();
+    const barrel = [...reachableSpecifiers('dist/elements/index.js')].sort();
+    // Set equality both ways: a second implementation re-added to the root
+    // shows up as an extra, a barrel export dropped from the root as a gap.
+    expect(root).toEqual(barrel);
+    expect(root).not.toContain('@civitai/components/register');
+  });
+
+  it('the `.` entry reaches no SDK — the viewer-bound elements stay behind their own entry', () => {
+    const root = [...reachableSpecifiers('dist/index.js')];
+    expect(root.filter((s) => s === '@civitai/sdk' || s.startsWith('@civitai/sdk/'))).toEqual([]);
+    for (const { specifier } of elements().filter(usesSdk)) {
+      expect(
+        root.filter((s) => s.startsWith(`@civitai/components/${specifier}`)),
+        `the root must not reach ${specifier}, which pulls @civitai/sdk in`
+      ).toEqual([]);
+    }
   });
 
   it('the `./elements` barrel registers every presentational element, and reaches no SDK', () => {

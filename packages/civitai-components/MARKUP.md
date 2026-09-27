@@ -1,9 +1,16 @@
 # `@civitai/components` — markup contract
 
 These components are **framework-agnostic**: the styling is driven entirely by
-`data-*` attributes, so any HTML that follows the contract below renders
-identically to the React bindings in `@civitai/components-react`. This document
-is the source of truth for external HTML authors.
+`data-*` attributes, so any HTML that follows the contract below picks up the
+design system without a framework. This document is the source of truth for
+external HTML authors.
+
+This sheet is one of **two independent** ways to consume the design system. The
+other is the `<civitai-*>` custom elements — self-styling in shadow DOM, so they
+need neither this sheet nor this contract — which are what
+`@civitai/components-react` binds for React. Use this document when you write
+the markup yourself; use the elements when you want the behaviour (keyboard
+handling, ARIA wiring, state) supplied for you.
 
 ## Setup
 
@@ -322,9 +329,9 @@ the flexbox spec.)
 `data-nowrap="true"` keeps the row on one line. Use it only where a single line
 is load-bearing, and expect overflow at narrow widths.
 
-Both are plain attributes, so `@civitai/components-react`'s `<Group>` — which
-renders exactly this markup and sets no inline `flex-wrap` — inherits the
-default and accepts `data-nowrap` as a passed-through prop.
+Both are plain attributes, so they are set the same way whoever writes the
+markup. The `<civitai-group>` element exposes the same choice as a `nowrap`
+property (reflected to the `nowrap` attribute), rather than `data-nowrap`.
 
 ### Alert — `data-civitai-ui="alert"`
 - **`role="alert"`** (or `role="status"` for non-urgent).
@@ -380,8 +387,12 @@ keyboard (arrow keys, Home/End, Page Up/Down) + ARIA come from the native contro
   to the error token). Disabled is the native input state. When you render a
   formatted value read-out (e.g. `20%`, `Large`), also set **`aria-valuetext`**
   on the input to that same string so screen readers announce it instead of the
-  raw `aria-valuenow` (the React binding sets this automatically from a
-  string/number `valueLabel`).
+  raw `aria-valuenow`. 🔴 Nothing does this for you on either track:
+  `<civitai-slider>`'s `show-value` renders a read-out of the RAW value and
+  sets no `aria-valuetext` (the attribute appears nowhere in this package's
+  element sources). The deleted React `<Slider>` DID set it, from its
+  `valueLabel` prop; that prop has no element equivalent, so a formatted
+  read-out now means setting `aria-valuetext` yourself.
 
 ```html
 <div data-civitai-ui="slider">
@@ -396,9 +407,12 @@ keyboard (arrow keys, Home/End, Page Up/Down) + ARIA come from the native contro
 ### SegmentedControl / Tabs — `data-civitai-ui="segmented-control"`
 A row of segment buttons with **roving tabindex** + **arrow-key navigation**,
 in one of **two ARIA role modes**. The CSS is presentational; hand-HTML authors
-MUST implement the keyboard behavior themselves (the `@civitai/components-react`
-`SegmentedControl` binding does it for you — prefer it for interactive use, and
-pick the mode with its `mode` prop: `'toggle'` default, or `'tabs'`).
+MUST implement the keyboard behavior themselves. Prefer an element for
+interactive use, which supplies it: `<civitai-segmented-control>` for the
+panel-less value switch (`radiogroup`/`radio`), and `<civitai-tabs>` when
+segments actually switch panels. They are two elements rather than one with a
+mode, because a `tab`'s `aria-controls` is an IDREF and an IDREF cannot reach a
+panel in the light DOM from inside a shadow root.
 
 **Common to both modes:**
 - Wrapper **`<div data-civitai-ui="segmented-control">`** with an accessible name
@@ -444,9 +458,11 @@ pick the mode with its `mode` prop: `'toggle'` default, or `'tabs'`).
 
 ### Toast — `data-civitai-ui="toast-region"` + `data-civitai-ui="toast"`
 An `aria-live` notification host (`toast-region`) plus the individual `toast`
-card. The React binding (`ToastProvider` + `useToast()`) owns the queue,
-auto-dismiss timers and portal; hand-HTML authors render into the region and add
-each toast so the live region announces it.
+card. `<civitai-toast-region>` owns the queue and auto-dismiss timers — call
+its `show(options)` method, which enqueues a toast and returns its id. (Until
+`@civitai/components-react@0.9.0` a React `ToastProvider` + `useToast()` pair
+did this; both were deleted with the hand-written layer.) Hand-HTML authors
+render into the region and add each toast so the live region announces it.
 - Host: **`<div data-civitai-ui="toast-region" role="region" aria-label="Notifications" aria-live="polite">`**
   (fixed bottom-right stack). Use `aria-live="assertive"` for urgent errors.
 - Toast: **`<div data-civitai-ui="toast" role="status">`** (or `role="alert"` for
@@ -471,15 +487,15 @@ each toast so the live region announces it.
 
 ### Tooltip — `data-civitai-ui="tooltip"`
 A hover/focus tooltip: a positioned `role="tooltip"` bubble revealed when the
-wrapper is hovered or contains focus. The React binding also wires the trigger's
-`aria-describedby` to the bubble + Escape-to-dismiss.
+wrapper is hovered or contains focus. `<civitai-tooltip>` wires the trigger's
+`aria-describedby` to the bubble and Escape-to-dismiss for you.
 - Wrapper **`<span data-civitai-ui="tooltip">`** containing, in order:
   - the **trigger** element (button/link/etc.), with **`aria-describedby="TIP_ID"`**.
   - **`<span data-civitai-ui-tooltip-bubble role="tooltip" id="TIP_ID">`** — the
     bubble. Revealed on `:hover`/`:focus-within`, or force-open with
     `data-open="true"`. **`data-dismissed="true"` force-HIDES it** — it overrides
     the hover/focus reveal, so Escape-to-dismiss works even while the pointer
-    still hovers / focus is still within (the React binding sets/clears this).
+    still hovers / focus is still within (`<civitai-tooltip>` sets/clears this).
 - A11y: the trigger must be focusable so keyboard users can reveal the tooltip;
   keep the tooltip text short (it is supplementary, not the accessible name).
 
@@ -492,8 +508,11 @@ wrapper is hovered or contains focus. The React binding also wires the trigger's
 
 ### Image — `data-civitai-ui="image"`
 A media container with a token placeholder background (visible while loading),
-`object-fit` control, and a broken-image fallback. The React binding wires
-`onLoad`/`onError` to `data-status`; hand-HTML authors set it themselves.
+`object-fit` control, and a broken-image fallback. Hand-HTML authors set
+`data-status` themselves. (`<civitai-image>` tracks this from the native
+`load`/`error` events, but reflects it as **`status`**, not `data-status` —
+its CSS keys off `:host([status='loading'])`. The two tracks spell this one
+differently; see the components README.)
 - Wrapper **`<div data-civitai-ui="image">`** (size it with `width`/`height`/
   `aspect-ratio` inline or via your own class). `data-status`: `loading` ·
   `loaded` · `error` (omitted ⇒ the image shows).
@@ -511,9 +530,17 @@ A media container with a token placeholder background (visible while loading),
 
 ---
 
-## React parity
+## Relationship to the elements and to React
 
-`@civitai/components-react` renders exactly this markup. The
-`html-vs-react-parity` browser test asserts `getComputedStyle()` is identical
-between hand-written HTML (per this doc) and the React components, in both
-themes — so this contract is executable, not aspirational.
+`@civitai/components-react` binds the `<civitai-*>` custom elements, **not**
+this sheet: the elements style themselves in shadow DOM, so they do not consume
+the contract above and are not a second renderer of it. Consuming this document
+means writing the markup yourself, in whatever framework or none.
+
+Until `@civitai/components-react@0.9.0` that package also shipped a
+hand-written React layer which DID render this markup, and an
+`html-vs-react-parity` browser test asserted identical `getComputedStyle()`
+between the two arms. That layer was superseded by the elements and the test
+retired with it — there is no longer a second implementation to compare
+against. The contract here remains executable against the sheet itself: the
+`@civitai/components` suites assert the rules in `components.css` directly.

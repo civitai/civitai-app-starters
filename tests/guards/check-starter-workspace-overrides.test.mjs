@@ -39,7 +39,7 @@ describe('check-starter-workspace-overrides', () => {
   test('INVARIANT: the real-shaped tree passes and reports its coverage count', async () => {
     const r = await guard();
     assert.equal(r.code, 0, exitMsg(0, r));
-    assert.match(r.stdout, /15 published-range/);
+    assert.match(r.stdout, /14 published-range/);
   });
 
   test('INVARIANT: a published-range pin with no workspace override fails, naming the package', async () => {
@@ -85,8 +85,8 @@ describe('check-starter-workspace-overrides', () => {
     // so covered stays at exactly MIN_COVERED_PINS and the ban is the only rule
     // that can fail the run.
     const starters = clone(DEFAULT_STARTERS);
-    starters['react-pwa']['@civitai/components'] = '^0.3.0'; // 15 -> 16 covered
-    starters['react-pwa']['@civitai/theme'] = 'workspace:^'; // 16 -> 15 covered, at the floor
+    starters['react-pwa']['@civitai/components'] = '^0.3.0'; // 14 -> 15 covered
+    starters['react-pwa']['@civitai/theme'] = 'workspace:^'; // 15 -> 14 covered, at the floor
     const r = await guard({ starters });
     assert.equal(r.code, 1, exitMsg(1, r));
     assert.match(r.stderr, /WORKSPACE-PROTOCOL PIN IN A TIGED-CONSUMED STARTER/);
@@ -117,7 +117,7 @@ describe('check-starter-workspace-overrides', () => {
     const r = await guard({ starters });
     assert.equal(r.code, 1, exitMsg(1, r));
     assert.match(r.stderr, /COVERAGE FLOOR/);
-    assert.match(r.stderr, /14 covered .*< .*15/s);
+    assert.match(r.stderr, /13 covered .*< .*14/s);
   });
 
   test('the coverage floor does not block GROWTH (a new covered pin passes)', async () => {
@@ -125,7 +125,7 @@ describe('check-starter-workspace-overrides', () => {
     starters['react-pwa']['@civitai/components'] = '^0.3.0';
     const r = await guard({ starters });
     assert.equal(r.code, 0, exitMsg(0, r));
-    assert.match(r.stdout, /16 published-range/);
+    assert.match(r.stdout, /15 published-range/);
   });
 
   test('the workspace: ban covers devDependencies, not just dependencies', async () => {

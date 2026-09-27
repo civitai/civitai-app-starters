@@ -66,13 +66,19 @@ describe('Group', () => {
    * writes `flex-wrap` as an inline style) against the `@civitai/components`
    * CSS rule.
    *
-   * 🔴 Those are two of THREE surfaces, and this guard only reaches two of
-   * them. The third is `@civitai/components-react`'s `<Group>`, which writes no
-   * inline style and has no `wrap` prop — a React consumer that resolves
-   * against the CSS exactly as bare markup does. It is guarded separately, by
-   * the absolute `styling anchors — Group` case in that package's
-   * `html-vs-react-parity.browser.test.tsx`. Do not read "non-React consumer"
-   * here as the whole population resolving against the stylesheet; it is not.
+   * 🔴 Those WERE two of THREE surfaces. The third was
+   * `@civitai/components-react`'s `<Group>`, which wrote no inline style and
+   * had no `wrap` prop — a React consumer resolving against the CSS exactly as
+   * bare markup does — guarded by the absolute `styling anchors — Group` case
+   * in that package's `html-vs-react-parity.browser.test.tsx`. BOTH are gone:
+   * components-react@0.9.0 deleted the hand-written React layer when the
+   * custom elements superseded it, and the parity suite went with it. The bare
+   * markup surface is now pinned by `civitai-components`'
+   * `presentational-parity.browser.test.ts`, case **`group`** — NOT
+   * `group/nowrap`, which sets `nowrap` on both arms and so stays green
+   * through a deletion of the rule. See the note in `components.css`. Do not read "non-React
+   * consumer" here as the whole population resolving against the stylesheet;
+   * it is not.
    *
    * They DID disagree: this package's React default was `wrap`, the CSS shipped
    * no `flex-wrap` at all, so identical-looking markup wrapped here and
