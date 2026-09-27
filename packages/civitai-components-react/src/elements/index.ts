@@ -48,3 +48,10 @@ export { CivitaiToast } from './civitai-toast.js';
 export { CivitaiToastRegion } from './civitai-toast-region.js';
 export { CivitaiTooltip } from './civitai-tooltip.js';
 export { CivitaiVideo } from './civitai-video.js';
+
+// The event-detail types the props above are typed with. Type-only, so this is
+// erased at runtime and changes nothing the barrel registers or pulls in. An
+// SDK-bound binding's detail types stay out of here, like the binding itself.
+export type { MenuSelectDetail } from './civitai-menu.js';
+export type { ReactionDetail } from './civitai-reaction.js';
+export type { TagVoteDetail } from './civitai-tag.js';
