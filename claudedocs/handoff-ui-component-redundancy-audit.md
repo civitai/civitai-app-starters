@@ -20,69 +20,62 @@ packages, dead code. Read-only session; the deliverable is the findings below, n
   a verdict of ADDRESSED closes this arc, otherwise name the one item still open.
 
 ## State now
-- **Branch/PR:** #478 MERGED (squash `a65190f`) and #480 `chore(release): version packages`
-  MERGED (squash `0ea7b00`). 🔴 **This doc itself has never been on mainline** — it lives only
-  on `docs/handoff-ui-component-redundancy-audit` via **PR #473, still OPEN**. Primary clone
-  sits on `main` behind origin/main with the PRE-EXISTING dirty `pnpm-workspace.yaml` (1 line)
-  and untracked `apps/` — still not this work.
+- 🔴 **THE ARC IS CLOSED 2026-09-27 (session 4). Verdict: ADDRESSED.** The frozen
+  closing-condition offered FIXED **or** FILED; it is satisfied by FILED. The three
+  cross-package stylesheet drift findings are now issues, each carrying re-measured
+  file:line evidence and its own `## Closing condition`:
+  **#482 (F1 SegmentedControl) · #483 (F2 Slider) · #484 (F3 Select)**. The single-ownership
+  decision those three converge on is #358 and is the operator's call — it was never part of
+  this arc's condition, which is why filing closes it rather than waiting.
+- **Rank 2 DONE — the two falsified public issues are corrected.** #328 was commented and
+  **retitled** off the dead "34 identical names" framing onto the surviving comparison
+  (`blocks-react/ui` vs the `<civitai-*>` elements); #357 was commented — its blocks-react
+  half is untouched and it stays open as filed. Both comments carry the measurements and a
+  `## Closing condition`.
+- **Branch/PR:** #478 MERGED (`a65190f`) and #480 MERGED (`0ea7b00`). 🔴 **This doc still has
+  never been on mainline** — it lives only on `docs/handoff-ui-component-redundancy-audit`
+  via **PR #473, still OPEN**. Primary clone sits on `main` behind origin/main with the
+  PRE-EXISTING dirty `pnpm-workspace.yaml` (1 line) and untracked `apps/` — still not this work.
 - **DONE 2026-09-26 (session 2):** the component-API half of the audit, run INLINE. Findings
-  C1–C8 + the structural root cause under Defects — see the reconciliation there, which
-  supersedes their disposition.
-- **DONE 2026-09-27 (session 3) — the REMEDIATION shipped, not just the audit.**
-  `@civitai/components-react`'s `.` entry re-exports the generated `@lit/react` element
-  bindings; the 22 hand-written components, `internal/field.tsx` and `styles.ts` are deleted,
-  guarded by a test that fails if anything but a generated binding appears under `src/`.
+  C1–C8 + the structural root cause under Defects — ⚠ read the C1 RETRACTION there before
+  re-filing anything from that list.
+- **DONE 2026-09-27 (session 3) — the REMEDIATION shipped.** `@civitai/components-react`'s `.`
+  entry re-exports the generated `@lit/react` element bindings; the 22 hand-written components,
+  `internal/field.tsx` and `styles.ts` are deleted, guarded by a test that fails if anything
+  but a generated binding appears under `src/`.
 - 🔴 **DONE 2026-09-27 (session 4) — THE RELEASE IS COMPLETE. All six packages agree.**
-  `@civitai/sdk@0.8.0` was **NOT staged**; it was a plain E503 publish failure. Re-ran the
-  failed job of Release `36283050923` (attempt 2, `completed/success`): `🦋 success packages
-  published successfully` + `🦋 New tag: @civitai/sdk@0.8.0` at 02:03:58Z, and the run's own
-  `Assert the published versions actually exist on npm` step passed. Verified by RESOLVING in
-  a clean dir — lockfile records `node_modules/@civitai/sdk -> 0.8.0` from
-  `registry.npmjs.org/@civitai/sdk/-/sdk-0.8.0.tgz`; negative control `0.99.0` ETARGETs and
-  writes no lockfile. Live matrix, all OK: app-sdk 0.51.2 · sdk 0.8.0 · blocks-react 0.58.1 ·
-  theme 0.4.0 · components 0.8.1 · components-react 0.9.0.
+  `@civitai/sdk@0.8.0` was **NOT staged**; a plain E503 publish failure, cured by re-running
+  the failed job of Release `36283050923` (attempt 2 `completed/success`, tag pushed, assert
+  green). Verified by RESOLVING in a clean dir, with `@0.99.0` as the ETARGET control. Live
+  matrix all OK: app-sdk 0.51.2 · sdk 0.8.0 · blocks-react 0.58.1 · theme 0.4.0 ·
+  components 0.8.1 · components-react 0.9.0.
 - **DONE 2026-09-27 (session 4) — the arc audited ask-by-ask.** All three sessions resolved and
-  every operator-typed message read: opencode `ses_f2483102dffewgcn50h0EisEia` (6 typed,
-  09-26 02:13→17:59), Claude `e13c3ec0-3ff4-4226-b81c-9021398cb37a` (7 typed,
-  09-26 17:59→09-27 01:55), Claude `82a9c2bd-6abd-4188-809b-5e7fe61b59fe` (this one).
-  **Everything the operator asked to SHIP shipped; what never shipped is the audit's own
-  output** — see Next steps 1–2.
+  every operator-typed message read: opencode `ses_f2483102dffewgcn50h0EisEia` (6 typed),
+  Claude `e13c3ec0-3ff4-4226-b81c-9021398cb37a` (7 typed), Claude
+  `82a9c2bd-6abd-4188-809b-5e7fe61b59fe` (this one). Everything the operator asked to SHIP
+  shipped; the audit's own output was the gap, and filing closed it.
 - **Dead code removed:** a visual-regression suite that had never run anywhere; an axe sweep
   duplicating the sibling package's (9 unique cases migrated into `@civitai/components`);
   `src/utilities.generated.ts`; `@civitai/theme` + `@testing-library/*` + `axe-core` from
   components-react; `@civitai/components` from `next-app`.
 - **Audited:** round 0 + seven delta rounds, all claims blocks on PR #478. Ended when the
   attribution gate fired (`--round 8`, exit 5) on two consecutive comment-only rounds.
-- **Deploy/verify:** merges verified by CONTENT on `origin/main`; publishes verified by asking
-  npm and then by RESOLVING, never by reading a version string.
-- clawgate resolve: **exit 5 AGAIN this session, NOTHING RESOLVED** (0 tasks). An unknown
-  session id answers 200 with an empty array, so that zero cannot distinguish "touched no
-  task" from "wrong id" ⇒ no `clawgate-task:` field, by rule. Not a clean bill of health.
+- **Deploy/verify:** merges verified by CONTENT on `origin/main`; publishes verified by
+  RESOLVING, never by reading a version string.
+- clawgate resolve: **exit 5, NOTHING RESOLVED** (0 tasks). An unknown session id answers 200
+  with an empty array, so that zero cannot distinguish "touched no task" from "wrong id" ⇒ no
+  `clawgate-task:` field, by rule. Not a clean bill of health.
 
 ## Next steps (ranked)
-1. **Close the arc: F1/F2/F3.** Decide single ownership of slider + segmented-control + select
-   styling (the #358 decision the components README points at), then fix them — or FILE them as
-   three issues carrying their file:line evidence. Either satisfies the closing-condition.
-   🔴 **Re-verified live on `origin/main` 2026-09-27: neither fixed nor filed.** Both arms of all
-   three survive, and no issue among the repo's 85 covers them (#328/#357 are the C-findings,
-   #358 is the ownership question). Files: `packages/civitai-components/src/components.css`
-   (segmented `:673`, slider `:622-663` — RE-MEASURED, the old `:649`/`:588` have shifted) vs
-   `packages/civitai-blocks-react/src/ui/styles.ts:382-438` (unchanged).
-   forcing: user — the operator asked "dispatch to audit for redundancy" (session 1,
-   2026-09-26 02:16); the findings are the half of that ask that was never delivered.
-2. **Re-point or close #328 and #357 — the supersession made them false, and both are PUBLIC
-   and OPEN.** #328's headline is *"blocks-react/ui and components-react export 34 identical
-   names"*; measured on `origin/main` the overlap is **0** — components-react's `src/` is
-   `index.ts` + `elements/` (49 files) and exports none of `Stack`/`StackProps`/`Gap`/`Alert`/
-   `SegmentedControl`/`Badge`. #357's blocks-react arm survives VERBATIM (`gap?: string | number`
-   at `src/ui/Stack.tsx:7`, `toLength` at `:14`) but its components-react arm is gone.
-   forcing: regression — a merged change (`a65190f`) falsified two open issues in a public repo,
-   and nothing has told a reader.
-3. **Merge PR #473** so this doc reaches mainline. Measured cost of it not being there, this
-   session: `resume-state.sh` returned `NO SUCH FILE` and reconciled NOTHING; `find-session.py
-   --arc` exited unmeasured; `handoff_search` printed `in_scope_docs == indexed_docs == 489`,
-   i.e. never indexed. forcing: none
-4. **Close Dependabot #270 and #272.** Verified moot: `origin/main`'s
+🔴 **The arc is CLOSED — nothing below is another round of it.** The stylesheet work now
+lives in #482/#483/#484 and is tracked there, not here. Both items below are honest opt-outs:
+nothing external is asking for either, so a session drawing from this queue should skip them.
+1. **Merge PR #473** so this doc reaches mainline. Measured cost of it not being there:
+   `resume-state.sh` returned `NO SUCH FILE` and reconciled NOTHING; `find-session.py --arc`
+   exited unmeasured; `handoff_search` printed `in_scope_docs == indexed_docs == 489`, i.e.
+   never indexed. ⚠ Merging fixes only the file-not-found half — see Gotchas on the repo-handle
+   gap, which merging does NOT fix. forcing: none
+2. **Close Dependabot #270 and #272.** Verified moot: `origin/main`'s
    `packages/civitai-components-react/package.json` has zero `axe`, `@axe-core/*`,
    `@testing-library/*` or `@civitai/theme` entries — the devDeps they bump are gone.
    forcing: none
@@ -93,8 +86,15 @@ packages, dead code. Read-only session; the deliverable is the findings below, n
 The supersession deleted `@civitai/components-react`'s hand-written layer, which was one
 arm of every C-finding. **That does not close them.** Measured on `origin/main` after the
 merge, each divergence survives against the LIT ELEMENT instead:
-- **C1 Alert close gate — SURVIVES.** `blocks-react/src/ui/Alert.tsx` still gates on
-  `withCloseButton`; `civitai-alert.ts` gates on `closable`. Same silent trap, new pair.
+- ~~**C1 Alert close gate — SURVIVES.** Same silent trap, new pair.~~ 🔴 **RETRACTED
+  2026-09-27 — THIS OVERSTATED IT, and the retraction is now public on #328.** Measured: the
+  element gates on `this.closable` (`civitai-alert.ts:101`), default `false` (`:85`); blocks
+  gates on `withCloseButton` (`Alert.tsx:65`), default `false` (`:39`). **Both sides now
+  require an explicit boolean**, so the original trap — the DELETED components-react arm
+  rendering the button whenever `onClose != null`, making `<Alert onClose={fn}>` dismissible
+  on one surface and a dead end on the other — has no surface left to occur on. What survives
+  is a prop RENAME (`closable` vs `withCloseButton`, `closeLabel` vs `closeButtonLabel`),
+  which is loud. Do not re-file this as a silent divergence.
 - **C8 Badge default — SURVIVES.** `civitai-badge.ts` constructor sets
   `this.variant = 'filled'`; `blocks-react/src/ui/Badge.tsx` defaults `variant = 'light'`.
 - **C2/C3 SegmentedControl — SURVIVE, and are now a TWO-way split, not three.**
@@ -354,23 +354,49 @@ that have no such ledger and no owner.
 - **Rank 4 of the old list is still live:** `packages/civitai-blocks-react/README.md:1224`
   still advertises "8px radius" while `src/ui/styles.ts:30` documents "radius 8px→4px".
 
+- 🔴 **A `gh issue create` whose `--body-file` argument is a SHELL VARIABLE is BLOCKED, and the
+  block is correct.** The closing-condition gate cannot evaluate `$SP/f1.md`, so it refuses
+  rather than failing open — a gate that passed an unreadable body would be walkable by
+  changing the call's SHAPE instead of its content. Pass a **literal** path, `--body '<md>'`,
+  or a heredoc. Cost here: one refused call per issue until the bodies grew a
+  `## Closing condition` heading with a `Checked by:` line, which they should have had anyway.
+- 🔴 **Filing can satisfy a closing condition that reads like it demands a fix — read the
+  `or`.** This arc's condition was *"either FIXED by single-ownership consolidation or FILED as
+  GitHub issues carrying their file:line evidence"*, and three sessions treated it as blocked
+  on the #358 ownership decision. It was not: the FILED arm needed no decision from anyone and
+  closed a four-session arc in one pass. When a condition offers two arms, check which arm is
+  actually unblocked before reporting the arc as open.
+- 🔴 **An audit finding can get WEAKER when the code changes, and the reconciliation that
+  re-points it is where that gets missed.** Session 3's reconciliation carried C1 forward as
+  "SURVIVES — same silent trap, new pair". Measured this session: both surviving sides require
+  an explicit boolean, so the trap needs the DELETED arm to exist and what remains is a loud
+  prop rename. The re-pointing pass checked that *a* divergence still existed and not that the
+  *hazard* did. Retracted in Defects and publicly on #328.
+
 ## How to verify
-- **The release is COMPLETE** (this inverts the old check): from a checkout of `origin/main`,
-  at the REPO ROOT, `node scripts/assert-published-versions.mjs` → exit 0, six packages
-  confirmed. 🔴 From elsewhere it refuses with "no publishable package found … Refusing to
-  report success for a check that inspected nothing" — that is the guard working, not a pass.
+- 🔴 **The arc's closing condition, as a command:** all three F-findings are filed, open, and
+  carry file:line evidence —
+  ```bash
+  for n in 482 483 484; do
+    gh issue view $n --repo civitai/civitai-app-starters --json number,state,title,body \
+      --jq '"#\(.number) \(.state) — refs=\((.body|[scan("(components\\.css|styles\\.ts|Stack\\.tsx|Slider\\.tsx|SegmentedControl\\.tsx):[0-9]+")]|length)) cc=\(.body|test("## Closing condition"))"'
+  done
+  ```
+  Measured 2026-09-27: `#482 OPEN refs=4`, `#483 OPEN refs=8`, `#484 OPEN refs=9`, all
+  `cc=true`. ⚠ The regex undercounts — many refs are a bare `:673` after a filename — so read
+  it as a floor, not a census.
+- **The release is COMPLETE:** from a checkout of `origin/main`, at the REPO ROOT,
+  `node scripts/assert-published-versions.mjs` → exit 0, six packages confirmed. 🔴 From
+  elsewhere it refuses with "no publishable package found … Refusing to report success for a
+  check that inspected nothing" — the guard working, not a pass.
 - **The publish resolves, not just reads:** in an empty dir with a stub `package.json`,
   `npm install --prefer-online --package-lock-only @civitai/sdk@0.8.0`, then read
-  `package-lock.json` for `node_modules/@civitai/sdk -> 0.8.0`. Control: the same command with
-  `@0.99.0` must ETARGET and write no lockfile. A clean dir is required — a stale lockfile
-  answers `up to date` and proves nothing.
-- **The closing condition is still open:** `gh issue list --repo civitai/civitai-app-starters
-  --state all --limit 200` contains no F1/F2/F3 issue, and both arms are present —
-  `git show origin/main:packages/civitai-components/src/components.css | grep -n segmented`
-  and `… src/ui/styles.ts | grep -n segmented` both return hits.
+  `package-lock.json` for `node_modules/@civitai/sdk -> 0.8.0`. Control: `@0.99.0` must
+  ETARGET and write no lockfile. A clean dir is required — a stale lockfile answers
+  `up to date` and proves nothing.
 - **The supersession shipped:** `npm view @civitai/components-react version` → `0.9.0`;
   `git ls-tree -r --name-only origin/main -- packages/civitai-components-react/src/` is
-  `index.ts` + `elements/` only.
+  `index.ts` + `elements/` only (49 files).
 - **Full local gate** (build first or `blocks-react` fails on an unresolvable import):
   `pnpm -r --filter './packages/**' build && pnpm test && pnpm test:guards &&
   pnpm check:public-types && pnpm typecheck`, plus
