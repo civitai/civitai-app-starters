@@ -431,3 +431,99 @@ rather than about this migration.
   restated number goes wrong (`7` → `13/5` → `12/9` → `12/6`). The durable fix is not care: it is
   **reading the number off `git diff --numstat <base> <head>` at the moment of writing**, and saying
   so in the artefact instead of restating a remembered figure.
+
+## Evicted 2026-09-27 (fourth pass) — `starters#479`'s ladder, and the port scope
+
+<!-- Straight to the archive: the doc's ratchet gates the DELTA, so new detail in an
+     APPEND section is what makes a round unlandable. The doc keeps pointers. -->
+
+### 🔴 ONE PARAGRAPH TOOK THREE FRAMINGS, AND NOTHING IN THE REPO COULD SEE ANY OF THEM WRONG
+- as-of: 2026-09-27
+- **The structural finding, which is the transferable one:** **zero** test files and **zero** scripts in
+  `civitai-app-starters` read `packages/civitai-sdk/BREAKING.md` — measured by enumeration, with
+  `api-report.mjs` reading `public-api.md` as the positive control proving the search works. So all
+  three wrong framings of its porting section shipped past a **fully green suite**. Prose review was
+  the only guard and it failed three times. `via: measurement`
+- **The three framings, all mine, each written while fixing the previous one:**
+  (a) *"a second client for these same routes already ships here"* — **FALSE**: `useSharedStorage`
+  sends `SHARED_*` over `postMessage` (20 hits, **zero** `/api/v1`) and the host answers via tRPC
+  `apps.shared.*`. Two **transports**, not two clients of one surface — and it inverted
+  `BREAKING.md`'s own master table, which maps the `SHARED_*` family to those routes.
+  (b) *"the port is a transport change; budget for the token/CORS work"* — **FALSE**: `initialize()`
+  wires `createHostSession`, `createHttp` sends `Authorization: Bearer` on every request
+  (`src/http/index.ts:41`) and retries once on 401 with a fresh host-minted token (`:54-56`), and all
+  five kept routes declare `allowOpaqueOrigin`. It pointed a porter's effort at **finished
+  infrastructure** while demoting the real work.
+  (c) the landed one: the transport does change, the credential and CORS declaration are already
+  handled, and the remaining work is four **call-site** items — narrow `value` from `unknown`, move
+  vote/counter/report app-side, handle refusals as HTTP (`ApiError` with a `status`, **except** a
+  CORS/network failure which is a bare `TypeError`), audit every `limit`.
+- 🔴 **THE FIX THAT MATTERS IS THE GUARD, NOT THE WORDING.** `test/shared-storage/seam.test.ts` now
+  pins the section's load-bearing claims as **whole normalised strings** (`readFileSync` + a
+  `normalisedProse()` normaliser), with a positive control and a file-visibility control: **8 doc
+  mutants, 8 killed**, each red on its own assertion — reword a pinned claim, reword the tier CORS
+  clause, drop the `ApiError` carve-out, restore the over-reaching quote, delete the transport
+  carve-out, drop a retracted framing, shrink the four-item list, rename the heading. A cosmetic
+  reword now fails a test, which is the point. **The doc also carries its own retraction record** so
+  a fourth framing is not derived.
+- **Generalises past this repo:** when a document's claims are load-bearing and no test reads it,
+  the count of wrong versions is bounded only by how many times someone looks. Pin the normalised
+  string; a keyword assertion is walkable by rewording.
+
+### `#479`'s ladder in one line each, and what four rounds actually bought
+- as-of: 2026-09-27
+- **No code defect was ever found.** Two independent mutation batteries (28/28 and 23/23, different
+  mutants) confirmed the client. Round 0 questioned the requirement — *"the immediate consumer needs
+  three methods"* was **false as stated**: `civitai-app-playable-collections` has **no
+  `@civitai/sdk` dependency at all**, so the PR unblocked nothing today; it is the surface the port
+  needs to pre-exist. Rounds 1–3 found only prose, **two of the findings mine** (the (a)/(b)
+  inversions above). The ladder closed on the **attribution gate** — two consecutive rounds whose
+  fixes changed zero payload lines.
+- 🔴 **A void evidence row survived three rounds because of a same-named twin.**
+  `apps.router.storage.test.ts` stays 100% green when `block-token-access.service.ts`'s throw is
+  flipped, because a **module-private** `assertAppBlocksEnabledForTokenUser(userId, op)` at
+  `src/server/services/apps/app-storage.service.ts:150` is what it actually exercises. ⚠ The twin is
+  a **DELIBERATE, DOCUMENTED divergence** — `block-token-access.service.ts:23-38` names it, records
+  the extra `StorageOp` and the counter, and says *"Keep all of that when reconciling the two."* An
+  earlier report of mine called it an undocumented one-rule-two-places hazard; **retracted**. Only the
+  `'Apps are not enabled'` throw is byte-identical; the subject-unresolvable messages differ by the
+  leading word `runtime`, deliberately.
+- **`limit` is the divergence that bites silently**: the bridge **HOST** normalised three ways
+  (clamp 1..100, floor a non-integer, fall back to 50 on non-finite **or non-number**) and the REST
+  route 400s on all three. The hook itself does not clamp — the attribution is the host's.
+
+### `playable-collections`' REAL port scope, measured
+- as-of: 2026-09-27
+- **3 production bridge files**, not 27: `src/App.tsx`, `src/lib/popular.ts`, `src/lib/viewer-maturity.ts`.
+  The other root importers are `dev-transport.ts` plus three tests; one (`scope-contract.test.ts`) is
+  reached only by a **dynamic `await import()`** that no `from '…'` pattern sees. **10** platform
+  hooks, not 9 — `viewer-maturity.ts` adds `useDomainMaturity`. `via: measurement`
+- 🔴 **ONE `/ui` COMPONENT KEEPS THE BRIDGE ALIVE, and it is not the one it looks like.** Of the 11
+  `/ui` components the app uses, only **`FollowButton`** reaches a transport (via
+  `useCollectionFollow` → `getTransport()`); **`BlockGate` does NOT**, despite wrapping the
+  production root — its only non-visual dep, `useDirectLoad`, touches no transport. So the
+  dual-transport hazard is **one component in one file** (`CollectionViewer.tsx`), not the app root.
+  Remedy is `initialize({ transport })` (`civitai-sdk/src/app/index.ts:87,103`), **not** pulling
+  `FollowButton` in scope — that app's `CLAUDE.md` forbids a second follow implementation.
+  ⚠ I originally briefed "leave `/ui` alone" after counting **import sites** without checking what
+  those components **do**. Counting sites is not knowing whether one constructs a transport.
+- **Blocked on nothing now** — `#479` merged (`62bf04de`). The `/testing` harness (15 files) needs a
+  **fetch-level** rebuild, because after the port the app's real boundary IS `fetch`.
+
+### Cross-agent hazards this session created, worth avoiding next time
+- as-of: 2026-09-27
+- 🔴 **The scratchpad is SHARED by every subagent.** One audit round's cleanup used broad
+  `*.log`/`*.err`/`*.out` globs there and may have deleted an earlier round's artifacts; another
+  found a similarly-named `pr_body.md` already present. **Name every scratch file per-agent, and
+  delete only what you created, by exact name.**
+- 🔴 **Two audit rounds wrote to the SHARED primary clone** (a bare `git fetch`) before internalising
+  the rule against it. Additive, but it is a write to a checkout other sessions are standing in.
+  Put it in the dispatch brief explicitly — the invariant clause alone did not prevent it.
+- ⚠ **A subagent read dependency versions from the WORKING TREE, which was 3 commits behind
+  `origin/main`** (`app-sdk 0.39.0/blocks-react 0.49.0` vs the ref's `0.42.0/0.51.0`). Brief agents
+  to read deps from the ref.
+- 🔴 **I STATED ONE DIFF'S SIZE WRONG FOUR TIMES** (`7` → `13/5` → `12/9` → `12/6`) on a PR whose
+  thesis is that an unchecked restated number goes wrong. **Read it off
+  `git diff --numstat <base> <head>` at the moment of writing** and say so in the artefact, rather
+  than restating a remembered figure. Twice this session a **zero from a phrase I invented** also
+  read as a real absence — both caught only by a positive control.
