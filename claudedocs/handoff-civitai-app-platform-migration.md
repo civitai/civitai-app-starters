@@ -44,16 +44,14 @@ that protocol."*
 ## State now
 
 - **Branch / PR:** `docs/handoff-app-platform-migration` (PR `starters#440`, **OPEN**). Read from the ref; re-fetch first. Ranks 1–4, 8, 10, 12 closed.
-- 🔴 **CLOSING CONDITION HOLDS — ADDRESSED, CLOSED.** `app-requests` **0** anchored importers on `origin/main`, dep absent from `package.json`; controls 15 / 4.
-- 🔴 **`starters#479`'s DECISION GOVERNS THE PORT:** shared storage is **GENERIC KEY-VALUE ONLY** (`list`/`get`/`append`/`update`/`withdraw`); `vote`/`unvote`/`counts`/`top`/`increment`/`report` are **deliberately absent**, app-layer. **The 11 routes existing is NOT a gap.** `SharedItem` keeps `count`/`viewerVoted` on purpose.
-- ✅ **`sdk@0.8.0` PUBLISHED, CONTENT-VERIFIED** (ARCHIVE, fifth pass). `AppClient.sharedStorage` installable; `vote` is NOT in it, so vote-CASTING is app-layer on `app.site`.
-- ✅ **`devrc#1889` MERGED** — squash `9b41e398f2`, verified BY CONTENT (ancestry is FALSE after a squash: normal). 9 lessons filed; **8 of 17 already there**. 📖 ARCHIVE, sixth pass.
-- 🔴 **RANK 5 IS IN FLIGHT, NOT UNSTARTED.** Branch **`zach/sdk-port-playable-collections-impl`**, **`b157419` PUSHED, no PR**, worktree `/tmp/claude-1000/wt-pc-port-3075627` off tip `65b0028`. Ships `src/lib/sdk-transport.ts` + test: **12 passing, 2 watched-fail mutants**. 📖 ARCHIVE, sixth pass.
-- **Port surface, measured:** **6** static root importers **+ 1 dynamic** (`scope-contract.test.ts:470,494` — a `from '…'` grep CANNOT see it). Runtime bridge = `App.tsx` (9 hooks), `lib/viewer-maturity.ts`, `dev-transport.ts`; `lib/popular.ts` + 2 tests are **types only**.
-- 🔴 **CORRECTION, MEASURED: BOTH `/ui` consumers reach the bridge** — the former *"FollowButton, not BlockGate"* was WRONG; `BlockGate` wraps the PRODUCTION root at `src/main.tsx:56`. Evidence: ARCHIVE, sixth pass.
+- 🔴 **CLOSING CONDITION RE-MEASURED 2026-09-27, STILL HOLDS — ADDRESSED, CLOSED.** `app-requests@origin/main` (`996cf3d`): **0** anchored importers, verbatim form also 0, dep absent from `package.json`; control `@civitai/sdk` **2**; fleet controls below.
+- 🔴 **RANK 5's REBIND IS DONE AND PUSHED — `zach/sdk-port-pc-rebind`, 4 commits, NO PR.** Supersedes `…-impl` (carries `b157419` forward): `a825a5c` install fix · `72119bd` `lib/sdk-runtime.ts` + 19 tests · `bd0ac37` the rebind. Worktree `/tmp/claude-1000/wt-pc-rebind-603101`, deps installed.
+- ✅ **VERIFIED LOCALLY** (`nix develop`, node v24.19.0, pnpm **11.25.0**): typecheck 0 · `pnpm test` **807 passed / 60 files, 0 failed** · build rc 0 · **10 mutants** killed against the FINAL source, each by its own named assertion, source restored byte-identical each time.
+- ⚠ **NOT VERIFIED against the real platform** — all local; a signed-in page-slot load must settle that the REST routes answer a real block token for THIS app. **BROWSER TIER UNRUN, NOT PASSING** (3 of 63 files, `chromium_headless_shell-1243` absent) — gate elsewhere.
+- 🔴 **RETAINED SURFACE, for the PR to name:** root importers **7 → 7**, composition inverted — `App.tsx`, `viewer-maturity.ts`, `popular.ts` are OFF it; what remains is the port's own `sdk-transport.ts` + `sdk-runtime.ts`, `dev-transport.ts` (dev/test only) and 4 test files. `/ui` **7** (incl. `BlockGate` at the production root) and `/testing` **15** stay until `#328`, so this app cannot reach 0 either.
+- 🔴 **`starters#479` GOVERNS THE PORT:** shared storage is **GENERIC KV ONLY**; `vote`/`unvote`/`counts`/`top`/`increment`/`report` are deliberately absent, app-layer. **The 11 routes existing is NOT a gap.** Vote ships as `app.site.post('blocks/shared-storage/vote',{key})` → `{count}`.
 - 🔴 **ASKS COME FROM TRANSCRIPTS.** *"app oauth tokens short-lived, online-refresh-only"* is **ALREADY SATISFIED AND MEASURED** (`design-app-block-auth-split.md` §6.1). **Don't re-open.**
-- **`claim-work`:** rank 5 held (mine). **No `clawgate-task:`** — `resolve` exited **5**, NOTHING RESOLVED; an unknown session id also answers an empty array, so that zero is not a clean bill.
-- ⚠ **Leftover worktrees:** `wt-pc-port-3075627` (live port), `wt-hh2-3657854` (this doc), both under `/tmp/claude-1000/`.
+- **`claim-work`:** rank 5 held (mine, rc 12). **No `clawgate-task:`** — `resolve` exited **5**, NOTHING RESOLVED, and an unknown session id also answers an empty array, so that zero is not a clean bill.
 
 ## Open investigations — live diagnosis state
 
@@ -289,20 +287,21 @@ there. Two facts worth keeping:
 2. ✅ DONE — `sdk@0.7.0` and `0.8.0` published. forcing: gate — closed.
 3. ✅ DONE AND LIVE — `app-requests#24` `996cf3d`; 0.4.2 live. forcing: gate — closed.
 4. ✅ DONE — `civitai#5112`. forcing: regression — closed.
-5. **Port `playable-collections` — IN FLIGHT: branch `zach/sdk-port-playable-collections-impl`, `b157419` pushed, NO PR.** Adapter done. **Next: rebind the 9 `App.tsx` hooks onto `initialize({ transport })`** using `src/lib/sdk-transport.ts` — `useAppStorage`→`app.storage`, `useSharedStorage`→`app.sharedStorage` (+ vote app-layer on `app.site`), `useBuzzBalance`→`app.site.get('blocks/buzz')`, and `useBlockContext`/`useBlockToken`/`useHostOrigin`/`useBlockResize` off the snapshot; then `viewer-maturity.ts`. `/ui` stays on the bridge (`#328`). `scope-contract.test.ts` needs rewriting — its contract is meaningless once the hooks come from a package exporting none. 🔴 `collections:write:self` must not return. ⚠ **This host cannot read the browser tier either way** (Playwright wants `chromium_headless_shell-1243`, the pin gives `1228`) — gate elsewhere, report those 3 UNRUN.
-   forcing: gate — 4 of 9 on the bridge.
-6. **Then `gen-matrix` (3) → `sensei` (6, `trunk`) → `model-benchmarking` (7)**. The first and last cannot reach 0; their PRs must name what is retained.
+5. **`playable-collections` rebind DONE and pushed, NO PR — two OPERATOR calls gate it, nothing technical does.** `zach/sdk-port-pc-rebind`, 4 commits. (a) **the `@civitai/sdk@0.8.0` `minimumReleaseAgeExclude` entry** — without it the branch does not install under the pinned pnpm 11 at all, and this repo's `CLAUDE.md` makes adding it routine; but it is a supply-chain control and its clock closes **2026-09-28T02:03:55Z**, after which the entry is inert and should be DELETED. Waiting ~19h is the alternative. (b) **open the PR against `main`?** Then verify against the real platform.
+   forcing: gate — a pushed branch with no PR.
+6. **Then `gen-matrix` (3) → `sensei` (6, `trunk`) → `model-benchmarking` (7)**. None reaches 0; their PRs must name what is retained, as rank 5's does. Reuse rank 5's `lib/sdk-runtime.ts` (the nine bindings) and `dev-rest.ts` (the fetch-level fake) — app-local by design, so each port copies and adapts.
    forcing: gate — the fleet.
 7. **Delete `app-requests`' `minimumReleaseAgeExclude`** — inert since `2026-09-27T03:45:56Z`, now actionable. Own PR (precedent `#22`).
    forcing: deadline — inert now.
 8. ✅ DONE — `#5163`. forcing: gate — closed.
-9. **PRUNE THIS DOC — 99,155 B vs a 65,536 B ceiling.** 🔴 **Eviction CANNOT land an update** — the ratchet gates GROWTH, so moving closed material lowers current and post-update size identically; only shrinking the delta works (re-confirmed across 8 rounds over two sessions). Clearing the ceiling needs ~33,600 B against ~3,100 B marked evictable, so the lever is the `Gotchas` section.
+9. **PRUNE THIS DOC — ~98 KB vs a 65,536 B ceiling.** 🔴 **Eviction CANNOT land an update** — the ratchet gates the DELTA, so moving closed material lowers current and post-update size identically; only a smaller delta works. Re-confirmed 2026-09-27: a 4,340 B `Gotchas` append refused the round at `+5,771 B` — the fix is a terser delta **plus the full text in a separate ARCHIVE commit**, which has no ratchet.
    forcing: gate — the write gate refuses growth.
 10. ✅ DONE — `starters#479` `62bf04de`. forcing: gate — closed.
-11. **Close `playable-collections#48` as superseded** — a findings doc whose **both blocking decisions are answered** (1 by the kickoff, 2 by `sdk@0.8.0`), and rank 5's branch implements them.
+11. **Close `playable-collections#48` as superseded** — both blocking decisions answered, rank 5's branch implements them. Re-confirmed OPEN 2026-09-27.
     forcing: gate — an open PR blocking nothing.
 12. ✅ DONE — `devrc#1889` merged `9b41e398f2`. forcing: gate — closed.
 13. **Recover or retire the Koen Discord ask (09-22)** — *"get my recent chats with him, there is important detail in there."* No artifact on any ref or on disk; the only capture, `datapacket-talos/claudedocs/koen-zach-feedback.md`, is a **2026-09-03** voice transcript PREDATING it. May be in an opencode run this corpus cannot see — ask first.
+
     forcing: user — no recorded outcome.
 
 ## Defects (batched)
@@ -833,31 +832,30 @@ there. Two facts worth keeping:
 
 - 🔴 **2026-09-27: ARCHIVE sixth pass + cairn `devrc/skills`, `…/sdk-transport`.** A prose-payload ladder migrates into its own fix text — REVERT, don't redraft; a retraction is TREE-WIDE; three instruments lied, each caught by a control. **Operator:** merged `#1889` with round 4 owed; shipped `:1429` as-is.
 
+- 🔴 **RANK-5 REBIND: 5 GOTCHAS + 2 DECISIONS IN THE ARCHIVE, VERBATIM — `Evicted 2026-09-27 (seventh pass)`, `22a6237`.** A guard of mine was VACUOUS until the mutant; a port inherits a field the old code did not TRUST.
+
 ## How to verify
 
 ```bash
-# 1. closing condition (ADDRESSED) — anchored on the CONSTRUCT, note the CLOSING QUOTE
+# 1. closing condition (ADDRESSED) — anchored on the CONSTRUCT, note the CLOSING QUOTE. Fleet
+#    positive controls vs origin/<default>: gen-matrix 4 · sensei 12 · playable 7 · model-bench 25.
 A=/home/zach/workspace/civit/civitai-app-requests; git -C $A fetch origin -q
 git -C $A grep -lE "(from|import\()[[:space:]]*'@civitai/blocks-react'" origin/main -- '*.ts' '*.tsx' | wc -l  # 0
-#    fleet, same pattern vs origin/<default>: gen-matrix 4 · sensei 12 · playable 7 · model-bench 22
 
-# 2. rank 5's adapter — the tests AND the two mutants that must KILL
-P=/home/zach/workspace/civit/civitai-app-playable-collections
-git -C $P fetch origin zach/sdk-port-playable-collections-impl -q     # b157419
-#   worktree it, pnpm install, then vitest run --project node src/lib/sdk-transport.test.ts => 12 passed
-#   MUTANT A: delete the memo early-return => exactly 1 red on ITS OWN assertion
-#     ("Object.is equality"), 11 still green.  MUTANT B: getHostOrigin() ?? 'https://evil.example'
-#     => security test red, "expected 'https://evil.example' to be null".
-#   Restore from a `cp -a` copy, byte-identical by sha256 — never `git checkout --`.
+# 2. rank 5 — the REBIND branch (supersedes `…-impl`), 4 commits
+P=/home/zach/workspace/civit/civitai-app-playable-collections; git -C $P fetch origin -q
+git -C $P log --oneline origin/main..origin/zach/sdk-port-pc-rebind   # bd0ac37 72119bd a825a5c b157419
+#   worktree it, install INSIDE the flake (the host pnpm is a different MAJOR, blind to the
+#   supply-chain tier): nix develop <wt> --command bash -c 'cd <wt> && pnpm install --frozen-lockfile'
+#   -> "✓ Lockfile passes supply-chain policies (191 entries …)" AND `ls node_modules/.bin|wc -l` > 0
+#   — the .bin count is the tell; the exit code and the installed version both lie. Then
+#   typecheck 0 · pnpm test 807 passed / 60 files · build rc 0. The 3 browser files are UNRUN.
 
-# 3. the port's REAL surface — 6 static + 1 DYNAMIC (a `from` grep misses the 7th)
-git -C $P grep -nE "(from|import\()[[:space:]]*'@civitai/blocks-react'" origin/main -- '*.ts' '*.tsx'
-git -C $P grep -n "await import('@civitai/blocks-react')" origin/main -- '*.ts'   # scope-contract.test.ts
+# 3. the two guards that CAUGHT the port must FAIL when narrowed back (restore from a `cp -a`
+#    copy, sha256-identical, never `git checkout --`): (a) scope-contract.test.ts importRe ->
+#    '@civitai/blocks-react' alone: POSITIVE CONTROL red + all 5 scopes orphaned. (b)
+#    sdk-runtime.test.tsx transport() -> plain `??=`: the resetTransport() case red, 'anon'/'porter'.
 
-# 4. devrc#1889 landed — BY CONTENT, never ancestry (a squash never makes the head an ancestor)
-git -C $DEVRC grep -c '0 means ALLOWED' origin/main -- CLAUDE.md   # 1
-git -C $DEVRC grep -c 'NO CAPACITY' origin/main -- claude/         # control, non-zero
-
-# 5. rank 7's clock is PAST (2026-09-27T03:45:56Z). Asks come from TRANSCRIPTS, not this doc
-#    (--arc exits 3): the --ids-file recipe, then FILTER <task-notification> (~269 -> ~101).
+# 4. rank 7's clock is PAST. Asks come from TRANSCRIPTS (--arc exits 3): --ids-file, then
+#    FILTER <task-notification> (~269 -> ~101).
 ```
