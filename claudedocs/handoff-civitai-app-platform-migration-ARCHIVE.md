@@ -650,3 +650,93 @@ exfiltration case while covering nothing stops the next reader looking.
 ONLY the memo early-return → exactly **1** test red on its OWN assertion (`Object.is
 equality`, line 51) with 11 still green; adding a `hostOrigin` fallback → the security test
 red with its own assertion (`expected 'https://evil.example' to be null`).
+
+## Evicted 2026-09-27 (seventh pass) — the rank-5 rebind's lessons, held here to keep the doc's delta under its ratchet
+
+Full text of five gotchas and two decisions from the session that landed
+`zach/sdk-port-pc-rebind` (4 commits: `a825a5c` `72119bd` `bd0ac37`, on `b157419`).
+The commit messages carry the per-change evidence; this is the transferable half.
+
+🔴 **I WROTE A VACUOUS GUARD AND ONLY THE MUTANT FOUND IT — THE OBSERVABLE WAS THE BUG,
+NOT THE ASSERTION.** Guarding that the SDK runtime follows a REPLACED bridge transport
+(`test-setup.ts` nulls the singleton in a global `beforeEach`, so a plain `??=` would wrap
+a disposed one forever), I asserted *"re-rendering does not throw"*. The unkeyed-cache
+mutant **SURVIVED a 19-test green suite**: `dispose()` only drops listeners, so
+`getSnapshot()` on a disposed transport still answers its last value — and `ready` was
+already `true` on it. NEITHER "throws" nor "ready" can DIFFER between the two transports,
+so neither discriminates anything. Fixed by choosing a field whose value only ONE of them
+can produce: anonymous viewer on the first, signed-in on the second. The mutant then died
+`expected 'anon' to be 'porter'`. **Generalises: when a guard is about WHICH object is
+being read, the assertion must name a value the wrong object CANNOT produce — and
+"it did not crash" is never that value.**
+
+🔴 **A PORT INHERITS A FIELD THE OLD CODE DID NOT TRUST, AND THE SAFE DIRECTION IS NOT THE
+DEFAULT.** `@civitai/blocks-react`'s `useDomainMaturity` RE-APPLIED the domain∩viewer
+intersection via `effectiveBrowsingCeiling(maxBrowsingLevel, effectiveBrowsingLevel)`;
+`@civitai/sdk`'s snapshot passes the host's `effectiveBrowsingLevel` through RAW
+(`dist/core/transport.js`). A literal port of `viewer-maturity.ts` — one line, type-checks,
+same field name — would have silently WIDENED the maturity ceiling, rendering mature media
+to a viewer who turned NSFW off. The bridge hook's own comment states why it re-derived:
+*"so the never-wider property holds even against a host that ships a wrong value"*, and the
+function additionally maps junk `(31, -1)` to `3` (SFW). The `undefined` arm is equally
+load-bearing: `effectiveBrowsingCeiling` always returns a NUMBER, so calling it
+unconditionally turns "the host told us nothing" into a concrete ceiling, inverting a
+documented fail-closed contract. **When porting, diff what the OLD wrapper DID against what
+the NEW one PROVIDES; a field of the same name is not the same guarantee.**
+
+🔴 **WHICH WAY A STALE GUARD BREAKS IS A PROPERTY OF ITS PHRASING, AND TWO IN THIS PORT
+BROKE RED ONLY BY LUCK OF IT.** (a) `scope-contract.test.ts` scans value imports of ONE
+package to prove every manifest scope has a consumer; moving the nine hooks to an app-local
+module made it see **zero**, and the thing that failed by name was its **POSITIVE CONTROL**
+(*"finds the scoped hook this app really does call"*) — without that control the file would
+have passed the port untouched while asserting nothing. (b) The browse-prefs relationship
+guard watched an `APP_STORAGE_SET` postMessage that no longer happens; it failed because it
+asserts a write COUNT of **1**, and zero writes fails that. A guard phrased *"no more than
+one key"* would have PASSED on an empty set and gone on reading as coverage.
+**Phrase a contract guard as a positive count, never as an upper bound — and give every
+scanner a positive control, because that control is what survives a refactor the scanner
+cannot see.** Proven load-bearing: narrowing the regex back reddens the control AND reports
+all 5 declared scopes orphaned.
+
+🔴 **A FAKE'S DEFAULTS ARE PART OF ITS CONTRACT, AND THE FAILURE LANDS THREE STEPS AWAY.**
+Replacing the mock host with a `fetch`-level fake (`src/dev-rest.ts`) for app storage,
+shared storage and the Buzz balance — fetch-level because after the port those three ARE
+HTTP, and a transport-level fake would answer a conversation nobody is having — I defaulted
+the balance to zeros. The mock host defaults `{blue:1000, green:0, yellow:5000}`. One test
+then failed on a **tip never sending**: the tip modal's soft ceiling derives from the
+balance, and a zero ceiling refuses every amount. Nothing in the failure named the balance.
+**When a fake inherits an older fake's job, copy its DEFAULTS, not just its route shapes.**
+Two things kept the rest of the misses loud: the fake 404s any unrecognised route (an
+unknown path is a failure, not an empty screen), and its keys are ULID-shaped rather than
+`shared_<n>`, because this repo has already been bitten by an e2e case pinned to the retired
+mock host's minting convention.
+
+🔴 **`node_modules/.bin` IS THE TELL, NOT THE EXIT CODE — AND A VERSION CHECK CORROBORATED
+THE FALSE PASS.** A backgrounded `pnpm install --frozen-lockfile` was reported by the
+harness as `[exited with code 0]` while its log ended `✗ Lockfile failed supply-chain policy
+check (191 entries in 3.1s)` / `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`. Worse, the obvious
+confirmation LIED in the same direction: `node_modules/@civitai/sdk/package.json` was
+already readable at exactly the expected `0.8.0`, because packages are linked BEFORE the
+policy check runs. The discriminator was `ls node_modules/.bin | wc -l` → **0**. Same family
+as this doc's "count the runner's own result lines, never the exit code", one level out: the
+countable artefact here is a DIRECTORY the step is supposed to create. Re-confirmed in the
+same session: **the dev-shell banner's `pnpm --version` is not the pnpm you get** — it
+printed `10.28.1` in a run whose own warnings and closing `Done in … using pnpm v11.25.0`
+were pnpm 11's.
+
+**Decision (mine, operator UNCONFIRMED):** added the exact-version `@civitai/sdk@0.8.0`
+`minimumReleaseAgeExclude` entry rather than wait ~19h for the clock, on THIS repo's own
+`CLAUDE.md` condition (*"Bumping any `@civitai/*` dependency also means updating
+`minimumReleaseAgeExclude` in `pnpm-workspace.yaml`"*) plus the four existing first-party
+entries as precedent — a different condition from `app-requests`' *"almost always to wait …
+last resort"*, and the governing repo is the one being changed. The clock that actually
+governs (`2026-09-28T02:03:55Z`, 24h after the publish) is written into the file with a
+"delete it then" instruction, because the previous exemption pair in this fleet carried a
+removal condition that could never fire. Reversible in one line; flagged, not assumed.
+
+**Decision (mine):** `configureSdkRuntime` DROPS a stale AppClient instead of throwing on a
+second call. The throw named a real hazard — a `fetch` swapped mid-flight would otherwise be
+silently ignored — but refused a legitimate case in this repo's own suite (a test rendering
+the app twice with different props), and dropping the client REMOVES what refusing merely
+reports. Its test is now a behaviour (`the second fetch is the one that answers`) rather than
+an error string, and its mutant dies `expected '1' to be '2'`.
