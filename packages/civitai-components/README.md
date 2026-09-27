@@ -217,6 +217,16 @@ only while hovered or focused; a full video keeps its native controls, and so
 cannot be a button. Size them from outside; `--civitai-media-max-height` caps a
 tall one without cropping when `fit="contain"`.
 
+`<civitai-image>` passes `loading` and `decoding` straight to its `<img>`, which
+is the only way to reach them — the `<img>` is built inside the shadow root, so
+markup in the consuming page never touches it. Set `loading="lazy"` on tiles that
+start below the fold and the browser defers them; leave both unset and no
+attribute is rendered, so the default stays HTML's own.
+
+```html
+<civitai-image src="…" alt="Tile 47" loading="lazy" decoding="async"></civitai-image>
+```
+
 [`custom-elements.json`](./custom-elements.json) is the published contract —
 every tag, attribute, property, `::part` and slot. It is generated from the
 element sources (tags from `defineElement(TAG, …)`, parts and slots from the
