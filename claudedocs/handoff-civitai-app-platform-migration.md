@@ -43,17 +43,17 @@ that protocol."*
 
 ## State now
 
-- **Branch / PR:** `docs/handoff-app-platform-migration` (PR `starters#440`, **OPEN**). Read from the ref; re-fetch first. Ranks 1–4, 8, 10 closed (ladders: ARCHIVE).
-- 🔴 **CLOSING CONDITION RE-VERIFIED 2026-09-27 — ADDRESSED, CLOSED.** `app-requests` **0** anchored importers on `origin/main`, dep absent from `package.json`; controls: `@civitai/sdk` **15**, `gen-matrix` **4**.
-- 🔴 **`starters#479`'s DECISION GOVERNS FUTURE WORK:** shared storage is **GENERIC KEY-VALUE ONLY** — `list`/`get`/`append`/`update`/`withdraw`. `vote`/`unvote`/`counts`/`top`/`increment`/`report` are **deliberately absent**, app-layer until platform demand. **The 11 routes existing is NOT a gap.** `SharedItem` keeps `count`/`viewerVoted` on purpose.
-- ✅ **`@civitai/sdk@0.8.0` PUBLISHED AND CONTENT-VERIFIED** (ARCHIVE, fifth pass), so **rank 5's Decision 2 is settled for the SDK**. ⚠ `vote` is not in that surface — the port writes vote-casting app-layer on `app.site`.
-- 🔴 **EVERY PER-APP IMPORTER NUMBER IN THIS DOC IS INFLATED** — the pattern lacks a closing quote, so it prefix-matches `/ui` and `/testing`. Table: ARCHIVE.
-- **RANK 5 UNBLOCKED, claimed, NOT STARTED.** `#48` is a findings doc only. Re-measured `origin/main`: **7** anchored root importers = **3 production** (`App.tsx`, `lib/popular.ts`, `lib/viewer-maturity.ts`) + `dev-transport.ts` + 3 tests. ⚠ The clone was **3 behind**; fetch first.
-- ✅ **`app-requests` 0.4.2 APPROVED AND LIVE** (2026-09-26 11:52 CDT) — supersedes the former "SUBMITTED, NOT LIVE / moderator's action".
-- 🔴 **ASKS COME FROM TRANSCRIPTS, NOT THIS DOC.** *"app oauth tokens short-lived, online-refresh-only"* is **ALREADY SATISFIED AND MEASURED** (`design-app-block-auth-split.md` §6.1). **Don't re-open.**
-- **IN FLIGHT: `devrc` `6c1fbbfe`** (`zach/file-17-tooling-lessons`, wt `/tmp/claude-1000/wt-devrc-skillfile-1996961`) — committed, **NOT pushed**; the flake gate is re-running after run 1 failed on a STALE tree. Rank 12.
-- **`claim-work`:** rank 5 (mine) + `…-skills-filing`. **No `clawgate-task:`** — `resolve` exited **5**, NOTHING RESOLVED; an unknown session id also answers an empty array, so that zero is not a clean bill.
-- ⚠ **Leftover worktrees** registered in the shared `.git`: `cas-wt-resume-545889`, `/tmp/claude-1000/wt-handoff-3296319`.
+- **Branch / PR:** `docs/handoff-app-platform-migration` (PR `starters#440`, **OPEN**). Read from the ref; re-fetch first. Ranks 1–4, 8, 10, 12 closed.
+- 🔴 **CLOSING CONDITION HOLDS — ADDRESSED, CLOSED.** `app-requests` **0** anchored importers on `origin/main`, dep absent from `package.json`; controls 15 / 4.
+- 🔴 **`starters#479`'s DECISION GOVERNS THE PORT:** shared storage is **GENERIC KEY-VALUE ONLY** (`list`/`get`/`append`/`update`/`withdraw`); `vote`/`unvote`/`counts`/`top`/`increment`/`report` are **deliberately absent**, app-layer. **The 11 routes existing is NOT a gap.** `SharedItem` keeps `count`/`viewerVoted` on purpose.
+- ✅ **`sdk@0.8.0` PUBLISHED, CONTENT-VERIFIED** (ARCHIVE, fifth pass). `AppClient.sharedStorage` installable; `vote` is NOT in it, so vote-CASTING is app-layer on `app.site`.
+- ✅ **`devrc#1889` MERGED** — squash `9b41e398f2`, verified BY CONTENT (ancestry is FALSE after a squash: normal). 9 lessons filed; **8 of 17 already there**. 📖 ARCHIVE, sixth pass.
+- 🔴 **RANK 5 IS IN FLIGHT, NOT UNSTARTED.** Branch **`zach/sdk-port-playable-collections-impl`**, **`b157419` PUSHED, no PR**, worktree `/tmp/claude-1000/wt-pc-port-3075627` off tip `65b0028`. Ships `src/lib/sdk-transport.ts` + test: **12 passing, 2 watched-fail mutants**. 📖 ARCHIVE, sixth pass.
+- **Port surface, measured:** **6** static root importers **+ 1 dynamic** (`scope-contract.test.ts:470,494` — a `from '…'` grep CANNOT see it). Runtime bridge = `App.tsx` (9 hooks), `lib/viewer-maturity.ts`, `dev-transport.ts`; `lib/popular.ts` + 2 tests are **types only**.
+- 🔴 **CORRECTION, MEASURED: BOTH `/ui` consumers reach the bridge** — the former *"FollowButton, not BlockGate"* was WRONG; `BlockGate` wraps the PRODUCTION root at `src/main.tsx:56`. Evidence: ARCHIVE, sixth pass.
+- 🔴 **ASKS COME FROM TRANSCRIPTS.** *"app oauth tokens short-lived, online-refresh-only"* is **ALREADY SATISFIED AND MEASURED** (`design-app-block-auth-split.md` §6.1). **Don't re-open.**
+- **`claim-work`:** rank 5 held (mine). **No `clawgate-task:`** — `resolve` exited **5**, NOTHING RESOLVED; an unknown session id also answers an empty array, so that zero is not a clean bill.
+- ⚠ **Leftover worktrees:** `wt-pc-port-3075627` (live port), `wt-hh2-3657854` (this doc), both under `/tmp/claude-1000/`.
 
 ## Open investigations — live diagnosis state
 
@@ -264,6 +264,10 @@ that protocol."*
 - as-of: 2026-09-27
 - **VERBATIM there, not deleted:** (a) `sdk@0.8.0`'s publish failed **E503**; attempt 2, **not mine**, fixed it — the in-job control (two sibling publishes, one credential, same second, both OK) separated *failed* from *staged*. (b) **`BlockGate` DOES keep the bridge alive**; *"FollowButton, not BlockGate"* was WRONG.
 
+### ✅ Detail in the ARCHIVE — `Evicted 2026-09-27 (sixth pass)`
+- as-of: 2026-09-27
+- `devrc#1889`'s ladder; the port adapter's contract + mutation evidence.
+
 ## Fleet fan-out, 2026-09-24 — COMPLETE (was `IN FLIGHT`)
 
 Seven agents, operator-authorised branch+PR-no-merge. **All three ports merged
@@ -283,32 +287,32 @@ there. Two facts worth keeping:
 
 1. ✅ DONE — `devrc#1876` `47a76ed3`. forcing: gate — closed.
 2. ✅ DONE — `sdk@0.7.0` and `0.8.0` published. forcing: gate — closed.
-3. ✅ DONE AND NOW LIVE — `app-requests#24` `996cf3d`; 0.4.2 live. forcing: gate — closed.
+3. ✅ DONE AND LIVE — `app-requests#24` `996cf3d`; 0.4.2 live. forcing: gate — closed.
 4. ✅ DONE — `civitai#5112`. forcing: regression — closed.
-5. **Port `playable-collections`** — 3 production bridge files + 10 platform hooks. `/ui` out of scope (`#328`); inject the existing transport via `initialize({ transport })` — BOTH `/ui` clients reach the bridge. `/testing` (15 files) needs a **fetch-level** rebuild. 🔴 `collections:write:self` must not return. ⚠ **This host cannot read the browser tier either way** (Playwright wants `chromium_headless_shell-1243`, the pin gives `1228`) — gate elsewhere; report those 3 files UNRUN.
-   forcing: gate — 4 of 9 apps on the bridge.
+5. **Port `playable-collections` — IN FLIGHT: branch `zach/sdk-port-playable-collections-impl`, `b157419` pushed, NO PR.** Adapter done. **Next: rebind the 9 `App.tsx` hooks onto `initialize({ transport })`** using `src/lib/sdk-transport.ts` — `useAppStorage`→`app.storage`, `useSharedStorage`→`app.sharedStorage` (+ vote app-layer on `app.site`), `useBuzzBalance`→`app.site.get('blocks/buzz')`, and `useBlockContext`/`useBlockToken`/`useHostOrigin`/`useBlockResize` off the snapshot; then `viewer-maturity.ts`. `/ui` stays on the bridge (`#328`). `scope-contract.test.ts` needs rewriting — its contract is meaningless once the hooks come from a package exporting none. 🔴 `collections:write:self` must not return. ⚠ **This host cannot read the browser tier either way** (Playwright wants `chromium_headless_shell-1243`, the pin gives `1228`) — gate elsewhere, report those 3 UNRUN.
+   forcing: gate — 4 of 9 on the bridge.
 6. **Then `gen-matrix` (3) → `sensei` (6, `trunk`) → `model-benchmarking` (7)**. The first and last cannot reach 0; their PRs must name what is retained.
-   forcing: gate — the rest of the fleet.
-7. **Delete `app-requests`' `minimumReleaseAgeExclude`.** ⚠ **NOT inert at session end** — covers `sdk@0.7.0`, inert from `2026-09-27T03:45:56Z`, and it was `01:56Z`; deleting earlier breaks `pnpm install`. Own PR (precedent `#22`).
-   forcing: deadline — check the clock.
+   forcing: gate — the fleet.
+7. **Delete `app-requests`' `minimumReleaseAgeExclude`** — inert since `2026-09-27T03:45:56Z`, now actionable. Own PR (precedent `#22`).
+   forcing: deadline — inert now.
 8. ✅ DONE — `#5163`. forcing: gate — closed.
-9. **PRUNE THIS DOC — 98,877 B vs a 65,536 B ceiling.** 🔴 **Eviction CANNOT land an update** — the ratchet gates GROWTH, so moving closed material lowers current and post-update size identically (re-confirmed over 5 rounds); only shrinking the delta works. Clearing the ceiling needs ~33,341 B against 2,968 B marked evictable, so the lever is summarising the 62,912 B `Gotchas`.
-   forcing: gate — the write gate refuses a growing update.
+9. **PRUNE THIS DOC — 99,155 B vs a 65,536 B ceiling.** 🔴 **Eviction CANNOT land an update** — the ratchet gates GROWTH, so moving closed material lowers current and post-update size identically; only shrinking the delta works (re-confirmed across 8 rounds over two sessions). Clearing the ceiling needs ~33,600 B against ~3,100 B marked evictable, so the lever is the `Gotchas` section.
+   forcing: gate — the write gate refuses growth.
 10. ✅ DONE — `starters#479` `62bf04de`. forcing: gate — closed.
-11. **Audit `playable-collections#48`, or close it.** **Both its blocking decisions are now answered** (1 by the operator's kickoff, 2 by `sdk@0.8.0`) — so close-as-superseded, or audit then close.
-    forcing: gate — an unaudited PR.
-12. **Push `devrc` `6c1fbbfe`, open its PR — gated on `/tmp/claude-1000/devrc-gate2.log`.** 🔴 **COUNT result lines, never the exit code**: run 1's task said `exit code 0` over `RESULT: FAIL`. Its 5 failures are **STALE-TREE** (snapshotted pre-fix, all `browser SKILL.md is 12,540 B`; now 11,878). ⚠ My 4-file run (182 passed) was narrower: it missed `prune-skill`'s prose test, and 2 browser-bridge failures await run 2.
-    forcing: gate — an unpushed commit is one `checkout` from silent loss.
-13. **Recover or retire the Koen Discord ask (09-22)** — *"get my recent chats with him, there is important detail in there."* No artifact on any ref or on disk; the only Koen capture, `datapacket-talos/claudedocs/koen-zach-feedback.md`, is a **2026-09-03** voice transcript PREDATING it. The DM id is in the 09-22 transcript, deliberately not repeated here — this repo is PUBLIC. May be in an opencode run this corpus cannot see — ask before re-driving their browser.
-    forcing: user — an ask with no recorded outcome.
+11. **Close `playable-collections#48` as superseded** — a findings doc whose **both blocking decisions are answered** (1 by the kickoff, 2 by `sdk@0.8.0`), and rank 5's branch implements them.
+    forcing: gate — an open PR blocking nothing.
+12. ✅ DONE — `devrc#1889` merged `9b41e398f2`. forcing: gate — closed.
+13. **Recover or retire the Koen Discord ask (09-22)** — *"get my recent chats with him, there is important detail in there."* No artifact on any ref or on disk; the only capture, `datapacket-talos/claudedocs/koen-zach-feedback.md`, is a **2026-09-03** voice transcript PREDATING it. May be in an opencode run this corpus cannot see — ask first.
+    forcing: user — no recorded outcome.
 
 ## Defects (batched)
 
-- 🔴 **`minimumReleaseAgeExclude` inert from `2026-09-27T03:45:56Z`** — rank 7; **not yet**. Added against `app-requests` `CLAUDE.md:172-173` by operator override. **Not precedent.**
-- 🔴 **The subsystem-index write for `civitai-app-requests` is BLOCKED, not declined** — `cairn create` refuses an unregistered scope; `devrc#1862` still OPEN, and `routes.json` resolves into `/nix/store` so a `home-manager switch` is needed too.
-- ✅ **THE 17 TOOLING LESSONS ARE FILED** (`devrc` `6c1fbbfe`, pending push — rank 12). 🔴 **The UNFILED label was STALE for 8 of 17** — already in `audit-pr/SKILL.md:16`, 4 in `flows/civitai.com.md`, 2 in `platform-build-contract.md`. **Probe a target before trusting an UNFILED claim.** 7 written, 2 sharpened.
-- **`starters#328` OPEN** — 34 identical drifted names across `blocks-react/ui` and `components-react`.
-- **Open, re-confirmed 2026-09-27:** `civitai#5153` · `#5102` (🔴 **its fix agent was STOPPED by the operator 09-24 — a killed dispatch, not just an open issue**) · `#5120` · `starters#459` `#460` `#428` · `cli#706` · `orchestration#363` (**assigned `koenbeuk`**, not ours).
+- 🔴 **The subsystem-index write for `civitai-app-requests` is BLOCKED, not declined** — `cairn create` refuses an unregistered scope; `devrc#1862` OPEN, and `routes.json` resolves into `/nix/store` (needs a switch).
+- 🔴 **`audit-dispatch.py`'s WHERE TO WORK IS WRONG FOR CROSS-REPO DISPATCH** — it asserts the target "is the repository this session is standing in", false whenever cwd differs from the PR's repo. **Three** auditors hit it; brief every cross-repo auditor that it is wrong.
+- ⚠ **`devrc#1889` merged with round 4 owed** (operator direction); unaudited delta `fe509d0a`, 30 lines of prose, guards green — no guard there checks whether a sentence is true.
+- 🔴 **A private-repo detail shipped into a PUBLIC file, operator-accepted:** `platform-build-contract.md` cites `app-blocks-pipeline.yaml:1429` + its command; `talos-infra` is private. Flagged 3×.
+- **`starters#328` OPEN** — 34 drifted names; it keeps `/ui` on the bridge, so closing it lets the port DELETE its adapter.
+- **Open, re-confirmed 2026-09-27:** `civitai#5153` · `#5102` (🔴 its fix agent was STOPPED 09-24 — a killed dispatch) · `#5120` · `starters#459` `#460` `#428` · `cli#706`.
 - **`whats-deployed.md` wants REGENERATING**; **`legacy-hackathon-ops.md` mislabelled** `HISTORICAL` while cited as Flipt authority.
 
 ## Gotchas / decisions / dead-ends
@@ -827,35 +831,33 @@ there. Two facts worth keeping:
 
 - 🔴 **3 GOTCHAS FROM THIS SESSION ARE IN THE ARCHIVE — `Evicted 2026-09-27 (fifth pass)`:** read the step that DID the work, not only the one that CHECKED it · a tool refusing your action can mean someone else already did it · a skill's size gate can exist with no test file named after it · `--ids-file` ask-mining over-collects.
 
+- 🔴 **2026-09-27: ARCHIVE sixth pass + cairn `devrc/skills`, `…/sdk-transport`.** A prose-payload ladder migrates into its own fix text — REVERT, don't redraft; a retraction is TREE-WIDE; three instruments lied, each caught by a control. **Operator:** merged `#1889` with round 4 owed; shipped `:1429` as-is.
+
 ## How to verify
 
 ```bash
-# 1. closing condition — anchored on the CONSTRUCT, note the CLOSING QUOTE
+# 1. closing condition (ADDRESSED) — anchored on the CONSTRUCT, note the CLOSING QUOTE
 A=/home/zach/workspace/civit/civitai-app-requests; git -C $A fetch origin -q
 git -C $A grep -lE "(from|import\()[[:space:]]*'@civitai/blocks-react'" origin/main -- '*.ts' '*.tsx' | wc -l  # 0
-git -C $A show origin/main:package.json | grep -c blocks-react                                                # 0
+#    fleet, same pattern vs origin/<default>: gen-matrix 4 · sensei 12 · playable 7 · model-bench 22
 
-# 2. the fleet — same anchored pattern vs origin/<default> in civitai-app-{gen-matrix,
-#    sensei,playable-collections,model-benchmarking} => 4 · 12 · 7 · 22 root (prod 3·6·3·7)
+# 2. rank 5's adapter — the tests AND the two mutants that must KILL
+P=/home/zach/workspace/civit/civitai-app-playable-collections
+git -C $P fetch origin zach/sdk-port-playable-collections-impl -q     # b157419
+#   worktree it, pnpm install, then vitest run --project node src/lib/sdk-transport.test.ts => 12 passed
+#   MUTANT A: delete the memo early-return => exactly 1 red on ITS OWN assertion
+#     ("Object.is equality"), 11 still green.  MUTANT B: getHostOrigin() ?? 'https://evil.example'
+#     => security test red, "expected 'https://evil.example' to be null".
+#   Restore from a `cp -a` copy, byte-identical by sha256 — never `git checkout --`.
 
-# 3+4. sdk 0.8.0 and BlockGate — CONTENT, each with a negative control.
-#   npm pack, untar, then:
-#     dist/shared-storage/ present in 0.8.0, ABSENT in 0.7.0 (neg control)
-#     grep -cE "^    (list|get|append|update|withdraw)\(" dist/shared-storage/index.d.ts   => 5
-#     grep -cE "\b(vote|unvote|counts|top|increment|report)\(" same file                  => 0
-#   blocks-react@0.51.0 (the PIN, not the app's stale 0.48.0 install):
-#     dist/ui/BlockGate.js -> useDirectLoad -> dist/hooks/useBlockContext.js -> getTransport
-#     grep -cE "getTransport|useDirectLoad" dist/ui/Card.js                                 => 0 (neg)
+# 3. the port's REAL surface — 6 static + 1 DYNAMIC (a `from` grep misses the 7th)
+git -C $P grep -nE "(from|import\()[[:space:]]*'@civitai/blocks-react'" origin/main -- '*.ts' '*.tsx'
+git -C $P grep -n "await import('@civitai/blocks-react')" origin/main -- '*.ts'   # scope-contract.test.ts
 
-# 5. rank 7's clock (compare `date -u` BEFORE deleting) · rank 11's PR state
-git -C $A show origin/main:pnpm-workspace.yaml | grep -A2 minimumReleaseAgeExclude
-gh pr view 48 --repo ZacxDev/civitai-app-playable-collections --json state
-# rank 12's gate: nix build .#checks.x86_64-linux.pytests > LOG 2>&1 (plain redirect, never a
-#   pipe), then `wc -c LOG` FIRST and grep its TOTAL line, never the exit code.
+# 4. devrc#1889 landed — BY CONTENT, never ancestry (a squash never makes the head an ancestor)
+git -C $DEVRC grep -c '0 means ALLOWED' origin/main -- CLAUDE.md   # 1
+git -C $DEVRC grep -c 'NO CAPACITY' origin/main -- claude/         # control, non-zero
 
-# 6. the operator's asks — from TRANSCRIPTS, not this doc (--arc exits 3 here)
-find ~/.claude/projects -maxdepth 2 -name '*.jsonl' -print0 | xargs -0 \
-  grep -l "handoff-civitai-app-platform-migration" | sed 's|.*/||; s|\.jsonl$||' | sort -u > /tmp/ids.txt
-python3 $DEVRC/scripts/session-analysis/extract_user_msgs.py --ids-file /tmp/ids.txt -o /tmp/msgs.md
-# FILTER <task-notification>: 269 -> 101 operator-typed
+# 5. rank 7's clock is PAST (2026-09-27T03:45:56Z). Asks come from TRANSCRIPTS, not this doc
+#    (--arc exits 3): the --ids-file recipe, then FILTER <task-notification> (~269 -> ~101).
 ```
