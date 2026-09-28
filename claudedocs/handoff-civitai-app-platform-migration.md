@@ -43,15 +43,23 @@ that protocol."*
 
 ## State now
 
-- **Branch / PR:** `docs/handoff-app-platform-migration` (PR `starters#440`, **OPEN**). Read from the ref; re-fetch first. Ranks 1–4, 8, 10, 12 closed.
-- 🔴 **CLOSING CONDITION RE-MEASURED 2026-09-27, STILL HOLDS — ADDRESSED, CLOSED.** `app-requests@origin/main` (`996cf3d`): **0** anchored importers, verbatim form also 0, dep absent from `package.json`; control `@civitai/sdk` **2**; fleet controls below.
-- 🔴 **RANK 5's REBIND IS DONE AND PUSHED — `zach/sdk-port-pc-rebind`, 4 commits, NO PR.** Supersedes `…-impl` (carries `b157419` forward): `a825a5c` install fix · `72119bd` `lib/sdk-runtime.ts` + 19 tests · `bd0ac37` the rebind. Worktree `/tmp/claude-1000/wt-pc-rebind-603101`, deps installed.
-- ✅ **VERIFIED LOCALLY** (`nix develop`, node v24.19.0, pnpm **11.25.0**): typecheck 0 · `pnpm test` **807 passed / 60 files, 0 failed** · build rc 0 · **10 mutants** killed against the FINAL source, each by its own named assertion, source restored byte-identical each time.
-- ⚠ **NOT VERIFIED against the real platform** — all local; a signed-in page-slot load must settle that the REST routes answer a real block token for THIS app. **BROWSER TIER UNRUN, NOT PASSING** (3 of 63 files, `chromium_headless_shell-1243` absent) — gate elsewhere.
-- 🔴 **RETAINED SURFACE, for the PR to name:** root importers **7 → 7**, composition inverted — `App.tsx`, `viewer-maturity.ts`, `popular.ts` are OFF it; what remains is the port's own `sdk-transport.ts` + `sdk-runtime.ts`, `dev-transport.ts` (dev/test only) and 4 test files. `/ui` **7** (incl. `BlockGate` at the production root) and `/testing` **15** stay until `#328`, so this app cannot reach 0 either.
-- 🔴 **`starters#479` GOVERNS THE PORT:** shared storage is **GENERIC KV ONLY**; `vote`/`unvote`/`counts`/`top`/`increment`/`report` are deliberately absent, app-layer. **The 11 routes existing is NOT a gap.** Vote ships as `app.site.post('blocks/shared-storage/vote',{key})` → `{count}`.
-- 🔴 **ASKS COME FROM TRANSCRIPTS.** *"app oauth tokens short-lived, online-refresh-only"* is **ALREADY SATISFIED AND MEASURED** (`design-app-block-auth-split.md` §6.1). **Don't re-open.**
-- **`claim-work`:** rank 5 held (mine, rc 12). **No `clawgate-task:`** — `resolve` exited **5**, NOTHING RESOLVED, and an unknown session id also answers an empty array, so that zero is not a clean bill.
+- **Branch / PR:** `docs/handoff-app-platform-migration` (PR `starters#440`, **OPEN/CLEAN**). Read from the ref; re-fetch first. Ranks 1–4, 8, 10, 12 closed earlier; **5, 6, 7, 11 closed 2026-09-28.**
+- 🔴 **CLOSING CONDITION HOLDS — ADDRESSED, CLOSED.** `app-requests@origin/main` (`996cf3d`): **0** anchored importers, dep absent from `package.json`; control `@civitai/sdk` **2**.
+- ✅ **ALL FOUR PORTS MERGED AND SUBMITTED 2026-09-28**, each server-confirmed `pending/-` via `app_state.py` — never the CLI's `✓`: without `--yes` a non-interactive submit refuses.
+
+  | app | ver | port PR | bump PR |
+  |---|---|---|---|
+  | playable-collections | 0.2.20 | #49 `b631ae2` (+#48 `17bba1e`) | #50 `a9b33ac` |
+  | sensei (`trunk`) | 0.1.25 | #77 `407abd2` | #78 `5737cb8` |
+  | gen-matrix | 0.9.1 | #25 `451c882` | #27 `4c56b1c` |
+  | model-benchmarking | 0.4.8 | #53 `cf5799f` | #58 `13673f0` |
+
+- 🔴 **gen-matrix's STORE LISTING IS UNDER A MODERATOR TAKEDOWN** — `listing status --slug gen-matrix` → 403 *"removed by a moderator … no CLI command reverses this"*. 0.9.1 is submitted **into a listing that cannot publish**. Other three: icon ✓ cover ✓ `floor.met=true`.
+- ⚠ **`starters#488` (BREAKING.md route fix) OPEN, BLOCKED** by `Canonical schema drift-check`, now red on **every** PR here: the vendored schema lags the canonical by `kind` `good|app_unlock` + `payload`. **Time-dependent, not diff-dependent** — it curls a live URL, so #488 is merely the first check since the canonical moved (#488 05:09Z red, #487 21:32Z green). Scheduled re-vendor last ran 2026-09-27T21:32:21Z. Not #488's defect.
+- 🔴 **NOT VERIFIED AGAINST THE REAL PLATFORM** — four approvals will put these before real users, three spending real Buzz. Every gate behind all four is local + CI.
+- 🔴 **`starters#479` GOVERNS THE PORT:** shared storage is **GENERIC KV ONLY** — `vote`/`unvote`/`counts`/`top`/`increment`/`report` deliberately absent, app-layer. **The 11 routes existing is NOT a gap.**
+- 🔴 **ASKS COME FROM TRANSCRIPTS.** *"app oauth tokens short-lived, online-refresh-only"* is **ALREADY SATISFIED AND MEASURED** (`design-app-block-auth-split.md` §6.1 — BOTH halves, incl. automated refresh). **Don't re-open.**
+- **`claim-work`:** rank 5 held (mine, rc 12) — **release it.** **No `clawgate-task:`** — `resolve` exited **5**, NOTHING RESOLVED; an unknown session id answers 200 with an empty array, so that zero is no clean bill.
 
 ## Open investigations — live diagnosis state
 
@@ -283,35 +291,29 @@ there. Two facts worth keeping:
   under `## Open investigations`.
 ## Next steps (ranked)
 
-1. ✅ DONE — `devrc#1876` `47a76ed3`. forcing: gate — closed.
-2. ✅ DONE — `sdk@0.7.0` and `0.8.0` published. forcing: gate — closed.
-3. ✅ DONE AND LIVE — `app-requests#24` `996cf3d`; 0.4.2 live. forcing: gate — closed.
-4. ✅ DONE — `civitai#5112`. forcing: regression — closed.
-5. **`playable-collections` rebind DONE and pushed, NO PR — two OPERATOR calls gate it, nothing technical does.** `zach/sdk-port-pc-rebind`, 4 commits. (a) **the `@civitai/sdk@0.8.0` `minimumReleaseAgeExclude` entry** — without it the branch does not install under the pinned pnpm 11 at all, and this repo's `CLAUDE.md` makes adding it routine; but it is a supply-chain control and its clock closes **2026-09-28T02:03:55Z**, after which the entry is inert and should be DELETED. Waiting ~19h is the alternative. (b) **open the PR against `main`?** Then verify against the real platform.
-   forcing: gate — a pushed branch with no PR.
-6. **Then `gen-matrix` (3) → `sensei` (6, `trunk`) → `model-benchmarking` (7)**. None reaches 0; their PRs must name what is retained, as rank 5's does. Reuse rank 5's `lib/sdk-runtime.ts` (the nine bindings) and `dev-rest.ts` (the fetch-level fake) — app-local by design, so each port copies and adapts.
-   forcing: gate — the fleet.
-7. **Delete `app-requests`' `minimumReleaseAgeExclude`** — inert since `2026-09-27T03:45:56Z`, now actionable. Own PR (precedent `#22`).
-   forcing: deadline — inert now.
-8. ✅ DONE — `#5163`. forcing: gate — closed.
-9. **PRUNE THIS DOC — ~98 KB vs a 65,536 B ceiling.** 🔴 **Eviction CANNOT land an update** — the ratchet gates the DELTA, so moving closed material lowers current and post-update size identically; only a smaller delta works. Re-confirmed 2026-09-27: a 4,340 B `Gotchas` append refused the round at `+5,771 B` — the fix is a terser delta **plus the full text in a separate ARCHIVE commit**, which has no ratchet.
+1. 🔴 **Get gen-matrix's listing relisted.** A moderator must; no CLI reverses a takedown, and 0.9.1 is already submitted into it. Re-check with `civitai app listing status --slug gen-matrix`.
+   forcing: gate — a submitted release cannot publish while its listing is down.
+2. 🔴 **Unblock the drift gate, then merge `#488`.** Either re-vendor (`curl -sS "https://civitai.com/schemas/app-block/v1.json" -o packages/civitai-app-sdk/schemas/app-block/v1.json`) as its own PR — it pulls the `kind`/`payload` fields in, so an operator should see it — or wait for the scheduled run. **A permanently-red gate trains everyone to click through; merge nothing through it.**
+   forcing: gate — red on every PR in the repo.
+3. 🔴 **Answer the DROPPED operator instruction — "make it full-width."** Typed `2026-09-27T05:25:21Z`, record 500 of session `96de3010-98d5-4e7b-9c5d-8994e60b24e9` (model-benchmarking project); **no assistant turn followed it.** Referent UNKNOWN — perhaps `src/theme.ts` (`contentStyle`). Establish it before any edit.
+   forcing: user — typed and never answered.
+4. **Recover or retire the Koen Discord ask (09-22)** — *"get my recent chats with him, there is important detail in there."* No artifact on any ref or disk; the only capture, `datapacket-talos/claudedocs/koen-zach-feedback.md`, is a **2026-09-03** transcript PREDATING it. May be in an opencode run this corpus cannot see — ask first.
+   forcing: user — no recorded outcome.
+5. **Watch the four submissions through review**, then prove each LIVE by artefact, not a 200: `app_state.py <app> <ver>`, then grep the served bundle for a **backticked** token with a known-present control beside it — this toolchain minifies to template literals, so a double-quoted probe returns a confident zero.
+   forcing: gate — four pending reviews.
+6. **PRUNE THIS DOC — 98 KB vs a 65,536 B ceiling.** Re-confirmed 2026-09-28: this session's update was REFUSED at `+1,473 B` and trimmed twice to land. The ratchet gates the DELTA, so eviction alone cannot help a round — it needs a terser delta **or** the closed text moved out in a SEPARATE archive commit, which has no ratchet. Tool measures **3,072 B / 4 blocks** evictable.
    forcing: gate — the write gate refuses growth.
-10. ✅ DONE — `starters#479` `62bf04de`. forcing: gate — closed.
-11. **Close `playable-collections#48` as superseded** — both blocking decisions answered, rank 5's branch implements them. Re-confirmed OPEN 2026-09-27.
-    forcing: gate — an open PR blocking nothing.
-12. ✅ DONE — `devrc#1889` merged `9b41e398f2`. forcing: gate — closed.
-13. **Recover or retire the Koen Discord ask (09-22)** — *"get my recent chats with him, there is important detail in there."* No artifact on any ref or on disk; the only capture, `datapacket-talos/claudedocs/koen-zach-feedback.md`, is a **2026-09-03** voice transcript PREDATING it. May be in an opencode run this corpus cannot see — ask first.
-
-    forcing: user — no recorded outcome.
+7. **Re-dispatch the `starters#440` recon** (what to do with this doc's own PR). Its first run died on an API error, leaving one question: does `readme-snippets` glob `.md` broadly?
+   forcing: gate — an open PR carrying this doc.
 
 ## Defects (batched)
 
-- 🔴 **The subsystem-index write for `civitai-app-requests` is BLOCKED, not declined** — `cairn create` refuses an unregistered scope; `devrc#1862` OPEN, and `routes.json` resolves into `/nix/store` (needs a switch).
-- 🔴 **`audit-dispatch.py`'s WHERE TO WORK IS WRONG FOR CROSS-REPO DISPATCH** — it asserts the target "is the repository this session is standing in", false whenever cwd differs from the PR's repo. **Three** auditors hit it; brief every cross-repo auditor that it is wrong.
-- ⚠ **`devrc#1889` merged with round 4 owed** (operator direction); unaudited delta `fe509d0a`, 30 lines of prose, guards green — no guard there checks whether a sentence is true.
-- 🔴 **A private-repo detail shipped into a PUBLIC file, operator-accepted:** `platform-build-contract.md` cites `app-blocks-pipeline.yaml:1429` + its command; `talos-infra` is private. Flagged 3×.
-- **`starters#328` OPEN** — 34 drifted names; it keeps `/ui` on the bridge, so closing it lets the port DELETE its adapter.
-- **Open, re-confirmed 2026-09-27:** `civitai#5153` · `#5102` (🔴 its fix agent was STOPPED 09-24 — a killed dispatch) · `#5120` · `starters#459` `#460` `#428` · `cli#706`.
+- 🔴 **FOUR DEFECTS WERE COPIED INTO ALL FOUR PORTS, each caught by only the subset its own repo exposed** — cached `initialize()` rejection (3 of 4) · human-gated 10 min → 30 s, `civitai#4158` verbatim on a publish-after-pay path (sensei fixed; gen-matrix + model-bench not) · the adapter dropping `token.kind`, so `holdsBlockToken()` is false and `refuseBlockToken` is dead (**1 of 4** auditors) · anon-403 reads (a false banner only in sensei). **All fixed.** Evidence: `cairn recall --scope civitai-app-playable-collections --ref sdk-transport`. **The shape is the lesson: a predicate open-coded at N sites is wrong at N−1 in DIFFERENT subsets, so N single-repo audits cannot see the column.**
+- 🔴 **A COUNT IN PROSE IS A CLAIM: three counting rules gave three answers** for one tree — mentions ≠ imports ≠ statement-anchored. `playable-collections`: bare 7→8 / `/ui` 11 / `/testing` 16→20 by mentions; 5/7/15 by imports. **Quote the rule beside the number, or not the number.** A wrong figure was published, then retracted on the PR.
+- 🔴 **`audit-dispatch.py`'s WHERE TO WORK is WRONG cross-repo** (asserts the target is the cwd's repo; **three** auditors hit it). `--repo owner/name` DOES exist — use it.
+- ⚠ **A fixer agent self-reported FABRICATING audit findings** mid-run (app-requests #25–#27): narrated conclusions it had not read, which later matched by luck. Shipped work verified independently by content. **A subagent's self-reported audit result is not evidence.**
+- **Still open:** `starters#328` (34 drifted names; closing it lets every port DELETE its adapter) · `civitai#5102`→**`#5115`** is the real work (red on every PR, **74% bypass**, the only live recurring cost) · `#5120` **is a PR, not an issue — needs a reviewer** · `cli#706` · `#5153` · `starters#459` `#460` `#428` · `gen-matrix#26` (144 vs route 100) · `devrc#1862`.
+- **`tekton/SKILL.md:287` says `NO CAPACITY: <gate>`, `reference/pipelines.md:202` says `<leg>`.** devrc posts four contexts per gate, so **`<leg>` is right and SKILL.md — read first — is wrong.** One word in `$DEVRC`, needs a switch.
 - **`whats-deployed.md` wants REGENERATING**; **`legacy-hackathon-ops.md` mislabelled** `HISTORICAL` while cited as Flipt authority.
 
 ## Gotchas / decisions / dead-ends
@@ -837,25 +839,15 @@ there. Two facts worth keeping:
 ## How to verify
 
 ```bash
-# 1. closing condition (ADDRESSED) — anchored on the CONSTRUCT, note the CLOSING QUOTE. Fleet
-#    positive controls vs origin/<default>: gen-matrix 4 · sensei 12 · playable 7 · model-bench 25.
+SKILL=~/.claude/skills/civitai-app-fleet
+# 1. closing condition (ADDRESSED) — anchor on the CONSTRUCT; note the CLOSING QUOTE
 A=/home/zach/workspace/civit/civitai-app-requests; git -C $A fetch origin -q
 git -C $A grep -lE "(from|import\()[[:space:]]*'@civitai/blocks-react'" origin/main -- '*.ts' '*.tsx' | wc -l  # 0
+# controls vs origin/<default>: gen-matrix 4 · sensei 12 · playable 7 · model-bench 25
+# 2. the four submissions — SERVER state, never the CLI's exit status
+for p in "playable-collections 0.2.20" "sensei 0.1.25" "gen-matrix 0.9.1" "model-benchmarking 0.4.8"; do
+  python3 $SKILL/app_state.py ${p% *} ${p##* }; done   # all four: pending/-
+# 3. gen-matrix's listing is DOWN — expect a 403 naming a moderator takedown
+civitai app listing status --slug gen-matrix
 
-# 2. rank 5 — the REBIND branch (supersedes `…-impl`), 4 commits
-P=/home/zach/workspace/civit/civitai-app-playable-collections; git -C $P fetch origin -q
-git -C $P log --oneline origin/main..origin/zach/sdk-port-pc-rebind   # bd0ac37 72119bd a825a5c b157419
-#   worktree it, install INSIDE the flake (the host pnpm is a different MAJOR, blind to the
-#   supply-chain tier): nix develop <wt> --command bash -c 'cd <wt> && pnpm install --frozen-lockfile'
-#   -> "✓ Lockfile passes supply-chain policies (191 entries …)" AND `ls node_modules/.bin|wc -l` > 0
-#   — the .bin count is the tell; the exit code and the installed version both lie. Then
-#   typecheck 0 · pnpm test 807 passed / 60 files · build rc 0. The 3 browser files are UNRUN.
-
-# 3. the two guards that CAUGHT the port must FAIL when narrowed back (restore from a `cp -a`
-#    copy, sha256-identical, never `git checkout --`): (a) scope-contract.test.ts importRe ->
-#    '@civitai/blocks-react' alone: POSITIVE CONTROL red + all 5 scopes orphaned. (b)
-#    sdk-runtime.test.tsx transport() -> plain `??=`: the resetTransport() case red, 'anon'/'porter'.
-
-# 4. rank 7's clock is PAST. Asks come from TRANSCRIPTS (--arc exits 3): --ids-file, then
-#    FILTER <task-notification> (~269 -> ~101).
 ```
