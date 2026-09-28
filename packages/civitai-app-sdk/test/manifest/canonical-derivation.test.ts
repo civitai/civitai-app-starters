@@ -20,6 +20,7 @@
  *   - INVARIANT GUARDS, labelled. Green before the change as well as after — NOT
  *     regression coverage, and not counted as any.
  */
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { defineBlock, loadCanonicalSchema } from '../../src/manifest/defineBlock.js';
@@ -162,6 +163,29 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
   });
 });
 
+/**
+ * The body of `export interface <name>` in a TypeScript source, from the
+ * declaration line to the first line that is exactly `}`.
+ *
+ * Deliberately crude — it reads SOURCE TEXT, so it cannot resolve `extends` or
+ * a mapped type, and a shape that ever needs either should move to a real
+ * compiler-API walk rather than being regex-widened.
+ *
+ * 🔴 IT RETURNS `''` FOR AN INTERFACE IT CANNOT FIND, and an empty body makes
+ * every property check below "match nothing" and report clean — a guard that
+ * retires itself the first time an interface is renamed or reformatted. All
+ * THREE call sites below therefore assert the returned body is non-empty
+ * before using it (the two `BlockManifestV1` reads and the per-shape read in
+ * the nested test). Pair any new caller with the same assertion.
+ */
+function interfaceBody(src: string, name: string): string {
+  const start = src.indexOf(`export interface ${name} {`);
+  if (start < 0) return '';
+  const rest = src.slice(start);
+  const end = rest.indexOf('\n}');
+  return end < 0 ? '' : rest.slice(0, end);
+}
+
 describe('lockstep with the vendored schema (INVARIANT GUARDS — green before this change too)', () => {
   const schema = loadCanonicalSchema() as {
     required: string[];
@@ -209,6 +233,135 @@ describe('lockstep with the vendored schema (INVARIANT GUARDS — green before t
    * the schema enum. Divergence means a scope the server grants that
    * blocks-react rejects as unknown.
    */
+  it('every canonical top-level property is TYPED on BlockManifestV1 — fails when the schema grows', () => {
+    // 🔴 THE GAP THIS CLOSES, MEASURED: the canonical schema carried `goods` while
+    // `BlockManifestV1` did not, so `defineBlock`'s own documented inline-literal
+    // form rejected a goods declaration with TS2353 while Ajv accepted the same
+    // manifest loaded from a JSON file. Nothing could see it — the check below
+    // this one pins the scopes ENUM against BLOCK_SCOPES, and nothing pinned the
+    // schema's PROPERTY SET against the interface's KEYS.
+    //
+    // Read from the TypeScript SOURCE rather than a hand-written list, so the
+    // ledger cannot drift from the type it claims to describe. (Deliberately
+    // the source and not `dist/blocks/types.d.ts`: the emitted declarations are
+    // a build artifact this suite must not require, and `defineBlock`'s
+    // inline-literal form is checked against the source anyway.)
+    const src = readFileSync(
+      new URL('../../src/blocks/types.ts', import.meta.url),
+      'utf8',
+    );
+    const body = interfaceBody(src, 'BlockManifestV1');
+    // Positive control on the parse, the same one the nested test applies to
+    // each shape it resolves: an empty body makes EVERY property check below
+    // "match nothing" and report clean, so a renamed or reformatted interface
+    // would silently retire this guard rather than fail it.
+    expect(body, 'interface BlockManifestV1 not found in types.ts').not.toBe('');
+    // `$schema` is a JSON-Schema META key, not a manifest field — a manifest may
+    // carry it to name the schema it validates against, and the TYPE should not.
+    // Named as the one exception rather than widening the filter until it passes:
+    // an unexplained allowlist is how this class of guard goes quiet.
+    const META_ONLY = ['$schema'];
+    const schemaProps = Object.keys(schema.properties ?? {}).filter(
+      (k) => !META_ONLY.includes(k),
+    );
+    expect(schemaProps.length).toBeGreaterThan(5); // positive control on the read
+    const untyped = schemaProps.filter(
+      (k) => !new RegExp(`^\\s{2}${k}\\??:`, 'm').test(body),
+    );
+    expect(untyped, 'canonical properties with no BlockManifestV1 key').toEqual([]);
+  });
+
+  /**
+   * 🔴 THE SAME GAP, ONE LEVEL DOWN — and the level where it is most likely to
+   * reopen. The guard above is TOP-LEVEL only, so adding
+   * `goods.items.properties.badgeUrl` to the vendored schema passed a fully
+   * green suite while `defineBlock` rejected the very same manifest with
+   * TS2353: exactly the failure class this change exists to close, just nested.
+   * `goods[]` is the newest of these shapes and the likeliest to grow.
+   *
+   * Nothing here is hand-listed except the LEDGER below. The nested shapes are
+   * DERIVED from the schema (any top-level property that is an object with
+   * `properties`, or an array whose `items` is), and the interface that types
+   * each one is read off `BlockManifestV1`'s own declaration — so a shape the
+   * schema grows is covered the moment someone extends the ledger, rather than
+   * needing a new test written for it.
+   */
+  it('every canonical NESTED property is TYPED on the interface that models it', () => {
+    const src = readFileSync(new URL('../../src/blocks/types.ts', import.meta.url), 'utf8');
+    const manifestBody = interfaceBody(src, 'BlockManifestV1');
+    expect(manifestBody, 'interface BlockManifestV1 not found in types.ts').not.toBe('');
+
+    /**
+     * Top-level schema properties whose value shape carries its own
+     * `properties` — directly, or as an array's `items`.
+     *
+     * 🔴 KEYED ON `properties`, NOT ON `type === 'object'`, and the difference
+     * is what the ledger below is worth. JSON Schema does not require `type`,
+     * so a nested shape written without it — the common form once a schema
+     * starts composing — would not have been collected, the ledger would still
+     * have matched its four expected keys, and the TS2353 gap this test exists
+     * to close would have reopened silently. A shape's own `properties` is the
+     * thing this test actually reads, so it is the right thing to select on.
+     *
+     * ⚠️ RESIDUAL, AND DELIBERATELY NOT PAPERED OVER: a nested object reached
+     * through `$ref`, `oneOf`, `anyOf` or `allOf` carries no inline
+     * `properties`, so it is still invisible here and the ledger would still
+     * match. The canonical schema uses none of those today (measured: the four
+     * shapes below are the complete set of composed values in it). Resolving
+     * them needs a real schema walk rather than a wider predicate, and the
+     * honest statement is that this guard covers INLINE shapes only — so the
+     * "fails when the set GROWS" claim below is scoped to those.
+     */
+    const nested: { key: string; props: string[] }[] = [];
+    for (const [key, def] of Object.entries(schema.properties ?? {})) {
+      const shape = def as unknown as {
+        properties?: Record<string, unknown>;
+        items?: { properties?: Record<string, unknown> };
+      };
+      const objectShape =
+        shape && typeof shape === 'object' && 'properties' in shape && shape.properties
+          ? shape.properties
+          : shape?.items &&
+              typeof shape.items === 'object' &&
+              'properties' in shape.items &&
+              shape.items.properties
+            ? shape.items.properties
+            : null;
+      if (objectShape) nested.push({ key, props: Object.keys(objectShape) });
+    }
+
+    // 🔴 LEDGER, not a filter. It fails when the set of INLINE nested shapes
+    // GROWS (the schema gained one nobody has looked at) AND when it SHRINKS
+    // (the derivation stopped finding them, which would make every assertion
+    // below vacuous — the failure mode a plain `forEach` over an empty list
+    // cannot show). It cannot see a shape composed via `$ref`/`oneOf`/`anyOf`;
+    // see the derivation's note above.
+    expect(
+      nested.map((n) => n.key).sort(),
+      'nested object shapes in the canonical schema',
+    ).toEqual(['goods', 'iframe', 'page', 'targets']);
+
+    const untyped: string[] = [];
+    for (const { key, props } of nested) {
+      // `goods?: BlockManifestGood[];` → `BlockManifestGood`. An INLINE object
+      // literal captures nothing, which fails the next assertion by name rather
+      // than silently skipping the shape.
+      const named = new RegExp(`^\\s{2}${key}\\??:\\s*([A-Za-z_$][\\w$]*)`, 'm').exec(manifestBody);
+      expect(named?.[1], `BlockManifestV1.${key} must be typed by a named interface`).toBeTruthy();
+      const nestedBody = interfaceBody(src, named![1]);
+      // Positive control on the parse: a typo'd or renamed interface yields an
+      // empty body, under which EVERY property below "matches nothing" and the
+      // whole shape would report clean.
+      expect(nestedBody, `interface ${named![1]} not found in types.ts`).not.toBe('');
+      for (const p of props) {
+        if (!new RegExp(`^\\s{2}${p}\\??:`, 'm').test(nestedBody)) {
+          untyped.push(`${key}.${p} (missing on ${named![1]})`);
+        }
+      }
+    }
+    expect(untyped, 'canonical nested properties with no interface key').toEqual([]);
+  });
+
   it('the scopes enum holds exactly BLOCK_SCOPES — fails if either side grows OR shrinks', () => {
     const schemaEnum = schema.properties.scopes?.items?.enum;
     // Positive control. A moved JSON path yields `undefined`, which would throw

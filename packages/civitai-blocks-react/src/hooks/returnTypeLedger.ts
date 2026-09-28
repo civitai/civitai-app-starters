@@ -68,8 +68,10 @@ import type {
   useDailyCompensation,
   useDirectLoad,
   useDomainMaturity,
+  useEntitlements,
   useGatedImages,
   useGenerationResources,
+  useGoodPurchase,
   useHostOrigin,
   useImageUpload,
   usePublishGenerationOutputs,
@@ -104,8 +106,10 @@ import type {
   UseDailyCompensation,
   UseDirectLoad,
   UseDomainMaturity,
+  UseEntitlements,
   UseGatedImages,
   UseGenerationResources,
+  UseGoodPurchase,
   UseHostOrigin,
   UseImageUpload,
   UsePublishGenerationOutputs,
@@ -160,10 +164,12 @@ type _useDailyCompensation = Assert<
 >;
 type _useDirectLoad = Assert<Exact<ReturnType<typeof useDirectLoad>, UseDirectLoad>>;
 type _useDomainMaturity = Assert<Exact<ReturnType<typeof useDomainMaturity>, UseDomainMaturity>>;
+type _useEntitlements = Assert<Exact<ReturnType<typeof useEntitlements>, UseEntitlements>>;
 type _useGatedImages = Assert<Exact<ReturnType<typeof useGatedImages>, UseGatedImages>>;
 type _useGenerationResources = Assert<
   Exact<ReturnType<typeof useGenerationResources>, UseGenerationResources>
 >;
+type _useGoodPurchase = Assert<Exact<ReturnType<typeof useGoodPurchase>, UseGoodPurchase>>;
 type _useHostOrigin = Assert<Exact<ReturnType<typeof useHostOrigin>, UseHostOrigin>>;
 /**
  * 🔴 OVERLOADED, SO THIS LINE COVERS ONE ARM OF THREE — say so rather than let

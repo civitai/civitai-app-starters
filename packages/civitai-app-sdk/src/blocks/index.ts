@@ -151,6 +151,7 @@ export type {
   PageSlotId,
   UnknownSlotContext,
   BlockManifest,
+  BlockManifestGood,
   BlockManifestV1,
   BlockSettings,
   BlockToken,

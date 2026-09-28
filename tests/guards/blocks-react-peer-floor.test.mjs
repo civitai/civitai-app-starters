@@ -193,6 +193,36 @@ const PEER_VALUE_SYMBOL_SINCE = {
   isLevelAllowed: '0.13.0',
   isMessage: '0.6.0',
   isSfwCeiling: '0.13.0',
+  // MEASURED 2026-09-28 against the REAL published tarballs, same instrument and
+  // same recipe as the sweep above (`npm pack @civitai/app-sdk@V`, untar,
+  // resolve `exports['./blocks']` out of that tarball's own package.json,
+  // `import()` it, test `'isSignedIn' in mod`). Nine versions probed:
+  // 0.45.0 … 0.51.2, where 0.51.2 was `npm view @civitai/app-sdk version` on
+  // the day. Reached for by `src/hooks/useEntitlements.ts`, which derives its
+  // `unauthenticated` flag from the viewer rather than from a 403.
+  //
+  // 🔴 The run is EXACTLY 0.47.0-and-up, established from BOTH sides so the
+  // entry is the start of an unbroken run and not a first sighting:
+  //   - 0.46.0 and 0.45.0 do NOT export it (26 symbols on `./blocks` each), so
+  //     the run cannot start lower;
+  //   - 0.47.0 (30), 0.48.0 (29), 0.49.0/0.50.0/0.51.0/0.51.1/0.51.2 (34 each)
+  //     all DO, unbroken to the newest published version.
+  // Note 0.48.0's count DROPS to 29 — that is the `defineBlock`/
+  // `BlockManifestError` move (#352) the docblock above warns about, and it is
+  // why presence was checked per version rather than inferred from the counts.
+  // Controls, run before these numbers were believed:
+  //   - POSITIVE: the export count MOVES across the probed tarballs
+  //     (26 → 30 → 29 → 34). A reading identical everywhere would be
+  //     indistinguishable from a probe wired to one tarball nine times.
+  //   - NEGATIVE: an impossible symbol (`__THIS_SYMBOL_CANNOT_EXIST_ff3a9c__`)
+  //     read ABSENT in 9 of 9 — the probe can say "no", so PRESENT is not its
+  //     only answer.
+  //   - CROSS-CHECK: `isSignedIn` is a VALUE export of the in-tree
+  //     `blocks/index.ts:144`, which the INVARIANT GUARD below independently
+  //     re-derives.
+  // 0.47.0 is BELOW the declared floor `>=0.49.0`, so this entry does not move
+  // it — every version the range admits exports the symbol.
+  isSignedIn: '0.47.0',
   parseBlockInitFragment: '0.31.0',
   stripBlockInitFragment: '0.31.0',
 };
