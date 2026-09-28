@@ -469,6 +469,40 @@ const { purchased, newBalance } = await openPurchaseModal(suggestedAmount);
 if (purchased) { /* retry the generation */ }
 ```
 
+### `useGoodPurchase()`
+
+Sell a **digital good** — a manifest-declared entitlement the platform sells to the viewer for Buzz on your app's behalf. Requires the `goods:purchase:self` scope **and** a `goods` entry in your manifest; without both the endpoint answers 404.
+
+```tsx
+const { purchase, loading, error } = useGoodPurchase();
+const { entitlement } = await purchase(
+  { goodId: 'extra-slots', expectedPriceBuzz: 250 },
+  { topUpOnInsufficientFunds: true },
+);
+```
+
+🔴 **The platform renders no confirmation for the purchase itself** — this is a plain authed POST on the block token, so whatever the viewer confirms is *your* UI. Spend is bounded by the manifest-reviewed price and the viewer's daily cap, but a good can be priced near that cap where a tip cannot. Show the price and require an explicit action.
+
+`{ topUpOnInsufficientFunds: true }` opens `useBuzzPurchase()` on an `insufficient_funds` refusal and retries **once with the same idempotency key** — but only if the viewer actually bought Buzz. **Pass `expectedPriceBuzz` with it**, or the modal opens with no suggested amount and the retry can re-refuse after real fiat was spent. It keys on the *reason*, never on "the call failed", so it never offers Buzz for a failure Buzz cannot fix.
+
+Refusals reject with a `GoodPurchaseRefusal` carrying `status` and, where the server sends one, `reason`. `reason` is **`undefined`** for the endpoint's own refusals (404, 429, daily-cap 400, every idempotency refusal) — only service-level ones populate it, so always fall back to `status` and `message`.
+
+### `useEntitlements()`
+
+What the viewer owns **from this app** — the read half of the goods rail. Scope `goods:read:self`, which is consent-exempt: the reply is scoped server-side to your own app, so a read-only block needs no purchase power and triggers no re-consent prompt.
+
+```tsx
+const { owns, loading, error, unauthenticated, refetch } = useEntitlements();
+if (loading) return <Spinner />;
+if (unauthenticated) return <SignInToBuy />;        // a logged-out viewer
+if (error) return <RetryNotice onRetry={refetch} />; // NOT "you own nothing"
+return owns('extra-slots') ? <Unlocked /> : <BuyButton onDone={refetch} />;
+```
+
+🔴 **`owns()` returns `false` when the viewer owns nothing AND when the read failed**, so never gate paid content on it alone — check `loading`, `unauthenticated` and `error` first, in that order. A block that paywalls on `!owns(id)` takes away something the viewer paid for on every transient failure. `unauthenticated` exists because a **page** app is a public surface: a logged-out viewer's token is anonymous and the server refuses both goods scopes for one, which is an `error` that no retry can clear.
+
+Call `refetch()` after a successful purchase to reflect it without a remount.
+
 ### `useBuzzBalance()`
 
 The signed-in viewer's per-pool Buzz balance (`{ blue, green, yellow }` — the

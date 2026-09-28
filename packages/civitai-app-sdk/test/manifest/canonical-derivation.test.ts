@@ -20,6 +20,7 @@
  *   - INVARIANT GUARDS, labelled. Green before the change as well as after — NOT
  *     regression coverage, and not counted as any.
  */
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { defineBlock, loadCanonicalSchema } from '../../src/manifest/defineBlock.js';
@@ -209,6 +210,37 @@ describe('lockstep with the vendored schema (INVARIANT GUARDS — green before t
    * the schema enum. Divergence means a scope the server grants that
    * blocks-react rejects as unknown.
    */
+  it('every canonical top-level property is TYPED on BlockManifestV1 — fails when the schema grows', () => {
+    // 🔴 THE GAP THIS CLOSES, MEASURED: the canonical schema carried `goods` while
+    // `BlockManifestV1` did not, so `defineBlock`'s own documented inline-literal
+    // form rejected a goods declaration with TS2353 while Ajv accepted the same
+    // manifest loaded from a JSON file. Nothing could see it — the check below
+    // this one pins the scopes ENUM against BLOCK_SCOPES, and nothing pinned the
+    // schema's PROPERTY SET against the interface's KEYS.
+    //
+    // Read from the built .d.ts rather than a hand-written list, so the ledger
+    // cannot drift from the type it claims to describe.
+    const dts = readFileSync(
+      new URL('../../src/blocks/types.ts', import.meta.url),
+      'utf8',
+    );
+    const iface = dts.slice(dts.indexOf('export interface BlockManifestV1'));
+    const body = iface.slice(0, iface.indexOf('\n}'));
+    // `$schema` is a JSON-Schema META key, not a manifest field — a manifest may
+    // carry it to name the schema it validates against, and the TYPE should not.
+    // Named as the one exception rather than widening the filter until it passes:
+    // an unexplained allowlist is how this class of guard goes quiet.
+    const META_ONLY = ['$schema'];
+    const schemaProps = Object.keys(schema.properties ?? {}).filter(
+      (k) => !META_ONLY.includes(k),
+    );
+    expect(schemaProps.length).toBeGreaterThan(5); // positive control on the read
+    const untyped = schemaProps.filter(
+      (k) => !new RegExp(`^\\s{2}${k}\\??:`, 'm').test(body),
+    );
+    expect(untyped, 'canonical properties with no BlockManifestV1 key').toEqual([]);
+  });
+
   it('the scopes enum holds exactly BLOCK_SCOPES — fails if either side grows OR shrinks', () => {
     const schemaEnum = schema.properties.scopes?.items?.enum;
     // Positive control. A moved JSON path yields `undefined`, which would throw

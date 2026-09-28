@@ -1524,6 +1524,32 @@ export interface ManifestPreview {
  * declare at all, and `iframe.src`, which the platform REFUSES), so the type
  * itself rejected every manifest the starters ship.
  */
+/**
+ * One entry of a manifest's `goods[]`. Mirrors the canonical schema exactly;
+ * `id`, `title` and `priceBuzz` are required there and so are they here.
+ */
+export interface BlockManifestGood {
+  /** Lowercase alphanumeric with `-`/`_`, at most 64 chars. Colon-free, because it is composed into a redis key and a ledger external id. */
+  id: string;
+  /** At most 80 chars. */
+  title: string;
+  /** At most 500 chars. */
+  description?: string;
+  /**
+   * Whole Buzz, minimum 2 — at a price of 1 the owner's floored 70% share is
+   * ZERO, so the app would sell an item and earn nothing from it, permanently.
+   */
+  priceBuzz: number;
+  /**
+   * What the entitlement grants. `app_unlock` marks a one-time unlock of the app
+   * itself; it is RECORDED identically today and the platform does not yet act
+   * on it, so declaring it buys nothing unless you intend that later behaviour.
+   */
+  kind?: 'good' | 'app_unlock';
+  /** Opaque app payload, carried verbatim onto the entitlement. Never interpreted by the platform. */
+  payload?: Record<string, unknown>;
+}
+
 export interface BlockManifestV1 {
   /**
    * Optional JSON-Schema reference. The canonical types it as a plain string
@@ -1564,6 +1590,23 @@ export interface BlockManifestV1 {
    * with the canonical schema's `scopeJustifications` (civitai #3195).
    */
   scopeJustifications?: Record<string, string>;
+  /**
+   * Optional DIGITAL GOODS catalog — entitlements the platform sells to a viewer
+   * for Buzz on this app's behalf. Manifest-governed and REVIEW-GATED: the
+   * catalog a moderator approves is the catalog that can be sold, and changing a
+   * price means shipping a new version and being re-reviewed.
+   *
+   * Declaring goods is not by itself permission to sell — the manifest must also
+   * carry `goods:purchase:self` in `scopes`.
+   *
+   * 🔴 THE TYPE WAS ABSENT WHILE THE SCHEMA PROPERTY EXISTED, so `defineBlock`'s
+   * documented inline-literal form rejected a `goods` declaration with TS2353
+   * even though Ajv accepted the same manifest from a JSON file. Nothing could
+   * catch that: there is a vendored-schema↔`BLOCK_SCOPES` cross-check but no
+   * schema-properties↔interface-keys check, and the repo's manifest tests cast.
+   * Kept in lockstep with the canonical schema's `goods`.
+   */
+  goods?: BlockManifestGood[];
   /** Optional; the canonical declares no required sub-field. */
   iframe?: ManifestIframe;
   /** Full-page surface descriptor (W10). */

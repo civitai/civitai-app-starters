@@ -40,6 +40,12 @@ export interface GoodPurchaseOptions {
    * and — only if they actually bought Buzz — retry the purchase ONCE.
    * Default `false`, so the refusal surfaces and the app decides.
    *
+   * ⚠️ PASS `expectedPriceBuzz` WITH THIS. It is what the modal is opened with,
+   * so without it the viewer sees no suggested amount, may top up less than the
+   * good costs, and the single retry re-refuses `insufficient_funds` after real
+   * fiat was spent. The option works without it; it just works worse in the one
+   * direction that costs the viewer money.
+   *
    * 🔴 THE RETRY REUSES THE SAME IDEMPOTENCY KEY, DELIBERATELY. The server's
    * own comment on this path is that an `insufficient_funds` refusal leaves the
    * key FREE precisely because "an identical retry CAN reach a different
@@ -192,7 +198,32 @@ export function useGoodPurchase(): UseGoodPurchase {
             bodyJson?.reason,
           );
         }
+        // 🔴 VALIDATE THE 2xx, because the declared return type promises an
+        // entitlement. Without this an unparseable 200 resolved as `null` and a
+        // wrong-shaped one resolved with `entitlement === undefined` — and the
+        // documented usage destructures it, so both surfaced as a TypeError in
+        // the app rather than as a failed purchase. On this hook the body IS the
+        // granted entitlement, so a caller cannot recover from a silent absence.
+        // `useEntitlements` in this same package performs the equivalent check.
+        if (bodyJson == null || bodyJson.ok !== true || bodyJson.entitlement == null) {
+          throw new GoodPurchaseRefusal(
+            `purchase succeeded (${res.status}) but the response was not a purchase result — the charge may have landed; do not retry without the same idempotency key`,
+            res.status,
+            'malformed_success',
+          );
+        }
         return bodyJson as GoodPurchaseResult;
+      } catch (err) {
+        // A timeout or an unmount surfaces as a bare `AbortError`, which on a
+        // money path is the least informative wording available: the caller
+        // cannot tell it from a refusal, and the charge may have landed. Named
+        // and bounded, as `useTip` and `useEntitlements` both do.
+        if (controller.signal.aborted && !(err instanceof GoodPurchaseRefusal)) {
+          throw new Error(
+            `useGoodPurchase: request aborted (timed out after ${GOOD_PURCHASE_TIMEOUT_MS}ms or the hook unmounted). The charge may or may not have landed — retry with the SAME idempotencyKey to find out safely.`,
+          );
+        }
+        throw err;
       } finally {
         clearTimeout(timeoutId);
         inFlight.current.delete(controller);

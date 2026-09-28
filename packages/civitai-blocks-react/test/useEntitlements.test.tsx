@@ -112,6 +112,44 @@ describe('useEntitlements', () => {
     expect(result.current.entitlements).toBeNull();
   });
 
+  it('🔴 a 403 sets `unauthenticated` — the one refusal a retry cannot fix', async () => {
+    // A page App Block is a PUBLIC surface. A logged-out viewer's block token
+    // carries an anonymous subject, and the server refuses BOTH goods scopes for
+    // one (`enforceContextBinding` → 403 "<scope> requires authenticated
+    // subject"). That is an `error`, so a block rendering a retry notice on
+    // `error` alone shows every anonymous first paint a button that can never
+    // succeed — in the one case where "you own nothing" is the right answer.
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 403,
+      json: async () => ({ error: 'goods:read:self requires authenticated subject' }),
+    })) as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useEntitlements());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.unauthenticated).toBe(true);
+    expect(result.current.error).toBeInstanceOf(Error);
+    expect(result.current.owns('extra-slots')).toBe(false);
+  });
+
+  it('CONTROL — a NON-403 failure is NOT unauthenticated, so a retry is still offered', async () => {
+    // Without this arm the assertion above would hold for a hook that set the
+    // flag on every failure, which would route a transient 500 to a sign-in
+    // screen and strand the viewer.
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: 'upstream exploded' }),
+    })) as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useEntitlements());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.unauthenticated).toBe(false);
+    expect(result.current.error).toBeInstanceOf(Error);
+  });
+
   it('CONTROL — owning nothing is a SUCCESSFUL read, and reports no error', async () => {
     // Without this arm the assertion above would also hold for a hook that
     // errored on an empty list, which would be a different bug wearing the same

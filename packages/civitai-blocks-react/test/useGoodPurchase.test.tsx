@@ -113,6 +113,44 @@ describe('useGoodPurchase', () => {
     expect((result.current.error as GoodPurchaseRefusal).status).toBe(400);
   });
 
+  it('🔴 a 2xx that is not a purchase result REJECTS rather than resolving undefined', async () => {
+    // The declared return type promises an entitlement, and the documented usage
+    // destructures it. An unparseable 200 resolved as `null` and a wrong-shaped
+    // one resolved with `entitlement === undefined`, so both surfaced as a
+    // TypeError in the app instead of a failed purchase. On this hook the body
+    // IS the granted entitlement, so a silent absence is unrecoverable.
+    for (const body of [null, { ok: true }, { ok: true, purchase: { id: 'x' } }]) {
+      globalThis.fetch = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => {
+          if (body === null) throw new Error('invalid json');
+          return body;
+        },
+      })) as unknown as typeof fetch;
+      const { result } = renderHook(() => useGoodPurchase());
+      await act(async () => {
+        await expect(
+          result.current.purchase({ goodId: 'extra-slots' }),
+          `body ${JSON.stringify(body)}`,
+        ).rejects.toBeInstanceOf(GoodPurchaseRefusal);
+      });
+      // The message must say the charge MAY have landed — the caller's next
+      // move is a same-key retry, not a fresh attempt.
+      expect(result.current.error?.message).toContain('may have landed');
+    }
+  });
+
+  it('CONTROL — a well-formed 2xx still resolves, so the check above is not rejecting everything', async () => {
+    globalThis.fetch = okFetch() as unknown as typeof fetch;
+    const { result } = renderHook(() => useGoodPurchase());
+    let out: unknown;
+    await act(async () => {
+      out = await result.current.purchase({ goodId: 'extra-slots' });
+    });
+    expect((out as { ok: boolean }).ok).toBe(true);
+  });
+
   it('does NOT open the top-up modal unless asked — the default leaves the refusal to the app', async () => {
     globalThis.fetch = refusingFetch(400, 'insufficient_funds') as never;
     const { result } = renderHook(() => useGoodPurchase());

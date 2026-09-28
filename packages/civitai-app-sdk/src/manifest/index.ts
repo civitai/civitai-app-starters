@@ -15,4 +15,4 @@
 export { defineBlock, SCHEMA_DIVERGENCES, KNOWN_GAPS, loadCanonicalSchema } from './defineBlock.js';
 export type { DefineBlockConfig } from './defineBlock.js';
 export { BlockManifestError } from '../blocks/manifestError.js';
-export type { BlockManifest, BlockManifestV1 } from '../blocks/types.js';
+export type { BlockManifest, BlockManifestGood, BlockManifestV1 } from '../blocks/types.js';

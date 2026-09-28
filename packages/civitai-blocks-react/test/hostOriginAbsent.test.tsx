@@ -2,6 +2,8 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useGenerationResources } from '../src/hooks/useGenerationResources.js';
+import { useEntitlements } from '../src/hooks/useEntitlements.js';
+import { useGoodPurchase } from '../src/hooks/useGoodPurchase.js';
 import { useTip } from '../src/hooks/useTip.js';
 import { useTipAllowance } from '../src/hooks/useTipAllowance.js';
 import { getTransport } from '../src/transport/singleton.js';
@@ -112,7 +114,9 @@ describe('#398 host origin never arrives — the direct-fetch hook family', () =
 
     const tipHook = renderHook(() => useTip());
     const resourcesHook = renderHook(() => useGenerationResources());
+    const purchaseHook = renderHook(() => useGoodPurchase());
     const allowanceHook = renderHook(() => useTipAllowance());
+    const entitlementsHook = renderHook(() => useEntitlements());
 
     const settled: string[] = [];
     const rejections = Promise.all([
@@ -120,20 +124,33 @@ describe('#398 host origin never arrives — the direct-fetch hook family', () =
       resourcesHook.result.current
         .fetch([1])
         .catch(() => settled.push('useGenerationResources')),
+      purchaseHook.result.current
+        .purchase({ goodId: 'g' })
+        .catch(() => settled.push('useGoodPurchase')),
     ]);
     await act(async () => {
       await rejections;
     });
-    expect(settled.sort()).toEqual(['useGenerationResources', 'useTip']);
+    expect(settled.sort()).toEqual(['useGenerationResources', 'useGoodPurchase', 'useTip']);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(30_001);
     });
     expect(allowanceHook.result.current.loading).toBe(false);
     expect(allowanceHook.result.current.error).toBeInstanceOf(Error);
+    // The second declarative member. Its docstring asserts this terminal state
+    // in 🔴 terms and nothing pinned it until now.
+    expect(entitlementsHook.result.current.loading).toBe(false);
+    expect(entitlementsHook.result.current.error).toBeInstanceOf(Error);
+    // 🔴 And NOT mistaken for a sign-in problem: the host never introduced
+    // itself, which is not the same refusal as an anonymous viewer, and routing
+    // it to a sign-in screen would be a dead end for an embedded block.
+    expect(entitlementsHook.result.current.unauthenticated).toBe(false);
 
     tipHook.unmount();
     resourcesHook.unmount();
+    purchaseHook.unmount();
     allowanceHook.unmount();
+    entitlementsHook.unmount();
   });
 });

@@ -49,6 +49,19 @@ export interface UseEntitlements {
   /** Re-read entitlements (e.g. immediately after a successful purchase). */
   refetch: () => void;
   /**
+   * `true` when the read was refused because the viewer is NOT SIGNED IN.
+   *
+   * 🔴 THIS IS THE ONE CASE WHERE "you own nothing" IS THE RIGHT ANSWER, and
+   * without it the guidance on `error` produces the wrong screen. A page App
+   * Block is a PUBLIC surface: a logged-out viewer's block token carries an
+   * anonymous subject, and the server refuses BOTH goods scopes for one
+   * (`enforceContextBinding` → 403 "<scope> requires authenticated subject").
+   * That is an `error`, so rendering a retry notice on `error` alone shows every
+   * anonymous first paint a button that can never succeed. Branch on this
+   * first: show the unpurchased/sign-in state, not a failure.
+   */
+  unauthenticated: boolean;
+  /**
    * `true` if the viewer owns `goodId`. 🔴 Returns `false` while
    * `entitlements` is still `null`, which is ALSO what a failed read looks
    * like — so never gate paid content on this alone without checking
@@ -75,8 +88,11 @@ export interface UseEntitlements {
  * `refetch`, or one landing after unmount, is dropped.
  *
  * @example
- * const { owns, loading, error, refetch } = useEntitlements();
+ * const { owns, loading, error, unauthenticated, refetch } = useEntitlements();
  * if (loading) return <Spinner />;
+ * // Order matters. `unauthenticated` is an `error` too, and it is the one
+ * // refusal a retry cannot fix — a logged-out viewer of a public page block.
+ * if (unauthenticated) return <SignInToBuy />;
  * if (error) return <RetryNotice onRetry={refetch} />;   // NOT "you own nothing"
  * return owns('extra-slots') ? <Unlocked /> : <BuyButton onDone={refetch} />;
  */
@@ -86,6 +102,7 @@ export function useEntitlements(): UseEntitlements {
   const [entitlements, setEntitlements] = useState<Entitlement[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const [unauthenticated, setUnauthenticated] = useState(false);
 
   // Not a sequencing guard: drained only by the unmount cleanup, so it exists
   // to abort on unmount and let a superseded request's socket close.
@@ -121,6 +138,7 @@ export function useEntitlements(): UseEntitlements {
     const token = seq.begin();
     setLoading(true);
     setError(null);
+    setUnauthenticated(false);
     const controller = new AbortController();
     inFlight.current.add(controller);
     const timeoutId = setTimeout(() => controller.abort(), ENTITLEMENTS_TIMEOUT_MS);
@@ -134,6 +152,10 @@ export function useEntitlements(): UseEntitlements {
           | null;
         if (!seq.isCurrent(token)) return;
         if (!res.ok || body == null || !Array.isArray(body.entitlements)) {
+          // 403 is the server's "anonymous subject" refusal. Recorded before the
+          // throw so the catch below does not have to re-derive it from a
+          // developer-facing message string.
+          if (res.status === 403) setUnauthenticated(true);
           throw new Error(body?.error ?? `entitlements request failed (${res.status})`);
         }
         setEntitlements(body.entitlements);
@@ -167,5 +189,5 @@ export function useEntitlements(): UseEntitlements {
     [entitlements],
   );
 
-  return { entitlements, loading, error, refetch, owns };
+  return { entitlements, loading, error, unauthenticated, refetch, owns };
 }
