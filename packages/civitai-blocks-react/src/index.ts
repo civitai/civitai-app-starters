@@ -54,6 +54,16 @@ export type {
   WatchWorkflowOptions,
   WorkflowSubmitErrorCode,
 } from './hooks/useBuzzWorkflow.js';
+export { useEntitlements } from './hooks/useEntitlements.js';
+export type { UseEntitlements, Entitlement } from './hooks/useEntitlements.js';
+export { useGoodPurchase, GoodPurchaseRefusal } from './hooks/useGoodPurchase.js';
+export type {
+  UseGoodPurchase,
+  GoodPurchaseParams,
+  GoodPurchaseOptions,
+  GoodPurchaseResult,
+  GoodEntitlement,
+} from './hooks/useGoodPurchase.js';
 export { useTip } from './hooks/useTip.js';
 export type { TipParams, TipOptions, TipResult, UseTip } from './hooks/useTip.js';
 export { useTipAllowance } from './hooks/useTipAllowance.js';
