@@ -112,17 +112,18 @@ describe('useEntitlements', () => {
     expect(result.current.entitlements).toBeNull();
   });
 
-  it('🔴 a 403 sets `unauthenticated` — the one refusal a retry cannot fix', async () => {
+  it('🔴 an UNCODED 403 sets `unauthenticated` — the one refusal a retry cannot fix', async () => {
     // A page App Block is a PUBLIC surface. A logged-out viewer's block token
-    // carries an anonymous subject, and the server refuses BOTH goods scopes for
-    // one (`enforceContextBinding` → 403 "<scope> requires authenticated
-    // subject"). That is an `error`, so a block rendering a retry notice on
-    // `error` alone shows every anonymous first paint a button that can never
-    // succeed — in the one case where "you own nothing" is the right answer.
+    // carries an anonymous subject, and the ENDPOINT refuses it with exactly
+    // this body — `src/pages/api/v1/blocks/entitlements.ts`, verbatim, and
+    // deliberately not an invented one. That is an `error`, so a block
+    // rendering a retry notice on `error` alone shows every anonymous first
+    // paint a button that can never succeed — in the one case where "you own
+    // nothing" is the right answer.
     globalThis.fetch = vi.fn(async () => ({
       ok: false,
       status: 403,
-      json: async () => ({ error: 'goods:read:self requires authenticated subject' }),
+      json: async () => ({ error: 'Anonymous block tokens hold no entitlements' }),
     })) as unknown as typeof fetch;
 
     const { result } = renderHook(() => useEntitlements());
@@ -131,6 +132,82 @@ describe('useEntitlements', () => {
     expect(result.current.unauthenticated).toBe(true);
     expect(result.current.error).toBeInstanceOf(Error);
     expect(result.current.owns('extra-slots')).toBe(false);
+  });
+
+  it('🔴 CONTROL — a CODED 403 is NOT unauthenticated, and its real cause reaches `error`', async () => {
+    // The assertion above holds for a status-only predicate too, and a
+    // status-only predicate is WRONG: a 403 on this route has seven producers
+    // and only the two uncoded ones mean "not signed in". `withBlockScope`
+    // (`src/server/middleware/block-scope.middleware.ts`) emits the other five
+    // — `instance_revoked`, `consent_revoked`, `app_not_approved`,
+    // `insufficient_scope`, `context_binding` — and its own comment states it
+    // carries a `code` on EVERY 403 it emits, "so an app can treat it as
+    // always-present".
+    //
+    // `insufficient_scope` is the likeliest of them in practice: a manifest
+    // that simply forgot `goods:read:self`. Routing it to `unauthenticated`
+    // tells an app to show a SIGNED-IN viewer a sign-in screen, and buries the
+    // one message that names the actual fix.
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 403,
+      json: async () => ({
+        error: 'missing required scope: goods:read:self',
+        code: 'insufficient_scope',
+      }),
+    })) as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useEntitlements());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.unauthenticated).toBe(false);
+    expect(result.current.error).toBeInstanceOf(Error);
+    // The server's own wording, not a status stand-in — this is what a
+    // developer reads to find out their manifest is missing a scope.
+    expect(result.current.error?.message).toBe('missing required scope: goods:read:self');
+  });
+
+  it.each([
+    ['instance_revoked', 'block instance revoked'],
+    ['consent_revoked', 'consent revoked for scope: goods:read:self'],
+    ['app_not_approved', 'app block is not approved'],
+    ['context_binding', 'block token is not bound to this context'],
+  ])('CONTROL — the coded 403 `%s` is an error, never a sign-in prompt', async (code, message) => {
+    // The remaining middleware 403s, enumerated rather than sampled: the
+    // discriminator is the PRESENCE of `code`, so every one of them must land
+    // the same way. A predicate keyed on a particular code value, or on a
+    // message string, passes the single case above and fails here.
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 403,
+      json: async () => ({ error: message, code }),
+    })) as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useEntitlements());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.unauthenticated).toBe(false);
+    expect(result.current.error?.message).toBe(message);
+  });
+
+  it('a 403 whose body did not parse is treated as unauthenticated — the pinned choice', async () => {
+    // Not incidental behaviour: with no body there is no `code` to read, and
+    // both real auth refusals are shaped exactly that way while neither
+    // producer of a CODED 403 sends an unparseable body. Pinned so that
+    // changing the call is a deliberate act with a test to update.
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 403,
+      json: async () => {
+        throw new Error('invalid json');
+      },
+    })) as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useEntitlements());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.unauthenticated).toBe(true);
+    expect(result.current.error?.message).toContain('403');
   });
 
   it('CONTROL — a NON-403 failure is NOT unauthenticated, so a retry is still offered', async () => {

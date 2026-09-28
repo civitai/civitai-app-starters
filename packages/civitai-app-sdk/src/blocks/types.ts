@@ -1515,18 +1515,17 @@ export interface ManifestPreview {
 }
 
 /**
- * v1 manifest shape. Mirrors `schemas/app-block/v1.json` — keep them in sync.
- *
- * REQUIRED HERE = REQUIRED THERE. Only `blockId`, `version`, `name`,
- * `contentRating` and `scopes` are required, because those are exactly the five
- * entries in the canonical schema's `required` array. Before #330 this
- * interface required eleven (including `appId`, which the canonical does not
- * declare at all, and `iframe.src`, which the platform REFUSES), so the type
- * itself rejected every manifest the starters ship.
- */
-/**
  * One entry of a manifest's `goods[]`. Mirrors the canonical schema exactly;
  * `id`, `title` and `priceBuzz` are required there and so are they here.
+ *
+ * 🔴 DECLARED BEFORE `BlockManifestV1`'S DOCBLOCK ON PURPOSE. Inserting an
+ * interface BETWEEN a docblock and the declaration it documents does not just
+ * look untidy — `tsc` emits both comments onto THIS interface in
+ * `dist/blocks/types.d.ts` and leaves `BlockManifestV1` undocumented, so the
+ * published types told a reader that "only `blockId`, `version`, `name`,
+ * `contentRating` and `scopes` are required" about a type with three fields and
+ * different requirements. Keep any new sibling above this comment or below
+ * `BlockManifestV1`.
  */
 export interface BlockManifestGood {
   /** Lowercase alphanumeric with `-`/`_`, at most 64 chars. Colon-free, because it is composed into a redis key and a ledger external id. */
@@ -1550,6 +1549,16 @@ export interface BlockManifestGood {
   payload?: Record<string, unknown>;
 }
 
+/**
+ * v1 manifest shape. Mirrors `schemas/app-block/v1.json` — keep them in sync.
+ *
+ * REQUIRED HERE = REQUIRED THERE. Only `blockId`, `version`, `name`,
+ * `contentRating` and `scopes` are required, because those are exactly the five
+ * entries in the canonical schema's `required` array. Before #330 this
+ * interface required eleven (including `appId`, which the canonical does not
+ * declare at all, and `iframe.src`, which the platform REFUSES), so the type
+ * itself rejected every manifest the starters ship.
+ */
 export interface BlockManifestV1 {
   /**
    * Optional JSON-Schema reference. The canonical types it as a plain string

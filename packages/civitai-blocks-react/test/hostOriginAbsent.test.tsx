@@ -12,33 +12,43 @@ import { resetTransport } from '../src/testing.js';
 /**
  * #398 — THE HOST-ORIGIN-ABSENT FAMILY, IN ONE PLACE.
  *
- * Three hooks direct-fetch the App Blocks REST API and therefore need
+ * FIVE hooks direct-fetch the App Blocks REST API and therefore need
  * `useHostOrigin()` before they can do anything. This file pins what each does
  * when that origin NEVER arrives (a direct/unembedded load, `InlineTransport`
  * before bootstrap), and asserts the one property that must hold across all of
  * them: NOTHING IS LEFT WAITING FOREVER.
  *
+ * 🔴 THIS FILE IS THE LEDGER FOR THAT FAMILY — the enumeration below and the
+ * `settled` assertion in the last case are the only places the membership is
+ * written down. A hook that direct-fetches and is NOT listed here is a hook
+ * nobody has checked for an eternal spinner, so ADD IT IN BOTH PLACES when you
+ * write one. (The goods pair was added to the last case without this prose
+ * being updated, which is how the count read "Three" while the body drove five.)
+ *
  * 🔴 ONE PROPERTY, TWO SHAPES — and the split is by API shape, not by accident:
  *
- *   IMPERATIVE (`useTip.tip()`, `useGenerationResources.fetch()`) — the caller
- *   holds a promise, so the terminal state is a REJECTION with a named error,
- *   delivered immediately. There is no `loading` flag to strand.
+ *   IMPERATIVE (`useTip.tip()`, `useGenerationResources.fetch()`,
+ *   `useGoodPurchase.purchase()`) — the caller holds a promise, so the terminal
+ *   state is a REJECTION with a named error, delivered immediately. There is no
+ *   `loading` flag to strand.
  *
- *   DECLARATIVE (`useTipAllowance`) — nobody holds a promise; the hook owns
- *   `loading`/`error` and auto-fetches. Throwing from an effect is not available
- *   to it, so its terminal state is `loading: false` plus a named `error`, after
- *   a BOUNDED WAIT (the origin is absent during every healthy boot too, so an
- *   immediate error would flash on every embedded block).
+ *   DECLARATIVE (`useTipAllowance`, `useEntitlements`) — nobody holds a promise;
+ *   the hook owns `loading`/`error` and auto-fetches. Throwing from an effect is
+ *   not available to it, so its terminal state is `loading: false` plus a named
+ *   `error`, after a BOUNDED WAIT (the origin is absent during every healthy
+ *   boot too, so an immediate error would flash on every embedded block).
  *
  * `useWildcardPack` is NOT in this family, contrary to the issue's table: its
  * `:77-82` early `setLoading(false)` is a `modelVersionId` validity guard, and
  * the hook never reads the host origin at all.
  *
- * ⚠️ HONEST LABEL: the two imperative cases below are GREEN at `f913811`. They
- * are INVARIANT GUARDS pinning behaviour the fix must not flatten while making
- * the family agree — they are NOT regression coverage for #398. Only the
- * `useTipAllowance` cases (here and in `useTipAllowance.test.tsx`) were watched
- * to fail.
+ * ⚠️ HONEST LABEL: the two `useTip` / `useGenerationResources` cases below are
+ * GREEN at `f913811`. They are INVARIANT GUARDS pinning behaviour the fix must
+ * not flatten while making the family agree — they are NOT regression coverage
+ * for #398. Only the `useTipAllowance` cases (here and in
+ * `useTipAllowance.test.tsx`) were watched to fail. The two goods hooks postdate
+ * #398 entirely and were written against the settled contract, so their
+ * membership in the last case is an invariant guard too.
  */
 
 const PARENT_ORIGIN = 'https://civitai.com';

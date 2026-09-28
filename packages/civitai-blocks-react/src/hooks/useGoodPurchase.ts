@@ -107,6 +107,14 @@ export interface UseGoodPurchase {
    * echo, including the entitlement it granted. REJECTS with a
    * {@link GoodPurchaseRefusal} on any 4xx/5xx — read `reason` to tell
    * `insufficient_funds` from a stale price or a rate limit.
+   *
+   * Two non-refusal rejections, distinguishable by `name`:
+   * - the 30s bound elapsed → a plain `Error` naming the timeout. A REAL
+   *   failure; the charge may have landed, so retry with the SAME
+   *   `idempotencyKey`.
+   * - the hook unmounted first → an `Error` with `name === 'AbortError'`, so a
+   *   caller that ignores navigate-away rejections can keep doing so. The same
+   *   same-key retry advice applies if the component comes back.
    */
   purchase: (
     params: GoodPurchaseParams,
@@ -174,7 +182,15 @@ export function useGoodPurchase(): UseGoodPurchase {
     ): Promise<GoodPurchaseResult> => {
       const controller = new AbortController();
       inFlight.current.add(controller);
-      const timeoutId = setTimeout(() => controller.abort(), GOOD_PURCHASE_TIMEOUT_MS);
+      // Which abort fired is not recoverable from the signal — both a timeout
+      // and the unmount cleanup set `aborted` — so record it at the source.
+      // The two need OPPOSITE handling below, and conflating them is how a
+      // money-path timeout gets swallowed by an unmount-ignoring caller.
+      let timedOut = false;
+      const timeoutId = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, GOOD_PURCHASE_TIMEOUT_MS);
       try {
         const res = await fetch(`${host}/api/v1/blocks/goods/purchase`, {
           method: 'POST',
@@ -205,7 +221,21 @@ export function useGoodPurchase(): UseGoodPurchase {
         // the app rather than as a failed purchase. On this hook the body IS the
         // granted entitlement, so a caller cannot recover from a silent absence.
         // `useEntitlements` in this same package performs the equivalent check.
-        if (bodyJson == null || bodyJson.ok !== true || bodyJson.entitlement == null) {
+        //
+        // 🔴 `purchase` IS CHECKED TOO, and for the same reason `entitlement` is:
+        // `GoodPurchaseResult` declares it REQUIRED, so `result.purchase.id` is
+        // typed as safe and a body of `{ ok: true, entitlement }` alone would
+        // resolve and then TypeError at the dereference. The live 200 path
+        // (`src/pages/api/v1/blocks/goods/purchase.ts`) always sends all three,
+        // so this is the type's promise being kept rather than a reachable
+        // server bug — but an `as`-cast past an unvalidated required field is
+        // exactly how the `entitlement` case reached an app in the first place.
+        if (
+          bodyJson == null ||
+          bodyJson.ok !== true ||
+          bodyJson.entitlement == null ||
+          bodyJson.purchase == null
+        ) {
           throw new GoodPurchaseRefusal(
             `purchase succeeded (${res.status}) but the response was not a purchase result — the charge may have landed; do not retry without the same idempotency key`,
             res.status,
@@ -218,10 +248,35 @@ export function useGoodPurchase(): UseGoodPurchase {
         // money path is the least informative wording available: the caller
         // cannot tell it from a refusal, and the charge may have landed. Named
         // and bounded, as `useTip` and `useEntitlements` both do.
+        //
+        // 🔴 THE `!(err instanceof GoodPurchaseRefusal)` HALF IS NOT DEFENSIVE
+        // PADDING. A refusal thrown from the `try` above (an `insufficient_funds`
+        // 400, say) can be in flight when the unmount cleanup aborts the
+        // controller — and rewriting it here would strip `reason`, so the
+        // top-up branch in `purchase` below would stop recognising it and the
+        // viewer would be shown a raw failure instead of the Buzz modal. A
+        // deliberate refusal always wins over the abort wrapper.
         if (controller.signal.aborted && !(err instanceof GoodPurchaseRefusal)) {
-          throw new Error(
-            `useGoodPurchase: request aborted (timed out after ${GOOD_PURCHASE_TIMEOUT_MS}ms or the hook unmounted). The charge may or may not have landed — retry with the SAME idempotencyKey to find out safely.`,
+          if (timedOut) {
+            // The BOUND fired. This is a real failure the caller must handle,
+            // so it deliberately does NOT get the `AbortError` name below:
+            // callers routinely ignore `AbortError` as "we navigated away", and
+            // a silently-ignored money-path timeout is the worst outcome here.
+            throw new Error(
+              `useGoodPurchase: request aborted (timed out after ${GOOD_PURCHASE_TIMEOUT_MS}ms). The charge may or may not have landed — retry with the SAME idempotencyKey to find out safely.`,
+            );
+          }
+          // 🔴 UNMOUNT. `name` stays `AbortError` on purpose: that is the
+          // discriminator a caller uses to IGNORE a rejection its component no
+          // longer cares about, and flattening it to a plain `Error` turns every
+          // navigate-away into a reported failure. The MESSAGE still says what
+          // happened — informative wording and a usable `name` are not a
+          // trade-off. `useBuzzWorkflow`'s `watch()` does the same.
+          const aborted = new Error(
+            'useGoodPurchase: request aborted (the hook unmounted before the response arrived). The charge may or may not have landed — retry with the SAME idempotencyKey to find out safely.',
           );
+          aborted.name = 'AbortError';
+          throw aborted;
         }
         throw err;
       } finally {

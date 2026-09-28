@@ -487,19 +487,25 @@ const { entitlement } = await purchase(
 
 Refusals reject with a `GoodPurchaseRefusal` carrying `status` and, where the server sends one, `reason`. `reason` is **`undefined`** for the endpoint's own refusals (404, 429, daily-cap 400, every idempotency refusal) — only service-level ones populate it, so always fall back to `status` and `message`.
 
+Two rejections are **not** refusals, and `name` tells them apart: the 30s bound rejects with a plain `Error` naming the timeout — a real failure, the charge may have landed, retry with the **same** `idempotencyKey` — while an unmount rejects with `name === 'AbortError'`, the usual signal that the component navigated away and there is nothing to report.
+
 ### `useEntitlements()`
 
 What the viewer owns **from this app** — the read half of the goods rail. Scope `goods:read:self`, which is consent-exempt: the reply is scoped server-side to your own app, so a read-only block needs no purchase power and triggers no re-consent prompt.
 
 ```tsx
-const { owns, loading, error, unauthenticated, refetch } = useEntitlements();
-if (loading) return <Spinner />;
-if (unauthenticated) return <SignInToBuy />;        // a logged-out viewer
-if (error) return <RetryNotice onRetry={refetch} />; // NOT "you own nothing"
-return owns('extra-slots') ? <Unlocked /> : <BuyButton onDone={refetch} />;
+function PaidFeature() {
+  const { owns, loading, error, unauthenticated, refetch } = useEntitlements();
+  if (loading) return <Spinner />;
+  if (unauthenticated) return <SignInToBuy />;        // a logged-out viewer
+  if (error) return <RetryNotice onRetry={refetch} />; // NOT "you own nothing"
+  return owns('extra-slots') ? <Unlocked /> : <BuyButton onDone={refetch} />;
+}
 ```
 
-🔴 **`owns()` returns `false` when the viewer owns nothing AND when the read failed**, so never gate paid content on it alone — check `loading`, `unauthenticated` and `error` first, in that order. A block that paywalls on `!owns(id)` takes away something the viewer paid for on every transient failure. `unauthenticated` exists because a **page** app is a public surface: a logged-out viewer's token is anonymous and the server refuses both goods scopes for one, which is an `error` that no retry can clear.
+🔴 **`owns()` returns `false` when the viewer owns nothing AND when the read failed**, so never gate paid content on it alone — check `loading`, `unauthenticated` and `error` first, in that order. A block that paywalls on `!owns(id)` takes away something the viewer paid for on every transient failure. `unauthenticated` exists because a **page** app is a public surface: a logged-out viewer's token is anonymous and the endpoint refuses it, which is an `error` that no retry can clear.
+
+🔴 **`unauthenticated` is not "the status was 403".** A 403 on this route has seven producers and only the two the endpoint itself emits mean *not signed in*; the five scope/consent/approval refusals all carry a machine-readable `code`, so the flag is set on `403` **with no `code`** and every coded 403 reaches `error` instead, carrying the server's own wording. In practice the one you will hit is `insufficient_scope` — a manifest that forgot `goods:read:self`. Read `error.message`, not the status.
 
 Call `refetch()` after a successful purchase to reflect it without a remount.
 

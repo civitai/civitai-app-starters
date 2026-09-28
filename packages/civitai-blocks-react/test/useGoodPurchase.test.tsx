@@ -1,4 +1,4 @@
-import { act, renderHook } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BlockInitPayload } from '@civitai/app-sdk/blocks';
@@ -74,7 +74,27 @@ describe('useGoodPurchase', () => {
   afterEach(() => {
     resetTransport();
     globalThis.fetch = realFetch;
+    vi.useRealTimers();
   });
+
+  /**
+   * A `fetch` that never settles on its own — it rejects the way the platform
+   * does, ONLY when its `AbortSignal` fires. Anything less (a promise that
+   * simply hangs) cannot exercise the abort branch at all: the hook would sit
+   * on the `await` forever and the test would time out rather than assert.
+   */
+  function abortOnlyFetch() {
+    return vi.fn(
+      (_url: string, opts: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          opts.signal?.addEventListener('abort', () => {
+            const e = new Error('The operation was aborted.');
+            e.name = 'AbortError';
+            reject(e);
+          });
+        }),
+    );
+  }
 
   it('POSTs to the goods endpoint with the bearer token, the goodId and an auto idempotencyKey', async () => {
     const fetchMock = okFetch();
@@ -119,7 +139,31 @@ describe('useGoodPurchase', () => {
     // one resolved with `entitlement === undefined`, so both surfaced as a
     // TypeError in the app instead of a failed purchase. On this hook the body
     // IS the granted entitlement, so a silent absence is unrecoverable.
-    for (const body of [null, { ok: true }, { ok: true, purchase: { id: 'x' } }]) {
+    //
+    // 🔴 THE FIXTURE SET IS CHOSEN SO EACH CLAUSE OF THE GUARD IS THE KILLING
+    // CONDITION FOR AT LEAST ONE ROW — otherwise a clause can be deleted with
+    // the suite still green. The first three rows are all killed by the
+    // `bodyJson == null` / `entitlement == null` clauses, so an earlier
+    // revision's `ok !== true` clause SURVIVED deletion: every row that had a
+    // body also set `ok: true`. The last two rows fix that:
+    //   - `ok` OMITTED but otherwise complete → only `ok !== true` can reject it.
+    //   - `purchase` OMITTED but otherwise complete → only `purchase == null`
+    //     can, and `GoodPurchaseResult` declares that field REQUIRED, so
+    //     resolving here hands the caller a value whose `.purchase.id` throws.
+    const GOOD_ENTITLEMENT = {
+      goodId: 'extra-slots',
+      kind: 'good',
+      payload: {},
+      grantedAt: 'now',
+    };
+    const GOOD_PURCHASE = { id: 'bgp_01', goodId: 'extra-slots', priceBuzz: 250 };
+    for (const body of [
+      null,
+      { ok: true },
+      { ok: true, purchase: { id: 'x' } },
+      { purchase: GOOD_PURCHASE, entitlement: GOOD_ENTITLEMENT },
+      { ok: true, entitlement: GOOD_ENTITLEMENT },
+    ]) {
       globalThis.fetch = vi.fn(async () => ({
         ok: true,
         status: 200,
@@ -214,6 +258,133 @@ describe('useGoodPurchase', () => {
     });
     expect(openPurchaseModal).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * THE ABORT/TIMEOUT BRANCH. Until now it had NO coverage at all — no
+   * `useFakeTimers`, no `abort`, no `timeout` anywhere in this file — while
+   * being the branch that decides what an app is told when a money request
+   * does not come back.
+   */
+  describe('the abort branch', () => {
+    it('🔴 the 30s bound produces a NAMED timeout error, not a bare AbortError', async () => {
+      // 🔴 Fake timers BEFORE the render, per `hostOriginAbsent.test.tsx`: a
+      // `useFakeTimers()` installed afterwards leaves an already-armed timer on
+      // the real clock, and `advanceTimersByTimeAsync` then moves a clock the
+      // timer is not on.
+      vi.useFakeTimers();
+      const fetchMock = abortOnlyFetch();
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const { result } = renderHook(() => useGoodPurchase());
+      let caught: unknown;
+      await act(async () => {
+        const settled = result.current
+          .purchase({ goodId: 'extra-slots' })
+          .catch((e: unknown) => {
+            caught = e;
+          });
+        await vi.advanceTimersByTimeAsync(30_001);
+        await settled;
+      });
+
+      const err = caught as Error;
+      expect(err).toBeInstanceOf(Error);
+      // The bound, by value — a caller reading this knows the request was
+      // cut off by US and not refused by the server.
+      expect(err.message).toContain('timed out after 30000ms');
+      // The same-key retry advice is the whole point of naming it: the charge
+      // may have landed on the far side of the abort.
+      expect(err.message).toContain('SAME idempotencyKey');
+      // 🔴 NOT an `AbortError`. Apps routinely ignore that name as "we
+      // navigated away"; a silently-ignored money-path timeout is the worst
+      // outcome this branch can produce.
+      expect(err.name).toBe('Error');
+      expect(err).not.toBeInstanceOf(GoodPurchaseRefusal);
+    });
+
+    it('🔴 an UNMOUNT keeps `name === "AbortError"` — the discriminator callers ignore on', async () => {
+      // Distinct from the timeout above and deliberately so. A component that
+      // navigated away has no failure to report, and the established way to say
+      // that is the `AbortError` name — `useBuzzWorkflow`'s `watch()` sets it
+      // the same way. Flattening it to a plain `Error` (as this branch once did)
+      // turns every navigate-away into a reported purchase failure.
+      const fetchMock = abortOnlyFetch();
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const hook = renderHook(() => useGoodPurchase());
+      let caught: unknown;
+      const settled = hook.result.current
+        .purchase({ goodId: 'extra-slots' })
+        .catch((e: unknown) => {
+          caught = e;
+        });
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+      await act(async () => {
+        hook.unmount();
+        await settled;
+      });
+
+      const err = caught as Error;
+      expect(err.name).toBe('AbortError');
+      // Informative wording AND a usable `name` — not a trade-off.
+      expect(err.message).toContain('unmounted');
+      expect(err.message).toContain('SAME idempotencyKey');
+      // And it is NOT the timeout wording: the bound never elapsed.
+      expect(err.message).not.toContain('timed out');
+    });
+
+    it('🔴 a refusal racing the abort STAYS a GoodPurchaseRefusal, so the top-up branch still sees it', async () => {
+      // This is the `!(err instanceof GoodPurchaseRefusal)` escape hatch, and it
+      // is not defensive padding: the server's `insufficient_funds` 400 can be
+      // mid-parse when the unmount cleanup aborts the controller. Rewriting it
+      // into the abort `Error` strips `reason`, `canTopUp` goes false, and the
+      // viewer is shown a raw failure where the Buzz modal was the whole point.
+      let releaseBody: () => void = () => {};
+      const bodyGate = new Promise<void>((r) => {
+        releaseBody = r;
+      });
+      let reachedBody = false;
+      const fetchMock = vi.fn(async () => ({
+        ok: false,
+        status: 400,
+        json: async () => {
+          reachedBody = true;
+          await bodyGate;
+          return { ok: false, error: 'not enough Buzz', reason: 'insufficient_funds' };
+        },
+      }));
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      // The modal declines, so the ORIGINAL refusal is what surfaces — the
+      // assertion below is about which error object reached the branch, not
+      // about the retry.
+      openPurchaseModal.mockResolvedValue({ purchased: false });
+
+      const hook = renderHook(() => useGoodPurchase());
+      let caught: unknown;
+      const settled = hook.result.current
+        .purchase({ goodId: 'extra-slots', expectedPriceBuzz: 250 }, { topUpOnInsufficientFunds: true })
+        .catch((e: unknown) => {
+          caught = e;
+        });
+      // Park the hook inside `res.json()`, then abort underneath it.
+      await waitFor(() => expect(reachedBody).toBe(true));
+
+      await act(async () => {
+        hook.unmount();
+        releaseBody();
+        await settled;
+      });
+
+      expect(caught).toBeInstanceOf(GoodPurchaseRefusal);
+      expect((caught as GoodPurchaseRefusal).reason).toBe('insufficient_funds');
+      // The discriminator survived far enough to REACH the top-up branch —
+      // a structural check on `instanceof` alone would pass for a refusal the
+      // branch never saw.
+      expect(openPurchaseModal).toHaveBeenCalledTimes(1);
+      expect(openPurchaseModal).toHaveBeenCalledWith(250);
+    });
   });
 
   it('CONTROL — a NON-funds refusal is never topped up, however the flag is set', async () => {

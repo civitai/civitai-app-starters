@@ -163,6 +163,24 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
   });
 });
 
+/**
+ * The body of `export interface <name>` in a TypeScript source, from the
+ * declaration line to the first line that is exactly `}`.
+ *
+ * Deliberately crude — it reads SOURCE TEXT, so it cannot resolve `extends` or
+ * a mapped type, and a shape that ever needs either should move to a real
+ * compiler-API walk rather than being regex-widened. Every caller below pairs
+ * it with an assertion that the returned body is non-empty, because an empty
+ * body makes every property check "match nothing" and report clean.
+ */
+function interfaceBody(src: string, name: string): string {
+  const start = src.indexOf(`export interface ${name} {`);
+  if (start < 0) return '';
+  const rest = src.slice(start);
+  const end = rest.indexOf('\n}');
+  return end < 0 ? '' : rest.slice(0, end);
+}
+
 describe('lockstep with the vendored schema (INVARIANT GUARDS — green before this change too)', () => {
   const schema = loadCanonicalSchema() as {
     required: string[];
@@ -218,14 +236,16 @@ describe('lockstep with the vendored schema (INVARIANT GUARDS — green before t
     // this one pins the scopes ENUM against BLOCK_SCOPES, and nothing pinned the
     // schema's PROPERTY SET against the interface's KEYS.
     //
-    // Read from the built .d.ts rather than a hand-written list, so the ledger
-    // cannot drift from the type it claims to describe.
-    const dts = readFileSync(
+    // Read from the TypeScript SOURCE rather than a hand-written list, so the
+    // ledger cannot drift from the type it claims to describe. (Deliberately
+    // the source and not `dist/blocks/types.d.ts`: the emitted declarations are
+    // a build artifact this suite must not require, and `defineBlock`'s
+    // inline-literal form is checked against the source anyway.)
+    const src = readFileSync(
       new URL('../../src/blocks/types.ts', import.meta.url),
       'utf8',
     );
-    const iface = dts.slice(dts.indexOf('export interface BlockManifestV1'));
-    const body = iface.slice(0, iface.indexOf('\n}'));
+    const body = interfaceBody(src, 'BlockManifestV1');
     // `$schema` is a JSON-Schema META key, not a manifest field — a manifest may
     // carry it to name the schema it validates against, and the TYPE should not.
     // Named as the one exception rather than widening the filter until it passes:
@@ -239,6 +259,72 @@ describe('lockstep with the vendored schema (INVARIANT GUARDS — green before t
       (k) => !new RegExp(`^\\s{2}${k}\\??:`, 'm').test(body),
     );
     expect(untyped, 'canonical properties with no BlockManifestV1 key').toEqual([]);
+  });
+
+  /**
+   * 🔴 THE SAME GAP, ONE LEVEL DOWN — and the level where it is most likely to
+   * reopen. The guard above is TOP-LEVEL only, so adding
+   * `goods.items.properties.badgeUrl` to the vendored schema passed a fully
+   * green suite while `defineBlock` rejected the very same manifest with
+   * TS2353: exactly the failure class this change exists to close, just nested.
+   * `goods[]` is the newest of these shapes and the likeliest to grow.
+   *
+   * Nothing here is hand-listed except the LEDGER below. The nested shapes are
+   * DERIVED from the schema (any top-level property that is an object with
+   * `properties`, or an array whose `items` is), and the interface that types
+   * each one is read off `BlockManifestV1`'s own declaration — so a shape the
+   * schema grows is covered the moment someone extends the ledger, rather than
+   * needing a new test written for it.
+   */
+  it('every canonical NESTED property is TYPED on the interface that models it', () => {
+    const src = readFileSync(new URL('../../src/blocks/types.ts', import.meta.url), 'utf8');
+    const manifestBody = interfaceBody(src, 'BlockManifestV1');
+
+    /** Top-level schema properties whose value shape is an object with its own `properties`. */
+    const nested: { key: string; props: string[] }[] = [];
+    for (const [key, def] of Object.entries(schema.properties ?? {})) {
+      const shape = def as unknown as {
+        type?: string;
+        properties?: Record<string, unknown>;
+        items?: { type?: string; properties?: Record<string, unknown> };
+      };
+      const objectShape =
+        shape.type === 'object' && shape.properties
+          ? shape.properties
+          : shape.items?.type === 'object' && shape.items.properties
+            ? shape.items.properties
+            : null;
+      if (objectShape) nested.push({ key, props: Object.keys(objectShape) });
+    }
+
+    // 🔴 LEDGER, not a filter. It fails when the set GROWS (the schema gained a
+    // nested object nobody has looked at) AND when it SHRINKS (the derivation
+    // stopped finding them, which would make every assertion below vacuous —
+    // the failure mode a plain `forEach` over an empty list cannot show).
+    expect(
+      nested.map((n) => n.key).sort(),
+      'nested object shapes in the canonical schema',
+    ).toEqual(['goods', 'iframe', 'page', 'targets']);
+
+    const untyped: string[] = [];
+    for (const { key, props } of nested) {
+      // `goods?: BlockManifestGood[];` → `BlockManifestGood`. An INLINE object
+      // literal captures nothing, which fails the next assertion by name rather
+      // than silently skipping the shape.
+      const named = new RegExp(`^\\s{2}${key}\\??:\\s*([A-Za-z_$][\\w$]*)`, 'm').exec(manifestBody);
+      expect(named?.[1], `BlockManifestV1.${key} must be typed by a named interface`).toBeTruthy();
+      const nestedBody = interfaceBody(src, named![1]);
+      // Positive control on the parse: a typo'd or renamed interface yields an
+      // empty body, under which EVERY property below "matches nothing" and the
+      // whole shape would report clean.
+      expect(nestedBody, `interface ${named![1]} not found in types.ts`).not.toBe('');
+      for (const p of props) {
+        if (!new RegExp(`^\\s{2}${p}\\??:`, 'm').test(nestedBody)) {
+          untyped.push(`${key}.${p} (missing on ${named![1]})`);
+        }
+      }
+    }
+    expect(untyped, 'canonical nested properties with no interface key').toEqual([]);
   });
 
   it('the scopes enum holds exactly BLOCK_SCOPES — fails if either side grows OR shrinks', () => {

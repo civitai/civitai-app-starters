@@ -54,11 +54,18 @@ export interface UseEntitlements {
    * 🔴 THIS IS THE ONE CASE WHERE "you own nothing" IS THE RIGHT ANSWER, and
    * without it the guidance on `error` produces the wrong screen. A page App
    * Block is a PUBLIC surface: a logged-out viewer's block token carries an
-   * anonymous subject, and the server refuses BOTH goods scopes for one
-   * (`enforceContextBinding` → 403 "<scope> requires authenticated subject").
-   * That is an `error`, so rendering a retry notice on `error` alone shows every
-   * anonymous first paint a button that can never succeed. Branch on this
-   * first: show the unpurchased/sign-in state, not a failure.
+   * anonymous subject and the endpoint refuses it, which is an `error` — so
+   * rendering a retry notice on `error` alone shows every anonymous first paint
+   * a button that can never succeed. Branch on this first: show the
+   * unpurchased/sign-in state, not a failure.
+   *
+   * 🔴 NOT "the status was 403". A 403 on this route has SEVEN producers and
+   * only two of them mean "not signed in" — see the note on the predicate in
+   * `refetch` below. The other five (`instance_revoked`, `consent_revoked`,
+   * `app_not_approved`, `insufficient_scope`, `context_binding`) reach `error`
+   * instead, which is where a developer can actually read the cause; routing
+   * them here would tell a signed-in viewer to sign in, and would hide the
+   * single likeliest one in practice — a manifest missing `goods:read:self`.
    */
   unauthenticated: boolean;
   /**
@@ -148,14 +155,36 @@ export function useEntitlements(): UseEntitlements {
     })
       .then(async (res) => {
         const body = (await res.json().catch(() => null)) as
-          | { entitlements?: Entitlement[]; error?: string }
+          | { entitlements?: Entitlement[]; error?: string; code?: string }
           | null;
         if (!seq.isCurrent(token)) return;
         if (!res.ok || body == null || !Array.isArray(body.entitlements)) {
-          // 403 is the server's "anonymous subject" refusal. Recorded before the
-          // throw so the catch below does not have to re-derive it from a
-          // developer-facing message string.
-          if (res.status === 403) setUnauthenticated(true);
+          // 🔴 THE PREDICATE IS STRUCTURAL, NOT STATUS-ONLY, AND NEVER A MESSAGE
+          // MATCH. A 403 on this route has SEVEN producers and only two of them
+          // mean "not signed in":
+          //
+          //   `withBlockScope` (`src/server/middleware/block-scope.middleware.ts`)
+          //   emits five — `instance_revoked`, `consent_revoked`,
+          //   `app_not_approved`, `insufficient_scope`, `context_binding` — and
+          //   carries a `code` on EVERY one, which its own comment states is the
+          //   contract ("so an app can treat it as always-present").
+          //
+          //   The ENDPOINT itself (`src/pages/api/v1/blocks/entitlements.ts`)
+          //   emits the only two genuine auth refusals — an unparseable subject
+          //   claim and an anonymous one — and neither carries a `code`.
+          //
+          // So `code == null` IS the discriminator, and it stays right when the
+          // viewer-facing copy is reworded. Keying on the status alone sent a
+          // signed-in viewer whose manifest simply omits `goods:read:self` to a
+          // sign-in screen — the likeliest 403 in practice, and the one whose
+          // real cause is then invisible. Every coded 403 falls through to the
+          // throw below, so it surfaces on `error` with the server's own wording.
+          //
+          // A 403 whose body did not parse at all has no `code` either, and is
+          // treated as unauthenticated: both real auth refusals are body-shaped
+          // that way, and neither producer of a coded 403 sends an unparseable
+          // one. Pinned by a test so the choice is deliberate, not incidental.
+          if (res.status === 403 && body?.code == null) setUnauthenticated(true);
           throw new Error(body?.error ?? `entitlements request failed (${res.status})`);
         }
         setEntitlements(body.entitlements);
