@@ -209,6 +209,28 @@ const PINNED_CLAIMS = {
     '**(b)** *"budget for the token/CORS work"* — **false**',
   'the transport claim is NOT retracted':
     '🔴 The *transport* change is NOT retracted — this document still asserts it, above.',
+
+  // 🔴 THE ROUTE TABLE WAS UNPINNED, AND THAT IS HOW IT SHIPPED WRONG.
+  //
+  // Every claim above is about token/CORS/manifest prose. Nothing read the
+  // `Old message(s) → Now` mapping — the most consequential and the most
+  // mechanically checkable thing in a migration guide — so `GET_IMAGES_BY_IDS`
+  // pointed at `blocks/images?ids=` through a fully green suite. That route's
+  // corpus is the exact SQL complement of the gated one, so a port following this
+  // guide gets `200` and an EMPTY list for every id it published, forever, and
+  // renders nothing while looking healthy. Silent rather than loud, because
+  // `blocks/images` reports misses by OMISSION — there is no error to notice.
+  //
+  // These three pin the mapping AND its reason. The reason carries as much weight
+  // as the route: without it the next editor sees two plausible image routes and
+  // no recorded basis for preferring either, which is the state that produced the
+  // defect. Verified against platform source, never against this document.
+  'gated-images is the GET_IMAGES_BY_IDS replacement':
+    'This is the per-viewer GATED read, and it is the replacement for `GET_IMAGES_BY_IDS`.',
+  'the two image routes are not interchangeable':
+    '🔴 **THERE ARE TWO IMAGE ROUTES AND THEY ARE NOT INTERCHANGEABLE. `blocks/images?ids=` CANNOT SERVE THIS CASE — it answers EMPTY for every id an app published, at any ceiling, for any viewer, forever.**',
+  'the gated corpus is the exact complement':
+    '`blocks/gated-images` is the exact complement — `AND i."postId" IS NULL`',
 } as const;
 
 describe("BREAKING.md's porting section is pinned, because prose review failed it three times", () => {
