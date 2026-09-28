@@ -182,7 +182,15 @@ describe('useGoodPurchase', () => {
     // `topUpOnInsufficientFunds` must key on the REASON, not on "the call failed".
     // A stale price or a rate limit is not fixed by buying Buzz, and opening a
     // payment modal for one would be a spend prompt the viewer cannot act on.
-    globalThis.fetch = refusingFetch(429, 'rate_limited') as never;
+    // 🔴 The REAL shape: the endpoint's own 429 carries `{ error }` and NO
+    // `reason` — only service-level refusals populate it. An earlier draft of
+    // this test invented `reason: 'rate_limited'`, a value the server never
+    // sends, which made the case look covered while testing a fiction.
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 429,
+      json: async () => ({ error: 'Too many purchases — please retry shortly.' }),
+    })) as unknown as typeof fetch;
     const { result } = renderHook(() => useGoodPurchase());
 
     await act(async () => {

@@ -62,7 +62,6 @@ export type {
   GoodPurchaseParams,
   GoodPurchaseOptions,
   GoodPurchaseResult,
-  GoodEntitlement,
 } from './hooks/useGoodPurchase.js';
 export { useTip } from './hooks/useTip.js';
 export type { TipParams, TipOptions, TipResult, UseTip } from './hooks/useTip.js';

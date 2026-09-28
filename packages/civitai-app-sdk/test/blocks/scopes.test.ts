@@ -29,11 +29,25 @@ const CANONICAL_BLOCK_SCOPES = [
   'collections:read:private',
   // App Blocks → Post bridge. SENSITIVE + consent-gated.
   'posts:write:self',
+  // Digital goods. `goods:read:self` is consent-EXEMPT (server-scoped to the
+  // calling app's own sales); `goods:purchase:self` is consent-GATED.
+  'goods:read:self',
+  'goods:purchase:self',
 ] as const;
 
 describe('BLOCK_SCOPES', () => {
   it('exposes exactly the canonical server block-scope set', () => {
     expect(new Set(Object.values(BLOCK_SCOPES))).toEqual(new Set(CANONICAL_BLOCK_SCOPES));
+  });
+
+  it('includes the digital-goods scopes, which the canonical schema has carried since #5171', () => {
+    // These were live on the server and in the canonical schema while ABSENT
+    // here, so `defineBlock` rejected both and no app scaffolded from this repo
+    // could declare them — the blocks-react hooks that call the goods endpoints
+    // were unreachable. Named rather than left to the set-equality above so the
+    // reason survives.
+    expect(BLOCK_SCOPES.GOODS_READ_SELF).toBe('goods:read:self');
+    expect(BLOCK_SCOPES.GOODS_PURCHASE_SELF).toBe('goods:purchase:self');
   });
 
   it('includes the W4 apps:storage:* datastore scopes', () => {

@@ -48,6 +48,20 @@ export const BLOCK_SCOPES = {
   // per-post confirm rendering the SERVER'S resolution of the request, and the
   // server re-runs every guard.
   POSTS_WRITE_SELF: 'posts:write:self',
+  // goods:* — the DIGITAL GOODS rail (civitai/civitai#5171): the platform sells
+  // a manifest-declared entitlement to the viewer for Buzz, on the app's behalf.
+  // These were live on the SERVER and in the canonical schema while absent here,
+  // so `defineBlock` rejected both and no app scaffolded from this repo could
+  // DECLARE them — the hooks that call them were unreachable. Found by the
+  // round-0 reachability question on app-starters#489.
+  //
+  // `goods:read:self` is CONSENT-EXEMPT by design: the read is scoped
+  // server-side to the calling app's own appBlockId, so it can only ever return
+  // what that app itself sold and there is no third-party data to consent to.
+  // `goods:purchase:self` is CONSENT-GATED — money out of the viewer's balance
+  // always needs an explicit grant. Do not collapse the two.
+  GOODS_READ_SELF: 'goods:read:self',
+  GOODS_PURCHASE_SELF: 'goods:purchase:self',
 } as const;
 
 export type BlockScopeKey = keyof typeof BLOCK_SCOPES;

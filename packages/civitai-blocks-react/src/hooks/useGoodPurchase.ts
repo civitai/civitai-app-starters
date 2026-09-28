@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { generateIdempotencyKey } from '../transport/transport.js';
+import type { Entitlement } from './useEntitlements.js';
 import { useBlockToken } from './useBlockToken.js';
 import { useBuzzPurchase } from './useBuzzPurchase.js';
 import { useHostOrigin } from './useHostOrigin.js';
@@ -45,29 +46,43 @@ export interface GoodPurchaseOptions {
    * verdict — a top-up"; it caches terminal results, not this one. Minting a
    * fresh key here would work too, but it would make a lost response on the
    * retry unrecoverable, which is the thing idempotency keys exist to prevent.
+   *
+   * ⚠️ RECONCILED WITH THE OPPOSITE POLICY NEXT DOOR, which a reader will hit.
+   * `useBuzzWorkflow` states twice that a resolved-failed budget "is the cue to
+   * call `useBuzzPurchase().openPurchaseModal()`" — i.e. the APP decides — and
+   * warns that "routing a rejection into a top-up sells Buzz for a failure Buzz
+   * cannot fix". That policy is right for a generation, and this option does not
+   * contradict it: it defaults to `false`, and it keys on the REASON
+   * (`insufficient_funds`) rather than on "the call failed", so it never offers
+   * Buzz for a failure Buzz cannot fix. What it buys, and the only reason it is
+   * in the library at all rather than left to each app, is the same-key retry
+   * above — a server contract an app gets wrong in the expensive direction.
    */
   topUpOnInsufficientFunds?: boolean;
-}
-
-/** One entitlement, as the platform records it. */
-export interface GoodEntitlement {
-  goodId: string;
-  kind: string;
-  payload: Record<string, unknown>;
-  grantedAt: string;
 }
 
 /** The successful purchase echo the endpoint returns. */
 export interface GoodPurchaseResult {
   ok: true;
   purchase: { id: string; goodId: string; priceBuzz: number };
-  entitlement: GoodEntitlement;
+  entitlement: Entitlement;
 }
 
 /**
  * A refusal the server produced deliberately, as opposed to a transport
- * failure. `reason` is the machine-readable discriminator — branch on it rather
- * than on `message`, which is viewer-facing copy and will be reworded.
+ * failure.
+ *
+ * `reason` is the machine-readable discriminator where one exists — branch on it
+ * rather than on `message`, which is viewer-facing copy and will be reworded.
+ *
+ * 🔴 `reason` IS OFTEN `undefined`, AND A CONSUMER MUST HANDLE THAT. Only the
+ * SERVICE-level refusals carry one (`insufficient_funds`, `ledger_conflict`,
+ * `charge_failed`, `charge_unknown`, the price-disagreement and
+ * already-owned cases). The ENDPOINT's own refusals return `{ error }` alone:
+ * the 404 for an unavailable good, the 429 rate limit, the daily-cap 400 and
+ * every idempotency refusal (409 / 422 / 503). So a `switch (reason)` with no
+ * default silently swallows a material fraction of real failures — always fall
+ * back to `status` plus `message`.
  */
 export class GoodPurchaseRefusal extends Error {
   readonly status: number;
