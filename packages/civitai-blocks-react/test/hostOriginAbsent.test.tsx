@@ -18,12 +18,26 @@ import { resetTransport } from '../src/testing.js';
  * before bootstrap), and asserts the one property that must hold across all of
  * them: NOTHING IS LEFT WAITING FOREVER.
  *
- * 🔴 THIS FILE IS THE LEDGER FOR THAT FAMILY — the enumeration below and the
- * `settled` assertion in the last case are the only places the membership is
- * written down. A hook that direct-fetches and is NOT listed here is a hook
- * nobody has checked for an eternal spinner, so ADD IT IN BOTH PLACES when you
- * write one. (The goods pair was added to the last case without this prose
- * being updated, which is how the count read "Three" while the body drove five.)
+ * 🔴 THIS FILE IS THE LEDGER FOR THAT FAMILY. A hook that direct-fetches and is
+ * NOT recorded here is a hook nobody has checked for an eternal spinner — but
+ * WHERE you record it depends on which of the two shapes below it has, and an
+ * earlier version of this note said only "ADD IT IN BOTH PLACES", which is
+ * wrong for a declarative hook: `settled` is an IMPERATIVE-only ledger.
+ *
+ *   A NEW IMPERATIVE HOOK → three places: this prose, the `settled` array's
+ *   exact-equality assertion in the last case, and a `.catch(…)` that pushes
+ *   its name onto that array. The exact-equality is the point — it fails when
+ *   the set grows as well as when it shrinks.
+ *
+ *   A NEW DECLARATIVE HOOK → three places too, but not the same three: this
+ *   prose, a `renderHook` in the last case, and its OWN post-bound assertions
+ *   there (`loading === false` plus a named `error`). It must NOT go in
+ *   `settled` — it never rejects, so adding it makes that assertion
+ *   permanently red. A declarative member's membership is visible only in the
+ *   assertions it adds, so it is the shape most easily left half-added.
+ *
+ * (The goods pair was added to the last case without this prose being updated,
+ * which is how the count read "Three" while the body drove five.)
  *
  * 🔴 ONE PROPERTY, TWO SHAPES — and the split is by API shape, not by accident:
  *

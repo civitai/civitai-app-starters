@@ -335,26 +335,72 @@ describe('useGoodPurchase', () => {
       expect(err.message).not.toContain('timed out');
     });
 
-    it('🔴 a refusal racing the abort STAYS a GoodPurchaseRefusal, so the top-up branch still sees it', async () => {
-      // This is the `!(err instanceof GoodPurchaseRefusal)` escape hatch, and it
-      // is not defensive padding: the server's `insufficient_funds` 400 can be
-      // mid-parse when the unmount cleanup aborts the controller. Rewriting it
-      // into the abort `Error` strips `reason`, `canTopUp` goes false, and the
-      // viewer is shown a raw failure where the Buzz modal was the whole point.
-      let releaseBody: () => void = () => {};
-      const bodyGate = new Promise<void>((r) => {
-        releaseBody = r;
-      });
+    /**
+     * 🔴 A `fetch` WHOSE BODY READ BEHAVES LIKE THE PLATFORM'S, which the
+     * previous fixture did not: its `json()` ignored `opts.signal` entirely and
+     * resolved the full body after the abort, so it could only ever exercise the
+     * happy half of the race and reported the other half as covered.
+     *
+     * Real `Response.json()` splits on whether the BYTES have arrived:
+     *   - body still streaming when the controller aborts → the read REJECTS
+     *     with an `AbortError`;
+     *   - body already buffered → the parse completes normally, even though the
+     *     signal is aborted underneath it.
+     *
+     * `release()` is what moves the fixture from the first state to the second,
+     * so a test picks the race it means instead of getting whichever one the
+     * mock happened to encode.
+     */
+    function bufferedOrStreamingFetch(status: number, body: unknown) {
+      let released = false;
       let reachedBody = false;
-      const fetchMock = vi.fn(async () => ({
-        ok: false,
-        status: 400,
-        json: async () => {
-          reachedBody = true;
-          await bodyGate;
-          return { ok: false, error: 'not enough Buzz', reason: 'insufficient_funds' };
+      let resolveBody: (v: unknown) => void = () => {};
+      const fetchMock = vi.fn((_url: string, opts: RequestInit) =>
+        Promise.resolve({
+          ok: status >= 200 && status < 300,
+          status,
+          json: () =>
+            new Promise((resolve, reject) => {
+              reachedBody = true;
+              resolveBody = resolve;
+              if (released) resolve(body);
+              opts.signal?.addEventListener('abort', () => {
+                // Bytes already in hand → the abort cannot un-deliver them.
+                if (!released) {
+                  const e = new Error('The operation was aborted.');
+                  e.name = 'AbortError';
+                  reject(e);
+                }
+              });
+            }),
+        }),
+      );
+      return {
+        fetchMock,
+        atBody: () => reachedBody,
+        /** The bytes arrived. Any abort from here on cannot fail the parse. */
+        release: () => {
+          released = true;
+          resolveBody(body);
         },
-      }));
+      };
+    }
+
+    it('🔴 a refusal the hook ALREADY PARSED stays a GoodPurchaseRefusal, so the top-up branch still sees it', async () => {
+      // This is the `!(err instanceof GoodPurchaseRefusal)` escape hatch, and it
+      // is not defensive padding — but the scenario is the one that actually
+      // holds, not the "mid-parse" one the source comment used to claim. The
+      // server's `insufficient_funds` 400 has ALREADY ARRIVED and parsed when
+      // the abort fires underneath it (`release()` before `unmount()`, both in
+      // the same synchronous block, so the parse settles a microtask after the
+      // controller is already aborted). Rewriting it into the abort `Error`
+      // strips `reason`, `canTopUp` goes false, and the viewer is shown a raw
+      // failure where the Buzz modal was the whole point.
+      const { fetchMock, atBody, release } = bufferedOrStreamingFetch(400, {
+        ok: false,
+        error: 'not enough Buzz',
+        reason: 'insufficient_funds',
+      });
       globalThis.fetch = fetchMock as unknown as typeof fetch;
       // The modal declines, so the ORIGINAL refusal is what surfaces — the
       // assertion below is about which error object reached the branch, not
@@ -368,12 +414,12 @@ describe('useGoodPurchase', () => {
         .catch((e: unknown) => {
           caught = e;
         });
-      // Park the hook inside `res.json()`, then abort underneath it.
-      await waitFor(() => expect(reachedBody).toBe(true));
+      // Park the hook inside `res.json()`, then land the bytes and abort.
+      await waitFor(() => expect(atBody()).toBe(true));
 
       await act(async () => {
+        release();
         hook.unmount();
-        releaseBody();
         await settled;
       });
 
@@ -384,6 +430,80 @@ describe('useGoodPurchase', () => {
       // branch never saw.
       expect(openPurchaseModal).toHaveBeenCalledTimes(1);
       expect(openPurchaseModal).toHaveBeenCalledWith(250);
+    });
+
+    it('🔴 an UNMOUNT during the BODY READ of a 200 is an AbortError, not a "charge may have landed" refusal', async () => {
+      // 🔴 THE CASE `.catch(() => null)` GOT BACKWARDS. The purchase SUCCEEDED —
+      // a 200 with a complete body on the wire — and the component merely
+      // navigated away before the block finished reading it. Swallowing the
+      // `AbortError` made `bodyJson` null, which fell into the malformed-success
+      // guard and produced `'purchase succeeded (200) but the response was not a
+      // purchase result — the charge may have landed…'`. A caller following the
+      // documented advice to ignore `AbortError` on navigate-away would instead
+      // report a possible-charge failure for a purchase that worked.
+      const { fetchMock, atBody } = bufferedOrStreamingFetch(200, OK_BODY);
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const hook = renderHook(() => useGoodPurchase());
+      let caught: unknown;
+      const settled = hook.result.current
+        .purchase({ goodId: 'extra-slots' })
+        .catch((e: unknown) => {
+          caught = e;
+        });
+      await waitFor(() => expect(atBody()).toBe(true));
+
+      await act(async () => {
+        hook.unmount(); // aborts while the body is still streaming
+        await settled;
+      });
+
+      const err = caught as Error;
+      expect(err).not.toBeInstanceOf(GoodPurchaseRefusal);
+      expect(err.name).toBe('AbortError');
+      expect(err.message).toContain('unmounted');
+      // The exact wording the old path produced, pinned as an ANTI-assertion so
+      // a regression cannot re-introduce it under a different guard.
+      expect(err.message).not.toContain('was not a purchase result');
+      expect((err as GoodPurchaseRefusal).reason).toBeUndefined();
+    });
+
+    it('🔴 a TIMEOUT during the BODY READ of a 4xx is the named timeout error, not a reason-less refusal', async () => {
+      // The other half, and the one that costs money to get wrong: the bound
+      // fired while the refusal body was still streaming. Swallowing the
+      // `AbortError` produced `'purchase request failed (400)'` with `reason`
+      // undefined — the timeout wording and its same-key retry advice lost, and
+      // the caller told the server had decided something it never read.
+      vi.useFakeTimers();
+      const { fetchMock, atBody } = bufferedOrStreamingFetch(400, {
+        ok: false,
+        error: 'not enough Buzz',
+        reason: 'insufficient_funds',
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const { result } = renderHook(() => useGoodPurchase());
+      let caught: unknown;
+      await act(async () => {
+        const settled = result.current
+          .purchase({ goodId: 'extra-slots' })
+          .catch((e: unknown) => {
+            caught = e;
+          });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(atBody()).toBe(true);
+        await vi.advanceTimersByTimeAsync(30_001);
+        await settled;
+      });
+
+      const err = caught as Error;
+      expect(err).not.toBeInstanceOf(GoodPurchaseRefusal);
+      expect(err.message).toContain('timed out after 30000ms');
+      expect(err.message).toContain('SAME idempotencyKey');
+      // 🔴 NOT an `AbortError` — the bound is a real failure a caller must
+      // handle, and it must not be mistaken for the navigate-away case above.
+      expect(err.name).toBe('Error');
+      expect(err.message).not.toContain('purchase request failed');
     });
   });
 

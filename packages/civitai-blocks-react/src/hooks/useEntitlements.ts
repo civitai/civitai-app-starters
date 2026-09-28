@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { isSignedIn } from '@civitai/app-sdk/blocks';
+
+import { useBlockContext } from './useBlockContext.js';
 import { useBlockToken } from './useBlockToken.js';
 import { useHostOrigin } from './useHostOrigin.js';
 import { useRequestSequencer } from './useRequestSequencer.js';
@@ -35,7 +38,13 @@ export interface Entitlement {
 }
 
 export interface UseEntitlements {
-  /** What the viewer owns, or `null` until the first successful fetch. */
+  /**
+   * What the viewer owns, or `null` until the first successful fetch.
+   *
+   * Stays `null` for an anonymous viewer, who is never asked: see
+   * {@link UseEntitlements.unauthenticated}. `owns()` is `false` either way,
+   * which is the right answer for someone with no account to own anything on.
+   */
   entitlements: Entitlement[] | null;
   /** `true` while a fetch (initial or `refetch`) is in flight. */
   loading: boolean;
@@ -49,23 +58,45 @@ export interface UseEntitlements {
   /** Re-read entitlements (e.g. immediately after a successful purchase). */
   refetch: () => void;
   /**
-   * `true` when the read was refused because the viewer is NOT SIGNED IN.
+   * `true` when there is NO SIGNED-IN VIEWER, so there is nobody for this app
+   * to have sold anything to.
    *
    * 🔴 THIS IS THE ONE CASE WHERE "you own nothing" IS THE RIGHT ANSWER, and
    * without it the guidance on `error` produces the wrong screen. A page App
    * Block is a PUBLIC surface: a logged-out viewer's block token carries an
-   * anonymous subject and the endpoint refuses it, which is an `error` — so
-   * rendering a retry notice on `error` alone shows every anonymous first paint
-   * a button that can never succeed. Branch on this first: show the
-   * unpurchased/sign-in state, not a failure.
+   * anonymous subject and the endpoint refuses it — so rendering a retry notice
+   * on `error` alone would show every anonymous first paint a button that can
+   * never succeed. Branch on this first: show the unpurchased/sign-in state,
+   * not a failure.
    *
-   * 🔴 NOT "the status was 403". A 403 on this route has SEVEN producers and
-   * only two of them mean "not signed in" — see the note on the predicate in
-   * `refetch` below. The other five (`instance_revoked`, `consent_revoked`,
-   * `app_not_approved`, `insufficient_scope`, `context_binding`) reach `error`
-   * instead, which is where a developer can actually read the cause; routing
-   * them here would tell a signed-in viewer to sign in, and would hide the
-   * single likeliest one in practice — a manifest missing `goods:read:self`.
+   * 🔴 DERIVED FROM THE VIEWER, NOT FROM A RESPONSE, and that is the whole
+   * point. It is `isSignedIn(useBlockContext().viewer) === false` once
+   * `BLOCK_INIT` has landed — `null` viewer means anonymous, the one wire value
+   * every host version agrees on (`ViewerInfo` / `isSignedIn` in
+   * `@civitai/app-sdk/blocks` carry the adjudication). Three consequences worth
+   * knowing:
+   *
+   *   - It is knowable BEFORE any request fires, so an anonymous viewer costs
+   *     no round trip: the hook SKIPS the GET entirely (see `refetch`).
+   *   - `error` stays `null` for an anonymous viewer. Nothing failed; we never
+   *     asked. A retry notice would be wrong twice over.
+   *   - It is `false` until `BLOCK_INIT` lands, because before that the viewer
+   *     is UNKNOWN rather than absent (the pre-init snapshot's `viewer` is also
+   *     `null`). A block that never gets init therefore reaches its terminal
+   *     `error` with this flag `false` — an unembedded block is not a sign-in
+   *     problem, and `test/hostOriginAbsent.test.tsx` pins exactly that.
+   *
+   * 🔴 IT IS NOT "the status was 403", AND A RESPONSE-DERIVED PREDICATE CANNOT
+   * WORK HERE. A 403 on this route has seven producers, and the anonymous case
+   * is NOT one of the uncoded ones: `withBlockScope` puts `goods:read:self` in
+   * its `:self` arm, so an anonymous subject is rejected as
+   * `code: 'context_binding'` — the same code a wrong `modelId` produces. There
+   * is no reachable uncoded 403 on this route, so an earlier
+   * `status === 403 && code == null` predicate could never fire, and keying on
+   * `context_binding` would conflate "not signed in" with a context mismatch.
+   * Every 403 now reaches `error` with the server's own wording, which is where
+   * a developer can read the cause — including the likeliest one in practice, a
+   * manifest missing `goods:read:self` (`insufficient_scope`).
    */
   unauthenticated: boolean;
   /**
@@ -94,11 +125,15 @@ export interface UseEntitlements {
  * Only the LATEST request may write state: a reply superseded by a newer
  * `refetch`, or one landing after unmount, is dropped.
  *
+ * An ANONYMOUS viewer is answered without a request: `unauthenticated` is read
+ * off `BLOCK_INIT`'s viewer, so the hook settles to `loading: false` with no
+ * `error` and never issues the GET the server would refuse anyway.
+ *
  * @example
  * const { owns, loading, error, unauthenticated, refetch } = useEntitlements();
  * if (loading) return <Spinner />;
- * // Order matters. `unauthenticated` is an `error` too, and it is the one
- * // refusal a retry cannot fix — a logged-out viewer of a public page block.
+ * // Order matters. `unauthenticated` is the state no retry can clear — a
+ * // logged-out viewer of a public page block — and it is NOT an `error`.
  * if (unauthenticated) return <SignInToBuy />;
  * if (error) return <RetryNotice onRetry={refetch} />;   // NOT "you own nothing"
  * return owns('extra-slots') ? <Unlocked /> : <BuyButton onDone={refetch} />;
@@ -106,10 +141,18 @@ export interface UseEntitlements {
 export function useEntitlements(): UseEntitlements {
   const host = useHostOrigin();
   const { raw } = useBlockToken();
+  const { ready, viewer } = useBlockContext();
   const [entitlements, setEntitlements] = useState<Entitlement[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
-  const [unauthenticated, setUnauthenticated] = useState(false);
+
+  // 🔴 DERIVED, NOT STATE. `ready` is load-bearing and is the whole reason this
+  // is not a bare `!isSignedIn(viewer)`: the pre-`BLOCK_INIT` snapshot also
+  // carries `viewer: null`, so without the gate every block would report
+  // "signed out" for the first frames of every healthy boot — and a block whose
+  // init NEVER lands would report it forever, sending an embedded block's
+  // terminal host-origin error to a sign-in screen it cannot act on.
+  const anonymous = ready && !isSignedIn(viewer);
 
   // Not a sequencing guard: drained only by the unmount cleanup, so it exists
   // to abort on unmount and let a superseded request's socket close.
@@ -142,10 +185,28 @@ export function useEntitlements(): UseEntitlements {
 
   const refetch = useCallback(() => {
     if (!host) return;
+    // 🔴 ANONYMOUS VIEWERS ARE ANSWERED WITHOUT A REQUEST — a deliberate choice,
+    // not an omission. Entitlements are bound to the token SUBJECT, and an
+    // anonymous subject can hold none, so the server's answer is knowable and
+    // constant (a `context_binding` 403 from `withBlockScope`'s `:self` arm).
+    // A page block is a PUBLIC surface, so this is the common path rather than
+    // an edge: firing the GET would spend a round trip per anonymous paint to
+    // learn something `BLOCK_INIT` already said, and would leave a 403 in every
+    // developer's network tab that reads as a bug in their manifest.
+    //
+    // `error` is left NULL on purpose. Nothing failed — `unauthenticated` is
+    // the terminal state, and it is the one the documented render order checks
+    // before `error`.
+    if (anonymous) {
+      seq.begin(); // invalidate any in-flight read from a previous signed-in state
+      setEntitlements(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
     const token = seq.begin();
     setLoading(true);
     setError(null);
-    setUnauthenticated(false);
     const controller = new AbortController();
     inFlight.current.add(controller);
     const timeoutId = setTimeout(() => controller.abort(), ENTITLEMENTS_TIMEOUT_MS);
@@ -159,32 +220,27 @@ export function useEntitlements(): UseEntitlements {
           | null;
         if (!seq.isCurrent(token)) return;
         if (!res.ok || body == null || !Array.isArray(body.entitlements)) {
-          // 🔴 THE PREDICATE IS STRUCTURAL, NOT STATUS-ONLY, AND NEVER A MESSAGE
-          // MATCH. A 403 on this route has SEVEN producers and only two of them
-          // mean "not signed in":
+          // 🔴 NO RESPONSE IS EVER CLASSIFIED AS "NOT SIGNED IN" HERE, AND THAT
+          // IS THE FIX RATHER THAN AN OVERSIGHT. `unauthenticated` is derived
+          // from the viewer (see the field's doc); by the time a reply lands we
+          // already know a viewer was signed in, because otherwise no request
+          // was issued at all.
           //
-          //   `withBlockScope` (`src/server/middleware/block-scope.middleware.ts`)
-          //   emits five — `instance_revoked`, `consent_revoked`,
-          //   `app_not_approved`, `insufficient_scope`, `context_binding` — and
-          //   carries a `code` on EVERY one, which its own comment states is the
-          //   contract ("so an app can treat it as always-present").
+          // The predicate that used to live here — `status === 403 && code ==
+          // null` — was DEAD. `src/pages/api/v1/blocks/entitlements.ts` wraps
+          // the handler in `withBlockScope(…, { requiredScope: 'goods:read:self'
+          // })`, and that middleware puts a `:self` scope with an anonymous
+          // subject in its `context_binding` arm, so the anonymous 403 arrives
+          // CODED. No uncoded 403 is reachable on this route, so the flag could
+          // never fire for the one case it exists for. Re-keying it on
+          // `context_binding` would be worse: that code is also what a wrong
+          // `modelId` and an array-form query param produce, so a signed-in
+          // viewer would be told to sign in.
           //
-          //   The ENDPOINT itself (`src/pages/api/v1/blocks/entitlements.ts`)
-          //   emits the only two genuine auth refusals — an unparseable subject
-          //   claim and an anonymous one — and neither carries a `code`.
-          //
-          // So `code == null` IS the discriminator, and it stays right when the
-          // viewer-facing copy is reworded. Keying on the status alone sent a
-          // signed-in viewer whose manifest simply omits `goods:read:self` to a
-          // sign-in screen — the likeliest 403 in practice, and the one whose
-          // real cause is then invisible. Every coded 403 falls through to the
-          // throw below, so it surfaces on `error` with the server's own wording.
-          //
-          // A 403 whose body did not parse at all has no `code` either, and is
-          // treated as unauthenticated: both real auth refusals are body-shaped
-          // that way, and neither producer of a coded 403 sends an unparseable
-          // one. Pinned by a test so the choice is deliberate, not incidental.
-          if (res.status === 403 && body?.code == null) setUnauthenticated(true);
+          // So every 403 — coded or not, parseable or not — surfaces on `error`
+          // with the server's own wording, which is where a developer can read
+          // the real cause. Pinned by the CONTROL cases in
+          // `test/useEntitlements.test.tsx`.
           throw new Error(body?.error ?? `entitlements request failed (${res.status})`);
         }
         setEntitlements(body.entitlements);
@@ -207,7 +263,7 @@ export function useEntitlements(): UseEntitlements {
         clearTimeout(timeoutId);
         inFlight.current.delete(controller);
       });
-  }, [host, raw, seq]);
+  }, [anonymous, host, raw, seq]);
 
   useEffect(() => {
     refetch();
@@ -218,5 +274,5 @@ export function useEntitlements(): UseEntitlements {
     [entitlements],
   );
 
-  return { entitlements, loading, error, unauthenticated, refetch, owns };
+  return { entitlements, loading, error, unauthenticated: anonymous, refetch, owns };
 }

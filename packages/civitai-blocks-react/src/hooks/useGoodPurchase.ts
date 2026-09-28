@@ -115,6 +115,16 @@ export interface UseGoodPurchase {
    * - the hook unmounted first → an `Error` with `name === 'AbortError'`, so a
    *   caller that ignores navigate-away rejections can keep doing so. The same
    *   same-key retry advice applies if the component comes back.
+   *
+   * 🔴 THAT CLASSIFICATION IS DECIDED BY THE ABORT STATE, NOT BY WHETHER A BODY
+   * PARSED, and it holds wherever the abort lands — including DURING the body
+   * read, which is the common shape when the headers arrive first. The one
+   * documented exception is the opposite race: a refusal the server had already
+   * delivered AND the hook had already parsed stays a {@link GoodPurchaseRefusal}
+   * even if the abort fires in the same tick, because a refusal we actually read
+   * is more informative than an abort, and `reason` is what the top-up branch
+   * needs. So an `AbortError` here never hides a refusal, and a refusal here
+   * never hides a timeout.
    */
   purchase: (
     params: GoodPurchaseParams,
@@ -204,9 +214,31 @@ export function useGoodPurchase(): UseGoodPurchase {
           }),
           signal: controller.signal,
         });
-        const bodyJson = (await res.json().catch(() => null)) as
-          | (Partial<GoodPurchaseResult> & { error?: string; reason?: string })
-          | null;
+        // 🔴 AN ABORT DURING THE BODY READ MUST NOT BE SWALLOWED AS "no body".
+        // With a real `fetch` the response headers can arrive and the BODY still
+        // be in flight; aborting then rejects `res.json()` with an `AbortError`.
+        // A blanket `.catch(() => null)` turned that into `bodyJson === null`,
+        // and the classification below — which reads the BODY rather than the
+        // abort state — then produced exactly the wrong answer twice:
+        //
+        //   200 + unmount mid-body → a `malformed_success` refusal saying "the
+        //   charge may have landed", reported to a caller the docs told to
+        //   IGNORE navigate-away aborts. A purchase that SUCCEEDED, surfaced as
+        //   a possible-charge failure.
+        //
+        //   4xx + timeout mid-body → `purchase request failed (<status>)` with
+        //   `reason` lost, so the documented timeout error and its same-key
+        //   retry advice never reached the caller.
+        //
+        // So a parse failure is only "no body" when the request was NOT aborted;
+        // otherwise it is rethrown and the `catch` below classifies it by the
+        // abort state, which is the only thing that can tell a timeout from an
+        // unmount. A genuinely unparseable body on a live request still yields
+        // `null` and the malformed/refusal handling below is unchanged.
+        const bodyJson = (await res.json().catch((err: unknown) => {
+          if (controller.signal.aborted) throw err;
+          return null;
+        })) as (Partial<GoodPurchaseResult> & { error?: string; reason?: string }) | null;
         if (!res.ok) {
           throw new GoodPurchaseRefusal(
             bodyJson?.error ?? `purchase request failed (${res.status})`,
@@ -250,12 +282,21 @@ export function useGoodPurchase(): UseGoodPurchase {
         // and bounded, as `useTip` and `useEntitlements` both do.
         //
         // 🔴 THE `!(err instanceof GoodPurchaseRefusal)` HALF IS NOT DEFENSIVE
-        // PADDING. A refusal thrown from the `try` above (an `insufficient_funds`
-        // 400, say) can be in flight when the unmount cleanup aborts the
-        // controller — and rewriting it here would strip `reason`, so the
+        // PADDING — but it does NOT cover a refusal cut off mid-parse, which an
+        // earlier version of this comment claimed. That case no longer reaches
+        // here at all: an abort during the body read is rethrown above and
+        // classified as an abort, because a body nobody could read carries no
+        // `reason` to preserve.
+        //
+        // What it does cover is the race the other way round: the body had
+        // ALREADY ARRIVED and parsed into an `insufficient_funds` 400 when the
+        // abort fired underneath it — the 30s bound elapsing in the same tick
+        // the refusal was thrown, or an unmount landing there. `signal.aborted`
+        // is then true while we hold a complete, deliberate server refusal.
+        // Rewriting it into the abort `Error` would strip `reason`, so the
         // top-up branch in `purchase` below would stop recognising it and the
         // viewer would be shown a raw failure instead of the Buzz modal. A
-        // deliberate refusal always wins over the abort wrapper.
+        // refusal we actually read always wins over an abort that raced it.
         if (controller.signal.aborted && !(err instanceof GoodPurchaseRefusal)) {
           if (timedOut) {
             // The BOUND fired. This is a real failure the caller must handle,

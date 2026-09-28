@@ -9,7 +9,11 @@ import { resetTransport } from '../src/testing.js';
 
 const PARENT_ORIGIN = 'https://civitai.com';
 
-function buildInit(): BlockInitPayload {
+function buildInit(viewer: BlockInitPayload['viewer'] = {
+  id: 7,
+  username: 'alice',
+  status: 'active',
+}): BlockInitPayload {
   return {
     blockInstanceId: 'inst-1',
     blockId: 'b',
@@ -21,10 +25,27 @@ function buildInit(): BlockInitPayload {
     },
     context: { slotId: 'app.page' },
     settings: { publisherSettings: {}, userSettings: {} },
-    viewer: { id: 7, username: 'alice', status: 'active' },
+    viewer,
     theme: 'dark',
     renderMode: 'iframe',
   };
+}
+
+/**
+ * Re-run the handshake with `viewer: null` — the ONE anonymous value on the
+ * wire, from every host version (`isSignedIn`'s doc adjudicates the spellings).
+ * The `beforeEach` has already dispatched a SIGNED-IN init, so this replaces the
+ * transport wholesale rather than layering a second `BLOCK_INIT` on top of it.
+ */
+function initAnonymous() {
+  resetTransport();
+  getTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+  window.dispatchEvent(
+    new MessageEvent('message', {
+      data: { type: 'BLOCK_INIT', payload: buildInit(null) },
+      origin: PARENT_ORIGIN,
+    }),
+  );
 }
 
 const OWNED = {
@@ -112,42 +133,89 @@ describe('useEntitlements', () => {
     expect(result.current.entitlements).toBeNull();
   });
 
-  it('🔴 an UNCODED 403 sets `unauthenticated` — the one refusal a retry cannot fix', async () => {
-    // A page App Block is a PUBLIC surface. A logged-out viewer's block token
-    // carries an anonymous subject, and the ENDPOINT refuses it with exactly
-    // this body — `src/pages/api/v1/blocks/entitlements.ts`, verbatim, and
-    // deliberately not an invented one. That is an `error`, so a block
-    // rendering a retry notice on `error` alone shows every anonymous first
-    // paint a button that can never succeed — in the one case where "you own
-    // nothing" is the right answer.
-    globalThis.fetch = vi.fn(async () => ({
-      ok: false,
-      status: 403,
-      json: async () => ({ error: 'Anonymous block tokens hold no entitlements' }),
-    })) as unknown as typeof fetch;
+  it('🔴 an ANONYMOUS VIEWER sets `unauthenticated` — derived from BLOCK_INIT, before any request', async () => {
+    // A page App Block is a PUBLIC surface, so a logged-out viewer is the
+    // COMMON path. `BlockInitPayload.viewer === null` is what the platform sends
+    // for one, and it is the only anonymous value on the wire.
+    //
+    // 🔴 THIS REPLACES A RESPONSE-DERIVED PREDICATE THAT COULD NEVER FIRE. The
+    // hook used to set the flag on `status === 403 && code == null`, and the
+    // fixture that "proved" it invented a body the server cannot send on this
+    // route: `entitlements.ts` wraps the handler in `withBlockScope(…,
+    // { requiredScope: 'goods:read:self' })`, whose `:self` arm rejects an
+    // anonymous subject as `code: 'context_binding'`. Every 403 here is CODED,
+    // so `code == null` was false in every reachable case and the flag was dead
+    // for the one case it exists for — while the fixture kept the suite green.
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ entitlements: [OWNED] }),
+    }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    initAnonymous();
 
     const { result } = renderHook(() => useEntitlements());
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.unauthenticated).toBe(true);
-    expect(result.current.error).toBeInstanceOf(Error);
+    // 🔴 NOT an error. Nothing failed — we never asked. A retry notice would be
+    // wrong twice over, and the documented render order checks this flag first.
+    expect(result.current.error).toBeNull();
     expect(result.current.owns('extra-slots')).toBe(false);
+    // 🔴 AND NO REQUEST WAS ISSUED. The `fetch` above would have RESOLVED with a
+    // full entitlement list, so this asserts the skip rather than a refusal:
+    // without it, a hook that fired anyway would still pass every line above.
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.current.entitlements).toBeNull();
+  });
+
+  it('CONTROL — a SIGNED-IN viewer is not unauthenticated, and the request IS issued', async () => {
+    // The arm that stops the flag being hardcoded `true`, and the one that
+    // proves the skip above is keyed on the viewer rather than on "never fetch".
+    const fetchMock = okFetch();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useEntitlements());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.unauthenticated).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.current.entitlements).toEqual([OWNED]);
+  });
+
+  it('CONTROL — an anonymous `refetch()` stays a no-op, so a retry button cannot spend a request', async () => {
+    // `unauthenticated` is derived, not latched, so it must survive the one
+    // action an app is most likely to wire to it by mistake.
+    const fetchMock = okFetch();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    initAnonymous();
+
+    const { result } = renderHook(() => useEntitlements());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      result.current.refetch();
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.unauthenticated).toBe(true);
+    expect(result.current.error).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('🔴 CONTROL — a CODED 403 is NOT unauthenticated, and its real cause reaches `error`', async () => {
-    // The assertion above holds for a status-only predicate too, and a
-    // status-only predicate is WRONG: a 403 on this route has seven producers
-    // and only the two uncoded ones mean "not signed in". `withBlockScope`
-    // (`src/server/middleware/block-scope.middleware.ts`) emits the other five
-    // — `instance_revoked`, `consent_revoked`, `app_not_approved`,
-    // `insufficient_scope`, `context_binding` — and its own comment states it
-    // carries a `code` on EVERY 403 it emits, "so an app can treat it as
-    // always-present".
+    // A signed-in viewer can still be refused, and none of those refusals is a
+    // sign-in problem. `withBlockScope`
+    // (`src/server/middleware/block-scope.middleware.ts`) emits five of them —
+    // `instance_revoked`, `consent_revoked`, `app_not_approved`,
+    // `insufficient_scope`, `context_binding` — and carries a `code` on EVERY
+    // 403 it emits, "so an app can treat it as always-present".
     //
-    // `insufficient_scope` is the likeliest of them in practice: a manifest
-    // that simply forgot `goods:read:self`. Routing it to `unauthenticated`
-    // tells an app to show a SIGNED-IN viewer a sign-in screen, and buries the
-    // one message that names the actual fix.
+    // `insufficient_scope` is the likeliest in practice: a manifest that simply
+    // forgot `goods:read:self`. Routing any of them to `unauthenticated` tells
+    // an app to show a SIGNED-IN viewer a sign-in screen, and buries the one
+    // message that names the actual fix. This is the arm that fails if anyone
+    // re-derives the flag from a status or a code.
     globalThis.fetch = vi.fn(async () => ({
       ok: false,
       status: 403,
@@ -173,10 +241,12 @@ describe('useEntitlements', () => {
     ['app_not_approved', 'app block is not approved'],
     ['context_binding', 'block token is not bound to this context'],
   ])('CONTROL — the coded 403 `%s` is an error, never a sign-in prompt', async (code, message) => {
-    // The remaining middleware 403s, enumerated rather than sampled: the
-    // discriminator is the PRESENCE of `code`, so every one of them must land
-    // the same way. A predicate keyed on a particular code value, or on a
-    // message string, passes the single case above and fails here.
+    // The remaining middleware 403s, enumerated rather than sampled. 🔴
+    // `context_binding` is the row that matters most: it is ALSO what the
+    // middleware sends for an anonymous subject on a `:self` scope, which is
+    // why the flag must not be keyed on it — the same code covers a wrong
+    // `modelId` and an array-form query param, and a signed-in viewer hitting
+    // either must not be told to sign in.
     globalThis.fetch = vi.fn(async () => ({
       ok: false,
       status: 403,
@@ -190,11 +260,13 @@ describe('useEntitlements', () => {
     expect(result.current.error?.message).toBe(message);
   });
 
-  it('a 403 whose body did not parse is treated as unauthenticated — the pinned choice', async () => {
-    // Not incidental behaviour: with no body there is no `code` to read, and
-    // both real auth refusals are shaped exactly that way while neither
-    // producer of a CODED 403 sends an unparseable body. Pinned so that
-    // changing the call is a deliberate act with a test to update.
+  it('a 403 whose body did not parse is an ERROR, not a sign-in prompt', async () => {
+    // The last shape a response-derived predicate used to claim: an unparseable
+    // 403 has no `code`, so `status === 403 && code == null` routed it to
+    // `unauthenticated`. It cannot be one — the viewer is signed in, which the
+    // hook knows from `BLOCK_INIT` before it ever issues the request. A body
+    // the block could not read is a failure to report, so it reaches `error`
+    // with the status in the message and the retry notice stays available.
     globalThis.fetch = vi.fn(async () => ({
       ok: false,
       status: 403,
@@ -206,7 +278,7 @@ describe('useEntitlements', () => {
     const { result } = renderHook(() => useEntitlements());
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    expect(result.current.unauthenticated).toBe(true);
+    expect(result.current.unauthenticated).toBe(false);
     expect(result.current.error?.message).toContain('403');
   });
 
