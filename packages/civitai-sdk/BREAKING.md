@@ -17,7 +17,7 @@ messages have no destination yet.
 |---|---|---|
 | `GET_VIEWER` | `app.site.get('blocks/me')` | Route exists. 🔴 **Not `site.get('me')`** — that resolves to `/api/v1/me`, an `AuthedEndpoint` that does not accept a block token |
 | `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`, `POLL_WORKFLOW`, `CANCEL_WORKFLOW`, `QUERY_APP_WORKFLOWS`, `CANCEL_APP_WORKFLOW` | `POST /api/v1/blocks/workflows/{submit,estimate,poll,cancel,query}` | **Routes exist.** 🔴 Use these, **not** `app.orchestration` — see *What a direct orchestrator call loses* below |
-| `GET_IMAGES_BY_IDS` | `GET /api/v1/blocks/images?ids=1,2,3` | Batch, up to **100** ids per request. Misses are reported by OMISSION — see below. 🔴 **Not `/api/v1/images`** — that is a `PublicEndpoint`; it ignores your token and answers with anonymous public results rather than erroring |
+| `GET_IMAGES_BY_IDS` | `GET /api/v1/blocks/gated-images?ids=1,2,3` | Batch, up to **100** ids (`IMAGE_IDS_BATCH_MAX`); answers `{ images: BlockGatedImage[] }`. 🔴 **Not `blocks/images?ids=`** — that route's corpus is the exact complement of this one, so it answers EMPTY for every id an app published; see *Batch image fetch* below. 🔴 **Not `/api/v1/images`** — that is a `PublicEndpoint`; it ignores your token and answers with anonymous public results rather than erroring |
 | `APP_STORAGE_*` | `POST /api/v1/blocks/app-storage/*` | **Routes exist** — five of them (`get`, `set`, `delete`, `list`, `quota`), civitai#5085. This row said "No v1 route"; that is no longer true. See *App storage* below |
 | `SHARED_*` | `app.sharedStorage`, over `GET\|POST /api/v1/blocks/shared-storage/*` | **Routes exist** — eleven of them. `app.sharedStorage` wraps the **five** key/value ones; the higher-level ops are deliberately app-layer. See *Shared storage* below |
 | `GET_BUZZ_BALANCE` | `GET /api/v1/blocks/buzz` | **Route exists.** Returns `{ blue, green, yellow }` — a bare object, three numbers |
@@ -239,13 +239,36 @@ it is the copy that cannot rot; this file deliberately does not restate it.
 
 ## Batch image fetch
 
-`GET /api/v1/blocks/images?ids=1,2,3` — up to **100** ids, matching the ceiling the `GET_IMAGES_BY_IDS` bridge message
-already enforced.
+`GET /api/v1/blocks/gated-images?ids=1,2,3` → `{ images: BlockGatedImage[] }` — up to **100** ids
+(`IMAGE_IDS_BATCH_MAX`), matching the ceiling the `GET_IMAGES_BY_IDS` bridge message already enforced. Any valid
+block token; no required scope.
 
-🔴 **Misses are reported by omission.** An id you may not see and an id that does not exist are both simply
-absent from `items`. That is deliberate: distinguishing them would leak whether a hidden image exists, which is
-the same non-disclosure `BlockGatedImage` already makes when it collapses its gated verdict. Do not infer
-deletion from absence.
+This is the per-viewer GATED read, and it is the replacement for `GET_IMAGES_BY_IDS`. Given the image ids an app
+stored — a benchmark grid, a generator's cover image, a gallery panel — it answers, PER REQUESTING VIEWER, which
+of them that viewer may be shown, with a host-minted moderated edge url for exactly those.
+
+🔴 **THERE ARE TWO IMAGE ROUTES AND THEY ARE NOT INTERCHANGEABLE. `blocks/images?ids=` CANNOT SERVE THIS CASE —
+it answers EMPTY for every id an app published, at any ceiling, for any viewer, forever.** The reason is that the
+two corpora are DISJOINT, not that the two routes disclose differently:
+
+- `blocks/images` serves `runImageSearch` over the Meilisearch images index, whose source query hard-filters
+  `i."postId" IS NOT NULL` (`civitai:src/server/search-index/images.search-index.ts:134`, and `:282` for the
+  incremental update pass).
+- `blocks/gated-images` is the exact complement — `AND i."postId" IS NULL`
+  (`civitai:src/server/services/blocks/block-gated-images.service.ts:184`), further scoped to
+  `blockPublishedAppId = claims.appId`.
+
+Complementary predicates: an image cannot satisfy both. And because `blocks/images` reports misses **by
+omission** (below), substituting it fails SILENTLY — `200` with an empty list, never an error. A port that uses
+it renders nothing and looks healthy. The authority on this is the docblock of
+`civitai:src/pages/api/v1/blocks/gated-images.ts`, which exists to answer exactly this question.
+
+🔴 **`blocks/images` is a catalog SEARCH route** — it shares `runImageSearch` with the public `/api/v1/images`,
+its `?ids=` is a FILTER over that search, and it is the right route when you are querying the public catalog. On
+that corpus **misses are reported by omission**: an id you may not see and an id that does not exist are both
+simply absent. That is deliberate there — the corpus is the whole public catalog, so confirming that a withheld
+id exists would itself be the disclosure. Do not infer deletion from absence, and do not read the omission rule
+as applying to `gated-images`, which collapses its gated verdict into `BlockGatedImage` instead.
 
 ## Post creation stays on the bridge
 
