@@ -15,7 +15,12 @@ sibling workspaces. Help them extend it.
 ## Stack
 
 - Vite 7 + React 19 + TypeScript strict
-- `@civitai/blocks-react` for the eight hooks + the singleton `IframeTransport`
+- `@civitai/blocks-react` for the block hooks + the singleton `IframeTransport`.
+  🔴 **Do not trust a hook count — enumerate.** The hook set grows every release;
+  this line said "the eight hooks" until 2026-09-29, by which point the package
+  exported 37 and the two newest (`useGoodPurchase` / `useEntitlements`) had been
+  invisible to every agent that read it. Enumerate from the package you actually
+  installed — `node -e "import('@civitai/blocks-react').then(m => console.log(Object.keys(m).filter(k => k.startsWith('use')).sort().join(' ')))"`.
 - `@civitai/app-sdk/blocks` for the manifest types, scope strings and the JSON schema
 - `@civitai/app-sdk/vite` for `blockManifestPlugin`, the build-time manifest gate (needs the optional peer `ajv`, already in `devDependencies`)
 - No styling library — the demo uses inline styles + the `[data-theme]` attribute the host provides
@@ -115,6 +120,31 @@ page surface, with the markup already in place so the two can never separate.
 - **New scope** — add the scope string to `block.manifest.json`'s `scopes` array, then re-register (Phase 2 self-service via the CLI; for now coordinate with the server team). Scope changes reset `app_blocks.status` to `pending` and require re-approval.
 - **Buzz-spending generation** — add `ai:write:budgeted` to manifest scopes and use `useBuzzWorkflow()`. The host caps each generation at the token's `buzzBudget`. For a **page app** that value comes from the manifest's `page.buzzBudgetPerGen`; for a **model-slot app** (like this starter) it comes from the install's `buzz_budget_per_gen` setting, not the manifest. Show `useBuzzWorkflow().status` next to your "Generate" button so users see polling state.
   - 🔴 **The per-gen budget is a SAFETY CEILING, not a cost estimate — never size it to what you think a run costs.** It caps what ONE generation may cost so a buggy or compromised app can't drain the viewer's Buzz. Set it to *several times* your worst-case run (e.g. `1000` when you expect ~100). Headroom is free: the server re-prices every submit and charges the real price, clamps the budget at the per-gen cap (1000) anyway, and separately caps cumulative spend per viewer per day. Size it to an estimate and the app **breaks**: a submit priced above the budget is rejected outright with `insufficient buzz budget` — nothing charged, nothing delivered — and for a page app it stays broken for every user until a new manifest version ships and is re-approved. Any upward drift (more steps, bigger resolution, pricier model or recipe) does that.
+- **Selling something (digital goods)** — needs `@civitai/app-sdk` ≥ 0.52.0 and
+  `@civitai/blocks-react` ≥ 0.59.0; this starter already pins both, so a fresh
+  scaffold has the whole path. Declare a `goods` array in `block.manifest.json`,
+  add `goods:purchase:self` (to sell) and `goods:read:self` (to read entitlements
+  back) to `scopes`, then call `useGoodPurchase()` to buy and `useEntitlements()`
+  to check ownership (`owns(goodId)`). Each good is `{ id, title, priceBuzz }`
+  plus an optional `description`; `priceBuzz` is **whole Buzz, 2–50000** (the
+  floor is 2 because the owner's 70% share is floored, so a 1-Buzz item would
+  earn its owner nothing, permanently), at most 32 goods per manifest. Points
+  worth knowing before you design around it:
+  - 🔴 **`id` is what an entitlement is keyed by.** Renaming it in a later
+    version orphans every entitlement already granted under the old id.
+  - 🔴 **The catalog is REVIEW-GATED.** The catalog a moderator approves is the
+    catalog that can be sold, and changing a price means shipping a new manifest
+    version and being re-reviewed — the same gate as a scope change.
+  - **The platform owns the ledger, you own the meaning.** It records who bought
+    what, when, at what price, and its refund state; what the good *does* is your
+    app's business — keep those semantics in your own app storage.
+  - **Pass `expectedPriceBuzz`** — the server charges its own price and refuses
+    when yours disagrees, which turns "the app showed a stale price" into a clean
+    refusal instead of a viewer charged an amount they never saw.
+  - **A purchase can be refused at a perfectly legal price.** The viewer has a
+    daily ceiling across every app they have installed, so handle the 4xx; do not
+    treat a valid `priceBuzz` as a guarantee of success.
+  - Sales split platform 30% / app owner 70%, paid immediately.
 - **Per-viewer settings** — Phase 2 (`block_user_settings` table). Don't roll your own persistence — flag the gap and wait for the platform.
 - **Multiple manifests** (one repo, several blocks) — add entries to `civitai.app.json`'s `blocks` array. Each manifest is independently versioned and reviewed.
 
