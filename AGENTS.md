@@ -90,7 +90,8 @@ civitai-app-starters/
 │   ├── civitai-blocks-react/    # React hooks + iframe transport + the /ui pack
 │   ├── civitai-theme/           # --civitai-* design tokens (generated from Mantine)
 │   ├── civitai-components/      # attribute-driven component CSS + the <civitai-*> elements
-│   └── civitai-components-react/# React bindings for those elements (generated)
+│   ├── civitai-components-react/# React bindings for those elements (generated)
+│   └── civitai-components-chat/ # <civitai-chat>: the assistant as one element (AI SDK + MCP, lazy)
 └── starters/
     ├── next-app/                # Next.js 15 App Router (SSR)
     ├── sveltekit-app/           # SvelteKit 2 (SSR)

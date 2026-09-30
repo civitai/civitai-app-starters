@@ -1,0 +1,204 @@
+import type { Attachment } from '../types.js';
+
+export const POST_TOOL = 'post_to_civitai';
+
+/** The host call from `@civitai/sdk`'s `host.createPost`; only a block framed in civitai.com has it. */
+export interface PostHost {
+  createPost(
+    request: {
+      sources: { kind: 'workflow'; workflowId: string; imageIndexes?: number[] }[];
+      title?: string;
+      detail?: string;
+      tags?: string[];
+    },
+    opts?: { signal?: AbortSignal },
+  ): Promise<{ postId: number; url: string } | null>;
+}
+
+export type PostState = 'ready' | 'posting' | 'posted' | 'failed' | 'dismissed';
+
+/** What survives a reload; a post not yet sent is rebuilt from the tool call. */
+export interface SavedPost {
+  state: 'posted' | 'dismissed';
+  postId?: number;
+  url?: string;
+}
+
+export interface PostDeps {
+  /** `null` outside civitai.com, where there is no host to post through. */
+  host: PostHost | null;
+  /** Asks for `posts:write:self`; inside civitai.com the host asks in place. */
+  authorize(): Promise<boolean>;
+  saved(post: PostDraft): void;
+}
+
+export interface PostInit {
+  id: string;
+  items: Attachment[];
+  title?: string;
+  detail?: string;
+  tags?: string[];
+  saved?: SavedPost;
+}
+
+export interface PostSummary {
+  status: 'awaiting_user' | 'posting' | 'posted' | 'failed' | 'not_posted';
+  url?: string;
+  reason?: string;
+  note: string;
+}
+
+const IMAGE_INDEX = /\.images\[(\d+)\]$/;
+
+/** Only pictures this chat made can be posted: the host takes workflow outputs, not uploads or URLs. */
+export function isPostable(attachment: Attachment): boolean {
+  return attachment.kind === 'image' && attachment.source.type === 'result' && IMAGE_INDEX.test(attachment.source.path);
+}
+
+function sourcesOf(items: Attachment[]) {
+  const byWorkflow = new Map<string, number[]>();
+  for (const item of items) {
+    if (item.source.type !== 'result') continue;
+    const index = Number(IMAGE_INDEX.exec(item.source.path)?.[1]);
+    byWorkflow.set(item.source.workflowId, [...(byWorkflow.get(item.source.workflowId) ?? []), index]);
+  }
+  return [...byWorkflow].map(([workflowId, imageIndexes]) => ({ kind: 'workflow' as const, workflowId, imageIndexes }));
+}
+
+/**
+ * A post the assistant suggested or the viewer started. The host shows its own
+ * post dialog; nothing is posted unless the viewer publishes it there.
+ */
+export class PostDraft extends EventTarget {
+  readonly id: string;
+  readonly items: Attachment[];
+  readonly title: string;
+  readonly detail: string;
+  readonly tags: string[];
+  state: PostState = 'ready';
+  postId?: number;
+  url?: string;
+  error?: { message: string; detail?: string };
+
+  #deps: PostDeps;
+
+  constructor(deps: PostDeps, init: PostInit) {
+    super();
+    this.#deps = deps;
+    this.id = init.id;
+    this.items = init.items;
+    this.title = init.title ?? '';
+    this.detail = init.detail ?? '';
+    this.tags = init.tags ?? [];
+    if (init.saved) {
+      this.state = init.saved.state;
+      this.postId = init.saved.postId;
+      this.url = init.saved.url;
+    }
+  }
+
+  async submit(): Promise<void> {
+    if (this.state !== 'ready' && this.state !== 'failed') return;
+    const host = this.#deps.host;
+    if (!host) return this.#set('failed', { message: 'Posting works when ChatCVT is opened on civitai.com.' });
+    this.#set('posting', undefined);
+    try {
+      if (!(await this.#deps.authorize())) return this.#set('failed', { message: 'Posting needs your permission on Civitai.' });
+      const post = await host.createPost({
+        sources: sourcesOf(this.items),
+        ...(this.title.trim() ? { title: this.title.trim().slice(0, 255) } : {}),
+        ...(this.detail.trim() ? { detail: this.detail.trim().slice(0, 2000) } : {}),
+        ...(this.tags.length ? { tags: this.tags } : {}),
+      });
+      if (!post) return this.#set('ready', undefined);
+      this.postId = post.postId;
+      this.url = post.url;
+      this.#set('posted', undefined);
+      this.#deps.saved(this);
+    } catch (error) {
+      this.#set('failed', humanizePostError(error));
+    }
+  }
+
+  dismiss(): void {
+    if (this.state !== 'ready' && this.state !== 'failed') return;
+    this.#set('dismissed', undefined);
+    this.#deps.saved(this);
+  }
+
+  toSaved(): SavedPost | undefined {
+    if (this.state === 'posted') return { state: 'posted', ...(this.postId !== undefined ? { postId: this.postId } : {}), ...(this.url ? { url: this.url } : {}) };
+    if (this.state === 'dismissed') return { state: 'dismissed' };
+    return undefined;
+  }
+
+  summary(): PostSummary {
+    switch (this.state) {
+      case 'ready':
+        return { status: 'awaiting_user', note: 'A card is on screen; the user posts it from there and confirms on Civitai. Do not say it is posted.' };
+      case 'posting':
+        return { status: 'posting', note: 'The user is confirming the post on Civitai.' };
+      case 'posted':
+        return { status: 'posted', url: this.url, note: 'It is live on Civitai. You may share the link.' };
+      case 'failed':
+        return { status: 'failed', reason: this.error?.detail ?? this.error?.message, note: 'Posting did not work. Tell the user why in plain words; they can try again on the card.' };
+      case 'dismissed':
+        return { status: 'not_posted', note: 'The user decided not to post it.' };
+    }
+  }
+
+  #set(state: PostState, error: PostDraft['error']): void {
+    this.state = state;
+    this.error = error;
+    this.dispatchEvent(new Event('change'));
+  }
+}
+
+export function humanizePostError(error: unknown): { message: string; detail?: string } {
+  const detail = error instanceof Error ? error.message : String(error);
+  const code = (error as { code?: unknown } | null)?.code;
+  if (code === 'unauthenticated' || /sign in/i.test(detail)) return { message: 'Sign in to Civitai to post.', detail };
+  if (code === 'rate-limited') return { message: 'You are posting a lot right now; wait a while and try again.', detail };
+  if (/subqueue|not .*this app/i.test(detail)) return { message: 'Civitai cannot post this picture from ChatCVT yet.', detail };
+  if (/review-mode|not ready/i.test(detail)) return { message: 'Posting is not available here right now.', detail };
+  return { message: 'Civitai could not create the post.', detail };
+}
+
+/** The open conversation's posts, plus any started from a result's Post button. */
+export class PostManager extends EventTarget {
+  #posts = new Map<string, PostDraft>();
+  readonly deps: PostDeps;
+
+  constructor(deps: PostDeps) {
+    super();
+    this.deps = deps;
+  }
+
+  get available(): boolean {
+    return this.deps.host !== null;
+  }
+
+  create(init: PostInit): PostDraft {
+    const post = new PostDraft(this.deps, init);
+    post.addEventListener('change', () => this.dispatchEvent(new CustomEvent('post-change', { detail: post })));
+    this.#posts.set(post.id, post);
+    return post;
+  }
+
+  get(id: string): PostDraft | undefined {
+    return this.#posts.get(id);
+  }
+
+  /** A fresh post for one result each time, so an earlier post never blocks posting it again. */
+  forMedia(attachment: Attachment): PostDraft {
+    return this.create({ id: `media:${attachment.id}:${Date.now()}`, items: [attachment] });
+  }
+
+  clear(): void {
+    this.#posts.clear();
+  }
+}
+
+export function isChatPost(id: string): boolean {
+  return !id.startsWith('media:');
+}
