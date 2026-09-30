@@ -143,6 +143,8 @@ export const WORKFLOW_STEP_TYPES = {
    * `maxDuration` is an upper bound; generation can stop earlier.
    */
   yuE2: 'Generate a song from style and lyrics with YuE2',
+  /** Music or a standalone sound effect from a text prompt. */
+  soniloAudioGen: 'Music or a sound effect from a text prompt (Sonilo)',
   /** Speech-to-text transcription. */
   transcription: 'Speech-to-text transcription',
   /** Generate captions from audio. */

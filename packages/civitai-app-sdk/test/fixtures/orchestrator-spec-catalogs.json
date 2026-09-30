@@ -18,7 +18,7 @@
     ".discriminator.mapping."
   ],
   "specUrl": "https://orchestration.civitai.com/openapi/v2-consumers.json",
-  "readOn": "2026-09-19",
+  "readOn": "2026-09-30",
   "workflowStepTypes": [
     "aceStepAudio",
     "ageClassification",
@@ -53,6 +53,7 @@
     "promptEnhancement",
     "qwenImageBench",
     "shieldstralModeration",
+    "soniloAudioGen",
     "textToImage",
     "textToSpeech",
     "training",
