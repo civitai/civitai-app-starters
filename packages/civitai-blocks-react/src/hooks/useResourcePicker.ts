@@ -20,13 +20,28 @@ export interface UseResourcePicker {
      * of the type — every resource the viewer can reach.
      *
      * Pass it ONLY when the block already holds a chosen checkpoint the pick has
-     * to match, and then DERIVE it from that checkpoint — `checkpoint.baseModel`,
-     * or `useBlockContext().context.checkpoint?.baseModel`. Never a hardcoded
+     * to match, and then DERIVE it from that checkpoint. Never a hardcoded
      * ecosystem string: a literal pins every viewer of the app to whichever
-     * family the author happened to be testing with.
+     * family the author happened to be testing with. Nor a literal reached
+     * through a fallback — `checkpoint?.baseModel ?? 'SDXL'` re-pins every viewer
+     * who has not picked yet, which is the same defect wearing a default.
+     *
+     * 🔴 WHERE THE FAMILY COMES FROM ON THIS HOOK'S ONLY SURFACE. This hook is
+     * PAGE-ONLY (`OPEN_RESOURCE_PICKER` is a page affordance; the model slot has
+     * the narrower `useCheckpointPicker` instead), and a page slot carries no
+     * checkpoint: `checkpoint` exists on `ModelSlotContext` alone, and
+     * `BlockContext` is a union with no index signature, so
+     * `useBlockContext().context.checkpoint` does not even typecheck. The source
+     * is {@link BlockResourceInfo}`.baseModel` — the `baseModel` of a Checkpoint
+     * THIS picker returned earlier:
+     *
+     *     const checkpoint = await open({ resourceType: 'Checkpoint' });
+     *     if (checkpoint) await open({ resourceType: 'LORA', baseModelGroup: checkpoint.baseModel });
      *
      * Accepts an ecosystem key (e.g. 'Flux1', 'SDXL') OR a baseModel name (e.g.
-     * 'Flux.1 D'); the host collapses either to the ecosystem family.
+     * 'Flux.1 D'); the host collapses either to the ecosystem family. `''` is not
+     * a way to widen: the page host drops a zero-length value, so it is only ever
+     * a confusing spelling of omitting the key.
      */
     baseModelGroup?: string;
   }) => Promise<BlockResourceInfo | null>;
@@ -54,18 +69,35 @@ export interface UseResourcePicker {
  * Host-mediated, same trust model as `useCheckpointPicker` / `useBuzzWorkflow`:
  * the block never touches the picker UI directly.
  *
- * @example
- * // DEFAULT — no ecosystem. The viewer sees every LoRA they can reach.
- * const { open } = useResourcePicker();
- * const picked = await open({ resourceType: 'LORA' });
- * if (!picked) return;                 // user dismissed
- * // feed picked.versionId into body.additionalResources and submit
+ * 🔴 THE ORDER OF THE TWO `@example` BLOCKS BELOW IS LOAD-BEARING — DO NOT SWAP
+ * THEM. `<civitai-developer-docs>/scripts/gen-appblocks-hooks.mjs` assigns
+ * `jsdocExample` inside its tag loop, so on a hook with several `@example` tags
+ * the LAST one wins and becomes the single published example whenever the README
+ * fence is unavailable (renamed heading, dropped fence). The unconstrained call
+ * is what every agent should copy, so it is last. The constrained variant is
+ * first, where a human reading top-down still meets the exception before the
+ * default it excepts.
  *
  * @example
- * // ONLY when the block already holds a chosen checkpoint the LoRA must match:
- * // derive the family from THAT checkpoint. A hardcoded ecosystem here hides
- * // every resource outside it from the viewer.
- * const picked = await open({ resourceType: 'LORA', baseModelGroup: checkpoint.baseModel });
+ * // CONSTRAINED — only when the pick has to match a checkpoint the block
+ * // already holds. Derive the family from THAT checkpoint; a hardcoded
+ * // ecosystem here hides every resource outside it from the viewer. On a page
+ * // block the checkpoint comes from this same picker, not from the context.
+ * const { open } = useResourcePicker();
+ * const checkpoint = await open({ resourceType: 'Checkpoint' });
+ * if (checkpoint) {
+ *   const lora = await open({ resourceType: 'LORA', baseModelGroup: checkpoint.baseModel });
+ *   // feed lora?.versionId into body.additionalResources and submit
+ * }
+ *
+ * @example
+ * // THE DEFAULT — no ecosystem filter at all. The viewer sees every LoRA they
+ * // can reach, which is almost always what you want.
+ * const { open } = useResourcePicker();
+ * const picked = await open({ resourceType: 'LORA' });
+ * if (picked) {
+ *   // feed picked.versionId into body.additionalResources and submit
+ * }
  */
 export function useResourcePicker(): UseResourcePicker {
   const open = useCallback(

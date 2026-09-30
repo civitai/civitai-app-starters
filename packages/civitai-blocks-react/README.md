@@ -965,16 +965,27 @@ Drive the platform Checkpoint picker + persist a viewer override.
 every checkpoint outside the family you pass, so a literal ecosystem pins every
 viewer to whichever family the author happened to test with. Read it from the
 checkpoint the block already holds. The parameter is currently **required** by
-this hook's type — and `''` is not an escape hatch: the host resolves it to the
-real ecosystem key `Other`, so it narrows rather than widens.
+this hook's type, and `''` is **not** an escape hatch — it does not even mean the
+same thing on both hosts. On a **model slot** the host normalises whatever string
+you send, so `''` resolves to the real ecosystem key `Other` and NARROWS to that
+one family. On a **page** the host drops a zero-length value, so `''` behaves
+exactly like omitting it. Neither is what you meant on at least one surface:
+pass a family derived from a real checkpoint, and never `''`.
 
 ```tsx
+import { isModelSlotContext } from '@civitai/app-sdk/blocks';
+
+const { context } = useBlockContext();
 const { open, persist } = useCheckpointPicker();
-const { selected } = await open({
-  baseModelGroup: checkpoint.baseModel,     // derived from the current pick
-  currentVersionId,
-});
-if (selected) await persist(selected.versionId);   // null clears the override
+
+// Derive the family from the checkpoint the block already holds — never a literal.
+if (isModelSlotContext(context) && context.checkpoint) {
+  const { selected } = await open({
+    baseModelGroup: context.checkpoint.baseModel,
+    currentVersionId: context.checkpoint.versionId,
+  });
+  if (selected) await persist(selected.versionId);   // null clears the override
+}
 ```
 
 ### `useResourcePicker()`
@@ -999,14 +1010,22 @@ if (picked) {
 ```
 
 Constrain it **only** when the block already holds a chosen checkpoint the pick has
-to match — and then derive the family from that checkpoint, never from a literal:
+to match — and then derive the family from that checkpoint, never from a literal.
+🔴 **This hook is PAGE-ONLY, and a page slot has no `context.checkpoint`** — that
+field lives on `ModelSlotContext` alone, so the family comes from
+`BlockResourceInfo.baseModel`, the `baseModel` of a Checkpoint this same picker
+returned earlier:
 
 ```tsx
 const { open } = useResourcePicker();
-const matching = await open({
-  resourceType: 'LORA',
-  baseModelGroup: checkpoint.baseModel,   // the checkpoint the viewer actually picked
-});
+
+const checkpoint = await open({ resourceType: 'Checkpoint' });
+if (checkpoint) {
+  const matching = await open({
+    resourceType: 'LORA',
+    baseModelGroup: checkpoint.baseModel,   // from the pick above — BlockResourceInfo.baseModel
+  });
+}
 ```
 
 ### `useImageUpload()`
