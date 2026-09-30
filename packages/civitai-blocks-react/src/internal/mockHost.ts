@@ -1817,25 +1817,42 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               });
               return;
             }
-            // Lazy-consent round-trip: grant the scope, then push a
+            // Lazy-consent round-trip: grant what the hint named, then push a
             // host-initiated TOKEN_REFRESH carrying it (the App's auto-resume
             // depends on seeing the new scope on its token).
-            consentGranted = true;
-            // …and grant whatever ELSE the hint named, filtered to the known
-            // vocabulary. `scopes` is untrusted block input (it is where markup
-            // and 5 KB strings arrive), so it is filtered here exactly as the
-            // refusal payload is — `isKnownBlockScope` is the same predicate
-            // both branches use. Absent/garbage hint ⇒ nothing extra, which is
-            // the pre-existing behaviour.
+            //
+            // `scopes` is untrusted block input (it is where markup and 5 KB
+            // strings arrive), so it is filtered to the known vocabulary exactly
+            // as the refusal payload is — `isKnownBlockScope` is the same
+            // predicate both branches use.
+            //
+            // 🔴 `consentGranted` IS THE MONEY FLAG, SO IT IS GRANTED ONLY WHEN
+            // ASKED FOR. It puts `ai:write:budgeted` AND `buzzBudget` on every
+            // token this host mints from here on. Setting it unconditionally
+            // meant a `posts:write:self` request also handed out the money
+            // scope, which made the PARTIAL-GRANT case — the viewer granting the
+            // one permission the block asked for and nothing else — unreachable
+            // in `pnpm dev`, so every local run exercised the one shape that
+            // hides a missing-scope bug.
+            //
+            // ⚠️ THE `!granted.length` FALLBACK IS LOAD-BEARING, not tidiness:
+            // `requestConsent()` with NO payload is documented as legitimate (the
+            // real host already knows the missing set it computed at mint), and
+            // so is a hint that survives no filtering. Both must keep granting
+            // the default money scope, which is the pre-existing behaviour — a
+            // grant branch that granted nothing at all would be a silent dead
+            // end of exactly the kind `consentGrantable` was added to remove.
             {
               const hint = (typed.payload as unknown as { scopes?: unknown } | undefined)
                 ?.scopes;
-              if (Array.isArray(hint)) {
-                for (const s of hint) {
-                  if (typeof s === 'string' && s !== BUDGETED_SCOPE && isKnownBlockScope(s)) {
-                    extraGrantedScopes.add(s);
-                  }
-                }
+              const granted = Array.isArray(hint)
+                ? hint.filter((s): s is string => typeof s === 'string' && isKnownBlockScope(s))
+                : [];
+              if (granted.length === 0 || granted.includes(BUDGETED_SCOPE)) {
+                consentGranted = true;
+              }
+              for (const s of granted) {
+                if (s !== BUDGETED_SCOPE) extraGrantedScopes.add(s);
               }
             }
             after(0, () => {

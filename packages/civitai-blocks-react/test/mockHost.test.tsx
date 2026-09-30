@@ -152,6 +152,49 @@ describe('createMockHost', () => {
     expect(tokenHook.result.current.buzzBudget).toBe(200);
   });
 
+  it('consent grants ONLY the scopes asked for — a `posts:write:self` grant is not a money grant', async () => {
+    // 🔴 THE PARTIAL-GRANT CASE, AND IT WAS UNREACHABLE IN `pnpm dev`. The grant
+    // branch used to set `consentGranted = true` unconditionally, and that flag
+    // is what puts `ai:write:budgeted` (and `buzzBudget`) on the minted token —
+    // so asking for `posts:write:self` handed out the MONEY scope as well. Every
+    // local run therefore exercised the all-scopes-granted path, which is the
+    // one shape that cannot show a block author what happens when the viewer
+    // grants the permission they asked for and nothing else.
+    uninstall = createMockHost({ consentGranted: false }).install();
+    const tokenHook = renderHook(() => useBlockToken());
+    const consentHook = renderHook(() => useRequestConsent());
+    await waitFor(() => expect(tokenHook.result.current.raw).toBeTruthy());
+
+    act(() => {
+      consentHook.result.current.requestConsent({ scopes: ['posts:write:self'] });
+    });
+
+    await waitFor(() => expect(tokenHook.result.current.scopes).toContain('posts:write:self'));
+    // 🔴 The assertion that was unreachable: the money scope stayed OFF.
+    expect(tokenHook.result.current.scopes).not.toContain('ai:write:budgeted');
+    expect(tokenHook.result.current.buzzBudget).toBeUndefined();
+  });
+
+  it('a REQUEST_CONSENT with NO usable hint still grants the budgeted scope', async () => {
+    // The compatibility arm of the test above, and the reason the grant is keyed
+    // on "the hint named the budgeted scope" rather than on "the hint is
+    // present". `requestConsent()` with no payload is documented as legitimate —
+    // the host already knows the missing set it computed at mint — so the mock
+    // must keep granting the default money scope there. Deleting that fallback
+    // makes a bare `requestConsent()` grant nothing at all, silently.
+    uninstall = createMockHost({ consentGranted: false }).install();
+    const tokenHook = renderHook(() => useBlockToken());
+    const consentHook = renderHook(() => useRequestConsent());
+    await waitFor(() => expect(tokenHook.result.current.raw).toBeTruthy());
+
+    act(() => {
+      consentHook.result.current.requestConsent();
+    });
+
+    await waitFor(() => expect(tokenHook.result.current.scopes).toContain('ai:write:budgeted'));
+    expect(tokenHook.result.current.buzzBudget).toBe(200);
+  });
+
   /**
    * The refusal path. Until `consentGrantable` existed the mock ALWAYS granted,
    * so a block author could not reach a `CONSENT_UNAVAILABLE` handler in

@@ -1083,18 +1083,41 @@ It **never** retries when:
 
 - the token already holds every scope the call needs (so the failure was not
   about consent — a rate limit, a 5xx, a bad body all behave exactly as before);
-- the host has pushed `CONSENT_UNAVAILABLE` — that scope can never be granted
-  here, so a retry is a guaranteed second failure;
-- the viewer dismissed a host confirm (`declined`); the component **unmounted**
-  mid-request; or the request timed out on a bridge with **no idempotency key**
-  (`createPost()`, collection follow). A timeout on a call that HAS a key —
-  `submit()`, `purchase()`, `tip()` — *is* retried, because the retry re-sends
-  that key and the server collapses the two into one operation;
+- the call failed **before `BLOCK_INIT`** landed. There is no real token yet, so
+  "the token is missing this scope" is not a fact about consent;
+- the host has pushed `CONSENT_UNAVAILABLE` **naming a scope this call needs** —
+  that scope can never be granted here, so a retry is a guaranteed second
+  failure. A refusal that names *other* scopes leaves this call alone, and one
+  that names **none** (the payload's `scopes` is documented as advisory and may
+  be empty) is treated as covering everything, which is the safe reading;
+- the viewer dismissed a host confirm (`declined`), or there is no session to
+  grant anything to (`signInRequired` — route that into `useRequestSignIn()`);
+- the component **unmounted** — including *during* the 60 s wait, so a grant that
+  arrives after your component is gone does not spend anything;
+- the request timed out on a bridge with **no idempotency key** (`createPost()`,
+  collection follow) — the retry would be a genuine second write, i.e. a second
+  public post. A timeout on a call that HAS a key — `submit()`, `purchase()`,
+  `tip()` — *is* retried, because the retry re-sends that key and the server
+  collapses the two into one operation;
 - **a second time.** One retry, never a loop. A second consent failure surfaces
   to you unchanged.
 
 If the viewer never answers the dialog, the **original** error is re-thrown after
 60 s and your `catch` sees exactly what it would have seen before.
+
+⚠️ **One failure is deliberately NOT excluded:** a host refusal about the
+*payload* rather than the token — `createPost()`'s `'no images to post'` — still
+prompts, because nothing distinguishes it structurally from a genuine consent
+failure without string-matching server copy. The cost is one needless dialog; the
+retry re-opens the host's own confirm and cannot publish anything new.
+
+**Concurrent callers share one dialog.** `N` calls that are in flight together and
+need the same scope post **one** `REQUEST_CONSENT` and wait on it together — a
+feed of tip buttons does not open a dialog per button. Each call still retries its
+**own** request with its **own** idempotency key, so *N* tips remain *N* transfers.
+⚠️ This is de-duplication of *concurrent* waits only: calls made one after another
+each get their own prompt, which is the shape that keeps `estimate()` out of the
+table above.
 
 Opt out per call — the same single option on every hook above:
 

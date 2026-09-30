@@ -9,9 +9,17 @@ import {
   WorkflowSubmitError,
 } from '../src/hooks/useBuzzWorkflow.js';
 import { useConsentUnavailable } from '../src/hooks/useConsentUnavailable.js';
-import { useCreatePostFromApp } from '../src/hooks/useCreatePostFromApp.js';
+import {
+  CreatePostError,
+  useCreatePostFromApp,
+} from '../src/hooks/useCreatePostFromApp.js';
 import { useGoodPurchase } from '../src/hooks/useGoodPurchase.js';
 import { useTip } from '../src/hooks/useTip.js';
+import {
+  CONSENT_GRANT_WAIT_MS,
+  withConsentRetry,
+} from '../src/internal/withConsentRetry.js';
+import { HUMAN_INTERACTION_TIMEOUT_MS } from '../src/transport/requestTimeouts.js';
 import { getTransport } from '../src/transport/singleton.js';
 import { resetTransport } from '../src/testing.js';
 
@@ -780,5 +788,355 @@ describe('withConsentRetry — automatic consent prompt-and-retry', () => {
     // test is dead without it.
     expect(sentOfType('REQUEST_CONSENT')).toHaveLength(0);
     expect(sentOfType('CREATE_POST_FROM_APP')).toHaveLength(1);
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🔴 RULE 4 ON THE KEYLESS BRIDGE — the arm the rule was WRITTEN for
+  // ───────────────────────────────────────────────────────────────────────────
+
+  it('🔴 useCreatePostFromApp: a TIMEOUT on the KEYLESS bridge is NEVER retried — no duplicate post', async () => {
+    // 🔴 THIS IS THE TEST THAT MAKES `flags.timedOut` REACHABLE. Until #500
+    // round 2 the `timedOut` stamp was applied in `createPost`'s OUTER catch —
+    // OUTSIDE the `withConsentRetry` call — so the raw `RequestTimeoutError`
+    // reached the helper carrying NEITHER `declined` NOR `timedOut`,
+    // `isCallerMarkedFinal` returned false, and on a token lacking
+    // `posts:write:self` the SDK prompted and RE-SENT THE POST.
+    // `CREATE_POST_FROM_APP` carries no `idempotencyKey` on the wire, so that
+    // second send is a genuine second write — a duplicate PUBLIC POST under the
+    // viewer's name, verbatim the outcome `CreatePostError.timedOut`'s own
+    // docstring exists to prevent. Deleting the `flags.timedOut === true` arm of
+    // `isCallerMarkedFinal` must fail THIS test; before the fix it failed none.
+    vi.useFakeTimers();
+    prime([]);
+    const { result } = renderHook(() => useCreatePostFromApp());
+
+    let settled!: Promise<unknown>;
+    await act(async () => {
+      settled = result.current
+        .createPost({ sources: [{ kind: 'published', imageIds: [1] }] })
+        .catch((e: unknown) => e);
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(sentOfType('CREATE_POST_FROM_APP')).toHaveLength(1);
+
+    // The host never answers at all — no reply, no refusal. Past the 10-minute
+    // human bound the transport gives up with a `RequestTimeoutError`.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(HUMAN_INTERACTION_TIMEOUT_MS + 1);
+    });
+
+    // 🔴 COUNTED BEFORE `await settled`, for the reason the siblings above give:
+    // pre-fix the call is held pending for the whole 60s consent wait, so
+    // awaiting first would fail by test timeout instead of on the count that
+    // names the defect.
+    expect(sentOfType('REQUEST_CONSENT')).toHaveLength(0);
+    expect(sentOfType('CREATE_POST_FROM_APP')).toHaveLength(1);
+
+    // …and the grant the pre-fix code was sitting there waiting for must not
+    // produce a second post either. This is the assertion that costs a real
+    // person a duplicate post if the guard regresses.
+    grant([POSTS_WRITE]);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CONSENT_GRANT_WAIT_MS + 1);
+    });
+    expect(sentOfType('CREATE_POST_FROM_APP')).toHaveLength(1);
+
+    const err = (await settled) as CreatePostError;
+    expect(err).toBeInstanceOf(CreatePostError);
+    // The flag rule 4 keys on, on the class that single-sources it.
+    expect(err.timedOut).toBe(true);
+    expect(err.code).toBeUndefined();
+  });
+
+  it('🔴 an ANONYMOUS viewer is routed to sign-in, never to a consent dialog they cannot act on', async () => {
+    // `sign in to post` is a named, single-sourced flag on `CreatePostError`, on
+    // exactly the same footing as `declined` — and it is just as un-retryable: no
+    // amount of scope granting gives a signed-OUT viewer a session. Before #500
+    // round 2 only `declined` was in `isCallerMarkedFinal`, so this landed in the
+    // consent path instead: a dialog with nothing the viewer could do in it, and
+    // `useRequestSignIn()` reached 60s late.
+    prime([]);
+    const { result } = renderHook(() => useCreatePostFromApp());
+
+    let settled!: Promise<unknown>;
+    act(() => {
+      settled = result.current
+        .createPost({ sources: [{ kind: 'published', imageIds: [1] }] })
+        .catch((e: unknown) => e);
+    });
+    await waitFor(() => expect(sentOfType('CREATE_POST_FROM_APP')).toHaveLength(1));
+    dispatch({
+      type: 'CREATE_POST_RESULT',
+      payload: {
+        requestId: sentOfType('CREATE_POST_FROM_APP')[0].requestId as string,
+        error: 'sign in to post',
+      },
+    });
+
+    // Counted first — pre-fix the promise is pending for the full 60s wait.
+    await new Promise((r) => setTimeout(r, 50));
+    // The token lacks `posts:write:self`, so the STRUCTURAL predicate alone
+    // WOULD have prompted; the `signInRequired` guard is the only thing here.
+    expect(sentOfType('REQUEST_CONSENT')).toHaveLength(0);
+    expect(sentOfType('CREATE_POST_FROM_APP')).toHaveLength(1);
+
+    const err = (await settled) as CreatePostError;
+    expect(err.signInRequired).toBe(true);
+    expect(err.code).toBe('sign in to post');
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // The refusal latch is SCOPE-AWARE, not transport-global
+  // ───────────────────────────────────────────────────────────────────────────
+
+  it('a refusal about a DIFFERENT scope does not disable prompt-and-retry for this one', async () => {
+    // The latch is one slot per transport, so before #500 round 2 a single
+    // `CONSENT_UNAVAILABLE` about ANY scope switched prompt-and-retry off for
+    // EVERY hook and every scope until the token rotated (~13 min). Rule 2's own
+    // justification does not reach that far: "the scope was clamped at mint" is a
+    // claim about the REFUSED scopes, and a retry for a scope the host never
+    // refused is not a guaranteed second failure.
+    prime([]);
+    renderHook(() => useConsentUnavailable());
+    const { result } = renderHook(() => useBuzzWorkflow());
+
+    // The host refuses the TIP scope. This submit needs `ai:write:budgeted`.
+    dispatch({
+      type: 'CONSENT_UNAVAILABLE',
+      payload: { reason: 'ungrantable', scopes: ['social:tip:self'] },
+    });
+    postMessage.mockClear();
+
+    let submitted!: Promise<unknown>;
+    act(() => {
+      submitted = result.current.submit(BODY);
+    });
+    await waitFor(() => expect(sentOfType('SUBMIT_WORKFLOW')).toHaveLength(1));
+    replyToSubmit(0, FAILED_SNAPSHOT);
+
+    await waitFor(() =>
+      expect(sentOfType('REQUEST_CONSENT')).toEqual([{ scopes: [BUDGETED] }]),
+    );
+    grant([BUDGETED]);
+    await waitFor(() => expect(sentOfType('SUBMIT_WORKFLOW')).toHaveLength(2));
+    replyToSubmit(1, OK_SNAPSHOT);
+    await expect(submitted).resolves.toMatchObject({ workflowId: 'wf-9' });
+  });
+
+  it('a refusal that names NO scopes stays GLOBAL — the advisory-empty case fails safe', async () => {
+    // 🔴 THE FAIL-SAFE HALF, and it is why the comparison is written as
+    // "non-empty AND disjoint" rather than "not a member". `@civitai/app-sdk`'s
+    // `ConsentUnavailablePayload` says `scopes` MAY BE EMPTY and is "an advisory
+    // detail for copy" — the host refuses on the UNFILTERED set, so a refusal
+    // naming only unrecognised scopes arrives as `scopes: []`. An empty list
+    // carries no information about WHICH scope was refused, so it keeps the
+    // conservative transport-global reading. Without this arm the narrowing
+    // would turn every advisory-empty refusal into a permitted retry.
+    prime([]);
+    renderHook(() => useConsentUnavailable());
+    const { result } = renderHook(() => useBuzzWorkflow());
+
+    dispatch({
+      type: 'CONSENT_UNAVAILABLE',
+      payload: { reason: 'ungrantable', scopes: [] },
+    });
+    postMessage.mockClear();
+
+    let settled!: Promise<unknown>;
+    act(() => {
+      settled = result.current.submit(BODY).catch((e: unknown) => e);
+    });
+    await waitFor(() => expect(sentOfType('SUBMIT_WORKFLOW')).toHaveLength(1));
+    replyToSubmit(0, FAILED_SNAPSHOT);
+
+    const err = (await settled) as WorkflowSubmitError;
+    expect(err).toBeInstanceOf(WorkflowSubmitError);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sentOfType('REQUEST_CONSENT')).toHaveLength(0);
+    expect(sentOfType('SUBMIT_WORKFLOW')).toHaveLength(1);
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🔴 AN UNMOUNT DURING THE 60s WAIT — rule 3 in the time axis
+  // ───────────────────────────────────────────────────────────────────────────
+
+  it('🔴 useTip: an unmount DURING the consent wait cancels the retry — no money moves', async () => {
+    // Rule 3 says work cancelled on purpose must not be silently resurrected,
+    // and until #500 round 2 the code only honoured that for a cancellation that
+    // had already produced an `AbortError`. An unmount landing in the 60s WAIT
+    // was invisible: the grant still drove a second `attempt()`, so a tip left
+    // the viewer's balance with no UI left to report it — and with the hook's
+    // `inFlight` set already cleared, that second POST is not even abortable.
+    const calls: Array<{ auth: string; body: Record<string, unknown> }> = [];
+    globalThis.fetch = vi.fn(async (_url: unknown, opts: unknown) => {
+      const o = opts as { headers: Record<string, string>; body: string };
+      calls.push({ auth: o.headers.Authorization, body: JSON.parse(o.body) });
+      if (o.headers.Authorization === 'Bearer jwt-1') {
+        return {
+          ok: false,
+          status: 403,
+          json: async () => ({ error: 'insufficient_scope' }),
+        } as unknown as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => OK_TIP,
+      } as unknown as Response;
+    }) as unknown as typeof fetch;
+
+    prime([]);
+    const hook = renderHook(() => useTip());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    let settled!: Promise<unknown>;
+    act(() => {
+      settled = hook.result.current
+        .tip({ toUserId: 123, amount: 50 })
+        .catch((e: unknown) => e);
+    });
+    await waitFor(() => expect(calls).toHaveLength(1));
+    await waitFor(() => expect(sentOfType('REQUEST_CONSENT')).toHaveLength(1));
+
+    // The viewer navigated away while the host's dialog was open, and THEN
+    // granted. The prompt already went out — that is not the defect; the second
+    // POST is.
+    act(() => {
+      hook.unmount();
+    });
+    grant(['social:tip:self']);
+    await new Promise((r) => setTimeout(r, 50));
+
+    // 🔴 ONE POST. Pre-fix this is 2, with `Bearer jwt-2` on the second.
+    expect(calls).toHaveLength(1);
+
+    // The ORIGINAL failure is what surfaces, exactly as it does when the viewer
+    // never answers — the caller asked for a tip, not for a consent round-trip.
+    const err = (await settled) as Error;
+    expect(err.message).toBe('insufficient_scope');
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // A PRE-`BLOCK_INIT` failure is not consent-shaped
+  // ───────────────────────────────────────────────────────────────────────────
+
+  it('no prompt while the transport is NOT READY — the pre-init token is a placeholder', async () => {
+    // 🔴 THE PRE-INIT SNAPSHOT'S `token.scopes` IS `[]`, so the structural
+    // predicate reads EVERY scope as missing and classifies any pre-init failure
+    // as consent-shaped. Two costs, and the second is the surprising one: the
+    // caller waits the full 60s on top of its own bound, AND the transport
+    // QUEUES outbound messages until `BLOCK_INIT`, so the `REQUEST_CONSENT`
+    // sits in that queue and FLUSHES the moment init lands — a consent dialog
+    // opening for a call that failed minutes earlier, which nobody asked for.
+    //
+    // Driven against `withConsentRetry` directly: the guard lives in the helper,
+    // so it covers every routed hook at once rather than one hook's spelling of
+    // it.
+    vi.useFakeTimers();
+    const transport = getTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+    expect(transport.getSnapshot().ready).toBe(false);
+    expect(transport.getSnapshot().token.scopes).toEqual([]);
+    postMessage.mockClear();
+
+    const attempt = vi.fn(async (): Promise<never> => {
+      throw new Error('boom');
+    });
+    let settled!: Promise<unknown>;
+    await act(async () => {
+      settled = withConsentRetry(transport, [BUDGETED], attempt).catch(
+        (e: unknown) => e,
+      );
+      await vi.advanceTimersByTimeAsync(1);
+    });
+
+    // Init lands, flushing whatever the outbound queue holds.
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'BLOCK_INIT', payload: buildInit([]) },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+    // Long enough that the pre-fix run's own 60s wait has also given up, so the
+    // `await settled` below cannot hang in either direction.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CONSENT_GRANT_WAIT_MS + 1);
+    });
+
+    // 🔴 Pre-fix this is 1 — a queued dialog delivered late.
+    expect(sentOfType('REQUEST_CONSENT')).toHaveLength(0);
+    expect(attempt).toHaveBeenCalledTimes(1);
+    expect((await settled) as Error).toMatchObject({ message: 'boom' });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // N CONCURRENT CALLERS — one dialog, N independent attempts
+  // ───────────────────────────────────────────────────────────────────────────
+
+  it('N concurrent callers needing the SAME scope open ONE dialog, and each keeps its OWN key', async () => {
+    // A feed of tip buttons is N hook INSTANCES, so each one's own `loading`
+    // gate defuses nothing: before #500 round 2 three concurrent tips posted
+    // three `REQUEST_CONSENT`s, opening three dialogs and holding three
+    // independent 60s waits.
+    //
+    // 🔴 THE SECOND ASSERTION IS THE MONEY ONE, and it is what stops the
+    // de-duplication from being a fix that breaks something worse: collapsing
+    // the WAIT must not collapse the ATTEMPTS. Three tips are three transfers;
+    // each retry must carry ITS OWN first attempt's key, never a neighbour's.
+    const calls: Array<{ auth: string; body: Record<string, unknown> }> = [];
+    globalThis.fetch = vi.fn(async (_url: unknown, opts: unknown) => {
+      const o = opts as { headers: Record<string, string>; body: string };
+      calls.push({ auth: o.headers.Authorization, body: JSON.parse(o.body) });
+      if (o.headers.Authorization === 'Bearer jwt-1') {
+        return {
+          ok: false,
+          status: 403,
+          json: async () => ({ error: 'insufficient_scope' }),
+        } as unknown as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => OK_TIP,
+      } as unknown as Response;
+    }) as unknown as typeof fetch;
+
+    prime([]);
+    const hooks = [
+      renderHook(() => useTip()),
+      renderHook(() => useTip()),
+      renderHook(() => useTip()),
+    ];
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    const tipped: Array<Promise<unknown>> = [];
+    act(() => {
+      for (const [i, h] of hooks.entries()) {
+        tipped.push(h.result.current.tip({ toUserId: 100 + i, amount: 10 + i }));
+      }
+    });
+
+    await waitFor(() => expect(calls).toHaveLength(3));
+    await new Promise((r) => setTimeout(r, 50));
+    // 🔴 ONE dialog for three callers. Pre-fix: three.
+    expect(sentOfType('REQUEST_CONSENT')).toEqual([{ scopes: ['social:tip:self'] }]);
+
+    grant(['social:tip:self']);
+    await waitFor(() => expect(calls).toHaveLength(6));
+    await Promise.all(tipped);
+
+    // Each retry replays ITS OWN first attempt — matched by `toUserId`, which is
+    // what identifies the logical tip, not by arrival order.
+    for (const first of calls.slice(0, 3)) {
+      const retry = calls
+        .slice(3)
+        .find((c) => c.body.toUserId === first.body.toUserId);
+      expect(retry).toBeDefined();
+      expect(retry!.body.idempotencyKey).toBe(first.body.idempotencyKey);
+      expect(retry!.auth).toBe('Bearer jwt-2');
+    }
+    // …and three DISTINCT keys, so nothing was collapsed into one transfer.
+    expect(new Set(calls.slice(0, 3).map((c) => c.body.idempotencyKey)).size).toBe(3);
   });
 });

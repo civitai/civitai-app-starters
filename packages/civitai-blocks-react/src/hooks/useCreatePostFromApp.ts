@@ -230,7 +230,27 @@ export function useCreatePostFromApp(): UseCreatePostFromApp {
         // See the `'human'` bucketing in `transport/requestTimeouts.ts`: the
         // host answers only when the viewer clicks or dismisses its confirm.
         { timeoutMs: HUMAN_INTERACTION_TIMEOUT_MS },
-      );
+      ).catch((err: unknown): never => {
+        // 🔴 THE `timedOut` STAMP LIVES HERE, INSIDE THE CLOSURE
+        // `withConsentRetry` RE-INVOKES — NOT IN `createPost`'s OUTER CATCH.
+        // That placement is the whole point and it is load-bearing: rule 4 of
+        // `internal/withConsentRetry.ts` ("never retry a keyless bridge's
+        // timeout") is read off THIS error, so a stamp applied outside the
+        // wrapper is invisible to it. Until #500 round 2 it was applied outside,
+        // and the consequence was exactly what `CreatePostError.timedOut`'s
+        // docstring exists to prevent: a raw `RequestTimeoutError` reached the
+        // helper carrying neither `declined` nor `timedOut`, so on a token
+        // lacking `posts:write:self` the SDK prompted and RE-SENT THE POST.
+        // `CREATE_POST_FROM_APP` has no `idempotencyKey` on the wire, so that
+        // second send is a genuine second write — a DUPLICATE PUBLIC POST under
+        // the viewer's name.
+        //
+        // Structural, not a message match — see `RequestTimeoutError`.
+        if (err instanceof RequestTimeoutError) {
+          throw new CreatePostError(err.message, { timedOut: true });
+        }
+        throw err instanceof Error ? err : new Error(String(err));
+      });
       if (reply.error || !reply.result) {
         // 🔴 `||`, NOT `??`. `isValidCreatePostResult` gates `error` on SHAPE
         // only (it has to: the channel carries free-text server messages), so
@@ -261,27 +281,37 @@ export function useCreatePostFromApp(): UseCreatePostFromApp {
         // UI to render next to a post that succeeded.
         //
         // No idempotency key is involved — `CREATE_POST_FROM_APP` has none on the
-        // wire. Its duplicate-protection is the host's own per-post confirm,
-        // which the retry re-opens exactly once; and a `declined` (the viewer
-        // dismissing that confirm) is never retried at all.
+        // wire, which is exactly why a TIMEOUT here must never be retried: there
+        // is nothing for the server to dedupe a second send against, so the retry
+        // would be a second public post. `createPostOnce` stamps `timedOut` on
+        // its own error for that reason, INSIDE this closure where rule 4 can see
+        // it. The remaining duplicate-protection is the host's own per-post
+        // confirm, which a consent retry re-opens exactly once; and a `declined`
+        // (the viewer dismissing that confirm) is never retried at all.
         return await withConsentRetry(
           getTransport(),
           CREATE_POST_SCOPES,
           () => createPostOnce(args),
           options,
+          // Rule 3 in the time axis: a grant that lands after this component is
+          // gone must not publish a post nobody is left to see.
+          () => mountedRef.current,
         );
       } catch (err: unknown) {
-        // A transport timeout arrives as a plain Error; wrap it so callers have
-        // ONE error type to test, with `.code` left undefined (it is not a host
-        // refusal). Re-wrapping our own error would lose `.code`, so pass it
-        // through.
+        // Wrap anything that is not already ours so callers have ONE error type
+        // to test, with `.code` left undefined (it is not a host refusal).
+        // Re-wrapping our own error would lose `.code` AND `.timedOut`, so pass
+        // it through.
+        //
+        // 🔴 NO `timedOut` STAMP HERE. It used to be applied at this line, which
+        // put it OUTSIDE `withConsentRetry` and made rule 4 unreachable for this
+        // bridge — the round-2 defect. `createPostOnce` owns the stamp now, so
+        // every transport timeout arrives here ALREADY a `CreatePostError` and
+        // takes the pass-through branch above.
         const wrapped =
           err instanceof CreatePostError
             ? err
-            : new CreatePostError(err instanceof Error ? err.message : String(err), {
-                // Structural, not a message match — see `RequestTimeoutError`.
-                timedOut: err instanceof RequestTimeoutError,
-              });
+            : new CreatePostError(err instanceof Error ? err.message : String(err));
         if (mountedRef.current) setError(wrapped);
         // 🔴 THROWN UNCONDITIONALLY, even when unmounted. The caller's `await`
         // is not the component — an app that persists the result must still

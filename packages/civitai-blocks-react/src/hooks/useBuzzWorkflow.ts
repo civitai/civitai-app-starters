@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type {
   BlockWorkflowSnapshot,
@@ -894,17 +894,43 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
   const [error, setError] = useState<Error | null>(null);
 
   /**
+   * Whether this hook's component is still mounted.
+   *
+   * 🔴 ITS ONLY JOB IS THE CONSENT RETRY, and that is a MONEY gate rather than a
+   * setState-after-unmount tidy-up. `submit()` can sit in `withConsentRetry`'s
+   * 60s grant wait long after the component is gone, and nothing else can see
+   * that: this hook's calls go through the postMessage bridge, so there is no
+   * `AbortController` to fire and rule 3's `AbortError` path never triggers. A
+   * grant arriving after unmount would then RESERVE BUZZ for a generation nobody
+   * is left to watch. Read immediately before the retry, never cached.
+   */
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  /**
    * 🔴 `estimate()` IS DELIBERATELY NOT ROUTED THROUGH `withConsentRetry`, and
    * that exclusion is load-bearing rather than an oversight.
    *
    * The automatic prompt is for calls a PERSON just made. `estimate()` is not
    * one: `starters/examples/buzz-workflow/src/App.tsx` calls it from a
    * `useEffect` keyed on the form inputs, so it fires on mount and again on
-   * every parameter edit. `withConsentRetry` has no in-flight dedupe, so
-   * routing it would post one `REQUEST_CONSENT` per edit — a consent dialog
-   * with no gesture behind it, N times — and hold each call pending for the
-   * full 60s grant wait. That is the same reason the Buzz READS are excluded;
-   * `estimate()` just happens to live on a hook whose OTHER call moves money.
+   * every parameter edit. Routing it would open a consent dialog with no gesture
+   * behind it and hold each call pending for the full 60s grant wait. That is the
+   * same reason the Buzz READS are excluded; `estimate()` just happens to live on
+   * a hook whose OTHER call moves money.
+   *
+   * ⚠️ The in-flight DE-DUPLICATION `withConsentRetry` gained in #500 round 2
+   * does not change this verdict, and reading it as a reason to route
+   * `estimate()` would be a mistake. It collapses CONCURRENT waits on the same
+   * scope set into one dialog; a form edited over several seconds produces
+   * SEQUENTIAL calls, each after the previous wait settled, so the N-dialogs
+   * problem survives for exactly this shape. The no-gesture objection is
+   * independent of it either way.
    *
    * A failed estimate keeps the behaviour that starter's own `catch` is written
    * against: reject with the server's reason, and show no price, because a
@@ -1052,6 +1078,9 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
           WORKFLOW_SCOPES,
           () => submitOnce(body, idempotencyKey),
           options,
+          // Rule 3 in the time axis — see `mountedRef` above for why this hook
+          // needs it even though it has no `AbortController`.
+          () => mountedRef.current,
         );
       } catch (err) {
         setError(err as Error);

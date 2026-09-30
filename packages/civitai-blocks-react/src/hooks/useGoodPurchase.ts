@@ -224,8 +224,16 @@ export function useGoodPurchase(): UseGoodPurchase {
       // new value, but the in-flight `purchase` call is still holding the
       // closure created at call time, whose `raw` is the PRE-grant token. Retry
       // with that and the server sees the same scope-less token and refuses
-      // again — a retry that could never succeed, for a grant that did. The
-      // `|| raw` keeps the pre-init case behaving exactly as before.
+      // again — a retry that could never succeed, for a grant that did.
+      //
+      // ⚠️ `|| raw` CANNOT SUBSTITUTE A DIFFERENT VALUE, and an earlier version
+      // of this comment claimed it covered "the pre-init case" as though it
+      // could. `raw` comes from `useBlockToken()`, which returns
+      // `useTransportSnapshot().token` — the SAME snapshot this line reads, one
+      // render older. The token only ever goes sentinel-empty → real, so
+      // whenever the live read is empty the closure's `raw` is empty too. It is
+      // an equal-valued default, not a second source; the LIVE READ is the part
+      // that does the work.
       const bearer = getTransport().getSnapshot().token.raw || raw;
       try {
         const res = await fetch(`${host}/api/v1/blocks/goods/purchase`, {
@@ -398,6 +406,13 @@ export function useGoodPurchase(): UseGoodPurchase {
             }
           },
           options,
+          // 🔴 RULE 3 IN THE TIME AXIS, AND IT IS NOT COVERED BY THE UNMOUNT
+          // ABORT IN `postOnce`. During the 60s consent wait there is no
+          // in-flight request for the cleanup to abort, so no `AbortError` is
+          // produced and the grant drove a SECOND CHARGE against a component
+          // that no longer exists. `withConsentRetry` reads this immediately
+          // before the retry.
+          () => mountedRef.current,
         );
       } catch (err) {
         const e =
