@@ -1,5 +1,17 @@
 # @civitai/app-sdk
 
+## 0.53.0
+
+### Minor Changes
+
+- 51a978a: Catalog sync: the orchestrator spec accepts 1 entry the SDK catalogs did not list.
+
+  - `WORKFLOW_STEP_TYPES`: add the `soniloAudioGen` step type
+
+  `WORKFLOW_STEP_TYPES` / `IMAGE_GEN_ENGINES` are hand-maintained mirrors of the `discriminator.mapping`s in `https://orchestration.civitai.com/openapi/v2-consumers.json`, which moves per orchestrator build — so they drift without anyone touching this repo. Read on 2026-09-30.
+
+  **Why `minor`.** `WorkflowStepType` is `keyof typeof WORKFLOW_STEP_TYPES`, so this widens an exported union. Purely additive: nothing that compiled before stops compiling, and there is no runtime behaviour change.
+
 ## 0.52.0
 
 ### Minor Changes
@@ -332,10 +344,10 @@
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-              before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                       @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-              after    @civitai/theme       0.3.1                   — 1 copy
-                       @civitai/components  0.4.2                   — 1 copy
+                before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                         @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                after    @civitai/theme       0.3.1                   — 1 copy
+                         @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
