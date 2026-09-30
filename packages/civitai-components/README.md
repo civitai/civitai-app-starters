@@ -279,6 +279,110 @@ The playground imports the elements from `src/`, so an edit is on screen
 without a build. `demo/` is the opposite: it loads the published artifact from
 jsDelivr to verify what consumers actually get.
 
+### Testing them in a non-browser DOM (`jsdom` / `happy-dom`)
+
+`<civitai-menu>` **mounts and opens** under `happy-dom` with no shim, and that is
+enforced rather than asserted: `pnpm --filter @civitai/components test` runs a
+`dom` project on happy-dom alongside the source guards, and
+`test/civitai-menu.dom.test.ts` opens the menu there.
+
+Scope, precisely: the menu is the only element in this package that touches the
+popover API (grep `showPopover`, `hidePopover`, `:popover-open` — the hits are one
+file), so it was the only one that could not mount. The `dom` project covers
+**it**; the other elements are covered in a real browser, where they have always
+been fine.
+
+`jsdom` is **measured, not gated** — it is not in this repo's CI at all. With the
+same test, `<civitai-menu>` mounts and opens without throwing on **jsdom 25.0.1**
+and **jsdom 30.1.1** as well. Neither implements the popover API either.
+
+Those DOMs are **incomplete**, not merely different, and the gaps are **not the
+same in each one**. Measured with the element's own probe:
+
+| | happy-dom 20.9.0 | jsdom 25.0.1 | jsdom 30.1.1 | chromium 153 |
+|---|---|---|---|---|
+| `showPopover` / `hidePopover` / `togglePopover` | absent | absent | absent | ✅ |
+| `menu.show()` opens, no throw | ✅ | ✅ | ✅ | ✅ |
+| `data-open` on the panel | ✅ | ✅ | ✅ | ✅ |
+| computed `display` follows it | ✅ | ✅ | ❌ always `block` | ✅ |
+| a click on the slotted trigger opens it | ❌ **silent** | ✅ | ✅ | ✅ |
+
+Two things to take from that table.
+
+**Assert `data-open`, not computed `display`.** It is the one signal that holds in
+all four columns. jsdom 30 does not apply a shadow root's stylesheet in
+`getComputedStyle`, so the panel reads `display: block` there whether it is open
+or shut — a display assertion passes for the wrong reason, and would have passed
+before this element was fixed at all.
+
+**Under happy-dom, a trigger click does nothing, and no shim changes that.** A
+click on light-DOM content assigned to a `<slot>` reaches the **host** (a listener
+there fires once) but **not** a listener on the `<slot>` element — which is the
+node Lit binds `@click` to. So the click dispatches, bubbles, and the handler is
+never called: no throw, no state change, a test that quietly does nothing. jsdom
+does deliver it. **Drive overlay elements through their methods** and the
+difference stops mattering:
+
+```ts
+menu.show();                  // ✅ works in every DOM above
+await menu.updateComplete;
+menu.hide();
+
+triggerButton.click();        // ❌ silently does nothing under happy-dom
+```
+
+Why `data-open` exists at all: the element treats popover as **additive**. The
+panel's visibility is decided by that attribute, and `showPopover()` is called
+only where it exists, for the two things only the top layer gives you — escaping
+a clipping ancestor, and native light dismiss. Neither of those survives into a
+non-browser DOM, so **do not expect the top layer, anchor positioning, or light
+dismiss**: a click outside a shown panel does not close it there. If that is what
+you are testing, use a real browser; this package's `browser` vitest project is
+the worked example.
+
+If **your own** code calls into the popover API, `@civitai/blocks-react/testing`
+exports a shim for it — `installPopoverShim()`, which also probes for the slotted
+click problem above and warns when it finds it. See that package's README
+§ "Testing overlay elements". You do not need it for the elements here.
+
+### Giving `<civitai-menu>`'s items an addressable container
+
+`part="panel"` **styles** the panel from the document
+(`civitai-menu::part(panel) { … }` resolves), but it is not a query target:
+`::part()` is a CSS-only mechanism, so `document.querySelector('[part="panel"]')`
+is `null`, and `document.querySelector` does not pierce shadow roots either. A
+test id, an analytics hook or an `aria-describedby` target therefore cannot live
+on the panel.
+
+**Put it on a container of your own, around the items.** That container is light
+DOM, so it is genuinely reachable from a document query, and the menu collects
+items through it:
+
+```html
+<civitai-menu label="Contribute">
+  <button slot="trigger">Contribute</button>
+  <div data-testid="contribute-menu-items">
+    <civitai-menu-item value="benchmark">Run a benchmark</civitai-menu-item>
+    <civitai-menu-item value="review">Write a review</civitai-menu-item>
+  </div>
+</civitai-menu>
+```
+
+```ts
+document.querySelector('[data-testid="contribute-menu-items"]');  // ✅ found
+```
+
+This is a **supported pattern**, not a workaround: the menu descends into
+assigned elements to find `[role="menuitem"]`, in DOM order, so focus management
+and arrow-key navigation keep working. Several containers are fine, wrapped and
+unwrapped items can be mixed, and `<civitai-menu-label>` inside a container is
+still skipped by the arrow keys. The attribute is yours — nothing about the name
+`data-testid` is special.
+
+What is **not** supported is `menu.shadowRoot.querySelector('.panel')`. It works,
+because the shadow root is open, but `.panel` is an implementation detail and a
+rename would break you silently.
+
 ### The dashboard five
 
 Added because a real consumer needed them and the vocabulary had no answer:

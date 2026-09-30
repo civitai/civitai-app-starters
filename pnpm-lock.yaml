@@ -119,6 +119,9 @@ importers:
       axe-core:
         specifier: ^4.12.1
         version: 4.12.1
+      happy-dom:
+        specifier: ^20.9.0
+        version: 20.9.0
       playwright:
         specifier: ^1.60.0
         version: 1.60.0

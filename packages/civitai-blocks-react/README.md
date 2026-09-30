@@ -1445,6 +1445,7 @@ what went stale in [#334](https://github.com/civitai/civitai-app-starters/issues
 | `createMockHost` | A framework-agnostic fake of the embedding host — answers every `*_RESULT` message, with knobs for generation cost/latency/failure, Buzz balance, app + shared storage, consent, maturity. Returns a `MockHost`; call `.install()` and keep the returned teardown. **No network, no Buzz.** |
 | `readMockHostUrlOptions` | Reads the harness URL toggles (`?viewer` `?consent` `?fail` `?theme` `?pick` `?balance` `?latency` `?seed` …) into a `Partial<MockHostOptions>`. `Harness` applies it for you; call it directly only in a hand-rolled harness. |
 | `Harness` | The React wrapper: installs a `createMockHost` on mount, tears it down on unmount, and renders an optional on-screen outbound-message log. Takes every `MockHostOptions` field plus `applyUrlToggles` and `showLog`. |
+| `installPopoverShim` | Stands in for the HTML popover API, which neither `jsdom` nor `happy-dom` implements at any version. Needed only if your own code calls `showPopover`/`hidePopover`/`togglePopover` or queries `:popover-open` — `@civitai/components`' own elements do not. Returns a `PopoverShimHandle`; inert (`installed: false`) in a real browser. **Read [Testing overlay elements](#testing-overlay-elements) first: it does not make trigger clicks work.** |
 
 <!-- TESTING-SURFACE:VALUES:END -->
 
@@ -1472,6 +1473,8 @@ MockHostScenarioPatch
 MockSharedScenario
 MockSharedSeed
 MockStorageScenario
+PopoverShimHandle
+PopoverShimOptions
 ```
 
 <!-- TESTING-SURFACE:TYPES:END -->
@@ -1500,6 +1503,57 @@ const uninstall = host.install();
 host.setScenario({ failMode: 'none' });   // live-tune mid-test
 uninstall();
 ```
+
+### Testing overlay elements
+
+`<civitai-menu>`, and anything else that opens a panel, live in an environment
+that is **incomplete** rather than merely different. Two facts, both measured on
+happy-dom 20.9.0; neither is a bug in the components.
+
+**1. There is no popover API.** `showPopover`, `hidePopover` and `togglePopover`
+are `undefined` on happy-dom 20.x and on jsdom 25 and 30 alike. `:popover-open`
+is worse than absent: it is **unreliable**, and the unreliability is not a
+property of your runner's version. It resolves through `nwsapi` under jsdom, so
+the same jsdom 25.0.1 both throws `DOMException: unknown pseudo-class selector`
+and returns `false` depending on which `nwsapi` your lockfile pulled in
+(measured: `false` on nwsapi 2.2.28). `@civitai/components`' own elements no
+longer read it, which is what takes that variable off the table for them. Install
+the shim if **your** code touches the API:
+
+```ts
+import { installPopoverShim } from '@civitai/blocks-react/testing';
+
+const shim = installPopoverShim();
+// …
+shim.uninstall();
+```
+
+It is inert in a real browser (`installed: false`), so it is safe to call from a
+setup file shared between a happy-dom project and a browser-mode project.
+
+**2. 🔴 UNDER happy-dom A TRIGGER CLICK DOES NOTHING, and the shim does not change
+that.** A click on light-DOM content assigned to a `<slot>` reaches the **host** (a
+listener there fires once) but **not** a listener on the `<slot>` element — and
+that is the node Lit binds `@click` to. So the click dispatches, bubbles, and
+then the handler is never called: no throw, no state change, a test that quietly
+does nothing. jsdom (25 and 30) *does* deliver it, so this one is happy-dom's
+alone — which is exactly why the shim **measures** it rather than asserting it:
+`installPopoverShim` probes on install, reports the answer as
+`handle.slottedClicksReachSlots`, and `console.warn`s when it is `false`.
+
+**Drive overlay elements through their methods:**
+
+```ts
+menu.show();                 // ✅ works in every DOM
+await menu.updateComplete;
+
+triggerButton.click();       // ❌ silently does nothing under happy-dom
+```
+
+Also absent, because they need layout and a hit-testing event path: the top
+layer, anchor positioning, and **light dismiss** (a click outside a shown panel
+does not close it). If what you are testing is one of those, use a real browser —
+this repo's own `browser` vitest project is the worked example.
 
 ### In a dev harness
 

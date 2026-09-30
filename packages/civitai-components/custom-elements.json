@@ -3041,6 +3041,16 @@
             },
             {
               "kind": "field",
+              "name": "#popoverRequestedOpen",
+              "privacy": "private",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether `showPopover()` has been called on the panel without a matching\n`hidePopover()`. This is bookkeeping, NOT the element's open state — that is\n`this.open`, and the `data-open` attribute it drives.\n\nIt exists because light dismiss and Escape close the popover WITHOUT going\nthrough `hide()`, and a redundant `hidePopover()` should then throw\n`InvalidStateError` per spec. Measured: **chromium 153 does not throw** on a\nredundant show, a redundant hide, or a hide of a hidden popover — so no\nbrowser test in this repo can see a stale flag. The thing that can is the\nspec-compliant shim in `@civitai/blocks-react/testing`; see\n`packages/civitai-blocks-react/test/popoverShim.test.ts`.\n\nThe guard it replaces read `panel.matches(':popover-open')`, which is the\ncall that threw in a non-browser DOM (#485)."
+            },
+            {
+              "kind": "field",
               "name": "#panel",
               "privacy": "private",
               "type": {
@@ -3064,6 +3074,7 @@
               "type": {
                 "text": "CivitaiMenuItem[]"
               },
+              "description": "Every slotted `[role=menuitem]`, in DOM order — including items a consumer\nhas wrapped in a container of their own.\n\n`assignedElements({ flatten: true })` flattens nested `<slot>`s, NOT\narbitrary wrappers, so a `<div data-testid=\"items\">` around the items used\nto make this getter return 0 of them: `show()` focused nothing and arrow-key\nnavigation had nothing to walk (#485). Descending one level is what lets the\nitems sit inside a consumer-owned container, and that container is the only\nplace a `document.querySelector`-able hook CAN live — it is light DOM. The\npanel is in the shadow root, and `::part()` is a CSS-only mechanism, so\nneither is reachable from a document query.\n\n`querySelectorAll` returns tree order, so DOM order survives the descent.",
               "readonly": true
             },
             {
