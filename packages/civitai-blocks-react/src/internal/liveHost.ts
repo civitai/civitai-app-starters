@@ -1975,6 +1975,15 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
               // it is part of the PUBLISHED contract, not because this harness is
               // a security boundary — a dev who hits it in production should hit
               // it in `dev:live` too.
+              //
+              // ⚠️ BY SPELLING, WHERE THE HOST'S IS BY DECODED VALUE. The host
+              // runs `decodeURIComponent` on the resolved first segment, so
+              // `%61pi/auth/logout` is refused there and reaches `pushState`-free
+              // site navigation here. That gap is INSIDE the
+              // battery-not-mirrored boundary above — percent-encoding evasion is
+              // an untrusted-input concern, and this harness has no untrusted
+              // input — but it is stated rather than left to be inferred from a
+              // comment that names the host's rule.
               if (path.split('/')[0]?.toLowerCase() === 'api') {
                 logOnce(
                   'navigate-api',
