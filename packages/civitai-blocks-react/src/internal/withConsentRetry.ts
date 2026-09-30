@@ -82,12 +82,23 @@ import { armConsentRefusalLatch, readConsentRefusalLatch } from './consentRefusa
  *     "has the host refused". Checked BEFORE the prompt, and again as the wait's
  *     own losing arm (a refusal that arrives in answer to THIS prompt).
  *
- *     🔴 **SCOPE-AWARE, NOT TRANSPORT-GLOBAL — see {@link isRefusalFinalFor}.**
- *     The latch is one slot per transport, so treating any refusal as final
- *     disabled prompt-and-retry for EVERY hook and EVERY scope until the token
- *     rotated (~13 min). The justification does not reach that far: "clamped at
- *     mint" is a claim about the REFUSED scopes, and a retry for a scope the host
- *     never refused is not a guaranteed second failure.
+ *     🔴 **THE LATCH READ IS SCOPE-AWARE, NOT TRANSPORT-GLOBAL — see
+ *     {@link isRefusalFinalFor}.** The latch is one slot per transport, so
+ *     treating any refusal as final disabled prompt-and-retry for EVERY hook and
+ *     EVERY scope until the token rotated (~13 min). The justification does not
+ *     reach that far: "clamped at mint" is a claim about the REFUSED scopes, and
+ *     a retry for a scope the host never refused is not a guaranteed second
+ *     failure.
+ *
+ *     ⚠️ THE WAIT'S LOSING ARM IS NOT SCOPE-CHECKED, deliberately. A
+ *     `CONSENT_UNAVAILABLE` arriving *during* the wait ends it whatever it names.
+ *     The prompt that opened this wait asked for exactly `missing`, so in
+ *     practice a refusal answering it is about those scopes; the only way to be
+ *     wrong is a concurrent prompt for a DIFFERENT scope set being refused at the
+ *     same moment, and being wrong there costs one needlessly-surfaced original
+ *     error — never a spend, never a duplicate write. Scope-checking it would add
+ *     a way to be wrong in the OTHER direction (waiting on past a real refusal),
+ *     which is the expensive one.
  *  3. **NEVER RETRY AN ABORT, OR A CALLER THAT WENT AWAY DURING THE WAIT.** An
  *     `AbortError` means the caller's component unmounted or its own bound
  *     elapsed — work that was cancelled on purpose must not be silently
@@ -413,7 +424,8 @@ function awaitConsentGrantShared(
  *   idempotency key OUTSIDE this closure — see the module header. 🔴 And stamp
  *   any final-error flag (`timedOut`, `declined`, `signInRequired`) INSIDE it,
  *   or rule 4 cannot see it.
- * @param options caller opt-out + wait bound.
+ * @param options caller opt-out. One field, `autoRequestConsent` — the 60s wait
+ *   is NOT configurable, see {@link CONSENT_GRANT_WAIT_MS}.
  * @param isActive rule 3 in the time axis — read IMMEDIATELY BEFORE the retry,
  *   never cached. A hook passes `() => mountedRef.current`; returning `false`
  *   re-throws the original error instead of re-invoking `attempt`. Optional so a
