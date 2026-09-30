@@ -22,10 +22,12 @@ export interface UseCheckpointPicker {
      * 'SDXL') or any baseModel name in the family; the host collapses either to
      * the ecosystem family, so any baseModel in the family works as a hint.
      *
-     * (Unlike {@link useResourcePicker}, this one is REQUIRED — a checkpoint
-     * pick is always scoped to a family. Use `useResourcePicker` with
-     * `resourceType: 'Checkpoint'` and no `baseModelGroup` for an unconstrained
-     * checkpoint pick.)
+     * (Unlike {@link useResourcePicker}'s, this parameter is currently REQUIRED
+     * by the type below.)
+     *
+     * 🔴 Never pass `''` to mean "unconstrained". The host resolves `''` to the
+     * real ecosystem key `'Other'`, so it NARROWS to that family rather than
+     * widening — it is not an escape hatch.
      */
     baseModelGroup: string;
     /** Currently-selected versionId so the picker can pre-highlight it. */

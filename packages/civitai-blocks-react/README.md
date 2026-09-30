@@ -964,8 +964,9 @@ Drive the platform Checkpoint picker + persist a viewer override.
 🔴 **`baseModelGroup` is a FILTER — derive it, never hardcode it.** The host hides
 every checkpoint outside the family you pass, so a literal ecosystem pins every
 viewer to whichever family the author happened to test with. Read it from the
-checkpoint the block already holds. For an *unconstrained* checkpoint pick, use
-`useResourcePicker({ resourceType: 'Checkpoint' })` with no `baseModelGroup`.
+checkpoint the block already holds. The parameter is currently **required** by
+this hook's type — and `''` is not an escape hatch: the host resolves it to the
+real ecosystem key `Other`, so it narrows rather than widens.
 
 ```tsx
 const { open, persist } = useCheckpointPicker();
