@@ -1,0 +1,81 @@
+{
+  "name": "@civitai/components-chat",
+  "version": "0.0.0",
+  "description": "<civitai-chat>: a Civitai assistant that makes images, video and music, as one element for any page. Companion to @civitai/components.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": [
+    "**/*.define.js"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "comment-packaging": "@civitai/* deps use workspace:^ not workspace:* (#374); `!dist/**/*.map` keeps dangling sourcemaps out of the tarball (#376). @civitai/sdk and lit are peers: the page hands the chat its own AppClient and shares one Lit. The sdk peer is an explicit range, not workspace:^, so an sdk minor does not force this package to a major (changesets bumps a dependent whose peer range it leaves); popupSignIn needs 0.9.0 (SignIn.signInWithPopup), everything else 0.8.0.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./civitai-chat": {
+      "types": "./dist/civitai-chat.d.ts",
+      "import": "./dist/civitai-chat.js"
+    },
+    "./civitai-chat/define": {
+      "types": "./dist/civitai-chat.define.d.ts",
+      "import": "./dist/civitai-chat.define.js"
+    }
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.map",
+    "!dist/**/*.test.*",
+    "!dist/test-*",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "2.0.77",
+    "@civitai/components": "workspace:^",
+    "@modelcontextprotocol/sdk": "^1.30.1",
+    "ai": "6.0.289",
+    "dompurify": "^3.4.16",
+    "marked": "^18.0.14",
+    "ulid": "^3.0.2"
+  },
+  "peerDependencies": {
+    "@civitai/sdk": ">=0.8.0 <1.0.0",
+    "lit": "^3.3.0"
+  },
+  "devDependencies": {
+    "@civitai/sdk": "workspace:*",
+    "@types/node": "^25.9.1",
+    "jsdom": "^25.0.0",
+    "lit": "^3.3.3",
+    "typescript": "^5.9.2",
+    "vite": "^8.0.14",
+    "vitest": "^4.1.11"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "civitai",
+    "components",
+    "chat",
+    "web-components",
+    "custom-elements",
+    "ai"
+  ],
+  "homepage": "https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-components-chat#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/civitai/civitai-app-starters.git",
+    "directory": "packages/civitai-components-chat"
+  }
+}

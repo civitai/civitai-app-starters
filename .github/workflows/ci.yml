@@ -212,6 +212,12 @@ jobs:
       - run: pnpm --filter @civitai/components-react typecheck
       - run: pnpm --filter @civitai/components-react test
 
+      # <civitai-chat>: logic in node, the elements in jsdom. Needs the sdk and
+      # components builds above for their declarations.
+      - run: pnpm --filter @civitai/components-chat typecheck
+      - run: pnpm --filter @civitai/components-chat test
+      - run: pnpm --filter @civitai/components-chat build
+
       # The React BINDING MECHANICS in real headless Chromium — property
       # assignment, refs, typed custom events, shadow-root `change` retargeting
       # (happy-dom cannot upgrade a custom element). NOT the a11y sweep: that
