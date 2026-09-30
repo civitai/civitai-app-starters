@@ -54,6 +54,10 @@ export async function readSession(cookies: Cookies, production: boolean): Promis
       clientId: config.CIVITAI_CLIENT_ID,
       clientSecret: config.CIVITAI_CLIENT_SECRET,
       refreshToken: session.tokens.refresh_token,
+      // The refreshed blob REPLACES the stored one below, so a `scope` the
+      // server omits (RFC 6749 §6 permits it) would be persisted as 0 and
+      // lock the user out of features their token still grants.
+      fallbackScope: session.tokens.scope,
     });
     const next: Session = { ...session, tokens: fresh };
     writeSession(cookies, next, production);

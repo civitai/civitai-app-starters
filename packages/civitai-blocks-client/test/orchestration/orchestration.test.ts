@@ -1,374 +1,127 @@
-import { describe, expect, it, vi } from 'vitest';
-import type {
-  TextToImageStepTemplate,
-  Workflow,
-  WorkflowStatus,
-  WorkflowTemplate,
-} from '@civitai/orchestration-client/dist/generated/types.gen.js';
+import { describe, expect, it } from 'vitest';
 
-import { orchestration } from '../../src/index.js';
-import { createFakeTransport } from '../../src/testing.js';
+import { createHttp } from '../../src/http/index.js';
+import { createOrchestrationClient } from '../../src/orchestration/index.js';
+import { createTokenSession } from '../../src/session/index.js';
+import { fakeFetch, json } from '../support/fake-fetch.js';
 
-// The orchestrator's own template: nothing in the package names `textToImage`,
-// so a step it gains needs no change here.
-const STEP = { $type: 'textToImage', input: { prompt: 'a cat' } } as TextToImageStepTemplate;
-const TEMPLATE = { steps: [STEP], currencies: [] } as unknown as WorkflowTemplate;
-const SPEND = { maxBuzz: 100 };
+const BASE = 'https://orchestration.civitai.com';
+const TEMPLATE = {
+  currencies: [],
+  steps: [{ $type: 'textToImage', input: { model: 'urn:air:sdxl:checkpoint:civitai:1@2', prompt: 'a lighthouse' } }],
+} as never;
 
-const workflow = (status: WorkflowStatus, extra: Partial<Workflow> = {}): Workflow =>
-  ({ id: 'wf-1', createdAt: '2026-09-18T00:00:00Z', metadata: {}, status, ...extra }) as Workflow;
+const workflow = (status: string) => ({ id: 'wf_1', status, steps: [] });
 
-const reads = (t: ReturnType<typeof createFakeTransport>) =>
-  t.sent.filter((m) => m.type === 'ORCHESTRATION_GET_WORKFLOW');
+function client(responses: Parameters<typeof fakeFetch>[0]) {
+  const { fetch, calls } = fakeFetch(responses);
+  const http = createHttp({ session: createTokenSession({ token: 't' }), baseUrl: BASE, fetch });
+  return { orchestration: createOrchestrationClient(http), calls };
+}
 
-/** `watchWorkflow` sleeps between reads; drive that clock rather than waiting on it. */
-const withFakeClock = async (body: () => Promise<void>) => {
-  vi.useFakeTimers();
-  try {
-    await body();
-  } finally {
-    vi.useRealTimers();
-  }
-};
+describe('orchestration', () => {
+  it('submits the template as it is', async () => {
+    const { orchestration, calls } = client([() => json(200, workflow('unassigned'))]);
 
-describe('orchestration.submitWorkflow', () => {
-  it('sends the template with the spend ceiling beside it', async () => {
-    const t = createFakeTransport();
-    t.reply('ORCHESTRATION_SUBMIT_WORKFLOW', workflow('scheduled'));
-
-    await expect(
-      orchestration.submitWorkflow(TEMPLATE, { transport: t, ...SPEND }),
-    ).resolves.toMatchObject({ id: 'wf-1', status: 'scheduled' });
-    expect(t.sent.at(-1)?.payload).toEqual({ workflow: TEMPLATE, maxBuzz: 100 });
+    await expect(orchestration.submitWorkflow(TEMPLATE)).resolves.toMatchObject({ id: 'wf_1' });
+    expect(calls[0]).toMatchObject({ method: 'POST', url: `${BASE}/v2/consumer/workflows` });
+    expect(JSON.parse(calls[0]!.body!)).toEqual(TEMPLATE);
   });
 
-  it('carries the orchestrator’s own idempotency key', async () => {
-    const t = createFakeTransport();
-    t.reply('ORCHESTRATION_SUBMIT_WORKFLOW', workflow('scheduled'));
+  it('prices a workflow without running it', async () => {
+    const { orchestration, calls } = client([() => json(200, workflow('unassigned'))]);
 
-    const once = { ...TEMPLATE, externalId: 'once-only' } as WorkflowTemplate;
-    await orchestration.submitWorkflow(once, { transport: t, ...SPEND });
-
-    expect(t.sent.at(-1)?.payload).toMatchObject({ workflow: { externalId: 'once-only' } });
+    await orchestration.estimateWorkflow(TEMPLATE);
+    expect(calls[0]!.url).toBe(`${BASE}/v2/consumer/workflows?whatif=true`);
   });
 
-  it('reports a failed run as a workflow, not a rejection', async () => {
-    const t = createFakeTransport();
-    t.reply('ORCHESTRATION_SUBMIT_WORKFLOW', workflow('failed'));
+  it('reads once, then holds reads until the workflow changes', async () => {
+    const { orchestration, calls } = client([
+      () => json(200, workflow('processing')),
+      () => json(200, workflow('succeeded')),
+    ]);
 
-    await expect(
-      orchestration.submitWorkflow(TEMPLATE, { transport: t, ...SPEND }),
-    ).resolves.toMatchObject({ status: 'failed' });
-  });
-
-  it('raises the code the host classified a bad request with', async () => {
-    const t = createFakeTransport();
-    t.fail('ORCHESTRATION_SUBMIT_WORKFLOW', { code: 'insufficient', message: 'not enough Buzz' });
-
-    await expect(
-      orchestration.submitWorkflow(TEMPLATE, { transport: t, ...SPEND }),
-    ).rejects.toMatchObject({ code: 'insufficient' });
-  });
-});
-
-describe('orchestration.estimateWorkflow', () => {
-  it('previews the cost without submitting', async () => {
-    const t = createFakeTransport();
-    t.reply('ORCHESTRATION_ESTIMATE_WORKFLOW', workflow('preparing', { cost: { base: 120, total: 120 } as Workflow['cost'] }));
-
-    const preview = await orchestration.estimateWorkflow(TEMPLATE, { transport: t, ...SPEND });
-
-    expect(preview.cost).toMatchObject({ total: 120 });
-    expect(t.sent.map((m) => m.type)).toEqual(['ORCHESTRATION_ESTIMATE_WORKFLOW']);
-  });
-});
-
-describe('orchestration.watchWorkflow', () => {
-  it('reads until a terminal status and yields every state', async () => {
-    await withFakeClock(async () => {
-      const t = createFakeTransport();
-      const seen: string[] = [];
-
-      const done = (async () => {
-        for await (const w of orchestration.watchWorkflow('wf-1', { transport: t })) {
-          seen.push(w.status);
-        }
-      })();
-
-      for (const status of ['preparing', 'processing', 'succeeded'] as const) {
-        t.reply('ORCHESTRATION_GET_WORKFLOW', workflow(status));
-        await vi.advanceTimersByTimeAsync(2_000);
-      }
-      await done;
-
-      expect(seen).toEqual(['preparing', 'processing', 'succeeded']);
-      expect(reads(t).at(0)?.payload).toEqual({ workflowId: 'wf-1', wait: true });
-    });
-  });
-
-  it('reads straight back out while images are landing', async () => {
-    const t = createFakeTransport();
-    const seen: number[] = [];
-
-    const withImages = (count: number) =>
-      workflow('processing', {
-        steps: [{ $type: 'textToImage', output: { images: Array(count).fill({ url: 'u' }) } }],
-      } as unknown as Partial<Workflow>);
-
-    t.reply('ORCHESTRATION_GET_WORKFLOW', withImages(1));
-    t.reply('ORCHESTRATION_GET_WORKFLOW', withImages(2));
-    t.reply('ORCHESTRATION_GET_WORKFLOW', workflow('succeeded'));
-
-    for await (const w of orchestration.watchWorkflow('wf-1', { transport: t })) {
-      const step = w.steps?.[0] as { output?: { images: unknown[] } } | undefined;
-      seen.push(step?.output?.images.length ?? 0);
-    }
-
-    // No clock involved: the held read is the only thing setting the pace.
-    expect(seen).toEqual([1, 2, 0]);
-    expect(reads(t)).toHaveLength(3);
-  });
-
-  it('says nothing when a read changed nothing', async () => {
-    const t = createFakeTransport();
-    const seen: string[] = [];
-
-    t.reply('ORCHESTRATION_GET_WORKFLOW', workflow('processing'));
-    t.reply('ORCHESTRATION_GET_WORKFLOW', workflow('processing'));
-    t.reply('ORCHESTRATION_GET_WORKFLOW', workflow('succeeded'));
-
-    for await (const w of orchestration.watchWorkflow('wf-1', { transport: t })) {
-      seen.push(w.status);
-    }
-
-    expect(seen).toEqual(['processing', 'succeeded']);
-    expect(reads(t)).toHaveLength(3);
-  });
-
-  it('stops reading when the consumer breaks out', async () => {
-    await withFakeClock(async () => {
-      const t = createFakeTransport();
-      t.reply('ORCHESTRATION_GET_WORKFLOW', workflow('processing'));
-
-      for await (const _ of orchestration.watchWorkflow('wf-1', { transport: t })) break;
-      await vi.advanceTimersByTimeAsync(10_000);
-
-      expect(reads(t)).toHaveLength(1);
-    });
-  });
-
-  it('survives repeated bursts of failures while progress is being made', async () => {
-    await withFakeClock(async () => {
-      const t = createFakeTransport();
-      const seen: string[] = [];
-
-      const done = (async () => {
-        for await (const w of orchestration.watchWorkflow('wf-1', { transport: t })) {
-          seen.push(w.status);
-        }
-      })();
-
-      for (const status of ['processing', 'succeeded'] as const) {
-        for (let i = 0; i < 3; i += 1) {
-          t.fail('ORCHESTRATION_GET_WORKFLOW', { code: 'unavailable', message: 'blip' });
-          await vi.advanceTimersByTimeAsync(5_000);
-        }
-        t.reply('ORCHESTRATION_GET_WORKFLOW', workflow(status));
-        await vi.advanceTimersByTimeAsync(0);
-      }
-      await done;
-
-      expect(seen).toEqual(['processing', 'succeeded']);
-    });
-  });
-
-  it('waits longer after each consecutive failure', async () => {
-    await withFakeClock(async () => {
-      const t = createFakeTransport();
-      const watching = (async () => {
-        for await (const _ of orchestration.watchWorkflow('wf-1', { transport: t }));
-      })().catch(() => {});
-
-      const blip = () =>
-        t.fail('ORCHESTRATION_GET_WORKFLOW', { code: 'unavailable', message: 'blip' });
-
-      blip();
-      await vi.advanceTimersByTimeAsync(0);
-      expect(reads(t)).toHaveLength(1);
-
-      // 250ms for the first retry, then 1s — a fixed gap would have re-read twice by now.
-      await vi.advanceTimersByTimeAsync(250);
-      blip();
-      await vi.advanceTimersByTimeAsync(0);
-      expect(reads(t)).toHaveLength(2);
-
-      await vi.advanceTimersByTimeAsync(250);
-      expect(reads(t)).toHaveLength(2);
-      await vi.advanceTimersByTimeAsync(750);
-      expect(reads(t)).toHaveLength(3);
-
-      t.reply('ORCHESTRATION_GET_WORKFLOW', workflow('succeeded'));
-      await vi.advanceTimersByTimeAsync(0);
-      await watching;
-    });
-  });
-
-  it('gives up once the failures never stop', async () => {
-    await withFakeClock(async () => {
-      const t = createFakeTransport();
-      // Handled from the start: the rejection lands mid-clock-advance, long
-      // before an `await` further down could attach to it.
-      const failure = (async () => {
-        for await (const _ of orchestration.watchWorkflow('wf-1', { transport: t }));
-      })().catch((err: unknown) => err);
-
-      for (let i = 0; i < 4; i += 1) {
-        t.fail('ORCHESTRATION_GET_WORKFLOW', { code: 'unavailable', message: 'bridge down' });
-        await vi.advanceTimersByTimeAsync(5_000);
-      }
-
-      expect(await failure).toMatchObject({ code: 'unavailable' });
-      expect(reads(t)).toHaveLength(4);
-    });
-  });
-
-  it('ends without waiting out the read gap when the consumer aborts mid-run', async () => {
-    await withFakeClock(async () => {
-      const t = createFakeTransport();
-      const ac = new AbortController();
-
-      const failure = (async () => {
-        for await (const _ of orchestration.watchWorkflow('wf-1', {
-          transport: t,
-          signal: ac.signal,
-        })) {
-          ac.abort();
-        }
-      })().catch((err: unknown) => err);
-
-      t.reply('ORCHESTRATION_GET_WORKFLOW', workflow('processing'));
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(await failure).toMatchObject({ name: 'AbortError' });
-    });
-  });
-
-  it('gives up immediately when the caller aborts', async () => {
-    await withFakeClock(async () => {
-      const t = createFakeTransport();
-      const ac = new AbortController();
-      t.stall('ORCHESTRATION_GET_WORKFLOW');
-
-      const failure = (async () => {
-        for await (const _ of orchestration.watchWorkflow('wf-1', {
-          transport: t,
-          signal: ac.signal,
-        }));
-      })().catch((err: unknown) => err);
-
-      await Promise.resolve();
-      ac.abort();
-
-      expect(await failure).toMatchObject({ name: 'AbortError' });
-      expect(reads(t)).toHaveLength(1);
-    });
-  });
-});
-
-describe('orchestration.runWorkflow', () => {
-  it('resolves with the finished workflow', async () => {
-    await withFakeClock(async () => {
-      const t = createFakeTransport();
-      const done = orchestration.runWorkflow(TEMPLATE, { transport: t, ...SPEND });
-
-      t.reply('ORCHESTRATION_SUBMIT_WORKFLOW', workflow('scheduled'));
-      await vi.advanceTimersByTimeAsync(2_000);
-      t.reply('ORCHESTRATION_GET_WORKFLOW', workflow('processing'));
-      await vi.advanceTimersByTimeAsync(2_000);
-      t.reply('ORCHESTRATION_GET_WORKFLOW', workflow('succeeded'));
-      await vi.advanceTimersByTimeAsync(2_000);
-
-      await expect(done).resolves.toMatchObject({ status: 'succeeded' });
-    });
-  });
-
-  it('resolves rather than throwing when the run fails', async () => {
-    const t = createFakeTransport();
-    t.reply('ORCHESTRATION_SUBMIT_WORKFLOW', workflow('failed'));
-
-    await expect(
-      orchestration.runWorkflow(TEMPLATE, { transport: t, ...SPEND }),
-    ).resolves.toMatchObject({ status: 'failed' });
-    expect(reads(t)).toHaveLength(0);
-  });
-
-  it('never reads a submission that already finished', async () => {
-    const t = createFakeTransport();
-    t.reply('ORCHESTRATION_SUBMIT_WORKFLOW', workflow('succeeded'));
-
-    await orchestration.runWorkflow(TEMPLATE, { transport: t, ...SPEND });
-
-    expect(reads(t)).toHaveLength(0);
-  });
-});
-
-describe('orchestration reads', () => {
-  it('returns the workflow with its steps and their typed output', async () => {
-    const t = createFakeTransport();
-    t.reply(
-      'ORCHESTRATION_GET_WORKFLOW',
-      workflow('succeeded', {
-        steps: [{ $type: 'textToImage', name: 'a', output: { images: [{ url: 'u' }] } }],
-      } as unknown as Partial<Workflow>),
-    );
-
-    const current = await orchestration.getWorkflow('wf-1', { transport: t });
-
-    expect(current.steps?.[0]).toMatchObject({ $type: 'textToImage' });
-    expect(t.sent.at(-1)?.payload).toEqual({ workflowId: 'wf-1' });
-  });
-
-  it('returns the canceled workflow', async () => {
-    const t = createFakeTransport();
-    t.reply('ORCHESTRATION_CANCEL_WORKFLOW', workflow('canceled'));
-
-    await expect(orchestration.cancelWorkflow('wf-1', { transport: t })).resolves.toMatchObject({
-      status: 'canceled',
-    });
-    expect(t.sent.at(-1)?.payload).toEqual({ workflowId: 'wf-1' });
-  });
-});
-
-describe('orchestration.listWorkflows', () => {
-  it('walks the pages without the cursor reaching the caller', async () => {
-    const t = createFakeTransport();
-    t.reply('ORCHESTRATION_LIST_WORKFLOWS', {
-      workflows: [workflow('succeeded', { id: 'a' })],
-      cursor: 'next',
-    });
-    t.reply('ORCHESTRATION_LIST_WORKFLOWS', { workflows: [workflow('succeeded', { id: 'b' })] });
-
-    const ids: (string | null | undefined)[] = [];
-    for await (const w of orchestration.listWorkflows({}, { transport: t })) ids.push(w.id);
-
-    expect(ids).toEqual(['a', 'b']);
-    expect(t.sent.map((s) => s.payload)).toEqual([
-      { limit: 50, cursor: undefined },
-      { limit: 50, cursor: 'next' },
+    await expect(orchestration.waitForWorkflow('wf_1')).resolves.toMatchObject({ status: 'succeeded' });
+    expect(calls.map((c) => c.url)).toEqual([
+      `${BASE}/v2/consumer/workflows/wf_1`,
+      `${BASE}/v2/consumer/workflows/wf_1?wait=20&until=change`,
     ]);
   });
 
-  it('stops fetching when the caller stops reading', async () => {
-    const t = createFakeTransport();
-    t.reply('ORCHESTRATION_LIST_WORKFLOWS', {
-      workflows: [workflow('succeeded', { id: 'a' }), workflow('succeeded', { id: 'b' })],
-      cursor: 'next',
-    });
+  it('yields each state the workflow moves through, and not a repeat', async () => {
+    const { orchestration } = client([
+      () => json(200, workflow('unassigned')),
+      () => json(202, workflow('unassigned')),
+      () => json(200, workflow('processing')),
+      () => json(200, workflow('succeeded')),
+    ]);
 
-    for await (const w of orchestration.listWorkflows({}, { transport: t })) {
-      if (w.id === 'a') break;
+    const seen: string[] = [];
+    for await (const state of orchestration.watchWorkflow('wf_1')) seen.push(state.status);
+
+    expect(seen).toEqual(['unassigned', 'processing', 'succeeded']);
+  });
+
+  it('counts a step’s progress as a change even when the status holds', async () => {
+    const running = (output: unknown) => ({ ...workflow('processing'), steps: [{ name: 'a', output }] });
+    const { orchestration } = client([
+      () => json(200, running(null)),
+      () => json(200, running({ images: [{ url: 'https://blob/1.png' }] })),
+      () => json(200, workflow('succeeded')),
+    ]);
+
+    let yields = 0;
+    for await (const _ of orchestration.watchWorkflow('wf_1')) yields++;
+
+    expect(yields).toBe(3);
+  });
+
+  it('stops reading when the caller stops watching', async () => {
+    const { orchestration, calls } = client([() => json(200, workflow('processing'))]);
+
+    for await (const state of orchestration.watchWorkflow('wf_1')) {
+      expect(state.status).toBe('processing');
+      break;
     }
 
-    expect(t.sent).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('resolves a failed workflow rather than throwing', async () => {
+    const { orchestration } = client([() => json(200, workflow('failed'))]);
+
+    await expect(orchestration.waitForWorkflow('wf_1')).resolves.toMatchObject({ status: 'failed' });
+  });
+
+  it('waits out a blip but not a refusal', async () => {
+    const blip = client([
+      () => json(200, workflow('processing')),
+      () => json(503, {}),
+      () => json(200, workflow('succeeded')),
+    ]);
+    await expect(blip.orchestration.waitForWorkflow('wf_1')).resolves.toMatchObject({
+      status: 'succeeded',
+    });
+
+    const refused = client([() => json(404, { title: 'Not Found' })]);
+    await expect(refused.orchestration.waitForWorkflow('wf_1')).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('cancels by setting the status', async () => {
+    const { orchestration, calls } = client([() => new Response(null, { status: 200 })]);
+
+    await orchestration.cancelWorkflow('wf_1');
+    expect(calls[0]).toMatchObject({ method: 'PUT', url: `${BASE}/v2/consumer/workflows/wf_1` });
+    expect(JSON.parse(calls[0]!.body!)).toEqual({ status: 'canceled' });
+  });
+
+  it('queries a page of workflows by tag', async () => {
+    const { orchestration, calls } = client([() => json(200, { next: 'c2', items: [] })]);
+
+    await expect(orchestration.queryWorkflows({ tags: ['mine'], take: 10 })).resolves.toEqual({
+      next: 'c2',
+      items: [],
+    });
+    expect(calls[0]!.url).toBe(`${BASE}/v2/consumer/workflows?tags=mine&take=10`);
   });
 });

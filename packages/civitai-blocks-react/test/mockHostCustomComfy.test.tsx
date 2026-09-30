@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useBuzzWorkflow, WorkflowSubmitError } from '../src/hooks/useBuzzWorkflow.js';
 import { getTransport } from '../src/internal/singleton.js';
-import { createMockHost, resetTransport, disallowedAccountError } from '../src/testing.js';
+import { createMockHost, resetTransport } from '../src/testing.js';
+import { disallowedAccountError } from '../src/internal/mockHost.js';
 
 /**
  * customComfy coverage for `createMockHost`: the `{ kind:'customComfy', recipe,

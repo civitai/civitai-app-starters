@@ -1,7 +1,7 @@
 {
   "name": "@civitai/blocks-client",
   "version": "0.1.0",
-  "description": "Framework-free host bridge for Civitai Apps: transport core plus domain services.",
+  "description": "The Civitai app SDK, v1 shape: an app holds a token and calls the Civitai API and the orchestrator; a block asks its host only to show host UI.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -28,8 +28,10 @@
     "api:check": "node scripts/api-report.mjs --check",
     "check:layering": "node scripts/check-layering.mjs",
     "check:parity": "node scripts/check-host-parity.mjs",
+    "gen:steps": "node scripts/gen-step-types.mjs",
+    "check:steps": "node scripts/gen-step-types.mjs --check",
     "snapshot:host": "node scripts/snapshot-host-messages.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json && tsc -p tsconfig.examples.json",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -37,6 +39,7 @@
     "node": ">=20"
   },
   "devDependencies": {
+    "@types/node": "^25.9.1",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11"
   },
@@ -45,11 +48,11 @@
   },
   "keywords": [
     "civitai",
-    "blocks",
+    "sdk",
+    "api",
+    "orchestration",
     "iframe",
-    "postmessage",
-    "transport",
-    "embed"
+    "postmessage"
   ],
   "homepage": "https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-blocks-client#readme",
   "bugs": "https://github.com/civitai/civitai-app-starters/issues",

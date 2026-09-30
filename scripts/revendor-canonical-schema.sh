@@ -22,7 +22,9 @@
 set -euo pipefail
 
 CANONICAL_URL="${CANONICAL_URL:-https://civitai.com/schemas/app-block/v1.json}"
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# `cd -P … >/dev/null` — see the same line in check-canonical-schema.sh: a bare
+# `cd` with CDPATH set echoes the directory into the `$(…)` capture.
+REPO_ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null && pwd)"
 VENDORED="$REPO_ROOT/packages/civitai-app-sdk/schemas/app-block/v1.json"
 
 if [[ ! -f "$VENDORED" ]]; then

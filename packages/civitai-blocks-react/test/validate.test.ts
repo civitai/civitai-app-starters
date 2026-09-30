@@ -453,8 +453,16 @@ describe('isValidAppStorageSetResult', () => {
   it('accepts ok:true with sizeBytes', () => {
     expect(isValidAppStorageSetResult({ requestId: 'r', ok: true, sizeBytes: 23 })).toBe(true);
   });
+  // A REAL host message, not the TRPC code the mock used to invent (#343). The
+  // validator takes any string, so the fixture may as well teach the truth.
   it('accepts ok:false with error (no sizeBytes)', () => {
-    expect(isValidAppStorageSetResult({ requestId: 'r', ok: false, error: 'PAYLOAD_TOO_LARGE' })).toBe(true);
+    expect(
+      isValidAppStorageSetResult({
+        requestId: 'r',
+        ok: false,
+        error: 'per-user row limit exceeded',
+      }),
+    ).toBe(true);
   });
   it('accepts an error-only reply (uniform {ok,error} contract)', () => {
     expect(isValidAppStorageSetResult({ requestId: 'r1', error: 'boom' })).toBe(true);

@@ -6,14 +6,36 @@
  *     `cdn.jsdelivr.net/npm/@civitai/components/styles.css` resolves to a real
  *     file (jsDelivr ignores package.json `exports`, so the `./styles.css`
  *     export alias alone 404s there; a real root file added to `files` fixes
- *     every CDN uniformly while the alias keeps bundler imports working), and
+ *     every CDN uniformly while the alias keeps bundler imports working),
  *   - generates `src/styles.generated.ts` embedding the same CSS as a string
- *     (the JS-injectable form), compiled by tsc into dist.
+ *     (the JS-injectable form), compiled by tsc into dist, and
+ *   - slices the sheet per component (`scripts/slice-css.ts`) into
+ *     `dist/css/<slug>.css` plus `src/css/<slug>.generated.ts`.
  * A generation-parity test asserts the two never diverge.
+ *
+ * 🔴 The per-component artifacts are NEITHER exported NOR published. They are
+ * not declared in package.json `exports` (so no consumer can name them), and
+ * `files` carries `"!dist/css"` (so they do not enter the tarball either).
+ * They exist on disk, in this repo, for `pnpm measure:css-split` and issue
+ * #358. Files on disk are reversible; export keys on a published package are
+ * not, and nothing imports these yet. Held until #358.
+ *
+ * Not exporting them was never a reason to SHIP them: under the earlier
+ * `files: ["dist"]` they added 70 unnameable files (118,744 B unpacked) to
+ * every install. A test runs `npm pack` and asserts zero `dist/css/` entries.
+ *
+ * 🔴 The whole-sheet outputs above are FROZEN. `componentsCss` and
+ * `injectStyles()` still carry every rule, byte-identical to before the split
+ * existed, because `blocks-react`'s `useBlocksStyles()` injecting the WHOLE
+ * pack is a documented contract (MARKUP.md): rendering any one `/ui` component
+ * styles hand-written `data-civitai-ui="…"` markup elsewhere on the page. The
+ * per-component artifacts are ADDITIVE and opt-in. See issue #358.
  */
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { assertLossless, cssSlices, sliceComponentsCss } from './slice-css.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(here, '..');
@@ -36,6 +58,66 @@ writeFileSync(
   `${banner}\n\n/** The @civitai/components stylesheet (identical to dist/components.css). */\nexport const componentsCss = ${JSON.stringify(css)};\n`
 );
 
+/* ── per-component slices ───────────────────────────────────────────────── */
+
+const split = sliceComponentsCss(css);
+// Before ANY slice is written — but read `slice-css.ts` for what this does and
+// does not prove. It pins the PARTITION ARITHMETIC: the pieces `sliceComponentsCss`
+// returns, recomposed by `composeSheet`, are exactly the input. It cannot see a
+// section boundary `SECTION_RE` failed to recognise (those rules merge into the
+// previous slice and reassembly stays byte-perfect); the test suite's boundary
+// guard is what covers that.
+assertLossless(split, css);
+const slices = cssSlices(split);
+
+// Stale artifacts must not survive a renamed or deleted section — but the two
+// directories need DIFFERENT treatment, and conflating them was a defect.
+//
+// 🔴 `src/css/` is TRACKED. A blanket `rmSync(..., { recursive: true })` here
+// deletes whatever a human puts in it — a README, a hand-written helper —
+// silently, on the next `pnpm build`, with no diff to read until `git status`.
+// So prune only what this script WRITES (`*.generated.ts`), by name.
+//
+// `dist/` is gitignored and holds nothing but build output (this script's
+// `.css` files plus tsc's `.js`/`.d.ts` emitted from `src/css/`), so the wipe
+// is correct there and is the only thing that clears a stale compiled slice.
+const srcCssDir = join(pkgRoot, 'src', 'css');
+const distCssDir = join(distDir, 'css');
+mkdirSync(srcCssDir, { recursive: true });
+for (const name of readdirSync(srcCssDir)) {
+  if (name.endsWith('.generated.ts')) rmSync(join(srcCssDir, name), { force: true });
+}
+rmSync(distCssDir, { recursive: true, force: true });
+mkdirSync(distCssDir, { recursive: true });
+
+for (const slice of slices) {
+  writeFileSync(join(distCssDir, `${slice.slug}.css`), slice.css);
+  const constName = `${slice.slug.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())}Css`;
+  writeFileSync(
+    join(srcCssDir, `${slice.slug}.generated.ts`),
+    `${banner}\n\n` +
+      `/**\n` +
+      ` * The \`${slice.title}\` slice of the @civitai/components stylesheet —\n` +
+      ` * a standalone, layered sheet carrying the shared \`[data-civitai-ui]\` base\n` +
+      ` * rule plus this section only. Identical to dist/css/${slice.slug}.css.\n` +
+      ` *\n` +
+      ` * Components in this slice: ${slice.slugs.join(', ')}.\n` +
+      ` *\n` +
+      ` * 🔴 NOT importable, and NOT published. This file is not declared in\n` +
+      ` * package.json \`exports\` (so \`@civitai/components/css/…\` does not\n` +
+      ` * resolve) and \`files\` excludes \`dist/css\` (so it never reaches the\n` +
+      ` * tarball). It exists for this repo's own measurement. See issue #358.\n` +
+      ` */\n` +
+      // `: string` is load-bearing, not decoration. Without it tsc infers the
+      // STRING LITERAL type and inlines the whole sheet into the `.d.ts` — the
+      // shape `styles.generated.ts` already has, where one 32 KB constant costs
+      // another 33 KB of declaration. Repeated across 14 slices that was 100 KB
+      // of `.d.ts` in the tarball (measured), for a type no consumer wants.
+      `export const css: string = ${JSON.stringify(slice.css)};\n\n` +
+      `/** Alias of {@link css}, named for this slice. */\nexport const ${constName}: string = css;\n`
+  );
+}
+
 // The elements stamp this on every constructor they register, so two copies of
 // the package on one page can name their versions when they collide.
 const { version } = JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf8')) as {
@@ -47,5 +129,8 @@ writeFileSync(
 );
 
 console.log(
-  '[build-css] wrote dist/components.css + styles.css + src/styles.generated.ts + src/version.generated.ts'
+  `[build-css] wrote dist/components.css + styles.css + src/styles.generated.ts + ` +
+    `src/version.generated.ts + ` +
+    `${slices.length} slices covering ${slices.reduce((n, s) => n + s.slugs.length, 0)} ` +
+    `components (not exported — see #358)`
 );

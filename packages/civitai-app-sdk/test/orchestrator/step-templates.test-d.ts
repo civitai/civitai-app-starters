@@ -160,7 +160,7 @@ expectTypeOf<Exclude<keyof WorkflowStepTemplates, WorkflowStepType>>().toEqualTy
  * `type … = never;` or a union of quoted literals — the script refuses to
  * guess at any other shape and writes nothing.
  */
-type CatalogStepTypesWithoutAGeneratedType = never;
+type CatalogStepTypesWithoutAGeneratedType = 'imageScanning' | 'preprocessVideo' | 'yuE2';
 expectTypeOf<Exclude<WorkflowStepType, keyof WorkflowStepTemplates>>().toEqualTypeOf<
   CatalogStepTypesWithoutAGeneratedType
 >();

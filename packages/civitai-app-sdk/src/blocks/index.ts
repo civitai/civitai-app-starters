@@ -1,10 +1,12 @@
 /**
  * `@civitai/app-sdk/blocks` — framework-agnostic contract for Civitai Apps.
  *
- * This subpath exports the manifest type, scope strings, postMessage protocol,
- * and the `defineBlock` validator. Hooks and transport implementations live in
- * a separate package (see `@civitai/blocks-react`) so this module stays usable
- * from any runtime — Node, browsers, workers — with no React dependency.
+ * This subpath exports the manifest type, scope strings and postMessage
+ * protocol. Hooks and transport implementations live in a separate package (see
+ * `@civitai/blocks-react`) so this module stays usable from any runtime — Node,
+ * browsers, workers — with no React dependency and no runtime dependencies at
+ * all. Build-time manifest validation lives at `@civitai/app-sdk/manifest`
+ * (node-only); see the note on `BlockManifestError` below.
  */
 
 // FIRST import, on purpose. Blocks are framed at an opaque origin (sandbox
@@ -18,8 +20,18 @@ import '../safe-storage/index.js';
 export { installSafeStorage, createMemoryStorage } from '../safe-storage/index.js';
 export type { SafeStorageInstallResult, SafeStorageName } from '../safe-storage/index.js';
 
-export { defineBlock, BlockManifestError } from './defineBlock.js';
-export type { DefineBlockConfig } from './defineBlock.js';
+/**
+ * `defineBlock` MOVED to `@civitai/app-sdk/manifest` (a NODE-ONLY subpath) in
+ * the release that closed #330. It now validates by compiling the vendored
+ * canonical schema with Ajv instead of maintaining a hand-written mirror of it,
+ * which needs `node:fs` and a runtime dependency — neither of which belongs on
+ * this browser-facing, zero-dependency surface. Most callers want the Vite
+ * plugin at `@civitai/app-sdk/vite` rather than the function.
+ *
+ * `BlockManifestError` stays exported here, from its own module, so
+ * `instanceof` means the same thing on both subpaths.
+ */
+export { BlockManifestError } from './manifestError.js';
 
 export {
   BLOCK_SCOPES,
@@ -40,6 +52,52 @@ export {
 export type { BrowsingLevelKey, BrowsingLevelBit, ColorDomain } from './browsingLevel.js';
 
 export {
+  APP_STORAGE_MAX_VALUE_BYTES,
+  APP_STORAGE_MAX_BYTES,
+  APP_STORAGE_MAX_ROWS,
+} from './appStorageLimits.js';
+
+/**
+ * {@link classifyAppStorageError} — the matcher a block branches on — plus the
+ * four rejection messages a MOCK HOST has to emit. The wire carries a
+ * host-authored message, never the TRPC code; see `appStorageErrors.ts` for the
+ * measurement, and #343 for the bug it closes.
+ *
+ * 🔴 **THE PUBLIC BRANCHING SURFACE IS THE REASON, NOT THE STRING.** A block
+ * switches on {@link AppStorageRejectionReason}; it never needs to hold a host
+ * message. So this barrel deliberately exports LESS than
+ * `appStorageErrors.ts` does, and the omissions are each a decision:
+ *
+ * - `APP_STORAGE_HOST_ERROR_MESSAGES` — the frozen array. Publishing it invites
+ *   `MESSAGES.includes(err.message)`, which is EQUALITY against a snapshot and
+ *   stops matching the day the host moves its per-value cap. That is the
+ *   matcher shape #343 exists to eliminate; `classifyAppStorageError` is
+ *   strictly wider (see its note on the per-value FAMILY).
+ * - `isAppStorageHostErrorMessage` — a thin `classifyAppStorageError(…) !==
+ *   null`. Its only caller is `tests/guards/app-storage-error-strings.test.mjs`,
+ *   which imports the module by FILE PATH.
+ * - `APP_STORAGE_ERROR_APP_QUOTA_EXCEEDED` / `_APP_ROW_LIMIT` — the app-wide
+ *   umbrella pair. No mock in this repository can emit them (nothing models the
+ *   umbrella), and a block reaches them through the `'app-quota-exceeded'` /
+ *   `'app-row-limit'` reasons, which ARE exported.
+ * - `appStorageValueTooLargeMessage` — the builder, so a test can prove the
+ *   per-value string is DERIVED from `APP_STORAGE_MAX_VALUE_BYTES` rather than
+ *   hardcoded.
+ *
+ * All five stay exported from `appStorageErrors.ts` itself, so a test or a
+ * guard reaches them by path. Adding one here later is a `minor`; removing one
+ * once published is not.
+ */
+export {
+  APP_STORAGE_ERROR_VALUE_TOO_LARGE,
+  APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED,
+  APP_STORAGE_ERROR_USER_ROW_LIMIT,
+  APP_STORAGE_ERROR_REQUEST_FAILED,
+  classifyAppStorageError,
+} from './appStorageErrors.js';
+export type { AppStorageRejectionReason } from './appStorageErrors.js';
+
+export {
   BLOCK_INIT_FRAGMENT_MARKER_KEY,
   BLOCK_INIT_FRAGMENT_VERSION,
   BLOCK_INIT_FRAGMENT_KEYS,
@@ -49,7 +107,12 @@ export {
 } from './initFragment.js';
 export type { BlockInitFragment } from './initFragment.js';
 
-export { isMessage } from './messages.js';
+export {
+  isMessage,
+  BLOCK_TO_PARENT_MESSAGE_TYPES,
+  OTHER_MESSAGE_TYPE_LABEL,
+  boundBlockToParentMessageType,
+} from './messages.js';
 export type {
   BlockInitPayload,
   BlockToParentMessage,
@@ -73,6 +136,13 @@ export type {
  */
 export { isModelSlotContext, isPageSlotContext } from './types.js';
 
+/**
+ * The sign-in gate, spelled once. Blocks, docs and starters call this instead
+ * of open-coding `viewer !== null` or `viewer?.signedIn === true`; see its doc
+ * in `types.ts` for which of the two it uses and why.
+ */
+export { isSignedIn } from './types.js';
+
 export type {
   BlockContext,
   KnownSlotId,
@@ -85,10 +155,10 @@ export type {
   BlockSettings,
   BlockToken,
   ContentRating,
-  ManifestAsset,
   ManifestBooleanField,
   ManifestIframe,
   ManifestNumberField,
+  ManifestPage,
   ManifestPreview,
   ManifestSettingField,
   ManifestSettings,
@@ -119,6 +189,7 @@ export type {
   WorkflowBodyCustomComfyInline,
   InlineComfyNode,
   WorkflowBodyStep,
+  WorkflowBodyPassThroughStep,
   WorkflowStatus,
   BlockBuzzTransaction,
   BlockBuzzAccount,

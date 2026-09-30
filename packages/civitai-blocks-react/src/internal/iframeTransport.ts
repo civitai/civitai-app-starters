@@ -1,5 +1,7 @@
 import {
+  boundBlockToParentMessageType,
   isMessage,
+  OTHER_MESSAGE_TYPE_LABEL,
   parseBlockInitFragment,
   stripBlockInitFragment,
   type BlockInitPayload,
@@ -45,6 +47,18 @@ interface PendingRequest {
   reject: (err: Error) => void;
   timeoutId: ReturnType<typeof setTimeout>;
   responseType: ParentToBlockMessageType;
+  /**
+   * The block→host message type this entry is awaiting a reply TO — i.e. what the
+   * block asked for, not what the host answers with.
+   *
+   * 🔴 IT IS HERE FOR THE REJECTION REPORT, AND THE REPLY TYPE CANNOT SUBSTITUTE.
+   * `BLOCK_MESSAGE_REJECTED` names the hanging REQUEST because the host's counter
+   * bounds its `type` label against the block→host protocol inventory, which holds
+   * no `*_RESULT` key — so reporting `responseType` would clamp to `'other'`
+   * server-side and collapse every rejection onto one label. See the message's
+   * docblock in `@civitai/app-sdk/blocks`.
+   */
+  requestType: string;
 }
 
 /**
@@ -300,6 +314,7 @@ export class IframeTransport implements BlockTransport {
         reject,
         timeoutId,
         responseType,
+        requestType: request.type,
       });
       this.dispatch(request.type, { ...request.payload, requestId });
     });
@@ -351,6 +366,167 @@ export class IframeTransport implements BlockTransport {
     }
   }
 
+  /**
+   * Which block→host request a reply we are about to drop leaves hanging, and
+   * whether we can tell at all.
+   *
+   * 🔴 "NO REQUEST IS PENDING" AND "I CANNOT TELL WHICH" ARE DIFFERENT ANSWERS, and
+   * an earlier revision collapsed them. It returned `'other'` whenever `requestId`
+   * was not a readable string and the `console.warn` then asserted *"unsolicited
+   * push — nothing was awaiting it"*, which is FALSE for two shapes that occur:
+   *  - a reply whose whole payload is not an object (`isObject` is the first thing
+   *    most validators check), while its request sits in `pending` and hangs to its
+   *    timeout;
+   *  - a PRE-v2 host, which echoes `requestId` only via
+   *    `...(requestId ? { requestId } : {})` — the asymmetry
+   *    `isValidTokenRefreshResponse` exists to tolerate (NOT `isValidTokenRefresh`,
+   *    which validates a host PUSH and has no `requestId` handling at all), so a
+   *    legacy host's malformed `TOKEN_REFRESH_RESPONSE`
+   *    arrives with no `requestId` at all while `REQUEST_TOKEN` is awaiting it.
+   * In both, something IS hanging and the operator was told the opposite. So a
+   * reply that leaves a request OF ITS OWN TYPE unattributed reports `unknown`
+   * rather than `pushed`, and the warn names how many are awaiting that reply type
+   * rather than claiming none was.
+   *
+   * 🔴 AND THE LOOKUP APPLIES THE SAME `responseType` PREDICATE AS REAL
+   * CORRELATION. Without it, a malformed reply carrying ANOTHER in-flight request's
+   * `requestId` — which a buggy host can produce by echoing the wrong id — reports
+   * against the wrong request type, i.e. mislabels a healthy request as the broken
+   * one. `handleMessage` already refuses to settle such a reply; this must refuse to
+   * name it for the same reason.
+   *
+   * The `requestId` is read from an UNVALIDATED payload (the validator just
+   * rejected it), so it is used ONLY as a `Map` key on our own pending table and
+   * never trusted as data.
+   *
+   * 🔴 THE CLAMP IS NOT REDUNDANT WITH THE TYPE SYSTEM. `requestType` is whatever
+   * the caller passed to `sendRequest` — typed, but a JavaScript consumer, or a
+   * block built against a newer protocol, can put any string there, and this value
+   * becomes a Prometheus label on the host. See `boundBlockToParentMessageType`.
+   */
+  private hangingRequestTypeFor(
+    replyType: string,
+    payload: unknown,
+  ): { label: string; hung: 'named' | 'pushed'} | { label: string; hung: 'unknown'; awaiting: number } {
+    // 🔴 THE DISCRIMINATOR IS "WHO IS AWAITING **THIS REPLY TYPE**", NOT
+    // `pending.size`. An earlier revision used the size of the whole table, and it
+    // was wrong in BOTH directions — the shape this file keeps producing:
+    //  - too WIDE: a genuine malformed PUSH (`THEME_CHANGE`, `CONSENT_UNAVAILABLE`,
+    //    `TOKEN_REFRESH`) arriving while anything at all was in flight printed "one
+    //    may now hang", when `validate.ts` says in as many words that dropping one
+    //    of those "costs at most a stale theme … never a hang — nothing awaits this
+    //    message". For a busy block that made the honest push case near-unreachable;
+    //  - too NARROW, on the same pass: the `responseType`-mismatch branch reached
+    //    the "this reply names none of them" wording having just FOUND the request
+    //    by id, so it asserted the one thing that was demonstrably false there.
+    // Filtering by `responseType` answers both: if nobody is awaiting this reply
+    // type, nothing here can hang whatever else is in flight.
+    //
+    // ⚠️ ONE EXCEPTION, AND IT IS THE HIGHEST-STAKES MOMENT THIS WARN HAS.
+    // `BLOCK_INIT` has a validator and is never any request's `responseType`, so a
+    // malformed one always lands on `pushed` and prints "nothing was awaiting it" —
+    // while `waitForInit()` IS awaiting it and rejects 10s later, after which the
+    // host shows a fallback.
+    //
+    // ⚠️ AND THE FILTER DID CHANGE THIS PATH, which an earlier revision of this note
+    // denied on the premise that "pre-init `pending` is empty". It is not: a block
+    // calling `useViewer()` from a bare mount effect has `GET_VIEWER` in `pending`
+    // before any init lands, because `sendRequest` inserts there BEFORE `dispatch`
+    // decides to queue. Under the old `pending.size` discriminator that printed
+    // "1 request(s) … may now hang"; now it prints the push wording — i.e. the change
+    // moved this path in the direction this very note calls the worst one. The
+    // CONCLUSION still holds (no metric moves: `reportRejection` returns early on
+    // `!parentOrigin`), and the rule above is not universal. Only the premise was
+    // wrong.
+    const awaiting = [...this.pending.values()].filter((p) => p.responseType === replyType);
+    if (awaiting.length === 0) {
+      return { label: OTHER_MESSAGE_TYPE_LABEL, hung: 'pushed' };
+    }
+    const requestId = (payload as { requestId?: unknown } | null | undefined)?.requestId;
+    if (typeof requestId === 'string') {
+      const pending = this.pending.get(requestId);
+      // The same predicate `handleMessage` applies before it will SETTLE a reply.
+      // An id matching a request awaiting a DIFFERENT reply type names nothing we
+      // may attribute: blaming it would pin this breakage on a healthy request.
+      if (pending && pending.responseType === replyType) {
+        return { label: boundBlockToParentMessageType(pending.requestType), hung: 'named' };
+      }
+    }
+    return { label: OTHER_MESSAGE_TYPE_LABEL, hung: 'unknown', awaiting: awaiting.length };
+  }
+
+  /**
+   * Tell the host that this transport refused an inbound message, so the drop
+   * becomes a number instead of a `console.warn` nobody is reading.
+   *
+   * 🔴 WHY IT GOES OVER THE BRIDGE AND NOT STRAIGHT TO AN ENDPOINT. A block runs
+   * in a sandboxed iframe at an OPAQUE origin with no ambient credential and no
+   * civitai session, so it has no metrics path of its own: a direct POST would be
+   * cross-origin, uncredentialed, and would need a new PUBLIC unauthenticated
+   * endpoint to receive it — a fresh abuse surface for an observability add-on, and
+   * explicitly out of scope. The host already owns the receiving half: its
+   * dispatcher counts every inbound bridge message on
+   * `civitai_app_block_bridge_messages_total{app_block_id,type,host,outcome}` and
+   * flushes it through the same-origin, coalescing `/api/track/block-message`
+   * beacon. Reporting over the bridge reuses that end to end and adds no route: the
+   * host's handler for this message records `outcome="validator_rejected"` against
+   * the `type` we name here.
+   *
+   * 🔴 THE VALIDATOR'S NAME IS NOT ON THIS WIRE, AND THE `console.warn` DOES NOT
+   * CLOSE THE GAP EITHER — an earlier revision of this docblock claimed it did, and
+   * that was false. `payloadValidatorFor` is a function from type to validator, so
+   * the TOP-LEVEL validator is derivable from the type already on the wire; a
+   * `validator` field would carry only that derivable half, which reads as coverage
+   * while adding none, and a fifth Prometheus label is not free (the beacon route's
+   * own docblock asks for the label product to be read before one is added). The
+   * half that is NOT derivable is which NESTED helper rejected —
+   * `isValidGatedImage` inside `isValidImagesResult` on 2026-09-18 — and the warn
+   * cannot supply it: `validator.name` resolves to the top-level validator, and no
+   * helper in `validate.ts` reports its own name anywhere at runtime. So that
+   * diagnosis is UNAVAILABLE today, from any surface. Closing it means teaching the
+   * validators to return a reason; do not read the warn as a substitute.
+   *
+   * 🔴 NOTHING IS REPORTED BEFORE `BLOCK_INIT`, DELIBERATELY. `dispatch` has no
+   * `parentOrigin` until the first valid init, so a report raised while rejecting a
+   * malformed `BLOCK_INIT` could only be QUEUED — and the host re-sends init on a
+   * ~400ms interval until `BLOCK_READY`, so that queue is a producer with no
+   * consumer: ~25 entries inside one 10s ready window, flushed only if a later init
+   * succeeds and silently discarded if none does. The gap it would have covered is
+   * already covered by a different series — a block that never inits never sends
+   * `BLOCK_READY`, so the host's ready timeout records
+   * `civitai_app_block_renders_total{result="timeout"}`. This counter exists for the
+   * failures AFTER ready, which that one is structurally blind to.
+   *
+   * 🔴 NO EMIT BUDGET, AND THE ONE AN EARLIER REVISION CARRIED WAS JUSTIFIED BY A
+   * FALSEHOOD. It capped reports at 30 per 10s "so a flood cannot burn the host's
+   * 30 msg/sec inbound budget that legitimate `BLOCK_ERROR` reporting needs". The
+   * host consumes `BLOCK_MESSAGE_REJECTED` in its shared dispatcher ABOVE that
+   * limiter — the same placement, and for the same stated reason, as its
+   * `no_handler` branch — so a report consumes none of that budget and the cap
+   * bought nothing. What it did buy was a permanent UNDERCOUNT, which inverts the
+   * receiving side's own documented preference: `bridgeLabels.ts` chooses its clamp
+   * so that "a real flood is still VISIBLE rather than exactly counted … the series
+   * reads 'enormous' instead of 'wrong'". A cap here makes a flood read SMALL, the
+   * one shape of wrongness that side rejects. Magnitude is therefore unbounded on
+   * this path exactly as it already is for `no_handler` and `deduped`; the host's
+   * `BRIDGE_MESSAGE_COUNT_MAX` is the clamp that bounds a row, and the beacon
+   * coalesces identical label sets, so the network cost of a flood is ~one row.
+   */
+  private reportRejection(hangingRequestType: string): void {
+    // No parent origin yet ⇒ nothing to post to, and queueing is worse than
+    // dropping here (see the docblock). Checked rather than left to `dispatch`,
+    // whose queue is unbounded and has no consumer on this path.
+    if (!this.parentOrigin) return;
+    // Fail-soft: a throw here would propagate out of the `message` listener and
+    // abort dispatch for this event — turning an observability feature into a
+    // second silent drop on top of the one it is reporting.
+    try {
+      this.dispatch('BLOCK_MESSAGE_REJECTED', { type: hangingRequestType });
+    } catch {
+      // swallow — telemetry must never break the transport it observes
+    }
+  }
+
   private postToParent(msg: { type: string; payload: unknown }): void {
     // `parentOrigin` is captured from a validated BLOCK_INIT; safe to use as targetOrigin.
     this.window.parent.postMessage(msg, this.parentOrigin!);
@@ -367,10 +543,28 @@ export class IframeTransport implements BlockTransport {
     // rather than crash — see ./validate.ts.
     const validator = payloadValidatorFor(data.type);
     if (validator && !validator(data.payload)) {
+      const hanging = this.hangingRequestTypeFor(data.type, data.payload);
+      // 🔴 THE THREE CASES SAY THREE DIFFERENT THINGS, and `unknown` is the one an
+      // earlier revision printed as `pushed`. Claiming "nothing was awaiting it"
+      // while a request hangs is worse than saying nothing: it sends the one person
+      // reading this console away from the actual symptom.
+      const diagnosis =
+        hanging.hung === 'named'
+          ? `; "${hanging.label}" will now hang to its request timeout)`
+          : hanging.hung === 'pushed'
+            ? ', unsolicited push — nothing was awaiting it)'
+            // `hung` is exactly three states and the two above are excluded, so this
+            // arm is `'unknown'` by construction — but a FOURTH state would land here
+            // silently, and the obvious `: 0` fallback prints "0 request(s) … so one
+            // may now hang", a sentence that contradicts itself. Say that instead.
+            : `; ${hanging.hung === 'unknown' ? `${hanging.awaiting} request(s)` : 'an unknown number of requests'} awaiting "${data.type}" and this reply names none of them, so one may now hang)`;
       // eslint-disable-next-line no-console -- developer-facing diagnostic at a trust boundary
       console.warn(
-        `IframeTransport: dropping malformed "${data.type}" message from ${event.origin}`,
+        `IframeTransport: dropping malformed "${data.type}" message from ${event.origin} ` +
+          `(rejected by ${validator.name || 'an anonymous validator'}` +
+          diagnosis,
       );
+      this.reportRejection(hanging.label);
       return;
     }
 

@@ -19,10 +19,16 @@
  *    body must be assignable, and a recipe body must NOT be able to carry
  *    inline-only fields (or vice versa) — because a type that merely compiles
  *    is not a type that matches the wire;
- *  - the `step` member (`kind: 'step'`) mirrors the host's `blockStepBodySchema`
- *    exactly — `{ kind, step, params }` and nothing else, since that schema is
- *    `.strict()` — and is the ONLY way a block can reach the host's step
- *    registry (`'convert-image'`, `'chat-completion'`, …).
+ *  - the `step` member (`kind: 'step'`) is ITSELF a union of two arms, mirroring
+ *    the host's `blockStepMemberSchema`, discriminated on the PRESENCE of
+ *    `step`: the REGISTRY arm (`blockStepBodySchema` — `{ kind, step, params }`
+ *    and nothing else, since that schema is `.strict()`) is the only way to
+ *    reach the host's step registry (`'convert-image'`, `'chat-completion'`, …);
+ *    the PASS-THROUGH arm (`blockPassThroughStepBodySchema` —
+ *    `{ kind, $type, input, maxBuzz }`, no `step` key) names an orchestrator
+ *    `$type` directly. Both directions are pinned, as for `customComfy`: a
+ *    pass-through body must be assignable, and neither arm may carry the other's
+ *    fields.
  *
  * This is a TYPE test: it is compiled by `tsc -p tsconfig.typecheck.json`
  * (the `test:types` script, run by `pnpm test`). If the type shape regresses,
@@ -40,6 +46,7 @@ import type {
   WorkflowBodyCustomComfy,
   WorkflowBodyCustomComfyInline,
   WorkflowBodyCustomComfyRecipe,
+  WorkflowBodyPassThroughStep,
   WorkflowBodyStep,
   WorkflowBodyTextToImage,
 } from '../../src/blocks/types.js';
@@ -52,8 +59,16 @@ type CustomComfy = Extract<WorkflowBody, { kind: 'customComfy' }>;
 type ComfyRecipe = Extract<CustomComfy, { mode?: 'recipe' }>;
 /** The INLINE arm of the `customComfy` member. */
 type ComfyInline = Extract<CustomComfy, { mode: 'inline' }>;
-/** The `step` member, narrowed out of the union. */
+/**
+ * The `step` member, narrowed out of the union. Like {@link CustomComfy} this is
+ * a UNION of two arms, not a single object type — narrowing on `kind` alone is
+ * not enough to reach either arm's fields.
+ */
 type Step = Extract<WorkflowBody, { kind: 'step' }>;
+/** The REGISTRY arm of the `step` member (`step` present). */
+type StepRegistry = Extract<Step, { step: string }>;
+/** The PASS-THROUGH arm of the `step` member (`step` absent). */
+type StepPassThrough = Extract<Step, { $type: string }>;
 
 const baseParams = { prompt: 'a cat' } as const;
 
@@ -70,9 +85,17 @@ expectTypeOf(checkpointOnly).toMatchTypeOf<WorkflowBody>();
 // --- the exported member types line up with the union arms ---
 expectTypeOf<TextToImage>().toEqualTypeOf<WorkflowBodyTextToImage>();
 expectTypeOf<CustomComfy>().toEqualTypeOf<WorkflowBodyCustomComfy>();
-expectTypeOf<Step>().toEqualTypeOf<WorkflowBodyStep>();
+// 🔴 `kind: 'step'` extracts a UNION of BOTH arms — it is no longer a synonym
+// for `WorkflowBodyStep`. Pin the whole union AND each arm, so neither a
+// dropped arm nor a swapped one can pass.
+expectTypeOf<Step>().toEqualTypeOf<WorkflowBodyStep | WorkflowBodyPassThroughStep>();
+expectTypeOf<StepRegistry>().toEqualTypeOf<WorkflowBodyStep>();
+expectTypeOf<StepPassThrough>().toEqualTypeOf<WorkflowBodyPassThroughStep>();
 expectTypeOf<WorkflowBody>().toEqualTypeOf<
-  WorkflowBodyTextToImage | WorkflowBodyCustomComfy | WorkflowBodyStep
+  | WorkflowBodyTextToImage
+  | WorkflowBodyCustomComfy
+  | WorkflowBodyStep
+  | WorkflowBodyPassThroughStep
 >();
 
 // --- additionalResources is OPTIONAL on the textToImage member ---
@@ -320,18 +343,96 @@ const stepBody: WorkflowBody = {
 };
 expectTypeOf(stepBody).toMatchTypeOf<WorkflowBody>();
 
-// --- the step member mirrors `blockStepBodySchema` EXACTLY: three fields ---
+// --- the REGISTRY arm mirrors `blockStepBodySchema` EXACTLY: three fields ---
 // The host schema is `.strict()`, so a fourth field here would be rejected at
 // the wire rather than dropped. Pinning the key set is what makes this a mirror
-// rather than a lookalike.
-expectTypeOf<keyof Step>().toEqualTypeOf<'kind' | 'step' | 'params'>();
-expectTypeOf<Step['step']>().toEqualTypeOf<string>();
-expectTypeOf<Step['params']>().toEqualTypeOf<Record<string, unknown>>();
+// rather than a lookalike. (Keyed off `StepRegistry`, not `Step` — `keyof` a
+// union is the INTERSECTION of its members' keys, which would silently narrow
+// to `'kind' | 'step'` and read as a passing assertion about nothing.)
+expectTypeOf<keyof StepRegistry>().toEqualTypeOf<'kind' | 'step' | 'params'>();
+expectTypeOf<StepRegistry['step']>().toEqualTypeOf<string>();
+expectTypeOf<StepRegistry['params']>().toEqualTypeOf<Record<string, unknown>>();
 
 // Notably there is NO top-level `accountType` on this arm — unlike the
 // `textToImage` member. The host schema does not accept one.
-expectTypeOf<Step>().not.toHaveProperty('accountType');
-expectTypeOf<Step>().not.toHaveProperty('recipe');
+expectTypeOf<StepRegistry>().not.toHaveProperty('accountType');
+expectTypeOf<StepRegistry>().not.toHaveProperty('recipe');
+
+// --- PASS-THROUGH arm: a body naming an orchestrator $type is a valid
+//     WorkflowBody, and it carries NO `step` key --------------------------------
+const passThroughBody: WorkflowBody = {
+  kind: 'step',
+  $type: 'imageBackgroundRemoval',
+  input: { image: 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/00001.jpeg' },
+  maxBuzz: 10,
+};
+expectTypeOf(passThroughBody).toMatchTypeOf<WorkflowBody>();
+
+// A deeply-nested, orchestrator-native `input` is just as valid — it is opaque
+// and forwarded unmodified, so nothing here constrains its shape.
+const passThroughNested: WorkflowBody = {
+  kind: 'step',
+  $type: 'comfy',
+  input: { quantity: 2, nested: { list: [1, 2, { deep: 'value' }], flag: false } },
+  maxBuzz: 250,
+};
+expectTypeOf(passThroughNested).toMatchTypeOf<WorkflowBody>();
+
+// The pass-through arm's key set mirrors the host's `.strict()`
+// `blockPassThroughStepBodySchema` exactly — `step` is present in the TYPE as
+// the optional-undefined arm discriminator (the host spells it `z.undefined()`),
+// and the wire body omits it entirely.
+expectTypeOf<keyof StepPassThrough>().toEqualTypeOf<
+  'kind' | 'step' | '$type' | 'input' | 'maxBuzz'
+>();
+expectTypeOf<StepPassThrough['$type']>().toEqualTypeOf<string>();
+expectTypeOf<StepPassThrough['input']>().toEqualTypeOf<Record<string, unknown>>();
+expectTypeOf<StepPassThrough['maxBuzz']>().toEqualTypeOf<number>();
+// 🔴 `step` is assignable ONLY as `undefined` — it is the discriminator, not a
+// field to fill in. `undefined` is the entire domain of the property type.
+expectTypeOf<StepPassThrough['step']>().toEqualTypeOf<undefined>();
+
+// The two arms do not bleed into each other, exactly as with `customComfy`.
+// Both host schemas are `.strict()`, so a body naming fields from both is
+// rejected by BOTH arms rather than resolved to a winner.
+expectTypeOf<StepPassThrough>().not.toHaveProperty('params');
+expectTypeOf<StepPassThrough>().not.toHaveProperty('recipe');
+expectTypeOf<StepPassThrough>().not.toHaveProperty('accountType');
+expectTypeOf<StepRegistry>().not.toHaveProperty('$type');
+expectTypeOf<StepRegistry>().not.toHaveProperty('input');
+expectTypeOf<StepRegistry>().not.toHaveProperty('maxBuzz');
+
+// 🔴 NEGATIVE PIN: a body that sets `step` to a string ALONGSIDE `$type` must
+// NOT type-check. It satisfies neither arm — the registry arm has no `$type`
+// and is missing `params`, and the pass-through arm's `step` admits only
+// `undefined`. This is the compile-time half of the host's "rejected by BOTH
+// arms" behaviour.
+expectTypeOf<{
+  kind: 'step';
+  step: string;
+  $type: string;
+  input: Record<string, unknown>;
+  maxBuzz: number;
+}>().not.toMatchTypeOf<WorkflowBody>();
+
+// …and the same thing as a literal assignment, which is how an app author meets
+// it. The error lands on `$type` itself, not on the declaration.
+const bothArms: WorkflowBody = {
+  kind: 'step',
+  step: 'chat-completion',
+  // @ts-expect-error — `step` and `$type` cannot coexist on one body
+  $type: 'imageBackgroundRemoval',
+  input: {},
+  maxBuzz: 10,
+};
+void bothArms;
+
+// 🔴 NEGATIVE PIN: `step: undefined` written EXPLICITLY is still a pass-through
+// body (the key is present with the only assignable value), but a pass-through
+// body MISSING `$type` is not assignable to anything.
+// @ts-expect-error — `$type` is required on the pass-through arm
+const missingType: WorkflowBody = { kind: 'step', input: {}, maxBuzz: 10 };
+void missingType;
 
 // --- narrowing on `kind` exposes the right member fields ---
 declare const someBody: WorkflowBody;
@@ -343,5 +444,16 @@ if (someBody.kind === 'textToImage') {
   // rather than letting a consumer assume every customComfy body is a recipe.
   expectTypeOf(someBody.mode).toEqualTypeOf<'recipe' | 'inline' | undefined>();
 } else {
-  expectTypeOf(someBody.step).toEqualTypeOf<string>();
+  // 🔴 Same shape one level down: narrowing to `kind === 'step'` leaves BOTH
+  // arms, so `step` is `string | undefined` here and `params` is NOT readable.
+  // A consumer must narrow again before touching either arm's fields.
+  expectTypeOf(someBody.step).toEqualTypeOf<string | undefined>();
+  if ('$type' in someBody) {
+    expectTypeOf(someBody.$type).toEqualTypeOf<string>();
+    expectTypeOf(someBody.input).toEqualTypeOf<Record<string, unknown>>();
+    expectTypeOf(someBody.maxBuzz).toEqualTypeOf<number>();
+  } else {
+    expectTypeOf(someBody.step).toEqualTypeOf<string>();
+    expectTypeOf(someBody.params).toEqualTypeOf<Record<string, unknown>>();
+  }
 }

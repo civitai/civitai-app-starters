@@ -44,8 +44,10 @@ export function App() {
   const [previewValues, setPreviewValues] = useState<Record<string, unknown> | null>(null);
 
   if (!ready) {
+    // No `rootRef` here: the host shows its own loading state until BLOCK_READY,
+    // and `useBlockResize` observes the real root whenever it mounts.
     return (
-      <div ref={rootRef} data-theme={theme} className="hw-root">
+      <div data-theme={theme} className="hw-root">
         Loading…
       </div>
     );

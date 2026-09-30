@@ -39,10 +39,14 @@ function useTransportSnapshot(): BlockSnapshot {
  * moves (today's behaviour).
  *
  * @example
+ * import { isSignedIn } from '@civitai/app-sdk/blocks';
  * const { ready, context, viewer, theme, settings } = useBlockContext();
  * if (!ready) return <div>Loading…</div>;
  * // Set data-theme on YOUR root — the host can't reach into the iframe (gotcha #60).
- * return <div data-theme={theme}>Hi {viewer?.username ?? 'anon'}</div>;
+ * // Sign-in gate: call `isSignedIn`. NOT `viewer?.username` — an identity read
+ * // standing in for a presence check, on a field that is `@deprecated` and
+ * // scheduled for removal. This snippet used to do exactly that.
+ * return <div data-theme={theme}>{isSignedIn(viewer) ? 'Hi there' : 'Hi anon'}</div>;
  */
 export function useBlockContext(): Pick<
   BlockSnapshot,

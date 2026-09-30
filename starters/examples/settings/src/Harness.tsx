@@ -88,7 +88,11 @@ export function Harness({ children }: { children: ReactNode }) {
         publisherSettings: { watermark_text: 'made on civitai', default_steps: 30 },
         userSettings: { show_advanced: true, preferred_sampler: 'DPM++ 2M Karras' },
       },
-      viewer: { id: 2, username: 'dev-viewer', status: 'active' },
+      // Byte-for-byte the viewer the production host sends: `signedIn: true` on
+      // every present viewer (civitai/civitai `withSignedInFlag`), and NO
+      // `status` — the platform withholds the viewer's moderation state from
+      // third-party iframes (civitai #2521). Anonymous is `viewer: null`.
+      viewer: { id: 2, username: 'dev-viewer', signedIn: true },
       theme: 'dark',
       renderMode: 'iframe',
     };

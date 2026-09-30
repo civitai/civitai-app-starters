@@ -16,7 +16,8 @@ sibling workspaces. Help them extend it.
 
 - Vite 7 + React 19 + TypeScript strict
 - `@civitai/blocks-react` for the eight hooks + the singleton `IframeTransport`
-- `@civitai/app-sdk/blocks` for the manifest types, scope strings, JSON schema, and the `defineBlock` validator
+- `@civitai/app-sdk/blocks` for the manifest types, scope strings and the JSON schema
+- `@civitai/app-sdk/vite` for `blockManifestPlugin`, the build-time manifest gate (needs the optional peer `ajv`, already in `devDependencies`)
 - No styling library — the demo uses inline styles + the `[data-theme]` attribute the host provides
 
 ## Why this shape
@@ -41,9 +42,9 @@ Don't try to "make this a real OAuth app." That's what `react-pwa` is for.
 ```
 .
 ├── block.manifest.json     # registered with civitai.com — declares slot + scopes (NOT iframe.src; platform stamps it)
-├── civitai.app.json        # CLI config (appId + manifest list)
+├── civitai.app.json        # CLI config (appId + manifest list) — appId lives HERE, not in the manifest
 ├── index.html
-├── vite.config.ts
+├── vite.config.ts          # registers blockManifestPlugin — validates block.manifest.json on every dev boot + build
 ├── .env.example
 ├── src/
 │   ├── App.tsx             # the block UI
@@ -59,7 +60,7 @@ Don't try to "make this a real OAuth app." That's what `react-pwa` is for.
 - **Gate UI on `ready`.** `useBlockContext().ready` is `false` until `BLOCK_INIT` lands. Render a small skeleton (or nothing) while waiting — the host shows its own loading state next to the iframe.
 - **Attach `useBlockResize` to your root element.** The iframe doesn't auto-resize; `RESIZE_IFRAME` messages drive that. Without `useBlockResize` the iframe stays at `iframe.minHeight` from the manifest.
 - **Narrow `context` per slot.** `BlockContext` is intentionally loose (`{ slotId, [key]: unknown }`). When you know your manifest targets model-page slots, cast to `ModelSlotContext` (from `@civitai/app-sdk/blocks`) to get `modelId`, `modelVersionId`, `modelName`, etc. typed. Other slot families get their own narrowing types as they ship.
-- **Treat `viewer === null` as anonymous.** The platform sends `viewer: null` for signed-out users, not an object with everything nulled out.
+- **Gate sign-in with `isSignedIn(viewer)`** (from `@civitai/app-sdk/blocks`), and do not open-code the gate. The platform sends `viewer: null` for signed-out users — never an object with everything nulled out. Which spelling is correct has already changed once, so the SDK owns it in one function: `signedIn` is optional on the wire and is the one viewer field the init validator deliberately does not reject when malformed, so `isSignedIn` answers from presence. It reads neither `viewer.id` nor `viewer.username` (both `@deprecated` and scheduled for removal), so nothing you write through it changes when those go. Need the identity itself? Call `useViewer()` — scope-gated and audited per call.
 
 ## Boot skeleton
 
@@ -131,7 +132,7 @@ page surface, with the markup already in place so the two can never separate.
 |---|---|
 | `src/App.tsx`, any block UI | `pnpm typecheck && pnpm dev:harness` and verify visually |
 | `vite.config.ts`, env wiring | `pnpm build` |
-| `block.manifest.json` | Validate against the JSON schema: `node -e "import('./node_modules/@civitai/app-sdk/dist/blocks/defineBlock.js').then(m => m.defineBlock({manifest: require('./block.manifest.json')}))"` |
+| `block.manifest.json` | Nothing extra — `blockManifestPlugin` (from `@civitai/app-sdk/vite`, registered in `vite.config.ts`) validates it against the canonical schema on every `pnpm dev`, `pnpm dev:harness` and `pnpm build`, and fails with the offending field path. `pnpm build` is the quickest way to check in isolation. Before submitting, also run `civitai app validate` — the CLI checks things only the server knows. |
 
 The starter intentionally ships without an e2e suite — real end-to-end
 verification requires civitai.com embedding the block. The dev harness +

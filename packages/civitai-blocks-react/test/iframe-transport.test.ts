@@ -4,7 +4,7 @@ import type { BlockInitPayload, ParentToBlockMessage } from '@civitai/app-sdk/bl
 
 import { IframeTransport } from '../src/internal/iframeTransport.js';
 import { sendTypedRequest } from '../src/internal/transport.js';
-import { mockParentMessage } from '../src/testing.js';
+import { mockParentMessage } from './helpers/mockParentMessage.js';
 
 const PARENT_ORIGIN = 'https://civitai.com';
 const OTHER_ORIGIN = 'https://evil.example.com';

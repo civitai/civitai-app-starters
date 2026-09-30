@@ -72,7 +72,7 @@
 import { cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { isModelSlotContext, isPageSlotContext } from '@civitai/app-sdk/blocks';
+import { isModelSlotContext, isPageSlotContext, isSignedIn } from '@civitai/app-sdk/blocks';
 
 import { useBlockContext } from '../src/hooks/useBlockContext.js';
 import { getTransport } from '../src/internal/singleton.js';
@@ -136,9 +136,12 @@ const HOST_DERIVED_MODEL_CONTEXT = {
 };
 
 /**
- * civitai/civitai `main`'s own contract test pins the viewer projection as
- * exactly `{ id: 8888, username: 'alice' }`. `signedIn` is added by
- * civitai/civitai#3707 (OPEN, unmerged) — see the DEFAULT-viewer fence below.
+ * Mirrors civitai/civitai `main`'s own contract test, which asserts the viewer
+ * projection is exactly `{ id: 8888, username: 'alice', signedIn: true }` and
+ * pins `Object.keys(viewer).sort()` as `['id', 'signedIn', 'username']`
+ * (`src/components/AppBlocks/__tests__/projectBlockInit.test.ts`). `signedIn`
+ * arrived with civitai/civitai#3707 (merged 2026-08-07) — see the
+ * DEFAULT-viewer fence below.
  */
 const HOST_DERIVED_VIEWER = { id: 8888, username: 'alice', signedIn: true as const };
 
@@ -643,9 +646,11 @@ describe('viewer thinning (change 4)', () => {
     expect(isValidBlockInitPayload(v2Init)).toBe(true);
     const snap = snapshotFromInit(v2Init as never);
     expect(snap.viewer?.signedIn).toBe(true);
-    // The sign-in gate a block should build against, and the legacy test it
-    // replaces, agree — that equivalence is what makes the migration safe.
+    // Against a CURRENT host the two candidate spellings agree, which is why
+    // `isSignedIn` can pick either. The three cases below are where they stop
+    // agreeing, and they are what picked the one it uses.
     expect(snap.viewer?.signedIn === true).toBe(snap.viewer !== null);
+    expect(isSignedIn(snap.viewer)).toBe(true);
   });
 
   it('accepts a viewer WITHOUT signedIn — a host predating the field', () => {
@@ -656,8 +661,13 @@ describe('viewer thinning (change 4)', () => {
     expect(isValidBlockInitPayload(oldHost)).toBe(true);
     const snap = snapshotFromInit(oldHost as never);
     expect(snap.viewer?.signedIn).toBeUndefined();
-    // The fallback: absent `signedIn` on a non-null viewer still means signed in.
+    // Absent `signedIn` on a non-null viewer still means signed in.
     expect(snap.viewer !== null).toBe(true);
+    // 🔴 DIVERGENCE 1 — and the SDK gate gets it right. An open-coded
+    // `viewer?.signedIn === true` would render the anonymous branch here, to a
+    // viewer who IS signed in.
+    expect(snap.viewer?.signedIn === true).toBe(false);
+    expect(isSignedIn(snap.viewer)).toBe(true);
   });
 
   it('🔴 a MALFORMED signedIn does NOT reject the payload', () => {
@@ -667,12 +677,13 @@ describe('viewer thinning (change 4)', () => {
     // over one advisory flag. The host retries the identical payload for 10s and
     // then abandons the launch, so a strict check here is a BRICKED block; an
     // ignored flag is a degraded one (the block reads `signedIn` as falsy and
-    // may show a sign-in CTA, while `viewer !== null` still answers correctly).
+    // may show a sign-in CTA, while presence still answers correctly).
     //
-    // Currently unreachable from the real host (`projectBlockInitViewer` writes
-    // a literal `true`) — which is the point: the strict version bought nothing
+    // Currently unreachable from the real host (`withSignedInFlag` writes a
+    // literal `true`) — which is the point: the strict version bought nothing
     // and cost a fleet-wide brick the day a host started writing
-    // `signedIn: !!user`.
+    // `signedIn: !!user`. That asymmetry is also why `isSignedIn` gates on the
+    // property this guard ENFORCES rather than on the one it waves through.
     for (const signedIn of [false, 'yes', 0, 1, null]) {
       expect(
         isValidBlockInitPayload({
@@ -685,14 +696,33 @@ describe('viewer thinning (change 4)', () => {
 
   it('a malformed signedIn still reaches the snapshot verbatim — not coerced', () => {
     // The guard tolerating it must not be mistaken for the SDK sanitising it.
-    // A block reading `viewer?.signedIn === true` sees `false` here; the
-    // documented `viewer !== null` fallback is what still reads correctly.
     const snap = snapshotFromInit({
       ...structuredClone(v2Init),
       viewer: { id: 8888, username: 'alice', signedIn: false },
     } as never);
     expect(snap.viewer?.signedIn).toBe(false);
     expect(snap.viewer !== null).toBe(true);
+    // 🔴 DIVERGENCE 2 — the `signedIn: !!user` hazard, reached end-to-end
+    // through the real validator and the real snapshot projection. An
+    // open-coded `viewer?.signedIn === true` shows a sign-in CTA to someone
+    // already signed in; `isSignedIn` does not.
+    expect(snap.viewer?.signedIn === true).toBe(false);
+    expect(isSignedIn(snap.viewer)).toBe(true);
+  });
+
+  it('🔴 isSignedIn is false for the ONLY anonymous value on the wire', () => {
+    // DIVERGENCE 3 is the direction that would be a defect if `isSignedIn` were
+    // wrong: anonymous must not read as signed in. `viewer: null` is the only
+    // anonymous value the contract has — `isValidBlockInitPayload` rejects a
+    // viewer that is neither `null` nor an object with a numeric `id`, and that
+    // guard is compiled into every deployed block bundle.
+    const anon = { ...structuredClone(v2Init), viewer: null };
+    expect(isValidBlockInitPayload(anon)).toBe(true);
+    const snap = snapshotFromInit(anon as never);
+    expect(snap.viewer).toBeNull();
+    expect(isSignedIn(snap.viewer)).toBe(false);
+    // …and on a snapshot that never received BLOCK_INIT at all.
+    expect(isSignedIn(undefined)).toBe(false);
   });
 
   it('🔴 rejects a viewer thinned to a bare boolean — deployed blocks would never become ready', () => {
@@ -807,37 +837,29 @@ describe('createMockHost BLOCK_INIT fidelity', () => {
   });
 
   it('🔴 the DEFAULT viewer is exactly { id, username, signedIn } — no `status`', async () => {
-    // 🔴 THIS FENCE STAYS — and it is deliberately NOT a mirror of a shipped
-    // host assertion. An earlier revision claimed it was. Its two halves have
-    // different provenance:
+    // 🔴 THIS FENCE STAYS. It pins a SHIPPED host contract; both halves mirror
+    // production:
     //
-    //  - `status` ABSENT mirrors production TODAY. civitai/civitai `main`'s
-    //    `projectBlockInitViewer` builds `{ id, username }`, and
-    //    `src/components/AppBlocks/__tests__/projectBlockInit.test.ts:154` pins
-    //    `Object.keys(viewer).sort()` as exactly `['id', 'username']`. `status`
-    //    is @deprecated because the platform withholds the viewer's moderation
-    //    state from third-party iframes (civitai #2521).
-    //  - `signedIn` PRESENT pins the INTENDED post-#3707 contract, not a shipped
-    //    one. `signedIn` appears ZERO times under `src/components/AppBlocks/` on
-    //    `main`. civitai/civitai#3707 (OPEN, unmerged) is what adds it, and what
-    //    moves the host's pinned key set to ['id','signedIn','username'].
+    //  - `status` ABSENT. `status` is @deprecated because the platform
+    //    withholds the viewer's moderation state from third-party iframes
+    //    (civitai #2521).
+    //  - `signedIn` PRESENT. civitai/civitai `main`'s `withSignedInFlag`
+    //    (`src/components/AppBlocks/projectBlockInit.ts`) stamps the literal
+    //    `true` on every present viewer, and
+    //    `src/components/AppBlocks/__tests__/projectBlockInit.test.ts` pins
+    //    `Object.keys(viewer).sort()` as exactly ['id','signedIn','username'].
+    //    It arrived with civitai/civitai#3707 (merged 2026-08-07).
     //
-    // WHY KEEP IT. The mock is what makes `signedIn` exercisable locally ahead
-    // of the host; without a fence the field can be dropped from the mock by an
-    // unrelated edit and nothing goes red. The cost of running ahead — a block
-    // gating on `viewer?.signedIn` that passes here and renders its anonymous
-    // branch to every signed-in user in production — is carried elsewhere, on
-    // purpose: `ViewerInfo.signedIn`'s doc, the changeset, and the migrated
-    // starter + `hello-world`, which all gate on `viewer !== null` instead.
+    // WHY KEEP IT. The mock is what makes `signedIn` exercisable locally;
+    // without a fence the field can be dropped from the mock by an unrelated
+    // edit and nothing goes red.
     //
-    // 🔴 IF #3707 NEVER LANDS, this assertion is what has to change first. Drop
-    // `signedIn` from `DEFAULT_VIEWER` (mockHost), from `anonFallbackViewer`
-    // (liveHost), from the two expectations below, from `HOST_DERIVED_VIEWER`
-    // above, and from the two `payload.viewer` fences in `liveHost.test.tsx`
-    // (~L229 and ~L277) — in ONE change — do not
-    // leave a fence pinning a contract nobody ships, which is the same
-    // both-wrong-blind defect this section exists to prevent, pointed the other
-    // way.
+    // 🔴 THE PROPERTY IT HOLDS: the dev hosts must not be more generous than
+    // the host they imitate. The same key set is pinned in six places —
+    // `DEFAULT_VIEWER` (mockHost), `anonFallbackViewer` (liveHost), the two
+    // expectations below, `HOST_DERIVED_VIEWER` above, and the two
+    // `payload.viewer` fences in `liveHost.test.tsx` — and they move together
+    // or not at all.
     //
     // `toEqual` is load-bearing — `toMatchObject` cannot see an extra key.
     uninstall = createMockHost().install();

@@ -15,9 +15,17 @@ export type BridgeErrorCode =
   /** The transport got an answer it could not read as a result. */
   | 'malformed';
 
-export class BridgeError extends Error {
+/** Anything this package throws on purpose, so one `catch` can tell it from a bug. */
+export class CivitaiError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'CivitaiError';
+  }
+}
+
+export class BridgeError extends CivitaiError {
   readonly code: BridgeErrorCode;
-  /** The message type that failed, e.g. `APP_STORAGE_GET`. */
+  /** The message type that failed, e.g. `SAVE_IMAGE`. */
   readonly operation: string;
 
   constructor(code: BridgeErrorCode, operation: string, message: string, options?: ErrorOptions) {
@@ -39,7 +47,6 @@ const HOST_FAILURES: ReadonlyArray<readonly [RegExp, BridgeFailureCode]> = [
     /(requires|lacks) .+ scope|not approved|revoked|invalid block token|not enabled|review preview|^banned$/i,
     'forbidden',
   ],
-  [/quota exceeded|row limit exceeded|exceeds \d+KB cap/i, 'insufficient'],
   [/rate limit|^busy$/i, 'rate-limited'],
   // A few of the host's older replies carry a code of their own in `error`.
   [/^(forbidden|review-mode|declined)$/i, 'forbidden'],

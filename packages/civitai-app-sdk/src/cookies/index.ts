@@ -15,8 +15,33 @@ const TAG_BYTES = 16;
 const KEY_BYTES = 32;
 const SALT = 'civitai-app-sdk-cookie-salt';
 
+/**
+ * Derived keys, memoized by secret.
+ *
+ * 🔴 `scryptSync` IS DELIBERATELY EXPENSIVE — Node's defaults (N=16384, r=8)
+ * cost ~16MB and tens of milliseconds PER CALL. The salt is a compile-time
+ * constant and the secret is a long-lived env value, so the key for a given
+ * secret is the same forever; re-deriving it on every request was pure burn.
+ *
+ * This is the one piece of module state in the package, and it is sanctioned
+ * for the same reason `src/safe-storage/` is: it is a pure cache of a pure
+ * function, keyed on its only input. It holds no per-user data — a *secret*
+ * is not a *token*, and the `Tokens live in arguments, never module state`
+ * rule is about the latter.
+ *
+ * A server has exactly one `SESSION_SECRET`, so this map holds one entry. It
+ * is unbounded only in the sense that a caller who feeds it unbounded distinct
+ * secrets would grow it — but such a caller is already paying an unbounded
+ * number of scrypt runs, which is the far larger problem.
+ */
+const keyCache = new Map<string, Buffer>();
+
 function getKey(secret: string): Buffer {
-  return scryptSync(secret, SALT, KEY_BYTES);
+  const cached = keyCache.get(secret);
+  if (cached) return cached;
+  const derived = scryptSync(secret, SALT, KEY_BYTES);
+  keyCache.set(secret, derived);
+  return derived;
 }
 
 /**
@@ -49,6 +74,15 @@ export function unsealCookie(sealed: string, secret: string): string | null {
     const tag = Buffer.from(tagHex, 'hex');
     const ciphertext = Buffer.from(ctHex, 'hex');
     if (iv.length !== IV_BYTES || tag.length !== TAG_BYTES) return null;
+    // 🔴 EVERY CHECK ABOVE THIS LINE IS FREE; `getKey` BELOW IT IS NOT — see the
+    // `keyCache` note. The sealed value arrives from a cookie, i.e. from an
+    // UNAUTHENTICATED client, so anything rejectable without a key must be
+    // rejected before the KDF. `Buffer.from(x, 'hex')` decodes leniently — it
+    // stops at the first non-hex character and returns what it got — so a
+    // ciphertext field of `zz` yields ZERO bytes while passing every check
+    // above. Zero bytes can never be a valid seal: `sealCookie('')` emits an
+    // empty `ctHex`, which the `!ctHex` guard already rejects.
+    if (ciphertext.length === 0) return null;
     const decipher = createDecipheriv(ALGORITHM, getKey(secret), iv);
     decipher.setAuthTag(tag);
     const dec = Buffer.concat([decipher.update(ciphertext), decipher.final()]);

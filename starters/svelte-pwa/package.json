@@ -35,11 +35,13 @@
     "preview": "vite preview",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:e2e:install": "playwright install --with-deps chromium"
+    "test:e2e:install": "playwright install --with-deps chromium",
+    "probe:static-serving": "node scripts/probe-static-serving.mjs",
+    "probe:cookie-flags": "node scripts/probe-cookie-flags.mjs"
   },
   "dependencies": {
-    "@civitai/app-sdk": "^0.42.0",
-    "@civitai/components": "^0.4.1",
+    "@civitai/app-sdk": "^0.49.0",
+    "@civitai/components": "^0.4.2",
     "@civitai/theme": "^0.3.1",
     "@hono/node-server": "^2.0.4",
     "@t3-oss/env-core": "^0.13.0",

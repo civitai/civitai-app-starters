@@ -38,7 +38,7 @@ Out of scope:
 
 - OAuth + PKCE on every starter; token exchange runs server-side and
   the browser only ever sees an opaque `httpOnly` session cookie.
-- AES-256-CTR encrypted sessions via `@civitai/app-sdk`'s
+- AES-256-GCM encrypted sessions via `@civitai/app-sdk`'s
   `sealCookie` / `unsealCookie` — no JWT-in-localStorage.
 - Scope bitmasks via named constants; consent screens request only what
   the demo needs (`AIServicesWrite | BuzzRead | UserRead`).

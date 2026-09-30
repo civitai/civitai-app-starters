@@ -25,7 +25,7 @@ token refreshes so the UI iterates without civitai.com embedding your block.
 
 ## What you ship
 
-- **`block.manifest.json`** — registered with civitai.com. Declares the slot you target and the scopes you request. You do **not** set `iframe.src`: the platform stamps it server-side when your block is approved (and ignores/strips any `src` you include).
+- **`block.manifest.json`** — registered with civitai.com. Declares the slot you target and the scopes you request. You do **not** set `iframe.src`: the platform stamps it server-side when your block is approved, and a manifest that declares one is refused at submit — so `pnpm dev`/`pnpm build` refuse it too (the manifest is validated on every dev-server boot and build).
 - **The Vite build output** (`pnpm build` → `dist/`) — submitted to civitai.com. The platform owns the build + serve recipe (it injects its own build; you don't ship a `Dockerfile` or `nginx.conf`) and serves your `dist/` at the URL it assigns. You don't self-host.
 
 ## What runs in the iframe

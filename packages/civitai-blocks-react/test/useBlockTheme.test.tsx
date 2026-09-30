@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { useBlockContext } from '../src/hooks/useBlockContext.js';
 import { useBlockTheme } from '../src/hooks/useBlockTheme.js';
 import { getTransport } from '../src/internal/singleton.js';
-import { createMockHost, mockParentMessage, resetTransport } from '../src/testing.js';
+import { createMockHost, resetTransport } from '../src/testing.js';
+import { mockParentMessage } from './helpers/mockParentMessage.js';
 
 /**
  * `useBlockTheme` end-to-end against the REAL SDK transport.

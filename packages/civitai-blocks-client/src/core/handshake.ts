@@ -1,7 +1,6 @@
 /**
- * The host's side of the handshake, as it arrives on the wire. Owned here
- * rather than imported so this package's protocol can move without waiting on
- * `@civitai/app-sdk`; the shapes are the host's and must track it.
+ * The host's side of the handshake, as it arrives on the wire. The shapes are
+ * the host's and must track it.
  */
 
 export type Theme = 'light' | 'dark';

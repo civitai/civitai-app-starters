@@ -1,4 +1,5 @@
-import { renderHook } from '@testing-library/react';
+import { render, renderHook } from '@testing-library/react';
+import { useRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BlockInitPayload } from '@civitai/app-sdk/blocks';
@@ -153,5 +154,116 @@ describe('useBlockResize', () => {
     // Should not throw and should post nothing.
     expect(() => renderHook(() => useBlockResize({ current: el }))).not.toThrow();
     expect(resizeMessages()).toHaveLength(0);
+  });
+
+  /**
+   * 🔴 THE LATER-MOUNT CASE. Every block in `starters/` renders a loading
+   * skeleton until `BLOCK_INIT` lands, so the element this hook is asked to
+   * observe DOES NOT EXIST on the first render. An effect keyed on the ref
+   * WRAPPER (`[ref]`) runs once, finds `ref.current === null`, and is never
+   * re-run — so the block never observes anything and the host never resizes
+   * the iframe. The starters papered over that by pinning `ref={rootRef}` to
+   * BOTH branches; these two cases are what make that unnecessary.
+   *
+   * Two shapes, because they fail for different reasons and one alone would
+   * certify the fix too generously:
+   *   - the hook-level shape, matching `useBlockBreakpoint`'s own later-mount
+   *     test, where the caller re-renders with the element already in the ref;
+   *   - the REAL component shape, where React attaches the ref during commit,
+   *     i.e. AFTER the render that mounts it. That one is the shape the
+   *     starters actually have.
+   */
+  it('picks up an element that only mounts on a later render', () => {
+    installMockResizeObserver();
+    const el = document.createElement('div');
+    let current: HTMLElement | null = null;
+    const { rerender } = renderHook(() => useBlockResize({ current }));
+
+    expect(roInstances, 'nothing to observe yet').toHaveLength(0);
+
+    current = el;
+    rerender();
+
+    expect(roInstances, 'the later-mounted element must be observed').toHaveLength(1);
+    expect(roInstances[0].observe).toHaveBeenCalledWith(el);
+
+    roInstances[0].cb([{ contentRect: { height: 250 } }]);
+    expect(resizeMessages().map((m) => m.payload.height)).toEqual([250]);
+  });
+
+  it('posts RESIZE_IFRAME for a root that a real component mounts on a later render', () => {
+    installMockResizeObserver();
+
+    // The starter shape, with NO `ref` on the loading branch — exactly what the
+    // workaround existed to avoid. React attaches `rootRef` during the commit
+    // that follows the `ready = true` render, not during that render itself.
+    function Block({ ready }: { ready: boolean }) {
+      const rootRef = useRef<HTMLDivElement>(null);
+      useBlockResize(rootRef);
+      if (!ready) return <div>Loading…</div>;
+      return <div ref={rootRef}>content</div>;
+    }
+
+    const { rerender } = render(<Block ready={false} />);
+    expect(roInstances, 'nothing to observe while loading').toHaveLength(0);
+
+    rerender(<Block ready />);
+
+    expect(roInstances, 'the real root must be observed once it mounts').toHaveLength(1);
+    roInstances[0].cb([{ contentRect: { height: 412 } }]);
+    expect(
+      resizeMessages().map((m) => m.payload.height),
+      'the host must be told the real height',
+    ).toEqual([412]);
+  });
+
+  /**
+   * INVARIANT GUARDS, not regression coverage — both of these already pass at
+   * `main` @ 0b6055b. They are here because the later-mount fix replaces the
+   * effect's dependency array with a per-render identity check, and without
+   * them nothing pins what that check is for: deleting it leaves every test
+   * above green while the observer is torn down and rebuilt on every render.
+   */
+  it('does not rebuild the observer when the element is unchanged across renders', () => {
+    installMockResizeObserver();
+
+    function Block({ n }: { n: number }) {
+      const rootRef = useRef<HTMLDivElement>(null);
+      useBlockResize(rootRef);
+      return <div ref={rootRef}>{n}</div>;
+    }
+
+    const { rerender } = render(<Block n={1} />);
+    expect(roInstances).toHaveLength(1);
+
+    rerender(<Block n={2} />);
+    rerender(<Block n={3} />);
+
+    expect(roInstances, 'same element -> one observer for its whole life').toHaveLength(1);
+    expect(roInstances[0].disconnect, 'and it is never disconnected').not.toHaveBeenCalled();
+  });
+
+  it('disconnects the old observer and observes the new one when the element changes', () => {
+    installMockResizeObserver();
+    const first = document.createElement('div');
+    const second = document.createElement('div');
+    let current: HTMLElement = first;
+
+    function Block() {
+      const stable = useRef<HTMLElement | null>(null);
+      stable.current = current;
+      useBlockResize(stable);
+      return null;
+    }
+
+    const { rerender } = render(<Block />);
+    expect(roInstances[0].observe).toHaveBeenCalledWith(first);
+
+    current = second;
+    rerender(<Block />);
+
+    expect(roInstances).toHaveLength(2);
+    expect(roInstances[0].disconnect, 'the old element is released').toHaveBeenCalledTimes(1);
+    expect(roInstances[1].observe).toHaveBeenCalledWith(second);
   });
 });
