@@ -84,12 +84,15 @@
  *     baseModelGroup: checkpoint.baseModel,  // e.g. 'SDXL'   literal in a comment
  *
  * 🔴 KNOWN LIMITS:
- *   - It is a text scan, not a TS parse. It cannot see a literal reached
- *     through indirection — `const ECOSYSTEM = 'SDXL'` a line above the call, a
- *     helper that returns one, or `'SD' + 'XL'`. That direction is a real hole,
- *     but it is not the shape that shipped, and closing it would mean
- *     type-checking every example fence — which `typecheck:readme` already does
- *     for a different property.
+ *   - It is a text scan, not a TS parse, so it cannot see a literal reached
+ *     through INDIRECTION — `const ECOSYSTEM = 'SDXL'` a line above the call, or
+ *     a helper that returns one (`pickFamily()`). Both measured to pass. That
+ *     direction is a real hole, but it is not the shape that shipped, and closing
+ *     it would mean type-checking every example fence — which `typecheck:readme`
+ *     already does for a different property. (Concatenation, `'SD' + 'XL'`, IS
+ *     caught — it is in the value expression, so the quoted-string rule below
+ *     finds it. Measured, and asserted in the F2 test; an earlier draft of this
+ *     bullet listed it as a miss and was wrong.)
  *   - ANY quoted string inside the value expression counts as a pin, so
  *     `baseModelGroup: ctx['checkpoint'].baseModel` would be a false positive.
  *     That direction is deliberate: a false positive is a visible failure a
@@ -98,10 +101,11 @@
  *   - The value expression is read across at most 3 newlines, so a picker option
  *     object spread over more than that could hide a literal in its tail.
  *   - The comment stripper is a character scanner, not a lexer: it knows
- *     strings, template literals and both comment forms, but not regex literals,
- *     and an UNBALANCED apostrophe in code (`<div>don't</div>`) makes it skip to
- *     end-of-line, so a `//` comment later on THAT line is not stripped. Both
- *     directions err toward a false positive, i.e. a visible failure.
+ *     strings, template literals and both comment forms, but not regex literals.
+ *     An UNBALANCED apostrophe in code (`<div>don't</div>`) makes it skip to
+ *     end-of-line, so a `//` comment later on THAT line is not stripped — a
+ *     false POSITIVE, i.e. a visible failure. A regex literal containing a
+ *     comment opener could go the other way; neither shape occurs in the corpus.
  *   - It keys on the `baseModelGroup` KEY. A future picker option that filters
  *     the same way under another name is not covered until it is added here.
  *   - An UNCLOSED fence now swallows the rest of its file, because that is what
@@ -587,6 +591,7 @@ test('the detector sees the reintroduction spellings, and not the legitimate one
     ['baseModelGroup: `SDXL`,', 'un-interpolated template literal'],
     ["baseModelGroup: checkpoint?.baseModel || 'SDXL',", 'logical-or fallback'],
     ["await open({\n  resourceType: 'LORA',\n  baseModelGroup:\n    'SDXL',\n});", 'multi-line object, value on its own line'],
+    ["baseModelGroup: 'SD' + 'XL',", 'concatenation — caught, unlike variable indirection'],
   ];
   for (const [code, label] of caught) {
     assert.ok(
@@ -609,6 +614,22 @@ test('the detector sees the reintroduction spellings, and not the legitimate one
       findHardcodedEcosystem(code),
       [],
       `FALSE POSITIVE (${label}): ${JSON.stringify(code)}`,
+    );
+  }
+
+  // The two INDIRECTION holes the header's KNOWN LIMITS names, pinned so that
+  // bullet stays a measurement rather than a belief. These are NOT "legal" —
+  // they are documented misses. If one starts being caught, the bullet is what
+  // needs updating, not this list.
+  for (const [code, label] of [
+    ["const ECOSYSTEM = 'SDXL';\nbaseModelGroup: ECOSYSTEM,", 'literal via a const'],
+    ['baseModelGroup: pickFamily(),', 'literal via a helper call'],
+  ]) {
+    assert.deepEqual(
+      findHardcodedEcosystem(code),
+      [],
+      `a DOCUMENTED KNOWN HOLE now fires (${label}) — good news, but the header's ` +
+        `KNOWN LIMITS bullet listing it as a miss is now wrong: ${JSON.stringify(code)}`,
     );
   }
 
