@@ -29,6 +29,12 @@ import {
 export { __resetTransport as resetTransport };
 
 export {
+  installPopoverShim,
+  type PopoverShimHandle,
+  type PopoverShimOptions,
+} from './internal/popoverShim.js';
+
+export {
   createMockHost,
   readMockHostUrlOptions,
   // The transitive type closure of `createMockHost`/`MockHostOptions`: every

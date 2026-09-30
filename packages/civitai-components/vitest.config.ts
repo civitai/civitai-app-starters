@@ -2,9 +2,25 @@ import { playwright } from '@vitest/browser-playwright';
 import { defineConfig } from 'vitest/config';
 
 /**
- * `node` = source guards, `browser` = element behaviour on chromium, `contract`
- * = the cross-engine surface on all three engines. `prefers-dark` needs its own
- * project because the OS scheme is a browser-context option, not a page one.
+ * `node` = source guards, `dom` = the NON-BROWSER DOM consumers actually test
+ * in, `browser` = element behaviour on chromium, `contract` = the cross-engine
+ * surface on all three engines. `prefers-dark` needs its own project because the
+ * OS scheme is a browser-context option, not a page one.
+ *
+ * 🔴 WHY `dom` EXISTS, AND WHAT IT IS NOT FOR (#485). Every element-behaviour
+ * project here is a real engine, so this package had no tier that could see a
+ * defect which only appears where the platform is INCOMPLETE — and that is the
+ * tier an App Block's own suite runs in (`@civitai/blocks-react/testing` is
+ * documented as letting a block "run in `vitest`/`happy-dom`", and both React
+ * packages' `unit` projects are happy-dom). `<civitai-menu>` threw
+ * `TypeError: panel.showPopover is not a function` there while 851 browser tests
+ * were green.
+ *
+ * It is NOT a second home for element behaviour. happy-dom does no layout, and
+ * — measured on 20.9.0 — does not deliver a click on slotted content to a
+ * listener on the `<slot>` it is assigned to, so trigger clicks are silent and
+ * anything positional is meaningless. Put behaviour in `browser`; put
+ * "this does not explode where a consumer runs it" here.
  */
 const CHROMIUM_ARGS = ['--no-sandbox', '--disable-dev-shm-usage'];
 
@@ -34,7 +50,18 @@ export default defineConfig({
             '**/*.browser.test.ts',
             '**/*.contract.test.ts',
             '**/*.prefers-dark.test.ts',
+            // `node` has no DOM at all, so a `*.dom.test.ts` would fail there on
+            // `document` rather than on anything it asserts.
+            '**/*.dom.test.ts',
           ],
+        },
+      },
+      {
+        test: {
+          name: 'dom',
+          environment: 'happy-dom',
+          include: ['test/**/*.dom.test.ts'],
+          exclude: ['node_modules'],
         },
       },
       {

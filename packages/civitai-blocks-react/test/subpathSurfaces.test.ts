@@ -90,6 +90,7 @@ const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const TESTING_VALUES = [
   'Harness',
   'createMockHost',
+  'installPopoverShim',
   'readMockHostUrlOptions',
   'resetTransport',
 ] as const;
@@ -118,6 +119,11 @@ const TESTING_TYPES = [
   'MockSharedScenario',
   'MockSharedSeed',
   'MockStorageScenario',
+  // `installPopoverShim`'s own two: the options bag it takes and the handle it
+  // returns. A consumer asserting `handle.slottedClicksReachSlots` in a helper of
+  // their own has to be able to name the handle's type.
+  'PopoverShimHandle',
+  'PopoverShimOptions',
 ] as const;
 
 /**
