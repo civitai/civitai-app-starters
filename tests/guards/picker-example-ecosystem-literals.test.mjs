@@ -98,7 +98,10 @@
  *   - The value expression is read across at most 3 newlines, so a picker option
  *     object spread over more than that could hide a literal in its tail.
  *   - The comment stripper is a character scanner, not a lexer: it knows
- *     strings, template literals and both comment forms, but not regex literals.
+ *     strings, template literals and both comment forms, but not regex literals,
+ *     and an UNBALANCED apostrophe in code (`<div>don't</div>`) makes it skip to
+ *     end-of-line, so a `//` comment later on THAT line is not stripped. Both
+ *     directions err toward a false positive, i.e. a visible failure.
  *   - It keys on the `baseModelGroup` KEY. A future picker option that filters
  *     the same way under another name is not covered until it is added here.
  *   - An UNCLOSED fence now swallows the rest of its file, because that is what
@@ -187,9 +190,11 @@ const MIN_BASE_MODEL_GROUP_SITES = 4;
 
 /**
  * A code region is a PICKER example if it names one of the picker hooks or uses
- * one of their option keys. `resourceType:` is in the list because the README's
- * secondary example is a bare `open({ resourceType, baseModelGroup })` fragment
- * that does not re-name the hook.
+ * one of their option keys. `resourceType:` is in the list so a bare
+ * `open({ resourceType, baseModelGroup })` fragment that does not re-name the
+ * hook still qualifies — every example in the corpus happens to name its hook
+ * today, so this arm is reach rather than current coverage, and dropping it
+ * would move no count while quietly narrowing the guard.
  */
 const PICKER_SIGNAL = /useResourcePicker|useCheckpointPicker|resourceType\s*:|baseModelGroup/;
 
