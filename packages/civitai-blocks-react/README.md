@@ -1018,9 +1018,30 @@ const first = resources[0];             // .versionId / .strength / .trainedWord
 
 ### `useCivitaiNavigate()`
 
-Request a navigation within civitai.com. The hook sends a `NAVIGATE` message to
-the host and returns — fire-and-forget, so the block never learns what the host
-did.
+Request a navigation from the host. The hook sends a `NAVIGATE` message and
+returns — fire-and-forget, so the block never learns what the host did,
+including when the host **refuses** the request.
+
+`scope` selects the **space** `path` is resolved in, and it **defaults to
+`'app'`**:
+
+| `scope` | `path` resolves | The viewer |
+|---|---|---|
+| `'app'` *(default)* | under **this app's own route**, as a sub-path of it | stays in your app; the page stays mounted |
+| `'site'` | at the **civitai.com root** | leaves your app for a site page |
+
+> 🔴 **A leading slash carries no meaning.** The host normalises it away in
+> **both** scopes, so `'/settings'` and `'settings'` are one request within
+> whichever scope you chose. That means `navigate('/models/12345')` asks for
+> **your app's** `/models/12345` — *not* civitai's model page. To reach the
+> civitai.com page, say so: `navigate('models/12345', { scope: 'site' })`.
+>
+> Both spellings were app-scoped before `scope` existed, so no call you have
+> already written changed meaning — that is the point of the default.
+
+`'site'` is granted **per-surface**: the public run page and the dev tunnel allow
+it, and a private run or a moderator's review preview refuse it. A refusal is
+silent, so do not build a flow that needs to know it happened.
 
 `target` is a REQUEST, not a guarantee. How the host acts on `'current'` vs
 `'new_tab'` is host-side behaviour and the host is the authority on it; this
@@ -1034,8 +1055,17 @@ package sends the message and makes no promise about the outcome.
 
 ```tsx
 const { navigate } = useCivitaiNavigate();
-navigate('/models/12345');              // `target` defaults to 'current'
-navigate('/models/12345', 'new_tab');   // requests a new tab; the host decides
+
+// Your app's own pages — the default.
+navigate('settings');                    // this app's /settings
+navigate('/settings');                   // identical; the slash means nothing
+
+// A civitai.com page — needs an explicit scope.
+navigate('models/12345', { scope: 'site' });
+navigate('models/12345', { scope: 'site', target: 'new_tab' });
+
+// The pre-`scope` two-argument shape still works, and is still app-scoped.
+navigate('detail/7', 'new_tab');
 ```
 
 ### `useBlockAnalytics()`

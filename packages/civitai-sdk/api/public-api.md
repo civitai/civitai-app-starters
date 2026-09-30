@@ -491,8 +491,15 @@ export interface Host {
     reportError(message: string, args?: {
         fatal?: boolean;
     }): void;
-    /** Deep-links within this app's own sub-paths; the host refuses anything else. */
+    /**
+     * Asks the host to navigate. `scope` picks the space `path` is resolved in and
+     * DEFAULTS to `'app'` — this app's own sub-paths, which is all this method
+     * could reach before the field existed. Pass `scope: 'site'` to leave the app
+     * for a civitai.com page; the host grants that per-surface and refuses it
+     * elsewhere. Fire-and-forget either way: a refusal is silent.
+     */
     navigate(path: string, args?: {
+        scope?: NavigateScope;
         target?: 'current' | 'new_tab';
     }): void;
     /** Fires `false` when the page hides and `true` when it returns. */

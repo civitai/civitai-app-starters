@@ -179,6 +179,7 @@ export type {
   BlockPendingImageInfo,
   BlockImageScanResult,
   BlockUploadPurpose,
+  BlockNavigateScope,
   BlockTextToImageParams,
   BlockWorkflowSnapshot,
   BuzzAccountType,

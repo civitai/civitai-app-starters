@@ -158,7 +158,10 @@ export type {
   RawGenerationResourcesResponse,
 } from './api/generationResources.js';
 export { useCivitaiNavigate } from './hooks/useCivitaiNavigate.js';
-export type { UseCivitaiNavigate } from './hooks/useCivitaiNavigate.js';
+export type {
+  UseCivitaiNavigate,
+  UseCivitaiNavigateOptions,
+} from './hooks/useCivitaiNavigate.js';
 export { useRequestSignIn } from './hooks/useRequestSignIn.js';
 export type { UseRequestSignIn } from './hooks/useRequestSignIn.js';
 export { useRequestConsent } from './hooks/useRequestConsent.js';

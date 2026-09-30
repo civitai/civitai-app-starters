@@ -9,6 +9,7 @@ import type {
   HostPushes,
   HostRequests,
   ImageScanResult,
+  NavigateScope,
   PickedResource,
   ResourcePickerType,
   SourceImage,
@@ -19,6 +20,7 @@ export type {
   ConsentRefusal,
   DownloadRequest,
   ImageScanResult,
+  NavigateScope,
   PickedResource,
   ResourcePickerType,
   SourceImage,
@@ -60,8 +62,14 @@ export interface Host {
   autoResize(element?: Element): () => void;
   /** `fatal` swaps the block for the host's fallback, for a block that cannot continue. */
   reportError(message: string, args?: { fatal?: boolean }): void;
-  /** Deep-links within this app's own sub-paths; the host refuses anything else. */
-  navigate(path: string, args?: { target?: 'current' | 'new_tab' }): void;
+  /**
+   * Asks the host to navigate. `scope` picks the space `path` is resolved in and
+   * DEFAULTS to `'app'` — this app's own sub-paths, which is all this method
+   * could reach before the field existed. Pass `scope: 'site'` to leave the app
+   * for a civitai.com page; the host grants that per-surface and refuses it
+   * elsewhere. Fire-and-forget either way: a refusal is silent.
+   */
+  navigate(path: string, args?: { scope?: NavigateScope; target?: 'current' | 'new_tab' }): void;
   /** Fires `false` when the page hides and `true` when it returns. */
   onVisibilityChange(handler: (visible: boolean) => void): () => void;
   /** Starts sign-in; the block re-initialises as a signed-in viewer. */
@@ -147,8 +155,17 @@ export function createHost(transport: BlockTransport): Host {
     },
     reportError: (message, args = {}) =>
       notify('BLOCK_ERROR', { message, fatal: args.fatal ?? false }, { transport }),
+    // `scope` is OMITTED rather than sent as `undefined` when the caller did not
+    // choose one. Absent and `'app'` mean the same thing to the host, so this is
+    // not a behaviour difference — it keeps the wire payload byte-identical to
+    // what every pre-`scope` build sends, which is the property the back-compat
+    // claim rests on and the one a host-side diff can actually check.
     navigate: (path, args = {}) =>
-      notify('NAVIGATE', { path, target: args.target ?? 'current' }, { transport }),
+      notify(
+        'NAVIGATE',
+        { path, ...(args.scope ? { scope: args.scope } : {}), target: args.target ?? 'current' },
+        { transport },
+      ),
     onVisibilityChange(handler) {
       const offSuspend = on(transport, 'SUSPEND', () => handler(false));
       const offResume = on(transport, 'RESUME', () => handler(true));

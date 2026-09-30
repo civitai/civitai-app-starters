@@ -338,7 +338,7 @@ wider scope — and refuses without one.
 | `resize(height)` | Resizes the frame, clamped to the manifest |
 | `autoResize(element?)` | Keeps the frame as tall as the body (or `element`); returns a stop function |
 | `reportError(message, { fatal })` | `fatal` swaps the block for the host's fallback |
-| `navigate(path, { target })` | Deep-links within this app's own sub-paths |
+| `navigate(path, { scope, target })` | Deep-links within this app's own sub-paths; `scope: 'site'` asks to leave the app for a civitai.com page instead. `scope` defaults to `'app'` |
 | `onVisibilityChange(handler)` | Reports the page hiding and returning |
 | `requestSignIn({ returnUrl })` | Starts sign-in; the block re-initialises signed in |
 | `download({ url, filename })` | Saves to the viewer's device — a sandboxed frame cannot |

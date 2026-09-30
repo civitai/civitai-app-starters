@@ -283,6 +283,29 @@ export type BlockImageScanResult =
 export type BlockUploadPurpose = 'display' | 'generationSource';
 
 /**
+ * Which SPACE a `NAVIGATE` path is resolved in. Mirrors the host's
+ * `NavigateScope` in civitai/civitai's `pageBlockHostLogic.ts`. Keep in lockstep.
+ *
+ *  - `'app'` (DEFAULT): the path is resolved under the block's OWN route
+ *    (`<base>/<slug>/<path>`) and pushed shallowly, so the page stays mounted.
+ *  - `'site'`: the path is resolved at the SITE root, non-shallow, and the viewer
+ *    leaves the app. Granted per-surface — the host refuses it outright on a
+ *    surface that does not hold the capability — and `/api/*` is refused in this
+ *    scope regardless.
+ *
+ * 🔴 ABSENT IS `'app'`, and the host compares against the literal `'site'` rather
+ * than validating against this union, so an UNKNOWN value fails CLOSED onto
+ * `'app'` too. That is what makes the field additive: a block built against an
+ * SDK that predates `scope` sends nothing and keeps the behaviour it always had.
+ *
+ * 🔴 A LEADING SLASH CARRIES NO MEANING. `scope` selects the space and `path` is a
+ * path WITHIN it, so the host normalises leading slashes away:
+ * `{ scope: 'app', path: '/settings' }` and `{ scope: 'app', path: 'settings' }`
+ * are one request. Do not reintroduce punctuation semantics.
+ */
+export type BlockNavigateScope = 'app' | 'site';
+
+/**
  * The source-image result the host returns from `OPEN_IMAGE_UPLOAD` when the
  * block requested `purpose: 'generationSource'` (`IMAGE_UPLOAD_RESULT.selected`)
  * — an UNSCANNED private img2img input. Identical to {@link BlockSourceImage}

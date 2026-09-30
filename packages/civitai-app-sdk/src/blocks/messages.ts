@@ -18,6 +18,7 @@ import type {
   BlockPendingImageInfo,
   BlockImageScanResult,
   BlockUploadPurpose,
+  BlockNavigateScope,
   BlockContext,
   BlockSettings,
   Theme,
@@ -1258,8 +1259,25 @@ export type BlockToParentMessage =
       payload: { requestId: string; versionId: number | null };
     }
   | {
+      // Ask the host to navigate. `scope` selects the SPACE and `path` is a path
+      // within it; see {@link BlockNavigateScope}.
+      //
+      // 🔴 `scope` IS OPTIONAL AND ABSENT MEANS `'app'` — a block built against an
+      // SDK that predates the field keeps exactly the behaviour it had, for `'/x'`
+      // and `'x'` alike, because the host normalises leading slashes away in both
+      // scopes. So this field is additive on the wire in both directions: an older
+      // host ignores it (and was app-scoped anyway), and a newer host defaults it.
+      //
+      // `target` is a REQUEST. The host owns the outcome — how it acts on
+      // `'new_tab'` is host behaviour and the host is the authority on it; this
+      // package states only what it sends.
+      //
+      // Fire-and-forget: there is no `requestId` and no reply, so a host that
+      // REFUSES the request (site scope on a surface without the capability, a
+      // scheme, `/api/*` in site scope) simply drops the message and the block
+      // never learns. Do not build a flow that needs to know.
       type: 'NAVIGATE';
-      payload: { path: string; target: 'current' | 'new_tab' };
+      payload: { path: string; scope?: BlockNavigateScope; target: 'current' | 'new_tab' };
     }
   // Anonymous conversion. A block rendered for a logged-out viewer
   // (`BLOCK_INIT.viewer === null`) asks the host to start the platform's

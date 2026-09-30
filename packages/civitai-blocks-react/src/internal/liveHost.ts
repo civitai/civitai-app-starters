@@ -119,6 +119,7 @@
 import {
   type BlockContext,
   type BlockInitPayload,
+  type BlockNavigateScope,
   type BlockWorkflowSnapshot,
   type ColorDomain,
   type Theme,
@@ -801,6 +802,16 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             title?: string;
             body?: WorkflowBody;
             path?: string;
+            /**
+             * NAVIGATE's space selector. Declared as the UNION rather than
+             * `string`, matching the wire type — but every read of it must still
+             * treat an out-of-union value as possible, because this whole object
+             * is a `as` cast over an untyped `postMessage` and a block built
+             * against a newer SDK can send a scope this one has never heard of.
+             * The handler compares against the literal `'site'` for exactly that
+             * reason: unknown fails closed onto `'app'`, as the host does.
+             */
+            scope?: BlockNavigateScope;
             target?: 'current' | 'new_tab';
             suggestedAmount?: number;
             baseModelGroup?: string;
@@ -1905,19 +1916,109 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           }
 
           case 'NAVIGATE': {
-            const path = typed.payload?.path ?? '';
-            const target = typed.payload?.target ?? 'current';
-            // Resolve relative paths against the backend origin so an in-app
-            // path (`/models/123`) opens on the real site.
-            const url = /^https?:\/\//i.test(path) ? path : `${baseUrl}${path}`;
+            // 🔴 THIS HANDLER USED TO SEND EVERY PATH TO THE REAL SITE, AND THAT
+            // IS WHY `dev:live` AND PRODUCTION DISAGREED. It resolved any
+            // relative path against `baseUrl` — "so an in-app path
+            // (`/models/123`) opens on the real site" — while production
+            // resolved the same call under the block's OWN route. So the docs
+            // and the dev harness agreed with each other and production was the
+            // odd one out, which is exactly the shape that makes a platform bug
+            // look like a block bug (civitai#5209).
+            //
+            // It now mirrors the merged contract, DEFAULT INCLUDED:
+            //   scope absent / anything but 'site'  → APP space (this dev origin)
+            //   scope === 'site'                    → SITE space (`baseUrl`)
+            // compared against the literal 'site' rather than validated against
+            // the union, so an unknown value fails CLOSED onto the narrower
+            // space — byte-for-byte the host's own test.
+            //
+            // 🔴 WHAT IS DELIBERATELY *NOT* MIRRORED: the host's hostile-path
+            // battery (control characters, backslashes, `%2f`/`%5c`,
+            // the resolved-vs-sent segment-structure rule, app containment).
+            // Those guard an UNTRUSTED iframe. In `dev:live` there is no
+            // untrusted party — the developer's own code, their own dev token,
+            // their own browser — so copying ~200 lines of security-critical
+            // resolver here would buy no safety and create a second, non-
+            // authoritative copy of it to drift. What IS mirrored is the
+            // CONTRACT a block author can be honestly wrong about: which space
+            // a path lands in, the `'app'` default, and the two refusals the
+            // published docs promise (a scheme, and `/api/*` in site scope).
+            const payload = typed.payload ?? {};
+            const rawPath = typeof payload.path === 'string' ? payload.path : '';
+            const target = payload.target ?? 'current';
+            const scope = payload.scope === 'site' ? 'site' : 'app';
+
+            // A scheme or protocol-relative reference is refused by the host in
+            // BOTH scopes — a block cannot move the host to another origin. This
+            // harness used to pass an absolute URL straight through, so a
+            // `navigate('https://example.com/x')` that production DROPS worked
+            // here. Refuse it, and say so: a silent drop in a dev harness is the
+            // thing a dev then blames on their own code.
+            if (/^[a-zA-Z][a-zA-Z0-9+.\-]*:/.test(rawPath) || /^\/[/\\]/.test(rawPath)) {
+              logOnce(
+                'navigate-off-origin',
+                `NAVIGATE to ${JSON.stringify(rawPath)} was DROPPED: the host refuses any scheme ` +
+                  'or protocol-relative path, in either scope. Pass a path within a scope ' +
+                  "(`navigate('models/123', { scope: 'site' })`) instead of a full URL.",
+              );
+              return;
+            }
+
+            // Leading slashes are normalised away in BOTH scopes — `scope`
+            // already said which space this is, so the slash has nothing left to
+            // mean. Do not reintroduce punctuation semantics here.
+            const path = rawPath.replace(/^\/+/, '');
+
+            if (scope === 'site') {
+              // The host's one content-based refusal: `/api/*` is not a page
+              // route, and `/api/auth/logout` takes a bare GET. Kept here because
+              // it is part of the PUBLISHED contract, not because this harness is
+              // a security boundary — a dev who hits it in production should hit
+              // it in `dev:live` too.
+              if (path.split('/')[0]?.toLowerCase() === 'api') {
+                logOnce(
+                  'navigate-api',
+                  `NAVIGATE to ${JSON.stringify(rawPath)} was DROPPED: the host refuses an ` +
+                    '`/api/*` first segment in site scope. Only page routes are reachable.',
+                );
+                return;
+              }
+              try {
+                const url = `${baseUrl}/${path}`;
+                if (target === 'new_tab') {
+                  win.open(url, '_blank');
+                } else {
+                  win.location.assign(url);
+                }
+              } catch {
+                /* navigation may be unavailable (tests) */
+              }
+              return;
+            }
+
+            // APP scope. Production resolves this under `<base>/<slug>/<path>`
+            // and pushes it SHALLOWLY, keeping the page mounted. In `dev:live`
+            // the block IS the page, served at this dev origin's own root, so the
+            // faithful analogue is `/<path>` on THIS origin — and `pushState`
+            // rather than `assign`, because a full load is precisely what
+            // "shallow" excludes.
+            //
+            // The `popstate` dispatch is what makes it work rather than merely
+            // change the URL bar. Production reflects the new sub-path back into
+            // the block over `ROUTE_CHANGED`; this SDK does not model that
+            // message at all, so a history-based router in the block gets the
+            // standard in-page signal instead. Without it an app-scoped navigate
+            // reproduces the #5209 symptom here — URL moves, nothing renders.
             try {
+              const url = `${win.location.origin}/${path}`;
               if (target === 'new_tab') {
                 win.open(url, '_blank');
               } else {
-                win.location.assign(url);
+                win.history.pushState(null, '', url);
+                win.dispatchEvent(new PopStateEvent('popstate', { state: null }));
               }
             } catch {
-              /* navigation may be unavailable (tests) */
+              /* history/navigation may be unavailable (tests) */
             }
             return;
           }

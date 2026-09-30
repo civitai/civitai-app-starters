@@ -1419,6 +1419,7 @@ describe('createLiveHost — NAVIGATE', () => {
   let inbound: ReturnType<typeof collectInbound>;
   let openSpy: ReturnType<typeof vi.spyOn>;
   let assignSpy: ReturnType<typeof vi.spyOn>;
+  let pushSpy: ReturnType<typeof vi.spyOn>;
   const TOKEN = fakeJwt(DEFAULT_CLAIMS);
 
   function install() {
@@ -1436,6 +1437,10 @@ describe('createLiveHost — NAVIGATE', () => {
     inbound = collectInbound();
     openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
     assignSpy = vi.spyOn(window.location, 'assign').mockImplementation(() => {});
+    // NOT mocked away: the popstate test needs the real pushState to move
+    // `location.pathname`, so this spy only RECORDS. `vi.restoreAllMocks()` in
+    // `afterEach` puts it back; the URL itself is per-test-file in jsdom.
+    pushSpy = vi.spyOn(window.history, 'pushState');
   });
   afterEach(() => {
     uninstall?.();
@@ -1444,38 +1449,137 @@ describe('createLiveHost — NAVIGATE', () => {
     vi.restoreAllMocks();
   });
 
-  it('new_tab target opens the resolved URL in a new tab (relative path → backend origin)', async () => {
+  /**
+   * 🔴 THE WHOLE POINT OF THIS BLOCK. Before the `scope` contract this harness
+   * resolved EVERY path against the backend origin, so `dev:live` reached the
+   * real site where production resolved the same call under the block's own
+   * route. Every test below that names `pushSpy` is asserting the DEFAULT — an
+   * unscoped path must NOT leave the dev origin — which is the divergence that
+   * made a platform bug look like a block bug (civitai#5209).
+   */
+  // [invariant guard — green at base] It coincides at base for a REASON worth
+  // stating: site scope is what the old unconditional behaviour already did for a
+  // leading-slash path, so this passes before and after. Its value is asserting
+  // that the site half survived the split, not that it was added — the sibling
+  // `pushSpy` assertion is what makes the DEFAULT observable, and that one is red
+  // at base. The leading-slash test two below is the site-scope case that moved.
+  it('site scope assigns the resolved URL on the backend origin', async () => {
     install();
     await waitForMessage(inbound, 'BLOCK_INIT');
-    post('NAVIGATE', { path: '/models/123', target: 'new_tab' });
+    post('NAVIGATE', { path: '/models/123', scope: 'site', target: 'current' });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(assignSpy).toHaveBeenCalledWith('https://civitai.com/models/123');
+    expect(pushSpy).not.toHaveBeenCalled();
+  });
+
+  // [invariant guard — green at base] Same coincidence as above, in the new_tab arm.
+  it('site scope + new_tab opens the backend-origin URL in a new tab', async () => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('NAVIGATE', { path: '/models/123', scope: 'site', target: 'new_tab' });
     await new Promise((r) => setTimeout(r, 10));
     expect(openSpy).toHaveBeenCalledWith('https://civitai.com/models/123', '_blank');
     expect(assignSpy).not.toHaveBeenCalled();
   });
 
-  it('current target assigns the resolved URL on the same frame', async () => {
+  it('site scope normalises a leading slash away rather than doubling it', async () => {
     install();
     await waitForMessage(inbound, 'BLOCK_INIT');
-    post('NAVIGATE', { path: '/user/alice', target: 'current' });
+    post('NAVIGATE', { path: 'user/alice', scope: 'site' });
     await new Promise((r) => setTimeout(r, 10));
+    // Byte-identical to the `/user/alice` spelling — one request, two spellings.
     expect(assignSpy).toHaveBeenCalledWith('https://civitai.com/user/alice');
+  });
+
+  it('DEFAULT (no scope) stays on the dev origin and pushes, never touching the site', async () => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('NAVIGATE', { path: '/models/123' });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(pushSpy).toHaveBeenCalledWith(null, '', `${ORIGIN}/models/123`);
+    expect(assignSpy).not.toHaveBeenCalled();
     expect(openSpy).not.toHaveBeenCalled();
   });
 
-  it('defaults to current-frame assign when no target is supplied', async () => {
+  it('an explicit app scope behaves identically to omitting it', async () => {
     install();
     await waitForMessage(inbound, 'BLOCK_INIT');
-    post('NAVIGATE', { path: '/' });
+    post('NAVIGATE', { path: 'detail/7', scope: 'app' });
     await new Promise((r) => setTimeout(r, 10));
-    expect(assignSpy).toHaveBeenCalledWith('https://civitai.com/');
+    expect(pushSpy).toHaveBeenCalledWith(null, '', `${ORIGIN}/detail/7`);
+    expect(assignSpy).not.toHaveBeenCalled();
   });
 
-  it('passes an absolute URL through unchanged (not re-prefixed with the backend origin)', async () => {
+  it('an UNKNOWN scope fails CLOSED onto app, like the host', async () => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('NAVIGATE', { path: 'models/123', scope: 'universe' });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(pushSpy).toHaveBeenCalledWith(null, '', `${ORIGIN}/models/123`);
+    expect(assignSpy).not.toHaveBeenCalled();
+  });
+
+  it('an app-scoped push fires popstate, so a router re-renders instead of only the URL moving', async () => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    const seen: string[] = [];
+    const onPop = () => seen.push(window.location.pathname);
+    window.addEventListener('popstate', onPop);
+    try {
+      post('NAVIGATE', { path: 'detail/7' });
+      await new Promise((r) => setTimeout(r, 10));
+    } finally {
+      window.removeEventListener('popstate', onPop);
+    }
+    expect(seen).toHaveLength(1);
+  });
+
+  it('app scope + new_tab opens the DEV origin, not the site', async () => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('NAVIGATE', { path: 'detail/7', target: 'new_tab' });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(openSpy).toHaveBeenCalledWith(`${ORIGIN}/detail/7`, '_blank');
+  });
+
+  /**
+   * ⚠️ THIS REPLACES A TEST THAT ASSERTED THE OPPOSITE. It read "passes an
+   * absolute URL through unchanged" and pinned `win.open('https://example.com/x')`
+   * — a second `dev:live`-vs-production divergence in the same handler, since the
+   * host refuses ANY scheme in either scope. The old behaviour was the bug.
+   */
+  it('DROPS an absolute URL — the host refuses any scheme, in either scope', async () => {
     install();
     await waitForMessage(inbound, 'BLOCK_INIT');
     post('NAVIGATE', { path: 'https://example.com/x', target: 'new_tab' });
+    post('NAVIGATE', { path: 'javascript:alert(1)', scope: 'site' });
     await new Promise((r) => setTimeout(r, 10));
-    expect(openSpy).toHaveBeenCalledWith('https://example.com/x', '_blank');
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(assignSpy).not.toHaveBeenCalled();
+    expect(pushSpy).not.toHaveBeenCalled();
+  });
+
+  it('DROPS a protocol-relative path rather than reading it as a redundant slash', async () => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('NAVIGATE', { path: '//evil.example/x', scope: 'site' });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(assignSpy).not.toHaveBeenCalled();
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(pushSpy).not.toHaveBeenCalled();
+  });
+
+  it('DROPS an `/api/*` first segment in SITE scope, and allows it in app scope', async () => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('NAVIGATE', { path: '/api/auth/logout', scope: 'site' });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(assignSpy).not.toHaveBeenCalled();
+    // App scope is untouched: it resolves under the dev origin and reaches no
+    // site handler, exactly as the host's own note says.
+    post('NAVIGATE', { path: 'api/thing' });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(pushSpy).toHaveBeenCalledWith(null, '', `${ORIGIN}/api/thing`);
   });
 });
 

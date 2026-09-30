@@ -64,6 +64,7 @@ export type {
   Host,
   HostCallOptions,
   ImageScanResult,
+  NavigateScope,
   PendingImage,
   PickedResource,
   ResourcePickerType,
