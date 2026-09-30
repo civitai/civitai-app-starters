@@ -51,14 +51,6 @@
  *   Rule 2  Every JSON-shaped `"sandbox": "…"` literal in the doc/source corpus
  *           declares only GRANTABLE tokens — a tutorial that teaches a manifest
  *           value is a declaration an author will copy.
- *   Rule 3  A LEDGER of every file that NAMES a silently-stripped token. Rules 1
- *           and 2 key on JSON syntax and would NOT have caught the original
- *           defect, which was prose: *"requires `allow-popups-to-escape-sandbox`
- *           in the manifest sandbox"*. The ledger fails when it GROWS (a new file
- *           started naming one — read it and check it says "don't") or SHRINKS
- *           (a documented warning was deleted). Asserting the SET, not a count,
- *           is what makes it unwalkable by rewording.
- *
  * PINNED, AND THE STALENESS IS VISIBLE
  * ====================================
  * `HOST_ALLOWED_SANDBOX_TOKENS` below is a PINNED COPY. This guard is in
@@ -74,14 +66,37 @@
  * unparseable source a FAILURE rather than a skip, and the job is ADVISORY
  * because it depends on a repo outside this PR.
  *
+ * REMOVED — rule 3, a ledger of every file NAMING a silently-stripped token
+ * ========================================================================
+ * It existed because the original defect was PROSE ("requires
+ * `allow-popups-to-escape-sandbox` in the manifest sandbox"), which rules 1 and
+ * 2 key on JSON syntax and cannot see. It was deleted deliberately, not lost:
+ *
+ *   - It pinned WORDING, not a value. A ledger asserting the SET of files that
+ *     mention a token fails when a warning is REWORDED or MOVED, so it taxed
+ *     every future doc edit near this topic.
+ *   - Measured recurrence: 4 commits in this repo's history ever touched
+ *     `allow-popups-to-escape-sandbox`, and 2 touched any `iframe.sandbox`
+ *     literal. The prose defect it guarded has occurred ONCE, and the retraction
+ *     is now recorded inline at both sites that carried it.
+ *   - Cost if it recurs: a doc sentence is wrong. Cost of the guard: a standing
+ *     prose tax plus a fragile source-parse of another package's
+ *     `BANNED_SANDBOX_TOKENS`, whose empty-match case needed its own assertion.
+ *
+ * Rules 1 and 2 are kept because they pin VALUES — a manifest field and a
+ * `"sandbox": "…"` literal an author will copy — which is the half that caught
+ * the scaffold-inheritance defect.
+ *
+ * 🔴 If a doc again tells authors to declare an ungrantable token, fix the doc.
+ * Do not re-add a ledger: that trade was priced and declined.
+ *
  * 🔴 KNOWN LIMITS:
- *   - Rules 2 and 3 are text scans, not parses. They over-report rather than
- *     under-report, and fail with file:line.
- *   - `SPEC_SANDBOX_TOKENS` is the HTML sandbox keyword list as of writing. A
- *     keyword added to the spec later is invisible to rule 3 until added here —
- *     which is why rule 1, the one that matters most, does not depend on it
- *     (it tests membership of the grantable set directly, so an unknown token
- *     fails it whether or not the spec list knows the token).
+ *   - Rule 2 is a text scan, not a parse. It over-reports rather than
+ *     under-reports, and fails with file:line.
+ *   - Neither rule depends on the HTML spec's keyword list: both test membership
+ *     of the GRANTABLE set directly, so a token the spec adds later still fails
+ *     them. (An earlier revision derived a "silently stripped" class from a
+ *     pinned spec list; see the REMOVED note below for why that went.)
  *   - It says nothing about whether a GRANTABLE token is actually honoured in a
  *     given placement, or about anything the host does after intersection.
  */
@@ -105,56 +120,6 @@ const HOST_ALLOWED_SANDBOX_TOKENS = new Set([
   'allow-pointer-lock',
   'allow-downloads',
 ]);
-
-/** The HTML `iframe[sandbox]` keyword set. Used only to derive rule 3's class. */
-const SPEC_SANDBOX_TOKENS = new Set([
-  'allow-downloads',
-  'allow-forms',
-  'allow-modals',
-  'allow-orientation-lock',
-  'allow-pointer-lock',
-  'allow-popups',
-  'allow-popups-to-escape-sandbox',
-  'allow-presentation',
-  'allow-same-origin',
-  'allow-scripts',
-  'allow-storage-access-by-user-activation',
-  'allow-top-navigation',
-  'allow-top-navigation-by-user-activation',
-  'allow-top-navigation-to-custom-protocols',
-]);
-
-const DEFINE_BLOCK = join(REPO_ROOT, 'packages/civitai-app-sdk/src/manifest/defineBlock.ts');
-
-/**
- * Read `defineBlock`'s BANNED_SANDBOX_TOKENS from source rather than copying it,
- * so the derived hazard class below tracks it. Fails loud: a parse that yields
- * nothing would silently WIDEN rule 3's ledger to include tokens `defineBlock`
- * already throws on, which is the "plausible-but-wrong output" failure mode.
- */
-function readLoudlyRejectedTokens() {
-  const src = readFileSync(DEFINE_BLOCK, 'utf8');
-  const m = src.match(/BANNED_SANDBOX_TOKENS\s*=\s*new Set\(\[([\s\S]*?)\]\)/);
-  assert.ok(m, `BANNED_SANDBOX_TOKENS = new Set([...]) not found in ${DEFINE_BLOCK}`);
-  const tokens = [...m[1].matchAll(/['"]([^'"]+)['"]/g)].map((x) => x[1]);
-  assert.ok(
-    tokens.length > 0,
-    'parsed BANNED_SANDBOX_TOKENS as EMPTY — the source shape changed; fix this parser, ' +
-      'because an empty set here silently widens rule 3 instead of failing.',
-  );
-  return new Set(tokens);
-}
-
-/**
- * The only dangerous class: declarable, accepted by every local and server
- * check, and then dropped with no error.
- */
-function silentlyStrippedTokens() {
-  const loud = readLoudlyRejectedTokens();
-  return new Set(
-    [...SPEC_SANDBOX_TOKENS].filter((t) => !HOST_ALLOWED_SANDBOX_TOKENS.has(t) && !loud.has(t)),
-  );
-}
 
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.turbo', 'coverage', '.next']);
 const SCAN_EXTS = ['.md', '.mdx', '.ts', '.tsx', '.mjs', '.js', '.json', '.html'];
@@ -254,95 +219,15 @@ test('rule 2: every documented "sandbox": "…" literal declares only grantable 
   assert.deepEqual(violations, [], `ungrantable sandbox token(s) documented:\n${violations.join('\n')}`);
 });
 
-// ── Rule 3: the ledger of files naming a silently-stripped token ──────────────
-
-/**
- * Every file permitted to NAME a silently-stripped token, and why. All three
- * name `allow-popups-to-escape-sandbox` in order to tell the reader NOT to
- * declare it — which is the correction this ledger exists to hold in place.
- *
- * 🔴 An ASSERTED SET, not a count or a maximum. It fails in BOTH directions:
- *   GREW    a new file names one. Read it. If it recommends the token, that is
- *           the bug this guard was written for. If it warns against it, add it
- *           here with a reason.
- *   SHRANK  a warning was deleted. That is how the docs rot back to telling
- *           authors to declare an inert token — which is exactly what happened
- *           before this guard existed.
- */
-const SILENT_TOKEN_MENTION_LEDGER = {
-  'packages/civitai-blocks-react/README.md':
-    'The propagating surface. developer.civitai.com generates its hooks reference with ' +
-    '`description: readme.prose || jsdocDesc` / `example: readme.example || jsdocExample`, so this ' +
-    "README SHADOWS the JSDoc. It warns authors off the token; if this entry disappears, the public " +
-    'docs stop carrying the warning even if the JSDoc still does.',
-  'packages/civitai-blocks-react/src/hooks/useCivitaiNavigate.ts':
-    'The JSDoc twin of the README entry. Kept consistent with it deliberately — it is what an IDE ' +
-    'shows, and what the generator falls back to if the README entry is ever removed.',
-  'packages/civitai-app-sdk/test/manifest/divergences.test.ts':
-    'Records why the removed third divergence case is gone: it cited the starter\'s own ' +
-    'declaration of this token as the worked example of the looser-than-review arm.',
-};
-
-test('rule 3: only ledgered files name a silently-stripped sandbox token', () => {
-  const silent = silentlyStrippedTokens();
-  assert.ok(
-    silent.has('allow-popups-to-escape-sandbox'),
-    'derivation sanity: allow-popups-to-escape-sandbox must land in the silently-stripped class ' +
-      '(it is in neither the host allowlist nor defineBlock\'s banned set). It did not, so the ' +
-      'derivation is broken and this rule is measuring the wrong set.',
-  );
-
-  const mentions = new Map();
-  for (const abs of ALL_FILES) {
-    if (!SCAN_EXTS.some((e) => abs.endsWith(e))) continue;
-    if (rel(abs).startsWith('tests/guards/manifest-sandbox-tokens')) continue; // this file
-    // RELEASE NOTES, both shapes. A changeset IS the changelog entry — `changeset
-    // version` moves its body into CHANGELOG.md and deletes the file — so the two
-    // are one corpus. Both legitimately describe the correction in prose ("we
-    // removed allow-popups-to-escape-sandbox because…"), neither is a place a
-    // reader copies a manifest value from, and ledgering them would churn the
-    // ledger on every release that mentions the token. Excluded on that reasoning,
-    // not for convenience: the guard flagged this guard's OWN changeset first.
-    if (rel(abs).includes('CHANGELOG.md')) continue;
-    if (rel(abs).startsWith('.changeset/')) continue;
-    const text = readFileSync(abs, 'utf8');
-    for (const token of silent) {
-      // Word-bounded so `allow-popups` never matches inside
-      // `allow-popups-to-escape-sandbox`, and vice versa.
-      if (new RegExp(`${token}(?![a-z-])`).test(text)) {
-        if (!mentions.has(rel(abs))) mentions.set(rel(abs), new Set());
-        mentions.get(rel(abs)).add(token);
-      }
-    }
-  }
-
-  const actual = [...mentions.keys()].sort();
-  const ledgered = Object.keys(SILENT_TOKEN_MENTION_LEDGER).sort();
-
-  const grew = actual.filter((f) => !ledgered.includes(f));
-  const shrank = ledgered.filter((f) => !actual.includes(f));
-
-  assert.deepEqual(
-    actual,
-    ledgered,
-    'the silently-stripped-token mention ledger moved.\n' +
-      (grew.length
-        ? `\nNEW file(s) naming one — read each and check it WARNS rather than RECOMMENDS:\n` +
-          grew.map((f) => `  + ${f}  (${[...mentions.get(f)].join(', ')})`).join('\n') +
-          '\nIf it warns, add it to SILENT_TOKEN_MENTION_LEDGER with a reason.\n'
-        : '') +
-      (shrank.length
-        ? `\nREMOVED file(s) that used to warn — a deleted warning is how this rots back:\n` +
-          shrank.map((f) => `  - ${f}`).join('\n') +
-          '\nIf the removal is intended, drop it from SILENT_TOKEN_MENTION_LEDGER too.\n'
-        : ''),
-  );
-});
-
 // ── Staleness: the pinned allowlist vs the live host ─────────────────────────
 
-const CIVITAI_REPO = process.env.CIVITAI_REPO ?? '/home/zach/workspace/civit/civitai';
-const HOST_SANDBOX_TS = join(CIVITAI_REPO, 'src/components/AppBlocks/sandbox.ts');
+const CIVITAI_REPO = process.env.CIVITAI_REPO ?? '';
+// No default: this repo is PUBLIC, so a contributor's local checkout path does not
+// belong in it — and a default that happens to exist on ONE machine makes this test
+// PASS there and SKIP everywhere else, which is the more expensive half of the bug.
+const HOST_SANDBOX_TS = CIVITAI_REPO
+  ? join(CIVITAI_REPO, 'src/components/AppBlocks/sandbox.ts')
+  : '';
 const REQUIRE_DRIFT_GUARD = process.env.REQUIRE_DRIFT_GUARD === '1';
 
 test('drift: the pinned allowlist matches live civitai/civitai', (t) => {
