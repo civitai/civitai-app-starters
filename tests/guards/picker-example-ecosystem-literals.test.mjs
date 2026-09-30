@@ -20,10 +20,20 @@
  * The defect was entirely in what the docs TEACH, and it had a propagation path
  * that made one line expensive:
  *
- *     packages/civitai-blocks-react/src/hooks/useResourcePicker.ts  @example
- *       -> generated into developer.civitai.com `apps/reference/hooks.md`
+ *     packages/civitai-blocks-react/README.md  (the `### useX()` tsx fence)
+ *       -> generated into developer.civitai.com `apps/reference/hooks`
  *         -> fetched by every AI coding agent building an App Block
  *           -> copied VERBATIM into the app
+ *
+ * 🔴 WHICH SURFACE THE GENERATOR ACTUALLY READS — the README is PRIMARY and the
+ * `@example` JSDoc is only its FALLBACK, which is the opposite of the obvious
+ * guess. `<civitai-developer-docs>/scripts/gen-appblocks-hooks.mjs` takes
+ * `readme.example || jsdocExample` and stamps the winner into the artifact as
+ * `exampleSource`; the generated `public/appblocks/hooks.json` reads
+ * `"exampleSource": "readme"` for both pickers. That is why this guard scans
+ * BOTH surfaces and neither is optional: the README is what ships today, and
+ * the `@example` is what ships the moment a hook's README heading is renamed or
+ * its fence dropped.
  *
  * The `@example` read `await open({ resourceType: 'LORA', baseModelGroup:
  * 'SDXL' })`. Weaker models copy an example literally, so apps shipped with the
@@ -98,15 +108,32 @@ const REQUIRED_SOURCES = [
 ];
 
 /**
- * Coverage floors. 6 picker example regions and 4 `baseModelGroup:` sites exist
- * across the corpus today (useResourcePicker 2 regions / 1 site,
- * useCheckpointPicker 1 / 1, blocks-react README 3 / 2). An unasserted count is
- * indistinguishable from a scanner wired to nothing: without these, deleting
- * every example, renaming a hook file, or a fence extractor that silently
- * stopped matching all read as a PASS. Raising them is fine; lowering one means
- * deciding the pickers need less documenting.
+ * Coverage floors. Both are counted over the WHOLE SWEEP (`SWEEP_ROOTS`), not
+ * over `REQUIRED_SOURCES` — read the next sentence as the decomposition of the
+ * sweep, because scoping the prose to the three required files and the
+ * assertion to the sweep is exactly how this floor was first set 2 too low.
+ *
+ * Today the sweep yields 8 picker example regions and 4 `baseModelGroup:` sites:
+ *
+ *   packages/civitai-blocks-react/README.md                      3 regions / 2 sites
+ *   packages/civitai-blocks-react/src/hooks/useResourcePicker.ts  2 / 1
+ *   packages/civitai-blocks-react/src/hooks/useCheckpointPicker.ts 1 / 1
+ *   packages/civitai-sdk/README.md                                1 / 0
+ *   packages/civitai-sdk/api/public-api.md                        1 / 0
+ *
+ * An unasserted count is indistinguishable from a scanner wired to nothing:
+ * without these, deleting every example, renaming a hook file, or a fence
+ * extractor that silently stopped matching all read as a PASS. Set EXACTLY at
+ * the corpus count so there is no slack to hide a deletion in — the two
+ * civitai-sdk regions are inside the floor for that reason. Raising them when
+ * examples are added is fine; lowering one means deciding the pickers need less
+ * documenting.
+ *
+ * To re-derive after changing the corpus, raise a floor above the truth and
+ * read the number the assertion's own failure message reports — do not count by
+ * eye and do not trust the table above, which is prose and can rot.
  */
-const MIN_PICKER_EXAMPLES = 6;
+const MIN_PICKER_EXAMPLES = 8;
 const MIN_BASE_MODEL_GROUP_SITES = 4;
 
 /**
@@ -320,8 +347,9 @@ test('no picker example hardcodes a base-model ecosystem', () => {
       'it from the checkpoint the block already holds —',
       '`baseModelGroup: checkpoint.baseModel`, the shape the CLI scaffold uses.',
       '',
-      'This matters more than an ordinary doc nit: the `@example` blocks are',
-      'GENERATED into developer.civitai.com apps/reference/hooks.md, which is what',
+      'This matters more than an ordinary doc nit: these examples are GENERATED',
+      'into developer.civitai.com apps/reference/hooks — the README fence first,',
+      'the `@example` JSDoc as its fallback — which is what',
       'AI coding agents fetch and copy verbatim. A literal here ships apps whose',
       "picker is pinned to one ecosystem and looks empty to everyone else's library.",
       '',

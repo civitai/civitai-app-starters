@@ -971,7 +971,7 @@ checkpoint the block already holds. For an *unconstrained* checkpoint pick, use
 const { open, persist } = useCheckpointPicker();
 const { selected } = await open({
   baseModelGroup: checkpoint.baseModel,     // derived from the current pick
-  currentVersionId: checkpoint.versionId,
+  currentVersionId,
 });
 if (selected) await persist(selected.versionId);   // null clears the override
 ```
