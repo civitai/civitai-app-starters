@@ -20,12 +20,14 @@ generation-covered checkpoints, not none. The model-slot host behaves the same
 way. The `required` was an SDK-side restriction only.
 
 `baseModelGroup` is now optional in both packages, and omitting it sends the key
-ABSENT from the wire payload rather than present-and-undefined. An empty string
-is normalized to absent for the same reason: on the host, `getBaseModelGroup('')`
-resolves to the real ecosystem key `'Other'`, and the model-slot host does not
-strip it — so `''` would narrow the picker to the Other family instead of
-widening it. Absence is the only spelling that means "unconstrained" on both
-host surfaces.
+ABSENT from the wire payload. An empty or whitespace-only string is normalized to
+absent too, and the reason differs by host: on a **model slot** any string is
+passed through `getBaseModelGroup`, which collapses an unrecognised value to the
+real ecosystem key `'Other'`, so `''` would NARROW the picker to that one family;
+on a **page** the host drops a zero-length value before that lookup, so `''` is
+already equivalent to omission there. A whitespace-only string narrows on **both**
+— the page host's guard is `length > 0`, which `'  '` passes. Absence is the only
+spelling that means "unconstrained" on both surfaces.
 
 Backward compatible **for CALLERS**: existing callers that pass a family keep
 the exact behaviour they have today.

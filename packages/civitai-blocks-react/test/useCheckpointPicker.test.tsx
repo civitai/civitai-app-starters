@@ -110,12 +110,21 @@ describe('useCheckpointPicker', () => {
     // SDK-side restriction only, and it made every ecosystem but the caller's
     // current one unreachable.
     //
-    // 🔴 The key must be ABSENT from the wire payload, not present-and-
-    // undefined. `getBaseModelGroup('')` on the host returns the REAL ecosystem
-    // key 'Other', and the model-slot host (IframeHost) passes any string
-    // straight through without stripping it — so emitting an empty string
-    // NARROWS the picker to the Other family instead of widening it. Absence is
-    // the only spelling that means "unconstrained" on both host surfaces.
+    // 🔴 What the wire must NOT carry is a string. On the model-slot host
+    // (IframeHost) any string is passed straight through to
+    // `getBaseModelGroup`, which collapses an unrecognised value to the real
+    // ecosystem key 'Other' — so an empty string NARROWS the picker to that one
+    // family instead of widening it. On the PAGE host the resolver drops a
+    // zero-length value before that lookup, so `''` is already equivalent to
+    // omission there; a WHITESPACE-ONLY string narrows on both, since that guard
+    // is `length > 0`. Absence is the only spelling that means "unconstrained" on
+    // both surfaces.
+    //
+    // These cases assert the key is ABSENT rather than present-and-undefined.
+    // That is a wire-SHAPE contract, not a behavioural one: no host distinguishes
+    // the two (both hosts' branches are a `typeof … === 'string'` or truthiness
+    // test, which `undefined` fails either way), and the earlier claim that the
+    // distinction was load-bearing has been retracted.
     it('omits baseModelGroup from the message when not provided (unconstrained pick)', () => {
       const { result } = renderHook(() => useCheckpointPicker());
       act(() => {
@@ -152,7 +161,9 @@ describe('useCheckpointPicker', () => {
     // `.trim()` and `'  '` reaches the wire, where `getBaseModelGroup('  ')`
     // resolves to the real ecosystem key 'Other' and NARROWS the picker to the
     // Other family: exactly the failure this whole change exists to remove,
-    // arrived at from the opposite direction.
+    // arrived at from the opposite direction. This is the spelling that narrows
+    // on BOTH hosts — the page host drops `''` for being zero-length, but `'  '`
+    // passes that guard — so it is the one case `.trim()` is the only defence for.
     it('treats a whitespace-only baseModelGroup as unconstrained — never puts "  " on the wire', () => {
       const { result } = renderHook(() => useCheckpointPicker());
       act(() => {
