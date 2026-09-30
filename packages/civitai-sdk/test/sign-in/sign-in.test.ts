@@ -5,11 +5,25 @@ import { createSignIn, scopeBitmask, SignInError, type SignInOptions } from '../
 
 const AI_AND_USER = (1 << 0) | (1 << 15);
 
-function page(url = 'https://brawl.example/play') {
-  const store = new Map<string, string>();
+function page(url = 'https://brawl.example/play', store = new Map<string, string>()) {
   const location = new URL(url);
   const visited: string[] = [];
+  const popups: { closed: boolean; opened: string[]; close(): void; location: { replace(to: string): void } }[] = [];
+  let blockPopups = false;
+  let closed = false;
   const win = {
+    open: () => {
+      if (blockPopups) return null;
+      const popup = {
+        closed: false,
+        opened: [] as string[],
+        close: () => void (popup.closed = true),
+        location: { replace: (to: string) => void popup.opened.push(to) },
+      };
+      popups.push(popup);
+      return popup;
+    },
+    close: () => void (closed = true),
     get location() {
       return {
         origin: location.origin,
@@ -39,7 +53,24 @@ function page(url = 'https://brawl.example/play') {
     while (visited.length === seen) await new Promise((r) => setTimeout(r, 1));
     return new URL(visited.at(-1)!);
   };
-  return { win, storage, store, visited, location, returnTo, nextVisit };
+  const nextPopup = async () => {
+    while (!popups.at(-1)?.opened.length) await new Promise((r) => setTimeout(r, 1));
+    return { popup: popups.at(-1)!, authorize: new URL(popups.at(-1)!.opened[0]!) };
+  };
+  return {
+    win,
+    storage,
+    store,
+    visited,
+    location,
+    returnTo,
+    nextVisit,
+    nextPopup,
+    blockPopups: () => void (blockPopups = true),
+    get closed() {
+      return closed;
+    },
+  };
 }
 
 type Call = { url: string; body: URLSearchParams; auth?: string };
@@ -219,5 +250,79 @@ describe('createSignIn', () => {
     await app.orchestration.getWorkflow('wf');
 
     expect(api.calls[0]!.auth).toBe('Bearer a1');
+  });
+
+  describe('in a popup', () => {
+    const options = (p: ReturnType<typeof page>, fetchFn: typeof fetch): SignInOptions => ({
+      clientId: 'brawl',
+      scopes: ['user:read:self', 'ai:write:budgeted'],
+      window: p.win,
+      storage: p.storage,
+      fetch: fetchFn,
+    });
+
+    /** Civitai sends the popup back to the same page, which runs createSignIn() like any visit. */
+    async function returnInPopup(opener: ReturnType<typeof page>, query: string, fetchFn: typeof fetch) {
+      const popupPage = page(`https://brawl.example/play${query}`, opener.store);
+      await createSignIn(options(popupPage, fetchFn));
+      return popupPage;
+    }
+
+    it('signs in without the page ever leaving, and the popup closes itself', async () => {
+      const p = page();
+      const hub = server(() => issued('a1'));
+      const auth = await createSignIn(options(p, hub.fetch));
+
+      const signingIn = auth.signInWithPopup();
+      const { popup, authorize } = await p.nextPopup();
+      expect(authorize.searchParams.get('redirect_uri')).toBe('https://brawl.example/play');
+      const popupPage = await returnInPopup(p, `?code=abc&state=${authorize.searchParams.get('state')}`, hub.fetch);
+      await signingIn;
+
+      expect(auth.signedIn).toBe(true);
+      await expect(auth.token()).resolves.toBe('a1');
+      expect(p.visited).toEqual([]);
+      expect(popupPage.closed).toBe(true);
+      expect(popupPage.location.search).toBe('');
+      expect(popup.closed).toBe(true);
+      expect(hub.calls.filter((c) => c.body.get('grant_type') === 'authorization_code')).toHaveLength(1);
+    });
+
+    it('reports a consent declined in the popup', async () => {
+      const p = page();
+      const hub = server(() => issued('never'));
+      const auth = await createSignIn(options(p, hub.fetch));
+
+      const signingIn = auth.signInWithPopup();
+      const { authorize } = await p.nextPopup();
+      await returnInPopup(p, `?error=access_denied&state=${authorize.searchParams.get('state')}`, hub.fetch);
+
+      await expect(signingIn).rejects.toThrow('access_denied');
+      expect(auth.signedIn).toBe(false);
+      expect(hub.calls).toHaveLength(0);
+    });
+
+    it('says so when the browser blocks the popup', async () => {
+      const p = page();
+      p.blockPopups();
+      const auth = await createSignIn(options(p, server(() => issued('never')).fetch));
+
+      await expect(auth.signInWithPopup()).rejects.toMatchObject({ code: 'popup-blocked' });
+      expect(p.store.size).toBe(0);
+    });
+
+    it('gives up when the viewer cancels, and closes the popup', async () => {
+      const p = page();
+      const auth = await createSignIn(options(p, server(() => issued('never')).fetch));
+      const abort = new AbortController();
+
+      const signingIn = auth.signInWithPopup({ signal: abort.signal });
+      const { popup } = await p.nextPopup();
+      abort.abort();
+
+      await expect(signingIn).rejects.toMatchObject({ code: 'canceled' });
+      expect(popup.closed).toBe(true);
+      expect(auth.signedIn).toBe(false);
+    });
   });
 });

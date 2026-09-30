@@ -3,7 +3,7 @@
  * own generated client (`@civitai/client`).
  *
  * The sibling `@civitai/app-sdk/orchestrator` module gives you the *catalog*
- * (`WORKFLOW_STEP_TYPES` — 50 `$type` names and what each one does) and the
+ * (`WORKFLOW_STEP_TYPES` — 51 `$type` names and what each one does) and the
  * fetch helpers (`submitWorkflow`, `estimateWorkflow`, …), but its body
  * builders take `input: unknown`. This module is the missing half: the actual
  * per-step input shapes, tracked against the orchestrator's OpenAPI spec by
@@ -70,7 +70,7 @@
  * consumer spec, so they are typed here. They are not an invitation.
  *
  * ⚠️ `WORKFLOW_STEP_TYPES` does NOT mark most of them. Counted at this commit:
- * of its 50 entries, exactly TWO sit under its "Platform internals" heading —
+ * of its 51 entries, exactly TWO sit under its "Platform internals" heading —
  * `comfyNodepackSnapshot` and `qwenImageBench`. `training`, `webScrape`,
  * `xGuardModeration`, `modelPickleScan` and the `model*` / `media*` steps are
  * ordinary documented entries under ordinary headings, and `webScrape` carries
@@ -89,9 +89,9 @@
  * (#315) without anything going red. The measured state, derived rather than
  * typed:
  *
- * `WORKFLOW_STEP_TYPES` documents 50 `$type`s; this map covers 47. The 3 with
+ * `WORKFLOW_STEP_TYPES` documents 51 `$type`s; this map covers 47. The 4 with
  * no generated template in the pinned `@civitai/client` are `imageScanning`,
- * `preprocessVideo`, `yuE2`, and `WorkflowStepTemplateFor<…>` is a compile
+ * `preprocessVideo`, `soniloAudioGen`, `yuE2`, and `WorkflowStepTemplateFor<…>` is a compile
  * error for each of them.
  *
  * That gap is EXPECTED and is not a defect in either surface. The catalog
@@ -387,7 +387,7 @@ interface StepTemplateMap {
 }
 
 /**
- * `$type` → its step-template type, for 47 of the catalog's 50 step types.
+ * `$type` → its step-template type, for 47 of the catalog's 51 step types.
  *
  * Keyed by the WIRE name rather than the generated type name, because the wire
  * name is what you actually have in hand and the generator does not always

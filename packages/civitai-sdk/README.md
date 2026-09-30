@@ -131,6 +131,29 @@ and a flag that the viewer signed in before (`returning`). Signing in again is
 a quick round trip, since Civitai remembers the consent. `requestGrants` goes
 back to Civitai for anything not yet granted.
 
+### Without leaving the page
+
+A page that must not be navigated away from, such as one with a chat or an
+editor embedded in it, signs in in a popup instead:
+
+```ts
+import { createSignIn, initialize } from '@civitai/sdk';
+
+const auth = await createSignIn({ clientId, scopes: ['ai:write:budgeted'] });
+button.onclick = async () => {
+  await auth.signInWithPopup(); // from the click itself: browsers only open a popup there
+  const app = await initialize(auth);
+};
+```
+
+Civitai returns the popup to `redirectUri`, the same page by default. That page
+calls `createSignIn()` as on any visit; in the popup it hands the result back to
+the page that opened it and closes. The result travels over a same-origin
+`BroadcastChannel`, not `window.opener`, because signing in through Google cuts
+the opener. A blocked popup rejects with `SignInError` `code: 'popup-blocked'`;
+pass a `signal` to give up, which rejects with `code: 'canceled'`.
+`requestGrants` still leaves the page.
+
 Only scopes with an OAuth equivalent can be asked for: `user:read:self`,
 `models:read:self`, `ai:write:budgeted`, `buzz:read:self`, `posts:write:self`
 and `social:tip:self`. The storage and collection scopes belong to blocks.

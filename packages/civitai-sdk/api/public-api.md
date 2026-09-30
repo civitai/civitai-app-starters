@@ -119,6 +119,15 @@ export interface SignIn extends TokenSessionOptions {
     signIn(opts?: {
         scopes?: readonly Scope[];
     }): Promise<never>;
+    /**
+     * Signs in in a popup, so the page stays where it is. Call it straight from a click or key press:
+     * browsers only open a popup there. Civitai returns the popup to `redirectUri`, whose page must call
+     * `createSignIn()` with the same client, which hands the result back here and closes the popup.
+     */
+    signInWithPopup(opts?: {
+        scopes?: readonly Scope[];
+        signal?: AbortSignal;
+    }): Promise<void>;
     signOut(): Promise<void>;
 }
 
