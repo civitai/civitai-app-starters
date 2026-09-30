@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 
-import { armConsentRefusalLatch } from '../internal/consentRefusalLatch.js';
+import { sendRequestConsent } from '../internal/withConsentRetry.js';
 import { getTransport } from '../transport/singleton.js';
 
 /** What {@link useRequestConsent} returns. */
@@ -51,17 +51,15 @@ export interface UseRequestConsent {
  */
 export function useRequestConsent(): UseRequestConsent {
   const requestConsent = useCallback((payload?: { scopes?: string[] }) => {
-    const transport = getTransport();
-    // Arm the refusal buffer BEFORE the request goes out. A `CONSENT_UNAVAILABLE`
-    // can only ever follow a `REQUEST_CONSENT`, and the transport drops an
-    // unsolicited push that has no listener at the instant it arrives — so this
-    // ordering is what lets a refusal survive until a `useConsentUnavailable()`
-    // mounts, instead of requiring one to already be mounted. Idempotent.
-    armConsentRefusalLatch(transport);
-    transport.sendMessage({
-      type: 'REQUEST_CONSENT',
-      ...(payload ? { payload } : {}),
-    });
+    // Single-sourced with the SDK's own automatic prompt-and-retry
+    // (`internal/withConsentRetry.ts`), which posts the identical message. The
+    // helper arms the refusal buffer BEFORE the request goes out: a
+    // `CONSENT_UNAVAILABLE` can only ever follow a `REQUEST_CONSENT`, and the
+    // transport drops an unsolicited push that has no listener at the instant it
+    // arrives — so that ordering is what lets a refusal survive until a
+    // `useConsentUnavailable()` mounts, instead of requiring one to already be
+    // mounted. Two spellings of "arm, then send" is how one of them forgets.
+    sendRequestConsent(getTransport(), payload);
   }, []);
   return { requestConsent };
 }

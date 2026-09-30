@@ -1,10 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { BLOCK_SCOPES } from '@civitai/app-sdk/blocks';
+
+import { withConsentRetry } from '../internal/withConsentRetry.js';
+import { getTransport } from '../transport/singleton.js';
 import { generateIdempotencyKey } from '../transport/transport.js';
+import type { ConsentRetryOptions } from './consentRetryOptions.js';
 import type { Entitlement } from './useEntitlements.js';
 import { useBlockToken } from './useBlockToken.js';
 import { useBuzzPurchase } from './useBuzzPurchase.js';
 import { useHostOrigin } from './useHostOrigin.js';
+
+/**
+ * The consent-gated scope a purchase needs.
+ *
+ * 🔴 `goods:purchase:self`, NEVER `goods:read:self` — `BLOCK_SCOPES`' own
+ * comment draws the line: the read is consent-EXEMPT (server-scoped to the
+ * calling app's own goods, so there is nothing third-party to consent to) while
+ * money out of the viewer's balance always needs an explicit grant. "Do not
+ * collapse the two." Prompting for the read would ask for the wrong thing and
+ * the wait below would never see it granted.
+ */
+const GOOD_PURCHASE_SCOPES = [BLOCK_SCOPES.GOODS_PURCHASE_SELF] as const;
 
 /**
  * Backstop timeout for the direct REST purchase POST. Like {@link useTip} (and
@@ -27,7 +44,7 @@ export interface GoodPurchaseParams {
 }
 
 /** Optional per-purchase controls. */
-export interface GoodPurchaseOptions {
+export interface GoodPurchaseOptions extends ConsentRetryOptions {
   /**
    * A STABLE idempotency key for this logical purchase. Reuse the SAME value
    * when RETRYING a purchase whose response was lost (timeout / network drop)
@@ -201,10 +218,19 @@ export function useGoodPurchase(): UseGoodPurchase {
         timedOut = true;
         controller.abort();
       }, GOOD_PURCHASE_TIMEOUT_MS);
+      // 🔴 THE BEARER IS READ LIVE, NOT OUT OF THE RENDER CLOSURE — WITHOUT THIS
+      // THE AUTOMATIC CONSENT RETRY CANNOT WORK. A consent grant re-mints the
+      // token and pushes `TOKEN_REFRESH`; React then re-renders and `raw` gets a
+      // new value, but the in-flight `purchase` call is still holding the
+      // closure created at call time, whose `raw` is the PRE-grant token. Retry
+      // with that and the server sees the same scope-less token and refuses
+      // again — a retry that could never succeed, for a grant that did. The
+      // `|| raw` keeps the pre-init case behaving exactly as before.
+      const bearer = getTransport().getSnapshot().token.raw || raw;
       try {
         const res = await fetch(`${host}/api/v1/blocks/goods/purchase`, {
           method: 'POST',
-          headers: { Authorization: `Bearer ${raw}`, 'Content-Type': 'application/json' },
+          headers: { Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             goodId: params.goodId,
             ...(params.expectedPriceBuzz != null
@@ -342,25 +368,37 @@ export function useGoodPurchase(): UseGoodPurchase {
         setLoading(true);
         setError(null);
       }
+      // 🔴 MINTED ONCE, OUTSIDE BOTH RETRY MECHANISMS. The top-up retry below
+      // and the consent retry wrapped around it BOTH re-post with this exact
+      // value, so however many attempts a single `purchase()` makes, the server
+      // sees ONE logical purchase. Moving it inside either closure turns an
+      // automatic retry into a second charge.
       const idempotencyKey = options?.idempotencyKey ?? generateIdempotencyKey();
       try {
-        try {
-          return await postOnce(params, idempotencyKey);
-        } catch (first) {
-          const canTopUp =
-            options?.topUpOnInsufficientFunds === true &&
-            first instanceof GoodPurchaseRefusal &&
-            first.reason === 'insufficient_funds';
-          if (!canTopUp) throw first;
+        return await withConsentRetry(
+          getTransport(),
+          GOOD_PURCHASE_SCOPES,
+          async () => {
+            try {
+              return await postOnce(params, idempotencyKey);
+            } catch (first) {
+              const canTopUp =
+                options?.topUpOnInsufficientFunds === true &&
+                first instanceof GoodPurchaseRefusal &&
+                first.reason === 'insufficient_funds';
+              if (!canTopUp) throw first;
 
-          // Only retry if the viewer ACTUALLY bought Buzz. `purchased: false`
-          // is the ordinary "they closed the modal" case, and retrying it would
-          // just reproduce the same refusal — so the original refusal is what
-          // the app should see.
-          const { purchased } = await openPurchaseModal(params.expectedPriceBuzz);
-          if (!purchased) throw first;
-          return await postOnce(params, idempotencyKey);
-        }
+              // Only retry if the viewer ACTUALLY bought Buzz. `purchased: false`
+              // is the ordinary "they closed the modal" case, and retrying it would
+              // just reproduce the same refusal — so the original refusal is what
+              // the app should see.
+              const { purchased } = await openPurchaseModal(params.expectedPriceBuzz);
+              if (!purchased) throw first;
+              return await postOnce(params, idempotencyKey);
+            }
+          },
+          options,
+        );
       } catch (err) {
         const e =
           err instanceof Error ? err : new Error(String(err));

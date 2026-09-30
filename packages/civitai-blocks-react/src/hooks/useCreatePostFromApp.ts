@@ -6,10 +6,22 @@ import type {
   BlockCreatePostResult,
   BlockPostSource,
 } from '@civitai/app-sdk/blocks';
+import { BLOCK_SCOPES } from '@civitai/app-sdk/blocks';
 
+import { withConsentRetry } from '../internal/withConsentRetry.js';
 import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { RequestTimeoutError, sendTypedRequest } from '../transport/transport.js';
+import type { ConsentRetryOptions } from './consentRetryOptions.js';
+
+/**
+ * The consent-gated scope this bridge requires — `posts:write:self`, named in
+ * `@civitai/app-sdk`'s own `CREATE_POST_FROM_APP` message docs ("Scope
+ * `posts:write:self` (NOT `ai:write:budgeted`), which is SENSITIVE and
+ * CONSENT-GATED"). From {@link BLOCK_SCOPES}, never a literal: a typo would not
+ * error, it would make the automatic consent prompt silently do nothing.
+ */
+const CREATE_POST_SCOPES = [BLOCK_SCOPES.POSTS_WRITE_SELF] as const;
 
 export type {
   BlockCreatePostHostError,
@@ -113,7 +125,10 @@ export interface UseCreatePostFromApp {
    * `declined`, which means the viewer dismissed the confirm and NO POST EXISTS.
    * Check `.declined` before rendering a failure.
    */
-  createPost: (args: BlockCreatePostRequest) => Promise<BlockCreatePostResult>;
+  createPost: (
+    args: BlockCreatePostRequest,
+    options?: ConsentRetryOptions,
+  ) => Promise<BlockCreatePostResult>;
   /** `true` while a request is in flight (including the viewer's confirm). */
   pending: boolean;
   /**
@@ -194,42 +209,67 @@ export function useCreatePostFromApp(): UseCreatePostFromApp {
     };
   }, []);
 
-  const createPost = useCallback(
+  /** ONE round-trip + its result contract. Re-invoked verbatim on a consent retry. */
+  const createPostOnce = useCallback(
     async (args: BlockCreatePostRequest): Promise<BlockCreatePostResult> => {
+      const reply = await sendTypedRequest(
+        getTransport(),
+        {
+          type: 'CREATE_POST_FROM_APP',
+          payload: {
+            sources: args.sources,
+            ...(args.title !== undefined ? { title: args.title } : {}),
+            ...(args.detail !== undefined ? { detail: args.detail } : {}),
+            ...(args.tags !== undefined ? { tags: args.tags } : {}),
+            ...(args.modelVersionId !== undefined
+              ? { modelVersionId: args.modelVersionId }
+              : {}),
+          },
+        },
+        'CREATE_POST_RESULT',
+        // See the `'human'` bucketing in `transport/requestTimeouts.ts`: the
+        // host answers only when the viewer clicks or dismisses its confirm.
+        { timeoutMs: HUMAN_INTERACTION_TIMEOUT_MS },
+      );
+      if (reply.error || !reply.result) {
+        // 🔴 `||`, NOT `??`. `isValidCreatePostResult` gates `error` on SHAPE
+        // only (it has to: the channel carries free-text server messages), so
+        // a host `error: ''` is a VALID reply that reaches here. `??` would
+        // then throw an Error with an EMPTY message for a public post, which
+        // renders as a blank failure. Fall through to a code that at least
+        // names a real outcome.
+        throw new CreatePostError(reply.error || 'no images to post');
+      }
+      return reply.result;
+    },
+    [],
+  );
+
+  const createPost = useCallback(
+    async (
+      args: BlockCreatePostRequest,
+      options?: ConsentRetryOptions,
+    ): Promise<BlockCreatePostResult> => {
       if (mountedRef.current) {
         setPending(true);
         setError(null);
       }
       try {
-        const reply = await sendTypedRequest(
+        // 🔴 INSIDE the try, not around it: the wrapper must sit between the
+        // round-trip and the `setError` below, so a first attempt that is
+        // recovered by a consent grant never leaves a failure in `error` for the
+        // UI to render next to a post that succeeded.
+        //
+        // No idempotency key is involved — `CREATE_POST_FROM_APP` has none on the
+        // wire. Its duplicate-protection is the host's own per-post confirm,
+        // which the retry re-opens exactly once; and a `declined` (the viewer
+        // dismissing that confirm) is never retried at all.
+        return await withConsentRetry(
           getTransport(),
-          {
-            type: 'CREATE_POST_FROM_APP',
-            payload: {
-              sources: args.sources,
-              ...(args.title !== undefined ? { title: args.title } : {}),
-              ...(args.detail !== undefined ? { detail: args.detail } : {}),
-              ...(args.tags !== undefined ? { tags: args.tags } : {}),
-              ...(args.modelVersionId !== undefined
-                ? { modelVersionId: args.modelVersionId }
-                : {}),
-            },
-          },
-          'CREATE_POST_RESULT',
-          // See the `'human'` bucketing in `transport/requestTimeouts.ts`: the
-          // host answers only when the viewer clicks or dismisses its confirm.
-          { timeoutMs: HUMAN_INTERACTION_TIMEOUT_MS },
+          CREATE_POST_SCOPES,
+          () => createPostOnce(args),
+          options,
         );
-        if (reply.error || !reply.result) {
-          // 🔴 `||`, NOT `??`. `isValidCreatePostResult` gates `error` on SHAPE
-          // only (it has to: the channel carries free-text server messages), so
-          // a host `error: ''` is a VALID reply that reaches here. `??` would
-          // then throw an Error with an EMPTY message for a public post, which
-          // renders as a blank failure. Fall through to a code that at least
-          // names a real outcome.
-          throw new CreatePostError(reply.error || 'no images to post');
-        }
-        return reply.result;
       } catch (err: unknown) {
         // A transport timeout arrives as a plain Error; wrap it so callers have
         // ONE error type to test, with `.code` left undefined (it is not a host

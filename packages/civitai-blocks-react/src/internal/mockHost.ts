@@ -75,7 +75,11 @@ import {
   type WrappedToken,
 } from '@civitai/app-sdk/blocks';
 
-import { consentUnavailablePayload, resolveUngrantableConsentNotice } from './consent.js';
+import {
+  consentUnavailablePayload,
+  isKnownBlockScope,
+  resolveUngrantableConsentNotice,
+} from './consent.js';
 import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
 
@@ -1646,6 +1650,29 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     const parentOrigin = win.location.origin;
     const originalParent = win.parent;
     let consentGranted = !!options.consentGranted;
+    /**
+     * Scopes granted by a `REQUEST_CONSENT` round-trip OTHER than
+     * `ai:write:budgeted` (which keeps its own flag, because `buzzBudget` is
+     * conditional on it and `setScenario` can toggle it).
+     *
+     * 🔴 WHY THIS EXISTS. The grant branch used to hand back exactly
+     * `[BUDGETED_SCOPE]` and nothing else, so on this host NO consent-gated
+     * scope but the money one could EVER appear on a token. That was invisible
+     * while nothing waited on a grant; it stops being invisible the moment the
+     * SDK does (`internal/withConsentRetry.ts`), because a block asking for
+     * `posts:write:self` would be "granted" a token that still lacks it and
+     * would sit out the full wait on a host that had already said yes. The real
+     * host grants the missing set it computed from the manifest, so modelling it
+     * as "grant what was asked for, filtered to the known vocabulary" is closer
+     * than the constant was — and a dev host that quietly diverges here is
+     * precisely what `./consent.js`'s header warns about.
+     */
+    const extraGrantedScopes = new Set<string>();
+    /** Everything the CURRENT token carries. One reader, so the two cannot drift. */
+    const currentScopes = (): string[] => [
+      ...(consentGranted ? [BUDGETED_SCOPE] : []),
+      ...extraGrantedScopes,
+    ];
     let tokenSerial = 0;
     let submitCount = 0;
     // body + cost remembered per workflow so the succeeded snapshot can echo them.
@@ -1668,7 +1695,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       tokenSerial += 1;
       return {
         raw: `${DEV_TOKEN}.${tokenSerial}`,
-        scopes: consentGranted ? [BUDGETED_SCOPE] : [],
+        scopes: currentScopes(),
         expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
         ...(consentGranted ? { buzzBudget } : {}),
       };
@@ -1769,11 +1796,11 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               // on when this fires or what it names.
               const notice = resolveUngrantableConsentNotice(
                 (typed.payload as unknown as { scopes?: unknown } | undefined)?.scopes,
-                // The scopes the CURRENT token carries. Computed inline rather
-                // than read off `nextToken()` — that helper MINTS (it bumps
-                // `tokenSerial`), so calling it here would burn a serial on a
-                // path that issues no token.
-                consentGranted ? [BUDGETED_SCOPE] : [],
+                // The scopes the CURRENT token carries. Read through
+                // `currentScopes()` rather than `nextToken()` — that helper MINTS
+                // (it bumps `tokenSerial`), so calling it here would burn a
+                // serial on a path that issues no token.
+                currentScopes(),
                 // Nothing is grantable — that is what `consentGrantable:false`
                 // MEANS. Passing the empty set here (rather than short-circuiting)
                 // keeps this call identical in shape to the host's.
@@ -1794,6 +1821,23 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // host-initiated TOKEN_REFRESH carrying it (the App's auto-resume
             // depends on seeing the new scope on its token).
             consentGranted = true;
+            // …and grant whatever ELSE the hint named, filtered to the known
+            // vocabulary. `scopes` is untrusted block input (it is where markup
+            // and 5 KB strings arrive), so it is filtered here exactly as the
+            // refusal payload is — `isKnownBlockScope` is the same predicate
+            // both branches use. Absent/garbage hint ⇒ nothing extra, which is
+            // the pre-existing behaviour.
+            {
+              const hint = (typed.payload as unknown as { scopes?: unknown } | undefined)
+                ?.scopes;
+              if (Array.isArray(hint)) {
+                for (const s of hint) {
+                  if (typeof s === 'string' && s !== BUDGETED_SCOPE && isKnownBlockScope(s)) {
+                    extraGrantedScopes.add(s);
+                  }
+                }
+              }
+            }
             after(0, () => {
               dispatchToBlock({ type: 'TOKEN_REFRESH', payload: { token: nextToken() } });
             });

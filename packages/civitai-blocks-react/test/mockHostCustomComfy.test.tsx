@@ -183,7 +183,18 @@ describe('createMockHost — customComfy generation', () => {
   // ---- scenario config applies identically to customComfy ----
 
   it('failNext rejects the first customComfy submit then succeeds', async () => {
-    uninstall = createMockHost({ generation: { failNext: 1 }, pollsUntilDone: 1 }).install();
+    // `consentGranted: true` so the token already carries `ai:write:budgeted`.
+    // This test is about the `failNext` KNOB — one deliberate failure, then a
+    // success — and with an un-granted token the SDK's automatic consent
+    // prompt-and-retry would legitimately absorb that first failure (prompt →
+    // the mock grants → retry → succeeds), leaving nothing for
+    // `submitExpectingRejection` to catch. Granting up front makes the consent
+    // path inert so the knob is what is being measured.
+    uninstall = createMockHost({
+      consentGranted: true,
+      generation: { failNext: 1 },
+      pollsUntilDone: 1,
+    }).install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 

@@ -1045,7 +1045,65 @@ const { requestSignIn } = useRequestSignIn();
 requestSignIn();
 ```
 
+### Automatic consent prompt-and-retry (on by default)
+
+**You usually do not need to write any of this.** Since `0.61.0` the
+consent-gated calls below handle a missing scope themselves: the call fails, the
+SDK opens the host's consent dialog naming the scope the call needs, waits for
+the grant, and then **retries the original call once** so it resolves as if it
+had just worked.
+
+| Hook | Call | Scope it prompts for |
+|---|---|---|
+| `useBuzzWorkflow()` | `estimate()`, `submit()` | `ai:write:budgeted` |
+| `useCreatePostFromApp()` | `createPost()` | `posts:write:self` |
+| `useGoodPurchase()` | `purchase()` | `goods:purchase:self` |
+| `useTip()` | `tip()` | `social:tip:self` |
+
+```tsx
+// This is the whole thing. No try/catch around a consent prompt, no watching
+// useBlockToken().scopes, no manual retry.
+const { submit } = useBuzzWorkflow();
+const snapshot = await submit(body);
+```
+
+🔴 **The retry re-sends the FIRST attempt's `idempotencyKey`.** That is what
+makes it safe on the money paths: `submit()`, `purchase()` and `tip()` mint the
+key once, before the first attempt, so however many attempts one call makes the
+server sees **one** logical operation and charges once. A retry with a fresh key
+would be a second reservation against the viewer's Buzz.
+
+It **never** retries when:
+
+- the token already holds every scope the call needs (so the failure was not
+  about consent — a rate limit, a 5xx, a bad body all behave exactly as before);
+- the host has pushed `CONSENT_UNAVAILABLE` — that scope can never be granted
+  here, so a retry is a guaranteed second failure;
+- the viewer dismissed a host confirm (`declined`), or the request was aborted /
+  timed out on a bridge with no idempotency key;
+- **a second time.** One retry, never a loop. A second consent failure surfaces
+  to you unchanged.
+
+If the viewer never answers the dialog, the **original** error is re-thrown after
+60 s and your `catch` sees exactly what it would have seen before.
+
+Opt out per call — the two options are the same on every hook above:
+
+```tsx
+await submit(body, { autoRequestConsent: false });   // pre-0.61 behaviour
+await submit(body, { consentTimeoutMs: 15_000 });    // give up on silence sooner
+```
+
+⚠️ **Not covered:** a scope your **manifest** never declared can never be granted
+either, and a block cannot see its own manifest at runtime — so that case is
+caught one round-trip late, by the host's `CONSENT_UNAVAILABLE`, rather than
+before the first attempt. Declare the scopes your app uses.
+
 ### `useRequestConsent()`
+
+The manual version of the above — still exported, still the right tool when you
+want to prompt *before* a call (e.g. on an onboarding screen) rather than after
+one fails.
 
 Lazy consent: ask the host to open its consent UI when a LOGGED-IN viewer takes
 an action whose consent-gated scope the block token is missing (e.g. Generate

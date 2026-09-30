@@ -9,9 +9,22 @@ import type {
   WorkflowBodyTextToImage,
   WorkflowStatus,
 } from '@civitai/app-sdk/blocks';
+import { BLOCK_SCOPES } from '@civitai/app-sdk/blocks';
 
+import { withConsentRetry } from '../internal/withConsentRetry.js';
 import { getTransport } from '../transport/singleton.js';
 import { generateIdempotencyKey, sendTypedRequest } from '../transport/transport.js';
+import type { ConsentRetryOptions } from './consentRetryOptions.js';
+
+/**
+ * The consent-gated scope both money calls on this hook require.
+ *
+ * Named from {@link BLOCK_SCOPES}, never a string literal: this array is sent to
+ * the host as the `REQUEST_CONSENT` hint, and the host ignores a hint with no
+ * RECOGNISED non-empty name — so a typo here would not error, it would make the
+ * automatic prompt silently do nothing.
+ */
+const WORKFLOW_SCOPES = [BLOCK_SCOPES.AI_WRITE_BUDGETED] as const;
 
 /**
  * The members of {@link WorkflowBody}, enumerated ONE WAY so `tsc` can compare
@@ -598,7 +611,7 @@ export class WorkflowSubmitError extends Error {
 }
 
 /** Optional per-submit controls. */
-export interface SubmitWorkflowOptions {
+export interface SubmitWorkflowOptions extends ConsentRetryOptions {
   /**
    * A STABLE idempotency key for this logical submit. Reuse the SAME value when
    * RETRYING a submit whose response was lost (timeout / network drop) so the
@@ -610,6 +623,11 @@ export interface SubmitWorkflowOptions {
    * SAFE. That code means a workflow probably exists and its spend may already
    * be committed server-side; retrying WITHOUT reusing the key mints a fresh one
    * and therefore a SECOND reservation. See {@link WorkflowSubmitError.code}.
+   *
+   * The SDK's own automatic consent retry obeys this: whichever value ends up
+   * here — yours, or the one `submit()` mints — is the value BOTH of its
+   * attempts carry. So an error you receive may already be a second attempt's;
+   * if you then retry a third time by hand, reuse this key for that too.
    */
   idempotencyKey?: string;
 }
@@ -637,7 +655,10 @@ export interface UseBuzzWorkflow {
    * failed estimate can never leave a previous, differently-configured
    * estimate's price sitting in `result` for a Confirm gate to read.
    */
-  estimate: (body: WorkflowBody) => Promise<BlockWorkflowSnapshot>;
+  estimate: (
+    body: WorkflowBody,
+    options?: ConsentRetryOptions,
+  ) => Promise<BlockWorkflowSnapshot>;
   /**
    * Queue a workflow. Resolves ONLY with a reply that represents a real workflow
    * OUTCOME — one that was queued, or one the server priced and then refused.
@@ -674,6 +695,15 @@ export interface UseBuzzWorkflow {
    *
    * `result` is updated to the returned snapshot BEFORE any rejection, so a
    * failed submit can never leave a previous submit's workflow in `result`.
+   *
+   * 🔴 CONSENT IS HANDLED FOR YOU. When the token lacks `ai:write:budgeted`,
+   * this opens the host's consent dialog, waits for the grant, and re-sends the
+   * submit ONCE — with the SAME {@link SubmitWorkflowOptions.idempotencyKey}, so
+   * the two attempts are one reservation, not two. Nothing else changes: a
+   * failure while the token DOES hold the scope is untouched, a
+   * `CONSENT_UNAVAILABLE` environment is never retried, and a second consent
+   * failure reaches you unchanged. Opt out with
+   * {@link ConsentRetryOptions.autoRequestConsent}`: false`.
    */
   submit: (
     body: WorkflowBody,
@@ -855,68 +885,94 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
   const [result, setResult] = useState<BlockWorkflowSnapshot | null>(null);
   const [error, setError] = useState<Error | null>(null);
 
-  const estimate = useCallback(async (body: WorkflowBody) => {
-    setError(null);
-    setStatus('estimating');
-    try {
-      const { snapshot } = await sendTypedRequest(
-        getTransport(),
-        { type: 'ESTIMATE_WORKFLOW', payload: { body } },
-        'ESTIMATE_RESULT',
-        { timeoutMs: WORKFLOW_REQUEST_TIMEOUT_MS },
-      );
-      // 🔴 PUBLISH THE SNAPSHOT BEFORE ANY REJECTION BELOW. `result` is what the
-      // README documents as where the cost lives, so a block may gate its Confirm
-      // on `typeof result.cost?.total === 'number'` rather than on the returned
-      // value. If the throw jumped over this line, a FAILED estimate would leave
-      // the PREVIOUS estimate's snapshot in place and that gate would read the
-      // OLD config's price — a live control quoting the wrong number on a money
-      // path, which is strictly worse than the dead control this PR exists to
-      // fix. Assigning first preserves the pre-fix fail-CLOSED property (the
-      // cost-less snapshot overwrites the priced one) and merely adds the
-      // rejection on top.
-      setResult(snapshot);
-      // 🔴 AN UNUSABLE ESTIMATE MUST REJECT — and there are TWO producers of the
-      // identical observable "resolved, but no `cost.total`", distinguishable
-      // only by fields the incident in civitai/civitai#4159 discarded:
-      //
-      //   (a) status:'failed'  — `blocks.estimateWorkflow` threw server-side. The
-      //       host cannot reject across postMessage, so it posts
-      //       `failureSnapshot(err)`: a VALID snapshot with `status:'failed'`,
-      //       an `error` string, and no `cost`.
-      //   (b) no numeric cost on an otherwise-successful snapshot — the server's
-      //       `snapshotFromWorkflow` OMITS `cost` entirely when the whatIf reply
-      //       has no numeric total (`...(typeof total === 'number' ? … : {})`),
-      //       which yields e.g. `{status:'pending'}` with no `error` at all.
-      //
-      // Keying on `status` ALONE would leave (b) resolving — the same dead
-      // "Cost unavailable" control, still undiagnosable. So the rule is the one
-      // the caller actually needs: an estimate that did not yield a usable price
-      // does not resolve. `canceled`/`expired` are covered by the same clause
-      // (they carry no cost), which is why they need no arm of their own.
-      const usableCost = typeof snapshot.cost?.total === 'number';
-      if (snapshot.status === 'failed') {
-        throw new WorkflowEstimateError(snapshot, 'failed');
-      }
-      if (!usableCost) {
-        throw new WorkflowEstimateError(snapshot, 'no-cost');
-      }
-      setStatus('confirming');
-      return snapshot;
-    } catch (err) {
-      setError(err as Error);
-      setStatus('error');
-      throw err;
+  /**
+   * ONE estimate round-trip AND its result contract, as a single unit.
+   *
+   * 🔴 THE REJECTIONS BELOW ARE INSIDE THE RETRIED UNIT ON PURPOSE. A
+   * consent-gated failure does not have to arrive as a thrown request — the host
+   * cannot reject across `postMessage`, so it answers with a failure-SHAPED
+   * reply and the throw happens down here. A wrapper placed around
+   * `sendTypedRequest` alone would therefore miss the common case entirely.
+   */
+  const estimateOnce = useCallback(async (body: WorkflowBody) => {
+    const { snapshot } = await sendTypedRequest(
+      getTransport(),
+      { type: 'ESTIMATE_WORKFLOW', payload: { body } },
+      'ESTIMATE_RESULT',
+      { timeoutMs: WORKFLOW_REQUEST_TIMEOUT_MS },
+    );
+    // 🔴 PUBLISH THE SNAPSHOT BEFORE ANY REJECTION BELOW. `result` is what the
+    // README documents as where the cost lives, so a block may gate its Confirm
+    // on `typeof result.cost?.total === 'number'` rather than on the returned
+    // value. If the throw jumped over this line, a FAILED estimate would leave
+    // the PREVIOUS estimate's snapshot in place and that gate would read the
+    // OLD config's price — a live control quoting the wrong number on a money
+    // path, which is strictly worse than the dead control this PR exists to
+    // fix. Assigning first preserves the pre-fix fail-CLOSED property (the
+    // cost-less snapshot overwrites the priced one) and merely adds the
+    // rejection on top.
+    setResult(snapshot);
+    // 🔴 AN UNUSABLE ESTIMATE MUST REJECT — and there are TWO producers of the
+    // identical observable "resolved, but no `cost.total`", distinguishable
+    // only by fields the incident in civitai/civitai#4159 discarded:
+    //
+    //   (a) status:'failed'  — `blocks.estimateWorkflow` threw server-side. The
+    //       host cannot reject across postMessage, so it posts
+    //       `failureSnapshot(err)`: a VALID snapshot with `status:'failed'`,
+    //       an `error` string, and no `cost`.
+    //   (b) no numeric cost on an otherwise-successful snapshot — the server's
+    //       `snapshotFromWorkflow` OMITS `cost` entirely when the whatIf reply
+    //       has no numeric total (`...(typeof total === 'number' ? … : {})`),
+    //       which yields e.g. `{status:'pending'}` with no `error` at all.
+    //
+    // Keying on `status` ALONE would leave (b) resolving — the same dead
+    // "Cost unavailable" control, still undiagnosable. So the rule is the one
+    // the caller actually needs: an estimate that did not yield a usable price
+    // does not resolve. `canceled`/`expired` are covered by the same clause
+    // (they carry no cost), which is why they need no arm of their own.
+    const usableCost = typeof snapshot.cost?.total === 'number';
+    if (snapshot.status === 'failed') {
+      throw new WorkflowEstimateError(snapshot, 'failed');
     }
+    if (!usableCost) {
+      throw new WorkflowEstimateError(snapshot, 'no-cost');
+    }
+    setStatus('confirming');
+    return snapshot;
   }, []);
 
-  const submit = useCallback(async (body: WorkflowBody, options?: SubmitWorkflowOptions) => {
-    setError(null);
-    setStatus('submitting');
-    // Idempotency: reuse a caller-supplied stable key across a retry (→ one Buzz
-    // charge), or mint a fresh one per call (each call is a new logical submit).
-    const idempotencyKey = options?.idempotencyKey ?? generateIdempotencyKey();
-    try {
+  const estimate = useCallback(
+    async (body: WorkflowBody, options?: ConsentRetryOptions) => {
+      setError(null);
+      setStatus('estimating');
+      try {
+        return await withConsentRetry(
+          getTransport(),
+          WORKFLOW_SCOPES,
+          () => estimateOnce(body),
+          options,
+        );
+      } catch (err) {
+        setError(err as Error);
+        setStatus('error');
+        throw err;
+      }
+    },
+    [estimateOnce],
+  );
+
+  /**
+   * ONE submit round-trip AND its result contract.
+   *
+   * 🔴 `idempotencyKey` IS A PARAMETER, NOT MINTED HERE, AND THAT IS THE MONEY
+   * SAFETY PROPERTY OF THIS WHOLE FILE. `submit` mints it ONCE, above the
+   * consent retry, and passes the same value into both invocations of this
+   * function. Minting it here instead would give the automatic retry a FRESH
+   * key — a SECOND Buzz reservation for one logical submit, which is exactly
+   * what {@link SubmitWorkflowOptions.idempotencyKey}'s docs forbid.
+   */
+  const submitOnce = useCallback(
+    async (body: WorkflowBody, idempotencyKey: string) => {
       const { snapshot } = await sendTypedRequest(
         getTransport(),
         { type: 'SUBMIT_WORKFLOW', payload: { body, idempotencyKey } },
@@ -967,12 +1023,38 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
       }
       setStatus(TERMINAL_STATUSES.has(snapshot.status) ? 'done' : 'polling');
       return snapshot;
-    } catch (err) {
-      setError(err as Error);
-      setStatus('error');
-      throw err;
-    }
-  }, []);
+    },
+    [],
+  );
+
+  const submit = useCallback(
+    async (body: WorkflowBody, options?: SubmitWorkflowOptions) => {
+      setError(null);
+      setStatus('submitting');
+      // Idempotency: reuse a caller-supplied stable key across a retry (→ one Buzz
+      // charge), or mint a fresh one per call (each call is a new logical submit).
+      //
+      // 🔴 MINTED HERE, OUTSIDE THE CLOSURE `withConsentRetry` RE-INVOKES. Both
+      // attempts therefore carry the SAME key and the host+orchestrator collapse
+      // them to ONE reservation. Move this line inside `submitOnce` and an
+      // automatic retry double-reserves a real person's Buzz — the single
+      // regression this feature exists to not have.
+      const idempotencyKey = options?.idempotencyKey ?? generateIdempotencyKey();
+      try {
+        return await withConsentRetry(
+          getTransport(),
+          WORKFLOW_SCOPES,
+          () => submitOnce(body, idempotencyKey),
+          options,
+        );
+      } catch (err) {
+        setError(err as Error);
+        setStatus('error');
+        throw err;
+      }
+    },
+    [submitOnce],
+  );
 
   /**
    * ONE poll round-trip, with an optional long-poll hint. The single place that
