@@ -1047,7 +1047,7 @@ requestSignIn();
 
 ### Automatic consent prompt-and-retry (on by default)
 
-**You usually do not need to write any of this.** Since `0.61.0` the
+**You usually do not need to write any of this.** Since `1.0.0` the
 consent-gated calls below handle a missing scope themselves: the call fails, the
 SDK opens the host's consent dialog naming the scope the call needs, waits for
 the grant, and then **retries the original call once** so it resolves as if it
@@ -1055,10 +1055,16 @@ had just worked.
 
 | Hook | Call | Scope it prompts for |
 |---|---|---|
-| `useBuzzWorkflow()` | `estimate()`, `submit()` | `ai:write:budgeted` |
+| `useBuzzWorkflow()` | `submit()` | `ai:write:budgeted` |
 | `useCreatePostFromApp()` | `createPost()` | `posts:write:self` |
 | `useGoodPurchase()` | `purchase()` | `goods:purchase:self` |
 | `useTip()` | `tip()` | `social:tip:self` |
+
+🔴 **`estimate()` is deliberately NOT in that table.** It is a price READ, and
+blocks call it from an effect keyed on the generation form — on mount, and again
+on every parameter change. Prompting there would open a consent dialog with no
+user gesture behind it, once per edit. A failed `estimate()` rejects exactly as
+it always has; show no price and let `submit()` do the asking.
 
 ```tsx
 // This is the whole thing. No try/catch around a consent prompt, no watching
@@ -1079,19 +1085,21 @@ It **never** retries when:
   about consent — a rate limit, a 5xx, a bad body all behave exactly as before);
 - the host has pushed `CONSENT_UNAVAILABLE` — that scope can never be granted
   here, so a retry is a guaranteed second failure;
-- the viewer dismissed a host confirm (`declined`), or the request was aborted /
-  timed out on a bridge with no idempotency key;
+- the viewer dismissed a host confirm (`declined`); the component **unmounted**
+  mid-request; or the request timed out on a bridge with **no idempotency key**
+  (`createPost()`, collection follow). A timeout on a call that HAS a key —
+  `submit()`, `purchase()`, `tip()` — *is* retried, because the retry re-sends
+  that key and the server collapses the two into one operation;
 - **a second time.** One retry, never a loop. A second consent failure surfaces
   to you unchanged.
 
 If the viewer never answers the dialog, the **original** error is re-thrown after
 60 s and your `catch` sees exactly what it would have seen before.
 
-Opt out per call — the two options are the same on every hook above:
+Opt out per call — the same single option on every hook above:
 
 ```tsx
-await submit(body, { autoRequestConsent: false });   // pre-0.61 behaviour
-await submit(body, { consentTimeoutMs: 15_000 });    // give up on silence sooner
+await submit(body, { autoRequestConsent: false });   // pre-1.0 behaviour
 ```
 
 ⚠️ **Not covered:** a scope your **manifest** never declared can never be granted

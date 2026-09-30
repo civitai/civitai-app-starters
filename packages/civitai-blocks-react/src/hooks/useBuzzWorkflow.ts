@@ -17,7 +17,11 @@ import { generateIdempotencyKey, sendTypedRequest } from '../transport/transport
 import type { ConsentRetryOptions } from './consentRetryOptions.js';
 
 /**
- * The consent-gated scope both money calls on this hook require.
+ * The consent-gated scope {@link UseBuzzWorkflow.submit} requires.
+ *
+ * 🔴 `submit()` ONLY. `estimate()` needs the same scope but is deliberately not
+ * routed through the automatic consent retry — see the comment on `estimate`
+ * below; it is an on-mount read with no gesture behind it.
  *
  * Named from {@link BLOCK_SCOPES}, never a string literal: this array is sent to
  * the host as the `REQUEST_CONSENT` hint, and the host ignores a hint with no
@@ -654,11 +658,15 @@ export interface UseBuzzWorkflow {
    * `result` is updated to the returned snapshot BEFORE any rejection, so a
    * failed estimate can never leave a previous, differently-configured
    * estimate's price sitting in `result` for a Confirm gate to read.
+   *
+   * 🔴 NO AUTOMATIC CONSENT PROMPT HERE, unlike {@link UseBuzzWorkflow.submit}.
+   * Blocks call `estimate()` from an effect keyed on the generation form, so it
+   * fires on mount and on every parameter change — prompting there would open a
+   * consent dialog with no user gesture behind it, once per edit. A missing
+   * scope surfaces as an ordinary rejection; show no price and let `submit()`
+   * do the asking.
    */
-  estimate: (
-    body: WorkflowBody,
-    options?: ConsentRetryOptions,
-  ) => Promise<BlockWorkflowSnapshot>;
+  estimate: (body: WorkflowBody) => Promise<BlockWorkflowSnapshot>;
   /**
    * Queue a workflow. Resolves ONLY with a reply that represents a real workflow
    * OUTCOME — one that was queued, or one the server priced and then refused.
@@ -886,80 +894,78 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
   const [error, setError] = useState<Error | null>(null);
 
   /**
-   * ONE estimate round-trip AND its result contract, as a single unit.
+   * 🔴 `estimate()` IS DELIBERATELY NOT ROUTED THROUGH `withConsentRetry`, and
+   * that exclusion is load-bearing rather than an oversight.
    *
-   * 🔴 THE REJECTIONS BELOW ARE INSIDE THE RETRIED UNIT ON PURPOSE. A
-   * consent-gated failure does not have to arrive as a thrown request — the host
-   * cannot reject across `postMessage`, so it answers with a failure-SHAPED
-   * reply and the throw happens down here. A wrapper placed around
-   * `sendTypedRequest` alone would therefore miss the common case entirely.
+   * The automatic prompt is for calls a PERSON just made. `estimate()` is not
+   * one: `starters/examples/buzz-workflow/src/App.tsx` calls it from a
+   * `useEffect` keyed on the form inputs, so it fires on mount and again on
+   * every parameter edit. `withConsentRetry` has no in-flight dedupe, so
+   * routing it would post one `REQUEST_CONSENT` per edit — a consent dialog
+   * with no gesture behind it, N times — and hold each call pending for the
+   * full 60s grant wait. That is the same reason the Buzz READS are excluded;
+   * `estimate()` just happens to live on a hook whose OTHER call moves money.
+   *
+   * A failed estimate keeps the behaviour that starter's own `catch` is written
+   * against: reject with the server's reason, and show no price, because a
+   * missing quote is not viewer-actionable copy. `submit()` IS routed, and that
+   * is where both the gesture and the charge are. Pinned by
+   * `test/withConsentRetry.test.tsx`.
    */
-  const estimateOnce = useCallback(async (body: WorkflowBody) => {
-    const { snapshot } = await sendTypedRequest(
-      getTransport(),
-      { type: 'ESTIMATE_WORKFLOW', payload: { body } },
-      'ESTIMATE_RESULT',
-      { timeoutMs: WORKFLOW_REQUEST_TIMEOUT_MS },
-    );
-    // 🔴 PUBLISH THE SNAPSHOT BEFORE ANY REJECTION BELOW. `result` is what the
-    // README documents as where the cost lives, so a block may gate its Confirm
-    // on `typeof result.cost?.total === 'number'` rather than on the returned
-    // value. If the throw jumped over this line, a FAILED estimate would leave
-    // the PREVIOUS estimate's snapshot in place and that gate would read the
-    // OLD config's price — a live control quoting the wrong number on a money
-    // path, which is strictly worse than the dead control this PR exists to
-    // fix. Assigning first preserves the pre-fix fail-CLOSED property (the
-    // cost-less snapshot overwrites the priced one) and merely adds the
-    // rejection on top.
-    setResult(snapshot);
-    // 🔴 AN UNUSABLE ESTIMATE MUST REJECT — and there are TWO producers of the
-    // identical observable "resolved, but no `cost.total`", distinguishable
-    // only by fields the incident in civitai/civitai#4159 discarded:
-    //
-    //   (a) status:'failed'  — `blocks.estimateWorkflow` threw server-side. The
-    //       host cannot reject across postMessage, so it posts
-    //       `failureSnapshot(err)`: a VALID snapshot with `status:'failed'`,
-    //       an `error` string, and no `cost`.
-    //   (b) no numeric cost on an otherwise-successful snapshot — the server's
-    //       `snapshotFromWorkflow` OMITS `cost` entirely when the whatIf reply
-    //       has no numeric total (`...(typeof total === 'number' ? … : {})`),
-    //       which yields e.g. `{status:'pending'}` with no `error` at all.
-    //
-    // Keying on `status` ALONE would leave (b) resolving — the same dead
-    // "Cost unavailable" control, still undiagnosable. So the rule is the one
-    // the caller actually needs: an estimate that did not yield a usable price
-    // does not resolve. `canceled`/`expired` are covered by the same clause
-    // (they carry no cost), which is why they need no arm of their own.
-    const usableCost = typeof snapshot.cost?.total === 'number';
-    if (snapshot.status === 'failed') {
-      throw new WorkflowEstimateError(snapshot, 'failed');
-    }
-    if (!usableCost) {
-      throw new WorkflowEstimateError(snapshot, 'no-cost');
-    }
-    setStatus('confirming');
-    return snapshot;
-  }, []);
-
-  const estimate = useCallback(
-    async (body: WorkflowBody, options?: ConsentRetryOptions) => {
-      setError(null);
-      setStatus('estimating');
-      try {
-        return await withConsentRetry(
-          getTransport(),
-          WORKFLOW_SCOPES,
-          () => estimateOnce(body),
-          options,
-        );
-      } catch (err) {
-        setError(err as Error);
-        setStatus('error');
-        throw err;
+  const estimate = useCallback(async (body: WorkflowBody) => {
+    setError(null);
+    setStatus('estimating');
+    try {
+      const { snapshot } = await sendTypedRequest(
+        getTransport(),
+        { type: 'ESTIMATE_WORKFLOW', payload: { body } },
+        'ESTIMATE_RESULT',
+        { timeoutMs: WORKFLOW_REQUEST_TIMEOUT_MS },
+      );
+      // 🔴 PUBLISH THE SNAPSHOT BEFORE ANY REJECTION BELOW. `result` is what the
+      // README documents as where the cost lives, so a block may gate its Confirm
+      // on `typeof result.cost?.total === 'number'` rather than on the returned
+      // value. If the throw jumped over this line, a FAILED estimate would leave
+      // the PREVIOUS estimate's snapshot in place and that gate would read the
+      // OLD config's price — a live control quoting the wrong number on a money
+      // path, which is strictly worse than the dead control this PR exists to
+      // fix. Assigning first preserves the pre-fix fail-CLOSED property (the
+      // cost-less snapshot overwrites the priced one) and merely adds the
+      // rejection on top.
+      setResult(snapshot);
+      // 🔴 AN UNUSABLE ESTIMATE MUST REJECT — and there are TWO producers of the
+      // identical observable "resolved, but no `cost.total`", distinguishable
+      // only by fields the incident in civitai/civitai#4159 discarded:
+      //
+      //   (a) status:'failed'  — `blocks.estimateWorkflow` threw server-side. The
+      //       host cannot reject across postMessage, so it posts
+      //       `failureSnapshot(err)`: a VALID snapshot with `status:'failed'`,
+      //       an `error` string, and no `cost`.
+      //   (b) no numeric cost on an otherwise-successful snapshot — the server's
+      //       `snapshotFromWorkflow` OMITS `cost` entirely when the whatIf reply
+      //       has no numeric total (`...(typeof total === 'number' ? … : {})`),
+      //       which yields e.g. `{status:'pending'}` with no `error` at all.
+      //
+      // Keying on `status` ALONE would leave (b) resolving — the same dead
+      // "Cost unavailable" control, still undiagnosable. So the rule is the one
+      // the caller actually needs: an estimate that did not yield a usable price
+      // does not resolve. `canceled`/`expired` are covered by the same clause
+      // (they carry no cost), which is why they need no arm of their own.
+      const usableCost = typeof snapshot.cost?.total === 'number';
+      if (snapshot.status === 'failed') {
+        throw new WorkflowEstimateError(snapshot, 'failed');
       }
-    },
-    [estimateOnce],
-  );
+      if (!usableCost) {
+        throw new WorkflowEstimateError(snapshot, 'no-cost');
+      }
+      setStatus('confirming');
+      return snapshot;
+    } catch (err) {
+      setError(err as Error);
+      setStatus('error');
+      throw err;
+    }
+  }, []);
 
   /**
    * ONE submit round-trip AND its result contract.

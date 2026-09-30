@@ -112,7 +112,16 @@ export function useTip(): UseTip {
     async (params: TipParams, idempotencyKey: string): Promise<TipResult> => {
       const controller = new AbortController();
       inFlight.current.add(controller);
-      const timeoutId = setTimeout(() => controller.abort(), TIP_REQUEST_TIMEOUT_MS);
+      // 🔴 WHICH ABORT FIRED IS NOT RECOVERABLE FROM THE SIGNAL — the bound and
+      // the unmount cleanup both set `aborted` — so record it at the source.
+      // The two need OPPOSITE handling below, exactly as in `useGoodPurchase`:
+      // an unmount is a cancellation nothing may resurrect, while the bound
+      // elapsing is a real failure whose recovery IS the same-key retry.
+      let timedOut = false;
+      const timeoutId = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, TIP_REQUEST_TIMEOUT_MS);
       // 🔴 THE BEARER IS READ LIVE, NOT OUT OF THE RENDER CLOSURE — WITHOUT THIS
       // THE AUTOMATIC CONSENT RETRY CANNOT WORK. A consent grant re-mints the
       // token and pushes `TOKEN_REFRESH`; React then re-renders and `raw` gets a
@@ -143,25 +152,38 @@ export function useTip(): UseTip {
         }
         return bodyJson as TipResult;
       } catch (err) {
-        const e =
-          controller.signal.aborted && !(err instanceof Error && err.message.startsWith('tip'))
-            ? new Error(
-                `useTip: request aborted (timed out after ${TIP_REQUEST_TIMEOUT_MS}ms or the hook unmounted).`,
-              )
-            : err instanceof Error
-              ? err
-              : new Error(String(err));
-        // 🔴 MARK THE ABORT SO THE AUTOMATIC CONSENT RETRY WILL NOT REOPEN IT.
-        // `withConsentRetry` re-throws anything carrying `timedOut === true`
-        // (same flag `CreatePostError` uses), because a request that was
-        // cancelled — by the 30s bound or by the component unmounting — may have
-        // landed server-side and must not be silently re-sent. The message and
-        // the error type are UNCHANGED; this only adds a field, so nothing a
-        // caller reads today moves.
-        if (controller.signal.aborted) {
-          (e as Error & { timedOut?: boolean }).timedOut = true;
+        // The `!… startsWith('tip')` half keeps a server refusal that was
+        // ALREADY read from being rewritten by an abort that raced it — the
+        // same precedence `useGoodPurchase` gives a `GoodPurchaseRefusal`.
+        if (
+          controller.signal.aborted &&
+          !(err instanceof Error && err.message.startsWith('tip'))
+        ) {
+          if (timedOut) {
+            // 🔴 THE BOUND FIRED, AND THIS ERROR IS DELIBERATELY RETRYABLE.
+            // `name` stays `Error` (callers routinely ignore `AbortError` as
+            // "we navigated away", and a silently-ignored money-path timeout is
+            // the worst outcome here) and it carries NO `timedOut` flag, so the
+            // automatic consent retry may re-send it. That is safe for exactly
+            // one reason: this hook mints an `idempotencyKey` above the retry
+            // and both POSTs carry it, so the server collapses them to ONE
+            // transfer. See rule 4 in `internal/withConsentRetry.ts` — the flag
+            // marks bridges with NO key to dedupe with, and this is not one.
+            throw new Error(
+              `useTip: request aborted (timed out after ${TIP_REQUEST_TIMEOUT_MS}ms). The transfer may or may not have landed — retry with the SAME idempotencyKey to find out safely.`,
+            );
+          }
+          // 🔴 UNMOUNT. `name = 'AbortError'` is what a caller discriminates on
+          // to IGNORE a rejection its component no longer cares about, and it
+          // is also what makes `withConsentRetry` rule 3 re-throw rather than
+          // resurrect work that was cancelled on purpose.
+          const aborted = new Error(
+            'useTip: request aborted (the hook unmounted before the response arrived). The transfer may or may not have landed — retry with the SAME idempotencyKey to find out safely.',
+          );
+          aborted.name = 'AbortError';
+          throw aborted;
         }
-        throw e;
+        throw err instanceof Error ? err : new Error(String(err));
       } finally {
         clearTimeout(timeoutId);
         inFlight.current.delete(controller);

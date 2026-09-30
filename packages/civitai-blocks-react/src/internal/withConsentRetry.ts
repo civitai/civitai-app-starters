@@ -82,7 +82,7 @@ import { armConsentRefusalLatch, readConsentRefusalLatch } from './consentRefusa
  *  3. **NEVER RETRY AN ABORT.** An `AbortError` means the caller's component
  *     unmounted or its own bound elapsed — work that was cancelled on purpose
  *     must not be silently resurrected, least of all on a money path.
- *  4. **NEVER RETRY A VIEWER REFUSAL OR A HOOK-DECLARED TIMEOUT.**
+ *  4. **NEVER RETRY A VIEWER REFUSAL OR A KEYLESS BRIDGE'S TIMEOUT.**
  *     `CreatePostError` and `CollectionFollowError` both carry
  *     `declined === true` when the person dismissed the host's own per-action
  *     confirm — an answer, not a failure; re-opening the dialog they just closed
@@ -94,11 +94,26 @@ import { armConsentRefusalLatch, readConsentRefusalLatch } from './consentRefusa
  *     the properties those classes already single-source, so a third such error
  *     joins the rule by declaring them.
  *
- *     ⚠️ This is NOT the same as re-throwing every timeout. A
- *     `RequestTimeoutError` out of `useBuzzWorkflow.submit` carries neither flag
- *     and IS retried — correctly, because that path has an idempotency key and
- *     its docs prescribe the same-key retry as the recovery. The flags mark the
- *     bridges that have no key to dedupe with.
+ *     🔴 **THE RULE `timedOut` ENCODES, IN ONE SENTENCE: a timeout is retryable
+ *     IFF the call carries an idempotency key.** That is a mechanical property,
+ *     not a preference. A timed-out request may have landed server-side; with a
+ *     key the server collapses the re-send into the first result, so the retry
+ *     is a REPLAY. Without one it is a genuine second write — a second public
+ *     post, a second follow. So a hook stamps `timedOut` exactly when its wire
+ *     message has no `idempotencyKey` field: `CREATE_POST_FROM_APP` and the
+ *     collection-follow bridge do, and they stamp it.
+ *
+ *     The three money paths — `useBuzzWorkflow.submit`, `useGoodPurchase` and
+ *     `useTip` — all mint a key ABOVE the retry and hand the same value to both
+ *     attempts, so none of them stamps it and all three retry a timeout. Their
+ *     own docs prescribe that same-key retry as the recovery. (`useTip` stamped
+ *     it until #500 round 1, which made it the only keyed hook that did not
+ *     retry; that inconsistency is what this paragraph exists to have settled.)
+ *
+ *     ⚠️ An UNMOUNT is a different thing and is covered by rule 3, not this one:
+ *     `useTip` and `useGoodPurchase` both name their unmount abort `AbortError`
+ *     and leave the bound-elapsed timeout a plain `Error`, so the two arms reach
+ *     opposite outcomes here.
  *
  * ## What it CANNOT detect: a scope absent from the MANIFEST
  *
@@ -134,7 +149,11 @@ import { armConsentRefusalLatch, readConsentRefusalLatch } from './consentRefusa
  * loses nothing — their next call sees the scope on the token and never enters
  * this path at all.
  *
- * Callers who know better override it with {@link ConsentRetryOptions.consentTimeoutMs}.
+ * 🔴 NOT CONFIGURABLE, and that is a decision rather than an omission. A public
+ * `consentTimeoutMs` shipped on five signatures in the first draft of #500 with
+ * no consumer outside this package — its only demonstrated use was shortening
+ * this wait inside one test, which fake timers do without widening the API. If
+ * a real caller ever needs a different bound, that is the moment to add one.
  */
 export const CONSENT_GRANT_WAIT_MS = 60_000;
 
@@ -182,7 +201,9 @@ function isAbort(err: unknown): boolean {
 /**
  * An error a hook has explicitly marked un-retryable — the viewer DISMISSED a
  * host confirm (`declined`), or the bridge timed out with no idempotency key to
- * dedupe a second attempt (`timedOut`).
+ * dedupe a second attempt (`timedOut`). See rule 4: `timedOut` means KEYLESS,
+ * not merely "timed out" — a keyed hook's timeout deliberately carries neither
+ * flag and IS retried, because the same key makes the re-send a replay.
  *
  * A duck-typed property test rather than `instanceof`, deliberately: the classes
  * that carry these (`CreatePostError`, `CollectionFollowError`) live in
@@ -290,11 +311,7 @@ export async function withConsentRetry<T>(
     armConsentRefusalLatch(transport);
     if (readConsentRefusalLatch(transport) !== null) throw err;
 
-    const granted = await awaitConsentGrant(
-      transport,
-      missing,
-      options?.consentTimeoutMs ?? CONSENT_GRANT_WAIT_MS,
-    );
+    const granted = await awaitConsentGrant(transport, missing, CONSENT_GRANT_WAIT_MS);
     // Refused or abandoned — the CALLER'S original error is what surfaces, not
     // a synthetic one about consent. It is the accurate description of what
     // went wrong with the thing they asked for.
