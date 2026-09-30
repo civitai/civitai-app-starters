@@ -125,6 +125,65 @@ describe('<civitai-image>', () => {
     const el = scope!.querySelector<CivitaiImage>('civitai-image')!;
     expect(el.shadowRoot!.querySelector('img')!.alt).toBe('');
   });
+
+  /*
+   * A grid of off-screen tiles decodes every one of them eagerly unless the
+   * consumer can say otherwise, and the `<img>` is built inside the shadow root
+   * where no outer-tree markup reaches it. These pin the PASSTHROUGH rather than
+   * the property's existence: a declared property that never reaches the `<img>`
+   * is exactly the shape that reads as support while providing none.
+   *
+   * Five of the seven were watched red before the passthrough existed ("expected
+   * null to be 'lazy'"). The other two — the unset case below, and the lazy
+   * image settling — were already green beforehand and are INVARIANT guards, not
+   * regression coverage: the first pins that the default rendered DOM does not
+   * move, the second that adding `loading` did not strand `status` on 'loading'.
+   */
+  it('renders no loading or decoding attribute unless asked, matching HTML', async () => {
+    await mount(`<civitai-image src="${PIXEL}" alt="p"></civitai-image>`);
+    const img = scope!.querySelector<CivitaiImage>('civitai-image')!.shadowRoot!.querySelector('img')!;
+    expect(img.getAttribute('loading')).toBeNull();
+    expect(img.getAttribute('decoding')).toBeNull();
+  });
+
+  it.each([
+    ['loading', 'lazy'],
+    ['loading', 'eager'],
+    ['decoding', 'async'],
+    ['decoding', 'sync'],
+    ['decoding', 'auto'],
+  ])('carries %s="%s" through to the img', async (name, value) => {
+    await mount(`<civitai-image src="${PIXEL}" alt="p" ${name}="${value}"></civitai-image>`);
+    const el = scope!.querySelector<CivitaiImage>('civitai-image')!;
+    expect(el.shadowRoot!.querySelector('img')!.getAttribute(name)).toBe(value);
+  });
+
+  it('carries the property form through too, and reflects it onto the host', async () => {
+    await mount(`<civitai-image src="${PIXEL}" alt="p"></civitai-image>`);
+    const el = scope!.querySelector<CivitaiImage>('civitai-image')!;
+    el.loading = 'lazy';
+    el.decoding = 'async';
+    await el.updateComplete;
+    const img = el.shadowRoot!.querySelector('img')!;
+    expect(img.getAttribute('loading')).toBe('lazy');
+    expect(img.getAttribute('decoding')).toBe('async');
+    expect(el.getAttribute('loading')).toBe('lazy');
+    expect(el.getAttribute('decoding')).toBe('async');
+  });
+
+  it('a lazy image still settles once it loads, so status is not stranded', async () => {
+    await mount(`<civitai-image src="${PIXEL}" alt="p" loading="lazy"></civitai-image>`);
+    const el = scope!.querySelector<CivitaiImage>('civitai-image')!;
+    expect(await settled(el)).toBe('loaded');
+  });
+
+  it('keeps the passthrough on the openable variant, where the img is nested in a button', async () => {
+    await mount(`<civitai-image openable src="${PIXEL}" alt="p" loading="lazy" decoding="async"></civitai-image>`);
+    const el = scope!.querySelector<CivitaiImage>('civitai-image')!;
+    const img = el.shadowRoot!.querySelector('button.open img')!;
+    expect(img.getAttribute('loading')).toBe('lazy');
+    expect(img.getAttribute('decoding')).toBe('async');
+  });
 });
 
 describe('<civitai-slider>', () => {

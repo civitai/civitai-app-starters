@@ -2345,6 +2345,30 @@
               "reflects": true
             },
             {
+              "kind": "field",
+              "name": "loading",
+              "privacy": "public",
+              "type": {
+                "text": "ImageLoading"
+              },
+              "description": "`<img loading>`, passed straight through: `lazy` defers a tile that is still\nbelow the fold. Unset renders no attribute, so the default stays HTML's.\nThe `<img>` is built in this element's shadow root, so a consumer's markup\ncannot reach it — which is why this is a property rather than nothing.",
+              "default": "''",
+              "attribute": "loading",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "decoding",
+              "privacy": "public",
+              "type": {
+                "text": "ImageDecoding"
+              },
+              "description": "`<img decoding>`, passed straight through. Unset renders no attribute.",
+              "default": "''",
+              "attribute": "decoding",
+              "reflects": true
+            },
+            {
               "kind": "method",
               "name": "#open",
               "privacy": "private",
@@ -2399,6 +2423,24 @@
               "description": "Names the open button when it should say more than `alt`.",
               "default": "''",
               "fieldName": "label"
+            },
+            {
+              "name": "loading",
+              "type": {
+                "text": "ImageLoading"
+              },
+              "description": "`<img loading>`, passed straight through: `lazy` defers a tile that is still\nbelow the fold. Unset renders no attribute, so the default stays HTML's.\nThe `<img>` is built in this element's shadow root, so a consumer's markup\ncannot reach it — which is why this is a property rather than nothing.",
+              "default": "''",
+              "fieldName": "loading"
+            },
+            {
+              "name": "decoding",
+              "type": {
+                "text": "ImageDecoding"
+              },
+              "description": "`<img decoding>`, passed straight through. Unset renders no attribute.",
+              "default": "''",
+              "fieldName": "decoding"
             }
           ],
           "superclass": {
