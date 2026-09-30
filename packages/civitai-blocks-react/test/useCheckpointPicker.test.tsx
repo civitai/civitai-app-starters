@@ -146,6 +146,22 @@ describe('useCheckpointPicker', () => {
       expect(sent.payload).not.toHaveProperty('baseModelGroup');
     });
 
+    // 🔴 THE CASE THAT MAKES `.trim()` LOAD-BEARING. `''` alone cannot see it:
+    // an empty string is already falsy, so the conditional spread would drop it
+    // with or without the trim. A whitespace-only string is truthy — delete the
+    // `.trim()` and `'  '` reaches the wire, where `getBaseModelGroup('  ')`
+    // resolves to the real ecosystem key 'Other' and NARROWS the picker to the
+    // Other family: exactly the failure this whole change exists to remove,
+    // arrived at from the opposite direction.
+    it('treats a whitespace-only baseModelGroup as unconstrained — never puts "  " on the wire', () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      act(() => {
+        result.current.open({ baseModelGroup: '  ' }).catch(() => {});
+      });
+      const sent = lastSent();
+      expect(sent.payload).not.toHaveProperty('baseModelGroup');
+    });
+
     it('still resolves with { selected } on an unconstrained pick', async () => {
       const { result } = renderHook(() => useCheckpointPicker());
       let pick!: Promise<{ selected?: unknown }>;

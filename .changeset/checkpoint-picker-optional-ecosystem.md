@@ -27,6 +27,18 @@ strip it — so `''` would narrow the picker to the Other family instead of
 widening it. Absence is the only spelling that means "unconstrained" on both
 host surfaces.
 
-Additive and backward compatible: existing callers that pass a family keep the
-exact behaviour they have today. `minor` per RELEASING.md — a new optional
-argument and looser input acceptance.
+Backward compatible **for CALLERS**: existing callers that pass a family keep
+the exact behaviour they have today.
+
+Not unconditionally backward compatible for **IMPLEMENTERS**. `open` is relaxed
+from `(opts: {…})` to `(opts?: {…})`, so anything that *implements* the exported
+`UseCheckpointPicker` type — a test double or fake typed as it, not a consumer
+of the hook — now has to accept a missing argument and stops type-checking
+until it does. Enumerated: the only references to the exported type are its own
+declaration, the `index.ts` re-export and the `Exact<ReturnType<typeof
+useCheckpointPicker>, UseCheckpointPicker>` row in `returnTypeLedger.ts` — which
+the hook itself satisfies. No independent implementer exists here, and the
+`civitai/cli` page-money scaffold's picker double is an untyped `vi.fn()`. That
+is why this is `minor` rather than `major` per RELEASING.md — a new
+optional argument and looser input acceptance. If one appears before release,
+re-grade it.
