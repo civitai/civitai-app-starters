@@ -1018,11 +1018,24 @@ const first = resources[0];             // .versionId / .strength / .trainedWord
 
 ### `useCivitaiNavigate()`
 
-Request a navigation within civitai.com (host-mediated; fire-and-forget).
+Request a navigation within civitai.com. The hook sends a `NAVIGATE` message to
+the host and returns — fire-and-forget, so the block never learns what the host
+did.
+
+`target` is a REQUEST, not a guarantee. How the host acts on `'current'` vs
+`'new_tab'` is host-side behaviour and the host is the authority on it; this
+package sends the message and makes no promise about the outcome.
+
+> 🔴 **Nothing in your manifest enables `'new_tab'`.** In particular, do **not**
+> declare `allow-popups-to-escape-sandbox`: the host intersects a manifest's
+> `iframe.sandbox` with a fixed allowlist that does not contain that token, so it
+> is dropped for every block at every trust tier and declaring it has no effect.
+> Earlier versions of this page said `'new_tab'` required it — that was wrong.
 
 ```tsx
 const { navigate } = useCivitaiNavigate();
-navigate('/models/12345', 'new_tab');   // 'new_tab' needs allow-popups* in the manifest sandbox
+navigate('/models/12345');              // `target` defaults to 'current'
+navigate('/models/12345', 'new_tab');   // requests a new tab; the host decides
 ```
 
 ### `useBlockAnalytics()`

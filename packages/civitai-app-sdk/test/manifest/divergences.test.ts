@@ -107,6 +107,16 @@ describe('SCHEMA_DIVERGENCES: every entry is strictly additive and carries a fix
  * the looser half so it stays DOCUMENTED rather than silently discovered at
  * review — the previous divergence entry itemised only the stricter half while
  * the docblock claimed "Nothing else".
+ *
+ * A third case used to sit here, citing `starters/civitai-block-starter`'s own
+ * sandbox as the worked example of the looser arm. It was removed with the
+ * starter's `allow-popups-to-escape-sandbox` declaration: that token is not in
+ * the host's sandbox allowlist at ANY trust tier, so shipping it in the scaffold
+ * taught every new app to declare something inert. The case was also vacuous —
+ * it split a literal and compared it to another literal, so no production code
+ * participated and it could only fail if someone edited the test. The real
+ * invariant it gestured at is now enforced against the actual manifest files by
+ * `tests/guards/manifest-sandbox-tokens.test.mjs`.
  */
 describe('the sandbox denylist is LOOSER than review, and says so', () => {
   it.each(['allow-popups', 'allow-modals', 'allow-downloads'])(
@@ -116,16 +126,6 @@ describe('the sandbox denylist is LOOSER than review, and says so', () => {
       expect(() => defineBlock({ manifest: manifest as unknown as BlockManifest })).not.toThrow();
     },
   );
-
-  it('the shipped block starter is itself outside the unverified-tier allowlist', () => {
-    // Not a defect to fix here — it is the measured reason the allowlist cannot
-    // be enforced locally. If this ever goes green, the allowlist became
-    // enforceable and KNOWN_GAPS['tier-dependent-sandbox-allowlist'] is stale.
-    const sandbox = 'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox';
-    const allowed = new Set(['allow-scripts', 'allow-forms']);
-    const outside = sandbox.split(' ').filter((t) => !allowed.has(t));
-    expect(outside).toEqual(['allow-popups', 'allow-popups-to-escape-sandbox']);
-  });
 
   it.each([
     'allow-top-navigation',
