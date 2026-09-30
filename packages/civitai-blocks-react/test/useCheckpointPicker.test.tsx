@@ -101,6 +101,71 @@ describe('useCheckpointPicker', () => {
       expect(sent.payload).not.toHaveProperty('currentVersionId');
     });
 
+    // ── Unconstrained pick (baseModelGroup optional) ────────────────────────
+    //
+    // The host has always tolerated an absent baseModelGroup: its
+    // resolveCheckpointPickerRequest treats the field as optional, and an
+    // absent/unresolved group produces the bare `type = Checkpoint` clause —
+    // ALL generation-covered checkpoints, not none. Requiring it was an
+    // SDK-side restriction only, and it made every ecosystem but the caller's
+    // current one unreachable.
+    //
+    // 🔴 The key must be ABSENT from the wire payload, not present-and-
+    // undefined. `getBaseModelGroup('')` on the host returns the REAL ecosystem
+    // key 'Other', and the model-slot host (IframeHost) passes any string
+    // straight through without stripping it — so emitting an empty string
+    // NARROWS the picker to the Other family instead of widening it. Absence is
+    // the only spelling that means "unconstrained" on both host surfaces.
+    it('omits baseModelGroup from the message when not provided (unconstrained pick)', () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      act(() => {
+        result.current.open({}).catch(() => {});
+      });
+      const sent = lastSent();
+      expect(sent.type).toBe('OPEN_CHECKPOINT_PICKER');
+      expect(sent.payload).not.toHaveProperty('baseModelGroup');
+      expect(typeof sent.payload.requestId).toBe('string');
+    });
+
+    it('omits baseModelGroup but keeps currentVersionId on an unconstrained pick', () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      act(() => {
+        result.current.open({ currentVersionId: 128078 }).catch(() => {});
+      });
+      const sent = lastSent();
+      expect(sent.payload).not.toHaveProperty('baseModelGroup');
+      expect(sent.payload.currentVersionId).toBe(128078);
+    });
+
+    it('treats an empty-string baseModelGroup as unconstrained — never puts "" on the wire', () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      act(() => {
+        result.current.open({ baseModelGroup: '' }).catch(() => {});
+      });
+      const sent = lastSent();
+      expect(sent.payload).not.toHaveProperty('baseModelGroup');
+    });
+
+    it('still resolves with { selected } on an unconstrained pick', async () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      let pick!: Promise<{ selected?: unknown }>;
+      act(() => {
+        pick = result.current.open({});
+      });
+      const sent = lastSent();
+      // A pick from a DIFFERENT family than the caller started in — the whole
+      // point of the unconstrained open.
+      const selected = {
+        versionId: 691639,
+        modelId: 618692,
+        baseModel: 'Flux.1 D',
+        modelName: 'FLUX',
+        versionName: 'dev',
+      };
+      reply('CHECKPOINT_PICKER_RESULT', sent.payload.requestId, { selected });
+      await expect(pick).resolves.toEqual({ selected });
+    });
+
     it('resolves with { selected } on the matching CHECKPOINT_PICKER_RESULT', async () => {
       const { result } = renderHook(() => useCheckpointPicker());
       let pick!: Promise<{ selected?: unknown }>;
