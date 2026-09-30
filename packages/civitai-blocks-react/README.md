@@ -961,9 +961,18 @@ await shared.withdraw(key);                            // remove my own entry
 
 Drive the platform Checkpoint picker + persist a viewer override.
 
+🔴 **`baseModelGroup` is a FILTER — derive it, never hardcode it.** The host hides
+every checkpoint outside the family you pass, so a literal ecosystem pins every
+viewer to whichever family the author happened to test with. Read it from the
+checkpoint the block already holds. For an *unconstrained* checkpoint pick, use
+`useResourcePicker({ resourceType: 'Checkpoint' })` with no `baseModelGroup`.
+
 ```tsx
 const { open, persist } = useCheckpointPicker();
-const { selected } = await open({ baseModelGroup: 'SDXL', currentVersionId });
+const { selected } = await open({
+  baseModelGroup: checkpoint.baseModel,     // derived from the current pick
+  currentVersionId: checkpoint.versionId,
+});
 if (selected) await persist(selected.versionId);   // null clears the override
 ```
 
@@ -974,13 +983,29 @@ The viewer searches in host chrome; the block only ever sees the one resource it
 picked. DISCOVERY ONLY — the returned `versionId` is re-validated + re-priced
 server-side at estimate/submit.
 
+🔴 **Pass NO `baseModelGroup` by default.** It is an optional FILTER, and the host
+hides every resource outside the family you pass — so a hardcoded ecosystem makes
+the viewer's own valid LoRAs invisible and the picker look empty or broken. Omit
+it and the viewer sees everything of that type.
+
 ```tsx
 const { open } = useResourcePicker();
-const picked = await open({ resourceType: 'LORA', baseModelGroup: 'SDXL' });
+const picked = await open({ resourceType: 'LORA' });   // unconstrained — the default
 if (picked) {
   const versionId = picked.versionId;   // feed into body.additionalResources
   const weight = picked.strength;        // recommended default weight (may be undefined)
 }
+```
+
+Constrain it **only** when the block already holds a chosen checkpoint the pick has
+to match — and then derive the family from that checkpoint, never from a literal:
+
+```tsx
+const { open } = useResourcePicker();
+const matching = await open({
+  resourceType: 'LORA',
+  baseModelGroup: checkpoint.baseModel,   // the checkpoint the viewer actually picked
+});
 ```
 
 ### `useImageUpload()`
