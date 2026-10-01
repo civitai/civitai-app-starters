@@ -1192,14 +1192,29 @@ export type BlockToParentMessage =
   // projection, or a free-text `error`).
   | { type: 'CANCEL_APP_WORKFLOW'; payload: { requestId: string; workflowId: string } }
   | {
-      // Ask the host to open the platform's Checkpoint picker. `baseModelGroup`
-      // is the ecosystem key (e.g. 'Flux1', 'SDXL') the picker filters to —
-      // typically derived from `useBlockContext().context.checkpoint?.baseModel`
-      // or from the LoRA's `baseModel` via the platform's group mapping.
+      // Ask the host to open the platform's Checkpoint picker.
+      //
+      // `baseModelGroup` is an OPTIONAL ecosystem-family FILTER (e.g. 'Flux1',
+      // 'SDXL'; a baseModel name like 'Flux.1 D' works too — the host collapses
+      // either to the family). OMIT it for an unconstrained pick across every
+      // family; pass it only to pin the pick to a family the block must stay in.
+      //
+      // The host has always treated this as optional — its
+      // `resolveCheckpointPickerRequest` accepts a bare `requestId`, and an
+      // absent group produces the bare `type = Checkpoint` clause, i.e. ALL
+      // generation-covered checkpoints rather than none. It was declared
+      // required here only on the SDK side, which left a block unable to offer
+      // any ecosystem but the one it started in.
+      //
+      // 🔴 OMIT the key; never send an empty string. The host's
+      // `getBaseModelGroup('')` returns the real ecosystem key 'Other', and the
+      // model-slot host does not strip it — so `''` NARROWS the picker to the
+      // Other family instead of widening it.
       type: 'OPEN_CHECKPOINT_PICKER';
       payload: {
         requestId: string;
-        baseModelGroup: string;
+        /** Optional ecosystem-family filter. Absent ⇒ unconstrained. Never ''. */
+        baseModelGroup?: string;
         /** Currently-selected versionId so the picker can pre-highlight it. */
         currentVersionId?: number;
       };

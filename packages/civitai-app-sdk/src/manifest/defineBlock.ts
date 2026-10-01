@@ -100,8 +100,9 @@ export const SCHEMA_DIVERGENCES = {
       'REVIEW IN THE OTHER DIRECTION: `allow-popups`, `allow-modals`, `allow-downloads` and any ' +
       'other token outside {allow-scripts, allow-forms} PASS HERE and may be refused at review. ' +
       'They are not rejected because the tier is assigned server-side during review and is ' +
-      'unknowable locally — `starters/civitai-block-starter` itself ships ' +
-      '"allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox". See ' +
+      'unknowable locally. Every shipped starter and example now declares exactly ' +
+      '"allow-scripts allow-forms", so none of them illustrates this gap any more — the looser ' +
+      'arm is pinned by the synthetic cases in test/manifest/divergences.test.ts instead. See ' +
       'KNOWN_GAPS["tier-dependent-sandbox-allowlist"].',
   },
   scopeJustifications: {
