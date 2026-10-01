@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type {
   BlockWorkflowSnapshot,
@@ -9,9 +9,26 @@ import type {
   WorkflowBodyTextToImage,
   WorkflowStatus,
 } from '@civitai/app-sdk/blocks';
+import { BLOCK_SCOPES } from '@civitai/app-sdk/blocks';
 
+import { withConsentRetry } from '../internal/withConsentRetry.js';
 import { getTransport } from '../transport/singleton.js';
 import { generateIdempotencyKey, sendTypedRequest } from '../transport/transport.js';
+import type { ConsentRetryOptions } from './consentRetryOptions.js';
+
+/**
+ * The consent-gated scope {@link UseBuzzWorkflow.submit} requires.
+ *
+ * 🔴 `submit()` ONLY. `estimate()` needs the same scope but is deliberately not
+ * routed through the automatic consent retry — see the comment on `estimate`
+ * below; it is an on-mount read with no gesture behind it.
+ *
+ * Named from {@link BLOCK_SCOPES}, never a string literal: this array is sent to
+ * the host as the `REQUEST_CONSENT` hint, and the host ignores a hint with no
+ * RECOGNISED non-empty name — so a typo here would not error, it would make the
+ * automatic prompt silently do nothing.
+ */
+const WORKFLOW_SCOPES = [BLOCK_SCOPES.AI_WRITE_BUDGETED] as const;
 
 /**
  * The members of {@link WorkflowBody}, enumerated ONE WAY so `tsc` can compare
@@ -598,7 +615,7 @@ export class WorkflowSubmitError extends Error {
 }
 
 /** Optional per-submit controls. */
-export interface SubmitWorkflowOptions {
+export interface SubmitWorkflowOptions extends ConsentRetryOptions {
   /**
    * A STABLE idempotency key for this logical submit. Reuse the SAME value when
    * RETRYING a submit whose response was lost (timeout / network drop) so the
@@ -610,6 +627,11 @@ export interface SubmitWorkflowOptions {
    * SAFE. That code means a workflow probably exists and its spend may already
    * be committed server-side; retrying WITHOUT reusing the key mints a fresh one
    * and therefore a SECOND reservation. See {@link WorkflowSubmitError.code}.
+   *
+   * The SDK's own automatic consent retry obeys this: whichever value ends up
+   * here — yours, or the one `submit()` mints — is the value BOTH of its
+   * attempts carry. So an error you receive may already be a second attempt's;
+   * if you then retry a third time by hand, reuse this key for that too.
    */
   idempotencyKey?: string;
 }
@@ -636,6 +658,13 @@ export interface UseBuzzWorkflow {
    * `result` is updated to the returned snapshot BEFORE any rejection, so a
    * failed estimate can never leave a previous, differently-configured
    * estimate's price sitting in `result` for a Confirm gate to read.
+   *
+   * 🔴 NO AUTOMATIC CONSENT PROMPT HERE, unlike {@link UseBuzzWorkflow.submit}.
+   * Blocks call `estimate()` from an effect keyed on the generation form, so it
+   * fires on mount and on every parameter change — prompting there would open a
+   * consent dialog with no user gesture behind it, once per edit. A missing
+   * scope surfaces as an ordinary rejection; show no price and let `submit()`
+   * do the asking.
    */
   estimate: (body: WorkflowBody) => Promise<BlockWorkflowSnapshot>;
   /**
@@ -674,6 +703,15 @@ export interface UseBuzzWorkflow {
    *
    * `result` is updated to the returned snapshot BEFORE any rejection, so a
    * failed submit can never leave a previous submit's workflow in `result`.
+   *
+   * 🔴 CONSENT IS HANDLED FOR YOU. When the token lacks `ai:write:budgeted`,
+   * this opens the host's consent dialog, waits for the grant, and re-sends the
+   * submit ONCE — with the SAME {@link SubmitWorkflowOptions.idempotencyKey}, so
+   * the two attempts are one reservation, not two. Nothing else changes: a
+   * failure while the token DOES hold the scope is untouched, a
+   * `CONSENT_UNAVAILABLE` environment is never retried, and a second consent
+   * failure reaches you unchanged. Opt out with
+   * {@link ConsentRetryOptions.autoRequestConsent}`: false`.
    */
   submit: (
     body: WorkflowBody,
@@ -855,6 +893,51 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
   const [result, setResult] = useState<BlockWorkflowSnapshot | null>(null);
   const [error, setError] = useState<Error | null>(null);
 
+  /**
+   * Whether this hook's component is still mounted.
+   *
+   * 🔴 ITS ONLY JOB IS THE CONSENT RETRY, and that is a MONEY gate rather than a
+   * setState-after-unmount tidy-up. `submit()` can sit in `withConsentRetry`'s
+   * 60s grant wait long after the component is gone, and nothing else can see
+   * that: this hook's calls go through the postMessage bridge, so there is no
+   * `AbortController` to fire and rule 3's `AbortError` path never triggers. A
+   * grant arriving after unmount would then RESERVE BUZZ for a generation nobody
+   * is left to watch. Read immediately before the retry, never cached.
+   */
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  /**
+   * 🔴 `estimate()` IS DELIBERATELY NOT ROUTED THROUGH `withConsentRetry`, and
+   * that exclusion is load-bearing rather than an oversight.
+   *
+   * The automatic prompt is for calls a PERSON just made. `estimate()` is not
+   * one: `starters/examples/buzz-workflow/src/App.tsx` calls it from a
+   * `useEffect` keyed on the form inputs, so it fires on mount and again on
+   * every parameter edit. Routing it would open a consent dialog with no gesture
+   * behind it and hold each call pending for the full 60s grant wait. That is the
+   * same reason the Buzz READS are excluded; `estimate()` just happens to live on
+   * a hook whose OTHER call moves money.
+   *
+   * ⚠️ The in-flight DE-DUPLICATION `withConsentRetry` gained in #500 round 2
+   * does not change this verdict, and reading it as a reason to route
+   * `estimate()` would be a mistake. It collapses CONCURRENT waits on the same
+   * scope set into one dialog; a form edited over several seconds produces
+   * SEQUENTIAL calls, each after the previous wait settled, so the N-dialogs
+   * problem survives for exactly this shape. The no-gesture objection is
+   * independent of it either way.
+   *
+   * A failed estimate keeps the behaviour that starter's own `catch` is written
+   * against: reject with the server's reason, and show no price, because a
+   * missing quote is not viewer-actionable copy. `submit()` IS routed, and that
+   * is where both the gesture and the charge are. Pinned by
+   * `test/withConsentRetry.test.tsx`.
+   */
   const estimate = useCallback(async (body: WorkflowBody) => {
     setError(null);
     setStatus('estimating');
@@ -910,13 +993,18 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
     }
   }, []);
 
-  const submit = useCallback(async (body: WorkflowBody, options?: SubmitWorkflowOptions) => {
-    setError(null);
-    setStatus('submitting');
-    // Idempotency: reuse a caller-supplied stable key across a retry (→ one Buzz
-    // charge), or mint a fresh one per call (each call is a new logical submit).
-    const idempotencyKey = options?.idempotencyKey ?? generateIdempotencyKey();
-    try {
+  /**
+   * ONE submit round-trip AND its result contract.
+   *
+   * 🔴 `idempotencyKey` IS A PARAMETER, NOT MINTED HERE, AND THAT IS THE MONEY
+   * SAFETY PROPERTY OF THIS WHOLE FILE. `submit` mints it ONCE, above the
+   * consent retry, and passes the same value into both invocations of this
+   * function. Minting it here instead would give the automatic retry a FRESH
+   * key — a SECOND Buzz reservation for one logical submit, which is exactly
+   * what {@link SubmitWorkflowOptions.idempotencyKey}'s docs forbid.
+   */
+  const submitOnce = useCallback(
+    async (body: WorkflowBody, idempotencyKey: string) => {
       const { snapshot } = await sendTypedRequest(
         getTransport(),
         { type: 'SUBMIT_WORKFLOW', payload: { body, idempotencyKey } },
@@ -967,12 +1055,41 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
       }
       setStatus(TERMINAL_STATUSES.has(snapshot.status) ? 'done' : 'polling');
       return snapshot;
-    } catch (err) {
-      setError(err as Error);
-      setStatus('error');
-      throw err;
-    }
-  }, []);
+    },
+    [],
+  );
+
+  const submit = useCallback(
+    async (body: WorkflowBody, options?: SubmitWorkflowOptions) => {
+      setError(null);
+      setStatus('submitting');
+      // Idempotency: reuse a caller-supplied stable key across a retry (→ one Buzz
+      // charge), or mint a fresh one per call (each call is a new logical submit).
+      //
+      // 🔴 MINTED HERE, OUTSIDE THE CLOSURE `withConsentRetry` RE-INVOKES. Both
+      // attempts therefore carry the SAME key and the host+orchestrator collapse
+      // them to ONE reservation. Move this line inside `submitOnce` and an
+      // automatic retry double-reserves a real person's Buzz — the single
+      // regression this feature exists to not have.
+      const idempotencyKey = options?.idempotencyKey ?? generateIdempotencyKey();
+      try {
+        return await withConsentRetry(
+          getTransport(),
+          WORKFLOW_SCOPES,
+          () => submitOnce(body, idempotencyKey),
+          options,
+          // Rule 3 in the time axis — see `mountedRef` above for why this hook
+          // needs it even though it has no `AbortController`.
+          () => mountedRef.current,
+        );
+      } catch (err) {
+        setError(err as Error);
+        setStatus('error');
+        throw err;
+      }
+    },
+    [submitOnce],
+  );
 
   /**
    * ONE poll round-trip, with an optional long-poll hint. The single place that

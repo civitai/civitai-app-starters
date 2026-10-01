@@ -19,7 +19,22 @@ function buildInit(): BlockInitPayload {
     blockInstanceId: 'i',
     blockId: 'b',
     appId: 'app_test',
-    token: { raw: 'jwt', scopes: [], expiresAt: new Date(Date.now() + 60_000).toISOString() },
+    // 🔴 THE MONEY SCOPE IS GRANTED HERE ON PURPOSE. Every test in this file is
+    // about the estimate/submit RESULT CONTRACT (#4159, #251) — which failure
+    // shapes reject and with what `code` — and none of them is about consent.
+    // Since `withConsentRetry` keys on "does the token still lack a scope this
+    // call needs", a fixture token with `scopes: []` would make EVERY deliberate
+    // failure below look consent-shaped: the hook would prompt, the hand-rolled
+    // parent here answers no `REQUEST_CONSENT`, and the assertion would sit
+    // behind a 60s silence instead of seeing its rejection. Granting the scope
+    // makes the consent path structurally inert and leaves these assertions
+    // measuring exactly what they were written to measure. The consent path has
+    // its own file: `test/withConsentRetry.test.tsx`.
+    token: {
+      raw: 'jwt',
+      scopes: ['ai:write:budgeted'],
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    },
     context: { slotId: 's' },
     settings: { publisherSettings: {}, userSettings: {} },
     viewer: null,

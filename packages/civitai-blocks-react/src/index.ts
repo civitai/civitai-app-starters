@@ -168,6 +168,7 @@ export type {
   UseConsentUnavailable,
   ConsentUnavailablePayload,
 } from './hooks/useConsentUnavailable.js';
+export type { ConsentRetryOptions } from './hooks/consentRetryOptions.js';
 export { useBlockAnalytics } from './hooks/useBlockAnalytics.js';
 export type { UseBlockAnalytics } from './hooks/useBlockAnalytics.js';
 export { useDomainMaturity } from './hooks/useDomainMaturity.js';
