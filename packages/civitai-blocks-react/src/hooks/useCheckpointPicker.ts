@@ -11,10 +11,23 @@ import { sendTypedRequest } from '../transport/transport.js';
 export interface UseCheckpointPicker {
   open: (opts: {
     /**
-     * Ecosystem key (e.g. 'Flux1', 'SDXL'). Get it from
-     * `useBlockContext().context.checkpoint?.baseModel` — but for the
-     * picker filter the host will collapse to the ecosystem family, so
-     * any baseModel in the family works as a hint.
+     * 🔴 DERIVE THIS, NEVER HARDCODE IT. It is a FILTER: the host hides every
+     * checkpoint outside the family you pass, so a literal ecosystem pins every
+     * viewer of the app to whichever family the author happened to be testing
+     * with and makes their own valid checkpoints invisible.
+     *
+     * Read it from the checkpoint the block already holds —
+     * `useBlockContext().context.checkpoint?.baseModel`, or the `baseModel` of
+     * the pick you are replacing. Accepts an ecosystem key (e.g. 'Flux1',
+     * 'SDXL') or any baseModel name in the family; the host collapses either to
+     * the ecosystem family, so any baseModel in the family works as a hint.
+     *
+     * (Unlike {@link useResourcePicker}'s, this parameter is currently REQUIRED
+     * by the type below.)
+     *
+     * 🔴 Never pass `''` to mean "unconstrained". The host resolves `''` to the
+     * real ecosystem key `'Other'`, so it NARROWS to that family rather than
+     * widening — it is not an escape hatch.
      */
     baseModelGroup: string;
     /** Currently-selected versionId so the picker can pre-highlight it. */
@@ -40,8 +53,13 @@ export interface UseCheckpointPicker {
  * useBuzzWorkflow.
  *
  * @example
+ * // Derive the family from the checkpoint the block already holds — never a
+ * // hardcoded ecosystem, which hides every other family from the viewer.
  * const { open, persist } = useCheckpointPicker();
- * const { selected } = await open({ baseModelGroup: 'SDXL', currentVersionId });
+ * const { selected } = await open({
+ *   baseModelGroup: checkpoint.baseModel,
+ *   currentVersionId: checkpoint.versionId,
+ * });
  * if (selected) await persist(selected.versionId);   // null clears the override
  */
 export function useCheckpointPicker(): UseCheckpointPicker {

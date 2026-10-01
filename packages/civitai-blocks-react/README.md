@@ -961,10 +961,31 @@ await shared.withdraw(key);                            // remove my own entry
 
 Drive the platform Checkpoint picker + persist a viewer override.
 
+🔴 **`baseModelGroup` is a FILTER — derive it, never hardcode it.** The host hides
+every checkpoint outside the family you pass, so a literal ecosystem pins every
+viewer to whichever family the author happened to test with. Read it from the
+checkpoint the block already holds. The parameter is currently **required** by
+this hook's type, and `''` is **not** an escape hatch — it does not even mean the
+same thing on both hosts. On a **model slot** the host normalises whatever string
+you send, so `''` resolves to the real ecosystem key `Other` and NARROWS to that
+one family. On a **page** the host drops a zero-length value, so `''` behaves
+exactly like omitting it. Neither is what you meant on at least one surface:
+pass a family derived from a real checkpoint, and never `''`.
+
 ```tsx
+import { isModelSlotContext } from '@civitai/app-sdk/blocks';
+
+const { context } = useBlockContext();
 const { open, persist } = useCheckpointPicker();
-const { selected } = await open({ baseModelGroup: 'SDXL', currentVersionId });
-if (selected) await persist(selected.versionId);   // null clears the override
+
+// Derive the family from the checkpoint the block already holds — never a literal.
+if (isModelSlotContext(context) && context.checkpoint) {
+  const { selected } = await open({
+    baseModelGroup: context.checkpoint.baseModel,
+    currentVersionId: context.checkpoint.versionId,
+  });
+  if (selected) await persist(selected.versionId);   // null clears the override
+}
 ```
 
 ### `useResourcePicker()`
@@ -974,12 +995,36 @@ The viewer searches in host chrome; the block only ever sees the one resource it
 picked. DISCOVERY ONLY — the returned `versionId` is re-validated + re-priced
 server-side at estimate/submit.
 
+🔴 **Pass NO `baseModelGroup` by default.** It is an optional FILTER, and the host
+hides every resource outside the family you pass — so a hardcoded ecosystem makes
+the viewer's own valid LoRAs invisible and the picker look empty or broken. Omit
+it and the viewer sees everything of that type.
+
 ```tsx
 const { open } = useResourcePicker();
-const picked = await open({ resourceType: 'LORA', baseModelGroup: 'SDXL' });
+const picked = await open({ resourceType: 'LORA' });   // unconstrained — the default
 if (picked) {
   const versionId = picked.versionId;   // feed into body.additionalResources
   const weight = picked.strength;        // recommended default weight (may be undefined)
+}
+```
+
+Constrain it **only** when the block already holds a chosen checkpoint the pick has
+to match — and then derive the family from that checkpoint, never from a literal.
+🔴 **This hook is PAGE-ONLY, and a page slot has no `context.checkpoint`** — that
+field lives on `ModelSlotContext` alone, so the family comes from
+`BlockResourceInfo.baseModel`, the `baseModel` of a Checkpoint this same picker
+returned earlier:
+
+```tsx
+const { open } = useResourcePicker();
+
+const checkpoint = await open({ resourceType: 'Checkpoint' });
+if (checkpoint) {
+  const matching = await open({
+    resourceType: 'LORA',
+    baseModelGroup: checkpoint.baseModel,   // from the pick above — BlockResourceInfo.baseModel
+  });
 }
 ```
 
