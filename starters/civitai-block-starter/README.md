@@ -57,7 +57,11 @@ wired, so its event is accepted and dropped. Both are fire-and-forget, so an
 unhandled one is dropped rather than hung: you get silence, not an error.
 
 This starter targets `model.sidebar_top`, so it runs on the model host — expect
-`useCivitaiNavigate` and `useBlockAnalytics` to do nothing as scaffolded.
+`useCivitaiNavigate` and `useBlockAnalytics` to do nothing as scaffolded. 🔴 That
+includes `navigate(path, { scope: 'site' })`: the model slot holds neither an
+in-app route to deep-link into nor the site-navigation capability, so **both**
+scopes are dropped there. Adding a scope does not make navigation reach the model
+host — a full-page block does.
 
 The two halves of that are pinned differently, so treat them differently:
 

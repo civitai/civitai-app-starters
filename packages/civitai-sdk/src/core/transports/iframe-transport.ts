@@ -369,6 +369,19 @@ export class IframeTransport implements BlockTransport {
       return;
     }
 
+    // The page's sub-path moved under the app root. Folded into the snapshot so
+    // `client.context.subPath` is live and `onChange` reports it — the same
+    // treatment as the theme, and the reason there is no `onRouteChange`.
+    //
+    // Unlike the theme this IS effectively init-gated, because the sub-path
+    // lives only in `context` and the pre-init context has no such key. That
+    // costs nothing: the host sends this only after init, and `BLOCK_INIT`
+    // replaces the snapshot with its own current value.
+    if (isHostMessage(data, 'ROUTE_CHANGED')) {
+      this.#applyRouteChange(data.payload.subPath);
+      return;
+    }
+
     // Matching the TYPE too, not just the id: `IMAGE_SCAN_RESOLVED` is a push
     // that deliberately reuses its `OPEN_IMAGE_UPLOAD`'s requestId, so an
     // id-only match could resolve the upload with the scan verdict's payload.
@@ -419,6 +432,17 @@ export class IframeTransport implements BlockTransport {
     const next: BlockSnapshot = { ...this.#snapshot, theme };
     if ('theme' in next.context) next.context = { ...next.context, theme };
     this.#snapshot = next;
+    this.#emit();
+  }
+
+  // Only ever UPDATES a context that already carries the key; never INTRODUCES
+  // it. A model slot has no route, so synthesising `subPath` would assert a page
+  // context the host never sent. Emits only when the value moved.
+  #applyRouteChange(subPath: string): void {
+    const context = this.#snapshot.context;
+    if (!('subPath' in context)) return;
+    if ((context as { subPath?: unknown }).subPath === subPath) return;
+    this.#snapshot = { ...this.#snapshot, context: { ...context, subPath } };
     this.#emit();
   }
 

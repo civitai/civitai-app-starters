@@ -63,6 +63,17 @@ const MIN_EXPECTED_MESSAGE_TYPES = 40;
  * Comments are stripped before matching: the region legitimately contains prose
  * (one comment says in as many words that a type it names is NOT a
  * `BlockToParentMessage`), and a prose mention must not become a protocol member.
+ *
+ * 🔴 LINE COMMENTS ARE STRIPPED FIRST, AND THE ORDER IS LOAD-BEARING. It used to
+ * run block-comments first, which means a `//` comment containing the two bytes
+ * `/*` — a path glob like `/api/*`, most plausibly, which is exactly how this was
+ * found — OPENED a phantom block comment that then ate everything up to the next
+ * real `*​/` further down the file. MEASURED: writing `/api/*` in one line comment
+ * inside the union took the derived set from 47 members to 27, failing the control
+ * below with `expected 27 to be greater than or equal to 40` — a number that names
+ * nothing about the cause. Stripping line comments first is order-safe in the
+ * other direction too: a `//` inside a block comment is removed without touching
+ * that block's own delimiters, so the block pass still sees them.
  */
 function deriveUnionMembersFromSource(): string[] {
   const start = MESSAGES_SOURCE.indexOf('export type BlockToParentMessage =');
@@ -71,8 +82,8 @@ function deriveUnionMembersFromSource(): string[] {
   expect(end, 'BlockToParentMessageType alias not found — parse is broken').toBeGreaterThan(start);
 
   const region = MESSAGES_SOURCE.slice(start, end)
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\/\/[^\n]*/g, '');
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
 
   return [...region.matchAll(/type:\s*'([A-Z][A-Z0-9_]*)'/g)].map((m) => m[1] as string);
 }

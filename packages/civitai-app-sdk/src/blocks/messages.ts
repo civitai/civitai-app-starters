@@ -18,6 +18,7 @@ import type {
   BlockPendingImageInfo,
   BlockImageScanResult,
   BlockUploadPurpose,
+  BlockNavigateScope,
   BlockContext,
   BlockSettings,
   Theme,
@@ -457,6 +458,55 @@ export type ParentToBlockMessage =
       //     to hit.
       type: 'THEME_CHANGE';
       payload: { theme: Theme };
+    }
+  | {
+      // Host-pushed ROUTE change — the host telling a PAGE block which sub-path
+      // below the app root is now showing. No `requestId`; this is an
+      // uncorrelated host→block PUSH, exactly like `TOKEN_REFRESH` /
+      // `THEME_CHANGE`, and there is no reply.
+      //
+      // WHY IT EXISTS: the page surface owns the browser history, not the block.
+      // A block asks for a move with `NAVIGATE` (`scope: 'app'`, the default),
+      // the host pushes it SHALLOWLY so the frame stays mounted — and then the
+      // only thing that has changed, from the block's side, is a value it was
+      // handed once at init. `BLOCK_INIT` is DEDUPED by the SDK transport, so a
+      // second init cannot carry the new value; before this message a block
+      // could move the host's URL and never learn where it had gone. That is
+      // civitai#5209's failure shape: the URL moves and nothing renders.
+      //
+      // It also covers the moves a block did NOT ask for — the viewer's own
+      // back/forward, and a deep link resolved after init.
+      //
+      // 🔴 THE FIRST VALUE DOES NOT COME OVER THIS MESSAGE, and a consumer that
+      // waits for one waits forever on an app's own index. The host sends the
+      // initial sub-path in `BLOCK_INIT.context.subPath`
+      // ({@link PageSlotContext}) and sends THIS message only when the resolved
+      // sub-path CHANGES after init (civitai/civitai `PageBlockHost.tsx`:
+      // `if (!initSentRef.current || status !== 'ready') return;`, deps
+      // `[subPath, status, send]`). So the message is a DELTA on a value that is
+      // already seeded — which is why the block-side surface is a hook that
+      // returns the CURRENT sub-path (`useCivitaiRoute`) rather than a
+      // change-callback: a callback alone cannot see the init value, and a
+      // change that lands before its subscription effect runs is lost.
+      //
+      // `subPath` is `''` on the app's own index — present and empty, never
+      // absent — and carries NO leading slash, matching the field it updates.
+      //
+      // ONLY THE PAGE SLOT EVER RECEIVES IT. A model slot has no route of its
+      // own, and the host's effect lives in `PageBlockHost`; there is no
+      // `subPath` on {@link ModelSlotContext} for it to update.
+      //
+      // BACK-COMPAT, BOTH DIRECTIONS — purely additive:
+      //   • OLD BLOCK / NEW HOST: an SDK that predates this message has no
+      //     handler for it — not `BLOCK_INIT`, not `TOKEN_REFRESH`, no
+      //     `requestId` to match a pending request, no push listener — so it
+      //     falls through the transport's no-op tail. Deployed page blocks keep
+      //     today's behaviour: the sub-path they got at init, forever.
+      //   • NEW BLOCK / OLD HOST: nothing awaits this message. A host that never
+      //     sends it just means the value never moves — i.e. today. No hook
+      //     blocks on it and there is no timeout to hit.
+      type: 'ROUTE_CHANGED';
+      payload: { subPath: string };
     }
   | {
       // Host-pushed REFUSAL of a `REQUEST_CONSENT` that can NEVER be granted.
@@ -1273,8 +1323,25 @@ export type BlockToParentMessage =
       payload: { requestId: string; versionId: number | null };
     }
   | {
+      // Ask the host to navigate. `scope` selects the SPACE and `path` is a path
+      // within it; see {@link BlockNavigateScope}.
+      //
+      // 🔴 `scope` IS OPTIONAL AND ABSENT MEANS `'app'` — a block built against an
+      // SDK that predates the field keeps exactly the behaviour it had, for `'/x'`
+      // and `'x'` alike, because the host normalises leading slashes away in both
+      // scopes. So this field is additive on the wire in both directions: an older
+      // host ignores it (and was app-scoped anyway), and a newer host defaults it.
+      //
+      // `target` is a REQUEST. The host owns the outcome — how it acts on
+      // `'new_tab'` is host behaviour and the host is the authority on it; this
+      // package states only what it sends.
+      //
+      // Fire-and-forget: there is no `requestId` and no reply, so a host that
+      // REFUSES the request (site scope on a surface without the capability, a
+      // scheme, `/api/*` in site scope) simply drops the message and the block
+      // never learns. Do not build a flow that needs to know.
       type: 'NAVIGATE';
-      payload: { path: string; target: 'current' | 'new_tab' };
+      payload: { path: string; scope?: BlockNavigateScope; target: 'current' | 'new_tab' };
     }
   // Anonymous conversion. A block rendered for a logged-out viewer
   // (`BLOCK_INIT.viewer === null`) asks the host to start the platform's

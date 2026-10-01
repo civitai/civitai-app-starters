@@ -62,6 +62,7 @@ import type {
   useBuzzWorkflow,
   useCheckpointPicker,
   useCivitaiNavigate,
+  useCivitaiRoute,
   useCollectionFollow,
   useConsentUnavailable,
   useCreatePostFromApp,
@@ -100,6 +101,7 @@ import type {
   UseBuzzWorkflow,
   UseCheckpointPicker,
   UseCivitaiNavigate,
+  UseCivitaiRoute,
   UseCollectionFollow,
   UseConsentUnavailable,
   UseCreatePostFromApp,
@@ -150,6 +152,7 @@ type _useCheckpointPicker = Assert<
   Exact<ReturnType<typeof useCheckpointPicker>, UseCheckpointPicker>
 >;
 type _useCivitaiNavigate = Assert<Exact<ReturnType<typeof useCivitaiNavigate>, UseCivitaiNavigate>>;
+type _useCivitaiRoute = Assert<Exact<ReturnType<typeof useCivitaiRoute>, UseCivitaiRoute>>;
 type _useCollectionFollow = Assert<
   Exact<ReturnType<typeof useCollectionFollow>, UseCollectionFollow>
 >;

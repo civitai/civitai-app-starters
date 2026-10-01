@@ -2,6 +2,20 @@ import type { WrappedToken } from '../core/handshake.js';
 
 export type ResourcePickerType = 'Checkpoint' | 'LORA';
 
+/**
+ * Which SPACE a `navigate()` path is resolved in.
+ *
+ *  - `'app'` — under this app's own route, as a sub-path of it. The DEFAULT.
+ *  - `'site'` — at the site root, leaving the app. The host grants this
+ *    per-surface and refuses it where the surface does not hold the capability.
+ *
+ * Omitting it means `'app'`, which is what keeps this field additive: a block
+ * that never sets it behaves as it did before the field existed. A leading slash
+ * carries no meaning — the host normalises it away in both scopes, so
+ * `'/settings'` and `'settings'` are one request within the scope you chose.
+ */
+export type NavigateScope = 'app' | 'site';
+
 /** The one resource the viewer picked. Discovery only: nothing here is an entitlement. */
 export interface PickedResource {
   versionId: number;
@@ -115,7 +129,7 @@ export type HostRequests = {
 export type HostNotifications = {
   RESIZE_IFRAME: { height: number };
   BLOCK_ERROR: { message: string; fatal: boolean };
-  NAVIGATE: { path: string; target: 'current' | 'new_tab' };
+  NAVIGATE: { path: string; scope?: NavigateScope; target: 'current' | 'new_tab' };
   REQUEST_SIGN_IN: { returnUrl?: string };
   REQUEST_CONSENT: { scopes?: string[] };
 };

@@ -302,6 +302,34 @@ export function isValidThemeChange(p: unknown): p is { theme: Theme } {
 }
 
 /**
+ * Host-pushed ROUTE change — the sub-path below the app root that is now
+ * showing. No `requestId` field; the host is the initiator, exactly like
+ * `TOKEN_REFRESH`.
+ *
+ * STRICTNESS: a string, and NOT a non-empty one. `''` is the genuine value on an
+ * app's own index — the same decision `isPageSlotContext` records for the field
+ * this message updates ("`subPath` is checked as a string, not a NON-EMPTY one")
+ * — so requiring content here would drop every navigation back to the app root
+ * and freeze the block on whatever sub-path it was last told about. That is a
+ * worse failure than the one a stricter check would prevent.
+ *
+ * Nothing further is asserted about the shape of the string. A leading slash, a
+ * dot segment or an absolute URL would all be host-side bugs, and this package
+ * is not the authority on the host's own resolver: the value lands in
+ * `context.subPath`, which is data a block routes on, not a URL this package
+ * fetches or assigns. Dropping a push costs at most a stale route (the block
+ * keeps rendering the last good value) and never a hang — nothing awaits it.
+ *
+ * 🔴 A validator is only reachable once `payloadValidatorFor` maps the type to
+ * it — see the same note on {@link isValidThemeChange}.
+ */
+export function isValidRouteChanged(p: unknown): p is { subPath: string } {
+  if (!isObject(p)) return false;
+  if (typeof p.subPath !== 'string') return false;
+  return true;
+}
+
+/**
  * Host-pushed refusal of a `REQUEST_CONSENT` that can never be granted. No
  * `requestId` field; the host is the initiator, exactly like `TOKEN_REFRESH`.
  *
@@ -1460,6 +1488,8 @@ export function payloadValidatorFor(
       return isValidTokenRefreshResponse;
     case 'THEME_CHANGE':
       return isValidThemeChange;
+    case 'ROUTE_CHANGED':
+      return isValidRouteChanged;
     case 'CONSENT_UNAVAILABLE':
       return isValidConsentUnavailable;
     case 'ESTIMATE_RESULT':

@@ -60,6 +60,14 @@ Both give you:
 A block's `app` also has `host`, `viewer`, `context`, `settings`, `theme` and
 `onChange(listener)`. Outside a block they do not exist, and the types say so.
 
+`context` and `theme` are LIVE, not mount-time snapshots: the host pushes
+`THEME_CHANGE` when the viewer toggles dark mode and `ROUTE_CHANGED` when a page
+block's sub-path moves, and both are folded into the same snapshot — so
+`app.context.subPath` tracks `app.host.navigate(path)` (and the viewer's own back
+button) and `onChange` tells you when. Read them on each render rather than
+copying them once; there is deliberately no `onRouteChange`, because one value
+observed two ways is two values that can disagree.
+
 A block opts in by declaring `auth: "oauth"` in its `block.manifest.json`. The
 host then hands it a real OAuth access token that `/api/v1`, the orchestrator
 and the MCP accept, and consent — including `requestGrants` — goes through the
@@ -338,7 +346,7 @@ wider scope — and refuses without one.
 | `resize(height)` | Resizes the frame, clamped to the manifest |
 | `autoResize(element?)` | Keeps the frame as tall as the body (or `element`); returns a stop function |
 | `reportError(message, { fatal })` | `fatal` swaps the block for the host's fallback |
-| `navigate(path, { target })` | Deep-links within this app's own sub-paths |
+| `navigate(path, { scope, target })` | Deep-links within this app's own sub-paths; `scope: 'site'` asks to leave the app for a civitai.com page instead. `scope` defaults to `'app'` |
 | `onVisibilityChange(handler)` | Reports the page hiding and returning |
 | `requestSignIn({ returnUrl })` | Starts sign-in; the block re-initialises signed in |
 | `download({ url, filename })` | Saves to the viewer's device — a sandboxed frame cannot |

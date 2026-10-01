@@ -119,6 +119,7 @@
 import {
   type BlockContext,
   type BlockInitPayload,
+  type BlockNavigateScope,
   type BlockWorkflowSnapshot,
   type ColorDomain,
   type Theme,
@@ -622,6 +623,20 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
   let currentTheme: Theme = theme;
   let pushToBlock: ((data: unknown) => void) | null = null;
 
+  // The sub-path the block has been TOLD about, and whether it has been told
+  // anything at all. Together these reproduce the production host's gate
+  // (`PageBlockHost.tsx`: `if (!initSentRef.current || status !== 'ready')
+  // return;` with deps `[subPath, status, send]`), which fires `ROUTE_CHANGED`
+  // only AFTER init and only when the resolved sub-path CHANGES.
+  //
+  // 🔴 SEEDED FROM THE INIT CONTEXT, NOT FROM `''`. The first value reaches the
+  // block in `BLOCK_INIT.context.subPath`, so a harness given
+  // `options.context: { …, subPath: 'compare/42' }` must not then push
+  // `ROUTE_CHANGED { subPath: 'compare/42' }` as if it were a change — the real
+  // host's effect does not fire for the value init already carried.
+  let currentSubPath = '';
+  let initDispatched = false;
+
   function install(): () => void {
     if (installed) return teardown;
     installed = true;
@@ -716,6 +731,11 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
         theme: currentTheme,
       };
       const context: BlockContext = hostContextWithTheme(baseContext, currentTheme);
+      // Seed the route ledger from what init actually carries, so the first
+      // `ROUTE_CHANGED` is a change rather than a restatement — see the
+      // declaration of `currentSubPath`.
+      currentSubPath =
+        'subPath' in context && typeof context.subPath === 'string' ? context.subPath : '';
       const initPayload: BlockInitPayload = {
         blockInstanceId: decoded.blockInstanceId ?? 'page_live',
         blockId: decoded.blockId ?? 'live-block',
@@ -732,7 +752,62 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           : {}),
       };
       dispatchToBlock({ type: 'BLOCK_INIT', payload: initPayload });
+      initDispatched = true;
     }
+
+    /**
+     * Reflect a route move back into the block over `ROUTE_CHANGED`, the way
+     * `PageBlockHost` does — the second half of an app-scoped `NAVIGATE`, and
+     * the only way a block learns where a shallow push put it.
+     *
+     * 🔴 THIS REPLACED A SYNTHETIC `popstate`. The earlier shape of this handler
+     * dispatched `new PopStateEvent('popstate')` after `pushState`, which made a
+     * history-based router in the block re-render — in `dev:live` only. Nothing
+     * in production dispatches a `popstate` for a host-side shallow push, so a
+     * block that worked here still showed the wrong view on civitai.com: the
+     * #5209 symptom with its sign flipped, which is the shape that keeps a
+     * platform bug invisible. The message is the real channel; this emits it.
+     *
+     * Three gates, all mirroring the host's own effect:
+     *  - AFTER INIT. The initial sub-path travels in `BLOCK_INIT.context`, and a
+     *    push the transport receives before init has no `context.subPath` to
+     *    update, so it would be silently dropped anyway.
+     *  - ONLY ON A CHANGE. The host's effect is keyed on `[subPath, …]`, so a
+     *    navigation to the route already showing produces no message.
+     *  - CURRENT FRAME ONLY. A `new_tab` navigation does not move THIS frame's
+     *    route, so it must not emit — see the call sites.
+     */
+    const reflectRoute = (subPath: string) => {
+      if (!initDispatched) return;
+      if (subPath === currentSubPath) return;
+      currentSubPath = subPath;
+      dispatchToBlock({ type: 'ROUTE_CHANGED', payload: { subPath } });
+    };
+
+    /**
+     * The sub-path `win.location` currently names, in the shape the host sends:
+     * the segment below the app root, with no leading slash (`''` on the index).
+     *
+     * In `dev:live` the block IS the page, served at this dev origin's own root,
+     * so the app root is `/` and the whole pathname below it is the sub-path.
+     * That is the same mapping the app-scope branch of `NAVIGATE` applies in the
+     * other direction (`/<path>` on this origin), kept in ONE place so the two
+     * cannot disagree.
+     */
+    const subPathFromLocation = () => win.location.pathname.replace(/^\/+/, '');
+
+    // The viewer's OWN back/forward, which production reports too: the host's
+    // effect is keyed on the resolved `subPath`, so it fires for a history move
+    // nobody asked for exactly as it does for a `NAVIGATE`. Without this a block
+    // written against `useCivitaiRoute()` would follow its own navigations here
+    // and ignore the back button — a divergence in the opposite direction to the
+    // one this PR closes, but a divergence.
+    //
+    // `pushState` does NOT fire `popstate`, so our own pushes do not come back
+    // through here; the change gate in `reflectRoute` makes a double-fire inert
+    // regardless.
+    const onPopState = () => reflectRoute(subPathFromLocation());
+    win.addEventListener('popstate', onPopState);
 
     /**
      * Open the in-harness picker overlay and resolve it into a picker-result
@@ -801,6 +876,16 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             title?: string;
             body?: WorkflowBody;
             path?: string;
+            /**
+             * NAVIGATE's space selector. Declared as the UNION rather than
+             * `string`, matching the wire type — but every read of it must still
+             * treat an out-of-union value as possible, because this whole object
+             * is a `as` cast over an untyped `postMessage` and a block built
+             * against a newer SDK can send a scope this one has never heard of.
+             * The handler compares against the literal `'site'` for exactly that
+             * reason: unknown fails closed onto `'app'`, as the host does.
+             */
+            scope?: BlockNavigateScope;
             target?: 'current' | 'new_tab';
             suggestedAmount?: number;
             baseModelGroup?: string;
@@ -1905,19 +1990,142 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           }
 
           case 'NAVIGATE': {
-            const path = typed.payload?.path ?? '';
-            const target = typed.payload?.target ?? 'current';
-            // Resolve relative paths against the backend origin so an in-app
-            // path (`/models/123`) opens on the real site.
-            const url = /^https?:\/\//i.test(path) ? path : `${baseUrl}${path}`;
+            // 🔴 THIS HANDLER USED TO SEND EVERY PATH TO THE REAL SITE, AND THAT
+            // IS WHY `dev:live` AND PRODUCTION DISAGREED. It resolved any
+            // relative path against `baseUrl` — "so an in-app path
+            // (`/models/123`) opens on the real site" — while production
+            // resolved the same call under the block's OWN route. So the docs
+            // and the dev harness agreed with each other and production was the
+            // odd one out, which is exactly the shape that makes a platform bug
+            // look like a block bug (civitai#5209).
+            //
+            // It now mirrors the merged contract, DEFAULT INCLUDED:
+            //   scope absent / anything but 'site'  → APP space (this dev origin)
+            //   scope === 'site'                    → SITE space (`baseUrl`)
+            // compared against the literal 'site' rather than validated against
+            // the union, so an unknown value fails CLOSED onto the narrower
+            // space — byte-for-byte the host's own test.
+            //
+            // 🔴 WHAT IS DELIBERATELY *NOT* MIRRORED: the host's hostile-path
+            // battery (control characters, backslashes, `%2f`/`%5c`,
+            // the resolved-vs-sent segment-structure rule, app containment).
+            // Those guard an UNTRUSTED iframe. In `dev:live` there is no
+            // untrusted party — the developer's own code, their own dev token,
+            // their own browser — so copying ~200 lines of security-critical
+            // resolver here would buy no safety and create a second, non-
+            // authoritative copy of it to drift. What IS mirrored is the
+            // CONTRACT a block author can be honestly wrong about: which space
+            // a path lands in, the `'app'` default, and the two refusals the
+            // published docs promise (a scheme, and `/api/*` in site scope).
+            const payload = typed.payload ?? {};
+            const rawPath = typeof payload.path === 'string' ? payload.path : '';
+            const target = payload.target ?? 'current';
+            const scope = payload.scope === 'site' ? 'site' : 'app';
+
+            // A scheme or protocol-relative reference is refused by the host in
+            // BOTH scopes — a block cannot move the host to another origin. This
+            // harness used to pass an absolute URL straight through, so a
+            // `navigate('https://example.com/x')` that production DROPS worked
+            // here. Refuse it, and say so: a silent drop in a dev harness is the
+            // thing a dev then blames on their own code.
+            if (/^[a-zA-Z][a-zA-Z0-9+.\-]*:/.test(rawPath) || /^\/[/\\]/.test(rawPath)) {
+              logOnce(
+                'navigate-off-origin',
+                `NAVIGATE to ${JSON.stringify(rawPath)} was DROPPED: the host refuses any scheme ` +
+                  'or protocol-relative path, in either scope. Pass a path within a scope ' +
+                  "(`navigate('models/123', { scope: 'site' })`) instead of a full URL.",
+              );
+              return;
+            }
+
+            // Leading slashes are normalised away in BOTH scopes — `scope`
+            // already said which space this is, so the slash has nothing left to
+            // mean. Do not reintroduce punctuation semantics here.
+            const path = rawPath.replace(/^\/+/, '');
+
+            if (scope === 'site') {
+              // The host's one content-based refusal: `/api/*` is not a page
+              // route, and `/api/auth/logout` takes a bare GET. Kept here because
+              // it is part of the PUBLISHED contract, not because this harness is
+              // a security boundary — a dev who hits it in production should hit
+              // it in `dev:live` too.
+              //
+              // 🔴 BY DECODED VALUE, LIKE THE HOST — not by spelling. An earlier
+              // revision compared `path.split('/')[0]` raw and said so in a
+              // comment, which left `%61pi/auth/logout` refused in production and
+              // followed here: the published contract mirrored with the one input
+              // shape that defeats it. Deleting the branch instead was the other
+              // coherent option and was rejected — the refusal is part of the
+              // PUBLISHED contract (not of any security boundary this harness
+              // pretends to be), so a dev who hits it in production should hit it
+              // in `dev:live` too, and a mirror that is wrong for one input is
+              // worse than either having it or not.
+              //
+              // This is NOT the host's "two spellings of one rule" case, which
+              // deleted a `first.toLowerCase() === 'api'` fast path sitting
+              // ALONGSIDE the decoded comparison and provably unable to reach a
+              // verdict the survivor did not (`decodeURIComponent('api')` is
+              // `'api'`; a mutation run showed it SURVIVED every test). There was
+              // only ever one comparison here, and it was the wrong one.
+              //
+              // Both of the host's refusal channels, in its order
+              // (`navigateSiteFirstSegmentIsRefused`): a first segment whose
+              // meaning cannot be established — a malformed escape like `%zz` —
+              // is refused too, because an undecodable segment is not evidence
+              // that it is not `api`. Fails CLOSED, like the host.
+              if (navigateSiteFirstSegmentIsRefused(path)) {
+                logOnce(
+                  'navigate-api',
+                  `NAVIGATE to ${JSON.stringify(rawPath)} was DROPPED: in site scope the host ` +
+                    'refuses a first segment that decodes to `api`, and refuses one it cannot ' +
+                    'decode at all. Only page routes are reachable.',
+                );
+                return;
+              }
+              try {
+                const url = `${baseUrl}/${path}`;
+                if (target === 'new_tab') {
+                  win.open(url, '_blank');
+                } else {
+                  win.location.assign(url);
+                }
+              } catch {
+                /* navigation may be unavailable (tests) */
+              }
+              return;
+            }
+
+            // APP scope. Production resolves this under `<base>/<slug>/<path>`
+            // and pushes it SHALLOWLY, keeping the page mounted. In `dev:live`
+            // the block IS the page, served at this dev origin's own root, so the
+            // faithful analogue is `/<path>` on THIS origin — and `pushState`
+            // rather than `assign`, because a full load is precisely what
+            // "shallow" excludes.
+            //
+            // 🔴 `reflectRoute` IS WHAT MAKES IT WORK rather than merely move the
+            // URL bar — and it is the production channel, not a local analogue
+            // of one. Production reflects the new sub-path back into the block
+            // over `ROUTE_CHANGED`; so does this now. An earlier revision
+            // dispatched a synthetic `popstate` here instead, "since this SDK
+            // models no `ROUTE_CHANGED`" — which made a history router re-render
+            // HERE and nowhere else, because no production host dispatches a
+            // `popstate` for its own shallow push. That is the #5209 failure
+            // class with its sign flipped, and a dev harness that is kinder than
+            // production is how #5209 stayed invisible in the first place.
+            //
+            // Emitted only in the `current` arm: a `new_tab` navigation does not
+            // move THIS frame's route, and the host's effect is keyed on the
+            // sub-path of the page it is actually rendering.
             try {
+              const url = `${win.location.origin}/${path}`;
               if (target === 'new_tab') {
                 win.open(url, '_blank');
               } else {
-                win.location.assign(url);
+                win.history.pushState(null, '', url);
+                reflectRoute(path);
               }
             } catch {
-              /* navigation may be unavailable (tests) */
+              /* history/navigation may be unavailable (tests) */
             }
             return;
           }
@@ -2002,6 +2210,14 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
       torn = true;
       installed = false;
       pushToBlock = null;
+      // Symmetric with the `addEventListener` in `install` — a listener that
+      // outlived the host would keep pushing `ROUTE_CHANGED` at a block whose
+      // host is gone (and, across a re-install, from two hosts at once).
+      win.removeEventListener('popstate', onPopState);
+      // The next install re-dispatches BLOCK_INIT and re-seeds the route from
+      // its context, so neither piece of route state may survive this teardown.
+      initDispatched = false;
+      currentSubPath = '';
       for (const t of timers) clearTimeout(t);
       timers.clear();
       // Close any open picker overlay (unmounts its DOM; resolves it `null`).
@@ -2065,6 +2281,42 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
  */
 function anonFallbackViewer(): ViewerInfo {
   return { id: 0, username: 'dev-live', signedIn: true };
+}
+
+/**
+ * SITE-scope refusal on a path's FIRST segment, by DECODED value — the dev-host
+ * mirror of the host's own `navigateSiteFirstSegmentIsRefused`
+ * (civitai/civitai `src/components/AppBlocks/pageBlockHostLogic.ts`).
+ *
+ * `path` arrives already stripped of leading slashes by the caller, so segment 0
+ * is `path.split('/')[0]`.
+ *
+ * TWO CHANNELS, and the second is the reason the host named the function
+ * "…IsRefused" rather than "…IsApi":
+ *  1. the segment DECODES to `api` (case-insensitively) — the `/api/*` rule the
+ *     published docs promise, which `%61pi` must not evade;
+ *  2. the segment cannot be decoded at all (`%zz`, a bare `%`) — its meaning
+ *     cannot be established, so it is not pushed. A deliberate fail-closed
+ *     decision, and it means this returns `true` for a segment that is not `api`.
+ *
+ * ⚠️ IT IS THE CONTRACT MIRROR, NOT A SECURITY BOUNDARY. The host's hostile-path
+ * battery (control characters, backslashes, `%2f`/`%5c`, the resolved-vs-sent
+ * segment-structure rule, app containment) is deliberately NOT mirrored in this
+ * harness — see the `NAVIGATE` case — so unlike the host, this cannot rely on
+ * `%2f` already being refused and a decode here CAN introduce a separator
+ * (`a%2fb` decodes to `a/b`). That costs nothing for the question being asked:
+ * only whether segment 0 means `api`, and a decode that produces a separator
+ * cannot turn a non-`api` segment into an `api` one.
+ */
+function navigateSiteFirstSegmentIsRefused(path: string): boolean {
+  const first = path.split('/')[0] ?? '';
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(first);
+  } catch {
+    return true;
+  }
+  return decoded.toLowerCase() === 'api';
 }
 
 /**
