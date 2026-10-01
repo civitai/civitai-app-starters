@@ -996,8 +996,16 @@ holds — a regenerate or variation flow pinned to one checkpoint's ecosystem �
 then derive it from that checkpoint, never from a literal:
 
 ```tsx
-// ONLY to stay inside the family the block already holds.
-const { selected } = await open({ baseModelGroup: context.checkpoint.baseModel });
+import { isModelSlotContext } from '@civitai/app-sdk/blocks';
+
+const { context } = useBlockContext();
+const { open, persist } = useCheckpointPicker();
+
+// ONLY to stay inside the family the block already holds — derived, never a literal.
+if (isModelSlotContext(context) && context.checkpoint) {
+  const { selected } = await open({ baseModelGroup: context.checkpoint.baseModel });
+  if (selected) await persist(selected.versionId);
+}
 ```
 
 ### `useResourcePicker()`
