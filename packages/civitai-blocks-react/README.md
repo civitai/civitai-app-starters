@@ -963,16 +963,20 @@ await shared.withdraw(key);                            // remove my own entry
 
 Drive the platform Checkpoint picker + persist a viewer override.
 
-🔴 **`baseModelGroup` is a FILTER — derive it, never hardcode it.** The host hides
-every checkpoint outside the family you pass, so a literal ecosystem pins every
-viewer to whichever family the author happened to test with. Read it from the
-checkpoint the block already holds. The parameter is currently **required** by
-this hook's type, and `''` is **not** an escape hatch — it does not even mean the
-same thing on both hosts. On a **model slot** the host normalises whatever string
-you send, so `''` resolves to the real ecosystem key `Other` and NARROWS to that
-one family. On a **page** the host drops a zero-length value, so `''` behaves
-exactly like omitting it. Neither is what you meant on at least one surface:
-pass a family derived from a real checkpoint, and never `''`.
+🔴 **OMIT `baseModelGroup` BY DEFAULT.** It is an ecosystem-family FILTER, not a
+label: the host HIDES every checkpoint outside the family you pass, so passing the
+family you are already in is a trap — the picker then offers only the ecosystem the
+user is trying to leave. Omit it for an unconstrained pick and the host applies no
+narrowing at all, offering every checkpoint the viewer can generate with. Pass it
+ONLY when the block must stay inside a family it already holds — a
+regenerate/variation flow, say — and then DERIVE it from that checkpoint, never a
+hardcoded ecosystem string: a literal pins every viewer to whichever family the
+author happened to test with. `''` is **not** an escape hatch — it does not even
+mean the same thing on both hosts. On a **model slot** the host normalises whatever
+string you send, so `''` resolves to the real ecosystem key `Other` and NARROWS to
+that one family. On a **page** the host drops a zero-length value, so `''` behaves
+exactly like omitting it. Neither is what you meant on at least one surface: omit
+the key, or pass a family derived from a real checkpoint, and never `''`.
 
 ```tsx
 import { isModelSlotContext } from '@civitai/app-sdk/blocks';
