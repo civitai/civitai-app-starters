@@ -1,5 +1,5 @@
 ---
-'@civitai/blocks-react': major
+'@civitai/blocks-react': minor
 ---
 
 Consent prompt-and-retry is now the DEFAULT on every consent-gated WRITE.
@@ -11,8 +11,8 @@ broken. `submit()`, `createPost()`, `purchase()` and `tip()` now open the host's
 consent dialog naming the scope the call needs, wait for the grant, and retry
 the original call ONCE so it resolves as if it had just worked.
 
-🔴 **BREAKING — this is a behaviour change existing callers will notice**, which
-is why it is a major. A call that used to reject immediately can now stay
+🔴 **BREAKING — this is a behaviour change existing callers will notice.** A
+call that used to reject immediately can now stay
 pending for up to 60 s while the viewer answers a dialog your app did not open,
 and then succeed. Three test suites in this repo had to be given already-granted
 scopes because the new default absorbed the failures they were deliberately
@@ -21,13 +21,18 @@ provoking (`test/mockHostScenarios.test.tsx`,
 the same surprise an app's own tests will hit. `autoRequestConsent: false`
 restores the old behaviour per call.
 
-⚠️ **What the `major` buys is SIGNALLING, not protection.** Under 0.x semver a
-`minor` already breaks a `^0.60.0` consumer, so `0.x → 1.0.0` does not add a
-barrier the version range did not already have — it makes the behaviour change
-impossible to miss in a changelog, and that is the whole return on a one-way
-door. (`starters/civitai-block-starter`'s `^0.60.0` pin is rewritten by the
-`chore(release): version packages` flow, so `check:starter-pins` is not left red
-by the bump.)
+⚠️ **Released as a MINOR, deliberately — the 1.0 declaration is deferred.** This
+entry asked for a `major` when it was written; that was reversed before release.
+The reasoning it recorded is what makes the reversal safe, so it is kept rather
+than deleted: under 0.x semver a `minor` already breaks a `^0.60.0` consumer, and
+`^0.60.0` resolves to `>=0.60.0 <0.61.0`, so **`0.61.0` and `1.0.0` are equally
+out of range** — a caret-ranged consumer does not receive this change
+automatically under either number, and gains no protection from the major. What a
+major would have bought is a louder signal in the version itself, which is not
+worth a one-way door; the signal lives in this entry's own 🔴 BREAKING line
+instead. (`starters/civitai-block-starter`'s `^0.60.0` pin is rewritten by the
+`chore(release): version packages` flow either way, so `check:starter-pins` is
+not left red by the bump.)
 
 🔴 **The retry re-sends the FIRST attempt's `idempotencyKey`** — the money-safety
 property, since a retry with a fresh key is a SECOND reservation against the
