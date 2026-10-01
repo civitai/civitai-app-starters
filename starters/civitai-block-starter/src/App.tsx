@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 
 import { useBlockContext, useBlockResize } from '@civitai/blocks-react';
 import { isModelSlotContext, isSignedIn } from '@civitai/app-sdk/blocks';
@@ -33,6 +33,20 @@ export function App() {
   const { ready, context, viewer, theme, blockInstanceId } = useBlockContext();
   const rootRef = useRef<HTMLDivElement>(null);
   useBlockResize(rootRef);
+
+  // Keep the PAGE (documentElement) in step with the host theme, so a live
+  // THEME_CHANGE repaints the background behind the app too — not just the
+  // components under data-theme below. index.html's inline script seeds the
+  // same attribute from the URL fragment before first paint; this effect owns
+  // it from BLOCK_INIT onward (the payload is authoritative — it must be able
+  // to correct a stale fragment, e.g. a viewer who toggled between iframe
+  // creation and init). Gated on `ready`: before BLOCK_INIT `theme` is the
+  // transport's 'light' sentinel (transport.ts), which would clobber the
+  // fragment seed of a dark host.
+  useEffect(() => {
+    if (!ready) return;
+    document.documentElement.dataset.theme = theme;
+  }, [ready, theme]);
 
   if (!ready) {
     // Pre-init: the host hasn't sent BLOCK_INIT yet. The host shows its own

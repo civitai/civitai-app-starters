@@ -304,9 +304,10 @@ function textOf(el) {
 /**
  * Structural theme assertions for the entry document. Separate from the gate
  * because the platform does not enforce them — they are OUR bet, recorded so a
- * later edit cannot quietly flip the default back to light.
+ * later edit cannot quietly flip the default back to light or hand the theme
+ * decision back to the OS/browser preference.
  *
- * Returns the three facts the guard asserts rather than asserting them here, so
+ * Returns the facts the guard asserts rather than asserting them here, so
  * the test owns the expectations and the failure messages.
  *
  * @param {string} html
@@ -316,6 +317,7 @@ function textOf(el) {
  *   darkMediaBlocks: string[],
  *   lightMediaBlocks: string[],
  *   baseCss: string,
+ *   inlineScripts: { type: string|null, text: string }[],
  * }}
  */
 export function readThemeShape(html) {
@@ -375,5 +377,12 @@ export function readThemeShape(html) {
     darkMediaBlocks,
     lightMediaBlocks,
     baseCss,
+    // Every <script> element's text, with its `type` attribute. An external
+    // (src=) script parses to an empty text. The THEME FAST PATH is the
+    // classic inline script that reads the `#civitai-block=v1` fragment —
+    // the module entry script carries `type="module"` and no text.
+    inlineScripts: elements
+      .filter((el) => el.tag === 'script')
+      .map((el) => ({ type: el.attrs.type ?? null, text: textOf(el) })),
   };
 }
