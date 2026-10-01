@@ -1,5 +1,381 @@
 # @civitai/blocks-react
 
+## 0.61.0
+
+### Minor Changes
+
+- 08318a6: feat: make `baseModelGroup` OPTIONAL on `useCheckpointPicker` — an unconstrained checkpoint pick
+
+  `useCheckpointPicker().open()` required `baseModelGroup`, and the wire type in
+  `@civitai/app-sdk` declared it required too. That made "pick a checkpoint from
+  any ecosystem" inexpressible: the only family a block can name is the one it is
+  already in, so the picker could only ever offer the ecosystem the user was
+  trying to leave. Every other family was unreachable for the life of the session.
+
+  The host never required it. `resolveCheckpointPickerRequest` in
+  `PageBlockHost` treats the field as optional and its unit tests already pin that
+  a bare `requestId` is a valid request; an absent or unresolved group produces
+  `baseModels: []`, which the picker's three consuming layers each special-case as
+  _no narrowing_ — the emitted clause is the bare `type = Checkpoint`, i.e. ALL
+  generation-covered checkpoints, not none. The model-slot host behaves the same
+  way. The `required` was an SDK-side restriction only.
+
+  `baseModelGroup` is now optional in both packages, and omitting it sends the key
+  ABSENT from the wire payload. An empty or whitespace-only string is normalized to
+  absent too, and the reason differs by host: on a **model slot** any string is
+  passed through `getBaseModelGroup`, which collapses an unrecognised value to the
+  real ecosystem key `'Other'`, so `''` would NARROW the picker to that one family;
+  on a **page** the host drops a zero-length value before that lookup, so `''` is
+  already equivalent to omission there. A whitespace-only string narrows on **both**
+  — the page host's guard is `length > 0`, which `'  '` passes. Absence is the only
+  spelling that means "unconstrained" on both surfaces.
+
+  Backward compatible **for CALLERS**: existing callers that pass a family keep
+  the exact behaviour they have today.
+
+  Not unconditionally backward compatible for **IMPLEMENTERS**. `open` is relaxed
+  from `(opts: {…})` to `(opts?: {…})`, so anything that _implements_ the exported
+  `UseCheckpointPicker` type — a test double or fake typed as it, not a consumer
+  of the hook — now has to accept a missing argument and stops type-checking
+  until it does. Enumerated: the only references to the exported type are its own
+  declaration, the `index.ts` re-export and the `Exact<ReturnType<typeof
+useCheckpointPicker>, UseCheckpointPicker>` row in `returnTypeLedger.ts` — which
+  the hook itself satisfies. No independent implementer exists here, and the
+  `civitai/cli` page-money scaffold's picker double is an untyped `vi.fn()`. That
+  is why this is `minor` rather than `major` per RELEASING.md — a new
+  optional argument and looser input acceptance. If one appears before release,
+  re-grade it.
+
+- 2895c67: `NAVIGATE` carries an explicit `scope`, defaulting to `'app'`.
+
+  The SDK side of the host contract merged in civitai/civitai#5250. `NAVIGATE`'s
+  payload is now `{ path, scope?, target }`, where `scope` selects the **space**
+  `path` is resolved in and `path` is a path _within_ it:
+
+  - `'app'` — under the block's own route, pushed shallowly. **The default.**
+  - `'site'` — at the civitai.com root, non-shallow, the viewer leaves the app.
+    Granted per-surface; `/api/*` is refused in this scope regardless.
+
+  A leading slash carries no meaning — the host normalises it away in _both_
+  scopes, so `'/settings'` and `'settings'` are one request. Intent lives in the
+  field, not in punctuation.
+
+  **Nothing an existing block sends changes meaning.** `scope` is omitted rather
+  than sent as `undefined` when a caller does not choose one, so an unscoped call
+  puts a byte-identical payload on the wire; and the host compares against the
+  literal `'site'` rather than validating against the union, so an absent _or
+  unknown_ value fails closed onto `'app'`. Both spellings of a path were
+  app-scoped before this field existed, which is the whole reason the default is
+  `'app'` and not `'site'`.
+
+  `useCivitaiNavigate`'s second argument is widened from `'current' | 'new_tab'` to
+  that union _or_ an options object (`{ scope, target }`). The two-argument call
+  shape keeps working unchanged; widening the parameter rather than adding an
+  overload keeps one published signature, so `UseCivitaiNavigate` still describes
+  the hook exactly. New exported types: `BlockNavigateScope`
+  (`@civitai/app-sdk/blocks`), `UseCivitaiNavigateOptions` (`@civitai/blocks-react`)
+  and `NavigateScope` (`@civitai/sdk`) — each required so the option is nameable
+  rather than inline.
+
+  🔴 **The dev host (`@civitai/blocks-react/live`) changes behaviour, and that is
+  the point.** It resolved _every_ path against the backend origin — "so an in-app
+  path (`/models/123`) opens on the real site" — while production resolved the same
+  call under the block's own route. So `dev:live` and the published docs agreed with
+  each other and production was the odd one out, which is what made a platform bug
+  look like a block bug. It now mirrors the merged contract, `'app'` default
+  included: an unscoped path stays on the dev origin (`pushState`, and the real
+  `ROUTE_CHANGED` the host sends — see the separate changeset for that message;
+  an earlier revision of this change dispatched a synthetic `popstate` instead and
+  that was itself a divergence), `scope: 'site'` goes to the backend
+  origin, an unknown scope fails closed onto `'app'`, and — a second divergence in
+  the same handler — an absolute URL or protocol-relative path is now **dropped**
+  rather than followed, because the host refuses any scheme in either scope. The
+  host's hostile-path battery is deliberately _not_ mirrored: it guards an untrusted
+  iframe, and `dev:live` has no untrusted party, so a second non-authoritative copy
+  of a security resolver would buy nothing and drift.
+
+  `minor` rather than `major` on the strength of the package's own published terms:
+  the one surface whose behaviour moves is `/live`, whose README "Stability of
+  `/live`" section reads _"a normal subpath of a `0.x` package where a minor may
+  break it, with the runtime symbol set pinned by `test/subpathSurfaces.test.ts` so
+  it cannot change silently"_ — and that symbol set is unchanged here.
+
+  **No drift guard against the host's own `NavigateScope`, and the reason is not
+  the one first written down.** A guard comparing this SDK's two-member union
+  against `civitai/civitai`'s was priced and declined. The rationale recorded at
+  the time was wrong twice and is corrected here, because a wrong rationale is what
+  the next PR cites:
+
+  - It leaned on #498's precedent. That deleted a **self-referential tautology** —
+    a literal compared against a literal, with no production code on either side.
+    A host-union guard is the opposite shape: it compares against another repo's
+    live source, which is a real claim that can really go stale.
+  - It offered `typecheck:readme` as covering the same ground. It does not.
+    `typecheck:readme` pins **README ↔ this repo's union**; the question a drift
+    guard answers is **SDK ↔ host**. Different operands, different question.
+
+  The decision stands, for the property neither bullet named: **drift fails closed
+  by construction.** The host resolves `obj.scope === 'site' ? 'site' : 'app'`, so
+  a host that gains a third space still honours this SDK (an unknown value lands in
+  `'app'`, the narrower one), and a host that _loses_ `'site'` degrades to `'app'`
+  too. There is no divergence a guard would prevent — only one it would _announce_.
+  A guard here buys a notification, not a safety property, and its standing cost (a
+  third sparse path in the drift job, plus breakage every time the host moves that
+  file) is paid against that. The behaviour that makes the drift safe is pinned by
+  value instead, by the `an UNKNOWN scope fails CLOSED onto app, like the host`
+  test — an assertion about state, not about wording.
+
+  Also fixes an instrument, because this change tripped it:
+  `test/blocks/blockToParentMessageTypes.test.ts` stripped block comments _before_
+  line comments, so a `//` comment containing the two bytes `/*` — a path glob like
+  `/api/*` — opened a phantom block comment that ate the rest of the region.
+  Measured: the derived union went from 47 members to 27, failing the control with
+  `expected 27 to be greater than or equal to 40`, a number that names nothing about
+  the cause.
+
+- 2895c67: `ROUTE_CHANGED` is modelled: a page block can finally see where it navigated to.
+
+  The host has been sending this message since the page surface shipped
+  (civitai/civitai `src/components/AppBlocks/PageBlockHost.tsx` —
+  `send('ROUTE_CHANGED', { subPath })` in an effect gated on
+  `!initSentRef.current || status !== 'ready'` and keyed on `[subPath, status]`).
+  This SDK modelled it **nowhere**, so a block could not subscribe to it at all.
+  The consequence was the civitai#5209 shape: in production an app-scoped
+  `navigate()` moved the host's URL and the block never learned, because
+  `BLOCK_INIT` — which carries the initial `subPath` — is deduped by the transport
+  and could not deliver a second value.
+
+  New surfaces:
+
+  - **`@civitai/app-sdk`** — `ROUTE_CHANGED` on `ParentToBlockMessage`, payload
+    `{ subPath: string }`. Declared beside `THEME_CHANGE`, the host→block push it
+    is shaped after: no `requestId`, no reply, nothing awaits it.
+  - **`@civitai/blocks-react`** — **`useCivitaiRoute()`** (and its
+    `UseCivitaiRoute` return type), returning the sub-path currently showing. The
+    transport folds the push into `context.subPath`, so
+    `useBlockContext().context.subPath` tracks the same value — there is one
+    writer and one copy.
+  - **`@civitai/sdk`** — `ROUTE_CHANGED` on `HostMessage`, folded into the
+    snapshot, so `app.context.subPath` is live and `onChange` reports it. **No
+    `onRouteChange` and no `HostPushes` row**, matching `THEME_CHANGE`: a value the
+    snapshot already holds is observed through the snapshot, and publishing a
+    second reader of one value is how `app.context.subPath` and a callback end up
+    disagreeing. `SUSPEND`/`RESUME` are in `HostPushes` because they carry no
+    state.
+
+  **A value hook, not an `onRouteChanged` callback — and that follows from the
+  wire, not from taste.** The host sends the FIRST sub-path in
+  `BLOCK_INIT.context.subPath` and sends this message only on a later _change_. A
+  callback therefore cannot see where the block started, and a change that lands
+  before its subscription effect runs is lost — a block that looks subscribed and
+  misses the first move, which is the same failure wearing a different hat. The
+  sub-path also already lives in `context`, so a callback that did not update the
+  snapshot would leave `useBlockContext().context.subPath` frozen at its mount-time
+  value while the callback reported another — exactly the divergence
+  `applyThemeChange` exists to avoid, and the reason the push is folded in whatever
+  the hook's shape.
+
+  `''` is a real route (an app's own index) and the validator accepts it
+  deliberately: `isValidRouteChanged` checks for a string, not a non-empty one,
+  mirroring `isPageSlotContext`'s decision about the same field. Rejecting it would
+  drop every navigation back to the app root.
+
+  **Back-compat, both directions — purely additive.** An old block on a new host
+  has no handler and falls through the transport's no-op tail, keeping the
+  sub-path it got at init. A new block on an old host waits on nothing: the value
+  simply never moves. On a model slot the push cannot even apply — the transport
+  only ever UPDATES a `subPath` the context already carries and never introduces
+  one, so it never asserts a page context the host did not send.
+
+  🔴 **The dev host (`@civitai/blocks-react/live`) changes behaviour again, and
+  this replaces something that shipped earlier in this same release.** That earlier
+  revision dispatched a synthetic `popstate` after `pushState` _"since this SDK
+  models no `ROUTE_CHANGED`"_. It made a history-based router in the block
+  re-render — in `dev:live` and nowhere else, because no production host dispatches
+  a `popstate` for its own shallow push. That is civitai#5209's failure class with
+  its sign flipped, in a harness whose entire purpose in this release was to stop
+  diverging from production; a dev host that is KINDER than production is how that
+  bug stayed invisible in the first place. The synthetic event is gone and the dev
+  host now emits the real message, with the host's own three gates: after init,
+  only on a change, and only for a move of THIS frame (so neither
+  `scope: 'site'` nor `target: 'new_tab'` emits). It also reflects the viewer's own
+  back/forward, which production reports too — its effect is keyed on the resolved
+  sub-path, not on who asked for the move.
+
+  Also in the dev host: **the site-scope `/api/*` refusal now compares the DECODED
+  first segment**, like the host's `navigateSiteFirstSegmentIsRefused`, and refuses
+  a segment it cannot decode at all. It previously compared the raw spelling, so
+  `%61pi/auth/logout` was refused in production and followed in `dev:live`. The
+  branch mirrors a _published_ refusal rather than guarding anything, which is why
+  it was fixed rather than deleted: a mirror that is wrong for one input shape is
+  worse than either having it or not. This is not the host's "two spellings of one
+  rule" case — that deleted a redundant raw fast path sitting _alongside_ a decoded
+  comparison and provably unable to reach a verdict the survivor did not; here
+  there was one comparison and it was the wrong one.
+
+  `minor` on the same terms as the rest of this release: additive on the API axis
+  (a new hook, a new message type, no rename and nothing narrowed), with the one
+  behaviour change confined to `/live`, whose README is explicit that it is _"a
+  normal subpath of a `0.x` package where a minor may break it"_ and whose runtime
+  symbol set — pinned by `test/subpathSurfaces.test.ts` — is unchanged.
+
+- 55bc9aa: Consent prompt-and-retry is now the DEFAULT on every consent-gated WRITE.
+
+  A block that calls a capability whose consent-gated scope its token was minted
+  without used to get a failure and nothing else; the app author had to write the
+  prompt-then-retry dance by hand, and almost nobody did — so working apps looked
+  broken. `submit()`, `createPost()`, `purchase()` and `tip()` now open the host's
+  consent dialog naming the scope the call needs, wait for the grant, and retry
+  the original call ONCE so it resolves as if it had just worked.
+
+  🔴 **BREAKING — this is a behaviour change existing callers will notice.** A
+  call that used to reject immediately can now stay
+  pending for up to 60 s while the viewer answers a dialog your app did not open,
+  and then succeed. Three test suites in this repo had to be given already-granted
+  scopes because the new default absorbed the failures they were deliberately
+  provoking (`test/mockHostScenarios.test.tsx`,
+  `test/mockHostCustomComfy.test.tsx`, `test/useBuzzWorkflow.test.tsx`) — that is
+  the same surprise an app's own tests will hit. `autoRequestConsent: false`
+  restores the old behaviour per call.
+
+  ⚠️ **Released as a MINOR, deliberately — the 1.0 declaration is deferred.** This
+  entry asked for a `major` when it was written; that was reversed before release.
+  The reasoning it recorded is what makes the reversal safe, so it is kept rather
+  than deleted: under 0.x semver a `minor` already breaks a `^0.60.0` consumer, and
+  `^0.60.0` resolves to `>=0.60.0 <0.61.0`, so **`0.61.0` and `1.0.0` are equally
+  out of range** — a caret-ranged consumer does not receive this change
+  automatically under either number, and gains no protection from the major. What a
+  major would have bought is a louder signal in the version itself, which is not
+  worth a one-way door; the signal lives in this entry's own 🔴 BREAKING line
+  instead. (`starters/civitai-block-starter`'s `^0.60.0` pin is rewritten by the
+  `chore(release): version packages` flow either way, so `check:starter-pins` is
+  not left red by the bump.)
+
+  🔴 **The retry re-sends the FIRST attempt's `idempotencyKey`** — the money-safety
+  property, since a retry with a fresh key is a SECOND reservation against the
+  viewer's Buzz. `submit()`, `purchase()` and `tip()` mint the key once, above the
+  retry, and hand the same value to both attempts. Pinned on the literal wire
+  values in `test/withConsentRetry.test.tsx` and mutation-checked: minting the key
+  inside the retried closure kills 2 tests on the bridge rail (`submit()`) and 3 on
+  the direct-fetch rail (`tip()`), each on a literal key-equality assertion.
+
+  **`estimate()` is deliberately NOT routed.** It is a price read that blocks call
+  from an effect keyed on the generation form, so it fires on mount and on every
+  parameter change; prompting there would open a consent dialog with no user
+  gesture behind it, once per edit. It keeps its old signature and its old
+  rejection behaviour.
+
+  It retries at most ONCE, never loops, and never retries at all when: the token
+  already holds every scope the call needs (so every non-consent failure behaves
+  exactly as before); the call failed BEFORE `BLOCK_INIT` landed, where there is no
+  real token and so no fact about consent to read; the host has pushed
+  `CONSENT_UNAVAILABLE` naming a scope THIS call needs; the viewer dismissed a host
+  confirm (`declined`); there is no session at all (`signInRequired` — that routes
+  to `useRequestSignIn()`); the component unmounted, INCLUDING during the 60 s
+  wait; or the request timed out on a bridge with NO idempotency key
+  (`createPost()`, collection follow), where a re-send would be a genuine second
+  write rather than a replay. A timeout on a call that HAS a key is retried — same
+  key, one operation. A viewer who never answers the dialog gets the ORIGINAL error
+  back after 60 s.
+
+  **Concurrent callers share one dialog.** Calls in flight together that need the
+  same scope post ONE `REQUEST_CONSENT` and wait on it together, so a feed of tip
+  buttons does not open a dialog per button. Each call still retries its own
+  request with its own idempotency key, so N tips stay N transfers. This covers
+  CONCURRENT waits only — sequential calls each get their own prompt, which is part
+  of why `estimate()` stays out.
+
+  New exported type `ConsentRetryOptions` (one field, `autoRequestConsent`) —
+  accepted by every routed call above, on by default, opt out per call.
+  `createPost()` takes a new optional trailing `options` argument.
+
+  Also: `createMockHost`'s consent grant now returns the scopes the block ASKED
+  for (filtered to the known vocabulary) instead of only `ai:write:budgeted`, so a
+  `posts:write:self` grant is reachable in `pnpm dev` — it was not, which made this
+  feature unexercisable locally for every hook but the workflow one. A grant asked
+  for by name no longer also hands out `ai:write:budgeted` and `buzzBudget`, so the
+  PARTIAL-grant case is reachable too; a `REQUEST_CONSENT` with no usable scopes
+  hint still grants the budgeted scope, as before.
+
+### Patch Changes
+
+- 8bd5801: `useCivitaiNavigate` no longer tells authors to declare a sandbox token the host strips.
+
+  civitai.com derives a block's iframe `sandbox` attribute by filtering the manifest's
+  declared tokens through a fixed allowlist (`ALLOWED_SANDBOX_TOKENS` in
+  `src/components/AppBlocks/sandbox.ts`). That filter is tier-independent —
+  `trustTier` only decides whether `allow-same-origin` is _added_ — and
+  `allow-popups-to-escape-sandbox` is not in the allowlist, so it is dropped for
+  every block at every trust tier. Both the `useCivitaiNavigate` README entry and
+  its JSDoc said `'new_tab'` "requires" that token, and the block starter declared
+  it, so every scaffolded app inherited a declaration that could not do anything.
+
+  The docs now state only what is verifiable: the hook sends a `NAVIGATE` message,
+  `target` is a request rather than a guarantee, the host is the authority on how it
+  acts on one, and nothing in the manifest enables `'new_tab'`. The starter manifest
+  drops the token (and `allow-popups`, which it never used), leaving
+  `"allow-scripts allow-forms"` — the same value all six shipped examples already
+  declare. `@civitai/app-sdk`'s `SCHEMA_DIVERGENCES['iframe.sandbox']` prose stops
+  citing the starter as its worked example, since the starter no longer declares it.
+
+  A new deterministic guard (`tests/guards/manifest-sandbox-tokens.test.mjs`) pins all
+  of it: every manifest and documented `"sandbox"` literal must declare only grantable
+  tokens, and the set of files naming a silently-stripped token is an asserted ledger
+  that fails when it grows _or_ shrinks.
+
+- 1bad5de: docs: teach the UNCONSTRAINED resource pick as the default
+
+  `baseModelGroup` is an optional FILTER on `useResourcePicker` — the host hides
+  every resource outside the family it is given — and the SDK has always
+  implemented it that way. But the `@example` blocks and README examples passed a
+  hardcoded `'SDXL'`, and those examples are generated into
+  developer.civitai.com `apps/reference/hooks` — the README's per-hook `tsx` fence
+  first, the hook's `@example` JSDoc only as its fallback — which AI coding agents
+  fetch and copy verbatim. Apps shipped with the picker pinned to one ecosystem, so
+  viewers' own valid LoRAs were invisible to them and the picker read as empty or
+  broken.
+
+  No runtime behaviour changes. The examples now show `open({ resourceType:
+'LORA' })` as the default and the derived `baseModelGroup: checkpoint.baseModel`
+  form (the shape the CLI's `page-money` scaffold already used) as the secondary
+  case, and the `baseModelGroup` JSDoc on both pickers says what a literal costs.
+  `tests/guards/picker-example-ecosystem-literals.test.mjs` fails the build if a
+  picker example passes `baseModelGroup` a string literal again.
+
+  Two doc-accuracy fixes and two guard holes closed on review:
+
+  - The `''` note said the host resolves it to the ecosystem key `Other`, "so it
+    narrows rather than widens". That is true on a **model slot** only — on a
+    **page** the host drops a zero-length value and `''` behaves exactly like
+    omitting it. The advice (never pass `''`) holds on both hosts; only the
+    mechanism was wrong, and it lands verbatim in the published hook description.
+  - `useResourcePicker`'s JSDoc pointed at `useBlockContext().context.checkpoint
+?.baseModel`, which does not exist on the only host that answers this hook:
+    `checkpoint` is a `ModelSlotContext` field, `BlockContext` is a union with no
+    index signature, and `OPEN_RESOURCE_PICKER` is page-only. The page-surface
+    source is `BlockResourceInfo.baseModel` — the `baseModel` of a Checkpoint a
+    prior `useResourcePicker({ resourceType: 'Checkpoint' })` returned — and the
+    examples now show that, self-contained, instead of a bare undeclared
+    `checkpoint`.
+  - The guard's markdown fence walker never recorded a fence whose info string was
+    a language it does not scan (bash, json, html, sh, diff, …), so that fence's
+    own closer opened a phantom block and swallowed the next real `ts`/`tsx` pair
+    whole. Measured over the sweep corpus, **15** code fences were invisible to the
+    scanner — including this package's own README quick-start, behind the bash
+    install snippet above it — and a literal in any of them passed as clean. Now
+    every fence opens a block; the count is 0.
+  - The detector was a per-line `baseModelGroup:\s*['"]` regex, which missed a
+    value on the next line, `checkpoint?.baseModel ?? 'SDXL'`, a ternary, `('SDXL')`
+    / `String('SDXL')`, and a quoted `'baseModelGroup':` key (the last not even
+    counted, so it could not hold the coverage floor up). It now reads the value
+    expression across lines out of a comment-stripped copy, so a literal in a
+    trailing comment is no longer a false positive and an interpolated template
+    literal stays legal.
+  - `useResourcePicker`'s two `@example` blocks are deliberately ordered
+    constrained-then-unconstrained: the docs generator overwrites `jsdocExample` on
+    each tag, so the LAST one is what gets published when the README fence is
+    unavailable.
+
 ## 0.60.0
 
 ### Minor Changes
@@ -796,10 +1172,10 @@ URL('https://civitai.com/evil').origin` is `https://civitai.com`).
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                      before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                               @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                      after    @civitai/theme       0.3.1                   — 1 copy
-                               @civitai/components  0.4.2                   — 1 copy
+                        before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                 @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                        after    @civitai/theme       0.3.1                   — 1 copy
+                                 @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
