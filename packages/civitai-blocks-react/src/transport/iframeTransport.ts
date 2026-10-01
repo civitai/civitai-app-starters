@@ -759,6 +759,22 @@ export class IframeTransport implements BlockTransport {
       return;
     }
 
+    // Host-pushed ROUTE change (the page's sub-path moved under the app root; no
+    // requestId). Same shape of handling as THEME_CHANGE: apply to the snapshot
+    // and emit, never matches a pending request.
+    //
+    // 🔴 THIS BRANCH IS THE FEATURE. Nothing in the type system requires it: the
+    // `never` bind in `payloadValidatorFor` forces a VALIDATOR for every union
+    // member, and the union member plus the validator together are enough to
+    // make `ROUTE_CHANGED` compile, be accepted at the boundary, and then reach
+    // the no-op tail. A declared type is not a code path — pinned by the
+    // mutation case in `useCivitaiRoute.test.tsx`, which deletes this branch and
+    // watches the subscriber's own assertion fail.
+    if (isMessage<ParentToBlockMessage, 'ROUTE_CHANGED'>(data, 'ROUTE_CHANGED')) {
+      this.applyRouteChange(data.payload.subPath);
+      return;
+    }
+
     // For request/response replies, look up the pending entry by `requestId`.
     //
     // 🔴 PROJECTED, NOT RAW. This is the last point before an inbound payload
@@ -871,6 +887,46 @@ export class IframeTransport implements BlockTransport {
     const next: BlockSnapshot = { ...this.snapshot, theme };
     if ('theme' in next.context) next.context = { ...next.context, theme };
     this.snapshot = next;
+    this.emit();
+  }
+
+  /**
+   * Apply a host-pushed `ROUTE_CHANGED` to the snapshot.
+   *
+   * Emits only when the value actually MOVED, for the same reason
+   * {@link IframeTransport.applyThemeChange} does: `useSyncExternalStore`
+   * re-renders on identity change, so an unconditional spread would re-render
+   * every subscriber on a redundant push.
+   *
+   * 🔴 ONE WRITER, ONE READER — the sub-path lives in `context` and NOWHERE
+   * else. Unlike the theme, which the host forwards twice (top-level and inside
+   * `context`), `subPath` is a `PageSlotContext` field only, so there is no
+   * second copy to keep in step and no top-level `BlockSnapshot.subPath` is
+   * introduced here. Adding one would create exactly the divergence the theme
+   * handler exists to avoid, in a package where only one of the two could be the
+   * value `BLOCK_INIT` delivered.
+   *
+   * ONLY EVER UPDATES A CONTEXT THAT ALREADY CARRIES THE KEY; never INTRODUCES
+   * it — the same rule, and the same reason, as the theme handler. A model slot
+   * has no route and the host's own effect lives in `PageBlockHost`, so a
+   * `subPath` synthesised onto a model (or unknown) context would be this
+   * package asserting a page context the host never sent.
+   *
+   * 🔴 THAT MAKES IT INIT-GATED IN EFFECT, WHICH IS A DIFFERENCE FROM
+   * `THEME_CHANGE` AND IS CORRECT HERE. `EMPTY_SNAPSHOT.context` is
+   * `{ slotId: '' }`, so a push that lands BEFORE `BLOCK_INIT` has no key to
+   * update and is dropped. It costs nothing: the host sends this message only
+   * after init (`initSentRef`), and `snapshotFromInit` replaces the whole
+   * snapshot with a `context` whose `subPath` is the host's own current value —
+   * so a pre-init push could only ever be older than the init that follows it.
+   * The theme is not gated because it has a pre-init writer (the URL fragment)
+   * and a top-level field to hold the value; this has neither.
+   */
+  private applyRouteChange(subPath: string): void {
+    const context = this.snapshot.context;
+    if (!('subPath' in context)) return;
+    if ((context as { subPath?: unknown }).subPath === subPath) return;
+    this.snapshot = { ...this.snapshot, context: { ...context, subPath } };
     this.emit();
   }
 

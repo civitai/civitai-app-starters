@@ -74,6 +74,7 @@ const HOOK_FILES = [
   'useBuzzWorkflow',
   'useCheckpointPicker',
   'useCivitaiNavigate',
+  'useCivitaiRoute',
   'useCollectionFollow',
   'useConsentUnavailable',
   'useCreatePostFromApp',

@@ -1437,9 +1437,12 @@ describe('createLiveHost — NAVIGATE', () => {
     inbound = collectInbound();
     openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
     assignSpy = vi.spyOn(window.location, 'assign').mockImplementation(() => {});
-    // NOT mocked away: the popstate test needs the real pushState to move
-    // `location.pathname`, so this spy only RECORDS. `vi.restoreAllMocks()` in
-    // `afterEach` puts it back; the URL itself is per-test-file in jsdom.
+    // NOT mocked away — this spy only RECORDS, and calling through is
+    // load-bearing: the dev host's `reflectRoute` sits INSIDE the same `try` as
+    // `pushState`, so a stub that threw would skip the emit and the
+    // ROUTE_CHANGED tests below would fail for a reason that is not theirs.
+    // `vi.restoreAllMocks()` in `afterEach` puts it back; the URL itself is
+    // per-test-file in jsdom.
     pushSpy = vi.spyOn(window.history, 'pushState');
   });
   afterEach(() => {
@@ -1501,15 +1504,15 @@ describe('createLiveHost — NAVIGATE', () => {
     expect(openSpy).not.toHaveBeenCalled();
   });
 
-  it('an explicit app scope behaves identically to omitting it', async () => {
-    install();
-    await waitForMessage(inbound, 'BLOCK_INIT');
-    post('NAVIGATE', { path: 'detail/7', scope: 'app' });
-    await new Promise((r) => setTimeout(r, 10));
-    expect(pushSpy).toHaveBeenCalledWith(null, '', `${ORIGIN}/detail/7`);
-    expect(assignSpy).not.toHaveBeenCalled();
-  });
-
+  /**
+   * 🔴 THE ONE SAMPLE THAT IS WORTH TAKING OF THE NON-`'site'` ARM. The resolver
+   * is `payload.scope === 'site' ? 'site' : 'app'`, so ABSENT, `'app'` and
+   * `'universe'` are one code path — and the test above already pins the absent
+   * spelling. A third sample (`scope: 'app'`) was deleted rather than kept: it
+   * asserted nothing the two arms do not, while reading as extra coverage. This
+   * one earns its place by naming the FAIL-CLOSED property, which is the half a
+   * reader can get wrong.
+   */
   it('an UNKNOWN scope fails CLOSED onto app, like the host', async () => {
     install();
     await waitForMessage(inbound, 'BLOCK_INIT');
@@ -1519,7 +1522,34 @@ describe('createLiveHost — NAVIGATE', () => {
     expect(assignSpy).not.toHaveBeenCalled();
   });
 
-  it('an app-scoped push fires popstate, so a router re-renders instead of only the URL moving', async () => {
+  /**
+   * 🔴 THIS REPLACES A TEST THAT PINNED A SYNTHETIC `popstate`. It read "an
+   * app-scoped push fires popstate, so a router re-renders instead of only the
+   * URL moving" and asserted `new PopStateEvent('popstate')` had been
+   * dispatched after `pushState`. That made a history router re-render in
+   * `dev:live` AND NOWHERE ELSE: no production host dispatches a `popstate` for
+   * its own shallow push — it sends `ROUTE_CHANGED`, which the SDK now models.
+   * A dev harness kinder than production is how civitai#5209 stayed invisible,
+   * so the old assertion was pinning the bug's mirror image.
+   *
+   * At the WIRE here; the block-side half of the round trip (the message
+   * reaching `useCivitaiRoute`) is `useCivitaiRoute.test.tsx`'s SEAM block.
+   */
+  it('an app-scoped push REFLECTS the new sub-path over ROUTE_CHANGED', async () => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('NAVIGATE', { path: 'detail/7' });
+    const msg = await waitForMessage(inbound, 'ROUTE_CHANGED');
+    // No leading slash: the sub-path BELOW the app root, matching the
+    // `PageSlotContext.subPath` field it updates.
+    expect(msg).toEqual({ subPath: 'detail/7' });
+    expect(pushSpy).toHaveBeenCalledWith(null, '', `${ORIGIN}/detail/7`);
+  });
+
+  it('does NOT dispatch a popstate — that channel was the divergence', async () => {
+    // The negative half, stated separately so it cannot be lost in a later
+    // edit: re-adding the synthetic event would make `dev:live` deliver BOTH
+    // signals where production delivers one.
     install();
     await waitForMessage(inbound, 'BLOCK_INIT');
     const seen: string[] = [];
@@ -1527,11 +1557,67 @@ describe('createLiveHost — NAVIGATE', () => {
     window.addEventListener('popstate', onPop);
     try {
       post('NAVIGATE', { path: 'detail/7' });
+      await waitForMessage(inbound, 'ROUTE_CHANGED');
       await new Promise((r) => setTimeout(r, 10));
     } finally {
       window.removeEventListener('popstate', onPop);
     }
-    expect(seen).toHaveLength(1);
+    expect(seen).toEqual([]);
+  });
+
+  it('emits NOTHING for a route already showing — the host\'s effect is change-keyed', async () => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('NAVIGATE', { path: 'detail/7' });
+    await waitForMessage(inbound, 'ROUTE_CHANGED');
+    const after = inbound.messages.filter((m) => m.type === 'ROUTE_CHANGED').length;
+    post('NAVIGATE', { path: '/detail/7' }); // the same route, spelled with a slash
+    await new Promise((r) => setTimeout(r, 20));
+    expect(inbound.messages.filter((m) => m.type === 'ROUTE_CHANGED')).toHaveLength(after);
+  });
+
+  // [invariant guard — green at base] It coincides because at base NOTHING ever
+  // emitted `ROUTE_CHANGED`, so "no ROUTE_CHANGED here" was true of every path.
+  // Its value is forward-facing: the emit added above has three gates, and this
+  // is the only check that the two NEGATIVE ones survive — a `reflectRoute` call
+  // moved out of the `current` arm, or up above the scope split, passes every
+  // other test in this file.
+  it('does NOT reflect a route the block was never shown: site scope and new_tab', async () => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('NAVIGATE', { path: 'models/123', scope: 'site' });
+    post('NAVIGATE', { path: 'detail/7', target: 'new_tab' });
+    await new Promise((r) => setTimeout(r, 20));
+    // Site scope leaves the app; a new tab is a different frame. Neither moves
+    // the sub-path of the page this host is rendering.
+    expect(inbound.messages.some((m) => m.type === 'ROUTE_CHANGED')).toBe(false);
+  });
+
+  it('does NOT reflect the sub-path BLOCK_INIT already carried', async () => {
+    // The real host's effect is gated on `initSentRef` AND keyed on `[subPath]`,
+    // so it never restates the value init delivered. A harness that pushed one
+    // anyway would teach a block to expect a message it will not get.
+    uninstall?.();
+    const host = createLiveHost({
+      blockToken: TOKEN,
+      viewer: { id: 42, username: 'dev-mod' },
+      context: {
+        slotId: 'app.page',
+        entityType: 'none',
+        slug: 'seed-explorer',
+        subPath: 'compare/42',
+        viewerUserId: 42,
+      },
+    });
+    uninstall = host.install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('NAVIGATE', { path: 'compare/42' });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(inbound.messages.some((m) => m.type === 'ROUTE_CHANGED')).toBe(false);
+    // …and a DIFFERENT route still reflects, so the seed is a seed and not a mute.
+    post('NAVIGATE', { path: 'detail/7' });
+    const msg = await waitForMessage(inbound, 'ROUTE_CHANGED');
+    expect(msg).toEqual({ subPath: 'detail/7' });
   });
 
   it('app scope + new_tab opens the DEV origin, not the site', async () => {
@@ -1580,6 +1666,52 @@ describe('createLiveHost — NAVIGATE', () => {
     post('NAVIGATE', { path: 'api/thing' });
     await new Promise((r) => setTimeout(r, 10));
     expect(pushSpy).toHaveBeenCalledWith(null, '', `${ORIGIN}/api/thing`);
+  });
+
+  /**
+   * 🔴 BY DECODED VALUE, LIKE THE HOST. The refusal above used to compare the
+   * raw first segment, so `%61pi/auth/logout` — refused in production, where
+   * `navigateSiteFirstSegmentIsRefused` decodes before comparing — was FOLLOWED
+   * here. A mirror of a published refusal that is wrong for one input shape is
+   * worse than either having it or not, which is why the branch was fixed rather
+   * than deleted.
+   */
+  it('DROPS a percent-encoded `api` first segment in site scope', async () => {
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('NAVIGATE', { path: '%61pi/auth/logout', scope: 'site' });
+    post('NAVIGATE', { path: 'AP%49/auth/logout', scope: 'site' });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(assignSpy).not.toHaveBeenCalled();
+    expect(openSpy).not.toHaveBeenCalled();
+  });
+
+  it('DROPS a first segment it cannot DECODE — fail closed, like the host', async () => {
+    // The host's second refusal channel: a segment whose meaning cannot be
+    // established is not pushed. An undecodable segment is not evidence that it
+    // is not `api`.
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('NAVIGATE', { path: '%zz/auth/logout', scope: 'site' });
+    post('NAVIGATE', { path: '%/x', scope: 'site' });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(assignSpy).not.toHaveBeenCalled();
+  });
+
+  // [invariant guard — green at base] It coincides because the base compared the
+  // RAW segment, which also allowed this path — it is red only against the
+  // over-correction, not against the bug. That is exactly its job: it is the
+  // POSITIVE control for the two decode tests above, which a refusal that simply
+  // dropped every percent sign would also satisfy.
+  it('still allows a segment that merely CONTAINS a percent — the decode is not a ban', async () => {
+    // A positive control on the same branch: without it, a refusal that dropped
+    // every percent sign would pass both tests above while breaking a legitimate
+    // path, and the two negatives could not tell the difference.
+    install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('NAVIGATE', { path: '50%25-off/x', scope: 'site' });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(assignSpy).toHaveBeenCalledWith('https://civitai.com/50%25-off/x');
   });
 });
 

@@ -26,6 +26,7 @@ import {
   isValidSharedUpdateResult,
   isValidSharedWithdrawResult,
   isValidSaveImageResult,
+  isValidRouteChanged,
   isValidThemeChange,
   isValidTokenRefresh,
   isValidTokenRefreshResponse,
@@ -1033,6 +1034,10 @@ describe('payloadValidatorFor', () => {
     // it does not prove it is mapped to the right guard. A THEME_CHANGE routed
     // to someone else's validator reaches the snapshot effectively unchecked.
     expect(payloadValidatorFor('THEME_CHANGE')).toBe(isValidThemeChange);
+    // 🔴 Identity, same reason: a ROUTE_CHANGED routed to someone else's
+    // validator reaches `context.subPath` — the value a page block routes on —
+    // effectively unchecked. The `never` bind only proves it is mapped.
+    expect(payloadValidatorFor('ROUTE_CHANGED')).toBe(isValidRouteChanged);
     // Same reason: a mis-wired CONSENT_UNAVAILABLE reaches the block's push
     // listener having been shape-checked against the wrong contract.
     expect(payloadValidatorFor('CONSENT_UNAVAILABLE')).toBe(isValidConsentUnavailable);
@@ -1122,6 +1127,41 @@ describe('isValidThemeChange', () => {
 
   it('ignores extra fields (a newer host may widen the payload)', () => {
     expect(isValidThemeChange({ theme: 'dark', requestId: 'r-1' })).toBe(true);
+  });
+});
+
+describe('isValidRouteChanged', () => {
+  it('accepts a sub-path', () => {
+    expect(isValidRouteChanged({ subPath: 'compare/42' })).toBe(true);
+  });
+
+  it('ACCEPTS the empty sub-path — the app index is a route, not an absence', () => {
+    // 🔴 The deliberate looseness, and the one case a "non-empty string" rule
+    // would have broken: `''` is what the host sends on an app's own index, so
+    // rejecting it would drop every navigation back to the root and freeze the
+    // block on the sub-path it was last told about.
+    expect(isValidRouteChanged({ subPath: '' })).toBe(true);
+  });
+
+  it('rejects a non-object payload', () => {
+    expect(isValidRouteChanged(null)).toBe(false);
+    expect(isValidRouteChanged(undefined)).toBe(false);
+    expect(isValidRouteChanged('compare/42')).toBe(false);
+    expect(isValidRouteChanged(1)).toBe(false);
+  });
+
+  it('rejects a missing / wrong-typed subPath', () => {
+    expect(isValidRouteChanged({})).toBe(false);
+    expect(isValidRouteChanged({ subPath: undefined })).toBe(false);
+    expect(isValidRouteChanged({ subPath: null })).toBe(false);
+    expect(isValidRouteChanged({ subPath: 42 })).toBe(false);
+    expect(isValidRouteChanged({ subPath: ['a'] })).toBe(false);
+    // The field name is the contract; a near-miss is not a route.
+    expect(isValidRouteChanged({ path: 'compare/42' })).toBe(false);
+  });
+
+  it('ignores extra fields (a newer host may widen the payload)', () => {
+    expect(isValidRouteChanged({ subPath: 'x', requestId: 'r-1' })).toBe(true);
   });
 });
 

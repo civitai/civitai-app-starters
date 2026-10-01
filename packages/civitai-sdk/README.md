@@ -60,6 +60,14 @@ Both give you:
 A block's `app` also has `host`, `viewer`, `context`, `settings`, `theme` and
 `onChange(listener)`. Outside a block they do not exist, and the types say so.
 
+`context` and `theme` are LIVE, not mount-time snapshots: the host pushes
+`THEME_CHANGE` when the viewer toggles dark mode and `ROUTE_CHANGED` when a page
+block's sub-path moves, and both are folded into the same snapshot — so
+`app.context.subPath` tracks `app.host.navigate(path)` (and the viewer's own back
+button) and `onChange` tells you when. Read them on each render rather than
+copying them once; there is deliberately no `onRouteChange`, because one value
+observed two ways is two values that can disagree.
+
 A block opts in by declaring `auth: "oauth"` in its `block.manifest.json`. The
 host then hands it a real OAuth access token that `/api/v1`, the orchestrator
 and the MCP accept, and consent — including `requestGrants` — goes through the

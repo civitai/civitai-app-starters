@@ -89,6 +89,13 @@ describe('useCivitaiNavigate', () => {
 
   // [invariant guard — green at base] The two-argument call shape is unchanged by
   // construction; this pins that the widened parameter did not break it.
+  //
+  // 🔴 IT ALSO PINS THE VERBATIM-PATH CLAIM, which is why a separate
+  // "passes the path through verbatim" test was deleted rather than kept. The
+  // `toEqual` below is an EXACT payload assertion on a path with a LEADING
+  // SLASH, so a hook that started normalising — `'/user/alice'` → `'user/alice'`
+  // — fails right here. `scope` selects the space and the HOST strips the slash;
+  // a second normaliser in this package would make the two layers disagree.
   it('forwards an explicit "new_tab" target passed the pre-`scope` way (still unscoped)', () => {
     const { result } = renderHook(() => useCivitaiNavigate());
     act(() => {
@@ -132,23 +139,6 @@ describe('useCivitaiNavigate', () => {
     });
     expect(lastSent().payload).toEqual(viaObject);
     expect('scope' in viaObject).toBe(false);
-  });
-
-  /**
-   * The contract's own normalisation claim, pinned at the SDK boundary: the hook
-   * must NOT rewrite the path. `'/settings'` and `'settings'` are one request
-   * only because the HOST strips the slash — if this package started stripping
-   * it too, the two layers would be normalising independently.
-   *
-   * [invariant guard — green at base] The hook never rewrote the path; this pins
-   * that it still does not, now that there is a normalisation rule to be tempted by.
-   */
-  it('passes the path through verbatim — a leading slash is the host\'s to normalise', () => {
-    const { result } = renderHook(() => useCivitaiNavigate());
-    act(() => {
-      result.current.navigate('/settings');
-    });
-    expect(lastSent().payload.path).toBe('/settings');
   });
 
   it('is fire-and-forget — the returned value is undefined (no host reply awaited)', () => {

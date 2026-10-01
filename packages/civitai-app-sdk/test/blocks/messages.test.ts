@@ -13,6 +13,7 @@ import type {
   BlockImageScanResult,
   BlockPendingImageInfo,
   BlockUploadedImageInfo,
+  PageSlotContext,
   WorkflowBody,
 } from '../../src/blocks/types.js';
 
@@ -362,6 +363,74 @@ describe('THEME_CHANGE (host-pushed live site theme)', () => {
       expect.unreachable('msg should narrow to THEME_CHANGE');
     }
     expect(msg.payload.theme).toBe(fromInit);
+  });
+});
+
+/**
+ * 🔴 [invariant guard — green at base] EVERY CASE IN THIS BLOCK PASSED BEFORE
+ * `ROUTE_CHANGED` EXISTED, and that is not a defect in them — it is what a
+ * runtime test of a TYPE change can be. Measured: all four were copied onto the
+ * pre-change branch and the file ran 28/28 green against an SDK that modelled
+ * the message nowhere. Two reasons, both structural: `isMessage` is a
+ * DISCRIMINATOR-ONLY guard (it compares `.type` and knows nothing of the union),
+ * and `tsconfig.json` EXCLUDES `test/`, so the `: ParentToBlockMessage`
+ * annotations here are never compiled.
+ *
+ * They are kept because they document the RUNTIME contract a consumer relies on
+ * — narrowing works, there is no `requestId`, `''` is a value — in the same
+ * shape as the sibling `THEME_CHANGE` block. The instrument that actually goes
+ * red on the union is `route-changed.test-d.ts`, compiled by `test:types`.
+ * Do not read this block as the union's coverage.
+ */
+describe('ROUTE_CHANGED (host-pushed page sub-path)', () => {
+  it('is a parent→block message carrying only the new subPath, with NO requestId', () => {
+    const msg: ParentToBlockMessage = { type: 'ROUTE_CHANGED', payload: { subPath: 'compare/42' } };
+    expect(isMessage<ParentToBlockMessage, 'ROUTE_CHANGED'>(msg, 'ROUTE_CHANGED')).toBe(true);
+    if (isMessage<ParentToBlockMessage, 'ROUTE_CHANGED'>(msg, 'ROUTE_CHANGED')) {
+      expect(msg.payload.subPath).toBe('compare/42');
+      // Host-INITIATED, like TOKEN_REFRESH / THEME_CHANGE: no correlation id, so
+      // a block must never try to match it to a pending request.
+      expect('requestId' in msg.payload).toBe(false);
+    } else {
+      expect.unreachable('msg should narrow to ROUTE_CHANGED');
+    }
+  });
+
+  it('carries the EMPTY sub-path — the app index is a route, not an absence', () => {
+    // 🔴 The one value a "non-empty string" payload rule would have broken, and
+    // the one a block reaches by navigating back to its own root. `''` is what
+    // `PageBlockHost.buildContext()` sends there, so it must be expressible here.
+    const msg: ParentToBlockMessage = { type: 'ROUTE_CHANGED', payload: { subPath: '' } };
+    if (!isMessage<ParentToBlockMessage, 'ROUTE_CHANGED'>(msg, 'ROUTE_CHANGED')) {
+      expect.unreachable('msg should narrow to ROUTE_CHANGED');
+    }
+    expect(msg.payload.subPath).toBe('');
+  });
+
+  it('is NOT a block→parent message (it never appears in the outbound union)', () => {
+    const msg = { type: 'ROUTE_CHANGED', payload: { subPath: 'x' } };
+    expect(isMessage<BlockToParentMessage, 'BLOCK_READY'>(msg, 'BLOCK_READY')).toBe(false);
+    expect(isMessage<BlockToParentMessage, 'NAVIGATE'>(msg, 'NAVIGATE')).toBe(false);
+  });
+
+  it('is assignable from the SAME field `BLOCK_INIT` seeds (one value, two carriers)', () => {
+    // The push updates `BLOCK_INIT.context.subPath`. If the two types ever
+    // diverge, a host could push a sub-path the init-seeded context cannot hold
+    // — which is the divergence `useCivitaiRoute` would then render.
+    const pageContext: PageSlotContext = {
+      slotId: 'app.page',
+      slug: 'seed-explorer',
+      subPath: 'compare/42',
+      viewerUserId: null,
+    };
+    const msg: ParentToBlockMessage = {
+      type: 'ROUTE_CHANGED',
+      payload: { subPath: pageContext.subPath },
+    };
+    if (!isMessage<ParentToBlockMessage, 'ROUTE_CHANGED'>(msg, 'ROUTE_CHANGED')) {
+      expect.unreachable('msg should narrow to ROUTE_CHANGED');
+    }
+    expect(msg.payload.subPath).toBe('compare/42');
   });
 });
 

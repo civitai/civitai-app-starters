@@ -123,7 +123,9 @@ const { ready, context, viewer, theme, settings, blockId, blockInstanceId, appId
 ```
 
 - `context` — `BlockContext` (`{ slotId, … }`); narrow to `ModelSlotContext` for
-  model-page slots.
+  model-page slots. LIVE on a page slot: `context.subPath` starts at the
+  `BLOCK_INIT` value and then tracks the host's `ROUTE_CHANGED` push on every
+  navigation — see [`useCivitaiRoute()`](#usecivitairoute).
 - `viewer` — `ViewerInfo | null` (`null` = anonymous). **Gate sign-in with
   `isSignedIn(viewer)`** (from `@civitai/app-sdk/blocks`), never on
   `viewer.id`/`viewer.username` (both `@deprecated`). Don't open-code the gate:
@@ -1067,6 +1069,63 @@ navigate('models/12345', { scope: 'site', target: 'new_tab' });
 // The pre-`scope` two-argument shape still works, and is still app-scoped.
 navigate('detail/7', 'new_tab');
 ```
+
+An app-scoped `navigate()` is **half** of a round trip. The host owns the
+history, so the way your block learns where it ended up is
+[`useCivitaiRoute()`](#usecivitairoute) — read that next if you are routing.
+
+### `useCivitaiRoute()`
+
+The sub-path below your app's root that is **currently showing**. This is the
+other half of an app-scoped [`useCivitaiNavigate()`](#usecivitainavigate): you
+ask the host to move, the host pushes it shallowly so your frame stays mounted,
+and this is how you find out where you went.
+
+```tsx
+function Router() {
+  const subPath = useCivitaiRoute(); // '' on your app's index
+  const [view, id] = subPath.split('/');
+  return view === 'compare' ? <Compare id={id} /> : <Index />;
+}
+```
+
+It also reports the moves you **did not** ask for: the viewer's own
+back/forward, and a deep link the host resolved after init.
+
+Two things set the value — `BLOCK_INIT`'s `context.subPath` at mount, and the
+host's `ROUTE_CHANGED` push on every later change. **The first value is never a
+message**, which is why this is a value hook rather than an `onRouteChanged`
+callback: a callback alone cannot see where the block started, and a change that
+lands before its subscription effect runs is lost. It is the same value as
+`useBlockContext().context.subPath` on a page slot — reach for this when the
+route is all you need, and because its return type is a plain `string` instead of
+a field on a union you have to narrow.
+
+> 🔴 **No leading slash.** The host sends the segment below your app root, so
+> `subPath === 'compare/42'` is the comparison that works and
+> `subPath === '/compare/42'` is the one that silently never matches.
+
+> 🔴 **`''` is a real route — your app's index — and it is also the pre-init
+> value.** The two are indistinguishable from this hook alone, exactly as
+> `'light'` is both a real theme and [`useBlockTheme()`](#useblocktheme)'s
+> pre-init value. Gate on `useBlockContext().ready` if your first paint must tell
+> them apart.
+
+> 🔴 **Read it on every render.** A block that copies the value into state once
+> at mount, or routes imperatively in a mount-only effect, stays on the route it
+> started with — the URL moves and nothing renders, which is the exact symptom
+> this message exists to end.
+
+**Page slot only.** A model-page slot has no route of its own, so this returns
+`''` there and never moves. Against a host that predates `ROUTE_CHANGED` the
+value simply stays at the init sub-path (the old behaviour); nothing awaits the
+message, so there is no hang either way.
+
+Exercise it locally with `pnpm dev:live`, where `navigate()` drives the real
+message end-to-end. `createMockHost` has **no** route control, deliberately: it
+does not handle `NAVIGATE` at all and has no URL to move, so a synthetic setter
+there would be a second, weaker way to produce a message the live host already
+produces from the call a block actually makes.
 
 ### `useBlockAnalytics()`
 

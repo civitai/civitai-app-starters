@@ -152,6 +152,47 @@ describe('IframeTransport pushes', () => {
     expect(changes).toBe(1);
   });
 
+  it('follows a route change on a page context but stays quiet when unchanged', () => {
+    const { transport, deliver } = mountTransport();
+    deliver(
+      init({
+        context: { slotId: 'app.page', slug: 'seed-explorer', subPath: '', viewerUserId: null },
+      }),
+    );
+    let changes = 0;
+    transport.snapshot.subscribe(() => (changes += 1));
+
+    deliver({ type: 'ROUTE_CHANGED', payload: { subPath: 'compare/42' } });
+    deliver({ type: 'ROUTE_CHANGED', payload: { subPath: 'compare/42' } });
+
+    expect(transport.snapshot.get().context).toMatchObject({ subPath: 'compare/42' });
+    expect(changes).toBe(1);
+  });
+
+  // [invariant guard — green at base] It coincides because at base the transport
+  // ignored `ROUTE_CHANGED` entirely, so it introduced nothing — the assertion
+  // was true for the wrong reason. It is kept as the pin on the never-fabricate
+  // rule, which is the half an "apply it to the context" implementation is most
+  // likely to get wrong once the branch exists.
+  it('cannot INTRODUCE a route onto a context that has none', () => {
+    // `init()`'s default context is `{ slotId: 'slot-1' }` — a slot this package
+    // does not know, with no `subPath` field. Synthesising one would have the
+    // transport assert a page context the host never sent.
+    const { transport, deliver } = mountTransport();
+    deliver(init());
+    const before = transport.snapshot.get().context;
+    let changes = 0;
+    transport.snapshot.subscribe(() => (changes += 1));
+
+    deliver({ type: 'ROUTE_CHANGED', payload: { subPath: 'compare/42' } });
+
+    expect('subPath' in transport.snapshot.get().context).toBe(false);
+    // Identity, not just equality: a dropped push must not re-allocate the
+    // context or notify anybody.
+    expect(transport.snapshot.get().context).toBe(before);
+    expect(changes).toBe(0);
+  });
+
   it('stops delivering to an unsubscribed handler', () => {
     const { transport, deliver } = mountTransport();
     deliver(init());

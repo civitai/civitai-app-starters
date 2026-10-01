@@ -162,6 +162,10 @@ export type {
   UseCivitaiNavigate,
   UseCivitaiNavigateOptions,
 } from './hooks/useCivitaiNavigate.js';
+// The other half of the `NAVIGATE` round trip: `useCivitaiNavigate` asks the
+// host to move, `useCivitaiRoute` is how the block learns where it now is.
+export { useCivitaiRoute } from './hooks/useCivitaiRoute.js';
+export type { UseCivitaiRoute } from './hooks/useCivitaiRoute.js';
 export { useRequestSignIn } from './hooks/useRequestSignIn.js';
 export type { UseRequestSignIn } from './hooks/useRequestSignIn.js';
 export { useRequestConsent } from './hooks/useRequestConsent.js';
