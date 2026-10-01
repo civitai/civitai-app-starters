@@ -984,14 +984,20 @@ import { isModelSlotContext } from '@civitai/app-sdk/blocks';
 const { context } = useBlockContext();
 const { open, persist } = useCheckpointPicker();
 
-// Derive the family from the checkpoint the block already holds — never a literal.
+// DEFAULT — pass no baseModelGroup. The viewer can reach every family.
 if (isModelSlotContext(context) && context.checkpoint) {
-  const { selected } = await open({
-    baseModelGroup: context.checkpoint.baseModel,
-    currentVersionId: context.checkpoint.versionId,
-  });
+  const { selected } = await open({ currentVersionId: context.checkpoint.versionId });
   if (selected) await persist(selected.versionId);   // null clears the override
 }
+```
+
+Pass `baseModelGroup` **only** when the block must stay inside a family it already
+holds — a regenerate or variation flow pinned to one checkpoint's ecosystem — and
+then derive it from that checkpoint, never from a literal:
+
+```tsx
+// ONLY to stay inside the family the block already holds.
+const { selected } = await open({ baseModelGroup: context.checkpoint.baseModel });
 ```
 
 ### `useResourcePicker()`
