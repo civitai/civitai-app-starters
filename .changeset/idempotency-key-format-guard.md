@@ -53,6 +53,14 @@ every hook and the dev mock host had no concept of `idempotencyKey` at all.
   logical tip rather than the component instance, so it survives a remount) and,
   as a second example, `generateIdempotencyKey()`, which is now **exported** from
   the package, because a documented alternative has to be reachable.
+- **`composeTipIdempotencyKey` is exported from `TipButton`**, so the
+  React-version dimension is testable at all. While the composition was inline,
+  deleting the seed normalisation changed nothing any test could observe — the
+  suite pins one React, whose `useId()` already conforms, so it was structurally
+  blind to the dimension the bug lives on. Measured: that mutation SURVIVED a
+  fully green 37-test file. A pure function can be fed React 18's `":R0:"` and
+  early React 19's guillemet form without installing them, and the same mutation
+  now fails 3 tests.
 - **All three `idempotencyKey` JSDocs now state the constraint** — charset, the
   64 bound, no colons, and that the host 400s otherwise, with the right error
   envelope per path. `civitai-developer-docs` generates its public hook reference

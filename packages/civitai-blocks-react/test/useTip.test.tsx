@@ -152,7 +152,7 @@ describe('useTip', () => {
     await act(async () => {
       await result.current.tip({ toUserId: 123, amount: 50 }, { idempotencyKey: 'tip_key-xyz' });
     });
-    const sent = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    const sent = JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string);
     expect(sent.idempotencyKey).toBe('tip_key-xyz');
   });
 

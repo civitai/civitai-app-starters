@@ -7,7 +7,7 @@ import type { BlockInitPayload } from '@civitai/app-sdk/blocks';
 import { getTransport } from '../src/transport/singleton.js';
 import { resetTransport } from '../src/testing.js';
 import { resolveIdempotencyKey } from '../src/transport/transport.js';
-import { TipButton } from '../src/ui/TipButton.js';
+import { TipButton, composeTipIdempotencyKey } from '../src/ui/TipButton.js';
 
 const PARENT_ORIGIN = 'https://civitai.com';
 
@@ -50,6 +50,75 @@ function okBody(amount: number): Response {
     }),
   } as unknown as Response;
 }
+
+/**
+ * THE REACT-VERSION DIMENSION, which the rendered tests above CANNOT see.
+ *
+ * 🔴 WHY THIS BLOCK EXISTS, MEASURED. `useId()`'s format is version-dependent
+ * and this package's peer range admits `^18.0.0 || ^19.0.0`. The suite pins ONE
+ * React (19.2.6), whose `useId()` returns `_r_0_` — already inside the host
+ * charset. So while the key composition was inline, DELETING the seed
+ * normalisation altogether changed nothing any test could observe: it was run as
+ * a mutation and SURVIVED a fully green 37-test file. The suite was structurally
+ * blind to the dimension the bug lives on.
+ *
+ * A pure function can be fed the other versions' shapes without installing them,
+ * which is the difference between "passes on this machine" and "passes across
+ * the range we declare". These are the cases a consumer on React 18 hits.
+ */
+describe('composeTipIdempotencyKey', () => {
+  // The REAL `useId()` outputs, by React version. The first two are the ones
+  // that 400 on their own; the third is what this repo happens to run.
+  const SEEDS: ReadonlyArray<readonly [string, string]> = [
+    ['React 18.3.1', ':R0:'],
+    ['early React 19 (guillemets)', '\u00abr0\u00bb'],
+    ['React 19.2.6 (resolved here)', '_r_0_'],
+    // Defensive: a future format this file cannot predict. The point of
+    // normalising rather than asserting a known set.
+    ['hypothetical future format', '#r.0/x'],
+  ];
+
+  for (const [label, seed] of SEEDS) {
+    it(`produces a HOST-VALID key from a ${label} seed`, () => {
+      const key = composeTipIdempotencyKey(seed, 123, 50, 'Collection', 99);
+      expect(isValidBlockIdempotencyKey(key)).toBe(true);
+      // And the hook boundary agrees, so it would not be refused in flight.
+      expect(() => resolveIdempotencyKey('useTip.tip', key)).not.toThrow();
+    });
+  }
+
+  it('🔴 is INJECTIVE across every field of the tip identity, on every seed', () => {
+    // Injectivity is what the original colon delimiter was chosen for, so
+    // changing it to `_` must not have cost it.
+    const keys = new Set<string>();
+    const variants: ReadonlyArray<readonly [number, number, 'Image' | 'Collection' | 'User' | undefined, number | undefined]> = [
+      [123, 50, 'Collection', 99],
+      [124, 50, 'Collection', 99],
+      [123, 51, 'Collection', 99],
+      [123, 50, 'Image', 99],
+      [123, 50, 'Collection', 98],
+      [123, 50, undefined, 99],
+      [123, 50, 'Collection', undefined],
+    ];
+    for (const [to, amt, et, ei] of variants) {
+      keys.add(composeTipIdempotencyKey('_r_0_', to, amt, et, ei));
+    }
+    expect(keys.size).toBe(variants.length);
+  });
+
+  it('keeps DISTINCT SEEDS distinct — two buttons in one tree must not collide', () => {
+    const a = composeTipIdempotencyKey(':R0:', 123, 50, 'Collection', 99);
+    const b = composeTipIdempotencyKey(':R1:', 123, 50, 'Collection', 99);
+    expect(a).not.toBe(b);
+  });
+
+  it('stays inside the 64-char bound for realistic ids', () => {
+    // 9-digit user id, 7-digit amount, the longest entityType, 9-digit entity.
+    const key = composeTipIdempotencyKey('_r_1a2b_', 999999999, 9999999, 'Collection', 999999999);
+    expect(key.length).toBeLessThanOrEqual(64);
+    expect(isValidBlockIdempotencyKey(key)).toBe(true);
+  });
+});
 
 describe('TipButton', () => {
   let fetchMock: ReturnType<typeof vi.fn>;

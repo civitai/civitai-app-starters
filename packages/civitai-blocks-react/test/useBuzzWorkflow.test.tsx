@@ -1077,7 +1077,7 @@ describe('useBuzzWorkflow', () => {
     act(() => {
       p = result.current.submit(body, { idempotencyKey: 'sheet_42-panel_7-a1b2c3' });
     });
-    const sent = postMessageMock.mock.calls[0][0] as {
+    const sent = postMessageMock.mock.calls[0]![0] as {
       payload: { requestId: string; idempotencyKey?: unknown };
     };
     expect(sent.payload.idempotencyKey).toBe('sheet_42-panel_7-a1b2c3');
