@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 
 import { hostToRunUrl } from '../transport/directLoad.js';
 import { useDirectLoad } from '../hooks/useDirectLoad.js';
@@ -7,45 +7,32 @@ import { Stack } from './Stack.js';
 import { useBlocksStyles } from './styles.js';
 
 /**
- * Read the OS/browser color-scheme preference, live.
+ * The theme the PAGE is already painted in — never the OS preference.
  *
- * A directly-loaded block has NO `BLOCK_INIT`, so there is no host `theme` to
- * set `data-theme` from (the usual gotcha-#60 path). We fall back to
- * `prefers-color-scheme` so the fallback card still themes correctly in light
- * AND dark. Guarded for SSR / engines without `matchMedia`.
+ * A directly-loaded block has no host: no `BLOCK_INIT`, no `THEME_CHANGE`. The
+ * only theme signal that can reach this card is the one the document itself
+ * booted with — `data-theme` on `<html>`, which the scaffolded `index.html`
+ * sets pre-paint from the host fragment (`#civitai-block=v1&theme=…`). So the
+ * card follows the page instead of second-guessing it, and a block with no
+ * fragment boots dark like every other Civitai surface.
+ *
+ * `'light'` is the ONLY value that buys light — exactly the rule the pre-paint
+ * script applies. Absent, empty, `'auto'`, a typo, or no DOM at all (SSR) are
+ * all dark.
+ *
+ * Reading `prefers-color-scheme` here was the defect: on a light-OS machine it
+ * painted a LIGHT card on a deliberately DARK page.
+ *
+ * Setting the attribute explicitly, rather than inheriting it, is load-bearing.
+ * `@civitai/theme` ships
+ * `@media (prefers-color-scheme: dark) { :root:not([data-theme]) { … } }`, so a
+ * document carrying no `data-theme` hands its tokens straight back to the OS.
+ * An explicit `data-theme` on this wrapper is what makes the card deterministic
+ * in a page that never set one.
  */
-function usePrefersColorScheme(): 'light' | 'dark' {
-  const [dark, setDark] = useState<boolean>(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
-    try {
-      return window.matchMedia('(prefers-color-scheme: dark)').matches;
-    } catch {
-      return false;
-    }
-  });
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
-    let mql: MediaQueryList;
-    try {
-      mql = window.matchMedia('(prefers-color-scheme: dark)');
-    } catch {
-      return;
-    }
-    const onChange = (e: MediaQueryListEvent) => setDark(e.matches);
-    // Modern browsers: addEventListener. Older Safari: addListener.
-    if (typeof mql.addEventListener === 'function') {
-      mql.addEventListener('change', onChange);
-      return () => mql.removeEventListener('change', onChange);
-    }
-    if (typeof mql.addListener === 'function') {
-      mql.addListener(onChange);
-      return () => mql.removeListener(onChange);
-    }
-    return;
-  }, []);
-
-  return dark ? 'dark' : 'light';
+function readDocumentTheme(): 'light' | 'dark' {
+  if (typeof document === 'undefined') return 'dark';
+  return document.documentElement?.dataset?.theme === 'light' ? 'light' : 'dark';
 }
 
 /**
@@ -109,15 +96,16 @@ const bodyStyle: React.CSSProperties = {
  *    "waiting for the Civitai host" card with a dev hint — NEVER a broken
  *    `apps/run/localhost` link.
  *
- * Theme-aware via `prefers-color-scheme` (there is no host `theme` on a direct
- * load) and styled with the `/ui` pack's tokens.
+ * Themed from the PAGE — `data-theme` on `<html>`, dark when absent — never
+ * from the OS preference (see {@link readDocumentTheme}), and styled with the
+ * `/ui` pack's tokens.
  */
 export function DirectLoadFallback({
   hostname,
   autoRedirectMs,
 }: DirectLoadFallbackProps): React.JSX.Element {
   useBlocksStyles();
-  const theme = usePrefersColorScheme();
+  const theme = readDocumentTheme();
   const resolvedHost =
     hostname ?? (typeof window !== 'undefined' ? window.location?.hostname : undefined);
   const runUrl = hostToRunUrl(resolvedHost);
