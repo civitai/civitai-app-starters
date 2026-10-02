@@ -6,6 +6,23 @@ import { getTransport } from '../src/transport/singleton.js';
 import { createMockHost, resetTransport } from '../src/testing.js';
 
 /**
+ * The storage scopes these suites exercise.
+ *
+ * `createMockHost` gates `APP_STORAGE_*` / `SHARED_*` on the scopes a manifest
+ * DECLARES, defaulting to none — the dev host used to serve storage
+ * unconditionally, which is why an app that forgot these passed its whole suite
+ * and then failed every save in production. A storage-mechanics test declares
+ * them explicitly; there is deliberately no permissive flag to reach for.
+ */
+const STORAGE_SCOPES = [
+  'apps:storage:read',
+  'apps:storage:write',
+  'apps:storage:shared:read',
+  'apps:storage:shared:write',
+];
+
+
+/**
  * Coverage for the SHARED-storage mock backend in `createMockHost` (the
  * in-memory, app-scoped, votable store answering the `SHARED_*` protocol).
  * Exercised against the REAL `useSharedStorage` hook + transport, mirroring the
@@ -33,7 +50,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   }
 
   it('append() assigns a key; list() returns entries newest-first', async () => {
-    host = createMockHost({ shared: {} });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, shared: {} });
     uninstall = host.install();
     const { result } = renderHook(() => useSharedStorage());
     await ready();
@@ -56,7 +73,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('append() echoes the opaque `data` payload back through list()', async () => {
-    host = createMockHost({ shared: {} });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, shared: {} });
     uninstall = host.install();
     const { result } = renderHook(() => useSharedStorage());
     await ready();
@@ -74,7 +91,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('seed populates the store (newest-first) with author + votes', async () => {
-    host = createMockHost({
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES,
       shared: {
         seed: [
           { value: { title: 'oldest' }, authorUserId: 11, voters: [11, 12] },
@@ -94,7 +111,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('vote() is one-per-user (idempotent); unvote() removes it', async () => {
-    host = createMockHost({ shared: {} });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, shared: {} });
     uninstall = host.install();
     const { result } = renderHook(() => useSharedStorage());
     await ready();
@@ -115,7 +132,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('getCounts() returns a map, 0 for unknown keys', async () => {
-    host = createMockHost({ shared: {} });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, shared: {} });
     uninstall = host.install();
     const { result } = renderHook(() => useSharedStorage());
     await ready();
@@ -131,7 +148,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('withdraw() removes the entry; a second withdraw reports deleted:false', async () => {
-    host = createMockHost({ shared: {} });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, shared: {} });
     uninstall = host.install();
     const { result } = renderHook(() => useSharedStorage());
     await ready();
@@ -146,7 +163,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('update() edits the author\'s own entry in place, preserving key + votes', async () => {
-    host = createMockHost({ shared: {} });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, shared: {} });
     uninstall = host.install();
     const { result } = renderHook(() => useSharedStorage());
     await ready();
@@ -166,7 +183,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('update() on a missing key rejects with NOT_FOUND', async () => {
-    host = createMockHost({ shared: {} });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, shared: {} });
     uninstall = host.install();
     const { result } = renderHook(() => useSharedStorage());
     await ready();
@@ -177,7 +194,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
 
   it('update() on another author\'s entry rejects with FORBIDDEN', async () => {
     // Seed an entry owned by a DIFFERENT user (the mock viewer is id 2).
-    host = createMockHost({
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES,
       shared: { seed: [{ value: { title: 'not mine' }, authorUserId: 999 }] },
     });
     uninstall = host.install();
@@ -196,7 +213,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('update() rejects an empty title with INVALID_VALUE', async () => {
-    host = createMockHost({ shared: {} });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, shared: {} });
     uninstall = host.install();
     const { result } = renderHook(() => useSharedStorage());
     await ready();
@@ -205,7 +222,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('shared.failNext also forces update() to error then recovers', async () => {
-    host = createMockHost({ shared: {} });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, shared: {} });
     uninstall = host.install();
     const { result } = renderHook(() => useSharedStorage());
     await ready();
@@ -220,7 +237,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('vote() on a missing key rejects with NOT_FOUND', async () => {
-    host = createMockHost({ shared: {} });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, shared: {} });
     uninstall = host.install();
     const { result } = renderHook(() => useSharedStorage());
     await ready();
@@ -228,7 +245,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('shared.failNext forces N mutations to error then recovers', async () => {
-    host = createMockHost({ shared: { failNext: 1 } });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, shared: { failNext: 1 } });
     uninstall = host.install();
     const { result } = renderHook(() => useSharedStorage());
     await ready();
@@ -241,7 +258,7 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
   });
 
   it('list() paginates with a cursor (newest-first)', async () => {
-    host = createMockHost({
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES,
       shared: {
         seed: [
           { value: { title: 't1' } },

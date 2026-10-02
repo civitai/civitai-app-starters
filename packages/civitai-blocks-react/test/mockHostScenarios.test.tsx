@@ -23,6 +23,23 @@ import { createMockHost, resetTransport, readMockHostUrlOptions } from '../src/t
 import { disallowedAccountError } from '../src/internal/mockHost.js';
 
 /**
+ * The storage scopes these suites exercise.
+ *
+ * `createMockHost` gates `APP_STORAGE_*` / `SHARED_*` on the scopes a manifest
+ * DECLARES, defaulting to none — the dev host used to serve storage
+ * unconditionally, which is why an app that forgot these passed its whole suite
+ * and then failed every save in production. A storage-mechanics test declares
+ * them explicitly; there is deliberately no permissive flag to reach for.
+ */
+const STORAGE_SCOPES = [
+  'apps:storage:read',
+  'apps:storage:write',
+  'apps:storage:shared:read',
+  'apps:storage:shared:write',
+];
+
+
+/**
  * Layer-1 scenario coverage for `createMockHost`: the `generation` / `buzz` /
  * `storage` groups + the runtime `setScenario` / `buzz` handle. Exercised
  * against the REAL SDK hooks + transport (mirrors mockHost.test.tsx).
@@ -709,7 +726,7 @@ describe('createMockHost — storage scenario (in-memory KV)', () => {
   }
 
   it('seed is readable via get(); list() enumerates seeded keys', async () => {
-    host = createMockHost({ storage: { seed: { 'prompt:1': 'hello', 'prompt:2': 'world' } } });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, storage: { seed: { 'prompt:1': 'hello', 'prompt:2': 'world' } } });
     uninstall = host.install();
     const { result } = renderHook(() => useAppStorage());
     await ready();
@@ -723,7 +740,7 @@ describe('createMockHost — storage scenario (in-memory KV)', () => {
   });
 
   it('set→get→delete round-trips', async () => {
-    host = createMockHost({ storage: {} });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, storage: {} });
     uninstall = host.install();
     const { result } = renderHook(() => useAppStorage());
     await ready();
@@ -756,7 +773,10 @@ describe('createMockHost — storage scenario (in-memory KV)', () => {
     uninstall?.();
     resetTransport();
     getTransport({ allowedParentOrigins: [ORIGIN] });
-    host = createMockHost({ storage });
+    // The storage scopes are declared so the SCOPE gate cannot be what refuses —
+    // this helper exists to measure which CEILING fired, and an undeclared scope
+    // would answer first and make every ceiling read the same.
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, storage });
     uninstall = host.install();
     const { result } = renderHook(() => useAppStorage());
     await ready();
@@ -859,7 +879,7 @@ describe('createMockHost — storage scenario (in-memory KV)', () => {
   });
 
   it('per-value cap rejects an oversized value with the host per-value message', async () => {
-    host = createMockHost({ storage: { valueCapBytes: 16 } });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, storage: { valueCapBytes: 16 } });
     uninstall = host.install();
     const { result } = renderHook(() => useAppStorage());
     await ready();
@@ -869,7 +889,7 @@ describe('createMockHost — storage scenario (in-memory KV)', () => {
   });
 
   it('quotaBytes rejects a write that would cross the quota', async () => {
-    host = createMockHost({ storage: { quotaBytes: 50 } });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, storage: { quotaBytes: 50 } });
     uninstall = host.install();
     const { result } = renderHook(() => useAppStorage());
     await ready();
@@ -893,7 +913,7 @@ describe('createMockHost — storage scenario (in-memory KV)', () => {
    * DEFAULT value is pinned separately, by the guard suite.
    */
   it('limitRows rejects an INSERT past the row ceiling', async () => {
-    host = createMockHost({ storage: { limitRows: 2 } });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, storage: { limitRows: 2 } });
     uninstall = host.install();
     const { result } = renderHook(() => useAppStorage());
     await ready();
@@ -920,7 +940,7 @@ describe('createMockHost — storage scenario (in-memory KV)', () => {
    * cap. The host's gate is `isInsert`-guarded for exactly this reason.
    */
   it('at the row ceiling, an OVERWRITE still succeeds', async () => {
-    host = createMockHost({ storage: { limitRows: 1 } });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, storage: { limitRows: 1 } });
     uninstall = host.install();
     const { result } = renderHook(() => useAppStorage());
     await ready();
@@ -939,7 +959,7 @@ describe('createMockHost — storage scenario (in-memory KV)', () => {
    * reason the 1000x row gap mattered at all.
    */
   it('the DEFAULT ceilings are the SDK constants — no generous local fiction', async () => {
-    host = createMockHost({ storage: {} });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, storage: {} });
     uninstall = host.install();
     const { result } = renderHook(() => useAppStorage());
     await ready();
@@ -949,7 +969,7 @@ describe('createMockHost — storage scenario (in-memory KV)', () => {
   });
 
   it('getQuota reports used/row counts + the configured ceilings', async () => {
-    host = createMockHost({
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES,
       storage: { seed: { a: '1', b: '2' }, quotaBytes: 1024, limitRows: 10 },
     });
     uninstall = host.install();
@@ -963,7 +983,7 @@ describe('createMockHost — storage scenario (in-memory KV)', () => {
   });
 
   it('storage.failNext forces N mutations to error then recovers', async () => {
-    host = createMockHost({ storage: { failNext: 1 } });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, storage: { failNext: 1 } });
     uninstall = host.install();
     const { result } = renderHook(() => useAppStorage());
     await ready();
@@ -979,7 +999,7 @@ describe('createMockHost — storage scenario (in-memory KV)', () => {
   });
 
   it('list() paginates with a cursor', async () => {
-    host = createMockHost({ storage: { seed: { k1: '1', k2: '2', k3: '3' } } });
+    host = createMockHost({ declaredScopes: STORAGE_SCOPES, storage: { seed: { k1: '1', k2: '2', k3: '3' } } });
     uninstall = host.install();
     const { result } = renderHook(() => useAppStorage());
     await ready();
@@ -1074,7 +1094,7 @@ describe('createMockHost — purity (no network)', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch' as never).mockImplementation(() => {
       throw new Error('mock host must not call fetch');
     });
-    const host = createMockHost({
+    const host = createMockHost({ declaredScopes: STORAGE_SCOPES,
       buzz: { balance: 100 },
       generation: { costPerGen: 5, latencyMs: 0 },
       storage: { seed: { a: '1' } },
