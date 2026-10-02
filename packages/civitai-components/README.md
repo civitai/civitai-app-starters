@@ -515,8 +515,9 @@ elements do.
 
 Spacing is a scale of its own — `--civitai-space-0` through `-6` — because
 Mantine expresses spacing per component rather than as a ramp, so
-`@civitai/theme` has nothing to derive it from. Override the custom properties
-to retune every utility at once. Colour utilities name tokens rather than
+`@civitai/theme` has nothing to derive it from. Redeclare the custom properties
+to retune every utility at once — **on a scope, not `:root`** (same trap as a
+colour override; see *Cascade* below). Colour utilities name tokens rather than
 shades, so `ci-muted` follows the theme into dark mode instead of pinning a
 grey. The grid is CSS Grid: `ci-row` is twelve columns, `ci-col-4` spans four,
 and `ci-md-col-6` does it from the `md` breakpoint up.
@@ -599,8 +600,15 @@ here so they're readable on the npm package page.
 **Theming** — set `data-theme="light"` or `data-theme="dark"` on any ancestor
 (typically `<html>` or the block root); tokens re-resolve from that scope
 (default = **dark**, and never the OS preference — see MARKUP.md). **Cascade** — every rule lives in `@layer civitai.components`,
-so your own unlayered CSS always wins with no `!important`; override a token
-locally by redeclaring it (`style="--civitai-color-primary: #a259ff"`).
+so your own unlayered CSS always wins with no `!important`. 🔴 **That holds for
+this package's rules but NOT for the tokens**: `@civitai/theme`'s sheet is
+unlayered, so an app's `:root { --civitai-color-…: }` ties with it and
+stylesheet order decides — and the order `useBlocksStyles()` produces is the one
+where your override silently loses. **Scope it instead** —
+`style="--civitai-color-primary: #a259ff"` on any ancestor, or a class on your
+block root; both win in either order, and reach inside component shadow roots.
+Full matrix and the reasoning: [`MARKUP.md`](./MARKUP.md) → *Cascade /
+overriding*.
 
 ### Text — `data-civitai-ui="text"`
 Headings, paragraphs and inline copy. The one component that prescribes no

@@ -108,6 +108,37 @@ mirror of the light palette and is the only thing that puts light back;
 override and it wins wherever it sits, because a nearer ancestor's tokens inherit
 over a farther one's.
 
+### Recolouring a token (brand overrides)
+
+🔴 **Put a token override on a SCOPE, never on `:root`.** This sheet carries no
+cascade layer, and its `:root` / `[data-theme='…']` blocks sit at specificity
+`0-1-0` — so a consumer's `:root { --civitai-color-primary: … }` does not
+outrank them, it **ties**, and the last stylesheet in the document wins.
+
+```css
+.my-block { --civitai-color-primary: #a259ff; }   /* ✅ wins in either order */
+:root     { --civitai-color-primary: #a259ff; }   /* ⚠️ wins only if this sheet loaded FIRST */
+:root:root{ --civitai-color-primary: #a259ff; }   /* ✅ escape hatch for a document-wide rebrand */
+```
+
+The same goes for an inline `style="--civitai-color-primary: …"`, and a scoped
+value reaches **inside** component shadow roots, because custom properties cross
+the boundary.
+
+⚠️ **The `:root` form fails silently in the order the framework produces.**
+`@civitai/blocks-react`'s `useBlocksStyles()` calls `injectTokens()` from a
+`useEffect`, so these tokens are appended **after** a bundler-injected app
+stylesheet. Measured in Chromium: a `:root` override in that order resolves to
+this theme's own value with no error — with or without `data-theme` present, so
+the theme attribute is not the cause. The full order × route matrix is pinned in
+`@civitai/components`' `test/token-override-order.browser.test.ts`.
+
+**What you cannot do:** define a theme of your own. This package exports token
+*values* and `injectTokens(doc?)`; the generator is internal, and only the
+literal strings `light` and `dark` select a token block — `data-theme="mybrand"`
+selects none and inherits the dark base. Recolour the token set; there is no
+named-theme API.
+
 There is deliberately **no** `@media (prefers-color-scheme: …)` block, in either
 direction. The browser must not decide a Civitai surface's theme: civitai.com is
 dark, and an App Block boots dark and takes light only from its host. ⚠️ Until
