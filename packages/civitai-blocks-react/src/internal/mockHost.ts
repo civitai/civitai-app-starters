@@ -747,13 +747,21 @@ export interface MockHostOptions {
    * every app that did not opt in, i.e. precisely the apps that did not know the
    * scopes existed.
    *
-   * Pass what your manifest declares — ideally by importing it, so the two
-   * cannot drift:
+   * Pass what your manifest declares — ideally by importing your own
+   * `block.manifest.json` as `manifest`, so the two cannot drift:
    *
    * ```ts
-   * import manifest from '../block.manifest.json';
    * createMockHost({ declaredScopes: manifest.scopes });
    * ```
+   *
+   * ⚠️ The `import` line is described rather than shown ON PURPOSE, and please
+   * do not helpfully add it back. `tests/guards/blocks-react-entry-directory-names.test.mjs`
+   * extracts import specifiers with a raw regex over the whole file —
+   * `/\bfrom\s*['"]([^'"]+)['"]/g`, comments included — so a `from '…'` inside a
+   * doc comment is read as a real edge and resolved against THIS file's
+   * directory. A relative path to a consumer's manifest does not exist from
+   * here, and the guard fails with `unresolvable specifier`. Measured: it went
+   * red on all five `Starter (…)` matrix legs.
    *
    * A test that only exercises storage mechanics (quota, caps, row limits) and
    * does not care about authorization should declare the storage scopes
