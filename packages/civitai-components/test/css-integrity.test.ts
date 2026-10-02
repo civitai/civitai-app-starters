@@ -71,37 +71,46 @@ describe('components CSS integrity', () => {
 });
 
 /*
- * 🔴 NO OS COLOUR-SCHEME PREFERENCE, ANYWHERE THIS PACKAGE AUTHORS CSS.
+ * 🔴 NO OS COLOUR-SCHEME PREFERENCE IN THIS PACKAGE'S CSS — an INVARIANT
+ * GUARD, not regression coverage. There are zero occurrences in `src/` today,
+ * so it has never caught anything and nothing it forbids has ever shipped here;
+ * it exists to keep it that way now that the dark-OS browser project which used
+ * to watch this surface is gone. Do not count it as a regression test.
  *
- * This replaces the dedicated `prefers-dark` vitest project, retired in the
- * same change. That project launched a SECOND Chromium context under
- * `contextOptions: { colorScheme: 'dark' }` to run five assertions, and after
- * the dark-base flip (`@civitai/theme@0.5.0`) every one of them passed
- * identically with and without the change it was aimed at: a dark-OS context
- * cannot tell "dark base" from "light base plus an OS-dark override", because
- * both answer dark. Its own header said so.
+ * It replaces that project. `vitest.config.ts` carries the argument for the
+ * retirement — read it THERE, not here: this comment deliberately does not
+ * restate it, because the same argument living in three files is how three
+ * copies drift apart.
  *
- * What it was left guarding is the one hazard a dark-OS browser could still see
- * and `@civitai/theme`'s guard could not: a `prefers-color-scheme` at-rule
- * authored HERE, in component CSS, rather than in the token sheet. Pinning that
- * at source is strictly stronger — it fails on the at-rule EXISTING, not on one
- * rendered consequence of it, and the absence of an at-rule cannot be observed
- * from a computed value at all — over a far wider surface than one sheet in one
- * engine. The mirror-image claim for the TOKEN sheet is pinned the same way, in
- * `@civitai/theme`'s `test/generation-parity.test.ts`.
+ * Pinned at SOURCE because the absence of an at-rule cannot be observed from a
+ * computed value, which is the same reason `@civitai/theme` pins its half as
+ * text in `test/generation-parity.test.ts`. The corpus is wider than the
+ * retired project's reach: the authored sheet, both committed generated sheets,
+ * and every element's shadow-DOM `css` template.
  *
- * ⚠️ SCOPE, stated so this is not read wider than it is: it reads authored
- * text. A `prefers-color-scheme` inside a third-party sheet a consumer loads is
- * outside it, and so is a JS `matchMedia` branch — there are none of either in
- * this package today, and neither was in the retired project's reach either.
+ * ⚠️ SCOPE, stated so this is not read wider than it is — it reads authored
+ * text under `src/` plus the two generated root sheets. Outside it: a
+ * `prefers-color-scheme` in a third-party sheet a consumer loads, and any JS
+ * `matchMedia` branch. ⚠️ `playground/main.ts` HAS such a branch — an earlier
+ * version of this comment claimed "there are none of either in this package",
+ * which was false; the true claim is `src/`-scoped. That file is a local dev
+ * page, is not published, and is deliberately not in the corpus. Neither case
+ * was in the retired project's reach either.
  */
 describe('no OS colour-scheme preference in the component CSS', () => {
   /*
    * Every surface this package authors or ships CSS in: the source sheet, both
    * committed generated sheets, and every element's shadow-DOM `css` template.
-   * `dist/` is deliberately absent — it is a copy of `src/components.css`,
-   * asserted byte-identical above — which keeps this guard independent of
-   * whether a build has run.
+   * `dist/` is deliberately absent because it is a COPY of `src/components.css`
+   * — asserted byte-identical two tests above — so scanning it would add a
+   * second reading of the same bytes, not a second surface.
+   *
+   * 🔴 THAT IS NOT INDEPENDENCE FROM THE BUILD, and an earlier version of this
+   * comment claimed it was. This module reads `dist/components.css` at the top
+   * level (line 22), so it cannot even IMPORT without a build — measured by
+   * removing that file: `Error: ENOENT` and `Tests no tests`, which reads as a
+   * skipped tier rather than a failure. Nothing here buys build-independence;
+   * excluding `dist/` only avoids double-counting.
    */
   const corpus = [
     'src/components.css',
@@ -117,11 +126,16 @@ describe('no OS colour-scheme preference in the component CSS', () => {
   it('reads a corpus big enough to be the real one', () => {
     // POSITIVE CONTROL on the CORPUS. The verdict below is a zero, and a zero
     // is only evidence if something was read: a glob that resolves to nothing,
-    // or to one stub file, reports a perfectly clean sweep. Both floors sit
-    // well under the live figures (103 files, ~277 kB when written), so adding
-    // or removing components cannot trip them.
+    // or to one stub file, reports a perfectly clean sweep. The floor sits well
+    // under the live figure (103 files when written), so adding or removing
+    // components cannot trip it.
+    //
+    // There was a second floor here, on the corpus's total BYTES. Deleted
+    // rather than kept: no mutation was found that it kills and this line does
+    // not — the one that drops the corpus to the 3 CSS files trips both — so it
+    // read as a second control while asserting nothing extra. Re-add it only
+    // with a mutant only it catches.
     expect(corpus.length).toBeGreaterThan(60);
-    expect(corpus.reduce((n, { text }) => n + text.length, 0)).toBeGreaterThan(150_000);
   });
 
   it('can see the thing it forbids', () => {
