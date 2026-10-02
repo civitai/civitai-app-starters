@@ -88,20 +88,23 @@ describe('components CSS integrity', () => {
  * retired project's reach: the authored sheet, both committed generated sheets,
  * and every element's shadow-DOM `css` template.
  *
- * ⚠️ SCOPE, stated so this is not read wider than it is. It reads CODE —
- * comments stripped — under `src/`, plus the two generated root sheets. So it
- * catches a `prefers-color-scheme` wherever it is REACHABLE from this package:
- * a CSS at-rule, and equally a JS `matchMedia('(prefers-color-scheme: …)')`,
- * since both are code under `src/`.
+ * SCOPE — exactly this, and the statement is positive rather than a chain of
+ * corrections: it reads CODE (comments stripped) under `src/`, plus the two
+ * generated root sheets. Within that it catches a `prefers-color-scheme` in any
+ * form — a CSS at-rule, and equally a JS `matchMedia('(prefers-color-scheme:
+ * …)')`. Outside it: third-party sheets a consumer loads, anything beyond
+ * `src/` and those two sheets, and prose. `playground/main.ts` has a
+ * `matchMedia` branch and is deliberately out — a local dev page, never
+ * published.
  *
- * ⚠️ Two earlier versions of this sentence were wrong in opposite directions,
- * so it is worth stating what is actually outside: a `prefers-color-scheme` in
- * a THIRD-PARTY sheet a consumer loads, anything outside `src/` and the two
- * named sheets, and prose. `playground/main.ts` HAS a `matchMedia` branch and
- * is deliberately not in the corpus — a local dev page, never published. (The
- * first version claimed "none of either in this package", which was false; the
- * second claimed a JS `matchMedia` branch was out of scope, which stopped being
- * true once the corpus widened to all of `src/`.)
+ * ⚠️ RETRACTED WORDINGS OF THE PARAGRAPH ABOVE, listed so a fourth is not
+ * derived. Three rounds each produced one, which is why this is now a list
+ * rather than another nested aside:
+ *   1. "there are none of either in this package" — false; `playground/` has one.
+ *   2. "a JS `matchMedia` branch is outside it" — stopped being true when the
+ *      corpus widened from `src/elements/` to all of `src/`.
+ *   3. "wherever it is REACHABLE from this package" — wider than the corpus
+ *      (`dist/`, `demo/`, `test/` and `playground/` are all reachable).
  */
 describe('no OS colour-scheme preference in the component CSS', () => {
   /*
@@ -117,17 +120,25 @@ describe('no OS colour-scheme preference in the component CSS', () => {
    * when someone adds a directory; a hand-written list of directories can, and
    * did.
    *
-   * `dist/` is deliberately absent — but ⚠️ NOT for the reason an earlier
-   * version of this comment gave ("scanning it would add a second reading of
-   * the same bytes"). That rule does not describe this code: the walk already
-   * reads `src/styles.generated.ts` and 15 `src/css/*.generated.ts` slices,
-   * every one of them a byte-embedding of the same sheet, so an at-rule planted
-   * in `src/components.css` reports SEVENTEEN offenders. The honest reason is
-   * narrower: `dist/` is a BUILD OUTPUT, and a guard over committed sources is
-   * one a reader can reason about without knowing whether a build has run.
-   * A reader applying the old rule would strip `*.generated.ts` from the walk
-   * believing they were tidying — which is this round's own defect class
-   * inverted, so it is recorded rather than quietly reworded.
+   * `dist/` is deliberately absent, and the reason is simply that it is a BUILD
+   * OUTPUT: a guard over committed sources is one a reader can reason about
+   * without knowing whether a build has run.
+   *
+   * ⚠️ TWO EARLIER VERSIONS OF THIS PARAGRAPH GAVE REASONS THAT DO NOT DESCRIBE
+   * THE CODE, so they are recorded rather than quietly reworded — a reader who
+   * tests a stated reason and finds it false strips `*.generated.ts` from the
+   * walk believing the whole note is wrong.
+   *   (1) "scanning `dist/` would add a second reading of the same bytes" — the
+   *       walk already re-reads this sheet's content many times over, via
+   *       `src/styles.generated.ts` and the 15 `src/css/*.generated.ts` slices.
+   *   (2) "every one of them a byte-embedding of the same sheet, so an at-rule
+   *       in `src/components.css` reports SEVENTEEN offenders" — only
+   *       `styles.generated.ts` embeds the whole sheet (41 kB against the
+   *       sheet's 40 kB). Each slice is the shared base rule plus ONE component
+   *       section (2–9 kB; see `scripts/build-css.ts`, `sliceComponentsCss`).
+   *       So the offender count is POSITION-DEPENDENT: an at-rule in the shared
+   *       `[data-civitai-ui]` base rule reports 17, one inside a single
+   *       section reports 3.
    *
    * 🔴 THAT IS NOT INDEPENDENCE FROM THE BUILD, and an earlier version of this
    * comment claimed it was. This module reads `dist/components.css` at the top
@@ -167,8 +178,26 @@ describe('no OS colour-scheme preference in the component CSS', () => {
    * So what this guard means is precise: a `prefers-color-scheme` in CODE. Write
    * about the invariant freely.
    */
+  /*
+   * 🔴 ONE LEFT-TO-RIGHT PASS, NOT TWO — and this is the whole correctness of
+   * the helper. An earlier version stripped block comments in one pass and line
+   * comments in a second, so a `/*` appearing INSIDE a `//` comment opened a
+   * block the author never opened, and the file's next legitimate comment
+   * terminator closed it — deleting everything between from the guard's view,
+   * including a real at-rule.
+   *
+   * Measured before the fix: an `@media (prefers-color-scheme: dark)` in
+   * `src/sdk/civitai-workflow-button.ts` (a PUBLISHED export) with a line
+   * comment two lines above it containing a glob or a URL wildcard — `// … a/*`
+   * or ``// … `<scheme>://*.<suffix>` `` — passed 10/10. Both shapes exist
+   * verbatim in sibling packages today (7 such comments across 4 of them), so
+   * the authoring habit is live even though this package has none.
+   *
+   * A single alternation makes `//` consume its own line before any later `/*`
+   * can open, because the regex engine takes whichever branch matches first.
+   */
   const stripComments = (text: string): string =>
-    text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+    text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, ' ');
 
   const hits = (text: string): number =>
     (stripComments(text).match(/prefers-color-scheme/g) ?? []).length;
@@ -212,8 +241,11 @@ describe('no OS colour-scheme preference in the component CSS', () => {
     // There was a second floor here, on the corpus's total BYTES. Deleted
     // rather than kept: no mutation was found that it kills and this one does
     // not — and it is blind in the same direction, since the three CSS sheets
-    // are only ~28% of the bytes, so a floor set "well under" the live figure
-    // survives their removal too. The named-surface assertions above are what
+    // are only 18.1% of the live corpus's bytes (76,722 of 423,666 over 126
+    // files), so a floor set "well under" the live figure survives their
+    // removal comfortably. ⚠️ That figure read "~28%" for two rounds: 27.6% was
+    // measured over the ROUND-0 corpus of 103 files and never updated when the
+    // walk widened. The named-surface assertions above are what
     // actually close that. Re-add a byte floor only with a mutant only it
     // catches.
     expect(corpus.length).toBeGreaterThan(60);
@@ -227,14 +259,40 @@ describe('no OS colour-scheme preference in the component CSS', () => {
   });
 
   it('does NOT fire on prose that merely names it', () => {
-    // NEGATIVE CONTROL, paired with the one above: between them they pin
-    // `stripComments` in both directions, so neither "catches everything" nor
-    // "catches nothing" can pass. Both shapes are real — the block form is how
-    // this invariant is documented in two sibling packages today.
+    // NEGATIVE CONTROL half. Both shapes are real — the block form is how this
+    // invariant is documented in two sibling packages today.
     expect(hits('/* no @media (prefers-color-scheme: dark) block, deliberately */')).toBe(0);
     expect(hits('// never reach for prefers-color-scheme here')).toBe(0);
     // ...and a comment must not launder an adjacent real one on the same line.
     expect(hits('@media (prefers-color-scheme: dark) { } // and prefers-color-scheme')).toBe(1);
+  });
+
+  it('still fires on a real at-rule that FOLLOWS a comment', () => {
+    /*
+     * 🔴 THIS IS THE HALF THAT PINS "CATCHES NOTHING", AND WITHOUT IT AN INERT
+     * STRIPPER PASSES ALL 294 TESTS. Stripping is monotone — it can only ever
+     * reduce the hit count — and every corpus file is 0 today, so NO
+     * over-stripping mutant can go red on a clean tree. The three expectations
+     * above cannot see one either, because none of their inputs has code AFTER
+     * a comment. Measured: a line-comment strip made greedy to EOF, and a
+     * block-comment strip made greedy from the first opener to the last
+     * terminator, both survived the entire suite while deleting essentially
+     * every file from the guard's view.
+     *
+     * (Those two mutants are described rather than spelled, because writing a
+     * block-comment terminator inside a block comment ends it — which is how
+     * this very comment broke the file once. See the note on the `node` project
+     * in `vitest.config.ts` for the same hazard in the same package.)
+     *
+     * So these two inputs are the discriminator: real code positioned after a
+     * comment, in both comment shapes. The second is also F1's exact bug —
+     * a glob inside a line comment, then a real at-rule, then a later
+     * terminator.
+     */
+    expect(hits('/* note */\n@media (prefers-color-scheme: dark) { }')).toBe(1);
+    expect(
+      hits('// glob: a/*\n@media (prefers-color-scheme: dark) { }\n/* trailing */')
+    ).toBe(1);
   });
 
   it('declares none, in either direction, in any of them', () => {
