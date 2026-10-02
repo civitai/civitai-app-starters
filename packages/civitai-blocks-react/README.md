@@ -963,16 +963,20 @@ await shared.withdraw(key);                            // remove my own entry
 
 Drive the platform Checkpoint picker + persist a viewer override.
 
-🔴 **`baseModelGroup` is a FILTER — derive it, never hardcode it.** The host hides
-every checkpoint outside the family you pass, so a literal ecosystem pins every
-viewer to whichever family the author happened to test with. Read it from the
-checkpoint the block already holds. The parameter is currently **required** by
-this hook's type, and `''` is **not** an escape hatch — it does not even mean the
-same thing on both hosts. On a **model slot** the host normalises whatever string
-you send, so `''` resolves to the real ecosystem key `Other` and NARROWS to that
-one family. On a **page** the host drops a zero-length value, so `''` behaves
-exactly like omitting it. Neither is what you meant on at least one surface:
-pass a family derived from a real checkpoint, and never `''`.
+🔴 **OMIT `baseModelGroup` BY DEFAULT.** It is an ecosystem-family FILTER, not a
+label: the host HIDES every checkpoint outside the family you pass, so passing the
+family you are already in is a trap — the picker then offers only the ecosystem the
+user is trying to leave. Omit it for an unconstrained pick and the host applies no
+narrowing at all, offering every checkpoint the viewer can generate with. Pass it
+ONLY when the block must stay inside a family it already holds — a
+regenerate/variation flow, say — and then DERIVE it from that checkpoint, never a
+hardcoded ecosystem string: a literal pins every viewer to whichever family the
+author happened to test with. `''` is **not** an escape hatch — it does not even
+mean the same thing on both hosts. On a **model slot** the host normalises whatever
+string you send, so `''` resolves to the real ecosystem key `Other` and NARROWS to
+that one family. On a **page** the host drops a zero-length value, so `''` behaves
+exactly like omitting it. Neither is what you meant on at least one surface: omit
+the key, or pass a family derived from a real checkpoint, and never `''`.
 
 ```tsx
 import { isModelSlotContext } from '@civitai/app-sdk/blocks';
@@ -980,13 +984,27 @@ import { isModelSlotContext } from '@civitai/app-sdk/blocks';
 const { context } = useBlockContext();
 const { open, persist } = useCheckpointPicker();
 
-// Derive the family from the checkpoint the block already holds — never a literal.
+// DEFAULT — pass no baseModelGroup. The viewer can reach every family.
 if (isModelSlotContext(context) && context.checkpoint) {
-  const { selected } = await open({
-    baseModelGroup: context.checkpoint.baseModel,
-    currentVersionId: context.checkpoint.versionId,
-  });
+  const { selected } = await open({ currentVersionId: context.checkpoint.versionId });
   if (selected) await persist(selected.versionId);   // null clears the override
+}
+```
+
+Pass `baseModelGroup` **only** when the block must stay inside a family it already
+holds — a regenerate or variation flow pinned to one checkpoint's ecosystem — and
+then derive it from that checkpoint, never from a literal:
+
+```tsx
+import { isModelSlotContext } from '@civitai/app-sdk/blocks';
+
+const { context } = useBlockContext();
+const { open, persist } = useCheckpointPicker();
+
+// ONLY to stay inside the family the block already holds — derived, never a literal.
+if (isModelSlotContext(context) && context.checkpoint) {
+  const { selected } = await open({ baseModelGroup: context.checkpoint.baseModel });
+  if (selected) await persist(selected.versionId);
 }
 ```
 
