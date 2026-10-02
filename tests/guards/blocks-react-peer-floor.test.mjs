@@ -225,6 +225,34 @@ const PEER_VALUE_SYMBOL_SINCE = {
   isSignedIn: '0.47.0',
   parseBlockInitFragment: '0.31.0',
   stripBlockInitFragment: '0.31.0',
+  // 🔴 PREDICTIONS, NOT MEASUREMENTS — see
+  // `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH` below, which is non-empty for the
+  // first time since #371 precisely so this difference stays machine-readable.
+  // These three ship for the FIRST time in the app-sdk release this branch's
+  // changeset produces, so there is no tarball to read them off.
+  //
+  // What WAS measured, 2026-10-02, same instrument and recipe as the sweeps
+  // above (`npm pack @civitai/app-sdk@V`, untar, resolve `exports['./blocks']`
+  // out of that tarball's own package.json, `import()` it, read
+  // `Object.keys(mod)`): all three are ABSENT from the newest published version.
+  // Three versions probed — 0.49.0 (the OLD floor), 0.53.0 and 0.54.0, where
+  // 0.54.0 was `npm view @civitai/app-sdk version` on the day (56 published
+  // versions). Each reported 34 exports and none of the three symbols.
+  // Controls, run before the numbers were believed:
+  //   - POSITIVE: `BLOCK_SCOPES` read PRESENT on all three tarballs — the probe
+  //     can see this subpath's exports at all. Without it a uniform "absent"
+  //     is indistinguishable from a probe wired to nothing.
+  //   - NEGATIVE: an impossible symbol (`__NOPE_7f3a__`) read ABSENT on all
+  //     three — the probe can say "no", so ABSENT is not its only answer.
+  // So the run cannot start at or below 0.54.0, and the first version that can
+  // export them is the one this branch publishes.
+  //
+  // 🔴 RE-MEASURE AND RETIRE after the release publishes: empty
+  // `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH`, re-read these three off the real
+  // 0.55.0 tarball with 0.54.0 as the ABSENT control, and record both here.
+  BLOCK_IDEMPOTENCY_KEY_MAX_LENGTH: '0.55.0',
+  BLOCK_IDEMPOTENCY_KEY_REGEX: '0.55.0',
+  blockIdempotencyKeyRejection: '0.55.0',
 };
 
 /**
@@ -264,7 +292,24 @@ const PEER_VALUE_SYMBOL_SINCE = {
 // This list stays EMPTY unless a branch again ledgers a symbol against a version
 // it is itself about to publish; see the docblock above for what declaring one
 // buys you.
-const PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH = [];
+//
+// RE-POPULATED 2026-10-02 — the second real occasion. The idempotency-key format
+// rule is vendored into `@civitai/app-sdk/blocks` (new module
+// `src/blocks/idempotency.ts`) and value-imported by `blocks-react`'s transport,
+// so these three first exist in the app-sdk release THIS branch publishes. The
+// measurement that they are absent from every PUBLISHED version — including
+// 0.54.0, the newest — plus its positive and negative controls, is recorded at
+// the entries themselves in `PEER_VALUE_SYMBOL_SINCE`.
+//
+// `isValidBlockIdempotencyKey` is deliberately NOT listed: it ships in the same
+// module, but `blocks-react/src` does not value-import it (only tests do, and
+// those resolve the workspace copy), and the `DERIVED FLOOR` test below rejects
+// a ledger entry for a symbol the package does not import.
+const PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH = [
+  'BLOCK_IDEMPOTENCY_KEY_MAX_LENGTH',
+  'BLOCK_IDEMPOTENCY_KEY_REGEX',
+  'blockIdempotencyKeyRejection',
+];
 
 /**
  * The same ledger for SUBPATHS. A bare `import '@civitai/app-sdk/safe-storage'`

@@ -1,10 +1,12 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { isValidBlockIdempotencyKey } from '@civitai/app-sdk/blocks';
 import type { BlockInitPayload } from '@civitai/app-sdk/blocks';
 
 import { getTransport } from '../src/transport/singleton.js';
 import { resetTransport } from '../src/testing.js';
+import { resolveIdempotencyKey } from '../src/transport/transport.js';
 import { TipButton } from '../src/ui/TipButton.js';
 
 const PARENT_ORIGIN = 'https://civitai.com';
@@ -127,6 +129,80 @@ describe('TipButton', () => {
     });
     // Never a sender — the server self-binds it off the token.
     expect(body()).not.toHaveProperty('fromUserId');
+  });
+
+  /**
+   * 🔴 THE KEY THIS COMPONENT COMPOSES MUST CLEAR THE HOST'S RULE — and until
+   * 2026-10-02 it did not, which made `TipButton` a LIVE PRODUCTION DEFECT.
+   *
+   * It composed `${useId()}:${toUserId}:${amount}:${entityType}:${entityId}`.
+   * The host enforces `^[A-Za-z0-9_-]{1,64}$` on `idempotencyKey` at
+   * `/api/v1/blocks/tip`, so every tip this button posted was rejected with
+   * `invalid_format` / 400 — and the component ALWAYS supplies a key, so there
+   * was no unkeyed path that happened to work.
+   *
+   * Measured under this suite's React 19: `useId()` returns `_r_0_`, which
+   * clears the charset on its own; the composed `_r_0_:123:50:Image:99` does
+   * not. Under React 18 `useId()` is `:r0:`, so that arm carried colons from the
+   * seed as well. Both are inside the declared peer range.
+   *
+   * 🔴 IT ASSERTS THE STATE, NOT A SPELLING. The check is the vendored predicate
+   * applied to the key actually on the wire — not "the key contains no colon",
+   * which a future composition could walk past with a different bad character
+   * (a space, a dot, a `|`). The whole family is covered by one assertion, and
+   * the pre-existing tests in this file could not see any of it: they compare
+   * keys for equality and inequality across retries, never for FORMAT.
+   */
+  it('🔴 composes an idempotencyKey the HOST ACCEPTS (it did not until 2026-10-02)', async () => {
+    render(
+      <TipButton
+        noun="curator"
+        toUserId={123}
+        amount={50}
+        entityType="Collection"
+        entityId={99}
+        data-testid="tip"
+      />,
+    );
+    fireEvent.click(screen.getByTestId('tip'));
+    fireEvent.click(screen.getByTestId('tip-confirm'));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    const key = body().idempotencyKey as string;
+    expect(typeof key).toBe('string');
+    // The exact predicate the host's zod input uses, read from the vendored
+    // constant rather than re-spelled here.
+    expect(isValidBlockIdempotencyKey(key)).toBe(true);
+    // And the gate the hook now applies agrees — so this key survives the
+    // boundary check rather than merely looking plausible.
+    expect(() => resolveIdempotencyKey('useTip.tip', key)).not.toThrow();
+  });
+
+  it('🔴 keeps the composed key INJECTIVE across every field of the tip identity', async () => {
+    // The colon was originally chosen as a delimiter to keep this property, so
+    // changing it to `_` must not have cost it. Each render differs in exactly
+    // one field; all four keys must be distinct, and all four must be valid.
+    const variants = [
+      { toUserId: 123, amount: 50, entityType: 'Collection' as const, entityId: 99 },
+      { toUserId: 124, amount: 50, entityType: 'Collection' as const, entityId: 99 },
+      { toUserId: 123, amount: 51, entityType: 'Collection' as const, entityId: 99 },
+      { toUserId: 123, amount: 50, entityType: 'Image' as const, entityId: 99 },
+      { toUserId: 123, amount: 50, entityType: 'Collection' as const, entityId: 98 },
+    ];
+    const keys: string[] = [];
+    for (const v of variants) {
+      const { unmount } = render(<TipButton noun="curator" {...v} data-testid="tip" />);
+      fireEvent.click(screen.getByTestId('tip'));
+      fireEvent.click(screen.getByTestId('tip-confirm'));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      const key = body(fetchMock.mock.calls.length - 1).idempotencyKey as string;
+      keys.push(key);
+      expect(isValidBlockIdempotencyKey(key)).toBe(true);
+      unmount();
+    }
+    // Distinct identities ⇒ distinct keys. A delimiter that collided would show
+    // up here as a duplicate, which is the harm the colon was guarding against.
+    expect(new Set(keys).size).toBe(keys.length);
   });
 
   it('REUSES the idempotency key when a failed tip is retried', async () => {

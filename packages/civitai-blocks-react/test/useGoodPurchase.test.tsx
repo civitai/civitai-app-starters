@@ -5,6 +5,7 @@ import type { BlockInitPayload } from '@civitai/app-sdk/blocks';
 
 import { GoodPurchaseRefusal, useGoodPurchase } from '../src/hooks/useGoodPurchase.js';
 import { getTransport } from '../src/transport/singleton.js';
+import { InvalidIdempotencyKeyError } from '../src/transport/transport.js';
 import { resetTransport } from '../src/testing.js';
 
 const PARENT_ORIGIN = 'https://civitai.com';
@@ -117,6 +118,57 @@ describe('useGoodPurchase', () => {
     // a client-supplied user id on a money path is the FIN-1 class.
     expect(sent).not.toHaveProperty('buyerUserId');
     expect(sent).not.toHaveProperty('userId');
+  });
+
+  /**
+   * 🔴 THE SEAM. `/api/v1/blocks/goods/purchase` enforces the same
+   * `^[A-Za-z0-9_-]{1,64}$` as the submit and tip paths. The assertion that
+   * matters is that `fetch` is never called — a refusal that still POSTed would
+   * make the error's "nothing was spent" a false claim.
+   */
+  it('🔴 purchase() REFUSES a malformed caller key BEFORE the POST — fetch is never called', async () => {
+    const fetchMock = okFetch();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useGoodPurchase());
+    await expect(
+      result.current.purchase(
+        { goodId: 'extra-slots' },
+        { idempotencyKey: 'good:extra-slots:1' },
+      ),
+    ).rejects.toThrow(InvalidIdempotencyKeyError);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('🔴 that refusal is NOT a GoodPurchaseRefusal — a refusal means the SERVER declined', async () => {
+    const fetchMock = okFetch();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useGoodPurchase());
+    let caught: unknown;
+    try {
+      await result.current.purchase({ goodId: 'g' }, { idempotencyKey: 'a:b' });
+    } catch (err) {
+      caught = err;
+    }
+    // `GoodPurchaseRefusal` carries a server-authored `reason` and means the
+    // server considered and declined the purchase. Nothing was asked here, so
+    // reporting one would assert an exchange that never happened.
+    expect(caught).toBeInstanceOf(InvalidIdempotencyKeyError);
+    expect(caught).not.toBeInstanceOf(GoodPurchaseRefusal);
+  });
+
+  it('a VALID caller key still reaches the POST — reachable, not a blanket deny', async () => {
+    const fetchMock = okFetch();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useGoodPurchase());
+    await act(async () => {
+      await result.current.purchase({ goodId: 'extra-slots' }, { idempotencyKey: 'good_slots-1' });
+    });
+    const sent = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    expect(sent.idempotencyKey).toBe('good_slots-1');
   });
 
   it('rejects with a GoodPurchaseRefusal carrying the machine-readable reason', async () => {

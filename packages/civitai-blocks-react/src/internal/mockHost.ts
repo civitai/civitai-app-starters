@@ -86,6 +86,11 @@ import {
   storageScopeDeniedMessage,
   storageScopeDeniedPayload,
 } from './mockHostScopes.js';
+import {
+  governsIdempotencyKey,
+  idempotencyKeyDeniedMessage,
+  idempotencyKeyRefusal,
+} from './mockHostIdempotency.js';
 import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
 
@@ -1833,6 +1838,12 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // non-array exactly as the real host's gate does. Declaring it as
             // `BlockPostSource[]` here would assert the thing under test.
             sources?: unknown;
+            // SUBMIT_WORKFLOW. `unknown`, NOT `string`, for the same reason as
+            // `sources` above: the wire type says `string` but the gate's job is
+            // to refuse what a block ACTUALLY sent, and a `string` annotation
+            // here would assert the property under test — a block compiled
+            // against an older SDK, or plain JS, can put anything in this field.
+            idempotencyKey?: unknown;
           };
         };
 
@@ -1860,6 +1871,43 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             dispatchToBlock({
               type: storageResultType(typed.type),
               payload: storageScopeDeniedPayload(typed.type, requestId, error),
+            });
+            return;
+          }
+        }
+
+        // ---- THE IDEMPOTENCY-KEY FORMAT GATE — see ./mockHostIdempotency.ts ----
+        //
+        // The host's rule is a zod `.regex()` on the procedure INPUT, so it fires
+        // BEFORE the procedure body — ahead of every scenario, budget and balance
+        // decision below. That ordering is the point: a malformed key is refused
+        // even when the scenario, the balance and the spend cap would all have
+        // allowed the submit, because production refuses it then too.
+        //
+        // 🔴 IT SITS AHEAD OF THE SWITCH for the same reason the storage gate
+        // does: one rule covering every surface, so a future money message that
+        // gains an `idempotencyKey` is governed by joining the table rather than
+        // by someone remembering to copy a check into its handler.
+        {
+          const refusal = governsIdempotencyKey(typed.type)
+            ? idempotencyKeyRefusal(typed.payload)
+            : null;
+          if (refusal !== null) {
+            dispatchToBlock({
+              type: 'WORKFLOW_SUBMITTED',
+              payload: {
+                requestId,
+                // The host's `errorSnapshot()` shape exactly (liveHost.ts:298):
+                // the 'failed' sentinel id and NO `cost`, which is what makes
+                // `submit()` reject as `'exception'` rather than resolving a
+                // priced refusal. A tRPC input rejection reaches the block this
+                // way, not as a throw — the reply crosses postMessage.
+                snapshot: {
+                  workflowId: 'failed',
+                  status: 'failed',
+                  error: idempotencyKeyDeniedMessage(refusal),
+                },
+              },
             });
             return;
           }

@@ -199,8 +199,39 @@ export function TipButton({
    * on the first landed transfer for a given key, and a repeat under the SAME
    * key is that same transfer. Change either and rotate.
    */
-  const keySeed = useId();
-  const idempotencyKey = `${keySeed}:${toUserId}:${amount}:${entityType ?? '-'}:${entityId ?? '-'}`;
+  /**
+   * 🔴 THE DELIMITER IS `_`, AND A COLON HERE WAS A LIVE PRODUCTION DEFECT.
+   * This component used to compose the key with ':' separators. The host
+   * enforces `^[A-Za-z0-9_-]{1,64}$` on `idempotencyKey` at
+   * `/api/v1/blocks/tip`, so EVERY tip this button posted was rejected with
+   * `invalid_format` / 400 — and `TipButton` always supplies a key, so there was
+   * no unkeyed path that happened to work. Measured 2026-10-02 under React 19:
+   * `useId()` returns `_r_0_` (which clears the charset on its own), while the
+   * composed `_r_0_:123:50:Image:99` does not — so under the React resolved here
+   * the DELIMITERS were the whole fault. Reported separately and not measured by
+   * this change: React 18.3.1 returns `":R0:"` and early React 19 a
+   * guillemet-wrapped id, both of which fail the charset on their own. The peer
+   * range is `^18.0.0 || ^19.0.0`, so the seed must be normalised regardless of
+   * which arm a consumer is on.
+   *
+   * `_` is a safe delimiter and the composition stays INJECTIVE, which is the
+   * property the colon was chosen for: after the sanitisation below the seed
+   * cannot contain `_`-ambiguity it did not already have, `toUserId`/`amount`/
+   * `entityId` are numbers (digits only), and `entityType` is one of the three
+   * literals `'Image' | 'Collection' | 'User'` — none contains `_`. So distinct
+   * tip identities still produce distinct keys.
+   *
+   * 🔴 SANITISING THE SEED IS NOT SANITISING A CALLER'S KEY. The repo-wide rule
+   * is REFUSE-never-rewrite for a key the BLOCK supplies, because that key is an
+   * identity its author chose. This seed is the opposite: an opaque uniqueness
+   * token this component mints itself, whose only contract is "distinct per
+   * mount". Normalising characters React's own format may change between major
+   * versions is the correct handling for a value we own — and the result is
+   * still validated by `useTip`, which refuses it rather than fixing it if this
+   * composition is ever wrong again.
+   */
+  const keySeed = useId().replace(/[^A-Za-z0-9_-]/g, '_');
+  const idempotencyKey = `${keySeed}_${toUserId}_${amount}_${entityType ?? '-'}_${entityId ?? '-'}`;
 
   const settled = done || tipped;
   // Both guards are about a NUMBER reaching a money path, and both were once

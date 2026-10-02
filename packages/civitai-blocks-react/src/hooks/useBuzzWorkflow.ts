@@ -13,7 +13,7 @@ import { BLOCK_SCOPES } from '@civitai/app-sdk/blocks';
 
 import { withConsentRetry } from '../internal/withConsentRetry.js';
 import { getTransport } from '../transport/singleton.js';
-import { generateIdempotencyKey, sendTypedRequest } from '../transport/transport.js';
+import { resolveIdempotencyKey, sendTypedRequest } from '../transport/transport.js';
 import type { ConsentRetryOptions } from './consentRetryOptions.js';
 
 /**
@@ -632,6 +632,28 @@ export interface SubmitWorkflowOptions extends ConsentRetryOptions {
    * here — yours, or the one `submit()` mints — is the value BOTH of its
    * attempts carry. So an error you receive may already be a second attempt's;
    * if you then retry a third time by hand, reuse this key for that too.
+   *
+   * 🔴 **FORMAT: `^[A-Za-z0-9_-]{1,64}$` — letters, digits, `_` and `-` only, at
+   * most 64 characters, and NO COLONS.** The host rejects anything else before
+   * the procedure runs: `BAD_REQUEST` / **400** on `blocks.submitWorkflow`, with
+   * `{"code":"invalid_format","pattern":"/^[A-Za-z0-9_-]{1,64}$/","path":["idempotencyKey"]}`.
+   * So a composite key like `sheetId:panelId:nonce` fails every time — that is
+   * the exact value that broke a shipped app, with 201 local tests green. The
+   * colon is excluded deliberately, not cosmetically: the host composes its
+   * per-`(user, app, key)` dedupe key with `:` as the delimiter and relies on the
+   * key being colon-free for that to stay injective. The 64 bound is derived
+   * from the orchestrator's 128-char `externalId` ceiling, which the host builds
+   * by substringing this key.
+   *
+   * 🔴 A key that fails this is **REFUSED before anything is sent**, with
+   * `InvalidIdempotencyKeyError` — nothing was sent and nothing was spent, which
+   * is why it is NOT a {@link WorkflowSubmitError} (every code on that class is
+   * money-ambiguous by design). The key is never sanitised for you: rewriting an
+   * idempotency key would break the identity it exists to carry — two distinct
+   * logical submits could collapse onto one slot, or a retry could be normalised
+   * differently from its first attempt and mint a SECOND reservation. Validate
+   * with `isValidBlockIdempotencyKey` from `@civitai/app-sdk/blocks` if you
+   * compose keys dynamically.
    */
   idempotencyKey?: string;
 }
@@ -1071,7 +1093,18 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
       // them to ONE reservation. Move this line inside `submitOnce` and an
       // automatic retry double-reserves a real person's Buzz — the single
       // regression this feature exists to not have.
-      const idempotencyKey = options?.idempotencyKey ?? generateIdempotencyKey();
+      // 🔴 A CALLER-SUPPLIED KEY IS VALIDATED HERE, AND REFUSED — NOT SANITISED.
+      // The host rejects anything outside `^[A-Za-z0-9_-]{1,64}$` with a 400
+      // before `blocks.submitWorkflow` runs, so an unchecked key is a guaranteed
+      // production failure that no local test used to be able to see. Refusing
+      // before the send is also what makes the money claim unambiguous: see
+      // `InvalidIdempotencyKeyError` for why this cannot be a
+      // `WorkflowSubmitError` (that class's `'exception'` arm explicitly admits
+      // money may have moved; here nothing left the iframe).
+      const idempotencyKey = resolveIdempotencyKey(
+        'useBuzzWorkflow.submit',
+        options?.idempotencyKey,
+      );
       try {
         return await withConsentRetry(
           getTransport(),
