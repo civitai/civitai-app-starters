@@ -29,7 +29,21 @@ describe('components CSS integrity', () => {
     expect(componentsCss).toBe(srcCss);
   });
 
-  it('the stamped element version matches package.json', () => {
+  /*
+   * 🔴 THIS CANNOT SEE A STALE COMMIT, AND IT READS AS IF IT COULD. CI builds
+   * this package before testing it (`.github/workflows/ci.yml`, the
+   * `design-system` job) and the build rewrites `src/version.generated.ts` from
+   * package.json — so what this asserts is that the GENERATOR stamped the right
+   * version, never that the version in git is current. `0.8.1` sat committed
+   * against a `0.9.0` package.json from #492 onward with this test green
+   * throughout.
+   *
+   * The committed file is checked by `scripts/check-generated-version.mjs`
+   * (`pnpm check:generated-version`), which reads it as text and runs BEFORE any
+   * build step. Keep both: this one owns the generator, that one owns the
+   * commit.
+   */
+  it('the stamped element version matches package.json (post-BUILD: see the note above)', () => {
     expect(VERSION).toBe(pkg.version);
   });
 
