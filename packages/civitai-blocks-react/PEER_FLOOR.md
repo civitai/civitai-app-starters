@@ -12,7 +12,59 @@ half of that lives in [`tests/guards/blocks-react-peer-floor.test.mjs`](../../te
 — `PEER_VALUE_SYMBOL_SINCE`, `PEER_SUBPATH_SINCE`, and the assertions over them.
 This file is the prose half: why the number is what it is, and how to move it.
 
-Declared today: `">=0.49.0 <1.0.0"`.
+Declared today: `">=0.55.0 <1.0.0"`.
+
+---
+
+## 🔴 RAISED 0.49.0 → 0.55.0 (the fifth time), 2026-10-02 — the idempotency-key rule
+
+`transport/transport.ts` began value-importing three new peer symbols from
+`@civitai/app-sdk/blocks`: `BLOCK_IDEMPOTENCY_KEY_REGEX`,
+`BLOCK_IDEMPOTENCY_KEY_MAX_LENGTH` and `blockIdempotencyKeyRejection` — the
+vendored host rule for a money-POST `idempotencyKey`, new module
+`src/blocks/idempotency.ts`. They back `resolveIdempotencyKey`, the single
+hook-boundary gate all three money hooks route their caller-supplied key through.
+
+Why it was needed at all: a block sent `sheetId:panelId:nonce`, passed 201 local
+tests, and then failed every production save with
+`invalid_format` / `must match pattern /^[A-Za-z0-9_-]{1,64}$/` (400 on
+`blocks.submitWorkflow`). The rule now lives in exactly one place.
+
+**`0.55.0` is a PREDICTION, pinned as one.** These three ship for the first time
+in the app-sdk minor released alongside this change, so there is no tarball to
+probe. Derived from the release plan: in-tree app-sdk `0.54.0`, which was also
+`npm view @civitai/app-sdk version` on the day (56 published versions); this
+branch's changeset bumps app-sdk `minor`; so the release is `0.55.0`. It is
+pinned via `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH` plus the `PREDICTED ENTRY`
+test, which re-derives the number from the tree on every run — so a rebase past
+another app-sdk release goes **red** instead of drifting.
+
+What *was* measured, rather than predicted — that the symbols are absent from
+every published version, so the run cannot start lower. Three tarballs probed
+with the standard recipe (`npm pack`, untar, resolve `exports['./blocks']` out of
+the tarball's own `package.json`, `import()` it, read `Object.keys`):
+
+| version | exports | the three symbols | `BLOCK_SCOPES` (pos. ctrl) | `__NOPE_7f3a__` (neg. ctrl) |
+|---|---|---|---|---|
+| 0.49.0 (old floor) | 34 | absent | present | absent |
+| 0.53.0 | 34 | absent | present | absent |
+| 0.54.0 (newest published) | 34 | absent | present | absent |
+
+Both controls ran before the numbers were believed: the positive one shows the
+probe can read this subpath's exports at all (a uniform "absent" is otherwise
+indistinguishable from a probe wired to nothing), and the negative one shows it
+can answer "no".
+
+`isValidBlockIdempotencyKey` ships in the same module and is deliberately **not**
+ledgered: `src/` does not value-import it (only tests do, and those resolve the
+workspace copy), and the guard's `DERIVED FLOOR` test rejects an entry for a
+symbol the package does not import.
+
+🔴 **OWED AFTER THE RELEASE PUBLISHES:** empty
+`PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH`, re-read the three entries off the real
+`0.55.0` tarball with `0.54.0` as the ABSENT control, and record both here — the
+same conversion #372/`75c711a` did for `0.49.0`. A list left populated pins the
+floor to the NEXT release forever.
 
 ---
 

@@ -7,7 +7,7 @@ import { getTransport } from '../transport/singleton.js';
 import type { ConsentRetryOptions } from './consentRetryOptions.js';
 import { useHostOrigin } from './useHostOrigin.js';
 import { useBlockToken } from './useBlockToken.js';
-import { generateIdempotencyKey } from '../transport/transport.js';
+import { resolveIdempotencyKey } from '../transport/transport.js';
 
 /** The consent-gated scope a tip needs (`social:tip:self`). */
 const TIP_SCOPES = [BLOCK_SCOPES.SOCIAL_TIP_SELF] as const;
@@ -34,6 +34,20 @@ export interface TipOptions extends ConsentRetryOptions {
    * RETRYING a tip whose response was lost (timeout / network drop) so the host
    * collapses it to ONE transfer instead of DOUBLE-TIPPING. Omit → the hook mints
    * a fresh key per `tip()` call (each call is a new logical tip).
+   *
+   * 🔴 **FORMAT: `^[A-Za-z0-9_-]{1,64}$` — letters, digits, `_` and `-` only, at
+   * most 64 characters, and NO COLONS.** `/api/v1/blocks/tip` rejects anything
+   * else with a **400** (`"Invalid request body"` + a zod `flatten()` in
+   * `details`), so a composite key like `user:image:nonce` fails every time. The
+   * colon is excluded deliberately, not cosmetically: the host composes its
+   * per-`(user, app, key)` tip dedupe key with `:` as the delimiter and relies on
+   * the key being colon-free for that to stay injective.
+   *
+   * 🔴 A key that fails this is **REFUSED before the POST**, with
+   * `InvalidIdempotencyKeyError` — nothing is sent and nothing is spent. It is
+   * never sanitised for you: rewriting an idempotency key would break the
+   * identity it exists to carry. Validate with `isValidBlockIdempotencyKey` from
+   * `@civitai/app-sdk/blocks` if you compose keys dynamically.
    */
   idempotencyKey?: string;
 }
@@ -78,10 +92,37 @@ export interface UseTip {
  * timeout safe (the server replays the first terminal result). Omitting it mints
  * a fresh key per call, so each call is a distinct logical tip.
  *
+ * 🔴 THE KEY'S FORMAT IS CONSTRAINED — see
+ * {@link TipOptions.idempotencyKey}. Letters, digits, `_` and `-` only, at most
+ * 64 characters, **no colons**; the host 400s anything else, and this hook now
+ * refuses it before the POST.
+ *
+ * 🔴 THIS EXAMPLE USED TO RECOMMEND `React.useId()`, AND THAT WAS A LIVE DEFECT:
+ * `useId()` wraps its value in characters outside the allowed class on most of
+ * the React versions this package's peer range admits (`^18.0.0 || ^19.0.0`) —
+ * React 18.3.1 returns `":R0:"` and early React 19 a guillemet-wrapped id, both
+ * of which 400. (React 19.2.6, resolved in this repo today, happens to return
+ * `_r_0_`, which does clear the charset — so the bug was INVISIBLE here while
+ * being guaranteed for a consumer on 18.) Anyone copying that line shipped a
+ * guaranteed rejection. Prefer a stable id you already have, which is also
+ * better idempotency: it is tied to the THING being tipped rather than to a
+ * component instance, so it survives a remount.
+ *
  * @example
  * const { tip, loading, error } = useTip();
- * const key = React.useId(); // stable across this component's retries
+ * // A stable id from your own data — the best key, because it identifies the
+ * // logical tip rather than the component that rendered it.
+ * const key = `tip-${imageId}-${amount}`;
  * await tip({ toUserId: 123, amount: 50, entityType: 'Image', entityId: 99 }, { idempotencyKey: key });
+ *
+ * @example
+ * // No natural id to hand? Mint one with the SDK's generator and persist it
+ * // for as long as the logical tip lives. Do NOT post-process `useId()` into
+ * // shape: rewriting a key is exactly what this SDK refuses to do, because a
+ * // silently-rewritten key breaks the identity the key exists to carry.
+ * import { generateIdempotencyKey } from '@civitai/blocks-react';
+ * const keyRef = React.useRef(generateIdempotencyKey());
+ * await tip({ toUserId: 123, amount: 50 }, { idempotencyKey: keyRef.current });
  */
 export function useTip(): UseTip {
   const host = useHostOrigin();
@@ -212,7 +253,13 @@ export function useTip(): UseTip {
       // 🔴 MINTED ONCE, OUTSIDE the closure the consent retry re-invokes, so
       // both POSTs carry the SAME key and the host collapses them to ONE
       // transfer. Minting it inside would DOUBLE-TIP a real person.
-      const idempotencyKey = options?.idempotencyKey ?? generateIdempotencyKey();
+      // 🔴 VALIDATED AND REFUSED, NOT SANITISED — see
+      // `InvalidIdempotencyKeyError`. `/api/v1/blocks/tip` enforces the same
+      // `^[A-Za-z0-9_-]{1,64}$` the submit path does, and the tip endpoint's
+      // redis key composes `<userId>:<appBlockId>:<key>` with ':' as the
+      // delimiter, so a colon-bearing key is an injectivity hazard and not just
+      // a format violation.
+      const idempotencyKey = resolveIdempotencyKey('useTip.tip', options?.idempotencyKey);
       try {
         return await withConsentRetry(
           getTransport(),

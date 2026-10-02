@@ -57,6 +57,13 @@ export {
   APP_STORAGE_MAX_ROWS,
 } from './appStorageLimits.js';
 
+export {
+  BLOCK_IDEMPOTENCY_KEY_REGEX,
+  BLOCK_IDEMPOTENCY_KEY_MAX_LENGTH,
+  isValidBlockIdempotencyKey,
+  blockIdempotencyKeyRejection,
+} from './idempotency.js';
+
 /**
  * {@link classifyAppStorageError} — the matcher a block branches on — plus the
  * four rejection messages a MOCK HOST has to emit. The wire carries a

@@ -4,7 +4,7 @@ import { BLOCK_SCOPES } from '@civitai/app-sdk/blocks';
 
 import { withConsentRetry } from '../internal/withConsentRetry.js';
 import { getTransport } from '../transport/singleton.js';
-import { generateIdempotencyKey } from '../transport/transport.js';
+import { resolveIdempotencyKey } from '../transport/transport.js';
 import type { ConsentRetryOptions } from './consentRetryOptions.js';
 import type { Entitlement } from './useEntitlements.js';
 import { useBlockToken } from './useBlockToken.js';
@@ -50,6 +50,19 @@ export interface GoodPurchaseOptions extends ConsentRetryOptions {
    * when RETRYING a purchase whose response was lost (timeout / network drop)
    * so the server replays the first terminal result instead of charging twice.
    * Omit → a fresh key per `purchase()` call.
+   *
+   * 🔴 **FORMAT: `^[A-Za-z0-9_-]{1,64}$` — letters, digits, `_` and `-` only, at
+   * most 64 characters, and NO COLONS.** `/api/v1/blocks/goods/purchase` rejects
+   * anything else with a **400** (`"Invalid request body"` + a zod `flatten()` in
+   * `details`), so a composite key like `good:extra-slots:1` fails every time.
+   *
+   * 🔴 A key that fails this is **REFUSED before the POST**, with
+   * `InvalidIdempotencyKeyError` — nothing is sent and nothing is spent, and it
+   * is NOT a {@link GoodPurchaseRefusal} (that would assert the server
+   * considered and declined the purchase, which never happened). The key is
+   * never sanitised for you: rewriting an idempotency key would break the
+   * identity it exists to carry. Validate with `isValidBlockIdempotencyKey` from
+   * `@civitai/app-sdk/blocks` if you compose keys dynamically.
    */
   idempotencyKey?: string;
   /**
@@ -381,7 +394,13 @@ export function useGoodPurchase(): UseGoodPurchase {
       // value, so however many attempts a single `purchase()` makes, the server
       // sees ONE logical purchase. Moving it inside either closure turns an
       // automatic retry into a second charge.
-      const idempotencyKey = options?.idempotencyKey ?? generateIdempotencyKey();
+      // 🔴 VALIDATED AND REFUSED, NOT SANITISED — see
+      // `InvalidIdempotencyKeyError`. `/api/v1/blocks/goods/purchase` enforces
+      // the same `^[A-Za-z0-9_-]{1,64}$` as the submit and tip paths.
+      const idempotencyKey = resolveIdempotencyKey(
+        'useGoodPurchase.purchase',
+        options?.idempotencyKey,
+      );
       try {
         return await withConsentRetry(
           getTransport(),

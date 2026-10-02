@@ -5,6 +5,7 @@ import type { BlockInitPayload } from '@civitai/app-sdk/blocks';
 
 import { useTip } from '../src/hooks/useTip.js';
 import { getTransport } from '../src/transport/singleton.js';
+import { InvalidIdempotencyKeyError } from '../src/transport/transport.js';
 import { resetTransport } from '../src/testing.js';
 
 const PARENT_ORIGIN = 'https://civitai.com';
@@ -118,6 +119,41 @@ describe('useTip', () => {
     const key2 = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string).idempotencyKey;
     expect(key1).toBe('tip-key-xyz');
     expect(key2).toBe('tip-key-xyz');
+  });
+
+  /**
+   * 🔴 THE SEAM. `/api/v1/blocks/tip` enforces the same
+   * `^[A-Za-z0-9_-]{1,64}$` the submit path does, and the tip endpoint composes
+   * its redis key as `<userId>:<appBlockId>:<key>` — so a colon-bearing key is
+   * an INJECTIVITY hazard there, not merely a format violation: the host's own
+   * source says app B "would REPLAY app A's cached response body verbatim" if
+   * two apps could collide on one slot.
+   *
+   * The assertion that matters is that `fetch` is never called.
+   */
+  it('🔴 tip() REFUSES a malformed caller key BEFORE the POST — fetch is never called', async () => {
+    const fetchMock = okTipFetch() as unknown as ReturnType<typeof vi.fn>;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useTip());
+    await expect(
+      result.current.tip({ toUserId: 123, amount: 50 }, { idempotencyKey: 'sheet:panel:nonce' }),
+    ).rejects.toThrow(InvalidIdempotencyKeyError);
+
+    // No money POST was issued, which is what licenses the error's own claim.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('a VALID caller key still reaches the POST — reachable, not a blanket deny', async () => {
+    const fetchMock = okTipFetch() as unknown as ReturnType<typeof vi.fn>;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useTip());
+    await act(async () => {
+      await result.current.tip({ toUserId: 123, amount: 50 }, { idempotencyKey: 'tip_key-xyz' });
+    });
+    const sent = JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string);
+    expect(sent.idempotencyKey).toBe('tip_key-xyz');
   });
 
   it('two auto-keyed tips get DIFFERENT keys (each call is a new logical tip)', async () => {

@@ -1079,6 +1079,14 @@ export type BlockToParentMessage =
   // timeout retry collapses to the existing workflow instead of a SECOND Buzz
   // charge. Absent → today's behavior (no dedupe). Additive/backward-compatible:
   // an older host that ignores the field simply never dedupes.
+  //
+  // 🔴 ITS FORMAT IS NOT FREE. `string` here is the WIRE type, not the accepted
+  // set: the host rejects anything outside `^[A-Za-z0-9_-]{1,64}$` with a 400
+  // before the procedure runs, and a colon — the most natural delimiter for a
+  // composite key — is specifically excluded. Validate with
+  // `isValidBlockIdempotencyKey` from this same subpath; see `./idempotency.ts`
+  // for the provenance, the four host entry points and why the colon ban is a
+  // correctness invariant rather than a style rule.
   | {
       type: 'SUBMIT_WORKFLOW';
       payload: { requestId: string; body: WorkflowBody; idempotencyKey?: string };

@@ -25,6 +25,13 @@ export type { DetectOptions } from './transport/detector.js';
 export { getTransport } from './transport/singleton.js';
 
 export { sendTypedRequest } from './transport/transport.js';
+// Exported so a block can MINT a conforming key for a logical operation it has
+// no natural id for, and hold it across retries. Previously internal, which is
+// why `useTip`'s own `@example` reached for `React.useId()` instead — a value
+// that fails the host's charset on most of the React versions this package's
+// peer range admits. The documented alternative has to be reachable, or the doc
+// recommends whatever happens to be in scope.
+export { generateIdempotencyKey } from './transport/transport.js';
 export type {
   BlockSnapshot,
   BlockTransport,
@@ -101,6 +108,11 @@ export type { UseSaveImage, SaveImageInput } from './hooks/useSaveImage.js';
 // JSDoc says consumers need to distinguish "no reply" from "the host said no" —
 // which they cannot do if they cannot name the type.
 export { RequestTimeoutError } from './transport/transport.js';
+// Exported because all three money hooks can throw it and its whole purpose is
+// to be DISTINGUISHABLE from the money-ambiguous rejections beside it — a caller
+// that cannot name the type cannot tell "nothing was spent" from "may have been
+// spent", which is the one distinction the class exists to carry.
+export { InvalidIdempotencyKeyError } from './transport/transport.js';
 export {
   useCollectionFollow,
   CollectionFollowError,

@@ -10,6 +10,7 @@ import {
   WorkflowSubmitError,
 } from '../src/hooks/useBuzzWorkflow.js';
 import { getTransport } from '../src/transport/singleton.js';
+import { InvalidIdempotencyKeyError } from '../src/transport/transport.js';
 import { resetTransport } from '../src/testing.js';
 
 const PARENT_ORIGIN = 'https://civitai.com';
@@ -1024,6 +1025,64 @@ describe('useBuzzWorkflow', () => {
     expect(s2.payload.idempotencyKey).toBe('stable-key-abc');
     replySubmitted(s2.payload.requestId);
     await p2;
+  });
+
+  /**
+   * 🔴 THE SEAM, not the helper. `resolveIdempotencyKey`'s own cases live in
+   * `transport-helpers.test.ts`; what THIS pins is that `submit()` is actually
+   * wired to it and that the refusal happens BEFORE the postMessage. Unwire the
+   * hook and the helper's tests stay green — this one does not.
+   *
+   * The production shape, verbatim: `sheetId:panelId:nonce`.
+   */
+  it('🔴 submit() REFUSES a malformed caller key BEFORE sending — postMessage is never called', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const body = { kind: 'textToImage' as const, modelId: 7, modelVersionId: 99, params: { prompt: 'cat' } };
+
+    postMessageMock.mockClear();
+    await expect(
+      result.current.submit(body, { idempotencyKey: 'sheet_42:panel_7:a1b2c3' }),
+    ).rejects.toThrow(InvalidIdempotencyKeyError);
+
+    // 🔴 THE LOAD-BEARING ASSERTION. "It rejected" is not the claim — "nothing
+    // was sent" is, and that is what licenses the error's "nothing was spent".
+    expect(postMessageMock).not.toHaveBeenCalled();
+  });
+
+  it('🔴 that refusal is NOT a WorkflowSubmitError — the money contracts differ', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const body = { kind: 'textToImage' as const, modelId: 7, modelVersionId: 99, params: { prompt: 'cat' } };
+
+    let caught: unknown;
+    try {
+      await result.current.submit(body, { idempotencyKey: 'a:b' });
+    } catch (err) {
+      caught = err;
+    }
+    // `WorkflowSubmitError`'s own docs say its `'exception'` arm covers "a lost
+    // response or an in-progress idempotency conflict" — i.e. money MAY have
+    // moved. A key refused before the send is unambiguous, so it must not
+    // arrive as that class, or a caller branching on it would under-report.
+    expect(caught).toBeInstanceOf(InvalidIdempotencyKeyError);
+    expect(caught).not.toBeInstanceOf(WorkflowSubmitError);
+    expect((caught as Error).message).toContain('Nothing was sent and nothing was spent');
+  });
+
+  it('a VALID caller key still goes through — the guard is reachable, not a blanket deny', async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+    const body = { kind: 'textToImage' as const, modelId: 7, modelVersionId: 99, params: { prompt: 'cat' } };
+
+    postMessageMock.mockClear();
+    let p!: Promise<unknown>;
+    act(() => {
+      p = result.current.submit(body, { idempotencyKey: 'sheet_42-panel_7-a1b2c3' });
+    });
+    const sent = postMessageMock.mock.calls[0]![0] as {
+      payload: { requestId: string; idempotencyKey?: unknown };
+    };
+    expect(sent.payload.idempotencyKey).toBe('sheet_42-panel_7-a1b2c3');
+    replySubmitted(sent.payload.requestId);
+    await p;
   });
 
   it('two auto-keyed submits get DIFFERENT keys (each call is a new logical submit)', async () => {
