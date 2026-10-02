@@ -305,11 +305,31 @@ const PEER_VALUE_SYMBOL_SINCE = {
 // module, but `blocks-react/src` does not value-import it (only tests do, and
 // those resolve the workspace copy), and the `DERIVED FLOOR` test below rejects
 // a ledger entry for a symbol the package does not import.
-const PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH = [
-  'BLOCK_IDEMPOTENCY_KEY_MAX_LENGTH',
-  'BLOCK_IDEMPOTENCY_KEY_REGEX',
-  'blockIdempotencyKeyRejection',
-];
+//
+// RETIRED 2026-10-02 on the Version Packages PR (#515) that releases app-sdk
+// 0.55.0 — which is what `PREDICTION HAS COME TRUE` fires on, and it did, on its
+// SECOND real occasion. Retired per that assertion's own steps 1 and 2: the list
+// is emptied and THE FLOOR IS LEFT WHERE IT IS (`>=0.49.0`). The three
+// `BLOCK_IDEMPOTENCY_KEY_*` / `blockIdempotencyKeyRejection` entries in
+// `PEER_VALUE_SYMBOL_SINCE` stay at `0.55.0`: that release genuinely exports
+// them, so raising either the entries or the floor would exclude a good release
+// — the #309/#317/#344 family with the sign flipped, which this file exists to
+// police.
+//
+// 🔴 CONVERSION NOT YET COMPLETE — owed after this PR merges and the release job
+// publishes. The npm half is deliberately NOT runnable here: on this branch
+// 0.55.0 is in-tree and unpublished, so `npm view @civitai/app-sdk@0.55.0`
+// answers `E404 / No match found`, and per the assertion that E404 is the
+// CORRECT answer, not evidence the prediction was wrong. After the publish,
+// re-read the three entries off the real tarball and record the numbers plus a
+// control version that shows the probe can answer ABSENT (0.54.0 served that
+// role for the pre-release measurement), exactly as the 2026-09-21 / #371
+// conversion did.
+//
+// This list stays EMPTY unless a branch again ledgers a symbol against a version
+// it is itself about to publish; see the docblock above for what declaring one
+// buys you.
+const PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH = [];
 
 /**
  * The same ledger for SUBPATHS. A bare `import '@civitai/app-sdk/safe-storage'`

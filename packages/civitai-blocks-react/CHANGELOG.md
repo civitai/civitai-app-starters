@@ -1,5 +1,237 @@
 # @civitai/blocks-react
 
+## 0.63.0
+
+### Minor Changes
+
+- c13383d: **Refuse a malformed `idempotencyKey` before it reaches the host.**
+
+  A block composed its key as `sheetId:panelId:nonce`. It passed 201 local tests,
+  the dev harness and review, then failed **every** save in production:
+
+  ```json
+  {
+    "code": "invalid_format",
+    "format": "regex",
+    "pattern": "/^[A-Za-z0-9_-]{1,64}$/",
+    "path": ["idempotencyKey"],
+    "message": "Invalid string: must match pattern /^[A-Za-z0-9_-]{1,64}$/"
+  }
+  ```
+
+  `BAD_REQUEST` / 400 on `blocks.submitWorkflow`. Nothing in this repository
+  modelled the rule: the SDK's key _generator_ was tested against the charset, but
+  `crypto.randomUUID()` and the `idem-<base36>` fallback both conform by
+  construction and always did — so the only guard that existed covered the half
+  that cannot fail, while a **caller-supplied** key went through unexamined at
+  every hook and the dev mock host had no concept of `idempotencyKey` at all.
+
+  - **`@civitai/app-sdk`** — new `blocks/idempotency.ts`, exported from
+    `@civitai/app-sdk/blocks`: `BLOCK_IDEMPOTENCY_KEY_REGEX`,
+    `BLOCK_IDEMPOTENCY_KEY_MAX_LENGTH`, `isValidBlockIdempotencyKey` and
+    `blockIdempotencyKeyRejection`. It records the provenance (the host's
+    `block-gen-idempotency.ts:77`), the **four** host entry points that enforce it,
+    why the 64 bound is derived from the orchestrator's 128-char `externalId`
+    ceiling, and why the colon ban is a correctness invariant: the host composes its
+    per-`(user, app, key)` redis keys with `:` as the delimiter and documents them
+    as injective _because_ the key is colon-free.
+  - **`@civitai/blocks-react`** — `useBuzzWorkflow().submit`, `useTip().tip` and
+    `useGoodPurchase().purchase` now **refuse** a malformed caller-supplied key
+    before anything is sent, throwing the new exported
+    `InvalidIdempotencyKeyError`. The dev mock host gained a format gate ahead of
+    its message switch, so the defect surfaces in `pnpm dev` and in the suite
+    instead of in production.
+  - **`TipButton` is fixed — it was a second, live production defect.** It composed
+    `${useId()}:${toUserId}:${amount}:${entityType}:${entityId}`, and it always
+    supplies a key, so **every tip it posted was rejected by the host with the same
+    400**. The delimiter is now `_` and the seed is normalised. Measured on the
+    React resolved here (19.2.6): `useId()` returns `_r_0_`, which clears the
+    charset alone, while `_r_0_:123:50:Image:99` does not — so here the delimiters
+    were the whole fault. Reported separately, not measured by this change: React
+    18.3.1 returns `":R0:"` and early React 19 a guillemet-wrapped id, both of
+    which fail on their own. The peer range admits `^18.0.0 || ^19.0.0`, so the
+    seed is normalised either way.
+  - **`useTip`'s `@example` recommended `React.useId()` as the key** — a live
+    defect for the same reason: anyone copying it on React 18 shipped a guaranteed 400. Replaced with a stable domain id (the better key — it identifies the
+    logical tip rather than the component instance, so it survives a remount) and,
+    as a second example, `generateIdempotencyKey()`, which is now **exported** from
+    the package, because a documented alternative has to be reachable.
+  - **`composeTipIdempotencyKey` is exported from `TipButton`**, so the
+    React-version dimension is testable at all. While the composition was inline,
+    deleting the seed normalisation changed nothing any test could observe — the
+    suite pins one React, whose `useId()` already conforms, so it was structurally
+    blind to the dimension the bug lives on. Measured: that mutation SURVIVED a
+    fully green 37-test file. A pure function can be fed React 18's `":R0:"` and
+    early React 19's guillemet form without installing them, and the same mutation
+    now fails 3 tests.
+  - **All three `idempotencyKey` JSDocs now state the constraint** — charset, the
+    64 bound, no colons, and that the host 400s otherwise, with the right error
+    envelope per path. `civitai-developer-docs` generates its public hook reference
+    from these JSDocs, so the constraint could not reach the published docs until
+    the JSDoc carried it.
+
+  ### Why MINOR and not patch
+
+  **It refuses input that was previously forwarded.** A block passing a
+  non-conforming key used to get a 400 from the host; it now gets a thrown
+  `InvalidIdempotencyKeyError` from the SDK. The outcome was already a failure in
+  both cases — no working call becomes a failing one — but the _failure mode_,
+  _type_ and _timing_ all change, and a caller with a `try/catch` around `submit()`
+  that branched on `WorkflowSubmitError` will now see a different class. That is a
+  behaviour change at a public boundary, so it is not a patch.
+
+  **It is not a major.** Pre-1.0, a major would mean `1.0.0`, and these packages are
+  deliberately still v0 — the same reasoning the storage-scope gate shipped under
+  in `0.62.0`.
+
+  ### Why REFUSE and never sanitise
+
+  An idempotency key is an **identity**. Silently rewriting a caller's key breaks
+  the exact property the key exists to provide: two distinct logical submits could
+  collapse onto one slot (one charge for two intended operations), or a retry could
+  be normalised differently from its first attempt and mint a **second**
+  reservation. Both are money bugs and both are quieter than a rejection, so the
+  SDK refuses and says so. `InvalidIdempotencyKeyError` is a distinct class rather
+  than a reuse of the existing money-path errors because those are all
+  money-_ambiguous_ by design — `WorkflowSubmitError`'s `'exception'` arm covers "a
+  lost response or an in-progress idempotency conflict", and the abort/timeout
+  rejections say the charge may or may not have landed. A key refused at the
+  boundary is unambiguous: nothing left the iframe, so the caller gets a type that
+  says so.
+
+  ### Peer floor
+
+  `@civitai/blocks-react`'s `@civitai/app-sdk` peer floor moves `>=0.49.0` →
+  `>=0.55.0`, because its transport value-imports three symbols that first exist in
+  this app-sdk release. Measured absent from 0.49.0, 0.53.0 and 0.54.0 (the newest
+  published), with `BLOCK_SCOPES` present as the positive control and an impossible
+  symbol absent as the negative one. `changeset version` cannot do this
+  automatically — `onlyUpdatePeerDependentsWhenOutOfRange` only rewrites a range the
+  computed version _fails_.
+
+### Patch Changes
+
+- 04c7425: docs: the "default = light" claim is false under @civitai/theme's dark base
+
+  Both packages document the unthemed default, and both descriptions become wrong
+  the moment `@civitai/theme@0.5.0` ships. They are consumer-facing in the strict
+  sense — `MARKUP.md` is `@civitai/components`' self-declared canonical contract,
+  `README.md` is its npm page, and the `@civitai/blocks-react` JSDoc ships inside
+  the published `.d.ts` — so leaving them would have published a default that
+  contradicts the one the tokens emit.
+
+  - `@civitai/components` `MARKUP.md` / `README.md`: the default is now the **dark**
+    palette and nothing consults the OS preference. Only `light` and `dark` select a
+    token block; any other value selects none and inherits the dark base. Both say
+    what the previous behaviour was, so a reader upgrading can tell which world
+    their own code was written for, and that an explicit `data-theme` added _only_
+    to defeat the OS can now be dropped.
+  - `@civitai/blocks-react` `src/ui/styles.ts`: the JSDoc asserted the deleted
+    `@media (prefers-color-scheme: dark) { :root:not([data-theme]) { … } }` as live
+    fact, and opened with a 🔴 warning that reading "no `data-theme`" as non-light
+    "is how the explicit attribute gets deleted" — exactly backwards once the base
+    is dark. Replaced, with the reversal stated rather than quietly rewritten.
+  - `@civitai/blocks-react` `src/ui/BlockGate.tsx`: `readDocumentTheme`'s doc called
+    the explicit wrapper attribute "load-bearing" because only it could stop the OS
+    deciding. That reason is gone. The attribute **stays**, and the doc now gives
+    the one difference that survives: the read is `document.documentElement`, while
+    inheritance takes the nearest `[data-theme]` ancestor — the same on a direct
+    load, but that is a property of the deployment, not of the code.
+
+  No behaviour change in either package; prose and JSDoc only. A patch release is
+  needed because the published artifacts _are_ these documents.
+
+- 8bbebf1: fix(BlockGate): the direct-load fallback took its theme from the OS, so a dark page got a light card
+
+  `DirectLoadFallback` read `prefers-color-scheme` through a local
+  `usePrefersColorScheme` hook and stamped the result onto its own wrapper's
+  `data-theme`. That attribute is the thing that decides the card's tokens, so on
+  a light-OS machine the card painted **light on a deliberately dark page** — it
+  overrode the page rather than following it.
+
+  It now reads the one theme signal that can actually reach a directly-loaded
+  block: `data-theme` on `<html>`, which the scaffolded `index.html` sets pre-paint
+  from the host fragment (`#civitai-block=v1&theme=…`). `'light'` is the only value
+  that buys light — absent, empty, `'auto'`, a typo, or no DOM at all (SSR) are all
+  dark, exactly the rule the pre-paint script applies.
+
+  Three things worth knowing:
+
+  1. **Setting the attribute explicitly is load-bearing, so it stays.** The
+     obvious simplification — drop `data-theme` and inherit — reintroduces the bug
+     by another route: `@civitai/theme` ships
+     `@media (prefers-color-scheme: dark) { :root:not([data-theme]) { … } }`, so a
+     page carrying no `data-theme` hands its tokens straight back to the OS. An
+     explicit attribute on the wrapper is what makes the card deterministic in a
+     page that never set one.
+  2. **The live OS listener is gone, not replaced.** A direct load has no host, so
+     there is no `BLOCK_INIT` and no `THEME_CHANGE` — nothing can move the value
+     mid-session, and a `matchMedia` subscription only existed to watch the signal
+     this fix stops consulting. `readDocumentTheme()` is a plain read.
+  3. **No API change.** `usePrefersColorScheme` was module-local and never
+     exported; `BlockGate`, `DirectLoadFallback` and both their prop types are
+     untouched. The embedded happy path never ran this code.
+
+  🔴 **One consumer-visible inversion, stated because an upgrading block cannot act
+  on it otherwise.** On a page whose `<html>` carries no `data-theme` — or carries
+  any value other than `light` — the card is now dark where it used to follow the
+  OS. For a block on the CURRENT scaffold that is the intended fix. For a block
+  still on the PRE-0.61 scaffold it goes the other way: that `index.html` sets no
+  `data-theme` and has no pre-paint script at all, and that page ends up **white
+  under a light OS** — so a light-OS viewer opening `<slug>.civit.ai` directly now
+  gets a DARK card on a WHITE page, where before the two matched. There the page
+  theme _was_ the OS preference, so reading the OS was following the page; this
+  release reads `data-theme`, which those pages never set.
+
+  **The fix is to re-scaffold** (`civitai app init`), and the current
+  `starters/civitai-block-starter` is the reference for what that buys: the page
+  owns its own background, dark on the base rule with light only behind
+  `html[data-theme='light']`, a pre-paint script that sets the attribute from the
+  host fragment, and `src/App.tsx` keeping `documentElement` in step afterwards.
+  Those parts are coupled — `tests/guards/boot-skeleton.test.mjs` asserts each of
+  them — so take the starter as a whole rather than porting a rule or two across.
+
+  🔴 **Do NOT hardcode `data-theme` on `<html>` as a shortcut.** On the pre-0.61
+  scaffold nothing ever rewrites that attribute (its `App.tsx` stamps `data-theme`
+  on its own wrapper, never on `documentElement`), so a hand-set value is permanent
+  on **every** surface — the embedded block included, where it is not a cosmetic
+  choice: measured in a real iframe, `data-theme="dark"` turns a see-through embed
+  into an unconditional opaque `#121212` panel for every light-OS viewer. It also
+  only half-works where you wanted it: `@civitai/blocks-react` injects its
+  stylesheet from an effect, so on that scaffold the page is still the OS-coloured
+  browser canvas until React mounts — `#ffffff` through first paint under a light
+  OS, flipping afterwards. That window is exactly what the starter's inline
+  `<style>` and `bootSkeleton: true` exist to own.
+
+  ⚠️ **A page that sets `data-theme` to a value that is neither `light` nor
+  `dark`** — `auto`, an empty string, a typo, or the right word in the wrong case —
+  **gets a dark card AND `@civitai/theme`'s light root tokens.** Only those two
+  values select a token block, and the OS-dark fallback is gated on
+  `:root:not([data-theme])`, which any value defeats. The clean answer is to let
+  the scaffold's pre-paint script own the attribute. If you set it by hand,
+  `light` is free; `dark` also lines the tokens up, but it carries the embedded
+  cost in the paragraph above, and from an `auto` baseline that cost is wider than
+  it looks there — an `auto` embed is see-through under either OS, so `dark` makes
+  it opaque for every viewer, not just light-OS ones.
+
+  This release changes only the direct-load landing, never the embedded path.
+
+  Covered by six cases in `test/BlockGate.test.tsx`, each fixture setting the OS
+  preference to the OPPOSITE of the expected answer so it cannot pass by agreeing
+  with both rules at once, plus an assertion that the OS is never _asked_ (not
+  merely overruled). All six are red against the pre-change component; two mutants
+  — inverting the comparison, and letting only an explicit `'dark'` be dark — are
+  each killed by the cases that own them.
+
+  This is the same decision already applied to the scaffolded starters
+  (civitai-app-starters#509, civitai/cli#766): boot dark, take light only from the
+  host, never from the OS.
+
+- Updated dependencies [04c7425]
+- Updated dependencies [04c7425]
+  - @civitai/components@0.9.1
+  - @civitai/theme@0.5.0
+
 ## 0.62.0
 
 ### Minor Changes
@@ -1301,10 +1533,10 @@ URL('https://civitai.com/evil').origin` is `https://civitai.com`).
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                            before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                     @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                            after    @civitai/theme       0.3.1                   — 1 copy
-                                     @civitai/components  0.4.2                   — 1 copy
+                              before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                       @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                              after    @civitai/theme       0.3.1                   — 1 copy
+                                       @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
