@@ -88,14 +88,20 @@ describe('components CSS integrity', () => {
  * retired project's reach: the authored sheet, both committed generated sheets,
  * and every element's shadow-DOM `css` template.
  *
- * ⚠️ SCOPE, stated so this is not read wider than it is — it reads authored
- * text under `src/` plus the two generated root sheets. Outside it: a
- * `prefers-color-scheme` in a third-party sheet a consumer loads, and any JS
- * `matchMedia` branch. ⚠️ `playground/main.ts` HAS such a branch — an earlier
- * version of this comment claimed "there are none of either in this package",
- * which was false; the true claim is `src/`-scoped. That file is a local dev
- * page, is not published, and is deliberately not in the corpus. Neither case
- * was in the retired project's reach either.
+ * ⚠️ SCOPE, stated so this is not read wider than it is. It reads CODE —
+ * comments stripped — under `src/`, plus the two generated root sheets. So it
+ * catches a `prefers-color-scheme` wherever it is REACHABLE from this package:
+ * a CSS at-rule, and equally a JS `matchMedia('(prefers-color-scheme: …)')`,
+ * since both are code under `src/`.
+ *
+ * ⚠️ Two earlier versions of this sentence were wrong in opposite directions,
+ * so it is worth stating what is actually outside: a `prefers-color-scheme` in
+ * a THIRD-PARTY sheet a consumer loads, anything outside `src/` and the two
+ * named sheets, and prose. `playground/main.ts` HAS a `matchMedia` branch and
+ * is deliberately not in the corpus — a local dev page, never published. (The
+ * first version claimed "none of either in this package", which was false; the
+ * second claimed a JS `matchMedia` branch was out of scope, which stopped being
+ * true once the corpus widened to all of `src/`.)
  */
 describe('no OS colour-scheme preference in the component CSS', () => {
   /*
@@ -111,9 +117,17 @@ describe('no OS colour-scheme preference in the component CSS', () => {
    * when someone adds a directory; a hand-written list of directories can, and
    * did.
    *
-   * `dist/` is deliberately absent because it is a COPY of `src/components.css`
-   * — asserted byte-identical two tests above — so scanning it would add a
-   * second reading of the same bytes, not a second surface.
+   * `dist/` is deliberately absent — but ⚠️ NOT for the reason an earlier
+   * version of this comment gave ("scanning it would add a second reading of
+   * the same bytes"). That rule does not describe this code: the walk already
+   * reads `src/styles.generated.ts` and 15 `src/css/*.generated.ts` slices,
+   * every one of them a byte-embedding of the same sheet, so an at-rule planted
+   * in `src/components.css` reports SEVENTEEN offenders. The honest reason is
+   * narrower: `dist/` is a BUILD OUTPUT, and a guard over committed sources is
+   * one a reader can reason about without knowing whether a build has run.
+   * A reader applying the old rule would strip `*.generated.ts` from the walk
+   * believing they were tidying — which is this round's own defect class
+   * inverted, so it is recorded rather than quietly reworded.
    *
    * 🔴 THAT IS NOT INDEPENDENCE FROM THE BUILD, and an earlier version of this
    * comment claimed it was. This module reads `dist/components.css` at the top
@@ -139,7 +153,25 @@ describe('no OS colour-scheme preference in the component CSS', () => {
     text: readFileSync(join(pkgRoot, file), 'utf8'),
   }));
 
-  const hits = (text: string): number => (text.match(/prefers-color-scheme/g) ?? []).length;
+  /*
+   * 🔴 COMMENTS ARE STRIPPED BEFORE MATCHING, and that is a correctness
+   * requirement rather than tidiness. The corpus is 123 `.ts` files, and a
+   * docblock that merely NAMES this invariant — "no `@media
+   * (prefers-color-scheme: …)` block anywhere in this package" — is exactly the
+   * next edit someone makes. Measured on the un-stripped version: such a
+   * docblock in `src/index.ts` turned the guard RED with a message blaming CSS,
+   * in a file containing none. The identical docblock already exists in two
+   * sibling packages' `src/`, so this was a false blocker on a documented and
+   * demonstrated habit, not a contrived input.
+   *
+   * So what this guard means is precise: a `prefers-color-scheme` in CODE. Write
+   * about the invariant freely.
+   */
+  const stripComments = (text: string): string =>
+    text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+
+  const hits = (text: string): number =>
+    (stripComments(text).match(/prefers-color-scheme/g) ?? []).length;
 
   it('reads the NAMED surfaces, and a corpus big enough to be the real one', () => {
     // POSITIVE CONTROL on the CORPUS. The verdict below is a zero, and a zero
@@ -148,19 +180,27 @@ describe('no OS colour-scheme preference in the component CSS', () => {
     const files = corpus.map((c) => c.file);
 
     // 🔴 THE NAMED SURFACES COME FIRST, BECAUSE A COUNT CANNOT SEE THE LOSS OF
-    // A SPECIFIC ONE. Measured: drop the three CSS sheets and ~100 element
-    // files remain — comfortably over any floor — while the stylesheet this
-    // package exists to ship goes unscanned, and an at-rule planted in it
-    // passes. A cardinality floor is blind to exactly the surface that matters
-    // most.
-    expect(files).toEqual(
-      expect.arrayContaining(['src/components.css', ...ROOT_SHEETS])
-    );
-    // The two PUBLISHED sdk elements — the gap the directory-enumerated corpus
-    // had. Named, not merely counted, so the walk losing that directory fails
-    // here rather than silently shrinking the corpus by two.
+    // A SPECIFIC ONE. Measured: drop the CSS sheets and ~100 element files
+    // remain — comfortably over any floor — while the stylesheet this package
+    // exists to ship goes unscanned, and an at-rule planted in it passes. A
+    // cardinality floor is blind to exactly the surface that matters most.
+    //
+    // 🔴 EVERY NAME HERE IS A LITERAL, DELIBERATELY DUPLICATING `ROOT_SHEETS`
+    // ABOVE. An earlier version wrote `...ROOT_SHEETS` instead, which derived
+    // the expectation from the implementation it was testing: the constant fed
+    // BOTH the corpus and this assertion, so `ROOT_SHEETS = []` dropped two
+    // PUBLISHED exports out of the corpus and shrank this check to match —
+    // measured 293/293 GREEN, with an at-rule in the generated `utilities.css`
+    // then passing. Each published surface is spelled out so losing one fails
+    // here. Do not DRY this back up against the corpus.
     expect(files).toEqual(
       expect.arrayContaining([
+        'src/components.css',
+        'utilities.css',
+        'bootstrap-compat.css',
+        // The two PUBLISHED sdk elements — the gap the directory-enumerated
+        // corpus had, so the walk losing that directory fails here rather than
+        // silently shrinking the corpus by two.
         'src/sdk/civitai-sign-in-button.ts',
         'src/sdk/civitai-workflow-button.ts',
       ])
@@ -184,6 +224,17 @@ describe('no OS colour-scheme preference in the component CSS', () => {
     // mis-typed pattern finds nothing in a clean tree and nothing in a dirty
     // one, and those two are indistinguishable from the result alone.
     expect(hits('@media (prefers-color-scheme: dark) { :root { color: red } }')).toBe(1);
+  });
+
+  it('does NOT fire on prose that merely names it', () => {
+    // NEGATIVE CONTROL, paired with the one above: between them they pin
+    // `stripComments` in both directions, so neither "catches everything" nor
+    // "catches nothing" can pass. Both shapes are real — the block form is how
+    // this invariant is documented in two sibling packages today.
+    expect(hits('/* no @media (prefers-color-scheme: dark) block, deliberately */')).toBe(0);
+    expect(hits('// never reach for prefers-color-scheme here')).toBe(0);
+    // ...and a comment must not launder an adjacent real one on the same line.
+    expect(hits('@media (prefers-color-scheme: dark) { } // and prefers-color-scheme')).toBe(1);
   });
 
   it('declares none, in either direction, in any of them', () => {
