@@ -118,7 +118,6 @@ outrank them, it **ties**, and the last stylesheet in the document wins.
 ```css
 .my-block { --civitai-color-primary: #a259ff; }   /* ✅ wins in either order */
 :root     { --civitai-color-primary: #a259ff; }   /* ⚠️ wins only if this sheet loaded FIRST */
-:root:root{ --civitai-color-primary: #a259ff; }   /* ✅ escape hatch for a document-wide rebrand */
 ```
 
 The same goes for an inline `style="--civitai-color-primary: …"`, and a scoped

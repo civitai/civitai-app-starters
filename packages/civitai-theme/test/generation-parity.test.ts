@@ -72,6 +72,25 @@ describe('generation parity', () => {
       expect(css).not.toContain('prefers-color-scheme');
     });
 
+    /*
+     * 🔴 THIS SHEET CARRIES NO CASCADE LAYER, AND THAT IS LOAD-BEARING FOR
+     * CONSUMERS — it is why a consumer's `:root { --civitai-…: }` only TIES
+     * with the blocks below (both 0-1-0) and stylesheet order decides, which
+     * is the whole reason `@civitai/components`' MARKUP.md tells authors to
+     * SCOPE a token override instead.
+     *
+     * Asserted HERE because this is the defining property, in the package that
+     * owns it. `@civitai/components`' `test/token-override-order.browser.test.ts`
+     * pins the consumer-visible CONSEQUENCE at the chromium tier; a downstream
+     * consequence in another package is evidence, not a tripwire. Wrapping this
+     * sheet in a layer — or giving its base block zero specificity with
+     * `:where()` — is a deliberate cascade change for consumers, so it fails
+     * here first and in one line.
+     */
+    it('declares NO cascade layer — the tokens are unlayered on purpose', () => {
+      expect(css).not.toContain('@layer');
+    });
+
     it(":root carries the DARK value for every token that has one", () => {
       const { root, dark } = resolveTokens();
       const rootBlock = /:root \{([\s\S]*?)\}/.exec(css)?.[1] ?? '';

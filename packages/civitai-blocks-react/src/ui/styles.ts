@@ -41,19 +41,16 @@ import { tokensCss } from '@civitai/theme';
  * The `--civitai-*` tokens theme via an ancestor `[data-theme='dark']`
  * selector.
  *
- * 🔴 **INJECTING FROM AN EFFECT HAS A CONSEQUENCE FOR BRAND OVERRIDES, and it
- * is this function's to own.** `useBlocksStyles()` is a `useEffect`, so these
- * three `<style>` elements are appended to `<head>` AFTER a bundler-injected
- * app stylesheet. `@civitai/theme`'s sheet carries no cascade layer and
- * declares its tokens at `:root` / `[data-theme='…']` (specificity `0-1-0`), so
- * an app's own `:root { --civitai-color-primary: … }` TIES with it and loses on
- * source order — silently, with no error, resolving to civitai's own value.
- * Measured in Chromium, with and without `data-theme` present, so the theme
- * attribute is not the cause. **Tell block authors to SCOPE a token override**
- * (a class on the block root, or an inline `style`): a scoped value wins in
- * either order and still crosses into component shadow roots. The order ×
- * route matrix is pinned in `@civitai/components`'
- * `test/token-override-order.browser.test.ts`.
+ * 🔴 **INJECTING FROM AN EFFECT IS WHAT MAKES A BRAND OVERRIDE AT `:root`
+ * LOSE, so the consequence is this function's to own.** These `<style>`
+ * elements are appended from a `useEffect`, i.e. AFTER a bundler-injected app
+ * stylesheet — and that is the stylesheet order in which an app's own
+ * `:root { --civitai-…: }` silently loses to the unlayered token sheet.
+ * **Tell block authors to SCOPE a token override**, never `:root`.
+ * The mechanism, the measured matrix and the routes that do work live in
+ * `@civitai/components`' `MARKUP.md` ("Cascade / overriding"). This comment
+ * deliberately does not restate them: a JSDoc paraphrase of another package's
+ * README, on another release cadence, is the desync nothing in CI can see.
  *
  * **"No `data-theme`" means DARK, and nothing here consults the OS.** Since
  * `@civitai/theme@0.5.0` the `:root` palette IS the dark one and the stylesheet

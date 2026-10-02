@@ -69,10 +69,6 @@ were measured to win in **either** stylesheet order:
 ```css
 /* or a class on your block root — not :root */
 .my-block { --civitai-color-primary: #a259ff; }
-
-/* last resort, if a document-wide rebrand genuinely cannot be scoped:
-   one extra `:root` outranks the theme's blocks, so order stops mattering */
-:root:root { --civitai-color-primary: #a259ff; }
 ```
 
 A scoped override reaches **inside** component shadow roots — custom properties

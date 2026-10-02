@@ -7,10 +7,16 @@
  * custom properties (link `@civitai/theme/styles.css` alongside this file, or
  * call `injectStyles()` which injects both).
  *
- * ALL rules live in `@layer civitai.components` so a consumer's own unlayered
- * CSS always wins the cascade WITHOUT specificity fights. State colors are
- * derived with `color-mix()` from base tokens (no shade enumeration), and
- * structure uses native CSS nesting (no preprocessor).
+ * ALL rules HERE live in `@layer civitai.components`, so a consumer's own
+ * unlayered CSS always wins over THIS SHEET without specificity fights.
+ * 🔴 That does NOT extend to the TOKENS. @civitai/theme's sheet carries no
+ * layer and declares them at `:root`/`[data-theme='…']` (0-1-0), so a
+ * consumer's `:root { --civitai-…: }` only TIES with it and stylesheet order
+ * decides — silently, in the order `useBlocksStyles()` produces. Scope a token
+ * override (a class on your root, or an inline style); never `:root`. Measured
+ * matrix: MARKUP.md, "Cascade / overriding".
+ * State colors are derived with `color-mix()` from base tokens (no shade
+ * enumeration), and structure uses native CSS nesting (no preprocessor).
  *
  * See MARKUP.md for the full per-component markup + ARIA contract.
  */

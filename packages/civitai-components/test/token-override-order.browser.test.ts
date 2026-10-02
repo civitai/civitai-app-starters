@@ -18,12 +18,19 @@
  * behaviour: the routes the docs recommend are the ones measured order-IMMUNE,
  * and the route the docs warn against is measured order-dependent.
  *
- * 🔴 IF YOU LAYER THE TOKEN SHEET, THIS FILE GOES RED — deliberately. Wrapping
- * the tokens in `@layer civitai.tokens` would make every unlayered app override
- * win regardless of order, which retires the trap and falsifies the two
- * `order-DEPENDENT` cases below. That is the forcing function: the cascade
- * change and the doc correction have to land together, because this test is the
- * seam between them.
+ * 🔴 ANY CASCADE CHANGE THAT LETS AN UNLAYERED APP `:root` WIN FALSIFIES THE
+ * TWO `order-DEPENDENT` CASES BELOW — not only layering. Wrapping the tokens in
+ * `@layer civitai.tokens` does it; so does giving the base block zero
+ * specificity with `:where(:root)`, which is the likelier durable candidate of
+ * the two. An earlier version of this comment named layering alone, which read
+ * as narrower than what the cases actually trip on.
+ *
+ * ⚠️ So this file is EVIDENCE of the consequence, not the tripwire for the
+ * cause. The defining property — that `@civitai/theme`'s emitted sheet carries
+ * no cascade layer — is pinned where it belongs, in that package's own
+ * `test/generation-parity.test.ts`, in one node-tier line. Read these cases as
+ * "here is what consumers experience today"; read that one as "here is the
+ * property you are changing".
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { darkTokens, injectTokens } from '@civitai/theme';
@@ -151,20 +158,16 @@ describe('these routes are ORDER-IMMUNE — what the docs recommend', () => {
     expect(primary(brandedScope({ style: `--civitai-color-primary: ${BRAND_HEX}` }))).toBe(BRAND);
   });
 
-  it.each([
-    ['tokens first', true],
-    ['tokens last', false],
-  ])('a specificity notch (:root:root) wins at the root itself (%s)', (_label, tokensFirst) => {
-    // The escape hatch for an app that genuinely wants a document-wide rebrand
-    // and cannot scope it: one extra `:root` outranks the theme's 0-1-0 blocks,
-    // so order stops mattering.
-    if (tokensFirst) injectTokens();
-    appCss(`:root:root { --civitai-color-primary: ${BRAND_HEX}; }`);
-    if (!tokensFirst) injectTokens();
-    root.setAttribute('data-theme', 'dark');
-    expect(primary(root)).toBe(BRAND);
-  });
 });
+
+/*
+ * NOT TESTED HERE, DELIBERATELY: `:root:root`. A specificity notch does beat
+ * the theme's 0-1-0 blocks in both source orders — measured — but it was cut
+ * from the docs rather than taught: nobody asked for it, it has no named
+ * consumer, it teaches a specificity hack, and it buys nothing a scoped
+ * override does not already buy unconditionally. Re-add the route and its
+ * cases together, or neither.
+ */
 
 describe('a scoped brand token reaches where components actually paint', () => {
   it('crosses the shadow boundary into a custom element', async () => {
