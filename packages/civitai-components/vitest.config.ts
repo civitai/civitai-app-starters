@@ -19,6 +19,13 @@ import { defineConfig } from 'vitest/config';
  * what the `browser` project already reports; that is why
  * `test/color-scheme.dark-base.browser.test.ts` lives there.
  *
+ * ⚠️ If you DO add one back, it needs TWO edits, not one: the project block
+ * here, AND the matching `prefers-dark` glob back in the `node` project's
+ * `exclude` below. Without the second, `node` collects the file and it dies on
+ * `ReferenceError: document is not defined` rather than on anything it asserts.
+ * (Writing that glob literally in this comment is not possible: it contains the
+ * block-comment terminator.)
+ *
  * 🔴 WHY `dom` EXISTS, AND WHAT IT IS NOT FOR (#485). Every element-behaviour
  * project here is a real engine, so this package had no tier that could see a
  * defect which only appears where the platform is INCOMPLETE — and that is the

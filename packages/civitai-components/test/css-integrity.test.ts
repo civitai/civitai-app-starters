@@ -99,8 +99,18 @@ describe('components CSS integrity', () => {
  */
 describe('no OS colour-scheme preference in the component CSS', () => {
   /*
-   * Every surface this package authors or ships CSS in: the source sheet, both
-   * committed generated sheets, and every element's shadow-DOM `css` template.
+   * Every surface this package authors or ships CSS in: everything under
+   * `src/`, plus the two committed generated root sheets (which sit outside it).
+   *
+   * 🔴 THE `src/` WALK IS RECURSIVE AND EXTENSION-DRIVEN ON PURPOSE. An earlier
+   * version enumerated `src/elements/*.ts`, which silently excluded `src/sdk/`
+   * — where `civitai-sign-in-button` and `civitai-workflow-button`, both
+   * PUBLISHED export keys, author shadow-DOM `css` templates. So the comment
+   * claimed "every element's template" while an at-rule planted in either one
+   * reached `dist/` with all 293 tests green. A walk cannot reacquire that gap
+   * when someone adds a directory; a hand-written list of directories can, and
+   * did.
+   *
    * `dist/` is deliberately absent because it is a COPY of `src/components.css`
    * — asserted byte-identical two tests above — so scanning it would add a
    * second reading of the same bytes, not a second surface.
@@ -112,29 +122,60 @@ describe('no OS colour-scheme preference in the component CSS', () => {
    * skipped tier rather than a failure. Nothing here buys build-independence;
    * excluding `dist/` only avoids double-counting.
    */
-  const corpus = [
-    'src/components.css',
-    'utilities.css',
-    'bootstrap-compat.css',
-    ...readdirSync(join(pkgRoot, 'src/elements'))
-      .filter((name) => name.endsWith('.ts'))
-      .map((name) => `src/elements/${name}`),
-  ].map((file) => ({ file, text: readFileSync(join(pkgRoot, file), 'utf8') }));
+  const walk = (dir: string): string[] =>
+    readdirSync(join(pkgRoot, dir), { withFileTypes: true }).flatMap((entry) =>
+      entry.isDirectory()
+        ? walk(`${dir}/${entry.name}`)
+        : /\.(ts|css)$/.test(entry.name)
+          ? [`${dir}/${entry.name}`]
+          : []
+    );
+
+  /** Generated, committed, published — and OUTSIDE `src/`, so named explicitly. */
+  const ROOT_SHEETS = ['utilities.css', 'bootstrap-compat.css'];
+
+  const corpus = [...ROOT_SHEETS, ...walk('src')].map((file) => ({
+    file,
+    text: readFileSync(join(pkgRoot, file), 'utf8'),
+  }));
 
   const hits = (text: string): number => (text.match(/prefers-color-scheme/g) ?? []).length;
 
-  it('reads a corpus big enough to be the real one', () => {
+  it('reads the NAMED surfaces, and a corpus big enough to be the real one', () => {
     // POSITIVE CONTROL on the CORPUS. The verdict below is a zero, and a zero
     // is only evidence if something was read: a glob that resolves to nothing,
-    // or to one stub file, reports a perfectly clean sweep. The floor sits well
-    // under the live figure (103 files when written), so adding or removing
-    // components cannot trip it.
+    // or to one stub file, reports a perfectly clean sweep.
+    const files = corpus.map((c) => c.file);
+
+    // 🔴 THE NAMED SURFACES COME FIRST, BECAUSE A COUNT CANNOT SEE THE LOSS OF
+    // A SPECIFIC ONE. Measured: drop the three CSS sheets and ~100 element
+    // files remain — comfortably over any floor — while the stylesheet this
+    // package exists to ship goes unscanned, and an at-rule planted in it
+    // passes. A cardinality floor is blind to exactly the surface that matters
+    // most.
+    expect(files).toEqual(
+      expect.arrayContaining(['src/components.css', ...ROOT_SHEETS])
+    );
+    // The two PUBLISHED sdk elements — the gap the directory-enumerated corpus
+    // had. Named, not merely counted, so the walk losing that directory fails
+    // here rather than silently shrinking the corpus by two.
+    expect(files).toEqual(
+      expect.arrayContaining([
+        'src/sdk/civitai-sign-in-button.ts',
+        'src/sdk/civitai-workflow-button.ts',
+      ])
+    );
+
+    // The floor sits well under the live figure (126 files when written), so
+    // adding or removing components cannot trip it.
     //
     // There was a second floor here, on the corpus's total BYTES. Deleted
-    // rather than kept: no mutation was found that it kills and this line does
-    // not — the one that drops the corpus to the 3 CSS files trips both — so it
-    // read as a second control while asserting nothing extra. Re-add it only
-    // with a mutant only it catches.
+    // rather than kept: no mutation was found that it kills and this one does
+    // not — and it is blind in the same direction, since the three CSS sheets
+    // are only ~28% of the bytes, so a floor set "well under" the live figure
+    // survives their removal too. The named-surface assertions above are what
+    // actually close that. Re-add a byte floor only with a mutant only it
+    // catches.
     expect(corpus.length).toBeGreaterThan(60);
   });
 
