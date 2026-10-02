@@ -230,10 +230,12 @@ describe('<BlockGate> / <DirectLoadFallback>', () => {
    * report, and it passes against both the pre-change and post-change component.
    * Named rather than placed, so inserting a case above it cannot misidentify it.
    *
-   * The claims above are about the six cases that exist today, NOT a promise
-   * about any case added later: a new rendering case that does not oppose the OS
-   * would falsify both of them. If you add one, either make it conform or move
-   * these two claims onto the cases that honour them.
+   * The opposite-OS and red-at-base claims describe the card-rendering cases as
+   * they stand, NOT a promise about a case added later: a new rendering case
+   * whose fixture agrees with the OS instead of opposing it falsifies both.
+   * (The never-asked claim survives that — it does not depend on fixture
+   * polarity.) If you add such a case, either make it conform or move those two
+   * claims onto the cases that honour them.
    */
   describe('the fallback theme comes from the PAGE, never the OS', () => {
     /** Report `prefersDark` for the color-scheme query, recording every query asked. */

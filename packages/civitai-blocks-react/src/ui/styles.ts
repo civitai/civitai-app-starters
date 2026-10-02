@@ -39,8 +39,23 @@ import { tokensCss } from '@civitai/theme';
  * Theming (gotcha #60): a block sets `data-theme={theme}` on its OWN root
  * (from `BLOCK_INIT.theme`); the host can't reach across the iframe boundary.
  * The `--civitai-*` tokens theme via an ancestor `[data-theme='dark']`
- * selector; the default (no `data-theme`, i.e. light) matches @civitai/theme's
- * `:root` palette.
+ * selector.
+ *
+ * 🔴 **"No `data-theme`" is NOT a synonym for light, and reading it that way is
+ * how the explicit attribute gets deleted.** This comment used to say so. With
+ * no attribute anywhere above you, @civitai/theme's `:root` palette applies —
+ * which IS light — but it ships
+ * `@media (prefers-color-scheme: dark) { :root:not([data-theme]) { … } }`, so an
+ * attribute-less root follows the **OS** instead. That is why a surface which
+ * must not consult the OS has to set `data-theme` EXPLICITLY rather than rely on
+ * the default: `DirectLoadFallback` (./BlockGate.tsx) stamps it on its own
+ * wrapper for exactly this reason, and inheriting instead would hand the card
+ * back to the OS preference on any page that sets no attribute.
+ *
+ * Only `light` and `dark` select a token block. Any other value — `auto`, an
+ * empty string, a typo, the right word in the wrong case — takes the `:root`
+ * (light) palette AND defeats the `:not([data-theme])` fallback, so it is the
+ * one state that is neither themed nor OS-following.
  */
 
 /** Marker attribute on the injected interactive-5 `<style>` so injection is idempotent. */

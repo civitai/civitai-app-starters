@@ -64,11 +64,16 @@ browser canvas until React mounts — `#ffffff` through first paint under a ligh
 OS, flipping afterwards. That window is exactly what the starter's inline
 `<style>` and `bootSkeleton: true` exist to own.
 
-⚠️ **A page that sets `data-theme` to anything other than `light`** — `auto` is
-the one we have seen — **gets a dark card, and takes `@civitai/theme`'s light
-root tokens**, because its OS-dark fallback is gated on `:root:not([data-theme])`
-and any value defeats that. Point it at `dark` or `light`, or let the scaffold's
-script own it.
+⚠️ **A page that sets `data-theme` to a value that is neither `light` nor
+`dark`** — `auto`, an empty string, a typo, or the right word in the wrong case —
+**gets a dark card AND `@civitai/theme`'s light root tokens.** Only those two
+values select a token block, and the OS-dark fallback is gated on
+`:root:not([data-theme])`, which any value defeats. The clean answer is to let
+the scaffold's pre-paint script own the attribute. If you set it by hand,
+`light` is free; `dark` also lines the tokens up, but it carries the embedded
+cost in the paragraph above, and from an `auto` baseline that cost is wider than
+it looks there — an `auto` embed is see-through under either OS, so `dark` makes
+it opaque for every viewer, not just light-OS ones.
 
 This release changes only the direct-load landing, never the embedded path.
 
