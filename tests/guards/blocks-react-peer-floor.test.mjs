@@ -334,9 +334,22 @@ const PEER_VALUE_SYMBOL_SINCE = {
 // silently read nothing out of that tarball.
 //
 // The prediction was CORRECT, so `PEER_VALUE_SYMBOL_SINCE` is left at `0.55.0`
-// and the floor stays `>=0.49.0` — the assertion's step 4 ("leave it alone if
+// and the floor is left untouched — the assertion's step 4 ("leave it alone if
 // the measurement agrees"). These three are no longer exempt from the
 // measurement rule, and nothing here is owed.
+//
+// ⚠ CORRECTION — this note said "the floor stays `>=0.49.0`" and that was FALSE.
+// The declared floor is `>=0.55.0 <1.0.0`, raised by #517 in the same change that
+// added the value-imports, and the published 0.63.0 carries exactly that. The
+// wrong number was copied from the 2026-09-21 note ~50 lines above, which says
+// `>=0.49.0` correctly about ITS OWN conversion — a different release. Measured,
+// not reasoned: `npm view @civitai/blocks-react@0.63.0 peerDependencies`. The
+// lesson is the one this file keeps relearning: a number lifted from an adjacent
+// comment is not a measurement, and a floor is the single value every consumer's
+// install resolves against, so a wrong one here reads as authoritative. Had it
+// been believed in the direction it pointed — floor 0.49.0 against imports that
+// first exist in 0.55.0 — it describes precisely the satisfied-but-wrong peer
+// range this whole file exists to prevent (#309/#317/#344).
 //
 // This list stays EMPTY unless a branch again ledgers a symbol against a version
 // it is itself about to publish; see the docblock above for what declaring one
