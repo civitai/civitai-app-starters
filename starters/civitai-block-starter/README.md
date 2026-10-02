@@ -86,10 +86,14 @@ host stand down its own loading UI (no veil, iframe visible from mount); declare
 over an empty `#root` it is *worse* than not opting in — a blank iframe for the
 whole load, with the veil that used to cover it deliberately removed.
 
-The boot theme is a **guess** from `prefers-color-scheme`, corrected when
-`BLOCK_INIT` arrives. It defaults to **dark**: the base CSS rules carry the dark
-values and light lives only in `@media (prefers-color-scheme: light)` — never the
-other way round, or `no-preference` viewers get light.
+The boot theme is the **host's**, not the OS's. Civitai apps default to dark
+and never consult the browser preference: the base CSS rules carry the dark
+values, and light engages only when the host says the viewer chose it — via
+the `#civitai-block=v1&theme=…` URL fragment (an inline script applies it
+before first paint), then `BLOCK_INIT`, then live `THEME_CHANGE` pushes
+(synced onto `<html>` by an effect in `src/App.tsx`). Light never lives behind
+a media query, or an OS-light viewer whose site theme is dark gets a light
+page under dark components.
 
 Nothing removes the skeleton because React's `createRoot` clears the container on
 its first render. That is React-specific — Svelte 5's `mount` appends and needs

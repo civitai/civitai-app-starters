@@ -27,9 +27,11 @@
  * same as its sibling guards, deliberately, so renaming a matrix entry can never
  * silently stop running it.
  *
- * READ AS A REGRESSION TEST. At `origin/main` (dd7c5ba, pre-change) the
- * repo-sweep test fails on the literal substring `is empty in the built` and the
- * theme tests fail on `dark light`. Re-derive rather than trust this:
+ * READ AS A REGRESSION TEST. At `origin/main` (a560b3d, immediately before
+ * this change) the repo-sweep test fails on the literal substring
+ * `is empty in the built` and the theme tests fail because `index.html` still
+ * carries an OS-preference media query, no fragment fast-path script, and an
+ * `index.css` that transparents the page. Re-derive rather than trust this:
  *   git worktree add --detach /tmp/vbs origin/main
  *   cp scripts/lib/boot-skeleton-gate.mjs /tmp/vbs/scripts/lib/
  *   cp tests/guards/boot-skeleton.test.mjs /tmp/vbs/tests/guards/
@@ -333,38 +335,139 @@ test('civitai-block-starter: the boot theme defaults to DARK, structurally', () 
       'before any CSS is parsed, and "light dark" bets the wrong way',
   );
 
+  // 🔴 The OS/browser preference must NEVER decide this app's theme. Civitai
+  // apps default dark; light engages only when the viewer chose light on
+  // civitai.com and the HOST says so (fragment fast path → BLOCK_INIT →
+  // THEME_CHANGE). Any OS-preference media query in the inline style — dark
+  // OR light — hands the decision to a surface that knows nothing about the
+  // viewer's site choice, and is the exact defect this guard exists to keep
+  // dead: OS-light + site-dark painted dark components on a light page.
   assert.deepEqual(
     shape.darkMediaBlocks,
     [],
-    'there must be NO @media (prefers-color-scheme: dark) block. Dark is the BASE. Supplying ' +
-      'the dark values from inside a dark media query hands no-preference / query-less UAs ' +
-      'the light theme, which is the exact inversion this guard exists to prevent.',
+    'there must be NO OS-preference media query carrying dark values. Dark is the BASE. ' +
+      'Supplying the dark values from inside such a query hands no-preference / query-less ' +
+      'UAs the light theme, which is the exact inversion this guard exists to prevent.',
+  );
+  assert.deepEqual(
+    shape.lightMediaBlocks,
+    [],
+    'there must be NO OS-preference media query carrying light values either. Light is ' +
+      'engaged ONLY by the host fragment (`html[data-theme="light"]`), never by the ' +
+      'browser preference — an OS-light viewer whose site theme is dark must still get ' +
+      'the dark page.',
   );
 
-  assert.ok(
-    shape.lightMediaBlocks.length >= 1,
-    'light must be applied only inside @media (prefers-color-scheme: light)',
-  );
-
-  // The base rules must actually carry the dark values.
+  // The base rules must actually carry the dark page value.
   const htmlBg = /html\s*\{[^}]*background:\s*([^;}]+)/i.exec(shape.baseCss);
   assert.ok(htmlBg, 'the base rules must set `html { background: … }` — this is the strong ' +
     'guarantee, independent of `color-scheme` support');
   const baseBg = htmlBg[1].trim().toLowerCase();
-  const lightBg = /html\s*\{[^}]*background:\s*([^;}]+)/i.exec(shape.lightMediaBlocks.join('\n'));
-  assert.ok(lightBg, 'the light media block must override html background');
+  assert.ok(
+    isDarkHex(baseBg),
+    `base html background ${baseBg} is not a dark colour; dark is supposed to be the base`,
+  );
+
+  // …and the light override must exist, behind the fragment-gated attribute,
+  // and be genuinely lighter.
+  const lightRule = /html\[data-theme='light'\]\s*\{([^}]*)\}/i.exec(shape.baseCss);
+  assert.ok(
+    lightRule,
+    'light must be applied ONLY behind `html[data-theme="light"]` — the attribute the ' +
+      'inline fragment script and the App effect set. Without this rule a host that says ' +
+      '"light" has no way to repaint the page.',
+  );
+  const lightBg = /background:\s*([^;}]+)/i.exec(lightRule[1]);
+  assert.ok(lightBg, 'the light override must set an html background');
   assert.notEqual(
     baseBg,
     lightBg[1].trim().toLowerCase(),
     'base and light html backgrounds are identical — one of them is not doing anything',
   );
   assert.ok(
-    isDarkHex(baseBg),
-    `base html background ${baseBg} is not a dark colour; dark is supposed to be the base`,
+    !isDarkHex(lightBg[1].trim().toLowerCase()),
+    `the html[data-theme="light"] override (${lightBg[1].trim()}) is a dark colour`,
+  );
+
+  // The boot skeleton flips with the same attribute — a light page with dark
+  // skeleton cards is the mismatch all over again.
+  assert.match(
+    shape.baseCss,
+    /html\[data-theme='light'\][^{}]*\[data-boot-skeleton\]/i,
+    'the skeleton shapes must have a light variant keyed on the same attribute, or a ' +
+      'host-declared light page shows dark skeleton cards',
+  );
+});
+
+test('civitai-block-starter: the theme fast path is the HOST fragment, not the OS', () => {
+  const html = readFileSync(join(BLOCK_STARTER, 'index.html'), 'utf8');
+  const shape = readThemeShape(html);
+
+  // Exactly one classic inline script must read the fragment pre-paint. The
+  // module entry script has type="module" and no text; the fast path has
+  // neither.
+  const inlineBodies = shape.inlineScripts.filter((s) => s.text.trim() !== '');
+  const fastPath = inlineBodies.find((s) => s.text.includes('civitai-block'));
+  assert.ok(
+    fastPath,
+    'an inline classic script must read the #civitai-block=v1 fragment before first paint ' +
+      '— without it the host theme arrives only with BLOCK_INIT, after first paint, and ' +
+      'a site-light viewer gets a dark flash on every load',
   );
   assert.ok(
-    !isDarkHex(lightBg[1].trim().toLowerCase()),
-    `the prefers-color-scheme: light override (${lightBg[1].trim()}) is a dark colour`,
+    fastPath.type === null,
+    'the fast-path script must be a CLASSIC inline script — Vite bundles `type="module"` ' +
+      'inline scripts into the entry chunk, which does not run before first paint',
+  );
+  assert.match(
+    fastPath.text,
+    /'light'/,
+    'the fast path must engage light only for the exact fragment value theme=light; any ' +
+      'other value (or no fragment) keeps the dark default',
+  );
+  assert.match(
+    fastPath.text,
+    /dataset\.theme|setAttribute/,
+    'the fast path must set the data-theme attribute the boot CSS keys on',
+  );
+
+  // The whole document must never consult the OS preference — not in CSS,
+  // not in JS, not even in a comment (a comment normalising the old mechanism
+  // is how the media query came back last time).
+  assert.doesNotMatch(
+    html,
+    /prefers-color-scheme/,
+    'index.html must not mention prefers-color-scheme anywhere — the OS preference is not ' +
+      'an input to this app\'s theme. If a comment needs the history, point at the guard ' +
+      'instead of restating the mechanism.',
+  );
+  assert.doesNotMatch(
+    html,
+    /matchMedia/,
+    'index.html must not call matchMedia — JS reads the theme from the host fragment, ' +
+      'never from the OS',
+  );
+});
+
+test('civitai-block-starter: index.css does not override the boot page background', () => {
+  // Load-bearing cascade fact, measured: Vite emits index.css as a <link>
+  // AFTER the inline <style> in the built document. Both select `html` at
+  // specificity (0,0,1), so a background declared here wins the cascade and
+  // silently hands the page back to the OS canvas colour the moment the
+  // stylesheet lands — the boot paint survives only until then. The page
+  // background belongs to index.html (+ the App effect); this file must not
+  // paint it.
+  const css = readFileSync(join(BLOCK_STARTER, 'src', 'index.css'), 'utf8');
+  // 🔴 Strip comments FIRST — the rule's own explanatory comment names
+  // `background:`, and a check run over uncommented source reads that prose
+  // as a declaration (the same comment-as-code failure readThemeShape's
+  // dark-media regex once had).
+  const cssCode = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const htmlOrBodyBg = /(^|[,\s])(?:html|body)[^{]*\{[^}]*background\s*:/i.exec(cssCode);
+  assert.ok(
+    !htmlOrBodyBg,
+    `index.css sets a background on html/body (${htmlOrBodyBg?.[0]}), which overrides the ` +
+      'boot <style> by cascade order — see the comment in this file\'s html/body rule',
   );
 });
 
@@ -376,6 +479,30 @@ test('civitai-block-starter: index.css color-scheme stays dark-first too', () =>
   const m = /color-scheme:\s*([^;]+);/i.exec(css);
   assert.ok(m, 'index.css must declare color-scheme');
   assert.equal(m[1].trim(), 'dark light');
+});
+
+test('civitai-block-starter: App.tsx keeps the page in step with the host theme', () => {
+  // THEME_CHANGE arrives only as a transport push — no reload, no new
+  // fragment (the host deliberately does not rewrite the iframe src on a
+  // toggle). Without this sync a mounted block flips its components but
+  // leaves the page behind them in the old theme.
+  const src = readFileSync(join(BLOCK_STARTER, 'src', 'App.tsx'), 'utf8');
+  assert.match(
+    src,
+    /document\.documentElement/,
+    'the page background lives on <html>; the host theme must reach it',
+  );
+  assert.match(
+    src,
+    /dataset\.theme\s*=|setAttribute\(['"]data-theme/,
+    'the sync must set the same data-theme attribute the boot CSS keys on',
+  );
+  assert.match(
+    src,
+    /if \(!ready\)\s*return/,
+    'the sync must be gated on ready — before BLOCK_INIT `theme` is the transport ' +
+      "'light' sentinel, which would clobber the fragment seed of a dark host",
+  );
 });
 
 /** Relative luminance of a #rgb/#rrggbb below the midpoint. */

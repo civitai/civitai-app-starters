@@ -82,16 +82,25 @@ removing dead scaffolding, which is why
 
 Two things worth knowing before you edit either half:
 
-- **The theme is a GUESS.** The host sends no `BLOCK_INIT` URL fragment, so the
-  skeleton paints from `prefers-color-scheme` and is corrected the moment
-  `BLOCK_INIT` lands. We bet **dark**, because Civitai is dark by default: the
-  base (unconditioned) CSS rules carry the dark values, light is applied *only*
-  inside `@media (prefers-color-scheme: light)`, and there is deliberately **no**
-  `@media (prefers-color-scheme: dark)` block — that would hand `no-preference`
-  and query-less UAs the light theme. `<meta name="color-scheme">` and
-  `src/index.css`'s `color-scheme` both list `dark` first for the same reason (a
-  CSS `color-scheme` declaration overrides the meta tag, and Vite emits
-  `index.css` as a render-blocking `<link>` in the built document).
+- **The theme is not a guess — it is the HOST's.** Civitai apps default to
+  dark and never consult the OS/browser preference. Light engages only when
+  the viewer chose light on civitai.com, delivered by the host three ways:
+  the `#civitai-block=v1&theme=…` URL fragment (read by an inline script in
+  `index.html` **before first paint** — both host surfaces append it),
+  `BLOCK_INIT` (authoritative, corrects a stale fragment), and
+  `THEME_CHANGE` (the live push when the viewer toggles mid-session — synced
+  onto `<html>` by the effect in `src/App.tsx`, since the host does not
+  rewrite the iframe URL on a toggle). The base (unconditioned) CSS rules in
+  `index.html` carry the dark values, light is applied *only* behind
+  `html[data-theme='light']`, and there is deliberately **no** OS-preference
+  media query anywhere in the document — `tests/guards/boot-skeleton.test.mjs`
+  in this monorepo blocks one from coming back. `<meta name="color-scheme">`
+  and `src/index.css`'s `color-scheme` both list `dark` first for the UA
+  canvas (a CSS `color-scheme` declaration overrides the meta tag, and Vite
+  emits `index.css` as a render-blocking `<link>` in the built document).
+  🔴 `src/index.css` must NOT set a `background` on `html`/`body`: it is
+  emitted after the inline style, so it would win the cascade and hand the
+  page back to the OS canvas colour.
 - **Nothing removes the skeleton, and that is React-specific.**
   `createRoot(container).render(...)` clears the container's children before its
   first commit — measured, see
