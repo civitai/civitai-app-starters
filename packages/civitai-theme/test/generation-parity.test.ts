@@ -101,19 +101,40 @@ describe('generation parity', () => {
       expect(css).not.toContain('@layer');
     });
 
-    it('declares its base block at full specificity — not zero-specificity', () => {
-      // The property is SPECIFICITY, so assert that and nothing narrower.
+    it('declares its base block on :root (or :root/:host) at full specificity', () => {
       // `:where(…)` anywhere in this sheet drops a block to 0-0-0 and hands
       // consumers a different cascade.
       expect(css).not.toContain(':where(');
-      // 🔴 A SELECTOR LIST IS ALLOWED, DELIBERATELY. An earlier version asserted
-      // `toContain(':root {')`, which reddens on `:root, :host { … }` — a change
-      // that adds shadow-root support and alters NOTHING about specificity or
-      // the consumer cascade — and reddened it with this test's name, blaming
-      // zero-specificity when nothing became zero-specificity. A guard whose
-      // message misdiagnoses is worse than one that stays quiet, because the
-      // fix it suggests is to loosen the wrong thing.
-      expect(css).toMatch(/(^|\})\s*:root[\s,{]/);
+
+      /*
+       * 🔴 TWO PROPERTIES, AND BOTH ARE NEEDED — SPECIFICITY ALONE IS NOT THE
+       * CONTRACT. Consumers depend on the tokens being declared ON the root
+       * element at 0-1-0, so the selector-list MEMBERS are enumerated rather
+       * than merely anchored.
+       *
+       * The history, because two earlier versions were each wrong in a
+       * different direction and a third would otherwise be derived:
+       *   1. `toContain(':root {')` — reddened on `:root, :host { … }`, a change
+       *      that adds shadow-root support and alters nothing for consumers,
+       *      and reddened it under this test's name, misdiagnosing it as
+       *      zero-specificity.
+       *   2. the anchored form matching ":root starts a top-level selector" —
+       *      fixed that, but traded it for two FALSE NEGATIVES in the dangerous
+       *      direction, both measured green: `:root body { … }` and
+       *      `:root > * { … }`. Each keeps 0-1-0 specificity, so the property
+       *      the comment claimed held — yet the tokens move OFF the root
+       *      element, onto its children or behind the existence of a `<body>`.
+       *      `getComputedStyle(document.documentElement)` then carries none of
+       *      them, a shadow root attached above `<body>` inherits nothing, and
+       *      an unregistered token resolves to empty. It was also order-
+       *      sensitive: `:host, :root {` failed while `:root, :host {` passed.
+       *
+       * The anchor admits the end of the banner comment as well as a preceding
+       * `}`, because the sheet opens with that banner and the `^` alternative is
+       * otherwise dead — so emitting the base block before the `@property`
+       * rules used to redden this for the wrong reason.
+       */
+      expect(css).toMatch(/(^|\}|\/)\s*((:root|:host)\s*,\s*)*(:root|:host)\s*\{/);
     });
 
     it(":root carries the DARK value for every token that has one", () => {
@@ -136,10 +157,20 @@ describe('generation parity', () => {
      * ⚠️ INVARIANT GUARD, not regression coverage — stated so nobody counts it
      * as the latter. Measured: this one assertion is GREEN against the
      * pre-flip generator, because the light block was already a full mirror.
-     * The other three in this describe are red there. What makes it worth
-     * keeping is that the flip changes its CONSEQUENCE: before, an omission
-     * here fell back to a light `:root` and was invisible; now it falls back to
-     * a dark one and shows.
+     * What makes it worth keeping is that the flip changes its CONSEQUENCE:
+     * before, an omission here fell back to a light `:root` and was invisible;
+     * now it falls back to a dark one and shows.
+     *
+     * ⚠️ This used to add "The other three in this describe are red there", and
+     * that was wrong twice over — which is why no count appears now. It named
+     * three when the block has held two, three, four and five assertions at
+     * different points (it grew twice while this very PR was in review), and
+     * the claim is not true of all of them anyway: the `prefers-color-scheme`
+     * and dark-`:root` assertions are red against the pre-flip generator, while
+     * the `@layer` and base-selector ones are GREEN there — that generator had
+     * a bare `:root` and no layer. Count the block; do not trust a number about
+     * it. (The pre-flip red/green split is derived from the shape recorded in
+     * `src/generate.ts`, not measured — that generator no longer exists here.)
      */
     it("[data-theme='light'] is a FULL mirror, not a diff — it is the only way back to light", () => {
       const { root, dark } = resolveTokens();

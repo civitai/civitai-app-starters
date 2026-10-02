@@ -41,10 +41,10 @@ import { tokensCss } from '@civitai/theme';
  * The `--civitai-*` tokens theme via an ancestor `[data-theme='dark']`
  * selector.
  *
- * 🔴 Injecting from an effect is what makes a brand override at `:root` lose.
- * That warning lives on `useBlocksStyles()`'s own JSDoc below — the only copy,
- * and the only one that reaches the published `.d.ts`. Do not restate it here:
- * two copies in one file is the desync this package already argues against.
+ * 🔴 Brand-override behaviour is documented on `useBlocksStyles()`'s own JSDoc
+ * below — the only copy, and the only one that reaches the published `.d.ts`.
+ * Do not restate it here, headline included: two copies in one file is the
+ * desync this package already argues against.
  *
  * **"No `data-theme`" means DARK, and nothing here consults the OS.** Since
  * `@civitai/theme@0.5.0` the `:root` palette IS the dark one and the stylesheet
