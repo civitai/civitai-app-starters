@@ -52,10 +52,13 @@ describe('generation parity', () => {
   });
 
   /*
-   * 🔴 THE DARK-BASE CONTRACT. These three assertions are the whole reason the
-   * stylesheet looks the way it does, and each one has a failure mode that is
-   * invisible in a rendered page until someone reports a light flash or a
-   * theme that follows the wrong thing.
+   * 🔴 THE DARK-BASE CONTRACT. Every assertion in this block is part of it —
+   * count them rather than trusting a number here; an earlier version said
+   * "these three" and was staled twice by assertions added below it, which
+   * invites a reader to conclude the surplus ones are not part of the contract
+   * and relax one. Each has a failure mode that is invisible in a rendered page
+   * until someone reports a light flash or a theme that follows the wrong
+   * thing.
    *
    * Pinned as the SHEET's text rather than a computed style on purpose: the
    * absence of an at-rule cannot be observed from a computed value — a page
@@ -98,12 +101,19 @@ describe('generation parity', () => {
       expect(css).not.toContain('@layer');
     });
 
-    it('declares its base block at a BARE :root — not zero-specificity', () => {
-      // `:where(...)` anywhere in this sheet would drop a block to 0-0-0 and
-      // hand consumers a different cascade; `:root {` must be present as
-      // itself, so a rename or a wrap fails rather than merely changing shape.
+    it('declares its base block at full specificity — not zero-specificity', () => {
+      // The property is SPECIFICITY, so assert that and nothing narrower.
+      // `:where(…)` anywhere in this sheet drops a block to 0-0-0 and hands
+      // consumers a different cascade.
       expect(css).not.toContain(':where(');
-      expect(css).toContain(':root {');
+      // 🔴 A SELECTOR LIST IS ALLOWED, DELIBERATELY. An earlier version asserted
+      // `toContain(':root {')`, which reddens on `:root, :host { … }` — a change
+      // that adds shadow-root support and alters NOTHING about specificity or
+      // the consumer cascade — and reddened it with this test's name, blaming
+      // zero-specificity when nothing became zero-specificity. A guard whose
+      // message misdiagnoses is worse than one that stays quiet, because the
+      // fix it suggests is to loosen the wrong thing.
+      expect(css).toMatch(/(^|\})\s*:root[\s,{]/);
     });
 
     it(":root carries the DARK value for every token that has one", () => {

@@ -32,7 +32,7 @@
  * ⚠️ So this file is EVIDENCE of the consequence, not the tripwire for the
  * cause. The defining property — that `@civitai/theme`'s emitted sheet carries
  * no cascade layer — is pinned where it belongs, in that package's own
- * `test/generation-parity.test.ts`, in one node-tier line. Read these cases as
+ * `test/generation-parity.test.ts`, at the node tier. Read these cases as
  * "here is what consumers experience today"; read that one as "here is the
  * property you are changing".
  */

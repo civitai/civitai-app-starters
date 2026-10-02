@@ -29,11 +29,12 @@ read as one option among equals rather than as the route that works.
 - `@civitai/components` `src/components.css`: 🔴 **the sheet's own header
   carried the unqualified promise this release retracts** — *"ALL rules live in
   `@layer civitai.components` so a consumer's own unlayered CSS always wins the
-  cascade WITHOUT specificity fights"* — and it is single-sourced into **16**
-  generated artifacts by `pnpm --filter @civitai/components generate`, so it was
-  the most-published copy of the wrong claim and the last one anyone would look
-  at. Now scoped to *this sheet* with the token exception stated. One edit,
-  sixteen artifacts.
+  cascade WITHOUT specificity fights"* — and it is single-sourced into **16** generated
+  artifacts under `src/` by `pnpm --filter @civitai/components generate` (which
+  also rewrites `dist/components.css` and the root `styles.css`, carrying the
+  same header) — so it was the most-published copy of the wrong claim and the
+  last one anyone would look at. Now scoped to *this sheet* with the token
+  exception stated: one edit, every artifact.
 - `@civitai/components` `MARKUP.md`: *Cascade / overriding* now separates the
   layered rules from the unlayered tokens, says **scope a token override, never
   declare one at `:root`**, and gives the routes measured to win in either order
@@ -44,9 +45,13 @@ read as one option among equals rather than as the route that works.
   unqualified "your own unlayered CSS always wins" sentence lived — cut to the
   one-clause rule plus the `MARKUP.md` link it already carried. The utilities
   section's "override the custom properties to retune every utility at once" now
-  says *on a scope, not `:root`*, noting that those tokens live in a **different**
-  unlayered sheet (`utilities.css`) of identical structure — the same shape by
-  construction, not separately measured.
+  says *on a scope, not `:root`*. ⚠️ With a caveat that matters: those tokens
+  live in `utilities.css`, a **different** unlayered sheet, and nothing injects
+  it for you — a consumer links it themselves, so there the stylesheet order is
+  *theirs* to control and a `:root` override can be made to work. Scoping is
+  still the advice because it needs no ordering discipline at all. Measured for
+  the token sheet; that sheet is the same shape by construction, not separately
+  measured.
 - `@civitai/theme` `README.md`: a *Recolouring a token (brand overrides)*
   section, because this is the sheet with no layer and its own page never
   mentioned the interaction. It also states plainly what is **not** supported:
@@ -64,8 +69,9 @@ read as one option among equals rather than as the route that works.
   pointer rather than a paraphrase of the matrix: a JSDoc copy of another
   package's README, on another release cadence, is a desync nothing in CI can
   see, and this repo has already measured that exact failure once.
-- `@civitai/theme` `test/generation-parity.test.ts`: a one-line node-tier
-  assertion that the emitted sheet contains no `@layer`. That is the **defining**
+- `@civitai/theme` `test/generation-parity.test.ts`: two node-tier assertions —
+  that the emitted sheet contains no `@layer`, and that its base block is a bare
+  `:root` rather than zero-specificity. That is the **defining**
   property consumers depend on, and until now it was asserted nowhere — the
   parity test stays green if you layer, because both sides of the comparison
   move together.

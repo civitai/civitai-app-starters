@@ -41,16 +41,10 @@ import { tokensCss } from '@civitai/theme';
  * The `--civitai-*` tokens theme via an ancestor `[data-theme='dark']`
  * selector.
  *
- * 🔴 **INJECTING FROM AN EFFECT IS WHAT MAKES A BRAND OVERRIDE AT `:root`
- * LOSE, so the consequence is this function's to own.** These `<style>`
- * elements are appended from a `useEffect`, i.e. AFTER a bundler-injected app
- * stylesheet — and that is the stylesheet order in which an app's own
- * `:root { --civitai-…: }` silently loses to the unlayered token sheet.
- * **Tell block authors to SCOPE a token override**, never `:root`.
- * The mechanism, the measured matrix and the routes that do work live in
- * `@civitai/components`' `MARKUP.md` ("Cascade / overriding"). This comment
- * deliberately does not restate them: a JSDoc paraphrase of another package's
- * README, on another release cadence, is the desync nothing in CI can see.
+ * 🔴 Injecting from an effect is what makes a brand override at `:root` lose.
+ * That warning lives on `useBlocksStyles()`'s own JSDoc below — the only copy,
+ * and the only one that reaches the published `.d.ts`. Do not restate it here:
+ * two copies in one file is the desync this package already argues against.
  *
  * **"No `data-theme`" means DARK, and nothing here consults the OS.** Since
  * `@civitai/theme@0.5.0` the `:root` palette IS the dark one and the stylesheet
