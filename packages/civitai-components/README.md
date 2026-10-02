@@ -598,7 +598,7 @@ here so they're readable on the npm package page.
 
 **Theming** — set `data-theme="light"` or `data-theme="dark"` on any ancestor
 (typically `<html>` or the block root); tokens re-resolve from that scope
-(default = light). **Cascade** — every rule lives in `@layer civitai.components`,
+(default = **dark**, and never the OS preference — see MARKUP.md). **Cascade** — every rule lives in `@layer civitai.components`,
 so your own unlayered CSS always wins with no `!important`; override a token
 locally by redeclaring it (`style="--civitai-color-primary: #a259ff"`).
 

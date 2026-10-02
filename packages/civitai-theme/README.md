@@ -100,12 +100,26 @@ tokens.colorPrimary;     // "#228BE6"
 
 Theme by setting `data-theme="light" | "dark"` on any ancestor.
 
-Set nothing and the page follows the OS: the stylesheet carries the dark values
-under `@media (prefers-color-scheme: dark)`, scoped to `:root:not([data-theme])`.
-An app that sets the attribute — a block acting on the host's `THEME_CHANGE`, or
-its own theme switch — never matches that block and is unaffected. The attribute
-is the override, and it wins wherever it sits, because a nearer ancestor's tokens
-inherit over a farther one's.
+**Dark is the base, and nothing here consults the OS.** `:root` carries the dark
+palette plus `color-scheme: dark`, so an element with no `data-theme` above it is
+dark — on any machine, under any OS preference. `[data-theme='light']` is a full
+mirror of the light palette and is the only thing that puts light back;
+`[data-theme='dark']` restores dark inside a light subtree. The attribute is the
+override and it wins wherever it sits, because a nearer ancestor's tokens inherit
+over a farther one's.
+
+There is deliberately **no** `@media (prefers-color-scheme: …)` block, in either
+direction. The browser must not decide a Civitai surface's theme: civitai.com is
+dark, and an App Block boots dark and takes light only from its host. ⚠️ Until
+`0.5.0` the opposite was true — `:root` was light and dark arrived via
+`@media (prefers-color-scheme: dark) { :root:not([data-theme]) { … } }` — so every
+surface that must not follow the OS had to set `data-theme` explicitly just to
+defeat it. If you added such an attribute for that reason alone, you can drop it.
+
+Note on the JS exports, which did **not** change: `tokens` is still the LIGHT
+map and `darkTokens` the dark one. So `tokens` no longer describes what `:root`
+emits — read it as "the `[data-theme='light']` values". That naming is kept
+deliberately, so this release breaks one thing (the CSS default) rather than two.
 
 ## Build
 

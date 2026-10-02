@@ -37,6 +37,20 @@ For any change to a published package — `packages/civitai-app-sdk/src/**` or `
 - **`minor`** — new exported function, new optional argument, new subpath export, looser input acceptance. **Adding API.**
 - **`major`** — rename, removal, signature change, behavior change that existing callers will notice. **Breaking.**
 
+🔴 **While a package is `0.x`, a BREAKING change takes `minor`, not `major`.** This
+ladder read as if `major` were the only correct bump for a break, and every
+package here is `0.x` — so the written rule contradicted what the repo actually
+does. The practice is right and the omission was the bug: under npm's caret
+semantics a `0.x` minor is already a hard wall (`^0.4.0` means `>=0.4.0 <0.5.0`),
+so `minor` gives a caret consumer — which is what the starters pin — exactly the
+protection `major` would, while `major` on a `0.x` package means `1.0.0` and
+claims an API-stability commitment nobody here is making. Precedent, both merged:
+`feat(blocks-react)!` (#511) took `@civitai/blocks-react` 0.61.1 → **0.62.0**, and
+`feat(theme)!` (#516) took `@civitai/theme` 0.4.0 → **0.5.0**. Reserve `major` for
+a deliberate `1.0.0`. Say in the changeset body that the change is breaking —
+that text is what reaches the CHANGELOG and npm, and it is doing the work the
+bump level cannot.
+
 A starter-only change (no SDK touch) does not need a changeset. The starter `package.json` files are `ignore`'d in `.changeset/config.json`.
 
 ## 🔴 Why every `@civitai/*` package must be in the root `pnpm.overrides`

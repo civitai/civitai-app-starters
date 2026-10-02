@@ -41,11 +41,72 @@ describe('generation parity', () => {
       new RegExp(`${selector} \\{([\\s\\S]*?)\\}`).exec(css)?.[1] ?? '';
 
     it.each([
-      [':root', 'light'],
+      // 🔴 `:root` is DARK. Changing this row is changing the design system's
+      // base scheme, not fixing a test.
+      [':root', 'dark'],
       ["\\[data-theme='light'\\]", 'light'],
       ["\\[data-theme='dark'\\]", 'dark'],
     ])('%s declares color-scheme: %s', (selector, scheme) => {
       expect(block(selector)).toContain(`color-scheme: ${scheme};`);
+    });
+  });
+
+  /*
+   * 🔴 THE DARK-BASE CONTRACT. These three assertions are the whole reason the
+   * stylesheet looks the way it does, and each one has a failure mode that is
+   * invisible in a rendered page until someone reports a light flash or a
+   * theme that follows the wrong thing.
+   *
+   * Pinned as the SHEET's text rather than a computed style on purpose: the
+   * absence of an at-rule cannot be observed from a computed value — a page
+   * under a dark OS looks identical whether the base is dark or the base is
+   * light with an OS-dark override. Only the source can tell them apart.
+   */
+  describe('dark base, and no OS preference anywhere', () => {
+    const css = artifacts['tokens.css'];
+
+    it('declares NO prefers-color-scheme block, in either direction', () => {
+      // The old shape was `@media (prefers-color-scheme: dark) {
+      // :root:not([data-theme]) { … } }`, which made an unthemed element follow
+      // the OS. An OS-LIGHT block would be the same defect mirrored.
+      expect(css).not.toContain('prefers-color-scheme');
+    });
+
+    it(":root carries the DARK value for every token that has one", () => {
+      const { root, dark } = resolveTokens();
+      const rootBlock = /:root \{([\s\S]*?)\}/.exec(css)?.[1] ?? '';
+      expect(Object.keys(dark).length).toBeGreaterThan(10); // positive control
+      for (const [varName, value] of Object.entries(dark)) {
+        expect(rootBlock, `${varName} must be dark in :root`).toContain(`${varName}: ${value};`);
+      }
+      // And a token with no dark override keeps the shared value, so the base
+      // is not silently dropping anything.
+      const shared = Object.keys(root).filter((v) => !(v in dark));
+      expect(shared.length).toBeGreaterThan(5); // positive control
+      for (const varName of shared) {
+        expect(rootBlock).toContain(`${varName}: ${root[varName]};`);
+      }
+    });
+
+    /*
+     * ⚠️ INVARIANT GUARD, not regression coverage — stated so nobody counts it
+     * as the latter. Measured: this one assertion is GREEN against the
+     * pre-flip generator, because the light block was already a full mirror.
+     * The other three in this describe are red there. What makes it worth
+     * keeping is that the flip changes its CONSEQUENCE: before, an omission
+     * here fell back to a light `:root` and was invisible; now it falls back to
+     * a dark one and shows.
+     */
+    it("[data-theme='light'] is a FULL mirror, not a diff — it is the only way back to light", () => {
+      const { root, dark } = resolveTokens();
+      const lightBlock = /\[data-theme='light'\] \{([\s\S]*?)\}/.exec(css)?.[1] ?? '';
+      // Every token :root sets dark must be restated here, or a light subtree
+      // inherits dark values for the ones that were omitted.
+      for (const varName of Object.keys(dark)) {
+        expect(lightBlock, `${varName} must be restated in the light block`).toContain(
+          `${varName}: ${root[varName]};`
+        );
+      }
     });
   });
 

@@ -1,6 +1,22 @@
 /**
- * Runs in a context the browser reports as `prefers-color-scheme: dark`, which
- * is the only way to observe the token stylesheet's preference block at all.
+ * Runs in a context the browser reports as `prefers-color-scheme: dark`.
+ *
+ * ⚠️ WHAT THIS FILE IS NO LONGER FOR. Its original reason was that a dark-OS
+ * context "is the only way to observe the token stylesheet's preference block
+ * at all" — and that block is GONE: the stylesheet now carries the dark palette
+ * on `:root` unconditionally and declares no `prefers-color-scheme` anywhere.
+ *
+ * 🔴 So every assertion below passes identically before and after that flip, and
+ * none of them is evidence for it. A dark-OS context cannot distinguish "dark
+ * base" from "light base plus an OS-dark override" — both answer dark. The
+ * discriminating fixture is a LIGHT OS, and it lives in
+ * `color-scheme.dark-base.browser.test.ts`; the source-level claim that no
+ * at-rule exists is pinned in `@civitai/theme`'s `test/generation-parity.test.ts`.
+ *
+ * What it still earns its place for: proving the dark base is NOT secretly
+ * OS-coupled in the other direction — that a dark-OS viewer gets the same
+ * answers, and that an explicit `data-theme` still overrides regardless of what
+ * the OS says.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { darkTokens, injectTokens, tokens } from '@civitai/theme';

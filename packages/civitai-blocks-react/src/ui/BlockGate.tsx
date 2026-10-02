@@ -23,12 +23,19 @@ import { useBlocksStyles } from './styles.js';
  * Reading `prefers-color-scheme` here was the defect: on a light-OS machine it
  * painted a LIGHT card on a deliberately DARK page.
  *
- * Setting the attribute explicitly, rather than inheriting it, is load-bearing.
- * `@civitai/theme` ships
+ * Setting the attribute explicitly, rather than inheriting it, keeps this card's
+ * theme a decision of this component rather than of whatever is above it.
+ *
+ * ⚠️ It used to be load-bearing for a stronger reason that no longer holds:
+ * `@civitai/theme` shipped
  * `@media (prefers-color-scheme: dark) { :root:not([data-theme]) { … } }`, so a
- * document carrying no `data-theme` hands its tokens straight back to the OS.
- * An explicit `data-theme` on this wrapper is what makes the card deterministic
- * in a page that never set one.
+ * document carrying no `data-theme` handed its tokens back to the OS and only an
+ * explicit attribute could stop it. Since `@civitai/theme@0.5.0` the base is
+ * dark and that at-rule is gone, so inheriting would reach the same answer on a
+ * direct-load page. One real difference survives and is why this stays: the read
+ * below is `document.documentElement`, whereas inheritance takes the NEAREST
+ * `[data-theme]` ancestor. Those coincide on a direct load — no host, no wrapper
+ * — but that is a property of the deployment, not of this code.
  */
 function readDocumentTheme(): 'light' | 'dark' {
   if (typeof document === 'undefined') return 'dark';
