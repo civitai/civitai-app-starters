@@ -225,12 +225,15 @@ describe('<BlockGate> / <DirectLoadFallback>', () => {
    * component. `osColorSchemeQueries()` pins the stronger claim: the OS is never
    * ASKED, not merely overruled.
    *
-   * The `'the stub itself works'` case renders nothing: it is the negative
-   * control for the stub, so it deliberately asserts the OS preference AGREES
-   * with what it was told to report, and it passes against both the pre-change
-   * and post-change component. Named rather than placed, and the clauses above
-   * are scoped by what a case RENDERS rather than by a count — so adding a case,
-   * anywhere in this block, cannot make any of this stale.
+   * The negative control — the case titled "the stub itself works …" — renders
+   * nothing: it asserts the OS preference AGREES with what the stub was told to
+   * report, and it passes against both the pre-change and post-change component.
+   * Named rather than placed, so inserting a case above it cannot misidentify it.
+   *
+   * The claims above are about the six cases that exist today, NOT a promise
+   * about any case added later: a new rendering case that does not oppose the OS
+   * would falsify both of them. If you add one, either make it conform or move
+   * these two claims onto the cases that honour them.
    */
   describe('the fallback theme comes from the PAGE, never the OS', () => {
     /** Report `prefersDark` for the color-scheme query, recording every query asked. */
