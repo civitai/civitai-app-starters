@@ -371,7 +371,18 @@ describe('the ./css/* artifacts are deliberately UNEXPORTED and UNPUBLISHED (iss
    * `.npmignore`, a changed negation order). This runs the real packer and
    * counts what it would actually put in the tarball.
    */
-  it('the per-component artifacts are NOT published (npm pack ships no dist/css)', () => {
+  /*
+   * TIMEOUT, not a default: this spawns the real `npm` and packs the whole
+   * package, so its duration is a property of the RUNNER, not of the code under
+   * test. Measured on two consecutive commits of one branch in the same CI job:
+   * 2,557 ms green, then 5,892 ms against vitest's 5,000 ms default — the same
+   * work, red the second time, with 289 other tests passing and only this one's
+   * time moved. At ~51% of the default on a good run it had no margin at all.
+   * 60 s is deliberately far above any plausible pack so that a trip means a
+   * genuine hang; the assertions below, not the clock, are what this test is
+   * for.
+   */
+  it('the per-component artifacts are NOT published (npm pack ships no dist/css)', { timeout: 60_000 }, () => {
     const raw = execFileSync('npm', ['pack', '--dry-run', '--json'], {
       cwd: pkgRoot,
       encoding: 'utf8',
