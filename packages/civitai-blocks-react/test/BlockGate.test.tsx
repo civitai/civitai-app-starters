@@ -219,10 +219,17 @@ describe('<BlockGate> / <DirectLoadFallback>', () => {
    * the DOCUMENT (`data-theme` on `<html>`, which the scaffolded index.html sets
    * pre-paint from the host fragment) and defaults to dark.
    *
-   * Every case below sets the OS preference to the OPPOSITE of the expected
-   * answer, so a fixture cannot pass by agreeing with both rules at once — and
-   * each one is red against the pre-change component. `osColorSchemeQueries()`
-   * pins the stronger claim: the OS is never ASKED, not merely overruled.
+   * Every case below THAT RENDERS THE CARD sets the OS preference to the
+   * OPPOSITE of the expected answer, so a fixture cannot pass by agreeing with
+   * both rules at once — and each of those is red against the pre-change
+   * component. `osColorSchemeQueries()` pins the stronger claim: the OS is never
+   * ASKED, not merely overruled.
+   *
+   * The last case renders nothing: it is the negative control for the stub
+   * itself, so it deliberately asserts the OS preference AGREES with what it was
+   * told to report, and it is green in both directions. Scoped by what a case
+   * renders rather than by a count, so neither clause goes stale when one is
+   * added.
    */
   describe('the fallback theme comes from the PAGE, never the OS', () => {
     /** Report `prefersDark` for the color-scheme query, recording every query asked. */
