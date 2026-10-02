@@ -316,15 +316,27 @@ const PEER_VALUE_SYMBOL_SINCE = {
 // — the #309/#317/#344 family with the sign flipped, which this file exists to
 // police.
 //
-// 🔴 CONVERSION NOT YET COMPLETE — owed after this PR merges and the release job
-// publishes. The npm half is deliberately NOT runnable here: on this branch
-// 0.55.0 is in-tree and unpublished, so `npm view @civitai/app-sdk@0.55.0`
-// answers `E404 / No match found`, and per the assertion that E404 is the
-// CORRECT answer, not evidence the prediction was wrong. After the publish,
-// re-read the three entries off the real tarball and record the numbers plus a
-// control version that shows the probe can answer ABSENT (0.54.0 served that
-// role for the pre-release measurement), exactly as the 2026-09-21 / #371
-// conversion did.
+// CONVERSION COMPLETE 2026-10-02: #515 merged (`70ec100`), the release job
+// published app-sdk 0.55.0 — resolvable (`npm install --dry-run` rc=0, no
+// ETARGET), `_npmUser = GitHub Actions <npm-oidc-no-reply@github.com>`,
+// `dist.attestations` present — and all three entries were then re-read off
+// THAT tarball (`npm pack @civitai/app-sdk@0.55.0`), not off the workspace copy:
+//
+//   BLOCK_IDEMPOTENCY_KEY_MAX_LENGTH   PRESENT, 4 files
+//   BLOCK_IDEMPOTENCY_KEY_REGEX        PRESENT, 4 files
+//   blockIdempotencyKeyRejection       PRESENT, 4 files
+//
+// NEGATIVE CONTROL — the same probe over the 0.54.0 tarball answers ABSENT (0
+// files) for both greppable entries, which is what makes the PRESENT readings
+// above mean something rather than being a grep that matches anything.
+// POSITIVE CONTROL for that control — `BLOCK_SCOPES` is PRESENT in 0.54.0 (7
+// files), so the ABSENT pair is a real absence and not an extraction that
+// silently read nothing out of that tarball.
+//
+// The prediction was CORRECT, so `PEER_VALUE_SYMBOL_SINCE` is left at `0.55.0`
+// and the floor stays `>=0.49.0` — the assertion's step 4 ("leave it alone if
+// the measurement agrees"). These three are no longer exempt from the
+// measurement rule, and nothing here is owed.
 //
 // This list stays EMPTY unless a branch again ledgers a symbol against a version
 // it is itself about to publish; see the docblock above for what declaring one
