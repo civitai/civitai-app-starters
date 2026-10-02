@@ -82,13 +82,28 @@ describe('generation parity', () => {
      * Asserted HERE because this is the defining property, in the package that
      * owns it. `@civitai/components`' `test/token-override-order.browser.test.ts`
      * pins the consumer-visible CONSEQUENCE at the chromium tier; a downstream
-     * consequence in another package is evidence, not a tripwire. Wrapping this
-     * sheet in a layer — or giving its base block zero specificity with
-     * `:where()` — is a deliberate cascade change for consumers, so it fails
-     * here first and in one line.
+     * consequence in another package is evidence, not a tripwire.
+     *
+     * 🔴 THERE ARE TWO WAYS TO MAKE AN UNLAYERED CONSUMER `:root` WIN, AND BOTH
+     * ARE PINNED, because an earlier version of this comment claimed one
+     * assertion covered both and it did not. A `@layer` wrap is caught by the
+     * substring check; giving the base block ZERO specificity (`:where(:root)`)
+     * is invisible to it — measured, that mutation left this assertion GREEN
+     * and instead emptied two unrelated `/:root \{/` regexes above, whose
+     * messages read as "the `:root` block lost its declarations" and invite
+     * someone to widen those regexes and ship the cascade change with this
+     * tripwire still green. So the selector shape is asserted too.
      */
     it('declares NO cascade layer — the tokens are unlayered on purpose', () => {
       expect(css).not.toContain('@layer');
+    });
+
+    it('declares its base block at a BARE :root — not zero-specificity', () => {
+      // `:where(...)` anywhere in this sheet would drop a block to 0-0-0 and
+      // hand consumers a different cascade; `:root {` must be present as
+      // itself, so a rename or a wrap fails rather than merely changing shape.
+      expect(css).not.toContain(':where(');
+      expect(css).toContain(':root {');
     });
 
     it(":root carries the DARK value for every token that has one", () => {

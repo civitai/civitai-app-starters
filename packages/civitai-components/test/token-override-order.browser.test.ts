@@ -18,12 +18,16 @@
  * behaviour: the routes the docs recommend are the ones measured order-IMMUNE,
  * and the route the docs warn against is measured order-dependent.
  *
- * 🔴 ANY CASCADE CHANGE THAT LETS AN UNLAYERED APP `:root` WIN FALSIFIES THE
- * TWO `order-DEPENDENT` CASES BELOW — not only layering. Wrapping the tokens in
- * `@layer civitai.tokens` does it; so does giving the base block zero
- * specificity with `:where(:root)`, which is the likelier durable candidate of
- * the two. An earlier version of this comment named layering alone, which read
- * as narrower than what the cases actually trip on.
+ * 🔴 A CASCADE CHANGE FALSIFIES THESE `order-DEPENDENT` CASES — but WHICH ones
+ * depends on the change, and an earlier version of this comment got both the
+ * cause and the count wrong. Measured:
+ *   - `@layer civitai.tokens` around the sheet  -> BOTH cases go red.
+ *   - zero-specificity base (`:where(:root)`)   -> exactly ONE goes red, the
+ *     no-`data-theme` case. The `data-theme='dark'` case stays GREEN, because
+ *     that block keeps its `0-1-0` specificity and still wins on order.
+ * So `:where()` is a PARTIAL falsification, and it is the likelier durable
+ * candidate of the two — which is exactly why it is pinned at source rather
+ * than inferred from here.
  *
  * ⚠️ So this file is EVIDENCE of the consequence, not the tripwire for the
  * cause. The defining property — that `@civitai/theme`'s emitted sheet carries

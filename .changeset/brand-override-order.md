@@ -54,10 +54,14 @@ read as one option among equals rather than as the route that works.
   internal, and only the literal strings `light`/`dark` select a token block, so
   `data-theme="mybrand"` selects none and inherits dark. You recolour the token
   set; there is no named-theme API.
-- `@civitai/blocks-react` `src/ui/styles.ts`: the JSDoc that documents the
-  injection now owns its consequence — it ships inside the published `.d.ts`,
-  and this is the function whose effect-time injection creates the losing order.
-  Kept to the ownership sentence plus a pointer: a JSDoc paraphrase of another
+- `@civitai/blocks-react` `src/ui/styles.ts`: this is the function whose
+  effect-time injection creates the losing order, so the warning belongs on it.
+  🔴 **It is on `useBlocksStyles()`' own JSDoc, not the file-level comment** —
+  measured, the file-level block reaches the published `.d.ts` **not at all**:
+  it floats above a non-exported const that `tsc` elides, so it attaches to no
+  emitted declaration, and `files` ships no `src`. A block author hovering the
+  hook is the named audience and the file comment never reached them. Kept to a
+  pointer rather than a paraphrase of the matrix: a JSDoc copy of another
   package's README, on another release cadence, is a desync nothing in CI can
   see, and this repo has already measured that exact failure once.
 - `@civitai/theme` `test/generation-parity.test.ts`: a one-line node-tier
@@ -72,12 +76,15 @@ is needed because the published artifacts *are* these documents.
 Backed by tests rather than by reasoning, at two levels:
 `@civitai/components`' `test/token-override-order.browser.test.ts` asserts every
 documented route in **both** stylesheet orders, with fixture controls naming the
-real civitai value the trap resolves to; and the theme-package line above pins
-the property those cases are a consequence of. It deliberately records the trap
-as well as the happy paths — but as EVIDENCE, not as the tripwire: any cascade
-change that lets an unlayered app `:root` win falsifies the order-dependent
-cases, including `:where(:root)` and not only `@layer`, so the one-line
-theme-package assertion is what a cascade change actually trips first.
+real civitai value the trap resolves to; and the theme-package assertions above
+pin the property those cases are a consequence of. The browser cases record the
+trap as well as the happy paths, but as EVIDENCE rather than as the tripwire —
+and measured, they are a PARTIAL detector: a `@layer` wrap reddens both
+order-dependent cases, while a zero-specificity base (`:where(:root)`) reddens
+exactly **one**, because `[data-theme='dark']` keeps its `0-1-0` specificity and
+still wins on order. That is why the property is pinned at source in the theme
+package, in **two** assertions rather than one: a substring check for `@layer`
+cannot see `:where(`, so the selector shape is asserted alongside it.
 
 Not documented, deliberately: `:root:root`. The specificity notch does beat the
 theme's blocks in both orders, but nobody asked for it, it has no named

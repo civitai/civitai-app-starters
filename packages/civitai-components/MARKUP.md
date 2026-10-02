@@ -59,8 +59,8 @@ unlayered at specificity `0-1-0`. So an app's own `:root { --civitai-color-…: 
 does not outrank them, it **ties** — and the winner is whichever stylesheet
 comes last.
 
-**Scope a token override; never declare one at `:root`.** All three of these
-were measured to win in **either** stylesheet order:
+**Scope a token override; never declare one at `:root`.** Each of these was
+measured to win in **either** stylesheet order:
 
 ```html
 <!-- on the element, or any ancestor of what you want recoloured -->

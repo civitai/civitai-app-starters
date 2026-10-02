@@ -516,11 +516,14 @@ elements do.
 Spacing is a scale of its own — `--civitai-space-0` through `-6` — because
 Mantine expresses spacing per component rather than as a ramp, so
 `@civitai/theme` has nothing to derive it from. Redeclare the custom properties
-to retune every utility at once — **on a scope, not `:root`**. These live at
-`:root` in `utilities.css`, which is a *different* unlayered sheet from the
-token sheet but has the identical structure, so a `:root` redeclaration ties
-with it the same way; see *Cascade* below. (The measured matrix covers the token
-sheet; this one is the same shape by construction, not separately measured.) Colour utilities name tokens rather than
+to retune every utility at once — **on a scope, not `:root`**. These live in a
+bare `:root` block in `utilities.css`, which carries no `@layer`, so a `:root`
+redeclaration only ties with it and the later sheet wins. ⚠️ Unlike the token
+sheet, nothing injects `utilities.css` for you — you link it yourself, so that
+order is *yours* to control and a `:root` override can be made to work. Scoping
+is still the advice, because it needs no ordering discipline at all. (Measured
+for the token sheet; this sheet is the same shape by construction, not
+separately measured.) Colour utilities name tokens rather than
 shades, so `ci-muted` follows the theme into dark mode instead of pinning a
 grey. The grid is CSS Grid: `ci-row` is twelve columns, `ci-col-4` spans four,
 and `ci-md-col-6` does it from the `md` breakpoint up.
@@ -575,8 +578,11 @@ its own verbs instead — `<civitai-toast-region>` has `show(options)`,
 
 ## Design
 
-- All rules live in `@layer civitai.components`, so consumer CSS wins the
-  cascade without specificity fights.
+- All rules live in `@layer civitai.components`, so consumer CSS beats **this
+  sheet** without specificity fights. 🔴 Not the **tokens**: `@civitai/theme`'s
+  sheet is unlayered, so a `:root { --civitai-…: }` override only ties with it
+  and loses on stylesheet order. Scope token overrides — see
+  [`MARKUP.md`](./MARKUP.md) → *Cascade / overriding*.
 - State colors (hover/active/tint) are derived with `color-mix()` from base
   tokens — no shade enumeration.
 - Authored in plain CSS with native nesting (no preprocessor); `src/components.css`
