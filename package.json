@@ -24,6 +24,8 @@
     "check:shipped-sourcemaps:selftest": "node scripts/check-shipped-sourcemaps.mjs --self-test",
     "check:public-types": "node scripts/check-public-type-closure.mjs",
     "check:public-types:selftest": "node scripts/check-public-type-closure.mjs --self-test",
+    "check:generated-version": "node scripts/check-generated-version.mjs",
+    "check:generated-version:selftest": "node scripts/check-generated-version.mjs --self-test",
     "sync:catalogs": "node scripts/sync-orchestrator-catalogs.mjs",
     "assert:published": "node scripts/assert-published-versions.mjs",
     "smoke:published-starters": "node scripts/smoke-published-starters.mjs",

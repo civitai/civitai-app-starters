@@ -191,6 +191,18 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # 🔴 BEFORE THE BUILD, AND THAT ORDER IS THE WHOLE POINT. Every build step
+      # below regenerates `packages/civitai-components/src/version.generated.ts`
+      # from package.json, so by the time `@civitai/components test` runs its own
+      # parity assertion ("the stamped element version matches package.json") the
+      # two sides agree by construction and it cannot fail. That is how 0.8.1
+      # stayed committed against a 0.9.0 package.json from #492 onward with CI
+      # green throughout. This step reads the COMMITTED file as text, needs no
+      # build, and is the only thing here that can see that drift. Moving it
+      # below a build step silently disarms it. Self-test: `pnpm
+      # check:generated-version:selftest`.
+      - run: pnpm check:generated-version
+
       # Build in dependency order: theme (Mantine -> --civitai-* tokens) ->
       # components (CSS referencing those tokens) -> components-react (bindings).
       - run: pnpm --filter @civitai/theme build
