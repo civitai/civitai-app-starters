@@ -427,7 +427,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --project node --project dom",
     "test:watch": "vitest --project node",
-    "test:browser": "vitest run --project browser --project prefers-dark",
+    "test:browser": "vitest run --project browser",
     "test:contract": "vitest run --project contract",
     "manifest": "cem analyze"
   },

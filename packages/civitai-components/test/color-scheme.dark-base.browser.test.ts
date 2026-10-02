@@ -3,16 +3,20 @@
  * reporting `prefers-color-scheme: light`.
  *
  * The `browser` project sets no `colorScheme`, so Chromium reports light — and
- * that is the whole point of putting these here rather than in the
- * `prefers-dark` project. Before the dark-base flip the stylesheet carried the
- * LIGHT palette on `:root` and reached dark only through
+ * that is the whole point: a LIGHT OS is the only fixture that can tell the two
+ * designs apart. Before the dark-base flip the stylesheet carried the LIGHT
+ * palette on `:root` and reached dark only through
  * `@media (prefers-color-scheme: dark) { :root:not([data-theme]) { … } }`, so an
  * element with no `data-theme` above it followed the OS. Every assertion below
  * is red against that shape.
  *
- * 🔴 A dark-OS context CANNOT distinguish the two designs — it answers "dark"
- * either way — which is why `color-scheme.prefers-dark.test.ts` passes before
- * and after the flip and is not evidence for it. This file is the discriminator.
+ * 🔴 A dark-OS context CANNOT distinguish them — it answers "dark" either way.
+ * That is why this file is the discriminator, and why the dedicated dark-OS
+ * browser project that used to sit beside it was retired rather than kept: its
+ * assertions were green on both designs. The source-level half of the contract
+ * — that no component CSS declares the at-rule at all — is pinned in
+ * `test/css-integrity.test.ts`; see `vitest.config.ts` for why no dark-OS
+ * project exists.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { darkTokens, injectTokens, tokens } from '@civitai/theme';
