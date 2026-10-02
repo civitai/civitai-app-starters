@@ -80,6 +80,12 @@ import {
   isKnownBlockScope,
   resolveUngrantableConsentNotice,
 } from './consent.js';
+import {
+  requiredStorageScope,
+  storageResultType,
+  storageScopeDeniedMessage,
+  storageScopeDeniedPayload,
+} from './mockHostScopes.js';
 import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
 
@@ -724,17 +730,69 @@ export interface MockHostOptions {
    */
   disallowedAccountTypes?: BuzzAccountType[];
   /**
+   * The scopes the app's `block.manifest.json` DECLARES — the set the real
+   * host's token mint draws from.
+   *
+   * 🔴 **STORAGE IS GATED ON THIS, AND THE DEFAULT IS EMPTY.** A storage op whose
+   * scope is not in here is refused exactly as the server refuses it, because the
+   * server's test is presence in the block's approved scope set (see
+   * `BLOCK_SCOPES` in `@civitai/app-sdk`) and an undeclared scope is never
+   * approved. Omit this and every `APP_STORAGE_*` / `SHARED_*` call fails.
+   *
+   * That is a DELIBERATE BREAKING DEFAULT. Until this existed the mock host
+   * served storage unconditionally, so an app that forgot the scopes passed its
+   * whole suite and the dev harness and then failed every save in production —
+   * the one storage failure mode that actually ships was the only one the mock
+   * could not produce. A default of "permissive" would have left that true for
+   * every app that did not opt in, i.e. precisely the apps that did not know the
+   * scopes existed.
+   *
+   * Pass what your manifest declares — ideally by importing your own
+   * `block.manifest.json` as `manifest`, so the two cannot drift:
+   *
+   * ```ts
+   * createMockHost({ declaredScopes: manifest.scopes });
+   * ```
+   *
+   * ⚠️ The `import` line is described rather than shown ON PURPOSE, and please
+   * do not helpfully add it back. `tests/guards/blocks-react-entry-directory-names.test.mjs`
+   * extracts import specifiers with a raw regex over the whole file —
+   * `/\bfrom\s*['"]([^'"]+)['"]/g`, comments included — so a `from '…'` inside a
+   * doc comment is read as a real edge and resolved against THIS file's
+   * directory. A relative path to a consumer's manifest does not exist from
+   * here, and the guard fails with `unresolvable specifier`. Measured: it went
+   * red on all five `Starter (…)` matrix legs.
+   *
+   * A test that only exercises storage mechanics (quota, caps, row limits) and
+   * does not care about authorization should declare the storage scopes
+   * explicitly rather than reach for a permissive flag — there is none, on
+   * purpose.
+   *
+   * ⚠️ Scopes OTHER than storage are not read from here yet. `ai:write:budgeted`
+   * keeps its own `consentGranted` flag, because `buzzBudget` is conditional on
+   * it and `setScenario` can toggle it mid-session; giving one scope two sources
+   * of truth is how they drift.
+   */
+  declaredScopes?: string[];
+  /**
    * STORAGE scenario: in-memory KV backend (seed / quota / failNext). See
    * {@link MockStorageScenario}. When omitted, the store starts EMPTY with the
-   * v0 defaults — `APP_STORAGE_*` is answered either way (the mock host always
-   * serves storage now).
+   * v0 defaults.
+   *
+   * ⚠️ This governs the BACKEND, not authorization. Storage is additionally
+   * gated on {@link MockHostOptions.declaredScopes}, which defaults to empty —
+   * so a scenario alone no longer makes storage answer. (It used to: this doc
+   * said `APP_STORAGE_*` was "answered either way", and that was the defect.)
    */
   storage?: MockStorageScenario;
   /**
    * SHARED scenario: in-memory, app-scoped, votable backend (seed / failNext).
-   * See {@link MockSharedScenario}. When omitted, the shared store starts EMPTY
-   * — the `SHARED_*` protocol is answered either way (the mock host always
-   * serves shared storage now).
+   * See {@link MockSharedScenario}. When omitted, the shared store starts EMPTY.
+   *
+   * ⚠️ As with {@link MockHostOptions.storage}, this governs the BACKEND and not
+   * authorization: `SHARED_*` is additionally gated on
+   * {@link MockHostOptions.declaredScopes} (`apps:storage:shared:read` /
+   * `:write`), which defaults to empty.
    */
   shared?: MockSharedScenario;
   /** Host theme delivered in `BLOCK_INIT` + context. Default `'dark'`. */
@@ -1668,6 +1726,19 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
      * precisely what `./consent.js`'s header warns about.
      */
     const extraGrantedScopes = new Set<string>();
+    /**
+     * What the app's manifest DECLARES — the set the real host's token mint draws
+     * from, and the set the storage gate tests presence in.
+     *
+     * 🔴 Deliberately NOT defaulted to anything permissive. See
+     * {@link MockHostOptions.declaredScopes}: a permissive default would leave the
+     * pre-gate behaviour in place for every app that did not opt in, which is the
+     * population the gate exists for.
+     *
+     * This is a SNAPSHOT at install time, unlike `consentGranted`, which
+     * `setScenario` can toggle. A manifest does not change mid-session.
+     */
+    const declaredScopeSet = new Set<string>(options.declaredScopes ?? []);
     /** Everything the CURRENT token carries. One reader, so the two cannot drift. */
     const currentScopes = (): string[] => [
       ...(consentGranted ? [BUDGETED_SCOPE] : []),
@@ -1768,6 +1839,31 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
         options.onOutbound?.({ type: typed.type, payload: typed.payload });
 
         const requestId = typed.payload?.requestId;
+
+        // ---- THE STORAGE SCOPE GATE — see ./mockHostScopes.ts ----
+        //
+        // The server's test is PRESENCE in the block's approved scope set, so an
+        // UNDECLARED scope is refused before the backend is ever consulted. That
+        // ordering is the point: it refuses even when the scenario, the quota and
+        // the row budget would all have allowed the op, because production does.
+        //
+        // 🔴 IT SITS AHEAD OF THE SWITCH SO ONE RULE COVERS EVERY SURFACE. The
+        // alternative — a check inside each of the 15 storage handlers — is the
+        // shape that regenerates the same omission at every new site: a storage
+        // message added later is governed the moment it joins the table in
+        // `mockHostScopes.ts`, rather than whenever someone remembers to copy a
+        // guard into its handler.
+        {
+          const needed = requiredStorageScope(typed.type);
+          if (needed !== null && !declaredScopeSet.has(needed)) {
+            const error = storageScopeDeniedMessage(typed.type, needed);
+            dispatchToBlock({
+              type: storageResultType(typed.type),
+              payload: storageScopeDeniedPayload(typed.type, requestId, error),
+            });
+            return;
+          }
+        }
 
         switch (typed.type) {
           case 'REQUEST_TOKEN':
