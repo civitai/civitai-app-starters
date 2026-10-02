@@ -383,9 +383,16 @@ export function buildArtifacts(themeOverride: MantineThemeOverride = civitaiThem
   const propertyRules = meta
     .filter((m) => m.type === 'color')
     .map((m) => {
-      // The @property fallback is the no-information case, so it is dark too —
-      // consistent with `:root`, and it matters for a shadow root that cannot
-      // see any ancestor's declaration.
+      // The @property fallback is the no-information case, so it is dark too.
+      // ⚠️ CONSISTENCY WITH `:root`, NOT AN INDEPENDENTLY OBSERVABLE BEHAVIOUR —
+      // an earlier draft of this comment claimed it "matters for a shadow root
+      // that cannot see any ancestor's declaration", and nothing demonstrates
+      // that: @property rules are emitted for `type === 'color'` only, and the
+      // one shadow-root test case asserts `--civitai-card-border-width`, which
+      // has no @property rule at all and resolves by ordinary inheritance of the
+      // `:root` declaration. Leaving the initials light against a dark `:root`
+      // would be a real inconsistency; that is the reason, and it is the only
+      // one claimed here.
       const initial = baseValue(m.varName)!;
       return `@property ${m.varName} {\n  syntax: '<color>';\n  inherits: true;\n  initial-value: ${initial};\n}`;
     })

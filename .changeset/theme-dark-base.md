@@ -28,7 +28,8 @@ The JS exports are untouched — `tokens` remains the LIGHT map and `darkTokens`
 the dark one, so `tokens` no longer describes `:root`. That naming is kept
 deliberately: this release breaks the CSS default and nothing else, which keeps
 it reviewable and revertable in one piece. The `@property` initial-values do move
-to dark, so a shadow root that can see no ancestor declaration is dark too.
+to dark, for consistency with `:root` — not as an independently observable
+behaviour; see the note at the emission site.
 
 **If you need the old behaviour**, set `data-theme` from your own
 `matchMedia('(prefers-color-scheme: dark)')` listener. Nothing in the stylesheet

@@ -40,7 +40,12 @@ Or, from JS: `import { injectStyles } from '@civitai/components'; injectStyles()
 
 Set `data-theme="light"` or `data-theme="dark"` on any ancestor (typically
 `<html>` or the block root). All tokens re-resolve from that scope. Default
-(no attribute) is the light palette.
+(no attribute) is the **dark** palette, and nothing consults the OS preference:
+since `@civitai/theme@0.5.0` the dark values live on `:root` and the stylesheet
+declares no `prefers-color-scheme` block in either direction. Only `light` and
+`dark` select a token block — any other value selects none and inherits the dark
+base. ⚠️ Before that release the default was light-with-an-OS-dark-override; if
+you set `data-theme` only to stop the browser deciding, you can drop it.
 
 ## Cascade / overriding
 
