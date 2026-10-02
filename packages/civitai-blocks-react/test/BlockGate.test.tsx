@@ -214,6 +214,120 @@ describe('<BlockGate> / <DirectLoadFallback>', () => {
   });
 
   /*
+   * The fallback card used to read `prefers-color-scheme`, so on a light-OS
+   * machine it painted a LIGHT card on a deliberately DARK page. It now follows
+   * the DOCUMENT (`data-theme` on `<html>`, which the scaffolded index.html sets
+   * pre-paint from the host fragment) and defaults to dark.
+   *
+   * Every case below sets the OS preference to the OPPOSITE of the expected
+   * answer, so a fixture cannot pass by agreeing with both rules at once — and
+   * each one is red against the pre-change component. `osColorSchemeQueries()`
+   * pins the stronger claim: the OS is never ASKED, not merely overruled.
+   */
+  describe('the fallback theme comes from the PAGE, never the OS', () => {
+    /** Report `prefersDark` for the color-scheme query, recording every query asked. */
+    function stubOsPreference(prefersDark: boolean) {
+      const asked: string[] = [];
+      const impl = ((query: string) => {
+        asked.push(query);
+        return {
+          matches: /prefers-color-scheme:\s*dark/.test(query) ? prefersDark : false,
+          media: query,
+          onchange: null,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          addListener: () => {},
+          removeListener: () => {},
+          dispatchEvent: () => false,
+        } as unknown as MediaQueryList;
+      }) as typeof window.matchMedia;
+      vi.stubGlobal('matchMedia', impl);
+      return () => asked.filter((q) => q.includes('prefers-color-scheme'));
+    }
+
+    /** The wrapper's own `data-theme` — the attribute that decides the card's tokens. */
+    const cardTheme = () =>
+      document.querySelector('[data-civitai-block-direct-load]')?.getAttribute('data-theme');
+
+    function setPageTheme(value: string | null) {
+      if (value == null) delete document.documentElement.dataset.theme;
+      else document.documentElement.dataset.theme = value;
+    }
+
+    afterEach(() => {
+      setPageTheme(null);
+      vi.unstubAllGlobals();
+    });
+
+    it('page is LIGHT, OS says dark → light (the page wins, and the OS is never asked)', () => {
+      const osColorSchemeQueries = stubOsPreference(true);
+      setPageTheme('light');
+      render(<DirectLoadFallback hostname="model-benchmarking.civit.ai" />);
+      expect(cardTheme()).toBe('light');
+      expect(osColorSchemeQueries()).toEqual([]);
+    });
+
+    it('page is DARK, OS says light → dark', () => {
+      const osColorSchemeQueries = stubOsPreference(false);
+      setPageTheme('dark');
+      render(<DirectLoadFallback hostname="model-benchmarking.civit.ai" />);
+      expect(cardTheme()).toBe('dark');
+      expect(osColorSchemeQueries()).toEqual([]);
+    });
+
+    it('page carries NO data-theme, OS says light → dark (dark is the floor, not the OS)', () => {
+      const osColorSchemeQueries = stubOsPreference(false);
+      setPageTheme(null);
+      expect(document.documentElement.hasAttribute('data-theme')).toBe(false);
+      render(<DirectLoadFallback hostname="model-benchmarking.civit.ai" />);
+      expect(cardTheme()).toBe('dark');
+      expect(osColorSchemeQueries()).toEqual([]);
+    });
+
+    it("an unrecognised data-theme ('auto'), OS says light → dark: only 'light' buys light", () => {
+      const osColorSchemeQueries = stubOsPreference(false);
+      setPageTheme('auto');
+      render(<DirectLoadFallback hostname="model-benchmarking.civit.ai" />);
+      expect(cardTheme()).toBe('dark');
+      expect(osColorSchemeQueries()).toEqual([]);
+    });
+
+    it('an EMPTY data-theme, OS says light → dark', () => {
+      stubOsPreference(false);
+      setPageTheme('');
+      render(<DirectLoadFallback hostname="model-benchmarking.civit.ai" />);
+      expect(cardTheme()).toBe('dark');
+    });
+
+    it('through the gate: the direct-load branch carries the PAGE theme too', () => {
+      const osColorSchemeQueries = stubOsPreference(false);
+      setPageTheme('dark');
+      setFrame('top-level');
+      render(
+        <BlockGate hostname="model-benchmarking.civit.ai">
+          <Child />
+        </BlockGate>,
+      );
+      act(() => {
+        vi.advanceTimersByTime(TIMEOUT + 1);
+      });
+      expect(fallbackShowing()).toBe(true);
+      expect(cardTheme()).toBe('dark');
+      expect(osColorSchemeQueries()).toEqual([]);
+    });
+
+    it('the stub itself works — the negative control for the two assertions above', () => {
+      const osColorSchemeQueries = stubOsPreference(true);
+      expect(window.matchMedia('(prefers-color-scheme: dark)').matches).toBe(true);
+      expect(window.matchMedia('(prefers-color-scheme: light)').matches).toBe(false);
+      expect(osColorSchemeQueries()).toEqual([
+        '(prefers-color-scheme: dark)',
+        '(prefers-color-scheme: light)',
+      ]);
+    });
+  });
+
+  /*
    * Styling used to arrive as a SIDE EFFECT of rendering a `/ui` component —
    * each one calls `useBlocksStyles()` itself. So a block that wraps its root in
    * <BlockGate> but renders none of them got the design-system CSS on the
