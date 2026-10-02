@@ -225,11 +225,12 @@ describe('<BlockGate> / <DirectLoadFallback>', () => {
    * component. `osColorSchemeQueries()` pins the stronger claim: the OS is never
    * ASKED, not merely overruled.
    *
-   * The last case renders nothing: it is the negative control for the stub
-   * itself, so it deliberately asserts the OS preference AGREES with what it was
-   * told to report, and it is green in both directions. Scoped by what a case
-   * renders rather than by a count, so neither clause goes stale when one is
-   * added.
+   * The `'the stub itself works'` case renders nothing: it is the negative
+   * control for the stub, so it deliberately asserts the OS preference AGREES
+   * with what it was told to report, and it passes against both the pre-change
+   * and post-change component. Named rather than placed, and the clauses above
+   * are scoped by what a case RENDERS rather than by a count — so adding a case,
+   * anywhere in this block, cannot make any of this stale.
    */
   describe('the fallback theme comes from the PAGE, never the OS', () => {
     /** Report `prefersDark` for the color-scheme query, recording every query asked. */

@@ -38,28 +38,44 @@ on it otherwise.** On a page whose `<html>` carries no `data-theme` — or carri
 any value other than `light` — the card is now dark where it used to follow the
 OS. For a block on the CURRENT scaffold that is the intended fix. For a block
 still on the PRE-0.61 scaffold it goes the other way: that `index.html` sets no
-`data-theme` and has no pre-paint script at all, and it paints the page white
-under `@media (prefers-color-scheme: light)` — so a light-OS viewer opening
-`<slug>.civit.ai` directly now gets a DARK card on a WHITE page, where before the
-two matched. There the page theme *was* the OS preference, so reading the OS was
-following the page; this release reads `data-theme`, which those pages never set.
+`data-theme` and has no pre-paint script at all, and that page ends up **white
+under a light OS** — so a light-OS viewer opening `<slug>.civit.ai` directly now
+gets a DARK card on a WHITE page, where before the two matched. There the page
+theme *was* the OS preference, so reading the OS was following the page; this
+release reads `data-theme`, which those pages never set.
 
-**The fix is in your page's CSS, not in an attribute.** Re-scaffold
-(`civitai app init`) — the current `index.html` carries the dark values on the
-base rules and applies light only behind `html[data-theme='light']`, so a
-fragment-less direct load paints dark and the card matches. Or make that one
-change by hand: drop the `@media (prefers-color-scheme: light)` block from your
-`index.html`, or gate it on `html[data-theme='light']`.
+**Fix it in one line: put `data-theme="dark"` on `<html>`.** Measured in headless
+Chromium against that scaffold's own two stylesheets: the page goes from
+`#ffffff` to `#121212` and the card is already dark, so the two match — and they
+then match under a dark OS too.
 
-🔴 **Adding `data-theme` to `<html>` is NOT a fix, in either value**, and it is
-the obvious thing to reach for. `data-theme="dark"` moves nothing: the card is
-already dark without it, and the white page comes from your own OS-keyed CSS,
-which `@civitai/theme` cannot override because it paints no `html`/`body`
-background at all — it only defines custom properties. `data-theme="light"` is
-worse than nothing: it matches the white page under a light OS and, under a dark
-OS, puts a LIGHT card on the `#1a1b1e` page that scaffold paints by default —
-re-creating the exact defect this release fixes, permanently, because nothing in
-that scaffold ever rewrites `<html>`'s attribute afterwards.
+Why an attribute moves the page at all, since the mechanism is not obvious and is
+the whole reason the one-liner works: on the pre-0.61 scaffold the page colour is
+the **browser canvas**, not that `index.html`'s inline `background`. Its
+`src/index.css` declares `html, body { background: transparent }`, and Vite emits
+that file as a `<link>` *after* the inline `<style>`, so at equal specificity the
+transparent rule wins and the inline dark/light backgrounds are dead. The canvas
+then follows `color-scheme`, which `@civitai/theme` declares — `:root` light,
+`[data-theme='dark']` dark, plus an OS-keyed fallback for a root with no
+attribute — and `BlockGate` injects that sheet on both branches. So the attribute
+reaches the page through `color-scheme`, and `data-theme="light"` is a valid
+choice too: it gives a white page and a light card, matched under either OS.
+
+Re-scaffolding (`civitai app init`) also fixes it, and it is the better end state
+— the current starter paints `#1a1b1e` on the base rule, applies light only
+behind `html[data-theme='light']`, and has **removed** the `background:
+transparent` declaration from `src/index.css`, which is the part that matters.
+🔴 **If you hand-port instead, you must change BOTH files.** Editing
+`index.html` alone does nothing: measured, dropping the
+`@media (prefers-color-scheme: light)` block leaves the page `#ffffff`, and so
+does re-gating it on `html[data-theme='light']`, because the transparent rule in
+`src/index.css` is still winning.
+
+⚠️ **`data-theme="auto"` is the one value that is now wrong in both directions.**
+`auto` is not `light`, so the card is dark; and `@civitai/theme`'s OS-dark
+fallback is gated on `:root:not([data-theme])`, so an `auto` root takes the light
+tokens unconditionally — measured `#ffffff` under a dark OS as well as a light
+one. Change it to `dark` (or `light`); do not leave it on `auto`.
 
 The direct-load landing is the only surface affected, never the embedded path.
 
