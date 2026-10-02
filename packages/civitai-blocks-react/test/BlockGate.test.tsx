@@ -293,10 +293,11 @@ describe('<BlockGate> / <DirectLoadFallback>', () => {
     });
 
     it('an EMPTY data-theme, OS says light → dark', () => {
-      stubOsPreference(false);
+      const osColorSchemeQueries = stubOsPreference(false);
       setPageTheme('');
       render(<DirectLoadFallback hostname="model-benchmarking.civit.ai" />);
       expect(cardTheme()).toBe('dark');
+      expect(osColorSchemeQueries()).toEqual([]);
     });
 
     it('through the gate: the direct-load branch carries the PAGE theme too', () => {
@@ -316,7 +317,7 @@ describe('<BlockGate> / <DirectLoadFallback>', () => {
       expect(osColorSchemeQueries()).toEqual([]);
     });
 
-    it('the stub itself works — the negative control for the two assertions above', () => {
+    it('the stub itself works — the negative control for every never-asked assertion above', () => {
       const osColorSchemeQueries = stubOsPreference(true);
       expect(window.matchMedia('(prefers-color-scheme: dark)').matches).toBe(true);
       expect(window.matchMedia('(prefers-color-scheme: light)').matches).toBe(false);

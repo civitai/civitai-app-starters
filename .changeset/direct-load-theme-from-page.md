@@ -33,6 +33,21 @@ Three things worth knowing:
    exported; `BlockGate`, `DirectLoadFallback` and both their prop types are
    untouched. The embedded happy path never ran this code.
 
+🔴 **One consumer-visible inversion, stated because an upgrading block cannot act
+on it otherwise.** On a page whose `<html>` carries no `data-theme`, the card is
+now dark where it used to follow the OS. For a block on the CURRENT scaffold that
+is the intended fix. For a block still on the PRE-0.61 scaffold it goes the other
+way: that `index.html` sets no `data-theme` and has no pre-paint script at all,
+and it paints the page white under `@media (prefers-color-scheme: light)` — so a
+light-OS viewer opening `<slug>.civit.ai` directly now gets a DARK card on a
+WHITE page, where before the two matched. There the page theme *was* the OS
+preference, so reading the OS was following the page; this release reads
+`data-theme`, which those pages never set.
+
+Nothing to change in your block's code — re-scaffold, or set
+`data-theme="dark"` on `<html>` — and the direct-load landing is the only surface
+affected, never the embedded path.
+
 Covered by six cases in `test/BlockGate.test.tsx`, each fixture setting the OS
 preference to the OPPOSITE of the expected answer so it cannot pass by agreeing
 with both rules at once, plus an assertion that the OS is never *asked* (not
