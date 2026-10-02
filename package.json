@@ -30,6 +30,7 @@
     "test:guards": "node --test --test-timeout=60000 \"tests/guards/*.test.mjs\"",
     "test:guards:public-types": "node --test --test-timeout=60000 \"tests/guards/check-public-type-closure-patterns.test.mjs\"",
     "changeset": "changeset",
+    "release:version": "changeset version && pnpm --filter @civitai/components generate",
     "release": "pnpm -r --filter \"./packages/*\" build && changeset publish",
     "release:check": "changeset status --verbose"
   },

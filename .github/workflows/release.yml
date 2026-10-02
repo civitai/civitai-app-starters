@@ -105,7 +105,22 @@ jobs:
         uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
         with:
           publish: pnpm release
-          version: pnpm changeset version
+          # NOT a bare `changeset version`. `@civitai/components` commits a
+          # GENERATED artifact that embeds its own version —
+          # `packages/civitai-components/src/version.generated.ts`, written by
+          # `scripts/build-css.ts` from package.json — so bumping the version
+          # without re-running the generator leaves the committed constant a
+          # release behind. It drifted that way at 0.8.1 -> 0.9.0 (#492) and
+          # NOTHING caught it: the `design-system` job builds before it tests,
+          # so the parity test in `packages/civitai-components/test/css-integrity.test.ts`
+          # only ever sees the freshly generated value. The red surfaces for a
+          # human instead, in any checkout that has not been built — a fresh
+          # clone's `pnpm --filter @civitai/components test` fails on that
+          # assertion. `release:version` (root package.json) regenerates it in
+          # the same step, so the Version PR carries the artifact with the bump.
+          # `@civitai/components` is the ONLY package whose generated output
+          # embeds its own version; that is why the filter is narrow.
+          version: pnpm release:version
           title: 'chore(release): version packages'
           commit: 'chore(release): version packages'
         env:
