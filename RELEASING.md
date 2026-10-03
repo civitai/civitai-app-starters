@@ -47,13 +47,37 @@ the "looser input acceptance" above, which is about API this package chooses to
 widen. The distinction matters because every starter pins a caret and a `0.x`
 minor is a hard wall: shipping the correction as `minor` leaves every caret
 consumer with a package that rejects manifests the platform requires, which is
-the opposite of the fix. 🔴 **Permissive-only is the precondition, not a
-formality** — if the re-vendored schema TIGHTENS anything (lowered bound, new
-`required`, narrowed enum, removed property) it can make a previously-valid
-manifest fail, and that is a `minor` under the `0.x`-breaking rule below.
-`scripts/revendor-canonical-schema.sh` writes `patch` by default and cannot tell
-the difference, so its generated changeset carries a 🔴 telling the reviewer to
-check the diff.
+the opposite of the fix. 🔴 **Permissive-only is the precondition, not a formality, and this list is the
+SINGLE SOURCE for what breaks it** — `scripts/revendor-canonical-schema.sh` and
+`.github/workflows/revendor-canonical-schema.yml` point here rather than
+restating it, because three divergent copies is how the short version loses the
+case that matters.
+
+A re-vendor is **NOT** permissive-only if the diff does any of these. Each makes
+a manifest that validated yesterday start failing, so each is a `minor` under the
+`0.x`-breaking rule below:
+
+- adds or narrows a **`pattern`**
+- adds an **`allOf`** / **`not`** / **`oneOf`** constraint
+- flips **`additionalProperties`** from `true`/absent to `false`
+- **lowers** a `maxLength` / `maximum` / `maxItems`, or **raises** a `minLength` /
+  `minimum` / `minItems` (note the direction: *lowering* a `minimum` loosens, so
+  "a lowered bound" on its own is the wrong test)
+- narrows a **`type`**, or removes a member from an **`enum`**
+- adds an entry to **`required`**, or removes a property
+- adds **`multipleOf`**, or tightens an existing one
+
+🔴 **This is not a theoretical list — the one real instance used the two items a
+shorter checklist would have omitted.** `77805d0` ("re-vendor tightened App
+Blocks manifest schema") lowered `buildCommand.maxLength` 256→128 **and** added a
+`pattern`, plus four `not` clauses on `outputDir`. A checklist naming only bounds
+and enums matches one of its three mechanisms.
+
+⚠ **The SDK suite does not catch these for you.** It pins the top-level
+`required` set, `tagline.maxLength`, the scopes enum and the
+property-set-is-typed ledger — so a tightening on any field outside that set
+passes the bot's validation step and the PR opens with `patch`. Reading the diff
+is the control.
 
 🔴 **While a package is `0.x`, a BREAKING change takes `minor`, not `major`.** This
 ladder read as if `major` were the only correct bump for a break, and every

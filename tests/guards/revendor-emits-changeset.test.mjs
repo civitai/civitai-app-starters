@@ -185,31 +185,74 @@ describe('revendor-canonical-schema.sh — a re-vendor must PUBLISH, not just mi
       const cs = readFileSync(join(root, '.changeset', found[0]), 'utf8');
 
       // Assert the STATE a release depends on — the package it bumps and the
-      // bump level — not merely that some file appeared. `patch`: pre-1.0 a
-      // caret pins the MINOR, so a minor would withhold the corrected schema
-      // from every caret-pinned consumer, which is the failure this mechanism
-      // exists to end. The script's own comment carries the full reasoning and
-      // the two rationales that were retracted before it.
-      assert.match(
-        cs,
-        /^---\n(?:[^\n]*\n)*?'@civitai\/app-sdk': patch\n(?:[^\n]*\n)*?---\n/,
-        `changeset does not declare a patch bump for @civitai/app-sdk:\n${cs}`,
+      // bump level. `patch`: pre-1.0 a caret pins the MINOR, so a minor would
+      // withhold the corrected schema from every caret-pinned consumer, which is
+      // the failure this mechanism exists to end. The script's own comment
+      // carries the reasoning and the rationales retracted before it.
+      // (A second, regex-only assertion on the same property lived here and was
+      // removed as redundant: the parsed check below is strictly stronger, and
+      // two assertions for one property can diverge.)
+      // 🔴 ALLOWLIST OVER THE PARSED FRONT-MATTER REGION — and it has been wrong
+      // twice, in the same direction both times: the assertion was NARROWER than
+      // the sentence describing it.
+      //   WRONG 1: a denylist alternation of five package names, against SEVEN
+      //   publishable packages — a changeset bumping `@civitai/components-chat`
+      //   passed.
+      //   WRONG 2: an allowlist regexed over the WHOLE FILE for SINGLE-QUOTED
+      //   keys. It enforced a quote SPELLING, not a state: `"@civitai/x": minor`
+      //   (valid YAML, parses to two packages) and `@civitai/x: minor` (invalid
+      //   YAML the release tooling cannot read) BOTH passed, while the comment
+      //   claimed "the ONLY line allowed in the front matter is app-sdk's".
+      // Now: slice between the first two `---` fences and read the key regardless
+      // of quoting, so the assertion is about the KEY SET a release will act on.
+      const fence = cs.split('\n').reduce(
+        (acc, line, i) => (line.trim() === '---' && acc.length < 2 ? [...acc, i] : acc),
+        [],
       );
-      // 🔴 ALLOWLIST, NOT A DENYLIST. This was a hand-listed alternation of five
-      // package names and the workspace has SEVEN publishable packages, so a
-      // changeset bumping the unlisted one passed. A denylist of names has to be
-      // revisited every time a package is added — and nothing would tell you.
-      // Inverted: the ONLY line allowed in the front matter is app-sdk's, so a
-      // package added tomorrow is covered without touching this test.
-      const bumped = (cs.match(/^'[^']+':\s*\w+$/gm) ?? []).sort();
+      assert.equal(fence.length, 2, `changeset has no delimited front matter:\n${cs}`);
+      const bumped = cs
+        .split('\n')
+        .slice(fence[0] + 1, fence[1])
+        .filter((l) => l.trim() !== '')
+        .map((l) => {
+          const m = l.match(/^\s*(?:'([^']+)'|"([^"]+)"|([^:\s][^:]*?))\s*:\s*(\S+)\s*$/);
+          return m ? `${m[1] ?? m[2] ?? m[3]}: ${m[4]}` : `UNPARSEABLE: ${l}`;
+        })
+        .sort();
       assert.deepEqual(
         bumped,
-        ["'@civitai/app-sdk': patch"],
-        `changeset must bump @civitai/app-sdk and nothing else (it ships the schema); got:\n${bumped.join('\n') || '(none parsed)'}`,
+        ['@civitai/app-sdk: patch'],
+        `front matter must bump @civitai/app-sdk alone, at patch (it is the package that ships the schema); got:\n${bumped.join('\n') || '(empty front matter)'}`,
       );
     } finally {
       destroyFixture(root);
     }
+  });
+
+  /**
+   * STALENESS PIN, not behaviour coverage — and it is here because this exact
+   * figure has already rotted once in this PR's own history. The cadence is
+   * quoted in prose in four places (this file twice, the script header, the
+   * workflow's guard comment) against ONE source: the `cron:` line. It changed
+   * from weekly to 6-hourly in #265, and the retraction of "weekly" missed a
+   * copy inside this very file. So rather than adding a fifth sentence asking
+   * people to keep them in step, read the source and fail when it moves — then
+   * whoever changes the cadence is pointed at the prose by a red test.
+   */
+  test('STALENESS PIN: the cron is still 4x/day, which the prose around it asserts', () => {
+    const wf = readFileSync(
+      join(REPO_ROOT, '.github', 'workflows', 'revendor-canonical-schema.yml'),
+      'utf8',
+    );
+    const m = wf.match(/^\s*-\s*cron:\s*"([^"]+)"/m);
+    assert.ok(m, 'no quoted cron: line found in revendor-canonical-schema.yml');
+    assert.equal(
+      m[1],
+      '37 */6 * * *',
+      `the cron changed to "${m[1]}". Four prose copies of "four times a day" are now stale: ` +
+        'this file (the module docblock and the no-op guard), scripts/revendor-canonical-schema.sh ' +
+        "(header), and the workflow's own guard comment. Update them, then update this expectation.",
+    );
   });
 
   test('INVARIANT GUARD: a no-op re-vendor writes NO changeset', async () => {

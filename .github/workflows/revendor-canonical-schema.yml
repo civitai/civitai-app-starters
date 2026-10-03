@@ -57,18 +57,53 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Adopted VERBATIM in shape from the sibling
+      # `sync-orchestrator-catalogs.yml`, which has carried it since that
+      # workflow learned the same lesson. Its comment there explains why the
+      # sibling needed it and says it was "fine for the sibling
+      # `revendor-canonical-schema.yml`, whose PR is mergeable as-is and which
+      # nobody commits to". 🔴 THAT PREMISE IS NOW FALSE FOR THIS WORKFLOW: this
+      # bot writes a changeset carrying a semver DECISION it cannot verify, so a
+      # reviewer may need to change the bump level on this branch before merging.
+      # `create-pull-request` rebases and force-pushes the branch on every run,
+      # and the mirror on `main` keeps drifting until the PR merges, so
+      # re-detection is CERTAIN rather than unlikely — without this step a
+      # reviewer's downgrade is discarded within 6 hours (the cron is 4x/day).
+      #
+      # `github.token` rather than CHANGESETS_TOKEN: this is a read, and the
+      # `pull-requests: write` grant above already covers it. A `gh` failure
+      # (rate limit, outage) fails the step and therefore the job, which is the
+      # safe direction — an unanswered "is a PR open?" must never be read as "no".
+      - name: Refuse to clobber an open re-vendor PR
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVENDOR_BRANCH: automation/revendor-canonical-schema
+        run: |
+          set -euo pipefail
+          n="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$REVENDOR_BRANCH" \
+                 --state open --json number --jq '.[0].number // empty')"
+          echo "open=$n" >> "$GITHUB_OUTPUT"
+          if [[ -n "$n" ]]; then
+            echo "::notice::PR #${n} is already open on ${REVENDOR_BRANCH}. Skipping this run so a reviewer's commits on that branch are not force-pushed away. Merge or close it and the next run will re-vendor."
+          fi
+
       - uses: pnpm/action-setup@v6
+        if: steps.guard.outputs.open == ''
 
       - uses: actions/setup-node@v7
+        if: steps.guard.outputs.open == ''
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
       - name: Re-vendor canonical schema
+        if: steps.guard.outputs.open == ''
         run: ./scripts/revendor-canonical-schema.sh
 
       - name: Detect changes
         id: changed
+        if: steps.guard.outputs.open == ''
         run: |
           if [[ -n "$(git status --porcelain)" ]]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -78,10 +113,23 @@ jobs:
 
       # Validate the FULL relevant SDK suite (not a subset): schema-parity /
       # defineBlock tests read the vendored schema, so a canonical change that
-      # breaks an SDK assertion fails HERE and no PR opens; an additive/optional
-      # change passes and the PR opens.
+      # breaks an SDK assertion fails HERE and no PR opens.
+      #
+      # 🔴 DO NOT READ THE CONVERSE. This said "an additive/optional change
+      # passes and the PR opens" until 2026-10-03, which is true of the common
+      # case and reads as "the bot can only ever open an innocuous PR". What
+      # passes is anything the SDK suite does not assert on, and that set
+      # includes CONSTRAINT TIGHTENINGS: the suite pins the top-level `required`
+      # set, `tagline.maxLength`, the scopes enum and the property-set-is-typed
+      # ledger — so a new `pattern`, a new `allOf`/`not`, a lowered `maxLength`
+      # or `additionalProperties` true->false on an unpinned field sails
+      # through. That has happened in this repo: `77805d0` re-vendored exactly
+      # such a tightening (`buildCommand.maxLength` 256->128 plus a new
+      # `pattern`, and four `not` clauses on `outputDir`). An ADDITIVE change
+      # passing is also the DESIGNED path, not a surprise — this repo types the
+      # field first so the ledger is green when the bytes arrive.
       - name: Validate SDK against the re-vendored schema
-        if: steps.changed.outputs.changed == 'true'
+        if: steps.guard.outputs.open == '' && steps.changed.outputs.changed == 'true'
         run: |
           pnpm install --frozen-lockfile
           pnpm --filter @civitai/app-sdk typecheck
@@ -89,7 +137,7 @@ jobs:
           pnpm --filter @civitai/app-sdk build
 
       - name: Open PR if schema changed
-        if: steps.changed.outputs.changed == 'true'
+        if: steps.guard.outputs.open == '' && steps.changed.outputs.changed == 'true'
         # SHA-pinned to an EXACT commit, asserted by
         # `tests/guards/workflow-action-pins.test.mjs` (PINNED), which runs in ci.yml's
         # `Starter` job — `pull_request`-triggered and a required context. This
@@ -139,13 +187,22 @@ jobs:
             merged without a changeset reach no consumer. It copies bytes and
             cannot tell which direction the schema moved, so:
 
-            🔴 **Read the schema diff.** If it TIGHTENS anything — lowered bound,
-            new `required`, narrowed enum, removed property — `patch` is wrong (a
-            manifest that validated before will start failing). **Do not fix that
-            by committing to this branch:** this branch is regenerated and
-            force-pushed on every cron run, up to four a day, and the drift is
-            re-detected until this PR merges — your commit will be discarded.
-            Close this PR and land the re-vendor by hand with a `minor` changeset.
+            🔴 **Read the schema diff. `patch` is correct only if the change is
+            permissive-only** — if it TIGHTENS anything, a manifest that validated
+            yesterday starts failing, and the bump is a `minor`.
+            **`RELEASING.md` ("vendored-schema parity") is the single source for
+            what counts as tightening** — read it rather than guessing, because
+            the short list people reach for omits `pattern` and `allOf`/`not`,
+            which is how the one real instance in this repo tightened.
+            ⚠ The SDK validation step above does NOT catch these: it pins the
+            top-level `required` set, `tagline.maxLength`, the scopes enum and the
+            property-set ledger, so a tightening on any other field passes it.
+
+            **To downgrade: commit the changed changeset to THIS branch and
+            merge.** That is safe as of the `Refuse to clobber an open re-vendor
+            PR` step at the top of this workflow — while this PR is open the cron
+            skips, so your commit is not force-pushed away. Merge or close it and
+            the next run re-vendors.
 
             A semantic canonical addition — e.g. a new manifest field like
             `scopeJustifications` (civitai #3195) — may also warrant adding the

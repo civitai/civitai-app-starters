@@ -104,36 +104,52 @@ echo "re-vendored $VENDORED from $CANONICAL_URL"
 #   minor." Right answer, incomplete reason: it never asked which DIRECTION the
 #   schema moved, which is the only thing that decides the level.
 #   DEAD 2 — "`minor`, because the nested-property ledger aborts the bot on an
-#   ADDITIVE change, so only constraint TIGHTENINGS reach here." FALSIFIED by
-#   measurement, and it inverted the truth. This repo types the field FIRST, on
-#   purpose: `packages/civitai-app-sdk/CHANGELOG.md` (0.56.0) says "This lands
-#   AHEAD of the schema bytes on purpose, and that ordering is the point" and
-#   names this very ledger as the reason. A pre-typed additive change therefore
-#   PASSES the ledger — it is the DESIGNED bot path, not an abort — and it is the
-#   case that produced the incident this block exists for. Enumerated over every
-#   `chore(sdk): re-vendor` commit to the vendored schema: additive or
-#   description-only in every one; zero unattended tightenings.
+#   ADDITIVE change, so only constraint TIGHTENINGS reach here." FALSIFIED, and
+#   it inverted the truth. This repo types the field FIRST, on purpose:
+#   `packages/civitai-app-sdk/CHANGELOG.md` (0.56.0) says "This lands AHEAD of
+#   the schema bytes on purpose, and that ordering is the point" and names this
+#   very ledger as the reason. A pre-typed additive change therefore PASSES the
+#   ledger — it is the DESIGNED path, not an abort — and it is the case that
+#   produced the incident this block exists for.
 #
-# What is actually true is smaller than either dead draft, and the honest part is
-# the limitation: THIS SCRIPT CANNOT TELL WHICH DIRECTION THE SCHEMA MOVED. It
-# does not diff the schema; it copies bytes. So the level here is a DEFAULT
-# matched to the measured population, not a judgement about the change in hand:
-# the observed bot-path population is permissive, and pre-1.0 a caret pins the
-# MINOR, so `minor` would withhold the corrected schema from every caret-pinned
-# consumer — which is the exact failure this whole mechanism exists to end.
-# `patch` delivers it. The residual risk is the inverse case, and it is handled
-# by the 🔴 in the generated body rather than by a word here, because a word here
-# cannot see the diff. Tightenings DO exist in this file's history (see
-# `chore(sdk): re-vendor tightened …` and the decorative-scope removal) — they
-# were human-driven, not bot-driven, which is why this is a default and not a
-# claim that tightenings never happen.
+# 🔴 AND THE NUMBER THAT REPLACED DEAD 2 WAS ALSO WRONG — read this before
+# quoting any count from here. An earlier revision claimed "additive or
+# description-only in EVERY `chore(sdk): re-vendor` commit; zero unattended
+# tightenings". Re-derived: that filter selects SEVEN commits and **6 of 7** are
+# additive-or-description-only. The exception is `77805d0`, "re-vendor tightened
+# App Blocks manifest schema" — `buildCommand.maxLength` 256->128, a new
+# `pattern`, and four `not` clauses on `outputDir`. It matches the filter and is
+# unambiguously a tightening. The claim also rescued itself with the word
+# "unattended", which empties the population rather than saving it: ALL commits
+# to this file are human-authored, so there are zero unattended re-vendors to
+# measure — and `77805d0` is the most bot-shaped commit in the set (schema bytes
+# only, no types, no tests, no changeset).
+#
+# So: THIS SCRIPT CANNOT TELL WHICH DIRECTION THE SCHEMA MOVED. It does not diff
+# the schema; it copies bytes. `patch` is a DEFAULT chosen because (a) the
+# majority of re-vendors to this file have been permissive, and (b) pre-1.0 a
+# caret pins the MINOR, so `minor` would withhold the corrected schema from
+# every caret-pinned consumer — the exact failure this mechanism exists to end.
+# It is NOT a claim that tightenings do not reach here: one already has. The
+# control for that case is the 🔴 checklist in the generated body, and the
+# checklist is therefore load-bearing, not decoration — `77805d0` tightened via
+# `pattern` and `allOf`/`not`, so a checklist naming only bounds and enums would
+# have missed the one real instance.
 CHANGESET_DIR="$REPO_ROOT/.changeset"
 CHANGESET="$CHANGESET_DIR/revendor-canonical-schema-$(date -u +%Y-%m-%d).md"
 mkdir -p "$CHANGESET_DIR"
-# 🔴 The body deliberately does NOT interpolate $CANONICAL_URL. `changeset
-# version` copies this text verbatim into the package CHANGELOG in a PUBLIC repo,
-# and the URL is env-overridable — so a local run against an internal host would
+# 🔴 TWO RULES FOR THIS BODY, both learned the hard way.
+#
+# (1) It does NOT interpolate $CANONICAL_URL. `changeset version` copies this
+# text VERBATIM into the package CHANGELOG — a public repo, and the npm page —
+# and the URL is env-overridable, so a local run against an internal host would
 # publish that hostname. The canonical URL is a constant; write it as one.
+#
+# (2) Keep it SHORT and about THE CHANGE. The reviewer-facing mechanics (which
+# branch to commit on, what to do about a tightening) belong in the PR body,
+# which is where the reviewer actually reads them — putting them here publishes
+# bot-branch instructions to every consumer reading the changelog, addressed to
+# nobody who can act on them. An earlier revision shipped seven such lines.
 cat > "$CHANGESET" <<'EOF'
 ---
 '@civitai/app-sdk': patch
@@ -147,19 +163,8 @@ The vendored schema is published — it ships in the tarball, is exported as
 runtime — so mirroring the bytes only takes effect once the package is
 released. This changeset is what releases them.
 
-**Why `patch`.** This was written by `scripts/revendor-canonical-schema.sh`,
-which copies bytes and CANNOT tell which direction the schema moved. `patch` is
-the default because the measured population of unattended re-vendors is
-permissive (additive or description-only), and because pre-1.0 a caret pins the
-minor — so `minor` would withhold the corrected schema from every caret-pinned
-consumer, which is the failure this mechanism exists to end.
-
-🔴 **READ THE SCHEMA DIFF BEFORE MERGING.** If it TIGHTENS anything — a lowered
-`maxLength`, a new `required` entry, a narrowed enum, a removed property — then
-`patch` is wrong, because a manifest that validated before will start failing.
-**Do not fix that by editing this file on this branch:** this PR's branch is
-regenerated and force-pushed on every cron run (up to four a day), and the drift
-is re-detected until the PR merges, so your commit is certain to be discarded.
-Close this PR instead and land the re-vendor by hand with a `minor` changeset.
+`patch` is the automated default for a vendored-schema parity fix; see
+`RELEASING.md`. It is correct when the re-vendor is permissive-only, which is
+what the reviewer checks before merging.
 EOF
 echo "wrote $CHANGESET (a re-vendor only reaches consumers once published)"
