@@ -70,7 +70,9 @@
  *
  * 🔴 KNOWN LIMITS. {@link injectBaseHref} is a TEXT transform, not an HTML
  * parse: it finds the first `<base href=…>` and the first `<head>` with regular
- * expressions, so a `<base>` inside a comment or a template string is treated
+ * expressions — linear ones, see `findExistingBase` for why that is a
+ * requirement and not a preference — so a `<base>` inside a comment or a
+ * template string is treated
  * as real, and a document whose `<head>` appears only inside a comment gets its
  * `<base>` inserted at the comment instead. Both over-apply rather than
  * under-apply — the base is still absolute and still correct for ordinary
@@ -177,18 +179,15 @@ export function injectBaseHref(html: string, documentUrl: string): InjectBaseHre
     );
   }
 
-  const existing = EXISTING_BASE_HREF.exec(html);
-  const existingHref = existing ? unquoteAttr(existing[1]) : undefined;
+  const existing = findExistingBase(html);
 
   let baseHref: string;
   try {
     baseHref =
-      existingHref === undefined || existingHref === ''
-        ? new URL('.', docUrl).href
-        : new URL(existingHref, docUrl).href;
+      existing === undefined ? new URL('.', docUrl).href : new URL(existing.href, docUrl).href;
   } catch (cause) {
     throw new NestedDocumentError(
-      `injectBaseHref: the document's own <base href="${existingHref ?? ''}"> does not resolve ` +
+      `injectBaseHref: the document's own <base href="${existing?.href ?? ''}"> does not resolve ` +
         `against ${docUrl.href}`,
       { code: 'invalid-url', url: docUrl.href, cause },
     );
@@ -196,9 +195,9 @@ export function injectBaseHref(html: string, documentUrl: string): InjectBaseHre
 
   const tag = `<base href="${escapeAttr(baseHref)}">`;
 
-  if (existing && existingHref !== undefined && existingHref !== '') {
+  if (existing !== undefined) {
     const before = html.slice(0, existing.index);
-    const after = html.slice(existing.index + existing[0].length);
+    const after = html.slice(existing.index + existing.length);
     return { html: `${before}${tag}${after}`, baseHref, hadExistingBase: true };
   }
 
@@ -314,26 +313,51 @@ export async function fetchNestedDocument(
 
 /* ----------------------------------------------------------------- internals */
 
-/**
- * First `<base>` tag that carries an `href` attribute, capturing the raw
- * attribute value (quoted or bare). A `<base target=…>` with no `href` does not
- * match, because per the HTML spec it sets no document base URL.
- */
-const EXISTING_BASE_HREF = /<base\b[^>]*?\bhref\s*=\s*("[^"]*"|'[^']*'|[^\s"'>]+)[^>]*>/i;
-
 /** Opening `<head>` tag, with or without attributes. */
 const HEAD_OPEN = /<head\b[^>]*>/i;
 
 /** A leading doctype declaration. */
 const LEADING_DOCTYPE = /^\s*<!doctype\b[^>]*>/i;
 
-function unquoteAttr(raw: string | undefined): string | undefined {
-  if (raw === undefined) return undefined;
-  const first = raw[0];
-  if ((first === '"' || first === "'") && raw.endsWith(first) && raw.length >= 2) {
-    return raw.slice(1, -1);
+/**
+ * An `href` attribute inside ONE tag's text, quoted, single-quoted or bare.
+ * Applied only to a matched tag, never to the whole document.
+ */
+const HREF_ATTR = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i;
+
+/**
+ * The first `<base>` tag that sets a document base URL, i.e. the first one with
+ * a non-empty `href`. Per the HTML spec a `<base>` with only `target` sets no
+ * base URL, and a later `<base href>` is what the parser would use — so this
+ * walks the `<base>` tags rather than taking the first one.
+ *
+ * 🔴 TWO REGEXES ON PURPOSE, AND THE REASON IS A SECURITY GATE, NOT STYLE. The
+ * single-pattern version — `/<base\b[^>]*?\bhref\s*=\s*(…)[^>]*>/i` — nests a
+ * lazy `[^>]*?` inside a match that also ends in `[^>]*`, which CodeQL flags as
+ * `js/polynomial-redos` (high): on a long run of non-`>` characters after a
+ * `<base` with no `href`, the engine retries the inner scan from every start
+ * position, so the cost is quadratic in document length. The document is the
+ * app's own bundle, but it is still library input and still attacker-reachable
+ * for anyone who can influence a build. Here the tag scan is ONE quantifier
+ * (linear) and the attribute scan runs against a single tag's bounded text, so
+ * the whole walk is linear. Do not merge them back.
+ */
+function findExistingBase(
+  html: string,
+): { index: number; length: number; href: string } | undefined {
+  // A fresh literal per call: a module-level `g` regex carries `lastIndex`
+  // between calls, which would make this function's answer depend on the
+  // previous one.
+  for (const tag of html.matchAll(/<base\b[^>]*>/gi)) {
+    const attr = HREF_ATTR.exec(tag[0]);
+    if (attr === null) continue;
+    const href = attr[1] ?? attr[2] ?? attr[3] ?? '';
+    // An empty `href` sets no base URL either, so it is "absent" like `target`.
+    if (href === '') continue;
+    if (tag.index === undefined) continue;
+    return { index: tag.index, length: tag[0].length, href };
   }
-  return raw;
+  return undefined;
 }
 
 /**

@@ -106,12 +106,12 @@ Mutation-checked, five mutants, all killed — and one of them produced a findin
 worth recording rather than a tick:
 
 - **Delete the `<base>` insertion** (`return { html, … }` instead of
-  `insertInto(html, tag)`) → 10 of 34 unit tests red, and 4 of 13 browser tests,
+  `insertInto(html, tag)`) → 11 of 34 unit tests red, and 4 of 13 browser tests,
   including the in-browser mechanism test with exactly the production symptom:
   `expected 'http://localhost:63315/sprite.png' to be
   'https://nested-fixture.example/engine/sprite.png'`.
 - **Base on the document instead of its directory** (`docUrl.href` instead of
-  `new URL('.', docUrl).href`) → 14 of 34 unit tests red, first with
+  `new URL('.', docUrl).href`) → 15 of 34 unit tests red, first with
   `expected '<base href="…/engine/boot.html">' to be '<base href="…/engine/">'`.
   🔴 **But the in-browser `img.src` test SURVIVES it**, and that is not a gap in
   the test — a `<base href>` naming the document resolves a relative URL
@@ -128,5 +128,18 @@ worth recording rather than a tick:
 - **Drop the `\b` after `<head`** in the opening-tag pattern → 1 red, with the
   base landing *inside* `<header>` — after the asset references, where it does
   nothing.
-- **Drop the `\b` after `<base`** in the existing-base pattern → 1 red, with a
-  `<basefont href>` read as the document's own base.
+- **Drop the `\b` after `<base`** in the existing-base tag pattern → 1 red, with
+  a `<basefont href>` read as the document's own base.
+
+**One real defect was caught by CI and fixed in this branch, not worked around.**
+The first revision found the existing `<base href>` with a single pattern,
+`/<base\b[^>]*?\bhref\s*=\s*(…)[^>]*>/i`. CodeQL flagged it **high**,
+`js/polynomial-redos`: a lazy `[^>]*?` nested inside a match that also ends in
+`[^>]*` makes the engine retry the inner scan from every start position, so a
+long run of non-`>` characters after a `<base` with no `href` costs quadratic
+time in document length. The document is the app's own bundle, but it is still
+library input. The fix splits it: `findExistingBase` walks `<base>` tags with
+ONE quantifier (linear) and applies the `href` pattern to a single tag's
+bounded text, so the whole walk is linear. Behaviour is unchanged — all 34 unit
+tests passed before and after the refactor, and all five mutants above were
+re-run against the new shape and are still killed.

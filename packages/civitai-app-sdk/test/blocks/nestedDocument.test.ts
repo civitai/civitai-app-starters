@@ -26,9 +26,9 @@
  * WATCHED TO FAIL (mutation-checked, 2026-10-03), five mutants, each killed by
  * the assertion written for it:
  *
- *   - delete the `<base>` insertion → 10 red.
+ *   - delete the `<base>` insertion → 11 red.
  *   - base on the document instead of its directory (`docUrl.href` for
- *     `new URL('.', docUrl).href`) → 14 red, first with
+ *     `new URL('.', docUrl).href`) → 15 red, first with
  *     `expected '<base href="…/engine/boot.html">' to be
  *      '<base href="…/engine/">'`.
  *   - stop replacing an existing `<base href>`, inserting alongside it → 4 red,
@@ -36,8 +36,8 @@
  *   - drop the `\b` after `<head` in `HEAD_OPEN` → 1 red, the `<header>` test,
  *     with the base landing INSIDE `<header>` (after the asset references,
  *     where it does nothing).
- *   - drop the `\b` after `<base` in `EXISTING_BASE_HREF` → 1 red, the same
- *     test, `<basefont href>` having been read as the document's base.
+ *   - drop the `\b` after `<base` in `findExistingBase`'s tag pattern → 1 red,
+ *     the same test, `<basefont href>` having been read as the document's base.
  *
  * 🔴 THE SECOND MUTANT IS WHY THIS FILE'S LITERAL STRINGS ARE LOAD-BEARING, AND
  * WHY ITS BROWSER SIBLING DOES NOT DUPLICATE THEM. A `<base href>` naming the
