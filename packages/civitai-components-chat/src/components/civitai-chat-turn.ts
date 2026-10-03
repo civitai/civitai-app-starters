@@ -4,6 +4,8 @@ import { until } from 'lit/directives/until.js';
 
 import type { TurnPart } from '../agent/parts.js';
 import type { JobManager } from '../orchestration/jobs.js';
+import type { PanelManager } from '../panels/panel.js';
+import { isPanelTool } from '../panels/tools.js';
 import { POST_TOOL, type PostManager } from '../posting/post.js';
 import { CUT_OFF } from '../store/thread-store.js';
 import type { ModelDirectory } from '../store/models.js';
@@ -12,8 +14,8 @@ import { isJobTool } from '../tools/catalog.js';
 import type { Attachment, ChoiceOption, ModelRecommendation, Turn } from '../types.js';
 import { renderMarkdown } from '../ux/markdown.js';
 import type { StripItem } from './lib/civitai-chat-attachment-strip.js';
-import { DEFAULT_ACTIONS } from './lib/civitai-chat-generation-card.js';
-import { LightElement } from './light.js';
+import { LightElement, emit } from './light.js';
+import { mediaActions } from './media-actions.js';
 
 const ACTIVITY: Record<string, string> = {
   find_services: 'Checking what fits best…',
@@ -27,10 +29,13 @@ const ACTIVITY: Record<string, string> = {
   transcribe_audio: 'Listening…',
 };
 
-const WITH_POST = {
-  ...DEFAULT_ACTIONS,
-  image: [...DEFAULT_ACTIONS.image.slice(0, -1), { id: 'post', label: 'Post' }, ...DEFAULT_ACTIONS.image.slice(-1)],
-};
+/** What a failed step said: a thrown error, or a tool that answered `{ error }`. */
+function failureOf(part: Extract<TurnPart, { kind: 'tool' }>): string | undefined {
+  if (part.state === 'error') return part.error || 'It failed.';
+  const error = (part.output as { error?: unknown } | undefined)?.error;
+  return part.state === 'done' && error ? String(error).slice(0, 600) : undefined;
+}
+
 
 /** One exchange: what the user sent, and everything the assistant said and made in reply. */
 export class CivitaiChatTurn extends LightElement {
@@ -42,6 +47,10 @@ export class CivitaiChatTurn extends LightElement {
     latest: { type: Boolean },
     jobs: { attribute: false },
     posts: { attribute: false },
+    panels: { attribute: false },
+    files: { attribute: false },
+    canShare: { type: Boolean, attribute: 'can-share' },
+    dockPanels: { type: Boolean, attribute: 'dock-panels' },
     models: { attribute: false },
     resolve: { attribute: false },
     activity: { attribute: false },
@@ -54,6 +63,11 @@ export class CivitaiChatTurn extends LightElement {
   declare latest: boolean;
   declare jobs: JobManager;
   declare posts: PostManager;
+  declare panels?: PanelManager;
+  declare files: () => Attachment[];
+  declare canShare: boolean;
+  /** Panels show in the page beside the chat; the thread only points at them. */
+  declare dockPanels: boolean;
   declare models: ModelDirectory;
   declare resolve: (id: string) => Attachment | undefined;
   /** What a tool the embedding page added is doing, in its words. */
@@ -64,6 +78,7 @@ export class CivitaiChatTurn extends LightElement {
     this.parts = [];
     this.live = false;
     this.latest = false;
+    this.files = () => [];
   }
 
   #userFiles(): StripItem[] {
@@ -76,11 +91,32 @@ export class CivitaiChatTurn extends LightElement {
   }
 
   #tool(part: Extract<TurnPart, { kind: 'tool' }>): TemplateResult | typeof nothing {
+    const failure = failureOf(part);
+    if (failure) {
+      const what = isPanelTool(part.toolName) ? 'Changing the controls' : (ACTIVITY[part.toolName] ?? this.activity?.(part.toolName) ?? 'A step').replace(/…$/, '');
+      return html`<details class="cvt-step-failed"><summary>${what} didn't work</summary><code>${failure}</code></details>`;
+    }
     if (isJobTool(part.toolName)) {
       const output = part.output as { job?: string } | undefined;
       const job = this.jobs.byToolCall(part.toolCallId) ?? (output?.job ? this.jobs.get(output.job) : undefined);
-      if (job) return html`<civitai-chat-generation-card .job=${job} .actions=${this.posts.available ? WITH_POST : DEFAULT_ACTIONS}></civitai-chat-generation-card>`;
+      if (job) return html`<civitai-chat-generation-card .job=${job} .actions=${mediaActions(this.posts)}></civitai-chat-generation-card>`;
       return part.state === 'calling' ? html`<div class="cvt-activity">Getting ready…</div>` : nothing;
+    }
+    if (isPanelTool(part.toolName)) {
+      const handle = (part.output as { panel?: unknown } | undefined)?.panel;
+      const panel = typeof handle === 'string' ? this.panels?.get(handle) : undefined;
+      if (panel && this.dockPanels) {
+        return html`<button type="button" class="cvt-panel-chip" @click=${() => emit(this, 'panel-focus', { panel })}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M4 12h16M4 18h7M17 4v4M10 10v4M14 16v4" /></svg>
+          ${part.toolName === 'open_panel' ? 'Set up' : 'Changed'} “${panel.spec.title}”
+        </button>`;
+      }
+      // A panel shows once, at the assistant's latest change to it.
+      if (panel?.toolCallId === part.toolCallId) {
+        return html`<civitai-chat-panel .panel=${panel} .files=${this.files} ?can-share=${this.canShare} .actions=${mediaActions(this.posts)}></civitai-chat-panel>`;
+      }
+      if (panel) return html`<div class="cvt-note">${part.toolName === 'open_panel' ? 'Set up' : 'Changed'} “${panel.spec.title}”; it is further down.</div>`;
+      return part.state === 'calling' ? html`<div class="cvt-activity">Setting up the controls…</div>` : nothing;
     }
     if (part.toolName === POST_TOOL) {
       const post = this.posts.get(part.toolCallId);

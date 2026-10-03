@@ -8,9 +8,13 @@ import { chatConfig } from './config.js';
 import { createMcpConnection, type McpConnection } from './mcp/clients.js';
 import { createOrchestrationApi, type OrchestrationApi } from './orchestration/api.js';
 import { generationDetails, type GenerationDetails } from './orchestration/details.js';
-import { toolInfo, type GenerationJob, type JobState } from './orchestration/job.js';
+import { toolInfo, type GenerationJob, type JobState, type JobToolInfo } from './orchestration/job.js';
 import { JobManager } from './orchestration/jobs.js';
-import { POST_TOOL, PostManager, isChatPost, type PostHost } from './posting/post.js';
+import { PanelManager } from './panels/panel.js';
+import type { SharedPanel } from './panels/share.js';
+import { OPEN_PANEL } from './panels/tools.js';
+import { sitePoster } from './posting/site.js';
+import { POST_TOOL, PostManager, type PostHost } from './posting/post.js';
 import { resolveAttachmentArgs, uploadId } from './store/attachments.js';
 import { ThreadStore, type OpenedConversation } from './store/thread-store.js';
 import { buildToolSet } from './tools/build.js';
@@ -53,6 +57,7 @@ export class ChatSession extends EventTarget {
   readonly siteMcp: McpConnection;
   readonly jobs: JobManager;
   readonly posts: PostManager;
+  readonly panels: PanelManager;
   readonly store: ThreadStore;
   readonly agent: Agent;
   settings: Settings;
@@ -61,6 +66,8 @@ export class ChatSession extends EventTarget {
   #siteTools: Promise<McpTool[] | null> | null = null;
   #options: SessionOptions;
   #hostToolNames = new Set<string>();
+  /** What the run tools can do, from the latest catalog; panels run through them. */
+  #runTools = new Map<string, JobToolInfo>();
 
   constructor(app: AppClient, options: SessionOptions = {}) {
     super();
@@ -70,12 +77,15 @@ export class ChatSession extends EventTarget {
     this.api = createOrchestrationApi(app);
     this.orchestrationMcp = createMcpConnection({ url: chatConfig.orchestrationMcpUrl, token: () => app.getToken() });
     this.siteMcp = createMcpConnection({ url: chatConfig.siteMcpUrl });
+    // The site MCP's browse tools are anonymous; posting goes as the viewer, so it carries their token.
+    const poster = sitePoster(createMcpConnection({ url: chatConfig.siteMcpUrl, token: () => app.getToken() }));
     this.posts = new PostManager({
       host: postHostOf(app),
+      site: () => (this.#options.mcp?.().site === false ? null : poster),
       authorize: () => app.requestGrants(['posts:write:self']),
       saved: (post) => {
         const saved = post.toSaved();
-        if (saved && isChatPost(post.id)) void this.store.savePost(post.id, saved).catch((error: unknown) => console.warn('[chat-cvt] could not record the post', error));
+        if (saved) void this.store.savePost(post.id, saved).catch((error: unknown) => console.warn('[chat-cvt] could not record the post', error));
       },
     });
     this.jobs = new JobManager({
@@ -87,6 +97,11 @@ export class ChatSession extends EventTarget {
       hideMatureContent: () => !this.settings.allowMature,
       findWorkflows: async (tags) =>
         (await app.orchestration.queryWorkflows({ tags, take: 10 })).items,
+    });
+    this.panels = new PanelManager({
+      jobs: this.jobs,
+      toolInfo: (name) => this.#runTools.get(name),
+      save: (panel) => void this.store.savePanel(panel).catch((error: unknown) => console.warn('[chat-cvt] could not save the panel', error)),
     });
     this.store = new ThreadStore({
       orchestration: app.orchestration,
@@ -104,6 +119,7 @@ export class ChatSession extends EventTarget {
       customInstructions: () => this.settings.customInstructions,
       hostInstructions: () => this.#options.hostInstructions?.(),
       isHostTool: (name) => this.#hostToolNames.has(name),
+      panels: () => this.panels.context(),
       systemPrompt: () => this.#options.systemPrompt?.(),
     });
   }
@@ -115,6 +131,7 @@ export class ChatSession extends EventTarget {
       orchestration ? this.#loadOrchestration() : [],
       site ? (this.#siteTools ??= loadSiteTools(this.siteMcp)) : [],
     ]);
+    this.#runTools = new Map(orchestrationTools.filter((tool) => isJobTool(tool.name)).map((tool) => [tool.name, toolInfo(tool.name, tool.inputSchema)]));
     return { orchestration: orchestrationTools, site: siteTools };
   }
 
@@ -186,9 +203,11 @@ export class ChatSession extends EventTarget {
     this.agent.abort();
     this.jobs.clear();
     this.posts.clear();
+    this.panels.clear();
     const [opened, catalog] = await Promise.all([this.store.open(id), this.catalog().catch(() => null)]);
     this.#rebuildJobs(opened, catalog);
     this.#rebuildPosts(opened);
+    this.panels.restore(opened.conversation.id, opened.conversation.panels, new Map(opened.jobs.filter(({ metadata }) => metadata.panel).map(({ metadata, workflow }) => [metadata.job, workflow])));
     this.updateSettings({ lastConversationId: id });
   }
 
@@ -196,6 +215,7 @@ export class ChatSession extends EventTarget {
     this.agent.abort();
     this.jobs.clear();
     this.posts.clear();
+    this.panels.clear();
     this.store.startNew();
   }
 
@@ -227,6 +247,34 @@ export class ChatSession extends EventTarget {
     await this.agent.send(text, attachments, refs);
   }
 
+  /**
+   * Starts a conversation with a panel someone shared, as if the assistant had just built it, so the
+   * viewer can run it and ask for changes. Free: no assistant reply runs until they write.
+   */
+  async openShared(shared: SharedPanel): Promise<void> {
+    this.newConversation();
+    const turn = this.store.appendUserTurn(`Opened a shared panel: ${shared.spec.title}`, []);
+    const conversation = this.store.current!;
+    conversation.title = shared.spec.title;
+    conversation.titleSource = 'llm';
+    const toolCallId = `shared-${conversation.id}`;
+    const panel = this.panels.open({
+      conversationId: conversation.id,
+      seq: turn.seq,
+      toolCallId,
+      spec: shared.spec,
+      values: shared.values,
+      forkedFrom: { id: shared.id, version: shared.version },
+    });
+    turn.assistant.messages = [
+      { role: 'assistant', content: [{ type: 'tool-call', toolCallId, toolName: OPEN_PANEL, input: { ...shared.spec, values: panel.values } }] },
+      { role: 'tool', content: [{ type: 'tool-result', toolCallId, toolName: OPEN_PANEL, output: { type: 'json', value: panel.summary() as never } }] },
+    ];
+    turn.assistant.status = 'done';
+    this.updateSettings({ lastConversationId: conversation.id });
+    await this.store.completeTurn(turn);
+  }
+
   /** How the embedding page describes its tool while it runs. */
   hostActivity(name: string): string | undefined {
     return this.#options.hostTools?.()[name]?.activity;
@@ -251,6 +299,7 @@ export class ChatSession extends EventTarget {
       site: this.siteMcp,
       siteApi: this.app.site,
       posts: this.posts,
+      panels: this.panels,
       findAttachment: (id) => this.findAttachment(id),
       resolveArgs: (args) => this.resolveArgs(args),
       onCaption: (id, caption) => {

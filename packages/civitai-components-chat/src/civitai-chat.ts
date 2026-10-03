@@ -2,6 +2,7 @@ import { defineChatShell } from './components/define-shell.js';
 
 export { CivitaiChat, type ChatLayout } from './components/civitai-chat.js';
 export { configureChat, type ChatConfig } from './config.js';
+export { holdSharedPanel, takeSharedPanel, type SharedPanel } from './panels/share.js';
 export { popupSignIn } from './auth/popup.js';
 export type { ChatFile, ChatTool, ChatToolContext } from './tools/host.js';
 

@@ -3,6 +3,7 @@ import { ulid } from 'ulid';
 
 import { APP_TAG, HEAD_TAG, JOB_TAG, TURN_TAG, conversationTag, scopeTag } from '../config.js';
 import type { OrchestrationApi } from '../orchestration/api.js';
+import type { SavedPanel } from '../panels/panel.js';
 import type { SavedPost } from '../posting/post.js';
 import type { Attachment, Conversation, ConversationMetadata, ConversationSummary, JobMetadata, SavedTurn, TitleSource, Turn } from '../types.js';
 
@@ -98,6 +99,7 @@ export class ThreadStore extends EventTarget {
       updatedAt: head?.metadata.updatedAt ?? now,
       turns,
       ...(head?.metadata.posts ? { posts: head.metadata.posts } : {}),
+      ...(head?.metadata.panels ? { panels: head.metadata.panels } : {}),
     };
     const jobs = jobWorkflows.flatMap((workflow) => {
       const metadata = jobMetadataOf(workflow);
@@ -157,6 +159,16 @@ export class ThreadStore extends EventTarget {
     const conversation = this.current;
     if (!conversation) return;
     conversation.posts = { ...conversation.posts, [id]: post };
+    const head = this.#heads.get(conversation.id);
+    if (head) await this.#deps.api.updateWorkflow(head.workflowId, { metadata: this.#metadata(conversation) });
+  }
+
+  async savePanel(panel: SavedPanel): Promise<void> {
+    const conversation = this.current;
+    if (!conversation) return;
+    conversation.panels = { ...conversation.panels, [panel.handle]: panel };
+    // A reply still streaming saves the panel with it; writing now could land after that save and drop the reply.
+    if (conversation.turns.at(-1)?.assistant.status === 'streaming') return;
     const head = this.#heads.get(conversation.id);
     if (head) await this.#deps.api.updateWorkflow(head.workflowId, { metadata: this.#metadata(conversation) });
   }
@@ -246,6 +258,7 @@ export class ThreadStore extends EventTarget {
       updatedAt: conversation.updatedAt,
       turns: conversation.turns.map(saved),
       ...(conversation.posts ? { posts: conversation.posts } : {}),
+      ...(conversation.panels ? { panels: conversation.panels } : {}),
       ...(this.#deps.scope ? { scope: this.#deps.scope } : {}),
     };
   }

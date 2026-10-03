@@ -2,6 +2,7 @@ import type { Workflow, WorkflowTemplate } from '@civitai/sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 import { flush, workflow } from '../test-support/fakes.js';
+import type { SavedPanel } from '../panels/panel.js';
 import type { ConversationMetadata, SavedTurn } from '../types.js';
 import { CUT_OFF, ThreadStore, firstMessageTitle } from './thread-store.js';
 
@@ -128,6 +129,22 @@ describe('ThreadStore', () => {
     expect(conversation.posts).toEqual({ p0: { state: 'dismissed' } });
     await store.savePost('p1', { state: 'posted', postId: 9 });
     expect(deps.api.updateWorkflow).toHaveBeenCalledWith('7-5', { metadata: expect.objectContaining({ posts: { p0: { state: 'dismissed' }, p1: { state: 'posted', postId: 9 } } }) });
+  });
+
+  it('keeps panels with the conversation, but leaves saving to the reply while one is streaming', async () => {
+    const panel: SavedPanel = { v: 1, id: 'U', handle: 'p1', seq: 1, toolCallId: 'c', versions: [], values: {}, runs: [] };
+    const { store, deps } = setup([head('7-5', { conversationId: 'A', panels: { p1: panel } })]);
+    const { conversation } = await store.open('A');
+    expect(conversation.panels).toEqual({ p1: panel });
+
+    await store.savePanel({ ...panel, handle: 'p2', runs: [{ job: 'p2-1', version: 1, values: {} }] });
+    expect(deps.api.updateWorkflow).toHaveBeenLastCalledWith('7-5', { metadata: expect.objectContaining({ panels: { p1: panel, p2: expect.objectContaining({ runs: [{ job: 'p2-1', version: 1, values: {} }] }) } }) });
+
+    store.appendUserTurn('make it warmer', []);
+    deps.api.updateWorkflow.mockClear();
+    await store.savePanel({ ...panel, values: { mood: 'warm' } });
+    expect(deps.api.updateWorkflow).not.toHaveBeenCalled();
+    expect(store.current?.panels?.p1?.values).toEqual({ mood: 'warm' });
   });
 
   it('renames through the head, which is what the list reads', async () => {

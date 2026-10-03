@@ -56,7 +56,7 @@ describe('GenerationJob', () => {
       [true, true],
       [false, false],
     ]);
-    expect(calls[1]!.args).toMatchObject({ images: ['https://x/up'], tags: ['chat-cvt', 'cvt:job', 'cvt:conv:C1'] });
+    expect(calls[1]!.args).toMatchObject({ whatif: false, images: ['https://x/up'], tags: ['chat-cvt', 'cvt:job', 'cvt:conv:C1'] });
     expect(JSON.parse(calls[1]!.args.metadataJson as string)).toMatchObject({ job: 'gen3-1', seq: 3, toolCallId: 'call_1', tool: 'run_step' });
     expect(job.summary()).toMatchObject({ job: 'gen3-1', status: 'running', estimatedBuzz: 44 });
 

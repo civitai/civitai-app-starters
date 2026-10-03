@@ -7,6 +7,8 @@ export interface PromptContext {
   customInstructions?: string;
   /** Whether posting is possible: only inside civitai.com, through its host. */
   canPost?: boolean;
+  /** The panels on screen, their values and latest runs. */
+  panels?: string;
   /** Names of the tools the assistant has this turn; the rules only mention what it can use. */
   tools?: string[];
   /** The page the chat is embedded in: its own tools, and what it tells the assistant. */
@@ -15,7 +17,7 @@ export interface PromptContext {
   rules?: string | ((defaults: string) => string);
 }
 
-export function buildSystemPrompt({ attachments, now, customInstructions, canPost = false, tools, host, rules }: PromptContext): string {
+export function buildSystemPrompt({ attachments, now, customInstructions, canPost = false, panels, tools, host, rules }: PromptContext): string {
   const own = customInstructions?.trim().slice(0, CUSTOM_INSTRUCTIONS_MAX);
   const hostSays = host?.instructions?.trim().slice(0, HOST_INSTRUCTIONS_MAX);
   const defaults = defaultRules({ canPost, tools });
@@ -24,6 +26,7 @@ export function buildSystemPrompt({ attachments, now, customInstructions, canPos
     chosen,
     '',
     `Files in this conversation:\n${roster(attachments)}`,
+    ...(panels ? ['', 'Panels in this conversation (the user may have changed values or run them since you last spoke):', panels] : []),
     '',
     `Today is ${now.toISOString().slice(0, 10)}.`,
     ...(host && (host.tools.length > 0 || hostSays)
@@ -73,6 +76,11 @@ export function defaultRules({ canPost = false, tools }: { canPost?: boolean; to
           ...(models ? ['- When the user wants a Civitai community model or LoRA, find it with search_models and pass its AIR to get_input_schema as resources; the example then uses it.'] : []),
         ]
       : ['- You cannot make or change pictures, videos or audio here. If asked, say so in one sentence.']),
+    ...(has('open_panel')
+      ? [
+          '- When the user wants to explore or iterate on one kind of thing (a logo, a beat, a character in different scenes) or asks for controls, build a panel with open_panel instead of making it once: they then try settings and run it themselves. When they ask to change, extend or fill in a panel, or for help with what it made, use update_panel on it rather than opening a new one. Things a panel made have ids like p1-2-1.',
+        ]
+      : []),
     '- Ask at most one short clarifying question, and only when the request is genuinely ambiguous. When the user should pick between directions, call ask_choice instead of listing options in text.',
     '- Every file has an id like up1-1 (an upload) or gen2-1-1 (something made in this chat). In tool calls, put the id wherever the schema asks for an image, video or audio URL; the app swaps in the real file.',
     ...(makes
@@ -85,7 +93,7 @@ export function defaultRules({ canPost = false, tools }: { canPost?: boolean; to
       : []),
     '- When the user asks why something failed, pass on the reason from its tool result in plain words, even if it is technical.',
     ...(makes && canPost
-      ? ['- When the user wants to share or post pictures from this chat on Civitai, call post_to_civitai with their ids and a short title suggestion. The user confirms it on Civitai; never say it is posted until a later tool result says so. Only post when they ask.']
+      ? ['- When the user wants to share or post something made in this chat on Civitai, call post_to_civitai with their ids, a short title and a few tags. The user confirms it on the card; never say it is posted until a later tool result says so. Only post when they ask.']
       : makes
         ? ['- You cannot post to Civitai here. If asked, say posting works when ChatCVT is opened on civitai.com, and they can download the file meanwhile.']
         : []),

@@ -23,7 +23,7 @@ export function configureChat(patch: Partial<ChatConfig>): void {
   Object.assign(chatConfig, Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)));
 }
 
-export const MAX_STEPS = 6;
+export const MAX_STEPS = 10;
 export const MAX_OUTPUT_TOKENS = 1_200;
 export const CONTEXT_BUDGET_TOKENS = 24_000;
 export const RETENTION_DAYS = 30;

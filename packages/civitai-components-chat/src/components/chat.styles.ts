@@ -2,6 +2,20 @@ import { css } from 'lit';
 
 /** The chat's own shadow-root styles. */
 export const chatStyles = css`
+/* The region positions itself with a rule it adds to the document head, which does not reach into this shadow root. */
+civitai-toast-region {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(92vw, 380px);
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
 :host {
   display: block;
   height: 100%;
@@ -725,6 +739,97 @@ civitai-chat-model-card {
 .cvt-choice:disabled .cvt-choice-option {
   opacity: 0.55;
   cursor: default;
+}
+
+.cvt-panel {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: calc(var(--civitai-radius, 8px) * 1.5);
+  background: var(--civitai-color-surface);
+}
+
+.cvt-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.cvt-panel-head h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.cvt-panel-share {
+  margin-left: auto;
+}
+
+.cvt-panel-head p {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 14px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-step-failed {
+  font-size: 13px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-step-failed summary {
+  cursor: pointer;
+  width: fit-content;
+}
+
+.cvt-step-failed summary::before {
+  content: '⚠ ';
+  color: var(--civitai-color-warning, var(--civitai-color-error));
+}
+
+.cvt-step-failed code {
+  display: block;
+  margin-top: 4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cvt-panel-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: 999px;
+  background: var(--civitai-color-surface);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cvt-panel-chip:hover {
+  border-color: var(--civitai-color-primary);
+}
+
+.cvt-panel-chip svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.cvt-panel-runs {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.cvt-panel-runs > civitai-chat-generation-card {
+  justify-self: stretch;
 }
 
 /* ── composer ── */
