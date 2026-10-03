@@ -37,6 +37,75 @@ For any change to a published package — `packages/civitai-app-sdk/src/**` or `
 - **`minor`** — new exported function, new optional argument, new subpath export, looser input acceptance. **Adding API.**
 - **`major`** — rename, removal, signature change, behavior change that existing callers will notice. **Breaking.**
 
+🔴 **One carve-out, because it reads both ways and the wrong reading ships a
+package that stays broken: a VENDORED-SCHEMA PARITY fix takes `patch` when it is
+permissive-only.** `packages/civitai-app-sdk/schemas/app-block/v1.json` is a byte
+mirror of a server contract, not API this package designed, and `defineBlock`
+validates against it at runtime. When the server has already changed and the
+mirror has not, the package is *wrong*, so correcting it is a **bug fix** — not
+the "looser input acceptance" above, which is about API this package chooses to
+widen. The distinction matters because every starter pins a caret and a `0.x`
+minor is a hard wall: shipping the correction as `minor` leaves every caret
+consumer with a package that rejects manifests the platform requires, which is
+the opposite of the fix. 🔴 **Permissive-only is the precondition, not a formality, and this list is the
+SINGLE SOURCE for what breaks it** — `scripts/revendor-canonical-schema.sh` and
+`.github/workflows/revendor-canonical-schema.yml` point here rather than
+restating it, because three divergent copies is how the short version loses the
+case that matters.
+
+A re-vendor is **NOT** permissive-only if the diff does any of these. Each makes
+a manifest that validated yesterday start failing, so each is a `minor` under the
+`0.x`-breaking rule below:
+
+🔴 **DECLARING A NEW PROPERTY IS A TIGHTENING HERE, and it is the item everyone
+omits — including the first two versions of this list.** The manifest schema's
+ROOT has **no `additionalProperties`**, so it is an *open* schema: a manifest may
+carry any key the schema does not mention, and that key is unvalidated. The
+moment a re-vendor *declares* that key with a `type` or a `pattern`, every
+manifest already using it with another shape starts failing. Measured against a
+real starter manifest at the actual commits, with a control that validates in
+both arms:
+
+| re-vendor | manifest carrying that key | |
+|---|---|---|
+| `cbfb851` declares `repository` | `VALID` → **`INVALID`** | host-allowlist `pattern` |
+| `cfd585d` declares `bootSkeleton` | `VALID` → **`INVALID`** | not of type `boolean` |
+| `a8a8a35` declares `goods[].justification` | `INVALID` → `VALID` | genuinely permissive — `goods.items` is closed |
+
+So this repo has had **three** tightening re-vendors, not one, and two of them
+tightened by this mechanism alone.
+
+- declares a **new property** on an open schema — i.e. anywhere without
+  `additionalProperties: false` (the root, today)
+- adds or narrows a **`pattern`**
+- adds an **`allOf`** / **`anyOf`** / **`not`** / **`oneOf`** / **`const`**
+  constraint
+- flips **`additionalProperties`** from `true`/absent to `false`
+- **lowers** a `maxLength` / `maximum` / `maxItems` / `maxProperties`, or
+  **raises** a `minLength` / `minimum` / `minItems` / `minProperties`, or adds an
+  `exclusiveMinimum` / `exclusiveMaximum` (note the direction: *lowering* a
+  `minimum` loosens, so "a lowered bound" on its own is the wrong test)
+- narrows a **`type`**, or removes a member from an **`enum`**
+- adds an entry to **`required`**, or adds `dependentRequired` /
+  `uniqueItems: true` / `propertyNames` / an assertive `format`
+- adds **`multipleOf`**, or tightens an existing one
+
+⚠ **Removing a property is NOT on that list, and the direction is the trap.** On
+a *closed* object (`goods.items`) removing a declared property is a tightening;
+on the open root it **loosens** — the key simply stops being validated. An
+earlier version of this list had it flatly under "tightening", which is the same
+direction error it fixes for bounds one bullet up.
+
+🔴 **This list is not theoretical: `77805d0` ("re-vendor tightened App Blocks
+manifest schema") lowered `buildCommand.maxLength` 256→128, added a `pattern`,
+and added four `not` clauses on `outputDir` — three mechanisms in one commit.**
+
+⚠ **The SDK suite does not catch these for you.** It pins the top-level
+`required` set, `tagline.maxLength`, the scopes enum and the
+property-set-is-typed ledger — so a tightening on any field outside that set
+passes the bot's validation step and the PR opens with `patch`. Reading the diff
+is the control.
+
 🔴 **While a package is `0.x`, a BREAKING change takes `minor`, not `major`.** This
 ladder read as if `major` were the only correct bump for a break, and every
 package here is `0.x` — so the written rule contradicted what the repo actually

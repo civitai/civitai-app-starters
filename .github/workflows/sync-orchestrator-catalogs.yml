@@ -80,13 +80,20 @@ jobs:
       # 🔴 DO NOT TOUCH A BRANCH A HUMAN MAY BE CURATING.
       #
       # `peter-evans/create-pull-request` REBASES AND FORCE-PUSHES its branch on
-      # every run — upstream documents this as deliberate, and it is fine for the
-      # sibling `revendor-canonical-schema.yml`, whose PR is mergeable as-is and
-      # which nobody commits to. This workflow is the first here whose PR body
+      # every run — upstream documents this as deliberate. This workflow's PR body
       # asks a reviewer to COMMIT to that branch: write the descriptions, move the
       # entries into the right sections, rewrite the changeset. A maintainer who
       # curates and does not merge before tomorrow's 06:41 UTC run would have that
       # work force-pushed away, with no notification and no reflog they can see.
+      #
+      # ⚠ CORRECTED 2026-10-03. This used to add "and it is fine for the sibling
+      # `revendor-canonical-schema.yml`, whose PR is mergeable as-is and which
+      # nobody commits to". That is NO LONGER TRUE: the re-vendor bot now writes a
+      # changeset carrying a semver decision it cannot verify, so its PR body asks
+      # a reviewer to commit a downgrade on that branch too — and "nobody commits
+      # to it" became an instruction rather than an observation. That workflow has
+      # since adopted this very step. Do not re-derive the old exemption from this
+      # comment; there is no longer a sibling here that is safe to clobber.
       #
       # Considered and rejected: a per-run branch suffix (a new PR every day for
       # the same drift), and a slower cadence (widens the window, does not close
