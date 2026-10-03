@@ -125,16 +125,26 @@ echo "re-vendored $VENDORED from $CANONICAL_URL"
 # measure — and `77805d0` is the most bot-shaped commit in the set (schema bytes
 # only, no types, no tests, no changeset).
 #
+# 🔴 AND THE SECOND NUMBER WAS WRONG TOO, IN THE SAME DIRECTION. The revision
+# that fixed "6 of 7" then cashed it as "the majority of re-vendors have been
+# PERMISSIVE" — which is the additive-is-not-permissive conflation this very
+# paragraph warns about, one level up. Measured against a real starter manifest
+# with a control that validates in both arms: the schema ROOT has no
+# `additionalProperties`, so DECLARING a new property is itself a tightening for
+# any manifest already carrying that key. `cbfb851` (`repository`) and `cfd585d`
+# (`bootSkeleton`) each took a valid manifest to INVALID that way. So there are
+# THREE tightening re-vendors, not one, and the permissive count is **4 of 7** —
+# a 4:3 margin, not 6:1.
+#
 # So: THIS SCRIPT CANNOT TELL WHICH DIRECTION THE SCHEMA MOVED. It does not diff
-# the schema; it copies bytes. `patch` is a DEFAULT chosen because (a) the
-# majority of re-vendors to this file have been permissive, and (b) pre-1.0 a
-# caret pins the MINOR, so `minor` would withhold the corrected schema from
-# every caret-pinned consumer — the exact failure this mechanism exists to end.
-# It is NOT a claim that tightenings do not reach here: one already has. The
-# control for that case is the 🔴 checklist in the generated body, and the
-# checklist is therefore load-bearing, not decoration — `77805d0` tightened via
-# `pattern` and `allOf`/`not`, so a checklist naming only bounds and enums would
-# have missed the one real instance.
+# the schema; it copies bytes. `patch` is a DEFAULT chosen because (a) permissive
+# is the plurality case at 4 of 7, and (b) pre-1.0 a caret pins the MINOR, so
+# `minor` would withhold the corrected schema from every caret-pinned consumer —
+# the exact failure this mechanism exists to end. 🔴 It is NOT a claim that
+# tightenings do not reach here: three already have, and at 4:3 the default is
+# barely a majority. The control is the checklist in `RELEASING.md`, which is
+# therefore load-bearing rather than decoration — two of those three tightened
+# ONLY by declaring a property, which no bounds-and-enums checklist catches.
 CHANGESET_DIR="$REPO_ROOT/.changeset"
 CHANGESET="$CHANGESET_DIR/revendor-canonical-schema-$(date -u +%Y-%m-%d).md"
 mkdir -p "$CHANGESET_DIR"
@@ -163,8 +173,13 @@ The vendored schema is published — it ships in the tarball, is exported as
 runtime — so mirroring the bytes only takes effect once the package is
 released. This changeset is what releases them.
 
-`patch` is the automated default for a vendored-schema parity fix; see
-`RELEASING.md`. It is correct when the re-vendor is permissive-only, which is
-what the reviewer checks before merging.
+`patch` is the automated default for a vendored-schema parity fix, correct when
+the re-vendor is permissive-only, which the reviewer checks before merging. The
+rule and what counts as a tightening are in `RELEASING.md`:
+https://github.com/civitai/civitai-app-starters/blob/main/RELEASING.md
+
+(That is an absolute URL on purpose: this text is copied verbatim into the
+published CHANGELOG, where a relative repo path resolves to nothing — and
+`RELEASING.md` is not in the npm tarball.)
 EOF
 echo "wrote $CHANGESET (a re-vendor only reaches consumers once published)"

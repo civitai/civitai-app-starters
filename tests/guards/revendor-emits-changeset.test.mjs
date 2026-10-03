@@ -244,14 +244,27 @@ describe('revendor-canonical-schema.sh — a re-vendor must PUBLISH, not just mi
       join(REPO_ROOT, '.github', 'workflows', 'revendor-canonical-schema.yml'),
       'utf8',
     );
-    const m = wf.match(/^\s*-\s*cron:\s*"([^"]+)"/m);
+    // Accept either quote style: both are valid YAML and both satisfy the only
+    // reason the value is quoted at all (so `*` is not read as an alias). An
+    // earlier version matched double quotes only and failed with "no quoted
+    // cron: line found" over a line that was plainly there.
+    const m = wf.match(/^\s*-\s*cron:\s*(?:"([^"]+)"|'([^']+)')/m);
     assert.ok(m, 'no quoted cron: line found in revendor-canonical-schema.yml');
+    const cron = m[1] ?? m[2];
     assert.equal(
-      m[1],
+      cron,
       '37 */6 * * *',
-      `the cron changed to "${m[1]}". Four prose copies of "four times a day" are now stale: ` +
-        'this file (the module docblock and the no-op guard), scripts/revendor-canonical-schema.sh ' +
-        "(header), and the workflow's own guard comment. Update them, then update this expectation.",
+      `the cron changed to "${cron}". SEVEN prose copies describe the old cadence and are now ` +
+        'stale. Sweep ALL of them, not just the ones you were looking at — an earlier version of ' +
+        'this message named four, so a half-done sweep went green:\n' +
+        '  tests/guards/revendor-emits-changeset.test.mjs  — the module docblock, and the no-op guard\n' +
+        '  scripts/revendor-canonical-schema.sh            — the "Used by CI:" header\n' +
+        '  .github/workflows/revendor-canonical-schema.yml — the schedule comment (the ":37 past" list),\n' +
+        '                                                    the "SEVEN DAYS of red CI" paragraph,\n' +
+        '                                                    the guard comment, and the bot PR BODY\n' +
+        '  .github/workflows/sync-orchestrator-catalogs.yml — its "WHY DAILY AND NOT 6-HOURLY" comment\n' +
+        'Then update this expectation. ⚠ A minute-only change (e.g. "11 */6 * * *") also fires this ' +
+        'and leaves most of those copies CORRECT — only the ":37"-specific prose is stale then.',
     );
   });
 

@@ -57,21 +57,48 @@ A re-vendor is **NOT** permissive-only if the diff does any of these. Each makes
 a manifest that validated yesterday start failing, so each is a `minor` under the
 `0.x`-breaking rule below:
 
+🔴 **DECLARING A NEW PROPERTY IS A TIGHTENING HERE, and it is the item everyone
+omits — including the first two versions of this list.** The manifest schema's
+ROOT has **no `additionalProperties`**, so it is an *open* schema: a manifest may
+carry any key the schema does not mention, and that key is unvalidated. The
+moment a re-vendor *declares* that key with a `type` or a `pattern`, every
+manifest already using it with another shape starts failing. Measured against a
+real starter manifest at the actual commits, with a control that validates in
+both arms:
+
+| re-vendor | manifest carrying that key | |
+|---|---|---|
+| `cbfb851` declares `repository` | `VALID` → **`INVALID`** | host-allowlist `pattern` |
+| `cfd585d` declares `bootSkeleton` | `VALID` → **`INVALID`** | not of type `boolean` |
+| `a8a8a35` declares `goods[].justification` | `INVALID` → `VALID` | genuinely permissive — `goods.items` is closed |
+
+So this repo has had **three** tightening re-vendors, not one, and two of them
+tightened by this mechanism alone.
+
+- declares a **new property** on an open schema — i.e. anywhere without
+  `additionalProperties: false` (the root, today)
 - adds or narrows a **`pattern`**
-- adds an **`allOf`** / **`not`** / **`oneOf`** constraint
+- adds an **`allOf`** / **`anyOf`** / **`not`** / **`oneOf`** / **`const`**
+  constraint
 - flips **`additionalProperties`** from `true`/absent to `false`
-- **lowers** a `maxLength` / `maximum` / `maxItems`, or **raises** a `minLength` /
-  `minimum` / `minItems` (note the direction: *lowering* a `minimum` loosens, so
-  "a lowered bound" on its own is the wrong test)
+- **lowers** a `maxLength` / `maximum` / `maxItems` / `maxProperties`, or
+  **raises** a `minLength` / `minimum` / `minItems` / `minProperties`, or adds an
+  `exclusiveMinimum` / `exclusiveMaximum` (note the direction: *lowering* a
+  `minimum` loosens, so "a lowered bound" on its own is the wrong test)
 - narrows a **`type`**, or removes a member from an **`enum`**
-- adds an entry to **`required`**, or removes a property
+- adds an entry to **`required`**, or adds `dependentRequired` /
+  `uniqueItems: true` / `propertyNames` / an assertive `format`
 - adds **`multipleOf`**, or tightens an existing one
 
-🔴 **This is not a theoretical list — the one real instance used the two items a
-shorter checklist would have omitted.** `77805d0` ("re-vendor tightened App
-Blocks manifest schema") lowered `buildCommand.maxLength` 256→128 **and** added a
-`pattern`, plus four `not` clauses on `outputDir`. A checklist naming only bounds
-and enums matches one of its three mechanisms.
+⚠ **Removing a property is NOT on that list, and the direction is the trap.** On
+a *closed* object (`goods.items`) removing a declared property is a tightening;
+on the open root it **loosens** — the key simply stops being validated. An
+earlier version of this list had it flatly under "tightening", which is the same
+direction error it fixes for bounds one bullet up.
+
+🔴 **This list is not theoretical: `77805d0` ("re-vendor tightened App Blocks
+manifest schema") lowered `buildCommand.maxLength` 256→128, added a `pattern`,
+and added four `not` clauses on `outputDir` — three mechanisms in one commit.**
 
 ⚠ **The SDK suite does not catch these for you.** It pins the top-level
 `required` set, `tagline.maxLength`, the scopes enum and the

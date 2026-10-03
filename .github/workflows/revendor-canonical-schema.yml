@@ -49,6 +49,13 @@ permissions:
 
 env:
   NODE_VERSION: '24'
+  # 🔴 SINGLE-SOURCED DELIBERATELY. The guard below queries this branch and
+  # `create-pull-request` writes it. TWO SPELLINGS OF IT WOULD MAKE THE GUARD
+  # SILENTLY INERT: it would ask about a branch nobody opens a PR on, `open`
+  # would always be empty, every step would run, and the next cron would
+  # force-push a reviewer's commit away with the job green throughout. Pinned
+  # by tests/guards/revendor-guard-gating.test.mjs.
+  REVENDOR_BRANCH: automation/revendor-canonical-schema
 
 jobs:
   revendor:
@@ -74,11 +81,23 @@ jobs:
       # `pull-requests: write` grant above already covers it. A `gh` failure
       # (rate limit, outage) fails the step and therefore the job, which is the
       # safe direction — an unanswered "is a PR open?" must never be read as "no".
+      #
+      # 🔴 THE COST, STATED BECAUSE IT IS REAL AND HIGHER HERE THAN FOR THE
+      # SIBLING. While a re-vendor PR is open this job skips ENTIRELY — including
+      # a manual `workflow_dispatch`, so there is no override. If the canonical
+      # drifts again while that PR sits open, the PR's bytes are stale and merging
+      # it does NOT restore parity; `ci.yml`'s `schema-drift` job is a hard fail
+      # on every PR in the repo until a later run re-vendors. That is the
+      # escalation — loud, repo-wide, within ~6 hours — but it points at the wrong
+      # object, so: IF A RE-VENDOR PR GOES STALE, CLOSE IT and the next run
+      # re-vendors. An open-but-abandoned PR blocks every future re-vendor for as
+      # long as it stays open. The old behaviour kept re-vendoring instead, and
+      # destroyed reviewer commits silently to do it; a visible stall was chosen
+      # over a silent clobber deliberately.
       - name: Refuse to clobber an open re-vendor PR
         id: guard
         env:
           GH_TOKEN: ${{ github.token }}
-          REVENDOR_BRANCH: automation/revendor-canonical-schema
         run: |
           set -euo pipefail
           n="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$REVENDOR_BRANCH" \
@@ -160,7 +179,7 @@ jobs:
           # changesets release workflow. A dedicated token would be cleaner if the
           # coupling ever bites, but reusing it avoids adding another secret.
           token: ${{ secrets.CHANGESETS_TOKEN }}
-          branch: automation/revendor-canonical-schema
+          branch: ${{ env.REVENDOR_BRANCH }}
           delete-branch: true
           commit-message: "chore(sdk): re-vendor canonical app-block manifest schema"
           title: "chore(sdk): re-vendor canonical app-block manifest schema"
@@ -191,12 +210,15 @@ jobs:
             permissive-only** — if it TIGHTENS anything, a manifest that validated
             yesterday starts failing, and the bump is a `minor`.
             **`RELEASING.md` ("vendored-schema parity") is the single source for
-            what counts as tightening** — read it rather than guessing, because
-            the short list people reach for omits `pattern` and `allOf`/`not`,
-            which is how the one real instance in this repo tightened.
-            ⚠ The SDK validation step above does NOT catch these: it pins the
-            top-level `required` set, `tagline.maxLength`, the scopes enum and the
-            property-set ledger, so a tightening on any other field passes it.
+            what counts as tightening** — read it rather than guessing. Three
+            re-vendors in this repo have tightened, and **two of them did it only
+            by DECLARING a new property**: the schema root has no
+            `additionalProperties`, so a newly-declared key starts validating
+            manifests that already carried it. No bounds-and-enums checklist
+            catches that, which is why the list lives in one place and this body
+            does not restate it.
+            ⚠ The SDK validation step above does NOT catch these either — see the
+            comment on that step for which assertions it does and does not make.
 
             **To downgrade: commit the changed changeset to THIS branch and
             merge.** That is safe as of the `Refuse to clobber an open re-vendor
