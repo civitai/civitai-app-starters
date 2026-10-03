@@ -1,5 +1,41 @@
 # @civitai/blocks-react
 
+## 0.63.2
+
+### Patch Changes
+
+- a5e84b7: docs: three README claims the shipped tokens had already falsified
+
+  **`@civitai/blocks-react` — default theme.** The auto-theming bullet told authors
+  that with no `data-theme` attribute the components render **light**, "matching
+  the starter palette". `@civitai/theme@0.5.0` flipped the base to **dark** and
+  removed the OS-preference override, so both halves have been false since that
+  release. Corrected by reusing the wording the canonical contract already carries
+  (`@civitai/components`' `MARKUP.md`): default (no attribute) is the dark palette,
+  and nothing consults the OS preference.
+
+  **`@civitai/blocks-react` — component-pack description.** The W6 section
+  advertised "8px radius, the blue primary, the dark/light surfaces". The shipped
+  token is `--civitai-radius: 0.25rem` — **4px** — and has been since `0.35.0`; the
+  package's own `src/ui/styles.ts` already records the `8px→4px` break. The
+  parenthetical is cut rather than re-specified, so it cannot go stale against
+  another package's tokens a third time.
+
+  **`@civitai/theme` — the opening description.** The first bullet described
+  `dist/tokens.css` as "a `:root` + `[data-theme='light'|'dark']` + **OS-preference**
+  stylesheet". The same file already says the opposite twice — _"Dark is the base,
+  and nothing here consults the OS"_, and _"There is deliberately no
+  `@media (prefers-color-scheme: …)` block, in either direction"_ — and the shipped
+  `dist/tokens.css` contains zero such at-rules. The two words are cut; the
+  accurate explanation below them is left to stand.
+
+  Prose only — no behaviour change in either package. Patch releases are needed
+  because the published artifacts _are_ these documents: all three claims are live
+  in the published READMEs that ship inside the `0.63.1` and `0.5.1` tarballs.
+
+- Updated dependencies [a5e84b7]
+  - @civitai/theme@0.5.2
+
 ## 0.63.1
 
 ### Patch Changes
@@ -1636,10 +1672,10 @@ URL('https://civitai.com/evil').origin` is `https://civitai.com`).
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                         @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                after    @civitai/theme       0.3.1                   — 1 copy
-                                         @civitai/components  0.4.2                   — 1 copy
+                                  before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                           @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                  after    @civitai/theme       0.3.1                   — 1 copy
+                                           @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
