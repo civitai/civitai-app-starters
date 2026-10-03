@@ -25,7 +25,10 @@
 # mirrored but never released do not reach a single consumer.
 #
 # Run locally:  ./scripts/revendor-canonical-schema.sh
-# Used by CI:   .github/workflows/revendor-canonical-schema.yml (weekly cron).
+# Used by CI:   .github/workflows/revendor-canonical-schema.yml — cron
+#               `37 */6 * * *`, i.e. FOUR runs a day. (This line said "weekly"
+#               until 2026-10-03; the workflow moved off weekly deliberately and
+#               carries its own rationale. Read the `cron:` line, not this one.)
 set -euo pipefail
 
 CANONICAL_URL="${CANONICAL_URL:-https://civitai.com/schemas/app-block/v1.json}"
@@ -75,38 +78,43 @@ cp "$tmp" "$VENDORED"
 echo "re-vendored $VENDORED from $CANONICAL_URL"
 
 # 🔴 MIRRORING THE BYTES IS HALF THE JOB — WITHOUT A CHANGESET THIS NEVER SHIPS.
+# The vendored copy is PUBLISHED (tarball + `exports` + read at runtime by
+# `defineBlock`), so bytes merged but never released reach no consumer, and with
+# `additionalProperties: false` a stale published copy REJECTS a newly-required
+# field rather than ignoring it. The measured incident and the full reasoning
+# live once, in `tests/guards/revendor-emits-changeset.test.mjs` — do not
+# re-narrate it here.
 #
-# The vendored copy is not an internal build input: it is published. It ships in
-# the tarball (`files: [… "schemas" …]`), is a public export
-# (`./schemas/app-block/v1.json`), and `defineBlock` READS IT AT RUNTIME
-# (`src/manifest/defineBlock.ts`, CANONICAL_SCHEMA_PATH). So a re-vendor that is
-# merged but never released leaves every installed copy of this package
-# validating against the OLD schema, indefinitely — and because `goods.items`
-# sets `additionalProperties: false`, that stale copy REJECTS a field the server
-# has started to require, rather than merely failing to check it.
+# DATED filename, matching `scripts/sync-orchestrator-catalogs.mjs` (which has
+# written a changeset after a successful sync since before this script did).
+# ⚠ An earlier revision of this block used a FIXED name and justified it as
+# "the workflow reuses one branch, so a fixed name is overwritten instead of
+# accumulating". That rationale was wrong AND the fixed name was unsafe:
+# `create-pull-request` regenerates the branch from base on every run, so
+# changesets never accumulated and there was nothing to overwrite — while
+# `cat >` on a fixed path TRUNCATES whatever is already there, which is exactly
+# where a hand-authored changeset for the same mechanism lands. Do not reinstate
+# a fixed name to "avoid accumulation"; the accumulation it prevents cannot
+# happen.
 #
-# Measured 2026-10-03: `goods[].justification` went live, #529 re-vendored the
-# bytes with no changeset, and the published `@civitai/app-sdk@0.56.0` therefore
-# rejected a manifest the platform REQUIRES for `kind: "app_unlock"` — so the
-# first paid app could not be authored through the documented path. That is the
-# incident this block exists to prevent, and it is structural: nothing else in
-# the chain adds a changeset, so a re-vendor PR could never publish.
-#
-# Deterministic filename, deliberately: the workflow reuses ONE branch
-# (`automation/revendor-canonical-schema`), so a fixed name is overwritten on a
-# re-run instead of accumulating a changeset per run. `changeset version`
-# consumes the file at release, so it does not linger.
-#
-# `patch`, not `minor`: this mirrors BYTES. A canonical change that adds a field
-# also needs that field on `BlockManifestV1` — a human step this script does not
-# do (and one the SDK's own nested-property ledger test fails loudly on), and
-# that type change is what would earn a minor.
+# `minor`, matching the same sibling, and the reason is an ASYMMETRY in what can
+# reach this line. The SDK's nested-property ledger test
+# (`test/manifest/canonical-derivation.test.ts`) FAILS when the canonical grows a
+# property that `BlockManifestV1` does not type — and the workflow runs the full
+# SDK suite before opening a PR. So an ADDITIVE canonical change aborts the bot
+# and gets a human. What silently survives to here is the class the ledger cannot
+# see: a tightened bound, a new `required` entry, a narrowed enum — i.e. changes
+# that make a manifest which previously VALIDATED start failing. Those are the
+# breaking ones, so the automated default must be the breaking level; pre-1.0 a
+# caret pins the minor, so `minor` is what stops a consumer's build moving under
+# them. A reviewer who has read the diff and sees it is permissive-only may
+# downgrade this to `patch` before merging.
 CHANGESET_DIR="$REPO_ROOT/.changeset"
-CHANGESET="$CHANGESET_DIR/revendor-canonical-schema.md"
+CHANGESET="$CHANGESET_DIR/revendor-canonical-schema-$(date -u +%Y-%m-%d).md"
 mkdir -p "$CHANGESET_DIR"
 cat > "$CHANGESET" <<EOF
 ---
-'@civitai/app-sdk': patch
+'@civitai/app-sdk': minor
 ---
 
 Re-vendor the canonical App Block manifest schema from $CANONICAL_URL.
@@ -115,5 +123,13 @@ The vendored schema is published — it ships in the tarball, is exported as
 \`./schemas/app-block/v1.json\`, and \`defineBlock\` validates against it at
 runtime — so mirroring the bytes only takes effect once the package is
 released. This changeset is what releases them.
+
+**Why \`minor\`.** This was written by \`scripts/revendor-canonical-schema.sh\`,
+which cannot classify the change's direction. An additive canonical change would
+have failed the SDK's nested-property ledger and never reached here, so what does
+reach here is the class that ledger cannot see — a tightened bound, a new
+\`required\`, a narrowed enum — which can make a previously-valid manifest start
+failing. 🔴 **Read the schema diff before merging**: if it is permissive-only,
+downgrade this to \`patch\` and say so here.
 EOF
 echo "wrote $CHANGESET (a re-vendor only reaches consumers once published)"

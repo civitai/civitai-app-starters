@@ -30,10 +30,22 @@
  * regression coverage. They are here to pin the fail-safe direction, and they
  * are only non-vacuous BECAUSE the regression case proves this harness can
  * observe a changeset when one is written.
+ *
+ * 🔴 AND TWO OF THOSE THREE ARE STRUCTURALLY UNREACHABLE AS THE SCRIPT STANDS —
+ * say so rather than letting them read as live coverage. The 404 and transient
+ * branches `exit` before the `cp`, so no ordering of the current code can write
+ * a changeset there: their changeset assertion cannot fail today. They are kept
+ * deliberately, as ORDERING PINS — they are what goes red if someone moves the
+ * changeset write ABOVE those exits — and their exit-code and mirror-untouched
+ * assertions ARE live coverage of the script's documented contract. The NO-OP
+ * case is the only one of the three that reaches the drift decision, so it is
+ * the only one whose changeset assertion is reachable; it is also the one that
+ * matters most, because the cron runs four times a day and finds no drift on
+ * nearly all of them.
  */
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,7 +59,20 @@ const REPO_ROOT = join(HERE, '..', '..');
 const REAL_SCRIPT = join(REPO_ROOT, 'scripts', 'revendor-canonical-schema.sh');
 
 const SCHEMA_REL = join('packages', 'civitai-app-sdk', 'schemas', 'app-block', 'v1.json');
-const CHANGESET_REL = join('.changeset', 'revendor-canonical-schema.md');
+
+/**
+ * The script writes a DATED filename (`revendor-canonical-schema-<YYYY-MM-DD>.md`,
+ * matching `sync-orchestrator-catalogs.mjs`), so the test must not pin one name.
+ * Reading the DIRECTORY also makes the no-changeset cases assert something real:
+ * "no file whose name starts with this prefix", rather than "one exact path is
+ * absent", which a renamed output would satisfy vacuously.
+ */
+const CHANGESET_PREFIX = 'revendor-canonical-schema';
+function changesets(root) {
+  const dir = join(root, '.changeset');
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((f) => f.startsWith(CHANGESET_PREFIX) && f.endsWith('.md'));
+}
 
 /** A minimal but REAL-SHAPED schema: `goods.items` with additionalProperties:false
  *  is the property that turns a stale mirror into a rejection, so the fixture
@@ -125,11 +150,10 @@ after(async () => {
   await new Promise((r) => server.close(r));
 });
 
-const changesetPath = (root) => join(root, CHANGESET_REL);
 const msg = (want, r) => `expected exit ${want}, got ${r.code}\n--- script output ---\n${r.out}`;
 
 describe('revendor-canonical-schema.sh — a re-vendor must PUBLISH, not just mirror', () => {
-  test('REGRESSION: a real re-vendor writes a patch changeset for @civitai/app-sdk', async () => {
+  test('REGRESSION: a real re-vendor writes a minor changeset for @civitai/app-sdk', async () => {
     const root = createFixture(serialize(baseSchema()));
     try {
       respond = { status: 200, body: serialize(grownSchema()) };
@@ -144,18 +168,31 @@ describe('revendor-canonical-schema.sh — a re-vendor must PUBLISH, not just mi
         'the vendored schema was not actually re-vendored',
       );
 
-      assert.ok(
-        existsSync(changesetPath(root)),
-        `no changeset at ${CHANGESET_REL} — the re-vendor cannot reach a published consumer\n--- script output ---\n${r.out}`,
+      const found = changesets(root);
+      assert.equal(
+        found.length,
+        1,
+        `expected exactly 1 ${CHANGESET_PREFIX}* changeset, got ${found.length} (${found.join(', ')}) — the re-vendor cannot reach a published consumer\n--- script output ---\n${r.out}`,
       );
-      const cs = readFileSync(changesetPath(root), 'utf8');
+      // Dated, not fixed: a fixed name `cat >`-truncates a hand-authored
+      // changeset for this same mechanism. Pin the SHAPE so the fixed name
+      // cannot come back.
+      assert.match(
+        found[0],
+        /^revendor-canonical-schema-\d{4}-\d{2}-\d{2}\.md$/,
+        `changeset filename is not dated — a fixed name truncates whatever is already at that path: ${found[0]}`,
+      );
+      const cs = readFileSync(join(root, '.changeset', found[0]), 'utf8');
 
       // Assert the STATE a release depends on — the package it bumps and the
-      // bump level — not merely that some file appeared.
+      // bump level — not merely that some file appeared. `minor`, because the
+      // only canonical changes that reach this path are the ones the SDK's
+      // nested-property ledger cannot see, which are the CONSTRAINT-TIGHTENING
+      // ones; shipping those as `patch` moves a consumer's build under them.
       assert.match(
         cs,
-        /^---\n(?:[^\n]*\n)*?'@civitai\/app-sdk': patch\n(?:[^\n]*\n)*?---\n/,
-        `changeset does not declare a patch bump for @civitai/app-sdk:\n${cs}`,
+        /^---\n(?:[^\n]*\n)*?'@civitai\/app-sdk': minor\n(?:[^\n]*\n)*?---\n/,
+        `changeset does not declare a minor bump for @civitai/app-sdk:\n${cs}`,
       );
       // It is the SDK that ships the schema; bumping anything else would release
       // the wrong package and leave the mirror stale.
@@ -179,7 +216,7 @@ describe('revendor-canonical-schema.sh — a re-vendor must PUBLISH, not just mi
       respond = { status: 200, body: identical };
       const r = await runScript(root, origin);
       assert.equal(r.code, 0, msg(0, r));
-      assert.ok(!existsSync(changesetPath(root)), 'a no-op re-vendor wrote a changeset');
+      assert.deepEqual(changesets(root), [], 'a no-op re-vendor wrote a changeset');
     } finally {
       destroyFixture(root);
     }
@@ -192,7 +229,7 @@ describe('revendor-canonical-schema.sh — a re-vendor must PUBLISH, not just mi
       respond = { status: 503, body: 'upstream unavailable' };
       const r = await runScript(root, origin);
       assert.equal(r.code, 0, msg(0, r)); // transient => skip quietly
-      assert.ok(!existsSync(changesetPath(root)), 'a transient failure wrote a changeset');
+      assert.deepEqual(changesets(root), [], 'a transient failure wrote a changeset');
       assert.equal(readFileSync(join(root, SCHEMA_REL), 'utf8'), before, 'the mirror was modified on a transient failure');
     } finally {
       destroyFixture(root);
@@ -205,7 +242,7 @@ describe('revendor-canonical-schema.sh — a re-vendor must PUBLISH, not just mi
       respond = { status: 404, body: 'not found' };
       const r = await runScript(root, origin);
       assert.equal(r.code, 1, msg(1, r)); // the canonical URL moved => hard fail
-      assert.ok(!existsSync(changesetPath(root)), 'a 404 wrote a changeset');
+      assert.deepEqual(changesets(root), [], 'a 404 wrote a changeset');
     } finally {
       destroyFixture(root);
     }
