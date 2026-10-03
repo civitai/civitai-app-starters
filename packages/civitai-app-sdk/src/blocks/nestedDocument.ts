@@ -136,12 +136,19 @@ export interface InjectBaseHrefResult {
  * Give a document an absolute `<base href>` so its relative asset URLs still
  * resolve once it is running from a `srcdoc` frame.
  *
- * This is the whole mechanism, and the reason it is a separate exported
- * function: a `srcdoc` document's own base URL is `about:srcdoc`, which inherits
- * the embedder's — an opaque origin — so every `src="loader.js"` and
+ * This is the whole mechanism, and the reason it is a separate function with
+ * tests of its own: a `srcdoc` document's own base URL is `about:srcdoc`, which
+ * inherits the embedder's — an opaque origin — so every `src="loader.js"` and
  * `url(font.woff2)` in the fetched markup resolves to nothing. A wrong or
  * missing `<base>` breaks every relative load in the document **with no error
  * naming the base**, which is why it is pinned by its own test.
+ *
+ * 🔴 MODULE-INTERNAL — NOT part of the public `./blocks` surface. It is exported
+ * from this FILE so the unit suite can import it by path; `index.ts`
+ * deliberately does not re-export it, because nothing in or out of the tree
+ * calls the rewrite on its own and an export is far cheaper to add later than to
+ * remove once published. Same for {@link InjectBaseHrefResult}. See the note
+ * beside the `./nestedDocument.js` re-export in `index.ts`.
  *
  * ONE RULE, in both directions:
  *

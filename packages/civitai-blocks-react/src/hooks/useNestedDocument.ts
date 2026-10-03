@@ -50,15 +50,18 @@ const LOADING: State = { status: 'loading', srcDoc: null, error: null };
  * document of its own.
  *
  * 🔴 PREFER NOT TO NEED THIS. A plain `<iframe src="/game/index.html">` of your
- * own bundle **cannot load**: the block document's origin is opaque (the
- * sandbox withholds `allow-same-origin` outside the internal trust tier) and
- * the static host stamps `frame-ancestors` + `X-Frame-Options` on every path,
- * so no `frame-ancestors` list can ever match — `*` included. An engine build
+ * own bundle **cannot load**, and no manifest change fixes it. An engine build
  * (Defold, Unity, Phaser) is a `<canvas>` plus a JS loader and normally mounts
- * directly into the block's own document, which avoids the whole problem class.
- * Reach for this hook only when a separate document is genuinely required. The
- * measured matrix and the limits are in `@civitai/app-sdk`'s
- * `src/blocks/nestedDocument.ts`.
+ * directly into the block's own document, which avoids the whole problem class;
+ * reach for this hook only when a separate document is genuinely required.
+ *
+ * WHY, measured, in ONE place: the header of `@civitai/app-sdk`'s
+ * `src/blocks/nestedDocument.ts`. It carries the opaque-origin /
+ * `frame-ancestors` / `X-Frame-Options` derivation, the five-row measured
+ * matrix with its positive control, and the known limits of the `<base>`
+ * rewrite. Do not restate any of it here: it was duplicated across 11 surfaces
+ * with nothing in the repo checking them for agreement, which is exactly how
+ * two measured claims in these files' own test headers went stale.
  *
  * 🔴 THE STRING IS NOT SANITIZED. It is your own markup and scripts, verbatim;
  * pass a `src` you control, and put a `sandbox` attribute on the iframe.

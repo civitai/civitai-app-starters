@@ -25,7 +25,7 @@
  *
  *  - **`./blocks`** — importing it RUNS `./safe-storage` for its side effect
  *    (repairing `localStorage`/`sessionStorage` at an opaque origin). Folding
- *    132 symbols and that side effect into the root would make every OAuth app
+ *    130 symbols and that side effect into the root would make every OAuth app
  *    that writes `import { exchangeCode } from '@civitai/app-sdk'` pay for the
  *    Civitai-Apps contract it does not use. Blocks and OAuth apps are disjoint
  *    audiences; see this package's README.

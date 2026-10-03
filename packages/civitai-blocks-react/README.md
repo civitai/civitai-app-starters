@@ -1509,14 +1509,11 @@ const runUrl = hostToRunUrl('my-app.civit.ai'); // 'https://civitai.com/apps/run
 ## Embedding your own nested document
 
 🔴 **A nested `<iframe src="…">` pointing at your own bundled content cannot
-load, and no manifest change fixes it.** Your block document's origin is opaque
-(the sandbox withholds `allow-same-origin` outside the internal trust tier), and
-every path on `https://<blockId>.civit.ai/` — `.html`, `.js`, `.wasm`, archives,
-all of it — is served with `Content-Security-Policy: frame-ancestors …` plus
-`X-Frame-Options: SAMEORIGIN`, stamped at the platform edge rather than by your
-own server. `frame-ancestors` is checked against every ancestor, and an opaque
-origin matches **no** source list — `*` included — so widening the allowlist is
-not the fix.
+load, and no manifest change fixes it** — your block document's origin is opaque
+and the static host stamps `frame-ancestors` + `X-Frame-Options` on every path
+it serves. The full derivation, the measured browser matrix and the known limits
+live in one place: the header of `@civitai/app-sdk`'s
+`src/blocks/nestedDocument.ts`.
 
 **Prefer a single-document design.** An engine build (Defold, Unity WebGL,
 Phaser) is a `<canvas>` plus a JS loader that normally mounts straight into the
@@ -1551,9 +1548,8 @@ resolve to nothing. A document that already declares a `<base href>` has it
 resolved against the fetch URL and replaced, so there is never more than one.
 
 **The string is not sanitized**, on purpose: it is your own markup and scripts,
-verbatim. Only pass a `src` you control. Outside React,
-`fetchNestedDocument` / `injectBaseHref` from `@civitai/app-sdk/blocks` are the
-same thing without the hook.
+verbatim. Only pass a `src` you control. Outside React, `fetchNestedDocument`
+from `@civitai/app-sdk/blocks` is the same thing without the hook.
 
 ## The `/ui` subexport
 

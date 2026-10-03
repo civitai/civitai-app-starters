@@ -66,20 +66,28 @@ export {
 
 /**
  * The `srcdoc` escape hatch for embedding one of your own bundled documents
- * inside a block, and the measured reason a plain `<iframe src>` of your own
- * subdomain cannot load: the block document's origin is opaque, and the static
- * host stamps `frame-ancestors` + `X-Frame-Options` on every path. Prefer a
- * SINGLE-DOCUMENT design — see the header of `nestedDocument.ts`, which carries
- * the matrix and the limits.
+ * inside a block, because a plain `<iframe src>` of your own subdomain cannot
+ * load. Prefer a SINGLE-DOCUMENT design. The measured reason, the matrix and
+ * the limits live in ONE place: the header of `nestedDocument.ts`.
+ *
+ * 🔴 `injectBaseHref` and `InjectBaseHrefResult` ARE DELIBERATELY NOT HERE, and
+ * the omission is the same decision as the `appStorageErrors.ts` block below:
+ * publish the branching surface, not every internal the module happens to
+ * export. `fetchNestedDocument` covers every runnable example in this repo's
+ * four prose surfaces (this package's README, `@civitai/blocks-react`'s README,
+ * `docs/build-your-first-app-block.md` and the changeset); the only in-tree
+ * importers of the rewrite are this module's own unit tests, and
+ * `@civitai/blocks-react` does not value-import it. There can be no EXTERNAL
+ * consumer either: measured 2026-10-03, `injectBaseHref` appears in 0 files of
+ * the published `0.54.0`/`0.55.0`/`0.56.0` tarballs' `dist` (positive control:
+ * `BLOCK_SCOPES`, 7 files in each), i.e. no published version has ever shipped
+ * it. Both stay exported from `nestedDocument.ts`, so the unit suite reaches
+ * them by file path — and adding one here later is a `minor`, while removing one
+ * once published is not.
  */
-export {
-  fetchNestedDocument,
-  injectBaseHref,
-  NestedDocumentError,
-} from './nestedDocument.js';
+export { fetchNestedDocument, NestedDocumentError } from './nestedDocument.js';
 export type {
   FetchNestedDocumentOptions,
-  InjectBaseHrefResult,
   NestedDocument,
   NestedDocumentErrorCode,
 } from './nestedDocument.js';

@@ -119,7 +119,7 @@ const ENTRY_POINTS: Record<string, EntryPoint> = {
         'either is a breaking change.',
     },
     reason:
-      'NOT on the root: importing it runs ./safe-storage for its side effect, and it is 132 ' +
+      'NOT on the root: importing it runs ./safe-storage for its side effect, and it is 130 ' +
       'symbols of Civitai-Apps contract that an OAuth app never touches. Disjoint audiences.',
   },
   './safe-storage': {

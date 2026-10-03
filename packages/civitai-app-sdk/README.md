@@ -137,7 +137,7 @@ interface BlockInitPayload {
 | `BLOCK_SCOPES` / `BLOCK_SCOPE_PATTERN` | Every known block scope string (the authoritative enum the canonical schema validates `scopes` against) + the `domain:verb:target` format-helper regex. Read the current set from `BLOCK_SCOPES` itself — scopes are added and retired, so no count is quoted here. A scope is valid only if it's a member of `BLOCK_SCOPES`, matching the [canonical schema](https://civitai.com/schemas/app-block/v1.json). |
 | `isMessage(data, type)` | Discriminator-only message narrowing (see above). |
 | `isModelSlotContext(ctx)` / `isPageSlotContext(ctx)` | Runtime narrowing for the `slotId`-discriminated `BlockContext` union. Real checks on a value that crossed a `postMessage` boundary — they verify every field they assert, not just `slotId`. |
-| `fetchNestedDocument(opts)` / `injectBaseHref(html, url)` | Embed one of your OWN bundled documents as an iframe `srcdoc`, because a nested `<iframe src>` of your own content **cannot load** — see [Nested documents](#nested-documents) below. `NestedDocumentError` carries a `.code` of `'invalid-url' \| 'http-error' \| 'network-error'`. |
+| `fetchNestedDocument(opts)` | Embed one of your OWN bundled documents as an iframe `srcdoc`, because a nested `<iframe src>` of your own content **cannot load** — see [Nested documents](#nested-documents) below. `NestedDocumentError` carries a `.code` of `'invalid-url' \| 'http-error' \| 'network-error'`. |
 | `isSignedIn(viewer)` | **The sign-in gate.** `isSignedIn(useBlockContext().viewer)` — do not open-code it as `viewer !== null` or `viewer?.signedIn === true`. Which of those is correct has already changed once with the host contract, and this is the one place it is decided. It reads neither `viewer.id` nor `viewer.username` (both `@deprecated`), so nothing written through it changes when those are removed. Need the identity rather than the presence? `useViewer()` — scope-gated and audited per call. |
 | types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `WorkflowBodyCustomComfy` (+ its two arms `WorkflowBodyCustomComfyRecipe` / `WorkflowBodyCustomComfyInline`, and `InlineComfyNode`), `WorkflowBodyStep` / `WorkflowBodyPassThroughStep` (the two arms of `kind: 'step'`), `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
 
@@ -324,15 +324,11 @@ if you want the standalone `Storage` work-alike.
 ### Nested documents
 
 🔴 **A nested `<iframe src="…">` pointing at your own bundled content cannot
-load, and no manifest change fixes it.** Two policies combine: your block's
-origin is **opaque** (the sandbox withholds `allow-same-origin` outside the
-internal trust tier), and every path on `https://<blockId>.civit.ai/` — `.html`,
-`.js`, `.wasm`, archives, all of it — is served with
-`Content-Security-Policy: frame-ancestors …` plus `X-Frame-Options: SAMEORIGIN`,
-stamped at the platform edge rather than by your own server.
-`frame-ancestors` is checked against every ancestor, and an opaque origin
-matches **no** source list — `*` included — so widening the allowlist is not the
-fix either.
+load, and no manifest change fixes it** — your block's origin is opaque and the
+static host stamps `frame-ancestors` + `X-Frame-Options` on every path it
+serves. The full derivation, the measured browser matrix and the known limits
+are in one place: the header of
+[`src/blocks/nestedDocument.ts`](src/blocks/nestedDocument.ts).
 
 **Prefer a single-document design.** An engine build (Defold, Unity WebGL,
 Phaser) is a `<canvas>` plus a JS loader that normally mounts straight into the
@@ -356,7 +352,7 @@ The injected `<base href>` is the mechanism: a `srcdoc` document's base URL is
 `about:srcdoc`, inheriting yours, so every relative `src=` in the fetched markup
 would otherwise resolve to nothing. A document that already declares a
 `<base href>` has it resolved against the fetch URL and replaced, so there is
-never more than one. `injectBaseHref(html, url)` is that rewrite on its own.
+never more than one.
 
 **The returned string is NOT sanitized**, on purpose — it is your own markup and
 scripts, verbatim, and stripping them would remove the thing the nested document
@@ -368,7 +364,7 @@ exists to run. Only pass a `src` you control. React callers want
 
 | `@civitai/app-sdk` | adds (blocks surface) |
 |---|---|
-| `0.57.0` | `fetchNestedDocument` / `injectBaseHref` / `NestedDocumentError` — the `srcdoc` escape hatch for embedding your own bundled documents |
+| `0.57.0` | `fetchNestedDocument` / `NestedDocumentError` — the `srcdoc` escape hatch for embedding your own bundled documents |
 | `0.27.0` | `@civitai/app-sdk/safe-storage` — opaque-origin `localStorage`/`sessionStorage` shim, auto-installed by the `blocks` subpath |
 | `0.24.0` | `QUERY_APP_WORKFLOWS` / `CANCEL_APP_WORKFLOW` messages + the `AppWorkflow` type (app generator subqueue, PR #3164) |
 | `0.7.0` | `CANCEL_WORKFLOW` / `WORKFLOW_CANCELED` messages (real cancel, gotcha #51) |

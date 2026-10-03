@@ -211,14 +211,15 @@ export function Game() {
 ```
 
 Outside React, `fetchNestedDocument` from `@civitai/app-sdk/blocks` does the same
-thing as a plain async function, and `injectBaseHref` is the rewrite on its own
-if you already hold the markup.
+thing as a plain async function.
 
 The rewrite matters: a `srcdoc` document's base URL is `about:srcdoc`, inheriting
 *yours*, so every relative `src=` in the fetched markup would otherwise resolve
-to nothing. The helpers inject an absolute `<base href="…/game/">` — the
+to nothing. The helper injects an absolute `<base href="…/game/">` — the
 directory the document was fetched from — which is the one thing that keeps
-relative asset loads working. **This is not sanitization**: the string is your
+relative asset loads working. If the fetched document already declares a
+`<base href>` of its own, it is resolved against the fetch URL and **replaced**,
+so the output never carries two. **This is not sanitization**: the string is your
 own markup and scripts, verbatim, so only pass a `src` you control.
 
 ## 3. Write the block

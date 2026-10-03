@@ -6,24 +6,21 @@
 Add the nested-document `srcdoc` helper, and document why a block cannot frame
 its own bundled content.
 
-**The constraint (#532).** Two platform policies combine so that a nested
-`<iframe src="…">` pointing at an app's own bundle can never load, and nothing
-in the manifest fixes it:
+**The constraint (#532).** A nested `<iframe src="…">` pointing at an app's own
+bundle can never load, and nothing in the manifest fixes it. Two platform
+policies combine: outside the internal trust tier the sandbox withholds
+`allow-same-origin`, so the block document's origin is **opaque** (measured,
+`window.origin === "null"`); and every path served from
+`https://<blockId>.civit.ai/` carries `Content-Security-Policy: frame-ancestors
+…` plus `X-Frame-Options: SAMEORIGIN`, stamped at the platform edge rather than
+by the app's own server.
 
-1. A block's frame is sandboxed with the manifest's `iframe.sandbox` tokens
-   intersected by a trust-tier allowlist. Outside the internal tier
-   `allow-same-origin` is refused at `civitai app validate` time and re-stripped
-   host-side, so the block document's origin is **opaque** — measured,
-   `window.origin === "null"`.
-2. Every path served from `https://<blockId>.civit.ai/` — `.html`, `.js`,
-   `.wasm`, archive files, all of it — carries
-   `Content-Security-Policy: frame-ancestors …` plus
-   `X-Frame-Options: SAMEORIGIN`. Both are stamped at the platform edge, not by
-   the app's own server, so a build cannot override them.
-
-`frame-ancestors` is checked against every ancestor, and an **opaque ancestor
-matches no source list at all**. Measured in a two-origin Chromium replica with
-positive and negative controls:
+An **opaque ancestor matches no `frame-ancestors` source list at all** — `*`
+included, because CSP3 ASCII-serializes the ancestor origin and URL-parses it,
+and `"null"` fails that parse before any source matching happens. So widening
+the allowlist is not a fix either. Measured in a two-origin Chromium replica,
+where the no-headers positive control is what makes the BLOCKEDs attributable to
+the headers rather than to the replica:
 
 | nested document's headers | result |
 |---|---|
@@ -33,17 +30,14 @@ positive and negative controls:
 | `frame-ancestors <unrelated>` — negative control | BLOCKED |
 | `X-Frame-Options: SAMEORIGIN` only | BLOCKED |
 
-CSP3 ASCII-serializes the ancestor origin and URL-parses it; `"null"` fails that
-parse and returns *Blocked* before any source matching, which is why even `*`
-does not help. The positive control is what makes the four BLOCKEDs attributable
-to the headers rather than to the replica.
-
-**`@civitai/app-sdk/blocks` gains three values and four types** — minor, not
+**`@civitai/app-sdk/blocks` gains two values and three types** — minor, not
 patch, because the `./blocks` subpath grows public surface:
-`fetchNestedDocument(options)`, `injectBaseHref(html, documentUrl)`,
-`NestedDocumentError`, plus `FetchNestedDocumentOptions`, `NestedDocument`,
-`InjectBaseHrefResult` and `NestedDocumentErrorCode`. Zero new dependencies; the
-module is browser-safe and the subpath stays runtime-agnostic.
+`fetchNestedDocument(options)` and `NestedDocumentError`, plus
+`FetchNestedDocumentOptions`, `NestedDocument` and `NestedDocumentErrorCode`.
+Zero new dependencies; the module is browser-safe and the subpath stays
+runtime-agnostic. The `<base href>` rewrite itself stays **module-internal**:
+nothing in or out of the tree calls it on its own, and an export is far cheaper
+to add later than to remove once published.
 
 The helper does the one thing that works: fetch the document's markup (the
 static host answers `Access-Control-Allow-Origin: *`, so a null-origin `fetch`
@@ -74,9 +68,12 @@ build (Defold, Unity WebGL, Phaser) is a `<canvas>` plus a JS loader that
 normally mounts straight into the block's own document, which avoids the problem
 class entirely. The helper is the fallback for when a separate document is
 genuinely required. `docs/build-your-first-app-block.md` carries that guidance
-immediately after the manifest's sandbox rules — where an author designing the
-app actually hits it — and both package READMEs repeat the constraint at their
-own API surface.
+in full, immediately after the manifest's sandbox rules — where an author
+designing the app actually hits it. Every other surface (both package READMEs,
+the barrel comments, the two test headers) states the constraint in one sentence
+and points at a single canonical derivation instead of restating it. It had been
+duplicated across 11 surfaces with nothing checking them for agreement — which
+is how two measured claims in the test headers beside it went stale.
 
 **The returned string is deliberately NOT sanitized**, and that is stated at
 every surface rather than left implicit: it is the app's own bundled markup and
@@ -113,18 +110,24 @@ worth recording rather than a tick:
 - **Base on the document instead of its directory** (`docUrl.href` instead of
   `new URL('.', docUrl).href`) → 15 of 34 unit tests red, first with
   `expected '<base href="…/engine/boot.html">' to be '<base href="…/engine/">'`.
-  🔴 **But the in-browser `img.src` test SURVIVES it**, and that is not a gap in
-  the test — a `<base href>` naming the document resolves a relative URL
-  identically to one naming its directory, so the two are behaviourally
-  equivalent for asset loading. The directory form is kept because it is what
-  the caller is handed as `baseHref`; the literal-string assertions are what
-  pin it, and that division is now stated in both test headers rather than left
-  to look like redundant coverage.
-- **Stop replacing an existing `<base href>`** (insert alongside it instead) → 4
-  unit tests red, including the `<base` occurrence count, which is the
-  assertion written for exactly that case: a second `<base>` is ignored by the
-  parser, so the document would silently keep its relative href as the
-  effective one.
+  🔴 **But only 2 of the 13 browser tests see it** — the two that assert the
+  whole `srcDoc` string; every in-browser `img.src` assertion SURVIVES it. That
+  is not a gap in the test: a `<base href>` naming the document resolves a
+  relative URL identically to one naming its directory, so the two are
+  behaviourally equivalent for asset loading and no amount of resolution testing
+  can separate them. The directory form is kept because it is what the caller is
+  handed as `baseHref`; the literal-string assertions are what pin it, and that
+  division is now stated in both test headers rather than left to look like
+  redundant coverage.
+- **Stop replacing an existing `<base href>`** → killed in every faithful
+  spelling, but the count **depends on the spelling**, so there is no single
+  number for this mutant: inserting alongside immediately after `<head>` → 2
+  unit tests red; `findExistingBase` returning `undefined` → 5; detecting the
+  tag but ignoring its href → 5. The `<base` occurrence-count assertion — the
+  one written for exactly this case, because a second `<base>` is ignored by the
+  parser and the document would silently keep its relative href as the effective
+  one — is red in **all three**, which is what makes the guard sound rather than
+  any one of the numbers.
 - **Drop the `\b` after `<head`** in the opening-tag pattern → 1 red, with the
   base landing *inside* `<header>` — after the asset references, where it does
   nothing.

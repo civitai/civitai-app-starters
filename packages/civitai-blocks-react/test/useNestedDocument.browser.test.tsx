@@ -12,18 +12,10 @@
  * test must never do. Here the assertion is on `img.src` as the BROWSER
  * computed it, read out of a live `srcdoc` document.
  *
- * A `srcdoc` frame is also the only mechanism available at all:
- *
- *   - a block's own frame is sandboxed without `allow-same-origin`, so its
- *     origin is OPAQUE (`window.origin === "null"`);
- *   - every path on the static host carries `frame-ancestors` and
- *     `X-Frame-Options: SAMEORIGIN`, stamped at the platform edge;
- *   - an opaque ancestor matches NO `frame-ancestors` source list — measured,
- *     `*` included — so `<iframe src="…/game/index.html">` is blocked and no
- *     manifest change unblocks it.
- *
- * `srcdoc` inherits the embedder's origin and carries no response headers, so
- * neither policy applies. What it also inherits is the embedder's BASE URL
+ * A `srcdoc` frame is also the only mechanism available at all — the measured
+ * reason why is in ONE place, the header of `@civitai/app-sdk`'s
+ * `src/blocks/nestedDocument.ts`, and is not restated here. What matters for
+ * THIS file is the side effect: `srcdoc` inherits the embedder's BASE URL
  * (`about:srcdoc`), which is why the `<base>` injection is load-bearing rather
  * than cosmetic.
  *
@@ -38,15 +30,21 @@
  *      base — WITH a negative control proving the same markup WITHOUT a base
  *      resolves somewhere else entirely.
  *
- * WHAT THIS TIER CANNOT SEE, MEASURED. Replacing `new URL('.', docUrl).href`
- * with `docUrl.href` in `injectBaseHref` — basing on the document rather than
- * its directory — SURVIVES every assertion here, because a `<base href>` naming
- * the document resolves a relative URL identically to one naming its directory.
- * That mutant is caught by the app-sdk unit suite's literal-string assertions
- * (14 red), which is the division of labour: those pin the exact bytes and the
- * reported `baseHref`, this file proves a real parser RESOLVES against them.
- * Deleting the insertion outright reddens 4 tests here, including the `img.src`
- * one, with the production symptom (`http://localhost:…/sprite.png`).
+ * WHAT THIS TIER CANNOT SEE, MEASURED (2026-10-03). Replacing
+ * `new URL('.', docUrl).href` with `docUrl.href` in `injectBaseHref` — basing on
+ * the document rather than its directory — reddens 2 of the 13 tests here, and
+ * BOTH are the two that assert the whole `srcDoc` string: `loading → ready
+ * exposes a srcDoc…` and `changing src restarts the cycle…`. Every `img.src`
+ * assertion SURVIVES it, which is the point of the division of labour: a `<base
+ * href>` naming the document resolves a relative URL identically to one naming
+ * its directory, so no amount of RESOLUTION testing can see the difference. The
+ * same mutant reddens 15 tests in the app-sdk unit suite, whose literal-string
+ * assertions pin the exact bytes and the reported `baseHref`; this file proves a
+ * real parser resolves against them. Deleting the `<base>` insertion outright
+ * reddens 4 tests here, including the `img.src` one, with the production symptom
+ * (`http://localhost:…/sprite.png`) — and that 4 is spelling-independent,
+ * because no fixture in this file declares a `<base>` of its own, so the
+ * replace-an-existing-base branch is never reached either way.
  *
  * FIXTURE VALUES ARE PAIRWISE DISTINCT. The host (`nested-fixture.example`),
  * the two directories (`engine/`, `other/`), the two documents (`boot.html`,

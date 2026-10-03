@@ -23,13 +23,11 @@ Declared today: `">=0.57.0 <1.0.0"`.
 embedding an app's own bundled document, new module
 `src/blocks/nestedDocument.ts` (#532).
 
-Why it was needed at all: a block's frame is sandboxed without
-`allow-same-origin`, so its origin is opaque, and every path on
-`https://<blockId>.civit.ai/` is served with `frame-ancestors` +
-`X-Frame-Options: SAMEORIGIN`. An opaque ancestor matches no `frame-ancestors`
-source list — `*` included — so a nested `<iframe src>` of the app's own content
+Why it was needed at all: a nested `<iframe src>` of the app's own content
 cannot load and no manifest change fixes it. Two app versions shipped broken
-before the cause was isolated.
+before the cause was isolated. The derivation and the measured matrix are in one
+place — the header of
+[`packages/civitai-app-sdk/src/blocks/nestedDocument.ts`](../civitai-app-sdk/src/blocks/nestedDocument.ts).
 
 **`0.57.0` is a PREDICTION, pinned as one.** The symbol ships for the first time
 in the app-sdk minor released alongside this change, so there is no tarball to
@@ -59,7 +57,10 @@ shows it can answer "no".
 deliberately **not** ledgered: `src/` does not value-import them (the hook needs
 only `fetchNestedDocument`), and the guard's `DERIVED FLOOR` test rejects an
 entry for a symbol the package does not import. Same call as
-`isValidBlockIdempotencyKey` below.
+`isValidBlockIdempotencyKey` below. `injectBaseHref` is additionally **not
+exported from `./blocks` at all** — it stays module-internal, so it is not a
+peer symbol any consumer could import; the rows above are a `grep` over the
+tarball's `dist`, which sees a module-internal name just the same.
 
 🔴 **OWED AFTER THE RELEASE PUBLISHES:** empty
 `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH`, re-read the entry off the real `0.57.0`
@@ -112,11 +113,29 @@ ledgered: `src/` does not value-import it (only tests do, and those resolve the
 workspace copy), and the guard's `DERIVED FLOOR` test rejects an entry for a
 symbol the package does not import.
 
-🔴 **OWED AFTER THE RELEASE PUBLISHES:** empty
-`PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH`, re-read the three entries off the real
-`0.55.0` tarball with `0.54.0` as the ABSENT control, and record both here — the
-same conversion #372/`75c711a` did for `0.49.0`. A list left populated pins the
-floor to the NEXT release forever.
+✅ **SETTLED, AND THE PREDICTION WAS CORRECT — nothing is owed here.** The
+release published, `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH` was emptied, and the
+three entries were re-read off the real tarballs (`npm pack @civitai/app-sdk@V`,
+untar, `grep -rl <symbol> package/dist`) rather than off the workspace copy. The
+registry was asked first: `npm view @civitai/app-sdk versions` lists `0.55.0`
+and `0.56.0`, and `npm view @civitai/app-sdk version` is `0.56.0`.
+
+| version | the three symbols | `BLOCK_SCOPES` (pos. ctrl) | `__NOPE_7f3a__` (neg. ctrl) |
+|---|---|---|---|
+| 0.54.0 (the version below) | **absent** (0 files) | present (7 files) | absent |
+| 0.55.0 (the floor) | **present** (4 files each) | present (7 files) | absent |
+| 0.56.0 (newest published) | **present** (4 files each) | present (7 files) | absent |
+
+Which is what makes `>=0.55.0` **EXACT, not merely sufficient**: 0.54.0 cannot
+start the run and 0.56.0 keeps it unbroken to the top. Both controls ran before
+the readings were believed — the positive one shows the probe can see this
+package's shipped code at all, the negative one shows it can answer "no". The
+floor is left where it is, per the `PREDICTION HAS COME TRUE` test's own step 2.
+
+⚠ This paragraph read "🔴 **OWED AFTER THE RELEASE PUBLISHES**" until
+2026-10-03, a day after the conversion had in fact completed (recorded in the
+guard, not here). A settled item labelled as outstanding is the same defect as a
+prediction labelled as a measurement, with the sign flipped.
 
 ---
 

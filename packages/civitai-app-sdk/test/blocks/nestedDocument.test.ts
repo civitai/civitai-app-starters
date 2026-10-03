@@ -5,15 +5,11 @@
  *
  * WHY THIS EXISTS
  * ===============
- * A block's own frame is sandboxed without `allow-same-origin`, so its origin
- * is opaque; the static host stamps `frame-ancestors` + `X-Frame-Options` on
- * every path it serves. Measured in a two-origin Chromium replica, an opaque
- * ancestor matches NO `frame-ancestors` source list — `*` included — so a
- * nested `<iframe src="https://<slug>.civit.ai/game/index.html">` is blocked
- * and no manifest change can unblock it. `fetchNestedDocument` fetches the
- * markup instead (the host sends `Access-Control-Allow-Origin: *`) and rewrites
- * its base URL so it still works from a `srcdoc` frame, which carries no
- * response headers and inherits the parent's origin.
+ * A nested `<iframe src="https://<slug>.civit.ai/game/index.html">` is blocked
+ * and no manifest change can unblock it, so `fetchNestedDocument` fetches the
+ * markup and rewrites its base URL for a `srcdoc` frame instead. The
+ * derivation, the measured matrix and the known limits are in the header of
+ * `../../src/blocks/nestedDocument.ts` and NOT restated here.
  *
  * THE `<base href>` IS THE WHOLE MECHANISM, AND IT FAILS SILENTLY
  * ==============================================================
@@ -26,18 +22,32 @@
  * WATCHED TO FAIL (mutation-checked, 2026-10-03), five mutants, each killed by
  * the assertion written for it:
  *
- *   - delete the `<base>` insertion → 11 red.
+ *   - delete the `<base>` insertion (the `insertInto` branch) → 11 red.
  *   - base on the document instead of its directory (`docUrl.href` for
  *     `new URL('.', docUrl).href`) → 15 red, first with
  *     `expected '<base href="…/engine/boot.html">' to be
  *      '<base href="…/engine/">'`.
- *   - stop replacing an existing `<base href>`, inserting alongside it → 4 red,
- *     including the `<base` occurrence count.
+ *   - stop replacing an existing `<base href>` → KILLED IN EVERY FAITHFUL
+ *     SPELLING, but the count DEPENDS ON THE SPELLING, so no single number is
+ *     this mutant's count. Re-measured 2026-10-03, three spellings:
+ *       - insert alongside, immediately after `<head>`, still resolving the
+ *         existing href → 2 red;
+ *       - `findExistingBase` returns `undefined`                → 5 red;
+ *       - detect the tag but ignore its href, inserting alongside → 5 red.
+ *     `REPLACES it … (one <base> in the output)` — the `<base` occurrence count
+ *     — is red in ALL THREE, which is what makes the guard sound rather than
+ *     any one of the numbers. (An earlier draft of this list recorded a flat
+ *     "4 red"; that does not reproduce under any of the three.)
  *   - drop the `\b` after `<head` in `HEAD_OPEN` → 1 red, the `<header>` test,
  *     with the base landing INSIDE `<header>` (after the asset references,
  *     where it does nothing).
  *   - drop the `\b` after `<base` in `findExistingBase`'s tag pattern → 1 red,
  *     the same test, `<basefont href>` having been read as the document's base.
+ *
+ * Every count above was read off the runner over
+ * `test/blocks/nestedDocument.test.ts` (34 tests green at HEAD), restoring the
+ * module from a `cp -a` copy and re-checking its sha256 between mutants so a
+ * failed restore cannot score a borrowed kill for the next one.
  *
  * 🔴 THE SECOND MUTANT IS WHY THIS FILE'S LITERAL STRINGS ARE LOAD-BEARING, AND
  * WHY ITS BROWSER SIBLING DOES NOT DUPLICATE THEM. A `<base href>` naming the
