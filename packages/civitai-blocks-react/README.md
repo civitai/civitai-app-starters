@@ -1517,8 +1517,7 @@ Two surfaces live here:
 
 ### W6 component pack
 
-A drop-in set of primitives that match Civitai's look (8px radius, the blue
-primary, the dark/light surfaces) — **with zero setup**:
+A drop-in set of primitives that match Civitai's look — **with zero setup**:
 
 - **No Mantine dependency, no CSS import, no setup step.** The pack ships its
   CSS as a string and injects it into your block document's `<head>` the first
