@@ -20,3 +20,13 @@ it('registers only the chat up front and the rest of it once the chat has a sign
   await vi.waitFor(() => expect(chat.shadowRoot?.querySelector('civitai-chat-sidebar')).not.toBeNull());
   expect(customElements.get('civitai-chat-thread')).toBeDefined();
 });
+
+it("shows the chat's toasts as toasts, not as unknown tags", async () => {
+  defineCivitaiChat();
+  const region = document.createElement('civitai-toast-region');
+  document.body.append(region);
+  region.show({ message: 'Link copied to clipboard.', color: 'success' });
+  const toast = region.querySelector('civitai-toast') ?? region.shadowRoot?.querySelector('civitai-toast');
+  expect(toast?.textContent).toBe('Link copied to clipboard.');
+  expect(toast?.matches(':defined')).toBe(true);
+});

@@ -1,4 +1,5 @@
 import type { Attachment } from '../types.js';
+import type { SitePoster } from './site.js';
 
 export const POST_TOOL = 'post_to_civitai';
 
@@ -15,11 +16,11 @@ export interface PostHost {
   ): Promise<{ postId: number; url: string } | null>;
 }
 
-export type PostState = 'ready' | 'posting' | 'posted' | 'failed' | 'dismissed';
+export type PostState = 'ready' | 'posting' | 'drafting' | 'drafted' | 'publishing' | 'posted' | 'failed' | 'dismissed';
 
 /** What survives a reload; a post not yet sent is rebuilt from the tool call. */
 export interface SavedPost {
-  state: 'posted' | 'dismissed';
+  state: 'posted' | 'dismissed' | 'drafted';
   postId?: number;
   url?: string;
 }
@@ -27,6 +28,8 @@ export interface SavedPost {
 export interface PostDeps {
   /** `null` outside civitai.com, where there is no host to post through. */
   host: PostHost | null;
+  /** Without a host: the site MCP, as the viewer, when the page lets the chat use it. */
+  site?(): SitePoster | null;
   /** Asks for `posts:write:self`; inside civitai.com the host asks in place. */
   authorize(): Promise<boolean>;
   saved(post: PostDraft): void;
@@ -42,7 +45,7 @@ export interface PostInit {
 }
 
 export interface PostSummary {
-  status: 'awaiting_user' | 'posting' | 'posted' | 'failed' | 'not_posted';
+  status: 'awaiting_user' | 'posting' | 'draft' | 'posted' | 'failed' | 'not_posted';
   url?: string;
   reason?: string;
   note: string;
@@ -50,9 +53,14 @@ export interface PostSummary {
 
 const IMAGE_INDEX = /\.images\[(\d+)\]$/;
 
-/** Only pictures this chat made can be posted: the host takes workflow outputs, not uploads or URLs. */
-export function isPostable(attachment: Attachment): boolean {
-  return attachment.kind === 'image' && attachment.source.type === 'result' && IMAGE_INDEX.test(attachment.source.path);
+/**
+ * Only what this chat made can be posted: civitai.com's host takes pictures from workflow outputs; the
+ * site, posting outside civitai.com, takes their videos too.
+ */
+export function isPostable(attachment: Attachment, videos = false): boolean {
+  if (attachment.source.type !== 'result') return false;
+  if (attachment.kind === 'image') return IMAGE_INDEX.test(attachment.source.path);
+  return videos && attachment.kind === 'video';
 }
 
 function sourcesOf(items: Attachment[]) {
@@ -100,7 +108,7 @@ export class PostDraft extends EventTarget {
   async submit(): Promise<void> {
     if (this.state !== 'ready' && this.state !== 'failed') return;
     const host = this.#deps.host;
-    if (!host) return this.#set('failed', { message: 'Posting works when ChatCVT is opened on civitai.com.' });
+    if (!host) return this.#viaSite();
     this.#set('posting', undefined);
     try {
       if (!(await this.#deps.authorize())) return this.#set('failed', { message: 'Posting needs your permission on Civitai.' });
@@ -120,6 +128,48 @@ export class PostDraft extends EventTarget {
     }
   }
 
+  /** Posts outside civitai.com start as a draft the viewer publishes from the card. */
+  get drafts(): boolean {
+    return this.#deps.host === null && Boolean(this.#deps.site?.());
+  }
+
+  /** Makes a draft made through the site public; on civitai.com the host's own dialog publishes. */
+  async publish(): Promise<void> {
+    const site = this.#deps.site?.();
+    if (!site || this.postId === undefined || (this.state !== 'drafted' && this.state !== 'failed')) return;
+    this.#set('publishing', undefined);
+    try {
+      await site.publish(this.postId);
+      this.#set('posted', undefined);
+      this.#deps.saved(this);
+    } catch (error) {
+      this.#set('failed', humanizePostError(error));
+    }
+  }
+
+  async #viaSite(): Promise<void> {
+    // A draft already made is published on retry, not made twice.
+    if (this.postId !== undefined) return this.publish();
+    const site = this.#deps.site?.();
+    if (!site) return this.#set('failed', { message: 'Posting works when ChatCVT is opened on civitai.com.' });
+    this.#set('drafting', undefined);
+    try {
+      if (!(await this.#deps.authorize())) return this.#set('failed', { message: 'Posting needs your permission on Civitai.' });
+      const draft = await site.createDraft({
+        images: this.items.flatMap((item) => (item.url ? [{ url: item.url, width: item.width, height: item.height, type: item.kind === 'video' ? ('video' as const) : ('image' as const) }] : [])),
+        ...(this.title.trim() ? { title: this.title.trim().slice(0, 255) } : {}),
+        ...(this.detail.trim() ? { detail: this.detail.trim().slice(0, 2000) } : {}),
+        ...(this.tags.length ? { tags: this.tags } : {}),
+      });
+      this.postId = draft.postId;
+      this.url = draft.url;
+      this.#set('drafted', undefined);
+      this.#deps.saved(this);
+    } catch (error) {
+      this.#set('failed', humanizePostError(error));
+    }
+  }
+
   dismiss(): void {
     if (this.state !== 'ready' && this.state !== 'failed') return;
     this.#set('dismissed', undefined);
@@ -127,7 +177,7 @@ export class PostDraft extends EventTarget {
   }
 
   toSaved(): SavedPost | undefined {
-    if (this.state === 'posted') return { state: 'posted', ...(this.postId !== undefined ? { postId: this.postId } : {}), ...(this.url ? { url: this.url } : {}) };
+    if (this.state === 'posted' || this.state === 'drafted') return { state: this.state, ...(this.postId !== undefined ? { postId: this.postId } : {}), ...(this.url ? { url: this.url } : {}) };
     if (this.state === 'dismissed') return { state: 'dismissed' };
     return undefined;
   }
@@ -138,6 +188,10 @@ export class PostDraft extends EventTarget {
         return { status: 'awaiting_user', note: 'A card is on screen; the user posts it from there and confirms on Civitai. Do not say it is posted.' };
       case 'posting':
         return { status: 'posting', note: 'The user is confirming the post on Civitai.' };
+      case 'drafting':
+      case 'drafted':
+      case 'publishing':
+        return { status: 'draft', url: this.url, note: 'A draft is being made or waits on Civitai; it goes public only when the user presses Publish on the card. Do not say it is posted.' };
       case 'posted':
         return { status: 'posted', url: this.url, note: 'It is live on Civitai. You may share the link.' };
       case 'failed':
@@ -175,7 +229,7 @@ export class PostManager extends EventTarget {
   }
 
   get available(): boolean {
-    return this.deps.host !== null;
+    return this.deps.host !== null || Boolean(this.deps.site?.());
   }
 
   create(init: PostInit): PostDraft {
@@ -189,16 +243,16 @@ export class PostManager extends EventTarget {
     return this.#posts.get(id);
   }
 
-  /** A fresh post for one result each time, so an earlier post never blocks posting it again. */
-  forMedia(attachment: Attachment): PostDraft {
-    return this.create({ id: `media:${attachment.id}:${Date.now()}`, items: [attachment] });
+  /** Videos can be posted only through the site; civitai.com's own dialog takes pictures. */
+  get takesVideos(): boolean {
+    return this.deps.host === null && Boolean(this.deps.site?.());
+  }
+
+  accepts(attachment: Attachment): boolean {
+    return this.available && isPostable(attachment, this.takesVideos);
   }
 
   clear(): void {
     this.#posts.clear();
   }
-}
-
-export function isChatPost(id: string): boolean {
-  return !id.startsWith('media:');
 }

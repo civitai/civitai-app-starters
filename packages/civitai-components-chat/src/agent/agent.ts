@@ -12,6 +12,9 @@ import type { TurnPart } from './parts.js';
 import { PROVIDER_OPTIONS } from './provider.js';
 import { buildSystemPrompt } from './system-prompt.js';
 
+const LAST_STEP =
+  'This is your last step this turn: you cannot call tools now. Tell the user plainly what got done and what did not, and that they can ask you to carry on. Do not say you are about to do something.';
+
 export interface AgentDeps {
   model: LanguageModel;
   store: ThreadStore;
@@ -23,6 +26,8 @@ export interface AgentDeps {
   /** Read at the start of every reply, so the embedding page can change them at any time. */
   hostInstructions?(): string | undefined;
   isHostTool?(name: string): boolean;
+  /** What the assistant is told about the panels on screen, read at the start of every reply. */
+  panels?(): string | undefined;
   systemPrompt?(): string | ((defaults: string) => string) | undefined;
   now?(): Date;
 }
@@ -70,17 +75,19 @@ export class Agent extends EventTarget {
     let streamError: unknown;
     try {
       const tools = await this.#deps.toolSet({ conversationId: conversation.id, seq: turn.seq });
+      const system = buildSystemPrompt({
+        attachments: this.#deps.attachments(),
+        now: this.#deps.now?.() ?? new Date(),
+        customInstructions: this.#deps.customInstructions?.(),
+        canPost: this.#deps.posts?.available ?? false,
+        panels: this.#deps.panels?.(),
+        tools: Object.keys(tools),
+        host: { tools: Object.keys(tools).filter((name) => this.#deps.isHostTool?.(name)), instructions: this.#deps.hostInstructions?.() },
+        rules: this.#deps.systemPrompt?.(),
+      });
       const result = streamText({
         model: this.#deps.model,
-        system: buildSystemPrompt({
-          attachments: this.#deps.attachments(),
-          now: this.#deps.now?.() ?? new Date(),
-          customInstructions: this.#deps.customInstructions?.(),
-          canPost: this.#deps.posts?.available ?? false,
-          tools: Object.keys(tools),
-          host: { tools: Object.keys(tools).filter((name) => this.#deps.isHostTool?.(name)), instructions: this.#deps.hostInstructions?.() },
-          rules: this.#deps.systemPrompt?.(),
-        }),
+        system,
         messages: buildModelMessages(conversation.turns, (key) => this.#deps.jobs.get(key) ?? this.#deps.posts?.get(key)),
         tools,
         stopWhen: [stepCountIs(MAX_STEPS), hasToolCall(ASK_CHOICE)],
@@ -88,8 +95,8 @@ export class Agent extends EventTarget {
         maxOutputTokens: MAX_OUTPUT_TOKENS,
         temperature: 0.7,
         providerOptions: PROVIDER_OPTIONS,
-        // The last allowed step must speak, or a run of failing tools ends in silence.
-        prepareStep: ({ stepNumber }) => (stepNumber >= MAX_STEPS - 1 ? { toolChoice: 'none' } : undefined),
+        // The last allowed step must speak, or a run of failing tools ends in silence; told why, it does not promise more.
+        prepareStep: ({ stepNumber }) => (stepNumber >= MAX_STEPS - 1 ? { toolChoice: 'none', system: `${system}\n\n${LAST_STEP}` } : undefined),
         onStepFinish: (step) => {
           completed = [...step.response.messages];
         },

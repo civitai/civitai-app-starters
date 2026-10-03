@@ -50,6 +50,8 @@ export interface JobInit {
   toolCallId: string;
   tool: JobToolInfo;
   args: Record<string, unknown>;
+  /** The panel that ran it, when the user pressed its Run button rather than the assistant calling a tool. */
+  panel?: string;
 }
 
 /** What the assistant is told about a job, at call time and in every later turn. */
@@ -107,6 +109,7 @@ export class GenerationJob extends EventTarget {
   readonly toolCallId: string;
   readonly tool: JobToolInfo;
   readonly args: Record<string, unknown>;
+  readonly panel?: string;
 
   state: JobState = 'pricing';
   price: Price | null = null;
@@ -131,6 +134,7 @@ export class GenerationJob extends EventTarget {
     this.toolCallId = init.toolCallId;
     this.tool = init.tool;
     this.args = init.args;
+    this.panel = init.panel;
   }
 
   get label(): string {
@@ -178,6 +182,7 @@ export class GenerationJob extends EventTarget {
       job: this.id,
       toolCallId: this.toolCallId,
       tool: this.tool.name,
+      ...(this.panel ? { panel: this.panel } : {}),
     };
   }
 
@@ -236,7 +241,7 @@ export class GenerationJob extends EventTarget {
       try {
         const result = await this.#deps.mcp.callTool(
           this.tool.name,
-          { ...args, waitForCompletion: false, ...this.#taggingArgs() },
+          { ...args, ...this.#runArgs(), waitForCompletion: false, ...this.#taggingArgs() },
           { signal: run.signal },
         );
         if (result.isError) {
@@ -389,7 +394,7 @@ export class GenerationJob extends EventTarget {
     try {
       const result = await this.#deps.mcp.callTool(
         this.tool.name,
-        { ...args, ...this.#taggingArgs() },
+        { ...args, ...this.#runArgs(), ...this.#taggingArgs() },
         {
           signal,
           timeoutMs: BLOCKING_TIMEOUT_MS,
@@ -426,6 +431,11 @@ export class GenerationJob extends EventTarget {
     } catch (error) {
       if (!signal.aborted) this.#fail(error);
     }
+  }
+
+  // The MCP's run tools only price unless told otherwise, so a real run has to say so.
+  #runArgs(): Record<string, unknown> {
+    return this.tool.whatif ? { whatif: false } : {};
   }
 
   #taggingArgs(): Record<string, unknown> {

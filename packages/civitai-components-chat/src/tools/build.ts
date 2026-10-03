@@ -5,7 +5,9 @@ import type { McpConnection, McpTool } from '../mcp/clients.js';
 import { mcpResultToText, structuredOf } from '../mcp/result.js';
 import { toolInfo } from '../orchestration/job.js';
 import type { JobManager } from '../orchestration/jobs.js';
-import { POST_TOOL, isPostable, type PostManager } from '../posting/post.js';
+import type { PanelManager } from '../panels/panel.js';
+import { panelTools } from '../panels/tools.js';
+import { POST_TOOL, type PostManager } from '../posting/post.js';
 import { ATTACHMENT_ID, jobId } from '../store/attachments.js';
 import type { Attachment, ModelRecommendation } from '../types.js';
 import { isJobTool, withoutControls, type ToolCatalog } from './catalog.js';
@@ -19,6 +21,8 @@ export interface TurnToolContext {
   site: McpConnection;
   siteApi: SiteClient;
   posts: PostManager;
+  /** Panels are offered only where the assistant can make things. */
+  panels?: PanelManager;
   findAttachment(id: string): Attachment | undefined;
   resolveArgs(args: Record<string, unknown>): Promise<Record<string, unknown>>;
   onCaption(attachmentId: string, caption: string): void;
@@ -72,6 +76,8 @@ export function buildToolSet(catalog: ToolCatalog, ctx: TurnToolContext): ToolSe
     }
   }
 
+  if (ctx.panels && catalog.orchestration.some((t) => t.name === 'run_step')) Object.assign(tools, panelTools({ conversationId: ctx.conversationId, seq: ctx.seq, panels: ctx.panels }));
+
   if (catalog.site) {
     for (const siteTool of catalog.site) {
       if (!(siteTool.name in tools)) tools[siteTool.name] = passthrough(siteTool, ctx.site, ctx);
@@ -85,8 +91,7 @@ export function buildToolSet(catalog: ToolCatalog, ctx: TurnToolContext): ToolSe
   }
 
   if (ctx.posts.available) tools[POST_TOOL] = tool({
-    description:
-      "Post pictures made in this chat to Civitai, when the user asks to share or post them. Shows a card; the user confirms the post on Civitai themselves, and nothing goes public until they do. Only pictures this chat made can be posted, not uploads, videos or audio.",
+    description: `Post ${postableKinds(ctx.posts)} made in this chat to Civitai, when the user asks to share or post them. Shows a card; the user confirms the post themselves, and nothing goes public until they do. Uploads and audio cannot be posted.`,
     inputSchema: jsonSchema<{ files: string[]; title?: string; description?: string; tags?: string[] }>({
       type: 'object',
       properties: {
@@ -102,8 +107,8 @@ export function buildToolSet(catalog: ToolCatalog, ctx: TurnToolContext): ToolSe
       const items = input.files.map((id) => ctx.findAttachment(id));
       const missing = input.files.filter((_, index) => !items[index]);
       if (missing.length) return { error: `No such files in this chat: ${missing.join(', ')}`, note: FAILED_NOTE };
-      const unpostable = (items as Attachment[]).filter((item) => !isPostable(item)).map((item) => item.id);
-      if (unpostable.length) return { error: `Only pictures made in this chat can be posted; not ${unpostable.join(', ')}.`, note: 'Tell the user in plain words.' };
+      const unpostable = (items as Attachment[]).filter((item) => !ctx.posts.accepts(item)).map((item) => item.id);
+      if (unpostable.length) return { error: `Only ${postableKinds(ctx.posts)} made in this chat can be posted; not ${unpostable.join(', ')}.`, note: 'Tell the user in plain words.' };
       const post = ctx.posts.create({ id: toolCallId, items: items as Attachment[], title: input.title, detail: input.description, tags: input.tags });
       return post.summary();
     },
@@ -142,6 +147,10 @@ export function buildToolSet(catalog: ToolCatalog, ctx: TurnToolContext): ToolSe
   });
 
   return tools;
+}
+
+function postableKinds(posts: PostManager): string {
+  return posts.takesVideos ? 'pictures and videos' : 'pictures';
 }
 
 function passthrough(mcpTool: McpTool, connection: McpConnection, ctx: TurnToolContext) {

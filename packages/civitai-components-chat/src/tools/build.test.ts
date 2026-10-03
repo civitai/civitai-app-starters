@@ -5,6 +5,7 @@ import orchestrationFixture from '../test-fixtures/orchestration-tools.json' wit
 import siteFixture from '../test-fixtures/site-tools.json' with { type: 'json' };
 import type { McpConnection, McpTool } from '../mcp/clients.js';
 import { JobManager } from '../orchestration/jobs.js';
+import { PanelManager } from '../panels/panel.js';
 import { PostManager } from '../posting/post.js';
 import { toolResult } from '../test-support/fakes.js';
 import { buildToolSet, type TurnToolContext } from './build.js';
@@ -68,6 +69,14 @@ describe('buildToolSet', () => {
       expect(names).not.toContain(denied);
     }
     expect(names).not.toContain('create_post');
+  });
+
+  it('offers panels only when it can run steps and the chat has somewhere to keep them', () => {
+    const panels = new PanelManager({ jobs: context().jobs, toolInfo: () => undefined, save: vi.fn() });
+    expect(Object.keys(buildToolSet(catalog(), context({ panels })))).toEqual(expect.arrayContaining(['open_panel', 'update_panel']));
+    expect(Object.keys(buildToolSet(catalog(), context()))).not.toContain('open_panel');
+    const withoutRuns = { ...catalog(), orchestration: catalog().orchestration.filter((t) => !t.name.startsWith('run_')) };
+    expect(Object.keys(buildToolSet(withoutRuns, context({ panels })))).not.toContain('open_panel');
   });
 
   it('offers a post for the user to confirm instead of posting it, for pictures this chat made', async () => {

@@ -99,8 +99,45 @@ configureChat({ autoRunLimit: 0 }); // ask before every generation
 `model` (the chat model's AIR), `orchestrationMcpUrl`, `siteMcpUrl` and `autoRunLimit` (the Buzz a
 new viewer's generations may cost before the chat asks) are the settings.
 
+## Panels
+
+When someone wants to explore one kind of thing (logos, beats, a character in different scenes)
+rather than make it once, the assistant builds a panel with `open_panel`: a few controls in plain
+words and a Run button with the price. Each press of Run goes straight to the orchestrator on the
+viewer's Buzz; no assistant reply is needed, so it costs nothing beyond the generation. Ask the
+assistant for help and it sees the panel's current values and what each run made, and changes the
+panel in place with `update_panel`: filling in values, adding or removing controls.
+
+A panel is a definition, not code: controls with content-studios' input kinds (`text`, `choice`,
+`slider`, `aspect`, `count`, `seed`, `toggle`, plus `image` for a file from the chat) and a
+`run_step` or `run_workflow` call with `{{input}}` placeholders. Every change is a new version, each
+run records the version and exact values it used (seeds included), and the whole thing is saved with
+the conversation, so a panel and its runs come back after a reload.
+
+Share on a panel copies a link that carries its latest version and values (not the author's files
+or runs). Opening it starts a conversation of the viewer's own with a copy of the panel: they run it
+on their Buzz and can ask their assistant to change it, which is told the panel came from someone
+else and treats its text as content, not instructions. A full-page chat shares links to itself and
+opens them on load; elsewhere, set `panel-link-base` to the page that calls `openPanel()`. A page
+that may send the viewer to sign in first calls `holdSharedPanel()` before it does, since the
+redirect back drops the link's hash.
+
+A panel can also fill the page beside the chat, studio-style. Set `dock-panels` on the chat: the
+thread then shows a chip where each panel was built or changed, and the chat fires
+`active-panel-change` with the panel to show. Hand it to `<civitai-chat-studio>`
+(`@civitai/components-chat/civitai-chat-studio/define`), which lays out the controls and Run, the run
+on show, and every run; wire its `media-action` to the chat's `mediaAction()` and pass the chat's
+`files` for image inputs.
+
+```ts
+chat.addEventListener('active-panel-change', (e) => (studio.panel = e.detail.panel));
+studio.files = () => chat.files();
+studio.addEventListener('media-action', (e) => chat.mediaAction(e.detail.id, e.detail.action));
+```
+
 ## Where chats live
 
 Every turn is a free, tagged `echo` workflow on the orchestrator, and every generation a tagged
 workflow, so a viewer's chats follow them to any device and expire with the orchestrator's 30-day
-retention. Nothing is kept on the page beyond preferences.
+retention. Panels are saved on the conversation, and their runs are tagged workflows like any other.
+Nothing is kept on the page beyond preferences.

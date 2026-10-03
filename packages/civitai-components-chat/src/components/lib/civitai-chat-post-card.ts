@@ -8,7 +8,7 @@ import { media, mediaSizes, type MediaKind } from './media.js';
 
 const TAG = 'civitai-chat-post-card';
 
-export type PostCardState = 'ready' | 'posting' | 'posted' | 'failed' | 'dismissed';
+export type PostCardState = 'ready' | 'posting' | 'drafting' | 'drafted' | 'publishing' | 'posted' | 'failed' | 'dismissed';
 
 /** What the card needs from a post; it re-renders on the post's `change` events. */
 export interface CardPost extends EventTarget {
@@ -18,10 +18,13 @@ export interface CardPost extends EventTarget {
   readonly url?: string;
   readonly error?: { message: string; detail?: string };
   submit(): Promise<void>;
+  /** Outside civitai.com a post starts as a draft, which `publish` makes public. */
+  readonly drafts?: boolean;
+  publish?(): Promise<void>;
   dismiss(): void;
 }
 
-/** A suggested post; Civitai's own dialog confirms it, so nothing is posted from here. */
+/** A suggested post; nothing goes public until the viewer confirms it in Civitai's dialog or presses Publish on its draft. */
 export class CivitaiChatPostCard extends CivitaiElement {
   static override styles = [
     hostBaseline,
@@ -139,13 +142,23 @@ export class CivitaiChatPostCard extends CivitaiElement {
         <civitai-button part="publish" size="sm" @click=${() => void post.submit()}>Post on Civitai</civitai-button>
         <civitai-button part="dismiss" size="sm" variant="subtle" @click=${() => post.dismiss()}>Not now</civitai-button>
       </div>
-      <div class="hint">Civitai shows the post before it goes public on your profile.</div>`;
+      <div class="hint">${post.drafts ? 'It starts as a draft; nothing goes public until you publish it.' : 'Civitai shows the post before it goes public on your profile.'}</div>`;
   }
 
   #outcome(post: CardPost): TemplateResult {
     switch (post.state) {
       case 'posting':
         return html`<div class="status" role="status"><civitai-loader size="sm"></civitai-loader>Confirm the post on Civitai…</div>`;
+      case 'drafting':
+        return html`<div class="status" role="status"><civitai-loader size="sm"></civitai-loader>Making a draft on Civitai…</div>`;
+      case 'publishing':
+        return html`<div class="status" role="status"><civitai-loader size="sm"></civitai-loader>Publishing…</div>`;
+      case 'drafted':
+        return html`<div class="status" role="status">Draft ready on Civitai. Nothing is public yet.</div>
+          <div class="row">
+            <civitai-button part="publish" size="sm" @click=${() => void post.publish?.()}>Publish</civitai-button>
+            ${post.url ? html`<a part="link" href=${post.url} target="_blank" rel="noopener">Open the draft</a>` : nothing}
+          </div>`;
       case 'posted':
         return html`<div class="status" role="status">
           Posted on Civitai. ${post.url ? html`<a part="link" href=${post.url} target="_blank" rel="noopener">View post</a>` : nothing}

@@ -6,7 +6,8 @@ import { keyed } from 'lit/directives/keyed.js';
 
 import { takeResume } from '../auth/resume.js';
 import { SCOPE_PATTERN } from '../config.js';
-import { isPostable } from '../posting/post.js';
+import type { Panel } from '../panels/panel.js';
+import { panelLink, sharedPanelOf, takeSharedPanel, type SharedPanel } from '../panels/share.js';
 import { conversationSpend, type Spend } from '../ux/spend.js';
 import type { GenerationJob } from '../orchestration/job.js';
 import type { ChatSession, PendingUpload } from '../session.js';
@@ -18,6 +19,11 @@ import type { Attachment, Settings } from '../types.js';
 import type { CivitaiChatComposer } from './civitai-chat-composer.js';
 import type { CivitaiChatThread } from './civitai-chat-thread.js';
 import { chatStyles } from './chat.styles.js';
+import { mediaActions } from './media-actions.js';
+import { DEFAULT_ACTIONS, type CardAction } from './lib/actions.js';
+import type { MediaKind } from './lib/media.js';
+
+import { panelStyles } from './panel.styles.js';
 import type { Example } from './civitai-chat-welcome.js';
 
 /** A finished file, or a job that has none yet (the viewer then shows its details alone). */
@@ -32,7 +38,7 @@ export type ChatLayout = 'auto' | 'compact' | 'wide';
  * replaces what an empty chat shows.
  */
 export class CivitaiChat extends LitElement {
-  static override styles = chatStyles;
+  static override styles = [chatStyles, panelStyles];
 
   static override properties: PropertyDeclarations = {
     app: { attribute: false },
@@ -42,6 +48,8 @@ export class CivitaiChat extends LitElement {
     systemPrompt: { attribute: false },
     mcp: { attribute: false },
     scope: {},
+    panelLinkBase: { attribute: 'panel-link-base' },
+    dockPanels: { type: Boolean, attribute: 'dock-panels' },
     fullPage: { type: Boolean, attribute: 'full-page', reflect: true },
     // Reflected so the stylesheet can key on it, including the default.
     layout: { reflect: true },
@@ -74,6 +82,17 @@ export class CivitaiChat extends LitElement {
   declare mcp: { orchestration?: boolean; site?: boolean };
   /** Keeps this page's conversations and preferences apart; set it before `app`. */
   declare scope?: string;
+  /**
+   * The page that opens a shared panel's link (by calling `openPanel`, or as a full-page chat). A
+   * full-page chat shares links to itself; elsewhere Share shows only once this is set.
+   */
+  declare panelLinkBase?: string;
+  /**
+   * Leaves panels to the page: the thread shows a chip where each one was built or changed, and the
+   * chat fires `active-panel-change` with the panel to show (the latest, or the one whose chip was
+   * clicked). Pair it with `<civitai-chat-studio>`.
+   */
+  declare dockPanels: boolean;
   /** The chat is the whole page: it sets the theme, takes keyboard shortcuts and picks up after a sign-in redirect. */
   declare fullPage: boolean;
   /** Where the chat list goes: a column beside the chat (`wide`), a dropdown under the title (`compact`), or by the chat's own width (`auto`, compact at 900px or less). */
@@ -95,6 +114,8 @@ export class CivitaiChat extends LitElement {
   #markStarted!: (session: ChatSession) => void;
   #rerender = (): void => this.requestUpdate();
   #signInAbort?: AbortController;
+  #focusedPanel?: Panel;
+  #activePanel?: Panel;
   #aiGrant?: { app: AppClient; granted: Promise<boolean> };
 
   constructor() {
@@ -102,6 +123,7 @@ export class CivitaiChat extends LitElement {
     this.tools = {};
     this.mcp = {};
     this.fullPage = false;
+    this.dockPanels = false;
     this.layout = 'auto';
     this.canSignOut = false;
     this.userName = '';
@@ -160,6 +182,43 @@ export class CivitaiChat extends LitElement {
     composer.focus();
   }
 
+  get panels(): Panel[] {
+    return this.#session?.panels.all() ?? [];
+  }
+
+  get activePanel(): Panel | undefined {
+    const panels = this.#session?.panels;
+    if (!panels) return undefined;
+    const focused = this.#focusedPanel;
+    return focused && panels.get(focused.handle) === focused ? focused : panels.latest;
+  }
+
+  files(): Attachment[] {
+    return this.#session?.attachments() ?? [];
+  }
+
+  /** Pass to `<civitai-chat-studio>` so its menus match the chat's. */
+  get mediaActions(): Record<MediaKind, CardAction[]> {
+    return this.#session ? mediaActions(this.#session.posts) : DEFAULT_ACTIONS;
+  }
+
+  mediaAction(id: string, action: string): Promise<void> {
+    return this.#mediaAction(id, action);
+  }
+
+  #announceActivePanel(): void {
+    const active = this.activePanel;
+    if (active === this.#activePanel) return;
+    this.#activePanel = active;
+    this.dispatchEvent(new CustomEvent('active-panel-change', { detail: { panel: active } }));
+  }
+
+  async openPanel(shared: SharedPanel): Promise<void> {
+    const session = await this.#started;
+    await session.openShared(shared);
+    this.renderRoot.querySelector<CivitaiChatThread>('civitai-chat-thread')?.scrollToEnd();
+  }
+
   async focusComposer(): Promise<void> {
     (await this.#composer())?.focus();
   }
@@ -183,10 +242,12 @@ export class CivitaiChat extends LitElement {
     if (this.fullPage) applyTheme(settings.theme);
     this.#session = session;
     this.#models = new ModelDirectory(app.site, () => session.settings.allowMature);
-    for (const target of [session.store, session.agent, session.jobs, session.posts] as EventTarget[]) {
-      for (const type of ['change', 'list-change', 'conversation-change', 'job-change', 'post-change']) target.addEventListener(type, this.#rerender);
+    for (const target of [session.store, session.agent, session.jobs, session.posts, session.panels] as EventTarget[]) {
+      for (const type of ['change', 'list-change', 'conversation-change', 'job-change', 'post-change', 'panel-change']) target.addEventListener(type, this.#rerender);
     }
     session.addEventListener('settings-change', this.#rerender);
+    session.panels.addEventListener('panel-change', () => this.#announceActivePanel());
+    session.store.addEventListener('conversation-change', () => this.#announceActivePanel());
     this.requestUpdate();
 
     void app.site
@@ -200,6 +261,14 @@ export class CivitaiChat extends LitElement {
     const target = resume?.conversationId ?? settings.lastConversationId;
     if (target) await this.#open(target, false);
     else session.newConversation();
+    const shared = this.fullPage ? await takeSharedPanel() : null;
+    if (shared) {
+      try {
+        await session.openShared(shared);
+      } catch (error) {
+        this.#toast('Could not open that shared panel.', error);
+      }
+    }
     if (resume?.draft) {
       const composer = await this.#composer();
       if (composer) composer.draft = resume.draft;
@@ -226,6 +295,28 @@ export class CivitaiChat extends LitElement {
       this.historyOpen = false;
     }
     this.renderRoot.querySelector<CivitaiChatThread>('civitai-chat-thread')?.scrollToEnd();
+  }
+
+  get #shareBase(): string | undefined {
+    return this.panelLinkBase || (this.fullPage ? `${location.origin}${location.pathname}` : undefined);
+  }
+
+  /**
+   * Copies a link that opens a copy of the panel; needs `panel-link-base` unless the chat is full-page.
+   * Resolves `true` once it is on the clipboard, `false` when the viewer was shown it to copy instead.
+   */
+  async sharePanel(panel: Panel): Promise<boolean> {
+    const base = this.#shareBase;
+    if (!base) return false;
+    const link = await panelLink(base, sharedPanelOf(panel.toSaved()));
+    try {
+      await navigator.clipboard.writeText(link);
+      this.#notify('Link copied to clipboard.');
+      return true;
+    } catch {
+      window.prompt('Copy this link to share the panel:', link);
+      return false;
+    }
   }
 
   #notify(message: string): void {
@@ -353,10 +444,8 @@ export class CivitaiChat extends LitElement {
     }
     if (action === 'post') {
       this.lightbox = null;
-      const post = this.#session!.posts.forMedia(attachment);
-      await post.submit();
-      if (post.state === 'posted') this.#notify('Posted on Civitai.');
-      if (post.state === 'failed') this.#toast(post.error?.message ?? 'Could not post that.', post.error?.detail);
+      this.refs = [attachment];
+      await this.#send(attachment.kind === 'video' ? 'Post this video to Civitai.' : 'Post this picture to Civitai.');
       return;
     }
     if (action === 'upscale') {
@@ -398,8 +487,9 @@ export class CivitaiChat extends LitElement {
         at: turn.createdAt,
         user: turn.user,
         assistant: turn.assistant.messages,
-        jobs: session.jobs.all().filter((job) => job.seq === turn.seq).map((job) => job.summary()),
+        jobs: session.jobs.all().filter((job) => job.seq === turn.seq && !job.panel).map((job) => job.summary()),
       })),
+      panels: session.panels.all().map((panel) => ({ ...panel.toSaved(), runs: panel.jobs.map((job) => job.summary()) })),
     };
     const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
     const link = Object.assign(document.createElement('a'), { href: url, download: `ChatCVT-${conversation.title.replace(/[^\w-]+/g, '-').slice(0, 40)}.json` });
@@ -534,6 +624,11 @@ export class CivitaiChat extends LitElement {
             if (job) this.lightbox = { job };
           }}
           @cvt-choice=${(e: CustomEvent<{ label: string }>) => void this.#send(e.detail.label)}
+          @panel-share=${(e: CustomEvent<{ panel: Panel; copied?: Promise<boolean> }>) => (e.detail.copied = this.sharePanel(e.detail.panel))}
+          @panel-focus=${(e: CustomEvent<{ panel: Panel }>) => {
+            this.#focusedPanel = e.detail.panel;
+            this.#announceActivePanel();
+          }}
         >
           <civitai-chat-dropzone
             class="cvt-main"
@@ -581,7 +676,7 @@ export class CivitaiChat extends LitElement {
                       composer.focus();
                     })}
                 ></civitai-chat-welcome>`
-              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .models=${this.#models} .resolve=${resolve} .activity=${(name: string) => session.hostActivity(name)}></civitai-chat-thread>`)}
+              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .activity=${(name: string) => session.hostActivity(name)}></civitai-chat-thread>`)}
           <civitai-chat-composer
             ?running=${session.agent.running}
             .uploads=${this.uploads}
@@ -618,8 +713,8 @@ export class CivitaiChat extends LitElement {
         ${details ? html`<civitai-chat-generation-details slot="details" .details=${details} .models=${this.#models}></civitai-chat-generation-details>` : nothing}
         ${boxed?.attachment
           ? html`<civitai-button slot="actions" size="sm" variant="light" @click=${() => void this.#mediaAction(boxed.attachment.id, 'reference')}>Use in chat</civitai-button>
-              ${session.posts.available && isPostable(boxed.attachment)
-                ? html`<civitai-button slot="actions" size="sm" variant="light" @click=${() => void this.#mediaAction(boxed.attachment.id, 'post')}>Post</civitai-button>`
+              ${session.posts.accepts(boxed.attachment)
+                ? html`<civitai-button slot="actions" size="sm" variant="light" @click=${() => void this.#mediaAction(boxed.attachment.id, 'post')}>Post to Civitai</civitai-button>`
                 : nothing}
               <civitai-button slot="actions" size="sm" variant="subtle" @click=${() => void this.#mediaAction(boxed.attachment.id, 'download')}>Download</civitai-button>`
           : nothing}

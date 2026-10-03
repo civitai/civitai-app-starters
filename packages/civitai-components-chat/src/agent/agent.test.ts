@@ -3,6 +3,7 @@ import { jsonSchema, tool, type ToolSet } from 'ai';
 import { MockLanguageModelV3, convertArrayToReadableStream } from 'ai/test';
 import { describe, expect, it, vi } from 'vitest';
 
+import { MAX_STEPS } from '../config.js';
 import { JobManager } from '../orchestration/jobs.js';
 import { ThreadStore } from '../store/thread-store.js';
 import { workflow } from '../test-support/fakes.js';
@@ -126,12 +127,14 @@ describe('Agent', () => {
   });
 
   it('makes the last allowed step answer in words instead of calling yet another tool', async () => {
-    const calls = Array.from({ length: 5 }, (_, i) => toolCall('generate_image', { prompt: `try ${i}` }, `call_${i}`));
-    const { agent, store, toolChoices } = setup([...calls, text('Sorry, that did not work.')]);
+    const calls = Array.from({ length: MAX_STEPS - 1 }, (_, i) => toolCall('generate_image', { prompt: `try ${i}` }, `call_${i}`));
+    const { agent, store, toolChoices, prompts } = setup([...calls, text('Sorry, that did not work.')]);
     await agent.send('make a bike');
-    expect(toolChoices).toHaveLength(6);
+    expect(toolChoices).toHaveLength(MAX_STEPS);
     expect(toolChoices.at(-1)).toEqual({ type: 'none' });
-    expect(toolChoices.slice(0, 5).every((choice) => (choice as { type: string }).type === 'auto')).toBe(true);
+    expect(toolChoices.slice(0, -1).every((choice) => (choice as { type: string }).type === 'auto')).toBe(true);
+    expect(JSON.stringify((prompts.at(-1) as unknown[])[0])).toContain('you cannot call tools now');
+    expect(JSON.stringify((prompts[0] as unknown[])[0])).not.toContain('you cannot call tools now');
     expect(store.current!.turns[0]!.assistant.messages.at(-1)).toMatchObject({ role: 'assistant', content: [{ type: 'text', text: 'Sorry, that did not work.' }] });
   });
 
