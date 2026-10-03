@@ -1532,8 +1532,8 @@ primary, the dark/light surfaces) — **with zero setup**:
 - **Auto-themed via your block's `data-theme`.** Set `data-theme={theme}` on
   your block's own root (from `useBlockContext().theme` — gotcha #60; the host
   can't reach across the iframe to set it for you). The components read an
-  ancestor `[data-theme='dark']` / `[data-theme='light']`; **no attribute =
-  light**, matching the starter palette.
+  ancestor `[data-theme='dark']` / `[data-theme='light']`; default (no
+  attribute) is the **dark** palette, and nothing consults the OS preference.
 
 ```tsx
 import { useRef } from 'react';
