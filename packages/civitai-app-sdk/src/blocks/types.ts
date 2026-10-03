@@ -1566,8 +1566,24 @@ export interface BlockManifestGood {
    * What the entitlement grants. `app_unlock` marks a one-time unlock of the app
    * itself; it is RECORDED identically today and the platform does not yet act
    * on it, so declaring it buys nothing unless you intend that later behaviour.
+   *
+   * 🔴 `app_unlock` carries THREE extra rules the platform validator enforces and
+   * this schema does not express: `priceBuzz` at most 5000 (not the 50000 the
+   * `priceBuzz` bound allows), at most ONE `app_unlock` good per manifest, and a
+   * mandatory `justification`. Local validation passing is necessary, not
+   * sufficient — see the canonical schema's `kind` description.
    */
   kind?: 'good' | 'app_unlock';
+  /**
+   * Why this good exists, shown to the moderator at review and never to the
+   * viewer. REQUIRED when `kind` is `'app_unlock'`: adding an unlock turns a free
+   * app into a paid one, and because an unlock does not require the sensitive
+   * `goods:purchase:self` scope, this is what makes that a reviewed decision
+   * rather than a diff nobody was pointed at. Optional for an ordinary good.
+   * Review metadata only — unlike `payload` it is never copied onto an
+   * entitlement, and the platform does not verify the claim. At most 500 chars.
+   */
+  justification?: string;
   /** Opaque app payload, carried verbatim onto the entitlement. Never interpreted by the platform. */
   payload?: Record<string, unknown>;
 }
