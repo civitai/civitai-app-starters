@@ -65,6 +65,26 @@ export {
 } from './idempotency.js';
 
 /**
+ * The `srcdoc` escape hatch for embedding one of your own bundled documents
+ * inside a block, and the measured reason a plain `<iframe src>` of your own
+ * subdomain cannot load: the block document's origin is opaque, and the static
+ * host stamps `frame-ancestors` + `X-Frame-Options` on every path. Prefer a
+ * SINGLE-DOCUMENT design — see the header of `nestedDocument.ts`, which carries
+ * the matrix and the limits.
+ */
+export {
+  fetchNestedDocument,
+  injectBaseHref,
+  NestedDocumentError,
+} from './nestedDocument.js';
+export type {
+  FetchNestedDocumentOptions,
+  InjectBaseHrefResult,
+  NestedDocument,
+  NestedDocumentErrorCode,
+} from './nestedDocument.js';
+
+/**
  * {@link classifyAppStorageError} — the matcher a block branches on — plus the
  * four rejection messages a MOCK HOST has to emit. The wire carries a
  * host-authored message, never the TRPC code; see `appStorageErrors.ts` for the

@@ -253,6 +253,44 @@ const PEER_VALUE_SYMBOL_SINCE = {
   BLOCK_IDEMPOTENCY_KEY_MAX_LENGTH: '0.55.0',
   BLOCK_IDEMPOTENCY_KEY_REGEX: '0.55.0',
   blockIdempotencyKeyRejection: '0.55.0',
+
+  // 🔴 A PREDICTION, pinned as one — see
+  // `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH` below. `fetchNestedDocument` is the
+  // `srcdoc` nested-document helper (#532), new module
+  // `src/blocks/nestedDocument.ts`, value-imported by
+  // `src/hooks/useNestedDocument.ts`. It ships for the FIRST time in the
+  // app-sdk minor this branch's own changeset produces, so there is no tarball
+  // to probe for a PRESENT reading.
+  //
+  // Derived from the release plan, not guessed: in-tree app-sdk `0.56.0`, which
+  // is also `npm view @civitai/app-sdk version`; this branch's changeset bumps
+  // app-sdk `minor`; `pnpm exec changeset status --verbose` prints
+  // `@civitai/app-sdk 0.57.0`.
+  //
+  // MEASURED 2026-10-03 — the half that CAN be measured: the symbol is absent
+  // from every published version, so the run cannot start lower. `npm pack` of
+  // each tarball, untarred, `grep -rl <symbol> package/dist`:
+  //
+  //   0.56.0 (newest published)   fetchNestedDocument 0 files
+  //   0.55.0 (the old floor)      fetchNestedDocument 0 files
+  //
+  // Controls, run before those zeros were believed:
+  //   - POSITIVE: `BLOCK_SCOPES` read PRESENT (7 files) on BOTH tarballs — the
+  //     probe can see this surface at all, so a 0 is a real absence rather
+  //     than a probe wired to nothing.
+  //   - NEGATIVE: an impossible symbol (`__NOPE_7f3a__`) read ABSENT (0 files)
+  //     on both — the probe can answer "no", so PRESENT is not its only answer.
+  //
+  // `injectBaseHref` and `NestedDocumentError` ship in the same module and are
+  // deliberately NOT ledgered: `blocks-react/src` does not value-import them
+  // (only the app-sdk's own tests and documentation do), and the `DERIVED
+  // FLOOR` test below rejects an entry for a symbol this package does not
+  // import. Both read 0 files on the same two tarballs.
+  //
+  // 🔴 RE-MEASURE AND RETIRE after the release publishes: empty
+  // `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH`, re-read this entry off the real
+  // 0.57.0 tarball with 0.56.0 as the ABSENT control, and record both here.
+  fetchNestedDocument: '0.57.0',
 };
 
 /**
@@ -354,7 +392,25 @@ const PEER_VALUE_SYMBOL_SINCE = {
 // This list stays EMPTY unless a branch again ledgers a symbol against a version
 // it is itself about to publish; see the docblock above for what declaring one
 // buys you.
-const PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH = [];
+//
+// RE-POPULATED 2026-10-03 — the THIRD real occasion. `fetchNestedDocument`, the
+// `srcdoc` nested-document helper (#532), is a new `@civitai/app-sdk/blocks`
+// module (`src/blocks/nestedDocument.ts`) value-imported by `blocks-react`'s
+// `src/hooks/useNestedDocument.ts`, so it first exists in the app-sdk release
+// THIS branch publishes (0.57.0 — `changeset status --verbose`). The
+// measurement that it is absent from every PUBLISHED version, including the
+// newest (0.56.0), plus its positive and negative controls, is recorded at the
+// entry itself in `PEER_VALUE_SYMBOL_SINCE`.
+//
+// `injectBaseHref` and `NestedDocumentError` are deliberately NOT listed: they
+// ship in the same module, but `blocks-react/src` does not value-import them,
+// and the `DERIVED FLOOR` test rejects a ledger entry for a symbol the package
+// does not import. Same reasoning as `isValidBlockIdempotencyKey` above.
+//
+// 🔴 OWED after 0.57.0 publishes: empty this list and convert the entry to a
+// measurement against the real tarball. A populated list pins the floor to the
+// NEXT release forever.
+const PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH = ['fetchNestedDocument'];
 
 /**
  * The same ledger for SUBPATHS. A bare `import '@civitai/app-sdk/safe-storage'`

@@ -12,7 +12,59 @@ half of that lives in [`tests/guards/blocks-react-peer-floor.test.mjs`](../../te
 — `PEER_VALUE_SYMBOL_SINCE`, `PEER_SUBPATH_SINCE`, and the assertions over them.
 This file is the prose half: why the number is what it is, and how to move it.
 
-Declared today: `">=0.55.0 <1.0.0"`.
+Declared today: `">=0.57.0 <1.0.0"`.
+
+---
+
+## 🔴 RAISED 0.55.0 → 0.57.0 (the sixth time), 2026-10-03 — the nested-document helper
+
+`hooks/useNestedDocument.ts` value-imports one new peer symbol from
+`@civitai/app-sdk/blocks`: `fetchNestedDocument` — the `srcdoc` escape hatch for
+embedding an app's own bundled document, new module
+`src/blocks/nestedDocument.ts` (#532).
+
+Why it was needed at all: a block's frame is sandboxed without
+`allow-same-origin`, so its origin is opaque, and every path on
+`https://<blockId>.civit.ai/` is served with `frame-ancestors` +
+`X-Frame-Options: SAMEORIGIN`. An opaque ancestor matches no `frame-ancestors`
+source list — `*` included — so a nested `<iframe src>` of the app's own content
+cannot load and no manifest change fixes it. Two app versions shipped broken
+before the cause was isolated.
+
+**`0.57.0` is a PREDICTION, pinned as one.** The symbol ships for the first time
+in the app-sdk minor released alongside this change, so there is no tarball to
+probe for a PRESENT reading. Derived from the release plan: in-tree app-sdk
+`0.56.0`, which is also `npm view @civitai/app-sdk version`; this branch's
+changeset bumps app-sdk `minor`; `pnpm exec changeset status --verbose` prints
+`@civitai/app-sdk 0.57.0` (and `@civitai/blocks-react 0.64.0`). It is pinned via
+`PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH` plus the `PREDICTED ENTRY` test, which
+re-derives the number from the tree on every run — so a rebase past another
+app-sdk release goes **red** instead of drifting.
+
+What *was* measured, rather than predicted — that the symbol is absent from
+every published version, so the run cannot start lower. `npm pack` of each
+tarball, untarred, `grep -rl <symbol> package/dist`:
+
+| version | `fetchNestedDocument` | `injectBaseHref` | `NestedDocumentError` | `BLOCK_SCOPES` (pos. ctrl) | `__NOPE_7f3a__` (neg. ctrl) |
+|---|---|---|---|---|---|
+| 0.56.0 (newest published) | absent (0 files) | absent | absent | present (7 files) | absent |
+| 0.55.0 (old floor) | absent (0 files) | absent | absent | present (7 files) | absent |
+
+Both controls ran before those zeros were believed: the positive one shows the
+probe can see this package's shipped code at all (a uniform "absent" is
+otherwise indistinguishable from a probe wired to nothing), and the negative one
+shows it can answer "no".
+
+`injectBaseHref` and `NestedDocumentError` ship in the same module and are
+deliberately **not** ledgered: `src/` does not value-import them (the hook needs
+only `fetchNestedDocument`), and the guard's `DERIVED FLOOR` test rejects an
+entry for a symbol the package does not import. Same call as
+`isValidBlockIdempotencyKey` below.
+
+🔴 **OWED AFTER THE RELEASE PUBLISHES:** empty
+`PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH`, re-read the entry off the real `0.57.0`
+tarball with `0.56.0` as the ABSENT control, and record both here. A list left
+populated pins the floor to the NEXT release forever.
 
 ---
 
