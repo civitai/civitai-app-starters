@@ -20,11 +20,11 @@ the platform demands and this SDK refused.
 The TypeScript side of the field shipped separately in `0.56.0`; this releases
 the schema that validates it.
 
-**Why `patch` when the script now defaults to `minor`.** That default is for a
-change whose direction the script cannot classify, and it is deliberately the
-breaking level because the only canonical changes that reach the automated path
-are constraint-*tightening* ones. This change was read and is the opposite: it
-ADDS an optional property under `goods.items`, which has
-`additionalProperties: false`, so it can only make a manifest that previously
-FAILED start validating. No manifest that validated before this change fails
-after it, so nothing moves under a consumer and `patch` is correct.
+**Why `patch`.** This is a vendored-schema parity fix and it is permissive-only,
+which `RELEASING.md` now names as a `patch` carve-out. The change ADDS an optional
+property under `goods.items`, which has `additionalProperties: false`, so it can
+only make a manifest that previously FAILED start validating — no manifest that
+validated before this change fails after it. And pre-1.0 a caret pins the minor,
+so a `minor` here would withhold the corrected schema from every caret-pinned
+consumer, leaving them with a package that rejects manifests the platform
+requires. That is the opposite of the fix.

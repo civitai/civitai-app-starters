@@ -37,6 +37,24 @@ For any change to a published package — `packages/civitai-app-sdk/src/**` or `
 - **`minor`** — new exported function, new optional argument, new subpath export, looser input acceptance. **Adding API.**
 - **`major`** — rename, removal, signature change, behavior change that existing callers will notice. **Breaking.**
 
+🔴 **One carve-out, because it reads both ways and the wrong reading ships a
+package that stays broken: a VENDORED-SCHEMA PARITY fix takes `patch` when it is
+permissive-only.** `packages/civitai-app-sdk/schemas/app-block/v1.json` is a byte
+mirror of a server contract, not API this package designed, and `defineBlock`
+validates against it at runtime. When the server has already changed and the
+mirror has not, the package is *wrong*, so correcting it is a **bug fix** — not
+the "looser input acceptance" above, which is about API this package chooses to
+widen. The distinction matters because every starter pins a caret and a `0.x`
+minor is a hard wall: shipping the correction as `minor` leaves every caret
+consumer with a package that rejects manifests the platform requires, which is
+the opposite of the fix. 🔴 **Permissive-only is the precondition, not a
+formality** — if the re-vendored schema TIGHTENS anything (lowered bound, new
+`required`, narrowed enum, removed property) it can make a previously-valid
+manifest fail, and that is a `minor` under the `0.x`-breaking rule below.
+`scripts/revendor-canonical-schema.sh` writes `patch` by default and cannot tell
+the difference, so its generated changeset carries a 🔴 telling the reviewer to
+check the diff.
+
 🔴 **While a package is `0.x`, a BREAKING change takes `minor`, not `major`.** This
 ladder read as if `major` were the only correct bump for a break, and every
 package here is `0.x` — so the written rule contradicted what the repo actually

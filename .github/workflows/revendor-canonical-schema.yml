@@ -133,11 +133,25 @@ jobs:
             a canonical change that broke an SDK assertion would have failed the
             job and no PR would have opened).
 
-            **Reviewer heads-up:** this bot only re-vendors the schema *bytes*. A
-            semantic canonical addition — e.g. a new manifest field like
+            **Reviewer heads-up — this bot re-vendors the schema bytes AND makes
+            a semver decision.** It writes a `patch` changeset for
+            `@civitai/app-sdk`, because the vendored schema is published and bytes
+            merged without a changeset reach no consumer. It copies bytes and
+            cannot tell which direction the schema moved, so:
+
+            🔴 **Read the schema diff.** If it TIGHTENS anything — lowered bound,
+            new `required`, narrowed enum, removed property — `patch` is wrong (a
+            manifest that validated before will start failing). **Do not fix that
+            by committing to this branch:** this branch is regenerated and
+            force-pushed on every cron run, up to four a day, and the drift is
+            re-detected until this PR merges — your commit will be discarded.
+            Close this PR and land the re-vendor by hand with a `minor` changeset.
+
+            A semantic canonical addition — e.g. a new manifest field like
             `scopeJustifications` (civitai #3195) — may also warrant adding the
             matching field to the `BlockManifestV1` TS type in
-            `packages/civitai-app-sdk/src/blocks/types.ts`. Check the diff for
-            new/changed fields and follow up with a type change if needed.
+            `packages/civitai-app-sdk/src/blocks/types.ts`. Note this repo's
+            practice is to type the field FIRST, ahead of the bytes, so that the
+            nested-property ledger passes when the bytes arrive.
 
             _JS twin of the civitai/cli schema re-vendor automation._

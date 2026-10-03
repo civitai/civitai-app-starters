@@ -97,39 +97,69 @@ echo "re-vendored $VENDORED from $CANONICAL_URL"
 # a fixed name to "avoid accumulation"; the accumulation it prevents cannot
 # happen.
 #
-# `minor`, matching the same sibling, and the reason is an ASYMMETRY in what can
-# reach this line. The SDK's nested-property ledger test
-# (`test/manifest/canonical-derivation.test.ts`) FAILS when the canonical grows a
-# property that `BlockManifestV1` does not type — and the workflow runs the full
-# SDK suite before opening a PR. So an ADDITIVE canonical change aborts the bot
-# and gets a human. What silently survives to here is the class the ledger cannot
-# see: a tightened bound, a new `required` entry, a narrowed enum — i.e. changes
-# that make a manifest which previously VALIDATED start failing. Those are the
-# breaking ones, so the automated default must be the breaking level; pre-1.0 a
-# caret pins the minor, so `minor` is what stops a consumer's build moving under
-# them. A reviewer who has read the diff and sees it is permissive-only may
-# downgrade this to `patch` before merging.
+# 🔴 `patch`. YOU ARE READING THE THIRD RATIONALE FOR THIS ONE WORD. Two are
+# dead; both are recorded so nobody derives a fourth from the same mistake.
+#
+#   DEAD 1 — "`patch`, because this mirrors BYTES; a type change would earn the
+#   minor." Right answer, incomplete reason: it never asked which DIRECTION the
+#   schema moved, which is the only thing that decides the level.
+#   DEAD 2 — "`minor`, because the nested-property ledger aborts the bot on an
+#   ADDITIVE change, so only constraint TIGHTENINGS reach here." FALSIFIED by
+#   measurement, and it inverted the truth. This repo types the field FIRST, on
+#   purpose: `packages/civitai-app-sdk/CHANGELOG.md` (0.56.0) says "This lands
+#   AHEAD of the schema bytes on purpose, and that ordering is the point" and
+#   names this very ledger as the reason. A pre-typed additive change therefore
+#   PASSES the ledger — it is the DESIGNED bot path, not an abort — and it is the
+#   case that produced the incident this block exists for. Enumerated over every
+#   `chore(sdk): re-vendor` commit to the vendored schema: additive or
+#   description-only in every one; zero unattended tightenings.
+#
+# What is actually true is smaller than either dead draft, and the honest part is
+# the limitation: THIS SCRIPT CANNOT TELL WHICH DIRECTION THE SCHEMA MOVED. It
+# does not diff the schema; it copies bytes. So the level here is a DEFAULT
+# matched to the measured population, not a judgement about the change in hand:
+# the observed bot-path population is permissive, and pre-1.0 a caret pins the
+# MINOR, so `minor` would withhold the corrected schema from every caret-pinned
+# consumer — which is the exact failure this whole mechanism exists to end.
+# `patch` delivers it. The residual risk is the inverse case, and it is handled
+# by the 🔴 in the generated body rather than by a word here, because a word here
+# cannot see the diff. Tightenings DO exist in this file's history (see
+# `chore(sdk): re-vendor tightened …` and the decorative-scope removal) — they
+# were human-driven, not bot-driven, which is why this is a default and not a
+# claim that tightenings never happen.
 CHANGESET_DIR="$REPO_ROOT/.changeset"
 CHANGESET="$CHANGESET_DIR/revendor-canonical-schema-$(date -u +%Y-%m-%d).md"
 mkdir -p "$CHANGESET_DIR"
-cat > "$CHANGESET" <<EOF
+# 🔴 The body deliberately does NOT interpolate $CANONICAL_URL. `changeset
+# version` copies this text verbatim into the package CHANGELOG in a PUBLIC repo,
+# and the URL is env-overridable — so a local run against an internal host would
+# publish that hostname. The canonical URL is a constant; write it as one.
+cat > "$CHANGESET" <<'EOF'
 ---
-'@civitai/app-sdk': minor
+'@civitai/app-sdk': patch
 ---
 
-Re-vendor the canonical App Block manifest schema from $CANONICAL_URL.
+Re-vendor the canonical App Block manifest schema from
+https://civitai.com/schemas/app-block/v1.json.
 
 The vendored schema is published — it ships in the tarball, is exported as
-\`./schemas/app-block/v1.json\`, and \`defineBlock\` validates against it at
+`./schemas/app-block/v1.json`, and `defineBlock` validates against it at
 runtime — so mirroring the bytes only takes effect once the package is
 released. This changeset is what releases them.
 
-**Why \`minor\`.** This was written by \`scripts/revendor-canonical-schema.sh\`,
-which cannot classify the change's direction. An additive canonical change would
-have failed the SDK's nested-property ledger and never reached here, so what does
-reach here is the class that ledger cannot see — a tightened bound, a new
-\`required\`, a narrowed enum — which can make a previously-valid manifest start
-failing. 🔴 **Read the schema diff before merging**: if it is permissive-only,
-downgrade this to \`patch\` and say so here.
+**Why `patch`.** This was written by `scripts/revendor-canonical-schema.sh`,
+which copies bytes and CANNOT tell which direction the schema moved. `patch` is
+the default because the measured population of unattended re-vendors is
+permissive (additive or description-only), and because pre-1.0 a caret pins the
+minor — so `minor` would withhold the corrected schema from every caret-pinned
+consumer, which is the failure this mechanism exists to end.
+
+🔴 **READ THE SCHEMA DIFF BEFORE MERGING.** If it TIGHTENS anything — a lowered
+`maxLength`, a new `required` entry, a narrowed enum, a removed property — then
+`patch` is wrong, because a manifest that validated before will start failing.
+**Do not fix that by editing this file on this branch:** this PR's branch is
+regenerated and force-pushed on every cron run (up to four a day), and the drift
+is re-detected until the PR merges, so your commit is certain to be discarded.
+Close this PR instead and land the re-vendor by hand with a `minor` changeset.
 EOF
 echo "wrote $CHANGESET (a re-vendor only reaches consumers once published)"

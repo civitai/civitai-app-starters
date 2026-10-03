@@ -153,7 +153,7 @@ after(async () => {
 const msg = (want, r) => `expected exit ${want}, got ${r.code}\n--- script output ---\n${r.out}`;
 
 describe('revendor-canonical-schema.sh — a re-vendor must PUBLISH, not just mirror', () => {
-  test('REGRESSION: a real re-vendor writes a minor changeset for @civitai/app-sdk', async () => {
+  test('REGRESSION: a real re-vendor writes a patch changeset for @civitai/app-sdk alone', async () => {
     const root = createFixture(serialize(baseSchema()));
     try {
       respond = { status: 200, body: serialize(grownSchema()) };
@@ -185,21 +185,27 @@ describe('revendor-canonical-schema.sh — a re-vendor must PUBLISH, not just mi
       const cs = readFileSync(join(root, '.changeset', found[0]), 'utf8');
 
       // Assert the STATE a release depends on — the package it bumps and the
-      // bump level — not merely that some file appeared. `minor`, because the
-      // only canonical changes that reach this path are the ones the SDK's
-      // nested-property ledger cannot see, which are the CONSTRAINT-TIGHTENING
-      // ones; shipping those as `patch` moves a consumer's build under them.
+      // bump level — not merely that some file appeared. `patch`: pre-1.0 a
+      // caret pins the MINOR, so a minor would withhold the corrected schema
+      // from every caret-pinned consumer, which is the failure this mechanism
+      // exists to end. The script's own comment carries the full reasoning and
+      // the two rationales that were retracted before it.
       assert.match(
         cs,
-        /^---\n(?:[^\n]*\n)*?'@civitai\/app-sdk': minor\n(?:[^\n]*\n)*?---\n/,
-        `changeset does not declare a minor bump for @civitai/app-sdk:\n${cs}`,
+        /^---\n(?:[^\n]*\n)*?'@civitai\/app-sdk': patch\n(?:[^\n]*\n)*?---\n/,
+        `changeset does not declare a patch bump for @civitai/app-sdk:\n${cs}`,
       );
-      // It is the SDK that ships the schema; bumping anything else would release
-      // the wrong package and leave the mirror stale.
-      assert.doesNotMatch(
-        cs,
-        /'@civitai\/(blocks-react|components|components-react|theme|sdk)':/,
-        `changeset bumps a package that does not ship the schema:\n${cs}`,
+      // 🔴 ALLOWLIST, NOT A DENYLIST. This was a hand-listed alternation of five
+      // package names and the workspace has SEVEN publishable packages, so a
+      // changeset bumping the unlisted one passed. A denylist of names has to be
+      // revisited every time a package is added — and nothing would tell you.
+      // Inverted: the ONLY line allowed in the front matter is app-sdk's, so a
+      // package added tomorrow is covered without touching this test.
+      const bumped = (cs.match(/^'[^']+':\s*\w+$/gm) ?? []).sort();
+      assert.deepEqual(
+        bumped,
+        ["'@civitai/app-sdk': patch"],
+        `changeset must bump @civitai/app-sdk and nothing else (it ships the schema); got:\n${bumped.join('\n') || '(none parsed)'}`,
       );
     } finally {
       destroyFixture(root);
@@ -207,9 +213,14 @@ describe('revendor-canonical-schema.sh — a re-vendor must PUBLISH, not just mi
   });
 
   test('INVARIANT GUARD: a no-op re-vendor writes NO changeset', async () => {
-    // Green before this change too. Pins the fail-safe direction: the weekly
-    // cron runs with no drift most weeks, and a changeset written then would
-    // publish an empty patch release every single week.
+    // Green before this change too. Pins the fail-safe direction, and this is
+    // the guard that earns its place: the cron is `37 */6 * * *` — FOUR runs a
+    // day — and finds no drift on nearly all of them, so a changeset written on
+    // a no-op would publish an empty release roughly four times a day.
+    // ⚠ This comment said "weekly … every single week" until round 2. The
+    // retraction of that figure swept the script header and the PR body and
+    // MISSED this copy, inside the file the same PR authored — the reason a
+    // retraction has to be a tree-wide sweep, not an edit where you were looking.
     const identical = serialize(baseSchema());
     const root = createFixture(identical);
     try {
