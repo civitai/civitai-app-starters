@@ -101,7 +101,7 @@ describe('generation parity', () => {
       expect(css).not.toContain('@layer');
     });
 
-    it('declares its base block on :root (or :root/:host) at full specificity', () => {
+    it('declares its base block on :root itself, at full specificity', () => {
       // `:where(…)` anywhere in this sheet drops a block to 0-0-0 and hands
       // consumers a different cascade.
       expect(css).not.toContain(':where(');
@@ -128,13 +128,23 @@ describe('generation parity', () => {
        *      them, a shadow root attached above `<body>` inherits nothing, and
        *      an unregistered token resolves to empty. It was also order-
        *      sensitive: `:host, :root {` failed while `:root, :host {` passed.
+       *   3. enumerating members as `(:root|:host)` — fixed BOTH of those, and
+       *      introduced a third: it accepted `:host { … }` ALONE, measured
+       *      green. That is strictly worse than either shape in (2), because
+       *      `:host` matches only inside a shadow tree, so for
+       *      `injectTokens(document)` the tokens land on NOTHING. `:root` is
+       *      therefore a REQUIRED member, not one of two alternatives.
        *
-       * The anchor admits the end of the banner comment as well as a preceding
-       * `}`, because the sheet opens with that banner and the `^` alternative is
-       * otherwise dead — so emitting the base block before the `@property`
-       * rules used to redden this for the wrong reason.
+       * Comments are stripped before matching, and that is load-bearing rather
+       * than tidy: the sheet opens with a banner, so an anchor admitting a
+       * comment's trailing slash admitted ANY slash, and a base block nested
+       * inside `@media` with a comment earlier in the file then satisfied it
+       * (measured). Stripping restores "top-level" to the `}`/start anchor and
+       * keeps the base-before-`@property` emission order passing.
        */
-      expect(css).toMatch(/(^|\}|\/)\s*((:root|:host)\s*,\s*)*(:root|:host)\s*\{/);
+      expect(css.replace(/\/\*[\s\S]*?\*\//g, ' ')).toMatch(
+        /(^|\})\s*(:host\s*,\s*)*:root\s*(,\s*:host\s*)*\{/
+      );
     });
 
     it(":root carries the DARK value for every token that has one", () => {

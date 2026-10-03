@@ -71,8 +71,9 @@ read as one option among equals rather than as the route that works.
   see, and this repo has already measured that exact failure once.
 - `@civitai/theme` `test/generation-parity.test.ts`: two node-tier assertions —
   that the emitted sheet contains no `@layer`, and that its base block declares
-  the tokens ON the root element at full specificity (`:root`, or a `:root`/
-  `:host` list; `:where(:root)`, `:root > *` and `:root body` all fail). That is the **defining**
+  the tokens ON the root element at full specificity — `:root` is required, so
+  `:root` and `:root, :host` pass while `:host` alone, `:where(:root)`,
+  `:root > *` and `:root body` all fail. That is the **defining**
   property consumers depend on, and until now it was asserted nowhere — the
   parity test stays green if you layer, because both sides of the comparison
   move together.
