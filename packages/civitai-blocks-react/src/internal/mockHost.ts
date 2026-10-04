@@ -1857,9 +1857,10 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             idempotencyKey?: unknown;
             // SHARED_LIST's author filter. `unknown` for the same reason as the
             // two above: the handler narrows with `=== true`, so only the
-            // literal boolean narrows the page and a `'true'` string lists the
-            // whole board — exactly what the live host does, and what the REST
-            // route 400s on. A `boolean` annotation here would assert that.
+            // literal boolean narrows the page and a `'true'` STRING lists the
+            // whole board — matching the live host, whose `typeof … ===
+            // 'boolean'` guard drops that string before it reaches tRPC. A
+            // `boolean` annotation here would assert the property under test.
             mine?: unknown;
           };
         };

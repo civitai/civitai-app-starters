@@ -1681,13 +1681,18 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             const listInput: Record<string, unknown> = { blockToken: rawToken, limit };
             if (typeof typed.payload?.prefix === 'string') listInput.prefix = typed.payload.prefix;
             if (typeof typed.payload?.cursor === 'string') listInput.cursor = typed.payload.cursor;
-            // `mine` narrows the page to rows the VIEWER authored. Forwarded
-            // only when it is a real boolean, so an omitted field stays OMITTED
-            // from the tRPC input rather than arriving as an explicit
-            // `undefined` — `apps.shared.list` takes `mine: z.boolean()`, a
-            // REAL boolean, not the `'true'`/`'false'` string the REST route
-            // parses. The author is the server's resolved subject, never
-            // anything the block sends.
+            // `mine` narrows the page to rows the VIEWER authored. The author is
+            // the server's resolved subject, never anything the block sends.
+            //
+            // The `typeof` test is what REFUSES a non-boolean, and that is the
+            // work it does: ⚠ it is NOT what keeps an omitted field out of the
+            // input — `callTrpcData` JSON-stringifies `listInput`, which drops an
+            // `undefined` value on its own. What JSON.stringify would happily
+            // forward is a `'true'` STRING, and `apps.shared.list` takes
+            // `mine: z.boolean()` — a REAL boolean, not the `'true'`/`'false'`
+            // literal union the REST route parses — so that would be a zod
+            // rejection of the whole list call. Same shape as the `prefix` and
+            // `cursor` guards above, for the same reason.
             if (typeof typed.payload?.mine === 'boolean') listInput.mine = typed.payload.mine;
             void callTrpcData('apps.shared.list', listInput, 'GET').then((r) => {
               if (r.error) {
