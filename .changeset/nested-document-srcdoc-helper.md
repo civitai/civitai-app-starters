@@ -284,8 +284,8 @@ superseded. Several produced findings worth recording rather than a tick:
    every start position. The second revision split it into two linear-looking
    regexes, which **cleared the alert and left the asymptotics quadratic** —
    `/<base\b[^>]*>/g` still rescans `[^>]*` from every `<base` start when the
-   document holds a long run with no `>`. Measured at 4× per doubling, and in
-   **seconds** on a 192 KB input (1.8-2.9 s across three sittings — the spread
+   document holds a long run with no `>`. That is 4× per doubling, and measured
+   in **seconds** on a 192 KB input (1.8-2.9 s across three sittings — the spread
    is machine load, which is why the figure is given as a range and the
    asymptotic shape, not as a single number). The fix is a single left-to-right
    scanner that advances its cursor by at least one character per iteration and

@@ -437,7 +437,7 @@ function isAsciiAlpha(ch: string | undefined): boolean {
  * "two linear regexes" revision that answered CodeQL's `js/polynomial-redos`
  * alert. `/<base\b[^>]*>/g` still retries `[^>]*` from every `<base` start
  * position when the document holds a long run with no `>`, so a document of
- * `'<base '.repeat(n)` cost quadratic time: measured 4x per doubling. Fixing the
+ * `'<base '.repeat(n)` cost quadratic time: 4x per doubling. Fixing the
  * ALERT is not the same as fixing the ASYMPTOTICS.
  * Every loop below advances its cursor by at least one character per iteration
  * and never restarts, and the only allocations are bounded-length tag/attribute
