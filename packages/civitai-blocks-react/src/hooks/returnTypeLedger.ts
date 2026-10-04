@@ -75,6 +75,7 @@ import type {
   useGoodPurchase,
   useHostOrigin,
   useImageUpload,
+  useNestedDocument,
   usePublishGenerationOutputs,
   useRequestConsent,
   useRequestSignIn,
@@ -114,6 +115,7 @@ import type {
   UseGoodPurchase,
   UseHostOrigin,
   UseImageUpload,
+  UseNestedDocument,
   UsePublishGenerationOutputs,
   UseRequestConsent,
   UseRequestSignIn,
@@ -190,6 +192,7 @@ type _useHostOrigin = Assert<Exact<ReturnType<typeof useHostOrigin>, UseHostOrig
  * declaration, not here.
  */
 type _useImageUpload = Assert<Exact<ReturnType<typeof useImageUpload>, UseImageUpload>>;
+type _useNestedDocument = Assert<Exact<ReturnType<typeof useNestedDocument>, UseNestedDocument>>;
 type _usePublishGenerationOutputs = Assert<
   Exact<ReturnType<typeof usePublishGenerationOutputs>, UsePublishGenerationOutputs>
 >;

@@ -1506,6 +1506,62 @@ const directLoad = useDirectLoad();            // true iff top-level AND no BLOC
 const runUrl = hostToRunUrl('my-app.civit.ai'); // 'https://civitai.com/apps/run/my-app' | null (null = not a civit.ai host)
 ```
 
+## Embedding your own nested document
+
+🔴 **A nested `<iframe src="…">` pointing at your own bundled content cannot
+load, and no manifest change fixes it** — your block document's origin is opaque
+and the static host stamps `frame-ancestors` + `X-Frame-Options` on every path
+it serves. The full derivation, the dated external browser matrix (an
+observation of the platform — nothing in this repo verifies it) and the known
+limits
+live in one place: the header of `@civitai/app-sdk`'s
+`src/blocks/nestedDocument.ts`.
+
+**Prefer a single-document design.** An engine build (Defold, Unity WebGL,
+Phaser) is a `<canvas>` plus a JS loader that normally mounts straight into the
+document you hand it; point it at your block's own root element and the problem
+class disappears.
+
+When a separate document is genuinely required, fetch it and inline it as the
+iframe's `srcdoc` — a `srcdoc` frame inherits your opaque origin and carries no
+response headers, so neither policy applies:
+
+```tsx
+import { useNestedDocument } from '@civitai/blocks-react';
+
+function Game() {
+  const { srcDoc, status, error } = useNestedDocument({ src: '/game/index.html' });
+  if (status === 'error') return <p>Could not load: {error?.message}</p>;
+  if (status !== 'ready') return <p>Loading…</p>;
+  // Your own sandbox — the nested frame does not inherit the outer one's.
+  return <iframe title="game" sandbox="allow-scripts" srcDoc={srcDoc ?? undefined} />;
+}
+```
+
+`status` is `'idle'` (no `src`), `'loading'`, `'ready'` or `'error'`; `srcDoc` is
+non-null exactly when `ready`, `error` exactly when `error`. Changing `src`
+restarts the fetch and aborts the previous one — `status` returns to `'loading'`
+in the same render that changes `src`, so no frame ever shows the previous
+document as `'ready'` beside a new `src`. Unmounting aborts it and writes no
+state. The fetch has a **30-second deadline**: a response that never arrives
+becomes `status: 'error'` with a message naming the timeout, rather than
+`'loading'` forever.
+
+The helper injects an absolute `<base href="…/game/">` — the directory of the
+**response's final URL**, so a redirect is followed rather than resolved one
+directory too high — because a `srcdoc` document's base URL is `about:srcdoc`,
+inheriting yours, so relative asset loads would otherwise resolve to nothing. A
+document that already declares a `<base href>` has that one resolved against the
+final URL and replaced, so the base the parser uses is always absolute. It is
+**not** a de-duplication: markup declaring two `<base href>` tags comes back
+with two, the first (the only one a parser honours) rewritten and the second
+left inert. Only real markup counts — a `<base>` or a `<head>` inside a comment
+or an inline `<script>`/`<style>` body is ignored.
+
+**The string is not sanitized**, on purpose: it is your own markup and scripts,
+verbatim. Only pass a `src` you control. Outside React, `fetchNestedDocument`
+from `@civitai/app-sdk/blocks` is the same thing without the hook.
+
 ## The `/ui` subexport
 
 Opinionated components, imported separately so a transport-only block stays lean.
