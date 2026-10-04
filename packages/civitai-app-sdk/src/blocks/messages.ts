@@ -1420,9 +1420,33 @@ export type BlockToParentMessage =
   // and any viewer votes it up/down. Calls go through the host — the block never
   // sees the datastore credentials, and the host injects the viewer identity +
   // block token (the block sends NO token).
+  // `mine: true` narrows the page to rows the VIEWER authored. The author it
+  // filters on is the host's own resolved viewer identity — the same subject
+  // `viewerVoted` already keys on — so the block sends a BOOLEAN and never a
+  // user id. Omitting it (or sending `false`) lists the whole board, which is
+  // the pre-existing behaviour.
+  //
+  // ⚠ The boolean is YAGNI, not a capability boundary: every listed item already
+  // carries `authorUserId`, so a block can already single out one author by
+  // paging the board — this parameter removes that COST, it does not grant
+  // reach. Rows are world-readable either way. Nothing asks for a `mine=<userId>`
+  // form, and widening a boolean later is easy where narrowing an id after
+  // clients depend on it is not.
+  //
+  // An ANONYMOUS viewer asking for `mine` gets an EMPTY page — not an error and
+  // not the whole board — because an anonymous viewer has authored nothing.
+  // Authoritative prose: `listSharedRows`' JSDoc in civitai/civitai
+  // `src/server/routers/apps-shared.router.ts` (civitai/civitai#5354 Q3,
+  // shipped in civitai/civitai#5361).
   | {
       type: 'SHARED_LIST';
-      payload: { requestId: string; prefix?: string; limit?: number; cursor?: string };
+      payload: {
+        requestId: string;
+        prefix?: string;
+        limit?: number;
+        cursor?: string;
+        mine?: boolean;
+      };
     }
   | {
       type: 'SHARED_GET_COUNT';

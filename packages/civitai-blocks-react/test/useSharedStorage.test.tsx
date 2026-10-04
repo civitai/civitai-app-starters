@@ -148,6 +148,36 @@ describe('useSharedStorage', () => {
     expect(out.nextCursor).toBe('bmV4dA==');
   });
 
+  it('list() forwards `mine` to SHARED_LIST — true, false, and absent (#5354 Q3)', async () => {
+    const { result } = renderHook(() => useSharedStorage());
+    const swallow = () => {};
+
+    // `mine: true` — the "my published" page a block actually wants.
+    act(() => {
+      result.current.list({ mine: true }).catch(swallow);
+    });
+    expect(lastSent().payload.mine).toBe(true);
+
+    // 🔴 `false` must survive as `false`, not collapse to absent. The REST
+    // sibling route reads `'false'` as a real value and the tRPC input takes a
+    // real boolean, so a client that normalised falsy→omitted would silently
+    // change the server's `mine ?? false` input shape.
+    act(() => {
+      result.current.list({ mine: false }).catch(swallow);
+    });
+    expect(lastSent().payload.mine).toBe(false);
+
+    // Absent — `undefined`, which the hosts' `typeof … === 'boolean'` guards
+    // drop. 🔴 Asserted with `toBeUndefined()` on the READ value, NOT with
+    // `toHaveBeenCalledWith({ mine: undefined })`: that matcher uses `toEqual`
+    // semantics, so it equals an object with no `mine` key at all and would pass
+    // against a hook that never forwards the field.
+    act(() => {
+      result.current.list().catch(swallow);
+    });
+    expect(lastSent().payload.mine).toBeUndefined();
+  });
+
   it('list() rejects on an error reply', async () => {
     const { result } = renderHook(() => useSharedStorage());
     let p!: Promise<unknown>;

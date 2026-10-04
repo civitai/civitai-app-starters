@@ -1998,6 +1998,49 @@ describe('createLiveHost — SHARED storage (served via apps.shared.*)', () => {
     expect('viewerVoted' in items[1]).toBe(false);
   });
 
+  it('SHARED_LIST forwards `mine` to apps.shared.list as a REAL boolean, and omits a non-boolean (#5354 Q3)', async () => {
+    installWithFetch(async (url) => {
+      if (url.includes('apps.shared.list')) return trpcData({ items: [], nextCursor: null });
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    const inputFor = (n: number) =>
+      (decodeInputParam(
+        String(
+          fetchMock.mock.calls.filter((c) => String(c[0]).includes('apps.shared.list'))[n]![0],
+        ),
+      ) as { json: Record<string, unknown> }).json;
+
+    // `true` → forwarded as the boolean `true`. 🔴 NOT the string `'true'`:
+    // `apps.shared.list` takes `mine: z.boolean().optional()`, so a string would
+    // be a zod rejection. (The `'true'`/`'false'` literal union is the REST
+    // route's shape, not tRPC's.)
+    post('SHARED_LIST', { requestId: 'r-m1', limit: 5, mine: true });
+    await waitForMessage(inbound, 'SHARED_LIST_RESULT');
+    expect(inputFor(0).mine).toBe(true);
+
+    // `false` → forwarded as `false`, not dropped.
+    post('SHARED_LIST', { requestId: 'r-m2', limit: 5, mine: false });
+    await waitForMessage(inbound, 'SHARED_LIST_RESULT');
+    expect(inputFor(1).mine).toBe(false);
+
+    // 🔴 ABSENT → the key must not appear in the tRPC input at all. Asserted
+    // with `'mine' in …`, never `toEqual({ … mine: undefined })`: that matcher
+    // equals an object with no `mine` key, so it passes against a host that
+    // never forwards the field — which is exactly the state this test was
+    // written to detect.
+    post('SHARED_LIST', { requestId: 'r-m3', limit: 5 });
+    await waitForMessage(inbound, 'SHARED_LIST_RESULT');
+    expect('mine' in inputFor(2)).toBe(false);
+
+    // A non-boolean the `typeof` guard must refuse rather than pass through —
+    // the string a careless caller would send, which the server would 400 on.
+    post('SHARED_LIST', { requestId: 'r-m4', limit: 5, mine: 'true' });
+    await waitForMessage(inbound, 'SHARED_LIST_RESULT');
+    expect('mine' in inputFor(3)).toBe(false);
+  });
+
   it('SHARED_GET backend error → error reply (never hangs) (#386)', async () => {
     installWithFetch(async (url) => {
       if (url.includes('apps.shared.get')) return trpcErr('FORBIDDEN', 403);

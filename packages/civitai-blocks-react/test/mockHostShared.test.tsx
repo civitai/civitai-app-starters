@@ -257,6 +257,124 @@ describe('createMockHost — shared scenario (in-memory votable store)', () => {
     });
   });
 
+  // ---- list({ mine }) — the author filter (civitai/civitai#5354 Q3) ----
+  //
+  // 🔴 Fixture authors are PAIRWISE DISTINCT and none of them is `0`, the id an
+  // anonymous mock viewer falls back to. A fixture whose rows all carry the
+  // viewer's own id cannot see a filter that was never applied, and one whose
+  // foreign author happened to be `0` could not separate the anonymous case from
+  // the signed-in one.
+  it('list({ mine: true }) returns only the viewer\'s own rows; mine:false/omitted return the board', async () => {
+    host = createMockHost({
+      declaredScopes: STORAGE_SCOPES,
+      shared: {
+        seed: [
+          { value: { title: 'theirs-old' }, authorUserId: 999 },
+          { value: { title: 'mine-1' }, authorUserId: 2 }, // DEFAULT_VIEWER.id
+          { value: { title: 'theirs-new' }, authorUserId: 404 },
+          { value: { title: 'mine-2' }, authorUserId: 2 },
+        ],
+      },
+    });
+    uninstall = host.install();
+    const { result } = renderHook(() => useSharedStorage());
+    await ready();
+
+    // Newest-first, narrowed to the viewer's two rows.
+    const mine = await result.current.list({ mine: true });
+    expect(mine.items.map((i) => i.value.title)).toEqual(['mine-2', 'mine-1']);
+    expect(mine.items.every((i) => i.authorUserId === 2)).toBe(true);
+
+    // 🔴 The paired control. Without it a filter that returned the empty set, or
+    // one applied unconditionally, would look identical to a working one.
+    const all = await result.current.list();
+    expect(all.items.map((i) => i.value.title)).toEqual([
+      'mine-2',
+      'theirs-new',
+      'mine-1',
+      'theirs-old',
+    ]);
+
+    // `false` is the server's own default (`mine ?? false`) — the whole board.
+    const explicitFalse = await result.current.list({ mine: false });
+    expect(explicitFalse.items.map((i) => i.value.title)).toEqual([
+      'mine-2',
+      'theirs-new',
+      'mine-1',
+      'theirs-old',
+    ]);
+  });
+
+  it('list({ mine: true }) composes with `prefix` and the cursor rather than replacing them', async () => {
+    host = createMockHost({
+      declaredScopes: STORAGE_SCOPES,
+      shared: {
+        // Keys are mock-minted `shared_<n>`, so `prefix` is exercised against
+        // that shape; the seed order fixes seq (newest LAST).
+        seed: [
+          { value: { title: 'a' }, authorUserId: 2 },
+          { value: { title: 'b' }, authorUserId: 999 },
+          { value: { title: 'c' }, authorUserId: 2 },
+          { value: { title: 'd' }, authorUserId: 2 },
+        ],
+      },
+    });
+    uninstall = host.install();
+    const { result } = renderHook(() => useSharedStorage());
+    await ready();
+
+    // prefix + mine together: the shared prefix keeps all four in scope, so the
+    // only thing that can produce three rows is the author filter.
+    const page1 = await result.current.list({ prefix: 'shared_', mine: true, limit: 2 });
+    expect(page1.items.map((i) => i.value.title)).toEqual(['d', 'c']);
+    expect(page1.nextCursor).toBeTruthy();
+
+    // 🔴 Page 2 of a FILTERED scan — the row that would surface here if `mine`
+    // were dropped is `b` (author 999), so this is the assertion that catches a
+    // filter applied only to the first page.
+    const page2 = await result.current.list({
+      prefix: 'shared_',
+      mine: true,
+      limit: 2,
+      cursor: page1.nextCursor,
+    });
+    expect(page2.items.map((i) => i.value.title)).toEqual(['a']);
+
+    // A prefix that matches nothing still wins over `mine`.
+    const none = await result.current.list({ prefix: 'nope:', mine: true });
+    expect(none.items).toEqual([]);
+  });
+
+  it('🔴 an ANONYMOUS viewer asking for `mine` gets an EMPTY page, not an error and not the board', async () => {
+    // Mirrors the server, where the empty page falls out of
+    // `s.author_user_id = $4::int` being UNKNOWN for a NULL subject.
+    //
+    // 🔴 THE SEED IS DELIBERATELY AUTHORLESS. An omitted `authorUserId` defaults
+    // to the mock viewer's id, which for an anonymous viewer is `0` — so these
+    // rows are exactly the ones a filter keyed on `mockUserId` would hand back,
+    // and this is the only fixture shape that can see that bug.
+    host = createMockHost({
+      declaredScopes: STORAGE_SCOPES,
+      viewer: null,
+      shared: { seed: [{ value: { title: 'anon-era-1' } }, { value: { title: 'anon-era-2' } }] },
+    });
+    uninstall = host.install();
+    const { result } = renderHook(() => useSharedStorage());
+    await ready();
+
+    await expect(result.current.list({ mine: true })).resolves.toEqual({
+      items: [],
+      nextCursor: undefined,
+    });
+
+    // 🔴 The positive control: reads still WORK for an anonymous viewer, and the
+    // same two rows are there to be read. Without this, a mock that simply
+    // refused every anonymous read would pass the assertion above.
+    const all = await result.current.list();
+    expect(all.items.map((i) => i.value.title)).toEqual(['anon-era-2', 'anon-era-1']);
+    expect(all.items.map((i) => i.authorUserId)).toEqual([0, 0]);
+  });
+
   it('list() paginates with a cursor (newest-first)', async () => {
     host = createMockHost({ declaredScopes: STORAGE_SCOPES,
       shared: {

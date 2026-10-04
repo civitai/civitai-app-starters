@@ -902,6 +902,15 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             modelVersionId?: number;
             /** SHARED_REPORT — optional free-text reason (bounded server-side). */
             reason?: string;
+            /**
+             * SHARED_LIST — narrow the page to rows the viewer authored.
+             * Declared `unknown`, NOT `boolean`: this object is an `as` cast
+             * over an untyped `postMessage`, so a block can send any value here
+             * and the handler's `typeof … === 'boolean'` test is what decides
+             * whether it reaches tRPC. Typing it `boolean` would make that test
+             * look redundant to a later reader and invite its removal.
+             */
+            mine?: unknown;
           };
         };
 
@@ -1672,6 +1681,14 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             const listInput: Record<string, unknown> = { blockToken: rawToken, limit };
             if (typeof typed.payload?.prefix === 'string') listInput.prefix = typed.payload.prefix;
             if (typeof typed.payload?.cursor === 'string') listInput.cursor = typed.payload.cursor;
+            // `mine` narrows the page to rows the VIEWER authored. Forwarded
+            // only when it is a real boolean, so an omitted field stays OMITTED
+            // from the tRPC input rather than arriving as an explicit
+            // `undefined` — `apps.shared.list` takes `mine: z.boolean()`, a
+            // REAL boolean, not the `'true'`/`'false'` string the REST route
+            // parses. The author is the server's resolved subject, never
+            // anything the block sends.
+            if (typeof typed.payload?.mine === 'boolean') listInput.mine = typed.payload.mine;
             void callTrpcData('apps.shared.list', listInput, 'GET').then((r) => {
               if (r.error) {
                 dispatchToBlock({

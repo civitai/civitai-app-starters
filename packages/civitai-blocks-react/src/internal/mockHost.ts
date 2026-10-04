@@ -1626,6 +1626,17 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   // vote/append is attributed to it. A single-user mock, so the per-user
   // one-vote set is naturally satisfied (voting twice keeps count at 1).
   const mockUserId = viewer?.id ?? 0;
+  // Whether the mock has a viewer identity at all, which is what decides the
+  // `SHARED_LIST { mine: true }` answer for an anonymous viewer.
+  //
+  // 🔴 `mockUserId` CANNOT carry this. It falls back to `0` for an anonymous
+  // viewer, and `0` is ALSO the `authorUserId` a seeded row defaults to in that
+  // same case (see the seed loop below) — so filtering on `mockUserId` would
+  // hand an anonymous caller the WHOLE seeded board under a flag whose whole
+  // point is to narrow it. Server-side the empty page falls out of
+  // `s.author_user_id = $4::int` being UNKNOWN for a NULL subject; here it needs
+  // this explicit flag.
+  const mockViewerIdentified = viewer != null;
   const sharedScenario: MockSharedScenario = { ...(options.shared ?? {}) };
   interface SharedRow {
     key: string;
@@ -1844,6 +1855,12 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // here would assert the property under test — a block compiled
             // against an older SDK, or plain JS, can put anything in this field.
             idempotencyKey?: unknown;
+            // SHARED_LIST's author filter. `unknown` for the same reason as the
+            // two above: the handler narrows with `=== true`, so only the
+            // literal boolean narrows the page and a `'true'` string lists the
+            // whole board — exactly what the live host does, and what the REST
+            // route 400s on. A `boolean` annotation here would assert that.
+            mine?: unknown;
           };
         };
 
@@ -2839,9 +2856,20 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             const prefix = typed.payload?.prefix ?? '';
             const limit = typed.payload?.limit ?? 100;
             const cursor = typed.payload?.cursor;
+            // `mine: true` narrows to rows THIS viewer authored, so a block
+            // author can exercise the "my published" path under `dev:mock`.
+            // Mirrors the real host: an ANONYMOUS viewer asking for `mine` gets
+            // an EMPTY page — not an error and not the whole board — because an
+            // anonymous viewer has authored nothing. Only `true` narrows;
+            // `false`/omitted list the whole board, matching the server's
+            // `mine ?? false`.
+            const mine = typed.payload?.mine === true;
             // Newest-first: highest seq first.
             const all = [...sharedStore.values()]
               .filter((r) => r.key.startsWith(prefix))
+              .filter(
+                (r) => !mine || (mockViewerIdentified && r.authorUserId === mockUserId),
+              )
               .sort((a, b) => b.seq - a.seq);
             // Cursor = base64 of the last returned key (matches the hook's
             // opaque-nextCursor contract).

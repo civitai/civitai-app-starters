@@ -53,6 +53,28 @@ export interface UseSharedStorage {
     prefix?: string;
     limit?: number;
     cursor?: string;
+    /**
+     * Narrow the page to rows THIS viewer authored. Omitted (or `false`) lists
+     * the whole board — the pre-existing behaviour.
+     *
+     * A boolean, never a user id: the host supplies the author from its own
+     * resolved viewer identity (the same subject `viewerVoted` keys on), so a
+     * block cannot ask for someone else's rows this way. An ANONYMOUS viewer
+     * asking for `mine` gets an EMPTY page — not an error, not the whole board.
+     *
+     * ⚠ The boolean is YAGNI, not a capability boundary. Every
+     * {@link SharedListItem} already carries `authorUserId`, so a block can
+     * already single out one author by paging the board; this removes that COST
+     * rather than granting reach. Authoritative prose lives on
+     * `listSharedRows`' JSDoc in civitai/civitai
+     * `src/server/routers/apps-shared.router.ts`.
+     *
+     * 🔴 Requires a host that forwards it (civitai/civitai#5361). An older host
+     * ignores the field and returns the whole board, so a block that renders
+     * "my published" from it should still compare `authorUserId` before
+     * trusting the page on an unknown host.
+     */
+    mine?: boolean;
   }): Promise<SharedListResult>;
   /**
    * Fetch ONE entry by its key — the single-row companion to {@link list} for
@@ -172,6 +194,7 @@ export function useSharedStorage(): UseSharedStorage {
               prefix: opts?.prefix,
               limit: opts?.limit,
               cursor: opts?.cursor,
+              mine: opts?.mine,
             },
           },
           'SHARED_LIST_RESULT',
