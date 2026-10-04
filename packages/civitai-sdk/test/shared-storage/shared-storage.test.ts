@@ -282,6 +282,59 @@ describe('AppClient.sharedStorage — list', () => {
     expect(fake.calls[1]!.query).toEqual({});
   });
 
+  it('🔴 serialises `mine` as `true`/`false` and OMITS it entirely when unset — `?mine=` is a 400', async () => {
+    // The route's schema is
+    // `z.union([z.literal('true'), z.literal('false')]).optional()`, so there
+    // are exactly three acceptable wires and one that 400s:
+    //   mine: true       → ?mine=true
+    //   mine: false      → ?mine=false
+    //   mine: undefined  → the param is ABSENT
+    //   anything else    → `?mine=` (or `?mine=1`) → 400 Invalid query
+    // `?mine=` is the standard rendering of an unset form field, which is
+    // precisely why a `String(query.mine)` or `?? ''` in the client would look
+    // harmless and break every default listing.
+    const { fake, shared } = await withFake({
+      pageSize: 50,
+      seed: [{ key: 'k:1', value: { title: 'x' } }],
+    });
+
+    await shared.list({ mine: true });
+    expect(fake.calls[0]!.query).toEqual({ mine: ['true'] });
+
+    await shared.list({ mine: false });
+    expect(fake.calls[1]!.query).toEqual({ mine: ['false'] });
+
+    // 🔴 KEY PRESENCE, not value equality. The recorded `query` is built from
+    // `searchParams`, so an emitted `?mine=` would read as `{ mine: [''] }` —
+    // which `toEqual({})` rejects. An assertion written as
+    // `expect(query.mine).toBeUndefined()` would pass for `{ mine: [''] }` too
+    // only if the key were absent, so the whole-object equality below is the one
+    // that distinguishes "omitted" from "emitted empty".
+    await shared.list();
+    expect(fake.calls[2]!.query).toEqual({});
+    expect('mine' in fake.calls[2]!.query).toBe(false);
+
+    await shared.list({ prefix: 'k:' });
+    expect(fake.calls[3]!.query).toEqual({ prefix: ['k:'] });
+    expect('mine' in fake.calls[3]!.query).toBe(false);
+
+    // Composes with the other three args rather than replacing them.
+    await shared.list({ prefix: 'k:', limit: 7, cursor: 'Y3Vy', mine: true });
+    expect(fake.calls[4]!.query).toEqual({
+      prefix: ['k:'],
+      limit: ['7'],
+      cursor: ['Y3Vy'],
+      mine: ['true'],
+    });
+
+    // 🔴 THE NEGATIVE CONTROL for the claim above: an `undefined` really is
+    // dropped by the URL builder rather than rendered. Driven through the same
+    // client, so it is the same code path — an explicit `undefined` property is
+    // what `list({ prefix: 'k:' })` hands the query object internally.
+    await shared.list({ mine: undefined, prefix: undefined, limit: undefined });
+    expect(fake.calls[5]!.query).toEqual({});
+  });
+
   it('🔴 throws on a malformed 200 — it never manufactures an empty store', async () => {
     // 🔴 Every fixture below is a VALID envelope except for the one thing under
     // test — `metadata: {}` is present throughout. The envelope guards run before

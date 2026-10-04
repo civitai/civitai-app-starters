@@ -211,6 +211,23 @@ export interface SharedListQuery {
     limit?: number;
     /** An opaque `nextCursor` from a previous page. */
     cursor?: string;
+    /**
+     * Narrows the page to rows THIS viewer authored. Omitted (or `false`) lists
+     * the whole board.
+     *
+     * A boolean, never a user id: the author is the server's resolved token
+     * subject, so this cannot ask for someone else's rows. 🔴 An ANONYMOUS viewer
+     * — who may read this store — gets an EMPTY page rather than an error or the
+     * whole board, so an empty result under `mine` is not evidence the store is
+     * empty.
+     *
+     * ⚠ The boolean is YAGNI, not a capability boundary: {@link SharedItem} already
+     * carries `authorUserId`, so singling out one author is already possible by
+     * paging; this removes the COST. Authoritative prose lives on
+     * `listSharedRows`' JSDoc in civitai/civitai
+     * `src/server/routers/apps-shared.router.ts`.
+     */
+    mine?: boolean;
 }
 
 export interface SharedListResult {

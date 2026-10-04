@@ -65,6 +65,23 @@ export interface SharedListQuery {
   limit?: number;
   /** An opaque `nextCursor` from a previous page. */
   cursor?: string;
+  /**
+   * Narrows the page to rows THIS viewer authored. Omitted (or `false`) lists
+   * the whole board.
+   *
+   * A boolean, never a user id: the author is the server's resolved token
+   * subject, so this cannot ask for someone else's rows. 🔴 An ANONYMOUS viewer
+   * — who may read this store — gets an EMPTY page rather than an error or the
+   * whole board, so an empty result under `mine` is not evidence the store is
+   * empty.
+   *
+   * ⚠ The boolean is YAGNI, not a capability boundary: {@link SharedItem} already
+   * carries `authorUserId`, so singling out one author is already possible by
+   * paging; this removes the COST. Authoritative prose lives on
+   * `listSharedRows`' JSDoc in civitai/civitai
+   * `src/server/routers/apps-shared.router.ts`.
+   */
+  mine?: boolean;
 }
 
 export interface SharedListResult {
@@ -180,10 +197,19 @@ export function createSharedStorageClient(http: Http): SharedStorageClient {
     ): Promise<SharedListResult> {
       const res = await get<{ items?: unknown; metadata?: unknown }>(
         'list',
-        // Named rather than spread: each of the three is a field a mutation can
+        // Named rather than spread: each of the four is a field a mutation can
         // drop on its own, and an `undefined` is omitted from the query string,
         // so the server's own default applies instead of a second copy here.
-        { prefix: query.prefix, limit: query.limit, cursor: query.cursor },
+        //
+        // 🔴 `mine` IS PASSED AS A BOOLEAN AND MUST STAY ONE. `urlFor` renders a
+        // boolean with `String()` (→ `?mine=true` / `?mine=false`) and drops
+        // `null`/`undefined` entirely, which is exactly the serialisation the
+        // route demands: its schema is
+        // `z.union([z.literal('true'), z.literal('false')]).optional()`, so
+        // `?mine=` — the standard rendering of an unset form field, and what
+        // `String(undefined)` or a `?? ''` here would produce — is a **400**, not
+        // a default. Never normalise this to a string or give it a fallback.
+        { prefix: query.prefix, limit: query.limit, cursor: query.cursor, mine: query.mine },
         signal,
       );
       // 🔴 NO `?? []`. A malformed 200 must throw, never answer "no rows": a
