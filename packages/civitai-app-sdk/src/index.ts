@@ -29,6 +29,12 @@
  *    that writes `import { exchangeCode } from '@civitai/app-sdk'` pay for the
  *    Civitai-Apps contract it does not use. Blocks and OAuth apps are disjoint
  *    audiences; see this package's README.
+ *    🔴 That 130 is ASSERTED, not merely quoted — by
+ *    `packages/civitai-app-sdk/test/export-surface.test.ts`, which pins
+ *    `surface.get('./blocks').size`. It said 119 here against a real 125 until
+ *    2026-10-04, because the existing checks pin the root as an exact union and
+ *    each subpath's set relations, none of which can see a subpath GROW. Update
+ *    both this line and the ledger `reason` in that file together.
  *  - **`./safe-storage`** — the same side effect, and its whole point is being
  *    imported FOR it (`import '@civitai/app-sdk/safe-storage'`). A side effect
  *    on the root barrel is not something a consumer can opt out of.

@@ -7,9 +7,38 @@
  * ==================================================================
  * The browser file's job is "a real parser resolves against the injected base",
  * which needs Chromium. These two need FAKE TIMERS and a RENDER LOG, neither of
- * which wants a browser, and every other timeout in this package is pinned in
- * the unit tier the same way (`useEntitlements`, `useTipAllowance`,
- * `useResourcePicker`, `usePublishGenerationOutputs`). The division:
+ * which wants a browser.
+ *
+ * ⚠ THAT IS A PRECEDENT FOR THE TIER, NOT FOR THE PRACTICE, AND AN EARLIER
+ * REVISION OF THIS PARAGRAPH CLAIMED MORE THAN IS TRUE. It read "every other
+ * timeout in this package is pinned in the unit tier the same way
+ * (`useEntitlements`, `useTipAllowance`, `useResourcePicker`,
+ * `usePublishGenerationOutputs`)". Re-checked 2026-10-04, by grep over the
+ * package rather than from memory:
+ *
+ *   - Timing behaviour here IS a unit-tier concern: 23 of this package's test
+ *     files call `vi.useFakeTimers()` (this one among them) and NO
+ *     `*.browser.test.*` file does. That half holds, and it is the half this
+ *     file's placement rests on.
+ *   - But a FETCH-ABORT DEADLINE of the shape below is pinned by NOTHING in
+ *     this package. `ENTITLEMENTS_TIMEOUT_MS`, `TIP_ALLOWANCE_TIMEOUT_MS` and
+ *     `GENERATION_RESOURCES_TIMEOUT_MS` appear in no test, and no test asserts
+ *     the `request aborted (timed out after …)` message those three emit. So
+ *     the deadline test below is the FIRST of its kind here, not the fourth.
+ *   - The fake-timer deadline tests that DO exist pin something else.
+ *     `useTipAllowance.test.tsx` and `hostOriginAbsent.test.tsx` pin
+ *     `HOST_ORIGIN_WAIT_MS` — a different constant from either hook's fetch
+ *     timeout, for `useTipAllowance` AND for `useEntitlements`.
+ *     `useResourcePicker.test.tsx` and `usePublishGenerationOutputs.test.tsx`
+ *     pin a NON-expiry: that a human-gated request does NOT reject at the ~30 s
+ *     default. Useful precedents for the mechanics, not for this assertion.
+ *   - 🔴 And `useEntitlements.ts:254` — like `useTipAllowance.ts:153` and
+ *     `useGenerationResources.ts:92` — reports `timed out after ${N}ms or the
+ *     hook unmounted`, which is exactly the conflation the hook below keeps
+ *     apart with its own `timedOut` flag. Citing them as precedent for how to
+ *     do this was backwards.
+ *
+ * The division:
  *
  *   `useNestedDocument.browser.test`  → the state machine + in-browser resolution
  *   this file                         → the deadline, and the (src, srcDoc) pair

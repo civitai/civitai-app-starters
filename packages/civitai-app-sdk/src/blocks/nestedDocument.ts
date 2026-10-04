@@ -200,6 +200,16 @@ export interface InjectBaseHrefResult {
  * See {@link InjectBaseHrefResult.html} for what is and is not guaranteed about
  * the count.
  *
+ * 🔴 BUT `href=""` IS AN `href`, so it is base-setting and is REWRITTEN. The
+ * spec keys on the `href` CONTENT ATTRIBUTE being present, not on its value
+ * resolving to something new: `""` parses successfully against the document's
+ * own URL, so `<base href="">` sets the base to `documentUrl` itself (not its
+ * directory), and a whitespace-only value does the same because the URL parser
+ * strips leading and trailing spaces. The distinction is load-bearing, not
+ * pedantic — see the comment at the `wantHref` test in `scanDocument` for what
+ * treating it as absent did to a document declaring `<base href=""><base
+ * href="/real/">`.
+ *
  * Only REAL MARKUP is considered: a `<base href>` or a `<head>` written inside
  * an HTML comment, or inside a `<script>`/`<style>` body, is ignored, and tag
  * names match case-insensitively. A quoted attribute value may contain `>`.
@@ -559,8 +569,21 @@ function scanDocument(html: string): DocumentScan {
     const tagEnd = k < n ? k + 1 : n;
 
     if (!closing && name === 'head' && headEndsAt === undefined) headEndsAt = tagEnd;
-    // An empty `href` sets no base URL, so it is "absent" like a bare `target`.
-    if (wantHref && href !== undefined && href !== '') {
+    // 🔴 AN EMPTY `href` IS BASE-SETTING — this line read `href !== ''` and
+    // that was wrong. Per HTML the document base URL comes from the first
+    // `<base>` that HAS an `href` CONTENT ATTRIBUTE, and `""` parses
+    // successfully against the document's own URL, so `<base href="">` sets
+    // the base to the document URL rather than setting none. Reading it as
+    // absent is harmful rather than merely imprecise: the inserted absolute
+    // base goes in BEFORE it, so this tag stays the first base-setting element
+    // the parser honours and `document.baseURI` becomes the EMBEDDER's URL —
+    // the opaque-origin failure this whole module exists to prevent, with a
+    // `baseHref` the caller is told is in use when it is not. A whitespace-only
+    // `href` is the same case for the same reason: the URL parser strips
+    // leading and trailing spaces, so `href="   "` also resolves to the
+    // document URL. Only a `<base>` with NO `href` attribute at all sets no
+    // base URL, and that case is `href === undefined` here.
+    if (wantHref && href !== undefined) {
       base = { index: lt, length: tagEnd - lt, href };
     }
 

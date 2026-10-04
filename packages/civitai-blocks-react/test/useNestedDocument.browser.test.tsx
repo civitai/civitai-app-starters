@@ -29,35 +29,64 @@
  *      makes a relative `<img src="sprite.png">` resolve against the injected
  *      base — WITH a negative control proving the same markup WITHOUT a base
  *      resolves somewhere else entirely.
+ *   4. 🔴 WHICH OF TWO `<base>` TAGS A REAL PARSER HONOURS — the one question
+ *      only this tier can answer, and the one that caught a real defect. See
+ *      the two `<base href="">` cases at the end of the last describe block.
  *
- * WHAT THIS TIER CANNOT SEE, RE-MEASURED 2026-10-03 AGAINST THE SINGLE-PASS
- * SCANNER (the figures recorded here previously were measured against the
- * two-regex implementation it replaced, and described code that no longer
- * exists). Denominator: 15 tests in this file, 51 in the app-sdk unit suite.
+ * 🔴 THE FIRST OF THAT PAIR IS A MEASUREMENT OF CHROMIUM, NOT COVERAGE OF OUR
+ * CODE. "MEASUREMENT: the parser honours `<base href="">` over a LATER real
+ * one" mounts raw markup in an iframe and calls NEITHER the hook NOR the
+ * helper, so no mutation of either implementation file can reach it — that is a
+ * property of what the test calls, not an observation over some set of mutants
+ * that happened to be tried. It earns its place because the fix rests on a fact
+ * about the parser, and keeping that fact executable re-checks it on every
+ * browser run instead of quoting the spec at it.
+ *
+ * Its own instrument WAS validated, by the only control that can: delete the
+ * empty-`href` tag from the fixture and the test goes red with
+ * `expected 'http://localhost:…/decoy-real/sprite.png' not to contain
+ * 'decoy-real'` — with the tag gone the decoy DOES win, so the tag's presence
+ * is what moves the result rather than the assertion being true of any markup.
+ *
+ * WHAT THIS TIER CANNOT SEE, RE-MEASURED 2026-10-04 (re-run for the
+ * empty-`href` fix, which changed the base-detection path; the figures here
+ * before that are superseded, as were the ones before them, which had been
+ * measured against the two-regex implementation the single-pass scanner
+ * replaced). Denominator: 17 tests in this file, 53 in the app-sdk unit suite.
  *
  * Replacing `new URL('.', docUrl).href` with `docUrl.href` in `injectBaseHref`
- * — basing on the document rather than its directory — reddens 2 of the 15
+ * — basing on the document rather than its directory — reddens 2 of the 17
  * tests here, and BOTH are the two that assert the whole `srcDoc` string:
  * `loading → ready exposes a srcDoc…` and `changing src restarts the cycle…`.
  * Every `img.src` assertion SURVIVES it, which is the point of the division of
  * labour: a `<base href>` naming the document resolves a relative URL
  * identically to one naming its directory, so no amount of RESOLUTION testing
- * can see the difference. The same mutant reddens 26 of the app-sdk unit tests,
+ * can see the difference. The same mutant reddens 25 of the app-sdk unit tests,
  * whose literal-string assertions pin the exact bytes and the reported
  * `baseHref`; this file proves a real parser resolves against them.
  *
  * Deleting the `<base>` insertion outright reddens 5 here, including the
  * `img.src` one, with the production symptom
  * (`expected 'http://localhost:…/sprite.png' to be
- * 'https://nested-fixture.example/engine/sprite.png'`) — and that 5 is
- * spelling-independent, because no fixture in this file declares a `<base>` of
- * its own, so the replace-an-existing-base branch is never reached either way.
+ * 'https://nested-fixture.example/engine/sprite.png'`). That 5 is
+ * spelling-independent because the deletion only touches the branch that has no
+ * existing base to replace, and the one fixture here that DOES declare a
+ * `<base>` (`MARKUP_EMPTY_BASE_FIRST`) takes the replace branch instead — so it
+ * stays green under this mutant, measured, not assumed.
  *
- * 🔴 ONE PROPERTY IS ONLY VISIBLE HERE: that an inline script survives the
- * rewrite and still EXECUTES. Emptying the scanner's `RAW_TEXT_ELEMENTS` set
- * reddens 2 app-sdk unit tests (the bytes changed) and exactly 1 here — the
- * script-runs case — which is the only assertion anywhere that a real JS engine
- * ran the rewritten document.
+ * 🔴 TWO PROPERTIES ARE ONLY VISIBLE HERE.
+ *   - That an inline script survives the rewrite and still EXECUTES. Emptying
+ *     the scanner's `RAW_TEXT_ELEMENTS` set reddens 2 app-sdk unit tests (the
+ *     bytes changed) and exactly 1 here — the script-runs case — which is the
+ *     only assertion anywhere that a real JS engine ran the rewritten document.
+ *   - That the rewrite targets the tag the PARSER honours. Putting `href !== ''`
+ *     back on `scanDocument`'s `wantHref` test — treating `<base href="">` as
+ *     absent, which the implementation did until 2026-10-04 — reddens 2 app-sdk
+ *     unit tests and exactly 1 here, `so the rewritten document resolves to the
+ *     FETCH host…`, with `expected 'http://localhost:…/?sessionId=…' to be
+ *     'https://nested-fixture.example/engine/boot.html'`. The unit reds are
+ *     byte assertions; only this one reads `document.baseURI` off a live
+ *     parse, which is where the harm actually appears.
  *
  * TWO PROPERTIES ARE NOT HERE AT ALL: the fetch deadline and the (src, srcDoc)
  * pairing both need fake timers and a render log, so they live in the unit-tier
@@ -65,10 +94,11 @@
  *
  * FIXTURE VALUES ARE PAIRWISE DISTINCT. The host (`nested-fixture.example`),
  * the two directories (`engine/`, `other/`), the two documents (`boot.html`,
- * `view.html`) and the asset (`sprite.png`) share no substring, and none of
- * them is a substring of the test page's own origin — so an assertion cannot be
- * satisfied by the wrong one of them, and a mutant that drops the base resolves
- * against `localhost` and fails loudly.
+ * `view.html`), the asset (`sprite.png`) and the two decoys (`/decoy-only/`,
+ * `/decoy-real/`) share no substring, and none of them is a substring of the
+ * test page's own origin — so an assertion cannot be satisfied by the wrong one
+ * of them, and a mutant that drops the base resolves against `localhost` and
+ * fails loudly.
  */
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -83,6 +113,15 @@ const VIEW = `${HOST}/other/view.html`;
 
 /** Carries a RELATIVE asset reference — the thing the `<base>` has to fix. */
 const MARKUP = '<!doctype html><html><head></head><body><img src="sprite.png"></body></html>';
+
+/**
+ * Declares `<base href="">` AHEAD of a real one. Only a real parser can settle
+ * which of the two it honours, which is why this fixture is here and not in the
+ * unit tier — see the two `document.baseURI` cases at the end of this file.
+ */
+const MARKUP_EMPTY_BASE_FIRST =
+  '<!doctype html><html><head><base href=""><base href="/decoy-real/"></head>' +
+  '<body><img src="sprite.png"></body></html>';
 
 /** A deferred fetch, so `loading` is observable rather than a race. */
 function deferred<T>() {
@@ -388,5 +427,39 @@ describe('the injected <base> is what makes relative assets resolve', () => {
       '<!doctype html><html><body><script>document.title = "harness-ok";</script></body></html>',
     );
     expect(doc.title).toBe('harness-ok');
+  });
+
+  it('🔴 MEASUREMENT: the parser honours `<base href="">` over a LATER real one', async () => {
+    // The fact the unit tier cannot establish, measured here rather than
+    // asserted from the spec. The fixture declares `<base href="">` and then
+    // `<base href="/decoy-real/">`. If an empty `href` set no base URL, the
+    // decoy would win and `img.src` would carry `/decoy-real/`. It does not:
+    // the empty one is the base-setting element, its base resolves to this
+    // harness page's own URL, and the asset lands beside THAT. This is the
+    // whole reason the rewrite must target the FIRST tag.
+    const doc = await mountSrcDoc(MARKUP_EMPTY_BASE_FIRST);
+    const resolved = doc.querySelector('img')?.src ?? '';
+    expect(resolved).not.toContain('decoy-real');
+    expect(resolved).toBe(new URL('sprite.png', document.baseURI).href);
+  });
+
+  it('🔴 so the rewritten document resolves to the FETCH host, not the embedder', async () => {
+    // The consequence of the measurement above, through the real hook. With
+    // `href=""` read as absent the helper rewrote the DECOY and left the empty
+    // tag first, so `baseURI` stayed this page's URL and every asset resolved
+    // against the embedder — the opaque-origin failure the hook exists to
+    // prevent. Both the base URL and the resolved asset are asserted: the
+    // asset alone could be satisfied by a base that merely shares a directory.
+    stubFetch(async (u) => textResponse(200, MARKUP_EMPTY_BASE_FIRST, u));
+    render(<Probe src={BOOT} />);
+    await waitFor(() => expect(status()).toBe('ready'));
+
+    const doc = await mountSrcDoc(screen.getByTestId('doc').textContent ?? '');
+    expect(doc.baseURI).toBe('https://nested-fixture.example/engine/boot.html');
+    expect(doc.querySelector('img')?.src).toBe(
+      'https://nested-fixture.example/engine/sprite.png',
+    );
+    // And the decoy came back inert rather than promoted.
+    expect(doc.querySelectorAll('base')).toHaveLength(2);
   });
 });

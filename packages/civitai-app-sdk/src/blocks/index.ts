@@ -78,12 +78,24 @@ export {
  * `docs/build-your-first-app-block.md` and the changeset); the only in-tree
  * importers of the rewrite are this module's own unit tests, and
  * `@civitai/blocks-react` does not value-import it. There can be no EXTERNAL
- * consumer either: measured 2026-10-03, `injectBaseHref` appears in 0 files of
- * the published `0.54.0`/`0.55.0`/`0.56.0` tarballs' `dist` (positive control:
- * `BLOCK_SCOPES`, 7 files in each), i.e. no published version has ever shipped
- * it. Both stay exported from `nestedDocument.ts`, so the unit suite reaches
- * them by file path — and adding one here later is a `minor`, while removing one
- * once published is not.
+ * consumer either. The DEFINING evidence is the git history, not a sample of
+ * tarballs: `nestedDocument.ts` is ADDED by the branch that introduced this
+ * helper — `git log --diff-filter=A` over it returns exactly one commit — so no
+ * version published before that commit can contain the symbol, whatever any
+ * individual tarball says.
+ *
+ * The tarball probe is a cross-check on that reasoning rather than its basis.
+ * Re-measured 2026-10-04: `injectBaseHref` appears in 0 files of the published
+ * `0.54.0`/`0.55.0`/`0.56.0`/`0.56.1` tarballs' `dist`, with `BLOCK_SCOPES` at
+ * 7 files in each as the positive control and `__NOPE_7f3a__` at 0 as the
+ * negative one. ⚠ An earlier revision of this comment derived "no published
+ * version has ever shipped it" from THREE tarballs alone — a sample generalised
+ * into a claim about every published version. The conclusion was right; the
+ * grounds it stated were not, which is the part worth not repeating.
+ *
+ * Both stay exported from `nestedDocument.ts`, so the unit suite reaches them by
+ * file path — and adding one here later is a `minor`, while removing one once
+ * published is not.
  */
 export { fetchNestedDocument, NestedDocumentError } from './nestedDocument.js';
 export type {

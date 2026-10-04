@@ -20,32 +20,49 @@
  * a pile of failed asset loads. So the base href is asserted as a LITERAL
  * STRING everywhere below, never recomputed from the implementation.
  *
- * WATCHED TO FAIL (mutation-checked 2026-10-03, against the SINGLE-PASS SCANNER
- * — every count below was re-measured from scratch for it; the counts recorded
- * here for the two-regex implementation it replaced described code that no
- * longer exists). Denominator: this file, 51 tests green at HEAD. Where a
- * browser-tier number is given it is out of 15, from
+ * WATCHED TO FAIL (mutation-checked 2026-10-04, re-run from scratch for the
+ * EMPTY-`href` fix below, which changed the base-detection path; the counts
+ * recorded here before that are superseded, as were the ones before them for
+ * the two-regex implementation the single-pass scanner replaced). Denominator:
+ * this file, 53 tests green at HEAD. Where a browser-tier number is given it is
+ * out of 17, from
  * `../../../civitai-blocks-react/test/useNestedDocument.browser.test.tsx`.
  *
  *   - delete the `<base>` insertion (`return { html, … }` for
- *     `insertInto(html, tag, scan)`)                 → 19 red, +5 of 15 browser.
+ *     `insertInto(html, tag, scan)`)                 → 19 red, +5 of 17 browser.
  *   - base on the document instead of its directory (`docUrl.href` for
- *     `new URL('.', docUrl).href`)                   → 26 red, +2 of 15 browser,
+ *     `new URL('.', docUrl).href`)                   → 25 red, +2 of 17 browser,
  *     first with `expected '<base href="…/engine/boot.html">' to be
  *     '<base href="…/engine/">'`.
+ *   - 🔴 treat an EMPTY `href` as ABSENT (`href !== ''` back on the `wantHref`
+ *     test in `scanDocument`) → 2 red here, +1 of 17 browser. THIS WAS THE
+ *     IMPLEMENTATION, and this file asserted it, until 2026-10-04: see the
+ *     `an EMPTY href IS base-setting` case for the spec reading and
+ *     `an empty href BEFORE a real one` for the harm. The browser red is the
+ *     one that shows the consequence rather than the bytes —
+ *     `expected 'http://localhost:…/?sessionId=…' to be
+ *     'https://nested-fixture.example/engine/boot.html'`, i.e. `baseURI`
+ *     landing on the EMBEDDER. The whitespace-only case is NOT red under it,
+ *     because `'   ' !== ''`; the two are pinned together so they cannot
+ *     diverge again.
  *   - stop replacing an existing `<base href>` → KILLED IN EVERY FAITHFUL
  *     SPELLING, but the count DEPENDS ON THE SPELLING, so no single number is
  *     this mutant's count. Three spellings:
  *       - insert alongside, immediately after `<head>`, still resolving the
- *         existing href                                        →  6 red;
- *       - `scanDocument` reports no base at all (`undefined`)   → 10 red;
- *       - detect the tag but ignore its href, inserting alongside →  6 red.
- *     TWO assertions are red in ALL THREE — `REPLACES it … (one <base> in the
- *     output)` and `🔴 TWO <base href> tags …`, both of which count `<base`
- *     occurrences — and that is what makes the guard sound rather than any one
- *     of the numbers. (A pre-scanner draft of this list recorded a flat
- *     "4 red", which reproduced under none of the three spellings. The counts
- *     above are this implementation's and will move again if it changes.)
+ *         existing href                                        →  9 red;
+ *       - `scanDocument` reports no base at all (`undefined`)   → 13 red;
+ *       - detect the tag, ignore its href, and insert the DIRECTORY base
+ *         alongside with `hadExistingBase: true`               → 13 red.
+ *     NINE assertions are red in ALL THREE (the first spelling's reds are a
+ *     subset of the other two's, which are identical) — among them
+ *     `REPLACES it … (one <base> in the output)` and `🔴 TWO <base href> tags …`,
+ *     both of which count `<base` occurrences, and all three empty/whitespace
+ *     cases. That overlap is what makes the guard sound rather than any one of
+ *     the numbers. (A pre-scanner draft of this list recorded a flat "4 red",
+ *     which reproduced under none of the spellings; the third spelling's own
+ *     count moved from 6 to 13 between sweeps, which is the same lesson again —
+ *     a spelling-dependent number is not re-derivable from its description, so
+ *     the exact replacement is spelled out above rather than paraphrased.)
  *   - stop skipping HTML COMMENTS (`if (false)` for the `<!--` branch) → 2 red,
  *     both of them the two `REACHES THE COMMENT BRANCH` cases.
  *     🔴 AND THAT PAIR EXISTS BECAUSE THIS MUTANT SURVIVED THE FIRST SWEEP. The
@@ -55,7 +72,7 @@
  *     none before the decoy. The guard was unreachable and scored a false
  *     green; a `>` early in the comment is what reaches it.
  *   - stop skipping `<script>`/`<style>` bodies (empty `RAW_TEXT_ELEMENTS`)
- *     → 2 red, +1 of 15 browser — the browser one being the only assertion
+ *     → 2 red, +1 of 17 browser — the browser one being the only assertion
  *     anywhere that the inline script still RUNS.
  *   - drop tag-name case-insensitivity (no `.toLowerCase()` on the name)
  *     → 2 red, the two uppercase/mixed-case cases.
@@ -65,31 +82,40 @@
  *     document's base) — the same single test, `<header>`/`<basefont>`.
  *   - mis-handle the QUOTED-ATTRIBUTE state → also SPELLING-DEPENDENT, because
  *     the state has two characters in it: honouring only `'`
- *     (`if (quote === "'")`) → 10 red; honouring only `"` → 2 red. Each
+ *     (`if (quote === "'")`) → 12 red; honouring only `"` → 2 red. Each
  *     spelling is blind to the other quote character, which is why both
  *     a double- and a single-quoted `>` fixture are present.
  *   - ignore the response's FINAL url (`documentUrl = url`) → 2 red, the two
  *     redirect cases.
- *   - reinstate the QUADRATIC regex existing-base walk (`html.matchAll(
- *     /<base\b[^>]*>/gi)`) → 6 red, including the pathological-input timing
- *     guard with its own message: `expected 2722.071061 to be less than 500`,
- *     while the 576 KB BENIGN control stayed green (10-15 ms over four runs).
- *     That pair is the attribution: the input's SHAPE, not a slow machine.
+ *   - reinstate a QUADRATIC regex existing-base walk (`html.matchAll(
+ *     /<base\b[^>]*>/gi)` plus an `href` pattern per match) → 5 red, including
+ *     the pathological-input timing guard with its own message, while the
+ *     576 KB BENIGN control stayed green. 🔴 No millisecond figure is quoted
+ *     here: see the `LINEAR_BUDGET_MS` docblock, where the observed RANGES are
+ *     recorded and the reason a margin multiplier must not be is stated. This
+ *     mutant's red count is spelling-dependent too — the earlier sweep's
+ *     spelling gave 6 — and that is why the replacement is written out.
  *
  * Method: exact-literal replacement with the occurrence count asserted to be 1,
  * restoring the module from a `cp -a` copy and re-checking its sha256 after
  * every restore, so a failed restore cannot score a borrowed kill for the next
  * mutant. One unmutated baseline run per pass as the positive control proving
- * the mutants executed (51/51, 7/7, 15/15 green).
+ * the mutants executed (53/53, 7/7, 17/17 green). 21 mutant SPELLINGS over the
+ * two implementation files (15 here, 6 in the hook), all killed; 17 if
+ * same-defect spellings are collapsed into families.
  *
  * 🔴 THE DIRECTORY-VS-DOCUMENT MUTANT IS WHY THIS FILE'S LITERAL STRINGS ARE
  * LOAD-BEARING, AND WHY ITS BROWSER SIBLING DOES NOT DUPLICATE THEM. A
  * `<base href>` naming the document resolves a relative URL IDENTICALLY to one
  * naming its directory, so that mutant is behaviourally equivalent for asset
  * loading and every in-browser `img.src` assertion SURVIVES it — measured, not
- * assumed; the 2 browser reds are both whole-`srcDoc`-string assertions. The
- * directory form is kept because it is what a caller is handed as `baseHref`,
- * and only a literal-string assertion can see it. Division of labour:
+ * assumed; the 2 browser reds are both whole-`srcDoc`-string assertions, named
+ * by the re-run on 2026-10-04. The directory form is kept because it is what a
+ * caller is handed as `baseHref`, and only a literal-string assertion can see
+ * it. 🔴 THE EMPTY-`href` MUTANT IS THE COUNTER-CASE AND WHY THE BROWSER TIER
+ * IS NOT REDUNDANT: there the browser tier sees a difference no byte-level
+ * assertion could reach alone, because the defect is which of two tags a real
+ * PARSER honours. Division of labour:
  *   this file                          → the exact bytes, `baseHref` included
  *   `useNestedDocument.browser.test`   → that a real parser RESOLVES against it
  *   `useNestedDocument.test.tsx`       → the hook's deadline + its state pairing
@@ -99,10 +125,17 @@
  * (`boot.html`), the asset (`loader.mjs`), the already-declared base (`/pkg/`)
  * and every decoy below (`/commented/`, `/scripted/`, `/styled/`,
  * `/after-script/`, `/quoted/`, `/shouted/`, `/murmured/`, `/winner/`,
- * `/loser/`, `/second-wins/`, `arcade/`, `cdn/v9/`) share no substring, so a
- * mutant that hardcodes any one of them cannot satisfy an assertion naming
- * another. No assertion's expected value is derivable from any other fixture
- * field.
+ * `/loser/`, `/second-wins/`, `/real/`, `arcade/`, `cdn/v9/`) share no
+ * substring, so a mutant that hardcodes any one of them cannot satisfy an
+ * assertion naming another.
+ *
+ * ⚠ ONE EXCEPTION, STATED RATHER THAN GLOSSED. The three empty/whitespace
+ * `href` cases expect `DOC_URL` ITSELF, because that is what the spec says
+ * `<base href="">` resolves to — so their expected value IS a fixture field,
+ * and a mutant that hardcoded "base on the document" would satisfy them. It is
+ * caught by the 25 OTHER tests the directory-vs-document mutant reddens; these
+ * three are not independent evidence against it, and this note exists so the
+ * blanket claim above is not read as covering them.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -282,10 +315,49 @@ describe('injectBaseHref — a document that already declares a <base>', () => {
     );
   });
 
-  it('an empty href is treated as absent (it sets no base URL either)', () => {
-    const { baseHref, hadExistingBase } = injectBaseHref('<head><base href="">', DOC_URL);
-    expect(baseHref).toBe('https://blocks-fixture.example/engine/');
-    expect(hadExistingBase).toBe(false);
+  it('🔴 an EMPTY href IS base-setting, and resolves to the document URL', () => {
+    // This test asserted the opposite until 2026-10-04, and the implementation
+    // agreed with it. Both were wrong about the spec: the document base URL is
+    // the frozen base URL of the first `<base>` that HAS an `href` CONTENT
+    // ATTRIBUTE, and `""` parses successfully against the document's own URL.
+    // So this tag IS the one a parser honours, and the base it sets is the
+    // DOCUMENT (`boot.html`), not its directory — which is why the expected
+    // string here is the one case in this file that names the document.
+    const { html, baseHref, hadExistingBase } = injectBaseHref('<head><base href="">', DOC_URL);
+    expect(baseHref).toBe('https://blocks-fixture.example/engine/boot.html');
+    expect(hadExistingBase).toBe(true);
+    expect(html).toBe('<head><base href="https://blocks-fixture.example/engine/boot.html">');
+  });
+
+  it('a WHITESPACE-ONLY href is the same case — the URL parser strips it', () => {
+    // Already correct before the empty-href fix, and pinned now so it cannot
+    // regress with it: the two values must agree, because the URL parser
+    // strips leading/trailing spaces and then takes the empty-string path.
+    const { html, baseHref, hadExistingBase } = injectBaseHref(
+      '<head><base href="   ">',
+      DOC_URL,
+    );
+    expect(baseHref).toBe('https://blocks-fixture.example/engine/boot.html');
+    expect(hadExistingBase).toBe(true);
+    expect(html).toBe('<head><base href="https://blocks-fixture.example/engine/boot.html">');
+  });
+
+  it('🔴 an empty href BEFORE a real one is the tag that gets rewritten', () => {
+    // THE HARMFUL CASE, and the reason the line above is not a nicety. Reading
+    // `href=""` as absent put the inserted absolute base in front of it and
+    // rewrote the SECOND tag — leaving the first, which is the one the parser
+    // honours, pointing at the embedder. `/real/` is the decoy: it must come
+    // back untouched and inert.
+    const { html, baseHref, hadExistingBase } = injectBaseHref(
+      '<head><base href=""><base href="/real/"></head><body><img src="sprite.png">',
+      DOC_URL,
+    );
+    expect(hadExistingBase).toBe(true);
+    expect(baseHref).toBe('https://blocks-fixture.example/engine/boot.html');
+    expect(html).toBe(
+      '<head><base href="https://blocks-fixture.example/engine/boot.html">' +
+        '<base href="/real/"></head><body><img src="sprite.png">',
+    );
   });
 });
 
@@ -512,15 +584,31 @@ describe('injectBaseHref — the scan is LINEAR, not quadratic', () => {
    * regex existing-base walk (`html.matchAll(/<base\b[^>]*>/gi)` + an `href`
    * pattern per tag — the "two linear regexes" revision that cleared CodeQL's
    * alert and left the asymptotics quadratic) reddens exactly this test with its
-   * own message, `expected 2722.071061 to be less than 500`, while the benign
-   * control below stays green.
+   * own message — `expected <ms> to be less than 500`, the figure differing run
+   * to run — while the benign control below stays green.
    *
-   * MEASURED MARGINS on this input, 2026-10-03, over four runs: the scanner
-   * 2-8 ms (the 8 was a cold first call; 2-3 ms in-suite), the regex walk
-   * 2,722 ms. The benign 576 KB control ran 10-15 ms throughout. The bound sits
-   * ~60x above the scanner's WORST observed time and ~5.4x below the regex
-   * walk's, which is what keeps it from flaking on a loaded machine while still
-   * catching a return to quadratic.
+   * 🔴 THE BOUND IS THE ONLY DURABLE NUMBER HERE. Every observation below is a
+   * single measurement on one developer machine at one moment, and the spread
+   * across re-measurements is wide enough that a MARGIN MULTIPLIER quoted off
+   * any one of them is a property of that box's load, not of this code. An
+   * earlier revision of this comment stated "~60x above the scanner" and
+   * "~5.4x below the regex walk" as if they were properties of the
+   * implementation; both were reproduced at materially different values the
+   * next day. So: no multiplier is claimed, and none should be re-derived from
+   * the ranges.
+   *
+   * What was observed, as a RANGE over three separate sittings (2026-10-03 and
+   * 2026-10-04, the last on a box carrying a load average near 37):
+   *
+   *   this scanner, pathological 192 KB   0.8 - 8 ms
+   *   the regex walk, same input          1,790 - 2,886 ms
+   *   the benign 576 KB control           1.8 - 15 ms
+   *
+   * The three orders of magnitude between the second row and the other two are
+   * the asymptotic difference and are what the 500 ms bound is placed to catch.
+   * The width WITHIN each row is machine load. Do not substitute a fresh pair
+   * of numbers as the new authority — add to the range, or state the bound
+   * alone.
    */
   const LINEAR_BUDGET_MS = 500;
 

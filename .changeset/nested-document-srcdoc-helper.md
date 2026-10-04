@@ -64,6 +64,23 @@ high; with a `<base href>` already present it is **resolved against that URL and
 replaced**, so the author's intent survives and its form becomes absolute. A
 `<base target>` with no `href` sets no base URL per spec and is left alone.
 
+🔴 **An EMPTY `href` IS base-setting, and the first revision of this branch got
+that wrong in the harmful direction.** The spec keys the document base URL on
+the first `<base>` that HAS an `href` content attribute, and `""` parses
+successfully against the document's own URL — so `<base href="">` sets the base
+to the document, not to nothing. Reading it as absent put the inserted absolute
+base in FRONT of it, leaving the tag a parser actually honours pointing at the
+embedder: for `<head><base href=""><base href="/real/"></head>` the helper
+reported `hadExistingBase: true` with a `/real/` base while Chromium resolved
+every asset against the embedder's URL — the opaque-origin failure this module
+exists to prevent, and a `baseHref` the caller was told was in use when it was
+not. The empty tag is now the one rewritten. Whitespace-only is the same case
+(the URL parser strips leading and trailing spaces) and both are pinned
+together. Measured in real Chromium rather than read off the spec, in
+`useNestedDocument.browser.test.tsx`: with `<base href="">` present the later
+`/decoy-real/` tag has no effect, and deleting the empty tag from the fixture
+makes the decoy win — which is what shows the measurement discriminates.
+
 **It is NOT a de-duplication, and an earlier draft of this changeset said it
 was.** The claim "the output never carries two `<base>` tags" was false at five
 surfaces and is corrected at all of them. What is guaranteed is that **the
@@ -116,10 +133,11 @@ scripts, and stripping them would remove the thing the nested document exists to
 run. The consequence is the contract — pass a `src` you control, and put your own
 `sandbox` attribute on the nested iframe.
 
-**Coverage.** 51 unit tests in `@civitai/app-sdk`
+**Coverage.** 53 unit tests in `@civitai/app-sdk`
 (`test/blocks/nestedDocument.test.ts`) over every branch — base injection with
 and without a `<head>`, with and without an existing `<base>`, quoted/unquoted/
-empty hrefs, doctype-only and empty documents, a `<base href>` and a `<head>`
+empty/whitespace-only hrefs (including an empty one declared AHEAD of a real
+one), doctype-only and empty documents, a `<base href>` and a `<head>`
 hidden in an HTML comment, a `<base` inside an inline `<script>` and inside a
 `<style>` body, `>` inside a double- and a single-quoted attribute value,
 uppercase and mixed-case tags, two `<base href>` tags, relative-src resolution
@@ -129,7 +147,7 @@ rejected fetch, failed body read, abort pass-through, and a missing `fetch`
 global. Every expected value is a literal string, never derived from the
 implementation.
 
-15 browser-mode tests in `@civitai/blocks-react`
+17 browser-mode tests in `@civitai/blocks-react`
 (`test/useNestedDocument.browser.test.tsx`) cover the hook's state machine and —
 this is why they are in the browser tier — mount the produced string as a real
 `srcdoc` and assert `img.src` **as Chromium resolved it**, so the base-href claim
@@ -154,22 +172,34 @@ pairs a new `src` with the previous document.
 invisible to both tiers**, so every stub in both files now carries one and the
 redirect cases pass a different one on purpose.
 
-**Mutation-checked, 17 mutants over the two implementation files, all killed**,
-with the unmutated baseline run as the positive control (51/51, 7/7, 15/15).
-Exact-literal replacement with the occurrence count asserted to be 1, restoring
-from a `cp -a` copy and re-checking its sha256 after every restore, so a failed
-restore cannot score a borrowed kill for the next mutant. Two of them produced
-findings worth recording rather than a tick:
+**Mutation-checked, 21 mutant SPELLINGS over the two implementation files (15 in
+`nestedDocument.ts`, 6 in `useNestedDocument.ts`), all killed** — 17 if
+same-defect spellings are collapsed into families. Unmutated baseline run as the
+positive control (53/53, 7/7, 17/17). Exact-literal replacement with the
+occurrence count asserted to be 1, restoring from a `cp -a` copy and re-checking
+its sha256 after every restore, so a failed restore cannot score a borrowed kill
+for the next mutant.
+
+⚠ **This line read "17 mutants" and that number is not derivable under any one
+convention** — it came from splitting the prefix-match bullet into two while
+collapsing the three "stop replacing" spellings and the two quote spellings into
+one each, i.e. two conventions in one tally. Counted from the records below:
+**21 spellings, 17 families**. The convention is now stated rather than implied,
+and both numbers are given so neither has to be re-derived. The per-mutant
+records were correct; only the headline was wrong. Re-run from scratch on
+2026-10-04 after the empty-`href` fix changed the base-detection path, so every
+count below is a fresh measurement and the previously recorded ones are
+superseded. Several produced findings worth recording rather than a tick:
 
 - **Delete the `<base>` insertion** (`return { html, … }` instead of
-  `insertInto(html, tag, scan)`) → 19 of 51 unit tests red, and 5 of 15 browser
+  `insertInto(html, tag, scan)`) → 19 of 53 unit tests red, and 5 of 17 browser
   tests, including the in-browser mechanism test with exactly the production
   symptom: `expected 'http://localhost:…/sprite.png' to be
   'https://nested-fixture.example/engine/sprite.png'`.
 - **Base on the document instead of its directory** (`docUrl.href` instead of
-  `new URL('.', docUrl).href`) → 26 of 51 unit tests red, first with
+  `new URL('.', docUrl).href`) → 25 of 53 unit tests red, first with
   `expected '<base href="…/engine/boot.html">' to be '<base href="…/engine/">'`.
-  🔴 **But only 2 of the 15 browser tests see it** — the two that assert the
+  🔴 **But only 2 of the 17 browser tests see it** — the two that assert the
   whole `srcDoc` string; every in-browser `img.src` assertion SURVIVES it. That
   is not a gap in the test: a `<base href>` naming the document resolves a
   relative URL identically to one naming its directory, so the two are
@@ -178,15 +208,27 @@ findings worth recording rather than a tick:
   handed as `baseHref`; the literal-string assertions are what pin it, and that
   division is stated in both test headers rather than left to look like
   redundant coverage.
+- 🔴 **Treat an EMPTY `href` as absent** (`href !== ''` back on `scanDocument`'s
+  `wantHref` test) → 2 of 53 unit red and 1 of 17 browser. **This was the
+  implementation, and both tiers asserted it, until 2026-10-04** — which is the
+  one mutant in this battery that was a real shipped defect rather than a
+  hypothetical. The browser red is the one that shows the harm instead of the
+  bytes: `expected 'http://localhost:…/?sessionId=…' to be
+  'https://nested-fixture.example/engine/boot.html'`, i.e. `document.baseURI`
+  landing on the EMBEDDER. The whitespace-only case is NOT red under it
+  (`'   ' !== ''`), which is exactly why the two are now pinned side by side.
 - **Stop replacing an existing `<base href>`** → killed in every faithful
   spelling, but the count **depends on the spelling**, so there is no single
-  number for this mutant: inserting alongside immediately after `<head>` → 6
-  unit tests red; the scan reporting no base at all → 10; detecting the tag but
-  ignoring its href → 6. Two `<base`-occurrence-count assertions are red in
-  **all three**, which is what makes the guard sound rather than any one of the
-  numbers.
+  number for this mutant: inserting alongside immediately after `<head>` → 9
+  unit tests red; the scan reporting no base at all → 13; detecting the tag,
+  ignoring its href and inserting the directory base alongside with
+  `hadExistingBase: true` → 13. Nine assertions are red in **all three** — among
+  them the two that count `<base` occurrences — which is what makes the guard
+  sound rather than any one of the numbers. The third spelling's own count moved
+  6 → 13 between sweeps because the spelling is not recoverable from a
+  paraphrase, so the replacement is now written out.
 - **Mis-handle the quoted-attribute state** → also spelling-dependent, because
-  the state has two characters in it: honouring only `'` → 10 red; honouring
+  the state has two characters in it: honouring only `'` → 12 red; honouring
   only `"` → 2 red. Each spelling is blind to the other quote character, which
   is why both a double- and a single-quoted `>` fixture are present.
 - **Stop skipping HTML comments** → 2 red. 🔴 **This mutant SURVIVED the first
@@ -203,11 +245,21 @@ findings worth recording rather than a tick:
   prefix** rather than whole (the scanner's equivalent of dropping a `\b`) → 1
   red each for `head` and `base`, the `<header>`/`<basefont>` test.
 - **Ignore the response's final URL** → 2 red, the two redirect cases.
-- **Reinstate the quadratic regex existing-base walk** → 6 red, including the
-  pathological-input timing guard with its own message, `expected 2722.071061
-  to be less than 500`, while the 576 KB **benign control stayed green**
-  (10-15 ms over four runs). That pair is what attributes a failure to the
+- **Reinstate a quadratic regex existing-base walk** (`html.matchAll(
+  /<base\b[^>]*>/gi)` plus an `href` pattern per match) → 5 red, including the
+  pathological-input timing guard with its own message, while the 576 KB
+  **benign control stayed green**. That pair is what attributes a failure to the
   input's SHAPE rather than to a loaded machine.
+
+  🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+  stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+  the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+  same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+  1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+  code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+  gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+  `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+  single measurements on one machine.
 - **In the hook:** the deadline wired to the shared controller but not
   distinguished from an unmount (the swallowing described below) → 1 red,
   `expected 'loading' to be 'error'`; flagging without aborting → 1 red, same
@@ -231,11 +283,13 @@ findings worth recording rather than a tick:
    every start position. The second revision split it into two linear-looking
    regexes, which **cleared the alert and left the asymptotics quadratic** —
    `/<base\b[^>]*>/g` still rescans `[^>]*` from every `<base` start when the
-   document holds a long run with no `>`. Measured at 4× per doubling and
-   **2.8 s on a 192 KB input**. The fix is a single left-to-right scanner that
-   advances its cursor by at least one character per iteration and never
-   restarts, pinned by the timing guard above (2-8 ms at that same 192 KB,
-   against a 500 ms bound).
+   document holds a long run with no `>`. Measured at 4× per doubling, and in
+   **seconds** on a 192 KB input (1.8-2.9 s across three sittings — the spread
+   is machine load, which is why the figure is given as a range and the
+   asymptotic shape, not as a single number). The fix is a single left-to-right
+   scanner that advances its cursor by at least one character per iteration and
+   never restarts, pinned by the timing guard above: single-digit milliseconds
+   at that same 192 KB, against a 500 ms bound.
 2. **Finding a `<base>` in the wrong places was actively harmful, not merely
    over-eager.** A `<base href>` in an HTML comment was "found" and the
    replacement spliced *inside* the comment, leaving the document with **zero**

@@ -32,26 +32,42 @@ place — the header of
 **`0.57.0` is a PREDICTION, pinned as one.** The symbol ships for the first time
 in the app-sdk minor released alongside this change, so there is no tarball to
 probe for a PRESENT reading. Derived from the release plan: in-tree app-sdk
-`0.56.0`, which is also `npm view @civitai/app-sdk version`; this branch's
-changeset bumps app-sdk `minor`; `pnpm exec changeset status --verbose` prints
-`@civitai/app-sdk 0.57.0` (and `@civitai/blocks-react 0.64.0`). It is pinned via
+`0.56.0`; this branch's changeset bumps app-sdk `minor`; `pnpm exec changeset
+status --verbose` prints `@civitai/app-sdk 0.57.0` (and
+`@civitai/blocks-react 0.64.0`). It is pinned via
 `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH` plus the `PREDICTED ENTRY` test, which
 re-derives the number from the tree on every run — so a rebase past another
 app-sdk release goes **red** instead of drifting.
 
+⚠ **The derivation above deliberately does NOT cite `npm view @civitai/app-sdk
+version`,** and an earlier revision did — "in-tree app-sdk `0.56.0`, which is
+also `npm view @civitai/app-sdk version`". That clause went false inside this
+PR's own lifetime: `0.56.1` published 2026-10-03T23:43:58Z, about 71 minutes
+before this branch's head commit. Nothing in the prediction depended on it —
+`changeset status` computes the next version from the TREE, so the answer is
+`0.57.0` whether the registry sits at `0.56.0` or `0.56.1` (re-run 2026-10-04
+after `0.56.1` published: still `0.57.0` / `0.64.0`, exit 0). A figure a
+conclusion does not rest on is pure decay surface, so it is gone rather than
+re-dated.
+
 What *was* measured, rather than predicted — that the symbol is absent from
 every published version, so the run cannot start lower. `npm pack` of each
-tarball, untarred, `grep -rl <symbol> package/dist`:
+tarball, untarred, `grep -rl <symbol> package/dist`. **The `read on` column is
+not decoration — only the `0.56.1` row was probed on 2026-10-04; the other two
+are the earlier readings, carried forward unchanged and NOT re-run:**
 
-| version | `fetchNestedDocument` | `injectBaseHref` | `NestedDocumentError` | `BLOCK_SCOPES` (pos. ctrl) | `__NOPE_7f3a__` (neg. ctrl) |
-|---|---|---|---|---|---|
-| 0.56.0 (newest published) | absent (0 files) | absent | absent | present (7 files) | absent |
-| 0.55.0 (old floor) | absent (0 files) | absent | absent | present (7 files) | absent |
+| version | read on | `fetchNestedDocument` | `injectBaseHref` | `NestedDocumentError` | `BLOCK_SCOPES` (pos. ctrl) | `__NOPE_7f3a__` (neg. ctrl) |
+|---|---|---|---|---|---|---|
+| 0.56.1 (newest published as of that date) | 2026-10-04 | absent (0 files) | absent | absent | present (7 files) | absent |
+| 0.56.0 | 2026-10-03 | absent (0 files) | absent | absent | present (7 files) | absent |
+| 0.55.0 (old floor) | 2026-10-03 | absent (0 files) | absent | absent | present (7 files) | absent |
 
 Both controls ran before those zeros were believed: the positive one shows the
 probe can see this package's shipped code at all (a uniform "absent" is
 otherwise indistinguishable from a probe wired to nothing), and the negative one
-shows it can answer "no".
+shows it can answer "no". The row for `0.56.1` is stamped with the date it was
+read because "newest published" is a moving reading; the CONCLUSION it supports
+is not, and was unaffected by the move.
 
 `injectBaseHref` and `NestedDocumentError` ship in the same module and are
 deliberately **not** ledgered: `src/` does not value-import them (the hook needs
@@ -64,8 +80,10 @@ tarball's `dist`, which sees a module-internal name just the same.
 
 🔴 **OWED AFTER THE RELEASE PUBLISHES:** empty
 `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH`, re-read the entry off the real `0.57.0`
-tarball with `0.56.0` as the ABSENT control, and record both here. A list left
-populated pins the floor to the NEXT release forever.
+tarball with **the newest version published BELOW it** as the ABSENT control —
+`0.56.1` as of 2026-10-04, but read the registry rather than trusting that — and
+record both here. A list left populated pins the floor to the NEXT release
+forever.
 
 ---
 
@@ -101,7 +119,7 @@ the tarball's own `package.json`, `import()` it, read `Object.keys`):
 |---|---|---|---|---|
 | 0.49.0 (old floor) | 34 | absent | present | absent |
 | 0.53.0 | 34 | absent | present | absent |
-| 0.54.0 (newest published) | 34 | absent | present | absent |
+| 0.54.0 (newest published on 2026-10-02) | 34 | absent | present | absent |
 
 Both controls ran before the numbers were believed: the positive one shows the
 probe can read this subpath's exports at all (a uniform "absent" is otherwise
@@ -117,20 +135,31 @@ symbol the package does not import.
 release published, `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH` was emptied, and the
 three entries were re-read off the real tarballs (`npm pack @civitai/app-sdk@V`,
 untar, `grep -rl <symbol> package/dist`) rather than off the workspace copy. The
-registry was asked first: `npm view @civitai/app-sdk versions` lists `0.55.0`
-and `0.56.0`, and `npm view @civitai/app-sdk version` is `0.56.0`.
+registry was asked first each time it was re-read; **as of 2026-10-04 the top of
+the line is `0.56.1`** (59 published versions), one more than the `0.56.0` an
+earlier revision of this paragraph recorded as the top. Again, only the `0.56.1`
+row was probed on 2026-10-04 — the three below it are earlier readings carried
+forward, not re-run.
 
-| version | the three symbols | `BLOCK_SCOPES` (pos. ctrl) | `__NOPE_7f3a__` (neg. ctrl) |
-|---|---|---|---|
-| 0.54.0 (the version below) | **absent** (0 files) | present (7 files) | absent |
-| 0.55.0 (the floor) | **present** (4 files each) | present (7 files) | absent |
-| 0.56.0 (newest published) | **present** (4 files each) | present (7 files) | absent |
+| version | read on | the three symbols | `BLOCK_SCOPES` (pos. ctrl) | `__NOPE_7f3a__` (neg. ctrl) |
+|---|---|---|---|---|
+| 0.54.0 (the version below) | 2026-10-03 | **absent** (0 files) | present (7 files) | absent |
+| 0.55.0 (the floor) | 2026-10-03 | **present** (4 files each) | present (7 files) | absent |
+| 0.56.0 | 2026-10-03 | **present** (4 files each) | present (7 files) | absent |
+| 0.56.1 (newest published as of that date) | 2026-10-04 | **present** (4 files each) | present (7 files) | absent |
 
 Which is what makes `>=0.55.0` **EXACT, not merely sufficient**: 0.54.0 cannot
-start the run and 0.56.0 keeps it unbroken to the top. Both controls ran before
-the readings were believed — the positive one shows the probe can see this
-package's shipped code at all, the negative one shows it can answer "no". The
-floor is left where it is, per the `PREDICTION HAS COME TRUE` test's own step 2.
+start the run, and the run is unbroken from 0.55.0 to the newest version
+published at the time of each reading. Both controls ran before the readings were
+believed — the positive one shows the probe can see this package's shipped code
+at all, the negative one shows it can answer "no". The floor is left where it is,
+per the `PREDICTION HAS COME TRUE` test's own step 2.
+
+⚠ **"Unbroken to the top" is a claim that EXPIRES, and that is the point of the
+dates.** Every row above is a reading of one tarball and stays true forever; the
+word "newest" is not a property of a tarball and goes stale on the next publish —
+which it did, twice, within three days. When you extend this table, add a dated
+row rather than re-labelling an existing one.
 
 ⚠ This paragraph read "🔴 **OWED AFTER THE RELEASE PUBLISHES**" until
 2026-10-03, a day after the conversion had in fact completed (recorded in the
@@ -164,8 +193,9 @@ and #372 (`24db9c3`) re-read the four entries off the real tarballs;
 
 Measured, both sides of the boundary:
 
-- published **`0.49.0` exports ALL four** (34 symbols on `./blocks`) and is the
-  newest published version, so the contiguous run is unbroken to the top;
+- published **`0.49.0` exports ALL four** (34 symbols on `./blocks`) and was the
+  newest published version on 2026-09-21, so the contiguous run was unbroken to
+  the top as of that reading;
 - published **`0.48.0` exports NONE of them** (29 symbols on `./blocks`), so the
   run cannot start lower.
 
