@@ -67,11 +67,20 @@ chat.tools = {
 chat.instructions = () => `The board has ${board.size} pins.`; // read at every reply
 ```
 
+A tool's call shows as its `activity` while it runs and as nothing once done, unless it has a
+`render`. It is called again on every change, so it can show progress and the result:
+
+```ts
+chat.tools.pin_to_board.render = (call) => (call.state === 'done' ? `Pinned to “${(call.output as { board: string }).board}”` : undefined);
+chat.toolViews = { search_models: { activity: 'Browsing the catalog…' } };
+```
+
 | Property | What it does |
 |---|---|
 | `app` | The signed-in `AppClient`; the chat starts when it is set. |
 | `signIn` | `({ signal }) => Promise<AppClient>`, called from the viewer's click or key press when they first send something without `app`. Reject with an error whose `code` is `'canceled'` when they give up; their message stays in the box. |
-| `tools` | The page's own tools, by name: `description`, `inputSchema` (JSON Schema), `execute(input, { files })`, optional `activity`. A built-in tool of the same name wins. |
+| `tools` | The page's own tools, by name: `description`, `inputSchema` (JSON Schema), `execute(input, { files })`, optional `activity` and `render`. A built-in tool of the same name wins. |
+| `toolViews` | How calls of any tool show, by tool name, including built-in and Civitai ones: `activity` (the line shown while it runs) and `render(call)`, which replaces the card with a lit template, DOM node or string; return `undefined` to keep the default. `call` is `{ name, input, state, output, error }`. |
 | `instructions` | A string or function, read at every reply: what the page is and shows. |
 | `systemPrompt` | Replaces the built-in rules (a string) or edits them (a function of the defaults). |
 | `mcp` | `{ orchestration?: boolean, site?: boolean }`, both on by default: making media, and Civitai model search. |
@@ -96,8 +105,15 @@ import { configureChat } from '@civitai/components-chat/civitai-chat';
 configureChat({ autoRunLimit: 0 }); // ask before every generation
 ```
 
-`model` (the chat model's AIR), `orchestrationMcpUrl`, `siteMcpUrl` and `autoRunLimit` (the Buzz a
-new viewer's generations may cost before the chat asks) are the settings.
+`model` (the default chat model), `models` (others the viewer may pick in Settings, each `{ id,
+label, note }`), `orchestrationMcpUrl`, `siteMcpUrl` and `autoRunLimit` (the Buzz a new viewer's
+generations may cost before the chat asks) are the settings. In Settings the viewer picks the
+assistant's model from the default, `models`, or any model id the orchestrator's chat endpoint
+serves (Custom); conversation titles always use the default.
+
+The message box takes slash commands, run by the chat itself and never sent to the assistant:
+`/clear` (or `/new`) starts a new chat, `/model` shows or switches the assistant's model
+(`/model smart`, `/model default`, `/model <id>`), and `/help` lists them.
 
 ## Panels
 
@@ -113,6 +129,19 @@ A panel is a definition, not code: controls with content-studios' input kinds (`
 `run_step` or `run_workflow` call with `{{input}}` placeholders. Every change is a new version, each
 run records the version and exact values it used (seeds included), and the whole thing is saved with
 the conversation, so a panel and its runs come back after a reload.
+
+A panel's button can also ask instead of run: with `run: { "ask": "Post {{picture}} titled {{title}}" }`
+and a `button` label, pressing it sends that message to the assistant as the viewer (with any picked
+pictures attached), which then acts with its own tools; its confirmations still apply. That makes a
+panel a form for anything the assistant can do, such as a post with an editable title and description.
+A panel opened from a share link puts the message in the message box instead, since someone else
+wrote it.
+
+A choice can also stand for a whole block of inputs (`map: { "Krea 2 Turbo": { engine: "comfy", …,
+prompt: "{{prompt}}" } }` with `input: "{{model}}"`), so one control switches between models whose
+inputs differ. **Adjust** on a generation card uses that without the assistant: it turns the request
+into a panel with its prompt and a model list (the current model plus others of the same kind, each
+priced up front with a free check, cheapest first, refused ones left out).
 
 Share on a panel copies a link that carries its latest version and values (not the author's files
 or runs). Opening it starts a conversation of the viewer's own with a copy of the panel: they run it

@@ -741,6 +741,10 @@ civitai-chat-model-card {
   cursor: default;
 }
 
+civitai-chat-panel {
+  display: block;
+}
+
 .cvt-panel {
   display: grid;
   gap: 16px;
@@ -770,6 +774,40 @@ civitai-chat-model-card {
   flex-basis: 100%;
   margin: 0;
   font-size: 14px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-commands {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+}
+
+.cvt-commands button {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--civitai-radius, 8px);
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cvt-commands button:hover,
+.cvt-commands button:focus-visible {
+  background: var(--civitai-color-border);
+  outline: none;
+}
+
+.cvt-commands span {
   color: var(--civitai-color-text-dimmed);
 }
 

@@ -1,36 +1,20 @@
 import { html, nothing, type PropertyDeclarations, type TemplateResult } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
-import { until } from 'lit/directives/until.js';
 
 import type { TurnPart } from '../agent/parts.js';
 import type { JobManager } from '../orchestration/jobs.js';
 import type { PanelManager } from '../panels/panel.js';
-import { isPanelTool } from '../panels/tools.js';
-import { POST_TOOL, type PostManager } from '../posting/post.js';
+import type { PostManager } from '../posting/post.js';
 import { CUT_OFF } from '../store/thread-store.js';
 import type { ModelDirectory } from '../store/models.js';
-import { ASK_CHOICE } from '../tools/build.js';
-import { isJobTool } from '../tools/catalog.js';
-import type { Attachment, ChoiceOption, ModelRecommendation, Turn } from '../types.js';
+import type { ChatToolView } from '../tools/host.js';
+import type { Attachment, Turn } from '../types.js';
 import { renderMarkdown } from '../ux/markdown.js';
 import type { StripItem } from './lib/civitai-chat-attachment-strip.js';
-import { LightElement, emit } from './light.js';
-import { mediaActions } from './media-actions.js';
+import { LightElement } from './light.js';
+import { modelCards, viewFor, type ToolPart, type ToolViewContext } from './tool-views.js';
 
-const ACTIVITY: Record<string, string> = {
-  find_services: 'Checking what fits best…',
-  get_input_schema: 'Getting ready…',
-  get_guide: 'Planning it out…',
-  search_models: 'Searching Civitai…',
-  get_model: 'Reading about that model…',
-  get_model_version: 'Reading about that model…',
-  search_images: 'Looking at examples…',
-  caption_media: 'Looking at your file…',
-  transcribe_audio: 'Listening…',
-};
-
-/** What a failed step said: a thrown error, or a tool that answered `{ error }`. */
-function failureOf(part: Extract<TurnPart, { kind: 'tool' }>): string | undefined {
+function failureOf(part: ToolPart): string | undefined {
   if (part.state === 'error') return part.error || 'It failed.';
   const error = (part.output as { error?: unknown } | undefined)?.error;
   return part.state === 'done' && error ? String(error).slice(0, 600) : undefined;
@@ -53,7 +37,7 @@ export class CivitaiChatTurn extends LightElement {
     dockPanels: { type: Boolean, attribute: 'dock-panels' },
     models: { attribute: false },
     resolve: { attribute: false },
-    activity: { attribute: false },
+    views: { attribute: false },
   };
 
   declare turn: Turn;
@@ -70,8 +54,8 @@ export class CivitaiChatTurn extends LightElement {
   declare dockPanels: boolean;
   declare models: ModelDirectory;
   declare resolve: (id: string) => Attachment | undefined;
-  /** What a tool the embedding page added is doing, in its words. */
-  declare activity?: (toolName: string) => string | undefined;
+  /** The embedding page's views, by tool name. */
+  declare views: Record<string, ChatToolView>;
 
   constructor() {
     super();
@@ -79,6 +63,7 @@ export class CivitaiChatTurn extends LightElement {
     this.live = false;
     this.latest = false;
     this.files = () => [];
+    this.views = {};
   }
 
   #userFiles(): StripItem[] {
@@ -90,60 +75,32 @@ export class CivitaiChatTurn extends LightElement {
     return [...uploads, ...refs];
   }
 
-  #tool(part: Extract<TurnPart, { kind: 'tool' }>): TemplateResult | typeof nothing {
+  #tool(part: ToolPart): unknown {
+    const view = viewFor(part.toolName, this.views);
     const failure = failureOf(part);
     if (failure) {
-      const what = isPanelTool(part.toolName) ? 'Changing the controls' : (ACTIVITY[part.toolName] ?? this.activity?.(part.toolName) ?? 'A step').replace(/…$/, '');
+      const what = (view?.activity ?? 'A step').replace(/…$/, '');
       return html`<details class="cvt-step-failed"><summary>${what} didn't work</summary><code>${failure}</code></details>`;
     }
-    if (isJobTool(part.toolName)) {
-      const output = part.output as { job?: string } | undefined;
-      const job = this.jobs.byToolCall(part.toolCallId) ?? (output?.job ? this.jobs.get(output.job) : undefined);
-      if (job) return html`<civitai-chat-generation-card .job=${job} .actions=${mediaActions(this.posts)}></civitai-chat-generation-card>`;
-      return part.state === 'calling' ? html`<div class="cvt-activity">Getting ready…</div>` : nothing;
-    }
-    if (isPanelTool(part.toolName)) {
-      const handle = (part.output as { panel?: unknown } | undefined)?.panel;
-      const panel = typeof handle === 'string' ? this.panels?.get(handle) : undefined;
-      if (panel && this.dockPanels) {
-        return html`<button type="button" class="cvt-panel-chip" @click=${() => emit(this, 'panel-focus', { panel })}>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M4 12h16M4 18h7M17 4v4M10 10v4M14 16v4" /></svg>
-          ${part.toolName === 'open_panel' ? 'Set up' : 'Changed'} “${panel.spec.title}”
-        </button>`;
-      }
-      // A panel shows once, at the assistant's latest change to it.
-      if (panel?.toolCallId === part.toolCallId) {
-        return html`<civitai-chat-panel .panel=${panel} .files=${this.files} ?can-share=${this.canShare} .actions=${mediaActions(this.posts)}></civitai-chat-panel>`;
-      }
-      if (panel) return html`<div class="cvt-note">${part.toolName === 'open_panel' ? 'Set up' : 'Changed'} “${panel.spec.title}”; it is further down.</div>`;
-      return part.state === 'calling' ? html`<div class="cvt-activity">Setting up the controls…</div>` : nothing;
-    }
-    if (part.toolName === POST_TOOL) {
-      const post = this.posts.get(part.toolCallId);
-      if (post) return html`<civitai-chat-post-card .post=${post}></civitai-chat-post-card>`;
-      return part.state === 'calling' ? html`<div class="cvt-activity">Getting your post ready…</div>` : nothing;
-    }
-    if (part.toolName === ASK_CHOICE) {
-      const input = part.input as { question?: string; options?: ChoiceOption[] } | undefined;
-      if (!input?.options?.length) return nothing;
-      return html`<civitai-chat-choice-card .question=${input.question ?? ''} .options=${input.options} .resolve=${this.resolve} ?disabled=${!this.latest || this.live}></civitai-chat-choice-card>`;
-    }
-    const models = (part.output as { models?: ModelRecommendation[] } | undefined)?.models;
-    if (models?.length) {
-      return html`<div class="cvt-models">
-        ${models.slice(0, 8).map(
-          (model) =>
-            html`${until(
-              this.models.get(model.id).then(
-                (details) =>
-                  html`<civitai-chat-model-card .name=${model.name} .creator=${details.creator ?? ''} .image=${details.image ?? ''} .href=${details.href} .kind=${details.kind ?? ''}></civitai-chat-model-card>`,
-              ),
-              html`<civitai-chat-model-card .name=${model.name}></civitai-chat-model-card>`,
-            )}`,
-        )}
-      </div>`;
-    }
-    return part.state === 'calling' ? html`<div class="cvt-activity">${ACTIVITY[part.toolName] ?? this.activity?.(part.toolName) ?? 'Working on it…'}</div>` : nothing;
+    const rendered = view?.render?.(part, this.#context());
+    if (rendered !== undefined) return rendered;
+    return modelCards(part, this.models) ?? (part.state === 'calling' ? html`<div class="cvt-activity">${view?.activity ?? 'Working on it…'}</div>` : nothing);
+  }
+
+  #context(): ToolViewContext {
+    return {
+      host: this,
+      jobs: this.jobs,
+      posts: this.posts,
+      panels: this.panels,
+      files: this.files,
+      canShare: this.canShare,
+      dockPanels: this.dockPanels,
+      latest: this.latest,
+      live: this.live,
+      models: this.models,
+      resolve: this.resolve,
+    };
   }
 
   // Between steps the finished tool shows nothing and the next reply has not started streaming.

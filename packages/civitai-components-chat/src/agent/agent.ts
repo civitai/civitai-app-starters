@@ -1,4 +1,4 @@
-import { generateText, hasToolCall, stepCountIs, streamText, type LanguageModel, type ModelMessage, type TextStreamPart, type ToolSet } from 'ai';
+import { generateText, hasToolCall, stepCountIs, streamText, type LanguageModel, type StopCondition, type ModelMessage, type TextStreamPart, type ToolSet } from 'ai';
 
 import { MAX_OUTPUT_TOKENS, MAX_STEPS } from '../config.js';
 import type { JobManager } from '../orchestration/jobs.js';
@@ -12,11 +12,18 @@ import type { TurnPart } from './parts.js';
 import { PROVIDER_OPTIONS } from './provider.js';
 import { buildSystemPrompt } from './system-prompt.js';
 
+/** A tool that hands the next move to the viewer (an ask panel) ends the reply, so the assistant cannot act for them. */
+const awaitsUser: StopCondition<ToolSet> = ({ steps }) =>
+  steps.at(-1)?.toolResults.some((result) => (result.output as { awaitsUser?: unknown } | undefined)?.awaitsUser === true) ?? false;
+
 const LAST_STEP =
   'This is your last step this turn: you cannot call tools now. Tell the user plainly what got done and what did not, and that they can ask you to carry on. Do not say you are about to do something.';
 
 export interface AgentDeps {
-  model: LanguageModel;
+  /** Read at the start of every reply, so a change in Settings applies from the next one. */
+  model(): LanguageModel;
+  /** Naming a conversation is a few words; it need not use a costly model the viewer picked. */
+  titleModel?(): LanguageModel;
   store: ThreadStore;
   jobs: JobManager;
   posts?: PostManager;
@@ -86,11 +93,11 @@ export class Agent extends EventTarget {
         rules: this.#deps.systemPrompt?.(),
       });
       const result = streamText({
-        model: this.#deps.model,
+        model: this.#deps.model(),
         system,
         messages: buildModelMessages(conversation.turns, (key) => this.#deps.jobs.get(key) ?? this.#deps.posts?.get(key)),
         tools,
-        stopWhen: [stepCountIs(MAX_STEPS), hasToolCall(ASK_CHOICE)],
+        stopWhen: [stepCountIs(MAX_STEPS), hasToolCall(ASK_CHOICE), awaitsUser],
         abortSignal: controller.signal,
         maxOutputTokens: MAX_OUTPUT_TOKENS,
         temperature: 0.7,
@@ -170,7 +177,7 @@ export class Agent extends EventTarget {
   async #nameConversation(turn: Turn): Promise<void> {
     try {
       const { text } = await generateText({
-        model: this.#deps.model,
+        model: (this.#deps.titleModel ?? this.#deps.model)(),
         maxOutputTokens: 24,
         temperature: 0.3,
         providerOptions: PROVIDER_OPTIONS,

@@ -209,6 +209,7 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
     buyBuzzUrl: { attribute: 'buy-buzz-url' },
     actions: { attribute: false },
     single: { type: Boolean, reflect: true },
+    adjustable: { type: Boolean },
   };
 
   declare job?: CardJob;
@@ -216,6 +217,8 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
   /** Which actions each result offers; each emits `media-action` with its id. */
   declare actions: Record<MediaKind, CardAction[]>;
   declare single: boolean;
+  /** Offers Adjust, which emits `job-adjust`: the page turns the request into controls to change and rerun. */
+  declare adjustable: boolean;
 
   #watched?: CardJob;
   #retried = new Set<string>();
@@ -226,6 +229,7 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
     this.buyBuzzUrl = 'https://civitai.com/purchase/buzz';
     this.actions = DEFAULT_ACTIONS;
     this.single = false;
+    this.adjustable = false;
   }
 
   override disconnectedCallback(): void {
@@ -284,18 +288,18 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
           <div class="row">
             <civitai-button part="confirm" size="sm" @click=${() => void job.confirm()}>Go ahead</civitai-button>
             <civitai-button part="decline" size="sm" variant="subtle" @click=${() => job.decline()}>Not now</civitai-button>
-            ${this.#info()}
+            ${this.#adjust()} ${this.#info()}
           </div>`;
       case 'submitting':
         return html`<div class="status" role="status"><civitai-loader size="sm"></civitai-loader>Starting…</div>`;
       case 'running':
         return this.#running(job);
       case 'succeeded':
-        return this.#gallery(job);
+        return html`${this.#gallery(job)}${this.adjustable ? html`<div class="row">${this.#adjust()}</div>` : nothing}`;
       case 'rejected':
         return html`<civitai-alert color="warning" part="error">
           You don't have enough Buzz for this${job.price ? html` (about ${job.price.total})` : nothing}.
-          <div class="row"><a class="buy" part="buy" href=${this.buyBuzzUrl} target="_blank" rel="noopener">Get Buzz</a></div>
+          <div class="row"><a class="buy" part="buy" href=${this.buyBuzzUrl} target="_blank" rel="noopener">Get Buzz</a>${this.#adjust()}</div>
         </civitai-alert>`;
       case 'declined':
         return html`<div class="status">Not started.</div>
@@ -312,6 +316,10 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
   }
 
   /** Asks the page to show what this job is making, before there is anything to open. */
+  #adjust(): TemplateResult | typeof nothing {
+    return this.adjustable ? html`<civitai-button part="adjust" size="sm" variant="subtle" @click=${() => this.#emit('job-adjust', {})}>Adjust</civitai-button>` : nothing;
+  }
+
   #info(): TemplateResult {
     return html`<civitai-button part="info" size="sm" variant="subtle" @click=${() => this.#emit('job-info', {})}>Info</civitai-button>`;
   }

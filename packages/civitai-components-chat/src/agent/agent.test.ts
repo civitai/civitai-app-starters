@@ -61,7 +61,7 @@ function setup(
     [ASK_CHOICE]: tool({ inputSchema: jsonSchema({ type: 'object', properties: { question: { type: 'string' } } }), execute: async () => ({ shown: true }) }),
   };
   const agent = new Agent({
-    model,
+    model: () => model,
     store,
     jobs: new JobManager({} as never),
     toolSet: async () => tools,
@@ -118,6 +118,38 @@ describe('Agent', () => {
     expect(JSON.stringify(prompts[1])).toContain('gen1-1');
     const roles = store.current!.turns[0]!.assistant.messages.map((m) => m.role);
     expect(roles).toEqual(['assistant', 'tool', 'assistant']);
+  });
+
+  it('ends the reply once a tool hands the next move to the user', async () => {
+    const { agent, prompts, generate } = setup([toolCall('generate_image', { prompt: 'a form' }), text('should not run')]);
+    generate.mockResolvedValueOnce({ panel: 'p1', awaitsUser: true, note: 'Wait.' } as never);
+    await agent.send('let me post it with my own title');
+    expect(prompts).toHaveLength(1);
+  });
+
+  it('asks the model chosen at the time of each reply', async () => {
+    const replied: string[] = [];
+    const model = (name: string) =>
+      new MockLanguageModelV3({
+        doStream: async () => {
+          replied.push(name);
+          return { stream: convertArrayToReadableStream(text(`from ${name}`)) as never };
+        },
+        doGenerate: async () => ({ content: [{ type: 'text', text: 'Title' }], finishReason: { unified: 'stop', raw: 'stop' }, usage, warnings: [] }),
+      });
+    const models = { fast: model('fast'), smart: model('smart') };
+    let chosen: keyof typeof models = 'fast';
+    const store = new ThreadStore({
+      orchestration: { submitWorkflow: vi.fn(async (_: WorkflowTemplate) => workflow({ id: '7-1' })), queryWorkflows: vi.fn() },
+      api: { updateWorkflow: vi.fn(async () => undefined), removeTag: vi.fn(async () => undefined), deleteWorkflow: vi.fn() },
+      hideMatureContent: () => true,
+    });
+    const agent = new Agent({ model: () => models[chosen], store, jobs: new JobManager({} as never), toolSet: async () => ({}), attachments: () => [] });
+
+    await agent.send('hi');
+    chosen = 'smart';
+    await agent.send('again');
+    expect(replied).toEqual(['fast', 'smart']);
   });
 
   it('stops after showing choices, so the user answers next', async () => {

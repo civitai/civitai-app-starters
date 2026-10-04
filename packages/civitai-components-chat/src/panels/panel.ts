@@ -6,7 +6,7 @@ import type { JobManager } from '../orchestration/jobs.js';
 import { panelRunId } from '../store/attachments.js';
 import type { HumanError } from '../ux/humanize.js';
 import type { Price } from '../ux/spending.js';
-import { missingRequired, normalizeValues, renderRun, withSeeds, type PanelSpec, type PanelValue, type PanelValues } from './spec.js';
+import { isAskPanel, missingRequired, normalizeValues, renderAsk, renderRun, withSeeds, type PanelSpec, type PanelValue, type PanelValues } from './spec.js';
 
 /** One press of Run: the version it ran and the exact values, seeds included, so it can be repeated. */
 export interface PanelRunRecord {
@@ -38,6 +38,8 @@ export interface PanelDeps {
   /** What the orchestration MCP's run tool can do; `undefined` while making things is switched off. */
   toolInfo(name: string): JobToolInfo | undefined;
   save(panel: SavedPanel): void;
+  ask?(message: string, refs: string[]): void;
+  compose?(message: string, refs: string[]): void;
   random?(): number;
   newId?(): string;
 }
@@ -54,6 +56,8 @@ export interface PanelSummary {
   version: number;
   values: PanelValues;
   estimatedBuzz?: number;
+  /** Ends the reply: the next move is the viewer's button press. */
+  awaitsUser?: true;
   note: string;
 }
 
@@ -114,8 +118,13 @@ export class Panel extends EventTarget {
     return missingRequired(this.spec, this.values);
   }
 
+  get asks(): boolean {
+    return isAskPanel(this.spec);
+  }
+
   get canRun(): boolean {
-    return this.missing.length === 0 && this.#deps.toolInfo(renderRun(this.spec, this.values).tool) !== undefined;
+    if (this.missing.length) return false;
+    return this.asks ? this.#deps.ask !== undefined : this.#deps.toolInfo(renderRun(this.spec, this.values).tool) !== undefined;
   }
 
   get jobs(): GenerationJob[] {
@@ -158,6 +167,7 @@ export class Panel extends EventTarget {
   }
 
   requestQuote(): void {
+    if (this.asks) return;
     clearTimeout(this.#quoteTimer);
     this.quoting = true;
     this.#emit();
@@ -180,6 +190,14 @@ export class Panel extends EventTarget {
 
   /** Runs the current values as a new generation; the button showed the price, so it does not ask again. */
   async run(): Promise<GenerationJob | undefined> {
+    if (this.asks) {
+      if (this.missing.length) return undefined;
+      const { message, refs } = renderAsk(this.spec, this.values);
+      // Someone else wrote a shared panel's message; the viewer reads it before it is sent.
+      if (this.forkedFrom) this.#deps.compose?.(message, refs);
+      else this.#deps.ask?.(message, refs);
+      return undefined;
+    }
     const values = withSeeds(this.spec, this.values, this.#deps.random ?? Math.random);
     const { tool, args } = renderRun(this.spec, values);
     const info = this.#deps.toolInfo(tool);
@@ -225,6 +243,15 @@ export class Panel extends EventTarget {
   }
 
   summary(): PanelSummary {
+    if (this.asks) {
+      return {
+        panel: this.handle,
+        version: this.version,
+        values: this.values,
+        awaitsUser: true,
+        note: `The panel is on screen and your reply ends here. When the user presses ${this.spec.button ?? 'Run'}, its message comes to you as their next message; only then do what it asks. To change it later, call update_panel with panel "${this.handle}".`,
+      };
+    }
     const price = this.price ? ` Each run costs about ${this.price.total} Buzz.` : '';
     return {
       panel: this.handle,
@@ -259,7 +286,9 @@ export class Panel extends EventTarget {
       `  Inputs: ${inputs.join(', ')}`,
       `  Current values: ${JSON.stringify(this.values)}`,
       `  Price per run with these values: ${this.price ? `about ${this.price.total} Buzz, quoted by the service` : 'not known yet'}. Never guess prices; only quote these numbers.`,
-      `  Run: ${template.length > CONTEXT_RUN_TEMPLATE ? `${template.slice(0, CONTEXT_RUN_TEMPLATE)}…` : template}`,
+      this.asks
+        ? `  Button "${this.spec.button ?? 'Run'}" sends you this message as the user: ${JSON.stringify(this.spec.run.ask)}`
+        : `  Run: ${template.length > CONTEXT_RUN_TEMPLATE ? `${template.slice(0, CONTEXT_RUN_TEMPLATE)}…` : template}`,
       ...(runs.length ? ['  Latest runs, newest first:', ...runs] : ['  Not run yet.']),
     ].join('\n');
   }
@@ -299,6 +328,7 @@ export class Panel extends EventTarget {
 }
 
 async function probe(deps: PanelDeps, where: { conversationId: string; seq: number; handle: string }, spec: PanelSpec, values: PanelValues): Promise<Probe> {
+  if (isAskPanel(spec)) return { price: null, state: 'pricing' };
   const filled = { ...values };
   for (const [key, input] of Object.entries(spec.inputs)) {
     if (input.kind === 'text' && input.required && String(filled[key] ?? '').trim() === '') filled[key] = PRICE_TEXT;

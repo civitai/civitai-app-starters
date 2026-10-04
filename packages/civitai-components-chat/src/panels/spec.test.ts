@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { checkPanelSpec, mergeSpec, missingRequired, normalizeValues, renderRun, sizeFor, withSeeds, type PanelSpec } from './spec.js';
+import { checkPanelSpec, mergeSpec, renderAsk, missingRequired, normalizeValues, renderRun, sizeFor, withSeeds, type PanelSpec } from './spec.js';
 
 const LOGO = {
   title: 'Logo maker',
@@ -48,7 +48,7 @@ describe('panel definitions', () => {
     expect(renderRun(logo, { ...values, reference: 'up1-1' }).args.input).toMatchObject({ images: ['up1-1'] });
   });
 
-  it('tells the assistant what to fix: unknown placeholders, unused inputs, bad controls, a run that is not run_step or run_workflow', () => {
+  it('tells the assistant what to fix: unknown placeholders, unused inputs, bad controls, a run that is not run_step, run_workflow or an ask', () => {
     const checked = checkPanelSpec({
       title: 'Broken',
       inputs: { mood: { kind: 'choice', options: ['Calm'] }, extra: { kind: 'toggle' }, tone: { kind: 'text' } },
@@ -61,7 +61,7 @@ describe('panel definitions', () => {
       'Inputs extra are not used in run; put {{name}} where each value belongs, or remove them.',
     ]);
     expect(checkPanelSpec({ ...LOGO, run: { prompt: 'x' } }).errors).toContain(
-      'run must be run_step arguments ({"stepType": ..., "input": {...}}) or run_workflow arguments ({"steps": [...]}).',
+      'run must be run_step arguments ({"stepType": ..., "input": {...}}), run_workflow arguments ({"steps": [...]}), or {"ask": "a message to you with {{name}} placeholders"}.',
     );
   });
 
@@ -94,5 +94,32 @@ describe('panel definitions', () => {
     );
     expect(merged.errors).toBeUndefined();
     expect(Object.keys(merged.spec!.inputs)).toEqual(['brand', 'style', 'shape', 'count', 'seed', 'palette']);
+  });
+
+  it('takes a panel whose button asks the assistant, with the values and picked files in the message', () => {
+    const post = spec({
+      title: 'Post it',
+      inputs: { picture: { kind: 'image', required: true }, title: { kind: 'text', label: 'Title' }, detail: { kind: 'text', label: 'Description', multiline: true } },
+      run: { ask: 'Post {{picture}} to Civitai titled "{{title}}". Description: {{detail}}' },
+      button: 'Post',
+    });
+    expect(post.button).toBe('Post');
+    expect(renderAsk(post, normalizeValues(post, { picture: 'gen1-1-1', title: 'Cozy cabin', detail: 'Snowy night.' }))).toEqual({
+      message: 'Post gen1-1-1 to Civitai titled "Cozy cabin". Description: Snowy night.',
+      refs: ['gen1-1-1'],
+    });
+    expect(checkPanelSpec({ title: 'Ask', inputs: { a: { kind: 'text' } }, run: { ask: 'do {{b}}' } }).errors).toContain('run uses {{b}}, but there is no input called b.');
+  });
+
+  it('lets a choice stand for a whole block of inputs, filling the placeholders inside it', () => {
+    const picker = spec({
+      title: 'Picker',
+      inputs: { prompt: { kind: 'text' }, model: { kind: 'choice', options: ['A', 'B'], map: { A: { model: 'a', prompt: '{{prompt}}' }, B: { model: 'b', text: 'make {{prompt}}' } } } },
+      run: { stepType: 'imageGen', input: '{{model}}' },
+    });
+    expect(renderRun(picker, normalizeValues(picker, { prompt: 'a fox', model: 'B' })).args).toEqual({ stepType: 'imageGen', input: { model: 'b', text: 'make a fox' } });
+    expect(checkPanelSpec({ title: 'x', inputs: { model: { kind: 'choice', options: ['A', 'B'], map: { A: { p: '{{missing}}' } } } }, run: { stepType: 's', input: '{{model}}' } }).errors).toContain(
+      'run uses {{missing}}, but there is no input called missing.',
+    );
   });
 });

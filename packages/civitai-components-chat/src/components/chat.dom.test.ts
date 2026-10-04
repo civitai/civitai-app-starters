@@ -203,4 +203,25 @@ describe('civitai-chat', () => {
     const slot = chat.shadowRoot!.querySelector<HTMLSlotElement>('slot[name="welcome"]')!;
     expect(slot.assignedElements().map((el) => el.textContent)).toEqual(['Welcome to Moodboard']);
   });
+
+  it('runs slash commands itself: switches the model and starts a new chat without asking the assistant', async () => {
+    const fetch = vi.fn(async (_url: unknown) => new Response('{}', { status: 503 }));
+    vi.stubGlobal('fetch', fetch);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const chat = document.createElement('civitai-chat');
+    chat.app = fakeApp();
+    document.body.append(chat);
+    const root = chat.shadowRoot!;
+    await vi.waitFor(() => expect(root.querySelector('civitai-chat-composer')).not.toBeNull());
+    const composer = root.querySelector('civitai-chat-composer')!;
+    const say = (text: string) => composer.dispatchEvent(new CustomEvent('cvt-send', { bubbles: true, composed: true, detail: { text } }));
+
+    say('/model smart');
+    await vi.waitFor(() => expect(JSON.parse(localStorage.getItem('cvt:settings') ?? '{}').assistantModel).toBe('z-ai/glm-5.3-flash'));
+    say('/model default');
+    await vi.waitFor(() => expect(JSON.parse(localStorage.getItem('cvt:settings') ?? '{}').assistantModel).toBeUndefined());
+    say('/clear');
+    await chat.updateComplete;
+    expect(fetch.mock.calls.map(([url]) => String(url)).filter((url) => url.includes('chat/completions'))).toEqual([]);
+  });
 });

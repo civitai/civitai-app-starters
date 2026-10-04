@@ -1,6 +1,6 @@
 import { html, nothing, type PropertyDeclarations, type TemplateResult } from 'lit';
 
-import { CUSTOM_INSTRUCTIONS_MAX, RETENTION_DAYS } from '../config.js';
+import { CUSTOM_INSTRUCTIONS_MAX, RETENTION_DAYS, type ChatModelOption } from '../config.js';
 import type { Settings } from '../types.js';
 import { LightElement, emit } from './light.js';
 
@@ -16,6 +16,8 @@ const LIMITS = [
   { value: String(NEVER_ASK), label: 'Never ask' },
 ];
 
+const CUSTOM = 'custom';
+
 export class CivitaiChatSettingsDialog extends LightElement {
   static override properties: PropertyDeclarations = {
     open: { type: Boolean },
@@ -24,6 +26,8 @@ export class CivitaiChatSettingsDialog extends LightElement {
     canExport: { type: Boolean },
     canSignOut: { type: Boolean },
     canTheme: { type: Boolean },
+    models: { attribute: false },
+    customModel: { state: true },
   };
 
   declare open: boolean;
@@ -34,6 +38,8 @@ export class CivitaiChatSettingsDialog extends LightElement {
   declare canSignOut: boolean;
   /** Only when the chat is the whole page; embedded, the page around it sets the theme. */
   declare canTheme: boolean;
+  declare models: ChatModelOption[];
+  declare customModel: boolean;
 
   constructor() {
     super();
@@ -42,6 +48,8 @@ export class CivitaiChatSettingsDialog extends LightElement {
     this.canExport = false;
     this.canSignOut = true;
     this.canTheme = true;
+    this.models = [];
+    this.customModel = false;
   }
 
   #change(patch: Partial<Settings>): void {
@@ -61,6 +69,38 @@ export class CivitaiChatSettingsDialog extends LightElement {
     ></civitai-segmented-control>`;
   }
 
+  #model(): TemplateResult {
+    const current = this.settings.assistantModel ?? '';
+    const listed = current === '' || this.models.some((model) => model.id === current);
+    const custom = this.customModel || !listed;
+    const data = [{ value: '', label: 'Default' }, ...this.models.map((model) => ({ value: model.id, label: model.label })), { value: CUSTOM, label: 'Custom…' }];
+    const note = custom
+      ? 'Any chat model the Civitai orchestrator serves; what a reply costs depends on the model.'
+      : current === ''
+        ? 'The cheapest.'
+        : (this.models.find((model) => model.id === current)?.note ?? '');
+    return html`<civitai-select
+        label="Assistant"
+        description=${note}
+        .data=${data}
+        .value=${custom ? CUSTOM : current}
+        @change=${(event: Event) => {
+          const value = (event.target as HTMLInputElement).value;
+          this.customModel = value === CUSTOM;
+          if (value !== CUSTOM) this.#change({ assistantModel: value || undefined });
+        }}
+      ></civitai-select>
+      ${custom
+        ? html`<civitai-text-input
+            label="Model id"
+            description="For example z-ai/glm-5.3-prime. Applies from the next reply."
+            placeholder="provider/model"
+            .value=${listed ? '' : current}
+            @change=${(event: Event) => this.#change({ assistantModel: (event.target as HTMLInputElement).value.trim() || undefined })}
+          ></civitai-text-input>`
+        : nothing}`;
+  }
+
   override render(): TemplateResult {
     const limit = LIMITS.some((option) => Number(option.value) === this.settings.autoRunLimit) ? String(this.settings.autoRunLimit) : '100';
     return html`<civitai-modal .open=${this.open} heading="Settings" with-close-button @close=${() => emit(this, 'cvt-close-settings')}>
@@ -73,6 +113,7 @@ export class CivitaiChatSettingsDialog extends LightElement {
           .value=${limit}
           @change=${(event: Event) => this.#change({ autoRunLimit: Number((event.target as HTMLInputElement).value) })}
         ></civitai-select>
+        ${this.#model()}
         <civitai-textarea
           label="Custom instructions"
           description="Sent with every message. Tell the assistant about you, your style, or how you like answers."

@@ -3,6 +3,7 @@ import { html, nothing, type PropertyDeclarations, type TemplateResult } from 'l
 import type { PendingUpload } from '../session.js';
 import type { Attachment } from '../types.js';
 import { ACCEPT_ATTRIBUTE, MAX_UPLOAD_BYTES } from '../uploads/upload.js';
+import { suggestCommands, type ChatCommand } from '../ux/commands.js';
 import type { CivitaiChatDropzone } from './lib/civitai-chat-dropzone.js';
 import type { StripItem } from './lib/civitai-chat-attachment-strip.js';
 import { LightElement, emit } from './light.js';
@@ -67,7 +68,22 @@ export class CivitaiChatComposer extends LightElement {
     void this.updateComplete.then(() => this.#autosize());
   }
 
+  #complete(command: ChatCommand): void {
+    this.text = `/${command.name} `;
+    void this.updateComplete.then(() => {
+      const area = this.querySelector('textarea');
+      area?.focus();
+      area?.setSelectionRange(this.text.length, this.text.length);
+    });
+  }
+
   #onKeyDown = (event: KeyboardEvent): void => {
+    const suggestions = suggestCommands(this.text);
+    if (event.key === 'Tab' && suggestions.length === 1) {
+      event.preventDefault();
+      this.#complete(suggestions[0]!);
+      return;
+    }
     if (event.key === 'Escape' && this.running) {
       event.preventDefault();
       emit(this, 'cvt-stop');
@@ -110,6 +126,18 @@ export class CivitaiChatComposer extends LightElement {
     emit(this, 'cvt-remove-file', { key: event.detail.key });
   };
 
+  #suggestions(): TemplateResult | typeof nothing {
+    const suggestions = suggestCommands(this.text);
+    if (suggestions.length === 0) return nothing;
+    return html`<ul class="cvt-commands" aria-label="Commands">
+      ${suggestions.map(
+        (command) => html`<li>
+          <button type="button" @click=${() => this.#complete(command)}><code>${command.usage}</code><span>${command.help}</span></button>
+        </li>`,
+      )}
+    </ul>`;
+  }
+
   override render(): TemplateResult {
     const items = this.#items();
     return html`<civitai-chat-dropzone
@@ -122,6 +150,7 @@ export class CivitaiChatComposer extends LightElement {
       @rejected=${(event: CustomEvent<{ reason: string }>) => emit(this, 'cvt-files-rejected', event.detail)}
     >
       <div class="cvt-composer-box">
+        ${this.#suggestions()}
         ${items.length ? html`<civitai-chat-attachment-strip removable size="sm" .items=${items} @remove=${this.#onRemove}></civitai-chat-attachment-strip>` : nothing}
         <textarea
           rows="1"

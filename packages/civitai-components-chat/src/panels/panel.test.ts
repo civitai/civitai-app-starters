@@ -20,6 +20,8 @@ const LOGO = {
 };
 
 function setup({ refuse = false } = {}) {
+  const asked: { message: string; refs: string[] }[] = [];
+  const composed: { message: string; refs: string[] }[] = [];
   const calls: { name: string; args: Record<string, unknown> }[] = [];
   const feed = controllable<Workflow>();
   const jobs = new JobManager({
@@ -43,13 +45,15 @@ function setup({ refuse = false } = {}) {
     jobs,
     toolInfo: (name) => (name === 'run_step' ? toolInfo(name, RUN_STEP_SCHEMA) : undefined),
     save: (panel) => saved.push(panel),
+    ask: (message, refs) => asked.push({ message, refs }),
+    compose: (message, refs) => composed.push({ message, refs }),
     random: () => 0.25,
     newId: () => 'PANEL-ULID',
   });
   const tools = panelTools({ conversationId: 'C1', seq: 2, panels });
   const call = (name: string, input: unknown, toolCallId = 'call_1') =>
     (tools[name] as unknown as { execute: (input: unknown, opts: unknown) => Promise<Record<string, unknown>> }).execute(input, { toolCallId, messages: [] });
-  return { panels, jobs, calls, saved, call, feed };
+  return { panels, jobs, calls, saved, call, feed, asked, composed };
 }
 
 describe('panels', () => {
@@ -154,5 +158,39 @@ describe('panels', () => {
     expect(panels.latest?.handle).toBe('p2');
     await call(UPDATE_PANEL, { panel: 'p1', values: { brand: 'D' } }, 'call_3');
     expect(panels.latest?.handle).toBe('p1');
+  });
+
+  it('opens a panel whose button asks the assistant: no price check, and pressing it sends the filled-in message', async () => {
+    const { panels, calls, call, asked, composed } = setup();
+    const result = await call(OPEN_PANEL, {
+      title: 'Post it',
+      inputs: { picture: { kind: 'image' }, title: { kind: 'text', label: 'Title' } },
+      run: { ask: 'Post {{picture}} to Civitai titled "{{title}}"' },
+      button: 'Post',
+      values: { picture: 'gen1-1-1', title: 'Cozy cabin' },
+    });
+    expect(calls).toEqual([]);
+    expect(result.note).toContain('its message comes to you as their next message');
+    const panel = panels.get('p1')!;
+    expect(panel.canRun).toBe(true);
+    expect(await panel.run()).toBeUndefined();
+    expect(asked).toEqual([{ message: 'Post gen1-1-1 to Civitai titled "Cozy cabin"', refs: ['gen1-1-1'] }]);
+    expect(composed).toEqual([]);
+    expect(panels.context()).toContain('Button "Post" sends you this message as the user');
+  });
+
+  it("puts a shared ask panel's message in the message box instead of sending what someone else wrote", async () => {
+    const { panels, asked, composed } = setup();
+    const panel = panels.open({
+      conversationId: 'C1',
+      seq: 1,
+      toolCallId: 'shared',
+      spec: { title: 'Post it', inputs: { title: { kind: 'text' } }, run: { ask: 'Post titled {{title}}' }, button: 'Post' },
+      values: { title: 'Hi' },
+      forkedFrom: { id: 'X', version: 1 },
+    });
+    await panel.run();
+    expect(asked).toEqual([]);
+    expect(composed).toEqual([{ message: 'Post titled Hi', refs: [] }]);
   });
 });

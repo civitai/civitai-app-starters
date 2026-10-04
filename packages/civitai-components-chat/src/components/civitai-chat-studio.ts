@@ -259,7 +259,9 @@ export class CivitaiChatStudio extends LitElement {
   }
 
   #canvas(job: GenerationJob | undefined): TemplateResult {
-    if (!job) return html`<div class="status">Press Run to make the first one.</div>`;
+    if (!job) {
+      return html`<div class="status">${this.panel?.asks ? `Press ${this.panel.spec.button ?? 'Run'} to ask the assistant; its answer appears in the chat.` : 'Press Run to make the first one.'}</div>`;
+    }
     switch (job.state) {
       case 'pricing':
       case 'submitting':

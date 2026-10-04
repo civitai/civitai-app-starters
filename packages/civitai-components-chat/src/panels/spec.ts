@@ -1,7 +1,7 @@
 /** content-studios' engine-1 input kinds, so a panel can become a studio; `map`, `base` and `image` are panel-only. */
 export type PanelInput =
   | { kind: 'text'; label?: string; default?: string; placeholder?: string; maxLen?: number; multiline?: boolean; required?: boolean }
-  | { kind: 'choice'; label?: string; options: string[]; default?: string; map?: Record<string, string> }
+  | { kind: 'choice'; label?: string; options: string[]; default?: string; map?: Record<string, string | Record<string, unknown>> }
   | { kind: 'slider'; label?: string; min: number; max: number; step?: number; default?: number }
   | { kind: 'aspect'; label?: string; options: string[]; default?: string; base?: number }
   | { kind: 'count'; label?: string; min?: number; max: number; default?: number }
@@ -13,7 +13,10 @@ export type PanelInputKind = PanelInput['kind'];
 export type PanelValue = string | number | boolean;
 export type PanelValues = Record<string, PanelValue>;
 
-/** `run_step` arguments (`stepType` + `input`) or `run_workflow` arguments (`steps`), with `{{input}}` placeholders. */
+/**
+ * `run_step` arguments (`stepType` + `input`) or `run_workflow` arguments (`steps`), with `{{input}}`
+ * placeholders; or `{ ask }`, a message the button sends to the assistant as the viewer.
+ */
 export type PanelRun = Record<string, unknown>;
 
 export interface PanelSpec {
@@ -23,11 +26,14 @@ export interface PanelSpec {
   /** Rows of input names, top to bottom; inputs left out follow, one per row. */
   layout?: string[][];
   run: PanelRun;
+  /** The button's label; Run by default. */
+  button?: string;
 }
 
 export const MAX_INPUTS = 12;
 const MAX_TEXT = 2000;
 const MAX_COUNT = 8;
+const MAX_FILL_DEPTH = 2;
 const SEED_MAX = 2_147_483_647;
 const KEY = /^[A-Za-z_][A-Za-z0-9_]{0,39}$/;
 const RESERVED = new Set(['__proto__', 'constructor', 'prototype', 'toString', 'valueOf', 'hasOwnProperty']);
@@ -78,11 +84,15 @@ export function checkPanelSpec(raw: unknown): Checked {
   }
 
   const run = raw.run;
-  if (!isObj(run) || !((typeof run.stepType === 'string' && isObj(run.input)) || Array.isArray(run.steps))) {
-    errors.push('run must be run_step arguments ({"stepType": ..., "input": {...}}) or run_workflow arguments ({"steps": [...]}).');
+  const ask = isObj(run) && typeof run.ask === 'string' && run.ask.trim() !== '' && run.ask.length <= MAX_TEXT;
+  const stepInput = isObj(run) && (isObj(run.input) || (typeof run.input === 'string' && WHOLE.test(run.input)));
+  if (!isObj(run) || !(ask || (typeof run.stepType === 'string' && stepInput) || Array.isArray(run.steps))) {
+    errors.push('run must be run_step arguments ({"stepType": ..., "input": {...}}), run_workflow arguments ({"steps": [...]}), or {"ask": "a message to you with {{name}} placeholders"}.');
   } else {
     const used = new Set<string>();
-    for (const { key, part } of placeholdersIn(run)) {
+    // A choice may stand for a whole block of inputs, whose own placeholders count as used.
+    const mapped = Object.values(inputs).flatMap((input) => (input.kind === 'choice' ? Object.values(input.map ?? {}).filter(isObj) : []));
+    for (const { key, part } of placeholdersIn([run, ...mapped])) {
       used.add(key);
       const input = inputs[key];
       if (!input) {
@@ -97,7 +107,17 @@ export function checkPanelSpec(raw: unknown): Checked {
 
   if (errors.length) return { errors };
   const description = optString(raw.description, 500);
-  return { spec: { title, ...(description ? { description } : {}), inputs, ...(layout ? { layout } : {}), run: run as PanelRun } };
+  const button = optString(raw.button, 24);
+  return {
+    spec: {
+      title,
+      ...(description ? { description } : {}),
+      inputs,
+      ...(layout ? { layout } : {}),
+      run: ask ? { ask: (run as { ask: string }).ask } : (run as PanelRun),
+      ...(button ? { button } : {}),
+    },
+  };
 }
 
 function checkInput(raw: unknown, err: (message: string) => void): PanelInput | undefined {
@@ -127,7 +147,7 @@ function checkInput(raw: unknown, err: (message: string) => void): PanelInput | 
         err('a choice needs 2 to 12 distinct options.');
         return undefined;
       }
-      const map = isObj(raw.map) ? Object.fromEntries(Object.entries(raw.map).filter(([k, v]) => options.includes(k) && typeof v === 'string')) as Record<string, string> : undefined;
+      const map = isObj(raw.map) ? (Object.fromEntries(Object.entries(raw.map).filter(([k, v]) => options.includes(k) && (typeof v === 'string' || isObj(v)))) as Record<string, string | Record<string, unknown>>) : undefined;
       return { kind: 'choice', ...base, options, default: options.includes(raw.default as string) ? (raw.default as string) : options[0]!, ...(map && Object.keys(map).length ? { map } : {}) };
     }
     case 'slider': {
@@ -270,6 +290,17 @@ export function withSeeds(spec: PanelSpec, values: PanelValues, random: () => nu
   return out;
 }
 
+export function isAskPanel(spec: PanelSpec): boolean {
+  return typeof spec.run.ask === 'string';
+}
+
+/** An ask panel's message with the values in, and the files its image inputs picked. */
+export function renderAsk(spec: PanelSpec, values: PanelValues): { message: string; refs: string[] } {
+  const message = String(renderRun(spec, values).args.ask ?? '').replace(/[ \t]{2,}/g, ' ').trim();
+  const refs = Object.entries(spec.inputs).flatMap(([key, input]) => (input.kind === 'image' && values[key] ? [String(values[key])] : []));
+  return { message, refs };
+}
+
 /** The run's tool and arguments with every placeholder filled in from the values. */
 export function renderRun(spec: PanelSpec, values: PanelValues): { tool: 'run_step' | 'run_workflow'; args: Record<string, unknown> } {
   const valueOf = (key: string, part?: string): unknown => {
@@ -284,18 +315,20 @@ export function renderRun(spec: PanelSpec, values: PanelValues): { tool: 'run_st
     if (input.kind === 'toggle' && input.map) return (value ? input.map.on : input.map.off) ?? '';
     return value;
   };
-  const fill = (node: unknown): unknown => {
+  const fill = (node: unknown, depth = 0): unknown => {
     if (typeof node === 'string') {
       const whole = WHOLE.exec(node);
-      if (whole) return valueOf(whole[1]!, whole[2]);
-      return node.replace(PLACEHOLDER, (_, key: string, part?: string) => String(valueOf(key, part)));
+      if (!whole) return node.replace(PLACEHOLDER, (_, key: string, part?: string) => String(valueOf(key, part)));
+      const value = valueOf(whole[1]!, whole[2]);
+      // A mapped block is filled in turn; the depth cap ends a block that names its own choice.
+      return isObj(value) && depth < MAX_FILL_DEPTH ? fill(value, depth + 1) : value;
     }
     if (Array.isArray(node)) {
       // An optional input left empty drops out, and so does a list it emptied.
-      const items = node.map(fill).filter((item) => item !== '');
+      const items = node.map((item) => fill(item, depth)).filter((item) => item !== '');
       return items.length === 0 && node.length > 0 ? '' : items;
     }
-    if (isObj(node)) return Object.fromEntries(Object.entries(node).map(([key, item]) => [key, fill(item)]).filter(([, item]) => item !== ''));
+    if (isObj(node)) return Object.fromEntries(Object.entries(node).map(([key, item]) => [key, fill(item, depth)]).filter(([, item]) => item !== ''));
     return node;
   };
   const args = fill(spec.run) as Record<string, unknown>;
@@ -324,5 +357,6 @@ export function mergeSpec(spec: PanelSpec, patch: Obj): Obj {
     inputs,
     layout: Array.isArray(patch.layout) ? patch.layout : spec.layout?.map((row) => row.filter((key) => key in inputs)),
     run: patch.run ?? spec.run,
+    button: patch.button ?? spec.button,
   };
 }

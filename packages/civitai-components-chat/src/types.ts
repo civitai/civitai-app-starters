@@ -109,6 +109,8 @@ export interface Settings {
   autoRunLimit: number;
   /** Sent with every request as the user's standing instructions to the assistant. */
   customInstructions?: string;
+  /** The assistant's model for this viewer; the configured default when unset. */
+  assistantModel?: string;
   lastConversationId?: string;
 }
 

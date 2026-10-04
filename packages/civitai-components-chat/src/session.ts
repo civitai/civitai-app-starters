@@ -1,5 +1,5 @@
 import type { AppClient } from '@civitai/sdk';
-import type { ToolSet } from 'ai';
+import type { LanguageModel, ToolSet } from 'ai';
 
 import { Agent } from './agent/agent.js';
 import { partsFromMessages } from './agent/parts.js';
@@ -11,7 +11,9 @@ import { generationDetails, type GenerationDetails } from './orchestration/detai
 import { toolInfo, type GenerationJob, type JobState, type JobToolInfo } from './orchestration/job.js';
 import { JobManager } from './orchestration/jobs.js';
 import { PanelManager } from './panels/panel.js';
+import { adjustPanel } from './panels/adjust.js';
 import type { SharedPanel } from './panels/share.js';
+import type { PanelSpec, PanelValues } from './panels/spec.js';
 import { OPEN_PANEL } from './panels/tools.js';
 import { sitePoster } from './posting/site.js';
 import { POST_TOOL, PostManager, type PostHost } from './posting/post.js';
@@ -20,7 +22,7 @@ import { ThreadStore, type OpenedConversation } from './store/thread-store.js';
 import { buildToolSet } from './tools/build.js';
 import type { McpTool } from './mcp/clients.js';
 import { isJobTool, loadOrchestrationTools, loadSiteTools, type ToolCatalog } from './tools/catalog.js';
-import type { Attachment, Settings } from './types.js';
+import type { Attachment, Settings, Turn } from './types.js';
 import { uploadAttachment, uploadFile, probeMedia } from './uploads/upload.js';
 import { decide } from './ux/spending.js';
 import { loadSettings, saveSettings, settingsKey } from './settings.js';
@@ -47,6 +49,9 @@ export interface SessionOptions {
   mcp?(): { orchestration?: boolean; site?: boolean };
   /** Replaces the built-in persona and rules, or edits them. */
   systemPrompt?(): string | ((defaults: string) => string) | undefined;
+  /** How an ask panel's button reaches the assistant: sent as the viewer, or put in the message box. */
+  ask?(message: string, refs: string[]): void;
+  compose?(message: string, refs: string[]): void;
 }
 
 /** Everything one signed-in viewer's chat needs, wired once. */
@@ -66,6 +71,7 @@ export class ChatSession extends EventTarget {
   #siteTools: Promise<McpTool[] | null> | null = null;
   #options: SessionOptions;
   #hostToolNames = new Set<string>();
+  #models = new Map<string, LanguageModel>();
   /** What the run tools can do, from the latest catalog; panels run through them. */
   #runTools = new Map<string, JobToolInfo>();
 
@@ -102,6 +108,8 @@ export class ChatSession extends EventTarget {
       jobs: this.jobs,
       toolInfo: (name) => this.#runTools.get(name),
       save: (panel) => void this.store.savePanel(panel).catch((error: unknown) => console.warn('[chat-cvt] could not save the panel', error)),
+      ...(options.ask ? { ask: options.ask } : {}),
+      ...(options.compose ? { compose: options.compose } : {}),
     });
     this.store = new ThreadStore({
       orchestration: app.orchestration,
@@ -110,7 +118,8 @@ export class ChatSession extends EventTarget {
       scope: options.scope,
     });
     this.agent = new Agent({
-      model: createAssistantModel(app),
+      model: () => this.#model(this.settings.assistantModel?.trim() || chatConfig.model),
+      titleModel: () => this.#model(chatConfig.model),
       store: this.store,
       jobs: this.jobs,
       posts: this.posts,
@@ -141,6 +150,12 @@ export class ChatSession extends EventTarget {
       throw error;
     });
     return this.#orchestrationTools;
+  }
+
+  #model(id: string): LanguageModel {
+    let model = this.#models.get(id);
+    if (!model) this.#models.set(id, (model = createAssistantModel(this.app, { model: id })));
+    return model;
   }
 
   updateSettings(patch: Partial<Settings>): void {
@@ -257,27 +272,35 @@ export class ChatSession extends EventTarget {
     const conversation = this.store.current!;
     conversation.title = shared.spec.title;
     conversation.titleSource = 'llm';
-    const toolCallId = `shared-${conversation.id}`;
-    const panel = this.panels.open({
-      conversationId: conversation.id,
-      seq: turn.seq,
-      toolCallId,
-      spec: shared.spec,
-      values: shared.values,
-      forkedFrom: { id: shared.id, version: shared.version },
-    });
-    turn.assistant.messages = [
-      { role: 'assistant', content: [{ type: 'tool-call', toolCallId, toolName: OPEN_PANEL, input: { ...shared.spec, values: panel.values } }] },
-      { role: 'tool', content: [{ type: 'tool-result', toolCallId, toolName: OPEN_PANEL, output: { type: 'json', value: panel.summary() as never } }] },
-    ];
-    turn.assistant.status = 'done';
+    this.#placePanel(turn, `shared-${conversation.id}`, shared.spec, shared.values, { id: shared.id, version: shared.version });
     this.updateSettings({ lastConversationId: conversation.id });
     await this.store.completeTurn(turn);
   }
 
-  /** How the embedding page describes its tool while it runs. */
-  hostActivity(name: string): string | undefined {
-    return this.#options.hostTools?.()[name]?.activity;
+  /**
+   * Turns a generation into a panel to tweak and rerun: its prompt, and its model beside similar ones,
+   * each priced as it is picked. Made by the app, not the assistant, so it costs nothing and always works.
+   */
+  async adjust(job: GenerationJob): Promise<boolean> {
+    if (this.agent.running || !this.store.current) return false;
+    const built = await adjustPanel(job.tool.name, job.args, { mcp: this.orchestrationMcp, resolveArgs: (args) => this.resolveArgs(args) }, job.subject);
+    if (!built) return false;
+    const turn = this.store.appendUserTurn(`Adjust ${job.subject.toLowerCase()}`, []);
+    this.#placePanel(turn, `adjust-${job.id}-${turn.seq}`, built.spec, built.values);
+    // The panel replaces a request still waiting for the viewer's OK.
+    job.decline();
+    await this.store.completeTurn(turn);
+    return true;
+  }
+
+  // Recorded as an assistant open_panel call so the thread, saving and the assistant need no special case.
+  #placePanel(turn: Turn, toolCallId: string, spec: PanelSpec, values: PanelValues, forkedFrom?: { id: string; version: number }): void {
+    const panel = this.panels.open({ conversationId: this.store.current!.id, seq: turn.seq, toolCallId, spec, values, ...(forkedFrom ? { forkedFrom } : {}) });
+    turn.assistant.messages = [
+      { role: 'assistant', content: [{ type: 'tool-call', toolCallId, toolName: OPEN_PANEL, input: { ...spec, values: panel.values } }] },
+      { role: 'tool', content: [{ type: 'tool-result', toolCallId, toolName: OPEN_PANEL, output: { type: 'json', value: panel.summary() as never } }] },
+    ];
+    turn.assistant.status = 'done';
   }
 
   async #toolSet(turn: { conversationId: string; seq: number }): Promise<ToolSet> {

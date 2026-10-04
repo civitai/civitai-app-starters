@@ -44,6 +44,16 @@ describe('civitai-chat-composer', () => {
     expect(sent).toEqual(['a red bike']);
   });
 
+  it('suggests slash commands while one is typed, and completes the only match on Tab', async () => {
+    const { composer, type, key } = await setup();
+    await type('/mo');
+    expect([...composer.querySelectorAll('.cvt-commands code')].map((c) => c.textContent)).toEqual(['/model [default | smart | model id]']);
+    key({ key: 'Tab' });
+    await composer.updateComplete;
+    expect(composer.querySelector('textarea')!.value).toBe('/model ');
+    expect(composer.querySelector('.cvt-commands')).toBeNull();
+  });
+
   it('does not send while a file is still uploading', async () => {
     const file = new File(['x'], 'p.png', { type: 'image/png' });
     const { sent, type, key } = await setup({ uploads: [{ key: 'u', file, progress: 0.4 }] });
@@ -155,6 +165,19 @@ class FakePost extends EventTarget implements CardPost {
   dismiss = vi.fn();
 }
 
+describe('civitai-chat-generation-card Adjust', () => {
+  it('offers Adjust only where the page can turn the request into controls', async () => {
+    const job = new FakeJob('awaiting_confirmation');
+    const plain = await mount('civitai-chat-generation-card', { job });
+    expect(plain.shadowRoot!.querySelector('[part=adjust]')).toBeNull();
+    const card = await mount('civitai-chat-generation-card', { job, adjustable: true });
+    const asked: unknown[] = [];
+    card.addEventListener('job-adjust', (e) => asked.push(e.target));
+    card.shadowRoot!.querySelector<HTMLElement>('[part=adjust]')!.click();
+    expect(asked).toEqual([card]);
+  });
+});
+
 describe('civitai-chat-post-card', () => {
   it('hands the post to Civitai only when the button is pressed, then links to it', async () => {
     const post = new FakePost();
@@ -184,6 +207,31 @@ describe('civitai-chat-post-card for a draft', () => {
     expect(post.publish).not.toHaveBeenCalled();
     card.shadowRoot!.querySelector<HTMLElement>('[part=publish]')!.click();
     expect(post.publish).toHaveBeenCalled();
+  });
+});
+
+describe('civitai-chat-settings-dialog', () => {
+  it('lets the viewer pick a listed model or type any model id', async () => {
+    const dialog = await mount('civitai-chat-settings-dialog', {
+      open: true,
+      settings: { theme: 'system', allowMature: false, autoRunLimit: 100 },
+      models: [{ id: 'z-ai/glm-5.3-flash', label: 'Smart', note: 'Follows instructions more closely.' }],
+    });
+    const changes: unknown[] = [];
+    dialog.addEventListener('cvt-settings-change', (e) => changes.push((e as CustomEvent).detail));
+    const select = dialog.querySelector<HTMLInputElement>('civitai-select[label=Assistant]')!;
+
+    select.value = 'z-ai/glm-5.3-flash';
+    select.dispatchEvent(new Event('change'));
+    expect(changes).toEqual([{ assistantModel: 'z-ai/glm-5.3-flash' }]);
+
+    select.value = 'custom';
+    select.dispatchEvent(new Event('change'));
+    await dialog.updateComplete;
+    const id = dialog.querySelector<HTMLInputElement>('civitai-text-input[label="Model id"]')!;
+    id.value = ' z-ai/glm-5.3-prime ';
+    id.dispatchEvent(new Event('change'));
+    expect(changes.at(-1)).toEqual({ assistantModel: 'z-ai/glm-5.3-prime' });
   });
 });
 
@@ -237,6 +285,34 @@ describe('civitai-chat-thread', () => {
     const failed = thread.querySelector('.cvt-step-failed')!;
     expect(failed.querySelector('summary')?.textContent).toBe("Changing the controls didn't work");
     expect(failed.querySelector('code')?.textContent).toBe('input.images: required');
+  });
+
+  it("shows a page tool's call the way the page renders it, and its own activity while it runs", async () => {
+    const turn = { seq: 1, createdAt: '', user: { content: 'pin it', attachments: [] }, assistant: { messages: [], status: 'streaming' as const } };
+    const live = { seq: 1, parts: [{ kind: 'tool', toolCallId: 't1', toolName: 'pin_to_board', input: { file: 'gen1-1-1' }, state: 'calling' }] };
+    const views = {
+      pin_to_board: {
+        activity: 'Pinning it…',
+        render: (call: { state: string; output?: unknown }) => (call.state === 'done' ? `Pinned as #${(call.output as { pin: number }).pin}` : undefined),
+      },
+    };
+    const thread = await mount('civitai-chat-thread', { turns: [turn], live: live as never, views, jobs: { byToolCall: () => undefined, get: () => undefined } as never });
+    await thread.querySelector('civitai-chat-turn')!.updateComplete;
+    expect(thread.querySelector('.cvt-activity')?.textContent).toBe('Pinning it…');
+
+    Object.assign(live.parts[0]!, { state: 'done', output: { pin: 7 } });
+    thread.live = { ...live } as never;
+    await thread.updateComplete;
+    await thread.querySelector('civitai-chat-turn')!.updateComplete;
+    expect(thread.textContent).toContain('Pinned as #7');
+  });
+
+  it('renames what a built-in tool is doing when the page gives only an activity', async () => {
+    const turn = { seq: 1, createdAt: '', user: { content: 'find one', attachments: [] }, assistant: { messages: [], status: 'streaming' as const } };
+    const live = { seq: 1, parts: [{ kind: 'tool', toolCallId: 't1', toolName: 'search_models', input: {}, state: 'calling' }] };
+    const thread = await mount('civitai-chat-thread', { turns: [turn], live: live as never, views: { search_models: { activity: 'Browsing the catalog…' } }, jobs: { byToolCall: () => undefined, get: () => undefined } as never });
+    await thread.querySelector('civitai-chat-turn')!.updateComplete;
+    expect(thread.querySelector('.cvt-activity')?.textContent).toBe('Browsing the catalog…');
   });
 
   it('shows a failed reply in plain words, with what the service said under Details', async () => {
@@ -409,6 +485,15 @@ describe('civitai-chat-panel', () => {
     expect(share().textContent).toBe('Share');
     share().click();
     await vi.waitFor(() => expect(share().textContent).toBe('Link copied ✓'));
+  });
+
+  it('labels an ask panel by what it does, without a price', async () => {
+    const { panel } = await panelFixture();
+    panel.apply({ spec: { ...panel.spec, run: { ask: 'Make a {{mood}} beat with {{lead}}' }, button: 'Make it' }, toolCallId: 'c2' });
+    const el = await mount('civitai-chat-panel', { panel });
+    const button = [...el.querySelectorAll<HTMLElement>('civitai-button')].find((b) => b.textContent?.startsWith('Make it'))!;
+    expect(button.textContent?.trim()).toBe('Make it');
+    expect(el.textContent).toContain('Fill in Lead to run.');
   });
 
   it('pulls a number past its limit back to the limit, in the field too, and prices that', async () => {

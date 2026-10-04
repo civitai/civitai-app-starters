@@ -37,8 +37,9 @@ export function panelFields(panel: Panel, files: () => Attachment[], options: Fi
 }
 
 export function runButton(panel: Panel): TemplateResult {
-  const price = panel.quoting ? ' · checking price…' : panel.price ? ` · ≈ ${panel.price.variable ? 'from ' : ''}${panel.price.total.toLocaleString()} Buzz` : '';
-  return html`<civitai-button ?disabled=${!panel.canRun || panel.insufficientBuzz} @click=${() => void panel.run()}>Run${price}</civitai-button>`;
+  const label = panel.spec.button ?? 'Run';
+  const price = panel.asks ? '' : panel.quoting ? ' · checking price…' : panel.price ? ` · ≈ ${panel.price.variable ? 'from ' : ''}${panel.price.total.toLocaleString()} Buzz` : '';
+  return html`<civitai-button ?disabled=${!panel.canRun || panel.insufficientBuzz} @click=${() => void panel.run()}>${label}${price}</civitai-button>`;
 }
 
 export function panelHint(panel: Panel): TemplateResult | typeof nothing {
@@ -46,6 +47,7 @@ export function panelHint(panel: Panel): TemplateResult | typeof nothing {
   if (missing.length) return html`<span class="cvt-panel-hint">Fill in ${missing.join(' and ')} to run.</span>`;
   if (panel.insufficientBuzz) return html`<span class="cvt-panel-hint cvt-panel-hint-error">You don't have enough Buzz for this.</span>`;
   if (panel.quoteError) return html`<span class="cvt-panel-hint cvt-panel-hint-error">${panel.quoteError.message}</span>`;
+  if (panel.asks) return html`<span class="cvt-panel-hint">${panel.forkedFrom ? 'Puts the request in your message box to check and send.' : 'Asks the assistant; its answer appears in the chat.'}</span>`;
   return nothing;
 }
 
