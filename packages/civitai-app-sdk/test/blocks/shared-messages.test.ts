@@ -20,6 +20,11 @@ describe('SHARED_* message discriminators (App Blocks shared storage)', () => {
   };
 
   const requests: BlockToParentMessage[] = [
+    // ⚠ `mine` is listed here for completeness of the fixture ONLY — nothing
+    // type-checks this file (`tsconfig.typecheck.json` includes `src/**/*` plus
+    // `*.test-d.ts`, and `vitest.config.ts` includes `test/**/*.test.ts`), so
+    // this literal is not evidence that the payload accepts the field. The
+    // compile-time guard is `shared-list-mine.test-d.ts`.
     {
       type: 'SHARED_LIST',
       payload: { requestId: 'r', prefix: 'p', limit: 10, cursor: 'c', mine: true },
@@ -81,43 +86,6 @@ describe('SHARED_* message discriminators (App Blocks shared storage)', () => {
       expect(msg.payload.nextCursor).toBe('n');
     } else {
       expect.unreachable('should narrow to SHARED_LIST_RESULT');
-    }
-  });
-
-  it('narrows a SHARED_LIST request to the four optional list args, `mine` included', () => {
-    // 🔴 A TYPE claim first: this file is type-checked by `tsc -p
-    // tsconfig.typecheck.json` as part of `pnpm test`, and before `mine` existed
-    // on the `SHARED_LIST` payload the literal below did not compile
-    // (`Object literal may only specify known properties`). That compile error
-    // IS the red half of this test — a published client that cannot SPELL the
-    // field cannot send it, which is the whole defect.
-    const req: BlockToParentMessage = {
-      type: 'SHARED_LIST',
-      payload: { requestId: 'r', prefix: 'p', limit: 10, cursor: 'c', mine: true },
-    };
-    if (isMessage<BlockToParentMessage, 'SHARED_LIST'>(req, 'SHARED_LIST')) {
-      expect(req.payload.mine).toBe(true);
-      // Key PRESENCE, not value equality: `toEqual`/`toBe` against `undefined`
-      // cannot tell a dropped field from an absent one, so the ledger is the
-      // key set itself — it fails when the payload's args GROW or SHRINK.
-      expect(Object.keys(req.payload).sort()).toEqual([
-        'cursor',
-        'limit',
-        'mine',
-        'prefix',
-        'requestId',
-      ]);
-    } else {
-      expect.unreachable('should narrow to SHARED_LIST');
-    }
-
-    // `mine` is OPTIONAL — omitting it must still typecheck, because every
-    // existing caller omits it and the whole-board listing is the default.
-    const bare: BlockToParentMessage = { type: 'SHARED_LIST', payload: { requestId: 'r' } };
-    if (isMessage<BlockToParentMessage, 'SHARED_LIST'>(bare, 'SHARED_LIST')) {
-      expect('mine' in bare.payload).toBe(false);
-    } else {
-      expect.unreachable('should narrow to SHARED_LIST');
     }
   });
 
