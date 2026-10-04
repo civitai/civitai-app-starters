@@ -326,7 +326,9 @@ if you want the standalone `Storage` work-alike.
 🔴 **A nested `<iframe src="…">` pointing at your own bundled content cannot
 load, and no manifest change fixes it** — your block's origin is opaque and the
 static host stamps `frame-ancestors` + `X-Frame-Options` on every path it
-serves. The full derivation, the measured browser matrix and the known limits
+serves. The full derivation, the dated external browser matrix (an
+observation of the platform — nothing in this repo verifies it) and the known
+limits
 are in one place: the header of
 [`src/blocks/nestedDocument.ts`](src/blocks/nestedDocument.ts).
 
@@ -350,9 +352,15 @@ frame.srcdoc = srcDoc;
 
 The injected `<base href>` is the mechanism: a `srcdoc` document's base URL is
 `about:srcdoc`, inheriting yours, so every relative `src=` in the fetched markup
-would otherwise resolve to nothing. A document that already declares a
-`<base href>` has it resolved against the fetch URL and replaced, so there is
-never more than one.
+would otherwise resolve to nothing. The base is the directory of the
+**response's final URL**, so a redirect is followed rather than resolved one
+directory too high. A document that already declares a `<base href>` has that
+one resolved against the final URL and replaced — the base the parser uses is
+always absolute. It is **not** a de-duplication: markup declaring two
+`<base href>` tags comes back with two, the first (the only one a parser
+honours) rewritten and the second left inert. Only real markup counts — a
+`<base>` or a `<head>` inside a comment or an inline `<script>`/`<style>` body
+is ignored, and tag names match case-insensitively.
 
 **The returned string is NOT sanitized**, on purpose — it is your own markup and
 scripts, verbatim, and stripping them would remove the thing the nested document

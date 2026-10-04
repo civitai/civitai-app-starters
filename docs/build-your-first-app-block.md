@@ -216,11 +216,15 @@ thing as a plain async function.
 The rewrite matters: a `srcdoc` document's base URL is `about:srcdoc`, inheriting
 *yours*, so every relative `src=` in the fetched markup would otherwise resolve
 to nothing. The helper injects an absolute `<base href="…/game/">` — the
-directory the document was fetched from — which is the one thing that keeps
-relative asset loads working. If the fetched document already declares a
-`<base href>` of its own, it is resolved against the fetch URL and **replaced**,
-so the output never carries two. **This is not sanitization**: the string is your
-own markup and scripts, verbatim, so only pass a `src` you control.
+directory the document the *response* came from, so a redirect is followed — which
+is the one thing that keeps relative asset loads working. If the fetched document
+already declares a `<base href>` of its own, it is resolved against that URL and
+**replaced**, so the base your document actually gets is absolute. It is not a
+de-duplication: if your markup declares two `<base href>` tags you get two back,
+the first — the only one a parser honours — rewritten. Only real markup counts, so
+a `<base>` written inside a comment or an inline `<script>` string is left alone.
+**This is not sanitization**: the string is your own markup and scripts, verbatim,
+so only pass a `src` you control.
 
 ## 3. Write the block
 

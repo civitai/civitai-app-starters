@@ -30,21 +30,38 @@
  *      base — WITH a negative control proving the same markup WITHOUT a base
  *      resolves somewhere else entirely.
  *
- * WHAT THIS TIER CANNOT SEE, MEASURED (2026-10-03). Replacing
- * `new URL('.', docUrl).href` with `docUrl.href` in `injectBaseHref` — basing on
- * the document rather than its directory — reddens 2 of the 13 tests here, and
- * BOTH are the two that assert the whole `srcDoc` string: `loading → ready
- * exposes a srcDoc…` and `changing src restarts the cycle…`. Every `img.src`
- * assertion SURVIVES it, which is the point of the division of labour: a `<base
- * href>` naming the document resolves a relative URL identically to one naming
- * its directory, so no amount of RESOLUTION testing can see the difference. The
- * same mutant reddens 15 tests in the app-sdk unit suite, whose literal-string
- * assertions pin the exact bytes and the reported `baseHref`; this file proves a
- * real parser resolves against them. Deleting the `<base>` insertion outright
- * reddens 4 tests here, including the `img.src` one, with the production symptom
- * (`http://localhost:…/sprite.png`) — and that 4 is spelling-independent,
- * because no fixture in this file declares a `<base>` of its own, so the
- * replace-an-existing-base branch is never reached either way.
+ * WHAT THIS TIER CANNOT SEE, RE-MEASURED 2026-10-03 AGAINST THE SINGLE-PASS
+ * SCANNER (the figures recorded here previously were measured against the
+ * two-regex implementation it replaced, and described code that no longer
+ * exists). Denominator: 15 tests in this file, 51 in the app-sdk unit suite.
+ *
+ * Replacing `new URL('.', docUrl).href` with `docUrl.href` in `injectBaseHref`
+ * — basing on the document rather than its directory — reddens 2 of the 15
+ * tests here, and BOTH are the two that assert the whole `srcDoc` string:
+ * `loading → ready exposes a srcDoc…` and `changing src restarts the cycle…`.
+ * Every `img.src` assertion SURVIVES it, which is the point of the division of
+ * labour: a `<base href>` naming the document resolves a relative URL
+ * identically to one naming its directory, so no amount of RESOLUTION testing
+ * can see the difference. The same mutant reddens 26 of the app-sdk unit tests,
+ * whose literal-string assertions pin the exact bytes and the reported
+ * `baseHref`; this file proves a real parser resolves against them.
+ *
+ * Deleting the `<base>` insertion outright reddens 5 here, including the
+ * `img.src` one, with the production symptom
+ * (`expected 'http://localhost:…/sprite.png' to be
+ * 'https://nested-fixture.example/engine/sprite.png'`) — and that 5 is
+ * spelling-independent, because no fixture in this file declares a `<base>` of
+ * its own, so the replace-an-existing-base branch is never reached either way.
+ *
+ * 🔴 ONE PROPERTY IS ONLY VISIBLE HERE: that an inline script survives the
+ * rewrite and still EXECUTES. Emptying the scanner's `RAW_TEXT_ELEMENTS` set
+ * reddens 2 app-sdk unit tests (the bytes changed) and exactly 1 here — the
+ * script-runs case — which is the only assertion anywhere that a real JS engine
+ * ran the rewritten document.
+ *
+ * TWO PROPERTIES ARE NOT HERE AT ALL: the fetch deadline and the (src, srcDoc)
+ * pairing both need fake timers and a render log, so they live in the unit-tier
+ * sibling `useNestedDocument.test.tsx` — see its header.
  *
  * FIXTURE VALUES ARE PAIRWISE DISTINCT. The host (`nested-fixture.example`),
  * the two directories (`engine/`, `other/`), the two documents (`boot.html`,
@@ -78,8 +95,20 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function textResponse(status: number, body: string): Response {
-  return { ok: status >= 200 && status < 300, status, text: async () => body } as unknown as Response;
+/**
+ * 🔴 `url` IS REQUIRED, mirroring the app-sdk unit stub. Omitting it is what
+ * made the requested-vs-final URL defect invisible to BOTH tiers: with no `url`
+ * on the stub the two can never disagree, so a redirect — the only case where
+ * they differ — could not be constructed. Call sites pass the url the stub was
+ * asked for.
+ */
+function textResponse(status: number, body: string, url: string): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    url,
+    text: async () => body,
+  } as unknown as Response;
 }
 
 /** Probe component: renders the hook's three fields as text. */
@@ -130,7 +159,7 @@ function stubFetch(handler: (url: string) => Promise<Response>) {
 
 describe('useNestedDocument — the state machine, in a real browser', () => {
   it('no src → idle, and nothing is fetched', () => {
-    stubFetch(async () => textResponse(200, MARKUP));
+    stubFetch(async (u) => textResponse(200, MARKUP, u));
     render(<Probe />);
 
     expect(status()).toBe('idle');
@@ -142,7 +171,7 @@ describe('useNestedDocument — the state machine, in a real browser', () => {
   it('POSITIVE CONTROL: the same stub IS called once a src is given', async () => {
     // Without this, `calls` being empty above is indistinguishable from a stub
     // that was never wired to the hook.
-    stubFetch(async () => textResponse(200, MARKUP));
+    stubFetch(async (u) => textResponse(200, MARKUP, u));
     render(<Probe src={BOOT} />);
 
     await waitFor(() => expect(status()).toBe('ready'));
@@ -158,12 +187,12 @@ describe('useNestedDocument — the state machine, in a real browser', () => {
     expect(status()).toBe('loading');
     expect(screen.getByTestId('len').textContent).toBe('null');
 
-    d.resolve(textResponse(200, MARKUP));
+    d.resolve(textResponse(200, MARKUP, BOOT));
     await waitFor(() => expect(status()).toBe('ready'));
   });
 
   it('loading → ready exposes a srcDoc, and error stays null', async () => {
-    stubFetch(async () => textResponse(200, MARKUP));
+    stubFetch(async (u) => textResponse(200, MARKUP, u));
     render(<Probe src={BOOT} />);
 
     await waitFor(() => expect(status()).toBe('ready'));
@@ -175,7 +204,7 @@ describe('useNestedDocument — the state machine, in a real browser', () => {
   });
 
   it('loading → error on a non-OK status, with the status in the message', async () => {
-    stubFetch(async () => textResponse(503, 'unavailable'));
+    stubFetch(async (u) => textResponse(503, 'unavailable', u));
     render(<Probe src={BOOT} />);
 
     await waitFor(() => expect(status()).toBe('error'));
@@ -210,8 +239,8 @@ describe('useNestedDocument — the state machine, in a real browser', () => {
     expect(calls[1]?.url).toBe('https://nested-fixture.example/other/view.html');
 
     // The superseded fetch resolving LATE must not win.
-    first.resolve(textResponse(200, '<head></head><!-- first -->'));
-    second.resolve(textResponse(200, MARKUP));
+    first.resolve(textResponse(200, '<head></head><!-- first -->', BOOT));
+    second.resolve(textResponse(200, MARKUP, VIEW));
 
     await waitFor(() => expect(status()).toBe('ready'));
     expect(screen.getByTestId('doc').textContent).toBe(
@@ -221,7 +250,7 @@ describe('useNestedDocument — the state machine, in a real browser', () => {
   });
 
   it('clearing src returns the hook to idle', async () => {
-    stubFetch(async () => textResponse(200, MARKUP));
+    stubFetch(async (u) => textResponse(200, MARKUP, u));
     const { rerender } = render(<Probe src={BOOT} />);
     await waitFor(() => expect(status()).toBe('ready'));
 
@@ -231,7 +260,7 @@ describe('useNestedDocument — the state machine, in a real browser', () => {
   });
 
   it('a relative src resolves against baseUrl', async () => {
-    stubFetch(async () => textResponse(200, MARKUP));
+    stubFetch(async (u) => textResponse(200, MARKUP, u));
     render(<Probe src="boot.html" baseUrl={`${HOST}/engine/`} />);
 
     await waitFor(() => expect(status()).toBe('ready'));
@@ -258,7 +287,7 @@ describe('useNestedDocument — unmount', () => {
     unmount();
     expect(calls[0]?.signal?.aborted).toBe(true);
 
-    d.resolve(textResponse(200, MARKUP));
+    d.resolve(textResponse(200, MARKUP, BOOT));
     await d.promise;
     // One more macrotask so the hook's `.then` would have run by now.
     await new Promise((r) => setTimeout(r, 0));
@@ -271,8 +300,8 @@ describe('useNestedDocument — unmount', () => {
 /* -------------------------------------------------- the mechanism, in-browser */
 
 describe('the injected <base> is what makes relative assets resolve', () => {
-  /** Mount `srcdoc` in a same-origin iframe and read the browser's own resolution. */
-  async function resolvedImgSrc(srcDoc: string): Promise<string> {
+  /** Mount `srcdoc` in a same-origin iframe and hand back its live document. */
+  async function mountSrcDoc(srcDoc: string): Promise<Document> {
     const iframe = document.createElement('iframe');
     iframe.setAttribute('data-nested-fixture', '');
     const loaded = new Promise<void>((resolve) => {
@@ -281,13 +310,21 @@ describe('the injected <base> is what makes relative assets resolve', () => {
     iframe.srcdoc = srcDoc;
     document.body.appendChild(iframe);
     await loaded;
-    const img = iframe.contentDocument?.querySelector('img');
+    const doc = iframe.contentDocument;
+    if (!doc) throw new Error('fixture iframe has no contentDocument');
+    return doc;
+  }
+
+  /** Read the browser's own resolution of the fixture's relative `<img src>`. */
+  async function resolvedImgSrc(srcDoc: string): Promise<string> {
+    const doc = await mountSrcDoc(srcDoc);
+    const img = doc.querySelector('img');
     if (!img) throw new Error('fixture iframe has no <img> — the srcdoc did not parse');
     return img.src;
   }
 
   it('🔴 a relative <img src> resolves against the injected base', async () => {
-    stubFetch(async () => textResponse(200, MARKUP));
+    stubFetch(async (u) => textResponse(200, MARKUP, u));
     render(<Probe src={BOOT} />);
     await waitFor(() => expect(status()).toBe('ready'));
 
@@ -308,7 +345,7 @@ describe('the injected <base> is what makes relative assets resolve', () => {
   });
 
   it('a nested directory in the src moves the base with it', async () => {
-    stubFetch(async () => textResponse(200, MARKUP));
+    stubFetch(async (u) => textResponse(200, MARKUP, u));
     render(<Probe src={`${HOST}/engine/deep/inner.html`} />);
     await waitFor(() => expect(status()).toBe('ready'));
 
@@ -316,5 +353,40 @@ describe('the injected <base> is what makes relative assets resolve', () => {
     expect(await resolvedImgSrc(srcDoc)).toBe(
       'https://nested-fixture.example/engine/deep/sprite.png',
     );
+  });
+
+  it('🔴 an inline script holding a `<base` STRING still RUNS, and its string is intact', async () => {
+    // The regex revision rewrote the `<base` inside this string literal,
+    // producing `var s = "<base href="https://…">"` — a SYNTAX ERROR, so the
+    // script did not execute at all. A unit assertion can only show the bytes
+    // are unchanged; only a real engine can show the script runs. The script
+    // writes its own string to `document.title`, so one assertion covers both:
+    // it executed, AND the literal survived byte-for-byte.
+    const WITH_SCRIPT =
+      '<!doctype html><html><head></head><body><img src="sprite.png">' +
+      '<script>document.title = "<base href=\\"/decoy-only/\\">";</script>' +
+      '</body></html>';
+    stubFetch(async (u) => textResponse(200, WITH_SCRIPT, u));
+    render(<Probe src={BOOT} />);
+    await waitFor(() => expect(status()).toBe('ready'));
+
+    const doc = await mountSrcDoc(screen.getByTestId('doc').textContent ?? '');
+    expect(doc.title).toBe('<base href="/decoy-only/">');
+    // …and the decoy was NOT taken as the document's base: the real base is
+    // still the fetch directory, which `/decoy-only/` shares no substring with.
+    expect(doc.querySelector('img')?.src).toBe(
+      'https://nested-fixture.example/engine/sprite.png',
+    );
+  });
+
+  it('POSITIVE CONTROL: a script in this harness CAN set the title', async () => {
+    // Without this, the assertion above is indistinguishable from a harness in
+    // which no `srcdoc` script ever runs (a sandbox attribute, a CSP) — in
+    // which case `doc.title` would be wrong for a reason that has nothing to do
+    // with the rewrite.
+    const doc = await mountSrcDoc(
+      '<!doctype html><html><body><script>document.title = "harness-ok";</script></body></html>',
+    );
+    expect(doc.title).toBe('harness-ok');
   });
 });

@@ -29,9 +29,16 @@
  * fix this, and `X-Frame-Options: SAMEORIGIN` blocks it a second time on its
  * own.
  *
- * MEASURED MATRIX (local two-origin Chromium replica, sandbox
- * `allow-scripts allow-forms`, nested document framed from the opaque-origin
- * parent):
+ * 🔴 EXTERNAL PLATFORM MEASUREMENT — NOTHING IN THIS REPO VERIFIES THE MATRIX
+ * BELOW. It was taken on 2026-10-03 against a local two-origin Chromium replica
+ * of the platform's frame topology (sandbox `allow-scripts allow-forms`, nested
+ * document framed from the opaque-origin parent). That replica is deliberately
+ * NOT committed here — it would be a second, drifting model of a platform this
+ * package does not own — so no test in this package exercises any row, and a
+ * green suite says nothing about them. Treat the table as a dated observation of
+ * the platform, not as a pinned property of this code: RE-MEASURE IT if the
+ * platform changes its sandbox trust tiers or the response headers its static
+ * host stamps.
  *
  *   headers on the nested document            result
  *   ----------------------------------------  ---------
@@ -41,9 +48,10 @@
  *   frame-ancestors <unrelated>  ← control    BLOCKED
  *   X-Frame-Options: SAMEORIGIN only          BLOCKED
  *
- * The positive control is what makes the four BLOCKEDs mean something: the
- * harness CAN load a nested document, so the blocks are the headers and not the
- * replica.
+ * Within that replica the positive control is what makes the four BLOCKEDs mean
+ * something: the harness CAN load a nested document, so the blocks are the
+ * headers and not the replica. That is a claim about the replica's internal
+ * consistency; it is not a claim that the replica matches production.
  *
  * WHAT THIS MODULE DOES
  * =====================
@@ -68,18 +76,27 @@
  * and the returned string carries whatever the fetched bytes said. Put your own
  * `sandbox` attribute on the iframe you hand it to.
  *
- * 🔴 KNOWN LIMITS. {@link injectBaseHref} is a TEXT transform, not an HTML
- * parse: it finds the first `<base href=…>` and the first `<head>` with regular
- * expressions — linear ones, see `findExistingBase` for why that is a
- * requirement and not a preference — so a `<base>` inside a comment or a
- * template string is treated
- * as real, and a document whose `<head>` appears only inside a comment gets its
- * `<base>` inserted at the comment instead. Both over-apply rather than
- * under-apply — the base is still absolute and still correct for ordinary
- * documents — and a parse would mean a DOM dependency on a zero-dependency,
- * worker-safe surface. It also does nothing about assets a script resolves by
- * hand from `location.*`: `<base>` moves `document.baseURI` and relative URLs
- * in markup, not a string a loader built from `location.pathname`.
+ * 🔴 KNOWN LIMITS. {@link injectBaseHref} is a SINGLE-PASS TOKENIZER, not an
+ * HTML parse (see `scanDocument`): it walks the document left to right once,
+ * tracking comments, `<script>`/`<style>` raw-text bodies and quoted attribute
+ * values, and locates the opening `<head>` and the first base-setting `<base>`
+ * only in real markup. It builds no tree, so it does not know element nesting,
+ * implied tags, or which `<head>` a stray tag would really have landed in.
+ * The cases it still gets wrong, none of which it previously got right either:
+ *
+ *   - `<title>` and `<textarea>` hold ESCAPABLE raw text, which this scanner
+ *     does not model — a literal `<base href=…>` written inside one is read as
+ *     markup. (`<script>`/`<style>`, the two bodies a build tool actually emits
+ *     markup-shaped strings into, ARE skipped.)
+ *   - A `<base>` inside a conditional comment, a `<template>`, or markup a
+ *     script writes at runtime is invisible or treated at face value, because
+ *     there is no DOM here to ask.
+ *   - It does nothing about assets a script resolves by hand from `location.*`:
+ *     `<base>` moves `document.baseURI` and relative URLs in markup, not a
+ *     string a loader built from `location.pathname`.
+ *
+ * A real parse would mean a DOM dependency on a zero-dependency, worker-safe
+ * surface, which is the trade this scanner exists to avoid.
  */
 
 /** Why a {@link NestedDocumentError} was thrown. Branch on this, not on the message. */
@@ -124,7 +141,17 @@ export class NestedDocumentError extends Error {
 
 /** What {@link injectBaseHref} returns. */
 export interface InjectBaseHrefResult {
-  /** The document with exactly one absolute `<base href>` in it. */
+  /**
+   * The document, with the `<base href>` the parser will USE made absolute.
+   *
+   * 🔴 NOT a de-duplication, and the difference is observable. What is
+   * guaranteed is that the FIRST base-setting `<base>` — the only one an HTML
+   * parser honours — carries {@link baseHref} as an absolute URL. Other
+   * `<base>` tags are left exactly as they were: a document declaring
+   * `<base href="/a/"><base href="/b/">` comes back with two, the first
+   * rewritten and the second untouched (inert, as it already was), and a
+   * `<base target>` with no `href` is left in place beside the inserted one.
+   */
   html: string;
   /** The absolute href that `<base>` now carries. */
   baseHref: string;
@@ -169,7 +196,13 @@ export interface InjectBaseHrefResult {
  *
  * A `<base>` that declares only `target` and no `href` is left alone — per the
  * HTML spec it sets no document base URL — and the new absolute `<base href>` is
- * inserted as if there were none.
+ * inserted as if there were none, so the output then holds two `<base>` tags.
+ * See {@link InjectBaseHrefResult.html} for what is and is not guaranteed about
+ * the count.
+ *
+ * Only REAL MARKUP is considered: a `<base href>` or a `<head>` written inside
+ * an HTML comment, or inside a `<script>`/`<style>` body, is ignored, and tag
+ * names match case-insensitively. A quoted attribute value may contain `>`.
  *
  * @param html The document's markup, as fetched.
  * @param documentUrl The absolute URL `html` was fetched from.
@@ -186,7 +219,8 @@ export function injectBaseHref(html: string, documentUrl: string): InjectBaseHre
     );
   }
 
-  const existing = findExistingBase(html);
+  const scan = scanDocument(html);
+  const existing = scan.base;
 
   let baseHref: string;
   try {
@@ -208,7 +242,7 @@ export function injectBaseHref(html: string, documentUrl: string): InjectBaseHre
     return { html: `${before}${tag}${after}`, baseHref, hadExistingBase: true };
   }
 
-  return { html: insertInto(html, tag), baseHref, hadExistingBase: false };
+  return { html: insertInto(html, tag, scan), baseHref, hadExistingBase: false };
 }
 
 /** Options for {@link fetchNestedDocument}. */
@@ -230,7 +264,11 @@ export interface FetchNestedDocumentOptions {
 export interface NestedDocument {
   /** Hand this to an iframe's `srcdoc`. NOT sanitized — see the module header. */
   srcDoc: string;
-  /** The absolute URL the document was fetched from. */
+  /**
+   * The absolute URL the document was fetched from — the response's FINAL URL,
+   * so a redirect is reflected here and `baseHref` is its directory. Falls back
+   * to the requested URL in a runtime whose `Response` carries no `url`.
+   */
   url: string;
   /** The absolute href the injected `<base>` carries. */
   baseHref: string;
@@ -314,57 +352,250 @@ export async function fetchNestedDocument(
     );
   }
 
-  const { html: srcDoc, baseHref, hadExistingBase } = injectBaseHref(html, url);
-  return { srcDoc, url, baseHref, hadExistingBase };
+  // 🔴 THE BASE IS RESOLVED AGAINST THE RESPONSE'S FINAL URL, NOT THE REQUESTED
+  // ONE. `fetch` follows redirects by default, and a `src` of `/game` answered
+  // with a 301 to `/game/index.html` lands the document one directory deeper
+  // than the request names. Basing on the requested URL then resolves every
+  // relative asset one directory TOO HIGH — silently, because the only symptom
+  // is a pile of 404s with nothing naming the base. `Response.url` is the
+  // serialized final URL and is what `document.baseURI` would have been had the
+  // document loaded normally. A `Response` stand-in without one (a stub, an
+  // exotic runtime) falls back to the requested URL, i.e. the previous
+  // behaviour.
+  const responseUrl = (response as { url?: unknown }).url;
+  const documentUrl = typeof responseUrl === 'string' && responseUrl !== '' ? responseUrl : url;
+
+  const { html: srcDoc, baseHref, hadExistingBase } = injectBaseHref(html, documentUrl);
+  return { srcDoc, url: documentUrl, baseHref, hadExistingBase };
 }
 
 /* ----------------------------------------------------------------- internals */
 
-/** Opening `<head>` tag, with or without attributes. */
-const HEAD_OPEN = /<head\b[^>]*>/i;
-
-/** A leading doctype declaration. */
-const LEADING_DOCTYPE = /^\s*<!doctype\b[^>]*>/i;
-
-/**
- * An `href` attribute inside ONE tag's text, quoted, single-quoted or bare.
- * Applied only to a matched tag, never to the whole document.
- */
-const HREF_ATTR = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i;
+/** What one pass of {@link scanDocument} found. All indices are into the input. */
+interface DocumentScan {
+  /** Index just PAST the first real opening `<head …>` tag. */
+  headEndsAt: number | undefined;
+  /** Index just PAST a doctype declaration that is the document's first node. */
+  doctypeEndsAt: number | undefined;
+  /** The first real `<base>` that sets a base URL, i.e. the one the parser uses. */
+  base: { index: number; length: number; href: string } | undefined;
+}
 
 /**
- * The first `<base>` tag that sets a document base URL, i.e. the first one with
- * a non-empty `href`. Per the HTML spec a `<base>` with only `target` sets no
- * base URL, and a later `<base href>` is what the parser would use — so this
- * walks the `<base>` tags rather than taking the first one.
+ * Elements whose content is RAW TEXT: `<` inside them starts no tag, so markup
+ * written in a JS string literal or a CSS value is content, not structure.
  *
- * 🔴 TWO REGEXES ON PURPOSE, AND THE REASON IS A SECURITY GATE, NOT STYLE. The
- * single-pattern version — `/<base\b[^>]*?\bhref\s*=\s*(…)[^>]*>/i` — nests a
- * lazy `[^>]*?` inside a match that also ends in `[^>]*`, which CodeQL flags as
- * `js/polynomial-redos` (high): on a long run of non-`>` characters after a
- * `<base` with no `href`, the engine retries the inner scan from every start
- * position, so the cost is quadratic in document length. The document is the
- * app's own bundle, but it is still library input and still attacker-reachable
- * for anyone who can influence a build. Here the tag scan is ONE quantifier
- * (linear) and the attribute scan runs against a single tag's bounded text, so
- * the whole walk is linear. Do not merge them back.
+ * `title`/`textarea` hold *escapable* raw text and are deliberately NOT here —
+ * modelling them needs entity handling this scanner does not do, and neither is
+ * a place a build tool emits markup-shaped strings. Stated as a known limit in
+ * the module header.
  */
-function findExistingBase(
-  html: string,
-): { index: number; length: number; href: string } | undefined {
-  // A fresh literal per call: a module-level `g` regex carries `lastIndex`
-  // between calls, which would make this function's answer depend on the
-  // previous one.
-  for (const tag of html.matchAll(/<base\b[^>]*>/gi)) {
-    const attr = HREF_ATTR.exec(tag[0]);
-    if (attr === null) continue;
-    const href = attr[1] ?? attr[2] ?? attr[3] ?? '';
-    // An empty `href` sets no base URL either, so it is "absent" like `target`.
-    if (href === '') continue;
-    if (tag.index === undefined) continue;
-    return { index: tag.index, length: tag[0].length, href };
+const RAW_TEXT_ELEMENTS = new Set(['script', 'style']);
+
+/** The five characters HTML counts as whitespace. */
+function isHtmlSpace(ch: string | undefined): boolean {
+  return ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\f';
+}
+
+/** A tag name must START with an ASCII letter, or the `<` is literal text. */
+function isAsciiAlpha(ch: string | undefined): boolean {
+  if (ch === undefined) return false;
+  const c = ch.charCodeAt(0);
+  return (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a);
+}
+
+/**
+ * ONE LEFT-TO-RIGHT PASS over the document, locating the opening `<head>`, a
+ * leading doctype and the first base-setting `<base>` — in REAL MARKUP only.
+ *
+ * 🔴 WHY THIS IS A SCANNER AND NOT TWO REGEXES, measured. The regex version
+ * found a `<base href>` or a `<head>` wherever the characters appeared, which is
+ * not where the parser finds them, and three of those disagreements were
+ * actively harmful rather than merely over-eager:
+ *
+ *   - a `<base href>` inside an HTML COMMENT was "found", and the replacement
+ *     was spliced INSIDE the comment — leaving the document with ZERO base
+ *     elements, where ignoring the comment inserts after `<head>` and works.
+ *     Detection turned a working document into a broken one.
+ *   - a `<base` inside an inline SCRIPT STRING was rewritten, corrupting the JS
+ *     (`var s = "<base href="https://…">"`) so the script did not run at all.
+ *   - a `<base>` whose attribute value contained `>` (`<base data-x="a>b"
+ *     href="/pkg/">`) was not recognised as having an `href`, so the author's
+ *     declared base was silently discarded.
+ *
+ * 🔴 AND IT IS LINEAR, WHICH THE REGEX VERSION WAS NOT — including the
+ * "two linear regexes" revision that answered CodeQL's `js/polynomial-redos`
+ * alert. `/<base\b[^>]*>/g` still retries `[^>]*` from every `<base` start
+ * position when the document holds a long run with no `>`, so a document of
+ * `'<base '.repeat(n)` cost quadratic time: measured 4x per doubling, 2.8 s on a
+ * 192 KB input. Fixing the ALERT is not the same as fixing the ASYMPTOTICS.
+ * Every loop below advances its cursor by at least one character per iteration
+ * and never restarts, and the only allocations are bounded-length tag/attribute
+ * names — so the whole pass is O(document length). Pinned by the pathological
+ * input guard in `test/blocks/nestedDocument.test.ts`.
+ */
+function scanDocument(html: string): DocumentScan {
+  const n = html.length;
+  let headEndsAt: number | undefined;
+  let doctypeEndsAt: number | undefined;
+  let base: { index: number; length: number; href: string } | undefined;
+
+  // A doctype only counts when it is the document's FIRST node. Tracked as a
+  // flag rather than re-inspecting the prefix, which would itself be quadratic.
+  let atFirstNode = true;
+
+  let i = 0;
+  while (i < n) {
+    const lt = html.indexOf('<', i);
+    if (lt < 0) break;
+
+    // Text before this `<`. Non-whitespace text is a node, so a doctype after
+    // it is not leading. Cheap: the scan stops at the first such character and
+    // the flag is never re-raised.
+    if (atFirstNode) {
+      for (let p = i; p < lt; p++) {
+        if (!isHtmlSpace(html[p])) {
+          atFirstNode = false;
+          break;
+        }
+      }
+    }
+
+    // ── A comment. Everything inside it is invisible. ──────────────────────
+    if (html.startsWith('<!--', lt)) {
+      const end = html.indexOf('-->', lt + 4);
+      i = end < 0 ? n : end + 3;
+      atFirstNode = false;
+      continue;
+    }
+
+    // ── A markup declaration (`<!doctype …>`) or a bogus comment (`<?…>`). ──
+    if (html[lt + 1] === '!' || html[lt + 1] === '?') {
+      const gt = html.indexOf('>', lt + 2);
+      const end = gt < 0 ? n : gt + 1;
+      if (
+        atFirstNode &&
+        doctypeEndsAt === undefined &&
+        html.slice(lt + 2, lt + 9).toLowerCase() === 'doctype' &&
+        !isAsciiAlpha(html[lt + 9])
+      ) {
+        doctypeEndsAt = end;
+      }
+      i = end;
+      atFirstNode = false;
+      continue;
+    }
+
+    // ── A start or end tag. ────────────────────────────────────────────────
+    let j = lt + 1;
+    const closing = html[j] === '/';
+    if (closing) j++;
+    if (!isAsciiAlpha(html[j])) {
+      // Not a tag: the `<` is literal text content.
+      i = lt + 1;
+      atFirstNode = false;
+      continue;
+    }
+
+    const nameStart = j;
+    while (j < n && !isHtmlSpace(html[j]) && html[j] !== '/' && html[j] !== '>') j++;
+    // Lowercased so `<HEAD`, `<Base` and `<BASE` all match, while `<header`
+    // and `<basefont` do not — the tag name is compared WHOLE, which is what
+    // the old `\b` in the pattern was standing in for.
+    const name = html.slice(nameStart, j).toLowerCase();
+
+    const wantHref = !closing && name === 'base' && base === undefined;
+    let href: string | undefined;
+
+    // Walk the attributes to find where this tag really ends. A QUOTED VALUE
+    // MAY CONTAIN `>` — which is the whole reason this cannot be `indexOf('>')`.
+    let k = j;
+    while (k < n && html[k] !== '>') {
+      if (isHtmlSpace(html[k]) || html[k] === '/') {
+        k++;
+        continue;
+      }
+      const attrNameStart = k;
+      while (
+        k < n &&
+        !isHtmlSpace(html[k]) &&
+        html[k] !== '/' &&
+        html[k] !== '>' &&
+        html[k] !== '='
+      ) {
+        k++;
+      }
+      if (k === attrNameStart) {
+        // A stray `=` with no name before it. Consume it so the loop advances.
+        k++;
+        continue;
+      }
+      const attrName = html.slice(attrNameStart, k).toLowerCase();
+
+      let p = k;
+      while (p < n && isHtmlSpace(html[p])) p++;
+      let value = '';
+      if (html[p] === '=') {
+        p++;
+        while (p < n && isHtmlSpace(html[p])) p++;
+        const quote = html[p];
+        if (quote === '"' || quote === "'") {
+          p++;
+          const from = p;
+          while (p < n && html[p] !== quote) p++;
+          value = html.slice(from, p);
+          if (p < n) p++; // past the closing quote
+        } else {
+          const from = p;
+          while (p < n && !isHtmlSpace(html[p]) && html[p] !== '>') p++;
+          value = html.slice(from, p);
+        }
+        k = p;
+      }
+      // The FIRST `href` wins, which is what an HTML parser does with a
+      // duplicate attribute.
+      if (wantHref && href === undefined && attrName === 'href') href = value;
+    }
+    const tagEnd = k < n ? k + 1 : n;
+
+    if (!closing && name === 'head' && headEndsAt === undefined) headEndsAt = tagEnd;
+    // An empty `href` sets no base URL, so it is "absent" like a bare `target`.
+    if (wantHref && href !== undefined && href !== '') {
+      base = { index: lt, length: tagEnd - lt, href };
+    }
+
+    atFirstNode = false;
+    i = tagEnd;
+
+    // A raw-text element's body is content, not markup. Resume at its end tag
+    // so the end tag itself is still tokenized normally.
+    if (!closing && RAW_TEXT_ELEMENTS.has(name)) {
+      i = findRawTextEnd(html, name, tagEnd);
+    }
   }
-  return undefined;
+
+  return { headEndsAt, doctypeEndsAt, base };
+}
+
+/**
+ * Index of the `<` that opens `</name…>`, or the end of the document if the
+ * element is never closed — which is also what a real parser does with an
+ * unterminated `<script>`.
+ */
+function findRawTextEnd(html: string, name: string, from: number): number {
+  const needle = `</${name}`;
+  let at = from;
+  while (at < html.length) {
+    const lt = html.indexOf('<', at);
+    if (lt < 0) return html.length;
+    // `slice` of a bounded length, so this allocation is O(1) per `<`.
+    if (html.slice(lt, lt + needle.length).toLowerCase() === needle) {
+      const after = html[lt + needle.length];
+      if (after === undefined || isHtmlSpace(after) || after === '>' || after === '/') return lt;
+    }
+    at = lt + 1;
+  }
+  return html.length;
 }
 
 /**
@@ -381,18 +612,10 @@ function escapeAttr(value: string): string {
 }
 
 /** Insert `tag` after the opening `<head>`, else after a leading doctype, else at the start. */
-function insertInto(html: string, tag: string): string {
-  const head = HEAD_OPEN.exec(html);
-  if (head) {
-    const at = head.index + head[0].length;
-    return `${html.slice(0, at)}${tag}${html.slice(at)}`;
-  }
-  const doctype = LEADING_DOCTYPE.exec(html);
-  if (doctype) {
-    const at = doctype.index + doctype[0].length;
-    return `${html.slice(0, at)}${tag}${html.slice(at)}`;
-  }
-  return `${tag}${html}`;
+function insertInto(html: string, tag: string, scan: DocumentScan): string {
+  const at = scan.headEndsAt ?? scan.doctypeEndsAt;
+  if (at === undefined) return `${tag}${html}`;
+  return `${html.slice(0, at)}${tag}${html.slice(at)}`;
 }
 
 /**
