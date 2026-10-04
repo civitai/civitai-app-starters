@@ -104,9 +104,9 @@ That rule is deliberately stated without a list of the non-ceiling strings.
 Two earlier drafts tried to enumerate them and both came up short; the honest,
 stable claim is the structural one — these six classify, everything else is
 `null` — and it stays true when the host adds or rewords a message.
-`invalid block token` (an expired token mid-session), `block instance revoked`
-and `Apps are not enabled` are *illustrations*, not a bound. See the header of
-the app-sdk's `blocks/appStorageErrors.ts` for the full reasoning and the
+`invalid block token` (an expired token mid-session) and `block instance
+revoked` are *illustrations*, not a bound. See the header of the app-sdk's
+`blocks/appStorageErrors.ts` for the full reasoning and the
 re-derivation recipe — which beats any prose in this repo, but is **necessary,
 not sufficient**: it greps `TRPCError` throws, so it cannot see a zod cap.
 
