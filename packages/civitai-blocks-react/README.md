@@ -882,10 +882,9 @@ ceiling that lands on `null` like everything else. Two earlier drafts of this
 section tried instead to enumerate the non-ceiling strings, and **both lists
 were short**; see the header of `blocks/appStorageErrors.ts` for what they
 missed and why no third list replaced them. `invalid block token` (an expired
-token mid-session), `block instance revoked` and `Apps are not enabled` are
-*illustrations* of what lands on `null`, never a bound on it. The practical
-consequence: `null` is a busy bucket, so see the `default` arm note below
-before writing copy for it.
+token mid-session) and `block instance revoked` are *illustrations* of what
+lands on `null`, never a bound on it. The practical consequence: `null` is a
+busy bucket, so see the `default` arm note below before writing copy for it.
 
 ⚠️ **The mock reaches four of the six.** It models no app-wide umbrella
 ([#368](https://github.com/civitai/civitai-app-starters/issues/368)), so
