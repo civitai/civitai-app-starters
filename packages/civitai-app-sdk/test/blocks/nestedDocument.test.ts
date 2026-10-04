@@ -344,10 +344,10 @@ describe('injectBaseHref — a document that already declares a <base>', () => {
 
   it('🔴 an empty href BEFORE a real one is the tag that gets rewritten', () => {
     // THE HARMFUL CASE, and the reason the line above is not a nicety. Reading
-    // `href=""` as absent put the inserted absolute base in front of it and
-    // rewrote the SECOND tag — leaving the first, which is the one the parser
-    // honours, pointing at the embedder. `/real/` is the decoy: it must come
-    // back untouched and inert.
+    // `href=""` as absent made the scan skip to the second tag and rewrite
+    // THAT — leaving the first, which is the one the parser honours, pointing
+    // at the embedder. `/real/` is the decoy: it must come back untouched and
+    // inert.
     const { html, baseHref, hadExistingBase } = injectBaseHref(
       '<head><base href=""><base href="/real/"></head><body><img src="sprite.png">',
       DOC_URL,

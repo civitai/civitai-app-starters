@@ -68,11 +68,12 @@ replaced**, so the author's intent survives and its form becomes absolute. A
 that wrong in the harmful direction.** The spec keys the document base URL on
 the first `<base>` that HAS an `href` content attribute, and `""` parses
 successfully against the document's own URL — so `<base href="">` sets the base
-to the document, not to nothing. Reading it as absent put the inserted absolute
-base in FRONT of it, leaving the tag a parser actually honours pointing at the
-embedder: for `<head><base href=""><base href="/real/"></head>` the helper
-reported `hadExistingBase: true` with a `/real/` base while Chromium resolved
-every asset against the embedder's URL — the opaque-origin failure this module
+to the document, not to nothing. Reading it as absent left the tag a parser
+actually honours pointing at the embedder: for `<head><base href=""><base
+href="/real/"></head>` the scan skipped past the empty tag to the second one, so
+the helper rewrote the DECOY and left the empty tag first: it reported
+`hadExistingBase: true` with a `/real/` base while Chromium resolved every
+asset against the embedder's URL — the opaque-origin failure this module
 exists to prevent, and a `baseHref` the caller was told was in use when it was
 not. The empty tag is now the one rewritten. Whitespace-only is the same case
 (the URL parser strips leading and trailing spaces) and both are pinned

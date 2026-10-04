@@ -437,8 +437,8 @@ function isAsciiAlpha(ch: string | undefined): boolean {
  * "two linear regexes" revision that answered CodeQL's `js/polynomial-redos`
  * alert. `/<base\b[^>]*>/g` still retries `[^>]*` from every `<base` start
  * position when the document holds a long run with no `>`, so a document of
- * `'<base '.repeat(n)` cost quadratic time: measured 4x per doubling, 2.8 s on a
- * 192 KB input. Fixing the ALERT is not the same as fixing the ASYMPTOTICS.
+ * `'<base '.repeat(n)` cost quadratic time: measured 4x per doubling. Fixing the
+ * ALERT is not the same as fixing the ASYMPTOTICS.
  * Every loop below advances its cursor by at least one character per iteration
  * and never restarts, and the only allocations are bounded-length tag/attribute
  * names — so the whole pass is O(document length). Pinned by the pathological
@@ -574,11 +574,13 @@ function scanDocument(html: string): DocumentScan {
     // `<base>` that HAS an `href` CONTENT ATTRIBUTE, and `""` parses
     // successfully against the document's own URL, so `<base href="">` sets
     // the base to the document URL rather than setting none. Reading it as
-    // absent is harmful rather than merely imprecise: the inserted absolute
-    // base goes in BEFORE it, so this tag stays the first base-setting element
-    // the parser honours and `document.baseURI` becomes the EMBEDDER's URL —
-    // the opaque-origin failure this whole module exists to prevent, with a
-    // `baseHref` the caller is told is in use when it is not. A whitespace-only
+    // absent is harmful rather than merely imprecise: for `<base href=""><base
+    // href="/real/">` the scan skipped past the empty tag to the second one, so
+    // the helper rewrote the DECOY and left the empty tag first — and the first
+    // base-setting tag is the one the parser honours, so `document.baseURI`
+    // becomes the EMBEDDER's URL, the opaque-origin failure this whole module
+    // exists to prevent, with a `baseHref` the caller is told is in use when it
+    // is not. Measured in `useNestedDocument.browser.test.tsx`. A whitespace-only
     // `href` is the same case for the same reason: the URL parser strips
     // leading and trailing spaces, so `href="   "` also resolves to the
     // document URL. Only a `<base>` with NO `href` attribute at all sets no

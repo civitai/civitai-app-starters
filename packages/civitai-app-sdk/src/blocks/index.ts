@@ -82,16 +82,12 @@ export {
  * tarballs: `nestedDocument.ts` is ADDED by the branch that introduced this
  * helper — `git log --diff-filter=A` over it returns exactly one commit — so no
  * version published before that commit can contain the symbol, whatever any
- * individual tarball says.
- *
- * The tarball probe is a cross-check on that reasoning rather than its basis.
- * Re-measured 2026-10-04: `injectBaseHref` appears in 0 files of the published
- * `0.54.0`/`0.55.0`/`0.56.0`/`0.56.1` tarballs' `dist`, with `BLOCK_SCOPES` at
- * 7 files in each as the positive control and `__NOPE_7f3a__` at 0 as the
- * negative one. ⚠ An earlier revision of this comment derived "no published
- * version has ever shipped it" from THREE tarballs alone — a sample generalised
+ * individual tarball says. ⚠ An earlier revision of this comment derived that
+ * conclusion from a handful of tarball probes instead — a sample generalised
  * into a claim about every published version. The conclusion was right; the
- * grounds it stated were not, which is the part worth not repeating.
+ * grounds it stated were not, which is the part worth not repeating. The probes
+ * themselves, with their read dates and controls, are recorded in
+ * `packages/civitai-blocks-react/PEER_FLOOR.md`.
  *
  * Both stay exported from `nestedDocument.ts`, so the unit suite reaches them by
  * file path — and adding one here later is a `minor`, while removing one once

@@ -256,12 +256,12 @@ const PEER_VALUE_SYMBOL_SINCE = {
   //
   // So 0.55.0 is EXACT, not merely sufficient. Controls, run before those
   // readings were believed:
-  //   - POSITIVE: `BLOCK_SCOPES` read PRESENT (7 files) on all three tarballs —
-  //     the probe can see this package's shipped code at all, so an ABSENT is a
-  //     real absence rather than a probe wired to nothing.
+  //   - POSITIVE: `BLOCK_SCOPES` read PRESENT (7 files) on every tarball
+  //     probed — the probe can see this package's shipped code at all, so an
+  //     ABSENT is a real absence rather than a probe wired to nothing.
   //   - NEGATIVE: an impossible symbol (`__NOPE_7f3a__`) read ABSENT (0 files)
-  //     on all three — the probe can say "no", so PRESENT is not its only
-  //     answer.
+  //     on every tarball probed — the probe can say "no", so PRESENT is not its
+  //     only answer.
   //
   // ⚠ This block carried "🔴 PREDICTIONS, NOT MEASUREMENTS" and "🔴 RE-MEASURE
   // AND RETIRE after the release publishes" until 2026-10-03, a day after the
