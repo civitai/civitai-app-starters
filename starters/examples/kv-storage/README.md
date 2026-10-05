@@ -26,6 +26,18 @@ const quota = await storage.getQuota();  // { usedBytes, rowCount, limitBytes, l
 Calls flow through the host's postMessage bridge — **the block never sees the
 apps DB credentials**. The host stores arbitrary JSON.
 
+🔴 **Before you debug a `401`: during the pre-GA preview the host API is enabled
+per ACCOUNT, and that gate is not your app.** An app that is submitted, approved
+and serving live still has every call here refused — with `Apps are not enabled`
+or `Apps access is not enabled for this browser session` — when the account the
+call is made for was never enrolled in the preview. Approval status, manifest
+scopes and token scopes are all irrelevant on that path, so checking them
+explains nothing. Those messages land on the `default:` arm below, *not* on a
+ceiling reason. The enablement step, the one-command check
+(`civitai app doctor`), the full message→gate table, and why App Storage always
+refuses under `dev:live` (no session cookie leaves the browser) are in
+[Preview access is on your ACCOUNT, not on your app](../../../docs/build-your-first-app-block.md#preview-access-is-on-your-account-not-on-your-app).
+
 ### Scope & isolation
 
 The store is keyed on (block instance, viewer): two users of the same block get

@@ -13,6 +13,13 @@ review → deploy** — and the handful of gotchas that trip up first-timers.
 > [civitai.com](https://civitai.com) and the
 > [civitai/cli issues](https://github.com/civitai/cli/issues) for the general-
 > availability announcement.
+>
+> 🔴 **The preview gates two different things, and getting a block approved
+> clears only one of them.** The host API a *running* block calls — App Storage
+> especially — is gated on the **account**, separately from submission and
+> approval. Read [Preview access is on your ACCOUNT, not on your
+> app](#preview-access-is-on-your-account-not-on-your-app) before you debug a
+> `401` from a block that is live and approved.
 
 ## 0. Install + log in
 
@@ -57,6 +64,131 @@ civitai.com model page
 - Node ≥ 20, pnpm.
 - A Civitai account. (Publishing is moderated; you submit a ZIP and a moderator
   approves it — you don't need any infra access.)
+- **For a block that calls the host API** (App Storage, and anything else the
+  host mediates on a viewer's behalf): that account enrolled in the App Blocks
+  preview — see the next section. This is a *separate* enablement from being
+  allowed to submit, and nothing about your manifest or your app's approval can
+  substitute for it.
+
+## Preview access is on your ACCOUNT, not on your app
+
+While Apps is pre-GA, the host API a running block calls is enabled **per
+account**, off by default. The gate is evaluated against a **user identity** —
+so it is orthogonal to whether your app exists, whether it is approved, which
+scopes your manifest declares, and which scopes your token carries.
+
+That means an app can be submitted, approved, built, DNS'd and serving live at
+`https://<blockId>.civit.ai/` while **every** `useAppStorage()` call it makes
+still answers `401`, because the account the call is made for is not enabled.
+Nothing is wrong with the app, and no change to the app can fix it.
+
+There are exactly two ways you will meet this gate, and they need different
+answers:
+
+1. **Your account is not in the preview** — the enablement step below, and
+   `civitai app doctor` tells you in one line.
+2. **The request reached the host with no session at all** — which is what
+   `npm run dev:live` does today, for everyone. That one is not about your
+   account; see [Why `dev:live` cannot exercise App
+   Storage](#why-devlive-cannot-exercise-app-storage).
+
+### The enablement step
+
+**Ask Civitai to add your account to the App Blocks preview.** There is no CLI
+command, dashboard toggle or manifest field that does it, and no self-serve
+request form yet (same channel as the submission access in the banner above —
+watch [civitai.com](https://civitai.com) and the
+[civitai/cli issues](https://github.com/civitai/cli/issues)). When you ask, say
+which account:
+
+```bash
+civitai whoami      # the account your CLI is authenticated as
+```
+
+The gate answers for the **account the call is made on behalf of** — the viewer
+with the host page open — not for the developer who submitted the app. On
+civitai.com those two facts line up in your favour: the same preview gate also
+decides whether a block **renders in its slot at all**, so a viewer who can see
+your block has already passed it. That is worth knowing because it narrows what
+a `401` can mean: during the preview it points at a request that reached the host
+**without a session** — the `dev:live` case below — far more often than at an
+unenrolled viewer.
+
+### Check it in one command
+
+```bash
+civitai app doctor          # prints an "App Blocks rollout:" line before the listings
+```
+
+Three outcomes — `enrolled`, `NOT ENROLLED`, and `COULD NOT CHECK` (kept
+distinct on purpose: an unreachable host is not a report that you are outside
+the preview; in `--json` that case is `null`, never `false`). It **never** sets
+the exit code — being outside a deliberately-dark preview is a supported state,
+not a broken listing — so it is safe in a release script. If your `civitai app
+doctor` prints no `App Blocks rollout:` line at all, the check is newer than
+your CLI: upgrade (it landed after `v0.1.113`).
+
+### Which gate refused you
+
+Each refusal below has text no other one uses, so the message *is* the
+diagnosis. The host forwards it verbatim into your block on the
+`APP_STORAGE_*_RESULT` reply, so you can read it from inside the iframe:
+
+| Message | Status | What it means | What fixes it |
+|---|---|---|---|
+| `Apps access is not enabled for this browser session` | 401 | The **session** account — whoever has the host page open — is not in the preview. Thrown before anything about your app is looked at. | Enrol that account. |
+| `Apps are not enabled` | 401 | The account the **block token was minted for** is not in the preview. | Enrol that account. |
+| `shared storage is not enabled` | 403 | The app-global *shared* datastore is a different surface behind its own gate. Per-viewer storage working says nothing about it. | Ask about shared storage specifically. |
+| `app block not found` | 404 | No app for that id — a slug/submission problem. | Submit, or fix the id. |
+| `app block is not approved` | 403 | The app exists and is **not** approved yet. | Wait for review. |
+| `block token subject could not be resolved` | 401 | The token's account could not be loaded (e.g. it no longer exists). | Re-mint the token / re-open the block. |
+
+Note the two independent axes: *authoring* (submit → review → approve) and
+*running* (the host API a live block calls). Approval clears neither account
+gate, which is why checking your app's status and your token's scopes explains
+nothing when you hit the first two rows — and it is why those two rows are the
+only ones an enrolment fixes.
+
+### Why `dev:live` cannot exercise App Storage
+
+🔴 **Its refusal is byte-identical to the one an unenrolled account gets, and it
+is not about your account.** Row 1's gate is keyed on the **browser session on
+the host page**. Under
+`npm run dev:live` there isn't one: the live host forwards the protocol to
+`https://civitai.com/api/trpc/apps.storage.*` as a cross-origin `fetch` carrying
+`Authorization: Bearer <dev token>` and **no credentials**, so no civitai
+session cookie goes with it (`createLiveHost` in
+[`@civitai/blocks-react`](../packages/civitai-blocks-react/src/internal/liveHost.ts)
+sets no `credentials` option, and the browser default omits cookies
+cross-origin).
+
+With no session the host evaluates the account gate **without an account**, and
+during the preview that path refuses. So App Storage under `dev:live` answers
+`401` for **every** developer, enrolled or not, before any app lookup and before
+your token's scopes are read. Do not read that `401` as a verdict on your
+enrolment, your approval, or your manifest.
+
+Where to test storage instead:
+
+- `npm run dev:harness` (mock host) for the storage flows and your error
+  branches — it backs the bridge with an in-memory store and enforces the caps;
+  see [`kv-storage`](../starters/examples/kv-storage) for what the harness can
+  and cannot reproduce.
+- the **block embedded on civitai.com**, opened by an enrolled account, for the
+  real thing. That is the only arm that exercises row 1 and row 2 as production
+  does.
+
+If the embedded block succeeds and `dev:live` refuses, nothing is wrong: you
+have reproduced the paragraph above.
+
+### Build for the refusal
+
+The preview makes a refused host call a **normal runtime state**, not an edge
+case. The `kv-storage` example's `storageFailureMessage()` is the shape to copy:
+these account refusals are *not* in the classified ceiling family, so they land
+on the classifier's `default:` arm — keep that arm, and don't have it tell a
+viewer to retry something a retry cannot fix. Degrade (session-only state plus
+an honest notice) rather than rendering nothing.
 
 ## 1. Scaffold
 
