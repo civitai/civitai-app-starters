@@ -139,6 +139,13 @@ These bit us building the reference block; the examples + the guide bake in the 
   Keep Vite `base: '/'` so the bundle resolves its own assets at the root.
 - **The dev harness pins the parent origin** — serve on the matching origin or
   `BLOCK_INIT` is rejected and the block hangs on "Loading…".
+- 🔴 **Host-API access is enabled per ACCOUNT during the preview, separately
+  from submit/approve** — an approved, live block can still get `401` on every
+  `useAppStorage()` call because the account was never enrolled, and neither
+  your manifest scopes nor your app's approval has anything to do with it.
+  `civitai app doctor` reports your account's state in one line. See
+  [Preview access is on your ACCOUNT, not on your app](./docs/build-your-first-app-block.md#preview-access-is-on-your-account-not-on-your-app)
+  — it also explains why App Storage always refuses under `dev:live`.
 
 ## Porting an existing app
 
