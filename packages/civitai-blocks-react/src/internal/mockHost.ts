@@ -325,17 +325,20 @@ export interface MockGenerationScenario {
    * Default `0`: the field is omitted, as the host omits it for a run that
    * produced no checkpoint. Opt in with `n > 0` to simulate a finished run —
    * it is off by default because a real run on this arm is bounded by the
-   * timeout below, so a default success would promise what the host cannot.
+   * spend rules below, so a default success would promise what the host may
+   * not deliver.
    *
    * The mock never fabricates a checkpoint url: the block contract does not
    * include one, so nothing here does either. A training snapshot's `imageUrls` stand for
    * the run's SAMPLE images only (the same {@link image}/{@link images} knobs
    * apply).
    *
-   * 🔴 THE REAL HOST BOUNDS THIS ARM BY `maxBuzz` (1–250), WHICH IS ALSO THE STEP
-   * TIMEOUT IN SECONDS — a real training run will typically not finish inside
-   * it. The mock does not simulate that timeout; a success here says nothing
-   * about whether your run fits.
+   * 🔴 THE REAL HOST BOUNDS THIS ARM BY AN ORCHESTRATOR QUOTE, NOT ONLY BY
+   * `maxBuzz`: a quoted run reserves `max(maxBuzz, quote)` against the token's
+   * per-call budget and gets no timeout; an unquoted one gets `maxBuzz` (1–250)
+   * as both its reservation and its timeout in seconds. The mock simulates
+   * neither the quote nor that timeout; a success here says nothing about
+   * whether your run is quoted, what it costs, or whether it fits.
    */
   trainedEpochs?: number;
   /**

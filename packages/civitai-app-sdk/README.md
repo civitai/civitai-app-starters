@@ -172,13 +172,19 @@ own key:
   and the host forwards `input` unmodified. There is no registry lookup, no param schema, no
   prompt audit and no AIR scan; what bounds it is a denylist of platform-internal `$type`s
   (scanners, moderation classifiers, hashing/model ingestion, web egress), a 64-character
-  `$type` cap, a 256 KB `input` cap, and `maxBuzz` — which, as on the inline arm, is **also the
-  step timeout in seconds**.
+  `$type` cap, a 256 KB `input` cap, and the spend reservation. **Unlike the inline arm, `maxBuzz`
+  is not always the timeout here**: on both `estimate` and `submit` the host asks the orchestrator
+  for a `whatif` quote of the step. **Quoted** → it reserves `max(maxBuzz, quote)`, gated against
+  the token's per-call budget (`token.buzzBudget`, capped at 1000 on a production token — so the
+  reservation can exceed the 1–250 `maxBuzz` range), and stamps **no** step timeout.
+  **Unquoted** → `maxBuzz` is both the reservation and the step timeout in seconds. `estimate`
+  returns that same reservation as `cost.total` — an upper bound, not a price.
 
   `training` and `imageResourceTraining` are **not** on that denylist — the host allows them on
-  this arm by an explicit operator decision. They get no special treatment: the same `maxBuzz`
-  ceiling (an integer 1–250) is also their timeout in seconds, so a real training run will
-  typically not fit inside it. The trained checkpoint is not part of the block contract (an older
+  this arm by an explicit operator decision. They get no special treatment: the quoted/unquoted
+  rules above apply to them as to any other `$type`. Whether a given training input is quoted,
+  and at what price, is the orchestrator's answer — read it from `estimate` before submitting.
+  The trained checkpoint is not part of the block contract (an older
   host may still leak checkpoint urls into `imageUrls` / `stepOutputs` — a host defect, never
   something to build on); a host that supports it reports the trained epochs on
   `snapshot.trainedEpochs` without the checkpoint, and the viewer publishes

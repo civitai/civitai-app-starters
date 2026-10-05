@@ -39,5 +39,4 @@ checkpoint url, and it does not simulate the real `maxBuzz` timeout.
 **Docs.** `training` and `imageResourceTraining` were described as
 platform-internal, "not an invitation". The host explicitly allows both on the
 pass-through arm; the README and the orchestrator docblocks now say so, with the
-bound that applies (`maxBuzz`, 1–250, is also the step timeout in seconds, so a
-real training run will typically not fit).
+bounds that apply (see `WorkflowBodyPassThroughStep.maxBuzz`).

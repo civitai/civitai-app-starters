@@ -86,8 +86,9 @@ export const WORKFLOW_STEP_TYPES = {
   imageToSvg: 'Raster image → SVG vectorization',
   /**
    * LoRA / DoRA / embedding training. Long-running. Allowed on an App Block's
-   * pass-through arm, where its `maxBuzz` (1–250) is also its timeout in
-   * seconds — see `WorkflowBodyPassThroughStep` in `@civitai/app-sdk/blocks`.
+   * pass-through arm, where `maxBuzz` (1–250) is its timeout in seconds only
+   * when the orchestrator returns no quote — see `WorkflowBodyPassThroughStep`
+   * in `@civitai/app-sdk/blocks`.
    */
   imageResourceTraining: 'Train a LoRA / DoRA / embedding from a dataset',
   /** Pre-process an image (resize, ControlNet preprocessor, etc.). */
