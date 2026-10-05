@@ -63,6 +63,9 @@ import {
   type BlockWildcardPack,
   type BlockWildcardPackErrorCode,
   type AppWorkflow,
+  type BlockPublishedModel,
+  type BlockTrainedEpoch,
+  type BlockWorkflowSnapshot,
   type BlockGatedImage,
   type BlockCollectionFollowErrorCode,
   type BlockCreatePostHostError,
@@ -313,7 +316,49 @@ export interface MockGenerationScenario {
    * {@link image} when both are set.
    */
   images?: string[] | ((req: WorkflowBody) => string[]);
+  /**
+   * How many trained epochs a succeeded PASS-THROUGH training step reports on
+   * {@link BlockWorkflowSnapshot.trainedEpochs} — epochs `1…n`, each tagged with
+   * the submitted `$type`. Applies only to a `{ kind: 'step', $type: 'training' }`
+   * or `'imageResourceTraining'` body; every other body is unaffected.
+   *
+   * Default `0`: the field is omitted, as the host omits it for a run that
+   * produced no checkpoint. Opt in with `n > 0` to simulate a finished run —
+   * it is off by default because a real run on this arm is bounded by the
+   * timeout below, so a default success would promise what the host cannot.
+   *
+   * The mock never fabricates a checkpoint url: the block contract does not
+   * include one, so nothing here does either. A training snapshot's `imageUrls` stand for
+   * the run's SAMPLE images only (the same {@link image}/{@link images} knobs
+   * apply).
+   *
+   * 🔴 THE REAL HOST BOUNDS THIS ARM BY `maxBuzz` (1–250), WHICH IS ALSO THE STEP
+   * TIMEOUT IN SECONDS — a real training run will typically not finish inside
+   * it. The mock does not simulate that timeout; a success here says nothing
+   * about whether your run fits.
+   */
+  trainedEpochs?: number;
+  /**
+   * When set, a succeeded pass-through training snapshot also carries this as
+   * {@link BlockWorkflowSnapshot.publishedModel} — simulating a run the viewer
+   * has started (`published: false`) or finished (`published: true`) publishing
+   * through the model wizard. Default: unset (field omitted). For the app-queue
+   * read, put `publishedModel` on the rows you pass as `appWorkflows`.
+   */
+  trainingPublishedModel?: BlockPublishedModel;
 }
+
+/**
+ * The pass-through training `$type` a body names, if any. Exact match — the
+ * orchestrator's `$type` discriminator is case-sensitive. Only the pass-through
+ * arm carries a `$type`, so no separate `kind` narrow is needed.
+ */
+const passThroughTrainingType = (
+  body: WorkflowBody,
+): BlockTrainedEpoch['$type'] | undefined => {
+  const t = (body as { $type?: unknown }).$type;
+  return t === 'training' || t === 'imageResourceTraining' ? t : undefined;
+};
 
 /**
  * BUZZ scenario controls — simulate a balance so the insufficient-Buzz / top-up
@@ -1777,11 +1822,38 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       };
     };
 
+    /**
+     * The training-only fields of a succeeded snapshot — see
+     * {@link MockGenerationScenario.trainedEpochs}. KIND-FAITHFUL, unlike the
+     * rest of the money path: only a pass-through `training` /
+     * `imageResourceTraining` body gets them, because only such a step produces
+     * a checkpoint. Empty for every other body, so their snapshots are unchanged.
+     */
+    const trainingFields = (
+      body: WorkflowBody,
+    ): Pick<BlockWorkflowSnapshot, 'trainedEpochs' | 'publishedModel'> => {
+      const $type = passThroughTrainingType(body);
+      if (!$type) return {};
+      const count = Math.max(0, Math.floor(gen.trainedEpochs ?? 0));
+      return {
+        ...(count > 0
+          ? {
+              trainedEpochs: Array.from({ length: count }, (_, i) => ({
+                $type,
+                epochNumber: i + 1,
+              })),
+            }
+          : {}),
+        ...(gen.trainingPublishedModel ? { publishedModel: { ...gen.trainingPublishedModel } } : {}),
+      };
+    };
+
     const succeededSnapshot = (workflowId: string) => {
       const wf = workflows.get(workflowId);
       const cost = wf?.cost ?? legacyCost;
       const body = wf?.body ?? ({} as WorkflowBody);
       return {
+        ...trainingFields(body),
         workflowId,
         status: 'succeeded' as const,
         cost: { total: cost },
