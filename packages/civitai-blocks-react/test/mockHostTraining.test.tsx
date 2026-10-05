@@ -16,8 +16,9 @@ import { createMockHost, resetTransport } from '../src/testing.js';
  * when configured, `publishedModel`). The mock also never fabricates a
  * checkpoint url — the block contract does not include one.
  *
- * Coverage note: the default/`n`/`publishedModel` cases were watched FAILING
- * against the pre-change mock; the `trainedEpochs: 0`, sample-image and
+ * Coverage note: the `1`/`n`/`publishedModel` cases were watched FAILING
+ * against the pre-change mock; the default-omits case was watched failing
+ * against this PR's earlier default of `1`; the `trainedEpochs: 0`, sample-image and
  * KIND-FAITHFUL cases pass there too (the old mock emitted neither field for
  * any body) and are INVARIANT guards — the KIND-FAITHFUL set was mutation-
  * checked against a `$type` match widened to any string.
@@ -71,14 +72,22 @@ describe('createMockHost — pass-through training', () => {
     return { host, result: hook.result };
   }
 
-  it('a succeeded training snapshot reports one trained epoch by default, and nothing else new', async () => {
+  it('by default a training snapshot reports NO trained epochs — the mock does not promise a finished run', async () => {
     const { result } = await mount({});
     const snap = await runToTerminal(result, TRAINING_BODY);
 
     expect(snap.status).toBe('succeeded');
-    expect(snap.trainedEpochs).toEqual([{ $type: 'training', epochNumber: 1 }]);
     expect(snap.publishedModel).toBeUndefined();
-    // The full key set: no checkpoint url field, no fabricated stepOutputs.
+    // The full key set: no trainedEpochs, no checkpoint url field, no fabricated stepOutputs.
+    expect(Object.keys(snap).sort()).toEqual(
+      ['cost', 'imageUrls', 'spentAccountType', 'status', 'workflowId'].sort(),
+    );
+  });
+
+  it('`trainedEpochs: 1` reports one epoch and nothing else new', async () => {
+    const { result } = await mount({ generation: { trainedEpochs: 1 } });
+    const snap = await runToTerminal(result, TRAINING_BODY);
+    expect(snap.trainedEpochs).toEqual([{ $type: 'training', epochNumber: 1 }]);
     expect(Object.keys(snap).sort()).toEqual(
       ['cost', 'imageUrls', 'spentAccountType', 'status', 'trainedEpochs', 'workflowId'].sort(),
     );

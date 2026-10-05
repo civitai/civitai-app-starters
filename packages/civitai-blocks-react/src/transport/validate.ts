@@ -268,8 +268,8 @@ export function isValidWorkflowSnapshot(s: unknown): s is BlockWorkflowSnapshot 
   // the snapshot, because the block dereferences these fields.
   //
   // 🔴 ONE DELIBERATE DIFFERENCE: the open-ended string unions
-  // (`modelSubstitutions[].reason`, `trainedEpochs[].$type`) are checked as
-  // STRINGS, not against their current members. A rejected snapshot is a dropped
+  // (`modelSubstitutions[].reason`, `trainedEpochs[].$type`, `toolCalls[].type`)
+  // are checked as STRINGS, not against their current members. A rejected snapshot is a dropped
   // poll reply — the block's request hangs to its timeout — so pinning today's
   // members here would turn the host adding a value into a fleet-wide hang in
   // every already-shipped block bundle. The types document that unknown values

@@ -26,13 +26,13 @@ exported types: `BlockTrainedEpoch`, `BlockPublishedModel`.
 **Validator (`@civitai/blocks-react`).** The inbound snapshot and `AppWorkflow`
 guards now shape-check every new field when present, on the same terms as
 `autoClaim`: absent is valid, present-but-malformed drops the message. The
-open-ended string unions (`modelSubstitutions[].reason`, `trainedEpochs[].$type`)
-are checked as strings rather than against today's members, so a host adding a
+open-ended string unions (`modelSubstitutions[].reason`, `trainedEpochs[].$type`,
+`toolCalls[].type`) are checked as strings rather than against today's members, so a host adding a
 value does not drop polls in already-shipped blocks.
 
-**Mock host.** A pass-through `training` / `imageResourceTraining` body now
-succeeds with `trainedEpochs` (new `generation.trainedEpochs` knob, default `1`;
-`0` omits the field) and, when `generation.trainingPublishedModel` is set, a
+**Mock host.** A pass-through `training` / `imageResourceTraining` body can now
+succeed with `trainedEpochs` (new opt-in `generation.trainedEpochs` knob, default
+`0`, which omits the field) and, when `generation.trainingPublishedModel` is set, a
 `publishedModel`. Only those two `$type`s get them. The mock never fabricates a
 checkpoint url, and it does not simulate the real `maxBuzz` timeout.
 

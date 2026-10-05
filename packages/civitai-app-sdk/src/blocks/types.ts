@@ -1587,6 +1587,10 @@ export interface BlockModelSubstitution {
 /** One entry of {@link BlockWorkflowSnapshot.toolCalls}. */
 export interface BlockStepToolCall {
   id: string;
+  /**
+   * The SDK's inbound validator checks only that it is a string, so a value
+   * the host adds later can arrive — do not assume `'function'` exhaustively.
+   */
   type: 'function';
   function: {
     /** Restricted to `[A-Za-z0-9_-]`. */
@@ -1598,7 +1602,11 @@ export interface BlockStepToolCall {
 
 /** One entry of {@link BlockWorkflowSnapshot.trainedEpochs}. */
 export interface BlockTrainedEpoch {
-  /** Which pass-through training `$type` produced this epoch. */
+  /**
+   * Which pass-through training `$type` produced this epoch. The SDK's inbound
+   * validator checks only that it is a string, so a value the host adds later
+   * can arrive — give an exhaustive `switch` a default branch.
+   */
   $type: 'training' | 'imageResourceTraining';
   /** Pass as `epoch` to the `/models/train/from-orchestrator` wizard route. */
   epochNumber: number;

@@ -322,8 +322,10 @@ export interface MockGenerationScenario {
    * the submitted `$type`. Applies only to a `{ kind: 'step', $type: 'training' }`
    * or `'imageResourceTraining'` body; every other body is unaffected.
    *
-   * Default `1`. `0` simulates a run that produced no checkpoint (the field is
-   * then omitted, as the host omits it).
+   * Default `0`: the field is omitted, as the host omits it for a run that
+   * produced no checkpoint. Opt in with `n > 0` to simulate a finished run —
+   * it is off by default because a real run on this arm is bounded by the
+   * timeout below, so a default success would promise what the host cannot.
    *
    * The mock never fabricates a checkpoint url: the block contract does not
    * include one, so nothing here does either. A training snapshot's `imageUrls` stand for
@@ -1832,7 +1834,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     ): Pick<BlockWorkflowSnapshot, 'trainedEpochs' | 'publishedModel'> => {
       const $type = passThroughTrainingType(body);
       if (!$type) return {};
-      const count = Math.max(0, Math.floor(gen.trainedEpochs ?? 1));
+      const count = Math.max(0, Math.floor(gen.trainedEpochs ?? 0));
       return {
         ...(count > 0
           ? {
