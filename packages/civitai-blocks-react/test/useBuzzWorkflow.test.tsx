@@ -1140,6 +1140,90 @@ describe('useBuzzWorkflow', () => {
     expect(result.current.result?.imageUrls).toEqual(['https://cdn/x.png']);
   });
 
+  // The #524 fields + the training-publish pair, end to end through the REAL
+  // transport validator. Values are pairwise distinct so a field swapped for
+  // another cannot pass.
+  const FULL_HOST_FIELDS = {
+    modelSubstitutions: [{ requested: 101, applied: 202, reason: 'unrecognized' }],
+    textOutputs: ['first reply', 'second reply'],
+    textOutputWithheld: { reason: 'A response was withheld.' },
+    toolCalls: [{ id: 'call_7', type: 'function', function: { name: 'lookup', arguments: '{"q":3}' } }],
+    stepOutputs: [{ $type: 'someNewStep', output: { score: 0.42 } }],
+    trainedEpochs: [
+      { $type: 'training', epochNumber: 4 },
+      { $type: 'training', epochNumber: 9 },
+    ],
+    publishedModel: { modelId: 555, modelVersionId: 666, published: true },
+  };
+
+  function replyStatus(requestId: string, snapshot: Record<string, unknown>) {
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'WORKFLOW_STATUS', payload: { requestId, snapshot } },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+  }
+
+  it('poll() delivers every host snapshot field verbatim, readable without a cast', async () => {
+    // INVARIANT GUARD, not regression coverage: the inbound validator has never
+    // stripped unknown keys, so these values arrived before #524 too — what #524
+    // changed is that they now TYPE-check (the reads below have no cast; see
+    // `workflow-snapshot-fields.test-d.ts` in app-sdk). Pinned so a future
+    // validator that starts projecting the snapshot cannot silently drop them.
+    const { result } = renderHook(() => useBuzzWorkflow());
+    let pollPromise!: Promise<unknown>;
+    act(() => {
+      pollPromise = result.current.poll('wf-full');
+    });
+    const sent = postMessageMock.mock.calls[0][0] as { payload: { requestId: string } };
+    replyStatus(sent.payload.requestId, { workflowId: 'wf-full', status: 'succeeded', ...FULL_HOST_FIELDS });
+
+    await pollPromise;
+    await waitFor(() => expect(result.current.status).toBe('done'));
+    const snap = result.current.result;
+    expect(snap?.modelSubstitutions).toEqual(FULL_HOST_FIELDS.modelSubstitutions);
+    expect(snap?.textOutputs).toEqual(FULL_HOST_FIELDS.textOutputs);
+    expect(snap?.textOutputWithheld).toEqual(FULL_HOST_FIELDS.textOutputWithheld);
+    expect(snap?.toolCalls).toEqual(FULL_HOST_FIELDS.toolCalls);
+    expect(snap?.stepOutputs).toEqual(FULL_HOST_FIELDS.stepOutputs);
+    expect(snap?.trainedEpochs).toEqual(FULL_HOST_FIELDS.trainedEpochs);
+    expect(snap?.publishedModel).toEqual(FULL_HOST_FIELDS.publishedModel);
+  });
+
+  it('poll() DROPS a snapshot whose new field is malformed, and settles on the next well-formed reply', async () => {
+    // Regression coverage: before the validator knew these fields, the
+    // malformed reply below was accepted and the block read `textOutputs` as a
+    // string where its type promises `string[]`.
+    const { result } = renderHook(() => useBuzzWorkflow());
+    let pollPromise!: Promise<unknown>;
+    act(() => {
+      pollPromise = result.current.poll('wf-bad');
+    });
+    const sent = postMessageMock.mock.calls[0][0] as { payload: { requestId: string } };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      replyStatus(sent.payload.requestId, {
+        workflowId: 'wf-bad',
+        status: 'succeeded',
+        textOutputs: 'not an array',
+      });
+      // Positive control on the SAME request id: a well-formed reply settles it.
+      replyStatus(sent.payload.requestId, {
+        workflowId: 'wf-bad',
+        status: 'succeeded',
+        textOutputs: ['ok'],
+      });
+      await pollPromise;
+      await waitFor(() => expect(result.current.status).toBe('done'));
+      expect(result.current.result?.textOutputs).toEqual(['ok']);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   // -------------------------------------------------------------------------
   // watch() — the PUSH-shaped API that replaces the caller's own timer loop.
   //

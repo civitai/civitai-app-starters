@@ -65,9 +65,18 @@
  *
  * The practical consequence: a number of the 47 step types below exist to serve
  * Civitai's own pipelines rather than third-party apps — `modelPickleScan`,
- * `xGuardModeration`, `training`, `comfyNodepackSnapshot`, `qwenImageBench`,
+ * `xGuardModeration`, `comfyNodepackSnapshot`, `qwenImageBench`,
  * the `model*` / `media*` hashing and classification steps. They are in the
  * consumer spec, so they are typed here. They are not an invitation.
+ *
+ * `training` and `imageResourceTraining` are the exception: an App Block's host
+ * explicitly ALLOWS both on the pass-through arm (`WorkflowBodyPassThroughStep`
+ * in `blocks/types.ts`), bounded like any other `$type` by its `maxBuzz` — an
+ * integer 1–250 that is also the step timeout in seconds, so a real training
+ * run will typically not fit. The trained checkpoint is not part of the block
+ * contract; publishing goes through Civitai's model wizard
+ * (`BlockWorkflowSnapshot.trainedEpochs`). For a standalone app the
+ * orchestrator's own authorization still decides.
  *
  * ⚠️ `WORKFLOW_STEP_TYPES` does NOT mark most of them. Counted at this commit:
  * of its 51 entries, exactly TWO sit under its "Platform internals" heading —

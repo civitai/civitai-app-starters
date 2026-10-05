@@ -190,6 +190,68 @@ describe('isValidWorkflowSnapshot', () => {
   ])('rejects %s', (_, payload) => {
     expect(isValidWorkflowSnapshot(payload)).toBe(false);
   });
+
+  // ---- #524's five host fields + the training-publish pair ----
+  const base = { workflowId: 'w', status: 'succeeded' };
+  const wellFormed = {
+    modelSubstitutions: [{ requested: 11, applied: 22, reason: 'gated' }],
+    textOutputs: ['a', ''],
+    textOutputWithheld: { reason: 'withheld' },
+    toolCalls: [{ id: 'c1', type: 'function', function: { name: 'f_1', arguments: '{}' } }],
+    stepOutputs: [
+      { $type: 'blobArchive', output: { url: 'x', entryCount: 3 } },
+      { $type: 'echo', output: null },
+      { $type: 'noOutputKey' },
+    ],
+    trainedEpochs: [{ $type: 'imageResourceTraining', epochNumber: 0 }],
+    publishedModel: { modelId: 1, modelVersionId: 2, published: false },
+  };
+
+  it('accepts a snapshot carrying every new field well-formed', () => {
+    expect(isValidWorkflowSnapshot({ ...base, ...wellFormed })).toBe(true);
+  });
+
+  it.each(Object.entries(wellFormed))('accepts %s alone (all optional)', (key, value) => {
+    expect(isValidWorkflowSnapshot({ ...base, [key]: value })).toBe(true);
+  });
+
+  it.each([
+    ['empty arrays', { modelSubstitutions: [], textOutputs: [], toolCalls: [], stepOutputs: [], trainedEpochs: [] }],
+    // 🔴 FORWARD COMPATIBILITY. A rejected snapshot is a dropped poll reply, so
+    // pinning today's members of an open-ended string union would turn a host
+    // adding one into a hang in every shipped block. Checked as strings only.
+    ['a modelSubstitutions reason the SDK does not know yet', { modelSubstitutions: [{ requested: 1, applied: 2, reason: 'future-reason' }] }],
+    ['a trainedEpochs $type the SDK does not know yet', { trainedEpochs: [{ $type: 'futureTraining', epochNumber: 1 }] }],
+  ])('accepts %s', (_, extra) => {
+    expect(isValidWorkflowSnapshot({ ...base, ...extra })).toBe(true);
+  });
+
+  it.each([
+    ['modelSubstitutions not an array', { modelSubstitutions: { requested: 1, applied: 2, reason: 'gated' } }],
+    ['modelSubstitutions entry not an object', { modelSubstitutions: [7] }],
+    ['modelSubstitutions.requested not a number', { modelSubstitutions: [{ requested: '1', applied: 2, reason: 'gated' }] }],
+    ['modelSubstitutions.applied NaN', { modelSubstitutions: [{ requested: 1, applied: Number.NaN, reason: 'gated' }] }],
+    ['modelSubstitutions.reason missing', { modelSubstitutions: [{ requested: 1, applied: 2 }] }],
+    ['textOutputs a bare string', { textOutputs: 'hello' }],
+    ['textOutputs contains a non-string', { textOutputs: ['ok', 3] }],
+    ['textOutputWithheld a bare string', { textOutputWithheld: 'withheld' }],
+    ['textOutputWithheld.reason missing', { textOutputWithheld: {} }],
+    ['toolCalls not an array', { toolCalls: { id: 'c' } }],
+    ['toolCalls entry missing function', { toolCalls: [{ id: 'c', type: 'function' }] }],
+    ['toolCalls.function.arguments an object', { toolCalls: [{ id: 'c', type: 'function', function: { name: 'f', arguments: {} } }] }],
+    ['toolCalls.id not a string', { toolCalls: [{ id: 1, type: 'function', function: { name: 'f', arguments: '{}' } }] }],
+    ['stepOutputs not an array', { stepOutputs: { $type: 'x', output: 1 } }],
+    ['stepOutputs entry missing $type', { stepOutputs: [{ output: 1 }] }],
+    ['trainedEpochs not an array', { trainedEpochs: { $type: 'training', epochNumber: 1 } }],
+    ['trainedEpochs.epochNumber a string', { trainedEpochs: [{ $type: 'training', epochNumber: '1' }] }],
+    ['trainedEpochs.epochNumber fractional', { trainedEpochs: [{ $type: 'training', epochNumber: 1.5 }] }],
+    ['trainedEpochs.$type missing', { trainedEpochs: [{ epochNumber: 1 }] }],
+    ['publishedModel not an object', { publishedModel: 555 }],
+    ['publishedModel.published a string', { publishedModel: { modelId: 1, modelVersionId: 2, published: 'true' } }],
+    ['publishedModel.modelVersionId missing', { publishedModel: { modelId: 1, published: true } }],
+  ])('rejects %s', (_, extra) => {
+    expect(isValidWorkflowSnapshot({ ...base, ...extra })).toBe(false);
+  });
 });
 
 describe('isValidTokenRefresh', () => {
@@ -875,6 +937,34 @@ describe('isValidAppWorkflowsResult', () => {
 
   it('accepts an EMPTY workflows array (a fresh app with no gens)', () => {
     expect(isValidAppWorkflowsResult({ result: { workflows: [], cursor: null } })).toBe(true);
+  });
+
+  it('accepts a row carrying a well-formed publishedModel (draft and published)', () => {
+    for (const published of [false, true]) {
+      expect(
+        isValidAppWorkflowsResult({
+          result: {
+            workflows: [{ ...validWorkflow, publishedModel: { modelId: 31, modelVersionId: 47, published } }],
+            cursor: null,
+          },
+        }),
+      ).toBe(true);
+    }
+  });
+
+  it.each([
+    ['publishedModel null', null],
+    ['publishedModel.published missing', { modelId: 31, modelVersionId: 47 }],
+    ['publishedModel.modelId a string', { modelId: '31', modelVersionId: 47, published: true }],
+  ])('rejects a row whose %s', (_, publishedModel) => {
+    expect(
+      isValidAppWorkflowsResult({
+        result: { workflows: [{ ...validWorkflow, publishedModel }], cursor: null },
+      }),
+    ).toBe(false);
+    expect(isValidCancelAppWorkflowResult({ result: { workflow: { ...validWorkflow, publishedModel } } })).toBe(
+      false,
+    );
   });
 
   it('accepts the free-text error variant', () => {

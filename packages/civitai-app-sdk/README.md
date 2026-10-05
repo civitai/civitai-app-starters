@@ -175,6 +175,18 @@ own key:
   `$type` cap, a 256 KB `input` cap, and `maxBuzz` — which, as on the inline arm, is **also the
   step timeout in seconds**.
 
+  `training` and `imageResourceTraining` are **not** on that denylist — the host allows them on
+  this arm by an explicit operator decision. They get no special treatment: the same `maxBuzz`
+  ceiling (an integer 1–250) is also their timeout in seconds, so a real training run will
+  typically not fit inside it. The trained checkpoint is not part of the block contract (an older
+  host may still leak checkpoint urls into `imageUrls` / `stepOutputs` — a host defect, never
+  something to build on); a host that supports it reports the trained epochs on
+  `snapshot.trainedEpochs` without the checkpoint, and the viewer publishes
+  one by being navigated (`useCivitaiNavigate`, `scope: 'site'`) to Civitai's own model wizard at
+  `models/train/from-orchestrator?workflowId=<id>&epoch=<n>`. `snapshot.publishedModel` (and
+  `AppWorkflow.publishedModel`) then reports the resulting model. Both fields are absent on hosts
+  that predate them.
+
 ```ts
 import type { WorkflowBody } from '@civitai/app-sdk/blocks';
 
@@ -613,7 +625,9 @@ A `$type` having a type here says nothing about whether you may submit it.
 - **App Blocks** don't reach the orchestrator at all. A block posts a `WorkflowBody` to the host, which validates it server-side against its own schema. That contract is `@civitai/app-sdk/blocks` and is completely unaffected by this subpath.
 - **Standalone apps / BFFs** submit directly with the user's OAuth token, and the orchestrator applies its own authorization. A body that compiles can still come back 400 or 403.
 
-Several of the 47 exist to serve Civitai's own pipelines rather than third-party apps — `modelPickleScan`, `xGuardModeration`, `training`, `comfyNodepackSnapshot`, `qwenImageBench`, the `model*`/`media*` hashing and classification steps. They're in the consumer spec, so they're typed here. They are not an invitation.
+Several of the 47 exist to serve Civitai's own pipelines rather than third-party apps — `modelPickleScan`, `xGuardModeration`, `comfyNodepackSnapshot`, `qwenImageBench`, the `model*`/`media*` hashing and classification steps. They're in the consumer spec, so they're typed here. They are not an invitation.
+
+`training` and `imageResourceTraining` are the exception: an App Block's host explicitly **allows** them on the pass-through arm (see `WorkflowBodyPassThroughStep` under Primitives above for the `maxBuzz` bound, and how a trained epoch is published). For a standalone app, the orchestrator's own authorization still decides.
 
 Note that `WORKFLOW_STEP_TYPES` does **not** mark most of them: of its 51 entries exactly two — `comfyNodepackSnapshot` and `qwenImageBench` — sit under its "Platform internals" heading, and the rest are ordinary documented entries (`webScrape` even carries usage notes). The reason the platform steps are typed anyway is not that the catalog flags them as internal; it's that the catalog *documents* them, so skipping them would make `WorkflowStepTemplateFor<'training'>` a compile error for a step type the SDK documents — which is exactly what is live today for the 3 `$type`s the pinned client cannot type, and is why that gap is spelled out above rather than left to be discovered.
 

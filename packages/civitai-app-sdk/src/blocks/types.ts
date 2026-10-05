@@ -1234,7 +1234,13 @@ export type WorkflowBodyStep = {
  *    classifiers, hashing/model-ingestion, web egress) is refused by the host
  *    router before any spend reservation or orchestrator call. It is a DENYLIST,
  *    not an allowlist: a `$type` the host has never heard of is allowed through
- *    by construction, which is the point of this arm.
+ *    by construction, which is the point of this arm. `training` and
+ *    `imageResourceTraining` are deliberately NOT on it (a host operator
+ *    decision): both may be submitted here, bounded like every other `$type`
+ *    by `maxBuzz` — which, being the timeout too, a real training run will
+ *    typically not fit inside. A host that supports it reports the trained
+ *    epochs on {@link BlockWorkflowSnapshot.trainedEpochs} without exposing
+ *    the checkpoint itself.
  *  - `$type` is bounded to **1…64 characters** and `input` to **262144 bytes**
  *    (256 KB) serialized. Both REJECT; neither truncates.
  *  - `maxBuzz` is the single spend knob — see its own note below.
@@ -1395,6 +1401,216 @@ export interface BlockWorkflowSnapshot {
     amount: number;
     accountType: 'yellow' | 'blue' | 'red' | 'green';
   };
+  /**
+   * Checkpoint versions the host SILENTLY replaced before running the
+   * generation. `requested` is the version id the block asked for, `applied` is
+   * the one that actually ran (and was billed).
+   *
+   * On an ecosystem whose model is locked to a workflow, the host swaps a
+   * version id that is not offered for the current workflow for that workflow's
+   * default and still succeeds — graceful degradation that keeps an app pinned
+   * to a since-retired version working. This field only REPORTS the swap; the
+   * behaviour is unchanged.
+   *
+   * WHERE IT APPEARS: on the `kind: 'textToImage'` path only — the submit reply,
+   * the estimate reply, every submit reply that quotes a cost without
+   * submitting, and every later poll/cancel of that workflow (the record is
+   * persisted with it, so it sits next to the `imageUrls` it describes). An
+   * estimate creates no persisted workflow, so there it exists only on that
+   * reply. It does NOT appear for `customComfy` or `step` bodies: neither
+   * resolves a checkpoint, so there is nothing to substitute.
+   *
+   * OMITTED entirely when nothing was substituted. Absent on hosts that predate
+   * it.
+   */
+  modelSubstitutions?: BlockModelSubstitution[];
+  /**
+   * Generated FREE TEXT produced by a registered text-output step (e.g.
+   * `chat-completion`) — every string here has PASSED the host's output
+   * moderation scan.
+   *
+   * WHERE IT APPEARS: the poll and cancel replies (`poll()` / `cancel()` /
+   * `watch()` on `useBuzzWorkflow`). NOT on the submit reply — a submit returns
+   * a freshly-queued workflow with no output yet, so poll for the text. Also
+   * never on {@link AppWorkflow}, which has no text field.
+   *
+   * OMITTED entirely when there is no text. Independent of
+   * {@link BlockWorkflowSnapshot.textOutputWithheld}: a workflow with two text
+   * steps can release one and withhold the other, and both fields then appear.
+   */
+  textOutputs?: string[];
+  /**
+   * Set when a text-output step produced nothing the block can be given, with a
+   * user-facing sentence saying why. TWO distinct causes land here:
+   *
+   *   1. WITHHELD — text WAS produced and is being kept back: a content-policy
+   *      hit, or any other fail-CLOSED scan outcome (scanner error or timeout,
+   *      no verdict at all, an over-cap payload, or requested labels that came
+   *      back missing or errored). Every one of those paths returns the SAME
+   *      message, so this cause is one string with several origins.
+   *   2. UNPUBLISHABLE — the step SUCCEEDED and the scan RELEASED, but none of
+   *      what came back could be published (e.g. a provider tool-call `id`
+   *      outside the published charset). Nothing was moderated in this case,
+   *      and the message says so explicitly.
+   *
+   * `reason` is deliberately generic: it does not name the labels that
+   * triggered.
+   *
+   * 🔴 THE TWO CAUSES ARE NOT MACHINE-SEPARABLE without matching on the string,
+   * which is NOT a contract. Do not branch on the text of `reason`.
+   *
+   * 🔴 ONLY CAUSE 2 IS STATUS-GATED, and that gate reads the STEP's own
+   * `succeeded` status — never the workflow's. Cause 1 is not gated at all, so a
+   * CANCELLED generation CAN still set this field: the orchestrator returns
+   * whatever text it had already produced, that text is still scanned, and a
+   * hit still withholds it. A block that skips rendering `reason` on cancel
+   * would suppress a real content-policy explanation.
+   *
+   * A block polling a healthy in-flight generation sees the field absent — not
+   * because of its status, but because a step that has produced no text yet can
+   * reach neither cause.
+   *
+   * Independent of {@link BlockWorkflowSnapshot.textOutputs} rather than
+   * mutually exclusive, so `reason` is scoped to "a step in this response",
+   * never to the response as a whole. Same appearance rules as `textOutputs`.
+   */
+  textOutputWithheld?: { reason: string };
+  /**
+   * Structured tool calls the model requested on a registered text-output step
+   * (e.g. `chat-completion` with tools), which have PASSED the same output
+   * moderation scan as {@link BlockWorkflowSnapshot.textOutputs}: every
+   * `arguments` string here was part of the text the scan released. The tool
+   * `name` is restricted to `[A-Za-z0-9_-]`, so it cannot carry prose.
+   *
+   * Each entry is fully populated — the host drops a call it cannot fill
+   * completely rather than publishing a partial one.
+   *
+   * Same appearance rules as `textOutputs` (poll and cancel replies only).
+   * OMITTED entirely when there are none.
+   */
+  toolCalls?: BlockStepToolCall[];
+  /**
+   * The raw orchestrator output of each PASS-THROUGH step
+   * ({@link WorkflowBodyPassThroughStep}: `kind: 'step'` with a `$type`), as
+   * `{ $type, output }`, forwarded as-is — minus its blobs.
+   *
+   * Blob-SHAPED values are removed from `output`; their available urls go to
+   * {@link BlockWorkflowSnapshot.imageUrls} (and to {@link AppWorkflow.images})
+   * instead, so a pass-through step does not open a second image channel.
+   * "Blob-shaped" is the exact scope of that: a url held in a plain string
+   * field of the output is not a blob and can still appear here.
+   *
+   * 🔴 UNSCANNED. Unlike `textOutputs`, no moderation scan runs over this
+   * field; moderation for the pass-through arm happens at the publish boundary.
+   * Treat any text in it accordingly.
+   *
+   * 🔴 A `$type` that is ALSO a registered step's orchestrator type (e.g.
+   * `chatCompletion`, which `chat-completion` uses) is handled by that
+   * registered step instead — its text arrives on `textOutputs`, scanned, and
+   * it does not appear here. Which channel a pass-through `$type` lands on can
+   * therefore change the day the host registers a step for it.
+   *
+   * `output` is `unknown`: its shape is whatever the orchestrator returns for
+   * that `$type`. OMITTED entirely when the workflow has no pass-through step
+   * with an unregistered `$type`.
+   */
+  stepOutputs?: Array<{ $type: string; output: unknown }>;
+  /**
+   * The epochs of a pass-through `training` / `imageResourceTraining` step
+   * (see {@link WorkflowBodyPassThroughStep}) that PRODUCED A CHECKPOINT — one
+   * entry per epoch, each naming the step's `$type` and its `epochNumber`.
+   *
+   * 🔴 THE CHECKPOINT ITSELF IS DELIBERATELY NOT EXPOSED — this field carries
+   * no download url. (An older host may still surface checkpoint urls in
+   * `imageUrls` or `stepOutputs` for a training step; that is a host defect,
+   * not a contract — never treat an `imageUrls` entry as a checkpoint.) To
+   * publish a trained epoch, navigate the viewer to Civitai's own model wizard:
+   *
+   * ```ts
+   * const { navigate } = useCivitaiNavigate();
+   * navigate(
+   *   `models/train/from-orchestrator?workflowId=${snapshot.workflowId}&epoch=${epoch.epochNumber}`,
+   *   { scope: 'site' },
+   * );
+   * ```
+   *
+   * The viewer completes (or abandons) the publish there, on Civitai's surface;
+   * {@link BlockWorkflowSnapshot.publishedModel} then reports the result.
+   *
+   * 🔴 REQUIRES A HOST VERSION THAT EMITS IT. Absent on older hosts — treat
+   * absence as "unknown", not as "no checkpoint". Also bear in mind the
+   * pass-through arm's `maxBuzz` (1–250) is the step timeout in seconds, so a
+   * real training run will typically not fit inside it.
+   */
+  trainedEpochs?: BlockTrainedEpoch[];
+  /**
+   * The Civitai model this run has been published as — present once the viewer
+   * has STARTED or FINISHED publishing it through the model wizard reached from
+   * {@link BlockWorkflowSnapshot.trainedEpochs}. `published` is `false` while the
+   * model is still a draft and `true` once it is published.
+   *
+   * 🔴 REQUIRES A HOST VERSION THAT EMITS IT. Absent on older hosts, and absent
+   * on any run nobody has started publishing.
+   */
+  publishedModel?: BlockPublishedModel;
+}
+
+/**
+ * Why the host substituted a checkpoint version — see
+ * {@link BlockWorkflowSnapshot.modelSubstitutions}.
+ *
+ *  - `'wrong-workflow'` — the id IS one of this ecosystem's workflow-scoped
+ *    versions, but for a DIFFERENT workflow (e.g. an edit-only version sent to
+ *    text-to-image).
+ *  - `'unrecognized'` — the id is in no scoped list for this ecosystem: a
+ *    community checkpoint, or a version retired since the app shipped.
+ *  - `'gated'` — the id IS offered for this workflow, but a gate rule hid it
+ *    from THIS viewer. The app is not wrong; the viewer may not use it.
+ *
+ * The host may add a reason in a later version, and the SDK's inbound
+ * validator does not reject an unrecognised one — handle an unknown value as a
+ * generic substitution rather than assuming the list is closed.
+ */
+export type ModelSubstitutionReason = 'wrong-workflow' | 'unrecognized' | 'gated';
+
+/** One entry of {@link BlockWorkflowSnapshot.modelSubstitutions}. */
+export interface BlockModelSubstitution {
+  /** The checkpoint version id the block asked for. */
+  requested: number;
+  /** The checkpoint version id that actually ran. */
+  applied: number;
+  reason: ModelSubstitutionReason;
+}
+
+/** One entry of {@link BlockWorkflowSnapshot.toolCalls}. */
+export interface BlockStepToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    /** Restricted to `[A-Za-z0-9_-]`. */
+    name: string;
+    /** The model's arguments, as the JSON string it produced. Scanned. */
+    arguments: string;
+  };
+}
+
+/** One entry of {@link BlockWorkflowSnapshot.trainedEpochs}. */
+export interface BlockTrainedEpoch {
+  /** Which pass-through training `$type` produced this epoch. */
+  $type: 'training' | 'imageResourceTraining';
+  /** Pass as `epoch` to the `/models/train/from-orchestrator` wizard route. */
+  epochNumber: number;
+}
+
+/**
+ * The model a training run was published as —
+ * {@link BlockWorkflowSnapshot.publishedModel} / {@link AppWorkflow.publishedModel}.
+ */
+export interface BlockPublishedModel {
+  modelId: number;
+  modelVersionId: number;
+  /** `false` while the model is still a draft in the wizard; `true` once published. */
+  published: boolean;
 }
 
 // ============================================================
@@ -1948,6 +2164,16 @@ export interface AppWorkflow {
   cost: number | null;
   /** ISO-8601. */
   createdAt: string;
+  /**
+   * The Civitai model a training run in this workflow was published as —
+   * present once the viewer has started or finished publishing it through the
+   * model wizard. Same shape and meaning as
+   * {@link BlockWorkflowSnapshot.publishedModel}.
+   *
+   * 🔴 REQUIRES A HOST VERSION THAT EMITS IT. Absent on older hosts, and on
+   * every workflow nobody has published.
+   */
+  publishedModel?: BlockPublishedModel;
 }
 
 // ============================================================
