@@ -1519,6 +1519,8 @@ export interface BlockWorkflowSnapshot {
    * The epochs of a pass-through `training` / `imageResourceTraining` step
    * (see {@link WorkflowBodyPassThroughStep}) that PRODUCED A CHECKPOINT — one
    * entry per epoch, each naming the step's `$type` and its `epochNumber`.
+   * Only runs whose training moderation status is approved are listed; an
+   * unmoderated or refused run reports no epochs.
    *
    * 🔴 THE CHECKPOINT ITSELF IS DELIBERATELY NOT EXPOSED — this field carries
    * no download url. (An older host may still surface checkpoint urls in
