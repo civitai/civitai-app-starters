@@ -78,7 +78,7 @@
     }
   },
   "dependencies": {
-    "@civitai/app-sdk": "^0.56.1",
+    "@civitai/app-sdk": "^0.57.0",
     "@civitai/components": "^0.9.2",
     "@civitai/theme": "^0.5.2",
     "@hono/node-server": "^2.0.4",
