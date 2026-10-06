@@ -26,6 +26,18 @@ const quota = await storage.getQuota();  // { usedBytes, rowCount, limitBytes, l
 Calls flow through the host's postMessage bridge — **the block never sees the
 apps DB credentials**. The host stores arbitrary JSON.
 
+🔴 **Before you debug a `401`: during the pre-GA preview the host API is enabled
+per ACCOUNT, and that gate is not your app.** An app that is submitted, approved
+and serving live still has every call here refused — with `Apps are not enabled`
+or `Apps access is not enabled for this browser session` — when the account the
+call is made for was never enrolled in the preview. Approval status, manifest
+scopes and token scopes are all irrelevant on that path, so checking them
+explains nothing. Those messages land on the `default:` arm below, *not* on a
+ceiling reason. The enablement step, the one-command check
+(`civitai app doctor`), the full message→gate table, and why App Storage always
+refuses under `dev:live` (no session cookie leaves the browser) are in
+[Preview access is on your ACCOUNT, not on your app](../../../docs/build-your-first-app-block.md#preview-access-is-on-your-account-not-on-your-app).
+
 ### Scope & isolation
 
 The store is keyed on (block instance, viewer): two users of the same block get
@@ -104,9 +116,9 @@ That rule is deliberately stated without a list of the non-ceiling strings.
 Two earlier drafts tried to enumerate them and both came up short; the honest,
 stable claim is the structural one — these six classify, everything else is
 `null` — and it stays true when the host adds or rewords a message.
-`invalid block token` (an expired token mid-session), `block instance revoked`
-and `Apps are not enabled` are *illustrations*, not a bound. See the header of
-the app-sdk's `blocks/appStorageErrors.ts` for the full reasoning and the
+`invalid block token` (an expired token mid-session) and `block instance
+revoked` are *illustrations*, not a bound. See the header of the app-sdk's
+`blocks/appStorageErrors.ts` for the full reasoning and the
 re-derivation recipe — which beats any prose in this repo, but is **necessary,
 not sufficient**: it greps `TRPCError` throws, so it cannot see a zod cap.
 

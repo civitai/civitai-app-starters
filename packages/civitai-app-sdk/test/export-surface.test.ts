@@ -119,8 +119,10 @@ const ENTRY_POINTS: Record<string, EntryPoint> = {
         'either is a breaking change.',
     },
     reason:
-      'NOT on the root: importing it runs ./safe-storage for its side effect, and it is 119 ' +
-      'symbols of Civitai-Apps contract that an OAuth app never touches. Disjoint audiences.',
+      'NOT on the root: importing it runs ./safe-storage for its side effect, and it is 135 ' +
+      'symbols of Civitai-Apps contract that an OAuth app never touches. Disjoint audiences. ' +
+      'The 135 is asserted below, not merely quoted — it said 119 against a real 125 until ' +
+      '2026-10-04.',
   },
   './safe-storage': {
     src: 'safe-storage/index',
@@ -351,6 +353,25 @@ describe('root barrel / subpath relationship (#377)', () => {
     // `@civitai/app-sdk`; an addition is a `minor`. Either way it belongs in
     // the diff and in the changeset, not in a green run.
     expect(sorted(surface.get('.')!)).toEqual([...ROOT_SURFACE].sort());
+  });
+
+  it('🔴 pins the `./blocks` export COUNT the prose quotes, so drift goes red', () => {
+    // `src/index.ts` and the `./blocks` ledger entry in this file BOTH quote
+    // this number as the reason `./blocks` is kept off the root barrel
+    // ("folding N symbols … into the root"). Until now nothing asserted it:
+    // the checks above pin the root as an exact union and every subpath's set
+    // relations, which cannot see a subpath GROWING — the union grows with it.
+    //
+    // 🔴 MEASURED DRIFT, which is why this is a test and not a comment. At this
+    // branch's merge base the prose said 119 while the real count was 125, so
+    // the `119 → 130` edit in this PR silently absorbed six symbols' worth of
+    // pre-existing drift. A number quoted in two files and asserted in none
+    // reads as maintained and is not.
+    //
+    // When this goes red the fix is not to change the number here alone: update
+    // BOTH prose sites in the same commit, and say in the changeset whether the
+    // additions are a `minor` (they are, for a published subpath).
+    expect(surface.get('./blocks')!.size).toBe(135);
   });
 
   it('gives every published subpath a reason recorded next to the README that documents it', () => {

@@ -49,11 +49,11 @@ describe('APP_STORAGE host error messages', () => {
   // bridge catches every `apps.storage.*` rejection with a blanket `catch` and
   // forwards its message on the same field, so every non-ceiling rejection the
   // host raises reaches a block too and all of them classify `null` —
-  // `invalid block token`, `block instance revoked` and `Apps are not enabled`
-  // are ILLUSTRATIONS of that, not a bound on it (no list in this repository
-  // is; see the header of `src/blocks/appStorageErrors.ts`). This array is the
-  // `PAYLOAD_TOO_LARGE` family plus the bridge fallback — a set THIS REPOSITORY
-  // CHOSE, not one the host guarantees closed. The host also enforces size
+  // `invalid block token` and `block instance revoked` are ILLUSTRATIONS of
+  // that, not a bound on it (no list in this repository is; see the header of
+  // `src/blocks/appStorageErrors.ts`). This array is the `PAYLOAD_TOO_LARGE`
+  // family plus the bridge fallback — a set THIS REPOSITORY CHOSE, not one the
+  // host guarantees closed. The host also enforces size
   // ceilings zod-side (`key` is capped at 200 chars on the `.input()` schema),
   // which throw no `TRPCError` and are absent here; see "Ceilings outside this
   // set" in that header.
@@ -172,20 +172,9 @@ describe('APP_STORAGE host error messages', () => {
       'app block not found', // :406  NOT_FOUND
       'app block is not approved', // :410  FORBIDDEN
       'storage requires an authenticated viewer', // :528/:949  UNAUTHORIZED
-      // 🔴 The four a previous draft's "measured in the same read" table
-      // missed — added here as evidence that the enumeration kept coming up
+      // 🔴 Three of the four a previous draft's "measured in the same read"
+      // table missed — here as evidence that the enumeration kept coming up
       // short, not to make the sample complete.
-      'Apps are not enabled', // :153/:255/:257  UNAUTHORIZED — the feature-flag
-      //                         kill switch, thrown from TWO gates with one
-      //                         spelling: the enforceAppBlocksFlag middleware
-      //                         (:249, throwing :255/:257), `.use()`d BEFORE
-      //                         `.input()` on all five storage procedures
-      //                         (:470, :509, :938, :1022, :1106), so it fires
-      //                         before anything else on every call; and
-      //                         assertAppBlocksEnabledForTokenUser (:139-155,
-      //                         throwing :153), reached from
-      //                         resolveStorageContext. Grepping the middleware
-      //                         name does NOT find :153.
       'block token subject could not be resolved', // :148, from resolveStorageContext
       'review token subject could not be resolved', // :82
       'Apps authoring is not enabled for this account', // :89

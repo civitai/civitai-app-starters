@@ -261,7 +261,73 @@ export function isValidWorkflowSnapshot(s: unknown): s is BlockWorkflowSnapshot 
       return false;
     }
   }
+  // ---- The host fields mirrored in #524, plus the training-publish pair. ----
+  //
+  // Same policy as `autoClaim` above: each is OPTIONAL (an older host omits it
+  // and the snapshot stays valid), and a PRESENT but malformed value rejects
+  // the snapshot, because the block dereferences these fields.
+  //
+  // 🔴 ONE DELIBERATE DIFFERENCE: the open-ended string unions
+  // (`modelSubstitutions[].reason`, `trainedEpochs[].$type`, `toolCalls[].type`)
+  // are checked as STRINGS, not against their current members. A rejected snapshot is a dropped
+  // poll reply — the block's request hangs to its timeout — so pinning today's
+  // members here would turn the host adding a value into a fleet-wide hang in
+  // every already-shipped block bundle. The types document that unknown values
+  // may arrive.
+  if (s.modelSubstitutions !== undefined) {
+    if (!Array.isArray(s.modelSubstitutions)) return false;
+    for (const m of s.modelSubstitutions) {
+      if (!isObject(m)) return false;
+      if (!isFiniteNumber(m.requested) || !isFiniteNumber(m.applied)) return false;
+      if (typeof m.reason !== 'string') return false;
+    }
+  }
+  if (s.textOutputs !== undefined) {
+    if (!Array.isArray(s.textOutputs)) return false;
+    if (!s.textOutputs.every((t): t is string => typeof t === 'string')) return false;
+  }
+  if (s.textOutputWithheld !== undefined) {
+    if (!isObject(s.textOutputWithheld) || typeof s.textOutputWithheld.reason !== 'string') {
+      return false;
+    }
+  }
+  if (s.toolCalls !== undefined) {
+    if (!Array.isArray(s.toolCalls)) return false;
+    for (const c of s.toolCalls) {
+      if (!isObject(c)) return false;
+      if (typeof c.id !== 'string' || typeof c.type !== 'string') return false;
+      if (!isObject(c.function)) return false;
+      if (typeof c.function.name !== 'string' || typeof c.function.arguments !== 'string') {
+        return false;
+      }
+    }
+  }
+  if (s.stepOutputs !== undefined) {
+    if (!Array.isArray(s.stepOutputs)) return false;
+    // `output` is `unknown` by contract — only the `$type` label is dereferenced.
+    for (const o of s.stepOutputs) {
+      if (!isObject(o) || typeof o.$type !== 'string') return false;
+    }
+  }
+  if (s.trainedEpochs !== undefined) {
+    if (!Array.isArray(s.trainedEpochs)) return false;
+    for (const e of s.trainedEpochs) {
+      if (!isObject(e) || typeof e.$type !== 'string') return false;
+      if (!Number.isInteger(e.epochNumber)) return false;
+    }
+  }
+  if (s.publishedModel !== undefined && !isValidPublishedModel(s.publishedModel)) return false;
   return true;
+}
+
+/**
+ * Shape check for `publishedModel` — shared by {@link isValidWorkflowSnapshot}
+ * and the `AppWorkflow` row guard, which carry the same field.
+ */
+function isValidPublishedModel(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isFiniteNumber(p.modelId) || !isFiniteNumber(p.modelVersionId)) return false;
+  return typeof p.published === 'boolean';
 }
 
 /**
@@ -788,6 +854,8 @@ function isValidAppWorkflow(w: unknown): boolean {
     if (img.height !== null && !isFiniteNumber(img.height)) return false;
     if (img.nsfwLevel !== null && !isFiniteNumber(img.nsfwLevel)) return false;
   }
+  // OPTIONAL — absent on hosts that predate it; checked only when present.
+  if (w.publishedModel !== undefined && !isValidPublishedModel(w.publishedModel)) return false;
   return true;
 }
 

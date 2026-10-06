@@ -197,6 +197,15 @@ export type { SfwGateProps } from './hooks/SfwGate.js';
 export { useDirectLoad } from './hooks/useDirectLoad.js';
 export type { UseDirectLoad, UseDirectLoadOptions } from './hooks/useDirectLoad.js';
 export { hostToRunUrl, DIRECT_LOAD_TIMEOUT_MS } from './transport/directLoad.js';
+// A block CANNOT frame its own bundled content by URL. This is the `srcdoc`
+// fallback; prefer a single-document design. Why, measured, in one place:
+// `@civitai/app-sdk`'s `src/blocks/nestedDocument.ts` header.
+export { useNestedDocument } from './hooks/useNestedDocument.js';
+export type {
+  NestedDocumentStatus,
+  UseNestedDocument,
+  UseNestedDocumentOptions,
+} from './hooks/useNestedDocument.js';
 export { useAppStorage } from './hooks/useAppStorage.js';
 export type {
   AppStorageKeyEntry,

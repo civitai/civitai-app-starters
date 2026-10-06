@@ -84,7 +84,11 @@ export const WORKFLOW_STEP_TYPES = {
   imageBackgroundRemoval: 'Image background removal (BiRefNet)',
   /** Vectorize a raster image with a local StarVector / OmniSVG model. */
   imageToSvg: 'Raster image → SVG vectorization',
-  /** LoRA / DoRA / embedding training. Long-running. */
+  /**
+   * LoRA / DoRA / embedding training. Long-running. Allowed on an App Block's
+   * pass-through arm, where its `maxBuzz` (1–250) is also its timeout in
+   * seconds — see `WorkflowBodyPassThroughStep` in `@civitai/app-sdk/blocks`.
+   */
   imageResourceTraining: 'Train a LoRA / DoRA / embedding from a dataset',
   /** Pre-process an image (resize, ControlNet preprocessor, etc.). */
   preprocessImage: 'Image preprocessing (resize, ControlNet preprocessors, …)',
@@ -171,7 +175,8 @@ export const WORKFLOW_STEP_TYPES = {
   /**
    * Generic training step. Engines: `ai-toolkit`, `comfy`. Distinct from
    * {@link WORKFLOW_STEP_TYPES.imageResourceTraining}, which is the older
-   * kohya/musubi/flux-dev-fast LoRA path.
+   * kohya/musubi/flux-dev-fast LoRA path. Allowed on an App Block's
+   * pass-through arm on the same terms as `imageResourceTraining`.
    */
   training: 'Model training (ai-toolkit / comfy engines)',
 

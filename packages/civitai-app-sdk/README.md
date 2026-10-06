@@ -137,6 +137,7 @@ interface BlockInitPayload {
 | `BLOCK_SCOPES` / `BLOCK_SCOPE_PATTERN` | Every known block scope string (the authoritative enum the canonical schema validates `scopes` against) + the `domain:verb:target` format-helper regex. Read the current set from `BLOCK_SCOPES` itself — scopes are added and retired, so no count is quoted here. A scope is valid only if it's a member of `BLOCK_SCOPES`, matching the [canonical schema](https://civitai.com/schemas/app-block/v1.json). |
 | `isMessage(data, type)` | Discriminator-only message narrowing (see above). |
 | `isModelSlotContext(ctx)` / `isPageSlotContext(ctx)` | Runtime narrowing for the `slotId`-discriminated `BlockContext` union. Real checks on a value that crossed a `postMessage` boundary — they verify every field they assert, not just `slotId`. |
+| `fetchNestedDocument(opts)` | Embed one of your OWN bundled documents as an iframe `srcdoc`, because a nested `<iframe src>` of your own content **cannot load** — see [Nested documents](#nested-documents) below. `NestedDocumentError` carries a `.code` of `'invalid-url' \| 'http-error' \| 'network-error'`. |
 | `isSignedIn(viewer)` | **The sign-in gate.** `isSignedIn(useBlockContext().viewer)` — do not open-code it as `viewer !== null` or `viewer?.signedIn === true`. Which of those is correct has already changed once with the host contract, and this is the one place it is decided. It reads neither `viewer.id` nor `viewer.username` (both `@deprecated`), so nothing written through it changes when those are removed. Need the identity rather than the presence? `useViewer()` — scope-gated and audited per call. |
 | types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `WorkflowBodyCustomComfy` (+ its two arms `WorkflowBodyCustomComfyRecipe` / `WorkflowBodyCustomComfyInline`, and `InlineComfyNode`), `WorkflowBodyStep` / `WorkflowBodyPassThroughStep` (the two arms of `kind: 'step'`), `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
 
@@ -173,6 +174,18 @@ own key:
   (scanners, moderation classifiers, hashing/model ingestion, web egress), a 64-character
   `$type` cap, a 256 KB `input` cap, and `maxBuzz` — which, as on the inline arm, is **also the
   step timeout in seconds**.
+
+  `training` and `imageResourceTraining` are **not** on that denylist — the host allows them on
+  this arm by an explicit operator decision. They get no special treatment: the same `maxBuzz`
+  ceiling (an integer 1–250) is also their timeout in seconds, so a real training run will
+  typically not fit inside it. The trained checkpoint is not part of the block contract (an older
+  host may still leak checkpoint urls into `imageUrls` / `stepOutputs` — a host defect, never
+  something to build on); a host that supports it reports the trained epochs on
+  `snapshot.trainedEpochs` without the checkpoint, and the viewer publishes
+  one by being navigated (`useCivitaiNavigate`, `scope: 'site'`) to Civitai's own model wizard at
+  `models/train/from-orchestrator?workflowId=<id>&epoch=<n>`. `snapshot.publishedModel` (and
+  `AppWorkflow.publishedModel`) then reports the resulting model. Both fields are absent on hosts
+  that predate them.
 
 ```ts
 import type { WorkflowBody } from '@civitai/app-sdk/blocks';
@@ -320,10 +333,58 @@ const { Viewer } = await import(viewerModuleSpecifier);
 for each global it actually replaced. `createMemoryStorage()` is exported too,
 if you want the standalone `Storage` work-alike.
 
+### Nested documents
+
+🔴 **A nested `<iframe src="…">` pointing at your own bundled content cannot
+load, and no manifest change fixes it** — your block's origin is opaque and the
+static host stamps `frame-ancestors` + `X-Frame-Options` on every path it
+serves. The full derivation, the dated external browser matrix (an
+observation of the platform — nothing in this repo verifies it) and the known
+limits
+are in one place: the header of
+[`src/blocks/nestedDocument.ts`](src/blocks/nestedDocument.ts).
+
+**Prefer a single-document design.** An engine build (Defold, Unity WebGL,
+Phaser) is a `<canvas>` plus a JS loader that normally mounts straight into the
+document you hand it, which avoids the whole problem class.
+
+When a separate document is genuinely required, fetch it and inline it as the
+iframe's `srcdoc` — that frame inherits your opaque origin and carries no
+response headers of its own:
+
+```ts
+import { fetchNestedDocument } from '@civitai/app-sdk/blocks';
+
+const { srcDoc, baseHref } = await fetchNestedDocument({ src: '/game/index.html' });
+// baseHref === 'https://<blockId>.civit.ai/game/'
+const frame = document.createElement('iframe');
+frame.setAttribute('sandbox', 'allow-scripts'); // your own; it does not inherit
+frame.srcdoc = srcDoc;
+```
+
+The injected `<base href>` is the mechanism: a `srcdoc` document's base URL is
+`about:srcdoc`, inheriting yours, so every relative `src=` in the fetched markup
+would otherwise resolve to nothing. The base is the directory of the
+**response's final URL**, so a redirect is followed rather than resolved one
+directory too high. A document that already declares a `<base href>` has that
+one resolved against the final URL and replaced — the base the parser uses is
+always absolute. It is **not** a de-duplication: markup declaring two
+`<base href>` tags comes back with two, the first (the only one a parser
+honours) rewritten and the second left inert. Only real markup counts — a
+`<base>` or a `<head>` inside a comment or an inline `<script>`/`<style>` body
+is ignored, and tag names match case-insensitively.
+
+**The returned string is NOT sanitized**, on purpose — it is your own markup and
+scripts, verbatim, and stripping them would remove the thing the nested document
+exists to run. Only pass a `src` you control. React callers want
+`useNestedDocument()` from
+[`@civitai/blocks-react`](../civitai-blocks-react/README.md).
+
 ### Version compatibility
 
 | `@civitai/app-sdk` | adds (blocks surface) |
 |---|---|
+| `0.57.0` | `fetchNestedDocument` / `NestedDocumentError` — the `srcdoc` escape hatch for embedding your own bundled documents |
 | `0.27.0` | `@civitai/app-sdk/safe-storage` — opaque-origin `localStorage`/`sessionStorage` shim, auto-installed by the `blocks` subpath |
 | `0.24.0` | `QUERY_APP_WORKFLOWS` / `CANCEL_APP_WORKFLOW` messages + the `AppWorkflow` type (app generator subqueue, PR #3164) |
 | `0.7.0` | `CANCEL_WORKFLOW` / `WORKFLOW_CANCELED` messages (real cancel, gotcha #51) |
@@ -564,7 +625,9 @@ A `$type` having a type here says nothing about whether you may submit it.
 - **App Blocks** don't reach the orchestrator at all. A block posts a `WorkflowBody` to the host, which validates it server-side against its own schema. That contract is `@civitai/app-sdk/blocks` and is completely unaffected by this subpath.
 - **Standalone apps / BFFs** submit directly with the user's OAuth token, and the orchestrator applies its own authorization. A body that compiles can still come back 400 or 403.
 
-Several of the 47 exist to serve Civitai's own pipelines rather than third-party apps — `modelPickleScan`, `xGuardModeration`, `training`, `comfyNodepackSnapshot`, `qwenImageBench`, the `model*`/`media*` hashing and classification steps. They're in the consumer spec, so they're typed here. They are not an invitation.
+Several of the 47 exist to serve Civitai's own pipelines rather than third-party apps — `modelPickleScan`, `xGuardModeration`, `comfyNodepackSnapshot`, `qwenImageBench`, the `model*`/`media*` hashing and classification steps. They're in the consumer spec, so they're typed here. They are not an invitation.
+
+`training` and `imageResourceTraining` are the exception: an App Block's host explicitly **allows** them on the pass-through arm (see `WorkflowBodyPassThroughStep` under Primitives above for the `maxBuzz` bound, and how a trained epoch is published). For a standalone app, the orchestrator's own authorization still decides.
 
 Note that `WORKFLOW_STEP_TYPES` does **not** mark most of them: of its 51 entries exactly two — `comfyNodepackSnapshot` and `qwenImageBench` — sit under its "Platform internals" heading, and the rest are ordinary documented entries (`webScrape` even carries usage notes). The reason the platform steps are typed anyway is not that the catalog flags them as internal; it's that the catalog *documents* them, so skipping them would make `WorkflowStepTemplateFor<'training'>` a compile error for a step type the SDK documents — which is exactly what is live today for the 3 `$type`s the pinned client cannot type, and is why that gap is spelled out above rather than left to be discovered.
 

@@ -3,7 +3,7 @@
 Framework-agnostic **design tokens**, derived at build time from civitai's real
 Mantine theme. Ships three forms of the same `--civitai-*` token contract:
 
-- `dist/tokens.css` — a `:root` + `[data-theme='light'|'dark']` + OS-preference stylesheet
+- `dist/tokens.css` — a `:root` + `[data-theme='light'|'dark']` stylesheet
   (`--civitai-*` custom properties; `<color>` tokens registered via `@property`).
 - typed JS — `import { tokens, darkTokens, tokenVars, tokensCss } from '@civitai/theme'`.
 - `dist/tokens.dtcg.json` — a W3C **Design Tokens Community Group** export

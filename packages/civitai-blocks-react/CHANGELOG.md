@@ -1,5 +1,144 @@
 # @civitai/blocks-react
 
+## 0.63.2
+
+### Patch Changes
+
+- a5e84b7: docs: three README claims the shipped tokens had already falsified
+
+  **`@civitai/blocks-react` — default theme.** The auto-theming bullet told authors
+  that with no `data-theme` attribute the components render **light**, "matching
+  the starter palette". `@civitai/theme@0.5.0` flipped the base to **dark** and
+  removed the OS-preference override, so both halves have been false since that
+  release. Corrected by reusing the wording the canonical contract already carries
+  (`@civitai/components`' `MARKUP.md`): default (no attribute) is the dark palette,
+  and nothing consults the OS preference.
+
+  **`@civitai/blocks-react` — component-pack description.** The W6 section
+  advertised "8px radius, the blue primary, the dark/light surfaces". The shipped
+  token is `--civitai-radius: 0.25rem` — **4px** — and has been since `0.35.0`; the
+  package's own `src/ui/styles.ts` already records the `8px→4px` break. The
+  parenthetical is cut rather than re-specified, so it cannot go stale against
+  another package's tokens a third time.
+
+  **`@civitai/theme` — the opening description.** The first bullet described
+  `dist/tokens.css` as "a `:root` + `[data-theme='light'|'dark']` + **OS-preference**
+  stylesheet". The same file already says the opposite twice — _"Dark is the base,
+  and nothing here consults the OS"_, and _"There is deliberately no
+  `@media (prefers-color-scheme: …)` block, in either direction"_ — and the shipped
+  `dist/tokens.css` contains zero such at-rules. The two words are cut; the
+  accurate explanation below them is left to stand.
+
+  Prose only — no behaviour change in either package. Patch releases are needed
+  because the published artifacts _are_ these documents: all three claims are live
+  in the published READMEs that ship inside the `0.63.1` and `0.5.1` tarballs.
+
+- Updated dependencies [a5e84b7]
+  - @civitai/theme@0.5.2
+
+## 0.63.1
+
+### Patch Changes
+
+- 42e6e11: docs: a `:root` token override loses silently, and all three packages told authors otherwise
+
+  `@civitai/components`' cascade promise — "every rule lives in
+  `@layer civitai.components`, so your own unlayered CSS always wins with no
+  `!important`" — is true of **this package's rules** and false of the **tokens**.
+  `@civitai/theme`'s sheet carries no cascade layer and declares its tokens at
+  `:root` / `[data-theme='…']`, specificity `0-1-0`. So an app's own
+  `:root { --civitai-color-primary: … }` does not outrank them, it **ties**, and
+  stylesheet order decides.
+
+  🔴 **The order that loses is the one the framework itself produces.**
+  `useBlocksStyles()` injects from a `useEffect`, so the token sheet lands _after_
+  a bundler-injected app stylesheet. Measured in Chromium: in that order a `:root`
+  brand override resolves to civitai's own `#1971C2` with no error and no warning
+  — and it does so with or without `data-theme` present, so the host theme stamp
+  is not the cause. An author branding a block the obvious way gets civitai blue
+  and nothing to debug.
+
+  Nothing in the three packages said so. The one piece of correct advice that did
+  exist — `MARKUP.md`'s inline-`style` example — happens to be order-immune, but
+  read as one option among equals rather than as the route that works.
+
+  - `@civitai/components` `src/components.css`: 🔴 **the sheet's own header
+    carried the unqualified promise this release retracts** — _"ALL rules live in
+    `@layer civitai.components` so a consumer's own unlayered CSS always wins the
+    cascade WITHOUT specificity fights"_ — and it is single-sourced into **16** generated
+    artifacts under `src/` by `pnpm --filter @civitai/components generate` (which
+    also rewrites `dist/components.css` and the root `styles.css`, carrying the
+    same header) — so it was the most-published copy of the wrong claim and the
+    last one anyone would look at. Now scoped to _this sheet_ with the token
+    exception stated: one edit, every artifact.
+  - `@civitai/components` `MARKUP.md`: _Cascade / overriding_ now separates the
+    layered rules from the unlayered tokens, says **scope a token override, never
+    declare one at `:root`**, and gives the routes measured to win in either order
+    (inline `style`, or a class on the block root). It also records that a scoped
+    value crosses into component shadow roots. This is the CANONICAL copy; the
+    others below point at it rather than restating it.
+  - `@civitai/components` `README.md`: the correction on the npm page, where the
+    unqualified "your own unlayered CSS always wins" sentence lived — cut to the
+    one-clause rule plus the `MARKUP.md` link it already carried. The utilities
+    section's "override the custom properties to retune every utility at once" now
+    says _on a scope, not `:root`_. ⚠️ With a caveat that matters: those tokens
+    live in `utilities.css`, a **different** unlayered sheet, and nothing injects
+    it for you — a consumer links it themselves, so there the stylesheet order is
+    _theirs_ to control and a `:root` override can be made to work. Scoping is
+    still the advice because it needs no ordering discipline at all. Measured for
+    the token sheet; that sheet is the same shape by construction, not separately
+    measured.
+  - `@civitai/theme` `README.md`: a _Recolouring a token (brand overrides)_
+    section, because this is the sheet with no layer and its own page never
+    mentioned the interaction. It also states plainly what is **not** supported:
+    the package exports token values and `injectTokens(doc?)`, the generator is
+    internal, and only the literal strings `light`/`dark` select a token block, so
+    `data-theme="mybrand"` selects none and inherits dark. You recolour the token
+    set; there is no named-theme API.
+  - `@civitai/blocks-react` `src/ui/styles.ts`: this is the function whose
+    effect-time injection creates the losing order, so the warning belongs on it.
+    🔴 **It is on `useBlocksStyles()`' own JSDoc, not the file-level comment** —
+    measured, the file-level block reaches the published `.d.ts` **not at all**:
+    it floats above a non-exported const that `tsc` elides, so it attaches to no
+    emitted declaration, and `files` ships no `src`. A block author hovering the
+    hook is the named audience and the file comment never reached them. Kept to a
+    pointer rather than a paraphrase of the matrix: a JSDoc copy of another
+    package's README, on another release cadence, is a desync nothing in CI can
+    see, and this repo has already measured that exact failure once.
+  - `@civitai/theme` `test/generation-parity.test.ts`: two node-tier assertions —
+    that the emitted sheet contains no `@layer`, and that its base block declares
+    the tokens ON the root element at full specificity — `:root` is required, so
+    `:root` and `:root, :host` pass while `:host` alone, `:where(:root)`,
+    `:root > *` and `:root body` all fail. That is the **defining**
+    property consumers depend on, and until now it was asserted nowhere — the
+    parity test stays green if you layer, because both sides of the comparison
+    move together.
+
+  Prose and JSDoc only — no behaviour change in any of the three. A patch release
+  is needed because the published artifacts _are_ these documents.
+
+  Backed by tests rather than by reasoning, at two levels:
+  `@civitai/components`' `test/token-override-order.browser.test.ts` asserts every
+  documented route in **both** stylesheet orders, with fixture controls naming the
+  real civitai value the trap resolves to; and the theme-package assertions above
+  pin the property those cases are a consequence of. The browser cases record the
+  trap as well as the happy paths, but as EVIDENCE rather than as the tripwire —
+  and measured, they are a PARTIAL detector: a `@layer` wrap reddens both
+  order-dependent cases, while a zero-specificity base (`:where(:root)`) reddens
+  exactly **one**, because `[data-theme='dark']` keeps its `0-1-0` specificity and
+  still wins on order. That is why the property is pinned at source in the theme
+  package, in **two** assertions rather than one: a substring check for `@layer`
+  cannot see `:where(`, so the selector shape is asserted alongside it.
+
+  Not documented, deliberately: `:root:root`. The specificity notch does beat the
+  theme's blocks in both orders, but nobody asked for it, it has no named
+  consumer, it teaches a specificity hack, and it buys nothing a scoped override
+  does not already buy unconditionally.
+
+- Updated dependencies [42e6e11]
+  - @civitai/components@0.9.2
+  - @civitai/theme@0.5.1
+
 ## 0.63.0
 
 ### Minor Changes
@@ -1533,10 +1672,10 @@ URL('https://civitai.com/evil').origin` is `https://civitai.com`).
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                              before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                       @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                              after    @civitai/theme       0.3.1                   — 1 copy
-                                       @civitai/components  0.4.2                   — 1 copy
+                                  before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                           @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                  after    @civitai/theme       0.3.1                   — 1 copy
+                                           @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
