@@ -106,7 +106,8 @@ configureChat({ autoRunLimit: 0 }); // ask before every generation
 ```
 
 `model` (the default chat model), `models` (others the viewer may pick in Settings, each `{ id,
-label, note }`), `orchestrationMcpUrl`, `siteMcpUrl` and `autoRunLimit` (the Buzz a new viewer's
+label, note }`; none by default, e.g. `configureChat({ models: [{ id: 'z-ai/glm-5.3-flash', label:
+'GLM 5.3 Flash', note: 'Follows instructions closely.' }] })`), `orchestrationMcpUrl`, `siteMcpUrl` and `autoRunLimit` (the Buzz a new viewer's
 generations may cost before the chat asks) are the settings. In Settings the viewer picks the
 assistant's model from the default, `models`, or any model id the orchestrator's chat endpoint
 serves (Custom); conversation titles always use the default.
@@ -122,7 +123,7 @@ choice is the model alone.
 
 The message box takes slash commands, run by the chat itself and never sent to the assistant:
 `/clear` (or `/new`) starts a new chat, `/model` shows or switches the assistant's model
-(`/model smart`, `/model default`, `/model <id>`), and `/help` lists them.
+(`/model default`, `/model <label of a listed model>`, `/model <id>`), and `/help` lists them.
 
 A page adds its own with `commands`, which can also replace or remove the built-ins:
 

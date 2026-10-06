@@ -519,7 +519,7 @@ export class CivitaiChat extends LitElement {
     return {
       clear: { aliases: ['new'], usage: '/clear', help: 'Start a new chat', run: () => this.newChat() },
       model: {
-        usage: '/model [default | smart | model id]',
+        usage: `/model [${['default', ...chatConfig.models.map((model) => model.label.toLowerCase()), 'model id'].join(' | ')}]`,
         help: "Show or switch the assistant's model",
         run: (arg, { notify }) => {
           const session = this.#session;
