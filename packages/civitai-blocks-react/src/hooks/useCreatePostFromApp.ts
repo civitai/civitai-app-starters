@@ -100,8 +100,13 @@ export class CreatePostError extends Error {
    */
   readonly declined: boolean;
   /**
-   * There is no session. Route this into `useRequestSignIn()` rather than
-   * showing an error — the viewer's next step is signing in, not retrying.
+   * There is no session — the viewer is signed out (`sign in to post`), or
+   * their session ended, e.g. signed out in another tab (a bare
+   * `UNAUTHORIZED`). Route this into `useRequestSignIn()` rather than showing
+   * an error — the viewer's next step is signing in, not retrying.
+   *
+   * A session that now belongs to a different account is NOT this: `.message`
+   * asks the viewer to reload the page, and is safe to render.
    */
   readonly signInRequired: boolean;
 
@@ -111,7 +116,7 @@ export class CreatePostError extends Error {
     this.timedOut = opts?.timedOut === true;
     if (isCreatePostErrorCode(error)) this.code = error;
     this.declined = error === 'declined';
-    this.signInRequired = error === 'sign in to post';
+    this.signInRequired = error === 'sign in to post' || error === 'UNAUTHORIZED';
   }
 }
 

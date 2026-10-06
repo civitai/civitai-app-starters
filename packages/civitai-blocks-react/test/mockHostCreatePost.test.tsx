@@ -152,3 +152,25 @@ describe('createMockHost — create post from app', () => {
     expect((caught as CreatePostError).signInRequired).toBe(true);
   });
 });
+
+describe('CreatePostError.signInRequired', () => {
+  it('is true for a session that ended (bare UNAUTHORIZED)', () => {
+    const err = new CreatePostError('UNAUTHORIZED');
+    expect(err.signInRequired).toBe(true);
+    // Not one of the host's closed refusal codes, so `.code` stays unset.
+    expect(err.code).toBeUndefined();
+  });
+
+  it('keeps `sign in to post` and nothing broader', () => {
+    expect(new CreatePostError('sign in to post').signInRequired).toBe(true);
+    for (const message of [
+      'this app session belongs to a different account; reload the page to continue',
+      'upstream said UNAUTHORIZED once',
+      'unauthorized',
+      'declined',
+      'no block token',
+    ]) {
+      expect(new CreatePostError(message).signInRequired, message).toBe(false);
+    }
+  });
+});
