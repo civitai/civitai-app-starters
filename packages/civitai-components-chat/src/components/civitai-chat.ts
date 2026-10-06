@@ -499,16 +499,14 @@ export class CivitaiChat extends LitElement {
   }
 
   #freeAllowance(session: ChatSession): FreeAllowance | null {
-    if (!session.freeTier.status.enabled) return null;
-    const model = session.settings.assistantModel?.trim() || chatConfig.model;
-    const free = session.freeTier.modelFor(model);
-    return { eligible: Boolean(free), left: free?.remaining ?? 0, resetAt: session.freeTier.resetAt(model) };
+    const free = session.freeTier.modelFor(chatConfig.model);
+    return free ? { left: free.remaining, resetAt: session.freeTier.resetAt(chatConfig.model) } : null;
   }
 
   #continuePaid(): void {
     const session = this.#session;
     if (!session) return;
-    this.#updateSettings({ payWhenFreeRunsOut: true });
+    this.#updateSettings({ assistantTier: 'auto' });
     void session.agent.retry();
   }
 

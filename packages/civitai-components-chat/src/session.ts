@@ -163,7 +163,10 @@ export class ChatSession extends EventTarget {
     let model = this.#models.get(id);
     if (!model) {
       const wrap = (inner: typeof fetch) =>
-        freeTierFetch(inner, id, this.freeTier, () => ({ useFree: this.settings.useFreeAllowance !== false, payWhenOut: this.settings.payWhenFreeRunsOut === true }));
+        freeTierFetch(inner, id, this.freeTier, () => {
+          const tier = this.settings.assistantTier ?? 'auto';
+          return { useFree: tier !== 'paid', payWhenOut: tier !== 'free' };
+        });
       this.#models.set(id, (model = createAssistantModel(this.app, { model: id, wrap })));
     }
     return model;

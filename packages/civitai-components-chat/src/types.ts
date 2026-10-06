@@ -113,10 +113,11 @@ export interface Settings {
   assistantModel?: string;
   /** The language the viewer speaks to the microphone in. */
   voiceLanguage?: string;
-  /** Send replies free while the daily allowance lasts; on unless turned off. */
-  useFreeAllowance?: boolean;
-  /** When the free allowance cannot serve a reply (used up, or slow to start), send it on Buzz without asking. */
-  payWhenFreeRunsOut?: boolean;
+  /**
+   * How replies are paid for: `auto` (the default) uses free replies while they last and then Buzz,
+   * `free` uses only free replies, `paid` always uses Buzz.
+   */
+  assistantTier?: 'auto' | 'free' | 'paid';
   lastConversationId?: string;
 }
 

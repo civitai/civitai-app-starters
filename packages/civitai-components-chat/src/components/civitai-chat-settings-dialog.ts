@@ -4,8 +4,8 @@ import { CUSTOM_INSTRUCTIONS_MAX, RETENTION_DAYS, type ChatModelOption } from '.
 import type { Settings } from '../types.js';
 import { LightElement, emit } from './light.js';
 
+/** The default model's free replies; null when it has none. */
 export interface FreeAllowance {
-  eligible: boolean;
   left: number;
   resetAt?: Date;
 }
@@ -23,6 +23,9 @@ const LIMITS = [
 ];
 
 const CUSTOM = 'custom';
+const AUTO = 'auto';
+const FREE = 'free';
+const DEFAULT = '';
 
 export class CivitaiChatSettingsDialog extends LightElement {
   static override properties: PropertyDeclarations = {
@@ -39,7 +42,6 @@ export class CivitaiChatSettingsDialog extends LightElement {
 
   declare open: boolean;
   declare settings: Settings;
-  /** The free replies the viewer's model has left; null when there is no free tier. */
   declare freeAllowance: FreeAllowance | null;
   declare userName: string;
   declare canExport: boolean;
@@ -82,57 +84,53 @@ export class CivitaiChatSettingsDialog extends LightElement {
     const current = this.settings.assistantModel ?? '';
     const listed = current === '' || this.models.some((model) => model.id === current);
     const custom = this.customModel || !listed;
-    const data = [{ value: '', label: 'Default' }, ...this.models.map((model) => ({ value: model.id, label: model.label })), { value: CUSTOM, label: 'Custom…' }];
-    const note = custom
-      ? 'Any chat model the Civitai orchestrator serves; what a reply costs depends on the model.'
-      : current === ''
-        ? 'The cheapest.'
-        : (this.models.find((model) => model.id === current)?.note ?? '');
+    const free = this.freeAllowance;
+    const tier = this.settings.assistantTier ?? 'auto';
+    const value = custom ? CUSTOM : current || (!free ? DEFAULT : tier === 'free' ? FREE : tier === 'paid' ? DEFAULT : AUTO);
+    const data = [
+      ...(free ? [{ value: AUTO, label: 'Auto' }, { value: FREE, label: 'Free' }] : []),
+      { value: DEFAULT, label: 'Default' },
+      ...this.models.map((model) => ({ value: model.id, label: model.label })),
+      { value: CUSTOM, label: 'Custom…' },
+    ];
     return html`<civitai-select
         label="Assistant"
-        description=${note}
+        description=${this.#note(value, free)}
         .data=${data}
-        .value=${custom ? CUSTOM : current}
+        .value=${value}
         @change=${(event: Event) => {
-          const value = (event.target as HTMLInputElement).value;
-          this.customModel = value === CUSTOM;
-          if (value !== CUSTOM) this.#change({ assistantModel: value || undefined });
+          const picked = (event.target as HTMLInputElement).value;
+          this.customModel = picked === CUSTOM;
+          if (picked === CUSTOM) return;
+          if (picked === AUTO || picked === FREE || picked === DEFAULT) {
+            this.#change({ assistantModel: undefined, assistantTier: picked === FREE ? 'free' : picked === DEFAULT ? 'paid' : 'auto' });
+          } else {
+            this.#change({ assistantModel: picked, assistantTier: 'auto' });
+          }
         }}
       ></civitai-select>
       ${custom
         ? html`<civitai-text-input
             label="Model id"
-            description="For example z-ai/glm-5.3-prime. Applies from the next reply."
-            placeholder="provider/model"
+            description="An AIR or a model id, for example z-ai/glm-5.3-prime. Applies from the next reply."
+            placeholder="urn:air:… or provider/model"
             .value=${listed ? '' : current}
-            @change=${(event: Event) => this.#change({ assistantModel: (event.target as HTMLInputElement).value.trim() || undefined })}
+            @change=${(event: Event) => this.#change({ assistantModel: (event.target as HTMLInputElement).value.trim() || undefined, assistantTier: 'auto' })}
           ></civitai-text-input>`
         : nothing}`;
   }
 
-  #free(): TemplateResult | typeof nothing {
-    const free = this.freeAllowance;
-    if (!free) return nothing;
-    const left = !free.eligible
-      ? 'The model you picked has no free replies; the default one does.'
-      : free.left > 0
-        ? `${free.left} free ${free.left === 1 ? 'reply' : 'replies'} left.`
-        : `Used up${free.resetAt ? ` until ${free.resetAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}.`;
-    return html`<section>
-      <h3>Free replies</h3>
-      <p>${left}</p>
-      <civitai-switch
-        label="Use my free replies first"
-        .checked=${this.settings.useFreeAllowance !== false}
-        @change=${(event: Event) => this.#change({ useFreeAllowance: (event.target as HTMLInputElement).checked })}
-      ></civitai-switch>
-      <civitai-switch
-        label="When they run out, continue on Buzz"
-        description="About 1 Buzz a reply. Also used when free replies are slow to start."
-        .checked=${this.settings.payWhenFreeRunsOut === true}
-        @change=${(event: Event) => this.#change({ payWhenFreeRunsOut: (event.target as HTMLInputElement).checked })}
-      ></civitai-switch>
-    </section>`;
+  #note(value: string, free: FreeAllowance | null): string {
+    const back = free?.resetAt ? ` until ${free.resetAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '';
+    if (value === AUTO) {
+      return free && free.left > 0
+        ? `Free replies while they last (${free.left} left), then about 1 Buzz a reply.`
+        : `Free replies are used up${back}; about 1 Buzz a reply meanwhile.`;
+    }
+    if (value === FREE) return free && free.left > 0 ? `Only free replies: ${free.left} left.` : `Free replies are used up${back}.`;
+    if (value === DEFAULT) return 'About 1 Buzz a reply.';
+    if (value === CUSTOM) return 'Any chat model the Civitai orchestrator serves; what a reply costs depends on the model.';
+    return this.models.find((model) => model.id === value)?.note ?? '';
   }
 
   override render(): TemplateResult {
@@ -148,7 +146,6 @@ export class CivitaiChatSettingsDialog extends LightElement {
           @change=${(event: Event) => this.#change({ autoRunLimit: Number((event.target as HTMLInputElement).value) })}
         ></civitai-select>
         ${this.#model()}
-        ${this.#free()}
         <civitai-textarea
           label="Custom instructions"
           description="Sent with every message. Tell the assistant about you, your style, or how you like answers."

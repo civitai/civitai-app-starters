@@ -391,27 +391,50 @@ describe('civitai-chat-post-card for a draft', () => {
 });
 
 describe('civitai-chat-settings-dialog', () => {
-  it('lets the viewer pick a listed model or type any model id', async () => {
+  const settingsDialog = async (freeAllowance: { left: number; resetAt?: Date } | null) => {
     const dialog = await mount('civitai-chat-settings-dialog', {
       open: true,
       settings: { theme: 'system', allowMature: false, autoRunLimit: 100 },
       models: [{ id: 'z-ai/glm-5.3-flash', label: 'Smart', note: 'Follows instructions more closely.' }],
+      freeAllowance,
     });
     const changes: unknown[] = [];
     dialog.addEventListener('cvt-settings-change', (e) => changes.push((e as CustomEvent).detail));
-    const select = dialog.querySelector<HTMLInputElement>('civitai-select[label=Assistant]')!;
+    const select = dialog.querySelector<HTMLInputElement & { data: { label: string }[] }>('civitai-select[label=Assistant]')!;
+    const pick = async (value: string) => {
+      select.value = value;
+      select.dispatchEvent(new Event('change'));
+      await dialog.updateComplete;
+    };
+    return { dialog, changes, select, pick };
+  };
 
-    select.value = 'z-ai/glm-5.3-flash';
-    select.dispatchEvent(new Event('change'));
-    expect(changes).toEqual([{ assistantModel: 'z-ai/glm-5.3-flash' }]);
+  it('offers free replies first, free only, or always paid, with what is left', async () => {
+    const { changes, select, pick } = await settingsDialog({ left: 198 });
+    expect(select.data.map((option) => option.label)).toEqual(['Auto', 'Free', 'Default', 'Smart', 'Custom…']);
+    expect(select.value).toBe('auto');
+    expect(select.getAttribute('description')).toBe('Free replies while they last (198 left), then about 1 Buzz a reply.');
 
-    select.value = 'custom';
-    select.dispatchEvent(new Event('change'));
-    await dialog.updateComplete;
+    await pick('free');
+    await pick('');
+    expect(changes).toEqual([
+      { assistantModel: undefined, assistantTier: 'free' },
+      { assistantModel: undefined, assistantTier: 'paid' },
+    ]);
+  });
+
+  it('lets the viewer pick a listed model or type any model id, and drops the free options when there are none', async () => {
+    const { dialog, changes, select, pick } = await settingsDialog(null);
+    expect(select.data.map((option) => option.label)).toEqual(['Default', 'Smart', 'Custom…']);
+
+    await pick('z-ai/glm-5.3-flash');
+    expect(changes).toEqual([{ assistantModel: 'z-ai/glm-5.3-flash', assistantTier: 'auto' }]);
+
+    await pick('custom');
     const id = dialog.querySelector<HTMLInputElement>('civitai-text-input[label="Model id"]')!;
     id.value = ' z-ai/glm-5.3-prime ';
     id.dispatchEvent(new Event('change'));
-    expect(changes.at(-1)).toEqual({ assistantModel: 'z-ai/glm-5.3-prime' });
+    expect(changes.at(-1)).toEqual({ assistantModel: 'z-ai/glm-5.3-prime', assistantTier: 'auto' });
   });
 });
 

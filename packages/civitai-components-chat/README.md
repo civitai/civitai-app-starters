@@ -111,13 +111,14 @@ generations may cost before the chat asks) are the settings. In Settings the vie
 assistant's model from the default, `models`, or any model id the orchestrator's chat endpoint
 serves (Custom); conversation titles always use the default.
 
-Replies go out on the viewer's free daily allowance when the orchestrator has one for the model
-(`GET /v2/consumer/free-tier`; the request carries `X-Civitai-Tier: free`). When it runs out, the chat
-only pays for the reply if the viewer turned on "When they run out, continue on Buzz" in Settings;
-otherwise the reply says until when the allowance is used up and offers **Continue with Buzz**, which
-turns that setting on and runs the reply again. Free work waits behind paid work, so for a viewer who
-allows paying, a free reply with no first byte after 12 seconds is sent again on Buzz. Settings shows
-how many free replies are left, and "Use my free replies first" turns the allowance off.
+Settings' Assistant choice also sets how replies are paid for, when the orchestrator has a free daily
+allowance for the default model (`GET /v2/consumer/free-tier`; free requests carry
+`X-Civitai-Tier: free`): **Auto** (the default) uses free replies while they last and then Buzz, and
+also Buzz when a free reply has not started after 12 seconds (free work waits behind paid work);
+**Free** uses only free replies, and once they are used up a reply says until when and offers
+**Continue with Buzz**, which switches to Auto and runs it again; **Default** always uses Buzz. A
+listed or custom model uses its own free allowance first if it has one. Without a free tier the
+choice is the model alone.
 
 The message box takes slash commands, run by the chat itself and never sent to the assistant:
 `/clear` (or `/new`) starts a new chat, `/model` shows or switches the assistant's model
