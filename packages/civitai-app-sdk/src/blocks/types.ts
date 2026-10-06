@@ -1227,7 +1227,8 @@ export type WorkflowBodyStep = {
  *  3. **No resource policy / `urn:air:` scan.** AIR resources are ALLOWED here.
  *     Spend, not entitlement, is the binding control.
  *  4. **No `billingMode` and no load-time price invariant.** {@link maxBuzz}
- *     replaces them, exactly as on {@link WorkflowBodyCustomComfyInline}.
+ *     and a per-request orchestrator `whatif` quote replace them — see
+ *     `maxBuzz` below for how the two combine.
  *
  * WHAT STILL BOUNDS IT, all server-side:
  *  - A **denylist** of platform-internal `$type`s (scanners, moderation
@@ -1236,14 +1237,20 @@ export type WorkflowBodyStep = {
  *    not an allowlist: a `$type` the host has never heard of is allowed through
  *    by construction, which is the point of this arm. `training` and
  *    `imageResourceTraining` are deliberately NOT on it (a host operator
- *    decision): both may be submitted here, bounded like every other `$type`
- *    by `maxBuzz` — which, being the timeout too, a real training run will
- *    typically not fit inside. A host that supports it reports the trained
- *    epochs on {@link BlockWorkflowSnapshot.trainedEpochs} without exposing
- *    the checkpoint itself.
+ *    decision): both may be submitted here, on the same terms as every other
+ *    `$type`. If the orchestrator quotes the run, the host reserves the quote
+ *    (or `maxBuzz`, if larger), gated by the token's per-call budget, and
+ *    stamps no timeout; if it does
+ *    not, `maxBuzz` is both the reservation and the timeout — see `maxBuzz`
+ *    below. Whether a given training input is quoted, and at what price, is
+ *    the orchestrator's answer, not this package's: read it from `estimate`.
+ *    A host that supports it reports the trained epochs on
+ *    {@link BlockWorkflowSnapshot.trainedEpochs} without exposing the
+ *    checkpoint itself.
  *  - `$type` is bounded to **1…64 characters** and `input` to **262144 bytes**
  *    (256 KB) serialized. Both REJECT; neither truncates.
- *  - `maxBuzz` is the single spend knob — see its own note below.
+ *  - `maxBuzz` is the app's spend knob, and the host's quote can raise the
+ *    reservation above it — see its own note below.
  *
  * @example A pass-through body for an orchestrator step the registry does not
  * carry. Note there is no `step` key.
@@ -1292,23 +1299,34 @@ export type WorkflowBodyPassThroughStep = {
    */
   input: Record<string, unknown>;
   /**
-   * The per-job Buzz ceiling. Required, an integer in **1…250**.
+   * The app's declared per-job Buzz amount: the least the host reserves, and —
+   * only when unquoted — the step timeout in seconds. NOT a spend ceiling (see
+   * below). Required, an integer in **1…250**.
    *
-   * 🔴 **IT IS ALSO THE STEP TIMEOUT, IN SECONDS** — identical mechanism to
-   * {@link WorkflowBodyCustomComfyInline.maxBuzz}. The host stamps
-   * `stepTimeoutSeconds = maxBuzz`; there is only one number, which is what makes
-   * the ceiling physically enforceable rather than merely asserted. So
-   * `maxBuzz: 10` does not buy a cheap job; it buys one that is KILLED after 10
-   * seconds and comes back `expired`. Size it to the wall-clock time the step
-   * actually needs.
+   * 🔴 **WHAT IT BOUNDS DEPENDS ON WHETHER THE HOST GOT A QUOTE** — this is NOT
+   * the mechanism of {@link WorkflowBodyCustomComfyInline.maxBuzz}, which is
+   * always the timeout. On both `estimate` and `submit` the host first asks the
+   * orchestrator for a `whatif` quote of this exact step, then:
+   *  - **Quoted** — the host reserves `max(maxBuzz, quote)` and stamps NO step
+   *    timeout. That reservation can exceed 250: it is gated against the token's
+   *    per-call budget (`token.buzzBudget` — the app's per-generation budget,
+   *    capped at 1000 when the host mints a production token), and a submit
+   *    whose reservation exceeds that budget comes back `failed` with an
+   *    `insufficient buzz budget` error before any Buzz is reserved.
+   *  - **Unquoted** (the orchestrator returned no price, or the quote could not
+   *    be had) — the host reserves `maxBuzz` and stamps it as the step timeout,
+   *    in seconds. `maxBuzz: 10` then buys a job that is KILLED after 10
+   *    seconds and comes back `expired`, so size it to the wall-clock time the
+   *    step actually needs. The same per-call budget gate applies. The timeout
+   *    bounds wall-clock time; it bounds spend only for a step billed by
+   *    compute time. A step priced per unit can bill ABOVE `maxBuzz`.
    *
-   * You are billed the REAL cost: post-paid against measured GPU seconds,
-   * refunding the unused remainder of the ceiling, so a generous `maxBuzz` costs
-   * nothing extra when the job finishes early. `estimate` on a pass-through body
-   * echoes this number back as `cost.total` — an upper bound, not a price;
-   * surface it as "up to N Buzz".
-   *
-   * The host additionally requires `maxBuzz <= token.buzzBudget` before submit.
+   * `estimate` on a pass-through body returns, as `cost.total`, the number the
+   * submit would reserve: `max(maxBuzz, quote)`, or `maxBuzz` when unquoted.
+   * It is a reservation, NOT a guaranteed ceiling: the terminal settle refunds
+   * any unused remainder, but nothing on this arm stops a job billing above
+   * the reservation (see the unquoted case above). Do not present it to the
+   * viewer as a maximum.
    */
   maxBuzz: number;
 };
@@ -1540,9 +1558,9 @@ export interface BlockWorkflowSnapshot {
    * {@link BlockWorkflowSnapshot.publishedModel} then reports the result.
    *
    * 🔴 REQUIRES A HOST VERSION THAT EMITS IT. Absent on older hosts — treat
-   * absence as "unknown", not as "no checkpoint". Also bear in mind the
-   * pass-through arm's `maxBuzz` (1–250) is the step timeout in seconds, so a
-   * real training run will typically not fit inside it.
+   * absence as "unknown", not as "no checkpoint". The run's spend and timeout
+   * follow the pass-through arm's rules — see
+   * {@link WorkflowBodyPassThroughStep.maxBuzz}.
    */
   trainedEpochs?: BlockTrainedEpoch[];
   /**
