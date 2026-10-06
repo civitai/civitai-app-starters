@@ -35,7 +35,7 @@ export interface Turn {
   createdAt: string;
   user: TurnUser;
   /** `errorDetail` is what the service said, shown only under Details. */
-  assistant: { messages: ModelMessage[]; status: TurnStatus; error?: string; errorDetail?: string };
+  assistant: { messages: ModelMessage[]; status: TurnStatus; error?: string; errorDetail?: string; errorKind?: string };
 }
 
 /** `refs` name earlier results the user pointed at ("animate this") without uploading anything. */
@@ -113,6 +113,11 @@ export interface Settings {
   assistantModel?: string;
   /** The language the viewer speaks to the microphone in. */
   voiceLanguage?: string;
+  /**
+   * How replies are paid for: `auto` (the default) uses free replies while they last and then Buzz,
+   * `free` uses only free replies, `paid` always uses Buzz.
+   */
+  assistantTier?: 'auto' | 'free' | 'paid';
   lastConversationId?: string;
 }
 

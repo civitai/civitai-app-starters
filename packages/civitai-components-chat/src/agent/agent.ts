@@ -69,6 +69,14 @@ export class Agent extends EventTarget {
     this.#abort?.abort();
   }
 
+  /** Runs the latest reply again after it failed, e.g. once the viewer agreed to pay for it. */
+  async retry(): Promise<void> {
+    const turn = this.#deps.store.current?.turns.at(-1);
+    if (this.running || turn?.assistant.status !== 'error') return;
+    turn.assistant = { messages: [], status: 'streaming' };
+    await this.#run(turn);
+  }
+
   async #run(turn: Turn): Promise<void> {
     const conversation = this.#deps.store.current;
     if (!conversation) return;
@@ -144,6 +152,7 @@ export class Agent extends EventTarget {
     const human = humanize(error);
     turn.assistant.error = human.message;
     turn.assistant.errorDetail = human.detail;
+    turn.assistant.errorKind = human.kind;
     this.dispatchEvent(new CustomEvent('error', { detail: human }));
   }
 

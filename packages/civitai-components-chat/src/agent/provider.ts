@@ -25,8 +25,13 @@ export function authedFetch(app: Pick<AppClient, 'getToken'>, doFetch: typeof fe
 
 export function createAssistantModel(
   app: Pick<AppClient, 'getToken'>,
-  { baseUrl = ORCH_URL, model = chatConfig.model, fetch: doFetch }: { baseUrl?: string; model?: string; fetch?: typeof fetch } = {},
+  {
+    baseUrl = ORCH_URL,
+    model = chatConfig.model,
+    fetch: doFetch,
+    wrap = (inner) => inner,
+  }: { baseUrl?: string; model?: string; fetch?: typeof fetch; wrap?: (inner: typeof fetch) => typeof fetch } = {},
 ): LanguageModel {
-  const provider = createOpenAICompatible({ name: PROVIDER, baseURL: `${baseUrl}/v1`, fetch: authedFetch(app, doFetch) });
+  const provider = createOpenAICompatible({ name: PROVIDER, baseURL: `${baseUrl}/v1`, fetch: wrap(authedFetch(app, doFetch)) });
   return provider.chatModel(model);
 }

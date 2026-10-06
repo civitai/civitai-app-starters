@@ -242,7 +242,7 @@ describe('civitai-chat', () => {
     const composer = root.querySelector('civitai-chat-composer')!;
     const say = (text: string) => composer.dispatchEvent(new CustomEvent('cvt-send', { bubbles: true, composed: true, detail: { text } }));
 
-    say('/model smart');
+    say('/model z-ai/glm-5.3-flash');
     await vi.waitFor(() => expect(JSON.parse(localStorage.getItem('cvt:settings') ?? '{}').assistantModel).toBe('z-ai/glm-5.3-flash'));
     say('/model default');
     await vi.waitFor(() => expect(JSON.parse(localStorage.getItem('cvt:settings') ?? '{}').assistantModel).toBeUndefined());
