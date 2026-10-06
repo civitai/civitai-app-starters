@@ -787,7 +787,7 @@ saying anything about money:
 |---|---|---|
 | `err.declined` | the viewer dismissed the dialog — **no run was submitted** | revert, say nothing |
 | `err.unconfirmed` | `submission-unconfirmed`, or no reply within the 10-min bound (`err.timedOut`) — the run **may be running and charged** | 🔴 **never retry automatically**: check the viewer's trainings first (`useAppWorkflows()` lists this app's runs). Re-running the same body after the server did start it is a **second, separately charged run** |
-| `err.refused` (`code: 'refused'`) | the server refused the submit at a **spend cap** after the viewer confirmed — their daily or private-run Buzz cap, the per-app consent budget, the app's daily spend or rate limit, or a dev-session cap. Refunded: **no run, nothing charged** | show `err.message` (the server's reason, e.g. `daily Buzz cap reached: …`); buying Buzz does not lift these caps |
+| `err.refused` (`code: 'refused'`) | the server refused the submit after the viewer confirmed — a **spend cap** (their daily or private-run Buzz cap, the per-app consent budget, the app's daily spend or rate limit, a dev-session cap) or a **temporary-availability** deny. Refunded: **no run, nothing charged**; the quote is used up | show `err.message` (the server's reason, e.g. `daily Buzz cap reached: …`); estimate again before any retry — buying Buzz does not lift these caps |
 | `err.signInRequired` | no session | route into `useRequestSignIn()` |
 | `err.code` set otherwise | a host refusal (`review-mode` / `block is not ready` / `invalid training request` / `no block token`) | show or ignore per case |
 | `err.code === undefined`, no flag | a server refusal before any submit (expired or used quote, changed body, ineligible image) | estimate again, then retry |
@@ -832,7 +832,7 @@ async function train(images: Array<{ id: number; caption: string }>) {
     if (!(err instanceof RunTrainingError)) throw err;
     if (err.declined) return; // no run
     if (err.unconfirmed) return showCheckYourTrainings(); // may be running — never auto-retry
-    if (err.refused) return showError(err.message); // a spend cap; no run, nothing charged
+    if (err.refused) return showError(err.message); // a cap / availability refusal; no run, nothing charged
     if (err.signInRequired) return requestSignIn();
     showError('Could not start training. Get a new price and try again.');
   }
@@ -847,7 +847,7 @@ twice, and needs
 `ai:write:budgeted` on the token and a signed-in viewer. Its knobs are
 `trainingDatasetRejected`, `trainingDatasetError`, `trainingQuoteTotal`,
 `runTrainingError` (`'declined'`, `'submission-unconfirmed'`, or any server
-message), `runTrainingCapRefusal` (the server's resolved spend-cap refusal →
+message), `runTrainingCapRefusal` (the server's resolved cap / availability refusal, which consumes the quote →
 `err.refused`) and `generation.trainedEpochs` for the finished run. It has no
 consent dialog, so `runTraining` settles at once where the real host waits on a
 click, and it checks a run's body against its quote by `datasetId` only — the

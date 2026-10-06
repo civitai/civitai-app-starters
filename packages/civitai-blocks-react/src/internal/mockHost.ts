@@ -906,14 +906,18 @@ export interface MockHostOptions {
    */
   runTrainingError?: BlockRunTrainingHostError | string;
   /**
-   * Make `RUN_TRAINING` resolve the server's SPEND-CAP refusal instead of a run:
+   * Make `RUN_TRAINING` resolve the server's spend-cap or temporary-availability
+   * refusal instead of a run:
    * a snapshot `{ workflowId: 'failed', status: 'failed', cost: { total: <quote> },
    * error: <this string> }` — the shape the real training submit returns when
    * the viewer's daily / private-run Buzz cap, the per-app consent budget, the
-   * app's spend or rate limit, or a dev-session cap stops the run (refunded, no
-   * run). `useRunTraining()` rejects it with `.refused`. Pass the server's text,
-   * e.g. `'daily Buzz cap reached: …'`. The quote is left unspent. Absent → the
-   * run starts. Live-tunable via {@link MockHost.setScenario}.
+   * app's spend or rate limit (or its "temporarily unavailable" deny), or a
+   * dev-session cap stops the run (refunded, no run). `useRunTraining()` rejects
+   * it with `.refused`. Pass the server's text, e.g. `'daily Buzz cap reached: …'`.
+   * 🔴 The quote is CONSUMED, as on the server (it is claimed before the cap
+   * checks): running the same `quoteId` again gets the quote-gone error — estimate
+   * again. Absent → the run starts. Live-tunable via {@link MockHost.setScenario};
+   * `setScenario({ runTrainingCapRefusal: undefined })` clears it.
    */
   runTrainingCapRefusal?: string;
   /**
@@ -2919,17 +2923,22 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             if (!quote || quote.spent || Date.now() >= quote.expiresAtMs) {
               return reply({ error: MOCK_TRAINING_QUOTE_GONE_ERROR });
             }
+            // The real order: the host's preview read (quote must exist) → the
+            // consent dialog → the server's submit, which CONSUMES the quote
+            // (`claimTrainingQuote` is a GETDEL) before its body-hash and cap
+            // checks. So a forced host refusal (`declined`, before the submit)
+            // leaves the quote usable, and everything after this line spends it.
+            // (`submission-unconfirmed` on the real host follows a submit that
+            // spent it; a test that needs that can re-estimate.)
+            if (runTrainingError !== undefined) return reply({ error: runTrainingError });
+            quote.spent = true;
             if (b.datasetId !== quote.datasetId) {
               return reply({
                 error: 'the training body differs from the one that was quoted — estimate again',
               });
             }
-            // A forced refusal settles BEFORE the submit, so it does not spend the
-            // quote — true of `declined` on the real host. (`submission-unconfirmed`
-            // there follows a submit that may have spent it; a test that needs that
-            // can re-estimate.)
-            if (runTrainingError !== undefined) return reply({ error: runTrainingError });
-            // The server's cap refusals RESOLVE (refunded, no run started).
+            // The server's cap / availability refusals RESOLVE (refunded, no run
+            // started) — after the quote was consumed above.
             if (runTrainingCapRefusal !== undefined) {
               return reply({
                 snapshot: {
@@ -2940,7 +2949,6 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                 },
               });
             }
-            quote.spent = true;
             submitCount += 1;
             const workflowId = `wf_${submitCount}_${Date.now()}`;
             workflows.set(workflowId, {
@@ -3683,12 +3691,12 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     if (patch.trainingDatasetRejected !== undefined) {
       trainingDatasetRejected = patch.trainingDatasetRejected;
     }
-    if (patch.trainingDatasetError !== undefined) trainingDatasetError = patch.trainingDatasetError;
+    // The training error knobs clear on an explicit `undefined` (key PRESENT in
+    // the patch), so a harness can turn a refusal off without re-installing.
+    if ('trainingDatasetError' in patch) trainingDatasetError = patch.trainingDatasetError;
     if (patch.trainingQuoteTotal !== undefined) trainingQuoteTotal = patch.trainingQuoteTotal;
-    if (patch.runTrainingError !== undefined) runTrainingError = patch.runTrainingError;
-    if (patch.runTrainingCapRefusal !== undefined) {
-      runTrainingCapRefusal = patch.runTrainingCapRefusal;
-    }
+    if ('runTrainingError' in patch) runTrainingError = patch.runTrainingError;
+    if ('runTrainingCapRefusal' in patch) runTrainingCapRefusal = patch.runTrainingCapRefusal;
     if (patch.appWorkflows !== undefined) {
       appWorkflows = {
         workflows: patch.appWorkflows.workflows,

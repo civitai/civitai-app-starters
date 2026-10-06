@@ -43,7 +43,8 @@ const CODE_SET: ReadonlySet<string> = new Set(RUN_TRAINING_ERROR_CODES);
 /**
  * The `code` a {@link RunTrainingError} can carry: one of the host's closed
  * refusal codes, or `'refused'` — assigned by THIS SDK, never sent by the host,
- * for a submit the server refused at a spend cap (see {@link RunTrainingError.refused}).
+ * for a submit the server refused at a spend cap or as temporarily unavailable
+ * (see {@link RunTrainingError.refused}).
  */
 export type RunTrainingErrorCode = BlockRunTrainingHostError | 'refused';
 
@@ -94,7 +95,8 @@ export class RunTrainingError extends Error {
    */
   readonly code?: RunTrainingErrorCode;
   /**
-   * The server refused the submit at a spend cap and refunded it — no run exists.
+   * The server refused the submit (a spend cap, or a temporary-availability deny)
+   * and refunded it — no run exists. The quote is used up: estimate again.
    * See the class docs; `.message` is the server's reason.
    */
   readonly refused: boolean;
@@ -141,7 +143,8 @@ export interface UseRunTraining {
    * with `useBuzzWorkflow().watch(snapshot.workflowId)`.
    *
    * REJECTS with a {@link RunTrainingError} — including `declined` (no run),
-   * `refused` (a spend cap stopped it; no run) and `unconfirmed` (a run may
+   * `refused` (a spend-cap or temporary-availability refusal; no run) and
+   * `unconfirmed` (a run may
    * exist). Read the flags before rendering anything. A resolved snapshot is
    * always a submitted run with a pollable `workflowId`.
    */
@@ -192,7 +195,7 @@ export interface UseRunTraining {
  *   if (e.declined) return;                          // no run — say nothing
  *   if (e.signInRequired) return requestSignIn();
  *   if (e.unconfirmed) return showCheckYourTrainings(); // may be running — never auto-retry
- *   if (e.refused) return showError(e.message); // a spend cap; no run, nothing charged
+ *   if (e.refused) return showError(e.message); // a cap / availability refusal; no run, nothing charged
  *   showError('Could not start training. Get a new price and try again.');
  * }
  */
@@ -237,7 +240,8 @@ export function useRunTraining(): UseRunTraining {
           throw new RunTrainingError(reply.error || 'submission-unconfirmed');
         }
         // 🔴 A RESOLVED SNAPSHOT IS NOT ALWAYS A RUN. The host's training submit
-        // answers its spend-cap refusals (refunded, nothing started) with a
+        // answers its spend-cap and temporary-availability refusals (refunded,
+        // nothing started) with a
         // resolved `{ workflowId: 'failed', status: 'failed', cost, error }`.
         // Resolving that would hand the caller a workflow id to `watch()` that
         // names nothing, and drop the reason. Exact match on the host's

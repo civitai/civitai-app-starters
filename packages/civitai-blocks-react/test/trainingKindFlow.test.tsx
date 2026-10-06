@@ -278,6 +278,46 @@ describe('kind:training — prepare → estimate → run → watch', () => {
     await waitFor(() => expect(result.current.run.error).toBe(e));
   });
 
+  it('a cap refusal CONSUMES the quote: re-running it gets the quote-gone error; a fresh quote runs once the knob clears', async () => {
+    const m = install({ runTrainingCapRefusal: 'app daily spend cap reached' });
+    uninstall = m.uninstall;
+    const { result } = hooks();
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+    const { estimate, body } = await prepareAndQuote(result);
+    const quoted = { ...body, quoteId: estimate.trainingQuote!.quoteId };
+
+    const first = await settle(() => result.current.run.runTraining(quoted));
+    expect((first.error as RunTrainingError).refused).toBe(true);
+
+    m.host.setScenario({ runTrainingCapRefusal: undefined });
+    const again = await settle(() => result.current.run.runTraining(quoted));
+    const e = again.error as RunTrainingError;
+    expect(e.message).toBe(MOCK_TRAINING_QUOTE_GONE_ERROR);
+    expect(e.code).toBeUndefined();
+    expect(e.refused).toBe(false);
+
+    // The knob really cleared: a NEW quote starts a run.
+    const fresh = await settle(() => result.current.wf.estimate(body));
+    const ran = await settle(() =>
+      result.current.run.runTraining({ ...body, quoteId: fresh.value!.trainingQuote!.quoteId }),
+    );
+    expect(ran.error).toBeUndefined();
+    expect(ran.value!.status).toBe('pending');
+  });
+
+  it('`declined` does NOT consume the quote — the same quote runs once the viewer confirms', async () => {
+    const m = install({ runTrainingError: 'declined' });
+    uninstall = m.uninstall;
+    const { result } = hooks();
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+    const { estimate, body } = await prepareAndQuote(result);
+    const quoted = { ...body, quoteId: estimate.trainingQuote!.quoteId };
+    expect(((await settle(() => result.current.run.runTraining(quoted))).error as RunTrainingError).declined).toBe(true);
+    m.host.setScenario({ runTrainingError: undefined });
+    const ran = await settle(() => result.current.run.runTraining(quoted));
+    expect(ran.error).toBeUndefined();
+  });
+
   it('a free-text server message on RUN_TRAINING has no code and no money flag', async () => {
     uninstall = install({ runTrainingError: 'the training body differs' }).uninstall;
     const { result } = hooks();
