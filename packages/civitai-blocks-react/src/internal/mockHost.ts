@@ -98,6 +98,7 @@ import {
   idempotencyKeyDeniedMessage,
   idempotencyKeyRefusal,
 } from './mockHostIdempotency.js';
+import { RUN_TRAINING_ERROR_CODES } from '../hooks/useRunTraining.js';
 import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
 
@@ -442,6 +443,18 @@ export const MOCK_TRAINING_NONE_ELIGIBLE_ERROR =
   'none of the requested images can be used for training';
 export const MOCK_TRAINING_NONE_IMPORTED_ERROR =
   'none of the requested images could be prepared for training';
+/**
+ * The forced `RUN_TRAINING` errors that settle BEFORE the server claims (and so
+ * consumes) the quote: the host's own gate and dialog codes. Derived from the
+ * host-code list — every code except `submission-unconfirmed`, which the host
+ * emits only after a submit was sent. Any other forced error (a server message
+ * such as "Not enough Buzz for this training run.") stands for a refusal the
+ * server made AFTER its claim, so it consumes the quote.
+ */
+const PRE_CLAIM_RUN_TRAINING_ERRORS: ReadonlySet<string> = new Set(
+  RUN_TRAINING_ERROR_CODES.filter((c) => c !== 'submission-unconfirmed'),
+);
+
 /** Default quote total for a `kind: 'training'` estimate when {@link MockHostOptions.trainingQuoteTotal} is unset. */
 const DEFAULT_TRAINING_QUOTE_TOTAL = 500;
 /** The real quote lifetime (`BLOCK_TRAINING_QUOTE_TTL_SECONDS`, 15 min). */
@@ -898,8 +911,15 @@ export interface MockHostOptions {
    * Force `RUN_TRAINING` to reply with an `error` instead of starting a run — a
    * {@link BlockRunTrainingHostError} (`'declined'`: the viewer dismissed the
    * dialog, no run; `'submission-unconfirmed'`: the run MAY exist) or any other
-   * string for a server message. Absent → the run starts. Neither forced error
-   * spends the quote. Live-tunable via {@link MockHost.setScenario}.
+   * string for a server message. Absent → the run starts.
+   *
+   * Whether the QUOTE survives follows the real flow: the host's own gate and
+   * dialog codes (`declined`, `review-mode`, `block is not ready`, `sign in to
+   * train`, `invalid training request`, `no block token`) settle before the
+   * server claims the quote, so it stays runnable; `submission-unconfirmed` and
+   * any server message settle after the claim, so it is used up — re-running it
+   * gets the quote-gone error. Live-tunable via {@link MockHost.setScenario};
+   * `undefined` clears it.
    *
    * 🔴 Same real gap as {@link createPostError}: the consent dialog is HOST
    * chrome, so the mock settles immediately where the real host waits on a click.
@@ -2923,14 +2943,17 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             if (!quote || quote.spent || Date.now() >= quote.expiresAtMs) {
               return reply({ error: MOCK_TRAINING_QUOTE_GONE_ERROR });
             }
-            // The real order: the host's preview read (quote must exist) → the
-            // consent dialog → the server's submit, which CONSUMES the quote
-            // (`claimTrainingQuote` is a GETDEL) before its body-hash and cap
-            // checks. So a forced host refusal (`declined`, before the submit)
-            // leaves the quote usable, and everything after this line spends it.
-            // (`submission-unconfirmed` on the real host follows a submit that
-            // spent it; a test that needs that can re-estimate.)
-            if (runTrainingError !== undefined) return reply({ error: runTrainingError });
+            // Which outcomes consume the quote, modelled on the real flow: the
+            // host's gate and consent dialog come first (quote kept); the
+            // server's submit then claims the quote with a GETDEL
+            // (`claimTrainingQuote`) BEFORE any of its own checks, so every
+            // server outcome — a refusal, a body mismatch, a cap refusal,
+            // `submission-unconfirmed`, a run — consumes it. The mock's check
+            // ORDER below is its own; only the spent/kept split is the server's.
+            if (runTrainingError !== undefined) {
+              if (!PRE_CLAIM_RUN_TRAINING_ERRORS.has(runTrainingError)) quote.spent = true;
+              return reply({ error: runTrainingError });
+            }
             quote.spent = true;
             if (b.datasetId !== quote.datasetId) {
               return reply({

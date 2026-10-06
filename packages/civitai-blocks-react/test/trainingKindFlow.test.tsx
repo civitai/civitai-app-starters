@@ -318,6 +318,68 @@ describe('kind:training — prepare → estimate → run → watch', () => {
     expect(ran.error).toBeUndefined();
   });
 
+  it('a forced SERVER outcome consumes the quote; a forced host gate/dialog code keeps it', async () => {
+    const m = install();
+    uninstall = m.uninstall;
+    const { result } = hooks();
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+    const { body } = await prepareAndQuote(result);
+
+    const runFresh = async (forced: string) => {
+      const q = await settle(() => result.current.wf.estimate(body));
+      const quoted = { ...body, quoteId: q.value!.trainingQuote!.quoteId };
+      m.host.setScenario({ runTrainingError: forced });
+      const first = await settle(() => result.current.run.runTraining(quoted));
+      expect((first.error as RunTrainingError).message, forced).toBe(forced);
+      m.host.setScenario({ runTrainingError: undefined });
+      return settle(() => result.current.run.runTraining(quoted));
+    };
+
+    // After the server's claim → the quote is gone.
+    for (const forced of ['Not enough Buzz for this training run.', 'submission-unconfirmed']) {
+      const again = await runFresh(forced);
+      expect((again.error as RunTrainingError | undefined)?.message, forced).toBe(
+        MOCK_TRAINING_QUOTE_GONE_ERROR,
+      );
+    }
+    // Before it → the same quote still runs.
+    for (const forced of ['declined', 'no block token']) {
+      const again = await runFresh(forced);
+      expect(again.error, forced).toBeUndefined();
+      expect(again.value?.status, forced).toBe('pending');
+    }
+  });
+
+  it('a body mismatch consumes the quote (the server claims before it compares)', async () => {
+    uninstall = install().uninstall;
+    const { result } = hooks();
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+    const { estimate, body } = await prepareAndQuote(result);
+    const other = await settle(() => result.current.prep.prepareDataset(ITEMS));
+    const quoteId = estimate.trainingQuote!.quoteId;
+
+    const mismatch = await settle(() =>
+      result.current.run.runTraining({ ...bodyFor(other.value!.datasetId), quoteId }),
+    );
+    expect((mismatch.error as RunTrainingError).message).toMatch(/differs from the one that was quoted/);
+    const again = await settle(() => result.current.run.runTraining({ ...body, quoteId }));
+    expect((again.error as RunTrainingError).message).toBe(MOCK_TRAINING_QUOTE_GONE_ERROR);
+  });
+
+  it('`trainingDatasetError` clears on `setScenario({ trainingDatasetError: undefined })`', async () => {
+    const m = install({ trainingDatasetError: 'training from apps is not enabled' });
+    uninstall = m.uninstall;
+    const { result } = hooks();
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+    expect((await settle(() => result.current.prep.prepareDataset(ITEMS))).error).toBeInstanceOf(
+      PrepareTrainingDatasetError,
+    );
+    m.host.setScenario({ trainingDatasetError: undefined });
+    const ok = await settle(() => result.current.prep.prepareDataset(ITEMS));
+    expect(ok.error).toBeUndefined();
+    expect(ok.value?.count).toBe(3);
+  });
+
   it('a free-text server message on RUN_TRAINING has no code and no money flag', async () => {
     uninstall = install({ runTrainingError: 'the training body differs' }).uninstall;
     const { result } = hooks();
