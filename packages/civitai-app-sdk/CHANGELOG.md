@@ -1,5 +1,50 @@
 # @civitai/app-sdk
 
+## 0.58.0
+
+### Minor Changes
+
+- 830aa0e: App Blocks `kind: 'training'` — train a LoRA from a page app, priced by a real quote and confirmed by the viewer in Civitai's own dialog.
+
+  Requires a civitai.com host carrying civitai/civitai#5434 and civitai/civitai#5438, with the host flag `app-blocks-training-kind` enabled for the viewer (it ships off). Page apps only, `ai:write:budgeted`, and refused from development and review sessions.
+
+  **`@civitai/app-sdk`**
+
+  - `WorkflowBodyTraining` (`kind: 'training'`) joins the `WorkflowBody` union, with `AiToolkitTrainingParams` mirroring the host's ai-toolkit schema. No `maxBuzz`, no timeout knob.
+  - `BlockWorkflowSnapshot.trainingQuote` — `{ quoteId, total, imageCount, expiresAt }` on a training estimate.
+  - Messages `PREPARE_TRAINING_DATASET` → `TRAINING_DATASET_RESULT` and `RUN_TRAINING` → `TRAINING_RESULT`, with `BlockTrainingDatasetItem`, `BlockTrainingDatasetResult`, `BlockTrainingRejectionReason`, and the host refusal codes `BlockPrepareTrainingDatasetHostError` / `BlockRunTrainingHostError`.
+  - The host bounds as constants: `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (5000), `BLOCK_TRAINING_DATASET_MAX_ITEMS`, `BLOCK_TRAINING_CAPTION_MAX_CHARS`, `BLOCK_TRAINING_SAMPLE_PROMPTS_MAX`, `BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS`, `BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS`, `BLOCK_TRAINING_MODEL_KEY_MAX_CHARS`.
+
+  **`@civitai/blocks-react`**
+
+  - `usePrepareTrainingDataset()` → `prepareDataset(items)` with `PrepareTrainingDatasetError`. A resolved dataset always admits at least one image; when nothing is admitted the server's refusal rejects the call. Prompts for `ai:write:budgeted` and retries once on a grant. Sent under the 120s server-work bound (the server's image import alone may take 60s).
+  - `useRunTraining()` → `runTraining({ ...body, quoteId })` with `RunTrainingError` (`.declined` = no run; `.refused` / `code: 'refused'` = a spend-cap or temporary-availability refusal of the confirmed run, refunded (the quote is used up), `.message` is the server's reason; `.unconfirmed` = a run may exist, check before retrying). A resolved snapshot is always a submitted run. Ten-minute consent bound; never auto-retried.
+  - `useBuzzWorkflow().estimate()` returns the quote; `useBuzzWorkflow().submit()` now refuses a `kind: 'training'` body before sending anything.
+  - Inbound validators for both replies and for `trainingQuote` (error fields shape-checked only, rejection reasons checked as strings).
+  - Mock host: a kind-faithful training path (stored datasets and quotes, the 5,000 ceiling, single-use quotes) with knobs `trainingDatasetRejected`, `trainingDatasetError`, `trainingQuoteTotal`, `runTrainingError`, `runTrainingCapRefusal`; a dataset with nothing admitted is refused as on the server; `generation.trainedEpochs` now also applies to a `kind: 'training'` run.
+  - `dev:live` refuses both training bridges, as the server refuses development tokens for training.
+
+- 206a7b3: Add `trainedEpochs` to `AppWorkflow` rows.
+
+  **`AppWorkflow.trainedEpochs` (`@civitai/app-sdk`).** The app-queue read
+  (`useAppWorkflows` / `QUERY_APP_WORKFLOWS`) can now report a training run's
+  epochs on each row, so a block can offer "publish epoch n" from its queue
+  without polling each run. Same shape and rule as
+  `BlockWorkflowSnapshot.trainedEpochs`: only moderation-approved runs are listed,
+  the checkpoint itself is not exposed, and the field is omitted when there are no
+  epochs. Optional, and absent on hosts that do not emit it yet.
+
+  **Validator (`@civitai/blocks-react`).** The `AppWorkflow` row guard (used by
+  both `APP_WORKFLOWS_RESULT` and `CANCEL_APP_WORKFLOW_RESULT`) now shape-checks
+  `trainedEpochs` when present, through the same helper as the snapshot guard:
+  absent is valid, present-but-malformed drops the reply, and `$type` is checked as
+  a string so a host adding a value does not break shipped blocks.
+
+  **Mock host.** The app-queue read still replies with the canned `appWorkflows`
+  rows verbatim — they carry no body, so the mock cannot tell a training row from
+  any other. Put `trainedEpochs` on the rows you pass there; it reaches the hook
+  intact.
+
 ## 0.57.0
 
 ### Minor Changes
@@ -253,15 +298,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-    🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-    stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-    the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-    same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-    1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-    code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-    gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-    `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-    single measurements on one machine.
+        🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+        stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+        the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+        same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+        1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+        code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+        gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+        `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+        single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -1169,10 +1214,10 @@ useCheckpointPicker>, UseCheckpointPicker>` row in `returnTypeLedger.ts` — whi
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                          before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                   @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                          after    @civitai/theme       0.3.1                   — 1 copy
-                                   @civitai/components  0.4.2                   — 1 copy
+                            before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                     @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                            after    @civitai/theme       0.3.1                   — 1 copy
+                                     @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
