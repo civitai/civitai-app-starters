@@ -244,6 +244,16 @@ describe('IframeTransport legacy replies', () => {
     });
   });
 
+  it('rejects a publish refused for an expired session as unauthenticated', async () => {
+    await expect(
+      exchange('PUBLISH_GENERATION_OUTPUTS', () => ({ error: 'UNAUTHORIZED' }), 'PUBLISH_RESULT'),
+    ).rejects.toMatchObject({
+      code: 'unauthenticated',
+      operation: 'PUBLISH_GENERATION_OUTPUTS',
+      message: 'UNAUTHORIZED',
+    });
+  });
+
   it('reads an empty error as no failure at all', async () => {
     await expect(
       exchange('OPEN_RESOURCE_PICKER', () => ({ error: '' }), 'RESOURCE_PICKER_RESULT'),
