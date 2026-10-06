@@ -42,7 +42,27 @@ describe('progressOf', () => {
         { $type: 'imageGen', name: 'b', status: 'processing', estimatedProgressRate: 0.3, queuePosition: { precedingJobs: 4 } },
       ] as never,
     });
-    expect(progressOf(wf)).toEqual({ progress: 0.3, queued: 4 });
+    expect(progressOf(wf)).toEqual({ progress: 0.3, queued: 4, preparing: null });
+  });
+
+  it('reports a model still downloading, by size across every download, with the longest time left', () => {
+    const wf = workflow({
+      id: '1-1',
+      steps: [
+        {
+          $type: 'imageGen',
+          name: 'a',
+          status: 'preparing',
+          estimatedProgressRate: 0.99,
+          preparation: [
+            { resource: 'urn:air:sdxl:checkpoint:civitai:139565@294470', sizeBytes: 6_000_000_000, progress: 0.5, etaSeconds: 300 },
+            { resource: 'urn:air:sdxl:lora:civitai:1@2', sizeBytes: 2_000_000_000, progress: 1, etaSeconds: 0 },
+            { resource: 'urn:air:sdxl:lora:civitai:3@4', sizeBytes: 2_000_000_000, progress: 0.25, etaSeconds: 400 },
+          ],
+        },
+      ] as never,
+    });
+    expect(progressOf(wf).preparing).toEqual({ progress: 0.4375, etaSeconds: 400, bytes: 8_000_000_000 });
   });
 });
 

@@ -85,18 +85,46 @@ function toMedia(blob: Record<string, unknown>, kind: MediaKind, path: string, s
   };
 }
 
-/** Where a workflow is: the slowest running step's progress and the longest queue wait. */
-export function progressOf(workflow: Workflow): { progress: number | null; queued: number | null } {
+/** A model or other resource a worker is still fetching before the work can start. */
+export interface Preparing {
+  /** 0 to 1 across every download, weighted by size. */
+  progress: number;
+  etaSeconds?: number;
+  bytes?: number;
+}
+
+interface Preparation {
+  progress?: unknown;
+  sizeBytes?: unknown;
+  etaSeconds?: unknown;
+}
+
+/** Where a workflow is: the slowest running step's progress, the longest queue wait, and any model still downloading. */
+export function progressOf(workflow: Workflow): { progress: number | null; queued: number | null; preparing: Preparing | null } {
   const rates = workflow.steps
     .map((step) => step.estimatedProgressRate)
     .filter((rate): rate is number => typeof rate === 'number' && rate > 0);
   const waits = workflow.steps
     .map((step) => step.queuePosition?.precedingJobs)
     .filter((ahead): ahead is number => typeof ahead === 'number');
+  const downloads = workflow.steps
+    .flatMap((step) => ((step as { preparation?: Preparation[] | null }).preparation ?? []))
+    .filter((item) => typeof item.progress === 'number' && item.progress < 1);
   return {
     progress: rates.length > 0 ? Math.min(...rates) : null,
     queued: waits.length > 0 ? Math.max(...waits) : null,
+    preparing: downloads.length > 0 ? preparingOf(downloads) : null,
   };
+}
+
+function preparingOf(downloads: Preparation[]): Preparing {
+  const sizes = downloads.map((item) => (typeof item.sizeBytes === 'number' && item.sizeBytes > 0 ? item.sizeBytes : 0));
+  const bytes = sizes.reduce((sum, size) => sum + size, 0);
+  const progress = bytes > 0
+    ? downloads.reduce((sum, item, i) => sum + (item.progress as number) * sizes[i]!, 0) / bytes
+    : downloads.reduce((sum, item) => sum + (item.progress as number), 0) / downloads.length;
+  const etas = downloads.map((item) => item.etaSeconds).filter((eta): eta is number => typeof eta === 'number' && eta >= 0);
+  return { progress, ...(etas.length ? { etaSeconds: Math.max(...etas) } : {}), ...(bytes > 0 ? { bytes } : {}) };
 }
 
 /** The first error the orchestrator attached to a failed step, if it said one. */

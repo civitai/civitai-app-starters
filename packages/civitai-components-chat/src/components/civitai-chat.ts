@@ -841,7 +841,7 @@ export class CivitaiChat extends LitElement {
                       composer.focus();
                     })}
                 ></civitai-chat-welcome>`
-              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...this.tools, ...this.toolViews }} @cvt-continue-paid=${() => this.#continuePaid()}></civitai-chat-thread>`)}
+              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...this.tools, ...this.toolViews }} @cvt-continue-paid=${() => this.#continuePaid()} @cvt-continue=${() => void this.#send('Continue where you left off.')}></civitai-chat-thread>`)}
           <civitai-chat-composer
             .commands=${this.#commands()}
             ?running=${session.agent.running}

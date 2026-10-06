@@ -85,6 +85,7 @@ describe('Agent', () => {
     const turn = store.current!.turns[0]!;
     expect(turn.assistant.status).toBe('done');
     expect(turn.assistant.messages).toEqual([{ role: 'assistant', content: [{ type: 'text', text: 'Hi there!' }] }]);
+    expect(turn.assistant.ranOut).toBeUndefined();
     expect(seen.map((parts) => (parts[0]?.kind === 'text' ? parts[0].text : ''))).toContain('Hi ');
     expect(agent.running).toBe(false);
   });
@@ -172,6 +173,7 @@ describe('Agent', () => {
     expect(JSON.stringify((prompts.at(-1) as unknown[])[0])).toContain('you cannot call tools now');
     expect(JSON.stringify((prompts[0] as unknown[])[0])).not.toContain('you cannot call tools now');
     expect(store.current!.turns[0]!.assistant.messages.at(-1)).toMatchObject({ role: 'assistant', content: [{ type: 'text', text: 'Sorry, that did not work.' }] });
+    expect(store.current!.turns[0]!.assistant.ranOut).toBe(true);
   });
 
   it('keeps the words the user already read when they stop a reply', async () => {

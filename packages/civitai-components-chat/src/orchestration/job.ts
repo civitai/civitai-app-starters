@@ -8,7 +8,7 @@ import type { Attachment, JobMetadata } from '../types.js';
 import { humanize, humanizeText, type HumanError } from '../ux/humanize.js';
 import type { Price } from '../ux/spending.js';
 import type { OrchestrationApi } from './api.js';
-import { failureOf, progressOf, readOutputs, type ResultMedia } from './outputs.js';
+import { failureOf, progressOf, readOutputs, type Preparing, type ResultMedia } from './outputs.js';
 
 export type JobState =
   | 'pricing'
@@ -117,6 +117,7 @@ export class GenerationJob extends EventTarget {
   workflow?: Workflow;
   progress: number | null = null;
   queued: number | null = null;
+  preparing: Preparing | null = null;
   error?: HumanError;
   media: ResultMedia[] = [];
 
@@ -285,6 +286,7 @@ export class GenerationJob extends EventTarget {
     this.media = [];
     this.progress = null;
     this.queued = null;
+    this.preparing = null;
     this.#settledSent = false;
     await this.start();
   }
@@ -318,9 +320,10 @@ export class GenerationJob extends EventTarget {
   apply(workflow: Workflow): void {
     this.workflow = workflow;
     this.workflowId = workflow.id ?? this.workflowId;
-    const { progress, queued } = progressOf(workflow);
+    const { progress, queued, preparing } = progressOf(workflow);
     this.progress = progress;
     this.queued = queued;
+    this.preparing = preparing;
     this.media = readOutputs(workflow);
     if (workflow.cost?.total !== undefined && this.price === null) {
       this.price = { total: workflow.cost.total, variable: workflow.cost.variable === true };

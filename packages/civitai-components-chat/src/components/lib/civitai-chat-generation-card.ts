@@ -47,6 +47,8 @@ export interface CardJob extends EventTarget {
   readonly price: { total: number; variable: boolean } | null;
   readonly progress: number | null;
   readonly queued: number | null;
+  /** A model still downloading before the work can start. */
+  readonly preparing?: { progress: number; etaSeconds?: number; bytes?: number } | null;
   readonly error?: { message: string; detail?: string };
   readonly results: CardResult[];
   readonly cancelable: boolean;
@@ -325,8 +327,11 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
   }
 
   #running(job: CardJob): TemplateResult {
-    const text =
-      job.queued !== null && job.queued > 0
+    const preparing = job.preparing;
+    const progress = preparing ? preparing.progress : job.progress;
+    const text = preparing
+      ? `Downloading the model${preparing.bytes ? ` (${gigabytes(preparing.bytes)})` : ''}… ${Math.round(preparing.progress * 100)}%${preparing.etaSeconds !== undefined ? ` · ${timeLeft(preparing.etaSeconds)}` : ''}`
+      : job.queued !== null && job.queued > 0
         ? `Waiting in line… ${job.queued} ahead`
         : job.queued === 0
           ? 'Waiting in line… next up'
@@ -337,8 +342,8 @@ export class CivitaiChatGenerationCard extends CivitaiElement {
         part="progress"
         size="sm"
         .label=${text}
-        ?indeterminate=${job.progress === null}
-        .value=${Math.round((job.progress ?? 0) * 100)}
+        ?indeterminate=${progress === null}
+        .value=${Math.round((progress ?? 0) * 100)}
       ></civitai-progress>
       <div class="visually-hidden" role="status">${text}</div>
       <div class="row">
@@ -415,4 +420,13 @@ declare global {
   interface HTMLElementTagNameMap {
     'civitai-chat-generation-card': CivitaiChatGenerationCard;
   }
+}
+
+function gigabytes(bytes: number): string {
+  return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`;
+}
+
+function timeLeft(seconds: number): string {
+  if (seconds < 60) return `about ${Math.max(1, Math.round(seconds))} s left`;
+  return `about ${Math.round(seconds / 60)} min left`;
 }

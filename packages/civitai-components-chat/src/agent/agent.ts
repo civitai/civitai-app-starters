@@ -116,15 +116,22 @@ export class Agent extends EventTarget {
           completed = [...step.response.messages];
         },
       });
+      let steps = 0;
       for await (const part of result.fullStream) {
-        if (part.type === 'start-step') stepText = '';
+        if (part.type === 'start-step') {
+          stepText = '';
+          steps++;
+        }
         if (part.type === 'text-delta') stepText += part.text;
         if (part.type === 'error') streamError = part.error;
         this.#onPart(part);
       }
       if (controller.signal.aborted) turn.assistant.status = 'aborted';
       else if (streamError !== undefined) this.#failed(turn, streamError);
-      else turn.assistant.status = 'done';
+      else {
+        turn.assistant.status = 'done';
+        if (steps >= MAX_STEPS) turn.assistant.ranOut = true;
+      }
     } catch (error) {
       if (controller.signal.aborted) turn.assistant.status = 'aborted';
       else this.#failed(turn, error);

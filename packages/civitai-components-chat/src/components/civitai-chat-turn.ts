@@ -113,6 +113,12 @@ export class CivitaiChatTurn extends LightElement {
     const { status, error, errorDetail } = this.turn.assistant;
     if (this.live) return this.#waiting() ? html`<div class="cvt-typing" aria-label="Assistant is replying"><span></span><span></span><span></span></div>` : nothing;
     if (status === 'aborted') return html`<div class="cvt-note">Stopped.</div>`;
+    if (status === 'done' && this.turn.assistant.ranOut && this.latest) {
+      return html`<div class="cvt-note cvt-ran-out">
+        This took more steps than one reply allows.
+        <civitai-button size="sm" variant="light" @click=${() => emit(this, 'cvt-continue')}>Continue</civitai-button>
+      </div>`;
+    }
     if (status === 'error' && error === CUT_OFF) return html`<div class="cvt-note">This reply was cut off. Ask again?</div>`;
     if (status === 'error' && this.turn.assistant.errorKind === 'free_tier_exhausted') {
       return html`<civitai-alert color="info">
