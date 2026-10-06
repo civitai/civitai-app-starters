@@ -113,9 +113,9 @@ allowance-sharing rule. `useDirectLoad()` is covered under
 [Direct-load fallback](#direct-load-fallback-open-on-civitai) rather than here.
 **`dev:live` refuses `usePublishGenerationOutputs()`**: publishing requires the
 viewer's signed-in civitai.com session, which the local harness does not have, so
-`publish()` rejects with a message saying so. Test publishing on civitai.com
-(`/apps/dev/<blockId>`); in `dev:mock` the `publishImageIds` / `publishError`
-scenario knobs drive both arms.
+`publish()` rejects with a message saying so. Test publishing with `dev:harness`,
+where the mock host's `publishImageIds` / `publishError` scenario knobs drive
+both arms.
 
 ### `useBlockContext()`
 

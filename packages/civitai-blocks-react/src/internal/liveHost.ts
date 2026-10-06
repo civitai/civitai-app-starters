@@ -103,7 +103,8 @@
  *     confirm before a PUBLIC post is written. Replies with a refusal.
  *   • PUBLISH_GENERATION_OUTPUTS — publishing requires the viewer's signed-in
  *     civitai.com session, which the local harness does not have; test
- *     publishing on civitai.com (`/apps/dev/<blockId>`). Replies with a refusal.
+ *     publishing with dev:harness (the mock host's `publishImageIds` /
+ *     `publishError` knobs). Replies with a refusal.
  *   • GET_WILDCARD_PACK — needs the session-authed resolve plus the in-tab
  *     zip/yaml parse that lives in civitai, not this SDK. Replies `parse-failed`.
  *   • OPEN_IMAGE_UPLOAD — needs the host's native modal + session-authed byte
@@ -1326,24 +1327,24 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           case 'PUBLISH_GENERATION_OUTPUTS': {
             // UNSUPPORTED in live, for the same reason as CREATE_POST_FROM_APP
             // above: publishing requires the viewer's signed-in civitai.com
-            // session (civitai/civitai#5421), which the local harness does not
-            // have — it holds a dev block token and has no civitai chrome to
-            // render the publish confirm in. On civitai.com the real host
-            // resolves the workflow's outputs, shows that confirm, and only then
-            // publishes bare, real-scanned public Image rows.
+            // session, which the local harness does not have — it holds a dev
+            // block token and has no civitai chrome to render the publish
+            // confirm in. On civitai.com the real host resolves the workflow's
+            // outputs, shows that confirm, and only then publishes bare,
+            // real-scanned public Image rows.
             //
             // FREE TEXT, like the post refusal: none of the host's codes is
             // honest about "this harness cannot do it". `usePublishGenerationOutputs`
-            // rejects with it as the message. Test publishing on civitai.com
-            // (`/apps/dev/<blockId>`), or use dev:mock (`publishImageIds` /
-            // `publishError` knobs) for both arms locally.
+            // rejects with it as the message. Test publishing with dev:harness:
+            // the mock host's `publishImageIds` / `publishError` knobs drive
+            // both arms locally.
             if (!isRoutableRequestId(requestId)) return;
             logOnce(
               'publish-outputs',
               'PUBLISH_GENERATION_OUTPUTS is not supported in dev:live (publishing requires the ' +
                 "viewer's signed-in civitai.com session, which the local harness does not have). " +
-                'Replying with a refusal. Test publishing on civitai.com (/apps/dev/<blockId>), or ' +
-                'use dev:mock to exercise the publish bridge.',
+                'Replying with a refusal. Test publishing with dev:harness, where the mock ' +
+                "host's publishImageIds / publishError knobs drive both arms.",
             );
             dispatchToBlock({
               type: 'PUBLISH_RESULT',
@@ -1352,8 +1353,8 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
                 error:
                   'publishing generation outputs is not supported in dev:live — publishing ' +
                   "requires the viewer's signed-in civitai.com session, which the local harness " +
-                  'does not have; test publishing on civitai.com (/apps/dev/<blockId>) or use ' +
-                  'dev:mock',
+                  "does not have; test publishing with dev:harness (the mock host's " +
+                  'publishImageIds / publishError knobs)',
               },
             });
             return;

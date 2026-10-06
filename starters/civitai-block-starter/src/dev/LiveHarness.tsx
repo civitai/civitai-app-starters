@@ -35,8 +35,8 @@ import { createLiveHost } from '@civitai/blocks-react/live';
  * fabricated success — the authoritative list is the SCOPE section at the top of
  * `@civitai/blocks-react`'s `src/internal/liveHost.ts`. One of them is publishing
  * generation outputs: publishing requires the viewer's signed-in civitai.com
- * session, which the local harness does not have; test publishing on civitai.com
- * (`/apps/dev/<blockId>`). Use `pnpm dev:harness` (mock mode) for refused flows.
+ * session, which the local harness does not have. Use `pnpm dev:harness` (mock
+ * mode) for refused flows, publishing included.
  */
 export function LiveHarness({ children }: { children: ReactNode }) {
   const [outbound, setOutbound] = useState<Array<{ type: string; payload?: unknown }>>([]);

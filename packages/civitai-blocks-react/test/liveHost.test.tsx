@@ -2119,7 +2119,7 @@ describe('createLiveHost — SAVE_IMAGE (refused, honest-by-design) (#386)', () 
   });
 });
 
-describe('createLiveHost — PUBLISH_GENERATION_OUTPUTS (refused: needs a signed-in session) (civitai/civitai#5421)', () => {
+describe('createLiveHost — PUBLISH_GENERATION_OUTPUTS (refused: needs a signed-in session)', () => {
   let uninstall: (() => void) | undefined;
   let inbound: ReturnType<typeof collectInbound>;
   let fetchMock: ReturnType<typeof vi.fn>;
@@ -2135,8 +2135,8 @@ describe('createLiveHost — PUBLISH_GENERATION_OUTPUTS (refused: needs a signed
   });
 
   // Before this change the harness forwarded to `blocks.publishGenerationOutputs`
-  // with only the block token. civitai.com now requires the viewer's signed-in
-  // session for that procedure (same as CREATE_POST_FROM_APP), which this
+  // with only the block token. Publishing requires the viewer's signed-in
+  // civitai.com session (same as CREATE_POST_FROM_APP), which this
   // harness does not have — so it must refuse immediately, on the reply
   // channel, without touching the network.
   it('replies PUBLISH_RESULT with an actionable error and makes no network call', async () => {
@@ -2165,7 +2165,7 @@ describe('createLiveHost — PUBLISH_GENERATION_OUTPUTS (refused: needs a signed
     expect(payload.error).toBe(
       "publishing generation outputs is not supported in dev:live — publishing requires the " +
         "viewer's signed-in civitai.com session, which the local harness does not have; test " +
-        'publishing on civitai.com (/apps/dev/<blockId>) or use dev:mock',
+        "publishing with dev:harness (the mock host's publishImageIds / publishError knobs)",
     );
     expect(fetchMock.mock.calls.length).toBe(callsAfterInit);
     const urls = fetchMock.mock.calls.map((c) => String(c[0])).join('\n');

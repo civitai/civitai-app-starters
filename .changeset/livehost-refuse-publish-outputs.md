@@ -12,6 +12,5 @@ saying so (and logs it once), the same way it already refuses
 `CREATE_POST_FROM_APP`. `publish()` rejects with that message; it makes no network
 call.
 
-Test publishing on civitai.com (`/apps/dev/<blockId>`). In `dev:mock`, the
-`publishImageIds` / `publishError` scenario knobs still drive both arms. Production
-blocks are unaffected.
+Test publishing with `dev:harness`, where the mock host's `publishImageIds` /
+`publishError` scenario knobs drive both arms. Production blocks are unaffected.
