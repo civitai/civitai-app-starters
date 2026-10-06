@@ -24,4 +24,10 @@ describe('shared panels', () => {
     expect(await decodePanel(tampered)).toBeNull();
     expect(await decodePanel('not-a-panel')).toBeNull();
   });
+  it('refuse a link that would unpack into far more than any panel, before reading it', async () => {
+    const bomb = { v: 1, id: 'X', version: 1, spec: SPEC, values: { brand: ' '.repeat(5_000_000) } };
+    const encoded = await encodePanel(bomb as never);
+    expect(encoded.length).toBeLessThan(16_000);
+    expect(await decodePanel(encoded)).toBeNull();
+  });
 });

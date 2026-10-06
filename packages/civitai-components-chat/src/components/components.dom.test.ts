@@ -685,13 +685,14 @@ describe('civitai-chat-panel', () => {
   });
 
   it("runs the user's choices as they set them, then shows the run", async () => {
-    const { el, submitted, runButton } = await setup();
+    const { el, panel, submitted, runButton } = await setup();
     const lead = el.querySelector('civitai-text-input')!;
     (lead as unknown as { value: string }).value = 'piano';
     lead.dispatchEvent(new Event('input'));
     const mood = el.querySelector('civitai-segmented-control')!;
     (mood as unknown as { value: string }).value = 'Sunday morning';
     mood.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => expect(panel.ready).toBe(true));
     await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
 
     runButton().click();
@@ -720,6 +721,7 @@ describe('civitai-chat-studio', () => {
     expect(root.querySelector('.canvas')?.textContent).toContain('Press Run to make the first one.');
 
     panel.setValue('lead', 'piano');
+    await panel.quote();
     await panel.run();
     await studio.updateComplete;
     expect(root.querySelector('.canvas [role=status]')?.textContent).toContain('Writing your song');

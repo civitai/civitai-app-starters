@@ -147,6 +147,27 @@ describe('ThreadStore', () => {
     expect(store.current?.panels?.p1?.values).toEqual({ mood: 'warm' });
   });
 
+  it('writes the conversation one change at a time, each with everything known when it goes out, so none lands stale', async () => {
+    const { store, deps } = setup([head('7-5', { conversationId: 'A' })]);
+    await store.open('A');
+    const sent: unknown[] = [];
+    let release!: () => void;
+    (deps.api.updateWorkflow as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (...args: unknown[]) => {
+      sent.push(Object.keys((args[1] as { metadata: ConversationMetadata }).metadata.posts ?? {}));
+      if (sent.length === 1) await new Promise<void>((resolve) => (release = resolve));
+    });
+
+    const first = store.savePost('p1', { state: 'posted', postId: 1 });
+    const second = store.savePost('p2', { state: 'posted', postId: 2 });
+    await flush();
+    expect(sent).toHaveLength(1);
+
+    release();
+    await Promise.all([first, second]);
+    expect(sent).toHaveLength(2);
+    expect(sent.at(-1)).toEqual(['p1', 'p2']);
+  });
+
   it('renames through the head, which is what the list reads', async () => {
     const { store, deps } = setup([head('7-2', { conversationId: 'A' })]);
     await store.refreshList();

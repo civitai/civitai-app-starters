@@ -13,6 +13,7 @@ export interface SharedPanel {
 const HASH = /(?:^#|&)panel=([A-Za-z0-9_-]+)/;
 const HELD = 'cvt:shared-panel';
 const MAX_ENCODED = 16_000;
+const MAX_DECODED = 256 * 1024;
 
 export function sharedPanelOf(panel: Pick<SavedPanel, 'id' | 'versions' | 'values'>): SharedPanel {
   const spec = panel.versions.at(-1)!;
@@ -31,8 +32,9 @@ export async function encodePanel(shared: SharedPanel): Promise<string> {
 export async function decodePanel(encoded: string): Promise<SharedPanel | null> {
   if (encoded.length > MAX_ENCODED) return null;
   try {
-    const stream = new Response(fromBase64Url(encoded)).body!.pipeThrough(new DecompressionStream('deflate-raw'));
-    const raw = JSON.parse(await new Response(stream).text()) as Partial<SharedPanel>;
+    const text = await inflateBounded(fromBase64Url(encoded));
+    if (text === null) return null;
+    const raw = JSON.parse(text) as Partial<SharedPanel>;
     if (raw?.v !== 1 || typeof raw.id !== 'string') return null;
     const checked = checkPanelSpec(raw.spec);
     if (!checked.spec) return null;
@@ -42,6 +44,30 @@ export async function decodePanel(encoded: string): Promise<SharedPanel | null> 
   } catch {
     return null;
   }
+}
+
+// Links are untrusted and deflate expands a lot: stop decompressing past what any real panel needs.
+async function inflateBounded(compressed: Uint8Array): Promise<string | null> {
+  const reader = new Response(compressed as BodyInit).body!.pipeThrough(new DecompressionStream('deflate-raw')).getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > MAX_DECODED) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return new TextDecoder().decode(bytes);
 }
 
 export async function panelLink(base: string, shared: SharedPanel): Promise<string> {
@@ -56,9 +82,11 @@ export function holdSharedPanel(): void {
   const match = HASH.exec(globalThis.location?.hash ?? '');
   if (!match) return;
   try {
-    globalThis.sessionStorage?.setItem(HELD, match[1]!);
+    if (!globalThis.sessionStorage) return;
+    globalThis.sessionStorage.setItem(HELD, match[1]!);
   } catch {
-    // Storage refused: the link still works when the viewer is already signed in.
+    // Storage refused: the hash stays, so the link still opens for a viewer already signed in.
+    return;
   }
   history.replaceState(history.state, '', `${location.pathname}${location.search}`);
 }

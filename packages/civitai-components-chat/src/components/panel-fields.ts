@@ -39,7 +39,7 @@ export function panelFields(panel: Panel, files: () => Attachment[], options: Fi
 export function runButton(panel: Panel): TemplateResult {
   const label = panel.spec.button ?? 'Run';
   const price = panel.asks ? '' : panel.quoting ? ' · checking price…' : panel.price ? ` · ≈ ${panel.price.variable ? 'from ' : ''}${panel.price.total.toLocaleString()} Buzz` : '';
-  return html`<civitai-button ?disabled=${!panel.canRun || panel.insufficientBuzz} @click=${() => void panel.run()}>${label}${price}</civitai-button>`;
+  return html`<civitai-button ?disabled=${!panel.ready} @click=${() => void panel.run()}>${label}${price}</civitai-button>`;
 }
 
 export function panelHint(panel: Panel): TemplateResult | typeof nothing {

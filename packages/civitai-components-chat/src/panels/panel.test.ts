@@ -93,6 +93,27 @@ describe('panels', () => {
     expect(panels.context()).toContain('Price per run with these values: about 12 Buzz, quoted by the service');
   });
 
+  it('never runs at a price the viewer has not seen, and keeps their changes for a reload', async () => {
+    vi.useFakeTimers();
+    try {
+      const { panels, call, saved } = setup();
+      await call(OPEN_PANEL, { ...LOGO, values: { brand: 'Night Owl' } });
+      const panel = panels.get('p1')!;
+      const savesBefore = saved.length;
+
+      panel.setValue('style', 'Mascot');
+      expect(panel.ready).toBe(false);
+      expect(await panel.run()).toBeUndefined();
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(panel.ready).toBe(true);
+      expect(saved).toHaveLength(savesBefore + 1);
+      expect(saved.at(-1)?.values).toMatchObject({ brand: 'Night Owl', style: 'Mascot' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('waits for required inputs before it can run', async () => {
     const { panels, call } = setup();
     await call(OPEN_PANEL, LOGO);

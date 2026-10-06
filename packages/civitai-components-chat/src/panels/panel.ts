@@ -61,6 +61,7 @@ export interface PanelSummary {
   note: string;
 }
 
+const SAVE_DELAY_MS = 1000;
 const QUOTE_DELAY_MS = 400;
 const CONTEXT_RUNS = 5;
 const CONTEXT_RUN_TEMPLATE = 1_500;
@@ -87,6 +88,7 @@ export class Panel extends EventTarget {
 
   #deps: PanelDeps;
   #quoteToken = 0;
+  #saveTimer?: ReturnType<typeof setTimeout>;
   #quoteTimer?: ReturnType<typeof setTimeout>;
   #watched = new Set<string>();
 
@@ -127,6 +129,11 @@ export class Panel extends EventTarget {
     return this.asks ? this.#deps.ask !== undefined : this.#deps.toolInfo(renderRun(this.spec, this.values).tool) !== undefined;
   }
 
+  /** Runnable now, with the price for these exact values on screen; a run never spends an amount nobody saw. */
+  get ready(): boolean {
+    return this.canRun && !this.insufficientBuzz && (this.asks || (!this.quoting && this.price !== null));
+  }
+
   get jobs(): GenerationJob[] {
     return this.runs.flatMap((run) => this.#deps.jobs.get(run.job) ?? []);
   }
@@ -136,6 +143,7 @@ export class Panel extends EventTarget {
     this.values = normalizeValues(this.spec, { ...this.values, [key]: value });
     this.#emit();
     this.requestQuote();
+    this.#saveSoon();
   }
 
   /** Puts back the values a run used, seeds included, so the next run can change one thing. */
@@ -145,6 +153,7 @@ export class Panel extends EventTarget {
     this.values = normalizeValues(this.spec, run.values);
     this.#emit();
     this.requestQuote();
+    this.#saveSoon();
   }
 
   select(job: string): void {
@@ -169,6 +178,8 @@ export class Panel extends EventTarget {
   requestQuote(): void {
     if (this.asks) return;
     clearTimeout(this.#quoteTimer);
+    // A quote already out is for the old values; its answer must not land.
+    this.#quoteToken++;
     this.quoting = true;
     this.#emit();
     this.#quoteTimer = setTimeout(() => void this.quote(), QUOTE_DELAY_MS);
@@ -198,6 +209,7 @@ export class Panel extends EventTarget {
       else this.#deps.ask?.(message, refs);
       return undefined;
     }
+    if (!this.ready) return undefined;
     const values = withSeeds(this.spec, this.values, this.#deps.random ?? Math.random);
     const { tool, args } = renderRun(this.spec, values);
     const info = this.#deps.toolInfo(tool);
@@ -319,7 +331,14 @@ export class Panel extends EventTarget {
   }
 
   #save(): void {
+    clearTimeout(this.#saveTimer);
     this.#deps.save(this.toSaved());
+  }
+
+  // Typing would otherwise write the conversation on every key.
+  #saveSoon(): void {
+    clearTimeout(this.#saveTimer);
+    this.#saveTimer = setTimeout(() => this.#save(), SAVE_DELAY_MS);
   }
 
   #emit(): void {

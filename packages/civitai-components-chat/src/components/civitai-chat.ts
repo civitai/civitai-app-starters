@@ -554,15 +554,18 @@ export class CivitaiChat extends LitElement {
       if (attachment.url) this.lightbox = { attachment };
       return;
     }
-    if (action === 'post') {
+    const request =
+      action === 'post'
+        ? attachment.kind === 'video' ? 'Post this video to Civitai.' : 'Post this picture to Civitai.'
+        : action === 'upscale'
+          ? attachment.kind === 'video' ? 'Make this video sharper.' : 'Make this picture sharper and bigger.'
+          : undefined;
+    if (request) {
       this.lightbox = null;
+      // Mid-reply nothing can be sent; the request waits in the box instead of vanishing.
+      if (this.#session?.agent.running) return this.#composeWith(request, [attachment.id]);
       this.refs = [attachment];
-      await this.#send(attachment.kind === 'video' ? 'Post this video to Civitai.' : 'Post this picture to Civitai.');
-      return;
-    }
-    if (action === 'upscale') {
-      this.refs = [attachment];
-      await this.#send(attachment.kind === 'video' ? 'Make this video sharper.' : 'Make this picture sharper and bigger.');
+      await this.#send(request);
       return;
     }
     this.refs = [...this.refs.filter((ref) => ref.id !== id), attachment];
