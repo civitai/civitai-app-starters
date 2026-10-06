@@ -256,4 +256,30 @@ export type {
   BlockCreatePostRequest,
   BlockCreatePostResult,
   BlockCreatePostHostError,
+  WorkflowBodyTraining,
+  AiToolkitTrainingParams,
+  AiToolkitTrainingParamsBase,
+  AiToolkitPlainEcosystem,
+  AiToolkitLrScheduler,
+  AiToolkitOptimizerType,
+  BlockTrainingQuote,
+  BlockTrainingDatasetItem,
+  BlockTrainingDatasetResult,
+  BlockTrainingRejectionReason,
+  BlockPrepareTrainingDatasetHostError,
+  BlockRunTrainingHostError,
+} from './types.js';
+
+/**
+ * Host bounds for the App Blocks `kind: 'training'` flow, mirrored from
+ * civitai/civitai's zod — see `WorkflowBodyTraining`.
+ */
+export {
+  BLOCK_TRAINING_MAX_BUZZ_PER_RUN,
+  BLOCK_TRAINING_DATASET_MAX_ITEMS,
+  BLOCK_TRAINING_CAPTION_MAX_CHARS,
+  BLOCK_TRAINING_SAMPLE_PROMPTS_MAX,
+  BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS,
+  BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS,
+  BLOCK_TRAINING_MODEL_KEY_MAX_CHARS,
 } from './types.js';

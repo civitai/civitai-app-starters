@@ -47,7 +47,7 @@
  * fetch chokepoints ..... 2
  * REST endpoints ........ GET /api/v1/blocks/me
  * tRPC procedures ....... 28 = blocks.* (13) + apps.shared.* (10) + apps.storage.* (5)
- * switch case labels .... 45, of which 8 REFUSE (enumerated under SCOPE below)
+ * switch case labels .... 47, of which 10 REFUSE (enumerated under SCOPE below)
  * --- END DERIVED ---
  *
  * PICKERS (Phase 1 of "make dev:live a faithful local host"): the live host
@@ -101,6 +101,12 @@
  *     host-chrome consent. Replies `collection-unavailable`.
  *   • CREATE_POST_FROM_APP — needs the server-resolved preview plus host-chrome
  *     confirm before a PUBLIC post is written. Replies with a refusal.
+ *   • PREPARE_TRAINING_DATASET — the server refuses every `kind: 'training'`
+ *     request from a dev token, so there is nothing to forward. Replies with a
+ *     refusal.
+ *   • RUN_TRAINING — the same dev-token refusal, plus the host-chrome consent
+ *     dialog a run is confirmed in, which this harness does not have. Replies
+ *     with a refusal.
  *   • PUBLISH_GENERATION_OUTPUTS — publishing requires the viewer's signed-in
  *     civitai.com session, which the local harness does not have; test
  *     publishing against the mock host — `createMockHost` or `Harness` from
@@ -208,6 +214,18 @@ const PAGE_SLOT_ID = 'app.page';
 
 /** The budgeted-spend scope the workflow procedures require. */
 const BUDGETED_SCOPE = 'ai:write:budgeted';
+
+/**
+ * The reply both training bridges get in dev:live — see their handlers. One
+ * string so the two cannot drift.
+ */
+export const TRAINING_UNSUPPORTED_ERROR = 'training is not supported in dev:live — use dev:mock';
+
+/** The once-per-session console line for a refused training bridge. */
+const trainingUnsupportedLog = (type: string): string =>
+  `${type} is not supported in dev:live (the server refuses every training request from a ` +
+  'dev token, and a run needs the host-chrome consent dialog). Replying with a refusal. ' +
+  'Use dev:mock to exercise the training flow.';
 
 /**
  * Decoded payload of a block-token JWT (the claims `BlockTokenService.sign`
@@ -1249,6 +1267,44 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
                 requestId,
                 error: 'creating posts is not supported in dev:live — use dev:mock',
               },
+            });
+            return;
+          }
+
+          case 'PREPARE_TRAINING_DATASET': {
+            // UNSUPPORTED in live, and here the SERVER decides it, not this
+            // harness: every `kind: 'training'` procedure refuses a dev token
+            // ("training is not available from a development or review session"
+            // — `assertTrainingRequestAllowed` in civitai/civitai), because there
+            // is no host page whose chrome can show the viewer a price. A
+            // training ESTIMATE is still forwarded (ESTIMATE_WORKFLOW above) and
+            // comes back carrying that same server refusal.
+            //
+            // FREE TEXT on the message's own reply channel; no host code is
+            // honest about "this harness cannot do it". Use dev:mock — its
+            // `trainingDatasetError` / `trainingDatasetRejected` knobs cover the
+            // refusal set.
+            if (!isRoutableRequestId(requestId)) return;
+            logOnce('training-dataset', trainingUnsupportedLog('PREPARE_TRAINING_DATASET'));
+            dispatchToBlock({
+              type: 'TRAINING_DATASET_RESULT',
+              payload: { requestId, error: TRAINING_UNSUPPORTED_ERROR },
+            });
+            return;
+          }
+
+          case 'RUN_TRAINING': {
+            // UNSUPPORTED in live for the same server-side reason as
+            // PREPARE_TRAINING_DATASET directly above — and doubly so: a run is
+            // CHARGED and confirmed in host chrome this harness does not have, so
+            // faking either half would let dev prove out a flow production does
+            // not have. Use dev:mock — its `runTrainingError` knob covers
+            // `declined`, `submission-unconfirmed` and the rest.
+            if (!isRoutableRequestId(requestId)) return;
+            logOnce('training-run', trainingUnsupportedLog('RUN_TRAINING'));
+            dispatchToBlock({
+              type: 'TRAINING_RESULT',
+              payload: { requestId, error: TRAINING_UNSUPPORTED_ERROR },
             });
             return;
           }

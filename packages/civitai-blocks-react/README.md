@@ -735,6 +735,126 @@ options drive both arms (including `declined`). **`dev:live` refuses this bridge
 it has no civitai chrome to render the server-resolved confirm in, and driving
 the write without it would let dev prove out a flow production does not have.
 
+### `usePrepareTrainingDataset()` and `useRunTraining()` — LoRA training
+
+Train a LoRA with the ai-toolkit engine on the **viewer's own images**, from
+inside a page app — the App Blocks `kind: 'training'` flow. Four steps, three
+hooks:
+
+1. **Dataset** — `usePrepareTrainingDataset().prepareDataset([{ imageId, caption }])`
+   (`PREPARE_TRAINING_DATASET`). Only the viewer's own scanned, unflagged images
+   within the page's maturity ceiling are admitted; the rest come back in
+   `rejected` with a reason (`unavailable`, `unsupported-media`, `not-eligible`,
+   `pending-scan`, `import-failed`, `import-unavailable`; `pending-scan` and
+   `import-unavailable` are retryable). You get an opaque `datasetId` and the
+   admitted `count`, always at least 1 — if **nothing** is admitted the call
+   rejects with the server's message instead. 1–50 images, captions up to 1,000 characters; captions are
+   moderated. No dialog, no charge.
+2. **Quote** — `useBuzzWorkflow().estimate(body)` with a `WorkflowBodyTraining`
+   (`kind: 'training'`, no `quoteId`). The reply carries `trainingQuote:
+   { quoteId, total, imageCount, expiresAt }` — the orchestrator's own price for
+   exactly this run, stored server-side for 15 minutes.
+3. **Run** — `useRunTraining().runTraining({ ...body, quoteId })` (`RUN_TRAINING`).
+   **Civitai shows the viewer a consent dialog in its own chrome** — price, base
+   model, length and dataset size, all read back from the server, never from
+   your body — and submits only on their click. Change nothing in the body
+   between the estimate and the run; the server checks it against the quoted one.
+4. **Follow** — `useBuzzWorkflow().watch(workflowId)`. Once the run's moderation
+   status is approved, `trainedEpochs` lists the epochs whose checkpoint is
+   ready; send the viewer to the publish wizard with one of them (see
+   `trainedEpochs` on `BlockWorkflowSnapshot`).
+
+🔴 **Availability.** Behind the host flag **`app-blocks-training-kind`**, which
+ships **off** and is evaluated per viewer. **Page apps only** — the model slot
+answers both messages with an error. The manifest must declare
+**`ai:write:budgeted`** and the viewer must be signed in and have granted it.
+**Refused from `dev:live` and from review sessions** (the server refuses
+development and review tokens); build the flow against the mock host. Requires a
+civitai.com host carrying civitai/civitai#5434 (`kind: 'training'`,
+`RUN_TRAINING`) and civitai/civitai#5438 (`PREPARE_TRAINING_DATASET`).
+
+🔴 **Money.** There is no `maxBuzz` and no timeout knob — the price is the quote.
+A confirmed run may cost more than the token's per-call `buzzBudget` (the viewer
+confirms the exact price), up to `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (5,000 Buzz);
+an estimate above that is refused. `useBuzzWorkflow().submit()` **refuses** a
+training body before sending anything: only `RUN_TRAINING`'s dialog can confirm a
+quote, so a training run starts nowhere else.
+
+`runTraining` **rejects** with a `RunTrainingError`; read the flags before
+saying anything about money:
+
+| | meaning | what to do |
+|---|---|---|
+| `err.declined` | the viewer dismissed the dialog — **no run was submitted** | revert, say nothing |
+| `err.unconfirmed` | `submission-unconfirmed`, or no reply within the 10-min bound (`err.timedOut`) — the run **may be running and charged** | 🔴 **never retry automatically**: check the viewer's trainings first (`useAppWorkflows()` lists this app's runs). Re-running the same body after the server did start it is a **second, separately charged run** |
+| `err.refused` (`code: 'refused'`) | the server refused the submit after the viewer confirmed — a **spend cap** (their daily or private-run Buzz cap, the per-app consent budget, the app's daily spend or rate limit, a dev-session cap) or a **temporary-availability** deny. Refunded: **no run, nothing charged**; the quote is used up | show `err.message` (the server's reason, e.g. `daily Buzz cap reached: …`); estimate again before any retry — buying Buzz does not lift these caps |
+| `err.signInRequired` | no session | route into `useRequestSignIn()` |
+| `err.code` set otherwise | a host refusal (`review-mode` / `block is not ready` / `invalid training request` / `no block token`) | show or ignore per case |
+| `err.code === undefined`, no flag | a server refusal before any submit (expired or used quote, changed body, ineligible image) | estimate again, then retry |
+
+`prepareDataset` rejects with a `PrepareTrainingDatasetError` (`.code` for the
+host's refusals — `review-mode`, `block is not ready`, `sign in to train`,
+`invalid training dataset`, `no block token` — plus `.signInRequired` and
+`.timedOut`). Preparing charges nothing, so none of them cost Buzz. It prompts
+for `ai:write:budgeted` and retries once on a grant (see the table below);
+`runTraining` deliberately does not — it carries no idempotency key and has an
+outcome where a run may exist, so it never re-sends.
+
+```tsx
+const { prepareDataset } = usePrepareTrainingDataset();
+const { estimate, watch } = useBuzzWorkflow();
+const { runTraining } = useRunTraining();
+
+async function train(images: Array<{ id: number; caption: string }>) {
+  // Rejects (no `.code`) when NOTHING is admitted, e.g. "none of the requested
+  // images can be used for training"; a resolved dataset always has count >= 1.
+  const dataset = await prepareDataset(images.map((i) => ({ imageId: i.id, caption: i.caption })));
+  if (dataset.rejected.length > 0) showNotice(`${dataset.rejected.length} image(s) left out`);
+
+  const body: WorkflowBodyTraining = {
+    kind: 'training',
+    datasetId: dataset.datasetId,
+    engine: 'ai-toolkit',
+    model: baseModelKey, // a key from Civitai's training catalog
+    params: aiToolkitParams, // AiToolkitTrainingParams
+    triggerWord: 'mystyle',
+    samplePrompts: ['mystyle, a lighthouse at dusk'],
+  };
+  const quote = (await estimate(body)).trainingQuote;
+  if (!quote) return showError('No training price came back.');
+  // Show quote.total; the host's dialog will show the same number.
+
+  try {
+    const started = await runTraining({ ...body, quoteId: quote.quoteId });
+    const done = await watch(started.workflowId, { onUpdate: render });
+    setEpochs(done.trainedEpochs ?? []);
+  } catch (err) {
+    if (!(err instanceof RunTrainingError)) throw err;
+    if (err.declined) return; // no run
+    if (err.unconfirmed) return showCheckYourTrainings(); // may be running — never auto-retry
+    if (err.refused) return showError(err.message); // a cap / availability refusal; no run, nothing charged
+    if (err.signInRequired) return requestSignIn();
+    showError('Could not start training. Get a new price and try again.');
+  }
+}
+```
+
+With the mock host — `createMockHost` or `Harness` from
+`@civitai/blocks-react/testing` — the training path is **kind-faithful**: it
+holds the datasets it prepared and the quotes it stored, refuses an unknown
+dataset, a dataset with nothing admitted, a quote above 5,000 and a quote run
+twice, and needs
+`ai:write:budgeted` on the token and a signed-in viewer. Its knobs are
+`trainingDatasetRejected`, `trainingDatasetError`, `trainingQuoteTotal`,
+`runTrainingError` (`'declined'`, `'submission-unconfirmed'`, or any server
+message), `runTrainingCapRefusal` (the server's resolved cap / availability refusal, which consumes the quote →
+`err.refused`) and `generation.trainedEpochs` for the finished run. It has no
+consent dialog, so `runTraining` settles at once where the real host waits on a
+click, and it checks a run's body against its quote by `datasetId` only — the
+server compares the whole body.
+**`dev:live` refuses both bridges**, because the server refuses every training
+request from a dev token.
+
 ### `useAppWorkflows(params?)`
 
 The calling app's **own** generator subqueue — the tag-scoped list of generations
@@ -1227,6 +1347,7 @@ had just worked.
 |---|---|---|
 | `useBuzzWorkflow()` | `submit()` | `ai:write:budgeted` |
 | `useCreatePostFromApp()` | `createPost()` | `posts:write:self` |
+| `usePrepareTrainingDataset()` | `prepareDataset()` | `ai:write:budgeted` |
 | `useGoodPurchase()` | `purchase()` | `goods:purchase:self` |
 | `useTip()` | `tip()` | `social:tip:self` |
 

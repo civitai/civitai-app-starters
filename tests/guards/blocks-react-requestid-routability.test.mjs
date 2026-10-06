@@ -224,10 +224,10 @@ test('no routability or wire-shape decision is open-coded outside the helper', (
  * file that had none.
  */
 const HELPER_CALL_LEDGER = {
-  'internal/liveHost.ts': 14,
-  'internal/mockHost.ts': 14,
+  'internal/liveHost.ts': 16,
+  'internal/mockHost.ts': 16,
   'transport/iframeTransport.ts': 2,
-  'transport/validate.ts': 34,
+  'transport/validate.ts': 36,
 };
 
 test('every consolidated call site is accounted for (asserted ledger)', () => {
@@ -308,8 +308,8 @@ test('mutation battery: every re-introduced spelling is caught BY THIS DETECTOR'
     assert.ok(mutated.includes(spelling), `${label}: mutant text absent after splice`);
     assert.equal(
       (mutated.match(new RegExp(ANCHOR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length,
-      32,
-      `${label}: expected exactly one of the 33 anchors to be replaced`,
+      34,
+      `${label}: expected exactly one of the 35 anchors to be replaced`,
     );
 
     const hits = findOpenCodedDecisions(mutated);

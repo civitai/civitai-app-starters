@@ -33,6 +33,26 @@ export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
  */
 export const HUMAN_INTERACTION_TIMEOUT_MS = 10 * 60_000;
 
+/**
+ * The bound for a `'protocol'` request whose SERVER WORK is itself slow — the
+ * host forwards it to the orchestrator and replies only once that answers. No
+ * person is in the loop, so it stays in the `'protocol'` bucket below; it just
+ * needs more than {@link DEFAULT_REQUEST_TIMEOUT_MS}.
+ *
+ * Callers: the workflow trio in `hooks/useBuzzWorkflow.ts` (a submit is a whatif
+ * preflight plus the real submit plus a prompt audit), and
+ * `PREPARE_TRAINING_DATASET` in `hooks/usePrepareTrainingDataset.ts`, whose
+ * server moderates the captions and imports up to 50 images into the
+ * orchestrator, the import alone under a 60s budget
+ * (`BLOCK_TRAINING_IMPORT_BUDGET_MS` in civitai/civitai's
+ * `block-training-dataset.service.ts`) — so the 30s default would reject a
+ * healthy prepare mid-import.
+ *
+ * Was a module-local constant in `useBuzzWorkflow.ts`; moved here so the second
+ * caller shares the number instead of re-typing it.
+ */
+export const WORKFLOW_REQUEST_TIMEOUT_MS = 120_000;
+
 /** Which bound a block→parent message is answered under. */
 export type RequestTimeoutClass =
   /** Reply waits on a PERSON — must pass {@link HUMAN_INTERACTION_TIMEOUT_MS}. */
@@ -84,6 +104,12 @@ const REQUEST_TIMEOUT_CLASS = {
   // failure, with nothing to reconcile the two. Unlike the publish bridge there
   // is no "outputs were lost" framing available here: the post exists.
   CREATE_POST_FROM_APP: 'human',
+  // 🔴 `'human'`: the host opens a training CONSENT dialog (price, base model,
+  // length, dataset size) and replies only on the viewer's click or dismiss. At
+  // the 30s default the request would reject with the dialog still open, and a
+  // viewer who then clicked Train would start a CHARGED run the block had
+  // already reported as failed.
+  RUN_TRAINING: 'human',
 
   // ── Fire-and-forget: no requestId, so no pending promise to time out ────
   BLOCK_ERROR: 'no-reply',
@@ -114,6 +140,11 @@ const REQUEST_TIMEOUT_CLASS = {
   APP_STORAGE_SET: 'protocol',
   CANCEL_APP_WORKFLOW: 'protocol',
   CANCEL_WORKFLOW: 'protocol',
+  // No dialog — preparing a dataset charges nothing and the host replies when
+  // the server does. Server-bound, so `'protocol'`; but sent under
+  // `WORKFLOW_REQUEST_TIMEOUT_MS`, not the 30s default, because the server's
+  // image import alone may take 60s. Same reasoning as the workflow trio below.
+  PREPARE_TRAINING_DATASET: 'protocol',
   // The workflow trio is server-bound, not person-bound. It carries its OWN
   // longer bound (`WORKFLOW_REQUEST_TIMEOUT_MS` in `hooks/useBuzzWorkflow.ts`)
   // for orchestrator latency — a different reason for a different number.
