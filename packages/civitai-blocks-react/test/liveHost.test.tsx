@@ -2165,7 +2165,8 @@ describe('createLiveHost — PUBLISH_GENERATION_OUTPUTS (refused: needs a signed
     expect(payload.error).toBe(
       "publishing generation outputs is not supported in dev:live — publishing requires the " +
         "viewer's signed-in civitai.com session, which the local harness does not have; test " +
-        "publishing with dev:harness (the mock host's publishImageIds / publishError knobs)",
+        'publishing against the mock host — createMockHost or Harness from ' +
+        '@civitai/blocks-react/testing, with the publishImageIds / publishError options',
     );
     expect(fetchMock.mock.calls.length).toBe(callsAfterInit);
     const urls = fetchMock.mock.calls.map((c) => String(c[0])).join('\n');

@@ -103,8 +103,9 @@
  *     confirm before a PUBLIC post is written. Replies with a refusal.
  *   • PUBLISH_GENERATION_OUTPUTS — publishing requires the viewer's signed-in
  *     civitai.com session, which the local harness does not have; test
- *     publishing with dev:harness (the mock host's `publishImageIds` /
- *     `publishError` knobs). Replies with a refusal.
+ *     publishing against the mock host — `createMockHost` or `Harness` from
+ *     `@civitai/blocks-react/testing`, with the `publishImageIds` /
+ *     `publishError` options. Replies with a refusal.
  *   • GET_WILDCARD_PACK — needs the session-authed resolve plus the in-tab
  *     zip/yaml parse that lives in civitai, not this SDK. Replies `parse-failed`.
  *   • OPEN_IMAGE_UPLOAD — needs the host's native modal + session-authed byte
@@ -1335,16 +1336,18 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             //
             // FREE TEXT, like the post refusal: none of the host's codes is
             // honest about "this harness cannot do it". `usePublishGenerationOutputs`
-            // rejects with it as the message. Test publishing with dev:harness:
-            // the mock host's `publishImageIds` / `publishError` knobs drive
-            // both arms locally.
+            // rejects with it as the message. Test publishing against the mock
+            // host — `createMockHost` or `Harness` from
+            // `@civitai/blocks-react/testing`, with the `publishImageIds` /
+            // `publishError` options.
             if (!isRoutableRequestId(requestId)) return;
             logOnce(
               'publish-outputs',
               'PUBLISH_GENERATION_OUTPUTS is not supported in dev:live (publishing requires the ' +
                 "viewer's signed-in civitai.com session, which the local harness does not have). " +
-                'Replying with a refusal. Test publishing with dev:harness, where the mock ' +
-                "host's publishImageIds / publishError knobs drive both arms.",
+                'Replying with a refusal. Test publishing against the mock host — createMockHost ' +
+                'or Harness from @civitai/blocks-react/testing, with the publishImageIds / ' +
+                'publishError options.',
             );
             dispatchToBlock({
               type: 'PUBLISH_RESULT',
@@ -1353,8 +1356,9 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
                 error:
                   'publishing generation outputs is not supported in dev:live — publishing ' +
                   "requires the viewer's signed-in civitai.com session, which the local harness " +
-                  "does not have; test publishing with dev:harness (the mock host's " +
-                  'publishImageIds / publishError knobs)',
+                  'does not have; test publishing against the mock host — createMockHost or ' +
+                  'Harness from @civitai/blocks-react/testing, with the publishImageIds / ' +
+                  'publishError options',
               },
             });
             return;

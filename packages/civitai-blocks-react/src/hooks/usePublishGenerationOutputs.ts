@@ -54,9 +54,9 @@ export interface UsePublishGenerationOutputs {
  *
  * `dev:live` refuses this bridge: publishing requires the viewer's signed-in
  * civitai.com session, which the local harness does not have, so `publish()`
- * rejects with a message saying so. Test publishing with `dev:harness`, where
- * the mock host's `publishImageIds` / `publishError` scenario knobs drive both
- * arms.
+ * rejects with a message saying so. Test publishing against the mock host —
+ * `createMockHost` or `Harness` from `@civitai/blocks-react/testing`, with the
+ * `publishImageIds` / `publishError` options.
  *
  * @example
  * const { publish } = usePublishGenerationOutputs();

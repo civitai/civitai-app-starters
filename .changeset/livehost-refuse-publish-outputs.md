@@ -12,5 +12,6 @@ saying so (and logs it once), the same way it already refuses
 `CREATE_POST_FROM_APP`. `publish()` rejects with that message; it makes no network
 call.
 
-Test publishing with `dev:harness`, where the mock host's `publishImageIds` /
-`publishError` scenario knobs drive both arms. Production blocks are unaffected.
+Test publishing against the mock host — `createMockHost` or `Harness` from
+`@civitai/blocks-react/testing`, with the `publishImageIds` / `publishError`
+options. Production blocks are unaffected.

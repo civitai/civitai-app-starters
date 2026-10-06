@@ -113,9 +113,9 @@ allowance-sharing rule. `useDirectLoad()` is covered under
 [Direct-load fallback](#direct-load-fallback-open-on-civitai) rather than here.
 **`dev:live` refuses `usePublishGenerationOutputs()`**: publishing requires the
 viewer's signed-in civitai.com session, which the local harness does not have, so
-`publish()` rejects with a message saying so. Test publishing with `dev:harness`,
-where the mock host's `publishImageIds` / `publishError` scenario knobs drive
-both arms.
+`publish()` rejects with a message saying so. Test publishing against the mock
+host — `createMockHost` or `Harness` from `@civitai/blocks-react/testing`, with
+the `publishImageIds` / `publishError` options.
 
 ### `useBlockContext()`
 
@@ -729,8 +729,9 @@ async function share() {
 }
 ```
 
-In `dev:mock` the `createPostResult` / `createPostError` scenario knobs drive
-both arms (including `declined`). **`dev:live` refuses this bridge on purpose** —
+With the mock host — `createMockHost` or `Harness` from
+`@civitai/blocks-react/testing` — the `createPostResult` / `createPostError`
+options drive both arms (including `declined`). **`dev:live` refuses this bridge on purpose** —
 it has no civitai chrome to render the server-resolved confirm in, and driving
 the write without it would let dev prove out a flow production does not have.
 
