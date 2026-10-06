@@ -22,6 +22,7 @@ import { voiceLanguage } from '../voice/languages.js';
 import { LiveTranscript, type VoiceTranscript } from '../voice/live-transcript.js';
 import type { StreamingTranscript } from '../voice/streaming-transcript.js';
 import type { CivitaiChatComposer } from './civitai-chat-composer.js';
+import type { FreeAllowance } from './civitai-chat-settings-dialog.js';
 import type { CivitaiChatThread } from './civitai-chat-thread.js';
 import { chatStyles } from './chat.styles.js';
 import { mediaActions } from './media-actions.js';
@@ -285,6 +286,7 @@ export class CivitaiChat extends LitElement {
       for (const type of ['change', 'list-change', 'conversation-change', 'job-change', 'post-change', 'panel-change']) target.addEventListener(type, this.#rerender);
     }
     session.addEventListener('settings-change', this.#rerender);
+    session.freeTier.addEventListener('change', this.#rerender);
     session.panels.addEventListener('panel-change', () => this.#announceActivePanel());
     session.store.addEventListener('conversation-change', () => this.#announceActivePanel());
     this.requestUpdate();
@@ -494,6 +496,20 @@ export class CivitaiChat extends LitElement {
     } catch (error) {
       this.#toast(`/${parsed.name} did not work.`, error);
     }
+  }
+
+  #freeAllowance(session: ChatSession): FreeAllowance | null {
+    if (!session.freeTier.status.enabled) return null;
+    const model = session.settings.assistantModel?.trim() || chatConfig.model;
+    const free = session.freeTier.modelFor(model);
+    return { eligible: Boolean(free), left: free?.remaining ?? 0, resetAt: session.freeTier.resetAt(model) };
+  }
+
+  #continuePaid(): void {
+    const session = this.#session;
+    if (!session) return;
+    this.#updateSettings({ payWhenFreeRunsOut: true });
+    void session.agent.retry();
   }
 
   /** The built-ins, then the page's `commands` over them. */
@@ -714,6 +730,7 @@ export class CivitaiChat extends LitElement {
       @cvt-open-settings=${() => {
         this.historyOpen = false;
         this.settingsOpen = true;
+        void this.#session?.freeTier.refresh();
       }}
     ></civitai-chat-sidebar>`;
   }
@@ -826,7 +843,7 @@ export class CivitaiChat extends LitElement {
                       composer.focus();
                     })}
                 ></civitai-chat-welcome>`
-              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...this.tools, ...this.toolViews }}></civitai-chat-thread>`)}
+              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...this.tools, ...this.toolViews }} @cvt-continue-paid=${() => this.#continuePaid()}></civitai-chat-thread>`)}
           <civitai-chat-composer
             .commands=${this.#commands()}
             ?running=${session.agent.running}
@@ -856,6 +873,7 @@ export class CivitaiChat extends LitElement {
       <civitai-chat-settings-dialog
         .open=${this.settingsOpen}
         .settings=${session.settings}
+        .freeAllowance=${this.#freeAllowance(session)}
         .userName=${this.userName}
         .canExport=${turns.length > 0}
         .canSignOut=${this.canSignOut}

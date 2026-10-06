@@ -4,6 +4,12 @@ import { CUSTOM_INSTRUCTIONS_MAX, RETENTION_DAYS, type ChatModelOption } from '.
 import type { Settings } from '../types.js';
 import { LightElement, emit } from './light.js';
 
+export interface FreeAllowance {
+  eligible: boolean;
+  left: number;
+  resetAt?: Date;
+}
+
 /** "Never ask" is stored as a number JSON can hold. */
 export const NEVER_ASK = 1_000_000;
 
@@ -22,6 +28,7 @@ export class CivitaiChatSettingsDialog extends LightElement {
   static override properties: PropertyDeclarations = {
     open: { type: Boolean },
     settings: { attribute: false },
+    freeAllowance: { attribute: false },
     userName: {},
     canExport: { type: Boolean },
     canSignOut: { type: Boolean },
@@ -32,6 +39,8 @@ export class CivitaiChatSettingsDialog extends LightElement {
 
   declare open: boolean;
   declare settings: Settings;
+  /** The free replies the viewer's model has left; null when there is no free tier. */
+  declare freeAllowance: FreeAllowance | null;
   declare userName: string;
   declare canExport: boolean;
   /** Inside civitai.com the site owns the session. */
@@ -101,6 +110,31 @@ export class CivitaiChatSettingsDialog extends LightElement {
         : nothing}`;
   }
 
+  #free(): TemplateResult | typeof nothing {
+    const free = this.freeAllowance;
+    if (!free) return nothing;
+    const left = !free.eligible
+      ? 'The model you picked has no free replies; the default one does.'
+      : free.left > 0
+        ? `${free.left} free ${free.left === 1 ? 'reply' : 'replies'} left.`
+        : `Used up${free.resetAt ? ` until ${free.resetAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}.`;
+    return html`<section>
+      <h3>Free replies</h3>
+      <p>${left}</p>
+      <civitai-switch
+        label="Use my free replies first"
+        .checked=${this.settings.useFreeAllowance !== false}
+        @change=${(event: Event) => this.#change({ useFreeAllowance: (event.target as HTMLInputElement).checked })}
+      ></civitai-switch>
+      <civitai-switch
+        label="When they run out, continue on Buzz"
+        description="About 1 Buzz a reply. Also used when free replies are slow to start."
+        .checked=${this.settings.payWhenFreeRunsOut === true}
+        @change=${(event: Event) => this.#change({ payWhenFreeRunsOut: (event.target as HTMLInputElement).checked })}
+      ></civitai-switch>
+    </section>`;
+  }
+
   override render(): TemplateResult {
     const limit = LIMITS.some((option) => Number(option.value) === this.settings.autoRunLimit) ? String(this.settings.autoRunLimit) : '100';
     return html`<civitai-modal .open=${this.open} heading="Settings" with-close-button @close=${() => emit(this, 'cvt-close-settings')}>
@@ -114,6 +148,7 @@ export class CivitaiChatSettingsDialog extends LightElement {
           @change=${(event: Event) => this.#change({ autoRunLimit: Number((event.target as HTMLInputElement).value) })}
         ></civitai-select>
         ${this.#model()}
+        ${this.#free()}
         <civitai-textarea
           label="Custom instructions"
           description="Sent with every message. Tell the assistant about you, your style, or how you like answers."

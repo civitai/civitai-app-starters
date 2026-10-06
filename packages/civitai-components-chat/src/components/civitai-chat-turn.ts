@@ -11,7 +11,7 @@ import type { ChatToolView } from '../tools/host.js';
 import type { Attachment, Turn } from '../types.js';
 import { renderMarkdown } from '../ux/markdown.js';
 import type { StripItem } from './lib/civitai-chat-attachment-strip.js';
-import { LightElement } from './light.js';
+import { LightElement, emit } from './light.js';
 import { modelCards, viewFor, type ToolPart, type ToolViewContext } from './tool-views.js';
 
 function failureOf(part: ToolPart): string | undefined {
@@ -114,6 +114,12 @@ export class CivitaiChatTurn extends LightElement {
     if (this.live) return this.#waiting() ? html`<div class="cvt-typing" aria-label="Assistant is replying"><span></span><span></span><span></span></div>` : nothing;
     if (status === 'aborted') return html`<div class="cvt-note">Stopped.</div>`;
     if (status === 'error' && error === CUT_OFF) return html`<div class="cvt-note">This reply was cut off. Ask again?</div>`;
+    if (status === 'error' && this.turn.assistant.errorKind === 'free_tier_exhausted') {
+      return html`<civitai-alert color="info">
+        ${error} You can keep going on Buzz (about 1 per reply).
+        ${this.latest ? html`<civitai-button size="sm" variant="light" @click=${() => emit(this, 'cvt-continue-paid')}>Continue with Buzz</civitai-button>` : nothing}
+      </civitai-alert>`;
+    }
     if (status === 'error') {
       return html`<civitai-alert color="error">
         ${error ?? 'Something went wrong.'}

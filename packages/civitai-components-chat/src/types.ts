@@ -35,7 +35,7 @@ export interface Turn {
   createdAt: string;
   user: TurnUser;
   /** `errorDetail` is what the service said, shown only under Details. */
-  assistant: { messages: ModelMessage[]; status: TurnStatus; error?: string; errorDetail?: string };
+  assistant: { messages: ModelMessage[]; status: TurnStatus; error?: string; errorDetail?: string; errorKind?: string };
 }
 
 /** `refs` name earlier results the user pointed at ("animate this") without uploading anything. */
@@ -113,6 +113,10 @@ export interface Settings {
   assistantModel?: string;
   /** The language the viewer speaks to the microphone in. */
   voiceLanguage?: string;
+  /** Send replies free while the daily allowance lasts; on unless turned off. */
+  useFreeAllowance?: boolean;
+  /** When the free allowance cannot serve a reply (used up, or slow to start), send it on Buzz without asking. */
+  payWhenFreeRunsOut?: boolean;
   lastConversationId?: string;
 }
 

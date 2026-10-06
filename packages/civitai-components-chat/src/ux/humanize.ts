@@ -1,4 +1,4 @@
-export type ErrorKind = 'insufficient_buzz' | 'blocked' | 'auth' | 'rate_limit' | 'timeout' | 'network' | 'assistant_unavailable' | 'unavailable' | 'unknown';
+export type ErrorKind = 'free_tier_exhausted' | 'insufficient_buzz' | 'blocked' | 'auth' | 'rate_limit' | 'timeout' | 'network' | 'assistant_unavailable' | 'unavailable' | 'unknown';
 
 export interface HumanError {
   kind: ErrorKind;
@@ -8,6 +8,7 @@ export interface HumanError {
 }
 
 const WORDS: Record<ErrorKind, string> = {
+  free_tier_exhausted: 'Your free replies are used up for now.',
   insufficient_buzz: "You don't have enough Buzz for this.",
   blocked: 'That request was blocked by the safety filter. Try wording it differently.',
   auth: "Civitai didn't accept your sign-in. Please sign in again.",
@@ -22,6 +23,7 @@ const WORDS: Record<ErrorKind, string> = {
 export function humanize(error: unknown): HumanError {
   const detail = detailOf(error);
   const kind = kindOf(error, detail);
+  if (kind === 'free_tier_exhausted') return { kind, message: freeTierMessage(detail), detail };
   return { kind, message: WORDS[kind], detail };
 }
 
@@ -29,9 +31,19 @@ export function humanizeText(text: string): HumanError {
   return humanize(new Error(text));
 }
 
+function freeTierMessage(detail: string): string {
+  const until = Date.parse(/until (\S+)/.exec(detail)?.[1] ?? '');
+  if (Number.isNaN(until)) return WORDS.free_tier_exhausted;
+  const at = new Date(until);
+  const sameDay = at.toDateString() === new Date().toDateString();
+  const when = sameDay ? at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : at.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  return `Your free replies are used up until ${when}.`;
+}
+
 function kindOf(error: unknown, detail: string): ErrorKind {
   const status = statusOf(error);
   const text = detail.toLowerCase();
+  if (/free allowance used up/.test(text)) return 'free_tier_exhausted';
   if (status === 402 || /insufficient|not enough buzz|balance/.test(text)) return 'insufficient_buzz';
   if (/blocked|prohibited|moderat|violat|not allowed|safety/.test(text)) return 'blocked';
   if (status === 401 || status === 403) return 'auth';

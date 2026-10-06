@@ -495,6 +495,23 @@ describe('civitai-chat-thread', () => {
     expect(thread.querySelector('.cvt-activity')?.textContent).toBe('Browsing the catalog…');
   });
 
+  it('offers to continue on Buzz when the free replies are used up', async () => {
+    const turn = {
+      seq: 1,
+      createdAt: '',
+      user: { content: 'hi', attachments: [] },
+      assistant: { messages: [], status: 'error' as const, error: 'Your free replies are used up until 4:55 PM.', errorKind: 'free_tier_exhausted' },
+    };
+    const thread = await mount('civitai-chat-thread', { turns: [turn], jobs: { byToolCall: () => undefined, get: () => undefined } as never });
+    await thread.querySelector('civitai-chat-turn')!.updateComplete;
+    const asked: unknown[] = [];
+    thread.addEventListener('cvt-continue-paid', (e) => asked.push(e));
+
+    expect(thread.textContent).toContain('Your free replies are used up until 4:55 PM.');
+    [...thread.querySelectorAll<HTMLElement>('civitai-button')].find((b) => b.textContent?.includes('Continue with Buzz'))!.click();
+    expect(asked).toHaveLength(1);
+  });
+
   it('shows a failed reply in plain words, with what the service said under Details', async () => {
     const turn = {
       seq: 1,
