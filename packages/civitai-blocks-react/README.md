@@ -746,8 +746,9 @@ hooks:
    within the page's maturity ceiling are admitted; the rest come back in
    `rejected` with a reason (`unavailable`, `unsupported-media`, `not-eligible`,
    `pending-scan`, `import-failed`, `import-unavailable`; `pending-scan` and
-   `import-unavailable` are retryable). You get an opaque
-   `datasetId`. 1–50 images, captions up to 1,000 characters; captions are
+   `import-unavailable` are retryable). You get an opaque `datasetId` and the
+   admitted `count`, always at least 1 — if **nothing** is admitted the call
+   rejects with the server's message instead. 1–50 images, captions up to 1,000 characters; captions are
    moderated. No dialog, no charge.
 2. **Quote** — `useBuzzWorkflow().estimate(body)` with a `WorkflowBodyTraining`
    (`kind: 'training'`, no `quoteId`). The reply carries `trainingQuote:
@@ -786,6 +787,7 @@ saying anything about money:
 |---|---|---|
 | `err.declined` | the viewer dismissed the dialog — **no run was submitted** | revert, say nothing |
 | `err.unconfirmed` | `submission-unconfirmed`, or no reply within the 10-min bound (`err.timedOut`) — the run **may be running and charged** | 🔴 **never retry automatically**: check the viewer's trainings first (`useAppWorkflows()` lists this app's runs). Re-running the same body after the server did start it is a **second, separately charged run** |
+| `err.refused` (`code: 'refused'`) | the server refused the submit at a **spend cap** after the viewer confirmed — their daily or private-run Buzz cap, the per-app consent budget, the app's daily spend or rate limit, or a dev-session cap. Refunded: **no run, nothing charged** | show `err.message` (the server's reason, e.g. `daily Buzz cap reached: …`); buying Buzz does not lift these caps |
 | `err.signInRequired` | no session | route into `useRequestSignIn()` |
 | `err.code` set otherwise | a host refusal (`review-mode` / `block is not ready` / `invalid training request` / `no block token`) | show or ignore per case |
 | `err.code === undefined`, no flag | a server refusal before any submit (expired or used quote, changed body, ineligible image) | estimate again, then retry |
@@ -804,8 +806,10 @@ const { estimate, watch } = useBuzzWorkflow();
 const { runTraining } = useRunTraining();
 
 async function train(images: Array<{ id: number; caption: string }>) {
+  // Rejects (no `.code`) when NOTHING is admitted, e.g. "none of the requested
+  // images can be used for training"; a resolved dataset always has count >= 1.
   const dataset = await prepareDataset(images.map((i) => ({ imageId: i.id, caption: i.caption })));
-  if (dataset.count === 0) return showError('None of those images can be trained on.');
+  if (dataset.rejected.length > 0) showNotice(`${dataset.rejected.length} image(s) left out`);
 
   const body: WorkflowBodyTraining = {
     kind: 'training',
@@ -828,6 +832,7 @@ async function train(images: Array<{ id: number; caption: string }>) {
     if (!(err instanceof RunTrainingError)) throw err;
     if (err.declined) return; // no run
     if (err.unconfirmed) return showCheckYourTrainings(); // may be running — never auto-retry
+    if (err.refused) return showError(err.message); // a spend cap; no run, nothing charged
     if (err.signInRequired) return requestSignIn();
     showError('Could not start training. Get a new price and try again.');
   }
@@ -837,12 +842,16 @@ async function train(images: Array<{ id: number; caption: string }>) {
 With the mock host — `createMockHost` or `Harness` from
 `@civitai/blocks-react/testing` — the training path is **kind-faithful**: it
 holds the datasets it prepared and the quotes it stored, refuses an unknown
-dataset, a quote above 5,000 and a quote run twice, and needs
+dataset, a dataset with nothing admitted, a quote above 5,000 and a quote run
+twice, and needs
 `ai:write:budgeted` on the token and a signed-in viewer. Its knobs are
 `trainingDatasetRejected`, `trainingDatasetError`, `trainingQuoteTotal`,
 `runTrainingError` (`'declined'`, `'submission-unconfirmed'`, or any server
-message) and `generation.trainedEpochs` for the finished run. It has no consent
-dialog, so `runTraining` settles at once where the real host waits on a click.
+message), `runTrainingCapRefusal` (the server's resolved spend-cap refusal →
+`err.refused`) and `generation.trainedEpochs` for the finished run. It has no
+consent dialog, so `runTraining` settles at once where the real host waits on a
+click, and it checks a run's body against its quote by `datasetId` only — the
+server compares the whole body.
 **`dev:live` refuses both bridges**, because the server refuses every training
 request from a dev token.
 

@@ -22,6 +22,8 @@ import {
 import { RunTrainingError, useRunTraining } from '../src/hooks/useRunTraining.js';
 import {
   MOCK_TRAINING_DATASET_GONE_ERROR,
+  MOCK_TRAINING_NONE_ELIGIBLE_ERROR,
+  MOCK_TRAINING_NONE_IMPORTED_ERROR,
   MOCK_TRAINING_QUOTE_GONE_ERROR,
   MOCK_TRAINING_BOUNDS,
   MOCK_TRAINING_SCOPE_ERROR,
@@ -247,6 +249,35 @@ describe('kind:training — prepare → estimate → run → watch', () => {
     expect(e.timedOut).toBe(false);
   });
 
+  it('a resolved spend-cap refusal REJECTS with .refused and the server reason, not a fake run', async () => {
+    const reason =
+      'daily Buzz cap reached: 900 already spent today across your installed apps, ' +
+      'this training run costs 500, daily cap is 1000';
+    uninstall = install({ runTrainingCapRefusal: reason, trainingQuoteTotal: 500 }).uninstall;
+    const { result } = hooks();
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+    const { estimate, body } = await prepareAndQuote(result);
+
+    const r = await settle(() =>
+      result.current.run.runTraining({ ...body, quoteId: estimate.trainingQuote!.quoteId }),
+    );
+    expect(r.value).toBeUndefined();
+    const e = r.error as RunTrainingError;
+    expect(e).toBeInstanceOf(RunTrainingError);
+    expect(e.refused).toBe(true);
+    expect(e.code).toBe('refused');
+    expect(e.message).toBe(reason);
+    expect(e.unconfirmed).toBe(false);
+    expect(e.declined).toBe(false);
+    expect(e.snapshot).toEqual({
+      workflowId: 'failed',
+      status: 'failed',
+      cost: { total: 500 },
+      error: reason,
+    });
+    await waitFor(() => expect(result.current.run.error).toBe(e));
+  });
+
   it('a free-text server message on RUN_TRAINING has no code and no money flag', async () => {
     uninstall = install({ runTrainingError: 'the training body differs' }).uninstall;
     const { result } = hooks();
@@ -258,7 +289,8 @@ describe('kind:training — prepare → estimate → run → watch', () => {
     const e = r.error as RunTrainingError;
     expect(e.message).toBe('the training body differs');
     expect(e.code).toBeUndefined();
-    expect([e.declined, e.unconfirmed, e.signInRequired, e.timedOut]).toEqual([
+    expect([e.declined, e.unconfirmed, e.signInRequired, e.timedOut, e.refused]).toEqual([
+      false,
       false,
       false,
       false,
@@ -332,6 +364,40 @@ describe('kind:training — prepare → estimate → run → watch', () => {
       ),
     );
     expect(ok.value?.count).toBe(50);
+  });
+
+  it('nothing admitted → the server\'s refusal, never a resolved count of 0', async () => {
+    const m = install({
+      trainingDatasetRejected: ITEMS.map((i) => ({ imageId: i.imageId, reason: 'not-eligible' as const })),
+    });
+    uninstall = m.uninstall;
+    const { result } = hooks();
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    const a = await settle(() => result.current.prep.prepareDataset(ITEMS));
+    expect(a.value).toBeUndefined();
+    const ae = a.error as PrepareTrainingDatasetError;
+    expect(ae).toBeInstanceOf(PrepareTrainingDatasetError);
+    expect(ae.message).toBe(MOCK_TRAINING_NONE_ELIGIBLE_ERROR);
+    expect(ae.code).toBeUndefined();
+
+    // Some passed eligibility and then failed the import → the import refusal.
+    m.host.setScenario({
+      trainingDatasetRejected: [
+        { imageId: 11, reason: 'not-eligible' },
+        { imageId: 12, reason: 'import-failed' },
+        { imageId: 13, reason: 'import-unavailable' },
+      ],
+    });
+    const b = await settle(() => result.current.prep.prepareDataset(ITEMS));
+    expect((b.error as PrepareTrainingDatasetError).message).toBe(
+      MOCK_TRAINING_NONE_IMPORTED_ERROR,
+    );
+
+    // One admitted → resolves, count 1.
+    m.host.setScenario({ trainingDatasetRejected: [{ imageId: 11, reason: 'pending-scan' }, { imageId: 12, reason: 'import-failed' }] });
+    const c = await settle(() => result.current.prep.prepareDataset(ITEMS));
+    expect(c.value?.count).toBe(1);
   });
 
   it('`trainingDatasetError` surfaces a code as .code and a server message without one', async () => {

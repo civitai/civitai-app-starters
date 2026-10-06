@@ -432,6 +432,16 @@ export const MOCK_TRAINING_QUOTE_GONE_ERROR =
   'training quote not found, expired or already used — estimate again';
 /** The real server's refusal for a training estimate naming a dataset it does not hold. */
 export const MOCK_TRAINING_DATASET_GONE_ERROR = 'training dataset not found or expired';
+/**
+ * The real server's two refusals for a dataset with NOTHING admitted
+ * (`prepareBlockTrainingDataset`): every image failed eligibility, or every
+ * eligible image failed its import. The server THROWS rather than returning
+ * `count: 0`, so a successful reply always admits at least one image.
+ */
+export const MOCK_TRAINING_NONE_ELIGIBLE_ERROR =
+  'none of the requested images can be used for training';
+export const MOCK_TRAINING_NONE_IMPORTED_ERROR =
+  'none of the requested images could be prepared for training';
 /** Default quote total for a `kind: 'training'` estimate when {@link MockHostOptions.trainingQuoteTotal} is unset. */
 const DEFAULT_TRAINING_QUOTE_TOTAL = 500;
 /** The real quote lifetime (`BLOCK_TRAINING_QUOTE_TTL_SECONDS`, 15 min). */
@@ -851,12 +861,23 @@ export interface MockHostOptions {
    * exactly as the server derives it. Absent → every image is admitted.
    * Live-tunable via {@link MockHost.setScenario}.
    *
+   * When this rejects EVERY named image the reply is an `error`, as on the real
+   * server — {@link MOCK_TRAINING_NONE_ELIGIBLE_ERROR}, or
+   * {@link MOCK_TRAINING_NONE_IMPORTED_ERROR} when every image that passed
+   * eligibility was rejected with an `import-*` reason. A success never has
+   * `count: 0`.
+   *
    * KIND-FAITHFUL, like the rest of the training path: the mock holds the
    * datasets it prepared, an estimate naming any other `datasetId` fails as the
    * server's does, a quote is run at most once, and every training call needs
    * `ai:write:budgeted` on the token ({@link MockHostOptions.consentGranted}) and
    * a signed-in viewer. What it cannot model: image ownership and moderation (it
    * has no images), the flag, and the page-only / dev-token refusals.
+   *
+   * ⚠️ The quote↔body check is NARROWER than the server's: the mock compares only
+   * `datasetId`, while the server hashes the whole body (minus `quoteId`) and
+   * refuses any change. A body edited between estimate and run passes here and
+   * fails in production.
    */
   trainingDatasetRejected?: Array<{ imageId: number; reason: BlockTrainingRejectionReason }>;
   /**
@@ -884,6 +905,17 @@ export interface MockHostOptions {
    * chrome, so the mock settles immediately where the real host waits on a click.
    */
   runTrainingError?: BlockRunTrainingHostError | string;
+  /**
+   * Make `RUN_TRAINING` resolve the server's SPEND-CAP refusal instead of a run:
+   * a snapshot `{ workflowId: 'failed', status: 'failed', cost: { total: <quote> },
+   * error: <this string> }` — the shape the real training submit returns when
+   * the viewer's daily / private-run Buzz cap, the per-app consent budget, the
+   * app's spend or rate limit, or a dev-session cap stops the run (refunded, no
+   * run). `useRunTraining()` rejects it with `.refused`. Pass the server's text,
+   * e.g. `'daily Buzz cap reached: …'`. The quote is left unspent. Absent → the
+   * run starts. Live-tunable via {@link MockHost.setScenario}.
+   */
+  runTrainingCapRefusal?: string;
   /**
    * Buzz pools a `SUBMIT_WORKFLOW` must REJECT when named in `body.accountType`
    * — simulates the real backend's content-rating clamp. The real host throws a
@@ -1076,6 +1108,7 @@ export type MockHostScenarioPatch = Pick<
   | 'trainingDatasetError'
   | 'trainingQuoteTotal'
   | 'runTrainingError'
+  | 'runTrainingCapRefusal'
   | 'appWorkflows'
   | 'appWorkflowsError'
   | 'publishImageIds'
@@ -1759,6 +1792,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   let trainingDatasetError: string | undefined = options.trainingDatasetError;
   let trainingQuoteTotal: number = options.trainingQuoteTotal ?? DEFAULT_TRAINING_QUOTE_TOTAL;
   let runTrainingError: string | undefined = options.runTrainingError;
+  let runTrainingCapRefusal: string | undefined = options.runTrainingCapRefusal;
   // App-subqueue bridge data + forced free-text-error knob. `appWorkflows` is
   // MUTABLE — CANCEL_APP_WORKFLOW marks the matching row canceled in place so a
   // follow-up QUERY reflects it.
@@ -2846,6 +2880,17 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               .map(({ imageId, reason }) => ({ imageId, reason }));
             const rejectedIds = new Set(rejected.map((r) => r.imageId));
             const count = [...named].filter((id) => !rejectedIds.has(id)).length;
+            if (count === 0) {
+              // The server THROWS here, eligibility before import: an `import-*`
+              // rejection means that image PASSED eligibility, so the server
+              // reached the import and refuses there.
+              const anyImported = rejected.some((r) => r.reason.startsWith('import-'));
+              return reply({
+                error: anyImported
+                  ? MOCK_TRAINING_NONE_IMPORTED_ERROR
+                  : MOCK_TRAINING_NONE_ELIGIBLE_ERROR,
+              });
+            }
             const datasetId = trainingHandle('tds_');
             trainingDatasets.set(datasetId, count);
             const result: BlockTrainingDatasetResult = { datasetId, count, rejected };
@@ -2884,6 +2929,17 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // there follows a submit that may have spent it; a test that needs that
             // can re-estimate.)
             if (runTrainingError !== undefined) return reply({ error: runTrainingError });
+            // The server's cap refusals RESOLVE (refunded, no run started).
+            if (runTrainingCapRefusal !== undefined) {
+              return reply({
+                snapshot: {
+                  workflowId: 'failed',
+                  status: 'failed',
+                  cost: { total: quote.total },
+                  error: runTrainingCapRefusal,
+                },
+              });
+            }
             quote.spent = true;
             submitCount += 1;
             const workflowId = `wf_${submitCount}_${Date.now()}`;
@@ -3630,6 +3686,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     if (patch.trainingDatasetError !== undefined) trainingDatasetError = patch.trainingDatasetError;
     if (patch.trainingQuoteTotal !== undefined) trainingQuoteTotal = patch.trainingQuoteTotal;
     if (patch.runTrainingError !== undefined) runTrainingError = patch.runTrainingError;
+    if (patch.runTrainingCapRefusal !== undefined) {
+      runTrainingCapRefusal = patch.runTrainingCapRefusal;
+    }
     if (patch.appWorkflows !== undefined) {
       appWorkflows = {
         workflows: patch.appWorkflows.workflows,

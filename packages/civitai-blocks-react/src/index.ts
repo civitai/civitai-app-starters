@@ -155,6 +155,7 @@ export {
 export type {
   UseRunTraining,
   QuotedTrainingBody,
+  RunTrainingErrorCode,
   BlockRunTrainingHostError,
   BlockTrainingQuote,
   WorkflowBodyTraining,

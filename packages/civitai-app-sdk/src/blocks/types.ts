@@ -2752,7 +2752,11 @@ export interface BlockTrainingDatasetResult {
    * characters), bound to this viewer, app and install.
    */
   datasetId: string;
-  /** How many images were ADMITTED. The server derives it; a run trains on exactly these. */
+  /**
+   * How many images were ADMITTED — always at least 1: when nothing is admitted
+   * the server refuses the request instead of returning an empty dataset. The
+   * server derives it; a run trains on exactly these.
+   */
   count: number;
   /** The images left out, each with its reason. Empty when every image was admitted. */
   rejected: Array<{ imageId: number; reason: BlockTrainingRejectionReason }>;

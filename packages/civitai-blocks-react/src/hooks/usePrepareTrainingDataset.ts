@@ -95,9 +95,12 @@ export interface UsePrepareTrainingDataset {
    * Resolves with the opaque `datasetId`, the admitted `count` and the
    * `rejected` images. REJECTS with a {@link PrepareTrainingDatasetError}.
    *
-   * 🔴 A RESOLVED RESULT CAN STILL HAVE ADMITTED NOTHING USEFUL — read
-   * `rejected` and `count`. `pending-scan` and `import-unavailable` are
-   * retryable; the rest are not.
+   * A resolved result admitted AT LEAST ONE image (`count >= 1`) — when nothing
+   * is admitted the server refuses instead, and this rejects with its message
+   * (`none of the requested images can be used for training` / `… could be
+   * prepared for training`, no `.code`). Read `rejected` for what was left out:
+   * `pending-scan` and `import-unavailable` are retryable; the rest are not.
+   * The per-image reasons are not available when everything was rejected.
    */
   prepareDataset: (
     items: BlockTrainingDatasetItem[],
@@ -135,10 +138,15 @@ export interface UsePrepareTrainingDataset {
  *
  * @example
  * const { prepareDataset } = usePrepareTrainingDataset();
- * const dataset = await prepareDataset(
- *   picked.map((img) => ({ imageId: img.id, caption: img.caption })),
- * );
- * if (dataset.count === 0) return showError('None of those images can be trained on.');
+ * try {
+ *   const dataset = await prepareDataset(
+ *     picked.map((img) => ({ imageId: img.id, caption: img.caption })),
+ *   );
+ *   if (dataset.rejected.length > 0) showNotice(`${dataset.rejected.length} image(s) left out`);
+ * } catch (e) {
+ *   // Includes "none of the requested images can be used for training".
+ *   if (e instanceof PrepareTrainingDatasetError) showError(e.message);
+ * }
  */
 export function usePrepareTrainingDataset(): UsePrepareTrainingDataset {
   const [pending, setPending] = useState(false);

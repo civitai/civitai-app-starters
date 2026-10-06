@@ -40,6 +40,21 @@ export const RUN_TRAINING_ERROR_CODES = [
 
 const CODE_SET: ReadonlySet<string> = new Set(RUN_TRAINING_ERROR_CODES);
 
+/**
+ * The `code` a {@link RunTrainingError} can carry: one of the host's closed
+ * refusal codes, or `'refused'` — assigned by THIS SDK, never sent by the host,
+ * for a submit the server refused at a spend cap (see {@link RunTrainingError.refused}).
+ */
+export type RunTrainingErrorCode = BlockRunTrainingHostError | 'refused';
+
+/**
+ * The `workflowId` the host's training submit stamps on a snapshot that is NOT a
+ * run — its cap refusals resolve `{ workflowId: 'failed', status: 'failed', cost,
+ * error }` (`submitTrainingWorkflow` in civitai/civitai `blocks.router.ts`).
+ * Compared with `===`: a real orchestrator id is a workflow that may exist.
+ */
+const HOST_REFUSAL_WORKFLOW_ID = 'failed';
+
 /** `true` when `error` is one of the host's closed refusal codes rather than a server message. */
 export function isRunTrainingErrorCode(error: string): error is BlockRunTrainingHostError {
   return CODE_SET.has(error);
@@ -60,14 +75,31 @@ export function isRunTrainingErrorCode(error: string): error is BlockRunTraining
  *    do NOT tell the viewer it failed: check their trainings first
  *    (`useAppWorkflows()` lists this app's runs), because re-running the same
  *    body after the server did start it is a SECOND, separately charged run.
+ *  - `.refused` (`code: 'refused'`) — the server REFUSED the submit at a spend
+ *    cap after the viewer confirmed (the viewer's daily or private-run Buzz cap,
+ *    the per-app consent budget, the app's daily spend or rate limit, a dev
+ *    session cap). Its reservation was refunded: NO RUN, nothing charged.
+ *    `.message` is the server's reason (e.g. `daily Buzz cap reached: …`) and
+ *    `.snapshot` the refusal it arrived in. Retrying needs a new estimate and
+ *    usually a later time; buying Buzz does not lift these caps.
  *  - `.signInRequired` — no session. Route into `useRequestSignIn()`.
  *  - anything else — a refusal before any submit (an expired or used quote, a
  *    body that no longer matches its quote, an ineligible image). Estimate again
  *    before retrying; `.message` is the host's or server's text.
  */
 export class RunTrainingError extends Error {
-  /** The closed host refusal code, or `undefined` for a server/transport error. */
-  readonly code?: BlockRunTrainingHostError;
+  /**
+   * The closed host refusal code, `'refused'` for a cap refusal, or `undefined`
+   * for a server/transport error.
+   */
+  readonly code?: RunTrainingErrorCode;
+  /**
+   * The server refused the submit at a spend cap and refunded it — no run exists.
+   * See the class docs; `.message` is the server's reason.
+   */
+  readonly refused: boolean;
+  /** The refusal snapshot the host replied with, when {@link refused}. */
+  readonly snapshot?: BlockWorkflowSnapshot;
   /** The viewer dismissed the consent dialog — no run was submitted. */
   readonly declined: boolean;
   /**
@@ -80,11 +112,20 @@ export class RunTrainingError extends Error {
   /** There is no session (`sign in to train`, or a bare `UNAUTHORIZED`). */
   readonly signInRequired: boolean;
 
-  constructor(error: string, opts?: { timedOut?: boolean }) {
+  constructor(
+    error: string,
+    opts?: { timedOut?: boolean; refusedSnapshot?: BlockWorkflowSnapshot },
+  ) {
     super(error);
     this.name = 'RunTrainingError';
     this.timedOut = opts?.timedOut === true;
-    if (isRunTrainingErrorCode(error)) this.code = error;
+    this.refused = opts?.refusedSnapshot !== undefined;
+    if (opts?.refusedSnapshot !== undefined) {
+      this.code = 'refused';
+      this.snapshot = opts.refusedSnapshot;
+    } else if (isRunTrainingErrorCode(error)) {
+      this.code = error;
+    }
     this.declined = error === 'declined';
     this.unconfirmed = this.timedOut || error === 'submission-unconfirmed';
     this.signInRequired = error === 'sign in to train' || error === 'UNAUTHORIZED';
@@ -99,8 +140,10 @@ export interface UseRunTraining {
    * submits, and this resolves with the submitted workflow's snapshot — poll it
    * with `useBuzzWorkflow().watch(snapshot.workflowId)`.
    *
-   * REJECTS with a {@link RunTrainingError} — including `declined` (no run) and
-   * `unconfirmed` (a run may exist). Read the flags before rendering anything.
+   * REJECTS with a {@link RunTrainingError} — including `declined` (no run),
+   * `refused` (a spend cap stopped it; no run) and `unconfirmed` (a run may
+   * exist). Read the flags before rendering anything. A resolved snapshot is
+   * always a submitted run with a pollable `workflowId`.
    */
   runTraining: (body: QuotedTrainingBody) => Promise<BlockWorkflowSnapshot>;
   /** `true` while a request is in flight (including the viewer's dialog). */
@@ -149,6 +192,7 @@ export interface UseRunTraining {
  *   if (e.declined) return;                          // no run — say nothing
  *   if (e.signInRequired) return requestSignIn();
  *   if (e.unconfirmed) return showCheckYourTrainings(); // may be running — never auto-retry
+ *   if (e.refused) return showError(e.message); // a spend cap; no run, nothing charged
  *   showError('Could not start training. Get a new price and try again.');
  * }
  */
@@ -191,6 +235,21 @@ export function useRunTraining(): UseRunTraining {
           // run was not started, so the block must not be told it was safe to
           // retry.
           throw new RunTrainingError(reply.error || 'submission-unconfirmed');
+        }
+        // 🔴 A RESOLVED SNAPSHOT IS NOT ALWAYS A RUN. The host's training submit
+        // answers its spend-cap refusals (refunded, nothing started) with a
+        // resolved `{ workflowId: 'failed', status: 'failed', cost, error }`.
+        // Resolving that would hand the caller a workflow id to `watch()` that
+        // names nothing, and drop the reason. Exact match on the host's
+        // sentinel: a failed snapshot with a REAL id is a workflow that may
+        // exist, and keeps resolving so it can be watched.
+        if (
+          reply.snapshot.workflowId === HOST_REFUSAL_WORKFLOW_ID &&
+          reply.snapshot.status === 'failed'
+        ) {
+          throw new RunTrainingError(reply.snapshot.error || 'training run refused', {
+            refusedSnapshot: reply.snapshot,
+          });
         }
         return reply.snapshot;
       } catch (err: unknown) {

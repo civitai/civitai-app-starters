@@ -258,6 +258,119 @@ describe('useRunTraining — outcomes with no answer', () => {
   });
 });
 
+describe('useRunTraining — which failed snapshots are refusals', () => {
+  let postMessageMock: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    postMessageMock = vi.fn();
+    Object.defineProperty(window, 'parent', {
+      value: { postMessage: postMessageMock },
+      configurable: true,
+      writable: true,
+    });
+    getTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { type: 'BLOCK_INIT', payload: buildInit() },
+        origin: PARENT_ORIGIN,
+      }),
+    );
+    postMessageMock.mockClear();
+  });
+  afterEach(() => {
+    resetTransport();
+    vi.restoreAllMocks();
+  });
+
+  async function replyWith(snapshot: Record<string, unknown>) {
+    const { result } = renderHook(() => useRunTraining());
+    let pending!: Promise<unknown>;
+    act(() => {
+      pending = result.current.runTraining({
+        kind: 'training',
+        datasetId: `tds_${'0'.repeat(32)}`,
+        engine: 'ai-toolkit',
+        model: 'sdxl',
+        params: {
+          engine: 'ai-toolkit',
+          ecosystem: 'sdxl',
+          resolution: 1024,
+          lr: 0.0001,
+          textEncoderLr: null,
+          trainTextEncoder: false,
+          lrScheduler: 'cosine',
+          optimizerType: 'adamw8bit',
+          networkDim: 32,
+          networkAlpha: 16,
+          noiseOffset: null,
+          minSnrGamma: null,
+          flipAugmentation: false,
+          shuffleTokens: false,
+          keepTokens: 0,
+        },
+        triggerWord: 'tok',
+        samplePrompts: [],
+        quoteId: `tq_${'0'.repeat(32)}`,
+      });
+    });
+    const state: { settled: 'resolved' | 'rejected' | null; value?: unknown; error?: unknown } = {
+      settled: null,
+    };
+    void pending.then(
+      (value) => Object.assign(state, { settled: 'resolved', value }),
+      (error: unknown) => Object.assign(state, { settled: 'rejected', error }),
+    );
+    const sent = postMessageMock.mock.calls
+      .map((c) => c[0] as { type: string; payload: { requestId: string } })
+      .filter((m) => m.type === 'RUN_TRAINING')
+      .pop()!;
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'TRAINING_RESULT',
+            payload: { requestId: sent.payload.requestId, snapshot },
+          },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+    await waitForSettled(state);
+    return state;
+  }
+
+  it("the host's sentinel `{ workflowId: 'failed', status: 'failed' }` rejects .refused", async () => {
+    const st = await replyWith({
+      workflowId: 'failed',
+      status: 'failed',
+      cost: { total: 500 },
+      error: 'app daily spend cap reached',
+    });
+    expect(st.settled).toBe('rejected');
+    expect((st.error as RunTrainingError).refused).toBe(true);
+    expect((st.error as RunTrainingError).message).toBe('app daily spend cap reached');
+  });
+
+  it('a failed snapshot with a REAL workflow id still resolves (it may exist; watch it)', async () => {
+    const st = await replyWith({ workflowId: 'wf_9', status: 'failed', error: 'x' });
+    expect(st.settled).toBe('resolved');
+    expect((st.value as { workflowId: string }).workflowId).toBe('wf_9');
+  });
+
+  it('near-miss ids are not the sentinel (exact, case-sensitive)', async () => {
+    for (const workflowId of ['FAILED', 'failed-1', 'x-failed']) {
+      const st = await replyWith({ workflowId, status: 'failed' });
+      expect(st.settled, workflowId).toBe('resolved');
+    }
+  });
+
+  it("a refusal with an empty error still names a reason", async () => {
+    const st = await replyWith({ workflowId: 'failed', status: 'failed', error: '' });
+    const e = st.error as RunTrainingError;
+    expect(e.refused).toBe(true);
+    expect(e.message).not.toBe('');
+  });
+});
+
 async function waitForSettled(state: { settled: unknown }) {
   for (let i = 0; i < 20 && state.settled === null; i++) {
     await act(async () => {
