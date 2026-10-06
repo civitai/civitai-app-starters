@@ -91,7 +91,7 @@ export class CivitaiChatSidebar extends LightElement {
   override render(): TemplateResult {
     return html`<nav class="cvt-sidebar-inner" aria-label="Chats">
       <div class="cvt-sidebar-top">
-        <span class="cvt-brand">ChatCVT</span>
+        <span class="cvt-brand">Civitai Chat</span>
         <civitai-button size="sm" variant="light" @click=${() => emit(this, 'cvt-new-chat')}>New chat</civitai-button>
       </div>
       <div class="cvt-chat-list">

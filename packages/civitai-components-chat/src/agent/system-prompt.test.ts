@@ -19,7 +19,7 @@ describe('system prompt', () => {
     expect(replaced).toContain('<context> block the app adds');
     expect(replaced).toContain('<user_instructions>\nBe brief.\n</user_instructions>');
 
-    const edited = buildSystemPrompt({ now, rules: (defaults) => defaults.replace('ChatCVT', 'Moodboard') });
+    const edited = buildSystemPrompt({ now, rules: (defaults) => defaults.replace('Civitai Chat', 'Moodboard') });
     expect(edited).toContain('You are the assistant in Moodboard');
   });
 });
