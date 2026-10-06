@@ -189,10 +189,11 @@ own key:
   The trained checkpoint is not part of the block contract (an older
   host may still leak checkpoint urls into `imageUrls` / `stepOutputs` — a host defect, never
   something to build on); a host that supports it reports the trained epochs on
-  `snapshot.trainedEpochs` without the checkpoint, and the viewer publishes
+  `snapshot.trainedEpochs` (and on each `AppWorkflow` row of the app-queue read) without the
+  checkpoint, and the viewer publishes
   one by being navigated (`useCivitaiNavigate`, `scope: 'site'`) to Civitai's own model wizard at
   `models/train/from-orchestrator?workflowId=<id>&epoch=<n>`. `snapshot.publishedModel` (and
-  `AppWorkflow.publishedModel`) then reports the resulting model. Both fields are absent on hosts
+  `AppWorkflow.publishedModel`) then reports the resulting model. These fields are absent on hosts
   that predate them.
 
 ```ts

@@ -967,6 +967,39 @@ describe('isValidAppWorkflowsResult', () => {
     );
   });
 
+  it.each([
+    ['one epoch', [{ $type: 'training', epochNumber: 1 }]],
+    ['several epochs', [{ $type: 'imageResourceTraining', epochNumber: 2 }, { $type: 'imageResourceTraining', epochNumber: 5 }]],
+    // Forward compatibility, same as the snapshot guard: $type is checked as a string.
+    ['a $type the SDK does not know yet', [{ $type: 'futureTraining', epochNumber: 1 }]],
+    ['an empty array', []],
+  ])('accepts a row whose trainedEpochs is %s', (_, trainedEpochs) => {
+    expect(
+      isValidAppWorkflowsResult({
+        result: { workflows: [{ ...validWorkflow, trainedEpochs }], cursor: null },
+      }),
+    ).toBe(true);
+    expect(isValidCancelAppWorkflowResult({ result: { workflow: { ...validWorkflow, trainedEpochs } } })).toBe(true);
+  });
+
+  it.each([
+    ['trainedEpochs null', null],
+    ['trainedEpochs not an array', { $type: 'training', epochNumber: 1 }],
+    ['trainedEpochs entry not an object', [7]],
+    ['trainedEpochs.epochNumber a string', [{ $type: 'training', epochNumber: '1' }]],
+    ['trainedEpochs.epochNumber fractional', [{ $type: 'training', epochNumber: 1.5 }]],
+    ['trainedEpochs.$type missing', [{ epochNumber: 1 }]],
+  ])('rejects a row whose %s', (_, trainedEpochs) => {
+    expect(
+      isValidAppWorkflowsResult({
+        result: { workflows: [{ ...validWorkflow, trainedEpochs }], cursor: null },
+      }),
+    ).toBe(false);
+    expect(isValidCancelAppWorkflowResult({ result: { workflow: { ...validWorkflow, trainedEpochs } } })).toBe(
+      false,
+    );
+  });
+
   it('accepts the free-text error variant', () => {
     expect(isValidAppWorkflowsResult({ requestId: 'q', error: 'block lacks scope' })).toBe(true);
   });

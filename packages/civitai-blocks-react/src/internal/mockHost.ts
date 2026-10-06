@@ -338,6 +338,11 @@ export interface MockGenerationScenario {
    * NOT simulated: the mock neither quotes nor times out, so a success here
    * says nothing about whether your run is quoted, what it costs, or whether
    * it finishes.
+   *
+   * Snapshot-only: the app-queue read (`QUERY_APP_WORKFLOWS`) replies with the
+   * canned {@link MockHostOptions.appWorkflows} rows verbatim — they carry no
+   * body, so the mock cannot tell a training row from any other. To exercise
+   * {@link AppWorkflow.trainedEpochs}, put it on the rows you pass there.
    */
   trainedEpochs?: number;
   /**
@@ -345,7 +350,8 @@ export interface MockGenerationScenario {
    * {@link BlockWorkflowSnapshot.publishedModel} — simulating a run the viewer
    * has started (`published: false`) or finished (`published: true`) publishing
    * through the model wizard. Default: unset (field omitted). For the app-queue
-   * read, put `publishedModel` on the rows you pass as `appWorkflows`.
+   * read, put `publishedModel` (and `trainedEpochs`) on the rows you pass as
+   * `appWorkflows`.
    */
   trainingPublishedModel?: BlockPublishedModel;
 }
