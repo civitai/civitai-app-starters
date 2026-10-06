@@ -27,6 +27,9 @@ import { uploadAttachment, uploadFile, probeMedia } from './uploads/upload.js';
 import { decide } from './ux/spending.js';
 import { loadSettings, saveSettings, settingsKey } from './settings.js';
 import { hostToolSet, type ChatTool } from './tools/host.js';
+import { StreamingTranscript } from './voice/streaming-transcript.js';
+import { voiceLanguage } from './voice/languages.js';
+import { transcribe } from './voice/transcribe.js';
 
 /** Jobs still waiting for a click are offered again only in the most recent turns. */
 const REOFFER_TURNS = 3;
@@ -250,6 +253,30 @@ export class ChatSession extends EventTarget {
       pending.error = (error as Error).message;
     }
     onChange();
+  }
+
+  /** Billed per second of audio sent, unlike `transcribe`, which bills per call. */
+  liveTranscript(onChange: () => void): StreamingTranscript {
+    const language = voiceLanguage(this.settings.voiceLanguage);
+    return new StreamingTranscript(
+      {
+        open: async (input) => {
+          const workflow = await this.app.orchestration.submitWorkflow({ steps: [{ $type: 'liveTranscription', input }] } as never);
+          const output = (workflow.steps?.[0] as { output?: { inputUrl?: string; transcriptUrl?: string } } | undefined)?.output;
+          if (!workflow.id || !output?.inputUrl || !output.transcriptUrl) throw new Error('Live transcription did not start.');
+          return { workflowId: workflow.id, inputUrl: output.inputUrl, transcriptUrl: output.transcriptUrl };
+        },
+        cancel: (id) => this.app.orchestration.cancelWorkflow(id),
+        transcribe: (recording, signal) => this.transcribe(recording, signal),
+        language,
+      },
+      onChange,
+    );
+  }
+
+  /** About 1 Buzz per call, whatever the length. */
+  transcribe(recording: Blob, signal?: AbortSignal): Promise<string> {
+    return transcribe({ api: this.api, mcp: this.orchestrationMcp }, recording, signal, voiceLanguage(this.settings.voiceLanguage));
   }
 
   async send(text: string, uploads: PendingUpload[] = [], refs: string[] = []): Promise<void> {

@@ -46,8 +46,13 @@ describe('buildModelMessages', () => {
 
   it('drops the oldest whole turns to stay within budget, never the latest', () => {
     const turns = [turn(1, 'x'.repeat(4_000)), turn(2, 'second'), turn(3, 'third')];
-    expect(buildModelMessages(turns, () => undefined, 200).map((m) => m.content)).toEqual(['second', 'reply 2', 'third', 'reply 3']);
-    expect(buildModelMessages(turns, () => undefined, 1).map((m) => m.content)).toEqual(['third', 'reply 3']);
+    expect(buildModelMessages(turns, () => undefined, { budget: 200 }).map((m) => m.content)).toEqual(['second', 'reply 2', 'third', 'reply 3']);
+    expect(buildModelMessages(turns, () => undefined, { budget: 1 }).map((m) => m.content)).toEqual(['third', 'reply 3']);
+  });
+
+  it('puts the context on the latest message only, so earlier messages read the same every reply', () => {
+    const messages = buildModelMessages([turn(1, 'first'), turn(2, 'second', { messages: [], status: 'streaming' })], () => undefined, { context: '<context>files</context>' });
+    expect(messages.map((m) => m.content)).toEqual(['first', 'reply 1', '<context>files</context>\n\nsecond']);
   });
 
   it('marks a reply the user stopped', () => {

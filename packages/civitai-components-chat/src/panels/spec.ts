@@ -101,8 +101,17 @@ export function checkPanelSpec(raw: unknown): Checked {
         errors.push(`{{${key}.${part}}} only works on an aspect input.`);
       }
     }
+    const blocks = Object.keys(inputs).filter((key) => isBlockChoice(inputs[key]!));
+    for (const key of misplacedBlocks(run, blocks)) {
+      errors.push(`{{${key}}} stands for a whole input (each of its options is a block of settings), so it can only be the whole input: "input": "{{${key}}}". To add a control, put its {{name}} inside each of ${key}'s option blocks.`);
+    }
     const unused = Object.keys(inputs).filter((key) => !used.has(key));
-    if (unused.length) errors.push(`Inputs ${unused.join(', ')} are not used in run; put {{name}} where each value belongs, or remove them.`);
+    const whole = !ask && typeof run.input === 'string' ? WHOLE.exec(run.input)?.[1] : undefined;
+    if (unused.length && whole && blocks.includes(whole)) {
+      errors.push(`Inputs ${unused.join(', ')} are not used in run. The input is {{${whole}}}, so put ${unused.map((key) => `{{${key}}}`).join(', ')} inside each of ${whole}'s option blocks.`);
+    } else if (unused.length) {
+      errors.push(`Inputs ${unused.join(', ')} are not used in run; put {{name}} where each value belongs, or remove them.`);
+    }
   }
 
   if (errors.length) return { errors };
@@ -191,6 +200,26 @@ function stringList(value: unknown): string[] {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function isBlockChoice(input: PanelInput): boolean {
+  return input.kind === 'choice' && Object.values(input.map ?? {}).some(isObj);
+}
+
+/** Block choices used anywhere but as a step's whole input, where they would put an object in a field. */
+function misplacedBlocks(run: Obj, blocks: string[]): string[] {
+  if (blocks.length === 0) return [];
+  const found = new Set<string>();
+  const walk = (node: unknown, isInput: boolean): void => {
+    if (typeof node === 'string') {
+      if (isInput && WHOLE.test(node)) return;
+      for (const { key } of placeholdersIn(node)) if (blocks.includes(key)) found.add(key);
+    } else if (Array.isArray(node)) node.forEach((item) => walk(item, false));
+    else if (isObj(node)) for (const [key, item] of Object.entries(node)) walk(item, key === 'input' && (node === run || steps.includes(node)));
+  };
+  const steps: unknown[] = Array.isArray(run.steps) ? run.steps : [];
+  walk(run, false);
+  return [...found];
 }
 
 function placeholdersIn(value: unknown): { key: string; part?: 'width' | 'height' }[] {

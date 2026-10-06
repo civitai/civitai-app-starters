@@ -111,6 +111,8 @@ export interface Settings {
   customInstructions?: string;
   /** The assistant's model for this viewer; the configured default when unset. */
   assistantModel?: string;
+  /** The language the viewer speaks to the microphone in. */
+  voiceLanguage?: string;
   lastConversationId?: string;
 }
 

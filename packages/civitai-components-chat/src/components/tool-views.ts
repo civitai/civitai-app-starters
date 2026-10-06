@@ -38,7 +38,7 @@ export interface ToolView {
 }
 
 const job: ToolView = {
-  activity: 'Getting ready…',
+  activity: 'Starting it…',
   render(part, ctx) {
     const output = part.output as { job?: string } | undefined;
     const found = ctx.jobs.byToolCall(part.toolCallId) ?? (output?.job ? ctx.jobs.get(output.job) : undefined);

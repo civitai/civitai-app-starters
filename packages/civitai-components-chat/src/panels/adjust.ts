@@ -3,8 +3,13 @@ import { mcpResultToText, structuredOf } from '../mcp/result.js';
 import type { PanelSpec, PanelValues } from './spec.js';
 
 const CATEGORY: Record<string, string> = { imageGen: 'image', videoGen: 'video' };
-const ALTERNATIVES = 6;
-const CANDIDATES = 12;
+const ALTERNATIVES = 8;
+const CANDIDATES = 40;
+const LISTED = 100;
+// Ids that name a text-only operation; with a picture to carry, they would ignore it.
+const TEXT_ONLY = /text-?to-?/i;
+const IMAGE_KEY = /image|frame/i;
+const NOT_FIRST = /last|end|mask|reference/i;
 const OPERATION = /^(create|edit)[A-Z]\w*$/;
 const LABEL_MAX = 60;
 const SERVICE = /^## #\d+: (.+)\n\s+Service: (\S+) \(stepType (\w+)\)/gm;
@@ -32,17 +37,21 @@ export async function adjustPanel(
   const prompt = input.prompt.slice(0, 2000);
 
   const operation = typeof input.operation === 'string' ? input.operation : undefined;
-  // Edits keep their source pictures whichever model makes them.
-  const carried = 'images' in input ? { images: input.images } : {};
+  // The pictures a generation starts from go with it, into whichever field each service takes them in.
+  const images = imagesIn(input);
   const services = await listServices(deps.mcp, stepType, operation);
   const current = services.find((service) => describes(service.id, input));
   const candidates = await Promise.all(
     services
-      .filter((service) => service !== current)
+      .filter((service) => service !== current && !(images.length && TEXT_ONLY.test(service.id)))
       .slice(0, CANDIDATES)
       .map(async (service) => {
-        const example = await exampleInput(deps.mcp, service.id);
-        return example ? { name: service.name, input: { ...example, ...carried, prompt: '{{prompt}}' } } : null;
+        const found = await exampleInput(deps.mcp, service.id);
+        if (!found) return null;
+        const slot = images.length ? imageSlot(found.slots) : undefined;
+        if (images.length && !slot) return null;
+        const carried = slot ? { [slot.name]: slot.list ? images : images[0] } : {};
+        return { name: service.name, input: { ...found.example, ...carried, prompt: '{{prompt}}' } };
       }),
   );
   const priced = await Promise.all(
@@ -52,10 +61,11 @@ export async function adjustPanel(
     })),
   );
   const [mine, ...others] = priced;
+  // The services come ranked by how well they do; picking the cheapest instead would hide the popular ones.
   const alternatives = others
     .filter((option) => option.price !== null)
-    .sort((a, b) => a.price! - b.price!)
-    .slice(0, ALTERNATIVES);
+    .slice(0, ALTERNATIVES)
+    .sort((a, b) => a.price! - b.price!);
   const options = [mine!, ...alternatives].map((option) => ({ label: optionLabel(option.name, option.price), input: option.input }));
   const unique = options.filter((option, index) => options.findIndex((o) => o.label === option.label) === index);
   const single = unique.length === 1;
@@ -77,7 +87,7 @@ export async function adjustPanel(
 async function listServices(mcp: Pick<McpConnection, 'callTool'>, stepType: string, operation?: string): Promise<Service[]> {
   try {
     // The whole category rather than a search by prompt, which ranks one model family above the rest.
-    const result = await mcp.callTool('find_services', { query: '*', ...(CATEGORY[stepType] ? { category: CATEGORY[stepType] } : {}), limit: 30 });
+    const result = await mcp.callTool('find_services', { query: '*', ...(CATEGORY[stepType] ? { category: CATEGORY[stepType] } : {}), limit: LISTED });
     if (result.isError) return [];
     return [...mcpResultToText(result, Infinity).matchAll(SERVICE)]
       .filter((match) => match[3] === stepType && !otherOperation(match[2]!, operation))
@@ -87,9 +97,9 @@ async function listServices(mcp: Pick<McpConnection, 'callTool'>, stepType: stri
   }
 }
 
-/** Ids name their operation when a model has several, e.g. …/createImage or …/editImage. */
+/** Ids name their operation when a model has several, e.g. …/createImage or …/editImage; other step types name theirs differently (image-to-video, createVideo). */
 function otherOperation(serviceId: string, operation?: string): boolean {
-  return Boolean(operation) && serviceId.split('/').some((part) => OPERATION.test(part) && part !== operation);
+  return Boolean(operation && OPERATION.test(operation)) && serviceId.split('/').some((part) => OPERATION.test(part) && part !== operation);
 }
 
 async function priceOf(
@@ -111,15 +121,44 @@ function optionLabel(name: string, price: number | null): string {
   return `${name.slice(0, LABEL_MAX - suffix.length)}${suffix}`;
 }
 
-async function exampleInput(mcp: Pick<McpConnection, 'callTool'>, service: string): Promise<Record<string, unknown> | null> {
+interface ImageSlot {
+  name: string;
+  list: boolean;
+}
+
+async function exampleInput(mcp: Pick<McpConnection, 'callTool'>, service: string): Promise<{ example: Record<string, unknown>; slots: ImageSlot[] } | null> {
   try {
     const result = await mcp.callTool('get_input_schema', { service });
     if (result.isError) return null;
-    const example = (JSON.parse(mcpResultToText(result, Infinity)) as { example?: unknown }).example;
-    return example && typeof example === 'object' && !Array.isArray(example) ? (example as Record<string, unknown>) : null;
+    const { example, schema } = JSON.parse(mcpResultToText(result, Infinity)) as { example?: unknown; schema?: { properties?: Record<string, SchemaProperty> } };
+    if (!example || typeof example !== 'object' || Array.isArray(example)) return null;
+    const slots = Object.entries(schema?.properties ?? {}).flatMap(([name, property]): ImageSlot[] =>
+      property.format === 'source-image' ? [{ name, list: false }] : property.items?.format === 'source-image' ? [{ name, list: true }] : [],
+    );
+    return { example: example as Record<string, unknown>, slots };
   } catch {
     return null;
   }
+}
+
+interface SchemaProperty {
+  format?: string;
+  items?: { format?: string };
+}
+
+/** Where a starting picture goes: a first frame or source image before a general list, never a last frame or mask. */
+function imageSlot(slots: ImageSlot[]): ImageSlot | undefined {
+  const usable = slots.filter((slot) => !NOT_FIRST.test(slot.name));
+  return usable.find((slot) => /first|start|source/i.test(slot.name)) ?? usable.find((slot) => slot.list) ?? usable[0];
+}
+
+function imagesIn(input: Record<string, unknown>): string[] {
+  for (const [key, value] of Object.entries(input)) {
+    if (!IMAGE_KEY.test(key) || NOT_FIRST.test(key)) continue;
+    const found = (Array.isArray(value) ? value : [value]).filter((item): item is string => typeof item === 'string' && item !== '');
+    if (found.length) return found;
+  }
+  return [];
 }
 
 /** A service id is its parameters in order (e.g. image/comfy/krea2/turbo/createImage); the request carries them as fields. */

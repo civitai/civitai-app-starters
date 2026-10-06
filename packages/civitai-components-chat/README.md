@@ -115,6 +115,16 @@ The message box takes slash commands, run by the chat itself and never sent to t
 `/clear` (or `/new`) starts a new chat, `/model` shows or switches the assistant's model
 (`/model smart`, `/model default`, `/model <id>`), and `/help` lists them.
 
+The microphone button lets the viewer talk instead of typing. Where the browser has audio worklets,
+it streams 16 kHz PCM to a `liveTranscription` step and the words appear as they are spoken (a few
+hundred milliseconds behind). Long pauses are not sent (it is billed per second of audio, about 1 Buzz
+per 15 s), and after 12 s without speech the step stops listening and its text goes in the message
+box. A chip next to the microphone sets the language spoken (the model cannot detect it, and decodes
+whatever it is told); it defaults to the first of the browser's languages the model knows. When the step cannot start, the recording is transcribed in one go when the viewer stops.
+Browsers without audio worklets cut the recording into phrases at pauses and transcribe each with
+`transcribe_audio` (about 1 Buzz a phrase). Stop puts the text in the message box to edit; the arrow
+sends it once the last words are back. Recordings stop by themselves after two minutes.
+
 ## Panels
 
 When someone wants to explore one kind of thing (logos, beats, a character in different scenes)

@@ -36,6 +36,32 @@ describe('civitai-chat', () => {
     expect(shortcut.defaultPrevented).toBe(false);
   });
 
+  it('shows the chat list as soon as it loads, without waiting for the viewer to do something', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    let deliver = (): void => undefined;
+    const head = {
+      id: '7-1',
+      status: 'succeeded',
+      tags: ['chat-cvt', 'cvt:turn', 'cvt:head', 'cvt:conv:CONV1'],
+      metadata: { v: 2, app: 'chat-cvt', conversationId: 'CONV1', title: 'Animate this', titleSource: 'llm', createdAt: '2026-10-05T00:00:00Z', updatedAt: '2026-10-05T00:00:00Z', turns: [] },
+    };
+    const app = fakeApp() as { orchestration: { queryWorkflows: unknown } };
+    app.orchestration.queryWorkflows = (query: { tags: string[] }) =>
+      query.tags.some((tag) => tag.startsWith('cvt:conv:'))
+        ? Promise.resolve({ items: [], next: '' })
+        : new Promise((resolve) => (deliver = () => resolve({ items: [head], next: '' })));
+    const chat = document.createElement('civitai-chat');
+    chat.layout = 'wide';
+    chat.app = app as never;
+    document.body.append(chat);
+    const root = chat.shadowRoot!;
+    await vi.waitFor(() => expect(root.querySelector('civitai-chat-sidebar')?.textContent).toContain('Your chats will appear here'));
+
+    deliver();
+    await vi.waitFor(() => expect(root.querySelector('civitai-chat-sidebar')?.textContent).toContain('Animate this'));
+  });
+
   it('opens the chat list from the title and closes it on Escape, on a click elsewhere, or when settings open', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);

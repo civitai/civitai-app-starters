@@ -17,6 +17,183 @@ async function mount<K extends keyof HTMLElementTagNameMap>(tag: K, props: Parti
   return el;
 }
 
+describe('civitai-chat-composer voice input', () => {
+  function fakeMicrophone({ refuse = false } = {}) {
+    const track = { stop: vi.fn() };
+    class FakeRecorder extends EventTarget {
+      static isTypeSupported = (type: string) => type.startsWith('audio/webm');
+      state = 'inactive';
+      mimeType = 'audio/webm;codecs=opus';
+      start() {
+        this.state = 'recording';
+      }
+      stop() {
+        this.state = 'inactive';
+        this.dispatchEvent(Object.assign(new Event('dataavailable'), { data: new Blob(['said'], { type: this.mimeType }) }));
+        this.dispatchEvent(new Event('stop'));
+      }
+    }
+    vi.stubGlobal('MediaRecorder', FakeRecorder);
+    vi.stubGlobal('AudioContext', undefined);
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: vi.fn(async () => (refuse ? Promise.reject(Object.assign(new Error('denied'), { name: 'NotAllowedError' })) : { getTracks: () => [track] })) },
+    });
+    return track;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    Reflect.deleteProperty(navigator, 'mediaDevices');
+  });
+
+  const press = async (composer: HTMLElement, label: string) => {
+    composer.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!.click();
+    await vi.waitFor(async () => {
+      await (composer as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    });
+  };
+
+  const listen = (composer: HTMLElement) => {
+    const events: string[] = [];
+    const phrases: Blob[] = [];
+    for (const type of ['cvt-voice-start', 'cvt-voice-phrase', 'cvt-voice-done', 'cvt-voice-cancel']) {
+      composer.addEventListener(type, (e) => {
+        const detail = (e as CustomEvent<{ recording?: Blob; send?: boolean }>).detail;
+        if (detail?.recording) phrases.push(detail.recording);
+        events.push(type === 'cvt-voice-done' ? `done:${detail!.send ? 'send' : 'edit'}` : type.replace('cvt-voice-', ''));
+      });
+    }
+    return { events, phrases };
+  };
+
+  it('hands over what the viewer said, then asks for it to be sent, releasing the microphone', async () => {
+    const track = fakeMicrophone();
+    const composer = await mount('civitai-chat-composer', { voice: true });
+    const { events, phrases } = listen(composer);
+
+    await press(composer, 'Talk instead of typing');
+    await vi.waitFor(() => expect(composer.querySelector('[aria-label="Recording your voice"]')).not.toBeNull());
+    expect(composer.querySelector('textarea')).toBeNull();
+
+    await press(composer, 'Send what you said');
+    await vi.waitFor(() => expect(events).toEqual(['start', 'phrase', 'done:send']));
+    expect(phrases[0]!.size).toBeGreaterThan(0);
+    expect(track.stop).toHaveBeenCalled();
+    await vi.waitFor(() => expect(composer.querySelector('textarea')).not.toBeNull());
+  });
+
+  it('stops for editing, or throws the recording away on cancel', async () => {
+    fakeMicrophone();
+    const composer = await mount('civitai-chat-composer', { voice: true });
+    const { events } = listen(composer);
+
+    await press(composer, 'Talk instead of typing');
+    await vi.waitFor(() => expect(composer.querySelector('[aria-label="Recording your voice"]')).not.toBeNull());
+    await press(composer, 'Cancel recording');
+    await vi.waitFor(() => expect(composer.querySelector('textarea')).not.toBeNull());
+    expect(events).toEqual(['start', 'cancel']);
+
+    await press(composer, 'Talk instead of typing');
+    await vi.waitFor(() => expect(composer.querySelector('[aria-label="Recording your voice"]')).not.toBeNull());
+    await press(composer, 'Stop and edit the text');
+    await vi.waitFor(() => expect(events.slice(2)).toEqual(['start', 'phrase', 'done:edit']));
+  });
+
+  it('streams speech as 16 kHz PCM where the browser has audio worklets', async () => {
+    fakeMicrophone();
+    const nodes: { port: { onmessage: ((event: { data: Float32Array }) => void) | null } }[] = [];
+    class FakeNode {
+      port = { onmessage: null };
+      constructor() {
+        nodes.push(this);
+      }
+      connect<T>(next: T) {
+        return next;
+      }
+    }
+    class FakeContext {
+      sampleRate = 48_000;
+      destination = {};
+      audioWorklet = { addModule: async () => undefined };
+      createGain() {
+        return { gain: { value: 1 }, connect: <T>(next: T) => next };
+      }
+      createMediaStreamSource() {
+        return { connect: <T>(next: T) => next };
+      }
+      close() {
+        return Promise.resolve();
+      }
+    }
+    vi.stubGlobal('AudioWorkletNode', FakeNode);
+    vi.stubGlobal('AudioContext', FakeContext);
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: () => 'blob:worklet', revokeObjectURL: () => undefined }));
+    const composer = await mount('civitai-chat-composer', { voice: true });
+    const started: { live: boolean }[] = [];
+    const audio: Int16Array[] = [];
+    composer.addEventListener('cvt-voice-start', (e) => started.push((e as CustomEvent<{ live: boolean }>).detail));
+    composer.addEventListener('cvt-voice-audio', (e) => audio.push((e as CustomEvent<{ pcm: Int16Array }>).detail.pcm));
+
+    await press(composer, 'Talk instead of typing');
+    await vi.waitFor(() => expect(started).toEqual([{ live: true }]));
+    nodes[0]!.port.onmessage!({ data: new Float32Array(2048).fill(0.4) });
+
+    expect(audio).toHaveLength(1);
+    expect(Math.abs(audio[0]!.length - 2048 / 3)).toBeLessThanOrEqual(1);
+  });
+
+  it('lets the viewer say which language they speak', async () => {
+    fakeMicrophone();
+    const composer = await mount('civitai-chat-composer', { voice: true, voiceLanguage: 'en' });
+    const chosen: string[] = [];
+    composer.addEventListener('cvt-voice-language', (e) => chosen.push((e as CustomEvent<{ language: string }>).detail.language));
+    const picker = composer.querySelector<HTMLSelectElement>('select[aria-label="The language you speak"]')!;
+    expect(picker.closest('label')!.textContent).toContain('EN');
+
+    picker.value = 'nl';
+    picker.dispatchEvent(new Event('change'));
+    expect(chosen).toEqual(['nl']);
+  });
+
+  it('shows the words heard so far while the viewer is still talking', async () => {
+    fakeMicrophone();
+    const composer = await mount('civitai-chat-composer', { voice: true });
+    await press(composer, 'Talk instead of typing');
+    await vi.waitFor(() => expect(composer.querySelector('[aria-label="Recording your voice"]')).not.toBeNull());
+
+    composer.heard = 'Paint me a snowy cabin';
+    await composer.updateComplete;
+    expect(composer.querySelector('.cvt-heard')?.textContent).toBe('Paint me a snowy cabin');
+  });
+
+  it('shows plainly that it is turning the recording into text, and lets the viewer stop it', async () => {
+    const composer = await mount('civitai-chat-composer', { voice: true, transcribing: true });
+    const canceled: unknown[] = [];
+    composer.addEventListener('cvt-voice-cancel', (e) => canceled.push(e));
+
+    const status = composer.querySelector('[role="status"]')!;
+    expect(status.textContent).toContain('Turning what you said into text');
+    expect(status.querySelector('.cvt-spinner')).not.toBeNull();
+    expect(composer.querySelector('textarea')).toBeNull();
+
+    await press(composer, 'Stop transcribing');
+    expect(canceled).toHaveLength(1);
+  });
+
+  it('says why when the microphone is refused', async () => {
+    fakeMicrophone({ refuse: true });
+    const composer = await mount('civitai-chat-composer', { voice: true });
+    const problems: unknown[] = [];
+    composer.addEventListener('cvt-voice-error', (e) => problems.push((e as CustomEvent<{ error: unknown }>).detail.error));
+
+    await press(composer, 'Talk instead of typing');
+    await vi.waitFor(() => expect(problems).toHaveLength(1));
+    expect((problems[0] as Error).name).toBe('NotAllowedError');
+    expect(composer.querySelector('textarea')).not.toBeNull();
+  });
+});
+
 describe('civitai-chat-composer', () => {
   const setup = async (props = {}) => {
     const composer = await mount('civitai-chat-composer', props);

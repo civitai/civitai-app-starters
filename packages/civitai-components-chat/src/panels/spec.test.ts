@@ -122,4 +122,24 @@ describe('panel definitions', () => {
       'run uses {{missing}}, but there is no input called missing.',
     );
   });
+
+  it('says where a new control goes when a block choice is the input, instead of letting the service refuse an object in a field', () => {
+    const inputs = {
+      prompt: { kind: 'text' },
+      model: { kind: 'choice', options: ['A', 'B'], map: { A: { engine: 'a', prompt: '{{prompt}}' }, B: { engine: 'b', prompt: '{{prompt}}' } } },
+      duration: { kind: 'slider', min: 1, max: 10, default: 5 },
+    };
+    const inField = checkPanelSpec({ title: 'x', inputs, run: { stepType: 'videoGen', input: { engine: '{{model}}', prompt: '{{prompt}}', duration: '{{duration}}' } } });
+    expect(inField.errors?.some((error) => error.startsWith('{{model}} stands for a whole input') && error.includes("inside each of model's option blocks"))).toBe(true);
+
+    const leftOut = checkPanelSpec({ title: 'x', inputs, run: { stepType: 'videoGen', input: '{{model}}' } });
+    expect(leftOut.errors).toEqual(["Inputs duration are not used in run. The input is {{model}}, so put {{duration}} inside each of model's option blocks."]);
+
+    const inBlocks = checkPanelSpec({
+      title: 'x',
+      inputs: { ...inputs, model: { ...inputs.model, map: { A: { engine: 'a', prompt: '{{prompt}}', duration: '{{duration}}' }, B: { engine: 'b', prompt: '{{prompt}}', duration: '{{duration}}' } } } },
+      run: { stepType: 'videoGen', input: '{{model}}' },
+    });
+    expect(inBlocks.errors).toBeUndefined();
+  });
 });

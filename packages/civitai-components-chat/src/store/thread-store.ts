@@ -72,13 +72,16 @@ export class ThreadStore extends EventTarget {
     });
     this.#cursor = page.next || null;
     const known = new Set(this.summaries.map((summary) => summary.id));
+    const added: ConversationSummary[] = [];
     for (const workflow of page.items) {
       const metadata = conversationMetadataOf(workflow);
       // A head whose tag removal failed is older than the one listed before it.
       if (!metadata || known.has(metadata.conversationId) || !workflow.id || metadata.scope !== this.#deps.scope) continue;
       known.add(metadata.conversationId);
-      this.summaries.push(summaryOf(workflow.id, metadata));
+      added.push(summaryOf(workflow.id, metadata));
     }
+    // Replaced, never mutated: Lit only re-renders a property that is a new object.
+    this.summaries = [...this.summaries, ...added];
     this.#emit('list-change');
   }
 
@@ -190,7 +193,7 @@ export class ThreadStore extends EventTarget {
     if (!summary) return;
     const metadata: ConversationMetadata = { ...summary.head.metadata, title: clampTitle(title), titleSource: 'user' };
     await this.#deps.api.updateWorkflow(summary.head.workflowId, { metadata });
-    Object.assign(summary, { title: metadata.title, titleSource: 'user', head: { ...summary.head, metadata } });
+    this.summaries = this.summaries.map((s) => (s.id === id ? { ...s, title: metadata.title, titleSource: 'user', head: { ...s.head, metadata } } : s));
     this.#emit('list-change');
   }
 

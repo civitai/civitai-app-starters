@@ -17,6 +17,9 @@ import type { ModelDirectory } from '../store/models.js';
 import type { ChatTool, ChatToolView } from '../tools/host.js';
 import { ACCEPT_ATTRIBUTE, MAX_UPLOAD_BYTES } from '../uploads/upload.js';
 import type { Attachment, Settings } from '../types.js';
+import { voiceLanguage } from '../voice/languages.js';
+import { LiveTranscript, type VoiceTranscript } from '../voice/live-transcript.js';
+import type { StreamingTranscript } from '../voice/streaming-transcript.js';
 import type { CivitaiChatComposer } from './civitai-chat-composer.js';
 import type { CivitaiChatThread } from './civitai-chat-thread.js';
 import { chatStyles } from './chat.styles.js';
@@ -64,6 +67,8 @@ export class CivitaiChat extends LitElement {
     lightbox: { state: true },
     loading: { state: true },
     signingIn: { state: true },
+    transcribing: { state: true },
+    heard: { state: true },
   };
 
   /** Signed in with at least `ai:write:budgeted`; the chat starts once it is set. */
@@ -110,6 +115,8 @@ export class CivitaiChat extends LitElement {
   declare lightbox: Lightboxed | null;
   declare loading: boolean;
   declare signingIn: boolean;
+  declare transcribing: boolean;
+  declare heard: string;
 
   #session?: ChatSession;
   #models?: ModelDirectory;
@@ -120,6 +127,7 @@ export class CivitaiChat extends LitElement {
   #signInAbort?: AbortController;
   #focusedPanel?: Panel;
   #activePanel?: Panel;
+  #voice?: VoiceTranscript;
   #aiGrant?: { app: AppClient; granted: Promise<boolean> };
 
   constructor() {
@@ -139,6 +147,8 @@ export class CivitaiChat extends LitElement {
     this.lightbox = null;
     this.loading = false;
     this.signingIn = false;
+    this.transcribing = false;
+    this.heard = '';
     this.#started = new Promise((resolve) => (this.#markStarted = resolve));
   }
 
@@ -409,6 +419,56 @@ export class CivitaiChat extends LitElement {
       if (!ok && this.#aiGrant?.granted === granted) this.#aiGrant = undefined;
     });
     return granted;
+  }
+
+  #voiceStart(live: boolean): void {
+    const session = this.#session;
+    if (!session) return;
+    this.#voice?.cancel();
+    const changed = (): void => {
+      if (this.#voice !== voice) return;
+      this.heard = voice.text;
+      // The server stopped listening (a long pause); what it heard goes in the box.
+      if (live && !voice.pending && !voice.canceled) this.renderRoot.querySelector<CivitaiChatComposer>('civitai-chat-composer')?.stopListening();
+    };
+    const voice: VoiceTranscript = live ? session.liveTranscript(changed) : new LiveTranscript((recording, signal) => session.transcribe(recording, signal), changed);
+    this.#voice = voice;
+    this.heard = '';
+  }
+
+  #voiceCancel(): void {
+    this.#voice?.cancel();
+    this.#voice = undefined;
+    this.heard = '';
+    this.transcribing = false;
+  }
+
+  async #voiceDone(send: boolean): Promise<void> {
+    const voice = this.#voice;
+    const session = this.#session;
+    const composer = this.renderRoot.querySelector<CivitaiChatComposer>('civitai-chat-composer');
+    if (!voice || !session || !composer) return;
+    voice.stop();
+    this.transcribing = voice.pending;
+    const words = await voice.settled();
+    if (voice.canceled || this.#voice !== voice) return;
+    this.#voice = undefined;
+    this.transcribing = false;
+    this.heard = '';
+    if (voice.error) {
+      this.#toast(words ? "Part of what you said couldn't be turned into text; check it before sending." : 'Could not turn your recording into text. Try again, or type it.', voice.error);
+    } else if (!words) {
+      this.#toast("Didn't catch any words. Try again a little closer to the microphone.");
+    }
+    if (!words) return;
+    const text = [composer.draft.trim(), words].filter(Boolean).join(' ');
+    if (send && !voice.error && !session.agent.running) {
+      composer.draft = '';
+      await this.#fromComposer(text);
+    } else {
+      composer.draft = text;
+      composer.focus();
+    }
   }
 
   /** What the viewer typed: a slash command runs here and never reaches the assistant. */
@@ -739,6 +799,17 @@ export class CivitaiChat extends LitElement {
             ?running=${session.agent.running}
             .uploads=${this.uploads}
             .refs=${this.refs}
+            voice
+            ?transcribing=${this.transcribing}
+            .heard=${this.heard}
+            .voiceLanguage=${voiceLanguage(session.settings.voiceLanguage)}
+            @cvt-voice-language=${(e: CustomEvent<{ language: string }>) => session.updateSettings({ voiceLanguage: e.detail.language })}
+            @cvt-voice-start=${(e: CustomEvent<{ live: boolean }>) => this.#voiceStart(e.detail.live)}
+            @cvt-voice-phrase=${(e: CustomEvent<{ recording: Blob }>) => (this.#voice as LiveTranscript | undefined)?.add(e.detail.recording)}
+            @cvt-voice-audio=${(e: CustomEvent<{ pcm: Int16Array }>) => (this.#voice as StreamingTranscript | undefined)?.add(e.detail.pcm)}
+            @cvt-voice-done=${(e: CustomEvent<{ send: boolean }>) => void this.#voiceDone(e.detail.send)}
+            @cvt-voice-cancel=${() => this.#voiceCancel()}
+            @cvt-voice-error=${(e: CustomEvent<{ error: unknown }>) => this.#toast(microphoneProblem(e.detail.error), e.detail.error)}
             @cvt-send=${(e: CustomEvent<{ text: string }>) => void this.#fromComposer(e.detail.text)}
             @cvt-stop=${() => session.agent.abort()}
             @cvt-files=${(e: CustomEvent<{ files: File[] }>) => this.addFiles(e.detail.files)}
@@ -795,4 +866,11 @@ declare global {
   interface HTMLElementTagNameMap {
     'civitai-chat': CivitaiChat;
   }
+}
+
+function microphoneProblem(error: unknown): string {
+  const name = (error as { name?: unknown } | null)?.name;
+  if (name === 'NotAllowedError' || name === 'SecurityError') return 'The microphone is blocked. Allow it for this site in your browser to talk instead of typing.';
+  if (name === 'NotFoundError') return 'No microphone was found.';
+  return 'Could not start the microphone.';
 }

@@ -98,16 +98,20 @@ describe('Agent', () => {
     for (const system of systems) expect(system).toContain('<user_instructions>\nTalk like a pirate.\n</user_instructions>');
   });
 
-  it('tells the assistant what the embedding app says as of each reply, and which tools are its own', async () => {
+  it('tells the assistant what the embedding app says as of each reply, without changing the system prompt', async () => {
     let pins = 0;
     const { agent, prompts } = setup([text('Sure.'), text('Sure.')], undefined, { instructions: () => `The board has ${pins} pins.`, tools: ['generate_image'] });
     await agent.send('hello');
     pins = 3;
     await agent.send('again');
-    const systems = prompts.map((prompt) => (prompt as { role: string; content: string }[]).find((m) => m.role === 'system')?.content ?? '');
+    const messages = prompts as { role: string; content: unknown }[][];
+    const systems = messages.map((prompt) => prompt.find((m) => m.role === 'system')?.content);
+    const latest = messages.map((prompt) => JSON.stringify(prompt.filter((m) => m.role === 'user').at(-1)?.content));
     expect(systems[0]).toContain('Its tools (generate_image) act on that app');
-    expect(systems[0]).toContain('<app_instructions>\nThe board has 0 pins.\n</app_instructions>');
-    expect(systems[1]).toContain('The board has 3 pins.');
+    expect(systems[1]).toBe(systems[0]);
+    expect(latest[0]).toContain('<app_instructions>\\nThe board has 0 pins.\\n</app_instructions>');
+    expect(latest[1]).toContain('The board has 3 pins.');
+    expect(JSON.stringify(messages[1]!.filter((m) => m.role === 'user')[0])).not.toContain('The board has');
   });
 
   it('calls a tool, feeds the result back, and lets the model answer', async () => {

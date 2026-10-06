@@ -959,6 +959,128 @@ civitai-chat-composer {
   cursor: default;
 }
 
+.cvt-voice-language {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  min-width: 32px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: 999px;
+  color: var(--civitai-color-text-dimmed);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.cvt-voice-language:hover,
+.cvt-voice-language:focus-within {
+  color: var(--civitai-color-text);
+  border-color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-voice-language:focus-within {
+  outline: 2px solid var(--civitai-color-primary);
+  outline-offset: 2px;
+}
+
+.cvt-voice-language select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.cvt-recording {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+}
+
+.cvt-levels {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.cvt-levels span {
+  flex: 1;
+  max-width: 3px;
+  min-height: 2px;
+  border-radius: 2px;
+  background: var(--civitai-color-text-dimmed);
+}
+
+.cvt-heard {
+  margin: 0;
+  max-height: 120px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  color: var(--civitai-color-text);
+}
+
+.cvt-transcribing {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+}
+
+.cvt-transcribing-label {
+  flex: 1;
+  min-width: 0;
+  background: linear-gradient(90deg, var(--civitai-color-text-dimmed) 30%, var(--civitai-color-text) 50%, var(--civitai-color-text-dimmed) 70%) 0 0 / 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: cvt-shimmer 1.6s linear infinite;
+}
+
+.cvt-spinner {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--civitai-color-border);
+  border-top-color: var(--civitai-color-primary);
+  border-radius: 50%;
+  animation: cvt-spin 0.8s linear infinite;
+}
+
+@keyframes cvt-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+@keyframes cvt-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cvt-transcribing-label {
+    animation: none;
+    color: var(--civitai-color-text);
+  }
+
+  .cvt-spinner {
+    animation-duration: 2.4s;
+  }
+}
+
 .cvt-send svg {
   width: 18px;
   height: 18px;
