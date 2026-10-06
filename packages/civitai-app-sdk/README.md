@@ -172,13 +172,21 @@ own key:
   and the host forwards `input` unmodified. There is no registry lookup, no param schema, no
   prompt audit and no AIR scan; what bounds it is a denylist of platform-internal `$type`s
   (scanners, moderation classifiers, hashing/model ingestion, web egress), a 64-character
-  `$type` cap, a 256 KB `input` cap, and `maxBuzz` — which, as on the inline arm, is **also the
-  step timeout in seconds**.
+  `$type` cap, a 256 KB `input` cap, and the spend reservation. **Unlike the inline arm, `maxBuzz`
+  is not always the timeout here**: on both `estimate` and `submit` the host asks the orchestrator
+  for a `whatif` quote of the step. **Quoted** → it reserves `max(maxBuzz, quote)`, gated against
+  the token's per-call budget (`token.buzzBudget`, capped at 1000 on a production token — so the
+  reservation can exceed the 1–250 `maxBuzz` range), and stamps **no** step timeout.
+  **Unquoted** → `maxBuzz` is both the reservation and the step timeout in seconds; the timeout
+  bounds wall-clock time, and spend only for a step billed by compute time — a step priced per
+  unit can bill above `maxBuzz`. `estimate` returns the reservation as `cost.total`; it is not a
+  guaranteed maximum. Full rules: `WorkflowBodyPassThroughStep.maxBuzz`.
 
   `training` and `imageResourceTraining` are **not** on that denylist — the host allows them on
-  this arm by an explicit operator decision. They get no special treatment: the same `maxBuzz`
-  ceiling (an integer 1–250) is also their timeout in seconds, so a real training run will
-  typically not fit inside it. The trained checkpoint is not part of the block contract (an older
+  this arm by an explicit operator decision. They get no special treatment: the quoted/unquoted
+  rules above apply to them as to any other `$type`. Whether a given training input is quoted,
+  and at what price, is the orchestrator's answer — read it from `estimate` before submitting.
+  The trained checkpoint is not part of the block contract (an older
   host may still leak checkpoint urls into `imageUrls` / `stepOutputs` — a host defect, never
   something to build on); a host that supports it reports the trained epochs on
   `snapshot.trainedEpochs` without the checkpoint, and the viewer publishes
@@ -507,7 +515,7 @@ The starters in `civitai/civitai-app-starters` wire this into framework-specific
 
 ## Choosing a workflow step type
 
-The orchestrator is a workflow API: each request submits a list of typed steps. `WORKFLOW_STEP_TYPES` is the in-code catalog of every step `$type` it accepts, with a one-line description for each — `textToImage`, `imageGen`, `videoGen`, `comfy`, `customComfy`, `textToSpeech`, `aceStepAudio`, `transcription`, `imageUpscaler` among them (51 in total).
+The orchestrator is a workflow API: each request submits a list of typed steps. `WORKFLOW_STEP_TYPES` is the in-code catalog of every step `$type` it accepts, with a one-line description for each — `textToImage`, `imageGen`, `videoGen`, `comfy`, `customComfy`, `textToSpeech`, `aceStepAudio`, `transcription`, `imageUpscaler` among them (53 in total).
 
 The catalog is pinned to the orchestrator's published OpenAPI spec two ways — an offline unit test against a transcribed copy of the spec's `WorkflowStepTemplate` discriminator mapping, and a CI job (`pnpm check:catalogs`) that re-fetches the live spec and diffs it. If a `$type` is listed here, the orchestrator accepts it.
 
@@ -582,15 +590,15 @@ What it exports:
 
 | Export | What |
 |---|---|
-| `WorkflowStepTemplates` | `$type` → template type, for 47 of the catalog's 51 step types. Keyed by the WIRE name, which the generated type names don't always match (`model3DPreview` → `Model3dPreviewStepTemplate`). |
+| `WorkflowStepTemplates` | `$type` → template type, for 47 of the catalog's 53 step types. Keyed by the WIRE name, which the generated type names don't always match (`model3DPreview` → `Model3dPreviewStepTemplate`). |
 | `WorkflowStepTemplateFor<'videoGen'>` | One step's template. |
 | `WorkflowStepInputFor<'videoGen'>` | One step's `input` shape, without needing the generated `*Input` name. |
 | `AnyWorkflowStepTemplate` | Discriminated union of all 47 mapped templates — `Extract<…, { $type: 'comfy' }>` and exhaustive `switch` work. `@civitai/client`'s base `WorkflowStepTemplate` has `$type` as a bare `string`, so it narrows nothing. |
 | `TypedWorkflowTemplate` | The submit envelope with `steps` narrowed to that union. Pass it straight to `submitWorkflow` / `estimateWorkflow`. |
 
-> 🔴 **The map is not total over the catalog, and that is the expected state.** `WORKFLOW_STEP_TYPES` documents 51 `$type`s; this map covers 47. The 4 with no generated template in the pinned `@civitai/client` are `imageScanning`, `preprocessVideo`, `soniloAudioGen`, `yuE2`, and `WorkflowStepTemplateFor<…>` is a compile error for each of them.
+> 🔴 **The map is not total over the catalog, and that is the expected state.** `WORKFLOW_STEP_TYPES` documents 53 `$type`s; this map covers 47. The 6 with no generated template in the pinned `@civitai/client` are `imageScanning`, `liveTranscription`, `merge`, `preprocessVideo`, `soniloAudioGen`, `yuE2`, and `WorkflowStepTemplateFor<…>` is a compile error for each of them.
 >
-> The two surfaces move independently on purpose: the catalog tracks the **live** orchestrator spec (a daily job syncs it), while these types track whatever `@civitai/client` was last published from. So the catalog runs ahead and the client catches up. The gap is never silent — `test/orchestrator/step-templates.test-d.ts` carries it as a `never` ledger plus one `@ts-expect-error` per gap `$type`, and `test/orchestrator/step-count-prose.test.ts` derives all four numbers (51, 47, 4, and the names) from `WORKFLOW_STEP_TYPES` and the map's own AST, then fails if this paragraph or its twin in `src/orchestrator/steps.ts` disagrees by one character.
+> The two surfaces move independently on purpose: the catalog tracks the **live** orchestrator spec (a daily job syncs it), while these types track whatever `@civitai/client` was last published from. So the catalog runs ahead and the client catches up. The gap is never silent — `test/orchestrator/step-templates.test-d.ts` carries it as a `never` ledger plus one `@ts-expect-error` per gap `$type`, and `test/orchestrator/step-count-prose.test.ts` derives all four numbers (53, 47, 6, and the names) from `WORKFLOW_STEP_TYPES` and the map's own AST, then fails if this paragraph or its twin in `src/orchestrator/steps.ts` disagrees by one character.
 
 The generated `*StepTemplate` and `*Input` types are **not** re-exported individually. Using this subpath already requires `@civitai/client` installed, so if you want one by name, import it straight from there — `import type { TextToImageStepTemplate } from '@civitai/client'`.
 
@@ -629,7 +637,7 @@ Several of the 47 exist to serve Civitai's own pipelines rather than third-party
 
 `training` and `imageResourceTraining` are the exception: an App Block's host explicitly **allows** them on the pass-through arm (see `WorkflowBodyPassThroughStep` under Primitives above for the `maxBuzz` bound, and how a trained epoch is published). For a standalone app, the orchestrator's own authorization still decides.
 
-Note that `WORKFLOW_STEP_TYPES` does **not** mark most of them: of its 51 entries exactly two — `comfyNodepackSnapshot` and `qwenImageBench` — sit under its "Platform internals" heading, and the rest are ordinary documented entries (`webScrape` even carries usage notes). The reason the platform steps are typed anyway is not that the catalog flags them as internal; it's that the catalog *documents* them, so skipping them would make `WorkflowStepTemplateFor<'training'>` a compile error for a step type the SDK documents — which is exactly what is live today for the 3 `$type`s the pinned client cannot type, and is why that gap is spelled out above rather than left to be discovered.
+Note that `WORKFLOW_STEP_TYPES` does **not** mark most of them: of its 53 entries exactly two — `comfyNodepackSnapshot` and `qwenImageBench` — sit under its "Platform internals" heading, and the rest are ordinary documented entries (`webScrape` even carries usage notes). The reason the platform steps are typed anyway is not that the catalog flags them as internal; it's that the catalog *documents* them, so skipping them would make `WorkflowStepTemplateFor<'training'>` a compile error for a step type the SDK documents — which is exactly what is live today for the 3 `$type`s the pinned client cannot type, and is why that gap is spelled out above rather than left to be discovered.
 
 ## Public vs. confidential clients
 

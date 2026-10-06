@@ -86,8 +86,9 @@ export const WORKFLOW_STEP_TYPES = {
   imageToSvg: 'Raster image → SVG vectorization',
   /**
    * LoRA / DoRA / embedding training. Long-running. Allowed on an App Block's
-   * pass-through arm, where its `maxBuzz` (1–250) is also its timeout in
-   * seconds — see `WorkflowBodyPassThroughStep` in `@civitai/app-sdk/blocks`.
+   * pass-through arm, where `maxBuzz` (1–250) is its timeout in seconds only
+   * when the orchestrator returns no quote — see `WorkflowBodyPassThroughStep`
+   * in `@civitai/app-sdk/blocks`.
    */
   imageResourceTraining: 'Train a LoRA / DoRA / embedding from a dataset',
   /** Pre-process an image (resize, ControlNet preprocessor, etc.). */
@@ -250,6 +251,15 @@ export const WORKFLOW_STEP_TYPES = {
   comfyNodepackSnapshot: 'Snapshot a worker’s installed ComfyUI node packs (internal)',
   /** Qwen image benchmarking harness. */
   qwenImageBench: 'Qwen image benchmarking (internal)',
+  // ----- Auto-added 2026-10-06 from the orchestrator spec ----------------------
+  // Added by scripts/sync-orchestrator-catalogs.mjs: the live spec accepts
+  // these and this catalog did not list them. MOVE each entry into the right
+  // section above, and replace any TODO(catalog) line with a real one-line
+  // description — `pnpm check:catalogs` names every placeholder that is left.
+  // (That check is advisory, so it will not stop this merging. It is a
+  // reminder, not a gate.)
+  liveTranscription: 'Live speech-to-text from audio streamed while the user talks',
+  merge: "Merge — combine fields from earlier steps' outputs into one result",
 } as const;
 
 export type WorkflowStepType = keyof typeof WORKFLOW_STEP_TYPES;
