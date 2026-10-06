@@ -2119,6 +2119,115 @@ describe('createLiveHost — SAVE_IMAGE (refused, honest-by-design) (#386)', () 
   });
 });
 
+describe('createLiveHost — PUBLISH_GENERATION_OUTPUTS (refused: needs a signed-in session)', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    inbound = collectInbound();
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  // Before this change the harness forwarded to `blocks.publishGenerationOutputs`
+  // with only the block token. Publishing requires the viewer's signed-in
+  // civitai.com session (same as CREATE_POST_FROM_APP), which this
+  // harness does not have — so it must refuse immediately, on the reply
+  // channel, without touching the network.
+  it('replies PUBLISH_RESULT with an actionable error and makes no network call', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fetchMock = vi.fn(async () => {
+      throw new Error('PUBLISH_GENERATION_OUTPUTS must not touch the network');
+    });
+    const host = createLiveHost({
+      blockToken: fakeJwt(DEFAULT_CLAIMS),
+      viewer: { id: 42, username: 'dev' },
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+    uninstall = host.install();
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    const callsAfterInit = fetchMock.mock.calls.length;
+
+    post('PUBLISH_GENERATION_OUTPUTS', {
+      requestId: 'r-pub',
+      workflowId: 'wf_1',
+      imageIndexes: [0],
+    });
+    const payload = await waitForMessage(inbound, 'PUBLISH_RESULT');
+
+    expect(payload.requestId).toBe('r-pub');
+    expect('result' in payload).toBe(false);
+    expect(payload.error).toBe(
+      "publishing generation outputs is not supported in dev:live — publishing requires the " +
+        "viewer's signed-in civitai.com session, which the local harness does not have; test " +
+        'publishing against the mock host — createMockHost or Harness from ' +
+        '@civitai/blocks-react/testing, with the publishImageIds / publishError options',
+    );
+    expect(fetchMock.mock.calls.length).toBe(callsAfterInit);
+    const urls = fetchMock.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(urls).not.toMatch(/publishGenerationOutputs/);
+
+    expect(warnSpy.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(
+      /PUBLISH_GENERATION_OUTPUTS/,
+    );
+  });
+});
+
+describe('createLiveHost — training bridges (refused: the server refuses dev tokens)', () => {
+  let uninstall: (() => void) | undefined;
+  let inbound: ReturnType<typeof collectInbound>;
+
+  beforeEach(() => {
+    inbound = collectInbound();
+  });
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+    inbound.stop();
+    vi.restoreAllMocks();
+  });
+
+  // Every `kind: 'training'` procedure refuses a dev token server-side, and a run
+  // is confirmed in host chrome this harness does not have. Each bridge must
+  // refuse on ITS OWN reply channel, immediately, without a network call — a
+  // missing case would hang the hook to its bound (120s / 10 min).
+  for (const [type, replyType, payload] of [
+    [
+      'PREPARE_TRAINING_DATASET',
+      'TRAINING_DATASET_RESULT',
+      { items: [{ imageId: 1, caption: 'c' }] },
+    ],
+    ['RUN_TRAINING', 'TRAINING_RESULT', { body: { kind: 'training', quoteId: 'tq_x' } }],
+  ] as const) {
+    it(`${type} replies ${replyType} with a refusal and makes no network call`, async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const fetchMock = vi.fn(async () => {
+        throw new Error(`${type} must not touch the network`);
+      });
+      uninstall = createLiveHost({
+        blockToken: fakeJwt(DEFAULT_CLAIMS),
+        viewer: { id: 42, username: 'dev' },
+        fetchImpl: fetchMock as unknown as typeof fetch,
+      }).install();
+      await waitForMessage(inbound, 'BLOCK_INIT');
+      const callsAfterInit = fetchMock.mock.calls.length;
+
+      post(type, { requestId: `r-${type}`, ...payload });
+      const reply = await waitForMessage(inbound, replyType);
+
+      expect(reply.requestId).toBe(`r-${type}`);
+      expect(reply.error).toBe('training is not supported in dev:live — use dev:mock');
+      expect('result' in reply || 'snapshot' in reply).toBe(false);
+      expect(fetchMock.mock.calls.length).toBe(callsAfterInit);
+    });
+  }
+});
+
 describe('createLiveHost — OPEN_IMAGE_UPLOAD (no headless upload contract)', () => {
   let uninstall: (() => void) | undefined;
   let inbound: ReturnType<typeof collectInbound>;

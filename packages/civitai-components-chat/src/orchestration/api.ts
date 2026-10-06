@@ -1,6 +1,7 @@
 import { ApiError, isTerminal, type AppClient, type Workflow } from '@civitai/sdk';
 
 import { ORCH_URL } from '../config.js';
+import type { FreeTierStatus } from '../agent/free-tier.js';
 
 export interface UploadedBlob {
   id: string;
@@ -32,6 +33,7 @@ export interface OrchestrationApi {
   presignUpload(opts?: SendOptions): Promise<{ uploadUrl: string; expiresAt?: string }>;
   uploadDirect(file: Blob, opts?: SendOptions): Promise<UploadedBlob>;
   refreshBlobUrl(blobId: string, opts?: SendOptions & { nsfwLevel?: string }): Promise<string>;
+  getFreeTier(opts?: SendOptions): Promise<FreeTierStatus>;
 }
 
 export function createOrchestrationApi(app: AppClient, baseUrl = ORCH_URL, doFetch: typeof fetch = fetch.bind(globalThis)): OrchestrationApi {
@@ -117,6 +119,7 @@ export function createOrchestrationApi(app: AppClient, baseUrl = ORCH_URL, doFet
       });
       return read<UploadedBlob>(response);
     },
+    getFreeTier: (opts) => json('GET', 'v2/consumer/free-tier', opts),
     async refreshBlobUrl(blobId, opts = {}) {
       const query = opts.nsfwLevel ? `?nsfwLevel=${encodeURIComponent(opts.nsfwLevel)}` : '';
       const response = await authed(url(`v2/consumer/blobs/${encodeURIComponent(blobId)}${query}`), {

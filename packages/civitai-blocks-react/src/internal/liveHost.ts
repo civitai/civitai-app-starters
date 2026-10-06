@@ -46,8 +46,8 @@
  * --- BEGIN DERIVED ---
  * fetch chokepoints ..... 2
  * REST endpoints ........ GET /api/v1/blocks/me
- * tRPC procedures ....... 29 = blocks.* (14) + apps.shared.* (10) + apps.storage.* (5)
- * switch case labels .... 45, of which 7 REFUSE (enumerated under SCOPE below)
+ * tRPC procedures ....... 28 = blocks.* (13) + apps.shared.* (10) + apps.storage.* (5)
+ * switch case labels .... 47, of which 10 REFUSE (enumerated under SCOPE below)
  * --- END DERIVED ---
  *
  * PICKERS (Phase 1 of "make dev:live a faithful local host"): the live host
@@ -101,6 +101,17 @@
  *     host-chrome consent. Replies `collection-unavailable`.
  *   • CREATE_POST_FROM_APP — needs the server-resolved preview plus host-chrome
  *     confirm before a PUBLIC post is written. Replies with a refusal.
+ *   • PREPARE_TRAINING_DATASET — the server refuses every `kind: 'training'`
+ *     request from a dev token, so there is nothing to forward. Replies with a
+ *     refusal.
+ *   • RUN_TRAINING — the same dev-token refusal, plus the host-chrome consent
+ *     dialog a run is confirmed in, which this harness does not have. Replies
+ *     with a refusal.
+ *   • PUBLISH_GENERATION_OUTPUTS — publishing requires the viewer's signed-in
+ *     civitai.com session, which the local harness does not have; test
+ *     publishing against the mock host — `createMockHost` or `Harness` from
+ *     `@civitai/blocks-react/testing`, with the `publishImageIds` /
+ *     `publishError` options. Replies with a refusal.
  *   • GET_WILDCARD_PACK — needs the session-authed resolve plus the in-tab
  *     zip/yaml parse that lives in civitai, not this SDK. Replies `parse-failed`.
  *   • OPEN_IMAGE_UPLOAD — needs the host's native modal + session-authed byte
@@ -203,6 +214,18 @@ const PAGE_SLOT_ID = 'app.page';
 
 /** The budgeted-spend scope the workflow procedures require. */
 const BUDGETED_SCOPE = 'ai:write:budgeted';
+
+/**
+ * The reply both training bridges get in dev:live — see their handlers. One
+ * string so the two cannot drift.
+ */
+export const TRAINING_UNSUPPORTED_ERROR = 'training is not supported in dev:live — use dev:mock';
+
+/** The once-per-session console line for a refused training bridge. */
+const trainingUnsupportedLog = (type: string): string =>
+  `${type} is not supported in dev:live (the server refuses every training request from a ` +
+  'dev token, and a run needs the host-chrome consent dialog). Replying with a refusal. ' +
+  'Use dev:mock to exercise the training flow.';
 
 /**
  * Decoded payload of a block-token JWT (the claims `BlockTokenService.sign`
@@ -1248,6 +1271,44 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             return;
           }
 
+          case 'PREPARE_TRAINING_DATASET': {
+            // UNSUPPORTED in live, and here the SERVER decides it, not this
+            // harness: every `kind: 'training'` procedure refuses a dev token
+            // ("training is not available from a development or review session"
+            // — `assertTrainingRequestAllowed` in civitai/civitai), because there
+            // is no host page whose chrome can show the viewer a price. A
+            // training ESTIMATE is still forwarded (ESTIMATE_WORKFLOW above) and
+            // comes back carrying that same server refusal.
+            //
+            // FREE TEXT on the message's own reply channel; no host code is
+            // honest about "this harness cannot do it". Use dev:mock — its
+            // `trainingDatasetError` / `trainingDatasetRejected` knobs cover the
+            // refusal set.
+            if (!isRoutableRequestId(requestId)) return;
+            logOnce('training-dataset', trainingUnsupportedLog('PREPARE_TRAINING_DATASET'));
+            dispatchToBlock({
+              type: 'TRAINING_DATASET_RESULT',
+              payload: { requestId, error: TRAINING_UNSUPPORTED_ERROR },
+            });
+            return;
+          }
+
+          case 'RUN_TRAINING': {
+            // UNSUPPORTED in live for the same server-side reason as
+            // PREPARE_TRAINING_DATASET directly above — and doubly so: a run is
+            // CHARGED and confirmed in host chrome this harness does not have, so
+            // faking either half would let dev prove out a flow production does
+            // not have. Use dev:mock — its `runTrainingError` knob covers
+            // `declined`, `submission-unconfirmed` and the rest.
+            if (!isRoutableRequestId(requestId)) return;
+            logOnce('training-run', trainingUnsupportedLog('RUN_TRAINING'));
+            dispatchToBlock({
+              type: 'TRAINING_RESULT',
+              payload: { requestId, error: TRAINING_UNSUPPORTED_ERROR },
+            });
+            return;
+          }
+
           case 'GET_WILDCARD_PACK': {
             // UNSUPPORTED in live v1 (honest-by-design, like OPEN_BUZZ_PURCHASE):
             // the real host resolves the pack via a SESSION-authed proc and does
@@ -1321,32 +1382,40 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           }
 
           case 'PUBLISH_GENERATION_OUTPUTS': {
-            // Publish selected outputs of one of the app's OWN workflows as bare,
-            // real-scanned public Image rows via the token-bound
-            // `blocks.publishGenerationOutputs` MUTATION (POST). The block sends
-            // `workflowId` + optional `imageIndexes` (NEVER urls); the host
-            // re-derives ownership, re-uploads + FULL-scans server-side. Returns a
-            // plain `{ imageIds }`, unwrapped with `callTrpcData`. FREE-TEXT error
-            // on failure. Unroutable without requestId.
+            // UNSUPPORTED in live, for the same reason as CREATE_POST_FROM_APP
+            // above: publishing requires the viewer's signed-in civitai.com
+            // session, which the local harness does not have — it holds a dev
+            // block token and has no civitai chrome to render the publish
+            // confirm in. On civitai.com the real host resolves the workflow's
+            // outputs, shows that confirm, and only then publishes bare,
+            // real-scanned public Image rows.
+            //
+            // FREE TEXT, like the post refusal: none of the host's codes is
+            // honest about "this harness cannot do it". `usePublishGenerationOutputs`
+            // rejects with it as the message. Test publishing against the mock
+            // host — `createMockHost` or `Harness` from
+            // `@civitai/blocks-react/testing`, with the `publishImageIds` /
+            // `publishError` options.
             if (!isRoutableRequestId(requestId)) return;
-            void callTrpcData(
-              'blocks.publishGenerationOutputs',
-              {
-                blockToken: rawToken,
-                workflowId: typed.payload?.workflowId,
-                ...(typed.payload?.imageIndexes !== undefined
-                  ? { imageIndexes: typed.payload.imageIndexes }
-                  : {}),
-                ...(typed.payload?.title !== undefined ? { title: typed.payload.title } : {}),
+            logOnce(
+              'publish-outputs',
+              'PUBLISH_GENERATION_OUTPUTS is not supported in dev:live (publishing requires the ' +
+                "viewer's signed-in civitai.com session, which the local harness does not have). " +
+                'Replying with a refusal. Test publishing against the mock host — createMockHost ' +
+                'or Harness from @civitai/blocks-react/testing, with the publishImageIds / ' +
+                'publishError options.',
+            );
+            dispatchToBlock({
+              type: 'PUBLISH_RESULT',
+              payload: {
+                requestId,
+                error:
+                  'publishing generation outputs is not supported in dev:live — publishing ' +
+                  "requires the viewer's signed-in civitai.com session, which the local harness " +
+                  'does not have; test publishing against the mock host — createMockHost or ' +
+                  'Harness from @civitai/blocks-react/testing, with the publishImageIds / ' +
+                  'publishError options',
               },
-              'POST',
-            ).then((r) => {
-              dispatchToBlock({
-                type: 'PUBLISH_RESULT',
-                payload: r.data
-                  ? { requestId, result: r.data }
-                  : { requestId, error: r.error ?? 'publish unavailable' },
-              });
             });
             return;
           }

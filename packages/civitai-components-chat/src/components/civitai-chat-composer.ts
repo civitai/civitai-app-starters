@@ -3,7 +3,7 @@ import { html, nothing, type PropertyDeclarations, type TemplateResult } from 'l
 import type { PendingUpload } from '../session.js';
 import type { Attachment } from '../types.js';
 import { ACCEPT_ATTRIBUTE, MAX_UPLOAD_BYTES } from '../uploads/upload.js';
-import { suggestCommands, type ChatCommand } from '../ux/commands.js';
+import { suggestCommands, type ChatCommands } from '../ux/commands.js';
 import { VOICE_LANGUAGES } from '../voice/languages.js';
 import { canStreamPcm, PcmRecorder } from '../voice/pcm-recorder.js';
 import { canRecord, VoiceRecorder } from '../voice/recorder.js';
@@ -20,6 +20,7 @@ export class CivitaiChatComposer extends LightElement {
     uploads: { attribute: false },
     refs: { attribute: false },
     placeholder: {},
+    commands: { attribute: false },
     voice: { type: Boolean },
     transcribing: { type: Boolean },
     heard: {},
@@ -34,6 +35,8 @@ export class CivitaiChatComposer extends LightElement {
   declare uploads: PendingUpload[];
   declare refs: Attachment[];
   declare placeholder: string;
+  /** The slash commands on offer, by name. */
+  declare commands: ChatCommands;
   /** Offers the microphone; the chat transcribes each `cvt-voice-phrase` and shows the text in `heard`. */
   declare voice: boolean;
   declare transcribing: boolean;
@@ -51,6 +54,7 @@ export class CivitaiChatComposer extends LightElement {
     this.disabled = false;
     this.uploads = [];
     this.refs = [];
+    this.commands = {};
     this.placeholder = 'Ask for a picture, a video, a song… or anything about Civitai';
     this.text = '';
     this.voice = false;
@@ -151,8 +155,8 @@ export class CivitaiChatComposer extends LightElement {
     void this.updateComplete.then(() => this.#autosize());
   }
 
-  #complete(command: ChatCommand): void {
-    this.text = `/${command.name} `;
+  #complete(name: string): void {
+    this.text = `/${name} `;
     void this.updateComplete.then(() => {
       const area = this.querySelector('textarea');
       area?.focus();
@@ -161,10 +165,10 @@ export class CivitaiChatComposer extends LightElement {
   }
 
   #onKeyDown = (event: KeyboardEvent): void => {
-    const suggestions = suggestCommands(this.text);
+    const suggestions = suggestCommands(this.text, this.commands);
     if (event.key === 'Tab' && suggestions.length === 1) {
       event.preventDefault();
-      this.#complete(suggestions[0]!);
+      this.#complete(suggestions[0]!.name);
       return;
     }
     if (event.key === 'Escape' && this.recording) {
@@ -215,12 +219,12 @@ export class CivitaiChatComposer extends LightElement {
   };
 
   #suggestions(): TemplateResult | typeof nothing {
-    const suggestions = suggestCommands(this.text);
+    const suggestions = suggestCommands(this.text, this.commands);
     if (suggestions.length === 0) return nothing;
     return html`<ul class="cvt-commands" aria-label="Commands">
       ${suggestions.map(
-        (command) => html`<li>
-          <button type="button" @click=${() => this.#complete(command)}><code>${command.usage}</code><span>${command.help}</span></button>
+        ({ name, command }) => html`<li>
+          <button type="button" @click=${() => this.#complete(name)}><code>${command.usage}</code><span>${command.help}</span></button>
         </li>`,
       )}
     </ul>`;

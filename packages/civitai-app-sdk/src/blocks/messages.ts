@@ -37,6 +37,9 @@ import type {
   BlockCollectionFollowResult,
   BlockPostSource,
   BlockCreatePostResult,
+  BlockTrainingDatasetItem,
+  BlockTrainingDatasetResult,
+  WorkflowBodyTraining,
 } from './types.js';
 
 // ============================================================
@@ -691,6 +694,41 @@ export type ParentToBlockMessage =
       };
     }
   | {
+      // Reply to PREPARE_TRAINING_DATASET. On success `result` carries the
+      // opaque `datasetId`, the server-derived `count` of ADMITTED images and
+      // the `rejected` ones with their reasons.
+      //
+      // 🔴 `error` IS A FREE-TEXT STRING AND THE VALIDATOR MUST STAY SHAPE-ONLY,
+      // for the reason given on CREATE_POST_RESULT: the host's own codes
+      // (`BlockPrepareTrainingDatasetHostError`) share the field with any server
+      // message it forwards (`training from apps is not enabled`, a rate limit,
+      // a refused caption), and a membership check would drop those replies at
+      // the transport, leaving the request to its timer.
+      type: 'TRAINING_DATASET_RESULT';
+      payload: {
+        requestId: string;
+        result?: BlockTrainingDatasetResult;
+        error?: string;
+      };
+    }
+  | {
+      // Reply to RUN_TRAINING. On success `snapshot` is the submitted training
+      // workflow (poll it with POLL_WORKFLOW / `useBuzzWorkflow().watch()`).
+      //
+      // 🔴 `error` IS FREE TEXT, SHAPE-CHECKED ONLY — same reason as above, and
+      // the timer a dropped reply would leave running here is the TEN-MINUTE
+      // consent bound. Two host codes carry money meaning (see
+      // `BlockRunTrainingHostError`): `declined` GUARANTEES no run was
+      // submitted; `submission-unconfirmed` means the run MAY be running and
+      // charged.
+      type: 'TRAINING_RESULT';
+      payload: {
+        requestId: string;
+        snapshot?: BlockWorkflowSnapshot;
+        error?: string;
+      };
+    }
+  | {
       // Reply to GET_IMAGES_BY_IDS. On success `result.images` is the per-viewer
       // gated projection (`BlockGatedImage[]`; unresolvable ids omitted). On host-
       // side failure `error` is a FREE-TEXT string and `result` is absent.
@@ -1232,6 +1270,41 @@ export type BlockToParentMessage =
       };
     }
   | {
+      // Ask the PAGE host to prepare a training dataset from the VIEWER'S OWN
+      // images — step 1 of the App Blocks `kind: 'training'` flow. The host calls
+      // `blocks.prepareTrainingDataset` with the page's block token (the block's
+      // own origin cannot reach it) and replies `TRAINING_DATASET_RESULT`. No
+      // dialog: preparing charges nothing.
+      //
+      // Scope `ai:write:budgeted`; flag `app-blocks-training-kind`; page host
+      // only (the model slot NACKs it with a `TRAINING_DATASET_RESULT` error).
+      // `items` is shape-checked by the host against the server's own item
+      // schema before any call — see `BlockTrainingDatasetItem` for the bounds.
+      //
+      // A server round-trip that imports up to 50 images into the orchestrator
+      // (the server's own import budget is 60s), so it is bucketed `'protocol'`
+      // but sent under the workflow trio's longer bound — see
+      // `@civitai/blocks-react`'s `requestTimeouts.ts`.
+      type: 'PREPARE_TRAINING_DATASET';
+      payload: { requestId: string; items: BlockTrainingDatasetItem[] };
+    }
+  | {
+      // Ask the PAGE host to RUN a quoted `kind: 'training'` body. The host
+      // reads the quote back from the server (`blocks.previewTrainingQuote`),
+      // shows the viewer a consent dialog in ITS chrome — every number on it
+      // server-resolved, never from this body — records the confirmation
+      // (`blocks.consentTrainingQuote`, session-only) and only then submits.
+      // Replies `TRAINING_RESULT`.
+      //
+      // 🔴 THIS IS THE ONLY WAY A TRAINING RUN STARTS. The server refuses a
+      // training submit whose quote no signed-in session confirmed, so the same
+      // body sent as SUBMIT_WORKFLOW is refused.
+      //
+      // Consent-gated ⇒ `'human'` timeout bucket.
+      type: 'RUN_TRAINING';
+      payload: { requestId: string; body: WorkflowBodyTraining };
+    }
+  | {
       // Ask the host for per-VIEWER gated display data for a set of image ids
       // (the ids a benchmark grid stored via shared storage). The host applies
       // the REQUESTING VIEWER's browsing-level clamp server-side and returns a
@@ -1609,6 +1682,8 @@ export const BLOCK_TO_PARENT_MESSAGE_TYPES = [
   'QUERY_APP_WORKFLOWS',
   'PUBLISH_GENERATION_OUTPUTS',
   'CREATE_POST_FROM_APP',
+  'PREPARE_TRAINING_DATASET',
+  'RUN_TRAINING',
   'GET_IMAGES_BY_IDS',
   'CANCEL_APP_WORKFLOW',
   'OPEN_CHECKPOINT_PICKER',

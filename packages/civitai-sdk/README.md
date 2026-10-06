@@ -357,7 +357,10 @@ wider scope — and refuses without one.
 | `publishGenerationOutputs({ workflowId, imageIndexes })` | Publishes your own workflow's outputs, behind the host's confirmation; resolves the new image ids |
 
 Host failures reject with a `BridgeError` carrying a `code` (`forbidden`,
-`unauthenticated`, `rate-limited`, …). Timeouts are the host's to set; pass a
+`unauthenticated`, `rate-limited`, …). `unauthenticated` includes a viewer whose
+session ended (signed out in another tab) — offer `requestSignIn()`. A session
+that now belongs to a different account is `forbidden`; its `message` asks the
+viewer to reload the page. Timeouts are the host's to set; pass a
 `signal` to cancel. `ApiError` and `BridgeError` both extend `CivitaiError`, so
 one `catch` can tell a refusal from a bug.
 

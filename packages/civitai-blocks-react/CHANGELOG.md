@@ -1,5 +1,459 @@
 # @civitai/blocks-react
 
+## 0.65.0
+
+### Minor Changes
+
+- 830aa0e: App Blocks `kind: 'training'` — train a LoRA from a page app, priced by a real quote and confirmed by the viewer in Civitai's own dialog.
+
+  Requires a civitai.com host carrying civitai/civitai#5434 and civitai/civitai#5438, with the host flag `app-blocks-training-kind` enabled for the viewer (it ships off). Page apps only, `ai:write:budgeted`, and refused from development and review sessions.
+
+  **`@civitai/app-sdk`**
+
+  - `WorkflowBodyTraining` (`kind: 'training'`) joins the `WorkflowBody` union, with `AiToolkitTrainingParams` mirroring the host's ai-toolkit schema. No `maxBuzz`, no timeout knob.
+  - `BlockWorkflowSnapshot.trainingQuote` — `{ quoteId, total, imageCount, expiresAt }` on a training estimate.
+  - Messages `PREPARE_TRAINING_DATASET` → `TRAINING_DATASET_RESULT` and `RUN_TRAINING` → `TRAINING_RESULT`, with `BlockTrainingDatasetItem`, `BlockTrainingDatasetResult`, `BlockTrainingRejectionReason`, and the host refusal codes `BlockPrepareTrainingDatasetHostError` / `BlockRunTrainingHostError`.
+  - The host bounds as constants: `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (5000), `BLOCK_TRAINING_DATASET_MAX_ITEMS`, `BLOCK_TRAINING_CAPTION_MAX_CHARS`, `BLOCK_TRAINING_SAMPLE_PROMPTS_MAX`, `BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS`, `BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS`, `BLOCK_TRAINING_MODEL_KEY_MAX_CHARS`.
+
+  **`@civitai/blocks-react`**
+
+  - `usePrepareTrainingDataset()` → `prepareDataset(items)` with `PrepareTrainingDatasetError`. A resolved dataset always admits at least one image; when nothing is admitted the server's refusal rejects the call. Prompts for `ai:write:budgeted` and retries once on a grant. Sent under the 120s server-work bound (the server's image import alone may take 60s).
+  - `useRunTraining()` → `runTraining({ ...body, quoteId })` with `RunTrainingError` (`.declined` = no run; `.refused` / `code: 'refused'` = a spend-cap or temporary-availability refusal of the confirmed run, refunded (the quote is used up), `.message` is the server's reason; `.unconfirmed` = a run may exist, check before retrying). A resolved snapshot is always a submitted run. Ten-minute consent bound; never auto-retried.
+  - `useBuzzWorkflow().estimate()` returns the quote; `useBuzzWorkflow().submit()` now refuses a `kind: 'training'` body before sending anything.
+  - Inbound validators for both replies and for `trainingQuote` (error fields shape-checked only, rejection reasons checked as strings).
+  - Mock host: a kind-faithful training path (stored datasets and quotes, the 5,000 ceiling, single-use quotes) with knobs `trainingDatasetRejected`, `trainingDatasetError`, `trainingQuoteTotal`, `runTrainingError`, `runTrainingCapRefusal`; a dataset with nothing admitted is refused as on the server; `generation.trainedEpochs` now also applies to a `kind: 'training'` run.
+  - `dev:live` refuses both training bridges, as the server refuses development tokens for training.
+
+- 206a7b3: Add `trainedEpochs` to `AppWorkflow` rows.
+
+  **`AppWorkflow.trainedEpochs` (`@civitai/app-sdk`).** The app-queue read
+  (`useAppWorkflows` / `QUERY_APP_WORKFLOWS`) can now report a training run's
+  epochs on each row, so a block can offer "publish epoch n" from its queue
+  without polling each run. Same shape and rule as
+  `BlockWorkflowSnapshot.trainedEpochs`: only moderation-approved runs are listed,
+  the checkpoint itself is not exposed, and the field is omitted when there are no
+  epochs. Optional, and absent on hosts that do not emit it yet.
+
+  **Validator (`@civitai/blocks-react`).** The `AppWorkflow` row guard (used by
+  both `APP_WORKFLOWS_RESULT` and `CANCEL_APP_WORKFLOW_RESULT`) now shape-checks
+  `trainedEpochs` when present, through the same helper as the snapshot guard:
+  absent is valid, present-but-malformed drops the reply, and `$type` is checked as
+  a string so a host adding a value does not break shipped blocks.
+
+  **Mock host.** The app-queue read still replies with the canned `appWorkflows`
+  rows verbatim — they carry no body, so the mock cannot tell a training row from
+  any other. Put `trainedEpochs` on the rows you pass there; it reaches the hook
+  intact.
+
+## 0.64.0
+
+### Minor Changes
+
+- 1d0d37d: Add the nested-document `srcdoc` helper, and document why a block cannot frame
+  its own bundled content.
+
+  **The constraint (#532).** A nested `<iframe src="…">` pointing at an app's own
+  bundle can never load, and nothing in the manifest fixes it. Two platform
+  policies combine: outside the internal trust tier the sandbox withholds
+  `allow-same-origin`, so the block document's origin is **opaque** (measured,
+  `window.origin === "null"`); and every path served from
+  `https://<blockId>.civit.ai/` carries `Content-Security-Policy: frame-ancestors
+…` plus `X-Frame-Options: SAMEORIGIN`, stamped at the platform edge rather than
+  by the app's own server.
+
+  An **opaque ancestor matches no `frame-ancestors` source list at all** — `*`
+  included, because CSP3 ASCII-serializes the ancestor origin and URL-parses it,
+  and `"null"` fails that parse before any source matching happens. So widening
+  the allowlist is not a fix either.
+
+  The table below is an **external platform measurement taken on 2026-10-03**, in
+  a local two-origin Chromium replica of the platform's frame topology. That
+  replica is deliberately not committed — it would be a second, drifting model of
+  a platform these packages do not own — so **no test here exercises any row, and
+  a green suite says nothing about them.** Treat it as a dated observation, and
+  re-measure it if the platform changes its sandbox trust tiers or the response
+  headers its static host stamps. Within the replica the no-headers positive
+  control is what makes the BLOCKEDs attributable to the headers rather than to
+  the harness; that is a claim about the replica's internal consistency, not that
+  the replica matches production.
+
+  | nested document's headers                        | result (replica, 2026-10-03) |
+  | ------------------------------------------------ | ---------------------------- |
+  | _(none)_ — positive control                      | **LOADED**                   |
+  | `frame-ancestors *`                              | BLOCKED                      |
+  | `frame-ancestors <app-host> <top-host>`          | BLOCKED                      |
+  | `frame-ancestors <unrelated>` — negative control | BLOCKED                      |
+  | `X-Frame-Options: SAMEORIGIN` only               | BLOCKED                      |
+
+  **`@civitai/app-sdk/blocks` gains two values and three types** — minor, not
+  patch, because the `./blocks` subpath grows public surface:
+  `fetchNestedDocument(options)` and `NestedDocumentError`, plus
+  `FetchNestedDocumentOptions`, `NestedDocument` and `NestedDocumentErrorCode`.
+  Zero new dependencies; the module is browser-safe and the subpath stays
+  runtime-agnostic. The `<base href>` rewrite itself stays **module-internal**:
+  nothing in or out of the tree calls it on its own, and an export is far cheaper
+  to add later than to remove once published.
+
+  The helper does the one thing that works: fetch the document's markup (the
+  static host answers `Access-Control-Allow-Origin: *`, so a null-origin `fetch`
+  succeeds where a frame load does not), rewrite its base URL to the absolute
+  location it came from, and hand the string to an iframe's `srcdoc` — which
+  inherits the parent's opaque origin and carries no response headers of its own.
+
+  **The `<base href>` is the whole mechanism, and it fails silently.** A `srcdoc`
+  document's base URL is `about:srcdoc`, inheriting the embedder's, so every
+  relative `src=` in the fetched markup resolves to nothing and no error message
+  mentions a base. One rule covers both directions: with no `<base href>` the base
+  becomes the **directory of the response's final URL** (`…/game/index.html` →
+  `…/game/`), so a redirect is followed rather than resolved one directory too
+  high; with a `<base href>` already present it is **resolved against that URL and
+  replaced**, so the author's intent survives and its form becomes absolute. A
+  `<base target>` with no `href` sets no base URL per spec and is left alone.
+
+  🔴 **An EMPTY `href` IS base-setting, and the first revision of this branch got
+  that wrong in the harmful direction.** The spec keys the document base URL on
+  the first `<base>` that HAS an `href` content attribute, and `""` parses
+  successfully against the document's own URL — so `<base href="">` sets the base
+  to the document, not to nothing. Reading it as absent left the tag a parser
+  actually honours pointing at the embedder: for `<head><base href=""><base
+href="/real/"></head>` the scan skipped past the empty tag to the second one, so
+  the helper rewrote the DECOY and left the empty tag first: it reported
+  `hadExistingBase: true` with a `/real/` base while Chromium resolved every
+  asset against the embedder's URL — the opaque-origin failure this module
+  exists to prevent, and a `baseHref` the caller was told was in use when it was
+  not. The empty tag is now the one rewritten. Whitespace-only is the same case
+  (the URL parser strips leading and trailing spaces) and both are pinned
+  together. Measured in real Chromium rather than read off the spec, in
+  `useNestedDocument.browser.test.tsx`: with `<base href="">` present the later
+  `/decoy-real/` tag has no effect, and deleting the empty tag from the fixture
+  makes the decoy win — which is what shows the measurement discriminates.
+
+  **It is NOT a de-duplication, and an earlier draft of this changeset said it
+  was.** The claim "the output never carries two `<base>` tags" was false at five
+  surfaces and is corrected at all of them. What is guaranteed is that **the
+  `<base href>` an HTML parser USES — the first base-setting one — is absolute**.
+  Markup declaring `<base href="/a/"><base href="/b/">` comes back with two, the
+  first rewritten and the second left exactly as it was (inert, as it already
+  was); and a `<base target>` left in place sits beside the inserted one, which
+  the suite has asserted all along.
+
+  **Only real markup is rewritten.** A `<base href>` or a `<head>` inside an HTML
+  comment, or inside a `<script>`/`<style>` body, is ignored; tag names match
+  case-insensitively (`<HEAD>`, `<Base>`); and a quoted attribute value may
+  contain `>`.
+
+  **`@civitai/blocks-react` gains `useNestedDocument({ src, baseUrl })`** →
+  `{ srcDoc, status, error }`, with `status` in
+  `'idle' | 'loading' | 'ready' | 'error'`. The three fields come from one state
+  object, so `srcDoc` is non-null exactly when `ready` and `error` exactly when
+  `error`. A mount with a `src` starts at `loading` rather than flashing `idle`;
+  unmounting aborts the fetch and writes no state.
+
+  Changing `src` restarts and aborts the previous fetch, and `status` returns to
+  `'loading'` **in the same render that changes `src`** — so no frame ever shows
+  the previous document as `'ready'` beside a new `src`.
+
+  The fetch carries a **30-second deadline**. The hook owns its `AbortController`
+  and never exposes it, so without one a response that never arrived left the hook
+  on `'loading'` forever with nothing a caller could cancel. On the deadline the
+  request is aborted and `status` becomes `'error'` with a message naming the
+  timeout. 30 seconds matches this package's existing `'protocol'`-class bound
+  (`DEFAULT_REQUEST_TIMEOUT_MS`, `ENTITLEMENTS_TIMEOUT_MS`): a static-host round
+  trip with no person in the loop. A timeout is reported; the hook's own aborts
+  (unmount, a `src` change) stay silent, as they must.
+
+  **Prefer a single-document design, and the docs now say so first.** An engine
+  build (Defold, Unity WebGL, Phaser) is a `<canvas>` plus a JS loader that
+  normally mounts straight into the block's own document, which avoids the problem
+  class entirely. The helper is the fallback for when a separate document is
+  genuinely required. `docs/build-your-first-app-block.md` carries that guidance
+  in full, immediately after the manifest's sandbox rules — where an author
+  designing the app actually hits it. Every other surface (both package READMEs,
+  the barrel comments, the three test headers) states the constraint in one sentence
+  and points at a single canonical derivation instead of restating it. It had been
+  duplicated across 11 surfaces with nothing checking them for agreement — which
+  is how two measured claims in the test headers beside it went stale.
+
+  **The returned string is deliberately NOT sanitized**, and that is stated at
+  every surface rather than left implicit: it is the app's own bundled markup and
+  scripts, and stripping them would remove the thing the nested document exists to
+  run. The consequence is the contract — pass a `src` you control, and put your own
+  `sandbox` attribute on the nested iframe.
+
+  **Coverage.** 53 unit tests in `@civitai/app-sdk`
+  (`test/blocks/nestedDocument.test.ts`) over every branch — base injection with
+  and without a `<head>`, with and without an existing `<base>`, quoted/unquoted/
+  empty/whitespace-only hrefs (including an empty one declared AHEAD of a real
+  one), doctype-only and empty documents, a `<base href>` and a `<head>`
+  hidden in an HTML comment, a `<base` inside an inline `<script>` and inside a
+  `<style>` body, `>` inside a double- and a single-quoted attribute value,
+  uppercase and mixed-case tags, two `<base href>` tags, relative-src resolution
+  against an explicit base / `document.baseURI` / `location.href` / nothing at
+  all, a redirected response, a response carrying no `url`, non-OK status,
+  rejected fetch, failed body read, abort pass-through, and a missing `fetch`
+  global. Every expected value is a literal string, never derived from the
+  implementation.
+
+  17 browser-mode tests in `@civitai/blocks-react`
+  (`test/useNestedDocument.browser.test.tsx`) cover the hook's state machine and —
+  this is why they are in the browser tier — mount the produced string as a real
+  `srcdoc` and assert `img.src` **as Chromium resolved it**, so the base-href claim
+  is a measured resolution rather than a restatement of the string the
+  implementation built. A negative control renders the same markup _without_ a
+  base and shows it resolving to the embedder instead. One case mounts a document
+  whose inline script holds a `<base …>` **string literal** and asserts the script
+  still RUNS and the literal is byte-identical — a property only a real JS engine
+  can show, with a positive control proving a `srcdoc` script can set the title in
+  this harness at all. Suites that assert a zero carry a positive control beside
+  it.
+
+  7 unit-tier tests in `@civitai/blocks-react`
+  (`test/useNestedDocument.test.tsx`) pin the two properties the browser tier
+  structurally cannot see — the 30-second deadline (at the deadline, and a
+  29,999 ms boundary on the other side of it; an unmount abort NOT reported as a
+  timeout; the timer released synchronously on cleanup; and a control showing an
+  ordinary HTTP error still reports the host's own message) and that no render
+  pairs a new `src` with the previous document.
+
+  🔴 **A `Response` stub with no `url` is why the requested-vs-final URL defect was
+  invisible to both tiers**, so every stub in both files now carries one and the
+  redirect cases pass a different one on purpose.
+
+  **Mutation-checked, 21 mutant SPELLINGS over the two implementation files (15 in
+  `nestedDocument.ts`, 6 in `useNestedDocument.ts`), all killed** — 17 if
+  same-defect spellings are collapsed into families. Unmutated baseline run as the
+  positive control (53/53, 7/7, 17/17). Exact-literal replacement with the
+  occurrence count asserted to be 1, restoring from a `cp -a` copy and re-checking
+  its sha256 after every restore, so a failed restore cannot score a borrowed kill
+  for the next mutant.
+
+  ⚠ **This line read "17 mutants" and that number is not derivable under any one
+  convention** — it came from splitting the prefix-match bullet into two while
+  collapsing the three "stop replacing" spellings and the two quote spellings into
+  one each, i.e. two conventions in one tally. Counted from the records below:
+  **21 spellings, 17 families**. The convention is now stated rather than implied,
+  and both numbers are given so neither has to be re-derived. The per-mutant
+  records were correct; only the headline was wrong. Re-run from scratch on
+  2026-10-04 after the empty-`href` fix changed the base-detection path, so every
+  count below is a fresh measurement and the previously recorded ones are
+  superseded. Several produced findings worth recording rather than a tick:
+
+  - **Delete the `<base>` insertion** (`return { html, … }` instead of
+    `insertInto(html, tag, scan)`) → 19 of 53 unit tests red, and 5 of 17 browser
+    tests, including the in-browser mechanism test with exactly the production
+    symptom: `expected 'http://localhost:…/sprite.png' to be
+'https://nested-fixture.example/engine/sprite.png'`.
+  - **Base on the document instead of its directory** (`docUrl.href` instead of
+    `new URL('.', docUrl).href`) → 25 of 53 unit tests red, first with
+    `expected '<base href="…/engine/boot.html">' to be '<base href="…/engine/">'`.
+    🔴 **But only 2 of the 17 browser tests see it** — the two that assert the
+    whole `srcDoc` string; every in-browser `img.src` assertion SURVIVES it. That
+    is not a gap in the test: a `<base href>` naming the document resolves a
+    relative URL identically to one naming its directory, so the two are
+    behaviourally equivalent for asset loading and no amount of resolution testing
+    can separate them. The directory form is kept because it is what the caller is
+    handed as `baseHref`; the literal-string assertions are what pin it, and that
+    division is stated in both test headers rather than left to look like
+    redundant coverage.
+  - 🔴 **Treat an EMPTY `href` as absent** (`href !== ''` back on `scanDocument`'s
+    `wantHref` test) → 2 of 53 unit red and 1 of 17 browser. **This was the
+    implementation, and both tiers asserted it, until 2026-10-04** — which is the
+    one mutant in this battery that was a real shipped defect rather than a
+    hypothetical. The browser red is the one that shows the harm instead of the
+    bytes: `expected 'http://localhost:…/?sessionId=…' to be
+'https://nested-fixture.example/engine/boot.html'`, i.e. `document.baseURI`
+    landing on the EMBEDDER. The whitespace-only case is NOT red under it
+    (`'   ' !== ''`), which is exactly why the two are now pinned side by side.
+  - **Stop replacing an existing `<base href>`** → killed in every faithful
+    spelling, but the count **depends on the spelling**, so there is no single
+    number for this mutant: inserting alongside immediately after `<head>` → 9
+    unit tests red; the scan reporting no base at all → 13; detecting the tag,
+    ignoring its href and inserting the directory base alongside with
+    `hadExistingBase: true` → 13. Nine assertions are red in **all three** — among
+    them the two that count `<base` occurrences — which is what makes the guard
+    sound rather than any one of the numbers. The third spelling's own count moved
+    6 → 13 between sweeps because the spelling is not recoverable from a
+    paraphrase, so the replacement is now written out.
+  - **Mis-handle the quoted-attribute state** → also spelling-dependent, because
+    the state has two characters in it: honouring only `'` → 12 red; honouring
+    only `"` → 2 red. Each spelling is blind to the other quote character, which
+    is why both a double- and a single-quoted `>` fixture are present.
+  - **Stop skipping HTML comments** → 2 red. 🔴 **This mutant SURVIVED the first
+    sweep, and finding that is what the sweep was for.** The two plainest
+    commented-`<base>`/`<head>` fixtures cannot see it: with the comment skip
+    gone, the markup-declaration branch (`<!…>`) still swallows the comment,
+    because it ends at the first `>` and those fixtures have none before the
+    decoy. The guard was unreachable and scored a false green. Two fixtures with a
+    `>` early in the comment reach it, and those are the two reds.
+  - **Stop skipping `<script>`/`<style>` bodies** → 2 unit red, and exactly 1
+    browser red: the script-runs case, the only assertion anywhere that a real JS
+    engine executed the rewritten document.
+  - **Drop tag-name case-insensitivity** → 2 red. **Match the tag name as a
+    prefix** rather than whole (the scanner's equivalent of dropping a `\b`) → 1
+    red each for `head` and `base`, the `<header>`/`<basefont>` test.
+  - **Ignore the response's final URL** → 2 red, the two redirect cases.
+  - **Reinstate a quadratic regex existing-base walk** (`html.matchAll(
+/<base\b[^>]*>/gi)` plus an `href` pattern per match) → 5 red, including the
+    pathological-input timing guard with its own message, while the 576 KB
+    **benign control stayed green**. That pair is what attributes a failure to the
+    input's SHAPE rather than to a loaded machine.
+
+        🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+        stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+        the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+        same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+        1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+        code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+        gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+        `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+        single measurements on one machine.
+
+  - **In the hook:** the deadline wired to the shared controller but not
+    distinguished from an unmount (the swallowing described below) → 1 red,
+    `expected 'loading' to be 'error'`; flagging without aborting → 1 red, same
+    assertion, different cause; the constant 30_000 → 5_000 → 2 red (the message
+    and the boundary); dropping the render-phase reset → 2 red; keeping the reset
+    but returning the stale state → the same 2.
+  - 🔴 **Dropping `clearTimeout` from the effect cleanup also SURVIVED the first
+    sweep**, and for a reason worth keeping: it changes no state at all, because
+    `abort()` on an already-aborted controller is a no-op and `.finally` clears
+    the timer a microtask later anyway. What it does change is that every unmount
+    leaves a 30-second timer holding the effect's closure — so the pending-timer
+    COUNT is the observable, and that assertion had to be added rather than
+    assumed.
+
+  **Two real defects were fixed in this branch rather than worked around.**
+
+  1. **`js/polynomial-redos` (CodeQL, high) — and the alert was only half of it.**
+     The first revision found the existing `<base href>` with a single pattern,
+     `/<base\b[^>]*?\bhref\s*=\s*(…)[^>]*>/i`: a lazy `[^>]*?` nested inside a
+     match that also ends in `[^>]*`, so the engine retries the inner scan from
+     every start position. The second revision split it into two linear-looking
+     regexes, which **cleared the alert and left the asymptotics quadratic** —
+     `/<base\b[^>]*>/g` still rescans `[^>]*` from every `<base` start when the
+     document holds a long run with no `>`. That is 4× per doubling, and measured
+     in **seconds** on a 192 KB input (1.8-2.9 s across three sittings — the spread
+     is machine load, which is why the figure is given as a range and the
+     asymptotic shape, not as a single number). The fix is a single left-to-right
+     scanner that advances its cursor by at least one character per iteration and
+     never restarts, pinned by the timing guard above: single-digit milliseconds
+     at that same 192 KB, against a 500 ms bound.
+  2. **Finding a `<base>` in the wrong places was actively harmful, not merely
+     over-eager.** A `<base href>` in an HTML comment was "found" and the
+     replacement spliced _inside_ the comment, leaving the document with **zero**
+     base elements where ignoring the comment inserts after `<head>` and works; a
+     `<base` in an inline script string was rewritten into a syntax error, so the
+     script did not run at all; and a `<base>` whose attribute value contained `>`
+     was read as having no `href`, silently discarding the author's declared base.
+     The scanner tracks comments, raw-text bodies and quoted attribute values, so
+     all three are now the documented behaviour with a literal-string test each.
+
+- 5279f8f: Mirror the host's workflow-snapshot fields, and add the training-publish pair.
+
+  **`BlockWorkflowSnapshot` now types every field the host emits (#524).** Five
+  fields the host has sent for several releases were missing from the SDK type, so
+  a block could only read them through a cast: `modelSubstitutions`,
+  `textOutputs`, `textOutputWithheld`, `toolCalls` and `stepOutputs`.
+  `snapshot.textOutputs` — the reply of a `chat-completion` step — now
+  type-checks without one. New exported types: `BlockModelSubstitution`,
+  `ModelSubstitutionReason`, `BlockStepToolCall`.
+
+  **Training-publish fields (host support pending).** `trainedEpochs` on
+  `BlockWorkflowSnapshot` lists the epochs of a pass-through `training` /
+  `imageResourceTraining` step that produced a checkpoint; the checkpoint itself
+  is deliberately not exposed. The viewer publishes one by being navigated
+  (`useCivitaiNavigate`, `scope: 'site'`) to
+  `models/train/from-orchestrator?workflowId=<id>&epoch=<n>`. `publishedModel`
+  (on both `BlockWorkflowSnapshot` and `AppWorkflow`) then reports the resulting
+  model. Both are optional and absent on hosts that do not emit them yet. New
+  exported types: `BlockTrainedEpoch`, `BlockPublishedModel`.
+
+  **Validator (`@civitai/blocks-react`).** The inbound snapshot and `AppWorkflow`
+  guards now shape-check every new field when present, on the same terms as
+  `autoClaim`: absent is valid, present-but-malformed drops the message. The
+  open-ended string unions (`modelSubstitutions[].reason`, `trainedEpochs[].$type`,
+  `toolCalls[].type`) are checked as strings rather than against today's members, so a host adding a
+  value does not drop polls in already-shipped blocks.
+
+  **Mock host.** A pass-through `training` / `imageResourceTraining` body can now
+  succeed with `trainedEpochs` (new opt-in `generation.trainedEpochs` knob, default
+  `0`, which omits the field) and, when `generation.trainingPublishedModel` is set, a
+  `publishedModel`. Only those two `$type`s get them. The mock never fabricates a
+  checkpoint url, and it does not simulate the real `maxBuzz` timeout.
+
+  **Docs.** `training` and `imageResourceTraining` were described as
+  platform-internal, "not an invitation". The host explicitly allows both on the
+  pass-through arm; the README and the orchestrator docblocks now say so, with the
+  bounds that apply (see `WorkflowBodyPassThroughStep.maxBuzz`).
+
+### Patch Changes
+
+- 220aa39: docs: delete the unverifiable host citations from the App Storage error docblocks
+
+  `appStorageErrors.ts`'s header and two of its member docblocks cited the host's
+  internals twice over: one host error string presented as _the_ App Block storage
+  kill-switch refusal, and a walk-through of the host code that raises it, down to
+  line numbers in a file in another repository.
+
+  Both are **deleted rather than re-pointed**, and the deletion is the fix:
+
+  - A line number in another repository's file is a citation nothing here can
+    check. There is no test, guard or CI job in this repository that reads the
+    host's router, so an unrelated insertion upstream silently invalidates every
+    offset — and re-pointing them would only reset the clock on the same defect.
+  - The string was never load-bearing. `classifyAppStorageError` matches only the
+    six messages this module exports — five by containment, the per-value one by
+    pattern — so it answers `null` for the cited string exactly as it does for
+    every other non-ceiling rejection. The docblocks already labelled it an
+    _illustration, not a bound_, and the structural claim it illustrated — every
+    rejection outside the classified family arrives on the same `error` field and
+    classifies `null` — stands on the bridge's blanket catch arms, not on any
+    example.
+
+  What is kept: the retraction history of the two enumeration attempts, including
+  that the second missed four more messages and that one of those fit neither of
+  its published tables. That is the reason this module carries no list of host
+  strings, and it needs none of the deleted specifics to make its point. Nothing
+  replaces the removed illustration — inventing a fresh one would re-create a
+  citation with the same expiry.
+
+  Prose only, in both packages — no runtime behaviour changed and no export moved.
+  Patch releases because the published artifacts _are_ these documents: the
+  docblocks ship inside `@civitai/app-sdk`'s `.d.ts` (and so reach IDE hover), and
+  the `@civitai/blocks-react` README ships in its tarball.
+
+- a62f280: Classify the two refusals civitai.com now sends when a publishing call needs the
+  viewer's signed-in session. A bare `UNAUTHORIZED` (the session ended, e.g.
+  signed out in another tab) is now `unauthenticated` in `@civitai/sdk` and sets
+  `CreatePostError.signInRequired` in `@civitai/blocks-react`, so an app offering
+  sign-in on that branch shows it instead of "unavailable". "…belongs to a
+  different account; reload the page to continue" is now `forbidden` in
+  `@civitai/sdk`; its message tells the viewer to reload. Existing mappings are
+  unchanged.
+- 7a896c3: `dev:live`: the live host now refuses `PUBLISH_GENERATION_OUTPUTS` instead of forwarding it
+
+  **Behaviour change for local `dev:live` harness users.** `createLiveHost` used to
+  forward `usePublishGenerationOutputs().publish()` to civitai.com. Publishing now
+  requires the viewer's signed-in civitai.com session, which the local harness does
+  not have, so the live host replies immediately on `PUBLISH_RESULT` with an error
+  saying so (and logs it once), the same way it already refuses
+  `CREATE_POST_FROM_APP`. `publish()` rejects with that message; it makes no network
+  call.
+
+  Test publishing against the mock host — `createMockHost` or `Harness` from
+  `@civitai/blocks-react/testing`, with the `publishImageIds` / `publishError`
+  options. Production blocks are unaffected.
+
+- 8589877: Docs: correct how the host bounds a pass-through step (`kind: 'step'`, bare
+  `$type`). It asks the orchestrator for a `whatif` quote on both `estimate` and
+  `submit`. When quoted, it reserves `max(maxBuzz, quote)` — gated against the
+  token's per-call budget, so it can exceed 250 — and stamps no step timeout;
+  `maxBuzz` is the step timeout only when there is no quote. `estimate` returns
+  that reservation, not a bare echo of `maxBuzz`. The `WorkflowBodyPassThroughStep`
+  and `trainedEpochs` docblocks, the README, the orchestrator step-catalog notes
+  and the mock host's `trainedEpochs` knob said otherwise. Docs only; no runtime
+  change.
+
 ## 0.63.2
 
 ### Patch Changes
@@ -1672,10 +2126,10 @@ URL('https://civitai.com/evil').origin` is `https://civitai.com`).
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                  before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                           @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                  after    @civitai/theme       0.3.1                   — 1 copy
-                                           @civitai/components  0.4.2                   — 1 copy
+                                      before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                               @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                      after    @civitai/theme       0.3.1                   — 1 copy
+                                               @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens

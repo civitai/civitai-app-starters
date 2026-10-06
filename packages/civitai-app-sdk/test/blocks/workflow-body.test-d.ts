@@ -49,6 +49,7 @@ import type {
   WorkflowBodyPassThroughStep,
   WorkflowBodyStep,
   WorkflowBodyTextToImage,
+  WorkflowBodyTraining,
 } from '../../src/blocks/types.js';
 
 /** The `textToImage` member, narrowed out of the union for member-field asserts. */
@@ -96,6 +97,7 @@ expectTypeOf<WorkflowBody>().toEqualTypeOf<
   | WorkflowBodyCustomComfy
   | WorkflowBodyStep
   | WorkflowBodyPassThroughStep
+  | WorkflowBodyTraining
 >();
 
 // --- additionalResources is OPTIONAL on the textToImage member ---
@@ -443,6 +445,8 @@ if (someBody.kind === 'textToImage') {
   // readable here, which is the point: the compiler forces the second narrow
   // rather than letting a consumer assume every customComfy body is a recipe.
   expectTypeOf(someBody.mode).toEqualTypeOf<'recipe' | 'inline' | undefined>();
+} else if (someBody.kind === 'training') {
+  expectTypeOf(someBody.datasetId).toEqualTypeOf<string>();
 } else {
   // 🔴 Same shape one level down: narrowing to `kind === 'step'` leaves BOTH
   // arms, so `step` is `string | undefined` here and `params` is NOT readable.

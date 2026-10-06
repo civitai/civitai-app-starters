@@ -3,6 +3,7 @@ import type { LanguageModel, ToolSet } from 'ai';
 
 import { Agent } from './agent/agent.js';
 import { partsFromMessages } from './agent/parts.js';
+import { FreeTier, freeTierFetch } from './agent/free-tier.js';
 import { createAssistantModel } from './agent/provider.js';
 import { chatConfig } from './config.js';
 import { createMcpConnection, type McpConnection } from './mcp/clients.js';
@@ -61,6 +62,8 @@ export interface SessionOptions {
 export class ChatSession extends EventTarget {
   readonly app: AppClient;
   readonly api: OrchestrationApi;
+  /** The viewer's free allowance for chat replies. */
+  readonly freeTier: FreeTier;
   readonly orchestrationMcp: McpConnection;
   readonly siteMcp: McpConnection;
   readonly jobs: JobManager;
@@ -84,6 +87,7 @@ export class ChatSession extends EventTarget {
     this.#options = options;
     this.settings = loadSettings(settingsKey(options.scope));
     this.api = createOrchestrationApi(app);
+    this.freeTier = new FreeTier(() => this.api.getFreeTier());
     this.orchestrationMcp = createMcpConnection({ url: chatConfig.orchestrationMcpUrl, token: () => app.getToken() });
     this.siteMcp = createMcpConnection({ url: chatConfig.siteMcpUrl });
     // The site MCP's browse tools are anonymous; posting goes as the viewer, so it carries their token.
@@ -157,7 +161,14 @@ export class ChatSession extends EventTarget {
 
   #model(id: string): LanguageModel {
     let model = this.#models.get(id);
-    if (!model) this.#models.set(id, (model = createAssistantModel(this.app, { model: id })));
+    if (!model) {
+      const wrap = (inner: typeof fetch) =>
+        freeTierFetch(inner, id, this.freeTier, () => {
+          const tier = this.settings.assistantTier ?? 'auto';
+          return { useFree: tier !== 'paid', payWhenOut: tier !== 'free' };
+        });
+      this.#models.set(id, (model = createAssistantModel(this.app, { model: id, wrap })));
+    }
     return model;
   }
 

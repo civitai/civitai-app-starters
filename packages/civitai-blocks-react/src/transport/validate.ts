@@ -309,14 +309,39 @@ export function isValidWorkflowSnapshot(s: unknown): s is BlockWorkflowSnapshot 
       if (!isObject(o) || typeof o.$type !== 'string') return false;
     }
   }
-  if (s.trainedEpochs !== undefined) {
-    if (!Array.isArray(s.trainedEpochs)) return false;
-    for (const e of s.trainedEpochs) {
-      if (!isObject(e) || typeof e.$type !== 'string') return false;
-      if (!Number.isInteger(e.epochNumber)) return false;
-    }
-  }
+  if (s.trainedEpochs !== undefined && !isValidTrainedEpochs(s.trainedEpochs)) return false;
   if (s.publishedModel !== undefined && !isValidPublishedModel(s.publishedModel)) return false;
+  if (s.trainingQuote !== undefined && !isValidTrainingQuote(s.trainingQuote)) return false;
+  return true;
+}
+
+/**
+ * Shape check for `trainingQuote` — the quote a `kind: 'training'` estimate
+ * returns. The block passes `quoteId` back verbatim and renders `total`, so both
+ * are pinned: a non-empty string, a finite number. `quoteId`'s `tq_…` FORMAT is
+ * deliberately not pinned — it is opaque, and a host changing it must not turn
+ * every estimate reply into a dropped one.
+ */
+function isValidTrainingQuote(q: unknown): boolean {
+  if (!isObject(q)) return false;
+  if (!isNonEmptyString(q.quoteId)) return false;
+  if (!isFiniteNumber(q.total)) return false;
+  if (!Number.isInteger(q.imageCount) || (q.imageCount as number) < 0) return false;
+  return typeof q.expiresAt === 'string';
+}
+
+/**
+ * Shape check for `trainedEpochs` — shared by {@link isValidWorkflowSnapshot}
+ * and the `AppWorkflow` row guard, which carry the same field. `$type` is
+ * checked as a STRING, not against today's members (see the forward-
+ * compatibility note in {@link isValidWorkflowSnapshot}).
+ */
+function isValidTrainedEpochs(epochs: unknown): boolean {
+  if (!Array.isArray(epochs)) return false;
+  for (const e of epochs) {
+    if (!isObject(e) || typeof e.$type !== 'string') return false;
+    if (!Number.isInteger(e.epochNumber)) return false;
+  }
   return true;
 }
 
@@ -854,8 +879,9 @@ function isValidAppWorkflow(w: unknown): boolean {
     if (img.height !== null && !isFiniteNumber(img.height)) return false;
     if (img.nsfwLevel !== null && !isFiniteNumber(img.nsfwLevel)) return false;
   }
-  // OPTIONAL — absent on hosts that predate it; checked only when present.
+  // OPTIONAL — absent on hosts that predate them; checked only when present.
   if (w.publishedModel !== undefined && !isValidPublishedModel(w.publishedModel)) return false;
+  if (w.trainedEpochs !== undefined && !isValidTrainedEpochs(w.trainedEpochs)) return false;
   return true;
 }
 
@@ -1144,6 +1170,60 @@ export function isValidCreatePostResult(p: unknown): boolean {
     }
   }
   if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+/**
+ * Reply to `PREPARE_TRAINING_DATASET`. A well-formed reply carries EITHER a
+ * `result` (`{ datasetId: non-empty string, count: integer ≥ 0, rejected: [{
+ * imageId: number, reason: string }] }`) OR an `error`; one with neither is
+ * malformed and dropped.
+ *
+ * 🔴 `error` IS SHAPE-CHECKED ONLY — the same decision as
+ * {@link isValidCreatePostResult}: the host's closed codes share the field with
+ * any server message it forwards, and a membership check would drop those
+ * replies before correlation, leaving the request to its timer.
+ *
+ * `rejected[].reason` is checked as a STRING, not against today's six members —
+ * the host adding a reason must not make every prepare reply that carries it a
+ * dropped one (the forward-compatibility rule in {@link isValidWorkflowSnapshot}).
+ */
+export function isValidTrainingDatasetResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (!isNonEmptyString(r.datasetId)) return false;
+    if (!Number.isInteger(r.count) || (r.count as number) < 0) return false;
+    if (!Array.isArray(r.rejected)) return false;
+    for (const x of r.rejected) {
+      if (!isObject(x) || !isFiniteNumber(x.imageId) || typeof x.reason !== 'string') {
+        return false;
+      }
+    }
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+/**
+ * Reply to `RUN_TRAINING`. A well-formed reply carries EITHER a `snapshot` (a
+ * valid {@link isValidWorkflowSnapshot} — the block polls its `workflowId`) OR an
+ * `error`; one with neither is malformed and dropped.
+ *
+ * 🔴 `error` IS SHAPE-CHECKED ONLY, and here a membership check would cost the
+ * most: this request carries the TEN-MINUTE consent bound, and the host forwards
+ * server refusals (an expired quote, a changed body, an ineligible image) in this
+ * field. A dropped refusal would leave a Train button spinning for ten minutes.
+ */
+export function isValidTrainingResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.snapshot !== undefined && !isValidWorkflowSnapshot(p.snapshot)) return false;
+  if (p.snapshot === undefined && p.error === undefined) return false;
   return true;
 }
 
@@ -1595,6 +1675,13 @@ export function payloadValidatorFor(
     // `validate.test.ts`.
     case 'CREATE_POST_RESULT':
       return isValidCreatePostResult;
+    // Same caveat as CREATE_POST_RESULT: presence is compiler-enforced, the
+    // identity is pinned by test (`validate.test.ts`). TRAINING_RESULT settles a
+    // charged run.
+    case 'TRAINING_DATASET_RESULT':
+      return isValidTrainingDatasetResult;
+    case 'TRAINING_RESULT':
+      return isValidTrainingResult;
     case 'IMAGE_UPLOAD_RESULT':
       return isValidImageUploadResult;
     case 'IMAGE_SCAN_RESOLVED':

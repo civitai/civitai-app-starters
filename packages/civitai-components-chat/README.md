@@ -106,15 +106,50 @@ configureChat({ autoRunLimit: 0 }); // ask before every generation
 ```
 
 `name` (what the chat calls itself in its sidebar, to its assistant and in messages; default
-"Civitai Chat"), `model` (the default chat model), `models` (others the viewer may pick in Settings, each `{ id,
-label, note }`), `orchestrationMcpUrl`, `siteMcpUrl` and `autoRunLimit` (the Buzz a new viewer's
+"Civitai Chat"), `model` (the default chat model), `models` (others the viewer may pick in Settings,
+each `{ id, label, note }`; none by default, e.g. `configureChat({ models: [{ id: 'z-ai/glm-5.3-flash',
+label: 'GLM 5.3 Flash', note: 'Follows instructions closely.' }] })`), `orchestrationMcpUrl`, `siteMcpUrl` and `autoRunLimit` (the Buzz a new viewer's
 generations may cost before the chat asks) are the settings. In Settings the viewer picks the
 assistant's model from the default, `models`, or any model id the orchestrator's chat endpoint
 serves (Custom); conversation titles always use the default.
 
+Settings' Assistant choice also sets how replies are paid for, when the orchestrator has a free daily
+allowance for the default model (`GET /v2/consumer/free-tier`; free requests carry
+`X-Civitai-Tier: free`): **Auto** (the default) uses free replies while they last and then Buzz, and
+also Buzz when a free reply has not started after 12 seconds (free work waits behind paid work);
+**Free** uses only free replies, and once they are used up a reply says until when and offers
+**Continue with Buzz**, which switches to Auto and runs it again; **Default** always uses Buzz. A
+listed or custom model uses its own free allowance first if it has one. Without a free tier the
+choice is the model alone.
+
 The message box takes slash commands, run by the chat itself and never sent to the assistant:
 `/clear` (or `/new`) starts a new chat, `/model` shows or switches the assistant's model
-(`/model smart`, `/model default`, `/model <id>`), and `/help` lists them.
+(`/model default`, `/model <label of a listed model>`, `/model <id>`), and `/help` lists them.
+
+A page adds its own with `commands`, which can also replace or remove the built-ins:
+
+```ts
+import type { ChatCommandsOption } from '@civitai/components-chat/civitai-chat';
+
+chat.commands = {
+  pin: {
+    usage: '/pin <name>',
+    help: 'Pin the latest picture to your board',
+    run: (arg, { send, compose, notify, conversationId }) => board.pinLatest(arg),
+  },
+  logo: { usage: '/logo <brand>', help: 'Start a logo panel', run: (arg, { send }) => send(`Build me a logo panel for ${arg}`) },
+  model: null, // remove a built-in
+} satisfies ChatCommandsOption;
+
+// Or build the whole set from the built-ins:
+chat.commands = (defaults) => ({ ...defaults, clear: { ...defaults.clear!, help: 'Start over' } });
+```
+
+A name adds a command or replaces the built-in of that name; `null` removes one. Names are a letter
+followed by letters, digits, `_` or `-`. Page commands appear in the suggestions while typing, Tab
+completion and `/help`. `run(arg, context)` gets the text after the name; `context.send` sends a
+message as the viewer, `compose` puts text in the message box, and `notify` shows a short note. A
+command that throws shows that it did not work.
 
 The microphone button lets the viewer talk instead of typing. Where the browser has audio worklets,
 it streams 16 kHz PCM to a `liveTranscription` step and the words appear as they are spoken (a few

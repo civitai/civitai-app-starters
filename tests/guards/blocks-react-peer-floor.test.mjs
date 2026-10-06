@@ -445,10 +445,27 @@ const PEER_VALUE_SYMBOL_SINCE = {
 // does not import. Same reasoning as `isValidBlockIdempotencyKey` above —
 // and `injectBaseHref` is not even exported from `./blocks` (module-internal).
 //
-// 🔴 OWED after 0.57.0 publishes: empty this list and convert the entry to a
-// measurement against the real tarball. A populated list pins the floor to the
-// NEXT release forever.
-const PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH = ['fetchNestedDocument'];
+// RETIRED 2026-10-06 on the Version Packages PR (#535) that releases app-sdk
+// 0.57.0 — the THIRD time `PREDICTION HAS COME TRUE` fired. Retired per that
+// assertion's steps 1 and 2: the list is emptied and THE FLOOR IS LEFT WHERE IT
+// IS (`>=0.57.0`). The `fetchNestedDocument` entry in `PEER_VALUE_SYMBOL_SINCE`
+// stays at `0.57.0`.
+//
+// CONVERSION COMPLETE 2026-10-06: #535 merged (`5168275`), the release job
+// (run 37416428817) published app-sdk 0.57.0 — `_npmUser = GitHub Actions`,
+// `dist.attestations` present — and the entry was re-read off THAT tarball
+// (`npm pack @civitai/app-sdk@0.57.0`, `grep -rl <symbol> package/dist`):
+//
+//   fetchNestedDocument   0.57.0: PRESENT, 4 files    0.56.1: ABSENT, 0 files
+//
+// POSITIVE CONTROL — `BLOCK_SCOPES` is PRESENT in both tarballs (7 files each),
+// so the 0.56.1 ABSENT is a real absence, not an extraction that read nothing.
+// NEGATIVE CONTROL — `__NOPE_7f3a__` is ABSENT from both (0 files).
+//
+// The prediction was CORRECT, so `PEER_VALUE_SYMBOL_SINCE` stays at `0.57.0`
+// and the floor stays at `>=0.57.0` — step 4, "leave it alone if the
+// measurement agrees". Nothing here is owed.
+const PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH = [];
 
 /**
  * The same ledger for SUBPATHS. A bare `import '@civitai/app-sdk/safe-storage'`

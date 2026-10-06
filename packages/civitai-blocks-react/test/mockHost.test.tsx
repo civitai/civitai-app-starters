@@ -392,6 +392,35 @@ describe('createMockHost', () => {
     expect(result.current.workflows.find((w) => w.workflowId === 'wf_app_1')?.status).toBe('canceled');
   });
 
+  // INVARIANT guard (green before the AppWorkflow.trainedEpochs change too): the
+  // mock replies with canned rows verbatim, so a training row's trainedEpochs
+  // must reach the hook intact — through the real inbound row validator.
+  it('QUERY_APP_WORKFLOWS passes a training row\'s trainedEpochs + publishedModel through to the hook', async () => {
+    const trainingRow: AppWorkflow = {
+      workflowId: 'wf_train',
+      status: 'succeeded',
+      images: [],
+      cost: 250,
+      createdAt: '2026-07-14T12:05:00.000Z',
+      trainedEpochs: [
+        { $type: 'training', epochNumber: 1 },
+        { $type: 'training', epochNumber: 2 },
+      ],
+      publishedModel: { modelId: 71, modelVersionId: 83, published: false },
+    };
+    uninstall = createMockHost({ appWorkflows: { workflows: [trainingRow, ...APP_WFS] } }).install();
+    const { result } = renderHook(() => useAppWorkflows());
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error).toBeNull();
+    expect(result.current.workflows[0]?.trainedEpochs).toEqual([
+      { $type: 'training', epochNumber: 1 },
+      { $type: 'training', epochNumber: 2 },
+    ]);
+    expect(result.current.workflows[0]?.publishedModel).toEqual({ modelId: 71, modelVersionId: 83, published: false });
+    expect(result.current.workflows.slice(1)).toEqual(APP_WFS);
+  });
+
   it('appWorkflowsError forces BOTH bridges to the error variant (read errors, cancel rejects)', async () => {
     uninstall = createMockHost({ appWorkflowsError: 'block lacks scope' }).install();
     const { result } = renderHook(() => useAppWorkflows());

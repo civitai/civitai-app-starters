@@ -70,6 +70,10 @@ import {
   type BlockCollectionFollowErrorCode,
   type BlockCreatePostHostError,
   type BlockCreatePostResult,
+  type BlockPrepareTrainingDatasetHostError,
+  type BlockRunTrainingHostError,
+  type BlockTrainingDatasetResult,
+  type BlockTrainingRejectionReason,
   type ColorDomain,
   type SharedStorageValue,
   type Theme,
@@ -94,6 +98,7 @@ import {
   idempotencyKeyDeniedMessage,
   idempotencyKeyRefusal,
 } from './mockHostIdempotency.js';
+import { RUN_TRAINING_ERROR_CODES } from '../hooks/useRunTraining.js';
 import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
 
@@ -132,6 +137,10 @@ const preferredAccountType = (body: WorkflowBody): BuzzAccountType | undefined =
     case 'customComfy':
       return body.mode === 'inline' ? undefined : body.params.accountType;
     case 'step':
+      return undefined;
+    // A training body names no pool either: the host's `blockTrainingBodySchema`
+    // is `.strict()` with no `accountType`.
+    case 'training':
       return undefined;
     default: {
       // Exhaustiveness check: a new `WorkflowBody` member makes this assignment
@@ -317,10 +326,13 @@ export interface MockGenerationScenario {
    */
   images?: string[] | ((req: WorkflowBody) => string[]);
   /**
-   * How many trained epochs a succeeded PASS-THROUGH training step reports on
+   * How many trained epochs a succeeded training run reports on
    * {@link BlockWorkflowSnapshot.trainedEpochs} — epochs `1…n`, each tagged with
-   * the submitted `$type`. Applies only to a `{ kind: 'step', $type: 'training' }`
-   * or `'imageResourceTraining'` body; every other body is unaffected.
+   * the run's `$type`. Applies only to a PASS-THROUGH `{ kind: 'step', $type:
+   * 'training' }` / `'imageResourceTraining'` body (tagged with that `$type`) and
+   * to a `kind: 'training'` run started through `RUN_TRAINING` (tagged
+   * `'training'`, the step the host builds for it); every other body is
+   * unaffected.
    *
    * Default `0`: the field is omitted, as the host omits it for a run that
    * produced no checkpoint. Opt in with `n > 0` to simulate a finished run —
@@ -338,6 +350,11 @@ export interface MockGenerationScenario {
    * NOT simulated: the mock neither quotes nor times out, so a success here
    * says nothing about whether your run is quoted, what it costs, or whether
    * it finishes.
+   *
+   * Snapshot-only: the app-queue read (`QUERY_APP_WORKFLOWS`) replies with the
+   * canned {@link MockHostOptions.appWorkflows} rows verbatim — they carry no
+   * body, so the mock cannot tell a training row from any other. To exercise
+   * {@link AppWorkflow.trainedEpochs}, put it on the rows you pass there.
    */
   trainedEpochs?: number;
   /**
@@ -345,7 +362,8 @@ export interface MockGenerationScenario {
    * {@link BlockWorkflowSnapshot.publishedModel} — simulating a run the viewer
    * has started (`published: false`) or finished (`published: true`) publishing
    * through the model wizard. Default: unset (field omitted). For the app-queue
-   * read, put `publishedModel` on the rows you pass as `appWorkflows`.
+   * read, put `publishedModel` (and `trainedEpochs`) on the rows you pass as
+   * `appWorkflows`.
    */
   trainingPublishedModel?: BlockPublishedModel;
 }
@@ -361,6 +379,86 @@ const passThroughTrainingType = (
   const t = (body as { $type?: unknown }).$type;
   return t === 'training' || t === 'imageResourceTraining' ? t : undefined;
 };
+
+/**
+ * The orchestrator `$type` a body's run trains with, if it trains at all: the
+ * pass-through training `$type`s above, and `'training'` for a
+ * `kind: 'training'` body — the host builds an ai-toolkit `training` step for it.
+ */
+const trainingStepType = (body: WorkflowBody): BlockTrainedEpoch['$type'] | undefined =>
+  body.kind === 'training' ? 'training' : passThroughTrainingType(body);
+
+/**
+ * The training bounds the mock enforces — COPIES of `@civitai/app-sdk/blocks`'s
+ * `BLOCK_TRAINING_DATASET_MAX_ITEMS`, `BLOCK_TRAINING_CAPTION_MAX_CHARS` and
+ * `BLOCK_TRAINING_MAX_BUZZ_PER_RUN`, deliberately not value-imported: a value
+ * import of a symbol the newest PUBLISHED app-sdk lacks raises this package's
+ * peer floor (`tests/guards/blocks-react-peer-floor.test.mjs`). The copy is held
+ * to the SDK's value by `test/trainingKindFlow.test.tsx`, which imports both.
+ */
+export const MOCK_TRAINING_BOUNDS = {
+  datasetMaxItems: 50,
+  captionMaxChars: 1000,
+  maxBuzzPerRun: 5000,
+} as const;
+
+/**
+ * The host's `PREPARE_TRAINING_DATASET` item check, mirrored: the server's
+ * `blockTrainingDatasetItemsSchema` — 1…50 items, each EXACTLY `{ imageId:
+ * positive integer, caption: string ≤ 1000 }`. The real host runs this BEFORE any
+ * server call and refuses with `invalid training dataset`, so the mock does too.
+ */
+function isValidTrainingDatasetItems(items: unknown): boolean {
+  if (!Array.isArray(items)) return false;
+  if (items.length < 1 || items.length > MOCK_TRAINING_BOUNDS.datasetMaxItems) return false;
+  return items.every((it) => {
+    if (typeof it !== 'object' || it === null || Array.isArray(it)) return false;
+    const keys = Object.keys(it);
+    if (keys.length !== 2 || !keys.includes('imageId') || !keys.includes('caption')) return false;
+    const { imageId, caption } = it as { imageId: unknown; caption: unknown };
+    return (
+      typeof imageId === 'number' &&
+      Number.isInteger(imageId) &&
+      imageId > 0 &&
+      typeof caption === 'string' &&
+      caption.length <= MOCK_TRAINING_BOUNDS.captionMaxChars
+    );
+  });
+}
+
+/** The real server's refusal for a training request from a token without the spend scope. */
+export const MOCK_TRAINING_SCOPE_ERROR = 'block lacks ai:write:budgeted scope';
+/** The real server's refusal for an unknown, expired or spent quote on `RUN_TRAINING`. */
+export const MOCK_TRAINING_QUOTE_GONE_ERROR =
+  'training quote not found, expired or already used — estimate again';
+/** The real server's refusal for a training estimate naming a dataset it does not hold. */
+export const MOCK_TRAINING_DATASET_GONE_ERROR = 'training dataset not found or expired';
+/**
+ * The real server's two refusals for a dataset with NOTHING admitted
+ * (`prepareBlockTrainingDataset`): every image failed eligibility, or every
+ * eligible image failed its import. The server THROWS rather than returning
+ * `count: 0`, so a successful reply always admits at least one image.
+ */
+export const MOCK_TRAINING_NONE_ELIGIBLE_ERROR =
+  'none of the requested images can be used for training';
+export const MOCK_TRAINING_NONE_IMPORTED_ERROR =
+  'none of the requested images could be prepared for training';
+/**
+ * The forced `RUN_TRAINING` errors that settle BEFORE the server claims (and so
+ * consumes) the quote: the host's own gate and dialog codes. Derived from the
+ * host-code list — every code except `submission-unconfirmed`, which the host
+ * emits only after a submit was sent. Any other forced error (a server message
+ * such as "Not enough Buzz for this training run.") stands for a refusal the
+ * server made AFTER its claim, so it consumes the quote.
+ */
+const PRE_CLAIM_RUN_TRAINING_ERRORS: ReadonlySet<string> = new Set(
+  RUN_TRAINING_ERROR_CODES.filter((c) => c !== 'submission-unconfirmed'),
+);
+
+/** Default quote total for a `kind: 'training'` estimate when {@link MockHostOptions.trainingQuoteTotal} is unset. */
+const DEFAULT_TRAINING_QUOTE_TOTAL = 500;
+/** The real quote lifetime (`BLOCK_TRAINING_QUOTE_TTL_SECONDS`, 15 min). */
+const TRAINING_QUOTE_TTL_MS = 15 * 60_000;
 
 /**
  * BUZZ scenario controls — simulate a balance so the insufficient-Buzz / top-up
@@ -770,6 +868,79 @@ export interface MockHostOptions {
    */
   createPostError?: BlockCreatePostHostError | string;
   /**
+   * Images `PREPARE_TRAINING_DATASET` leaves out, with their reasons — what
+   * `usePrepareTrainingDataset()` reports on `rejected`. Only entries whose
+   * `imageId` the request actually named are reported, and `count` is the rest,
+   * exactly as the server derives it. Absent → every image is admitted.
+   * Live-tunable via {@link MockHost.setScenario}.
+   *
+   * When this rejects EVERY named image the reply is an `error`, as on the real
+   * server — {@link MOCK_TRAINING_NONE_ELIGIBLE_ERROR}, or
+   * {@link MOCK_TRAINING_NONE_IMPORTED_ERROR} when every image that passed
+   * eligibility was rejected with an `import-*` reason. A success never has
+   * `count: 0`.
+   *
+   * KIND-FAITHFUL, like the rest of the training path: the mock holds the
+   * datasets it prepared, an estimate naming any other `datasetId` fails as the
+   * server's does, a quote is run at most once, and every training call needs
+   * `ai:write:budgeted` on the token ({@link MockHostOptions.consentGranted}) and
+   * a signed-in viewer. What it cannot model: image ownership and moderation (it
+   * has no images), the flag, and the page-only / dev-token refusals.
+   *
+   * ⚠️ The quote↔body check is NARROWER than the server's: the mock compares only
+   * `datasetId`, while the server hashes the whole body (minus `quoteId`) and
+   * refuses any change. A body edited between estimate and run passes here and
+   * fails in production.
+   */
+  trainingDatasetRejected?: Array<{ imageId: number; reason: BlockTrainingRejectionReason }>;
+  /**
+   * Force `PREPARE_TRAINING_DATASET` to reply with an `error` — a
+   * {@link BlockPrepareTrainingDatasetHostError} for a host refusal, or any other
+   * string for the free-text server-message variant. Absent → it prepares.
+   * Live-tunable via {@link MockHost.setScenario}.
+   */
+  trainingDatasetError?: BlockPrepareTrainingDatasetHostError | string;
+  /**
+   * The Buzz total a `kind: 'training'` estimate quotes. Default `500`. Above
+   * `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (5,000) the estimate fails exactly as the
+   * server's does. The run's terminal snapshot reports this as its `cost`.
+   * Live-tunable via {@link MockHost.setScenario}.
+   */
+  trainingQuoteTotal?: number;
+  /**
+   * Force `RUN_TRAINING` to reply with an `error` instead of starting a run — a
+   * {@link BlockRunTrainingHostError} (`'declined'`: the viewer dismissed the
+   * dialog, no run; `'submission-unconfirmed'`: the run MAY exist) or any other
+   * string for a server message. Absent → the run starts.
+   *
+   * Whether the QUOTE survives follows the real flow: the host's own gate and
+   * dialog codes (`declined`, `review-mode`, `block is not ready`, `sign in to
+   * train`, `invalid training request`, `no block token`) settle before the
+   * server claims the quote, so it stays runnable; `submission-unconfirmed` and
+   * any server message settle after the claim, so it is used up — re-running it
+   * gets the quote-gone error. Live-tunable via {@link MockHost.setScenario};
+   * `undefined` clears it.
+   *
+   * 🔴 Same real gap as {@link createPostError}: the consent dialog is HOST
+   * chrome, so the mock settles immediately where the real host waits on a click.
+   */
+  runTrainingError?: BlockRunTrainingHostError | string;
+  /**
+   * Make `RUN_TRAINING` resolve the server's spend-cap or temporary-availability
+   * refusal instead of a run:
+   * a snapshot `{ workflowId: 'failed', status: 'failed', cost: { total: <quote> },
+   * error: <this string> }` — the shape the real training submit returns when
+   * the viewer's daily / private-run Buzz cap, the per-app consent budget, the
+   * app's spend or rate limit (or its "temporarily unavailable" deny), or a
+   * dev-session cap stops the run (refunded, no run). `useRunTraining()` rejects
+   * it with `.refused`. Pass the server's text, e.g. `'daily Buzz cap reached: …'`.
+   * 🔴 The quote is CONSUMED, as on the server (it is claimed before the cap
+   * checks): running the same `quoteId` again gets the quote-gone error — estimate
+   * again. Absent → the run starts. Live-tunable via {@link MockHost.setScenario};
+   * `setScenario({ runTrainingCapRefusal: undefined })` clears it.
+   */
+  runTrainingCapRefusal?: string;
+  /**
    * Buzz pools a `SUBMIT_WORKFLOW` must REJECT when named in `body.accountType`
    * — simulates the real backend's content-rating clamp. The real host throws a
    * `BAD_REQUEST` at the currency-resolution boundary (before any spend) when a
@@ -957,6 +1128,11 @@ export type MockHostScenarioPatch = Pick<
   | 'collectionFollowError'
   | 'createPostResult'
   | 'createPostError'
+  | 'trainingDatasetRejected'
+  | 'trainingDatasetError'
+  | 'trainingQuoteTotal'
+  | 'runTrainingError'
+  | 'runTrainingCapRefusal'
   | 'appWorkflows'
   | 'appWorkflowsError'
   | 'publishImageIds'
@@ -1633,6 +1809,14 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   let createPostResult: BlockCreatePostResult =
     options.createPostResult ?? DEFAULT_CREATE_POST_RESULT;
   let createPostError: string | undefined = options.createPostError;
+  // App Blocks training bridges: canned dataset rejections, quote total, and
+  // forced-refusal knobs. The datasets/quotes themselves live per install.
+  let trainingDatasetRejected: Array<{ imageId: number; reason: BlockTrainingRejectionReason }> =
+    options.trainingDatasetRejected ?? [];
+  let trainingDatasetError: string | undefined = options.trainingDatasetError;
+  let trainingQuoteTotal: number = options.trainingQuoteTotal ?? DEFAULT_TRAINING_QUOTE_TOTAL;
+  let runTrainingError: string | undefined = options.runTrainingError;
+  let runTrainingCapRefusal: string | undefined = options.runTrainingCapRefusal;
   // App-subqueue bridge data + forced free-text-error knob. `appWorkflows` is
   // MUTABLE — CANCEL_APP_WORKFLOW marks the matching row canceled in place so a
   // follow-up QUERY reflects it.
@@ -1800,6 +1984,19 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     let submitCount = 0;
     // body + cost remembered per workflow so the succeeded snapshot can echo them.
     const workflows = new Map<string, { polls: number; cost: number; body: WorkflowBody }>();
+    // Training: datasets this install prepared (id → admitted count) and the
+    // quotes its estimates stored (id → what a run is checked against).
+    const trainingDatasets = new Map<string, number>();
+    const trainingQuotes = new Map<
+      string,
+      { datasetId: string; total: number; expiresAtMs: number; spent: boolean }
+    >();
+    let trainingSerial = 0;
+    /** `<prefix>` + 32 hex characters — the real handles' shape. */
+    const trainingHandle = (prefix: 'tds_' | 'tq_'): string => {
+      trainingSerial += 1;
+      return `${prefix}${trainingSerial.toString(16).padStart(32, '0')}`;
+    };
     const timers = new Set<ReturnType<typeof setTimeout>>();
 
     const dispatchToBlock = (data: unknown) => {
@@ -1834,7 +2031,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     const trainingFields = (
       body: WorkflowBody,
     ): Pick<BlockWorkflowSnapshot, 'trainedEpochs' | 'publishedModel'> => {
-      const $type = passThroughTrainingType(body);
+      const $type = trainingStepType(body);
       if (!$type) return {};
       const count = Math.max(0, Math.floor(gen.trainedEpochs ?? 0));
       return {
@@ -1918,6 +2115,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // here would assert the property under test — a block compiled
             // against an older SDK, or plain JS, can put anything in this field.
             idempotencyKey?: unknown;
+            // PREPARE_TRAINING_DATASET. `unknown` for the same reason as
+            // `sources`: the gate's job is to refuse what a block actually sent.
+            items?: unknown;
           };
         };
 
@@ -2129,6 +2329,54 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               });
               return;
             }
+            // TRAINING ESTIMATE — KIND-FAITHFUL, the one exception to the
+            // kind-agnostic rule above, because the real arm is not a priced
+            // pass-through: it needs the spend scope, names a dataset the server
+            // must hold, refuses a price above the per-run ceiling, and STORES a
+            // quote the run is later checked against. Each refusal is the
+            // server's message in the host's `failureSnapshot` shape.
+            if (body.kind === 'training') {
+              const refuse = (error: string) =>
+                dispatchToBlock({
+                  type: 'ESTIMATE_RESULT',
+                  payload: { requestId, snapshot: { workflowId: 'failed', status: 'failed', error } },
+                });
+              if (!consentGranted) return refuse(MOCK_TRAINING_SCOPE_ERROR);
+              const imageCount = trainingDatasets.get(body.datasetId);
+              if (imageCount === undefined) return refuse(MOCK_TRAINING_DATASET_GONE_ERROR);
+              const total = trainingQuoteTotal;
+              if (total > MOCK_TRAINING_BOUNDS.maxBuzzPerRun) {
+                return refuse(
+                  `this training run costs ${total} Buzz, above the per-run limit of ${MOCK_TRAINING_BOUNDS.maxBuzzPerRun} for apps`,
+                );
+              }
+              const quoteId = trainingHandle('tq_');
+              const expiresAtMs = Date.now() + TRAINING_QUOTE_TTL_MS;
+              trainingQuotes.set(quoteId, {
+                datasetId: body.datasetId,
+                total,
+                expiresAtMs,
+                spent: false,
+              });
+              dispatchToBlock({
+                type: 'ESTIMATE_RESULT',
+                payload: {
+                  requestId,
+                  snapshot: {
+                    workflowId: 'wf_estimate',
+                    status: 'pending',
+                    cost: { total },
+                    trainingQuote: {
+                      quoteId,
+                      total,
+                      imageCount,
+                      expiresAt: new Date(expiresAtMs).toISOString(),
+                    },
+                  },
+                },
+              });
+              return;
+            }
             dispatchToBlock({
               type: 'ESTIMATE_RESULT',
               payload: {
@@ -2153,6 +2401,28 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // the largest-wallet stamp. No recipe-registry validation.
             submitCount += 1;
             const body = typed.payload?.body ?? ({} as WorkflowBody);
+
+            // A `kind: 'training'` body is never started by SUBMIT_WORKFLOW: the
+            // server charges a training run only against a quote a signed-in
+            // session confirmed, which only RUN_TRAINING's dialog records. The
+            // server's own refusal, in the host's `failureSnapshot` shape.
+            // (`useBuzzWorkflow().submit()` refuses before sending; this covers a
+            // raw transport send.)
+            if (body.kind === 'training') {
+              dispatchToBlock({
+                type: 'WORKFLOW_SUBMITTED',
+                payload: {
+                  requestId,
+                  snapshot: {
+                    workflowId: 'failed',
+                    status: 'failed',
+                    error:
+                      'this training run has not been confirmed by the viewer in this session',
+                  },
+                },
+              });
+              return;
+            }
             const cost = costFor(body);
 
             // CAUGHT-SERVER-EXCEPTION simulation (`generation.failSubmitException`).
@@ -2611,6 +2881,105 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               payload: { requestId, result: { ...createPostResult } },
             });
             return;
+          }
+
+          case 'PREPARE_TRAINING_DATASET': {
+            // The host's gate order (`prepareTrainingDatasetGate.ts`): no
+            // requestId → drop; signed-out → `sign in to train`; items outside
+            // the server's schema → `invalid training dataset`, before any call.
+            // Then the server: the spend scope, then the dataset.
+            if (!isRoutableRequestId(requestId)) return;
+            const reply = (payload: Record<string, unknown>) =>
+              dispatchToBlock({ type: 'TRAINING_DATASET_RESULT', payload: { requestId, ...payload } });
+            if (viewer === null) return reply({ error: 'sign in to train' });
+            const items = typed.payload?.items;
+            if (!isValidTrainingDatasetItems(items)) {
+              return reply({ error: 'invalid training dataset' });
+            }
+            if (!consentGranted) return reply({ error: MOCK_TRAINING_SCOPE_ERROR });
+            if (trainingDatasetError !== undefined) return reply({ error: trainingDatasetError });
+            const named = new Set((items as Array<{ imageId: number }>).map((it) => it.imageId));
+            const rejected = trainingDatasetRejected
+              .filter((r) => named.has(r.imageId))
+              .map(({ imageId, reason }) => ({ imageId, reason }));
+            const rejectedIds = new Set(rejected.map((r) => r.imageId));
+            const count = [...named].filter((id) => !rejectedIds.has(id)).length;
+            if (count === 0) {
+              // The server THROWS here, eligibility before import: an `import-*`
+              // rejection means that image PASSED eligibility, so the server
+              // reached the import and refuses there.
+              const anyImported = rejected.some((r) => r.reason.startsWith('import-'));
+              return reply({
+                error: anyImported
+                  ? MOCK_TRAINING_NONE_IMPORTED_ERROR
+                  : MOCK_TRAINING_NONE_ELIGIBLE_ERROR,
+              });
+            }
+            const datasetId = trainingHandle('tds_');
+            trainingDatasets.set(datasetId, count);
+            const result: BlockTrainingDatasetResult = { datasetId, count, rejected };
+            return reply({ result });
+          }
+
+          case 'RUN_TRAINING': {
+            // The host's gate (`runTrainingGate.ts`): no requestId → drop;
+            // signed-out → `sign in to train`; not a `kind:'training'` body with
+            // a `quoteId` → `invalid training request`. Then the server: the
+            // spend scope, then the quote (unknown, expired or already spent).
+            if (!isRoutableRequestId(requestId)) return;
+            const reply = (payload: Record<string, unknown>) =>
+              dispatchToBlock({ type: 'TRAINING_RESULT', payload: { requestId, ...payload } });
+            if (viewer === null) return reply({ error: 'sign in to train' });
+            const raw = typed.payload?.body as unknown;
+            const b =
+              raw && typeof raw === 'object' && !Array.isArray(raw)
+                ? (raw as Record<string, unknown>)
+                : null;
+            if (!b || b.kind !== 'training' || typeof b.quoteId !== 'string' || !b.quoteId) {
+              return reply({ error: 'invalid training request' });
+            }
+            if (!consentGranted) return reply({ error: MOCK_TRAINING_SCOPE_ERROR });
+            const quote = trainingQuotes.get(b.quoteId);
+            if (!quote || quote.spent || Date.now() >= quote.expiresAtMs) {
+              return reply({ error: MOCK_TRAINING_QUOTE_GONE_ERROR });
+            }
+            // Which outcomes consume the quote, modelled on the real flow: the
+            // host's gate and consent dialog come first (quote kept); the
+            // server's submit then claims the quote with a GETDEL
+            // (`claimTrainingQuote`) BEFORE any of its own checks, so every
+            // server outcome — a refusal, a body mismatch, a cap refusal,
+            // `submission-unconfirmed`, a run — consumes it. The mock's check
+            // ORDER below is its own; only the spent/kept split is the server's.
+            if (runTrainingError !== undefined) {
+              if (!PRE_CLAIM_RUN_TRAINING_ERRORS.has(runTrainingError)) quote.spent = true;
+              return reply({ error: runTrainingError });
+            }
+            quote.spent = true;
+            if (b.datasetId !== quote.datasetId) {
+              return reply({
+                error: 'the training body differs from the one that was quoted — estimate again',
+              });
+            }
+            // The server's cap / availability refusals RESOLVE (refunded, no run
+            // started) — after the quote was consumed above.
+            if (runTrainingCapRefusal !== undefined) {
+              return reply({
+                snapshot: {
+                  workflowId: 'failed',
+                  status: 'failed',
+                  cost: { total: quote.total },
+                  error: runTrainingCapRefusal,
+                },
+              });
+            }
+            submitCount += 1;
+            const workflowId = `wf_${submitCount}_${Date.now()}`;
+            workflows.set(workflowId, {
+              polls: 0,
+              cost: quote.total,
+              body: raw as WorkflowBody,
+            });
+            return reply({ snapshot: { workflowId, status: 'pending' } });
           }
 
           case 'PUBLISH_GENERATION_OUTPUTS': {
@@ -3342,6 +3711,15 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
       collectionFollowError = patch.collectionFollowError;
     if (patch.createPostResult !== undefined) createPostResult = patch.createPostResult;
     if (patch.createPostError !== undefined) createPostError = patch.createPostError;
+    if (patch.trainingDatasetRejected !== undefined) {
+      trainingDatasetRejected = patch.trainingDatasetRejected;
+    }
+    // The training error knobs clear on an explicit `undefined` (key PRESENT in
+    // the patch), so a harness can turn a refusal off without re-installing.
+    if ('trainingDatasetError' in patch) trainingDatasetError = patch.trainingDatasetError;
+    if (patch.trainingQuoteTotal !== undefined) trainingQuoteTotal = patch.trainingQuoteTotal;
+    if ('runTrainingError' in patch) runTrainingError = patch.runTrainingError;
+    if ('runTrainingCapRefusal' in patch) runTrainingCapRefusal = patch.runTrainingCapRefusal;
     if (patch.appWorkflows !== undefined) {
       appWorkflows = {
         workflows: patch.appWorkflows.workflows,

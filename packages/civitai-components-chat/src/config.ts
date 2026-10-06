@@ -29,7 +29,7 @@ export const chatConfig: ChatConfig = {
   orchestrationMcpUrl: `${ORCH_URL}/mcp/v2`,
   siteMcpUrl: 'https://mcp.civitai.com/mcp',
   autoRunLimit: 100,
-  models: [{ id: 'z-ai/glm-5.3-flash', label: 'Smart', note: 'Follows instructions more closely.' }],
+  models: [],
 };
 
 /** Changes what every chat on the page uses from its next reply; call it before the first chat starts. */

@@ -219,4 +219,19 @@ describe('Agent', () => {
     expect(assistant.error).toBe("The assistant isn't available right now. Try again in a minute.");
     expect(assistant.errorDetail).toBe('Chat completion failed (workflow 6-20260929164414954-lk9b)');
   });
+
+  it('runs a failed reply again in the same turn, once the viewer agrees to pay for it', async () => {
+    const usedUp = Object.assign(new Error('Free allowance used up until 2026-10-07T14:55:36Z'), { statusCode: 400 });
+    const { agent, store } = setup([usedUp, text('Sure, here it is.')]);
+    await agent.send('write me a haiku');
+    const turn = store.current!.turns[0]!;
+    expect(turn.assistant.errorKind).toBe('free_tier_exhausted');
+    expect(turn.assistant.error).toMatch(/^Your free replies are used up until /);
+
+    await agent.retry();
+
+    expect(store.current!.turns).toHaveLength(1);
+    expect(turn.assistant.status).toBe('done');
+    expect(turn.assistant.messages).toEqual([{ role: 'assistant', content: [{ type: 'text', text: 'Sure, here it is.' }] }]);
+  });
 });
