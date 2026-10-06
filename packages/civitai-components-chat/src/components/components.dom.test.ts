@@ -256,6 +256,7 @@ class FakeJob extends EventTarget implements CardJob {
   price: { total: number; variable: boolean } | null = { total: 44, variable: false };
   progress: number | null = null;
   queued: number | null = null;
+  preparing: CardJob['preparing'] = null;
   error?: { message: string; detail?: string };
   results: CardJob['results'] = [];
   cancelable = false;
@@ -292,6 +293,18 @@ describe('civitai-chat-generation-card', () => {
     job.dispatchEvent(new Event('change'));
     await card.updateComplete;
     expect(text(card)).toContain('Making your picture… 40%');
+  });
+
+  it('says a model is downloading, how far along and how long is left, instead of a queue', async () => {
+    const job = new FakeJob('running', { queued: 0, progress: 0.99, preparing: { progress: 0.42, etaSeconds: 380, bytes: 6_938_053_632 } });
+    const card = await mount('civitai-chat-generation-card', { job });
+    expect(text(card)).toContain('Downloading the model (6.9 GB)… 42% · about 6 min left');
+    expect(card.shadowRoot!.querySelector('civitai-progress')).toHaveProperty('value', 42);
+
+    job.preparing = null;
+    job.dispatchEvent(new Event('change'));
+    await card.updateComplete;
+    expect(text(card)).toContain('Waiting in line… next up');
   });
 
   it('points to getting Buzz when there is not enough', async () => {
@@ -516,6 +529,17 @@ describe('civitai-chat-thread', () => {
     const thread = await mount('civitai-chat-thread', { turns: [turn], live: live as never, views: { search_models: { activity: 'Browsing the catalog…' } }, jobs: { byToolCall: () => undefined, get: () => undefined } as never });
     await thread.querySelector('civitai-chat-turn')!.updateComplete;
     expect(thread.querySelector('.cvt-activity')?.textContent).toBe('Browsing the catalog…');
+  });
+
+  it('offers to continue a reply that ran out of steps', async () => {
+    const turn = { seq: 1, createdAt: '', user: { content: 'paint a cabin', attachments: [] }, assistant: { messages: [], status: 'done' as const, ranOut: true } };
+    const thread = await mount('civitai-chat-thread', { turns: [turn], jobs: { byToolCall: () => undefined, get: () => undefined } as never });
+    await thread.querySelector('civitai-chat-turn')!.updateComplete;
+    const asked: unknown[] = [];
+    thread.addEventListener('cvt-continue', (e) => asked.push(e));
+
+    [...thread.querySelectorAll<HTMLElement>('civitai-button')].find((b) => b.textContent?.trim() === 'Continue')!.click();
+    expect(asked).toHaveLength(1);
   });
 
   it('offers to continue on Buzz when the free replies are used up', async () => {

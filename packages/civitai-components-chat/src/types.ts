@@ -35,7 +35,7 @@ export interface Turn {
   createdAt: string;
   user: TurnUser;
   /** `errorDetail` is what the service said, shown only under Details. */
-  assistant: { messages: ModelMessage[]; status: TurnStatus; error?: string; errorDetail?: string; errorKind?: string };
+  assistant: { messages: ModelMessage[]; status: TurnStatus; error?: string; errorDetail?: string; errorKind?: string; ranOut?: boolean };
 }
 
 /** `refs` name earlier results the user pointed at ("animate this") without uploading anything. */
