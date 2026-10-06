@@ -71,12 +71,9 @@
  *
  * `training` and `imageResourceTraining` are the exception: an App Block's host
  * explicitly ALLOWS both on the pass-through arm (`WorkflowBodyPassThroughStep`
- * in `blocks/types.ts`), bounded like any other `$type` there: a run the
- * orchestrator quotes reserves `max(maxBuzz, quote)` against the token's
- * per-call budget with no timeout stamped, and an unquoted run gets `maxBuzz`
- * (1–250) as both its reservation and its timeout in seconds. The trained
- * checkpoint is not part of the block
- * contract; publishing goes through Civitai's model wizard
+ * in `blocks/types.ts`), with the same spend rules as any other `$type` there
+ * (see `WorkflowBodyPassThroughStep.maxBuzz`). The trained checkpoint is not
+ * part of the block contract; publishing goes through Civitai's model wizard
  * (`BlockWorkflowSnapshot.trainedEpochs`). For a standalone app the
  * orchestrator's own authorization still decides.
  *

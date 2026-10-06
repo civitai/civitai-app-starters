@@ -177,8 +177,10 @@ own key:
   for a `whatif` quote of the step. **Quoted** → it reserves `max(maxBuzz, quote)`, gated against
   the token's per-call budget (`token.buzzBudget`, capped at 1000 on a production token — so the
   reservation can exceed the 1–250 `maxBuzz` range), and stamps **no** step timeout.
-  **Unquoted** → `maxBuzz` is both the reservation and the step timeout in seconds. `estimate`
-  returns that same reservation as `cost.total` — an upper bound, not a price.
+  **Unquoted** → `maxBuzz` is both the reservation and the step timeout in seconds; the timeout
+  bounds wall-clock time, and spend only for a step billed by compute time — a step priced per
+  unit can bill above `maxBuzz`. `estimate` returns the reservation as `cost.total`; it is not a
+  guaranteed maximum. Full rules: `WorkflowBodyPassThroughStep.maxBuzz`.
 
   `training` and `imageResourceTraining` are **not** on that denylist — the host allows them on
   this arm by an explicit operator decision. They get no special treatment: the quoted/unquoted

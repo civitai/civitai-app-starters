@@ -1315,13 +1315,16 @@ export type WorkflowBodyPassThroughStep = {
    *    be had) — the host reserves `maxBuzz` and stamps it as the step timeout,
    *    in seconds. `maxBuzz: 10` then buys a job that is KILLED after 10
    *    seconds and comes back `expired`, so size it to the wall-clock time the
-   *    step actually needs. The same per-call budget gate applies.
+   *    step actually needs. The same per-call budget gate applies. The timeout
+   *    bounds wall-clock time; it bounds spend only for a step billed by
+   *    compute time. A step priced per unit can bill ABOVE `maxBuzz`.
    *
    * `estimate` on a pass-through body returns, as `cost.total`, the number the
    * submit would reserve: `max(maxBuzz, quote)`, or `maxBuzz` when unquoted.
-   * It is a reservation, not a price — surface it as "up to N Buzz". Billing is
-   * post-paid: the terminal settle refunds the unused remainder of the
-   * reservation.
+   * It is a reservation, NOT a guaranteed ceiling: the terminal settle refunds
+   * any unused remainder, but nothing on this arm stops a job billing above
+   * the reservation (see the unquoted case above). Do not present it to the
+   * viewer as a maximum.
    */
   maxBuzz: number;
 };
@@ -1553,12 +1556,9 @@ export interface BlockWorkflowSnapshot {
    * {@link BlockWorkflowSnapshot.publishedModel} then reports the result.
    *
    * 🔴 REQUIRES A HOST VERSION THAT EMITS IT. Absent on older hosts — treat
-   * absence as "unknown", not as "no checkpoint". The run itself is bounded by
-   * the pass-through arm's rules ({@link WorkflowBodyPassThroughStep.maxBuzz}):
-   * a quoted run reserves the quote (or `maxBuzz`, if larger), gated by the
-   * token's per-call budget, with no timeout stamped; an unquoted one gets
-   * `maxBuzz` (1–250) as both its
-   * reservation and its timeout in seconds.
+   * absence as "unknown", not as "no checkpoint". The run's spend and timeout
+   * follow the pass-through arm's rules — see
+   * {@link WorkflowBodyPassThroughStep.maxBuzz}.
    */
   trainedEpochs?: BlockTrainedEpoch[];
   /**

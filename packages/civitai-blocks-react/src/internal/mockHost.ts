@@ -333,12 +333,11 @@ export interface MockGenerationScenario {
    * the run's SAMPLE images only (the same {@link image}/{@link images} knobs
    * apply).
    *
-   * 🔴 THE REAL HOST BOUNDS THIS ARM BY AN ORCHESTRATOR QUOTE, NOT ONLY BY
-   * `maxBuzz`: a quoted run reserves `max(maxBuzz, quote)` against the token's
-   * per-call budget and gets no timeout; an unquoted one gets `maxBuzz` (1–250)
-   * as both its reservation and its timeout in seconds. The mock simulates
-   * neither the quote nor that timeout; a success here says nothing about
-   * whether your run is quoted, what it costs, or whether it fits.
+   * 🔴 The real host's spend and timeout rules for this arm (see
+   * `WorkflowBodyPassThroughStep.maxBuzz` in `@civitai/app-sdk/blocks`) are
+   * NOT simulated: the mock neither quotes nor times out, so a success here
+   * says nothing about whether your run is quoted, what it costs, or whether
+   * it finishes.
    */
   trainedEpochs?: number;
   /**
