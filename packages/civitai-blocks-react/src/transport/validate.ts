@@ -309,14 +309,23 @@ export function isValidWorkflowSnapshot(s: unknown): s is BlockWorkflowSnapshot 
       if (!isObject(o) || typeof o.$type !== 'string') return false;
     }
   }
-  if (s.trainedEpochs !== undefined) {
-    if (!Array.isArray(s.trainedEpochs)) return false;
-    for (const e of s.trainedEpochs) {
-      if (!isObject(e) || typeof e.$type !== 'string') return false;
-      if (!Number.isInteger(e.epochNumber)) return false;
-    }
-  }
+  if (s.trainedEpochs !== undefined && !isValidTrainedEpochs(s.trainedEpochs)) return false;
   if (s.publishedModel !== undefined && !isValidPublishedModel(s.publishedModel)) return false;
+  return true;
+}
+
+/**
+ * Shape check for `trainedEpochs` — shared by {@link isValidWorkflowSnapshot}
+ * and the `AppWorkflow` row guard, which carry the same field. `$type` is
+ * checked as a STRING, not against today's members (see the forward-
+ * compatibility note in {@link isValidWorkflowSnapshot}).
+ */
+function isValidTrainedEpochs(epochs: unknown): boolean {
+  if (!Array.isArray(epochs)) return false;
+  for (const e of epochs) {
+    if (!isObject(e) || typeof e.$type !== 'string') return false;
+    if (!Number.isInteger(e.epochNumber)) return false;
+  }
   return true;
 }
 
@@ -854,8 +863,9 @@ function isValidAppWorkflow(w: unknown): boolean {
     if (img.height !== null && !isFiniteNumber(img.height)) return false;
     if (img.nsfwLevel !== null && !isFiniteNumber(img.nsfwLevel)) return false;
   }
-  // OPTIONAL — absent on hosts that predate it; checked only when present.
+  // OPTIONAL — absent on hosts that predate them; checked only when present.
   if (w.publishedModel !== undefined && !isValidPublishedModel(w.publishedModel)) return false;
+  if (w.trainedEpochs !== undefined && !isValidTrainedEpochs(w.trainedEpochs)) return false;
   return true;
 }
 

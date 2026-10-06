@@ -2,7 +2,7 @@
  * Compile-time coverage for the `BlockWorkflowSnapshot` fields the host emits
  * and the SDK did not mirror until #524 — `modelSubstitutions`, `textOutputs`,
  * `textOutputWithheld`, `toolCalls`, `stepOutputs` — plus the training-publish
- * pair `trainedEpochs` / `publishedModel` (the latter on `AppWorkflow` too).
+ * pair `trainedEpochs` / `publishedModel` (both on `AppWorkflow` too).
  *
  * The closing condition of #524 is that `snapshot.textOutputs` type-checks with
  * NO cast. Every read below is a plain property access on the published type;
@@ -58,6 +58,7 @@ expectTypeOf<BlockTrainedEpoch>().toEqualTypeOf<{
 }>();
 expectTypeOf(snapshot.publishedModel).toEqualTypeOf<BlockPublishedModel | undefined>();
 expectTypeOf(row.publishedModel).toEqualTypeOf<BlockPublishedModel | undefined>();
+expectTypeOf(row.trainedEpochs).toEqualTypeOf<BlockTrainedEpoch[] | undefined>();
 expectTypeOf<BlockPublishedModel>().toEqualTypeOf<{
   modelId: number;
   modelVersionId: number;
@@ -90,6 +91,18 @@ const full: BlockWorkflowSnapshot = {
 };
 void full;
 
+// --- a full AppWorkflow row the host can emit assigns ---
+const fullRow: AppWorkflow = {
+  workflowId: 'wf',
+  status: 'succeeded',
+  images: [],
+  cost: 250,
+  createdAt: '2026-01-01T00:00:00.000Z',
+  publishedModel: { modelId: 1, modelVersionId: 2, published: true },
+  trainedEpochs: [{ $type: 'imageResourceTraining', epochNumber: 3 }],
+};
+void fullRow;
+
 // --- the literal unions reject what the host never emits (gate: MUST be type errors) ---
 const badEpoch: BlockTrainedEpoch = {
   // @ts-expect-error — only the two pass-through training `$type`s produce epochs.
@@ -97,6 +110,17 @@ const badEpoch: BlockTrainedEpoch = {
   epochNumber: 1,
 };
 void badEpoch;
+
+const badRowEpoch: AppWorkflow = {
+  workflowId: 'wf',
+  status: 'succeeded',
+  images: [],
+  cost: null,
+  createdAt: '2026-01-01T00:00:00.000Z',
+  // @ts-expect-error — a row's epochs are the same BlockTrainedEpoch shape, not bare numbers.
+  trainedEpochs: [1, 2],
+};
+void badRowEpoch;
 
 const badToolCall: BlockStepToolCall = {
   id: 'c1',

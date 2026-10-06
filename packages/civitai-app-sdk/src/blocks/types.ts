@@ -1618,7 +1618,7 @@ export interface BlockStepToolCall {
   };
 }
 
-/** One entry of {@link BlockWorkflowSnapshot.trainedEpochs}. */
+/** One entry of {@link BlockWorkflowSnapshot.trainedEpochs} / {@link AppWorkflow.trainedEpochs}. */
 export interface BlockTrainedEpoch {
   /**
    * Which pass-through training `$type` produced this epoch. The SDK's inbound
@@ -2202,6 +2202,18 @@ export interface AppWorkflow {
    * every workflow nobody has published.
    */
   publishedModel?: BlockPublishedModel;
+  /**
+   * The epochs of a pass-through `training` / `imageResourceTraining` step in
+   * this workflow that produced a checkpoint. Same shape and rule as
+   * {@link BlockWorkflowSnapshot.trainedEpochs}: only runs whose training
+   * moderation status is approved are listed, the checkpoint itself is not
+   * exposed, and the field is OMITTED when there are no epochs to list. Lets a
+   * block offer "publish epoch n" from its queue without polling each run.
+   *
+   * 🔴 REQUIRES A HOST VERSION THAT EMITS IT. Absent on older hosts — treat
+   * absence as "unknown", not as "no checkpoint".
+   */
+  trainedEpochs?: BlockTrainedEpoch[];
 }
 
 // ============================================================
