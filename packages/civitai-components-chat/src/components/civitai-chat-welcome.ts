@@ -15,7 +15,7 @@ export const EXAMPLES: Example[] = [
   { title: 'Make a short video', prompt: 'Make a short video of a paper boat sailing down a rainy street' },
   { title: 'Write a song', prompt: 'Write a short, upbeat jingle about morning coffee' },
   { title: 'Find a model', prompt: "What's a good Civitai model for anime portraits?" },
-  { title: 'Say it out loud', prompt: 'Read "Welcome to ChatCVT!" in a warm, friendly voice' },
+  { title: 'Say it out loud', prompt: 'Read "Welcome aboard!" in a warm, friendly voice' },
 ];
 
 export class CivitaiChatWelcome extends LightElement {

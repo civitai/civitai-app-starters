@@ -1,3 +1,4 @@
+import { chatConfig } from '../config.js';
 import type { Attachment } from '../types.js';
 import type { SitePoster } from './site.js';
 
@@ -151,7 +152,7 @@ export class PostDraft extends EventTarget {
     // A draft already made is published on retry, not made twice.
     if (this.postId !== undefined) return this.publish();
     const site = this.#deps.site?.();
-    if (!site) return this.#set('failed', { message: 'Posting works when ChatCVT is opened on civitai.com.' });
+    if (!site) return this.#set('failed', { message: `Posting works when ${chatConfig.name} is opened on civitai.com.` });
     this.#set('drafting', undefined);
     try {
       if (!(await this.#deps.authorize())) return this.#set('failed', { message: 'Posting needs your permission on Civitai.' });
@@ -213,7 +214,7 @@ export function humanizePostError(error: unknown): { message: string; detail?: s
   const code = (error as { code?: unknown } | null)?.code;
   if (code === 'unauthenticated' || /sign in/i.test(detail)) return { message: 'Sign in to Civitai to post.', detail };
   if (code === 'rate-limited') return { message: 'You are posting a lot right now; wait a while and try again.', detail };
-  if (/subqueue|not .*this app/i.test(detail)) return { message: 'Civitai cannot post this picture from ChatCVT yet.', detail };
+  if (/subqueue|not .*this app/i.test(detail)) return { message: `Civitai cannot post this picture from ${chatConfig.name} yet.`, detail };
   if (/review-mode|not ready/i.test(detail)) return { message: 'Posting is not available here right now.', detail };
   return { message: 'Civitai could not create the post.', detail };
 }

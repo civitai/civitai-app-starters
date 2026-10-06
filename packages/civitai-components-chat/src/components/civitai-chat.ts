@@ -647,7 +647,7 @@ export class CivitaiChat extends LitElement {
       panels: session.panels.all().map((panel) => ({ ...panel.toSaved(), runs: panel.jobs.map((job) => job.summary()) })),
     };
     const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
-    const link = Object.assign(document.createElement('a'), { href: url, download: `ChatCVT-${conversation.title.replace(/[^\w-]+/g, '-').slice(0, 40)}.json` });
+    const link = Object.assign(document.createElement('a'), { href: url, download: `${chatConfig.name.replace(/\s+/g, '-')}-${conversation.title.replace(/[^\w-]+/g, '-').slice(0, 40)}.json` });
     link.click();
     URL.revokeObjectURL(url);
   }

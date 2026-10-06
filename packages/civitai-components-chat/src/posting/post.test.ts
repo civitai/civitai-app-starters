@@ -52,7 +52,7 @@ describe('PostDraft', () => {
     const { post, createPost } = setup();
     createPost.mockRejectedValueOnce(new Error('workflow is not in this app subqueue'));
     await post.submit();
-    expect(post).toMatchObject({ state: 'failed', error: { message: 'Civitai cannot post this picture from ChatCVT yet.' } });
+    expect(post).toMatchObject({ state: 'failed', error: { message: 'Civitai cannot post this picture from Civitai Chat yet.' } });
   });
 
   it('tells the assistant how the post ended', () => {

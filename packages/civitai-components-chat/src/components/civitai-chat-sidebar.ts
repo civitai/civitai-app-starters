@@ -1,5 +1,6 @@
 import { html, nothing, type PropertyDeclarations, type TemplateResult } from 'lit';
 
+import { chatConfig } from '../config.js';
 import type { ConversationSummary } from '../types.js';
 import { LightElement, emit } from './light.js';
 
@@ -91,7 +92,7 @@ export class CivitaiChatSidebar extends LightElement {
   override render(): TemplateResult {
     return html`<nav class="cvt-sidebar-inner" aria-label="Chats">
       <div class="cvt-sidebar-top">
-        <span class="cvt-brand">ChatCVT</span>
+        <span class="cvt-brand">${chatConfig.name}</span>
         <civitai-button size="sm" variant="light" @click=${() => emit(this, 'cvt-new-chat')}>New chat</civitai-button>
       </div>
       <div class="cvt-chat-list">
