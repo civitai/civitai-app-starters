@@ -1299,7 +1299,9 @@ export type WorkflowBodyPassThroughStep = {
    */
   input: Record<string, unknown>;
   /**
-   * The app's declared per-job Buzz ceiling. Required, an integer in **1…250**.
+   * The app's declared per-job Buzz amount: the least the host reserves, and —
+   * only when unquoted — the step timeout in seconds. NOT a spend ceiling (see
+   * below). Required, an integer in **1…250**.
    *
    * 🔴 **WHAT IT BOUNDS DEPENDS ON WHETHER THE HOST GOT A QUOTE** — this is NOT
    * the mechanism of {@link WorkflowBodyCustomComfyInline.maxBuzz}, which is
