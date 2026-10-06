@@ -451,10 +451,20 @@ const PEER_VALUE_SYMBOL_SINCE = {
 // IS (`>=0.57.0`). The `fetchNestedDocument` entry in `PEER_VALUE_SYMBOL_SINCE`
 // stays at `0.57.0`.
 //
-// 🔴 STILL OWED (step 3): once the release job publishes 0.57.0, re-read
-// `fetchNestedDocument` off THAT tarball (`npm pack @civitai/app-sdk@0.57.0`),
-// with 0.56.1 as the negative control, and record the reading here. Until then
-// the entry is a prediction that the tree now carries, not a measurement.
+// CONVERSION COMPLETE 2026-10-06: #535 merged (`5168275`), the release job
+// (run 37416428817) published app-sdk 0.57.0 — `_npmUser = GitHub Actions`,
+// `dist.attestations` present — and the entry was re-read off THAT tarball
+// (`npm pack @civitai/app-sdk@0.57.0`, `grep -rl <symbol> package/dist`):
+//
+//   fetchNestedDocument   0.57.0: PRESENT, 4 files    0.56.1: ABSENT, 0 files
+//
+// POSITIVE CONTROL — `BLOCK_SCOPES` is PRESENT in both tarballs (7 files each),
+// so the 0.56.1 ABSENT is a real absence, not an extraction that read nothing.
+// NEGATIVE CONTROL — `__NOPE_7f3a__` is ABSENT from both (0 files).
+//
+// The prediction was CORRECT, so `PEER_VALUE_SYMBOL_SINCE` stays at `0.57.0`
+// and the floor stays at `>=0.57.0` — step 4, "leave it alone if the
+// measurement agrees". Nothing here is owed.
 const PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH = [];
 
 /**
