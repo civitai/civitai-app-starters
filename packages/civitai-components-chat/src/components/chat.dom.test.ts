@@ -36,6 +36,32 @@ describe('civitai-chat', () => {
     expect(shortcut.defaultPrevented).toBe(false);
   });
 
+  it('shows the chat list as soon as it loads, without waiting for the viewer to do something', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    let deliver = (): void => undefined;
+    const head = {
+      id: '7-1',
+      status: 'succeeded',
+      tags: ['chat-cvt', 'cvt:turn', 'cvt:head', 'cvt:conv:CONV1'],
+      metadata: { v: 2, app: 'chat-cvt', conversationId: 'CONV1', title: 'Animate this', titleSource: 'llm', createdAt: '2026-10-05T00:00:00Z', updatedAt: '2026-10-05T00:00:00Z', turns: [] },
+    };
+    const app = fakeApp() as { orchestration: { queryWorkflows: unknown } };
+    app.orchestration.queryWorkflows = (query: { tags: string[] }) =>
+      query.tags.some((tag) => tag.startsWith('cvt:conv:'))
+        ? Promise.resolve({ items: [], next: '' })
+        : new Promise((resolve) => (deliver = () => resolve({ items: [head], next: '' })));
+    const chat = document.createElement('civitai-chat');
+    chat.layout = 'wide';
+    chat.app = app as never;
+    document.body.append(chat);
+    const root = chat.shadowRoot!;
+    await vi.waitFor(() => expect(root.querySelector('civitai-chat-sidebar')?.textContent).toContain('Your chats will appear here'));
+
+    deliver();
+    await vi.waitFor(() => expect(root.querySelector('civitai-chat-sidebar')?.textContent).toContain('Animate this'));
+  });
+
   it('opens the chat list from the title and closes it on Escape, on a click elsewhere, or when settings open', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -202,5 +228,26 @@ describe('civitai-chat', () => {
     await vi.waitFor(() => expect(chat.shadowRoot?.querySelector<HTMLSlotElement>('slot[name="welcome"]')).not.toBeNull());
     const slot = chat.shadowRoot!.querySelector<HTMLSlotElement>('slot[name="welcome"]')!;
     expect(slot.assignedElements().map((el) => el.textContent)).toEqual(['Welcome to Moodboard']);
+  });
+
+  it('runs slash commands itself: switches the model and starts a new chat without asking the assistant', async () => {
+    const fetch = vi.fn(async (_url: unknown) => new Response('{}', { status: 503 }));
+    vi.stubGlobal('fetch', fetch);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const chat = document.createElement('civitai-chat');
+    chat.app = fakeApp();
+    document.body.append(chat);
+    const root = chat.shadowRoot!;
+    await vi.waitFor(() => expect(root.querySelector('civitai-chat-composer')).not.toBeNull());
+    const composer = root.querySelector('civitai-chat-composer')!;
+    const say = (text: string) => composer.dispatchEvent(new CustomEvent('cvt-send', { bubbles: true, composed: true, detail: { text } }));
+
+    say('/model smart');
+    await vi.waitFor(() => expect(JSON.parse(localStorage.getItem('cvt:settings') ?? '{}').assistantModel).toBe('z-ai/glm-5.3-flash'));
+    say('/model default');
+    await vi.waitFor(() => expect(JSON.parse(localStorage.getItem('cvt:settings') ?? '{}').assistantModel).toBeUndefined());
+    say('/clear');
+    await chat.updateComplete;
+    expect(fetch.mock.calls.map(([url]) => String(url)).filter((url) => url.includes('chat/completions'))).toEqual([]);
   });
 });

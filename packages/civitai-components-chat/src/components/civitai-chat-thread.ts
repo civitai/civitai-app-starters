@@ -5,8 +5,10 @@ import { repeat } from 'lit/directives/repeat.js';
 import type { LiveTurn } from '../agent/agent.js';
 import { partsFromMessages, type TurnPart } from '../agent/parts.js';
 import type { JobManager } from '../orchestration/jobs.js';
+import type { PanelManager } from '../panels/panel.js';
 import type { PostManager } from '../posting/post.js';
 import type { ModelDirectory } from '../store/models.js';
+import type { ChatToolView } from '../tools/host.js';
 import type { Attachment, Turn } from '../types.js';
 import { LightElement } from './light.js';
 
@@ -19,9 +21,13 @@ export class CivitaiChatThread extends LightElement {
     live: { attribute: false, hasChanged: () => true },
     jobs: { attribute: false },
     posts: { attribute: false },
+    panels: { attribute: false },
+    files: { attribute: false },
+    canShare: { type: Boolean, attribute: 'can-share' },
+    dockPanels: { type: Boolean, attribute: 'dock-panels' },
     models: { attribute: false },
     resolve: { attribute: false },
-    activity: { attribute: false },
+    views: { attribute: false },
     atBottom: { state: true },
     announcement: { state: true },
   };
@@ -30,10 +36,14 @@ export class CivitaiChatThread extends LightElement {
   declare live: LiveTurn | null;
   declare jobs: JobManager;
   declare posts: PostManager;
+  declare panels: PanelManager;
+  declare files: () => Attachment[];
+  declare canShare: boolean;
+  /** Panels show in the page beside the chat; the thread only points at them. */
+  declare dockPanels: boolean;
   declare models: ModelDirectory;
   declare resolve: (id: string) => Attachment | undefined;
-  /** What a tool the embedding page added is doing, in its words. */
-  declare activity?: (toolName: string) => string | undefined;
+  declare views: Record<string, ChatToolView>;
   declare atBottom: boolean;
   declare announcement: string;
 
@@ -48,6 +58,7 @@ export class CivitaiChatThread extends LightElement {
 
   constructor() {
     super();
+    this.views = {};
     this.turns = [];
     this.live = null;
     this.atBottom = true;
@@ -139,9 +150,13 @@ export class CivitaiChatThread extends LightElement {
                 ?latest=${turn.seq === last}
                 .jobs=${this.jobs}
                 .posts=${this.posts}
+                .panels=${this.panels}
+                .files=${this.files}
+                ?can-share=${this.canShare}
+                ?dock-panels=${this.dockPanels}
                 .models=${this.models}
                 .resolve=${this.resolve}
-                .activity=${this.activity}
+                .views=${this.views}
               ></civitai-chat-turn>`,
           )}
         </div>

@@ -2,13 +2,14 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 const MAX_TEXT = 4_000;
 
-export function mcpResultToText(result: CallToolResult): string {
+/** Capped for the assistant, whose context it fills; pass `Infinity` to read a reply the app parses itself. */
+export function mcpResultToText(result: CallToolResult, max = MAX_TEXT): string {
   const text = result.content
     .map((block) => (block.type === 'text' ? block.text : block.type === 'resource_link' ? `[${block.name}]` : ''))
     .filter(Boolean)
     .join('\n')
     .trim();
-  return text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT)}\n…(truncated)` : text;
+  return text.length > max ? `${text.slice(0, max)}\n…(truncated)` : text;
 }
 
 export function structuredOf(result: CallToolResult): Record<string, unknown> | undefined {

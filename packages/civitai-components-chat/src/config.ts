@@ -2,9 +2,19 @@ export const ORCH_URL = 'https://orchestration.civitai.com';
 export const SITE_URL = 'https://civitai.com';
 export const BUY_BUZZ_URL = `${SITE_URL}/purchase/buzz`;
 
+export interface ChatModelOption {
+  /** A model id the orchestrator's chat endpoint serves, e.g. `anthropic/claude-sonnet-5.5`. */
+  id: string;
+  label: string;
+  /** What choosing it means for the viewer, e.g. the rough cost of a reply. */
+  note?: string;
+}
+
 export interface ChatConfig {
   /** The chat model, as an AIR the orchestrator serves through its OpenAI-compatible endpoint. */
   model: string;
+  /** Other models the viewer may pick in Settings, besides the default and a custom id. */
+  models: ChatModelOption[];
   orchestrationMcpUrl: string;
   siteMcpUrl: string;
   /** New viewers' "ask before spending more than" limit, in Buzz; 0 asks every time. */
@@ -16,6 +26,7 @@ export const chatConfig: ChatConfig = {
   orchestrationMcpUrl: `${ORCH_URL}/mcp/v2`,
   siteMcpUrl: 'https://mcp.civitai.com/mcp',
   autoRunLimit: 100,
+  models: [{ id: 'z-ai/glm-5.3-flash', label: 'Smart', note: 'Follows instructions more closely.' }],
 };
 
 /** Changes what every chat on the page uses from its next reply; call it before the first chat starts. */
@@ -23,7 +34,7 @@ export function configureChat(patch: Partial<ChatConfig>): void {
   Object.assign(chatConfig, Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)));
 }
 
-export const MAX_STEPS = 6;
+export const MAX_STEPS = 10;
 export const MAX_OUTPUT_TOKENS = 1_200;
 export const CONTEXT_BUDGET_TOKENS = 24_000;
 export const RETENTION_DAYS = 30;

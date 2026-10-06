@@ -1,5 +1,7 @@
+import type { Workflow } from '@civitai/sdk';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { controllable, imageStep, workflow } from '../test-support/fakes.js';
 import type { CardJob, CardState } from './lib/civitai-chat-generation-card.js';
 import type { CardPost, PostCardState } from './lib/civitai-chat-post-card.js';
 import { defineElements } from './define.js';
@@ -14,6 +16,183 @@ async function mount<K extends keyof HTMLElementTagNameMap>(tag: K, props: Parti
   await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
   return el;
 }
+
+describe('civitai-chat-composer voice input', () => {
+  function fakeMicrophone({ refuse = false } = {}) {
+    const track = { stop: vi.fn() };
+    class FakeRecorder extends EventTarget {
+      static isTypeSupported = (type: string) => type.startsWith('audio/webm');
+      state = 'inactive';
+      mimeType = 'audio/webm;codecs=opus';
+      start() {
+        this.state = 'recording';
+      }
+      stop() {
+        this.state = 'inactive';
+        this.dispatchEvent(Object.assign(new Event('dataavailable'), { data: new Blob(['said'], { type: this.mimeType }) }));
+        this.dispatchEvent(new Event('stop'));
+      }
+    }
+    vi.stubGlobal('MediaRecorder', FakeRecorder);
+    vi.stubGlobal('AudioContext', undefined);
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: vi.fn(async () => (refuse ? Promise.reject(Object.assign(new Error('denied'), { name: 'NotAllowedError' })) : { getTracks: () => [track] })) },
+    });
+    return track;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    Reflect.deleteProperty(navigator, 'mediaDevices');
+  });
+
+  const press = async (composer: HTMLElement, label: string) => {
+    composer.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!.click();
+    await vi.waitFor(async () => {
+      await (composer as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    });
+  };
+
+  const listen = (composer: HTMLElement) => {
+    const events: string[] = [];
+    const phrases: Blob[] = [];
+    for (const type of ['cvt-voice-start', 'cvt-voice-phrase', 'cvt-voice-done', 'cvt-voice-cancel']) {
+      composer.addEventListener(type, (e) => {
+        const detail = (e as CustomEvent<{ recording?: Blob; send?: boolean }>).detail;
+        if (detail?.recording) phrases.push(detail.recording);
+        events.push(type === 'cvt-voice-done' ? `done:${detail!.send ? 'send' : 'edit'}` : type.replace('cvt-voice-', ''));
+      });
+    }
+    return { events, phrases };
+  };
+
+  it('hands over what the viewer said, then asks for it to be sent, releasing the microphone', async () => {
+    const track = fakeMicrophone();
+    const composer = await mount('civitai-chat-composer', { voice: true });
+    const { events, phrases } = listen(composer);
+
+    await press(composer, 'Talk instead of typing');
+    await vi.waitFor(() => expect(composer.querySelector('[aria-label="Recording your voice"]')).not.toBeNull());
+    expect(composer.querySelector('textarea')).toBeNull();
+
+    await press(composer, 'Send what you said');
+    await vi.waitFor(() => expect(events).toEqual(['start', 'phrase', 'done:send']));
+    expect(phrases[0]!.size).toBeGreaterThan(0);
+    expect(track.stop).toHaveBeenCalled();
+    await vi.waitFor(() => expect(composer.querySelector('textarea')).not.toBeNull());
+  });
+
+  it('stops for editing, or throws the recording away on cancel', async () => {
+    fakeMicrophone();
+    const composer = await mount('civitai-chat-composer', { voice: true });
+    const { events } = listen(composer);
+
+    await press(composer, 'Talk instead of typing');
+    await vi.waitFor(() => expect(composer.querySelector('[aria-label="Recording your voice"]')).not.toBeNull());
+    await press(composer, 'Cancel recording');
+    await vi.waitFor(() => expect(composer.querySelector('textarea')).not.toBeNull());
+    expect(events).toEqual(['start', 'cancel']);
+
+    await press(composer, 'Talk instead of typing');
+    await vi.waitFor(() => expect(composer.querySelector('[aria-label="Recording your voice"]')).not.toBeNull());
+    await press(composer, 'Stop and edit the text');
+    await vi.waitFor(() => expect(events.slice(2)).toEqual(['start', 'phrase', 'done:edit']));
+  });
+
+  it('streams speech as 16 kHz PCM where the browser has audio worklets', async () => {
+    fakeMicrophone();
+    const nodes: { port: { onmessage: ((event: { data: Float32Array }) => void) | null } }[] = [];
+    class FakeNode {
+      port = { onmessage: null };
+      constructor() {
+        nodes.push(this);
+      }
+      connect<T>(next: T) {
+        return next;
+      }
+    }
+    class FakeContext {
+      sampleRate = 48_000;
+      destination = {};
+      audioWorklet = { addModule: async () => undefined };
+      createGain() {
+        return { gain: { value: 1 }, connect: <T>(next: T) => next };
+      }
+      createMediaStreamSource() {
+        return { connect: <T>(next: T) => next };
+      }
+      close() {
+        return Promise.resolve();
+      }
+    }
+    vi.stubGlobal('AudioWorkletNode', FakeNode);
+    vi.stubGlobal('AudioContext', FakeContext);
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: () => 'blob:worklet', revokeObjectURL: () => undefined }));
+    const composer = await mount('civitai-chat-composer', { voice: true });
+    const started: { live: boolean }[] = [];
+    const audio: Int16Array[] = [];
+    composer.addEventListener('cvt-voice-start', (e) => started.push((e as CustomEvent<{ live: boolean }>).detail));
+    composer.addEventListener('cvt-voice-audio', (e) => audio.push((e as CustomEvent<{ pcm: Int16Array }>).detail.pcm));
+
+    await press(composer, 'Talk instead of typing');
+    await vi.waitFor(() => expect(started).toEqual([{ live: true }]));
+    nodes[0]!.port.onmessage!({ data: new Float32Array(2048).fill(0.4) });
+
+    expect(audio).toHaveLength(1);
+    expect(Math.abs(audio[0]!.length - 2048 / 3)).toBeLessThanOrEqual(1);
+  });
+
+  it('lets the viewer say which language they speak', async () => {
+    fakeMicrophone();
+    const composer = await mount('civitai-chat-composer', { voice: true, voiceLanguage: 'en' });
+    const chosen: string[] = [];
+    composer.addEventListener('cvt-voice-language', (e) => chosen.push((e as CustomEvent<{ language: string }>).detail.language));
+    const picker = composer.querySelector<HTMLSelectElement>('select[aria-label="The language you speak"]')!;
+    expect(picker.closest('label')!.textContent).toContain('EN');
+
+    picker.value = 'nl';
+    picker.dispatchEvent(new Event('change'));
+    expect(chosen).toEqual(['nl']);
+  });
+
+  it('shows the words heard so far while the viewer is still talking', async () => {
+    fakeMicrophone();
+    const composer = await mount('civitai-chat-composer', { voice: true });
+    await press(composer, 'Talk instead of typing');
+    await vi.waitFor(() => expect(composer.querySelector('[aria-label="Recording your voice"]')).not.toBeNull());
+
+    composer.heard = 'Paint me a snowy cabin';
+    await composer.updateComplete;
+    expect(composer.querySelector('.cvt-heard')?.textContent).toBe('Paint me a snowy cabin');
+  });
+
+  it('shows plainly that it is turning the recording into text, and lets the viewer stop it', async () => {
+    const composer = await mount('civitai-chat-composer', { voice: true, transcribing: true });
+    const canceled: unknown[] = [];
+    composer.addEventListener('cvt-voice-cancel', (e) => canceled.push(e));
+
+    const status = composer.querySelector('[role="status"]')!;
+    expect(status.textContent).toContain('Turning what you said into text');
+    expect(status.querySelector('.cvt-spinner')).not.toBeNull();
+    expect(composer.querySelector('textarea')).toBeNull();
+
+    await press(composer, 'Stop transcribing');
+    expect(canceled).toHaveLength(1);
+  });
+
+  it('says why when the microphone is refused', async () => {
+    fakeMicrophone({ refuse: true });
+    const composer = await mount('civitai-chat-composer', { voice: true });
+    const problems: unknown[] = [];
+    composer.addEventListener('cvt-voice-error', (e) => problems.push((e as CustomEvent<{ error: unknown }>).detail.error));
+
+    await press(composer, 'Talk instead of typing');
+    await vi.waitFor(() => expect(problems).toHaveLength(1));
+    expect((problems[0] as Error).name).toBe('NotAllowedError');
+    expect(composer.querySelector('textarea')).not.toBeNull();
+  });
+});
 
 describe('civitai-chat-composer', () => {
   const setup = async (props = {}) => {
@@ -40,6 +219,16 @@ describe('civitai-chat-composer', () => {
     expect(sent).toEqual([]);
     key({ key: 'Enter' });
     expect(sent).toEqual(['a red bike']);
+  });
+
+  it('suggests slash commands while one is typed, and completes the only match on Tab', async () => {
+    const { composer, type, key } = await setup();
+    await type('/mo');
+    expect([...composer.querySelectorAll('.cvt-commands code')].map((c) => c.textContent)).toEqual(['/model [default | smart | model id]']);
+    key({ key: 'Tab' });
+    await composer.updateComplete;
+    expect(composer.querySelector('textarea')!.value).toBe('/model ');
+    expect(composer.querySelector('.cvt-commands')).toBeNull();
   });
 
   it('does not send while a file is still uploading', async () => {
@@ -115,9 +304,11 @@ describe('civitai-chat-generation-card', () => {
     const card = await mount('civitai-chat-generation-card', { job });
     const actions: unknown[] = [];
     card.addEventListener('media-action', (e) => actions.push((e as CustomEvent).detail));
-    const buttons = [...card.shadowRoot!.querySelectorAll('[part=actions] civitai-button')] as HTMLElement[];
-    expect(buttons.map((b) => b.textContent?.trim())).toEqual(['Use in chat', 'Animate', 'Sharpen', 'Info', 'Download']);
-    buttons[1]!.click();
+    expect(card.shadowRoot!.querySelector('h3')?.textContent).toBe('Your picture');
+    const items = [...card.shadowRoot!.querySelectorAll('[part=actions] civitai-menu-item')] as HTMLElement[];
+    expect(items.map((b) => b.textContent?.trim())).toEqual(['Use in chat', 'Animate', 'Sharpen', 'Info', 'Download']);
+    expect(card.shadowRoot!.querySelector('[part=actions] [slot=trigger]')?.getAttribute('aria-label')).toBe('More for this result');
+    items[1]!.click();
     expect(actions).toEqual([{ id: 'gen1-1-1', action: 'animate' }]);
     const visible = text(card).replace(/Details.*$/, '');
     expect(visible).not.toMatch(/urn:air|engine|workflow|seed|cfg/i);
@@ -151,6 +342,19 @@ class FakePost extends EventTarget implements CardPost {
   dismiss = vi.fn();
 }
 
+describe('civitai-chat-generation-card Adjust', () => {
+  it('offers Adjust only where the page can turn the request into controls', async () => {
+    const job = new FakeJob('awaiting_confirmation');
+    const plain = await mount('civitai-chat-generation-card', { job });
+    expect(plain.shadowRoot!.querySelector('[part=adjust]')).toBeNull();
+    const card = await mount('civitai-chat-generation-card', { job, adjustable: true });
+    const asked: unknown[] = [];
+    card.addEventListener('job-adjust', (e) => asked.push(e.target));
+    card.shadowRoot!.querySelector<HTMLElement>('[part=adjust]')!.click();
+    expect(asked).toEqual([card]);
+  });
+});
+
 describe('civitai-chat-post-card', () => {
   it('hands the post to Civitai only when the button is pressed, then links to it', async () => {
     const post = new FakePost();
@@ -163,6 +367,48 @@ describe('civitai-chat-post-card', () => {
     post.dispatchEvent(new Event('change'));
     await card.updateComplete;
     expect(card.shadowRoot!.querySelector<HTMLAnchorElement>('[part=link]')?.href).toBe('https://civitai.com/posts/123');
+  });
+});
+
+describe('civitai-chat-post-card for a draft', () => {
+  it('says nothing is public yet and publishes only from its Publish button', async () => {
+    const post = Object.assign(new FakePost(), { drafts: true, publish: vi.fn(async () => undefined) });
+    const card = await mount('civitai-chat-post-card', { post });
+    expect(card.shadowRoot!.textContent).toContain('It starts as a draft');
+    post.state = 'drafted';
+    post.url = 'https://civitai.com/posts/9';
+    post.dispatchEvent(new Event('change'));
+    await card.updateComplete;
+    expect(card.shadowRoot!.textContent).toContain('Nothing is public yet.');
+    expect(card.shadowRoot!.querySelector<HTMLAnchorElement>('[part=link]')?.href).toBe('https://civitai.com/posts/9');
+    expect(post.publish).not.toHaveBeenCalled();
+    card.shadowRoot!.querySelector<HTMLElement>('[part=publish]')!.click();
+    expect(post.publish).toHaveBeenCalled();
+  });
+});
+
+describe('civitai-chat-settings-dialog', () => {
+  it('lets the viewer pick a listed model or type any model id', async () => {
+    const dialog = await mount('civitai-chat-settings-dialog', {
+      open: true,
+      settings: { theme: 'system', allowMature: false, autoRunLimit: 100 },
+      models: [{ id: 'z-ai/glm-5.3-flash', label: 'Smart', note: 'Follows instructions more closely.' }],
+    });
+    const changes: unknown[] = [];
+    dialog.addEventListener('cvt-settings-change', (e) => changes.push((e as CustomEvent).detail));
+    const select = dialog.querySelector<HTMLInputElement>('civitai-select[label=Assistant]')!;
+
+    select.value = 'z-ai/glm-5.3-flash';
+    select.dispatchEvent(new Event('change'));
+    expect(changes).toEqual([{ assistantModel: 'z-ai/glm-5.3-flash' }]);
+
+    select.value = 'custom';
+    select.dispatchEvent(new Event('change'));
+    await dialog.updateComplete;
+    const id = dialog.querySelector<HTMLInputElement>('civitai-text-input[label="Model id"]')!;
+    id.value = ' z-ai/glm-5.3-prime ';
+    id.dispatchEvent(new Event('change'));
+    expect(changes.at(-1)).toEqual({ assistantModel: 'z-ai/glm-5.3-prime' });
   });
 });
 
@@ -196,6 +442,54 @@ describe('civitai-chat-thread', () => {
     await thread.updateComplete;
     await thread.querySelector('civitai-chat-turn')!.updateComplete;
     expect(thread.textContent).toContain('Hello there');
+  });
+
+  it('says when a step did not work, with what came back behind it, so a retrying assistant is visibly busy', async () => {
+    const turn = {
+      seq: 1,
+      createdAt: '',
+      user: { content: 'add a picture option', attachments: [] },
+      assistant: {
+        messages: [
+          { role: 'assistant' as const, content: [{ type: 'tool-call' as const, toolCallId: 'c1', toolName: 'update_panel', input: {} }] },
+          { role: 'tool' as const, content: [{ type: 'tool-result' as const, toolCallId: 'c1', toolName: 'update_panel', output: { type: 'json' as const, value: { error: 'input.images: required' } } }] },
+        ],
+        status: 'done' as const,
+      },
+    };
+    const thread = await mount('civitai-chat-thread', { turns: [turn], jobs: { byToolCall: () => undefined, get: () => undefined } as never, posts: { available: false } as never });
+    await thread.querySelector('civitai-chat-turn')!.updateComplete;
+    const failed = thread.querySelector('.cvt-step-failed')!;
+    expect(failed.querySelector('summary')?.textContent).toBe("Changing the controls didn't work");
+    expect(failed.querySelector('code')?.textContent).toBe('input.images: required');
+  });
+
+  it("shows a page tool's call the way the page renders it, and its own activity while it runs", async () => {
+    const turn = { seq: 1, createdAt: '', user: { content: 'pin it', attachments: [] }, assistant: { messages: [], status: 'streaming' as const } };
+    const live = { seq: 1, parts: [{ kind: 'tool', toolCallId: 't1', toolName: 'pin_to_board', input: { file: 'gen1-1-1' }, state: 'calling' }] };
+    const views = {
+      pin_to_board: {
+        activity: 'Pinning it…',
+        render: (call: { state: string; output?: unknown }) => (call.state === 'done' ? `Pinned as #${(call.output as { pin: number }).pin}` : undefined),
+      },
+    };
+    const thread = await mount('civitai-chat-thread', { turns: [turn], live: live as never, views, jobs: { byToolCall: () => undefined, get: () => undefined } as never });
+    await thread.querySelector('civitai-chat-turn')!.updateComplete;
+    expect(thread.querySelector('.cvt-activity')?.textContent).toBe('Pinning it…');
+
+    Object.assign(live.parts[0]!, { state: 'done', output: { pin: 7 } });
+    thread.live = { ...live } as never;
+    await thread.updateComplete;
+    await thread.querySelector('civitai-chat-turn')!.updateComplete;
+    expect(thread.textContent).toContain('Pinned as #7');
+  });
+
+  it('renames what a built-in tool is doing when the page gives only an activity', async () => {
+    const turn = { seq: 1, createdAt: '', user: { content: 'find one', attachments: [] }, assistant: { messages: [], status: 'streaming' as const } };
+    const live = { seq: 1, parts: [{ kind: 'tool', toolCallId: 't1', toolName: 'search_models', input: {}, state: 'calling' }] };
+    const thread = await mount('civitai-chat-thread', { turns: [turn], live: live as never, views: { search_models: { activity: 'Browsing the catalog…' } }, jobs: { byToolCall: () => undefined, get: () => undefined } as never });
+    await thread.querySelector('civitai-chat-turn')!.updateComplete;
+    expect(thread.querySelector('.cvt-activity')?.textContent).toBe('Browsing the catalog…');
   });
 
   it('shows a failed reply in plain words, with what the service said under Details', async () => {
@@ -301,5 +595,173 @@ describe('civitai-chat-dropzone', () => {
 
     expect(taken).toEqual(['cat.png']);
     expect(drop.defaultPrevented).toBe(true);
+  });
+});
+
+async function panelFixture() {
+  const feed = controllable<Workflow>();
+  const { PanelManager } = await import('../panels/panel.js');
+  const { JobManager } = await import('../orchestration/jobs.js');
+  const { toolInfo } = await import('../orchestration/job.js');
+  const submitted: Record<string, unknown>[] = [];
+  const jobs = new JobManager({
+    api: { getWorkflow: vi.fn(), watchWorkflow: vi.fn(() => feed.iterate()), addTag: vi.fn(), updateWorkflow: vi.fn() } as never,
+    cancelWorkflow: vi.fn(),
+    mcp: {
+      callTool: vi.fn(async (_name: string, args: Record<string, unknown>) => {
+        if (!args.whatif) submitted.push(args);
+        return { content: [{ type: 'text', text: 'ok' }], structuredContent: args.whatif ? { cost: { total: 12, variable: false } } : { workflowId: '7-1' } };
+      }),
+    } as never,
+    resolveArgs: async (args) => args,
+    decide: () => 'confirm',
+    findWorkflows: vi.fn(async () => []),
+    hideMatureContent: () => true,
+  });
+  const panels = new PanelManager({ jobs, toolInfo: (name) => toolInfo(name, { properties: { whatif: {}, waitForCompletion: {} } }), save: vi.fn() });
+  const panel = panels.open({
+    conversationId: 'C1',
+    seq: 1,
+    toolCallId: 'c1',
+    spec: {
+      title: 'Lo-fi beat',
+      inputs: {
+        mood: { kind: 'choice', label: 'Mood', options: ['Rainy night', 'Sunday morning'], default: 'Rainy night' },
+        lead: { kind: 'text', label: 'Lead', required: true },
+        tracks: { kind: 'count', label: 'How many', min: 1, max: 4, default: 1 },
+      },
+      run: { stepType: 'aceStepAudio', input: { prompt: 'lo-fi, {{mood}}, {{lead}}', quantity: '{{tracks}}' } },
+    },
+    price: { total: 44, variable: false },
+  });
+  return { panel, panels, submitted, feed };
+}
+
+describe('civitai-chat-panel', () => {
+  const setup = async () => {
+    const { panel, submitted } = await panelFixture();
+    const el = await mount('civitai-chat-panel', { panel });
+    const runButton = () => [...el.querySelectorAll<HTMLElement>('civitai-button')].find((b) => b.textContent?.startsWith('Run'))!;
+    return { el, panel, submitted, runButton };
+  };
+
+  it('shows its controls and the price on Run, and waits for required inputs', async () => {
+    const { el, runButton } = await setup();
+    expect(el.querySelector('h3')?.textContent).toBe('Lo-fi beat');
+    expect(el.querySelector('civitai-segmented-control')?.getAttribute('label')).toBe('Mood');
+    expect(runButton().textContent).toContain('Run · ≈ 44 Buzz');
+    expect(runButton().hasAttribute('disabled')).toBe(true);
+    expect(el.textContent).toContain('Fill in Lead to run.');
+  });
+
+  it('says the link was copied, once the chat answers that it reached the clipboard', async () => {
+    const { panel } = await panelFixture();
+    const el = await mount('civitai-chat-panel', { panel, canShare: true });
+    el.addEventListener('panel-share', (e) => ((e as CustomEvent<{ copied?: Promise<boolean> }>).detail.copied = Promise.resolve(true)));
+    const share = () => el.querySelector<HTMLElement>('.cvt-panel-share')!;
+    expect(share().textContent).toBe('Share');
+    share().click();
+    await vi.waitFor(() => expect(share().textContent).toBe('Link copied ✓'));
+  });
+
+  it('labels an ask panel by what it does, without a price', async () => {
+    const { panel } = await panelFixture();
+    panel.apply({ spec: { ...panel.spec, run: { ask: 'Make a {{mood}} beat with {{lead}}' }, button: 'Make it' }, toolCallId: 'c2' });
+    const el = await mount('civitai-chat-panel', { panel });
+    const button = [...el.querySelectorAll<HTMLElement>('civitai-button')].find((b) => b.textContent?.startsWith('Make it'))!;
+    expect(button.textContent?.trim()).toBe('Make it');
+    expect(el.textContent).toContain('Fill in Lead to run.');
+  });
+
+  it('pulls a number past its limit back to the limit, in the field too, and prices that', async () => {
+    const { el, panel, runButton } = await setup();
+    const tracks = el.querySelector('civitai-number-input')! as unknown as HTMLInputElement;
+    tracks.value = '15';
+    tracks.dispatchEvent(new Event('change'));
+    await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    expect(panel.values.tracks).toBe(4);
+    expect(tracks.value).toBe('4');
+    expect(runButton().textContent).toContain('checking price…');
+  });
+
+  it("runs the user's choices as they set them, then shows the run", async () => {
+    const { el, panel, submitted, runButton } = await setup();
+    const lead = el.querySelector('civitai-text-input')!;
+    (lead as unknown as { value: string }).value = 'piano';
+    lead.dispatchEvent(new Event('input'));
+    const mood = el.querySelector('civitai-segmented-control')!;
+    (mood as unknown as { value: string }).value = 'Sunday morning';
+    mood.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => expect(panel.ready).toBe(true));
+    await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+
+    runButton().click();
+    await vi.waitFor(() => expect(submitted).toHaveLength(1));
+    expect(submitted[0]).toMatchObject({ stepType: 'aceStepAudio', input: { prompt: 'lo-fi, Sunday morning, piano' }, waitForCompletion: false });
+    await vi.waitFor(() => expect(el.querySelector('civitai-chat-generation-card')).not.toBeNull());
+
+    runButton().click();
+    await vi.waitFor(() => expect(submitted).toHaveLength(2));
+    await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    expect([...el.querySelectorAll('.cvt-panel-run')].map((b) => [b.getAttribute('aria-label'), b.getAttribute('aria-pressed')])).toEqual([
+      ['Run 2, in progress', 'true'],
+      ['Run 1, in progress', 'false'],
+    ]);
+  });
+});
+
+describe('civitai-chat-studio', () => {
+  it('lays a panel out as a studio: controls with Run on the left, the run on show in the middle, every run in the tray', async () => {
+    const { panel, feed } = await panelFixture();
+    const studio = await mount('civitai-chat-studio', { panel });
+    const root = studio.shadowRoot!;
+    expect(root.querySelector('.controls h2')?.textContent).toBe('Lo-fi beat');
+    // Too long for buttons in the narrow column, so a dropdown.
+    expect(root.querySelector('.controls [label=Mood]')?.localName).toBe('civitai-select');
+    expect(root.querySelector('.canvas')?.textContent).toContain('Press Run to make the first one.');
+
+    panel.setValue('lead', 'piano');
+    await panel.quote();
+    await panel.run();
+    await studio.updateComplete;
+    expect(root.querySelector('.canvas [role=status]')?.textContent).toContain('Writing your song');
+    expect(root.querySelector('.tray-label')?.textContent).toBe('Runs · 1');
+
+    feed.push(workflow({ id: '7-1', status: 'succeeded', steps: [imageStep([{ id: 'a', url: 'https://x/a.png', width: 1024, height: 1024 }])] as never }));
+    await vi.waitFor(() => expect(root.querySelector('.results civitai-image')).not.toBeNull());
+    const picks: unknown[] = [];
+    studio.addEventListener('media-action', (e) => picks.push((e as CustomEvent).detail));
+    root.querySelectorAll<HTMLElement>('.results civitai-menu-item')[0]!.click();
+    expect(picks).toEqual([{ id: 'p1-1-1', action: 'reference' }]);
+  });
+
+  it('asks for something to make while there is no panel', async () => {
+    const studio = await mount('civitai-chat-studio');
+    expect(studio.shadowRoot!.textContent).toContain('its controls show up here');
+  });
+});
+
+describe('a docked panel in the thread', () => {
+  it('shows a chip that brings the panel up beside the chat, instead of the panel itself', async () => {
+    const { panel, panels } = await panelFixture();
+    const turn = {
+      seq: 1,
+      createdAt: '',
+      user: { content: 'a beat maker', attachments: [] },
+      assistant: {
+        messages: [
+          { role: 'assistant' as const, content: [{ type: 'tool-call' as const, toolCallId: 'c1', toolName: 'open_panel', input: {} }] },
+          { role: 'tool' as const, content: [{ type: 'tool-result' as const, toolCallId: 'c1', toolName: 'open_panel', output: { type: 'json' as const, value: { panel: 'p1' } } }] },
+        ],
+        status: 'done' as const,
+      },
+    };
+    const thread = await mount('civitai-chat-thread', { turns: [turn], panels, dockPanels: true, jobs: { byToolCall: () => undefined, get: () => undefined } as never, posts: { available: false } as never });
+    await thread.querySelector('civitai-chat-turn')!.updateComplete;
+    expect(thread.querySelector('civitai-chat-panel')).toBeNull();
+    const focused: unknown[] = [];
+    thread.addEventListener('panel-focus', (e) => focused.push((e as CustomEvent).detail.panel));
+    thread.querySelector<HTMLElement>('.cvt-panel-chip')!.click();
+    expect(focused).toEqual([panel]);
   });
 });

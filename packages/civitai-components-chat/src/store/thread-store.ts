@@ -3,6 +3,7 @@ import { ulid } from 'ulid';
 
 import { APP_TAG, HEAD_TAG, JOB_TAG, TURN_TAG, conversationTag, scopeTag } from '../config.js';
 import type { OrchestrationApi } from '../orchestration/api.js';
+import type { SavedPanel } from '../panels/panel.js';
 import type { SavedPost } from '../posting/post.js';
 import type { Attachment, Conversation, ConversationMetadata, ConversationSummary, JobMetadata, SavedTurn, TitleSource, Turn } from '../types.js';
 
@@ -37,6 +38,7 @@ export const CUT_OFF = 'cut-off';
  * Workflows expire 30 days after creation, so a conversation lasts 30 days from its latest turn.
  */
 export class ThreadStore extends EventTarget {
+  #writes = new Map<string, Promise<void>>();
   summaries: ConversationSummary[] = [];
   current: Conversation | null = null;
   /** What the orchestrator charged for the latest save; unknown until this session saves once. */
@@ -71,13 +73,16 @@ export class ThreadStore extends EventTarget {
     });
     this.#cursor = page.next || null;
     const known = new Set(this.summaries.map((summary) => summary.id));
+    const added: ConversationSummary[] = [];
     for (const workflow of page.items) {
       const metadata = conversationMetadataOf(workflow);
       // A head whose tag removal failed is older than the one listed before it.
       if (!metadata || known.has(metadata.conversationId) || !workflow.id || metadata.scope !== this.#deps.scope) continue;
       known.add(metadata.conversationId);
-      this.summaries.push(summaryOf(workflow.id, metadata));
+      added.push(summaryOf(workflow.id, metadata));
     }
+    // Replaced, never mutated: Lit only re-renders a property that is a new object.
+    this.summaries = [...this.summaries, ...added];
     this.#emit('list-change');
   }
 
@@ -98,6 +103,7 @@ export class ThreadStore extends EventTarget {
       updatedAt: head?.metadata.updatedAt ?? now,
       turns,
       ...(head?.metadata.posts ? { posts: head.metadata.posts } : {}),
+      ...(head?.metadata.panels ? { panels: head.metadata.panels } : {}),
     };
     const jobs = jobWorkflows.flatMap((workflow) => {
       const metadata = jobMetadataOf(workflow);
@@ -139,15 +145,14 @@ export class ThreadStore extends EventTarget {
     if (!conversation) return;
     await this.#submits.get(submitKey(conversation.id, turn.seq));
     const head = this.#heads.get(conversation.id);
-    const metadata = this.#metadata(conversation);
     if (head?.seq === turn.seq) {
-      await this.#deps.api.updateWorkflow(head.workflowId, { metadata });
+      await this.#writeHead(head.workflowId, () => this.#metadata(conversation));
     } else {
       const submit = this.#submitHead(conversation, turn.seq);
       this.#submits.set(submitKey(conversation.id, turn.seq), submit);
       // A submit that timed out may have landed: the externalId hands back that workflow as it was.
       const workflowId = await submit;
-      if (workflowId) await this.#deps.api.updateWorkflow(workflowId, { metadata });
+      if (workflowId) await this.#writeHead(workflowId, () => this.#metadata(conversation));
     }
     this.#touchSummary(conversation);
     this.#emit('conversation-change');
@@ -158,7 +163,26 @@ export class ThreadStore extends EventTarget {
     if (!conversation) return;
     conversation.posts = { ...conversation.posts, [id]: post };
     const head = this.#heads.get(conversation.id);
-    if (head) await this.#deps.api.updateWorkflow(head.workflowId, { metadata: this.#metadata(conversation) });
+    if (head) await this.#writeHead(head.workflowId, () => this.#metadata(conversation));
+  }
+
+  async savePanel(panel: SavedPanel): Promise<void> {
+    const conversation = this.current;
+    if (!conversation) return;
+    conversation.panels = { ...conversation.panels, [panel.handle]: panel };
+    // A reply still streaming saves the panel with it; writing now could land after that save and drop the reply.
+    if (conversation.turns.at(-1)?.assistant.status === 'streaming') return;
+    const head = this.#heads.get(conversation.id);
+    if (head) await this.#writeHead(head.workflowId, () => this.#metadata(conversation));
+  }
+
+  // Each write replaces the whole metadata, so they go one at a time per workflow, each built from the latest state.
+  #writeHead(workflowId: string, metadata: () => ConversationMetadata): Promise<void> {
+    const write = (this.#writes.get(workflowId) ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() => this.#deps.api.updateWorkflow(workflowId, { metadata: metadata() }));
+    this.#writes.set(workflowId, write);
+    return write;
   }
 
   async setTitle(title: string, source: TitleSource): Promise<void> {
@@ -177,8 +201,8 @@ export class ThreadStore extends EventTarget {
     const summary = this.summaries.find((s) => s.id === id);
     if (!summary) return;
     const metadata: ConversationMetadata = { ...summary.head.metadata, title: clampTitle(title), titleSource: 'user' };
-    await this.#deps.api.updateWorkflow(summary.head.workflowId, { metadata });
-    Object.assign(summary, { title: metadata.title, titleSource: 'user', head: { ...summary.head, metadata } });
+    await this.#writeHead(summary.head.workflowId, () => metadata);
+    this.summaries = this.summaries.map((s) => (s.id === id ? { ...s, title: metadata.title, titleSource: 'user', head: { ...s.head, metadata } } : s));
     this.#emit('list-change');
   }
 
@@ -246,6 +270,7 @@ export class ThreadStore extends EventTarget {
       updatedAt: conversation.updatedAt,
       turns: conversation.turns.map(saved),
       ...(conversation.posts ? { posts: conversation.posts } : {}),
+      ...(conversation.panels ? { panels: conversation.panels } : {}),
       ...(this.#deps.scope ? { scope: this.#deps.scope } : {}),
     };
   }

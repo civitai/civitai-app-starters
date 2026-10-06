@@ -3,6 +3,7 @@ import { jsonSchema, tool, type ToolSet } from 'ai';
 import { MockLanguageModelV3, convertArrayToReadableStream } from 'ai/test';
 import { describe, expect, it, vi } from 'vitest';
 
+import { MAX_STEPS } from '../config.js';
 import { JobManager } from '../orchestration/jobs.js';
 import { ThreadStore } from '../store/thread-store.js';
 import { workflow } from '../test-support/fakes.js';
@@ -60,7 +61,7 @@ function setup(
     [ASK_CHOICE]: tool({ inputSchema: jsonSchema({ type: 'object', properties: { question: { type: 'string' } } }), execute: async () => ({ shown: true }) }),
   };
   const agent = new Agent({
-    model,
+    model: () => model,
     store,
     jobs: new JobManager({} as never),
     toolSet: async () => tools,
@@ -97,16 +98,20 @@ describe('Agent', () => {
     for (const system of systems) expect(system).toContain('<user_instructions>\nTalk like a pirate.\n</user_instructions>');
   });
 
-  it('tells the assistant what the embedding app says as of each reply, and which tools are its own', async () => {
+  it('tells the assistant what the embedding app says as of each reply, without changing the system prompt', async () => {
     let pins = 0;
     const { agent, prompts } = setup([text('Sure.'), text('Sure.')], undefined, { instructions: () => `The board has ${pins} pins.`, tools: ['generate_image'] });
     await agent.send('hello');
     pins = 3;
     await agent.send('again');
-    const systems = prompts.map((prompt) => (prompt as { role: string; content: string }[]).find((m) => m.role === 'system')?.content ?? '');
+    const messages = prompts as { role: string; content: unknown }[][];
+    const systems = messages.map((prompt) => prompt.find((m) => m.role === 'system')?.content);
+    const latest = messages.map((prompt) => JSON.stringify(prompt.filter((m) => m.role === 'user').at(-1)?.content));
     expect(systems[0]).toContain('Its tools (generate_image) act on that app');
-    expect(systems[0]).toContain('<app_instructions>\nThe board has 0 pins.\n</app_instructions>');
-    expect(systems[1]).toContain('The board has 3 pins.');
+    expect(systems[1]).toBe(systems[0]);
+    expect(latest[0]).toContain('<app_instructions>\\nThe board has 0 pins.\\n</app_instructions>');
+    expect(latest[1]).toContain('The board has 3 pins.');
+    expect(JSON.stringify(messages[1]!.filter((m) => m.role === 'user')[0])).not.toContain('The board has');
   });
 
   it('calls a tool, feeds the result back, and lets the model answer', async () => {
@@ -119,6 +124,38 @@ describe('Agent', () => {
     expect(roles).toEqual(['assistant', 'tool', 'assistant']);
   });
 
+  it('ends the reply once a tool hands the next move to the user', async () => {
+    const { agent, prompts, generate } = setup([toolCall('generate_image', { prompt: 'a form' }), text('should not run')]);
+    generate.mockResolvedValueOnce({ panel: 'p1', awaitsUser: true, note: 'Wait.' } as never);
+    await agent.send('let me post it with my own title');
+    expect(prompts).toHaveLength(1);
+  });
+
+  it('asks the model chosen at the time of each reply', async () => {
+    const replied: string[] = [];
+    const model = (name: string) =>
+      new MockLanguageModelV3({
+        doStream: async () => {
+          replied.push(name);
+          return { stream: convertArrayToReadableStream(text(`from ${name}`)) as never };
+        },
+        doGenerate: async () => ({ content: [{ type: 'text', text: 'Title' }], finishReason: { unified: 'stop', raw: 'stop' }, usage, warnings: [] }),
+      });
+    const models = { fast: model('fast'), smart: model('smart') };
+    let chosen: keyof typeof models = 'fast';
+    const store = new ThreadStore({
+      orchestration: { submitWorkflow: vi.fn(async (_: WorkflowTemplate) => workflow({ id: '7-1' })), queryWorkflows: vi.fn() },
+      api: { updateWorkflow: vi.fn(async () => undefined), removeTag: vi.fn(async () => undefined), deleteWorkflow: vi.fn() },
+      hideMatureContent: () => true,
+    });
+    const agent = new Agent({ model: () => models[chosen], store, jobs: new JobManager({} as never), toolSet: async () => ({}), attachments: () => [] });
+
+    await agent.send('hi');
+    chosen = 'smart';
+    await agent.send('again');
+    expect(replied).toEqual(['fast', 'smart']);
+  });
+
   it('stops after showing choices, so the user answers next', async () => {
     const { agent, prompts } = setup([toolCall(ASK_CHOICE, { question: 'Which style?' }), text('should not run')]);
     await agent.send('make something');
@@ -126,12 +163,14 @@ describe('Agent', () => {
   });
 
   it('makes the last allowed step answer in words instead of calling yet another tool', async () => {
-    const calls = Array.from({ length: 5 }, (_, i) => toolCall('generate_image', { prompt: `try ${i}` }, `call_${i}`));
-    const { agent, store, toolChoices } = setup([...calls, text('Sorry, that did not work.')]);
+    const calls = Array.from({ length: MAX_STEPS - 1 }, (_, i) => toolCall('generate_image', { prompt: `try ${i}` }, `call_${i}`));
+    const { agent, store, toolChoices, prompts } = setup([...calls, text('Sorry, that did not work.')]);
     await agent.send('make a bike');
-    expect(toolChoices).toHaveLength(6);
+    expect(toolChoices).toHaveLength(MAX_STEPS);
     expect(toolChoices.at(-1)).toEqual({ type: 'none' });
-    expect(toolChoices.slice(0, 5).every((choice) => (choice as { type: string }).type === 'auto')).toBe(true);
+    expect(toolChoices.slice(0, -1).every((choice) => (choice as { type: string }).type === 'auto')).toBe(true);
+    expect(JSON.stringify((prompts.at(-1) as unknown[])[0])).toContain('you cannot call tools now');
+    expect(JSON.stringify((prompts[0] as unknown[])[0])).not.toContain('you cannot call tools now');
     expect(store.current!.turns[0]!.assistant.messages.at(-1)).toMatchObject({ role: 'assistant', content: [{ type: 'text', text: 'Sorry, that did not work.' }] });
   });
 

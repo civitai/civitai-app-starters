@@ -1,5 +1,6 @@
 import type { ModelMessage } from 'ai';
 
+import type { SavedPanel } from './panels/panel.js';
 import type { SavedPost } from './posting/post.js';
 
 export type MediaKind = 'image' | 'video' | 'audio';
@@ -55,6 +56,8 @@ export interface Conversation {
   turns: Turn[];
   /** Outcomes of posts the assistant offered, by tool call id. */
   posts?: Record<string, SavedPost>;
+  /** Panels the assistant built, by handle. */
+  panels?: Record<string, SavedPanel>;
 }
 
 export interface ConversationSummary {
@@ -83,6 +86,7 @@ export interface ConversationMetadata {
   updatedAt: string;
   turns: SavedTurn[];
   posts?: Record<string, SavedPost>;
+  panels?: Record<string, SavedPanel>;
   scope?: string;
 }
 
@@ -94,6 +98,7 @@ export interface JobMetadata {
   job: string;
   toolCallId: string;
   tool: string;
+  panel?: string;
 }
 
 export type Theme = 'system' | 'light' | 'dark';
@@ -104,6 +109,10 @@ export interface Settings {
   autoRunLimit: number;
   /** Sent with every request as the user's standing instructions to the assistant. */
   customInstructions?: string;
+  /** The assistant's model for this viewer; the configured default when unset. */
+  assistantModel?: string;
+  /** The language the viewer speaks to the microphone in. */
+  voiceLanguage?: string;
   lastConversationId?: string;
 }
 

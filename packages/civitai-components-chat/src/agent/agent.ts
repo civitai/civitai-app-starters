@@ -1,4 +1,4 @@
-import { generateText, hasToolCall, stepCountIs, streamText, type LanguageModel, type ModelMessage, type TextStreamPart, type ToolSet } from 'ai';
+import { generateText, hasToolCall, stepCountIs, streamText, type LanguageModel, type StopCondition, type ModelMessage, type TextStreamPart, type ToolSet } from 'ai';
 
 import { MAX_OUTPUT_TOKENS, MAX_STEPS } from '../config.js';
 import type { JobManager } from '../orchestration/jobs.js';
@@ -10,10 +10,20 @@ import { humanize } from '../ux/humanize.js';
 import { buildModelMessages } from './history.js';
 import type { TurnPart } from './parts.js';
 import { PROVIDER_OPTIONS } from './provider.js';
-import { buildSystemPrompt } from './system-prompt.js';
+import { buildSystemPrompt, buildTurnContext } from './system-prompt.js';
+
+/** A tool that hands the next move to the viewer (an ask panel) ends the reply, so the assistant cannot act for them. */
+const awaitsUser: StopCondition<ToolSet> = ({ steps }) =>
+  steps.at(-1)?.toolResults.some((result) => (result.output as { awaitsUser?: unknown } | undefined)?.awaitsUser === true) ?? false;
+
+const LAST_STEP =
+  'This is your last step this turn: you cannot call tools now. Tell the user plainly what got done and what did not, and that they can ask you to carry on. Do not say you are about to do something.';
 
 export interface AgentDeps {
-  model: LanguageModel;
+  /** Read at the start of every reply, so a change in Settings applies from the next one. */
+  model(): LanguageModel;
+  /** Naming a conversation is a few words; it need not use a costly model the viewer picked. */
+  titleModel?(): LanguageModel;
   store: ThreadStore;
   jobs: JobManager;
   posts?: PostManager;
@@ -23,6 +33,8 @@ export interface AgentDeps {
   /** Read at the start of every reply, so the embedding page can change them at any time. */
   hostInstructions?(): string | undefined;
   isHostTool?(name: string): boolean;
+  /** What the assistant is told about the panels on screen, read at the start of every reply. */
+  panels?(): string | undefined;
   systemPrompt?(): string | ((defaults: string) => string) | undefined;
   now?(): Date;
 }
@@ -70,26 +82,28 @@ export class Agent extends EventTarget {
     let streamError: unknown;
     try {
       const tools = await this.#deps.toolSet({ conversationId: conversation.id, seq: turn.seq });
+      const hostInstructions = this.#deps.hostInstructions?.();
+      const system = buildSystemPrompt({
+        now: this.#deps.now?.() ?? new Date(),
+        customInstructions: this.#deps.customInstructions?.(),
+        canPost: this.#deps.posts?.available ?? false,
+        tools: Object.keys(tools),
+        host: { tools: Object.keys(tools).filter((name) => this.#deps.isHostTool?.(name)), instructs: Boolean(hostInstructions?.trim()) },
+        rules: this.#deps.systemPrompt?.(),
+      });
+      const context = buildTurnContext({ attachments: this.#deps.attachments(), panels: this.#deps.panels?.(), hostInstructions });
       const result = streamText({
-        model: this.#deps.model,
-        system: buildSystemPrompt({
-          attachments: this.#deps.attachments(),
-          now: this.#deps.now?.() ?? new Date(),
-          customInstructions: this.#deps.customInstructions?.(),
-          canPost: this.#deps.posts?.available ?? false,
-          tools: Object.keys(tools),
-          host: { tools: Object.keys(tools).filter((name) => this.#deps.isHostTool?.(name)), instructions: this.#deps.hostInstructions?.() },
-          rules: this.#deps.systemPrompt?.(),
-        }),
-        messages: buildModelMessages(conversation.turns, (key) => this.#deps.jobs.get(key) ?? this.#deps.posts?.get(key)),
+        model: this.#deps.model(),
+        system,
+        messages: buildModelMessages(conversation.turns, (key) => this.#deps.jobs.get(key) ?? this.#deps.posts?.get(key), { context }),
         tools,
-        stopWhen: [stepCountIs(MAX_STEPS), hasToolCall(ASK_CHOICE)],
+        stopWhen: [stepCountIs(MAX_STEPS), hasToolCall(ASK_CHOICE), awaitsUser],
         abortSignal: controller.signal,
         maxOutputTokens: MAX_OUTPUT_TOKENS,
         temperature: 0.7,
         providerOptions: PROVIDER_OPTIONS,
-        // The last allowed step must speak, or a run of failing tools ends in silence.
-        prepareStep: ({ stepNumber }) => (stepNumber >= MAX_STEPS - 1 ? { toolChoice: 'none' } : undefined),
+        // The last allowed step must speak, or a run of failing tools ends in silence; told why, it does not promise more.
+        prepareStep: ({ stepNumber }) => (stepNumber >= MAX_STEPS - 1 ? { toolChoice: 'none', system: `${system}\n\n${LAST_STEP}` } : undefined),
         onStepFinish: (step) => {
           completed = [...step.response.messages];
         },
@@ -163,7 +177,7 @@ export class Agent extends EventTarget {
   async #nameConversation(turn: Turn): Promise<void> {
     try {
       const { text } = await generateText({
-        model: this.#deps.model,
+        model: (this.#deps.titleModel ?? this.#deps.model)(),
         maxOutputTokens: 24,
         temperature: 0.3,
         providerOptions: PROVIDER_OPTIONS,

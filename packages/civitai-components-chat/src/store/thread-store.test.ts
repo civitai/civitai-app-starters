@@ -2,6 +2,7 @@ import type { Workflow, WorkflowTemplate } from '@civitai/sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 import { flush, workflow } from '../test-support/fakes.js';
+import type { SavedPanel } from '../panels/panel.js';
 import type { ConversationMetadata, SavedTurn } from '../types.js';
 import { CUT_OFF, ThreadStore, firstMessageTitle } from './thread-store.js';
 
@@ -128,6 +129,43 @@ describe('ThreadStore', () => {
     expect(conversation.posts).toEqual({ p0: { state: 'dismissed' } });
     await store.savePost('p1', { state: 'posted', postId: 9 });
     expect(deps.api.updateWorkflow).toHaveBeenCalledWith('7-5', { metadata: expect.objectContaining({ posts: { p0: { state: 'dismissed' }, p1: { state: 'posted', postId: 9 } } }) });
+  });
+
+  it('keeps panels with the conversation, but leaves saving to the reply while one is streaming', async () => {
+    const panel: SavedPanel = { v: 1, id: 'U', handle: 'p1', seq: 1, toolCallId: 'c', versions: [], values: {}, runs: [] };
+    const { store, deps } = setup([head('7-5', { conversationId: 'A', panels: { p1: panel } })]);
+    const { conversation } = await store.open('A');
+    expect(conversation.panels).toEqual({ p1: panel });
+
+    await store.savePanel({ ...panel, handle: 'p2', runs: [{ job: 'p2-1', version: 1, values: {} }] });
+    expect(deps.api.updateWorkflow).toHaveBeenLastCalledWith('7-5', { metadata: expect.objectContaining({ panels: { p1: panel, p2: expect.objectContaining({ runs: [{ job: 'p2-1', version: 1, values: {} }] }) } }) });
+
+    store.appendUserTurn('make it warmer', []);
+    deps.api.updateWorkflow.mockClear();
+    await store.savePanel({ ...panel, values: { mood: 'warm' } });
+    expect(deps.api.updateWorkflow).not.toHaveBeenCalled();
+    expect(store.current?.panels?.p1?.values).toEqual({ mood: 'warm' });
+  });
+
+  it('writes the conversation one change at a time, each with everything known when it goes out, so none lands stale', async () => {
+    const { store, deps } = setup([head('7-5', { conversationId: 'A' })]);
+    await store.open('A');
+    const sent: unknown[] = [];
+    let release!: () => void;
+    (deps.api.updateWorkflow as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (...args: unknown[]) => {
+      sent.push(Object.keys((args[1] as { metadata: ConversationMetadata }).metadata.posts ?? {}));
+      if (sent.length === 1) await new Promise<void>((resolve) => (release = resolve));
+    });
+
+    const first = store.savePost('p1', { state: 'posted', postId: 1 });
+    const second = store.savePost('p2', { state: 'posted', postId: 2 });
+    await flush();
+    expect(sent).toHaveLength(1);
+
+    release();
+    await Promise.all([first, second]);
+    expect(sent).toHaveLength(2);
+    expect(sent.at(-1)).toEqual(['p1', 'p2']);
   });
 
   it('renames through the head, which is what the list reads', async () => {

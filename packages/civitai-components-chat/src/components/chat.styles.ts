@@ -2,6 +2,20 @@ import { css } from 'lit';
 
 /** The chat's own shadow-root styles. */
 export const chatStyles = css`
+/* The region positions itself with a rule it adds to the document head, which does not reach into this shadow root. */
+civitai-toast-region {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(92vw, 380px);
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
 :host {
   display: block;
   height: 100%;
@@ -727,6 +741,135 @@ civitai-chat-model-card {
   cursor: default;
 }
 
+civitai-chat-panel {
+  display: block;
+}
+
+.cvt-panel {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: calc(var(--civitai-radius, 8px) * 1.5);
+  background: var(--civitai-color-surface);
+}
+
+.cvt-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.cvt-panel-head h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.cvt-panel-share {
+  margin-left: auto;
+}
+
+.cvt-panel-head p {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 14px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-commands {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+}
+
+.cvt-commands button {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--civitai-radius, 8px);
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cvt-commands button:hover,
+.cvt-commands button:focus-visible {
+  background: var(--civitai-color-border);
+  outline: none;
+}
+
+.cvt-commands span {
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-step-failed {
+  font-size: 13px;
+  color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-step-failed summary {
+  cursor: pointer;
+  width: fit-content;
+}
+
+.cvt-step-failed summary::before {
+  content: '⚠ ';
+  color: var(--civitai-color-warning, var(--civitai-color-error));
+}
+
+.cvt-step-failed code {
+  display: block;
+  margin-top: 4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cvt-panel-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: 999px;
+  background: var(--civitai-color-surface);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cvt-panel-chip:hover {
+  border-color: var(--civitai-color-primary);
+}
+
+.cvt-panel-chip svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.cvt-panel-runs {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.cvt-panel-runs > civitai-chat-generation-card {
+  justify-self: stretch;
+}
+
 /* ── composer ── */
 
 civitai-chat-composer {
@@ -814,6 +957,128 @@ civitai-chat-composer {
   background: var(--civitai-color-surface-2);
   color: var(--civitai-color-text-dimmed);
   cursor: default;
+}
+
+.cvt-voice-language {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  min-width: 32px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--civitai-color-border);
+  border-radius: 999px;
+  color: var(--civitai-color-text-dimmed);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.cvt-voice-language:hover,
+.cvt-voice-language:focus-within {
+  color: var(--civitai-color-text);
+  border-color: var(--civitai-color-text-dimmed);
+}
+
+.cvt-voice-language:focus-within {
+  outline: 2px solid var(--civitai-color-primary);
+  outline-offset: 2px;
+}
+
+.cvt-voice-language select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.cvt-recording {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+}
+
+.cvt-levels {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.cvt-levels span {
+  flex: 1;
+  max-width: 3px;
+  min-height: 2px;
+  border-radius: 2px;
+  background: var(--civitai-color-text-dimmed);
+}
+
+.cvt-heard {
+  margin: 0;
+  max-height: 120px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  color: var(--civitai-color-text);
+}
+
+.cvt-transcribing {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+}
+
+.cvt-transcribing-label {
+  flex: 1;
+  min-width: 0;
+  background: linear-gradient(90deg, var(--civitai-color-text-dimmed) 30%, var(--civitai-color-text) 50%, var(--civitai-color-text-dimmed) 70%) 0 0 / 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: cvt-shimmer 1.6s linear infinite;
+}
+
+.cvt-spinner {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--civitai-color-border);
+  border-top-color: var(--civitai-color-primary);
+  border-radius: 50%;
+  animation: cvt-spin 0.8s linear infinite;
+}
+
+@keyframes cvt-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+@keyframes cvt-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cvt-transcribing-label {
+    animation: none;
+    color: var(--civitai-color-text);
+  }
+
+  .cvt-spinner {
+    animation-duration: 2.4s;
+  }
 }
 
 .cvt-send svg {

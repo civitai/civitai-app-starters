@@ -5,19 +5,30 @@ import { LitElement, html, nothing, type PropertyDeclarations, type PropertyValu
 import { keyed } from 'lit/directives/keyed.js';
 
 import { takeResume } from '../auth/resume.js';
-import { SCOPE_PATTERN } from '../config.js';
-import { isPostable } from '../posting/post.js';
+import { SCOPE_PATTERN, chatConfig } from '../config.js';
+import type { Panel } from '../panels/panel.js';
+import { panelLink, sharedPanelOf, takeSharedPanel, type SharedPanel } from '../panels/share.js';
+import { COMMANDS, modelName, parseCommand, resolveModel } from '../ux/commands.js';
+import { humanize } from '../ux/humanize.js';
 import { conversationSpend, type Spend } from '../ux/spend.js';
 import type { GenerationJob } from '../orchestration/job.js';
 import type { ChatSession, PendingUpload } from '../session.js';
 import { applyTheme } from '../settings.js';
 import type { ModelDirectory } from '../store/models.js';
-import type { ChatTool } from '../tools/host.js';
+import type { ChatTool, ChatToolView } from '../tools/host.js';
 import { ACCEPT_ATTRIBUTE, MAX_UPLOAD_BYTES } from '../uploads/upload.js';
 import type { Attachment, Settings } from '../types.js';
+import { voiceLanguage } from '../voice/languages.js';
+import { LiveTranscript, type VoiceTranscript } from '../voice/live-transcript.js';
+import type { StreamingTranscript } from '../voice/streaming-transcript.js';
 import type { CivitaiChatComposer } from './civitai-chat-composer.js';
 import type { CivitaiChatThread } from './civitai-chat-thread.js';
 import { chatStyles } from './chat.styles.js';
+import { mediaActions } from './media-actions.js';
+import { DEFAULT_ACTIONS, type CardAction } from './lib/actions.js';
+import type { MediaKind } from './lib/media.js';
+
+import { panelStyles } from './panel.styles.js';
 import type { Example } from './civitai-chat-welcome.js';
 
 /** A finished file, or a job that has none yet (the viewer then shows its details alone). */
@@ -32,16 +43,19 @@ export type ChatLayout = 'auto' | 'compact' | 'wide';
  * replaces what an empty chat shows.
  */
 export class CivitaiChat extends LitElement {
-  static override styles = chatStyles;
+  static override styles = [chatStyles, panelStyles];
 
   static override properties: PropertyDeclarations = {
     app: { attribute: false },
     signIn: { attribute: false },
     tools: { attribute: false },
+    toolViews: { attribute: false },
     instructions: { attribute: false },
     systemPrompt: { attribute: false },
     mcp: { attribute: false },
     scope: {},
+    panelLinkBase: { attribute: 'panel-link-base' },
+    dockPanels: { type: Boolean, attribute: 'dock-panels' },
     fullPage: { type: Boolean, attribute: 'full-page', reflect: true },
     // Reflected so the stylesheet can key on it, including the default.
     layout: { reflect: true },
@@ -54,6 +68,8 @@ export class CivitaiChat extends LitElement {
     lightbox: { state: true },
     loading: { state: true },
     signingIn: { state: true },
+    transcribing: { state: true },
+    heard: { state: true },
   };
 
   /** Signed in with at least `ai:write:budgeted`; the chat starts once it is set. */
@@ -66,6 +82,8 @@ export class CivitaiChat extends LitElement {
   declare signIn?: (options: { signal: AbortSignal }) => Promise<AppClient>;
   /** The page's own tools, by name; changes apply from the next reply. */
   declare tools: Record<string, ChatTool>;
+  /** How calls of any tool show in the chat, by tool name: an `activity` line, or a `render` that replaces the card. */
+  declare toolViews: Record<string, ChatToolView>;
   /** What the assistant should know about the page, read at the start of every reply. */
   declare instructions?: string | (() => string | undefined);
   /** Replaces the built-in persona and rules, or edits them (a function gets the defaults); read at every reply. */
@@ -74,6 +92,17 @@ export class CivitaiChat extends LitElement {
   declare mcp: { orchestration?: boolean; site?: boolean };
   /** Keeps this page's conversations and preferences apart; set it before `app`. */
   declare scope?: string;
+  /**
+   * The page that opens a shared panel's link (by calling `openPanel`, or as a full-page chat). A
+   * full-page chat shares links to itself; elsewhere Share shows only once this is set.
+   */
+  declare panelLinkBase?: string;
+  /**
+   * Leaves panels to the page: the thread shows a chip where each one was built or changed, and the
+   * chat fires `active-panel-change` with the panel to show (the latest, or the one whose chip was
+   * clicked). Pair it with `<civitai-chat-studio>`.
+   */
+  declare dockPanels: boolean;
   /** The chat is the whole page: it sets the theme, takes keyboard shortcuts and picks up after a sign-in redirect. */
   declare fullPage: boolean;
   /** Where the chat list goes: a column beside the chat (`wide`), a dropdown under the title (`compact`), or by the chat's own width (`auto`, compact at 900px or less). */
@@ -87,6 +116,8 @@ export class CivitaiChat extends LitElement {
   declare lightbox: Lightboxed | null;
   declare loading: boolean;
   declare signingIn: boolean;
+  declare transcribing: boolean;
+  declare heard: string;
 
   #session?: ChatSession;
   #models?: ModelDirectory;
@@ -95,13 +126,18 @@ export class CivitaiChat extends LitElement {
   #markStarted!: (session: ChatSession) => void;
   #rerender = (): void => this.requestUpdate();
   #signInAbort?: AbortController;
+  #focusedPanel?: Panel;
+  #activePanel?: Panel;
+  #voice?: VoiceTranscript;
   #aiGrant?: { app: AppClient; granted: Promise<boolean> };
 
   constructor() {
     super();
     this.tools = {};
+    this.toolViews = {};
     this.mcp = {};
     this.fullPage = false;
+    this.dockPanels = false;
     this.layout = 'auto';
     this.canSignOut = false;
     this.userName = '';
@@ -112,6 +148,8 @@ export class CivitaiChat extends LitElement {
     this.lightbox = null;
     this.loading = false;
     this.signingIn = false;
+    this.transcribing = false;
+    this.heard = '';
     this.#started = new Promise((resolve) => (this.#markStarted = resolve));
   }
 
@@ -160,6 +198,57 @@ export class CivitaiChat extends LitElement {
     composer.focus();
   }
 
+  get panels(): Panel[] {
+    return this.#session?.panels.all() ?? [];
+  }
+
+  get activePanel(): Panel | undefined {
+    const panels = this.#session?.panels;
+    if (!panels) return undefined;
+    const focused = this.#focusedPanel;
+    return focused && panels.get(focused.handle) === focused ? focused : panels.latest;
+  }
+
+  files(): Attachment[] {
+    return this.#session?.attachments() ?? [];
+  }
+
+  /** Pass to `<civitai-chat-studio>` so its menus match the chat's. */
+  get mediaActions(): Record<MediaKind, CardAction[]> {
+    return this.#session ? mediaActions(this.#session.posts) : DEFAULT_ACTIONS;
+  }
+
+  mediaAction(id: string, action: string): Promise<void> {
+    return this.#mediaAction(id, action);
+  }
+
+  #refsFor(ids: string[]): Attachment[] {
+    return ids.flatMap((id) => this.#session?.findAttachment(id) ?? []);
+  }
+
+  #sendWith(message: string, refs: string[]): void {
+    this.refs = this.#refsFor(refs);
+    void this.#send(message);
+  }
+
+  #composeWith(message: string, refs: string[]): void {
+    this.refs = this.#refsFor(refs);
+    void this.compose(message);
+  }
+
+  #announceActivePanel(): void {
+    const active = this.activePanel;
+    if (active === this.#activePanel) return;
+    this.#activePanel = active;
+    this.dispatchEvent(new CustomEvent('active-panel-change', { detail: { panel: active } }));
+  }
+
+  async openPanel(shared: SharedPanel): Promise<void> {
+    const session = await this.#started;
+    await session.openShared(shared);
+    this.renderRoot.querySelector<CivitaiChatThread>('civitai-chat-thread')?.scrollToEnd();
+  }
+
   async focusComposer(): Promise<void> {
     (await this.#composer())?.focus();
   }
@@ -178,15 +267,20 @@ export class CivitaiChat extends LitElement {
       hostInstructions: () => (typeof this.instructions === 'function' ? this.instructions() : this.instructions),
       systemPrompt: () => this.systemPrompt,
       mcp: () => this.mcp,
+      // While a reply is still coming the message waits in the box instead of being dropped.
+      ask: (message, refs) => (session.agent.running ? this.#composeWith(message, refs) : this.#sendWith(message, refs)),
+      compose: (message, refs) => this.#composeWith(message, refs),
     });
     const { settings } = session;
     if (this.fullPage) applyTheme(settings.theme);
     this.#session = session;
     this.#models = new ModelDirectory(app.site, () => session.settings.allowMature);
-    for (const target of [session.store, session.agent, session.jobs, session.posts] as EventTarget[]) {
-      for (const type of ['change', 'list-change', 'conversation-change', 'job-change', 'post-change']) target.addEventListener(type, this.#rerender);
+    for (const target of [session.store, session.agent, session.jobs, session.posts, session.panels] as EventTarget[]) {
+      for (const type of ['change', 'list-change', 'conversation-change', 'job-change', 'post-change', 'panel-change']) target.addEventListener(type, this.#rerender);
     }
     session.addEventListener('settings-change', this.#rerender);
+    session.panels.addEventListener('panel-change', () => this.#announceActivePanel());
+    session.store.addEventListener('conversation-change', () => this.#announceActivePanel());
     this.requestUpdate();
 
     void app.site
@@ -200,6 +294,14 @@ export class CivitaiChat extends LitElement {
     const target = resume?.conversationId ?? settings.lastConversationId;
     if (target) await this.#open(target, false);
     else session.newConversation();
+    const shared = this.fullPage ? await takeSharedPanel() : null;
+    if (shared) {
+      try {
+        await session.openShared(shared);
+      } catch (error) {
+        this.#toast('Could not open that shared panel.', error);
+      }
+    }
     if (resume?.draft) {
       const composer = await this.#composer();
       if (composer) composer.draft = resume.draft;
@@ -226,6 +328,28 @@ export class CivitaiChat extends LitElement {
       this.historyOpen = false;
     }
     this.renderRoot.querySelector<CivitaiChatThread>('civitai-chat-thread')?.scrollToEnd();
+  }
+
+  get #shareBase(): string | undefined {
+    return this.panelLinkBase || (this.fullPage ? `${location.origin}${location.pathname}` : undefined);
+  }
+
+  /**
+   * Copies a link that opens a copy of the panel; needs `panel-link-base` unless the chat is full-page.
+   * Resolves `true` once it is on the clipboard, `false` when the viewer was shown it to copy instead.
+   */
+  async sharePanel(panel: Panel): Promise<boolean> {
+    const base = this.#shareBase;
+    if (!base) return false;
+    const link = await panelLink(base, sharedPanelOf(panel.toSaved()));
+    try {
+      await navigator.clipboard.writeText(link);
+      this.#notify('Link copied to clipboard.');
+      return true;
+    } catch {
+      window.prompt('Copy this link to share the panel:', link);
+      return false;
+    }
   }
 
   #notify(message: string): void {
@@ -298,6 +422,85 @@ export class CivitaiChat extends LitElement {
     return granted;
   }
 
+  #voiceStart(live: boolean): void {
+    const session = this.#session;
+    if (!session) return;
+    this.#voice?.cancel();
+    const changed = (): void => {
+      if (this.#voice !== voice) return;
+      this.heard = voice.text;
+      // The server stopped listening (a long pause); what it heard goes in the box.
+      if (live && !voice.pending && !voice.canceled) this.renderRoot.querySelector<CivitaiChatComposer>('civitai-chat-composer')?.stopListening();
+    };
+    const voice: VoiceTranscript = live ? session.liveTranscript(changed) : new LiveTranscript((recording, signal) => session.transcribe(recording, signal), changed);
+    this.#voice = voice;
+    this.heard = '';
+  }
+
+  #voiceCancel(): void {
+    this.#voice?.cancel();
+    this.#voice = undefined;
+    this.heard = '';
+    this.transcribing = false;
+  }
+
+  async #voiceDone(send: boolean): Promise<void> {
+    const voice = this.#voice;
+    const session = this.#session;
+    const composer = this.renderRoot.querySelector<CivitaiChatComposer>('civitai-chat-composer');
+    if (!voice || !session || !composer) return;
+    voice.stop();
+    this.transcribing = voice.pending;
+    const words = await voice.settled();
+    if (voice.canceled || this.#voice !== voice) return;
+    this.#voice = undefined;
+    this.transcribing = false;
+    this.heard = '';
+    if (voice.error) {
+      const why = humanize(voice.error);
+      this.#toast(words ? "Part of what you said couldn't be turned into text; check it before sending." : why.kind === 'unknown' ? 'Could not turn your recording into text. Try again, or type it.' : why.message, voice.error);
+    } else if (!words) {
+      this.#toast("Didn't catch any words. Try again a little closer to the microphone.");
+    }
+    if (!words) return;
+    const text = [composer.draft.trim(), words].filter(Boolean).join(' ');
+    if (send && !voice.error && !session.agent.running) {
+      composer.draft = '';
+      await this.#fromComposer(text);
+    } else {
+      composer.draft = text;
+      composer.focus();
+    }
+  }
+
+  /** What the viewer typed: a slash command runs here and never reaches the assistant. */
+  async #fromComposer(text: string): Promise<void> {
+    const parsed = parseCommand(text);
+    if (!parsed) return this.#send(text);
+    if ('unknown' in parsed) return this.#toast(`There is no /${parsed.unknown} command. Type /help to see them.`);
+    switch (parsed.command.name) {
+      case 'clear':
+        this.newChat();
+        return;
+      case 'help':
+        this.#notify(COMMANDS.map((command) => `${command.usage}: ${command.help}`).join('  ·  '));
+        return;
+      case 'model': {
+        const session = this.#session;
+        if (!session) return this.#toast('Sign in first to choose a model.');
+        if (!parsed.arg) {
+          const others = ['default', ...chatConfig.models.map((model) => model.label.toLowerCase())].join(', ');
+          this.#notify(`The assistant uses ${modelName(session.settings.assistantModel, chatConfig.models)}. Switch with /model ${others}, or a model id.`);
+          return;
+        }
+        const id = resolveModel(parsed.arg, chatConfig.models);
+        this.#updateSettings({ assistantModel: id });
+        this.#notify(`The assistant now uses ${modelName(id, chatConfig.models)}, from the next reply.`);
+        return;
+      }
+    }
+  }
+
   async #send(text: string): Promise<void> {
     const session = this.#session;
     if (!session && this.signIn) return this.#signInThen(() => this.#send(text), text);
@@ -351,17 +554,18 @@ export class CivitaiChat extends LitElement {
       if (attachment.url) this.lightbox = { attachment };
       return;
     }
-    if (action === 'post') {
+    const request =
+      action === 'post'
+        ? attachment.kind === 'video' ? 'Post this video to Civitai.' : 'Post this picture to Civitai.'
+        : action === 'upscale'
+          ? attachment.kind === 'video' ? 'Make this video sharper.' : 'Make this picture sharper and bigger.'
+          : undefined;
+    if (request) {
       this.lightbox = null;
-      const post = this.#session!.posts.forMedia(attachment);
-      await post.submit();
-      if (post.state === 'posted') this.#notify('Posted on Civitai.');
-      if (post.state === 'failed') this.#toast(post.error?.message ?? 'Could not post that.', post.error?.detail);
-      return;
-    }
-    if (action === 'upscale') {
+      // Mid-reply nothing can be sent; the request waits in the box instead of vanishing.
+      if (this.#session?.agent.running) return this.#composeWith(request, [attachment.id]);
       this.refs = [attachment];
-      await this.#send(attachment.kind === 'video' ? 'Make this video sharper.' : 'Make this picture sharper and bigger.');
+      await this.#send(request);
       return;
     }
     this.refs = [...this.refs.filter((ref) => ref.id !== id), attachment];
@@ -398,8 +602,9 @@ export class CivitaiChat extends LitElement {
         at: turn.createdAt,
         user: turn.user,
         assistant: turn.assistant.messages,
-        jobs: session.jobs.all().filter((job) => job.seq === turn.seq).map((job) => job.summary()),
+        jobs: session.jobs.all().filter((job) => job.seq === turn.seq && !job.panel).map((job) => job.summary()),
       })),
+      panels: session.panels.all().map((panel) => ({ ...panel.toSaved(), runs: panel.jobs.map((job) => job.summary()) })),
     };
     const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
     const link = Object.assign(document.createElement('a'), { href: url, download: `ChatCVT-${conversation.title.replace(/[^\w-]+/g, '-').slice(0, 40)}.json` });
@@ -452,7 +657,7 @@ export class CivitaiChat extends LitElement {
                 : html`<p class="cvt-sign-in-status">You are signed out. Sending a message signs you in with Civitai.</p>`}
               <civitai-chat-composer
                 ?running=${this.signingIn}
-                @cvt-send=${(e: CustomEvent<{ text: string }>) => void this.#send(e.detail.text)}
+                @cvt-send=${(e: CustomEvent<{ text: string }>) => void this.#fromComposer(e.detail.text)}
                 @cvt-stop=${() => this.#cancelSignIn()}
                 @cvt-files=${(e: CustomEvent<{ files: File[] }>) => this.addFiles(e.detail.files)}
                 @cvt-files-rejected=${(e: CustomEvent<{ reason: string }>) =>
@@ -529,11 +734,24 @@ export class CivitaiChat extends LitElement {
             const attachment = session.findAttachment(e.detail?.id ?? e.detail?.key ?? '');
             if (attachment?.url) this.lightbox = { attachment };
           }}
+          @job-adjust=${(e: Event) => {
+            const job = (e.target as { job?: GenerationJob }).job;
+            if (!job) return;
+            void session.adjust(job).then((made) => {
+              if (made) this.renderRoot.querySelector<CivitaiChatThread>('civitai-chat-thread')?.scrollToEnd();
+              else this.#toast(session.agent.running ? 'Wait for the assistant to finish, then try Adjust again.' : 'This one cannot be adjusted here.');
+            });
+          }}
           @job-info=${(e: Event) => {
             const job = (e.target as { job?: GenerationJob }).job;
             if (job) this.lightbox = { job };
           }}
           @cvt-choice=${(e: CustomEvent<{ label: string }>) => void this.#send(e.detail.label)}
+          @panel-share=${(e: CustomEvent<{ panel: Panel; copied?: Promise<boolean> }>) => (e.detail.copied = this.sharePanel(e.detail.panel))}
+          @panel-focus=${(e: CustomEvent<{ panel: Panel }>) => {
+            this.#focusedPanel = e.detail.panel;
+            this.#announceActivePanel();
+          }}
         >
           <civitai-chat-dropzone
             class="cvt-main"
@@ -581,12 +799,23 @@ export class CivitaiChat extends LitElement {
                       composer.focus();
                     })}
                 ></civitai-chat-welcome>`
-              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .models=${this.#models} .resolve=${resolve} .activity=${(name: string) => session.hostActivity(name)}></civitai-chat-thread>`)}
+              : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...this.tools, ...this.toolViews }}></civitai-chat-thread>`)}
           <civitai-chat-composer
             ?running=${session.agent.running}
             .uploads=${this.uploads}
             .refs=${this.refs}
-            @cvt-send=${(e: CustomEvent<{ text: string }>) => void this.#send(e.detail.text)}
+            voice
+            ?transcribing=${this.transcribing}
+            .heard=${this.heard}
+            .voiceLanguage=${voiceLanguage(session.settings.voiceLanguage)}
+            @cvt-voice-language=${(e: CustomEvent<{ language: string }>) => session.updateSettings({ voiceLanguage: e.detail.language })}
+            @cvt-voice-start=${(e: CustomEvent<{ live: boolean }>) => this.#voiceStart(e.detail.live)}
+            @cvt-voice-phrase=${(e: CustomEvent<{ recording: Blob }>) => (this.#voice as LiveTranscript | undefined)?.add(e.detail.recording)}
+            @cvt-voice-audio=${(e: CustomEvent<{ pcm: Int16Array }>) => (this.#voice as StreamingTranscript | undefined)?.add(e.detail.pcm)}
+            @cvt-voice-done=${(e: CustomEvent<{ send: boolean }>) => void this.#voiceDone(e.detail.send)}
+            @cvt-voice-cancel=${() => this.#voiceCancel()}
+            @cvt-voice-error=${(e: CustomEvent<{ error: unknown }>) => this.#toast(microphoneProblem(e.detail.error), e.detail.error)}
+            @cvt-send=${(e: CustomEvent<{ text: string }>) => void this.#fromComposer(e.detail.text)}
             @cvt-stop=${() => session.agent.abort()}
             @cvt-files=${(e: CustomEvent<{ files: File[] }>) => this.addFiles(e.detail.files)}
             @cvt-files-rejected=${(e: CustomEvent<{ reason: string }>) =>
@@ -603,6 +832,7 @@ export class CivitaiChat extends LitElement {
         .canExport=${turns.length > 0}
         .canSignOut=${this.canSignOut}
         .canTheme=${this.fullPage}
+        .models=${chatConfig.models}
         @cvt-close-settings=${() => (this.settingsOpen = false)}
         @cvt-settings-change=${(e: CustomEvent<Partial<Settings>>) => this.#updateSettings(e.detail)}
         @cvt-export=${() => this.#export()}
@@ -618,8 +848,8 @@ export class CivitaiChat extends LitElement {
         ${details ? html`<civitai-chat-generation-details slot="details" .details=${details} .models=${this.#models}></civitai-chat-generation-details>` : nothing}
         ${boxed?.attachment
           ? html`<civitai-button slot="actions" size="sm" variant="light" @click=${() => void this.#mediaAction(boxed.attachment.id, 'reference')}>Use in chat</civitai-button>
-              ${session.posts.available && isPostable(boxed.attachment)
-                ? html`<civitai-button slot="actions" size="sm" variant="light" @click=${() => void this.#mediaAction(boxed.attachment.id, 'post')}>Post</civitai-button>`
+              ${session.posts.accepts(boxed.attachment)
+                ? html`<civitai-button slot="actions" size="sm" variant="light" @click=${() => void this.#mediaAction(boxed.attachment.id, 'post')}>Post to Civitai</civitai-button>`
                 : nothing}
               <civitai-button slot="actions" size="sm" variant="subtle" @click=${() => void this.#mediaAction(boxed.attachment.id, 'download')}>Download</civitai-button>`
           : nothing}
@@ -641,4 +871,11 @@ declare global {
   interface HTMLElementTagNameMap {
     'civitai-chat': CivitaiChat;
   }
+}
+
+function microphoneProblem(error: unknown): string {
+  const name = (error as { name?: unknown } | null)?.name;
+  if (name === 'NotAllowedError' || name === 'SecurityError') return 'The microphone is blocked. Allow it for this site in your browser to talk instead of typing.';
+  if (name === 'NotFoundError') return 'No microphone was found.';
+  return 'Could not start the microphone.';
 }

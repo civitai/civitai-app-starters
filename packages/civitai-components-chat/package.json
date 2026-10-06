@@ -22,6 +22,14 @@
     "./civitai-chat/define": {
       "types": "./dist/civitai-chat.define.d.ts",
       "import": "./dist/civitai-chat.define.js"
+    },
+    "./civitai-chat-studio": {
+      "types": "./dist/civitai-chat-studio.d.ts",
+      "import": "./dist/civitai-chat-studio.js"
+    },
+    "./civitai-chat-studio/define": {
+      "types": "./dist/civitai-chat-studio.define.d.ts",
+      "import": "./dist/civitai-chat-studio.define.js"
     }
   },
   "files": [

@@ -1,5 +1,5 @@
 import type { AppClient } from '@civitai/sdk';
-import type { ToolSet } from 'ai';
+import type { LanguageModel, ToolSet } from 'ai';
 
 import { Agent } from './agent/agent.js';
 import { partsFromMessages } from './agent/parts.js';
@@ -8,19 +8,28 @@ import { chatConfig } from './config.js';
 import { createMcpConnection, type McpConnection } from './mcp/clients.js';
 import { createOrchestrationApi, type OrchestrationApi } from './orchestration/api.js';
 import { generationDetails, type GenerationDetails } from './orchestration/details.js';
-import { toolInfo, type GenerationJob, type JobState } from './orchestration/job.js';
+import { toolInfo, type GenerationJob, type JobState, type JobToolInfo } from './orchestration/job.js';
 import { JobManager } from './orchestration/jobs.js';
-import { POST_TOOL, PostManager, isChatPost, type PostHost } from './posting/post.js';
+import { PanelManager } from './panels/panel.js';
+import { adjustPanel } from './panels/adjust.js';
+import type { SharedPanel } from './panels/share.js';
+import type { PanelSpec, PanelValues } from './panels/spec.js';
+import { OPEN_PANEL } from './panels/tools.js';
+import { sitePoster } from './posting/site.js';
+import { POST_TOOL, PostManager, type PostHost } from './posting/post.js';
 import { resolveAttachmentArgs, uploadId } from './store/attachments.js';
 import { ThreadStore, type OpenedConversation } from './store/thread-store.js';
 import { buildToolSet } from './tools/build.js';
 import type { McpTool } from './mcp/clients.js';
 import { isJobTool, loadOrchestrationTools, loadSiteTools, type ToolCatalog } from './tools/catalog.js';
-import type { Attachment, Settings } from './types.js';
+import type { Attachment, Settings, Turn } from './types.js';
 import { uploadAttachment, uploadFile, probeMedia } from './uploads/upload.js';
 import { decide } from './ux/spending.js';
 import { loadSettings, saveSettings, settingsKey } from './settings.js';
 import { hostToolSet, type ChatTool } from './tools/host.js';
+import { StreamingTranscript } from './voice/streaming-transcript.js';
+import { voiceLanguage } from './voice/languages.js';
+import { transcribe } from './voice/transcribe.js';
 
 /** Jobs still waiting for a click are offered again only in the most recent turns. */
 const REOFFER_TURNS = 3;
@@ -43,6 +52,9 @@ export interface SessionOptions {
   mcp?(): { orchestration?: boolean; site?: boolean };
   /** Replaces the built-in persona and rules, or edits them. */
   systemPrompt?(): string | ((defaults: string) => string) | undefined;
+  /** How an ask panel's button reaches the assistant: sent as the viewer, or put in the message box. */
+  ask?(message: string, refs: string[]): void;
+  compose?(message: string, refs: string[]): void;
 }
 
 /** Everything one signed-in viewer's chat needs, wired once. */
@@ -53,6 +65,7 @@ export class ChatSession extends EventTarget {
   readonly siteMcp: McpConnection;
   readonly jobs: JobManager;
   readonly posts: PostManager;
+  readonly panels: PanelManager;
   readonly store: ThreadStore;
   readonly agent: Agent;
   settings: Settings;
@@ -61,6 +74,9 @@ export class ChatSession extends EventTarget {
   #siteTools: Promise<McpTool[] | null> | null = null;
   #options: SessionOptions;
   #hostToolNames = new Set<string>();
+  #models = new Map<string, LanguageModel>();
+  /** What the run tools can do, from the latest catalog; panels run through them. */
+  #runTools = new Map<string, JobToolInfo>();
 
   constructor(app: AppClient, options: SessionOptions = {}) {
     super();
@@ -70,12 +86,15 @@ export class ChatSession extends EventTarget {
     this.api = createOrchestrationApi(app);
     this.orchestrationMcp = createMcpConnection({ url: chatConfig.orchestrationMcpUrl, token: () => app.getToken() });
     this.siteMcp = createMcpConnection({ url: chatConfig.siteMcpUrl });
+    // The site MCP's browse tools are anonymous; posting goes as the viewer, so it carries their token.
+    const poster = sitePoster(createMcpConnection({ url: chatConfig.siteMcpUrl, token: () => app.getToken() }));
     this.posts = new PostManager({
       host: postHostOf(app),
+      site: () => (this.#options.mcp?.().site === false ? null : poster),
       authorize: () => app.requestGrants(['posts:write:self']),
       saved: (post) => {
         const saved = post.toSaved();
-        if (saved && isChatPost(post.id)) void this.store.savePost(post.id, saved).catch((error: unknown) => console.warn('[chat-cvt] could not record the post', error));
+        if (saved) void this.store.savePost(post.id, saved).catch((error: unknown) => console.warn('[chat-cvt] could not record the post', error));
       },
     });
     this.jobs = new JobManager({
@@ -88,6 +107,13 @@ export class ChatSession extends EventTarget {
       findWorkflows: async (tags) =>
         (await app.orchestration.queryWorkflows({ tags, take: 10 })).items,
     });
+    this.panels = new PanelManager({
+      jobs: this.jobs,
+      toolInfo: (name) => this.#runTools.get(name),
+      save: (panel) => void this.store.savePanel(panel).catch((error: unknown) => console.warn('[chat-cvt] could not save the panel', error)),
+      ...(options.ask ? { ask: options.ask } : {}),
+      ...(options.compose ? { compose: options.compose } : {}),
+    });
     this.store = new ThreadStore({
       orchestration: app.orchestration,
       api: this.api,
@@ -95,7 +121,8 @@ export class ChatSession extends EventTarget {
       scope: options.scope,
     });
     this.agent = new Agent({
-      model: createAssistantModel(app),
+      model: () => this.#model(this.settings.assistantModel?.trim() || chatConfig.model),
+      titleModel: () => this.#model(chatConfig.model),
       store: this.store,
       jobs: this.jobs,
       posts: this.posts,
@@ -104,6 +131,7 @@ export class ChatSession extends EventTarget {
       customInstructions: () => this.settings.customInstructions,
       hostInstructions: () => this.#options.hostInstructions?.(),
       isHostTool: (name) => this.#hostToolNames.has(name),
+      panels: () => this.panels.context(),
       systemPrompt: () => this.#options.systemPrompt?.(),
     });
   }
@@ -115,6 +143,7 @@ export class ChatSession extends EventTarget {
       orchestration ? this.#loadOrchestration() : [],
       site ? (this.#siteTools ??= loadSiteTools(this.siteMcp)) : [],
     ]);
+    this.#runTools = new Map(orchestrationTools.filter((tool) => isJobTool(tool.name)).map((tool) => [tool.name, toolInfo(tool.name, tool.inputSchema)]));
     return { orchestration: orchestrationTools, site: siteTools };
   }
 
@@ -124,6 +153,12 @@ export class ChatSession extends EventTarget {
       throw error;
     });
     return this.#orchestrationTools;
+  }
+
+  #model(id: string): LanguageModel {
+    let model = this.#models.get(id);
+    if (!model) this.#models.set(id, (model = createAssistantModel(this.app, { model: id })));
+    return model;
   }
 
   updateSettings(patch: Partial<Settings>): void {
@@ -186,9 +221,11 @@ export class ChatSession extends EventTarget {
     this.agent.abort();
     this.jobs.clear();
     this.posts.clear();
+    this.panels.clear();
     const [opened, catalog] = await Promise.all([this.store.open(id), this.catalog().catch(() => null)]);
     this.#rebuildJobs(opened, catalog);
     this.#rebuildPosts(opened);
+    this.panels.restore(opened.conversation.id, opened.conversation.panels, new Map(opened.jobs.filter(({ metadata }) => metadata.panel).map(({ metadata, workflow }) => [metadata.job, workflow])));
     this.updateSettings({ lastConversationId: id });
   }
 
@@ -196,6 +233,7 @@ export class ChatSession extends EventTarget {
     this.agent.abort();
     this.jobs.clear();
     this.posts.clear();
+    this.panels.clear();
     this.store.startNew();
   }
 
@@ -217,6 +255,29 @@ export class ChatSession extends EventTarget {
     onChange();
   }
 
+  /** Billed per second of audio sent, unlike `transcribe`, which bills per call. */
+  liveTranscript(onChange: () => void): StreamingTranscript {
+    const language = voiceLanguage(this.settings.voiceLanguage);
+    return new StreamingTranscript(
+      {
+        open: async (input) => {
+          const workflow = await this.app.orchestration.submitWorkflow({ steps: [{ $type: 'liveTranscription', input }] } as never);
+          const output = (workflow.steps?.[0] as { output?: { inputUrl?: string; transcriptUrl?: string } } | undefined)?.output;
+          if (!workflow.id || !output?.inputUrl || !output.transcriptUrl) throw new Error('Live transcription did not start.');
+          return { workflowId: workflow.id, inputUrl: output.inputUrl, transcriptUrl: output.transcriptUrl };
+        },
+        cancel: (id) => this.app.orchestration.cancelWorkflow(id),
+        language,
+      },
+      onChange,
+    );
+  }
+
+  /** About 1 Buzz per call, whatever the length. */
+  transcribe(recording: Blob, signal?: AbortSignal): Promise<string> {
+    return transcribe({ api: this.api, mcp: this.orchestrationMcp }, recording, signal, voiceLanguage(this.settings.voiceLanguage));
+  }
+
   async send(text: string, uploads: PendingUpload[] = [], refs: string[] = []): Promise<void> {
     const conversation = this.store.current ?? this.store.startNew();
     const seq = (conversation.turns.at(-1)?.seq ?? 0) + 1;
@@ -227,9 +288,45 @@ export class ChatSession extends EventTarget {
     await this.agent.send(text, attachments, refs);
   }
 
-  /** How the embedding page describes its tool while it runs. */
-  hostActivity(name: string): string | undefined {
-    return this.#options.hostTools?.()[name]?.activity;
+  /**
+   * Starts a conversation with a panel someone shared, as if the assistant had just built it, so the
+   * viewer can run it and ask for changes. Free: no assistant reply runs until they write.
+   */
+  async openShared(shared: SharedPanel): Promise<void> {
+    this.newConversation();
+    const turn = this.store.appendUserTurn(`Opened a shared panel: ${shared.spec.title}`, []);
+    const conversation = this.store.current!;
+    conversation.title = shared.spec.title;
+    conversation.titleSource = 'llm';
+    this.#placePanel(turn, `shared-${conversation.id}`, shared.spec, shared.values, { id: shared.id, version: shared.version });
+    this.updateSettings({ lastConversationId: conversation.id });
+    await this.store.completeTurn(turn);
+  }
+
+  /**
+   * Turns a generation into a panel to tweak and rerun: its prompt, and its model beside similar ones,
+   * each priced as it is picked. Made by the app, not the assistant, so it costs nothing and always works.
+   */
+  async adjust(job: GenerationJob): Promise<boolean> {
+    if (this.agent.running || !this.store.current) return false;
+    const built = await adjustPanel(job.tool.name, job.args, { mcp: this.orchestrationMcp, resolveArgs: (args) => this.resolveArgs(args) }, job.subject);
+    if (!built) return false;
+    const turn = this.store.appendUserTurn(`Adjust ${job.subject.toLowerCase()}`, []);
+    this.#placePanel(turn, `adjust-${job.id}-${turn.seq}`, built.spec, built.values);
+    // The panel replaces a request still waiting for the viewer's OK.
+    job.decline();
+    await this.store.completeTurn(turn);
+    return true;
+  }
+
+  // Recorded as an assistant open_panel call so the thread, saving and the assistant need no special case.
+  #placePanel(turn: Turn, toolCallId: string, spec: PanelSpec, values: PanelValues, forkedFrom?: { id: string; version: number }): void {
+    const panel = this.panels.open({ conversationId: this.store.current!.id, seq: turn.seq, toolCallId, spec, values, ...(forkedFrom ? { forkedFrom } : {}) });
+    turn.assistant.messages = [
+      { role: 'assistant', content: [{ type: 'tool-call', toolCallId, toolName: OPEN_PANEL, input: { ...spec, values: panel.values } }] },
+      { role: 'tool', content: [{ type: 'tool-result', toolCallId, toolName: OPEN_PANEL, output: { type: 'json', value: panel.summary() as never } }] },
+    ];
+    turn.assistant.status = 'done';
   }
 
   async #toolSet(turn: { conversationId: string; seq: number }): Promise<ToolSet> {
@@ -251,6 +348,7 @@ export class ChatSession extends EventTarget {
       site: this.siteMcp,
       siteApi: this.app.site,
       posts: this.posts,
+      panels: this.panels,
       findAttachment: (id) => this.findAttachment(id),
       resolveArgs: (args) => this.resolveArgs(args),
       onCaption: (id, caption) => {
