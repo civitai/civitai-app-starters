@@ -120,7 +120,7 @@ it streams 16 kHz PCM to a `liveTranscription` step and the words appear as they
 hundred milliseconds behind). Long pauses are not sent (it is billed per second of audio, about 1 Buzz
 per 15 s), and after 12 s without speech the step stops listening and its text goes in the message
 box. A chip next to the microphone sets the language spoken (the model cannot detect it, and decodes
-whatever it is told); it defaults to the first of the browser's languages the model knows. When the step cannot start, the recording is transcribed in one go when the viewer stops.
+whatever it is told); it defaults to the first of the browser's languages the model knows.
 Browsers without audio worklets cut the recording into phrases at pauses and transcribe each with
 `transcribe_audio` (about 1 Buzz a phrase). Stop puts the text in the message box to edit; the arrow
 sends it once the last words are back. Recordings stop by themselves after two minutes.

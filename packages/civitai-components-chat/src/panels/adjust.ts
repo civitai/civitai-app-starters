@@ -6,8 +6,6 @@ const CATEGORY: Record<string, string> = { imageGen: 'image', videoGen: 'video' 
 const ALTERNATIVES = 8;
 const CANDIDATES = 40;
 const LISTED = 100;
-// Ids that name a text-only operation; with a picture to carry, they would ignore it.
-const TEXT_ONLY = /text-?to-?/i;
 const IMAGE_KEY = /image|frame/i;
 const NOT_FIRST = /last|end|mask|reference/i;
 const OPERATION = /^(create|edit)[A-Z]\w*$/;
@@ -17,6 +15,8 @@ const SERVICE = /^## #\d+: (.+)\n\s+Service: (\S+) \(stepType (\w+)\)/gm;
 interface Service {
   id: string;
   name: string;
+  /** With the operation, e.g. "· Reference to Video", for telling a model's services apart. */
+  fullName: string;
 }
 
 /**
@@ -39,11 +39,11 @@ export async function adjustPanel(
   const operation = typeof input.operation === 'string' ? input.operation : undefined;
   // The pictures a generation starts from go with it, into whichever field each service takes them in.
   const images = imagesIn(input);
-  const services = await listServices(deps.mcp, stepType, operation);
+  const services = await listServices(deps.mcp, stepType, operation, images.length > 0);
   const current = services.find((service) => describes(service.id, input));
   const candidates = await Promise.all(
     services
-      .filter((service) => service !== current && !(images.length && TEXT_ONLY.test(service.id)))
+      .filter((service) => service !== current)
       .slice(0, CANDIDATES)
       .map(async (service) => {
         const found = await exampleInput(deps.mcp, service.id);
@@ -51,11 +51,11 @@ export async function adjustPanel(
         const slot = images.length ? imageSlot(found.slots) : undefined;
         if (images.length && !slot) return null;
         const carried = slot ? { [slot.name]: slot.list ? images : images[0] } : {};
-        return { name: service.name, input: { ...found.example, ...carried, prompt: '{{prompt}}' } };
+        return { name: service.name, fullName: service.fullName, input: { ...found.example, ...carried, prompt: '{{prompt}}' } };
       }),
   );
   const priced = await Promise.all(
-    [{ name: `${current?.name ?? modelOf(input)} (current)`, input: { ...input, prompt: '{{prompt}}' } }, ...candidates.flatMap((c) => (c ? [c] : []))].map(async (option) => ({
+    [{ name: `${current?.name ?? modelOf(input)} (current)`, fullName: '', input: { ...input, prompt: '{{prompt}}' } }, ...candidates.flatMap((c) => (c ? [c] : []))].map(async (option) => ({
       ...option,
       price: await priceOf(deps, stepType, { ...option.input, prompt }),
     })),
@@ -66,7 +66,11 @@ export async function adjustPanel(
     .filter((option) => option.price !== null)
     .slice(0, ALTERNATIVES)
     .sort((a, b) => a.price! - b.price!);
-  const options = [mine!, ...alternatives].map((option) => ({ label: optionLabel(option.name, option.price), input: option.input }));
+  const chosen = [mine!, ...alternatives];
+  const options = chosen.map((option) => {
+    const shared = chosen.filter((other) => other.name === option.name).length > 1;
+    return { label: optionLabel(shared && option.fullName ? option.fullName : option.name, option.price), input: option.input };
+  });
   const unique = options.filter((option, index) => options.findIndex((o) => o.label === option.label) === index);
   const single = unique.length === 1;
 
@@ -84,14 +88,17 @@ export async function adjustPanel(
   };
 }
 
-async function listServices(mcp: Pick<McpConnection, 'callTool'>, stepType: string, operation?: string): Promise<Service[]> {
+async function listServices(mcp: Pick<McpConnection, 'callTool'>, stepType: string, operation: string | undefined, fromImage: boolean): Promise<Service[]> {
   try {
-    // The whole category rather than a search by prompt, which ranks one model family above the rest.
-    const result = await mcp.callTool('find_services', { query: '*', ...(CATEGORY[stepType] ? { category: CATEGORY[stepType] } : {}), limit: LISTED });
+    const result = await mcp.callTool('find_services', {
+      ...(CATEGORY[stepType] ? { category: CATEGORY[stepType] } : {}),
+      ...(fromImage ? { takes: ['image'] } : {}),
+      limit: LISTED,
+    });
     if (result.isError) return [];
     return [...mcpResultToText(result, Infinity).matchAll(SERVICE)]
       .filter((match) => match[3] === stepType && !otherOperation(match[2]!, operation))
-      .map((match) => ({ id: match[2]!, name: match[1]!.replace(/ · [^·]+$/, '').trim() }));
+      .map((match) => ({ id: match[2]!, name: match[1]!.replace(/ · [^·]+$/, '').trim(), fullName: match[1]!.trim() }));
   } catch {
     return [];
   }

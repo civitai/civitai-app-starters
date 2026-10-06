@@ -267,7 +267,6 @@ export class ChatSession extends EventTarget {
           return { workflowId: workflow.id, inputUrl: output.inputUrl, transcriptUrl: output.transcriptUrl };
         },
         cancel: (id) => this.app.orchestration.cancelWorkflow(id),
-        transcribe: (recording, signal) => this.transcribe(recording, signal),
         language,
       },
       onChange,

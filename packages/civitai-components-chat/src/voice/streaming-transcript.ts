@@ -1,5 +1,5 @@
 import type { VoiceTranscript } from './live-transcript.js';
-import { pcmBytes, wavOf } from './pcm.js';
+import { pcmBytes } from './pcm.js';
 
 const MAX_REQUEST_BYTES = 1024 * 1024;
 const SEND_ATTEMPTS = 4;
@@ -19,8 +19,6 @@ export interface StreamingDeps {
   /** Submits a `liveTranscription` step as the viewer and returns its upload and transcript URLs. */
   open(input: { language?: string; maxDurationSeconds: number; idleTimeoutSeconds: number }): Promise<LiveSession>;
   cancel(workflowId: string): Promise<void>;
-  /** Transcribes a whole recording at once, for when live transcription cannot start. */
-  transcribe(recording: Blob, signal: AbortSignal): Promise<string>;
   fetch?: typeof fetch;
   language?: string;
   maxSeconds?: number;
@@ -31,19 +29,13 @@ type TranscriptEvent =
   | { type: 'final'; text: string }
   | { type: 'done'; text: string };
 
-/**
- * One utterance transcribed while it is spoken: audio goes up in numbered chunks, one request at a time,
- * and text comes back as a stream of partial and final segments. When the step cannot start, the audio is
- * kept and transcribed in one go at the end instead.
- */
 export class StreamingTranscript implements VoiceTranscript {
   #deps: StreamingDeps;
   #onChange: () => void;
   #fetch: typeof fetch;
   #abort = new AbortController();
   #session?: LiveSession;
-  #unavailable = false;
-  /** Audio recorded before the session answered, or all of it when it never does. */
+  /** Talking starts before the session answers; this goes out with the first request. */
   #recorded: Int16Array[] = [];
   #outbox: Int16Array[] = [];
   #wake?: () => void;
@@ -65,9 +57,9 @@ export class StreamingTranscript implements VoiceTranscript {
       .open({ ...(deps.language ? { language: deps.language } : {}), maxDurationSeconds: deps.maxSeconds ?? 120, idleTimeoutSeconds: IDLE_SECONDS })
       .then(
         (session) => this.#begin(session),
-        () => {
-          this.#unavailable = true;
-          if (this.#closing) void this.#transcribeAtOnce();
+        (error: unknown) => {
+          this.error = error;
+          this.#finish();
         },
       );
   }
@@ -89,8 +81,6 @@ export class StreamingTranscript implements VoiceTranscript {
     if (this.#session) {
       this.#wake?.();
       setTimeout(() => this.#finish(), SETTLE_MS);
-    } else if (this.#unavailable) {
-      void this.#transcribeAtOnce();
     }
   }
 
@@ -231,17 +221,6 @@ export class StreamingTranscript implements VoiceTranscript {
       return;
     }
     this.#onChange();
-  }
-
-  async #transcribeAtOnce(): Promise<void> {
-    if (this.#recorded.length === 0) return this.#finish();
-    try {
-      this.#done = await this.#deps.transcribe(wavOf(this.#recorded), this.#abort.signal);
-    } catch (error) {
-      if (!this.canceled) this.error ??= error;
-    }
-    this.#recorded = [];
-    this.#finish();
   }
 
   #finish(): void {

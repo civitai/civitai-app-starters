@@ -43,7 +43,6 @@ function deps(orchestrator: ReturnType<typeof fakeOrchestrator>, overrides: Part
   return {
     open: vi.fn(async () => SESSION),
     cancel: vi.fn(async () => undefined),
-    transcribe: vi.fn(async () => 'said at once'),
     fetch: orchestrator.fetch,
     language: 'en',
     ...overrides,
@@ -111,18 +110,16 @@ describe('StreamingTranscript', () => {
     live.cancel();
   });
 
-  it('transcribes the whole recording at once when live transcription cannot start', async () => {
+  it('says why when the session cannot start, so the recording ends instead of going nowhere', async () => {
     const orchestrator = fakeOrchestrator();
-    const transcribe = vi.fn(async () => 'said at once');
-    const live = new StreamingTranscript(deps(orchestrator, { open: async () => Promise.reject(new Error('unknown step type')), transcribe }), () => undefined);
+    const changed = vi.fn();
+    const live = new StreamingTranscript(deps(orchestrator, { open: async () => Promise.reject(new Error('Not enough Buzz for 120 s')) }), changed);
     live.add(audio(1600));
-    live.add(audio(1600));
-    live.stop();
 
-    expect(await live.settled()).toBe('said at once');
-    const [recording] = transcribe.mock.calls[0] as unknown as [Blob];
-    expect(recording.type).toBe('audio/wav');
-    expect(recording.size).toBe(44 + 6400);
+    expect(await live.settled()).toBe('');
+    expect((live.error as Error).message).toBe('Not enough Buzz for 120 s');
+    expect(live.pending).toBe(false);
+    expect(changed).toHaveBeenCalled();
     expect(orchestrator.posts).toEqual([]);
   });
 

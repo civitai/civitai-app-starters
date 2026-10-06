@@ -106,24 +106,3 @@ export function pcmBytes(blocks: Int16Array[]): Uint8Array {
   }
   return bytes;
 }
-
-/** A playable WAV of the PCM, for transcribing in one go when live transcription is not available. */
-export function wavOf(blocks: Int16Array[]): Blob {
-  const data = pcmBytes(blocks);
-  const header = new DataView(new ArrayBuffer(44));
-  const text = (offset: number, value: string) => [...value].forEach((char, i) => header.setUint8(offset + i, char.charCodeAt(0)));
-  text(0, 'RIFF');
-  header.setUint32(4, 36 + data.length, true);
-  text(8, 'WAVE');
-  text(12, 'fmt ');
-  header.setUint32(16, 16, true);
-  header.setUint16(20, 1, true);
-  header.setUint16(22, 1, true);
-  header.setUint32(24, PCM_RATE, true);
-  header.setUint32(28, PCM_RATE * 2, true);
-  header.setUint16(32, 2, true);
-  header.setUint16(34, 16, true);
-  text(36, 'data');
-  header.setUint32(40, data.length, true);
-  return new Blob([header.buffer, data as BlobPart], { type: 'audio/wav' });
-}

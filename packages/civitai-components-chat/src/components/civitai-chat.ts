@@ -9,6 +9,7 @@ import { SCOPE_PATTERN, chatConfig } from '../config.js';
 import type { Panel } from '../panels/panel.js';
 import { panelLink, sharedPanelOf, takeSharedPanel, type SharedPanel } from '../panels/share.js';
 import { COMMANDS, modelName, parseCommand, resolveModel } from '../ux/commands.js';
+import { humanize } from '../ux/humanize.js';
 import { conversationSpend, type Spend } from '../ux/spend.js';
 import type { GenerationJob } from '../orchestration/job.js';
 import type { ChatSession, PendingUpload } from '../session.js';
@@ -456,7 +457,8 @@ export class CivitaiChat extends LitElement {
     this.transcribing = false;
     this.heard = '';
     if (voice.error) {
-      this.#toast(words ? "Part of what you said couldn't be turned into text; check it before sending." : 'Could not turn your recording into text. Try again, or type it.', voice.error);
+      const why = humanize(voice.error);
+      this.#toast(words ? "Part of what you said couldn't be turned into text; check it before sending." : why.kind === 'unknown' ? 'Could not turn your recording into text. Try again, or type it.' : why.message, voice.error);
     } else if (!words) {
       this.#toast("Didn't catch any words. Try again a little closer to the microphone.");
     }

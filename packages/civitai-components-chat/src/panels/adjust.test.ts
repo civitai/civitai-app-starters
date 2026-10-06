@@ -90,6 +90,7 @@ describe('adjustPanel', () => {
     const wan = { stepType: 'videoGen', input: { engine: 'wan', version: 'v2.2-5b', provider: 'fal', operation: 'image-to-video', prompt: 'it waddles', images: ['up1-1'] } };
 
     const built = (await adjustPanel('run_step', wan, { mcp, resolveArgs: async (args) => args }, 'Your video'))!;
+    expect(mcp.callTool).toHaveBeenCalledWith('find_services', { category: 'video', takes: ['image'], limit: 100 });
     const model = built.spec.inputs.model;
     expect(model?.kind === 'choice' && model.options).toEqual(['Wan v2.2-5b (current) · ≈ 143 Buzz', 'Lightricks LTX-2.5 · ≈ 52 Buzz', 'MiniMax H3 · ≈ 850 Buzz']);
     const h3 = renderRun(built.spec, normalizeValues(built.spec, { prompt: 'it waddles', model: 'MiniMax H3 · ≈ 850 Buzz' }));

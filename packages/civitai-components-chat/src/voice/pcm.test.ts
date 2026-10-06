@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { levelOf, PCM_RATE, Resampler, SpeechGate, wavOf } from './pcm.js';
+import { levelOf, PCM_RATE, Resampler, SpeechGate } from './pcm.js';
 
 const block = (samples: number, value: number) => new Int16Array(samples).fill(value);
 const LOUD = 8000;
@@ -49,15 +49,5 @@ describe('PCM', () => {
   it('measures loudness on the meter scale', () => {
     expect(levelOf(block(160, 0))).toBe(0);
     expect(levelOf(block(160, LOUD))).toBeGreaterThan(0.5);
-  });
-
-  it('wraps PCM in a WAV the transcriber can read', async () => {
-    const wav = wavOf([block(PCM_RATE, 100)]);
-    const view = new DataView(await wav.arrayBuffer());
-
-    expect(wav.type).toBe('audio/wav');
-    expect(wav.size).toBe(44 + PCM_RATE * 2);
-    expect(view.getUint32(24, true)).toBe(PCM_RATE);
-    expect(view.getInt16(44, true)).toBe(100);
   });
 });
