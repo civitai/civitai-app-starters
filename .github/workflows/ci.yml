@@ -502,6 +502,64 @@ jobs:
             echo "No lint script for ${{ matrix.starter }} — skipping."
           fi
 
+  # The six `starters/examples/*` apps. Nothing in CI ever built, typechecked
+  # or validated them, and all six failed `civitai app validate` — the CLI the
+  # docs tell people to run on a copied-out example — while every job here was
+  # green. One job (not a matrix) on purpose: six small Vite apps share one
+  # install and one package build, and one stable context name is what a
+  # branch-protection rule can name.
+  #
+  # Self-contained like the `Starter` matrix: the examples resolve @civitai/*
+  # from the workspace (root pnpm.overrides), and `civitai app validate` is a
+  # static check — no live Civitai endpoint is contacted. The one network
+  # dependency beyond the usual install is the pinned CLI from npm.
+  examples:
+    name: Examples (typecheck + build + civitai app validate)
+    runs-on: ubuntu-latest
+    env:
+      # Pinned, and asserted by the checker, so a CLI release cannot change this
+      # job's verdict without a reviewed bump here.
+      CIVITAI_CLI_VERSION: '0.1.113'
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The examples typecheck against the packages' built declarations.
+      - run: pnpm -r --filter "./packages/*" build
+
+      - name: Typecheck
+        run: pnpm -r --filter "./starters/examples/*" typecheck
+
+      # `vite build` also runs blockManifestPlugin, i.e. `defineBlock` against
+      # the vendored canonical schema, on every example manifest.
+      - name: Build
+        run: pnpm -r --filter "./starters/examples/*" build
+
+      - name: Install the civitai CLI (pinned)
+        run: npm install -g "@civitai/cli@${CIVITAI_CLI_VERSION}"
+
+      # NEGATIVE + POSITIVE control FIRST: a clean copy must validate clean, and
+      # the same copy without its lockfile must not — so the check below cannot
+      # pass on a CLI that reports nothing.
+      - run: pnpm check:examples-validate:selftest
+        env:
+          EXPECTED_CLI_VERSION: ${{ env.CIVITAI_CLI_VERSION }}
+
+      # `--strict`, on each example in place AND on a copy of only its tracked
+      # files (what `npx tiged` delivers). See the script for the one allowlisted
+      # warning and why.
+      - run: pnpm check:examples-validate
+        env:
+          EXPECTED_CLI_VERSION: ${{ env.CIVITAI_CLI_VERSION }}
+
   # What the TARBALLS contain, as opposed to what the tests import. Every job
   # above resolves `src/` or the workspace link; none of them has ever looked at
   # the artifact npm actually receives, which is how all five packages came to

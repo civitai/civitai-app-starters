@@ -20,8 +20,9 @@
  * SKIPS (not a published-version pin):
  *   - `workspace:*` / `workspace:^` / `workspace:~` protocol pins — these
  *     resolve to the in-repo package inside the monorepo; there is no
- *     published version to compare against. (The block-starter + examples use
- *     these; CI's `starter` job already builds them against the workspace.)
+ *     published version to compare against. No starter or example carries one
+ *     today: `check-starter-workspace-overrides.mjs` rule 2 forbids them in
+ *     anything under `starters/`, `starters/examples/*` included.
  *
  * FAILS (exit 1) when:
  *   - a semver-range pin is BEHIND the published latest — the range's floor is

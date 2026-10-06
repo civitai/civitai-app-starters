@@ -87,8 +87,8 @@ resolved branch and branches on `err.code` in its `catch`.
 
 ```bash
 cp .env.example .env
-pnpm install
-pnpm dev:harness   # → http://localhost:5185
+npm install           # inside this monorepo: pnpm install, at the root
+npm run dev:harness   # → http://localhost:5185
 ```
 
 The harness starts with a 50-Buzz budget (below the 120-Buzz cost) so the first

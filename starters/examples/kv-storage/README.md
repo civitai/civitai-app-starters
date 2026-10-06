@@ -42,9 +42,17 @@ refuses under `dev:live` (no session cookie leaves the browser) are in
 
 The store is keyed on (block instance, viewer): two users of the same block get
 isolated stores; the same user on a different model install gets a different
-store. This is the `apps:storage` capability — at v0 it's **ambient** (every
-block can call it; the host gates it, it's not a declared manifest scope). A
-future version may turn it into a real declared scope.
+store.
+
+🔴 **Storage is a declared scope, not ambient.** The host gates every call by
+presence in the block's approved scope set: `get`, `list` and `getQuota` need
+`apps:storage:read`; `set` and `delete` need `apps:storage:write`. This
+example's `block.manifest.json` declares both, each with a
+`scopeJustifications` entry. Leave one out and every matching call is refused
+in production (`storage set requires the apps:storage:write scope`) while it
+keeps working against the local harness, which does not check scopes.
+`civitai app validate` warns only when NEITHER storage scope is declared, so
+dropping just one of the two is not caught there.
 
 ### Limits
 
@@ -174,8 +182,8 @@ rows"`) rather than hard-coding anything: the ceilings move.
 
 ```bash
 cp .env.example .env
-pnpm install
-pnpm dev:harness   # → http://localhost:5183
+npm install           # inside this monorepo: pnpm install, at the root
+npm run dev:harness   # → http://localhost:5183
 ```
 
 The harness backs the bridge with an in-memory Map that enforces all three

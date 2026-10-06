@@ -52,7 +52,9 @@ export function Harness({ children }: { children: ReactNode }) {
       tokenSerialRef.current += 1;
       return {
         raw: `${DEV_TOKEN}.${tokenSerialRef.current}`,
-        scopes: ['models:read:self'],
+        // Mirrors block.manifest.json. The harness does not ENFORCE storage
+        // scopes (the host does) — this only keeps the token honest.
+        scopes: ['models:read:self', 'apps:storage:read', 'apps:storage:write'],
         expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
       };
     };

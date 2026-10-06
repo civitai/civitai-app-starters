@@ -15,12 +15,18 @@ offline via a dev harness that simulates the civitai.com host.
 
 ## Running any example
 
+Copied out on its own — the way you start a real app from one:
+
 ```bash
-cd <example>
+npx tiged civitai/civitai-app-starters/starters/examples/<example> my-block
+cd my-block
 cp .env.example .env
-pnpm install
-pnpm dev:harness    # → http://localhost:518x (each example pins its own port)
+npm install
+npm run dev:harness    # → http://localhost:518x (each example pins its own port)
 ```
+
+Inside this monorepo, `pnpm install` at the root instead, then
+`pnpm dev:harness` in the example's directory.
 
 > The harness pins the parent origin to the example's dev-server origin, and
 > `.env` matches it. They must stay in sync (gotcha #53) or `BLOCK_INIT` is
@@ -45,10 +51,18 @@ writes the `.zip` and you can web-upload it at `/apps/submit`.) See the
 
 ## Notes
 
-- These import `@civitai/app-sdk` / `@civitai/blocks-react` via `workspace:^`, so
-  in this monorepo they build against the local package source. When you `tiged`
-  one out standalone, swap to the published versions (`pnpm add @civitai/app-sdk
-  @civitai/blocks-react`).
-- The `cancel` call shown in `buzz-workflow` needs `@civitai/blocks-react@0.5.0+`
-  (real server-side cancel, gotcha #51); the example does the client-side half so
-  it compiles against any version.
+- Each example pins the PUBLISHED `@civitai/app-sdk` / `@civitai/blocks-react`
+  caret ranges, so a copied-out example installs as-is. Inside this monorepo the
+  root `pnpm.overrides` resolves those ranges to the local package source
+  instead, so the examples always build against the code beside them.
+- Each example commits a `package-lock.json` and sets `buildCommand` /
+  `outputDir` in its manifest. The platform build installs strictly from the
+  committed lockfile (`npm ci`), so `civitai app validate` refuses a project
+  with a `package.json` and no lockfile. Run `npm install` after you change a
+  dependency and commit the lockfile it writes.
+- CI typechecks and builds every example, and runs `civitai app validate
+  --strict` on each one both in place and on a copy of only its tracked files
+  (`scripts/check-examples-validate.mjs`).
+- `buzz-workflow`'s Cancel is a real server-side cancel (`cancel(workflowId)`
+  asks the host to stop the workflow on the orchestrator, gotcha #51), not just
+  a client-side untrack.

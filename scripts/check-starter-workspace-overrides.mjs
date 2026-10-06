@@ -105,9 +105,9 @@
  *      with no `workspace:` override, i.e. the next release would deadlock.
  *      Prints the exact line to add.
  *
- *   2. WORKSPACE-PROTOCOL PIN in a tiged-consumed starter -- a
- *      `starters/<name>/package.json` (anything NOT under `starters/examples/`)
- *      declares an `@civitai/*` dep with the `workspace:` protocol. This is the
+ *   2. WORKSPACE-PROTOCOL PIN in a tiged-consumed starter -- any
+ *      `starters/**` package.json, `starters/examples/*` INCLUDED, declares an
+ *      `@civitai/*` dep with the `workspace:` protocol. This is the
  *      shape `2a453e6` (#192) reverted, and until this rule existed it was the
  *      guard's blind spot: rule 1 only sees PUBLISHED ranges, so flipping the
  *      starters to `workspace:*` and deleting the override made every pin
@@ -115,9 +115,10 @@
  *      both, coverage silently 15 -> 11. The remediation text below said "do
  *      NOT do this" and nothing enforced it.
  *
- *      SCOPED to the tiged-consumed starters on purpose: `starters/examples/*`
- *      are in-repo illustrations, not scaffolding templates, and legitimately
- *      use `workspace:^`.
+ *      🔴 THE EXAMPLES ARE NOT EXEMPT ANY MORE. They used to be, as "in-repo
+ *      illustrations" on `workspace:^` -- while `docs/build-your-first-app-block.md`
+ *      told people to copy one out, where `workspace:^` cannot install. They are
+ *      copied out exactly like a starter, so they get exactly a starter's rules.
  *
  *   3. COVERAGE FLOOR -- the number of covered (published-range + overridden)
  *      pins fell below MIN_COVERED_PINS. Rule 2 catches the protocol swap;
@@ -142,21 +143,26 @@
  */
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, relative, sep } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..');
 const STARTERS_DIR = join(REPO_ROOT, 'starters');
-// In-repo illustrations, NOT `npx tiged` scaffolding targets. These are the
-// only starters allowed to use the `workspace:` protocol.
+// One level deeper than the starters, but copied out the same way
+// (`npx tiged civitai/civitai-app-starters/starters/examples/<name>`), so every
+// rule here applies to them too.
 const EXAMPLES_DIR = join(STARTERS_DIR, 'examples');
 const SCOPE = '@civitai/';
 const DEP_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'];
 
 /**
  * Floor for the number of published-range `@civitai/*` starter pins that must
- * be workspace-overridden. The tree carries 14 (next-app 3, react-pwa 3,
- * svelte-pwa 3, sveltekit-app 3, civitai-block-starter 2).
+ * be workspace-overridden. The tree carries 26: the five starters' 14 below,
+ * plus 2 in each of the 6 `starters/examples/*`.
+ *
+ * 14 -> 26 when the examples moved off `workspace:^` onto published carets
+ * (they are copied out like any starter). Counted, not estimated: the guard
+ * reported 14 before that change and 26 after it.
  *
  * GROWTH always passes -- this is a floor, not an equality. Only DELIBERATELY
  * removing a starter or one of its first-party deps should move it, and then
@@ -170,19 +176,20 @@ const DEP_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'opti
  * starter. This guard is what caught the drop; it is reviewed, not silent.
  * The Svelte starters DO still use that markup and keep their pins.
  */
-const MIN_COVERED_PINS = 14;
+const MIN_COVERED_PINS = 26;
 
 /**
  * Floor for the number of (tiged-consumed starter x third-party root override)
- * pairs rule 4 verifies. The tree carries 10: five starters mirroring the two
- * third-party constraints (`cookie@<0.7.0`, `postcss@<8.5.10`).
+ * pairs rule 4 verifies. The tree carries 22: five starters and six examples
+ * mirroring the two third-party constraints (`cookie@<0.7.0`,
+ * `postcss@<8.5.10`). 10 -> 22 when the examples became tiged-consumed.
  *
  * GROWTH always passes. A DROP means either a starter left the scan or the root
  * stopped constraining a third-party package -- lower it in the SAME commit so
  * the drop is reviewed rather than silent. Without it, deleting the root's
  * `cookie` entry leaves rule 4 with nothing to check and a clean exit 0.
  */
-const MIN_MIRRORED_CONSTRAINTS = 10;
+const MIN_MIRRORED_CONSTRAINTS = 22;
 
 /**
  * The manifest keys a tiged'd copy's package manager actually reads for an
@@ -264,7 +271,8 @@ function findPackageJsons(dir, out = []) {
 
 /**
  * The tiged-consumed starters' OWN root manifests -- `starters/<name>/package.json`
- * for every directory under `starters/` except `examples/`.
+ * for every directory under `starters/` except `examples/`, plus
+ * `starters/examples/<name>/package.json` for every example.
  *
  * Rule 4's scope, and deliberately NOT the recursive `findPackageJsons` walk: a
  * `npx tiged civitai/civitai-app-starters/starters/<name> my-app` copy makes
@@ -283,6 +291,17 @@ function tigedStarterManifests() {
   for (const e of entries) {
     if (!e.isDirectory() || e.name === 'examples' || e.name === 'node_modules') continue;
     const file = join(STARTERS_DIR, e.name, 'package.json');
+    if (existsSync(file)) out.push(file);
+  }
+  let examples = [];
+  try {
+    examples = readdirSync(EXAMPLES_DIR, { withFileTypes: true });
+  } catch {
+    /* no examples/ dir -- nothing to add */
+  }
+  for (const e of examples) {
+    if (!e.isDirectory() || e.name === 'node_modules') continue;
+    const file = join(EXAMPLES_DIR, e.name, 'package.json');
     if (existsSync(file)) out.push(file);
   }
   return out.sort();
@@ -326,18 +345,15 @@ function main() {
 
   for (const file of files) {
     const json = readJson(file);
-    // Tiged-consumed starter, or an in-repo example? Only the examples may use
-    // the `workspace:` protocol. A NEW top-level starter is covered by default.
-    const isExample = file === EXAMPLES_DIR || file.startsWith(EXAMPLES_DIR + sep);
     for (const field of DEP_FIELDS) {
       for (const [pkg, range] of Object.entries(json[field] ?? {})) {
         if (!pkg.startsWith(SCOPE)) continue;
         if (typeof range === 'string' && range.startsWith('workspace:')) {
           // A `workspace:` pin resolves locally by construction -- it never hits
-          // the registry, so it cannot deadlock. But in a starter that is copied
-          // out verbatim it BREAKS the scaffolded project, and it removes the
-          // pin from this guard's coverage entirely. Legal only in examples/.
-          if (!isExample) workspacePinned.push({ file, field, pkg, range });
+          // the registry, so it cannot deadlock. But in anything that is copied
+          // out verbatim it BREAKS the copied project, and it removes the pin
+          // from this guard's coverage entirely. Examples included.
+          workspacePinned.push({ file, field, pkg, range });
           continue;
         }
         if (workspaceOverridden.has(pkg)) covered.push({ file, field, pkg, range });
@@ -399,7 +415,7 @@ function main() {
     console.error('');
     console.error('ERROR: WORKSPACE-PROTOCOL PIN IN A TIGED-CONSUMED STARTER.');
     console.error('');
-    console.error('       A starter outside starters/examples/ declares a first-party');
+    console.error('       A starter or example under starters/ declares a first-party');
     console.error('       @civitai/* dependency with the `workspace:` protocol. Starters are');
     console.error('       copied out verbatim by `npx tiged`, so the scaffolded project gets');
     console.error('       a package.json npm cannot install. This exact change was made once');
@@ -419,8 +435,7 @@ function main() {
     console.error('  and keep the bare-key workspace override in the root package.json');
     console.error('  "pnpm" -> "overrides". The override is what makes it resolve locally.');
     console.error('');
-    console.error('  starters/examples/* are exempt -- they are in-repo illustrations, not');
-    console.error('  `npx tiged` scaffolding targets.');
+    console.error('  starters/examples/* are NOT exempt: they are copied out the same way.');
     console.error('');
   }
 

@@ -13,7 +13,7 @@
  *   <tmp>/scripts/<guard>.mjs              copied verbatim
  *   <tmp>/packages/<dir>/package.json      first-party workspace packages
  *   <tmp>/starters/<name>/package.json     tiged-consumed starters
- *   <tmp>/starters/examples/<name>/pkg     in-repo examples (workspace: allowed)
+ *   <tmp>/starters/examples/<name>/pkg     examples (copied out like starters)
  */
 import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -64,10 +64,19 @@ export const DEFAULT_STARTERS = {
   },
 };
 
-export const DEFAULT_EXAMPLES = {
-  'hello-world': { '@civitai/app-sdk': 'workspace:^', '@civitai/blocks-react': 'workspace:^' },
-  'kv-storage': { '@civitai/app-sdk': 'workspace:^', '@civitai/blocks-react': 'workspace:^' },
-};
+/**
+ * The real repo's six examples, mirrored exactly: each pins the two published
+ * carets the block starter does. They are copied out of the repo like a
+ * starter, so the guards hold them to a starter's rules — 12 more covered pins
+ * (26 total) and 12 more mirrored pairs (22 total).
+ */
+const EXAMPLE_PINS = { '@civitai/app-sdk': '^0.31.0', '@civitai/blocks-react': '^0.39.0' };
+export const DEFAULT_EXAMPLES = Object.fromEntries(
+  ['hello-world', 'settings', 'buzz-workflow', 'kv-storage', 'scopes-api', 'buzz-purchase'].map((n) => [
+    n,
+    { ...EXAMPLE_PINS },
+  ]),
+);
 
 /**
  * The root's THIRD-PARTY overrides — security constraints on transitive
@@ -142,6 +151,8 @@ const clone = (v) => JSON.parse(JSON.stringify(v));
  *   test that wants a rule-4 failure breaks exactly one entry rather than
  *   starting from a tree that fails for several reasons at once. Pass `null` for
  *   the pre-#390 shape: no starter mirrors anything.
+ * @param {object|null} [opts.exampleMirrors] the same, for `starters/examples/*`.
+ *   Defaults to a compliant mirror of every third-party override in `overrides`.
  */
 export function createFixture(opts = {}) {
   const {
@@ -152,6 +163,7 @@ export function createFixture(opts = {}) {
     scripts = ['check-starter-workspace-overrides.mjs', 'check-starter-pins.mjs'],
     depField = 'dependencies',
     starterMirrors = defaultStarterMirrors(starters, overrides),
+    exampleMirrors = defaultStarterMirrors(examples, overrides),
   } = opts;
 
   const dir = mkdtempSync(join(tmpdir(), 'starter-guard-'));
@@ -192,7 +204,11 @@ export function createFixture(opts = {}) {
     mkdirSync(d, { recursive: true });
     writeFileSync(
       join(d, 'package.json'),
-      JSON.stringify({ name, version: '0.0.0', private: true, [depField]: clone(deps) }, null, 2) + '\n',
+      JSON.stringify(
+        { name, version: '0.0.0', private: true, ...clone(exampleMirrors?.[name] ?? {}), [depField]: clone(deps) },
+        null,
+        2,
+      ) + '\n',
     );
   }
 

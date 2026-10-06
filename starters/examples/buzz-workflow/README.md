@@ -12,7 +12,7 @@ viewer's Buzz, host-mediated. This is the example to copy for any generation UI.
 | **GOTCHA #8/#9/#10** — status semantics + caller-driven polling | `src/App.tsx` |
 | **GOTCHA #19** — round dimensions to /64 | `round64()` |
 | Non-blocking queue + per-job cancel | `src/App.tsx` |
-| `ai:write:budgeted` scope + `buzzBudget` | `block.manifest.json` |
+| `ai:write:budgeted` scope + its `scopeJustifications` entry, and the `buzz_budget_per_gen` publisher setting the host signs into `token.buzzBudget` | `block.manifest.json` |
 
 ## The flow
 
@@ -25,6 +25,14 @@ poll(workflowId)→ status 'polling' → 'done'             (CALLER loops on a b
 All three go through the host's postMessage bridge — the block never holds an
 orchestrator token. The host enforces the budget (`cost ≤ token.buzzBudget`)
 before forwarding.
+
+🔴 **For a model-slot block the budget is the install's `buzz_budget_per_gen`
+setting — that exact key.** The host reads nothing else: this manifest declares
+it as a publisher setting so the installer can size it, and a setting under any
+other name is inert (this example's used to be, which left every install on the
+platform's small default). It is a SAFETY CEILING, not a cost estimate — size it
+several times your worst-case run; you are charged the real price. A page app
+sets `page.buzzBudgetPerGen` in the manifest instead.
 
 🔴 **A budget refusal does NOT reject — it RESOLVES**, as a snapshot with
 `status: 'failed'`, an `error` string, and the `cost` the server declined to
@@ -100,8 +108,8 @@ workflow already finished it rejects, but the card is cleared regardless.
 
 ```bash
 cp .env.example .env
-pnpm install
-pnpm dev:harness   # → http://localhost:5182
+npm install           # inside this monorepo: pnpm install, at the root
+npm run dev:harness   # → http://localhost:5182
 ```
 
 The harness mocks the orchestrator: it prices a seed it has already "generated"

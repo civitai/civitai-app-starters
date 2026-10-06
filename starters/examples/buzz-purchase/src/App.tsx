@@ -7,7 +7,8 @@ import {
   useBuzzWorkflow,
   WorkflowSubmitError,
 } from '@civitai/blocks-react';
-import type { ModelSlotContext, WorkflowBody } from '@civitai/app-sdk/blocks';
+import { isModelSlotContext } from '@civitai/app-sdk/blocks';
+import type { WorkflowBody } from '@civitai/app-sdk/blocks';
 
 /**
  * buzz-purchase — top up Buzz when a generation can't be afforded.
@@ -62,7 +63,9 @@ export function App() {
   const [topUpPending, setTopUpPending] = useState(false);
   const topUpInFlight = useRef(false);
 
-  const model = ready ? (context as ModelSlotContext) : null;
+  // NARROW, don't cast: on any slot that is not a complete model context this is
+  // null and Generate does nothing, instead of submitting `undefined` ids.
+  const model = ready && isModelSlotContext(context) ? context : null;
   const cost = 120; // pretend this is the quoted cost from an estimate
 
   const tryGenerate = useCallback(async () => {
@@ -261,7 +264,8 @@ export function App() {
 /**
  * The host surfaces insufficient-funds as an error string. Match loosely —
  * the exact wording isn't a stable contract, so key off the recognizable
- * tokens and fall back to showing the raw message.
+ * tokens. A message that matches none of them is NOT shown raw: `tryGenerate`
+ * logs it and renders copy this app owns (server text is unsanitised).
  */
 function isInsufficientFunds(message: string): boolean {
   const m = message.toLowerCase();

@@ -23,11 +23,18 @@ Declare what you need in the manifest:
 "scopes": ["user:read:self", "models:read:self"]
 ```
 
-The known set (see `BLOCK_SCOPES` in `@civitai/app-sdk/blocks`): `models:read:self`,
-`user:read:self`, `ai:write:budgeted`, `buzz:read:self`, `social:tip:self`,
-`apps:storage:read`, `apps:storage:write`, `apps:storage:shared:read`,
-`apps:storage:shared:write`, `collections:read:self`, `collections:write:self`,
-`collections:read:private`, `posts:write:self`.
+The known set is the `scopes` enum of the
+[canonical manifest schema](https://civitai.com/schemas/app-block/v1.json)
+(also `BLOCK_SCOPES` in `@civitai/app-sdk/blocks`). Copied from that enum,
+in its order — a guard test fails if the two ever differ:
+
+<!-- scopes-enum:start -->
+`models:read:self`, `user:read:self`, `ai:write:budgeted`, `buzz:read:self`,
+`social:tip:self`, `apps:storage:read`, `apps:storage:write`,
+`apps:storage:shared:read`, `apps:storage:shared:write`,
+`collections:read:self`, `collections:write:self`, `collections:read:private`,
+`posts:write:self`, `goods:read:self`, `goods:purchase:self`.
+<!-- scopes-enum:end -->
 
 A moderator sees your declared scopes at review. The issued JWT carries the
 **granted intersection** of what you declared and what the user consented to —
@@ -68,8 +75,8 @@ endpoints are gated by their own scopes — e.g. reading the bound model needs
 
 ```bash
 cp .env.example .env
-pnpm install
-pnpm dev:harness   # → http://localhost:5184
+npm install           # inside this monorepo: pnpm install, at the root
+npm run dev:harness   # → http://localhost:5184
 ```
 
 Locally the call returns **401** — the harness mints a mock token, not a real
