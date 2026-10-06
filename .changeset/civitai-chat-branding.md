@@ -1,5 +1,5 @@
 ---
-'@civitai/components-chat': patch
+'@civitai/components-chat': minor
 ---
 
-The chat calls itself Civitai Chat: the sidebar brand, the assistant's default persona, posting messages, an example prompt and the conversation export's file name.
+`configureChat({ name })` sets what the chat calls itself: the sidebar brand, the assistant's persona, posting messages and the conversation export's file name. It defaults to "Civitai Chat" (it said ChatCVT, the working name).

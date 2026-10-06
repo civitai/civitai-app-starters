@@ -105,7 +105,8 @@ import { configureChat } from '@civitai/components-chat/civitai-chat';
 configureChat({ autoRunLimit: 0 }); // ask before every generation
 ```
 
-`model` (the default chat model), `models` (others the viewer may pick in Settings, each `{ id,
+`name` (what the chat calls itself in its sidebar, to its assistant and in messages; default
+"Civitai Chat"), `model` (the default chat model), `models` (others the viewer may pick in Settings, each `{ id,
 label, note }`), `orchestrationMcpUrl`, `siteMcpUrl` and `autoRunLimit` (the Buzz a new viewer's
 generations may cost before the chat asks) are the settings. In Settings the viewer picks the
 assistant's model from the default, `models`, or any model id the orchestrator's chat endpoint

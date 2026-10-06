@@ -1,8 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
+import { chatConfig, configureChat } from '../config.js';
 import { buildSystemPrompt } from './system-prompt.js';
 
 const now = new Date('2026-09-24T00:00:00Z');
+
+const defaultName = chatConfig.name;
+afterEach(() => configureChat({ name: defaultName }));
 
 describe('system prompt', () => {
   it('only offers what the assistant can do with the tools it has', () => {
@@ -21,5 +25,10 @@ describe('system prompt', () => {
 
     const edited = buildSystemPrompt({ now, rules: (defaults) => defaults.replace('Civitai Chat', 'Moodboard') });
     expect(edited).toContain('You are the assistant in Moodboard');
+  });
+
+  it("introduces the assistant by the page's name for the chat", () => {
+    configureChat({ name: 'Moodboard Chat' });
+    expect(buildSystemPrompt({ now })).toContain('You are the assistant in Moodboard Chat,');
   });
 });
