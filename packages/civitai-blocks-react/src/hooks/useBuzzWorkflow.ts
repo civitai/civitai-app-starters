@@ -7,11 +7,13 @@ import type {
   WorkflowBodyPassThroughStep,
   WorkflowBodyStep,
   WorkflowBodyTextToImage,
+  WorkflowBodyTraining,
   WorkflowStatus,
 } from '@civitai/app-sdk/blocks';
 import { BLOCK_SCOPES } from '@civitai/app-sdk/blocks';
 
 import { withConsentRetry } from '../internal/withConsentRetry.js';
+import { WORKFLOW_REQUEST_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { resolveIdempotencyKey, sendTypedRequest } from '../transport/transport.js';
 import type { ConsentRetryOptions } from './consentRetryOptions.js';
@@ -59,7 +61,8 @@ type WorkflowBodyArms =
   | WorkflowBodyTextToImage
   | WorkflowBodyCustomComfy
   | WorkflowBodyStep
-  | WorkflowBodyPassThroughStep;
+  | WorkflowBodyPassThroughStep
+  | WorkflowBodyTraining;
 
 /** `[A] extends [B]` — bracketed so a union is compared whole, not distributed. */
 type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
@@ -85,6 +88,21 @@ type _WorkflowBodyArmsAreExhaustive = AssertTrue<
 >;
 
 /**
+ * Why {@link UseBuzzWorkflow.submit} refuses a `kind: 'training'` body.
+ *
+ * 🔴 REFUSED BEFORE THE SEND, NOT LEFT TO THE SERVER. The server charges a
+ * training run only against a quote the viewer confirmed from a signed-in
+ * session, and only `RUN_TRAINING`'s host-chrome dialog can record that — so a
+ * `SUBMIT_WORKFLOW` carrying this body can never start a run. Refusing here
+ * turns a server round-trip ending in a confusing refusal into an immediate
+ * error that names the hook to use. Nothing is sent and nothing is spent, which
+ * is why it is a plain `Error` and not a {@link WorkflowSubmitError} (every code
+ * on that class is money-ambiguous by design).
+ */
+export const TRAINING_BODY_SUBMIT_REFUSAL =
+  "useBuzzWorkflow.submit() does not run a kind:'training' body — estimate it here, then run it with useRunTraining().runTraining({ ...body, quoteId }). Nothing was sent.";
+
+/**
  * Snapshot statuses that mean "no further polling is needed."
  * Used by both `submit` (a host can return an instant-fail / cached result)
  * and `poll` so the hook can't get stuck in 'polling' after a terminal reply.
@@ -96,18 +114,16 @@ const TERMINAL_STATUSES: ReadonlySet<BlockWorkflowSnapshot['status']> = new Set(
   'expired',
 ]);
 
-/**
- * The workflow requests (estimate / submit / poll) are orchestrator-bound:
- * the host forwards them to the generation orchestrator and only replies
- * once it answers. `submit` is the slowest — server-side it does a whatif
- * cost-preflight AND the real submit (two orchestrator round-trips) plus a
- * prompt audit before responding, which legitimately exceeds the
- * transport's 30s `DEFAULT_REQUEST_TIMEOUT_MS` (tuned for fast bridge
- * messages) when the orchestrator queue is busy. Give these calls a
- * generous ceiling so a busy-but-healthy orchestrator doesn't surface as
- * a spurious `request "SUBMIT_WORKFLOW" timed out` rejection.
- */
-const WORKFLOW_REQUEST_TIMEOUT_MS = 120_000;
+// The workflow requests (estimate / submit / poll) are orchestrator-bound:
+// the host forwards them to the generation orchestrator and only replies
+// once it answers. `submit` is the slowest — server-side it does a whatif
+// cost-preflight AND the real submit (two orchestrator round-trips) plus a
+// prompt audit before responding, which legitimately exceeds the
+// transport's 30s `DEFAULT_REQUEST_TIMEOUT_MS` (tuned for fast bridge
+// messages) when the orchestrator queue is busy. `WORKFLOW_REQUEST_TIMEOUT_MS`
+// (imported above, from `transport/requestTimeouts.ts`) gives these calls a
+// generous ceiling so a busy-but-healthy orchestrator doesn't surface as a
+// spurious `request "SUBMIT_WORKFLOW" timed out` rejection.
 
 /**
  * Default orchestrator-side hold per {@link UseBuzzWorkflow.watch} poll,
@@ -687,6 +703,10 @@ export interface UseBuzzWorkflow {
    * consent dialog with no user gesture behind it, once per edit. A missing
    * scope surfaces as an ordinary rejection; show no price and let `submit()`
    * do the asking.
+   *
+   * A `kind: 'training'` body's reply also carries
+   * {@link BlockWorkflowSnapshot.trainingQuote} — the `quoteId` to run it with
+   * through `useRunTraining()`.
    */
   estimate: (body: WorkflowBody) => Promise<BlockWorkflowSnapshot>;
   /**
@@ -734,6 +754,9 @@ export interface UseBuzzWorkflow {
    * `CONSENT_UNAVAILABLE` environment is never retried, and a second consent
    * failure reaches you unchanged. Opt out with
    * {@link ConsentRetryOptions.autoRequestConsent}`: false`.
+   *
+   * 🔴 A `kind: 'training'` BODY IS REFUSED before anything is sent — it runs
+   * only through `useRunTraining()`. See {@link TRAINING_BODY_SUBMIT_REFUSAL}.
    */
   submit: (
     body: WorkflowBody,
@@ -1083,6 +1106,14 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
 
   const submit = useCallback(
     async (body: WorkflowBody, options?: SubmitWorkflowOptions) => {
+      // See `TRAINING_BODY_SUBMIT_REFUSAL`. Before the status flip, the key
+      // mint and the consent retry: nothing about this call may reach the wire.
+      if (body.kind === 'training') {
+        const refused = new Error(TRAINING_BODY_SUBMIT_REFUSAL);
+        setError(refused);
+        setStatus('error');
+        throw refused;
+      }
       setError(null);
       setStatus('submitting');
       // Idempotency: reuse a caller-supplied stable key across a retry (→ one Buzz

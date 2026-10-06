@@ -76,10 +76,12 @@ import type {
   useHostOrigin,
   useImageUpload,
   useNestedDocument,
+  usePrepareTrainingDataset,
   usePublishGenerationOutputs,
   useRequestConsent,
   useRequestSignIn,
   useResourcePicker,
+  useRunTraining,
   useSaveImage,
   useSharedStorage,
   useTip,
@@ -116,10 +118,12 @@ import type {
   UseHostOrigin,
   UseImageUpload,
   UseNestedDocument,
+  UsePrepareTrainingDataset,
   UsePublishGenerationOutputs,
   UseRequestConsent,
   UseRequestSignIn,
   UseResourcePicker,
+  UseRunTraining,
   UseSaveImage,
   UseSharedStorage,
   UseTip,
@@ -193,12 +197,16 @@ type _useHostOrigin = Assert<Exact<ReturnType<typeof useHostOrigin>, UseHostOrig
  */
 type _useImageUpload = Assert<Exact<ReturnType<typeof useImageUpload>, UseImageUpload>>;
 type _useNestedDocument = Assert<Exact<ReturnType<typeof useNestedDocument>, UseNestedDocument>>;
+type _usePrepareTrainingDataset = Assert<
+  Exact<ReturnType<typeof usePrepareTrainingDataset>, UsePrepareTrainingDataset>
+>;
 type _usePublishGenerationOutputs = Assert<
   Exact<ReturnType<typeof usePublishGenerationOutputs>, UsePublishGenerationOutputs>
 >;
 type _useRequestConsent = Assert<Exact<ReturnType<typeof useRequestConsent>, UseRequestConsent>>;
 type _useRequestSignIn = Assert<Exact<ReturnType<typeof useRequestSignIn>, UseRequestSignIn>>;
 type _useResourcePicker = Assert<Exact<ReturnType<typeof useResourcePicker>, UseResourcePicker>>;
+type _useRunTraining = Assert<Exact<ReturnType<typeof useRunTraining>, UseRunTraining>>;
 type _useSaveImage = Assert<Exact<ReturnType<typeof useSaveImage>, UseSaveImage>>;
 type _useSharedStorage = Assert<Exact<ReturnType<typeof useSharedStorage>, UseSharedStorage>>;
 type _useTip = Assert<Exact<ReturnType<typeof useTip>, UseTip>>;

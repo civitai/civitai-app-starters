@@ -139,7 +139,7 @@ interface BlockInitPayload {
 | `isModelSlotContext(ctx)` / `isPageSlotContext(ctx)` | Runtime narrowing for the `slotId`-discriminated `BlockContext` union. Real checks on a value that crossed a `postMessage` boundary — they verify every field they assert, not just `slotId`. |
 | `fetchNestedDocument(opts)` | Embed one of your OWN bundled documents as an iframe `srcdoc`, because a nested `<iframe src>` of your own content **cannot load** — see [Nested documents](#nested-documents) below. `NestedDocumentError` carries a `.code` of `'invalid-url' \| 'http-error' \| 'network-error'`. |
 | `isSignedIn(viewer)` | **The sign-in gate.** `isSignedIn(useBlockContext().viewer)` — do not open-code it as `viewer !== null` or `viewer?.signedIn === true`. Which of those is correct has already changed once with the host contract, and this is the one place it is decided. It reads neither `viewer.id` nor `viewer.username` (both `@deprecated`), so nothing written through it changes when those are removed. Need the identity rather than the presence? `useViewer()` — scope-gated and audited per call. |
-| types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `WorkflowBodyCustomComfy` (+ its two arms `WorkflowBodyCustomComfyRecipe` / `WorkflowBodyCustomComfyInline`, and `InlineComfyNode`), `WorkflowBodyStep` / `WorkflowBodyPassThroughStep` (the two arms of `kind: 'step'`), `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
+| types | `BlockManifestV1`, `ManifestSettings` (+ field types), `BlockContext`, `ModelSlotContext`, `BlockCheckpointInfo`, `ShowcaseImage`, `BlockToken`, `WrappedToken`, `BlockSettings`, `ViewerInfo`, `Theme`, `WorkflowBody`, `BlockTextToImageParams`, `WorkflowBodyCustomComfy` (+ its two arms `WorkflowBodyCustomComfyRecipe` / `WorkflowBodyCustomComfyInline`, and `InlineComfyNode`), `WorkflowBodyStep` / `WorkflowBodyPassThroughStep` (the two arms of `kind: 'step'`), `WorkflowBodyTraining` (+ `AiToolkitTrainingParams`, `BlockTrainingQuote`, `BlockTrainingDatasetItem`, `BlockTrainingDatasetResult` and the `BLOCK_TRAINING_*` bounds), `BlockWorkflowSnapshot`, `WorkflowStatus`, `BlockInitPayload`, `ParentToBlockMessage`, `BlockToParentMessage`. |
 
 `WorkflowBody`'s `customComfy` member is a discriminated union on `mode`, mirroring
 the host's `blockCustomComfyMemberSchema`. Narrow on the VALUE (`body.mode === 'inline'`),
@@ -207,6 +207,18 @@ const body: WorkflowBody = {
   maxBuzz: 10,
 };
 ```
+
+`WorkflowBodyTraining` (`kind: 'training'`) is the **quoted** way to train: an ai-toolkit LoRA
+run on a dataset Civitai prepared from the viewer's own images, mirroring the host's
+`blockTrainingBodySchema` (civitai/civitai#5434). There is no `maxBuzz` and no timeout — the
+`estimate` reply carries `snapshot.trainingQuote` (`quoteId`, `total`, `imageCount`,
+`expiresAt`), and the run starts only through the `RUN_TRAINING` bridge, after the viewer
+confirms that price in Civitai's own dialog. A confirmed run may exceed the token's per-call
+budget, up to `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (5,000). Page apps only, `ai:write:budgeted`,
+behind the host flag `app-blocks-training-kind` (off by default), and refused from development
+and review sessions. The dataset is prepared over `PREPARE_TRAINING_DATASET`
+(civitai/civitai#5438). Use it through `@civitai/blocks-react`'s `usePrepareTrainingDataset()`
+and `useRunTraining()`.
 
 ### `defineBlock` validator rules
 

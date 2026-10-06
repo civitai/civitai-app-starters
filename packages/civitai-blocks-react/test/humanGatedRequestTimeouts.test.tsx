@@ -10,6 +10,7 @@ import { useCreatePostFromApp } from '../src/hooks/useCreatePostFromApp.js';
 import { useImageUpload } from '../src/hooks/useImageUpload.js';
 import { usePublishGenerationOutputs } from '../src/hooks/usePublishGenerationOutputs.js';
 import { useResourcePicker } from '../src/hooks/useResourcePicker.js';
+import { useRunTraining } from '../src/hooks/useRunTraining.js';
 import {
   DEFAULT_REQUEST_TIMEOUT_MS,
   HUMAN_GATED_REQUEST_TYPES,
@@ -97,6 +98,36 @@ const DRIVERS: Record<string, () => () => Promise<unknown>> = {
         sources: [{ kind: 'workflow', workflowId: 'wf_app_1', imageIndexes: [0] }],
       });
   },
+  RUN_TRAINING: () => {
+    const { result } = renderHook(() => useRunTraining());
+    return () =>
+      result.current.runTraining({
+        kind: 'training',
+        datasetId: `tds_${'0'.repeat(32)}`,
+        engine: 'ai-toolkit',
+        model: 'sdxl',
+        params: {
+          engine: 'ai-toolkit',
+          ecosystem: 'sdxl',
+          resolution: 1024,
+          lr: 0.0001,
+          textEncoderLr: null,
+          trainTextEncoder: false,
+          lrScheduler: 'cosine',
+          optimizerType: 'adamw8bit',
+          networkDim: 32,
+          networkAlpha: 16,
+          noiseOffset: null,
+          minSnrGamma: null,
+          flipAugmentation: false,
+          shuffleTokens: false,
+          keepTokens: 0,
+        },
+        triggerWord: 'tok',
+        samplePrompts: [],
+        quoteId: `tq_${'0'.repeat(32)}`,
+      });
+  },
 };
 
 /** The reply message each request type is answered with, plus a minimal body. */
@@ -116,6 +147,10 @@ const REPLIES: Record<string, { type: string; extra: Record<string, unknown> }> 
   CREATE_POST_FROM_APP: {
     type: 'CREATE_POST_RESULT',
     extra: { result: { postId: 42, url: 'https://civitai.com/posts/42', imageIds: [1] } },
+  },
+  RUN_TRAINING: {
+    type: 'TRAINING_RESULT',
+    extra: { snapshot: { workflowId: 'wf_train_1', status: 'pending' } },
   },
 };
 
@@ -158,6 +193,11 @@ describe('human-gated requests never inherit the default protocol timeout', () =
       'OPEN_IMAGE_UPLOAD',
       'OPEN_RESOURCE_PICKER',
       'PUBLISH_GENERATION_OUTPUTS',
+      // The host opens a training CONSENT dialog and submits only on the
+      // viewer's click. At the 30s default the request would reject with the
+      // dialog open, and a viewer who then clicked Train would start a CHARGED
+      // run the block had reported as failed.
+      'RUN_TRAINING',
       // The host opens its OWN consent confirm naming the collection and replies
       // only on the viewer's click or dismiss. At the 30s default the request
       // would reject with the dialog still open, so a viewer who then confirmed

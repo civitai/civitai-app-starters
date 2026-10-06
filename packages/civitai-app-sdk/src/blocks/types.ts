@@ -1331,6 +1331,205 @@ export type WorkflowBodyPassThroughStep = {
   maxBuzz: number;
 };
 
+// ============================================================
+// App Blocks TRAINING kind (`kind: 'training'`)
+// ============================================================
+//
+// 🔴 MIRRORED FROM THE HOST, NOT DESIGNED HERE. Every type in this section copies
+// civitai/civitai's zod at `a32f506516` (main, after civitai/civitai#5434):
+// `blockTrainingBodySchema` in `src/server/schema/blocks/workflow.schema.ts`, and
+// `aiToolkitTrainingParamsSchema` in `src/server/schema/orchestrator/training.schema.ts`
+// for `params`. The host's zod is the definition; this is the copy. A field the
+// host adds is invisible here until this file is updated, and the host rejects a
+// body that does not parse — so a mismatch shows up as a refused estimate, never
+// as a silently different run.
+
+/** Ceiling on what ONE confirmed `kind: 'training'` run may cost, in Buzz. Host constant `BLOCK_TRAINING_MAX_BUZZ_PER_RUN`. */
+export const BLOCK_TRAINING_MAX_BUZZ_PER_RUN = 5000;
+/** Max images in one prepared training dataset. Host constant `BLOCK_TRAINING_DATASET_MAX_ITEMS`. */
+export const BLOCK_TRAINING_DATASET_MAX_ITEMS = 50;
+/** Max characters of one dataset caption. Host constant `BLOCK_TRAINING_CAPTION_MAX_CHARS`. */
+export const BLOCK_TRAINING_CAPTION_MAX_CHARS = 1000;
+/** Max sample prompts on a training body. Host constant `BLOCK_TRAINING_SAMPLE_PROMPTS_MAX`. */
+export const BLOCK_TRAINING_SAMPLE_PROMPTS_MAX = 6;
+/** Max characters of one sample prompt. Host constant `BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS`. */
+export const BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS = 1000;
+/** Max characters of the trigger word. Host constant `BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS`. */
+export const BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS = 64;
+/** Max characters of the base-model key. Host constant `BLOCK_TRAINING_MODEL_KEY_MAX_CHARS`. */
+export const BLOCK_TRAINING_MODEL_KEY_MAX_CHARS = 64;
+
+/** `lrScheduler` values the host's ai-toolkit schema accepts. */
+export type AiToolkitLrScheduler =
+  | 'constant'
+  | 'constant_with_warmup'
+  | 'cosine'
+  | 'linear'
+  | 'step';
+
+/** `optimizerType` values the host's ai-toolkit schema accepts. */
+export type AiToolkitOptimizerType =
+  | 'adamw'
+  | 'adamw8bit'
+  | 'adam8bit'
+  | 'lion'
+  | 'lion8bit'
+  | 'adafactor'
+  | 'adagrad'
+  | 'prodigy'
+  | 'prodigy8bit'
+  | 'automagic';
+
+/** The fields every ai-toolkit ecosystem shares (`aiToolkitBaseParams` on the host). */
+export interface AiToolkitTrainingParamsBase {
+  engine: 'ai-toolkit';
+  /** Saved checkpoint count, integer 1…50. With `steps` absent it is also the length knob. */
+  epochs?: number;
+  /** Total training steps, integer ≥ 1 — the primary length (and price) knob. */
+  steps?: number;
+  /** Integer ≥ 1. Exactly `1` on the `qwen21` / `ming` / `yue2` ecosystems. */
+  batchSize?: number;
+  sampleCfgScale?: number;
+  sampleStrength?: number;
+  continueFrom?: string;
+  resolution: number | null;
+  /**
+   * Learning rate. 🔴 Must be BELOW `0.1` unless `optimizerType` is `prodigy` or
+   * `prodigy8bit` — a host refinement this type cannot express; a body that
+   * breaks it is refused at estimate.
+   */
+  lr: number;
+  textEncoderLr: number | null;
+  trainTextEncoder: boolean;
+  lrScheduler: AiToolkitLrScheduler;
+  optimizerType: AiToolkitOptimizerType;
+  networkDim: number | null;
+  networkAlpha: number | null;
+  noiseOffset: number | null;
+  minSnrGamma: number | null;
+  flipAugmentation: boolean;
+  shuffleTokens: boolean;
+  keepTokens: number;
+  numRepeats?: number;
+}
+
+/**
+ * The ai-toolkit ecosystems that take NO `modelVariant` — send the key absent.
+ * (`qwen21` / `ming` / `yue2` also take none; they live on their own arm of
+ * {@link AiToolkitTrainingParams} because they pin `batchSize` to `1`.)
+ */
+export type AiToolkitPlainEcosystem =
+  | 'sd1'
+  | 'sdxl'
+  | 'chroma'
+  | 'qwen'
+  | 'zimageturbo'
+  | 'zimagebase'
+  | 'ltx2'
+  | 'ltx23'
+  | 'ltx25'
+  | 'minimaxh3'
+  | 'ernie'
+  | 'anima'
+  | 'boogu'
+  | 'krea2'
+  | 'mageflow'
+  | 'ideogram4'
+  | 'ace_step_15';
+
+/**
+ * `params` of a {@link WorkflowBodyTraining} — the host's
+ * `aiToolkitTrainingParamsSchema`, the same schema Civitai's own training form
+ * validates against, discriminated on `ecosystem`.
+ *
+ * ⚠️ THE ECOSYSTEM LIST IS CLOSED HERE AND OPEN ON THE HOST. The host adds
+ * ecosystems over time; until this package mirrors one, a body naming it does not
+ * type-check. That is the cost of a typed copy, paid deliberately: a free
+ * `string` would let a typo through to a refused estimate.
+ */
+export type AiToolkitTrainingParams = AiToolkitTrainingParamsBase &
+  (
+    | { ecosystem: AiToolkitPlainEcosystem; modelVariant?: undefined }
+    | { ecosystem: 'sd3'; modelVariant: 'large' | 'medium' }
+    | { ecosystem: 'flux1'; modelVariant: 'dev' | 'schnell' }
+    | { ecosystem: 'wan'; modelVariant: '2.1' | '2.2' }
+    | { ecosystem: 'flux2klein'; modelVariant: '4b' | '9b' }
+    | { ecosystem: 'qwen21' | 'ming' | 'yue2'; modelVariant?: undefined; batchSize?: 1 }
+    | { ecosystem: 'ace_step_15_xl'; modelVariant: 'base' | 'sft' }
+  );
+
+/**
+ * Train a LoRA with the ai-toolkit engine on a dataset Civitai prepared from the
+ * VIEWER'S OWN images — the App Blocks `kind: 'training'` workflow body.
+ *
+ * ## Availability — read before building on it
+ *
+ *  - 🔴 Behind the host flag **`app-blocks-training-kind`**, which ships OFF and is
+ *    evaluated per viewer. Where it is off, every training call is refused
+ *    (`training from apps is not enabled`).
+ *  - **Page apps only** (`/apps/run/<slug>`). The model slot answers both training
+ *    messages with an error, and the server refuses a non-page token.
+ *  - The manifest must declare **`ai:write:budgeted`** and the viewer must have
+ *    granted it; the viewer must be signed in.
+ *  - **Not from a development or review session**: dev tokens (`dev:live`, dev
+ *    tunnel) and review-sandbox tokens are refused, run-for-real included. Use the
+ *    mock host (`createMockHost` / `Harness`) to build the flow.
+ *
+ * ## The flow
+ *
+ *  1. **Dataset** — `usePrepareTrainingDataset()` (`PREPARE_TRAINING_DATASET`)
+ *     with `[{ imageId, caption }]`. Only the viewer's OWN scanned, unflagged
+ *     images within the page's maturity ceiling are admitted; the rest come back
+ *     in `rejected`. You get an opaque {@link WorkflowBodyTraining.datasetId}.
+ *  2. **Quote** — `useBuzzWorkflow().estimate(body)` with this body, `quoteId`
+ *     ABSENT. The reply's {@link BlockWorkflowSnapshot.trainingQuote} is the
+ *     orchestrator's own price for exactly this run, stored server-side.
+ *  3. **Run** — `useRunTraining().runTraining({ ...body, quoteId })`
+ *     (`RUN_TRAINING`). Civitai shows the viewer a consent dialog in ITS chrome —
+ *     price, base model, length, dataset size, all read back from the server,
+ *     never from your body — and submits only on their click.
+ *  4. **Follow** — `useBuzzWorkflow().watch(snapshot.workflowId)`.
+ *
+ * 🔴 `useBuzzWorkflow().submit()` REFUSES THIS BODY before sending it. The server
+ * charges a training run only against a quote the viewer confirmed from a
+ * signed-in session, which only `RUN_TRAINING`'s dialog can record.
+ *
+ * ## Money
+ *
+ * There is no `maxBuzz` and no timeout knob, on purpose: the price is the quote.
+ * A run may cost more than the token's per-call `buzzBudget` (the viewer confirms
+ * the exact price), up to {@link BLOCK_TRAINING_MAX_BUZZ_PER_RUN} (5,000 Buzz);
+ * an estimate above that is refused.
+ */
+export interface WorkflowBodyTraining {
+  kind: 'training';
+  /** The handle `usePrepareTrainingDataset()` returned — `tds_` + 32 hex characters. */
+  datasetId: string;
+  /** The only engine accepted. */
+  engine: 'ai-toolkit';
+  /**
+   * A base-model key from Civitai's training catalog (1…64 characters), resolved
+   * and gated server-side. Custom AIRs are not accepted.
+   */
+  model: string;
+  params: AiToolkitTrainingParams;
+  /** At most {@link BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS} characters. Moderated like a prompt. */
+  triggerWord: string;
+  /**
+   * At most {@link BLOCK_TRAINING_SAMPLE_PROMPTS_MAX} prompts of at most
+   * {@link BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS} characters each. Moderated like
+   * prompts.
+   */
+  samplePrompts: string[];
+  /**
+   * The quote this run is charged against — {@link BlockTrainingQuote.quoteId}
+   * from the estimate (`tq_` + 32 hex characters). OMIT it on the estimate;
+   * REQUIRED on `RUN_TRAINING`. The server checks the rest of the body against
+   * the body that was quoted, so change nothing else between the two.
+   */
+  quoteId?: string;
+}
+
 /**
  * Body the block sends to `useBuzzWorkflow().{submit,estimate}`. A real
  * discriminated union keyed by `kind`:
@@ -1349,6 +1548,10 @@ export type WorkflowBodyPassThroughStep = {
  *    an orchestrator `$type` directly and has the host forward `input`
  *    unmodified. Bounded by a platform-internal denylist and by `maxBuzz`, not
  *    by a registry.
+ *  - {@link WorkflowBodyTraining} (`kind: 'training'`) — an ai-toolkit LoRA run
+ *    on a server-prepared dataset of the viewer's own images. ESTIMATE ONLY
+ *    through `useBuzzWorkflow`; it runs through `useRunTraining()`, whose
+ *    host-chrome consent dialog is the only way to confirm its quote.
  *
  * `kind: 'step'` is therefore itself a union, discriminated on the PRESENCE of
  * `step` — the same nesting {@link WorkflowBodyCustomComfy} has on `mode`.
@@ -1369,7 +1572,8 @@ export type WorkflowBody =
   | WorkflowBodyTextToImage
   | WorkflowBodyCustomComfy
   | WorkflowBodyStep
-  | WorkflowBodyPassThroughStep;
+  | WorkflowBodyPassThroughStep
+  | WorkflowBodyTraining;
 
 /**
  * The host-mediated view of an orchestrator workflow that an iframe block
@@ -1573,6 +1777,34 @@ export interface BlockWorkflowSnapshot {
    * on any run nobody has started publishing.
    */
   publishedModel?: BlockPublishedModel;
+  /**
+   * The quote a {@link WorkflowBodyTraining} ESTIMATE produced — the orchestrator's
+   * own price for exactly that run, stored server-side. Pass
+   * `trainingQuote.quoteId` back as the body's `quoteId` on
+   * `useRunTraining().runTraining()`; the consent dialog then shows the viewer
+   * this price, read back from the server.
+   *
+   * `cost.total` on the same snapshot equals `trainingQuote.total`.
+   * `expiresAt` is an ISO-8601 timestamp: after it the run is refused and you
+   * estimate again. `imageCount` is the server-derived size of the prepared
+   * dataset, never a number the block sent.
+   *
+   * Present ONLY on the reply to a `kind: 'training'` estimate. Absent on hosts
+   * that predate civitai/civitai#5434.
+   */
+  trainingQuote?: BlockTrainingQuote;
+}
+
+/** {@link BlockWorkflowSnapshot.trainingQuote}. */
+export interface BlockTrainingQuote {
+  /** `tq_` + 32 hex characters. Opaque — pass it back verbatim. */
+  quoteId: string;
+  /** The quoted price, in Buzz. */
+  total: number;
+  /** How many images the prepared dataset holds. */
+  imageCount: number;
+  /** ISO-8601. The quote cannot be run after this. */
+  expiresAt: string;
 }
 
 /**
@@ -2465,3 +2697,120 @@ export type BlockCreatePostHostError =
   | 'no images to post'
   | 'no block token'
   | 'declined';
+
+// ============================================================
+// App Blocks training bridges (PREPARE_TRAINING_DATASET / RUN_TRAINING)
+// ============================================================
+
+/**
+ * One image of a training dataset request — an `Image` id the VIEWER owns, and
+ * the caption to train it with.
+ *
+ * Host bounds (`blockTrainingDatasetItemsSchema`): `imageId` a positive integer,
+ * `caption` at most {@link BLOCK_TRAINING_CAPTION_MAX_CHARS} characters, no other
+ * keys; 1…{@link BLOCK_TRAINING_DATASET_MAX_ITEMS} items per request. A payload
+ * outside them is refused by the host with `invalid training dataset` before any
+ * server call. Captions are moderated like prompts.
+ */
+export interface BlockTrainingDatasetItem {
+  imageId: number;
+  caption: string;
+}
+
+/**
+ * Why the server left an image out of a prepared dataset. Mirrors
+ * civitai/civitai's `BlockTrainingRejectionReason`.
+ *
+ * - `unavailable` — not found, OR not the viewer's own image. One reason for
+ *   both, on purpose: the server will not tell an app whether someone else's
+ *   image id exists.
+ * - `unsupported-media` — a video or audio row.
+ * - `not-eligible` — refused by moderation state or the page's maturity ceiling.
+ * - `pending-scan` — not scanned yet; retry once the scan finishes.
+ * - `import-failed` — the orchestrator did not accept the image.
+ * - `import-unavailable` — the import timed out or the orchestrator was
+ *   unavailable; retryable.
+ *
+ * The SDK's inbound validator checks `reason` only as a STRING, so a reason the
+ * host adds later still arrives — give an exhaustive `switch` a default branch.
+ */
+export type BlockTrainingRejectionReason =
+  | 'unavailable'
+  | 'unsupported-media'
+  | 'not-eligible'
+  | 'pending-scan'
+  | 'import-failed'
+  | 'import-unavailable';
+
+/**
+ * The success payload of `TRAINING_DATASET_RESULT` — what
+ * `usePrepareTrainingDataset().prepareDataset()` resolves with.
+ */
+export interface BlockTrainingDatasetResult {
+  /**
+   * Opaque handle for {@link WorkflowBodyTraining.datasetId} (`tds_` + 32 hex
+   * characters), bound to this viewer, app and install.
+   */
+  datasetId: string;
+  /** How many images were ADMITTED. The server derives it; a run trains on exactly these. */
+  count: number;
+  /** The images left out, each with its reason. Empty when every image was admitted. */
+  rejected: Array<{ imageId: number; reason: BlockTrainingRejectionReason }>;
+}
+
+/**
+ * The HOST'S OWN refusal codes on a `TRAINING_DATASET_RESULT`'s `error`. Mirrors
+ * civitai/civitai's `PREPARE_TRAINING_DATASET_HOST_ERRORS`
+ * (`src/components/AppBlocks/prepareTrainingDatasetGate.ts`, civitai/civitai#5438).
+ *
+ * 🔴 THE SET A BLOCK MAY RELY ON, NOT THE SET IT MAY RECEIVE: `error` also carries
+ * any server message verbatim (`training from apps is not enabled`, a rate limit,
+ * a moderation refusal of a caption). Compare by EQUALITY against these members
+ * and treat anything else as an opaque server message.
+ *
+ * - `review-mode` — a mod-review sandbox with "run for real" off.
+ * - `block is not ready` — the host handshake has not completed.
+ * - `sign in to train` — anonymous viewer; there are no images of theirs to read.
+ * - `invalid training dataset` — `items` failed the host's item schema (shape,
+ *   count or caption length). Nothing was sent to the server.
+ * - `no block token` — the host holds no block token yet.
+ */
+export type BlockPrepareTrainingDatasetHostError =
+  | 'review-mode'
+  | 'block is not ready'
+  | 'sign in to train'
+  | 'invalid training dataset'
+  | 'no block token';
+
+/**
+ * The HOST'S OWN refusal codes on a `TRAINING_RESULT`'s `error`. Mirrors
+ * civitai/civitai's `RUN_TRAINING_HOST_ERRORS`
+ * (`src/components/AppBlocks/runTrainingGate.ts`).
+ *
+ * 🔴 THE SET A BLOCK MAY RELY ON, NOT THE SET IT MAY RECEIVE: server messages
+ * (an expired or already-used quote, a body that differs from the quoted one, an
+ * ineligible dataset image) arrive verbatim in the same field.
+ *
+ * - `review-mode` — a mod-review sandbox with "run for real" off.
+ * - `block is not ready` — the host handshake has not completed.
+ * - `sign in to train` — anonymous viewer; there is no account to charge.
+ * - `invalid training request` — the body is not a `kind: 'training'` body
+ *   naming a `quoteId`.
+ * - `no block token` — the host holds no block token yet.
+ * - `declined` — the viewer dismissed the consent dialog. 🔴 GUARANTEED to mean
+ *   NO RUN WAS SUBMITTED.
+ * - `submission-unconfirmed` — the submit was SENT but its outcome is unknown
+ *   (the connection dropped, or the server attempted the run and could not
+ *   confirm it). 🔴 The run MAY BE RUNNING AND CHARGED. Check the viewer's
+ *   trainings (`useAppWorkflows()`, or send them to their Training page) before
+ *   offering a retry — a retry of the same body after the server did start the
+ *   run is a SECOND, separately charged run.
+ */
+export type BlockRunTrainingHostError =
+  | 'review-mode'
+  | 'block is not ready'
+  | 'sign in to train'
+  | 'invalid training request'
+  | 'no block token'
+  | 'declined'
+  | 'submission-unconfirmed';

@@ -133,6 +133,32 @@ export type {
   BlockCreatePostResult,
   BlockCreatePostHostError,
 } from './hooks/useCreatePostFromApp.js';
+export {
+  usePrepareTrainingDataset,
+  PrepareTrainingDatasetError,
+  PREPARE_TRAINING_DATASET_ERROR_CODES,
+  isPrepareTrainingDatasetErrorCode,
+} from './hooks/usePrepareTrainingDataset.js';
+export type {
+  UsePrepareTrainingDataset,
+  BlockPrepareTrainingDatasetHostError,
+  BlockTrainingDatasetItem,
+  BlockTrainingDatasetResult,
+  BlockTrainingRejectionReason,
+} from './hooks/usePrepareTrainingDataset.js';
+export {
+  useRunTraining,
+  RunTrainingError,
+  RUN_TRAINING_ERROR_CODES,
+  isRunTrainingErrorCode,
+} from './hooks/useRunTraining.js';
+export type {
+  UseRunTraining,
+  QuotedTrainingBody,
+  BlockRunTrainingHostError,
+  BlockTrainingQuote,
+  WorkflowBodyTraining,
+} from './hooks/useRunTraining.js';
 export type {
   BlockBuzzTransaction,
   BlockBuzzAccount,
