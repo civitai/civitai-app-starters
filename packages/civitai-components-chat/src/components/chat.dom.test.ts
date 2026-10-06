@@ -250,4 +250,30 @@ describe('civitai-chat', () => {
     await chat.updateComplete;
     expect(fetch.mock.calls.map(([url]) => String(url)).filter((url) => url.includes('chat/completions'))).toEqual([]);
   });
+
+  it("runs the page's own slash commands, and lets it replace or remove the built-ins", async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const pinned: string[] = [];
+    const chat = document.createElement('civitai-chat');
+    chat.commands = {
+      pin: { usage: '/pin <name>', help: 'Pin it to your board', run: (arg, { compose }) => (pinned.push(arg), compose(`Pinned ${arg}. Anything else?`)) },
+      model: null,
+    };
+    chat.app = fakeApp();
+    document.body.append(chat);
+    const root = chat.shadowRoot!;
+    await vi.waitFor(() => expect(root.querySelector('civitai-chat-composer')).not.toBeNull());
+    const composer = root.querySelector('civitai-chat-composer')!;
+    const say = (text: string) => composer.dispatchEvent(new CustomEvent('cvt-send', { bubbles: true, composed: true, detail: { text } }));
+
+    expect(Object.keys(composer.commands)).toEqual(['clear', 'help', 'pin']);
+    say('/pin sunset');
+    await vi.waitFor(() => expect(composer.draft).toBe('Pinned sunset. Anything else?'));
+    expect(pinned).toEqual(['sunset']);
+
+    say('/model smart');
+    await chat.updateComplete;
+    expect(JSON.parse(localStorage.getItem('cvt:settings') ?? '{}').assistantModel).toBeUndefined();
+  });
 });

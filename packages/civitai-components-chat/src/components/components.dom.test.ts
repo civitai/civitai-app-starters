@@ -222,7 +222,10 @@ describe('civitai-chat-composer', () => {
   });
 
   it('suggests slash commands while one is typed, and completes the only match on Tab', async () => {
-    const { composer, type, key } = await setup();
+    const run = () => undefined;
+    const { composer, type, key } = await setup({
+      commands: { clear: { usage: '/clear', help: 'Start a new chat', run }, model: { usage: '/model [default | smart | model id]', help: 'Switch model', run } },
+    });
     await type('/mo');
     expect([...composer.querySelectorAll('.cvt-commands code')].map((c) => c.textContent)).toEqual(['/model [default | smart | model id]']);
     key({ key: 'Tab' });
