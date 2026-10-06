@@ -31,9 +31,12 @@ import { createLiveHost } from '@civitai/blocks-react/live';
  * a SHORT-LIVED pasted TOKEN here — NEVER an API key. (A dev-proxy that holds
  * the API key server-side and auto-mints is a future follow-up; scope doc §5.1.)
  *
- * Live v1 does NOT support pickers / app-storage / in-band Buzz purchase — those
- * reply with a clearly-labelled "not supported in live v1" outcome. Use
- * `pnpm dev:harness` (mock mode) for those flows.
+ * Live mode REFUSES some host capabilities with an honest error rather than a
+ * fabricated success — the authoritative list is the SCOPE section at the top of
+ * `@civitai/blocks-react`'s `src/internal/liveHost.ts`. One of them is publishing
+ * generation outputs: publishing requires the viewer's signed-in civitai.com
+ * session, which the local harness does not have; test publishing on civitai.com
+ * (`/apps/dev/<blockId>`). Use `pnpm dev:harness` (mock mode) for refused flows.
  */
 export function LiveHarness({ children }: { children: ReactNode }) {
   const [outbound, setOutbound] = useState<Array<{ type: string; payload?: unknown }>>([]);

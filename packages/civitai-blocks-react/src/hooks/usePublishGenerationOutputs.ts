@@ -52,6 +52,12 @@ export interface UsePublishGenerationOutputs {
  * a human the request carries {@link HUMAN_INTERACTION_TIMEOUT_MS}, not the
  * default protocol timeout.
  *
+ * `dev:live` refuses this bridge: publishing requires the viewer's signed-in
+ * civitai.com session, which the local harness does not have, so `publish()`
+ * rejects with a message saying so. Test publishing on civitai.com
+ * (`/apps/dev/<blockId>`); in `dev:mock` the `publishImageIds` / `publishError`
+ * scenario knobs drive both arms.
+ *
  * @example
  * const { publish } = usePublishGenerationOutputs();
  * const imageIds = await publish({ workflowId: w.workflowId, imageIndexes: [0, 2] });

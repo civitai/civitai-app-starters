@@ -46,8 +46,8 @@
  * --- BEGIN DERIVED ---
  * fetch chokepoints ..... 2
  * REST endpoints ........ GET /api/v1/blocks/me
- * tRPC procedures ....... 29 = blocks.* (14) + apps.shared.* (10) + apps.storage.* (5)
- * switch case labels .... 45, of which 7 REFUSE (enumerated under SCOPE below)
+ * tRPC procedures ....... 28 = blocks.* (13) + apps.shared.* (10) + apps.storage.* (5)
+ * switch case labels .... 45, of which 8 REFUSE (enumerated under SCOPE below)
  * --- END DERIVED ---
  *
  * PICKERS (Phase 1 of "make dev:live a faithful local host"): the live host
@@ -101,6 +101,9 @@
  *     host-chrome consent. Replies `collection-unavailable`.
  *   • CREATE_POST_FROM_APP — needs the server-resolved preview plus host-chrome
  *     confirm before a PUBLIC post is written. Replies with a refusal.
+ *   • PUBLISH_GENERATION_OUTPUTS — publishing requires the viewer's signed-in
+ *     civitai.com session, which the local harness does not have; test
+ *     publishing on civitai.com (`/apps/dev/<blockId>`). Replies with a refusal.
  *   • GET_WILDCARD_PACK — needs the session-authed resolve plus the in-tab
  *     zip/yaml parse that lives in civitai, not this SDK. Replies `parse-failed`.
  *   • OPEN_IMAGE_UPLOAD — needs the host's native modal + session-authed byte
@@ -1321,32 +1324,37 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           }
 
           case 'PUBLISH_GENERATION_OUTPUTS': {
-            // Publish selected outputs of one of the app's OWN workflows as bare,
-            // real-scanned public Image rows via the token-bound
-            // `blocks.publishGenerationOutputs` MUTATION (POST). The block sends
-            // `workflowId` + optional `imageIndexes` (NEVER urls); the host
-            // re-derives ownership, re-uploads + FULL-scans server-side. Returns a
-            // plain `{ imageIds }`, unwrapped with `callTrpcData`. FREE-TEXT error
-            // on failure. Unroutable without requestId.
+            // UNSUPPORTED in live, for the same reason as CREATE_POST_FROM_APP
+            // above: publishing requires the viewer's signed-in civitai.com
+            // session (civitai/civitai#5421), which the local harness does not
+            // have — it holds a dev block token and has no civitai chrome to
+            // render the publish confirm in. On civitai.com the real host
+            // resolves the workflow's outputs, shows that confirm, and only then
+            // publishes bare, real-scanned public Image rows.
+            //
+            // FREE TEXT, like the post refusal: none of the host's codes is
+            // honest about "this harness cannot do it". `usePublishGenerationOutputs`
+            // rejects with it as the message. Test publishing on civitai.com
+            // (`/apps/dev/<blockId>`), or use dev:mock (`publishImageIds` /
+            // `publishError` knobs) for both arms locally.
             if (!isRoutableRequestId(requestId)) return;
-            void callTrpcData(
-              'blocks.publishGenerationOutputs',
-              {
-                blockToken: rawToken,
-                workflowId: typed.payload?.workflowId,
-                ...(typed.payload?.imageIndexes !== undefined
-                  ? { imageIndexes: typed.payload.imageIndexes }
-                  : {}),
-                ...(typed.payload?.title !== undefined ? { title: typed.payload.title } : {}),
+            logOnce(
+              'publish-outputs',
+              'PUBLISH_GENERATION_OUTPUTS is not supported in dev:live (publishing requires the ' +
+                "viewer's signed-in civitai.com session, which the local harness does not have). " +
+                'Replying with a refusal. Test publishing on civitai.com (/apps/dev/<blockId>), or ' +
+                'use dev:mock to exercise the publish bridge.',
+            );
+            dispatchToBlock({
+              type: 'PUBLISH_RESULT',
+              payload: {
+                requestId,
+                error:
+                  'publishing generation outputs is not supported in dev:live — publishing ' +
+                  "requires the viewer's signed-in civitai.com session, which the local harness " +
+                  'does not have; test publishing on civitai.com (/apps/dev/<blockId>) or use ' +
+                  'dev:mock',
               },
-              'POST',
-            ).then((r) => {
-              dispatchToBlock({
-                type: 'PUBLISH_RESULT',
-                payload: r.data
-                  ? { requestId, result: r.data }
-                  : { requestId, error: r.error ?? 'publish unavailable' },
-              });
             });
             return;
           }
