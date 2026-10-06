@@ -115,6 +115,31 @@ The message box takes slash commands, run by the chat itself and never sent to t
 `/clear` (or `/new`) starts a new chat, `/model` shows or switches the assistant's model
 (`/model smart`, `/model default`, `/model <id>`), and `/help` lists them.
 
+A page adds its own with `commands`, which can also replace or remove the built-ins:
+
+```ts
+import type { ChatCommandsOption } from '@civitai/components-chat/civitai-chat';
+
+chat.commands = {
+  pin: {
+    usage: '/pin <name>',
+    help: 'Pin the latest picture to your board',
+    run: (arg, { send, compose, notify, conversationId }) => board.pinLatest(arg),
+  },
+  logo: { usage: '/logo <brand>', help: 'Start a logo panel', run: (arg, { send }) => send(`Build me a logo panel for ${arg}`) },
+  model: null, // remove a built-in
+} satisfies ChatCommandsOption;
+
+// Or build the whole set from the built-ins:
+chat.commands = (defaults) => ({ ...defaults, clear: { ...defaults.clear!, help: 'Start over' } });
+```
+
+A name adds a command or replaces the built-in of that name; `null` removes one. Names are a letter
+followed by letters, digits, `_` or `-`. Page commands appear in the suggestions while typing, Tab
+completion and `/help`. `run(arg, context)` gets the text after the name; `context.send` sends a
+message as the viewer, `compose` puts text in the message box, and `notify` shows a short note. A
+command that throws shows that it did not work.
+
 The microphone button lets the viewer talk instead of typing. Where the browser has audio worklets,
 it streams 16 kHz PCM to a `liveTranscription` step and the words appear as they are spoken (a few
 hundred milliseconds behind). Long pauses are not sent (it is billed per second of audio, about 1 Buzz

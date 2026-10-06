@@ -8,7 +8,7 @@ import { takeResume } from '../auth/resume.js';
 import { SCOPE_PATTERN, chatConfig } from '../config.js';
 import type { Panel } from '../panels/panel.js';
 import { panelLink, sharedPanelOf, takeSharedPanel, type SharedPanel } from '../panels/share.js';
-import { COMMANDS, modelName, parseCommand, resolveModel } from '../ux/commands.js';
+import { modelName, parseCommand, resolveCommands, resolveModel, type ChatCommands, type ChatCommandsOption } from '../ux/commands.js';
 import { humanize } from '../ux/humanize.js';
 import { conversationSpend, type Spend } from '../ux/spend.js';
 import type { GenerationJob } from '../orchestration/job.js';
@@ -49,6 +49,7 @@ export class CivitaiChat extends LitElement {
     app: { attribute: false },
     signIn: { attribute: false },
     tools: { attribute: false },
+    commands: { attribute: false },
     toolViews: { attribute: false },
     instructions: { attribute: false },
     systemPrompt: { attribute: false },
@@ -82,6 +83,11 @@ export class CivitaiChat extends LitElement {
   declare signIn?: (options: { signal: AbortSignal }) => Promise<AppClient>;
   /** The page's own tools, by name; changes apply from the next reply. */
   declare tools: Record<string, ChatTool>;
+  /**
+   * Slash commands: a record over the built-ins (`clear`, `model`, `help`), where a name adds or replaces one
+   * and `null` removes it, or a function from the built-ins to the whole set.
+   */
+  declare commands?: ChatCommandsOption;
   /** How calls of any tool show in the chat, by tool name: an `activity` line, or a `render` that replaces the card. */
   declare toolViews: Record<string, ChatToolView>;
   /** What the assistant should know about the page, read at the start of every reply. */
@@ -475,30 +481,50 @@ export class CivitaiChat extends LitElement {
 
   /** What the viewer typed: a slash command runs here and never reaches the assistant. */
   async #fromComposer(text: string): Promise<void> {
-    const parsed = parseCommand(text);
+    const parsed = parseCommand(text, this.#commands());
     if (!parsed) return this.#send(text);
     if ('unknown' in parsed) return this.#toast(`There is no /${parsed.unknown} command. Type /help to see them.`);
-    switch (parsed.command.name) {
-      case 'clear':
-        this.newChat();
-        return;
-      case 'help':
-        this.#notify(COMMANDS.map((command) => `${command.usage}: ${command.help}`).join('  ·  '));
-        return;
-      case 'model': {
-        const session = this.#session;
-        if (!session) return this.#toast('Sign in first to choose a model.');
-        if (!parsed.arg) {
-          const others = ['default', ...chatConfig.models.map((model) => model.label.toLowerCase())].join(', ');
-          this.#notify(`The assistant uses ${modelName(session.settings.assistantModel, chatConfig.models)}. Switch with /model ${others}, or a model id.`);
-          return;
-        }
-        const id = resolveModel(parsed.arg, chatConfig.models);
-        this.#updateSettings({ assistantModel: id });
-        this.#notify(`The assistant now uses ${modelName(id, chatConfig.models)}, from the next reply.`);
-        return;
-      }
+    try {
+      await parsed.command.run(parsed.arg, {
+        conversationId: this.#session?.store.current?.id,
+        send: (message) => this.#send(message),
+        compose: (message) => void this.compose(message),
+        notify: (message) => this.#notify(message),
+      });
+    } catch (error) {
+      this.#toast(`/${parsed.name} did not work.`, error);
     }
+  }
+
+  /** The built-ins, then the page's `commands` over them. */
+  #commands(): ChatCommands {
+    return resolveCommands(this.#builtInCommands(), this.commands);
+  }
+
+  #builtInCommands(): ChatCommands {
+    return {
+      clear: { aliases: ['new'], usage: '/clear', help: 'Start a new chat', run: () => this.newChat() },
+      model: {
+        usage: '/model [default | smart | model id]',
+        help: "Show or switch the assistant's model",
+        run: (arg, { notify }) => {
+          const session = this.#session;
+          if (!session) return notify('Sign in first to choose a model.');
+          if (!arg) {
+            const others = ['default', ...chatConfig.models.map((model) => model.label.toLowerCase())].join(', ');
+            return notify(`The assistant uses ${modelName(session.settings.assistantModel, chatConfig.models)}. Switch with /model ${others}, or a model id.`);
+          }
+          const id = resolveModel(arg, chatConfig.models);
+          this.#updateSettings({ assistantModel: id });
+          notify(`The assistant now uses ${modelName(id, chatConfig.models)}, from the next reply.`);
+        },
+      },
+      help: {
+        usage: '/help',
+        help: 'List these commands',
+        run: (_arg, { notify }) => notify(Object.values(this.#commands()).map((command) => `${command.usage}: ${command.help}`).join('  ·  ')),
+      },
+    };
   }
 
   async #send(text: string): Promise<void> {
@@ -656,6 +682,7 @@ export class CivitaiChat extends LitElement {
                   </p>`
                 : html`<p class="cvt-sign-in-status">You are signed out. Sending a message signs you in with Civitai.</p>`}
               <civitai-chat-composer
+                .commands=${this.#commands()}
                 ?running=${this.signingIn}
                 @cvt-send=${(e: CustomEvent<{ text: string }>) => void this.#fromComposer(e.detail.text)}
                 @cvt-stop=${() => this.#cancelSignIn()}
@@ -801,6 +828,7 @@ export class CivitaiChat extends LitElement {
                 ></civitai-chat-welcome>`
               : keyed(conversation?.id, html`<civitai-chat-thread .turns=${turns} .live=${session.agent.live} .jobs=${session.jobs} .posts=${session.posts} .panels=${session.panels} .files=${() => session.attachments()} ?can-share=${this.#shareBase !== undefined} ?dock-panels=${this.dockPanels} .models=${this.#models} .resolve=${resolve} .views=${{ ...this.tools, ...this.toolViews }}></civitai-chat-thread>`)}
           <civitai-chat-composer
+            .commands=${this.#commands()}
             ?running=${session.agent.running}
             .uploads=${this.uploads}
             .refs=${this.refs}
