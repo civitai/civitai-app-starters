@@ -166,7 +166,7 @@ expectTypeOf<Exclude<keyof WorkflowStepTemplates, WorkflowStepType>>().toEqualTy
  * `type … = never;` or a union of quoted literals — the script refuses to
  * guess at any other shape and writes nothing.
  */
-type CatalogStepTypesWithoutAGeneratedType = 'imageScanning' | 'preprocessVideo' | 'soniloAudioGen' | 'yuE2';
+type CatalogStepTypesWithoutAGeneratedType = 'imageScanning' | 'liveTranscription' | 'merge' | 'preprocessVideo' | 'soniloAudioGen' | 'yuE2';
 expectTypeOf<Exclude<WorkflowStepType, keyof WorkflowStepTemplates>>().toEqualTypeOf<
   CatalogStepTypesWithoutAGeneratedType
 >();
@@ -190,6 +190,10 @@ expectTypeOf<Exclude<WorkflowStepType, keyof WorkflowStepTemplates>>().toEqualTy
  */
 // @ts-expect-error — documented `$type`, no generated template in the pinned peer
 export type _NoGeneratedTemplateFor_imageScanning = WorkflowStepTemplateFor<'imageScanning'>;
+// @ts-expect-error — documented `$type`, no generated template in the pinned peer
+export type _NoGeneratedTemplateFor_liveTranscription = WorkflowStepTemplateFor<'liveTranscription'>;
+// @ts-expect-error — documented `$type`, no generated template in the pinned peer
+export type _NoGeneratedTemplateFor_merge = WorkflowStepTemplateFor<'merge'>;
 // @ts-expect-error — documented `$type`, no generated template in the pinned peer
 export type _NoGeneratedTemplateFor_preprocessVideo = WorkflowStepTemplateFor<'preprocessVideo'>;
 // @ts-expect-error — documented `$type`, no generated template in the pinned peer
