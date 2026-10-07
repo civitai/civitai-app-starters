@@ -1,6 +1,6 @@
 # Civitai App examples
 
-Six minimal, runnable Civitai App examples — one per feature area. Each is
+Eleven minimal, runnable Civitai App examples — one per feature area. Each is
 self-contained (its own `block.manifest.json`, `src/`, and README) and runs
 offline against the SDK's mock host, or against the real backend with
 `dev:live`.

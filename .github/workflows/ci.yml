@@ -502,8 +502,8 @@ jobs:
             echo "No lint script for ${{ matrix.starter }} — skipping."
           fi
 
-  # The six `starters/examples/*` apps. Nothing in CI ever built, typechecked
-  # or validated them, and all six failed `civitai app validate` — the CLI the
+  # The `starters/examples/*` apps. Nothing in CI ever built, typechecked
+  # or validated them, and all six that existed then failed `civitai app validate` — the CLI the
   # docs tell people to run on a copied-out example — while every job here was
   # green. One job (not a matrix) on purpose: six small Vite apps share one
   # install and one package build, and one stable context name is what a
@@ -563,7 +563,7 @@ jobs:
       # BEHAVIOUR, not compilation: boot each example under `dev:harness` in
       # headless Chromium and check it renders past "Loading…", logs no error,
       # and PAINTS the host's theme (dark under a light OS was white until the
-      # examples went dark-first). ~15s for 6 examples x 3 scenarios locally.
+      # examples went dark-first). ~15s for the original 6 examples x 3 scenarios locally.
       # timeout-minutes on the install for the apt-get wedge documented on the
       # `blocks-react` job's identical step.
       - run: pnpm --filter @civitai/blocks-react exec playwright install --with-deps chromium
