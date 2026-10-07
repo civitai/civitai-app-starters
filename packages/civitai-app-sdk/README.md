@@ -266,7 +266,7 @@ no entry fails the suite.
 > assigned server-side, so it cannot be enforced locally.
 
 **Where it runs.** Every scaffold that ships a `block.manifest.json`
-(`starters/civitai-block-starter` and all six `starters/examples/*`) registers
+(`starters/civitai-block-starter` and every `starters/examples/*` app) registers
 `blockManifestPlugin` from `@civitai/app-sdk/vite` in its `vite.config.ts`. It
 fires from Vite's `configResolved`, the one hook called on both the dev-server
 and the build path — so `pnpm dev`, `pnpm dev:harness` and `pnpm build` all fail
