@@ -260,6 +260,66 @@ test('readThemeShape: a MENTION of the dark query in a CSS comment is not a bloc
   assert.match(shape.baseCss, /background:#111/);
 });
 
+// The React theme-sync instrument, against fixtures. The case that matters is
+// the second: a render-time gate present, the effect's own gate gone. A
+// file-wide phrase match passed it.
+const reactApp = (effectBody, { renderGate = true } = {}) => `
+export function App() {
+  const { ready, theme } = useBlock();
+  useEffect(() => {
+    if (!ready) return;
+    console.log('unrelated effect');
+  }, [ready]);
+  useEffect(() => {${effectBody}
+  }, [ready, theme]);
+  ${renderGate ? "if (!ready) return <div style={{ padding: 16 }}>Loading…</div>;" : ''}
+  return <div data-theme={theme}>{'}'}</div>;
+}`;
+const GATED = `
+    if (!ready) return;
+    document.documentElement.dataset.theme = theme;`;
+
+test('react theme sync: PASSES the gate inside the effect that writes <html>', () => {
+  assert.deepEqual(reactThemeSyncErrors(reactApp(GATED)), []);
+  assert.deepEqual(reactThemeSyncErrors(reactApp(GATED, { renderGate: false })), []);
+  assert.deepEqual(
+    reactThemeSyncErrors(
+      reactApp(`
+    if (!ready) return;
+    document.documentElement.setAttribute('data-theme', theme);`),
+    ),
+    [],
+  );
+});
+
+test('react theme sync: FAILS an ungated effect even with a render-time gate present', () => {
+  const src = reactApp(`
+    document.documentElement.dataset.theme = theme;`);
+  assert.match(src, /if \(!ready\) return <div/, 'fixture must carry the render-time gate');
+  assert.match(src, /if \(!ready\) return;/, 'fixture must carry a gate in ANOTHER effect');
+  const errors = reactThemeSyncErrors(src);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /does not open with `if \(!ready\) return;`/);
+});
+
+test('react theme sync: a COMMENT naming the gate inside the effect is not a gate', () => {
+  const errors = reactThemeSyncErrors(
+    reactApp(`
+    // if (!ready) return;
+    document.documentElement.dataset.theme = theme;`),
+  );
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /does not open with/);
+});
+
+test('react theme sync: FAILS when no effect writes <html> data-theme', () => {
+  const errors = reactThemeSyncErrors(reactApp(`
+    if (!ready) return;
+    document.body.dataset.theme = theme;`));
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /no `useEffect/);
+});
+
 // ---------------------------------------------------------------------------
 // 2. The repo sweep. THIS is the guard; everything above proves it can go red.
 // ---------------------------------------------------------------------------
@@ -598,9 +658,13 @@ for (const { label, dir, sync } of THEMED_APPS) {
         /dataset\.theme\s*=|setAttribute\(['"]data-theme/,
         'the sync must set the same data-theme attribute the boot CSS keys on',
       );
-      assert.match(
-        src,
-        /if \(!ready\)\s*return/,
+      // The ready gate is checked INSIDE the effect that writes <html>'s
+      // data-theme, never as a phrase anywhere in the file: every React example
+      // also has a render-time `if (!ready) return <div>Loading…</div>`, which a
+      // file-wide match accepted while the effect's own gate was deleted.
+      assert.deepEqual(
+        reactThemeSyncErrors(src),
+        [],
         'the sync must be gated on ready — before BLOCK_INIT `theme` is the transport ' +
           "'light' sentinel, which would clobber the fragment seed of a dark host",
       );
@@ -658,6 +722,66 @@ for (const { label, dir, sync } of THEMED_APPS) {
       );
     });
   }
+}
+
+/**
+ * The React theme sync, checked structurally: find the `useEffect(() => { … })`
+ * whose callback body writes <html>'s data-theme, and require that body to OPEN
+ * with the ready gate. Returns a list of problems (empty = sound).
+ *
+ * Why the gate must sit in THAT body: the effect is what writes <html>; a
+ * render-time `if (!ready) return <div>…` elsewhere in the component stops
+ * nothing, because the effect runs on the first commit regardless — with
+ * `theme` still the transport's 'light' sentinel.
+ */
+function reactThemeSyncErrors(rawSrc) {
+  // Comments out first, so prose that NAMES the gate or the write cannot
+  // satisfy either (same convention as the sdk check below).
+  const src = rawSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const HTML_THEME_WRITE =
+    /document\.documentElement\s*\.\s*(?:dataset\.theme\s*=(?!=)|setAttribute\(\s*['"]data-theme['"])/;
+  const READY_GATE = /^\s*if\s*\(\s*!ready\s*\)\s*return\s*;/;
+
+  const bodies = [];
+  const effectOpen = /\buseEffect\s*\(\s*\(\s*\)\s*=>\s*\{/g;
+  for (let m; (m = effectOpen.exec(src)); ) {
+    const open = m.index + m[0].length - 1;
+    const close = matchingBrace(src, open);
+    if (close < 0) return [`unbalanced braces in the useEffect at offset ${m.index}`];
+    bodies.push(src.slice(open + 1, close));
+  }
+  const themeEffects = bodies.filter((b) => HTML_THEME_WRITE.test(b));
+  if (themeEffects.length === 0) {
+    return [
+      'no `useEffect(() => { … })` writes document.documentElement data-theme — the host ' +
+        'theme never reaches <html> after mount',
+    ];
+  }
+  if (themeEffects.length > 1) {
+    return [`${themeEffects.length} effects write <html> data-theme; expected exactly one`];
+  }
+  if (!READY_GATE.test(themeEffects[0])) {
+    return [
+      'the effect that writes <html> data-theme does not open with `if (!ready) return;` — a ' +
+        'render-time ready gate elsewhere does not stop the effect from running',
+    ];
+  }
+  return [];
+}
+
+/** Index of the `}` closing the `{` at `open`, skipping string/template literals; -1 if none. */
+function matchingBrace(src, open) {
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    const c = src[i];
+    if (c === "'" || c === '"' || c === '`') {
+      for (i++; i < src.length && src[i] !== c; i++) if (src[i] === '\\') i++;
+      continue;
+    }
+    if (c === '{') depth++;
+    else if (c === '}' && --depth === 0) return i;
+  }
+  return -1;
 }
 
 /** Relative luminance of a #rgb/#rrggbb below the midpoint. */
