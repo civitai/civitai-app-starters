@@ -30,7 +30,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { elements, usesSdk } from '../scripts/bindings.js';
+import { detailTypes, elements, usesSdk } from '../scripts/bindings.js';
 
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 // Both `import x from 'y'` / `export … from 'y'` AND a bare `import 'y'`, which
@@ -53,6 +53,53 @@ function reachableSpecifiers(entry: string): Set<string> {
     }
   }
   return external;
+}
+
+// ---------------------------------------------------------------------------
+// What a consumer can NAME off a built entry, as opposed to what it imports.
+//
+// `reachableSpecifiers` above answers "what does this entry pull in"; these
+// answer "what does it hand out". Read against the BUILT `.d.ts`, because that
+// is the artifact a consumer's `tsc` resolves — a type-only export is erased
+// from the emitted `.js`, so a check over `dist/**/*.js` is structurally blind
+// to it.
+// ---------------------------------------------------------------------------
+
+/** `'./civitai-menu.js'` and `'./civitai-menu'` both name `civitai-menu.d.ts`. */
+const dtsFor = (file: string): string =>
+  file.endsWith('.d.ts') ? file : `${file.replace(/\.js$/, '')}.d.ts`;
+
+const EXPORT_STAR_RE = /export\s+\*\s+from\s*['"]([^'"]+)['"]/g;
+/** `export { A, B as C }` and `export type { A }`, with or without a `from`. */
+const EXPORT_LIST_RE = /export\s+(?:type\s+)?\{([^}]*)\}/g;
+const EXPORT_DECL_RE =
+  /export\s+(?:declare\s+)?(?:abstract\s+)?(?:const|let|var|function|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g;
+
+/** Every name a consumer can import from `entry`, following relative re-exports. */
+function exportedNames(entry: string): Set<string> {
+  const names = new Set<string>();
+  const seen = new Set<string>();
+  const queue = [dtsFor(resolve(pkgRoot, entry))];
+
+  while (queue.length) {
+    const file = queue.pop()!;
+    if (seen.has(file)) continue;
+    seen.add(file);
+    const source = readFileSync(file, 'utf8');
+
+    for (const [, specifier] of source.matchAll(EXPORT_STAR_RE)) {
+      if (specifier!.startsWith('.')) queue.push(dtsFor(resolve(dirname(file), specifier!)));
+    }
+    for (const [, list] of source.matchAll(EXPORT_LIST_RE)) {
+      for (const clause of list!.split(',')) {
+        // `A as B` is exported as B; a leading `type` is a per-clause modifier.
+        const name = clause.trim().replace(/^type\s+/, '').split(/\s+as\s+/).pop()?.trim();
+        if (name) names.add(name);
+      }
+    }
+    for (const [, name] of source.matchAll(EXPORT_DECL_RE)) names.add(name!);
+  }
+  return names;
 }
 
 describe('entry points', () => {
@@ -111,5 +158,68 @@ describe('entry points', () => {
       '@civitai/components/civitai-button',
       '@civitai/components/civitai-button/define',
     ]);
+  });
+
+  /**
+   * The event `detail` types must be nameable off this package.
+   *
+   * These appear in this package's OWN published signatures — `CivitaiMenu`'s
+   * `onSelect` is `EventName<CustomEvent<MenuSelectDetail>>` — while, until this
+   * guard, being exported by no entry point of it. A consumer typing that
+   * handler's argument had to add `@civitai/components` as a second direct
+   * dependency purely for a type, and this package's own browser test did
+   * exactly that for `TagVoteDetail`.
+   *
+   * 🔴 READ THE SCOPE. This asserts the NAME is exported from the built `.d.ts`,
+   * derived from `EVENTS` via `detailTypes` — the same source of truth the
+   * emitter reads, so the two cannot disagree about which types exist. It fails
+   * when a detail type is ADDED to `EVENTS` without reaching the surface, which
+   * is the rot it exists to catch. It does NOT assert the type is the right
+   * shape; `elements.browser.test.tsx` drives a real `onSelect` for that.
+   *
+   * The SDK arm is stated in the emitter (an SDK-bound binding's detail types
+   * stay out of the barrel, like the binding) but is UNEXERCISED today: neither
+   * `civitai-sign-in-button` nor `civitai-workflow-button` carries one, so there
+   * is nothing here to assert absent.
+   */
+  it('the root names every presentational `detail` type, so @civitai/components is not needed for one', () => {
+    const fromRoot = exportedNames('dist/index.d.ts');
+
+    // POSITIVE CONTROL — the walker really reached through `.` to the bindings,
+    // so a missing name below is a gap in the surface and not a parser wired to
+    // nothing. A reassuring pass over an empty set is the failure mode here.
+    expect(fromRoot).toContain('CivitaiButton');
+    expect(fromRoot.size).toBeGreaterThan(40);
+
+    const expected = elements()
+      .filter((entry) => !usesSdk(entry))
+      .flatMap((entry) => detailTypes(entry.tag));
+    // Not vacuous: there ARE detail types to check.
+    expect(expected.length).toBeGreaterThan(0);
+
+    for (const name of expected) {
+      expect(
+        [...fromRoot],
+        `@civitai/components-react must export the type \`${name}\` — it is in a public signature`
+      ).toContain(name);
+    }
+  });
+
+  it('a single binding entry names its own `detail` types too', () => {
+    // Per-element imports are a documented route (bundle size, and the two
+    // SDK-bound bindings have no other), so the type must be reachable there
+    // as well — not only off the barrel.
+    const withDetails = elements().filter((entry) => detailTypes(entry.tag).length > 0);
+    expect(withDetails.length).toBeGreaterThan(0);
+
+    for (const { tag } of withDetails) {
+      const names = exportedNames(`dist/elements/${tag}.d.ts`);
+      for (const detail of detailTypes(tag)) {
+        expect(
+          [...names],
+          `dist/elements/${tag}.d.ts must export the type \`${detail}\``
+        ).toContain(detail);
+      }
+    }
   });
 });
