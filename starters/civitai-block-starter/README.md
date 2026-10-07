@@ -35,7 +35,7 @@ iterates without civitai.com embedding your block.
 ## What runs in the iframe
 
 ```ts
-import '@civitai/components/register'; // every <civitai-*> element
+import '@civitai/components/register'; // the generic <civitai-*> kit (see below for the rest)
 import { initialize } from '@civitai/sdk';
 
 const app = await initialize();               // resolves on the host's BLOCK_INIT
@@ -65,10 +65,19 @@ before calling `app.orchestration` — a block submits through
 `POST /api/v1/blocks/workflows/submit`, which carries the per-call Buzz budget,
 daily caps and attribution that a direct orchestrator call skips.
 
-The UI is the full [`@civitai/components`](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-components)
-element set — `<civitai-button>`, `<civitai-text-input>`, `<civitai-select>`,
+The UI is the custom elements from [`@civitai/components`](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-components)
+— `<civitai-button>`, `<civitai-text-input>`, `<civitai-select>`,
 `<civitai-modal>`, `<civitai-image>`, … Every tag, attribute, event and slot is
-listed in the package's `custom-elements.json`.
+listed in the package's `custom-elements.json`. Which import defines which:
+
+| Import | Defines |
+|---|---|
+| `@civitai/components/register` (what `src/block.ts` uses) | the generic kit — every element except the seven below |
+| `@civitai/components/register-site` | the generic kit **plus** the civitai.com vocabulary: `<civitai-avatar>`, `<civitai-media-card>`, `<civitai-rating-badge>`, `<civitai-reaction>`, `<civitai-tag>` |
+| `@civitai/components/civitai-sign-in-button/define`, `…/civitai-workflow-button/define` | the two SDK-backed elements, one import each — no register entry includes them |
+
+An element nothing defines renders as an unstyled, inert tag with no error;
+`test/block.test.ts` fails if the starter uses one.
 
 ## Direct loads
 

@@ -1,8 +1,14 @@
-// Registers every `<civitai-*>` element. One line, and an element you add to
-// the markup below just works. To trim the bundle, swap it for the elements you
-// actually use, e.g. `import '@civitai/components/civitai-text/define';` — but
-// then an element you forget to define renders as an unstyled, inert tag with
-// no error, so add a define line for each one you use.
+// Registers the GENERIC `<civitai-*>` kit — every element except seven:
+//  - the civitai.com vocabulary (`<civitai-avatar>`, `<civitai-media-card>`,
+//    `<civitai-rating-badge>`, `<civitai-reaction>`, `<civitai-tag>`) needs
+//    `import '@civitai/components/register-site';` instead (it includes this);
+//  - the two SDK-backed elements (`<civitai-sign-in-button>`,
+//    `<civitai-workflow-button>`) each need their own
+//    `import '@civitai/components/<tag>/define';`.
+// To trim the bundle, swap this for the elements you actually use, e.g.
+// `import '@civitai/components/civitai-text/define';`. Either way, an element
+// nothing defines renders as an unstyled, inert tag with NO error —
+// `test/block.test.ts` fails if the starter uses one.
 import '@civitai/components/register';
 
 import { BridgeError, initialize, type BlockAppClient } from '@civitai/sdk';

@@ -27,8 +27,14 @@ Vite + React + TS) or at the six React examples under
   plus the API clients (`app.site`, `app.storage`, `app.sharedStorage`,
   `app.orchestration`). Its README is the reference; read `app.host`'s methods
   from the installed types rather than from a list here.
-- `@civitai/components` — the `<civitai-*>` elements, all registered by
-  `import '@civitai/components/register'` in `src/block.ts`. The full contract
+- `@civitai/components` — the `<civitai-*>` elements. `import
+  '@civitai/components/register'` in `src/block.ts` defines the generic kit:
+  every element except the civitai.com vocabulary (`<civitai-avatar>`,
+  `<civitai-media-card>`, `<civitai-rating-badge>`, `<civitai-reaction>`,
+  `<civitai-tag>` — use `@civitai/components/register-site`, which includes the
+  kit) and the two SDK-backed elements (`<civitai-sign-in-button>`,
+  `<civitai-workflow-button>` — each needs its own
+  `@civitai/components/<tag>/define`). The full contract
   (every tag, attribute, event, `::part` and slot) is
   `node_modules/@civitai/components/custom-elements.json`.
 - `@civitai/theme` — the `--civitai-*` tokens (`src/main.ts` imports its CSS).
@@ -95,9 +101,12 @@ Don't try to "make this a real OAuth app." That is what the `next-app` /
   `src/block.ts` is a static template filled field by field; a model name is
   user-authored, and interpolating it into markup is an XSS hole.
   `test/block.test.ts` pins this.
-- **Register every element you use.** `@civitai/components/register` covers all
-  of them. If you trim it to per-element `…/<tag>/define` imports, an element
-  you forget renders as an inert, unstyled tag with no error.
+- **Register every element you use.** `@civitai/components/register` covers
+  the generic kit only — see Stack above for the seven it does not define. An
+  element nothing defines renders as an inert, unstyled tag with no error, so
+  `test/block.test.ts` collects every `<civitai-*>` tag the starter uses and
+  fails if one is undefined; keep it passing when you add elements or trim the
+  import to per-element `…/<tag>/define` lines.
 - **Keep `import '@civitai/sdk/safe-storage'` the first import in `src/main.ts`.**
 
 ## Boot skeleton

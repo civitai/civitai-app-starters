@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { getTransport } from '@civitai/sdk';
 import { __resetTransport } from '@civitai/sdk/testing';
 
-import { mountBlock } from '../src/block.js';
+import { mountBlock, startBlock } from '../src/block.js';
 import { DIRECT_LOAD_TIMEOUT_MS, hostToRunUrl, renderDirectLoadFallback } from '../src/directLoad.js';
 
 /**
@@ -317,28 +317,34 @@ describe('embedded load', () => {
 
 describe('the "Open on Civitai" link', () => {
   test('a deployed block host links to its own run page', async () => {
-    // <civitai-button> is form-associated and calls attachInternals(), which
-    // happy-dom does not implement (real browsers do). A minimal stand-in, for
-    // this test only, so the element can upgrade and render its link.
-    const proto = HTMLElement.prototype as unknown as { attachInternals?: () => unknown };
-    const hadInternals = 'attachInternals' in proto;
-    if (!hadInternals) {
-      proto.attachInternals = () => ({
-        form: null,
-        setFormValue() {},
-        setValidity() {},
-        checkValidity: () => true,
-        reportValidity: () => true,
-        states: new Set(),
-      });
-    }
-    try {
-      await checkRunLink();
-    } finally {
-      if (!hadInternals) delete proto.attachInternals;
-    }
+    await withAttachInternals(checkRunLink);
   });
 });
+
+/**
+ * `<civitai-button>` is form-associated and calls attachInternals(), which
+ * happy-dom does not implement (real browsers do). A minimal stand-in, for the
+ * duration of `fn` only, so the element can upgrade and render.
+ */
+async function withAttachInternals(fn: () => Promise<void> | void): Promise<void> {
+  const proto = HTMLElement.prototype as unknown as { attachInternals?: () => unknown };
+  const hadInternals = 'attachInternals' in proto;
+  if (!hadInternals) {
+    proto.attachInternals = () => ({
+      form: null,
+      setFormValue() {},
+      setValidity() {},
+      checkValidity: () => true,
+      reportValidity: () => true,
+      states: new Set(),
+    });
+  }
+  try {
+    await fn();
+  } finally {
+    if (!hadInternals) delete proto.attachInternals;
+  }
+}
 
 async function checkRunLink() {
   {
@@ -353,3 +359,96 @@ async function checkRunLink() {
     expect(root.textContent).not.toContain('Waiting for the Civitai host');
   }
 }
+
+/**
+ * 🔴 `@civitai/components/register` does NOT define every `<civitai-*>` element
+ * (the civitai.com vocabulary needs `register-site`; the SDK-backed buttons need
+ * their own `define`), and an undefined tag renders as an inert, unstyled box
+ * with no error at all. So this checks the starter's ACTUAL usage, collected two
+ * ways, against the registry its own imports produced.
+ */
+describe('every <civitai-*> element the starter uses is defined', () => {
+  const STARTER = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const TAG_USE = /<(civitai-[a-z][a-z0-9-]*)\b|createElement\(\s*['"`](civitai-[a-z][a-z0-9-]*)['"`]/g;
+
+  /** `index.html` plus every source file under `src/`. */
+  function sourceFiles(): string[] {
+    const out = [join(STARTER, 'index.html')];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\.(ts|html|css)$/.test(entry.name)) out.push(full);
+      }
+    };
+    walk(join(STARTER, 'src'));
+    return out;
+  }
+
+  function staticTags(): Set<string> {
+    const tags = new Set<string>();
+    for (const file of sourceFiles()) {
+      // Comments name elements without using them (src/block.ts lists the ones
+      // `register` leaves out), so only CODE and markup count as usage.
+      const code = readFileSync(file, 'utf8')
+        .replace(/<!--[\s\S]*?-->/g, '')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '');
+      for (const m of code.matchAll(TAG_USE)) tags.add((m[1] ?? m[2])!);
+    }
+    return tags;
+  }
+
+  /** Every civitai-* node in the DOM after the starter renders each state it can render. */
+  async function runtimeTags(): Promise<Set<string>> {
+    const tags = new Set<string>();
+    const collect = () =>
+      root.querySelectorAll('*').forEach((el) => {
+        const name = el.localName;
+        if (name.startsWith('civitai-')) tags.add(name);
+      });
+
+    // 1. Mounted, with host context.
+    const mounted = mountBlock(root);
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload() });
+    await mounted;
+    collect();
+    // 2. The direct-load card, both branches.
+    await withAttachInternals(() => {
+      renderDirectLoadFallback(root, 'my-app.civit.ai');
+      collect();
+      renderDirectLoadFallback(root, 'localhost');
+      collect();
+    });
+    // 3. The start-error state.
+    __resetTransport();
+    getTransport({ allowedParentOrigins: [HOST_ORIGIN] });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const started = startBlock(root);
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload({ context: null }) });
+    await started;
+    errors.mockRestore();
+    collect();
+    return tags;
+  }
+
+  test('static usage (index.html + src/**) is all defined', () => {
+    const tags = staticTags();
+    // Positive control: the collector sees tags we know the starter uses.
+    for (const known of ['civitai-text', 'civitai-stack', 'civitai-badge', 'civitai-button', 'civitai-alert']) {
+      expect(tags, `static collector missed ${known}`).toContain(known);
+    }
+    const undefinedTags = [...tags].filter((t) => !customElements.get(t)).sort();
+    expect(undefinedTags, 'used by the starter but not defined by its imports').toEqual([]);
+  });
+
+  test('every element rendered at runtime is defined', async () => {
+    const tags = await runtimeTags();
+    // Positive control: one tag from each rendered state.
+    for (const known of ['civitai-badge', 'civitai-card', 'civitai-button', 'civitai-alert']) {
+      expect(tags, `runtime collector missed ${known}`).toContain(known);
+    }
+    const undefinedTags = [...tags].filter((t) => !customElements.get(t)).sort();
+    expect(undefinedTags, 'rendered by the starter but not defined by its imports').toEqual([]);
+  });
+});
