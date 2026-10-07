@@ -54,13 +54,13 @@ const BLOCK_STARTER = join(STARTERS, 'civitai-block-starter');
 /**
  * COVERAGE FLOOR. A sweep that finds zero files is indistinguishable from a
  * passing one, and a `find`-shaped guard silently narrows to nothing the moment
- * a directory moves. Measured at this commit: 8 manifests
- * (civitai-block-starter, civitai-block-starter-elements + 6 under
- * starters/examples), 2 of which declare bootSkeleton (the two block starters).
- * Raise these when the real numbers rise; never lower them to make a run green.
+ * a directory moves. Measured at this commit: 7 manifests
+ * (civitai-block-starter + 6 under starters/examples), 1 of which declares
+ * bootSkeleton. Raise these when the real numbers rise; never lower them to make
+ * a run green.
  */
-const MIN_MANIFESTS = 8;
-const MIN_DECLARING = 2;
+const MIN_MANIFESTS = 7;
+const MIN_DECLARING = 1;
 
 /** Every `block.manifest.json` under `starters/`, with its sibling entry document. */
 function collectBlockApps() {
@@ -374,7 +374,7 @@ test('civitai-block-starter: the boot theme defaults to DARK, structurally', () 
   assert.ok(
     lightRule,
     'light must be applied ONLY behind `html[data-theme="light"]` — the attribute the ' +
-      'inline fragment script and the App effect set. Without this rule a host that says ' +
+      'inline fragment script and src/block.ts set. Without this rule a host that says ' +
       '"light" has no way to repaint the page.',
   );
   const lightBg = /background:\s*([^;}]+)/i.exec(lightRule[1]);
@@ -455,7 +455,7 @@ test('civitai-block-starter: index.css does not override the boot page backgroun
   // specificity (0,0,1), so a background declared here wins the cascade and
   // silently hands the page back to the OS canvas colour the moment the
   // stylesheet lands — the boot paint survives only until then. The page
-  // background belongs to index.html (+ the App effect); this file must not
+  // background belongs to index.html (+ src/block.ts's theme sync); this file must not
   // paint it.
   const css = readFileSync(join(BLOCK_STARTER, 'src', 'index.css'), 'utf8');
   // 🔴 Strip comments FIRST — the rule's own explanatory comment names
@@ -481,27 +481,57 @@ test('civitai-block-starter: index.css color-scheme stays dark-first too', () =>
   assert.equal(m[1].trim(), 'dark light');
 });
 
-test('civitai-block-starter: App.tsx keeps the page in step with the host theme', () => {
-  // THEME_CHANGE arrives only as a transport push — no reload, no new
-  // fragment (the host deliberately does not rewrite the iframe src on a
-  // toggle). Without this sync a mounted block flips its components but
-  // leaves the page behind them in the old theme.
-  const src = readFileSync(join(BLOCK_STARTER, 'src', 'App.tsx'), 'utf8');
+test('civitai-block-starter: src/block.ts keeps the page in step with the host theme', () => {
+  // THEME_CHANGE arrives only as a bridge push — no reload, no new fragment
+  // (the host deliberately does not rewrite the iframe src on a toggle).
+  // Without this sync a mounted block flips nothing: the page AND the
+  // <civitai-*> elements (which read the --civitai-* tokens [data-theme]
+  // selects) stay in the old theme.
+  //
+  // Ported from the React starter's App.tsx check. Its three rules map as:
+  //   writes <html> data-theme           -> syncTheme() writes documentElement.dataset.theme from app.theme
+  //   re-runs on a theme change          -> update() calls syncTheme() and is subscribed with app.onChange
+  //   gated on `ready`                   -> the first sync runs only AFTER `await waitForHost(...)`
+  // The gate matters for the same reason it did in React: before BLOCK_INIT the
+  // bridge snapshot's `theme` is the 'light' sentinel, which would clobber the
+  // fragment seed of a dark host.
+  const src = readFileSync(join(BLOCK_STARTER, 'src', 'block.ts'), 'utf8')
+    // Comments out first, so prose that NAMES these calls cannot satisfy them.
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+
+  const syncFn = /function\s+syncTheme\s*\(\s*app\b[^)]*\)[^{]*\{([^}]*)\}/.exec(src);
+  assert.ok(syncFn, 'src/block.ts must define syncTheme(app)');
   assert.match(
-    src,
-    /document\.documentElement/,
-    'the page background lives on <html>; the host theme must reach it',
+    syncFn[1],
+    /document\.documentElement\.dataset\.theme\s*=\s*app\.theme\b/,
+    'syncTheme must write <html> data-theme from app.theme — the attribute the boot CSS and the tokens key on',
   );
-  assert.match(
-    src,
-    /dataset\.theme\s*=|setAttribute\(['"]data-theme/,
-    'the sync must set the same data-theme attribute the boot CSS keys on',
+
+  const mount = /export\s+async\s+function\s+mountBlock\s*\([^)]*\)[^{]*\{([\s\S]*?)\n\}/.exec(src);
+  assert.ok(mount, 'src/block.ts must export async function mountBlock');
+  const body = mount[1];
+  const awaitAt = body.search(/await\s+waitForHost\s*\(/);
+  const syncAt = body.search(/syncTheme\s*\(\s*app\s*\)/);
+  assert.ok(awaitAt >= 0, 'mountBlock must await waitForHost() (the BLOCK_INIT gate)');
+  assert.ok(syncAt >= 0, 'mountBlock must call syncTheme(app)');
+  assert.ok(
+    awaitAt < syncAt,
+    'the theme sync must run only AFTER BLOCK_INIT (await waitForHost) — before it, the snapshot ' +
+      "theme is the 'light' sentinel and would clobber a dark host's fragment seed",
   );
+  const update = /const\s+update\s*=\s*\(\)\s*=>\s*\{([^}]*)\}/.exec(body);
+  assert.ok(update && /syncTheme\s*\(\s*app\s*\)/.test(update[1]), 'update() must call syncTheme(app)');
   assert.match(
-    src,
-    /if \(!ready\)\s*return/,
-    'the sync must be gated on ready — before BLOCK_INIT `theme` is the transport ' +
-      "'light' sentinel, which would clobber the fragment seed of a dark host",
+    body,
+    /app\.onChange\s*\(\s*update\s*\)/,
+    'update must be subscribed with app.onChange, or a live THEME_CHANGE never reaches <html>',
+  );
+  const callsOutsideDef = (src.replace(syncFn[0], '').match(/syncTheme\s*\(/g) ?? []).length;
+  assert.equal(
+    callsOutsideDef,
+    1,
+    'syncTheme must be called from exactly one place (update), so no pre-init call can exist',
   );
 });
 

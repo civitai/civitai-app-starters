@@ -10,14 +10,12 @@
       order of authority:
 
         1. the `#civitai-block=v1&theme=…` URL fragment — synchronous, read by
-           the inline script below BEFORE first paint (both host surfaces
-           append it: src/components/AppBlocks/blockIframeUrl.ts in civitai);
+           the inline script below BEFORE first paint;
         2. `BLOCK_INIT` — authoritative, overwrites the fragment seed;
         3. `THEME_CHANGE` — the live push when the viewer toggles mid-session.
 
-      2 and 3 are synced onto <html> by the effect in src/App.tsx; this file
-      owns only the pre-paint window. `content="light dark"` (the Vite default
-      this replaces) bets the canvas the other way.
+      2 and 3 are synced onto <html> by `syncTheme` in src/block.ts; this file
+      owns only the pre-paint window.
     -->
     <meta name="color-scheme" content="dark light" />
     <title>Civitai App Block</title>
@@ -32,11 +30,12 @@
 
         THEME RULE: the base (unconditioned) rules carry the DARK values, and
         light is applied ONLY behind `html[data-theme='light']` — the attribute
-        the inline script below sets from the host fragment and that src/App.tsx
-        keeps in step afterwards. There is deliberately NO OS-preference media
-        query anywhere in this document: the browser must never decide this
-        app's theme, and the dark base is exactly what a missing fragment, an
-        unknown theme value, or a UA without the query all get.
+        the inline script below sets from the host fragment and that
+        src/block.ts keeps in step afterwards. There is deliberately NO
+        OS-preference media query anywhere in this document: the browser must
+        never decide this app's theme, and the dark base is exactly what a
+        missing fragment, an unknown theme value, or a UA without the query all
+        get.
       */
       html {
         /* The strong guarantee: unlike `color-scheme` this paints the page
@@ -49,7 +48,8 @@
       }
 
       [data-boot-skeleton] {
-        /* Matches App.tsx's own first render: padding 16, column, gap 8. */
+        /* Matches the rendered block's own layout (src/index.css
+           [data-block-root]): padding 16, column, gap 8. */
         padding: 16px;
         display: flex;
         flex-direction: column;
@@ -62,20 +62,20 @@
         background: #2c2e33;
       }
 
-      /* Title line — mirrors the <strong>Civitai App starter</strong> row. */
+      /* Title line — mirrors the "Civitai App starter" heading. */
       [data-boot-skeleton] > span[data-line='title'] {
         width: 160px;
         height: 16px;
       }
 
-      /* Meta line — mirrors the dimmed <small>slot: …</small> row. */
+      /* Meta line — mirrors the dimmed "slot: …" row. */
       [data-boot-skeleton] > span[data-line='meta'] {
         width: 120px;
         height: 12px;
         opacity: 0.7;
       }
 
-      /* Body lines — mirror the two <p> rows. */
+      /* Body lines — mirror the model and viewer rows. */
       [data-boot-skeleton] > span[data-line='body'] {
         width: 90%;
         height: 14px;
@@ -93,13 +93,12 @@
     <script>
       /*
         THEME FAST PATH — synchronous, pre-paint, no fetch. Mirrors the SDK's
-        parse rules (packages/civitai-app-sdk/src/blocks/initFragment.ts): the
-        fragment must carry the `civitai-block=v1` marker or it is not the
-        host's (a hash-routed app's own state must never theme the boot), and
-        only `theme=light` / `theme=dark` are honoured — anything else, an
-        absent fragment included, keeps the dark default. BLOCK_INIT remains
-        authoritative: src/App.tsx overwrites this attribute the moment the
-        payload lands and keeps it in step on THEME_CHANGE.
+        parse rules for the host fragment: it must carry the `civitai-block=v1`
+        marker or it is not the host's (a hash-routed app's own state must never
+        theme the boot), and only `theme=light` / `theme=dark` are honoured —
+        anything else, an absent fragment included, keeps the dark default.
+        BLOCK_INIT remains authoritative: src/block.ts overwrites this attribute
+        the moment the payload lands and keeps it in step on THEME_CHANGE.
       */
       (function () {
         try {
@@ -120,10 +119,11 @@
         iframe element itself while the block is loading, so an in-frame live
         region would announce the same state twice.
 
-        This element MUST stay a descendant of #root: React's
-        createRoot(#root).render() clears #root's children on its first commit,
-        which is what removes the skeleton. A skeleton painted as a SIBLING of
-        #root is never replaced and stays on screen forever.
+        This element MUST stay a descendant of #root: the block's first render
+        (`root.replaceChildren(…)` in src/block.ts) replaces #root's children,
+        which is what removes the skeleton. Nothing else removes it — there is no
+        framework here clearing the container for you — so a skeleton painted as
+        a SIBLING of #root stays on screen forever.
       -->
       <div data-boot-skeleton aria-hidden="true">
         <span data-line="title"></span>
@@ -132,6 +132,6 @@
         <span data-line="body-short"></span>
       </div>
     </div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

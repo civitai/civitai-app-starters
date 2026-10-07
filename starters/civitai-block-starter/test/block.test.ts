@@ -114,7 +114,6 @@ describe('mountBlock over the real bridge', () => {
     expect(field('model-id')?.textContent).toBe('4201');
     expect(field('model-version-id')?.textContent).toBe('9902');
     expect(field('viewer')?.textContent).toBe('signed in');
-    expect(root.querySelector<HTMLElement>('[data-block-root]')?.dataset.blockInstanceId).toBe('bki_test');
 
     // …inside REAL custom elements: registered, upgraded, and rendered by Lit
     // into their shadow roots. An unregistered tag would still hold the text

@@ -132,17 +132,17 @@ const TEMPLATES: Record<TextAs, () => TemplateResult> = Object.assign(
  * WHICH PAGES THOSE ARE, by complete enumeration of this repo. FOUR starters set
  * the colour on `body` via Tailwind (`text-zinc-900 dark:text-zinc-100`):
  * starters/next-app/src/app/globals.css, starters/react-pwa/index.html,
- * starters/svelte-pwa/index.html, starters/sveltekit-app/src/app.html. SEVEN set
- * it on a `[data-theme]` root as `#1a1a1a` / `#e6e6e6`:
- * starters/civitai-block-starter/src/index.css, and the src/index.css of each of
- * the six apps under starters/examples (buzz-purchase, buzz-workflow,
+ * starters/svelte-pwa/index.html, starters/sveltekit-app/src/app.html. SIX set
+ * it on a `[data-theme]` root as `#1a1a1a` / `#e6e6e6`: the src/index.css of
+ * each of the six apps under starters/examples (buzz-purchase, buzz-workflow,
  * hello-world, kv-storage, scopes-api, settings). A glob is not written here on
  * purpose: a star-slash inside a block comment ENDS it, and that broke this file
- * once. All eleven would show Text in their own colour rather than the token
- * once one of them renders Text; none does today, so this enumerates where the
- * trade would land rather than pages that have changed. The package's own demo
- * and playground are the exception, and they prove the rule — they DO render
- * Text, and both set `body { color: var(--civitai-color-text) }`, so they still
+ * once. All ten would show Text in their own colour rather than the token once
+ * one of them renders Text; none does today, so this enumerates where the trade
+ * would land rather than pages that have changed. The package's own demo and
+ * playground, and starters/civitai-block-starter, are the exception, and they
+ * prove the rule — they DO render Text, and all three set
+ * `body { color: var(--civitai-color-text) }`, so they still
  * render the token, by INHERITING it rather than because Text names it.
  *
  * A page wanting the token explicitly writes `ci-text-default` — but that class

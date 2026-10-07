@@ -8,8 +8,8 @@ If you (the AI agent) were pointed here to scaffold a new Civitai app for your u
 
 | Use this when… | Starter |
 |---|---|
-| Building a **Civitai App** — iframe-embedded UI that renders inside a civitai.com page slot | `starters/civitai-block-starter-elements` — **the default**: web components (`@civitai/sdk` + the `<civitai-*>` elements from `@civitai/components`), no UI framework |
-| Same, and the team wants React | `starters/civitai-block-starter` — React 19 + `@civitai/blocks-react` hooks; same manifest and demo (also what `civitai app init <name>` — the Go [`civitai` CLI](https://github.com/civitai/cli) — scaffolds today) |
+| Building a **Civitai App** — iframe-embedded UI that renders inside a civitai.com page slot | `starters/civitai-block-starter` — web components (`@civitai/sdk` + the `<civitai-*>` elements from `@civitai/components`), no UI framework |
+| Same, and the team wants React | The Go [`civitai` CLI](https://github.com/civitai/cli): `civitai app create <name>` scaffolds from its own embedded templates (`internal/scaffold/templates/`: `page-money` — the default, Vite + React + TS — `page-vite`, `static`), not from this repo. Or copy one of the six React `starters/examples/*`. A CLI template mirroring `civitai-block-starter` is in progress in a separate PR. |
 | App needs SEO / public-discoverable pages — gallery, landing, marketplace | `starters/next-app` (default for standalone apps) |
 | App needs SEO and the team prefers Svelte | `starters/sveltekit-app` |
 | App is a tool, mini-game, focused gen UI, in-app extension — no SEO required | `starters/react-pwa` |
@@ -98,8 +98,7 @@ civitai-app-starters/
     ├── sveltekit-app/           # SvelteKit 2 (SSR)
     ├── react-pwa/               # Vite + React 19 (SPA + Hono BFF)
     ├── svelte-pwa/              # Vite + Svelte 5 (SPA + Hono BFF)
-    ├── civitai-block-starter-elements/ # Civitai App: web components, no framework (default)
-    ├── civitai-block-starter/   # Civitai App: React 19 + @civitai/blocks-react
+    ├── civitai-block-starter/   # Civitai App: web components, no UI framework
     └── examples/                # six single-feature Civitai App examples (React)
 ```
 

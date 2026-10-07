@@ -260,10 +260,11 @@ Only five of those are **required** by the
 [canonical schema](https://civitai.com/schemas/app-block/v1.json): `blockId`,
 `version`, `name`, `contentRating`, `scopes`. The rest are optional.
 
-> **`appId` is not a manifest field.** Your app id lives in `civitai.app.json`
-> (`{"appId": "..."}`), which is what the `civitai` CLI reads. The scaffold still
-> carries an `appId` key in the manifest, the platform ignores it, and nothing
-> validates it; a future scaffold will drop it.
+> **`appId` is not a manifest field.** The `civitai` CLI identifies your app by
+> `blockId`, and no project file holds a separate app id (an older
+> `civitai.app.json` is read by nothing current). The scaffold still carries an
+> `appId` key in the manifest; the platform ignores it, and nothing validates
+> it.
 
 **You don't have to run the validator by hand** — the block scaffolds register
 `blockManifestPlugin` from `@civitai/app-sdk/vite` in their `vite.config.ts`,

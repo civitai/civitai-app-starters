@@ -1,15 +1,19 @@
 /**
- * MEASURES the one claim that lets `starters/civitai-block-starter/src/main.tsx`
- * ship with NO boot-skeleton cleanup code:
+ * MEASURES the one claim that lets a React block's entry module ship with NO
+ * boot-skeleton cleanup code:
  *
  *   React's `createRoot(container).render(...)` CLEARS the container's existing
  *   children before its first commit.
  *
- * That is why the `[data-boot-skeleton]` markup in the starter's `index.html`
+ * That is why a React block's `[data-boot-skeleton]` markup in `index.html`
  * removes itself with nothing written to remove it. If it ever stopped being
  * true, the skeleton would stay on screen UNDER the mounted app — a silent
- * visual defect on every block scaffolded from that starter, and the code that
- * would have prevented it is code we deliberately did not write.
+ * visual defect on every React block relying on it, and the code that would
+ * have prevented it is code deliberately not written.
+ *
+ * (`starters/civitai-block-starter` used to be that React block. It is now
+ * framework-free and removes the skeleton itself — its first render does
+ * `root.replaceChildren(…)` — which its own `test/block.test.ts` asserts.)
  *
  * 🔴 IT IS REACT-SPECIFIC AND DOES NOT GENERALISE. Svelte 5's
  * `mount(App, { target })` APPENDS: `_mount` does
@@ -19,10 +23,9 @@
  * `document.querySelector('[data-boot-skeleton]')?.remove()` after mount.
  * Assume APPEND for any framework nobody has measured.
  *
- * This lives in `@civitai/blocks-react` because that package owns the only
- * DOM-capable runner in the repo (vitest + happy-dom, CI job `blocks-react`).
- * The starters have no test runner of their own and adding one to a
- * `tiged`-copied template would ship a test harness to every scaffolded app.
+ * This lives in `@civitai/blocks-react` because it is a fact about React, and
+ * this package's suite (vitest + happy-dom, CI job `blocks-react`) is where
+ * React runs in this repo.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { act } from 'react';

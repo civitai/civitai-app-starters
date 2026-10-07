@@ -357,14 +357,19 @@ test('NEGATIVE CONTROL — references and ordinary English are not status claims
 test('COVERAGE FLOOR — the walk reaches the files that actually carry these claims', () => {
   const files = scannableFiles().map((f) => relative(REPO_ROOT, f));
   assert.ok(files.length > 50, `walk found only ${files.length} files — it is not reaching the tree`);
-  // The four source files that referenced #3707 at 66f9e09, one per surface
-  // (SDK types, blocks-react internals, blocks-react tests, a starter). If the
-  // walk stops reaching any of them, a regression here goes unseen.
+  // One file per surface that carries civitai/civitai PR citations (SDK types,
+  // blocks-react internals, blocks-react tests, a starter app). The starter
+  // anchor was `civitai-block-starter/src/App.tsx` (it cited #3707) until that
+  // starter was converted in place to web components; its replacement cites no
+  // PR, so the starter-surface anchor is now an example that does (#4159), and
+  // the converted starter's source is required too so the walk keeps reaching
+  // it. If the walk stops reaching any of them, a regression here goes unseen.
   for (const required of [
     'packages/civitai-app-sdk/src/blocks/types.ts',
     'packages/civitai-blocks-react/src/internal/mockHost.ts',
     'packages/civitai-blocks-react/test/blockInitV2.test.ts',
-    'starters/civitai-block-starter/src/App.tsx',
+    'starters/examples/buzz-workflow/src/App.tsx',
+    'starters/civitai-block-starter/src/block.ts',
   ]) {
     assert.ok(files.includes(required), `walk did not reach ${required}`);
   }

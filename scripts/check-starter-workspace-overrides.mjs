@@ -157,8 +157,12 @@ const DEP_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'opti
 
 /**
  * Floor for the number of published-range `@civitai/*` starter pins that must
- * be workspace-overridden. The tree carries 26: the five starters' 14 below,
- * plus 2 in each of the 6 `starters/examples/*`.
+ * be workspace-overridden. The tree carries 28: the five starters' 16, plus 2
+ * in each of the 6 `starters/examples/*`. (14 -> 16 when `civitai-block-starter`
+ * was converted to web components and swapped `@civitai/app-sdk` +
+ * `@civitai/blocks-react` for `@civitai/app-sdk` + `@civitai/components` +
+ * `@civitai/sdk` + `@civitai/theme`. The floor stays 26: growth always passes,
+ * and the fixture-based tests are built on a tree sitting exactly at 26.)
  *
  * 14 -> 26 when the examples moved off `workspace:^` onto published carets
  * (they are copied out like any starter). Counted, not estimated: the guard

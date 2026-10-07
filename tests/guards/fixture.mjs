@@ -30,12 +30,19 @@ export const REPO_ROOT = join(HERE, '..', '..');
 const REAL_SCRIPTS = join(REPO_ROOT, 'scripts');
 
 /**
- * The real repo's starter pin ledger, mirrored exactly: 5 tiged-consumed
- * starters declaring 14 published-range `@civitai/*` pins between them.
- * (15 until components-react@0.9.0 — `next-app` then dropped
- * `@civitai/components`, which it no longer renders any markup from.)
- * A test that wants a PASS must start from a tree at or above the guard's
- * coverage floor, so this default is the real shape, not a toy.
+ * The real repo's starter pin ledger as it stood before `civitai-block-starter`
+ * was converted to web components: 5 tiged-consumed starters declaring 14
+ * published-range `@civitai/*` pins between them. (15 until
+ * components-react@0.9.0 — `next-app` then dropped `@civitai/components`, which
+ * it no longer renders any markup from.)
+ *
+ * 🔴 NO LONGER AN EXACT MIRROR, deliberately. The converted block starter pins
+ * four packages (`@civitai/app-sdk`, `@civitai/components`, `@civitai/sdk`,
+ * `@civitai/theme`) instead of these two, so the real tree now carries 16 + 12
+ * = 28 covered pins. This fixture stays at 26 because the guard tests built on
+ * it need a tree sitting EXACTLY on the coverage floor (26) — their "+1 / -1, at
+ * the floor" arithmetic is the point. The real tree is checked by running the
+ * guard itself (CI's Starter job), not through this fixture.
  */
 export const DEFAULT_STARTERS = {
   'next-app': {
@@ -66,7 +73,7 @@ export const DEFAULT_STARTERS = {
 
 /**
  * The real repo's six examples, mirrored exactly: each pins the two published
- * carets the block starter does. They are copied out of the repo like a
+ * carets `@civitai/app-sdk` and `@civitai/blocks-react`. They are copied out of the repo like a
  * starter, so the guards hold them to a starter's rules — 12 more covered pins
  * (26 total) and 12 more mirrored pairs (22 total).
  */

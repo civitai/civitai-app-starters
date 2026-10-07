@@ -5,7 +5,7 @@
 // no error, so add a define line for each one you use.
 import '@civitai/components/register';
 
-import { BridgeError, getTransport, initialize, type BlockAppClient } from '@civitai/sdk';
+import { BridgeError, initialize, type BlockAppClient } from '@civitai/sdk';
 import { isModelSlotContext, isSignedIn } from '@civitai/app-sdk/blocks';
 
 import { DIRECT_LOAD_TIMEOUT_MS, isTopLevel, renderDirectLoadFallback } from './directLoad.js';
@@ -86,12 +86,6 @@ VIEW.innerHTML = `
 function render(root: HTMLElement, app: BlockAppClient): void {
   const view = VIEW.content.cloneNode(true) as DocumentFragment;
   const field = (name: string) => view.querySelector<HTMLElement>(`[data-field="${name}"]`)!;
-
-  // Read through `getTransport()` — the same bridge `initialize()` uses —
-  // because the client does not expose the instance id. Handy for telling
-  // several copies of your block apart in logs.
-  view.querySelector<HTMLElement>('[data-block-root]')!.dataset.blockInstanceId =
-    getTransport().snapshot.get().blockInstanceId;
 
   const { context } = app;
   field('slot').textContent = context.slotId;

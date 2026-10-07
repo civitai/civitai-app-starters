@@ -262,7 +262,8 @@ export interface BlockInitPayload {
    * fail-closed defaults for you. `@civitai/blocks-react`'s
    * `useDomainMaturity()` is the React wrapper over the same thing — it is one
    * way to get this right, not the only one, since this module is
-   * runtime-agnostic and two of the starters ship without React.
+   * runtime-agnostic and several starters — the Civitai App starter among
+   * them — ship without React.
    */
   effectiveBrowsingLevel?: number;
 }

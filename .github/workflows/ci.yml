@@ -382,7 +382,6 @@ jobs:
           - react-pwa
           - svelte-pwa
           - civitai-block-starter
-          - civitai-block-starter-elements
     steps:
       - uses: actions/checkout@v7
 
@@ -423,8 +422,9 @@ jobs:
 
       # Starters consume the first-party packages via published caret ranges
       # that the root pnpm.overrides redirects to workspace:* (the block
-      # starter additionally consumes @civitai/blocks-react). Building all
-      # packages up front so each starter's typecheck sees fresh .d.ts files.
+      # starter consumes @civitai/sdk + @civitai/components + @civitai/theme).
+      # Building all packages up front so each starter's typecheck sees fresh
+      # .d.ts files.
       - run: pnpm -r --filter "./packages/*" build
 
       - name: Typecheck

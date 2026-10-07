@@ -13,10 +13,13 @@
  * however slow its host), only after {@link DIRECT_LOAD_TIMEOUT_MS}, and a host
  * that answers late still mounts the real block over it.
  *
- * 🔴 `hostToRunUrl` mirrors the function of the same name in
+ * 🔴 `hostToRunUrl` is a copy of the function of the same name in
  * `@civitai/blocks-react` (`src/transport/directLoad.ts`). It is copied, not
  * imported, because that package requires React and no framework-agnostic
- * package exports it yet. Keep the two in step if you change either.
+ * package exports it yet. In the civitai-app-starters monorepo,
+ * `tests/guards/starter-host-to-run-url-parity.test.mjs` runs both over one
+ * input table and fails on any difference. That guard imports this file with
+ * Node's type stripping, so keep it free of imports.
  */
 
 /** Matches `DIRECT_LOAD_TIMEOUT_MS` in `@civitai/blocks-react`. */

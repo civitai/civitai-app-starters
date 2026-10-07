@@ -165,8 +165,7 @@ layer down, and the same predicate decides all three:
   the token disagree, Text follows the ancestor. An ancestor `color` is the
   common case, not the exception. Measured on both tracks at this commit, in the
   shape a block in this repo actually has: a `[data-theme="dark"]` root carrying
-  `color: #e6e6e6`, which is what `civitai-block-starter` and all six apps under
-  `starters/examples/` set. Text computes `rgb(230, 230, 230)` — the root's
+  `color: #e6e6e6`, which is what all six apps under `starters/examples/` set. Text computes `rgb(230, 230, 230)` — the root's
   colour — against a dark token of `rgb(193, 194, 197)`. Restoring the removed
   declaration on that same fixture puts both tracks back at `rgb(193, 194, 197)`
   while the plain `<p>` beside them stays `rgb(230, 230, 230)`; that pair is the
@@ -175,17 +174,17 @@ layer down, and the same predicate decides all three:
   the same way: with `color: rgb(24, 24, 27)` on `<body>` Text computes
   `rgb(24, 24, 27)` where it computed the token `rgb(34, 34, 34)` before.
 
-  Every in-repo consumer would be in that population once it renders Text — none
-  does today — by two different routes: four starters set the colour on `<body>`
-  with Tailwind
+  Every in-repo consumer that sets its own colour would be in that population
+  once it renders Text — none of them does today — by two different routes: four
+  starters set the colour on `<body>` with Tailwind
   (`text-zinc-900 dark:text-zinc-100` — `starters/next-app/src/app/globals.css`,
   `starters/react-pwa/index.html`, `starters/svelte-pwa/index.html`,
-  `starters/sveltekit-app/src/app.html`), and seven set it on a `[data-theme]`
-  root as `#1a1a1a` / `#e6e6e6` (`starters/civitai-block-starter/src/index.css`
-  plus the six `starters/examples/*/src/index.css`). The package's own `demo/`
-  and `playground/` are the exception that proves the rule: both set
-  `body { color: var(--civitai-color-text) }`, so they still show the token —
-  by inheriting it, not because Text names it. With no colour anywhere on the
+  `starters/sveltekit-app/src/app.html`), and six set it on a `[data-theme]`
+  root as `#1a1a1a` / `#e6e6e6` (the six `starters/examples/*/src/index.css`).
+  The package's own `demo/` and `playground/`, and `starters/civitai-block-starter`
+  (which does render Text), are the exception that proves the rule: all three set
+  `body { color: var(--civitai-color-text) }`, so they show the token — by
+  inheriting it, not because Text names it. With no colour anywhere on the
   page Text lands on the UA default `rgb(0, 0, 0)`, since `@civitai/theme` ships
   tokens only and sets no `color`.
 

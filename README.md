@@ -11,11 +11,11 @@ Starter templates for building on [Civitai](https://civitai.com), plus the share
 1. **OAuth apps** — full apps on your own domain that sign in with Civitai and
    call the orchestrator. The four `starters/*` templates + `@civitai/app-sdk`.
 2. **Civitai Apps** — iframe-embedded UIs that render *inside* civitai.com pages
-   (e.g. a generator in a model's sidebar). Built by default with **web
-   components**: [`starters/civitai-block-starter-elements`](./starters/civitai-block-starter-elements)
-   (`@civitai/sdk` + the `<civitai-*>` elements, no framework); React via
-   `@civitai/blocks-react` is the alternative. **See [Civitai Apps](#civitai-apps)
-   below.**
+   (e.g. a generator in a model's sidebar). Built with **web components**:
+   [`starters/civitai-block-starter`](./starters/civitai-block-starter)
+   (`@civitai/sdk` + the `<civitai-*>` elements, no framework). React blocks use
+   `@civitai/blocks-react`, as the [`starters/examples/*`](./starters/examples)
+   do. **See [Civitai Apps](#civitai-apps) below.**
 
 ## What's in here
 
@@ -26,8 +26,7 @@ Starter templates for building on [Civitai](https://civitai.com), plus the share
 - **`starters/sveltekit-app`** — SvelteKit 2 + Tailwind. Same demo surface as `next-app`.
 - **`starters/react-pwa`** — Vite + React 19 + tiny Hono BFF for OAuth token exchange. SPA/PWA shape.
 - **`starters/svelte-pwa`** — Vite + bare Svelte 5 (no Kit) + tiny Hono BFF. SPA/PWA shape.
-- **`starters/civitai-block-starter-elements`** — Vite + TypeScript Civitai App scaffold built on web components (`@civitai/sdk` + `@civitai/components`, no UI framework). **The default for a Civitai App.**
-- **`starters/civitai-block-starter`** — Vite + React 19 Civitai App scaffold (`@civitai/blocks-react`). The React alternative to the above.
+- **`starters/civitai-block-starter`** — Vite + TypeScript Civitai App scaffold built on web components (`@civitai/sdk` + `@civitai/components`, no UI framework).
 - **`starters/examples/*`** — six minimal, runnable Civitai App examples, one per feature (see [Civitai Apps](#civitai-apps)).
 
 The four OAuth starters ship the **same minimal demo:** log in via Civitai OAuth → show your Buzz balance (read with `fetchBuzzAccount()` — **not** from `/api/v1/me`, which returns none; hidden entirely when `BuzzRead` was not granted) → preview cost of a generation (`whatif`) → submit one image generation → display the result.
@@ -80,16 +79,19 @@ Unlike an OAuth app, a block runs *inside* civitai.com and gets a short-lived,
 block-scoped JWT + page context handed to it via `postMessage`. It's much smaller
 than a full app: a single static SPA, no OAuth dance, no BFF.
 
-### Starters
+### Starter
 
-| Starter | Stack |
-|---|---|
-| [`civitai-block-starter-elements`](./starters/civitai-block-starter-elements) — **default** | Vite + TypeScript, no UI framework. `@civitai/sdk`'s `initialize()` for the host bridge, `<civitai-*>` custom elements from `@civitai/components` for the UI. |
-| [`civitai-block-starter`](./starters/civitai-block-starter) — React alternative | Vite + React 19 with the `@civitai/blocks-react` hooks. Same manifest and the same demo. |
+[`starters/civitai-block-starter`](./starters/civitai-block-starter) — Vite +
+TypeScript, no UI framework: `@civitai/sdk`'s `initialize()` for the host
+bridge, `<civitai-*>` custom elements from `@civitai/components` for the UI.
 
 ```bash
-npx tiged civitai/civitai-app-starters/starters/civitai-block-starter-elements my-block
+npx tiged civitai/civitai-app-starters/starters/civitai-block-starter my-block
 ```
+
+Prefer React? The Go `civitai` CLI's `civitai app create <name>` scaffolds a
+Vite + React + TS app from its `page-money` template, and the six examples below
+are React too.
 
 ### Packages
 

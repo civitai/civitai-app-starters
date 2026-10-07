@@ -3,6 +3,14 @@
  * two ways it has actually gone wrong: naming symbols that do not exist, and
  * quoting a hook COUNT that the package then outgrows.
  *
+ * 🔴 THE STARTER IS NO LONGER REACT. It was converted in place to web
+ * components on `@civitai/sdk` (no `@civitai/blocks-react`), so the symbols its
+ * guide names are now `app.*` / `app.host.*` members of the SDK client, not
+ * hooks. Check 2 was PORTED to that surface rather than deleted: it reads the
+ * `AppClient`, `BlockAppClient` and `Host` interfaces out of the SDK source.
+ * The original hook check is kept beside it, so a `useXxx` the guide names
+ * (say, while pointing React users elsewhere) must still really exist.
+ *
  * WHY THIS EXISTS
  * ===============
  * `starters/civitai-block-starter/AGENTS.md` is the file a scaffolding agent
@@ -23,9 +31,11 @@
  *      so the only durable rule is "enumerate, don't count". Pins the CLASS,
  *      not the stale number.
  *
- *   2. FORWARD — every `useXxx` the doc names is really exported by
+ *   2. FORWARD — every `app.<member>` / `app.host.<member>` the doc names is
+ *      really declared on `@civitai/sdk`'s `AppClient` / `BlockAppClient` /
+ *      `Host`, and every `useXxx` it names is really exported by
  *      `@civitai/blocks-react`. A dead pointer in an agent guide is worse than
- *      no pointer: the agent writes an import that cannot resolve.
+ *      no pointer: the agent writes a call that cannot resolve.
  *
  *   3. FORWARD — every scope-shaped token the doc names is really a value in
  *      `BLOCK_SCOPES`. `defineBlock` gates on MEMBERSHIP in that object, so a
@@ -57,6 +67,8 @@ import { dirname, join } from 'node:path';
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DOC_PATH = 'starters/civitai-block-starter/AGENTS.md';
 const INDEX_PATH = 'packages/civitai-blocks-react/src/index.ts';
+const SDK_APP_PATH = 'packages/civitai-sdk/src/app/index.ts';
+const SDK_HOST_PATH = 'packages/civitai-sdk/src/host/index.ts';
 const SCOPES_PATH = 'packages/civitai-app-sdk/src/blocks/scopes.ts';
 
 const read = (rel) => readFileSync(join(REPO_ROOT, rel), 'utf8');
@@ -78,6 +90,41 @@ function scopesNamedInDoc(text) {
 /** Hook names re-exported by the blocks-react barrel. */
 function exportedHooks(indexSrc) {
   return new Set(Array.from(indexSrc.matchAll(/\buse[A-Z][A-Za-z0-9]*/g), (m) => m[0]));
+}
+
+/**
+ * Member names of `export interface <name> … { … }` in an SDK source file —
+ * the top-level (two-space-indented) property and method names.
+ */
+function interfaceMembers(src, name) {
+  const start = src.search(new RegExp(`^export interface ${name}\\b[^{]*\\{`, 'm'));
+  assert.ok(start >= 0, `could not locate \`export interface ${name}\``);
+  const end = src.indexOf('\n}', start);
+  const body = src.slice(src.indexOf('{', start) + 1, end);
+  return new Set(Array.from(body.matchAll(/^  (?:readonly\s+)?([a-zA-Z][A-Za-z0-9]*)\??\s*[(:<]/gm), (m) => m[1]));
+}
+
+/** `app.<member>` and `app.host.<member>` references inside backtick spans of the doc. */
+function sdkMembersNamedInDoc(text) {
+  const app = new Set();
+  const host = new Set();
+  for (const span of text.matchAll(/`([^`\n]+)`/g)) {
+    for (const m of span[1].matchAll(/\bapp\.(host\.)?([A-Za-z][A-Za-z0-9]*)/g)) {
+      if (m[1]) host.add(m[2]);
+      else app.add(m[2]);
+    }
+  }
+  return { app, host };
+}
+
+function sdkSurface() {
+  const appSrc = read(SDK_APP_PATH);
+  const app = new Set([
+    ...interfaceMembers(appSrc, 'AppClient'),
+    ...interfaceMembers(appSrc, 'BlockAppClient'),
+  ]);
+  const host = interfaceMembers(read(SDK_HOST_PATH), 'Host');
+  return { app, host };
 }
 
 /** Every value in the `BLOCK_SCOPES` object literal. */
@@ -106,8 +153,36 @@ test('the extractors actually match something (positive control)', () => {
   assert.ok(scopes.size >= 10, `BLOCK_SCOPES parse found only ${scopes.size} scopes`);
   assert.ok(hooks.has('useBlockContext'), 'blocks-react barrel parse lost its anchor hook');
   assert.ok(scopes.has('models:read:self'), 'BLOCK_SCOPES parse lost its anchor scope');
-  assert.ok(hooksNamedInDoc(doc).size > 0, `${DOC_PATH} names no hooks — parser or doc broken`);
+  // The hook extractor no longer has a positive control against the DOC (the
+  // guide legitimately names no hooks now) — it keeps one against the barrel
+  // above and against a literal here.
+  assert.deepEqual([...hooksNamedInDoc('call `useBlockContext()` and `useThing`')], ['useBlockContext', 'useThing']);
+  const sdk = sdkSurface();
+  for (const anchor of ['site', 'storage', 'orchestration', 'getToken', 'host', 'viewer', 'onChange']) {
+    assert.ok(sdk.app.has(anchor), `@civitai/sdk client parse lost its anchor member \`${anchor}\``);
+  }
+  for (const anchor of ['autoResize', 'openResourcePicker', 'publishGenerationOutputs']) {
+    assert.ok(sdk.host.has(anchor), `@civitai/sdk Host parse lost its anchor member \`${anchor}\``);
+  }
+  const named = sdkMembersNamedInDoc(doc);
+  assert.ok(named.app.size >= 5, `${DOC_PATH} names only ${named.app.size} \`app.*\` members — parser or doc broken`);
+  assert.ok(named.host.size >= 1, `${DOC_PATH} names no \`app.host.*\` member — parser or doc broken`);
   assert.ok(scopesNamedInDoc(doc).size > 0, `${DOC_PATH} names no scopes — parser or doc broken`);
+});
+
+test('every app.* / app.host.* member the doc names exists on the @civitai/sdk client', () => {
+  const sdk = sdkSurface();
+  const named = sdkMembersNamedInDoc(doc);
+  const missing = [
+    ...[...named.app].filter((m) => !sdk.app.has(m)).map((m) => `app.${m}`),
+    ...[...named.host].filter((m) => !sdk.host.has(m)).map((m) => `app.host.${m}`),
+  ].sort();
+  assert.deepEqual(
+    missing,
+    [],
+    `${DOC_PATH} names member(s) the @civitai/sdk client does not declare ` +
+      `(${SDK_APP_PATH} AppClient/BlockAppClient, ${SDK_HOST_PATH} Host): ${missing.join(', ')}`,
+  );
 });
 
 test('the doc does not quote a hook COUNT', () => {
