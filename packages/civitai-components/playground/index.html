@@ -357,6 +357,107 @@
       Hover the round button; open the kebab; react.
     </p>
 
+    <h2>Switch &amp; progress</h2>
+    <div class="row" style="align-items: flex-start">
+      <civitai-stack gap="sm">
+        <civitai-switch label="Live preview" description="Re-renders as you type"></civitai-switch>
+        <civitai-switch label="Public" checked></civitai-switch>
+        <civitai-switch label="Locked" checked disabled></civitai-switch>
+        <civitai-switch label="Accept terms" error="Required"></civitai-switch>
+      </civitai-stack>
+      <civitai-stack gap="md" style="flex: 1; min-width: 240px">
+        <civitai-progress id="progress-live" label="Generating" value="0" show-value></civitai-progress>
+        <civitai-progress label="Uploaded" value="100" color="success" size="sm"></civitai-progress>
+        <civitai-progress label="Quota" value="85" color="warning" show-value></civitai-progress>
+        <civitai-progress label="Failed at" value="40" color="error" size="lg"></civitai-progress>
+        <civitai-progress label="Preparing" indeterminate></civitai-progress>
+      </civitai-stack>
+    </div>
+
+    <h2>Button group &amp; input group</h2>
+    <civitai-stack gap="md">
+      <civitai-group>
+        <civitai-button-group aria-label="Alignment">
+          <civitai-button variant="outline">Left</civitai-button>
+          <civitai-button variant="outline">Center</civitai-button>
+          <civitai-button variant="outline">Right</civitai-button>
+        </civitai-button-group>
+        <civitai-button-group vertical aria-label="Order">
+          <civitai-button variant="light" size="sm">Up</civitai-button>
+          <civitai-button variant="light" size="sm">Down</civitai-button>
+        </civitai-button-group>
+      </civitai-group>
+      <civitai-input-group style="max-width: 420px">
+        <span data-affix>https://</span>
+        <civitai-text-input aria-label="Domain" placeholder="civitai.com"></civitai-text-input>
+        <civitai-button>Go</civitai-button>
+      </civitai-input-group>
+      <civitai-input-group style="max-width: 260px">
+        <civitai-number-input aria-label="Tip" value="100" min="1"></civitai-number-input>
+        <span data-affix>Buzz</span>
+      </civitai-input-group>
+    </civitai-stack>
+
+    <h2>Breadcrumb, pagination &amp; navigation</h2>
+    <civitai-stack gap="md">
+      <civitai-breadcrumb id="crumbs"></civitai-breadcrumb>
+      <civitai-group>
+        <civitai-pagination id="pages" total="20" page="1"></civitai-pagination>
+        <output id="page-value">page 1</output>
+      </civitai-group>
+      <civitai-group gap="lg" style="align-items: flex-start">
+        <civitai-nav-list id="nav" label="Sections" current="/jobs/replay" style="width: 220px">
+          <civitai-nav-item href="/" label="Summary"></civitai-nav-item>
+          <civitai-nav-item label="Jobs">
+            <civitai-nav-item href="/jobs" label="Active"></civitai-nav-item>
+            <civitai-nav-item label="Archive">
+              <civitai-nav-item href="/jobs/replay" label="Replay"></civitai-nav-item>
+              <civitai-nav-item href="/jobs/failed" label="Failed"></civitai-nav-item>
+            </civitai-nav-item>
+          </civitai-nav-item>
+          <civitai-nav-item href="/workers" label="Workers"></civitai-nav-item>
+          <civitai-nav-item href="/billing" label="Billing" disabled></civitai-nav-item>
+        </civitai-nav-list>
+        <output id="nav-value">current: /jobs/replay &mdash; click a link to move it</output>
+      </civitai-group>
+    </civitai-stack>
+
+    <h2>Table</h2>
+    <civitai-table striped hoverable with-border sticky-header style="max-width: 640px">
+      <table>
+        <thead>
+          <tr><th>Job</th><th>Model</th><th>Status</th><th data-numeric>Cost</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>wf_8f21</td><td>Flux.1 [dev]</td><td><civitai-badge variant="light" color="success">succeeded</civitai-badge></td><td data-numeric>12</td></tr>
+          <tr><td>wf_8f22</td><td>SDXL</td><td><civitai-badge variant="light" color="warning">queued</civitai-badge></td><td data-numeric>4</td></tr>
+          <tr><td>wf_8f23</td><td>SDXL</td><td><civitai-badge variant="light" color="error">failed</civitai-badge></td><td data-numeric>0</td></tr>
+          <tr><td>wf_8f24</td><td>Wan 2.2</td><td><civitai-badge variant="light">processing</civitai-badge></td><td data-numeric>185</td></tr>
+        </tbody>
+      </table>
+    </civitai-table>
+    <civitai-table dense style="max-width: 640px; margin-top: 12px">
+      <table>
+        <thead><tr><th>Dense</th><th data-numeric>Steps</th></tr></thead>
+        <tbody>
+          <tr><td>Draft</td><td data-numeric>8</td></tr>
+          <tr><td>Final</td><td data-numeric>30</td></tr>
+        </tbody>
+      </table>
+    </civitai-table>
+
+    <h2>Confirm dialog &mdash; <code>await dialog.ask()</code></h2>
+    <civitai-group>
+      <civitai-button id="ask-confirm" variant="outline">Publish&hellip;</civitai-button>
+      <civitai-button id="ask-destructive" variant="outline">Delete&hellip;</civitai-button>
+      <output id="confirm-value">nothing asked yet</output>
+    </civitai-group>
+    <civitai-confirm-dialog id="confirm" heading="Publish post?"
+      message="It will be visible to everyone." confirm-label="Publish"></civitai-confirm-dialog>
+    <civitai-confirm-dialog id="confirm-destructive" heading="Delete model?"
+      message="This cannot be undone. Focus starts on Cancel." confirm-label="Delete"
+      destructive></civitai-confirm-dialog>
+
     <h2>Form participation</h2>
     <form id="demo">
       <civitai-text-input name="q" label="Query" value="hello"
