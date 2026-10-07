@@ -7,7 +7,8 @@ How a Civitai App declares settings and renders the form for them.
 | Concept | Where |
 |---|---|
 | `settings` declaration in the manifest (4 fields, 3 types, 2 scopes) | `block.manifest.json` |
-| Reading delivered settings with `useBlockSettings()` | `src/App.tsx` |
+| Reading delivered settings (`useBlockContext().settings`) | `src/App.tsx` |
+| Filling in manifest defaults the host does not send | `withDefaults()` |
 | The headless `SettingsForm` from `@civitai/blocks-react/ui` | `src/App.tsx` |
 | `publisher` vs `viewer` scope | below |
 
@@ -48,6 +49,13 @@ and renders the form from it — same source of truth for both.
 - **`viewer`** — each signed-in user controls their own. Read from
   `BLOCK_INIT.settings.userSettings`.
 
+🔴 **The host sends what was stored, not the declaration.** The platform writes
+the manifest defaults when an install's settings are saved, so a stored install
+usually has them — but a field your manifest gained in a later version arrives
+missing on installs saved before it, and a page app is sent `{}`. Fall back to
+the manifest `default` yourself; `withDefaults()` in `src/App.tsx` is the whole
+of it (`SettingsForm` does the same for the fields it renders).
+
 ## Where settings get written
 
 From inside the iframe a block can only **read** the settings the host
@@ -76,18 +84,20 @@ import { SettingsForm } from '@civitai/blocks-react/ui';
 />
 ```
 
-It's intentionally **unstyled** (native controls, no Mantine, no CSS imports) —
-the host page themes it. A field with `requires_scope: "ai:write:budgeted"`
+It's intentionally **unstyled** (native controls, no Mantine, no CSS imports);
+the page's `color-scheme` themes the controls. The rest of this example uses the
+`/ui` components. A field with `requires_scope: "ai:write:budgeted"`
 only renders when that scope is in `declaredScopes`.
 
 ## Run it
 
 ```bash
-cp .env.example .env
 npm install           # inside this monorepo: pnpm install, at the root
 npm run dev:harness   # → http://localhost:5181
 ```
 
-The harness seeds both publisher and viewer settings so the form starts
-populated. See the [root README](../../../README.md) for submit → review →
-deploy.
+The SDK mock host delivers empty settings, so what you see is the manifest
+defaults, filled in by the block.
+`npm run dev:live` runs it against the real backend (see
+[the examples README](../README.md#against-the-real-backend-devlive)). See the
+[root README](../../../README.md) for submit → review → deploy.

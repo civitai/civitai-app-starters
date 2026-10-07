@@ -12,6 +12,7 @@
     }
   ],
   "scopes": ["user:read:self", "models:read:self"],
+  "bootSkeleton": true,
   "iframe": {
     "minHeight": 320,
     "maxHeight": 800,

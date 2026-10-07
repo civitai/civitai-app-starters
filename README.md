@@ -89,8 +89,8 @@ than a full app: a single static SPA, no OAuth dance, no BFF.
 ### Examples (start here)
 
 Six minimal, runnable blocks under [`starters/examples/`](./starters/examples) —
-one per feature, each with its own README. Each runs offline via a dev harness
-that simulates the host.
+one per feature, each with its own README. Each runs offline against the SDK's
+mock host (`dev:harness`), or against the real backend (`dev:live`).
 
 | Example | Shows |
 |---|---|
@@ -99,7 +99,7 @@ that simulates the host.
 | [`buzz-workflow`](./starters/examples/buzz-workflow) | `useBuzzWorkflow` estimate→submit→poll, the cost-quote-matches-charge rule |
 | [`kv-storage`](./starters/examples/kv-storage) | `useAppStorage` get/set/delete/list/getQuota |
 | [`scopes-api`](./starters/examples/scopes-api) | declaring scopes + calling scope-gated REST with the BLOCK_INIT token |
-| [`buzz-purchase`](./starters/examples/buzz-purchase) | `useBuzzPurchase` + the insufficient-budget flow |
+| [`buzz-purchase`](./starters/examples/buzz-purchase) | `useBuzzPurchase` + `useBuzzBalance`: top up a short wallet (a purchase never lifts the per-generation budget) |
 
 ### The dev → submit → review → deploy lifecycle
 

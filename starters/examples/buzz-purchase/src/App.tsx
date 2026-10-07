@@ -1,284 +1,243 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   useBlockContext,
   useBlockResize,
+  useBuzzBalance,
   useBuzzPurchase,
   useBuzzWorkflow,
   WorkflowSubmitError,
 } from '@civitai/blocks-react';
+import { Alert, Button, Card, Stack } from '@civitai/blocks-react/ui';
 import { isModelSlotContext } from '@civitai/app-sdk/blocks';
 import type { WorkflowBody } from '@civitai/app-sdk/blocks';
 
 /**
- * buzz-purchase — top up Buzz when a generation can't be afforded.
+ * buzz-purchase — top up Buzz when the viewer's WALLET can't cover a generation.
  *
- * `useBuzzPurchase().openPurchaseModal()` asks the host to open the Civitai
- * Buzz purchase modal and resolves when the user closes it
- * (`{ purchased, newBalance }`). The canonical use is the insufficient-budget
- * path.
+ * TWO LIMITS, AND A PURCHASE MOVES ONLY ONE OF THEM:
  *
- * 🔴 THAT PATH DOES **NOT** REJECT — IT RESOLVES. When the cost exceeds the
- * viewer's balance / the token's `buzzBudget`, `useBuzzWorkflow().submit()`
- * RESOLVES a snapshot with `status: 'failed'`, an `error` string and the `cost`
- * the server declined to charge. That resolved shape is the cue to offer a
- * top-up and retry. A `catch` is the WRONG place to sell Buzz: since
- * `@civitai/blocks-react@0.44.0` a rejection means the submit had no usable
- * outcome, which buying Buzz cannot fix (civitai/civitai-app-starters#251).
+ *  - the WALLET — the viewer's Buzz balance (`useBuzzBalance()`, which needs the
+ *    `buzz:read:self` scope). Buying Buzz raises it.
+ *  - the PER-GENERATION BUDGET — `token.buzzBudget`, the ceiling the host signs
+ *    into the block token from the install's `buzz_budget_per_gen` setting.
+ *    Buying Buzz does NOT raise it: the host's purchase reply is
+ *    `{ purchased }` and nothing else, and the budget is re-derived from the
+ *    install settings on every mint. A generation priced above it is refused
+ *    whatever the wallet holds, so this example never offers a top-up for it.
  *
- * 🔴 AND NOT EVERY RESOLVED `'failed'` IS ABOUT THE WALLET — the per-app velocity
- * limit, the per-app aggregate daily cap, a transient "unavailable" deny and a
- * missing price quote all arrive priced and resolving too. `isInsufficientFunds`
- * below is what keeps the top-up CTA off those.
+ * The flow: price the generation with `estimate()` (never a hard-coded number —
+ * the server prices it, author fee included), then check the budget, then the
+ * wallet, and only then spend. The budget is only known once the viewer has
+ * granted the spend scope, so the FIRST generation goes straight to `submit()`
+ * (which asks for that consent) and the refusal, if any, is explained after.
  *
- * 🔴 THE PATTERN TO COPY IS THE GUARDING AROUND THAT RETRY, NOT JUST THE CALL.
- * `openPurchaseModal` is human-gated — it waits up to 10 minutes for the viewer
- * to finish with the modal — so the retry it feeds is a PAID submit triggered by
- * an event whose timing you do not control. Three consequences, all handled
- * below and all worth keeping in your own app:
- *   1. guard re-entry — a second click while the modal is open starts a second
- *      purchase and a second queued retry. Guard with a REF, not state: the
- *      handler closes over the render's value, so two clicks in one frame both
- *      read the stale `false`. The `disabled` prop is UX, not the lock.
- *   2. catch the rejection — an abandoned modal eventually hits that timeout,
- *      and an uncaught rejection leaves your UI stuck in a pending state;
- *   3. before auto-spending, check the viewer is still THERE. Do not infer that
- *      from elapsed time — a real card payment with 3-D Secure or a bank OTP
- *      legitimately takes minutes with the viewer fully present, so a stopwatch
- *      would refuse exactly the flows that worked. `document.visibilityState` at
- *      the moment the promise resolves answers the actual question.
+ * 🔴 THE GUARDING AROUND THE RETRY IS THE PATTERN TO COPY, NOT JUST THE CALL.
+ * `openPurchaseModal` waits on a human (up to 10 minutes), so the retry it feeds
+ * is a PAID submit triggered by an event whose timing you do not control:
+ *   1. guard re-entry with a REF, not state — two clicks in one frame both read
+ *      the stale state; the `disabled` prop is UX, not the lock;
+ *   2. catch the rejection — an abandoned modal eventually times out;
+ *   3. before auto-spending, check the viewer is still THERE —
+ *      `document.visibilityState` when the promise resolves, not elapsed time (a
+ *      card payment with 3-D Secure legitimately takes minutes).
  */
 export function App() {
   const { ready, context, theme, token } = useBlockContext();
-  const { submit } = useBuzzWorkflow();
+  const { estimate, submit } = useBuzzWorkflow();
   const { openPurchaseModal } = useBuzzPurchase();
+  const { balance, loading: balanceLoading, refetch: refetchBalance } = useBuzzBalance();
   const rootRef = useRef<HTMLDivElement>(null);
   useBlockResize(rootRef);
 
+  const [cost, setCost] = useState<number | null>(null);
   const [status, setStatus] = useState<string | null>(null);
-  const [needsTopUp, setNeedsTopUp] = useState<{ shortfall?: number } | null>(null);
-  // `topUpPending` drives the button's disabled state (a render concern);
-  // `topUpInFlight` is the re-entry lock (a synchronous concern). See the
-  // module doc — conflating the two is the bug this pattern exists to avoid.
+  /** How much Buzz to suggest buying, when the wallet is what's short. */
+  const [topUp, setTopUp] = useState<number | null>(null);
+  /** A refused attempt waiting on a fresh balance read to say WHY it was refused. */
+  const [refused, setRefused] = useState<{ cost: number; otherwise: string } | null>(null);
   const [topUpPending, setTopUpPending] = useState(false);
   const topUpInFlight = useRef(false);
 
-  // NARROW, don't cast: on any slot that is not a complete model context this is
-  // null and Generate does nothing, instead of submitting `undefined` ids.
-  const model = ready && isModelSlotContext(context) ? context : null;
-  const cost = 120; // pretend this is the quoted cost from an estimate
+  // Keep <html> in step with the host theme (see hello-world for the why).
+  useEffect(() => {
+    if (!ready) return;
+    document.documentElement.dataset.theme = theme;
+  }, [ready, theme]);
 
-  const tryGenerate = useCallback(async () => {
-    if (!model) return;
-    setStatus(null);
-    setNeedsTopUp(null);
-    const body: WorkflowBody = {
-      kind: 'textToImage',
-      modelId: model.modelId,
-      modelVersionId: model.modelVersionId,
-      params: { prompt: 'a cozy reading nook', steps: 25 },
+  // NARROW, don't cast: on any slot that is not a complete model context this is
+  // null and nothing is priced or submitted.
+  const model = ready && isModelSlotContext(context) ? context : null;
+  const body = useMemo<WorkflowBody | null>(
+    () =>
+      model && {
+        kind: 'textToImage',
+        modelId: model.modelId,
+        modelVersionId: model.modelVersionId,
+        params: { prompt: 'a cozy reading nook', steps: 25 },
+      },
+    [model],
+  );
+
+  // The price comes from the server. A rejected estimate leaves it unknown,
+  // and Generate stays disabled: there is nothing to compare against.
+  useEffect(() => {
+    if (!body) return;
+    let cancelled = false;
+    estimate(body)
+      .then((snap) => !cancelled && setCost(snap.cost?.total ?? null))
+      .catch((err: unknown) => {
+        console.warn('[buzz-purchase] estimate failed:', err);
+        if (!cancelled) setCost(null);
+      });
+    return () => {
+      cancelled = true;
     };
-    try {
-      // 🔴 NO `idempotencyKey` HERE, DELIBERATELY — `submit()` mints a fresh one
-      // per call and that is the SAFE default for this flow.
-      //
-      // Reusing a key exists to stop a RETRY OF THE SAME ATTEMPT double-reserving
-      // after a lost response. The only retry in this example is the post-top-up
-      // one, and that is a NEW attempt under preconditions the viewer just PAID
-      // to change — not a repeat of the old one. Reusing the key there would ask
-      // the server to collapse the retry onto the refusal it already returned;
-      // this package's own docs describe the contract as "a retry with the same
-      // key is collapsed server-side to the first result", with no carve-out for
-      // a priced refusal. If that reading held, the viewer would buy Buzz and the
-      // generation would never run.
-      //
-      // (Measured against the current server, the refusal returns BEFORE the
-      // idempotency claim is taken, so reuse would in fact re-run. We do not
-      // build on that: it is an undocumented ordering, no harness here reads
-      // `idempotencyKey` at all, and this example has no tests — so a change to
-      // that ordering would break the headline flow silently.)
-      //
-      // Where reuse DOES belong: a retry after an `'exception'` /
-      // `'workflow-failed'` / transport failure, none of which this example
-      // retries. See the README.
-      const snap = await submit(body);
-      // The host surfaces an under-budget submit as a RESOLVED snapshot with
-      // `status: 'failed'`, an `error` string, and the `cost` it declined to
-      // charge. That is a workflow OUTCOME — the branch the top-up flow lives on.
-      //
-      // 🔴 IT IS NOT THE ONLY FAILURE SHAPE, AND THE OTHERS THROW. A
-      // failure-shaped reply with NO `cost` is not a usable outcome, and since
-      // @civitai/blocks-react 0.44.0 `submit()` REJECTS it with a
-      // `WorkflowSubmitError` (civitai/civitai-app-starters#251). It lands in the
-      // `catch` below, alongside transport-level failures (timeout, malformed
-      // reply) — and there `err.code` decides the copy. 🔴 NEITHER code proves
-      // nothing was spent: `'workflow-failed'` may already have charged, and
-      // `'exception'` only means the host had no workflow to report (a lost
-      // response or an in-progress idempotency conflict reach it too).
-      // Keep both paths: a top-up cannot fix a failed submit, and a retry cannot
-      // fix an empty wallet.
-      if (snap.status === 'failed' && isInsufficientFunds(snap.error ?? '')) {
-        setNeedsTopUp({ shortfall: cost - (token.buzzBudget ?? 0) });
-      } else if (snap.status === 'failed') {
-        // 🔴 A PRICED OUTCOME THAT IS *NOT* AFFORDABILITY — an app velocity or
-        // aggregate-spend cap, a transient deny, a missing quote. No top-up CTA,
-        // and NO raw server text on screen: `snap.error` is server-authored and
-        // unsanitised (raw upstream text, database constraint names among it,
-        // can reach it). Log it; render copy this app owns.
-        console.warn('[buzz-purchase] submit refused:', snap.error);
-        // Deliberately does NOT say "shortly": this arm also covers the per-app
-        // DAILY aggregate cap, which does not clear for hours.
-        setStatus('This generation could not be run right now. Please try again later.');
-      } else {
-        setStatus(`submitted: ${snap.workflowId} (${snap.status})`);
-      }
-    } catch (err) {
-      // 🔴 NEVER RENDER `err.message` — it is DEVELOPER-facing, not localised,
-      // and its wording is not a contract. Two apps shipped that sentence to end
-      // users on the estimate path (civitai/civitai-app-starters#253); this is
-      // the same mistake one path over. Branch on `err.code` for viewer copy.
-      if (err instanceof WorkflowSubmitError) {
-        console.warn('[buzz-purchase] submit failed:', err.code, err.message, err.snapshot.error);
+  }, [body, estimate]);
+
+  // Spendable Buzz, summed over the pools the host reports. The host spends
+  // only the pools the app's content rating allows (blue + green, or blue +
+  // yellow), so this can OVER-count — the safe direction for a purchase prompt:
+  // it never asks a viewer to buy Buzz they don't need.
+  const wallet = balance ? balance.blue + balance.green + balance.yellow : null;
+  const budget = token.buzzBudget; // present once the spend scope is granted
+
+  /**
+   * Explain why a generation of `price` can't run — from the NUMBERS, never
+   * from a refusal's wording. `true` when it showed something.
+   */
+  const explainBlocker = useCallback(
+    (price: number) => {
+      if (budget !== undefined && price > budget) {
         setStatus(
-          err.code === 'workflow-failed'
-            ? // A workflow probably exists and Buzz may ALREADY be committed. Do
-              // not claim it was free, and do not auto-retry — that would mint a
-              // new idempotency key and reserve a second time.
-              'The generation was submitted but failed. Check your generation history before retrying.'
-            : // 'exception' — the host had no workflow to report. USUALLY nothing
-              // was queued, but a lost response or an in-progress idempotency
-              // conflict lands here too, so the copy stays non-committal about
-              // spend. A production app retrying automatically should reuse the
-              // same idempotencyKey rather than minting a fresh one.
-              'Could not start the generation. Please try again.',
+          `This generation costs ${price} Buzz, over this app's ${budget}-Buzz limit per generation. ` +
+            "Buying Buzz can't change that limit; the app's installer sets it.",
         );
+        return true;
+      }
+      if (wallet !== null && wallet < price) {
+        setTopUp(price - wallet);
+        return true;
+      }
+      return false;
+    },
+    [budget, wallet],
+  );
+
+  // A refused attempt waits for the balance it asked for, then gets explained.
+  useEffect(() => {
+    if (!refused || balanceLoading) return;
+    if (!explainBlocker(refused.cost)) setStatus(refused.otherwise);
+    setRefused(null);
+  }, [refused, balanceLoading, explainBlocker]);
+
+  const runSubmit = useCallback(async () => {
+    if (!body || cost === null) return;
+    try {
+      // No `idempotencyKey`, deliberately: the only retry here is the one after
+      // a top-up, which is a NEW attempt under preconditions the viewer just paid
+      // to change. Reuse a key only to retry the SAME attempt (see README).
+      const snap = await submit(body);
+      if (snap.status !== 'failed') {
+        setStatus(`submitted: ${snap.workflowId} (${snap.status})`);
         return;
       }
-      // 🔴 NOT A WorkflowSubmitError — a transport-level failure, and the most
-      // likely one is the 120s request TIMEOUT. A submit that times out may well
-      // have been queued and charged server-side, so this must NOT claim the
-      // generation did not start and must NOT invite a blind retry. It is the
-      // least-known case, so it gets the most cautious copy.
-      console.warn('[buzz-purchase] submit transport error:', err);
-      setStatus(
-        'We lost contact before the generation was confirmed. Check your generation history before trying again.',
-      );
+      // A RESOLVED, priced refusal: the host declined before spending (a budget
+      // or cap gate). `snap.error` is server-authored — log it, never render it.
+      console.warn('[buzz-purchase] submit refused:', snap.error);
+      refetchBalance();
+      setRefused({ cost: snap.cost?.total ?? cost, otherwise: 'This generation could not be run right now. Please try again later.' });
+    } catch (err) {
+      // 🔴 NEVER RENDER `err.message`; branch on `err.code`. A short wallet is
+      // the orchestrator refusing to debit, which reaches the block as
+      // `'exception'` — so that arm consults the wallet too.
+      console.warn('[buzz-purchase] submit failed:', err);
+      if (err instanceof WorkflowSubmitError && err.code === 'exception') {
+        refetchBalance();
+        setRefused({ cost, otherwise: 'Could not start the generation. Please try again.' });
+      } else if (err instanceof WorkflowSubmitError) {
+        // 'workflow-failed': a workflow probably exists and Buzz may already be
+        // committed. Don't call it free, and don't auto-retry (a second reserve).
+        setStatus('The generation was submitted but failed. Check your generation history before retrying.');
+      } else {
+        // Transport-level, most likely the timeout: it may well have been queued
+        // and charged, so the most cautious copy.
+        setStatus('We lost contact before the generation was confirmed. Check your generation history before trying again.');
+      }
     }
-  }, [model, submit, token.buzzBudget]);
+  }, [body, cost, submit, refetchBalance]);
+
+  const tryGenerate = useCallback(() => {
+    setStatus(null);
+    setTopUp(null);
+    if (cost === null) return;
+    // With the budget known, don't send a submit that cannot land. Without it
+    // (no consent yet), submit: that asks for consent and the reply decides.
+    if (budget !== undefined && explainBlocker(cost)) return;
+    void runSubmit();
+  }, [cost, budget, explainBlocker, runSubmit]);
 
   const topUpAndRetry = useCallback(async () => {
-    // IN-FLIGHT GUARD: the modal can stay open for minutes, and every click
-    // during that window would open another one and queue another paid retry.
-    // A REF, not the `topUpPending` state: this callback closes over the value
-    // from the render that created it, so two clicks landing before React
-    // re-renders would both read the stale `false` and both get through. The
-    // `disabled` prop below is the visible affordance; this is the actual lock.
-    if (topUpInFlight.current) return;
+    if (topUpInFlight.current || topUp === null) return; // the real lock (see header)
     topUpInFlight.current = true;
-    // Suggest at least the shortfall so the modal pre-fills a useful amount.
-    const suggested = Math.max(needsTopUp?.shortfall ?? cost, cost);
     setTopUpPending(true);
     try {
-      const { purchased, newBalance } = await openPurchaseModal(suggested);
+      const { purchased } = await openPurchaseModal(topUp);
       if (!purchased) {
         setStatus('purchase canceled');
         return;
       }
-      setNeedsTopUp(null);
-      const bought = `purchased${newBalance != null ? ` (new balance ${newBalance})` : ''}`;
-
-      // 🔴 BEFORE AUTO-SPENDING, CHECK THE VIEWER IS STILL HERE — and measure
-      // PRESENCE, not elapsed time. How long the modal was open says nothing
-      // about whether anyone is watching: a card payment with 3-D Secure or a
-      // bank OTP legitimately runs for minutes with the viewer fully engaged, so
-      // a stopwatch would decline precisely the flows that succeeded. Visibility
-      // at the instant the promise resolves is the direct signal. (Tab
-      // visibility propagates into the iframe; `document.hasFocus()` would NOT
-      // work here — focus is usually still in the host document after its own
-      // modal closes, so it reads false for a viewer who is plainly present.)
-      const viewerPresent =
-        typeof document === 'undefined' || document.visibilityState === 'visible';
-      if (!viewerPresent) {
-        setStatus(`${bought} — press Generate when you're ready`);
+      setTopUp(null);
+      refetchBalance();
+      // Tab visibility propagates into the iframe; `document.hasFocus()` would
+      // not — focus usually stays in the host document after its modal closes.
+      if (document.visibilityState !== 'visible') {
+        setStatus("Buzz purchased — press Generate when you're ready");
         return;
       }
-
-      setStatus(`${bought} — retrying…`);
-      await tryGenerate();
+      setStatus('Buzz purchased — retrying…');
+      await runSubmit();
     } catch (err) {
-      // A rejection is reachable (an abandoned modal eventually hits the
-      // human-interaction timeout). Uncaught, it would surface as an unhandled
-      // rejection and leave the button stuck pending.
-      //
-      // 🔴 SAME RULE AS `tryGenerate` — log the developer-facing text, render
-      // copy this app owns. `err.message` here is an SDK/transport string, not
-      // localised viewer copy (civitai/civitai-app-starters#253).
       console.warn('[buzz-purchase] top-up flow error:', err);
       setStatus('The purchase could not be completed. Please try again.');
     } finally {
       topUpInFlight.current = false;
       setTopUpPending(false);
     }
-  }, [needsTopUp, openPurchaseModal, tryGenerate]);
+  }, [topUp, openPurchaseModal, refetchBalance, runSubmit]);
 
-  if (!ready) {
-    // No `rootRef` here: the host shows its own loading state until BLOCK_READY,
-    // and `useBlockResize` observes the real root whenever it mounts.
-    return (
-      <div data-theme={theme} className="hw-root">
-        Loading…
-      </div>
-    );
-  }
+  if (!ready) return <div style={{ padding: 16 }}>Loading…</div>;
 
   return (
-    <div ref={rootRef} data-theme={theme} className="hw-root">
-      <strong>Buzz purchase</strong>
-      <div className="hw-card">
-        Quoted cost: <strong>{cost} Buzz</strong> · your per-gen budget:{' '}
-        <strong>{token.buzzBudget ?? 0} Buzz</strong>
-      </div>
+    <div ref={rootRef} data-theme={theme} style={{ padding: 16 }}>
+      <Stack gap={8}>
+        <strong>Buzz purchase</strong>
+        <Card>
+          Quoted cost: <strong>{cost ?? '…'} Buzz</strong>
+          {budget !== undefined ? <> · per-generation limit: <strong>{budget} Buzz</strong></> : null}
+        </Card>
 
-      <button onClick={() => void tryGenerate()} style={buttonStyle}>
-        Generate ({cost} Buzz)
-      </button>
-
-      {needsTopUp ? (
-        <div className="hw-card" style={{ borderColor: '#e8a33d' }}>
-          <div style={{ fontWeight: 600 }}>Not enough Buzz</div>
-          <div style={{ fontSize: 13, opacity: 0.85, margin: '4px 0' }}>
-            You're {needsTopUp.shortfall && needsTopUp.shortfall > 0 ? `${needsTopUp.shortfall} ` : ''}
-            Buzz short. Top up to generate.
-          </div>
-          <button onClick={topUpAndRetry} disabled={topUpPending} style={buttonStyle}>
-            {topUpPending ? 'Purchase window open…' : 'Buy Buzz & retry'}
-          </button>
+        <div>
+          <Button onClick={tryGenerate} disabled={cost === null || refused !== null}>
+            Generate ({cost ?? '…'} Buzz)
+          </Button>
         </div>
-      ) : null}
 
-      {status ? <div style={{ fontSize: 13, opacity: 0.85 }}>{status}</div> : null}
+        {topUp !== null ? (
+          <Alert color="warning" title="Not enough Buzz">
+            <Stack gap={8}>
+              <span>You're {topUp} Buzz short. Top up to generate.</span>
+              <div>
+                <Button onClick={topUpAndRetry} loading={topUpPending}>
+                  Buy Buzz &amp; retry
+                </Button>
+              </div>
+            </Stack>
+          </Alert>
+        ) : null}
+
+        {status ? <small role="status">{status}</small> : null}
+      </Stack>
     </div>
   );
 }
-
-/**
- * The host surfaces insufficient-funds as an error string. Match loosely —
- * the exact wording isn't a stable contract, so key off the recognizable
- * tokens. A message that matches none of them is NOT shown raw: `tryGenerate`
- * logs it and renders copy this app owns (server text is unsanitised).
- */
-function isInsufficientFunds(message: string): boolean {
-  const m = message.toLowerCase();
-  return m.includes('insufficient') || m.includes('budget') || m.includes('not enough');
-}
-
-const buttonStyle = {
-  padding: '8px 14px',
-  border: 'none',
-  borderRadius: 6,
-  background: '#1971c2',
-  color: '#fff',
-  fontWeight: 600,
-  cursor: 'pointer',
-  alignSelf: 'flex-start',
-} as const;

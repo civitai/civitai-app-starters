@@ -21,6 +21,7 @@
     "check:starter-overrides": "node scripts/check-starter-workspace-overrides.mjs",
     "check:examples-validate": "node scripts/check-examples-validate.mjs",
     "check:examples-validate:selftest": "node scripts/check-examples-validate.mjs --self-test",
+    "check:examples-render": "node scripts/check-examples-render.mjs",
     "check:catalogs": "node scripts/check-orchestrator-catalogs.mjs",
     "check:shipped-sourcemaps": "node scripts/check-shipped-sourcemaps.mjs",
     "check:shipped-sourcemaps:selftest": "node scripts/check-shipped-sourcemaps.mjs --self-test",

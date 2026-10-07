@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "vite",
     "dev:harness": "VITE_DEV_HARNESS=true vite --host localhost --port 5182",
+    "dev:live": "VITE_DEV_HARNESS=true VITE_LIVE_MODE=true vite --host localhost --port 5182",
     "build": "vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "preview": "vite preview"
