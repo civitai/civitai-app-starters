@@ -427,6 +427,44 @@ test('react theme sync: a regex literal is skipped, or reported as unparseable',
   assert.doesNotMatch(msg, /gated|does not open|no `useEffect/);
 });
 
+test('react theme sync: a POSTFIX `!` (non-null assertion) is followed by division', () => {
+  // Read as a prefix `!`, the `/ 2` would open a regex literal: alone on its
+  // line that is a false "could not parse".
+  assert.deepEqual(
+    reactThemeSyncErrors(reactApp(GATED, { extra: '\n  const half = rootRef.current! / 2;' })),
+    [],
+  );
+});
+
+test('react theme sync: a POSTFIX `!` cannot hide a stray write behind a later `/`', () => {
+  // Read as a prefix `!`, the span from `/ 2` to the `/` in the trailing
+  // comment would be skipped as a regex, swallowing the stray write between.
+  onlyError(
+    reactApp(GATED, {
+      extra:
+        "\n  const h = rootRef.current! / 2; document.documentElement.dataset.theme = 'dark'; // a/b",
+    }),
+    /1 write\(s\) to <html> data-theme outside the gated useEffect/,
+  );
+});
+
+test('react theme sync: a PREFIX `!` still starts a regex literal', () => {
+  // `/:\/\//` contains `//`; if `!/…/` were not a regex start, the comment
+  // strip would eat the `{` after it and the write would leave the effect.
+  assert.deepEqual(
+    reactThemeSyncErrors(
+      reactApp(`
+    if (!ready) return;
+    const url = String(location.href);
+    if (!/:\\/\\//.test(url)) {
+      console.log('relative');
+    }
+    document.documentElement.dataset.theme = theme;`),
+    ),
+    [],
+  );
+});
+
 test('react theme sync: FAILS an ungated effect even with a render-time gate present', () => {
   const src = reactApp(UNGATED);
   assert.match(src, /if \(!ready\) return <div/, 'fixture must carry the render-time gate');
@@ -1026,6 +1064,9 @@ function assertReactThemeSync(src) {
   );
 }
 
+/** Where a `/` starts a regex literal rather than division — see stripJsComments. */
+const REGEX_START = /(?:[(,=:[&|?;{]|(?:^|[^\w$)\]\s])\s*!|\b(?:return|typeof)\s*!?)\s*$/;
+
 /**
  * `{ code }`: `src` with every `//` and block comment removed (newlines kept);
  * or `{ error }` when it cannot be stripped safely. String and template
@@ -1033,13 +1074,23 @@ function assertReactThemeSync(src) {
  * Quoted strings end at a newline, as in JS, so a stray apostrophe (JSX text)
  * cannot swallow the rest of the file.
  *
- * REGEX LITERALS are recognised only by POSITION: a lone `/` after one of
- * `( , = : [ ! & | ? ; {` or `return`/`typeof` starts one; it is scanned to
- * its closing `/` (escapes and `[…]` classes honoured) and replaced by a
- * neutral `/re/`, so a `//`, quote or brace inside it is not misread here or
- * by matchingBrace. One with no closing `/` on its line is an
- * `{ error }`. A `/` anywhere else (division, `</tag>`, `/>`) is ordinary
- * code — a regex in any OTHER position (e.g. after `=>`) is not recognised.
+ * REGEX LITERALS are recognised only by POSITION (REGEX_START): a lone `/`
+ * after one of `( , = : [ & | ? ; {` or `return`/`typeof` starts one, and
+ * so does one after a PREFIX `!` — a `!` whose previous non-space character
+ * is not an identifier character, `)` or `]`. A POSTFIX `!` (TypeScript's
+ * non-null assertion, `ref.current! / 2`) is followed by division, not a regex.
+ * A recognised regex is scanned to its closing `/` (escapes and `[…]` classes
+ * honoured) and replaced by a neutral `/re/`, so a `//`, quote or brace inside
+ * it is not misread here or by matchingBrace. One with no closing `/` on its
+ * line is an `{ error }`. A `/` anywhere else (division, `</tag>`, `/>`) is
+ * ordinary code.
+ *
+ * Known limits, both by position: a regex in any OTHER position (e.g. after
+ * `=>`) is not recognised; and JSX TEXT is not JSX-aware, so text whose `/`
+ * follows one of those characters (`<div>Usage: /help`, a wrapped
+ * `1&nbsp;/&nbsp;2`) is read as a regex: on a line with no later `/` that is
+ * a loud "could not parse"; with a later `/` on the line, the text up to it
+ * is skipped as if it were a regex.
  */
 function stripJsComments(src) {
   let out = '';
@@ -1058,7 +1109,7 @@ function stripJsComments(src) {
       const end = literalEnd(src, i);
       out += src.slice(i, end + 1);
       i = end;
-    } else if (c === '/' && n !== '>' && /(?:[(,=:[!&|?;{]|\breturn|\btypeof)\s*$/.test(out)) {
+    } else if (c === '/' && n !== '>' && REGEX_START.test(out)) {
       const end = regexEnd(src, i);
       if (end < 0) return { error: `unterminated regex literal at offset ${i}` };
       out += '/re/';
