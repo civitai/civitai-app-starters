@@ -1003,14 +1003,19 @@
      * THE TRADE, and it is NOT limited to a page that paints nothing: Text no
      * longer paints the token itself, so it takes whatever colour it inherits.
      * That decides what it renders on every page that DOES set a colour — the
-     * larger population, and the one every in-repo consumer would be in once it
-     * renders Text, which none does today (four starters colour `body` via
-     * Tailwind; seven more colour a `[data-theme]` root).
-     * Measured on both tracks, on the shape a block here actually has — a
-     * `[data-theme='dark']` root carrying `color: #e6e6e6` — Text computes
+     * larger population. Measured on both tracks, on a `[data-theme='dark']`
+     * root carrying `color: #e6e6e6` (the shape this repo's blocks had when this
+     * was measured; none sets that colour today): Text computes
      * `rgb(230, 230, 230)`, where restoring the removed declaration puts both
      * tracks back at the dark token `rgb(193, 194, 197)`. With no colour anywhere
-     * it lands on the UA default `rgb(0, 0, 0)`. `ci-text-default` asks for the
+     * it lands on the UA default `rgb(0, 0, 0)`.
+     * In this repo: the Tailwind starters colour `body` themselves, so they
+     * would show Text in their own colour once one of them renders it. Every
+     * Civitai App page sets `color: var(--civitai-color-text)` itself — each
+     * example's src/index.css on `:root`, the block starter's on `body` — so
+     * Text there shows the token by INHERITING it rather than by naming it.
+     * (See `src/elements/civitai-text.ts` for the full enumeration.)
+     * `ci-text-default` asks for the
      * token back, but it ships in a separate stylesheet that neither
      * `injectStyles()` nor `injectBlocksStyles()` injects — see the cost section
      * in `src/elements/civitai-text.ts` for every measurement and

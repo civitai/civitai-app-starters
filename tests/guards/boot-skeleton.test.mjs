@@ -54,13 +54,14 @@ const BLOCK_STARTER = join(STARTERS, 'civitai-block-starter');
 /**
  * COVERAGE FLOOR. A sweep that finds zero files is indistinguishable from a
  * passing one, and a `find`-shaped guard silently narrows to nothing the moment
- * a directory moves. Measured at this commit: 7 manifests
- * (civitai-block-starter + 6 under starters/examples), all 7 of which declare
- * bootSkeleton (the examples since they adopted the block starter's boot). Raise these when the real numbers rise; never lower them to make
- * a run green.
+ * a directory moves. These are FLOORS, not the inventory: every manifest under
+ * starters/ (civitai-block-starter plus every example) is found by the walk,
+ * and every one of them declares bootSkeleton today — derive the live numbers
+ * with `find starters -name block.manifest.json -not -path '*node_modules*'`.
+ * Raise these when the real numbers rise; never lower them to make a run green.
  */
-const MIN_MANIFESTS = 7;
-const MIN_DECLARING = 7;
+const MIN_MANIFESTS = 12;
+const MIN_DECLARING = 12;
 
 /** Every `block.manifest.json` under `starters/`, with its sibling entry document. */
 function collectBlockApps() {
@@ -297,38 +298,79 @@ test('every starter that ships a block.manifest.json satisfies the coupling', ()
 // ---------------------------------------------------------------------------
 
 /**
- * The block starter AND the examples listed here: each one is copied by someone,
- * so each gets the same dark-first checks. A new themed app joins by being
- * listed here — with a `sync` value, or it fails (see SYNC_KINDS below).
- *
- * `sync` names WHERE the app keeps <html data-theme> in step with the host, because
- * that is the one check whose subject is framework code rather than the shared
- * index.html / index.css / manifest trio:
- *   - 'react' — an effect in src/App.tsx gated on `ready` (the React examples);
- *   - 'sdk'   — `syncTheme` in src/block.ts, run after `initialize()` resolves and
- *               re-run from `app.onChange` (civitai-block-starter, which has no
- *               framework since it was converted to web components).
- * Both encode the same three rules: write <html>'s data-theme, re-run on a host
- * theme change, never before BLOCK_INIT.
- */
-const THEMED_APPS = [
-  { label: 'civitai-block-starter', dir: BLOCK_STARTER, sync: 'sdk' },
-  ...['hello-world', 'settings', 'buzz-workflow', 'kv-storage', 'scopes-api', 'buzz-purchase', 'page-app'].map((name) => ({
-    label: `examples/${name}`,
-    dir: join(STARTERS, 'examples', name),
-    sync: 'react',
-  })),
-  { label: 'examples/generate-studio', dir: join(STARTERS, 'examples', 'generate-studio'), sync: 'react' },
-];
-
-/**
  * 🔴 THE ONLY VALID `sync` VALUES. The theme-sync check below is chosen BY this
- * tag, so an entry without one (or with a typo) would get NEITHER check and
- * pass silently — which is how a merge once dropped generate-studio's sync
+ * tag, so an app without one (or with an ambiguous one) would get NEITHER check
+ * and pass silently — which is how a merge once dropped generate-studio's sync
  * check. A missing or unknown value is therefore a FAILURE, both here and as a
  * per-app test inside the loop, never a skip.
  */
 const SYNC_KINDS = new Set(['react', 'sdk']);
+
+/**
+ * `sync` names WHERE an app keeps <html data-theme> in step with the host, because
+ * that is the one check whose subject is framework code rather than the shared
+ * index.html / index.css / manifest trio:
+ *   - 'react' — an effect in src/App.tsx gated on `ready`; the app's src/App.tsx
+ *               imports `@civitai/blocks-react`;
+ *   - 'sdk'   — `syncTheme` in src/block.ts, run after `initialize()` resolves and
+ *               re-run from `app.onChange`; the app's src/block.ts imports
+ *               `@civitai/sdk` (civitai-block-starter, which has no framework
+ *               since it was converted to web components).
+ * Both encode the same three rules: write <html>'s data-theme, re-run on a host
+ * theme change, never before BLOCK_INIT.
+ *
+ * DERIVED from the app's source, not declared: exactly one of the two signals
+ * yields that kind. Neither, or both, yields `null` — which is not in SYNC_KINDS,
+ * so the app FAILS (never skips) until its sync is unambiguous.
+ */
+function deriveSyncKind(appDir) {
+  const imports = (rel, pkg) => {
+    let src;
+    try {
+      src = readFileSync(join(appDir, rel), 'utf8');
+    } catch {
+      return false;
+    }
+    // An import statement at the start of a line — prose in a comment that
+    // NAMES the package does not count.
+    return new RegExp(`^import\\b[^;]*?from\\s+['"]${pkg.replace('/', '\\/')}['"]`, 'm').test(src);
+  };
+  const react = imports(join('src', 'App.tsx'), '@civitai/blocks-react');
+  const sdk = imports(join('src', 'block.ts'), '@civitai/sdk');
+  if (react && !sdk) return 'react';
+  if (sdk && !react) return 'sdk';
+  return null;
+}
+
+/**
+ * Every app under starters/ whose manifest declares `bootSkeleton: true` —
+ * found by the same walk as the coupling sweep above, never hand-listed. Each
+ * one is copied by someone, so each gets the same dark-first checks; a new
+ * themed app joins by existing on disk. (A hand-written list here once left
+ * three such examples with no per-app checks at all, and nothing failed.)
+ */
+const THEMED_APPS = collectBlockApps()
+  .filter((a) => a.manifest?.bootSkeleton === true)
+  .map((a) => ({
+    label: relative(STARTERS, join(REPO_ROOT, a.dir)).split('\\').join('/'),
+    dir: join(REPO_ROOT, a.dir),
+    sync: deriveSyncKind(join(REPO_ROOT, a.dir)),
+  }))
+  .sort((x, y) => x.label.localeCompare(y.label));
+
+test('THEMED_APPS is derived from disk and includes the block starter', () => {
+  // POSITIVE CONTROL for the derivation: an empty or mis-rooted walk would
+  // produce zero per-app tests and a green run. The block starter is the one
+  // app whose presence (and `sdk` kind) is a fixed fact of this repo.
+  assert.ok(
+    THEMED_APPS.length >= MIN_DECLARING,
+    `derived ${THEMED_APPS.length} themed app(s), expected at least ${MIN_DECLARING}: ` +
+      THEMED_APPS.map((a) => a.label).join(', '),
+  );
+  const starter = THEMED_APPS.find((a) => a.dir === BLOCK_STARTER);
+  assert.ok(starter, 'civitai-block-starter declares bootSkeleton and must be derived');
+  assert.equal(starter.sync, 'sdk');
+});
 
 test('every THEMED_APPS entry names how it syncs the theme (react | sdk)', () => {
   const bad = THEMED_APPS.filter((a) => !SYNC_KINDS.has(a.sync)).map(
@@ -338,7 +380,9 @@ test('every THEMED_APPS entry names how it syncs the theme (react | sdk)', () =>
     bad,
     [],
     `THEMED_APPS entries without a valid \`sync\` (one of ${[...SYNC_KINDS].join(', ')}) — ` +
-      `their theme-sync check would be skipped:\n  ${bad.join('\n  ')}`,
+      'their theme-sync check would be skipped. The kind is derived: src/App.tsx importing ' +
+      '@civitai/blocks-react => react, src/block.ts importing @civitai/sdk => sdk; exactly ' +
+      `one must hold:\n  ${bad.join('\n  ')}`,
   );
 });
 
