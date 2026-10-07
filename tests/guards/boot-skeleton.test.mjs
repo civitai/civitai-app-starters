@@ -99,6 +99,15 @@ function collectBlockApps() {
   return out;
 }
 
+/**
+ * The ONE predicate for "this app opted into bootSkeleton". The coupling sweep
+ * and THEMED_APPS both select with it, so the two sets cannot drift apart.
+ * Strictly `true`, matching the platform gate (a string "true" does not arm it).
+ */
+function declaresBootSkeleton(manifest) {
+  return manifest?.bootSkeleton === true;
+}
+
 // ---------------------------------------------------------------------------
 // 1. The rule itself, against fixtures. These are the four cases the platform
 //    gate distinguishes; the whole guard is worthless if the function cannot
@@ -334,7 +343,7 @@ test('every starter that ships a block.manifest.json satisfies the coupling', ()
       `indistinguishable from a passing one — if manifests genuinely moved, fix the walk.`,
   );
 
-  const declaring = apps.filter((a) => a.manifest?.bootSkeleton === true);
+  const declaring = apps.filter((a) => declaresBootSkeleton(a.manifest));
   assert.ok(
     declaring.length >= MIN_DECLARING,
     `expected at least ${MIN_DECLARING} manifest(s) declaring bootSkeleton: true, found ` +
@@ -410,7 +419,7 @@ function deriveSyncKind(appDir) {
  * three such examples with no per-app checks at all, and nothing failed.)
  */
 const THEMED_APPS = collectBlockApps()
-  .filter((a) => a.manifest?.bootSkeleton === true)
+  .filter((a) => declaresBootSkeleton(a.manifest))
   .map((a) => ({
     label: relative(STARTERS, join(REPO_ROOT, a.dir)).split('\\').join('/'),
     dir: join(REPO_ROOT, a.dir),
@@ -419,14 +428,11 @@ const THEMED_APPS = collectBlockApps()
   .sort((x, y) => x.label.localeCompare(y.label));
 
 test('THEMED_APPS is derived from disk and includes the block starter', () => {
-  // POSITIVE CONTROL for the derivation: an empty or mis-rooted walk would
+  // POSITIVE CONTROL for the derivation: a filter wired to nothing would
   // produce zero per-app tests and a green run. The block starter is the one
-  // app whose presence (and `sdk` kind) is a fixed fact of this repo.
-  assert.ok(
-    THEMED_APPS.length >= MIN_DECLARING,
-    `derived ${THEMED_APPS.length} themed app(s), expected at least ${MIN_DECLARING}: ` +
-      THEMED_APPS.map((a) => a.label).join(', '),
-  );
+  // app whose presence (and `sdk` kind) is a fixed fact of this repo. The COUNT
+  // floor is not repeated here: the coupling sweep asserts MIN_DECLARING over
+  // the same walk and the same declaresBootSkeleton() predicate.
   const starter = THEMED_APPS.find((a) => a.dir === BLOCK_STARTER);
   assert.ok(starter, 'civitai-block-starter declares bootSkeleton and must be derived');
   assert.equal(starter.sync, 'sdk');
