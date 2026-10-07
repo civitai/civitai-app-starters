@@ -24,13 +24,27 @@ signed-in client, so a page where nobody opens the chat never downloads them.
 
 The chat needs an `AppClient` from [`@civitai/sdk`](../civitai-sdk) with `ai:write:budgeted`. A page
 that already has one hands it over, and the chat shares its session, token refresh and grant
-requests:
+requests. The chat sends that client's token straight to the orchestrator (its chat model, its MCP
+and its workflow routes), so the token must be an OAuth access token:
 
 | The page | `chat.app` |
 |---|---|
-| A block on civitai.com | `await initialize()`; the manifest asks for `ai:write:budgeted` |
 | A browser app on `createSignIn` | `await initialize(auth)`, the client it already uses |
 | An app whose server holds the tokens | `await initialize({ token: () => fetch('/api/civitai/token').then((r) => r.text()), requestGrants: () => true })`, behind a route that returns the session's access token |
+| A block on civitai.com | `await initialize()`, only with an OAuth token: see below |
+
+Inside a civitai.com block the host hands over the block-scoped token by default, and the
+orchestrator accepts no block token on any route, so every reply and every generation is refused.
+The chat works in a block only when the host hands it an OAuth access token instead; when and how
+it does is in `@civitai/sdk`'s README, under [`initialize()`](../civitai-sdk/README.md#initialize)
+and its [When the token is the block-scoped one](../civitai-sdk/README.md#when-the-token-is-the-block-scoped-one),
+and the manifest also asks for `ai:write:budgeted`. Nothing proxies the endpoints this chat calls
+(the orchestrator's chat model and MCP). The block routes under `/api/v1/blocks/workflows/*` can
+run a `chat-completion` step, which keeps the block path's controls, but `<civitai-chat>` does not
+use them. And with an OAuth
+token the chat's generations go to the orchestrator directly, without the spend caps, maturity clamp
+and app attribution the block routes add (`@civitai/sdk`'s
+[`BREAKING.md`](../civitai-sdk/BREAKING.md#what-a-direct-orchestrator-call-loses)).
 
 Or the chat opens signed out and asks only when the viewer first sends something. `popupSignIn`
 runs the page's own `createSignIn()` in a popup (`@civitai/sdk` 0.9 or later), so the page is never
