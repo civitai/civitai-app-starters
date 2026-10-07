@@ -100,13 +100,28 @@ function collectBlockApps() {
 }
 
 /**
- * The ONE predicate for "this app opted into bootSkeleton". The coupling sweep
- * and THEMED_APPS both select with it, so the two sets cannot drift apart.
- * Strictly `true`, matching the platform gate (a string "true" does not arm it).
+ * "This app opted into bootSkeleton" — answered by the platform gate itself,
+ * not restated here, so this guard can never select a different set than the
+ * gate arms on. (Strictly `true`: a string "true" does not arm it.)
  */
 function declaresBootSkeleton(manifest) {
-  return manifest?.bootSkeleton === true;
+  return checkBootSkeleton({ manifest, html: '' }).applicable;
 }
+
+/**
+ * The ONE list of apps that declare bootSkeleton, from ONE walk. The coupling
+ * sweep and THEMED_APPS both read this variable, so they cannot select
+ * different sets.
+ */
+const ALL_BLOCK_APPS = collectBlockApps();
+const DECLARING_APPS = ALL_BLOCK_APPS.filter((a) => declaresBootSkeleton(a.manifest));
+
+test('declaresBootSkeleton arms on exactly `true`, like the platform gate', () => {
+  assert.equal(declaresBootSkeleton({ bootSkeleton: true }), true);
+  for (const manifest of [null, {}, { bootSkeleton: false }, { bootSkeleton: 'true' }, { bootSkeleton: 1 }]) {
+    assert.equal(declaresBootSkeleton(manifest), false, JSON.stringify(manifest));
+  }
+});
 
 // ---------------------------------------------------------------------------
 // 1. The rule itself, against fixtures. These are the four cases the platform
@@ -347,6 +362,71 @@ test('react theme sync: comments and strings do not derail the parse', () => {
   );
 });
 
+test('react theme sync: a `//` inside a string does not start a comment', () => {
+  // If the stripper read `//api` as a comment it would drop the `{` that
+  // follows on the same line, the effect would close at the options' `}`, and
+  // the write after it would land outside every effect.
+  assert.deepEqual(
+    reactThemeSyncErrors(
+      reactApp(`
+    if (!ready) return;
+    void fetch('https://x/api', {
+      method: 'POST',
+    });
+    document.documentElement.dataset.theme = theme;`),
+    ),
+    [],
+  );
+});
+
+test('react theme sync: an apostrophe in JSX text does not swallow the next lines', () => {
+  // JSX text is not a string literal, but a scanner sees its apostrophe as one.
+  // Ending quoted strings at a newline (as JS does) keeps the comment below
+  // a comment; otherwise its mention of the write counts as a stray write.
+  const src = `
+export function App() {
+  const { ready, theme } = useBlock();
+  useEffect(() => {
+    if (!ready) return;
+    document.documentElement.dataset.theme = theme;
+  }, [ready, theme]);
+  if (!ready) return <div>Loading…</div>;
+  return (
+    <div data-theme={theme}>
+      <p>Don't panic</p>
+      {/* the effect above sets document.documentElement.dataset.theme = theme */}
+      <p>{'ok'}</p>
+    </div>
+  );
+}`;
+  assert.deepEqual(reactThemeSyncErrors(src), []);
+});
+
+test('react theme sync: a regex literal is skipped, or reported as unparseable', () => {
+  // `/:\/\//` contains `//`; read as a comment it would eat the `{` after it
+  // and report "no useEffect writes…" for a correctly gated effect.
+  assert.deepEqual(
+    reactThemeSyncErrors(
+      reactApp(`
+    if (!ready) return;
+    const url = String(location.href);
+    if (/:\\/\\//.test(url)) {
+      console.log('absolute');
+    }
+    document.documentElement.dataset.theme = theme;`),
+    ),
+    [],
+  );
+  const msg = onlyError(
+    reactApp(`
+    if (!ready) return;
+    const r = /never closed
+    document.documentElement.dataset.theme = theme;`),
+    /^could not parse App\.tsx: unterminated regex literal/,
+  );
+  assert.doesNotMatch(msg, /gated|does not open|no `useEffect/);
+});
+
 test('react theme sync: FAILS an ungated effect even with a render-time gate present', () => {
   const src = reactApp(UNGATED);
   assert.match(src, /if \(!ready\) return <div/, 'fixture must carry the render-time gate');
@@ -444,7 +524,7 @@ export function App() {
 // ---------------------------------------------------------------------------
 
 test('every starter that ships a block.manifest.json satisfies the coupling', () => {
-  const apps = collectBlockApps();
+  const apps = ALL_BLOCK_APPS;
 
   assert.ok(
     apps.length >= MIN_MANIFESTS,
@@ -453,7 +533,7 @@ test('every starter that ships a block.manifest.json satisfies the coupling', ()
       `indistinguishable from a passing one — if manifests genuinely moved, fix the walk.`,
   );
 
-  const declaring = apps.filter((a) => declaresBootSkeleton(a.manifest));
+  const declaring = DECLARING_APPS;
   assert.ok(
     declaring.length >= MIN_DECLARING,
     `expected at least ${MIN_DECLARING} manifest(s) declaring bootSkeleton: true, found ` +
@@ -555,24 +635,19 @@ test('syncKindFrom: a commented-out or quoted import is not a signal', () => {
  */
 const appLabel = (a) => relative(STARTERS, join(REPO_ROOT, a.dir)).split('\\').join('/');
 
-const THEMED_APPS = collectBlockApps()
-  .filter((a) => declaresBootSkeleton(a.manifest))
-  .map((a) => ({
-    label: appLabel(a),
-    dir: join(REPO_ROOT, a.dir),
-    sync: deriveSyncKind(join(REPO_ROOT, a.dir)),
-  }))
-  .sort((x, y) => x.label.localeCompare(y.label));
+const THEMED_APPS = DECLARING_APPS.map((a) => ({
+  label: appLabel(a),
+  dir: join(REPO_ROOT, a.dir),
+  sync: deriveSyncKind(join(REPO_ROOT, a.dir)),
+})).sort((x, y) => x.label.localeCompare(y.label));
 
 test('THEMED_APPS is EXACTLY the set the coupling sweep checks', () => {
   // The relationship, not a count: every app the sweep treats as declaring
   // bootSkeleton gets the per-app checks, and nothing else does. A count floor
   // here would miss a filter that drops the newest apps while the total still
   // clears it — the exact defect this derivation replaced.
-  const sweepSet = collectBlockApps()
-    .filter((a) => declaresBootSkeleton(a.manifest))
-    .map(appLabel)
-    .sort();
+  // DECLARING_APPS is the very array the coupling sweep iterates.
+  const sweepSet = DECLARING_APPS.map(appLabel).sort();
   assert.deepEqual(
     THEMED_APPS.map((a) => a.label).sort(),
     sweepSet,
@@ -865,7 +940,12 @@ for (const { label, dir, sync } of THEMED_APPS) {
  * The React theme sync, checked structurally. Returns a list of problems
  * (empty = sound):
  *   - exactly one `useEffect(() => { … })` writes <html>'s data-theme;
- *   - EVERY such write in the file sits inside that effect — a second write
+ *     a "write" is `document.documentElement.dataset.theme = …` or
+ *     `document.documentElement.setAttribute('data-theme', …)`, spelled through
+ *     `document.documentElement`. 🔴 An ALIASED write
+ *     (`const html = document.documentElement; html.dataset.theme = …`) is NOT
+ *     detected — neither as the sync nor as an ungated stray;
+ *   - EVERY such (unaliased) write in the file sits inside that effect — a second write
  *     under `useLayoutEffect`, another hook or the render body runs ungated;
  *   - that effect's body OPENS with `if (!ready) return;`;
  *   - its deps list both `ready` and `theme`, or a live THEME_CHANGE (or the
@@ -876,13 +956,15 @@ for (const { label, dir, sync } of THEMED_APPS) {
  * nothing, because the effect runs on the first commit regardless — with
  * `theme` still the transport's 'light' sentinel.
  *
- * A source this cannot parse reports "could not parse", never "not gated".
+ * A source this cannot parse — an unterminated block comment, or a regex
+ * literal (see stripJsComments) — reports "could not parse", never "not gated".
  */
 function reactThemeSyncErrors(rawSrc) {
   // Comments out first, so prose that NAMES the gate or the write cannot
   // satisfy either, and an apostrophe in a comment cannot open a fake string.
-  const src = stripJsComments(rawSrc);
-  if (src === null) return ['could not parse App.tsx: unterminated block comment'];
+  const stripped = stripJsComments(rawSrc);
+  if (stripped.error) return [`could not parse App.tsx: ${stripped.error}`];
+  const src = stripped.code;
   const HTML_THEME_WRITE =
     /document\.documentElement\s*\.\s*(?:dataset\.theme\s*=(?!=)|setAttribute\(\s*['"]data-theme['"])/g;
   const READY_GATE = /^\s*if\s*\(\s*!ready\s*\)\s*return\s*;/;
@@ -945,10 +1027,19 @@ function assertReactThemeSync(src) {
 }
 
 /**
- * `src` with every `//` and block comment removed (newlines kept), or null on
- * an unterminated block comment. String and template literals are copied
- * verbatim, so a `//` inside a string or URL survives. Quoted strings end at a
- * newline, as in JS, so a stray apostrophe (JSX text) cannot swallow the file.
+ * `{ code }`: `src` with every `//` and block comment removed (newlines kept);
+ * or `{ error }` when it cannot be stripped safely. String and template
+ * literals are copied verbatim, so a `//` inside a string or URL survives.
+ * Quoted strings end at a newline, as in JS, so a stray apostrophe (JSX text)
+ * cannot swallow the rest of the file.
+ *
+ * REGEX LITERALS are recognised only by POSITION: a lone `/` after one of
+ * `( , = : [ ! & | ? ; {` or `return`/`typeof` starts one; it is scanned to
+ * its closing `/` (escapes and `[…]` classes honoured) and replaced by a
+ * neutral `/re/`, so a `//`, quote or brace inside it is not misread here or
+ * by matchingBrace. One with no closing `/` on its line is an
+ * `{ error }`. A `/` anywhere else (division, `</tag>`, `/>`) is ordinary
+ * code — a regex in any OTHER position (e.g. after `=>`) is not recognised.
  */
 function stripJsComments(src) {
   let out = '';
@@ -957,7 +1048,7 @@ function stripJsComments(src) {
     const n = src[i + 1];
     if (c === '/' && n === '*') {
       const end = src.indexOf('*/', i + 2);
-      if (end < 0) return null;
+      if (end < 0) return { error: 'unterminated block comment' };
       out += src.slice(i, end + 2).replace(/[^\n]/g, '');
       i = end + 1;
     } else if (c === '/' && n === '/') {
@@ -967,11 +1058,30 @@ function stripJsComments(src) {
       const end = literalEnd(src, i);
       out += src.slice(i, end + 1);
       i = end;
+    } else if (c === '/' && n !== '>' && /(?:[(,=:[!&|?;{]|\breturn|\btypeof)\s*$/.test(out)) {
+      const end = regexEnd(src, i);
+      if (end < 0) return { error: `unterminated regex literal at offset ${i}` };
+      out += '/re/';
+      i = end;
     } else {
       out += c;
     }
   }
-  return out;
+  return { code: out };
+}
+
+/** Index of the `/` closing the regex literal opening at `i`; -1 if none on its line. */
+function regexEnd(src, i) {
+  let inClass = false;
+  for (let j = i + 1; j < src.length; j++) {
+    const c = src[j];
+    if (c === '\n') return -1;
+    if (c === '\\') j++;
+    else if (c === '[') inClass = true;
+    else if (c === ']') inClass = false;
+    else if (c === '/' && !inClass) return j;
+  }
+  return -1;
 }
 
 /** Index of the last char of the string/template literal opening at `i`. */
