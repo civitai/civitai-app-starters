@@ -24,13 +24,26 @@ signed-in client, so a page where nobody opens the chat never downloads them.
 
 The chat needs an `AppClient` from [`@civitai/sdk`](../civitai-sdk) with `ai:write:budgeted`. A page
 that already has one hands it over, and the chat shares its session, token refresh and grant
-requests:
+requests. The chat sends that client's token straight to the orchestrator (its chat model, its MCP
+and its workflow routes), so the token must be an OAuth access token:
 
 | The page | `chat.app` |
 |---|---|
-| A block on civitai.com | `await initialize()`; the manifest asks for `ai:write:budgeted` |
 | A browser app on `createSignIn` | `await initialize(auth)`, the client it already uses |
 | An app whose server holds the tokens | `await initialize({ token: () => fetch('/api/civitai/token').then((r) => r.text()), requestGrants: () => true })`, behind a route that returns the session's access token |
+| A block on civitai.com | `await initialize()`, only with an OAuth token: see below |
+
+Inside a civitai.com block the host hands over the block-scoped token by default, and the
+orchestrator accepts no block token on any route, so every reply and every generation is refused.
+A block opts in by declaring `auth: "oauth"` in its `block.manifest.json` along with
+`user:read:self` and `ai:write:budgeted`. Even then the host mints an OAuth token only for a
+signed-in viewer and only where its OAuth mint is enabled (it is flag-gated); otherwise it hands back
+the block token and the chat cannot reply. A manifest cannot declare `auth: "oauth"` alongside an
+`apps:storage:*` scope. There is no host-proxied route for the chat: the block routes under
+`/api/v1/blocks/workflows/*` run workflows only, not the chat model or the MCP. And with an OAuth
+token the chat's generations go to the orchestrator directly, without the spend caps, maturity clamp
+and app attribution the block routes add (`@civitai/sdk`'s
+[`BREAKING.md`](../civitai-sdk/BREAKING.md#what-a-direct-orchestrator-call-loses)).
 
 Or the chat opens signed out and asks only when the viewer first sends something. `popupSignIn`
 runs the page's own `createSignIn()` in a popup (`@civitai/sdk` 0.9 or later), so the page is never
