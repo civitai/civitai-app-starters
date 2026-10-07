@@ -95,8 +95,13 @@ Don't try to "make this a real OAuth app." That is what the `next-app` /
   `@civitai/app-sdk/blocks` before reading slot fields.
 - **Gate sign-in with `isSignedIn(app.viewer)`** from `@civitai/app-sdk/blocks`,
   never an open-coded check. The platform sends `viewer: null` for signed-out
-  users. For the viewer's identity, read the API (`app.site.get('me')`), not
-  `app.viewer`.
+  users. For the viewer's identity, read the block route
+  `app.site.get('blocks/me')`, not `app.viewer`. 🔴 Not `app.site.get('me')`:
+  that is `/api/v1/me`, which authenticates sessions, API keys and OAuth
+  tokens only, so the block token gets a 401. `blocks/me` needs `user:read:self` declared in
+  `block.manifest.json` (this starter declares no scopes), and that scope is
+  consent-gated — call `askConsent(app, ['user:read:self'])` (below) before
+  the read. An anonymous viewer is refused, so gate on `isSignedIn` first.
 - **Host data goes in with `textContent`, never `innerHTML`.** The view in
   `src/block.ts` is a static template filled field by field; a model name is
   user-authored, and interpolating it into markup is an XSS hole.

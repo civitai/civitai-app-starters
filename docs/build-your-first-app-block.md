@@ -197,8 +197,8 @@ Scaffolding is handled by the Go **`civitai` CLI**
 §0:
 
 ```bash
-civitai app create my-block   # batteries-included page-money template
-# (or `civitai app init my-block` for a no-build static template)
+civitai app create my-block   # the default template: page-elements (web components)
+# (`civitai app init my-block` scaffolds the same default)
 cd my-block
 cp .env.example .env
 pnpm install
@@ -206,24 +206,36 @@ pnpm install
 
 The scaffolder writes a correct `block.manifest.json`; you then edit it by hand
 to set your slot and content rating (the manifest is the source of truth — see
-§2). Pick the template that fits: `--template static | page-vite | page-money`
-(`create` defaults to `page-money`, `init` defaults to `static`).
+§2). Pick the template that fits:
+`--template page-elements | page-money | page-vite | static`. Both `create` and
+`init` default to **`page-elements`** — Vite + TypeScript with no UI framework,
+`@civitai/sdk` for the host bridge and the `<civitai-*>` elements for the UI; it
+mirrors [`starters/civitai-block-starter`](../starters/civitai-block-starter),
+except that it declares a full `page` rather than a model-slot target.
+`page-money` and `page-vite` are the React alternatives; `static` is a no-build
+page.
 
-Or copy one of the [examples](../starters/examples) that's closest to what you're
-building (`hello-world` for a static UI, `buzz-workflow` for a generator).
+Or copy [`starters/civitai-block-starter`](../starters/civitai-block-starter)
+(web components, a model-page slot) or one of the React
+[examples](../starters/examples) that's closest to what you're building
+(`hello-world` for a static UI, `buzz-workflow` for a generator).
 
-This gives you:
+The default template gives you:
 
 ```
 my-block/
-├── block.manifest.json   # what you register — slot + scopes (NOT iframe.src; the platform stamps it)
-├── index.html
+├── block.manifest.json   # what you register — slot/page + scopes (NOT iframe.src; the platform stamps it)
+├── index.html            # boot skeleton + pre-paint theme script
 ├── vite.config.ts        # base: '/'  (important — see §6)
-└── src/                  # no Dockerfile/nginx.conf — the platform injects its own build at approve
-    ├── App.tsx           # your UI
-    ├── main.tsx
-    └── Harness.tsx       # local host simulator (dev only)
+├── src/                  # no Dockerfile/nginx.conf — the platform injects its own build at approve
+│   ├── block.ts          # your UI: initialize → render → onChange → autoResize
+│   ├── main.ts           # entry
+│   └── dev/harness.ts    # local host simulator (dev only)
+└── test/                 # vitest + happy-dom, driving the real bridge
 ```
+
+(The React templates and examples have `src/App.tsx`, `src/main.tsx` and a
+`Harness.tsx` instead.)
 
 ## 2. The manifest
 
@@ -241,7 +253,7 @@ my-block/
     { "slotId": "model.sidebar_top", "priority": 100,
       "requiredContext": ["modelId", "modelVersionId"] }
   ],
-  "scopes": ["models:read:self"],   // domain:verb:target lowercase
+  "scopes": [],                     // domain:verb:target lowercase — declare only what your calls need
   "iframe": {
     // NO "src" — it is SERVER-OWNED. The platform stamps the canonical bundle
     // URL (https://<blockId>.civit.ai/, root-served) at build/approve. Declaring
@@ -365,7 +377,44 @@ and scripts, verbatim, so only pass a `src` you control.
 
 ## 3. Write the block
 
-Read everything from the host with `useBlockContext()`; gate on `ready`:
+With the default template (no framework), `initialize()` from `@civitai/sdk`
+resolves once the host's `BLOCK_INIT` lands; read the context from `app` and
+update the page on `app.onChange`:
+
+```ts
+import '@civitai/components/register'; // the generic <civitai-*> kit
+import { initialize } from '@civitai/sdk';
+import { isModelSlotContext, isSignedIn } from '@civitai/app-sdk/blocks';
+
+const root = document.getElementById('root')!;
+const app = await initialize(); // resolves on the host's BLOCK_INIT
+
+// Build the view ONCE and update it in place: `onChange` also fires on every
+// token rotation, and rebuilding would wipe whatever the viewer typed.
+const line = document.createElement('civitai-text');
+root.replaceChildren(line); // also removes the boot skeleton
+
+const update = () => {
+  // GOTCHA: data-theme on YOUR page — the host can't set it inside the iframe.
+  document.documentElement.dataset.theme = app.theme;
+  // `context` is a union keyed on slotId — narrow with the guard, not a cast.
+  // Sign-in gate: call `isSignedIn`, never an identity read.
+  line.textContent = isModelSlotContext(app.context)
+    ? `Block for ${app.context.modelName}, hi ${isSignedIn(app.viewer) ? 'there' : 'anon'}`
+    : 'Wrong slot.';
+};
+update();
+app.onChange(update);
+app.host.autoResize(root); // host fits the iframe to content
+```
+
+Host data goes in with `textContent`, never `innerHTML`. The starter's
+[`AGENTS.md`](../starters/civitai-block-starter/AGENTS.md) covers generation and
+digital goods on this path (consent, idempotency keys, and refusals, which
+resolve rather than reject).
+
+With a React template or example, read everything from the host with
+`useBlockContext()`; gate on `ready`:
 
 ```tsx
 import { useRef } from 'react';
@@ -404,7 +453,8 @@ pnpm dev:harness    # → http://localhost:<port> with a mock host
 # (the Go CLI has no `dev` command — run the project's own dev script)
 ```
 
-The harness (`src/Harness.tsx`) posts a fake `BLOCK_INIT`, intercepts your
+The harness (`src/dev/harness.ts` in the default template, `src/Harness.tsx` in
+the React ones) posts a fake `BLOCK_INIT`, intercepts your
 outbound messages into a debug log, and echoes token refreshes — so you iterate
 without civitai.com embedding your block.
 

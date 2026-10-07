@@ -41,8 +41,11 @@ import { DIRECT_LOAD_TIMEOUT_MS, isTopLevel, renderDirectLoadFallback } from './
  * file gets copied, so a gate spelled inline here becomes the gate the ecosystem
  * writes; the wire contract has moved before, and `isSignedIn` is where that
  * argument lives, once, in the SDK. If your block genuinely needs the viewer's
- * identity, read it from the API (`app.site.get('me')`) rather than from
- * `app.viewer`.
+ * identity, read it from the block route `app.site.get('blocks/me')` rather
+ * than from `app.viewer` — NOT `app.site.get('me')`, which the block token
+ * cannot authenticate. `blocks/me` needs the `user:read:self` scope declared in
+ * block.manifest.json (this starter declares none) and is consent-gated, so ask
+ * for it with `app.requestGrants` first (see AGENTS.md).
  */
 export async function mountBlock(root: HTMLElement): Promise<BlockAppClient> {
   const app = await waitForHost(root);
