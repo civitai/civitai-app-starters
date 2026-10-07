@@ -72,8 +72,9 @@ A block opts in by declaring `auth: "oauth"` in its `block.manifest.json`. The
 host then hands it a real OAuth access token that `/api/v1`, the orchestrator
 and the MCP accept, and consent — including `requestGrants` — goes through the
 host's consent dialog. The manifest must also declare `user:read:self`, which
-every OAuth token carries; without it the host never mints one and hands back
-the block token. And `auth: "oauth"` cannot be declared alongside any
+every OAuth token carries: on civitai.com the host never mints one without it
+and hands back the block token. The dev tunnel mints one regardless, so a
+missing `user:read:self` only shows up after approval. And `auth: "oauth"` cannot be declared alongside any
 `apps:storage:*` scope: such a manifest is refused at submit.
 
 ### When the token is the block-scoped one

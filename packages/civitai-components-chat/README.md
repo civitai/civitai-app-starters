@@ -38,8 +38,10 @@ orchestrator accepts no block token on any route, so every reply and every gener
 The chat works in a block only when the host hands it an OAuth access token instead; when and how
 it does is in `@civitai/sdk`'s README, under [`initialize()`](../civitai-sdk/README.md#initialize)
 and its [When the token is the block-scoped one](../civitai-sdk/README.md#when-the-token-is-the-block-scoped-one),
-and the manifest also asks for `ai:write:budgeted`. There is no host-proxied route for the chat: the block routes under
-`/api/v1/blocks/workflows/*` run workflows only, not the chat model or the MCP. And with an OAuth
+and the manifest also asks for `ai:write:budgeted`. Nothing proxies the endpoints this chat calls
+(the orchestrator's chat model and MCP). The block routes under `/api/v1/blocks/workflows/*` can
+run a `chat-completion` step, which keeps the block path's controls, but `<civitai-chat>` does not
+use them. And with an OAuth
 token the chat's generations go to the orchestrator directly, without the spend caps, maturity clamp
 and app attribution the block routes add (`@civitai/sdk`'s
 [`BREAKING.md`](../civitai-sdk/BREAKING.md#what-a-direct-orchestrator-call-loses)).

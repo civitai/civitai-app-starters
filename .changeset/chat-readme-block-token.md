@@ -11,7 +11,7 @@ default is the block-scoped one, which the orchestrator accepts on no route; `@c
 README says the same. So in a block with the default token every reply is refused.
 
 The README now says the chat needs an OAuth access token, links to `@civitai/sdk`'s README for when
-a block gets one, says there is no host-proxied route for the chat, and says its generations then
+a block gets one, says nothing proxies the chat's own endpoints (its model and MCP), and says its generations then
 skip the controls the block workflow routes add.
 
 Prose only, no behaviour change. A patch release because the README ships in the package.
