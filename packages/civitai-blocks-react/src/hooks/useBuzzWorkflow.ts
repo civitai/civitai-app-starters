@@ -472,8 +472,10 @@ export type WorkflowSubmitErrorCode = 'exception' | 'workflow-failed';
  *
  *   - **budget / spend-cap REJECTION** — a legitimate OUTCOME. The server quotes
  *     the price it refused to charge, so the snapshot carries a numeric
- *     `cost.total`. Blocks recover from it (open a top-up flow), so it MUST keep
- *     RESOLVING. Every such exit on the server attaches a cost: the per-call
+ *     `cost.total`, and the block can tell the viewer what was refused and why,
+ *     so it MUST keep RESOLVING. It is NOT a top-up cue: these are app and
+ *     platform caps, and buying Buzz raises none of them (see
+ *     {@link UseBuzzWorkflow.submit}). Every such exit on the server attaches a cost: the per-call
  *     `buzzBudget` gate, the per-user daily Buzz cap, the per-app aggregate and
  *     velocity caps, and the dev-tunnel session cap — on all three body kinds.
  *   - **caught server EXCEPTION** — `failureSnapshot(err)`, no `cost`, and the
@@ -523,8 +525,8 @@ export type WorkflowSubmitErrorCode = 'exception' | 'workflow-failed';
  *
  * 🔴 DO NOT "SIMPLIFY" THIS BY PUTTING `snapshot.error` BACK ON `message`, and do
  * not widen the guard to reject a budget rejection. The first re-opens #253; the
- * second breaks the top-up recovery flow, which is the one thing #251 says must
- * not break.
+ * second turns a priced, explainable refusal into an opaque exception, which is
+ * the one thing #251 says must not happen.
  */
 export class WorkflowSubmitError extends Error {
   /**
@@ -728,14 +730,25 @@ export interface UseBuzzWorkflow {
    * 🔴 A BUDGET / SPEND-CAP REJECTION STILL RESOLVES, and that is deliberate. It
    * is a documented outcome, not an error: the server quotes what it refused to
    * charge, so the resolved snapshot has `status === 'failed'` AND a numeric
-   * `cost.total`. THAT is the shape to branch on when offering a top-up —
-   * `useBuzzPurchase().openPurchaseModal()` — not a `catch`.
+   * `cost.total`. Branch on it to tell the viewer the run did not start.
    *
-   * 🔴 BUT A RESOLVED `'failed'` IS NOT ALWAYS AN AFFORDABILITY PROBLEM, so do not
-   * wire every one of them to a purchase modal. The per-app **velocity** limit,
-   * the per-app **aggregate daily** cap, a fail-closed "temporarily unavailable"
-   * deny and a **missing price quote** are all priced, resolving outcomes that
-   * buying Buzz cannot fix.
+   * 🔴 A RESOLVED `'failed'` IS NEVER A TOP-UP CUE — do not wire it to
+   * `useBuzzPurchase().openPurchaseModal()`. Every resolving refusal is a cap
+   * that buying Buzz does not raise: the per-call `buzzBudget`, the per-viewer
+   * daily and consent caps, the per-app **velocity** and **aggregate daily**
+   * caps, the dev-session cap, a fail-closed "temporarily unavailable" deny and a
+   * **missing price quote**.
+   *
+   * 🔴 THE CASE A TOP-UP DOES FIX — THE VIEWER IS ACTUALLY OUT OF BUZZ — REJECTS.
+   * The orchestrator refuses the run, the server throws, and the host answers
+   * with its cost-less `failureSnapshot(err)`, so this rejects with
+   * {@link WorkflowSubmitError} code **`'exception'`** — the same code as every
+   * other thrown submit (a bad request, an outage, a rate limit, an idempotency
+   * conflict). Nothing structural marks it as insufficient funds: the code is
+   * shared, and `snapshot.error` is the upstream message, server-authored prose
+   * that is not a contract. So decide a top-up from the BALANCE, not from the
+   * rejection: on `'exception'`, read {@link useBuzzBalance} and offer
+   * `openPurchaseModal()` only if the viewer cannot cover the quoted cost.
    *
    * 🔴 THIS ALSO INCLUDES MODERATOR REVIEW PREVIEW. While an app is under review
    * the host short-circuits every workflow request with
@@ -818,15 +831,17 @@ export interface UseBuzzWorkflow {
  *
  * 🔴 A BUDGET REFUSAL DOES **NOT** REJECT — IT RESOLVES. It comes back as a
  * snapshot with `status: 'failed'`, an `error` string and the `cost` the server
- * declined to charge, and THAT resolved shape is the cue to call
- * `useBuzzPurchase().openPurchaseModal()`. What DOES reject is a submit with no
- * usable outcome — see {@link WorkflowSubmitError}. Routing a rejection into a
- * top-up sells Buzz for a failure Buzz cannot fix.
+ * declined to charge. It is NOT a cue to call
+ * `useBuzzPurchase().openPurchaseModal()`: every resolving refusal is a cap
+ * buying Buzz does not raise (per-call budget, per-viewer daily and consent
+ * caps, per-app velocity and aggregate daily caps, the dev-session cap, a
+ * "temporarily unavailable" deny, a missing price quote).
  *
- * 🔴 NOR IS EVERY RESOLVED `'failed'` AN AFFORDABILITY PROBLEM. The per-app
- * velocity limit, the per-app aggregate daily cap, a fail-closed "temporarily
- * unavailable" deny and a missing price quote are all priced, resolving outcomes
- * too. Branch on the message/your own policy before offering to sell anything.
+ * 🔴 RUNNING OUT OF BUZZ REJECTS, and is not marked as such. The orchestrator's
+ * refusal reaches the block as {@link WorkflowSubmitError} code `'exception'`,
+ * shared with every other thrown submit. Offer a top-up only after checking
+ * {@link useBuzzBalance} against the quoted cost — see
+ * {@link UseBuzzWorkflow.submit}.
  *
  * AFTER `submit` FLIPS `status` TO `'polling'`, USE `watch(workflowId)`. It owns
  * the loop, resolves on the terminal snapshot, and pushes every intermediate
@@ -1066,10 +1081,11 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
       // `submit` half of civitai/civitai#4159). Two producers report
       // `status:'failed'` and `status` separates neither:
       //
-      //   - a budget / spend-cap REJECTION is an OUTCOME the block recovers from
-      //     (open a top-up flow). The server quotes the price it refused to
-      //     charge, so `cost.total` is present. It RESOLVES — turning this arm
-      //     into a throw is the one change that would break the recovery path.
+      //   - a budget / spend-cap REJECTION is an OUTCOME the block reports (the
+      //     run did not start, at this quoted price). The server quotes the price
+      //     it refused to charge, so `cost.total` is present. It RESOLVES —
+      //     turning this arm into a throw would erase that. (It is not a top-up
+      //     cue: buying Buzz raises none of these caps.)
       //   - a failure-shaped reply with NO `cost` is not a usable outcome. It
       //     REJECTS — and the `code` says which kind, because they differ on
       //     whether money moved (see WorkflowSubmitError.code).

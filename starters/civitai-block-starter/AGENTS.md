@@ -205,23 +205,51 @@ separate.
 - **Buzz-spending generation** — add `ai:write:budgeted` to `scopes`, then:
 
   ```ts
+  import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
+
   generateButton.addEventListener('click', async () => {
     generateButton.setAttribute('loading', '');
     try {
       if (!(await askConsent(app, ['ai:write:budgeted']))) return; // not granted: nothing was sent
       const idempotencyKey = crypto.randomUUID(); // once per generation, reused by any retry
-      const { snapshot } = await app.site.post<{ snapshot: unknown }>('blocks/workflows/submit', {
+      const { snapshot } = await app.site.post<{ snapshot: BlockWorkflowSnapshot }>('blocks/workflows/submit', {
         body: workflowBody, // the workflow: steps + their inputs
         idempotencyKey, // REQUIRED on this route — the request is refused without one
       });
-      console.log(snapshot); // render the workflow's progress here
+      // A REFUSAL IS AN HTTP 200, so it lands HERE, not in `catch`: `status: 'failed'`
+      // and the placeholder id 'failed' — there is no run to poll.
+      if (snapshot.status === 'failed') {
+        console.warn('submit refused:', snapshot.error); // server text: log it, never render it
+        showMessage('This generation could not start. Nothing was charged.');
+        return;
+      }
+      console.log(snapshot.workflowId); // a real run: poll it and render its progress here
     } catch (error) {
-      console.error(error); // and tell the viewer it failed
+      console.error(error); // a non-2xx: an ApiError with `status` and `body`
+      showMessage('Something went wrong. Please try again.');
     } finally {
       generateButton.removeAttribute('loading'); // reset on every outcome, a rejection included
     }
   });
   ```
+
+  (`showMessage` stands for your own UI.) What lands where:
+  - **Resolved, `status: 'failed'` — a refusal.** The route answers **200** with
+    `{ snapshot: { workflowId: 'failed', status: 'failed', cost: { total }, error } }`
+    for every cap it applies: the per-call budget, the viewer's daily and consent
+    caps, the app's velocity and daily caps, the dev-session cap, a "temporarily
+    unavailable" deny and a missing price quote. A training step with no price
+    quote is refused the same way but with **no `cost`**, so do not read
+    `cost.total` without checking it. `app.site.post` throws only on a non-2xx,
+    so without the `status` check a refusal looks like a started run.
+    `snapshot.error` is unsanitised server text — log it, show your own copy.
+    🔴 **Never offer a Buzz top-up here**: buying Buzz raises none of these caps.
+  - **Rejected — `catch`.** A non-2xx `ApiError`. This is where a viewer who is
+    genuinely **out of Buzz** lands (the orchestrator refuses the run; the route
+    answers 400), but so does any other bad request, with nothing structural to
+    tell them apart. If you want to offer a top-up (`app.host.openBuzzPurchase()`),
+    decide from the viewer's balance — `app.site.get('blocks/buzz')`, which needs
+    `buzz:read:self` — not from the rejection alone.
 
   🔴 Do **not** call `app.orchestration` from a block: a direct orchestrator call
   skips the per-call budget, the daily caps and attribution (the `@civitai/sdk`
@@ -229,10 +257,10 @@ separate.
   — for a model-slot app like this one that comes from the install's
   per-generation setting; for a page app, from `page.buzzBudgetPerGen`.
   - 🔴 **The per-gen budget is a SAFETY CEILING, not a cost estimate.** Set it to
-    several times your worst-case run. A submit priced above it is rejected
-    outright (`insufficient buzz budget`), nothing charged and nothing
-    delivered, and for a page app it stays broken until a new manifest version
-    is approved.
+    several times your worst-case run. A submit priced above it is refused — the
+    `status: 'failed'` snapshot above, with an `insufficient buzz budget` error —
+    nothing charged and nothing delivered, and for a page app it stays broken
+    until a new manifest version is approved.
   - The `buzz-workflow` example in the civitai-app-starters repo is a complete
     estimate → submit → poll flow, in React through the host bridge; this REST
     route forwards to the same server procedure.
