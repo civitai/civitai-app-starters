@@ -78,7 +78,7 @@ function renderStartError(root: HTMLElement): void {
   alert.dataset.blockError = '';
   // A fixed sentence, not the error's message: a message can carry host data,
   // and the details are in the console.
-  alert.textContent = 'This app could not start. Reload the page to try again.';
+  alert.textContent = 'Reload the page to try again.';
   const wrapper = document.createElement('div');
   wrapper.dataset.blockRoot = '';
   wrapper.append(alert);

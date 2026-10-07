@@ -179,8 +179,8 @@ describe('mountBlock over the real bridge', () => {
     await mounted;
     expect(field('viewer')?.textContent).toBe('anonymous');
     expect(field('slot')?.textContent).toBe('app.page');
-    // The model line is only for model slots: hidden, not removed (the view is
-    // updated in place, so a later context can show it again).
+    // The model line is only for model slots: hidden rather than removed,
+    // because `fill` only ever updates the view in place.
     expect(field('model')?.style.display).toBe('none');
   });
 
@@ -290,7 +290,8 @@ describe('a block that cannot start', () => {
     await vi.waitFor(() => expect(root.querySelector('[data-block-error]')).not.toBeNull());
     const alert = root.querySelector('[data-block-error]')!;
     expect(alert.getAttribute('role')).toBe('alert');
-    expect(alert.textContent).toContain('could not start');
+    expect(alert.getAttribute('heading')).toBe('This app could not start');
+    expect(alert.textContent).toBe('Reload the page to try again.');
     expect(root.querySelector('[data-boot-skeleton]')).toBeNull();
     expect(errors).toHaveBeenCalled();
     errors.mockRestore();

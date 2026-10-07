@@ -155,26 +155,62 @@ separate.
   routes through `app.site` and owns both of these itself:
   1. **Consent first.** `ai:write:budgeted` and `goods:purchase:self` are
      CONSENT-GATED: the token lacks them until the viewer grants them in the
-     host's dialog. Call `app.requestGrants([...])` before the call — it
-     resolves `true` at once when the token already holds the scopes, `false`
-     when consent cannot be granted here, and waits while the dialog is open, so
-     bound it with a `signal`. (`goods:read:self` is consent-exempt.)
+     host's dialog. Call `app.requestGrants([...])` before the call. It has
+     FOUR outcomes:
+     - resolves `true` — at once when the token already holds the scopes, or
+       when the viewer grants them;
+     - resolves `false` — the host says consent cannot be granted here;
+     - waits — while the dialog is open. A viewer who DISMISSES it sends
+       nothing, so without a `signal` it never settles;
+     - 🔴 **REJECTS** with the signal's `reason` when the `signal` aborts — so the
+       recommended `AbortSignal.timeout(60_000)` makes a dismissed dialog throw
+       a `TimeoutError` after 60 s (an already-aborted signal rejects at once).
+       Unhandled in a click handler, that is an unhandled rejection and any
+       "pending" UI never resets.
+
+     So: treat a `TimeoutError` / `AbortError` as "not granted", and reset
+     pending UI in a `finally`. The `askConsent` helper below does the first;
+     the snippets after it do the second. (`goods:read:self` is consent-exempt.)
   2. **One idempotency key per intent, reused on every retry.** Mint it BEFORE
      the first attempt and send the SAME value on any retry: a retry with a new
      key is a second reservation of the viewer's Buzz. The key must match
      `^[A-Za-z0-9_-]{1,64}$` — no colons; check one you compose yourself with
      `isValidBlockIdempotencyKey` from `@civitai/app-sdk/blocks`.
      `crypto.randomUUID()` conforms.
+  ```ts
+  import type { BlockAppClient, Scope } from '@civitai/sdk';
+
+  /** `true` only when the viewer holds `scopes`; a timed-out or aborted wait is "not granted". */
+  async function askConsent(app: BlockAppClient, scopes: Scope[]): Promise<boolean> {
+    try {
+      return await app.requestGrants(scopes, { signal: AbortSignal.timeout(60_000) });
+    } catch (error) {
+      // A dismissed dialog never answers, so the timeout fires and requestGrants REJECTS.
+      if (error instanceof DOMException && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+        return false;
+      }
+      throw error;
+    }
+  }
+  ```
 - **Buzz-spending generation** — add `ai:write:budgeted` to `scopes`, then:
 
   ```ts
-  if (!(await app.requestGrants(['ai:write:budgeted'], { signal: AbortSignal.timeout(60_000) }))) {
-    return; // the viewer did not grant it
-  }
-  const idempotencyKey = crypto.randomUUID(); // once per generation, reused by any retry
-  const { snapshot } = await app.site.post<{ snapshot: unknown }>('blocks/workflows/submit', {
-    body: workflowBody, // the workflow: steps + their inputs
-    idempotencyKey, // REQUIRED on this route — the request is refused without one
+  generateButton.addEventListener('click', async () => {
+    generateButton.setAttribute('loading', '');
+    try {
+      if (!(await askConsent(app, ['ai:write:budgeted']))) return; // not granted: nothing was sent
+      const idempotencyKey = crypto.randomUUID(); // once per generation, reused by any retry
+      const { snapshot } = await app.site.post<{ snapshot: unknown }>('blocks/workflows/submit', {
+        body: workflowBody, // the workflow: steps + their inputs
+        idempotencyKey, // REQUIRED on this route — the request is refused without one
+      });
+      console.log(snapshot); // render the workflow's progress here
+    } catch (error) {
+      console.error(error); // and tell the viewer it failed
+    } finally {
+      generateButton.removeAttribute('loading'); // reset on every outcome, a rejection included
+    }
   });
   ```
 
@@ -198,19 +234,25 @@ separate.
   whole Buzz, 2–50000, at most 32 goods per manifest. Then:
 
   ```ts
-  import type { Scope } from '@civitai/sdk';
-
   // `@civitai/sdk`'s Scope type does not list the goods scopes yet, hence the cast.
   const purchaseScope = 'goods:purchase:self' as Scope;
-  if (!(await app.requestGrants([purchaseScope], { signal: AbortSignal.timeout(60_000) }))) {
-    return;
-  }
-  const idempotencyKey = crypto.randomUUID(); // once per purchase, reused by any retry
-  const purchase = () =>
-    app.site.post('blocks/goods/purchase', { goodId: 'extra-slots', expectedPriceBuzz: 250, idempotencyKey });
-  await purchase(); // on a timeout, `await purchase()` again — same key, so it cannot charge twice
 
-  const { entitlements } = await app.site.get<{ entitlements: unknown[] }>('blocks/entitlements');
+  buyButton.addEventListener('click', async () => {
+    buyButton.setAttribute('loading', '');
+    try {
+      if (!(await askConsent(app, [purchaseScope]))) return; // not granted: nothing was charged
+      const idempotencyKey = crypto.randomUUID(); // once per purchase, reused by any retry
+      const purchase = () =>
+        app.site.post('blocks/goods/purchase', { goodId: 'extra-slots', expectedPriceBuzz: 250, idempotencyKey });
+      await purchase(); // on a timeout, `await purchase()` again — same key, so it cannot charge twice
+      const { entitlements } = await app.site.get<{ entitlements: unknown[] }>('blocks/entitlements');
+      console.log(entitlements); // show what the viewer now owns
+    } catch (error) {
+      console.error(error); // a refusal is an ApiError with `status` and `body`
+    } finally {
+      buyButton.removeAttribute('loading');
+    }
+  });
   ```
 
   - 🔴 **`id` is what an entitlement is keyed by.** Renaming it orphans every
