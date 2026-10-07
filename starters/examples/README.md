@@ -13,6 +13,7 @@ offline against the SDK's mock host, or against the real backend with
 | [`kv-storage`](./kv-storage) | per-block datastore | `useAppStorage` | storage scopes enforced locally, quota + per-value cap, anon handling |
 | [`scopes-api`](./scopes-api) | scopes + REST | `useBlockToken`, `useHostOrigin`, direct `fetch` | declared vs granted scopes, 401→refresh→retry |
 | [`buzz-purchase`](./buzz-purchase) | top-up | `useBuzzPurchase`, `useBuzzBalance`, `estimate` | a purchase raises the wallet, never the per-generation budget |
+| [`generation-kinds`](./generation-kinds) | other `WorkflowBody` kinds (page app) | `useBuzzWorkflow` with `customComfy` + `step`/`chat-completion`, `useWildcardPack`, `useRequestConsent` | both kinds page-only, `page.buzzBudgetPerGen` ≥ the recipe ceiling, chat text only on the poll; `training` not available to apps yet |
 
 ## What every example shares
 
