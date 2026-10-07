@@ -1,0 +1,30 @@
+{
+  "$schema": "https://civitai.com/schemas/app-block/v1.json",
+  "blockId": "favourites-board",
+  "version": "0.1.0",
+  "name": "Favourites Board",
+  "tagline": "Pin the Civitai models you keep coming back to, with a note on why.",
+  "category": "utility",
+  "type": "block",
+  "page": {
+    "path": "/",
+    "title": "Favourites Board"
+  },
+  "scopes": ["user:read:self", "apps:storage:read", "apps:storage:write"],
+  "scopeJustifications": {
+    "user:read:self": "Shows the signed-in viewer's own username at the top of their board. Asked for only when the viewer clicks \"Show my name\"; the board works without it.",
+    "apps:storage:read": "Loads the viewer's own board (the models they pinned and their notes) from this app's per-viewer store.",
+    "apps:storage:write": "Saves the viewer's board when they pin or remove a model, in this app's per-viewer store."
+  },
+  "bootSkeleton": true,
+  "iframe": {
+    "minHeight": 400,
+    "maxHeight": null,
+    "resizable": true,
+    "sandbox": "allow-scripts allow-forms"
+  },
+  "contentRating": "g",
+  "minApiVersion": "1.0",
+  "buildCommand": "npm run build",
+  "outputDir": "dist"
+}

@@ -8,7 +8,7 @@ Scaffold for a [Civitai App](https://github.com/civitai/civitai-app-starters/tre
 
 Prefer React? Scaffold with the Go [`civitai` CLI](https://github.com/civitai/cli)
 — `civitai app create <name>`, whose default `page-money` template is
-Vite + React + TS — or start from one of the six React examples in
+Vite + React + TS — or start from one of the React examples in
 [`starters/examples/`](https://github.com/civitai/civitai-app-starters/tree/main/starters/examples), which use the `@civitai/blocks-react` hooks.
 
 > This is **not** the same as the OAuth-app starters (`next-app`, `react-pwa`, …).

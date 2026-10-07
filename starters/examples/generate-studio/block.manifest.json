@@ -1,0 +1,30 @@
+{
+  "$schema": "https://civitai.com/schemas/app-block/v1.json",
+  "blockId": "generate-studio-demo",
+  "version": "0.1.0",
+  "name": "Generate Studio Demo",
+  "tagline": "Text-to-image and image-to-image with your own checkpoint and LoRAs.",
+  "type": "block",
+  "scopes": ["ai:write:budgeted", "buzz:read:self"],
+  "scopeJustifications": {
+    "ai:write:budgeted": "Runs the text-to-image and image-to-image generations the viewer starts, spending their Buzz up to this app's per-generation limit; also lists, cancels and (after a confirm) publishes the generations this app made for them.",
+    "buzz:read:self": "Reads the viewer's Buzz balance to tell them before spending whether they can afford a generation, and how much to top up if not."
+  },
+  "page": {
+    "path": "/",
+    "title": "Generate Studio",
+    "icon": "photo",
+    "buzzBudgetPerGen": 1000
+  },
+  "bootSkeleton": true,
+  "iframe": {
+    "minHeight": 600,
+    "maxHeight": 4000,
+    "resizable": true,
+    "sandbox": "allow-scripts allow-forms"
+  },
+  "contentRating": "pg",
+  "minApiVersion": "1.0",
+  "buildCommand": "npm run build",
+  "outputDir": "dist"
+}

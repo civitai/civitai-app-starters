@@ -9,7 +9,7 @@ If you (the AI agent) were pointed here to scaffold a new Civitai app for your u
 | Use this when… | Starter |
 |---|---|
 | Building a **Civitai App** — iframe-embedded UI that renders inside a civitai.com page slot | `starters/civitai-block-starter` — web components (`@civitai/sdk` + the `<civitai-*>` elements from `@civitai/components`), no UI framework |
-| Same, and the team wants React | The Go [`civitai` CLI](https://github.com/civitai/cli): `civitai app create <name>` scaffolds from its own embedded templates (`internal/scaffold/templates/`: `page-money` — the default, Vite + React + TS — `page-vite`, `static`), not from this repo. Or copy one of the six React `starters/examples/*`. A CLI template mirroring `civitai-block-starter` is in progress in a separate PR. |
+| Same, and the team wants React | The Go [`civitai` CLI](https://github.com/civitai/cli): `civitai app create <name>` scaffolds from its own embedded templates (`internal/scaffold/templates/`: `page-money` — the default, Vite + React + TS — `page-vite`, `static`), not from this repo. Or copy one of the React `starters/examples/*`. A CLI template mirroring `civitai-block-starter` is in progress in a separate PR. |
 | App needs SEO / public-discoverable pages — gallery, landing, marketplace | `starters/next-app` (default for standalone apps) |
 | App needs SEO and the team prefers Svelte | `starters/sveltekit-app` |
 | App is a tool, mini-game, focused gen UI, in-app extension — no SEO required | `starters/react-pwa` |
@@ -99,7 +99,7 @@ civitai-app-starters/
     ├── react-pwa/               # Vite + React 19 (SPA + Hono BFF)
     ├── svelte-pwa/              # Vite + Svelte 5 (SPA + Hono BFF)
     ├── civitai-block-starter/   # Civitai App: web components, no UI framework
-    └── examples/                # six single-feature Civitai App examples (React)
+    └── examples/                # single-feature Civitai App examples (React)
 ```
 
 ## Releasing a new SDK version

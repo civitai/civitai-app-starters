@@ -312,11 +312,12 @@ test('every starter that ships a block.manifest.json satisfies the coupling', ()
  */
 const THEMED_APPS = [
   { label: 'civitai-block-starter', dir: BLOCK_STARTER, sync: 'sdk' },
-  ...['hello-world', 'settings', 'buzz-workflow', 'kv-storage', 'scopes-api', 'buzz-purchase'].map((name) => ({
+  ...['hello-world', 'settings', 'buzz-workflow', 'kv-storage', 'scopes-api', 'buzz-purchase', 'page-app'].map((name) => ({
     label: `examples/${name}`,
     dir: join(STARTERS, 'examples', name),
     sync: 'react',
   })),
+  { label: 'examples/generate-studio', dir: join(STARTERS, 'examples', 'generate-studio') },
 ];
 
 for (const { label, dir, sync } of THEMED_APPS) {

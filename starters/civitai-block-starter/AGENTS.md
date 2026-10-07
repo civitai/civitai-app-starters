@@ -16,7 +16,7 @@ npm dependencies. Help them extend it.
 If they want **React** instead, don't add it here. Point them at the Go
 [`civitai` CLI](https://github.com/civitai/cli)'s React template
 (`civitai app create <name>` — its default template, `page-money`, is
-Vite + React + TS) or at the six React examples under
+Vite + React + TS) or at the React examples under
 `starters/examples/*` in the civitai-app-starters repo, which use the
 `@civitai/blocks-react` hooks.
 

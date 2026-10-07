@@ -27,7 +27,7 @@ Starter templates for building on [Civitai](https://civitai.com), plus the share
 - **`starters/react-pwa`** — Vite + React 19 + tiny Hono BFF for OAuth token exchange. SPA/PWA shape.
 - **`starters/svelte-pwa`** — Vite + bare Svelte 5 (no Kit) + tiny Hono BFF. SPA/PWA shape.
 - **`starters/civitai-block-starter`** — Vite + TypeScript Civitai App scaffold built on web components (`@civitai/sdk` + `@civitai/components`, no UI framework).
-- **`starters/examples/*`** — six minimal, runnable Civitai App examples, one per feature (see [Civitai Apps](#civitai-apps)).
+- **`starters/examples/*`** — eleven minimal, runnable Civitai App examples, one per feature (see [Civitai Apps](#civitai-apps)).
 
 The four OAuth starters ship the **same minimal demo:** log in via Civitai OAuth → show your Buzz balance (read with `fetchBuzzAccount()` — **not** from `/api/v1/me`, which returns none; hidden entirely when `BuzzRead` was not granted) → preview cost of a generation (`whatif`) → submit one image generation → display the result.
 
@@ -90,7 +90,7 @@ npx tiged civitai/civitai-app-starters/starters/civitai-block-starter my-block
 ```
 
 Prefer React? The Go `civitai` CLI's `civitai app create <name>` scaffolds a
-Vite + React + TS app from its `page-money` template, and the six examples below
+Vite + React + TS app from its `page-money` template, and the examples below
 are React too.
 
 ### Packages
@@ -105,7 +105,7 @@ are React too.
 
 ### Examples
 
-Six minimal, runnable blocks under [`starters/examples/`](./starters/examples) —
+Eleven minimal, runnable blocks under [`starters/examples/`](./starters/examples) —
 one per feature, each with its own README. They are written in React with
 `@civitai/blocks-react`. Each runs offline against the SDK's mock host
 (`dev:harness`), or against the real backend (`dev:live`).
@@ -118,6 +118,11 @@ one per feature, each with its own README. They are written in React with
 | [`kv-storage`](./starters/examples/kv-storage) | `useAppStorage` get/set/delete/list/getQuota |
 | [`scopes-api`](./starters/examples/scopes-api) | declaring scopes + calling scope-gated REST with the BLOCK_INIT token |
 | [`buzz-purchase`](./starters/examples/buzz-purchase) | `useBuzzPurchase` + `useBuzzBalance`: top up a short wallet (a purchase never lifts the per-generation budget) |
+| [`shared-board`](./starters/examples/shared-board) | `useSharedStorage` cross-viewer board beside per-user `useAppStorage` (flag + approval gated) |
+| [`page-app`](./starters/examples/page-app) | the full-page app shape: manifest `page`, `useBlockBreakpoint`, sign-in/consent, navigation, `BlockGate` |
+| [`generate-studio`](./starters/examples/generate-studio) | page-app generation: checkpoint/LoRA pickers, txt2img + img2img, app queue, gated outputs, publish |
+| [`generation-kinds`](./starters/examples/generation-kinds) | the other `WorkflowBody` kinds: `customComfy` recipes and `step` chat-completion, plus `useWildcardPack` |
+| [`monetize`](./starters/examples/monetize) | earning: manifest `goods` + `useGoodPurchase`/`useEntitlements`, and tips |
 
 ### The dev → submit → review → deploy lifecycle
 
@@ -126,7 +131,7 @@ Devs never touch git hosting. The path is:
 1. **Auth + Build** — `civitai login` once, scaffold with `civitai app create`
    (or copy `starters/civitai-block-starter`), iterate locally with
    `npm run dev:harness` (mock host) — plus `npm run dev:live` (live host) where
-   the project has it: the CLI's `page-money` template and the six examples do,
+   the project has it: the CLI's `page-money` template and the examples do,
    `civitai-block-starter` does not yet — and `vite build` to a static `dist/`.
    Validate the manifest any time with `civitai app validate`.
 2. **Submit** — `civitai app submit` validates, packages your project
