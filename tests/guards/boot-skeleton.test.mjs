@@ -306,6 +306,7 @@ const THEMED_APPS = [
     label: `examples/${name}`,
     dir: join(STARTERS, 'examples', name),
   })),
+  { label: 'examples/generate-studio', dir: join(STARTERS, 'examples', 'generate-studio') },
 ];
 
 for (const { label, dir } of THEMED_APPS) {

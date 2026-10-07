@@ -1,6 +1,6 @@
 # Civitai App examples
 
-Six minimal, runnable Civitai App examples — one per feature area. Each is
+Eleven minimal, runnable Civitai App examples — one per feature area. Each is
 self-contained (its own `block.manifest.json`, `src/`, and README) and runs
 offline against the SDK's mock host, or against the real backend with
 `dev:live`.
@@ -17,6 +17,7 @@ offline against the SDK's mock host, or against the real backend with
 | [`generation-kinds`](./generation-kinds) | other `WorkflowBody` kinds (page app) | `useBuzzWorkflow` with `customComfy` + `step`/`chat-completion`, `useWildcardPack`, `useRequestConsent` | both kinds page-only, `page.buzzBudgetPerGen` ≥ the recipe ceiling, chat text only on the poll; `training` not available to apps yet |
 | [`monetize`](./monetize) | earning: goods + tips | `useGoodPurchase`, `useEntitlements`, `useTip`, `useTipAllowance`, `TipButton` | entitlement gate order, one key per purchase, which rails pay nothing today |
 | [`page-app`](./page-app) | full-page app | manifest `page`, `useBlockBreakpoint`, `useCivitaiRoute`/`useCivitaiNavigate`, `useRequestSignIn`/`useRequestConsent`/`useConsentUnavailable`, `useViewer`, `useHostOrigin` | page frame ignores resize; consent-gated `user:read:self`; mock `NAVIGATE` gap |
+| [`generate-studio`](./generate-studio) | page-app generation (txt2img + img2img) | `useCheckpointPicker`, `useResourcePicker`, `useGenerationResources`, `useImageUpload`, `useBuzzWorkflow` (`watch`/`cancel`), `useAppWorkflows`, `usePublishGenerationOutputs`, `useGatedImages`, `useDomainMaturity`/`SfwGate`, `useSaveImage` | `page.buzzBudgetPerGen`, page-only LoRAs/source images, unrated ≠ "G", post creation is dark |
 
 ## What every example shares
 

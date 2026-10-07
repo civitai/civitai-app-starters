@@ -52,8 +52,8 @@ const REPO_ROOT = join(HERE, '..');
 const EXAMPLES_DIR = join(REPO_ROOT, 'starters', 'examples');
 const CLI = process.env.CIVITAI_BIN || 'civitai';
 
-/** Six examples exist. A drop means one left the scan; lower this in the same commit. */
-const MIN_EXAMPLES = 6;
+/** Eleven examples exist. A drop means one left the scan; lower this in the same commit. */
+const MIN_EXAMPLES = 11;
 
 /**
  * Warnings that are known, understood and NOT a defect in the example.

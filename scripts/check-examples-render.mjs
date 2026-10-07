@@ -57,8 +57,8 @@ const EXAMPLES_DIR = process.env.EXAMPLES_DIR || join(REPO_ROOT, 'starters', 'ex
 // Playwright is a devDependency of the browser-tested package, not of the root.
 const { chromium } = createRequire(join(REPO_ROOT, 'packages/civitai-blocks-react/package.json'))('playwright');
 
-/** Six examples exist. A drop means one left the scan; lower this in the same commit. */
-const MIN_EXAMPLES = 6;
+/** Eleven examples exist. A drop means one left the scan; lower this in the same commit. */
+const MIN_EXAMPLES = 11;
 
 const args = process.argv.slice(2);
 const argValue = (flag) => {

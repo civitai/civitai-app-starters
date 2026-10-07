@@ -26,7 +26,7 @@ Starter templates for building on [Civitai](https://civitai.com), plus the share
 - **`starters/react-pwa`** — Vite + React 19 + tiny Hono BFF for OAuth token exchange. SPA/PWA shape.
 - **`starters/svelte-pwa`** — Vite + bare Svelte 5 (no Kit) + tiny Hono BFF. SPA/PWA shape.
 - **`starters/civitai-block-starter`** — Vite + React 19 Civitai App scaffold.
-- **`starters/examples/*`** — six minimal, runnable Civitai App examples, one per feature (see [Civitai Apps](#civitai-apps)).
+- **`starters/examples/*`** — eleven minimal, runnable Civitai App examples, one per feature (see [Civitai Apps](#civitai-apps)).
 
 The four OAuth starters ship the **same minimal demo:** log in via Civitai OAuth → show your Buzz balance (read with `fetchBuzzAccount()` — **not** from `/api/v1/me`, which returns none; hidden entirely when `BuzzRead` was not granted) → preview cost of a generation (`whatif`) → submit one image generation → display the result.
 
@@ -88,7 +88,7 @@ than a full app: a single static SPA, no OAuth dance, no BFF.
 
 ### Examples (start here)
 
-Six minimal, runnable blocks under [`starters/examples/`](./starters/examples) —
+Eleven minimal, runnable blocks under [`starters/examples/`](./starters/examples) —
 one per feature, each with its own README. Each runs offline against the SDK's
 mock host (`dev:harness`), or against the real backend (`dev:live`).
 
@@ -100,6 +100,11 @@ mock host (`dev:harness`), or against the real backend (`dev:live`).
 | [`kv-storage`](./starters/examples/kv-storage) | `useAppStorage` get/set/delete/list/getQuota |
 | [`scopes-api`](./starters/examples/scopes-api) | declaring scopes + calling scope-gated REST with the BLOCK_INIT token |
 | [`buzz-purchase`](./starters/examples/buzz-purchase) | `useBuzzPurchase` + `useBuzzBalance`: top up a short wallet (a purchase never lifts the per-generation budget) |
+| [`shared-board`](./starters/examples/shared-board) | `useSharedStorage` cross-viewer board beside per-user `useAppStorage` (flag + approval gated) |
+| [`page-app`](./starters/examples/page-app) | the full-page app shape: manifest `page`, `useBlockBreakpoint`, sign-in/consent, navigation, `BlockGate` |
+| [`generate-studio`](./starters/examples/generate-studio) | page-app generation: checkpoint/LoRA pickers, txt2img + img2img, app queue, gated outputs, publish |
+| [`generation-kinds`](./starters/examples/generation-kinds) | the other `WorkflowBody` kinds: `customComfy` recipes and `step` chat-completion, plus `useWildcardPack` |
+| [`monetize`](./starters/examples/monetize) | earning: manifest `goods` + `useGoodPurchase`/`useEntitlements`, and tips |
 
 ### The dev → submit → review → deploy lifecycle
 
