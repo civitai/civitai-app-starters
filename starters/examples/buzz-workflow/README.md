@@ -8,6 +8,7 @@ viewer's Buzz, host-mediated. This is the example to copy for any generation UI.
 | Concept | Where |
 |---|---|
 | `useBuzzWorkflow()` — estimate / submit / poll | `src/App.tsx` |
+| Branching on `WorkflowEstimateError.code` when there is no price | `estimateFailureMessage()` |
 | **GOTCHA #59** — estimate params must mirror submit (esp. the seed) | `buildBody()` |
 | **GOTCHA #8/#9/#10** — status semantics + caller-driven polling | `src/App.tsx` |
 | **GOTCHA #19** — round dimensions to /64 | `round64()` |
@@ -36,11 +37,12 @@ sets `page.buzzBudgetPerGen` in the manifest instead.
 
 🔴 **A budget refusal does NOT reject — it RESOLVES**, as a snapshot with
 `status: 'failed'`, an `error` string, and the `cost` the server declined to
-charge. That resolved shape is your cue to call
-`useBuzzPurchase().openPurchaseModal()` — see the `buzz-purchase` example. Note
-that affordability is only *some* of the priced refusals: the per-app velocity
-limit, the per-app aggregate daily cap, a transient "unavailable" deny and a
-missing price quote all resolve the same way and buying Buzz fixes none of them.
+charge. The per-generation budget gate, the per-user daily cap, the per-app
+velocity and aggregate daily caps, a transient "unavailable" deny and a missing
+price quote all resolve this way — and **buying Buzz fixes none of them**: a
+purchase raises the viewer's wallet, while every one of these is a limit. A
+wallet too small to pay is a different outcome; the `buzz-purchase` example
+shows how to tell the two apart.
 
 What DOES reject (since `@civitai/blocks-react@0.44.0`) is a failure-shaped reply
 with **no `cost`** — `cost` presence is the discriminator, since `status` is
@@ -52,6 +54,20 @@ conflict also lands there, so retry with the SAME `idempotencyKey`);
 committed** — poll `err.snapshot.workflowId` rather than retrying blindly, after
 checking it is not the `'whatif'` non-workflow sentinel (there is nothing behind
 that one to poll). See civitai/civitai-app-starters#251.
+
+## When the estimate has no price
+
+Since `@civitai/blocks-react@0.43.0`, an unusable estimate **rejects** with a
+`WorkflowEstimateError`, and its `code` is the only stable thing to branch on:
+
+- `'failed'` — the estimate did not succeed; usually the server refused this
+  configuration. Its reason is on `err.snapshot.error` — **log it, never render
+  it** (server-authored, unsanitised).
+- `'no-cost'` — the reply succeeded but carried no price.
+- not a `WorkflowEstimateError` at all — the request itself did not complete.
+
+`estimateFailureMessage()` maps each to copy the app owns. Don't match on
+`err.message` either: it is developer-facing and its wording is not a contract.
 
 ## GOTCHA #59 — the estimate must match submit exactly
 
@@ -107,13 +123,16 @@ workflow already finished it rejects, but the card is cleared regardless.
 ## Run it
 
 ```bash
-cp .env.example .env
 npm install           # inside this monorepo: pnpm install, at the root
 npm run dev:harness   # → http://localhost:5182
 ```
 
-The harness mocks the orchestrator: it prices a seed it has already "generated"
-at 0 (cache hit) and a fresh seed at 120 Buzz, so you can watch the CTA go from
-`free (cache hit)` on the first Generate to `120 Buzz` on the re-gen — exactly
-the #59 behavior. See the [root README](../../../README.md) for submit → review →
+The SDK mock host runs the whole estimate → submit → poll loop with no Buzz.
+`src/Harness.tsx` prices a request that carries a fixed seed at 0 (a cache hit)
+and one without at 120 Buzz, so the CTA goes from `free (cache hit)` on the
+first Generate to `120 Buzz` on the re-gen — the #59 behaviour. (The real
+orchestrator decides cache hits by the whole workflow, not the seed alone.)
+
+`npm run dev:live` runs it against the real backend and **spends your own
+Buzz** — see [the examples README](../README.md#against-the-real-backend-devlive). See the [root README](../../../README.md) for submit → review →
 deploy.

@@ -51,6 +51,7 @@
       "default": "Euler"
     }
   },
+  "bootSkeleton": true,
   "iframe": {
     "minHeight": 320,
     "maxHeight": 800,

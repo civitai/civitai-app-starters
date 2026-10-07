@@ -118,7 +118,10 @@ const ERRORS_MODULE = 'packages/civitai-app-sdk/src/blocks/appStorageErrors.ts';
  */
 const MOCKS = [
   { file: 'packages/civitai-blocks-react/src/internal/mockHost.ts', rejections: 5 },
-  { file: 'starters/examples/kv-storage/src/Harness.tsx', rejections: 1 },
+  // `starters/examples/kv-storage/src/Harness.tsx` left this ledger when it
+  // stopped hand-rolling a KV store and mounted the SDK's `Harness` (i.e. the
+  // mockHost.ts above) instead. If an example ever answers APP_STORAGE_* itself
+  // again, the completeness walk below names it.
 ];
 
 /**

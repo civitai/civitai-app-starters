@@ -560,6 +560,17 @@ jobs:
         env:
           EXPECTED_CLI_VERSION: ${{ env.CIVITAI_CLI_VERSION }}
 
+      # BEHAVIOUR, not compilation: boot each example under `dev:harness` in
+      # headless Chromium and check it renders past "Loading…", logs no error,
+      # and PAINTS the host's theme (dark under a light OS was white until the
+      # examples went dark-first). ~15s for 6 examples x 3 scenarios locally.
+      # timeout-minutes on the install for the apt-get wedge documented on the
+      # `blocks-react` job's identical step.
+      - run: pnpm --filter @civitai/blocks-react exec playwright install --with-deps chromium
+        timeout-minutes: 15
+      - run: pnpm check:examples-render
+        timeout-minutes: 5
+
   # What the TARBALLS contain, as opposed to what the tests import. Every job
   # above resolves `src/` or the workspace link; none of them has ever looked at
   # the artifact npm actually receives, which is how all five packages came to

@@ -10,7 +10,9 @@ The smallest complete Civitai App. Read this first.
 | The `ready` gate (fields are sentinel-empty before BLOCK_INIT) | `src/App.tsx` |
 | `useBlockResize(ref)` — host fits the iframe to content | `src/App.tsx` |
 | The host **trust frame** (drawn by civitai.com around the iframe) | conceptual — see below |
-| **GOTCHA #60** — the block sets `data-theme` on its own root | `src/App.tsx` + `src/index.css` |
+| **GOTCHA #60** — the block themes itself, dark first | `index.html` + `src/App.tsx` |
+| `/ui` components (`Card`, `Stack`) on the `--civitai-*` tokens | `src/App.tsx`, `src/main.tsx` |
+| `<BlockGate>` for a direct, unembedded load | `src/main.tsx` |
 
 ## The lifecycle
 
@@ -25,36 +27,40 @@ The smallest complete Civitai App. Read this first.
 3. `useBlockContext()` flips `ready` true and your UI renders.
 4. `useBlockResize` posts `RESIZE_IFRAME` so the host sizes the iframe to fit.
 
-## GOTCHA #60 — theming is the block's job
+## GOTCHA #60 — theming is the block's job, and it starts dark
 
-The host hands you `theme` (`'light' | 'dark'`) in `BLOCK_INIT`, but it **cannot
-set `data-theme` inside your iframe** — that's a cross-document boundary. So:
+The host hands you `theme` (`'light' | 'dark'`), but it **cannot set anything
+inside your iframe** — that's a cross-document boundary. civitai.com is dark,
+and the block must not let the viewer's OS decide otherwise, so:
 
-- Inline-style anything you can: `color: theme === 'dark' ? '#e6e6e6' : '#1a1a1a'`.
-- For what you *can't* inline-style — `::before`/`::after` pseudo-elements,
-  `:hover`/`:focus` states — set `data-theme={theme}` on your root element and
-  key the CSS off `[data-theme='dark'] …` (see `src/index.css`).
+1. `index.html` declares `<meta name="color-scheme" content="dark light">`,
+   paints a dark page in an inline `<style>`, and an inline script reads the
+   host's `#civitai-block=v1&theme=…` URL fragment **before first paint**, so a
+   light host is light from the first frame.
+2. `src/App.tsx` sets `document.documentElement.dataset.theme` from
+   `BLOCK_INIT` and again on every live `THEME_CHANGE` — but only once `ready`,
+   because before `BLOCK_INIT` the value is a placeholder.
+3. The `/ui` components and the `--civitai-*` tokens key off that attribute:
+   dark by default, light under `[data-theme='light']`. No hex colours of your
+   own needed.
 
-If you forget, every `[data-theme=…]` rule is silently dormant and the block
-ignores the host's theme. It does not simply stay light: `src/index.css` sets
-`color-scheme: light dark`, so the browser's own defaults follow the viewer's
-**OS** colour scheme — which need not match the host page, in either direction.
+What this replaces: `color-scheme: light dark` on a transparent page, which
+painted a **white** block on a light-OS viewer while civitai.com was dark.
 
 ## Run it locally
 
 ```bash
-cp .env.example .env
 npm install           # inside this monorepo: pnpm install, at the root
 npm run dev:harness   # → http://localhost:5180 with a mock host
 ```
 
-The harness (`src/Harness.tsx`) simulates the host: it posts a fake
-`BLOCK_INIT` (here with `theme: 'dark'` so you can see #60 working), intercepts
-your outbound messages into a debug log, and echoes token refreshes.
+`src/Harness.tsx` mounts the SDK's mock host (`Harness` from
+`@civitai/blocks-react/testing`): it posts `BLOCK_INIT`, answers the block's
+requests, and logs the outbound messages in a corner badge. Add `?theme=light`
+to the URL for the light theme, `?viewer=anon` for an anonymous viewer.
 
-> The harness pins the parent origin to `http://localhost:5180` and so does
-> `.env`. They must match (gotcha #53) or `BLOCK_INIT` is origin-rejected and
-> the block hangs on "Loading…".
+`npm run dev:live` runs the same block against the real backend — see
+[the examples README](../README.md#against-the-real-backend-devlive).
 
 ## Build + ship
 

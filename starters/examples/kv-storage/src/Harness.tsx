@@ -1,246 +1,69 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
-import {
-  APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED,
-  APP_STORAGE_ERROR_USER_ROW_LIMIT,
-  APP_STORAGE_ERROR_VALUE_TOO_LARGE,
-  APP_STORAGE_MAX_BYTES,
-  APP_STORAGE_MAX_ROWS,
-  APP_STORAGE_MAX_VALUE_BYTES,
-  type BlockInitPayload,
-  type ModelSlotContext,
-} from '@civitai/app-sdk/blocks';
+import { getTransport } from '@civitai/blocks-react';
+import { Harness as MockHost } from '@civitai/blocks-react/testing';
+// 🔴 `/live` is the REAL backend: a submit there spends your own Buzz. It has its
+// own subpath (never `/testing`) so the import line itself says so.
+import { createLiveHost } from '@civitai/blocks-react/live';
+import type { ModelSlotContext } from '@civitai/app-sdk/blocks';
 
-const DEV_TOKEN = 'dev.harness.mock.jwt.NOT.A.REAL.RS256';
-const DEV_INSTANCE_ID = 'bki_dev_kv_storage';
-const DEV_BLOCK_ID = 'kv-storage-demo';
-const DEV_APP_ID = 'app_dev';
+import manifest from '../block.manifest.json' with { type: 'json' };
 
 /**
- * Local dev harness. Civitai Apps normally mount inside an iframe the civitai.com
- * host controls; locally there's no host. `pnpm dev:harness` wraps the block in
- * this component, which:
+ * Dev-only host for `npm run dev:harness` (mock) and `npm run dev:live` (real
+ * backend). Never mounted in a production build — see src/main.tsx.
  *
- *  1. Intercepts `window.parent.postMessage` so the block's outbound messages
- *     (BLOCK_READY, RESIZE_IFRAME, REQUEST_TOKEN, …) land in a debug log.
- *  2. Echoes the host replies the block depends on (here: TOKEN_REFRESH_RESPONSE).
- *  3. Dispatches a fake BLOCK_INIT from the configured allowed-parent origin.
- *
- * GOTCHA #53: the IframeTransport drops any postMessage whose origin isn't in
- * `VITE_BLOCK_ALLOWED_PARENT_ORIGINS`. The harness fires BLOCK_INIT from
- * `window.location.origin`, so serve on the pinned origin
- * (`vite --host localhost --port 5180`, which `pnpm dev:harness` does) and set
- * `.env` to match, or BLOCK_INIT is origin-rejected and the block hangs on
- * "Loading…".
- *
- * The mock token is NOT a real RS256 JWT — orchestrator/API calls that verify
- * it will fail. The harness is for UI iteration, not integration testing.
+ * Both hosts post their replies from this page's own origin, and the SDK
+ * transport drops messages from any origin it was not told to trust. So the
+ * transport is created HERE, before any hook runs, with this origin allowed
+ * (gotcha #53) — no `.env` value has to match a port.
  */
+export function installDevTransport() {
+  getTransport({ allowedParentOrigins: [window.location.origin] });
+}
+
+/**
+ * What the host sends a block in the `model.sidebar_top` slot. Placeholder ids:
+ * for `dev:live`, put a real model's ids here.
+ */
+const MODEL_SLOT: ModelSlotContext = {
+  slotId: 'model.sidebar_top',
+  modelId: 12345,
+  modelVersionId: 67890,
+  modelName: 'Dev Mock Model',
+  modelType: 'Checkpoint',
+  modelNsfwLevel: 1,
+};
+
 export function Harness({ children }: { children: ReactNode }) {
-  const [outbound, setOutbound] = useState<Array<{ type: string; payload?: unknown }>>([]);
-  const [parentOrigin] = useState(() => window.location.origin);
-  const tokenSerialRef = useRef(0);
-
-  useEffect(() => {
-    const originalParent = window.parent;
-
-    const dispatchToBlock = (data: unknown) => {
-      window.dispatchEvent(new MessageEvent('message', { data, origin: parentOrigin }));
-    };
-
-    const nextToken = () => {
-      tokenSerialRef.current += 1;
-      return {
-        raw: `${DEV_TOKEN}.${tokenSerialRef.current}`,
-        // Mirrors block.manifest.json. The harness does not ENFORCE storage
-        // scopes (the host does) — this only keeps the token honest.
-        scopes: ['models:read:self', 'apps:storage:read', 'apps:storage:write'],
-        expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
-      };
-    };
-
-    // In-memory store mocking the host's per-(instance, viewer) KV datastore.
-    const store = new Map<string, { value: unknown; updatedAt: string; bytes: number }>();
-    // 🔴 THE CEILINGS COME FROM THE SDK, NEVER RE-TYPED. Hand-copied literals
-    // here were 25x too large on bytes and 1000x on rows — the app-wide
-    // umbrella instead of the per-(app, viewer) clamp the host enforces — so a
-    // block that blew the real budget ran perfectly in this harness.
-    const PER_VALUE_CAP = APP_STORAGE_MAX_VALUE_BYTES;
-    const QUOTA_BYTES = APP_STORAGE_MAX_BYTES;
-    const QUOTA_ROWS = APP_STORAGE_MAX_ROWS;
-    const usedBytes = () => [...store.values()].reduce((n, e) => n + e.bytes, 0);
-
-    const parentMock = {
-      postMessage: (msg: unknown) => {
-        if (typeof msg !== 'object' || msg === null || typeof (msg as { type?: unknown }).type !== 'string') {
-          return;
-        }
-        const typed = msg as {
-          type: string;
-          payload?: { requestId?: string; key?: string; value?: unknown; prefix?: string };
-        };
-        setOutbound((prev) => [...prev, { type: typed.type, payload: typed.payload }]);
-        const requestId = typed.payload?.requestId;
-
-        if (typed.type === 'REQUEST_TOKEN') {
-          dispatchToBlock({
-            type: 'TOKEN_REFRESH_RESPONSE',
-            payload: { ...(requestId ? { requestId } : {}), token: nextToken() },
-          });
-        }
-
-        if (typed.type === 'APP_STORAGE_GET') {
-          const entry = store.get(typed.payload?.key ?? '');
-          dispatchToBlock({
-            type: 'APP_STORAGE_GET_RESULT',
-            payload: { requestId, value: entry ? entry.value : null },
-          });
-        }
-
-        if (typed.type === 'APP_STORAGE_SET') {
-          const key = typed.payload?.key ?? '';
-          const bytes = new TextEncoder().encode(JSON.stringify(typed.payload?.value ?? null)).length;
-          // The ROW gate is `isInsert`-guarded (`!store.has(key)`), mirroring
-          // the host: a store sitting AT the ceiling must still accept an
-          // overwrite, or an app with no delete affordance would be stuck with
-          // no way back under the cap. It used to be missing entirely — the
-          // row limit was reported by getQuota and enforced by nothing.
-          //
-          // ⚠️ The BYTE gate is NOT the host's shape: the host exempts a write
-          // whose stored bytes do not increase, and this one does not (nor
-          // does it subtract the bytes of the row being replaced). Tracked as
-          // civitai/civitai-app-starters#345.
-          //
-          // 🔴 THE REJECTION STRINGS ARE THE HOST'S OWN, IMPORTED, NEVER TYPED
-          // HERE. The wire carries the TRPCError's *message*, not its code, so
-          // the `PAYLOAD_TOO_LARGE` this used to send was a string production
-          // can never produce — and `App.tsx`'s error branch matched it and
-          // nothing else, so the useful copy was unreachable live while
-          // passing every local run (#343). Which gate tripped now selects the
-          // message the host would send for that gate.
-          const wouldInsert = !store.has(key);
-          const rejection =
-            bytes > PER_VALUE_CAP
-              ? APP_STORAGE_ERROR_VALUE_TOO_LARGE
-              : usedBytes() + bytes > QUOTA_BYTES
-                ? APP_STORAGE_ERROR_USER_QUOTA_EXCEEDED
-                : wouldInsert && store.size + 1 > QUOTA_ROWS
-                  ? APP_STORAGE_ERROR_USER_ROW_LIMIT
-                  : null;
-          if (rejection) {
-            dispatchToBlock({
-              type: 'APP_STORAGE_SET_RESULT',
-              payload: { requestId, ok: false, error: rejection },
-            });
-          } else {
-            store.set(key, { value: typed.payload?.value, updatedAt: new Date().toISOString(), bytes });
-            dispatchToBlock({
-              type: 'APP_STORAGE_SET_RESULT',
-              payload: { requestId, ok: true, sizeBytes: bytes },
-            });
-          }
-        }
-
-        if (typed.type === 'APP_STORAGE_DELETE') {
-          const deleted = store.delete(typed.payload?.key ?? '');
-          dispatchToBlock({
-            type: 'APP_STORAGE_DELETE_RESULT',
-            payload: { requestId, ok: true, deleted },
-          });
-        }
-
-        if (typed.type === 'APP_STORAGE_LIST') {
-          const prefix = typed.payload?.prefix ?? '';
-          const keys = [...store.entries()]
-            .filter(([k]) => k.startsWith(prefix))
-            .map(([k, e]) => ({ key: k, updatedAt: e.updatedAt }));
-          dispatchToBlock({ type: 'APP_STORAGE_LIST_RESULT', payload: { requestId, keys } });
-        }
-
-        if (typed.type === 'APP_STORAGE_QUOTA') {
-          dispatchToBlock({
-            type: 'APP_STORAGE_QUOTA_RESULT',
-            payload: {
-              requestId,
-              usedBytes: usedBytes(),
-              rowCount: store.size,
-              limitBytes: QUOTA_BYTES,
-              limitRows: QUOTA_ROWS,
-            },
-          });
-        }
-      },
-    };
-    Object.defineProperty(window, 'parent', { value: parentMock, configurable: true, writable: true });
-
-    const context: ModelSlotContext = {
-      slotId: 'model.sidebar_top',
-      modelId: 12345,
-      modelVersionId: 67890,
-      modelName: 'Dev Mock Model',
-      modelType: 'Checkpoint',
-      modelNsfwLevel: 1,
-      theme: 'dark',
-    };
-    const payload: BlockInitPayload = {
-      blockInstanceId: DEV_INSTANCE_ID,
-      blockId: DEV_BLOCK_ID,
-      appId: DEV_APP_ID,
-      token: nextToken(),
-      context,
-      settings: { publisherSettings: {}, userSettings: {} },
-      // Byte-for-byte the viewer the production host sends: `signedIn: true` on
-      // every present viewer (civitai/civitai `withSignedInFlag`), and NO
-      // `status` — the platform withholds the viewer's moderation state from
-      // third-party iframes (civitai #2521). Anonymous is `viewer: null`.
-      viewer: { id: 2, username: 'dev-viewer', signedIn: true },
-      theme: 'dark',
-      renderMode: 'iframe',
-    };
-    // Defer one tick so the block's transport listener is registered before
-    // the message fires.
-    const timer = window.setTimeout(() => dispatchToBlock({ type: 'BLOCK_INIT', payload }), 0);
-
-    return () => {
-      window.clearTimeout(timer);
-      Object.defineProperty(window, 'parent', { value: originalParent, configurable: true, writable: true });
-    };
-  }, [parentOrigin]);
-
+  if (import.meta.env.VITE_LIVE_MODE === 'true') return <LiveHost>{children}</LiveHost>;
+  // The SDK's mock host: no network, no Buzz. `declaredScopes` is the
+  // manifest's own list, so a scope the manifest forgot fails here exactly as
+  // the real host refuses it. URL knobs: `?theme=light`, `?viewer=anon`, …
   return (
-    <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', minHeight: '100vh' }}>
-      <header style={harnessHeaderStyle}>
-        <strong>DEV HARNESS</strong>
-        <span>mock BLOCK_INIT from {parentOrigin}</span>
-        <span style={{ marginLeft: 'auto' }}>outbound: {outbound.length}</span>
-      </header>
-      <main style={{ border: '1px dashed #888', margin: 16 }}>{children}</main>
-      <pre style={harnessLogStyle}>
-        {outbound.length === 0
-          ? '// no outbound messages yet'
-          : outbound.map((m, i) => `${i + 1}. ${m.type} ${JSON.stringify(m.payload ?? {})}`).join('\n')}
-      </pre>
-    </div>
+    <MockHost declaredScopes={manifest.scopes} blockId={manifest.blockId} context={MODEL_SLOT}>
+      {children}
+    </MockHost>
   );
 }
 
-const harnessHeaderStyle = {
-  padding: '8px 12px',
-  background: '#222',
-  color: '#fff',
-  fontSize: 12,
-  fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-  display: 'flex',
-  gap: 16,
-  alignItems: 'center',
-} as const;
-
-const harnessLogStyle = {
-  margin: 0,
-  padding: 12,
-  background: '#111',
-  color: '#7fc',
-  fontSize: 11,
-  maxHeight: 240,
-  overflow: 'auto',
-} as const;
+/** `createLiveHost` forwards the bridge to the real API through the vite proxy. */
+function LiveHost({ children }: { children: ReactNode }) {
+  const token = import.meta.env.VITE_LIVE_BLOCK_TOKEN as string | undefined;
+  const [installed, setInstalled] = useState(false);
+  useEffect(() => {
+    if (!token) return;
+    // `backendBaseUrl: ''` = same origin; vite.config.ts proxies `/api`.
+    const host = createLiveHost({
+      blockToken: token,
+      backendBaseUrl: '',
+      context: MODEL_SLOT,
+      fetchImpl: (input, init) => fetch(input, init), // bound: a detached `fetch` throws
+    });
+    const uninstall = host.install();
+    setInstalled(true);
+    return uninstall;
+  }, [token]);
+  if (!token) return <p>dev:live needs VITE_LIVE_BLOCK_TOKEN in .env.development.local (see .env.example).</p>;
+  return installed ? children : null;
+}

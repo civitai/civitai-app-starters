@@ -49,10 +49,12 @@ presence in the block's approved scope set: `get`, `list` and `getQuota` need
 `apps:storage:read`; `set` and `delete` need `apps:storage:write`. This
 example's `block.manifest.json` declares both, each with a
 `scopeJustifications` entry. Leave one out and every matching call is refused
-in production (`storage set requires the apps:storage:write scope`) while it
-keeps working against the local harness, which does not check scopes.
-`civitai app validate` warns only when NEITHER storage scope is declared, so
-dropping just one of the two is not caught there.
+in production (`storage set requires the apps:storage:write scope`) — and in
+the local harness too, because `src/Harness.tsx` hands the mock host this
+manifest's `scopes` as `declaredScopes`. (The harness used to answer storage
+regardless, so a missing scope passed every local run.) `civitai app validate`
+warns only when NEITHER storage scope is declared, so dropping just one of the
+two is not caught there — the harness is where you see it.
 
 ### Limits
 
@@ -100,8 +102,8 @@ forwards `err.message` (`per-user row limit exceeded`, `value exceeds 64KB
 cap`, …). Six **ceiling** strings are measured and single-sourced in the
 app-sdk's `blocks/appStorageErrors.ts` — one per `PAYLOAD_TOO_LARGE` site in
 the host's router, plus the bridge's `storage request failed` fallback — and
-this example's harness draws its rejections from the same module, so the
-branches it CAN reach fire the same way here and in production.
+the SDK mock host this example runs on draws its rejections from the same
+module, so the branches it CAN reach fire the same way here and in production.
 
 🔴 **Six is the `PAYLOAD_TOO_LARGE` family plus the bridge's fallback, not
 everything that arrives — and not even every ceiling.** The host's bridge
@@ -130,23 +132,22 @@ revoked` are *illustrations*, not a bound. See the header of the app-sdk's
 re-derivation recipe — which beats any prose in this repo, but is **necessary,
 not sufficient**: it greps `TRPCError` throws, so it cannot see a zod cap.
 
-⚠️ **It reaches three of the six**, and that is a property of the harness, not
-of your block. It has one rejection site, a three-way choice between the
-per-value cap, the per-user byte budget and the per-user row budget. So:
+⚠️ **It reaches four of the six reasons, plus the `default:` arm**, and that is a
+property of the mock host, not of your block:
 
 | reason | reachable under `pnpm dev:harness`? |
 | --- | --- |
 | `value-too-large` | yes |
 | `user-quota-exceeded` | yes |
 | `user-row-limit` | yes |
+| `request-failed` | yes — pass `storage={{ failNext: 1 }}` to the mock host in `src/Harness.tsx` |
 | `app-quota-exceeded` / `app-row-limit` | **no** — nothing here models the app-wide umbrella ([#368](https://github.com/civitai/civitai-app-starters/issues/368)) |
-| `request-failed` | **no** — the harness has no forced-failure knob (`createMockHost` does, via `storage: { failNext }`) |
-| the `default:` arm's `null` | **no** — nothing local produces an unclassifiable message, and the harness never rejects for auth at all |
+| the `default:` arm's `null` | yes — remove a storage scope from `block.manifest.json`; the mock host refuses with the host's scope message, which classifies `null` |
 
-Those arms are still correct and still required — a block that drops them
-renders nothing at all for a real production rejection. They are simply not
-exercised by running this example locally, which is the #343 lesson with its
-polarity reversed: there, a branch fired locally and never live.
+The app-wide arms are still correct and still required — a block that drops
+them renders nothing at all for a real production rejection. They are simply
+not exercised by running this example locally, which is the #343 lesson with
+its polarity reversed: there, a branch fired locally and never live.
 
 `storageFailureMessage()` in `src/App.tsx` is the shape to copy: it calls
 `classifyAppStorageError(err)`, branches on the REASON, logs the host's words
@@ -181,16 +182,16 @@ rows"`) rather than hard-coding anything: the ceilings move.
 ## Run it
 
 ```bash
-cp .env.example .env
 npm install           # inside this monorepo: pnpm install, at the root
 npm run dev:harness   # → http://localhost:5183
 ```
 
-The harness backs the bridge with an in-memory Map that enforces all three
-caps against the same SDK constants — **including the row limit**, which it
-reported but did not enforce until recently, so a row-limit overrun used to
-pass here and fail only in production. set/get/delete/list/quota all work
-offline.
+The harness is the SDK's mock host (`Harness` from
+`@civitai/blocks-react/testing`): an in-memory store that enforces all three
+caps against the same SDK constants — the row limit included — and refuses any
+call whose scope the manifest does not declare. set/get/delete/list/quota all
+work offline. (`npm run dev:live` forwards storage to the real backend; see the
+preview-access note above for why it refuses there today.)
 
 ⚠️ It is a simulation, not a replica. Five known divergences from the host:
 

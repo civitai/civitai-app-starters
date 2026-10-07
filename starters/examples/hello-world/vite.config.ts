@@ -1,34 +1,43 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
 // Validates block.manifest.json on every dev-server boot and every build, by
 // compiling the CANONICAL schema (https://civitai.com/schemas/app-block/v1.json,
-// vendored inside the SDK) with Ajv — not against a hand-written mirror of it.
-// Wired in by #330; before it nothing in any starter called `defineBlock`, so no
-// shipped manifest was ever checked. Needs `ajv` in devDependencies (an optional
-// peer of @civitai/app-sdk). This is a dev-loop gate, NOT a substitute for
+// vendored inside the SDK) with Ajv. Needs `ajv` in devDependencies (an optional
+// peer of @civitai/app-sdk). A dev-loop gate, NOT a substitute for
 // `civitai app validate`.
 import { blockManifestPlugin } from '@civitai/app-sdk/vite';
 
-// Civitai Apps are served at the ROOT of their own subdomain
-// (https://<blockId>.civit.ai/) by an nginx container — the platform stamps that
-// URL as the block's `iframe.src` at approve; you never set it yourself, and
-// `defineBlock` refuses a manifest that does (gotcha #33/#36).
-// So `base` MUST be '/' — a stale Vite `base: '/my-block/'` makes the bundle
-// request its assets from a path nginx doesn't serve, and the iframe renders
-// blank. Keep this '/'.
-export default defineConfig({
-  base: '/',
-  plugins: [blockManifestPlugin(), react()],
-  server: {
-    // The dev harness pins the allowed parent origin to this exact origin
-    // (gotcha #53). Serve on localhost:5180 so BLOCK_INIT isn't origin-rejected.
-    host: 'localhost',
-    port: 5180,
-    strictPort: true,
-  },
-  build: {
-    target: 'es2022',
-    rollupOptions: { output: { manualChunks: undefined } },
-  },
+// base MUST be '/' — the block is served at the root of its own subdomain
+// (https://<blockId>.civit.ai/). The platform stamps that root URL as the
+// block's iframe.src at approve; you never set it in the manifest, and
+// `defineBlock` refuses one that does (gotcha #33/#36).
+export default defineConfig(({ mode }) => {
+  // Read at CONFIG time (server-side), never bundled.
+  const env = loadEnv(mode, process.cwd(), '');
+  return {
+    base: '/',
+    plugins: [blockManifestPlugin(), react()],
+    server: {
+      // A fixed origin per example, so two of them can run side by side.
+      host: 'localhost',
+      port: 5180,
+      strictPort: true,
+      // For `dev:live`: the SDK live host calls `/api/...` on THIS origin and
+      // the proxy forwards it to the real backend with an accepted Origin
+      // header, so the browser never makes a cross-origin call. (The mock host
+      // never calls `/api`.) Dev server only; `vite build` ignores `server`.
+      proxy: {
+        '/api': {
+          target: env.VITE_LIVE_HOST_ORIGIN || 'https://civitai.com',
+          changeOrigin: true,
+          headers: { origin: 'https://civitai.com' },
+        },
+      },
+    },
+    build: {
+      target: 'es2022',
+      rollupOptions: { output: { manualChunks: undefined } },
+    },
+  };
 });

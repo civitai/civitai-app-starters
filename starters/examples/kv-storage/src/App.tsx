@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useAppStorage, useBlockContext, useBlockResize } from '@civitai/blocks-react';
+import { Button, Card, Group, Stack, TextInput, Textarea } from '@civitai/blocks-react/ui';
 import type { AppStorageKeyEntry, AppStorageQuota } from '@civitai/blocks-react';
 import { classifyAppStorageError, isSignedIn } from '@civitai/app-sdk/blocks';
 
@@ -28,9 +29,9 @@ import { classifyAppStorageError, isSignedIn } from '@civitai/app-sdk/blocks';
  * PRESENCE in the block's approved scope set: `get` / `list` / `getQuota` need
  * `apps:storage:read`, `set` / `delete` need `apps:storage:write`. This
  * example's `block.manifest.json` declares both (with justifications); drop
- * one and every matching call is refused in production while still working
- * against the local harness. Anon viewers: `get`/`list` no-op (null / empty),
- * writes reject.
+ * one and every matching call is refused — in production, and in the local
+ * harness too, which reads its `declaredScopes` from the same manifest. Anon
+ * viewers: `get`/`list` no-op (null / empty), writes reject.
  *
  * This example is a tiny notes pad backed by KV.
  */
@@ -39,6 +40,12 @@ export function App() {
   const storage = useAppStorage();
   const rootRef = useRef<HTMLDivElement>(null);
   useBlockResize(rootRef);
+
+  // Keep <html> in step with the host theme (see hello-world for the why).
+  useEffect(() => {
+    if (!ready) return;
+    document.documentElement.dataset.theme = theme;
+  }, [ready, theme]);
 
   const [keys, setKeys] = useState<AppStorageKeyEntry[]>([]);
   const [quota, setQuota] = useState<AppStorageQuota | null>(null);
@@ -94,71 +101,63 @@ export function App() {
     [storage, refresh],
   );
 
-  if (!ready) {
-    // No `rootRef` here: the host shows its own loading state until BLOCK_READY,
-    // and `useBlockResize` observes the real root whenever it mounts.
-    return (
-      <div data-theme={theme} className="hw-root">
-        Loading…
-      </div>
-    );
-  }
+  if (!ready) return <div style={{ padding: 16 }}>Loading…</div>;
 
   if (isAnon) {
     return (
-      <div ref={rootRef} data-theme={theme} className="hw-root">
-        <strong>Notes</strong>
-        <div className="hw-card">Sign in to save notes — storage is per-viewer.</div>
+      <div ref={rootRef} data-theme={theme} style={{ padding: 16 }}>
+        <Stack gap={8}>
+          <strong>Notes</strong>
+          <Card>Sign in to save notes — storage is per-viewer.</Card>
+        </Stack>
       </div>
     );
   }
 
   return (
-    <div ref={rootRef} data-theme={theme} className="hw-root">
-      <strong>Notes (KV-backed)</strong>
+    <div ref={rootRef} data-theme={theme} style={{ padding: 16 }}>
+      <Stack gap={8}>
+        <strong>Notes (KV-backed)</strong>
 
-      <div className="hw-card" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <input value={draftKey} onChange={(e) => setDraftKey(e.target.value)} placeholder="key" />
-        <textarea
-          rows={3}
-          value={draftValue}
-          onChange={(e) => setDraftValue(e.target.value)}
-          placeholder="note text"
-          style={{ resize: 'vertical' }}
-        />
-        <button onClick={save} style={buttonStyle}>
-          set()
-        </button>
-      </div>
+        <Card>
+          <Stack gap={8}>
+            <TextInput label="Key" value={draftKey} onChange={(e) => setDraftKey(e.target.value)} />
+            <Textarea label="Note" minRows={3} value={draftValue} onChange={(e) => setDraftValue(e.target.value)} />
+            <Button onClick={save}>set()</Button>
+          </Stack>
+        </Card>
 
-      <div className="hw-card">
-        <div style={{ fontWeight: 600 }}>list({`{ prefix: 'note-' }`})</div>
-        {keys.length === 0 ? (
-          <div style={{ opacity: 0.7 }}>no notes yet</div>
-        ) : (
-          keys.map((k) => (
-            <div key={k.key} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <code style={{ flex: 1 }}>{k.key}</code>
-              <span style={{ fontSize: 11, opacity: 0.6 }}>{k.updatedAt.toLocaleString()}</span>
-              <button onClick={() => load(k.key)} style={linkButtonStyle}>
-                get
-              </button>
-              <button onClick={() => remove(k.key)} style={linkButtonStyle}>
-                delete
-              </button>
-            </div>
-          ))
-        )}
-      </div>
+        <Card>
+          <Stack gap={4}>
+            <strong>list({`{ prefix: 'note-' }`})</strong>
+            {keys.length === 0 ? (
+              <small style={dimmed}>no notes yet</small>
+            ) : (
+              keys.map((k) => (
+                <Group key={k.key} gap={8} wrap={false}>
+                  <code style={{ flex: 1 }}>{k.key}</code>
+                  <small style={dimmed}>{k.updatedAt.toLocaleString()}</small>
+                  <Button variant="subtle" size="sm" onClick={() => load(k.key)}>
+                    get
+                  </Button>
+                  <Button variant="subtle" size="sm" onClick={() => remove(k.key)}>
+                    delete
+                  </Button>
+                </Group>
+              ))
+            )}
+          </Stack>
+        </Card>
 
-      {quota ? (
-        <div className="hw-card" style={{ fontSize: 12 }}>
-          {fmtBytes(quota.usedBytes)} of {fmtBytes(quota.limitBytes)} used · {quota.rowCount} /{' '}
-          {quota.limitRows} rows
-        </div>
-      ) : null}
+        {quota ? (
+          <small style={dimmed}>
+            {fmtBytes(quota.usedBytes)} of {fmtBytes(quota.limitBytes)} used · {quota.rowCount} /{' '}
+            {quota.limitRows} rows
+          </small>
+        ) : null}
 
-      {status ? <div style={{ fontSize: 12, opacity: 0.8 }}>{status}</div> : null}
+        {status ? <small role="status">{status}</small> : null}
+      </Stack>
     </div>
   );
 }
@@ -262,21 +261,4 @@ function fmtBytes(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-const buttonStyle = {
-  padding: '8px 14px',
-  border: 'none',
-  borderRadius: 6,
-  background: '#1971c2',
-  color: '#fff',
-  fontWeight: 600,
-  cursor: 'pointer',
-} as const;
-
-const linkButtonStyle = {
-  border: 'none',
-  background: 'transparent',
-  color: 'inherit',
-  textDecoration: 'underline',
-  cursor: 'pointer',
-  fontSize: 12,
-} as const;
+const dimmed = { color: 'var(--civitai-color-text-dimmed)' } as const;

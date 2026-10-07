@@ -16,6 +16,7 @@
     "apps:storage:read": "Lists and loads the notes this viewer saved in this block, and reads the storage quota to show how much of it they have used.",
     "apps:storage:write": "Saves and deletes the viewer's own notes in this block's per-viewer store."
   },
+  "bootSkeleton": true,
   "iframe": {
     "minHeight": 360,
     "maxHeight": 900,
