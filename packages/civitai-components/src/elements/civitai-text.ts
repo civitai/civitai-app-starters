@@ -137,8 +137,7 @@ const TEMPLATES: Record<TextAs, () => TemplateResult> = Object.assign(
  * Text; none does today, so this enumerates where the trade would land rather
  * than pages that have changed. No page here sets `#1a1a1a` / `#e6e6e6` any
  * more: every Civitai App page sets `color: var(--civitai-color-text)` itself —
- * the src/index.css of the six apps under starters/examples (buzz-purchase,
- * buzz-workflow, hello-world, kv-storage, scopes-api, settings) on `:root`, and
+ * the src/index.css of every app under starters/examples on `:root`, and
  * starters/civitai-block-starter/src/index.css on `body` — as do the package's
  * own demo and playground. A glob is not written here on purpose: a star-slash
  * inside a block comment ENDS it, and that broke this file once. Those pages

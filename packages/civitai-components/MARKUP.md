@@ -181,7 +181,7 @@ layer down, and the same predicate decides all three:
   `starters/svelte-pwa/index.html`, `starters/sveltekit-app/src/app.html`); none
   of them renders Text today, so it would bite the first one that does. No page
   here sets `#1a1a1a` / `#e6e6e6` any more. Every Civitai App page sets the
-  token itself instead — the six `starters/examples/*/src/index.css` on `:root`,
+  token itself instead — every `starters/examples/*/src/index.css` on `:root`,
   and `starters/civitai-block-starter/src/index.css` on `body`, all as
   `color: var(--civitai-color-text)` — as do the package's own `demo/` and
   `playground/`. Those pages show the token in Text by inheriting it, not
