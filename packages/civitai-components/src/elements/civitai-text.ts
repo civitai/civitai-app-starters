@@ -112,16 +112,16 @@ const TEMPLATES: Record<TextAs, () => TemplateResult> = Object.assign(
  * WHAT IT COSTS, measured rather than assumed. Text no longer paints
  * `--civitai-color-text` itself, so it renders in whatever colour it inherits.
  * The trade is therefore NOT confined to a page that paints nothing — it
- * applies to every page that DOES set a colour, which is the larger population
- * and includes every in-repo consumer. Measured on both tracks at this commit:
+ * applies to every page that DOES set a colour, which is the larger population.
+ * Measured on both tracks:
  *
- *   ANCESTOR COLOUR SET (the common case), in the shape a block here actually
- *   has — a `[data-theme="dark"]` root carrying `color: #e6e6e6`: Text computes
+ *   ANCESTOR COLOUR SET (the common case), on a `[data-theme="dark"]` root
+ *   carrying `color: #e6e6e6` — the shape this repo's blocks had when this was
+ *   measured; none sets that colour today (see below). Text computes
  *   `rgb(230, 230, 230)`. Restoring the removed declaration on the SAME fixture
  *   puts both tracks back at the dark token `rgb(193, 194, 197)` while the plain
- *   `<p>` beside them stays `rgb(230, 230, 230)` — that pair IS the trade, in
- *   the exact colours a block here ships. Dark is where it reads: a soft grey
- *   token against a near-white block colour. Light behaves identically — with
+ *   `<p>` beside them stays `rgb(230, 230, 230)` — that pair IS the trade. Dark
+ *   is where it reads: a soft grey token against a near-white page colour. Light behaves identically — with
  *   `color: rgb(24, 24, 27)` on `body`, Text computes `rgb(24, 24, 27)` where the
  *   token `rgb(34, 34, 34)` used to win.
  *
@@ -130,20 +130,20 @@ const TEMPLATES: Record<TextAs, () => TemplateResult> = Object.assign(
  *   still tracks light/dark, since the theme does set `color-scheme`.
  *
  * WHICH PAGES THOSE ARE, by complete enumeration of this repo. FOUR starters set
- * the colour on `body` via Tailwind (`text-zinc-900 dark:text-zinc-100`):
+ * their own colour on `body` via Tailwind (`text-zinc-900 dark:text-zinc-100`):
  * starters/next-app/src/app/globals.css, starters/react-pwa/index.html,
- * starters/svelte-pwa/index.html, starters/sveltekit-app/src/app.html. SIX set
- * it on a `[data-theme]` root as `#1a1a1a` / `#e6e6e6`: the src/index.css of
- * each of the six apps under starters/examples (buzz-purchase, buzz-workflow,
- * hello-world, kv-storage, scopes-api, settings). A glob is not written here on
- * purpose: a star-slash inside a block comment ENDS it, and that broke this file
- * once. All ten would show Text in their own colour rather than the token once
- * one of them renders Text; none does today, so this enumerates where the trade
- * would land rather than pages that have changed. The package's own demo and
- * playground, and starters/civitai-block-starter, are the exception, and they
- * prove the rule — they DO render Text, and all three set
- * `body { color: var(--civitai-color-text) }`, so they still
- * render the token, by INHERITING it rather than because Text names it.
+ * starters/svelte-pwa/index.html, starters/sveltekit-app/src/app.html. They would
+ * show Text in their own colour rather than the token once one of them renders
+ * Text; none does today, so this enumerates where the trade would land rather
+ * than pages that have changed. No page here sets `#1a1a1a` / `#e6e6e6` any
+ * more: every Civitai App page sets `color: var(--civitai-color-text)` itself —
+ * the src/index.css of the six apps under starters/examples (buzz-purchase,
+ * buzz-workflow, hello-world, kv-storage, scopes-api, settings) on `:root`, and
+ * starters/civitai-block-starter/src/index.css on `body` — as do the package's
+ * own demo and playground. A glob is not written here on purpose: a star-slash
+ * inside a block comment ENDS it, and that broke this file once. Those pages
+ * show the token by INHERITING it rather than because Text names it; of them,
+ * the block starter and the demo/playground actually render Text.
  *
  * A page wanting the token explicitly writes `ci-text-default` — but that class
  * ships in utilities.css, a SEPARATE stylesheet that `injectStyles()` does not

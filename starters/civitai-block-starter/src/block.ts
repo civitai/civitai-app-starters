@@ -11,15 +11,18 @@ import { isModelSlotContext, isSignedIn } from '@civitai/app-sdk/blocks';
 import { DIRECT_LOAD_TIMEOUT_MS, isTopLevel, renderDirectLoadFallback } from './directLoad.js';
 
 /**
- * Replace the markup and `render` with your block's actual UI.
+ * Replace the markup and `fill` with your block's actual UI.
  *
  * The starter demo:
  * - `initialize()` from `@civitai/sdk` waits for the host's `BLOCK_INIT` and
  *   resolves with `app` — slot context, viewer, theme, settings, and `app.host`
  *   for host UI. Until it resolves, the boot skeleton in index.html is what the
  *   viewer sees, so there is no separate loading state to render.
- * - `app.onChange` fires whenever any of those change (e.g. a `THEME_CHANGE`
- *   push when the viewer toggles dark mode); this demo simply re-renders.
+ * - The view is BUILT ONCE and then UPDATED IN PLACE: `app.onChange` fires on
+ *   every snapshot change — a theme toggle, a route change, and also every
+ *   token rotation, which changes nothing on screen — so it only re-syncs the
+ *   theme and rewrites the text of the `data-field` elements. Rebuilding the
+ *   view there would throw away anything the viewer typed every few minutes.
  * - `app.host.autoResize(root)` keeps the host iframe as tall as the content
  *   (`RESIZE_IFRAME` messages flow automatically).
  * - `context` is narrowed with `isModelSlotContext` since this starter targets
@@ -38,14 +41,48 @@ import { DIRECT_LOAD_TIMEOUT_MS, isTopLevel, renderDirectLoadFallback } from './
 export async function mountBlock(root: HTMLElement): Promise<BlockAppClient> {
   const app = await waitForHost(root);
 
+  const view = createView();
   const update = () => {
     syncTheme(app);
-    render(root, app);
+    fill(view, app);
   };
   update();
+  // Replacing #root's children — once — is also what removes the boot skeleton
+  // (or the direct-load card, if a late host answered).
+  root.replaceChildren(view.root);
   app.onChange(update);
   app.host.autoResize(root);
   return app;
+}
+
+/**
+ * Starts the block and makes a failure VISIBLE: a block that cannot start
+ * (a malformed host payload, a bug in `fill`) shows an error in place of the
+ * boot skeleton, which would otherwise stay up forever with nothing said.
+ * This is what `src/main.ts` calls.
+ */
+export async function startBlock(root: HTMLElement): Promise<void> {
+  try {
+    await mountBlock(root);
+  } catch (error) {
+    console.error('[civitai-block] could not start:', error);
+    renderStartError(root);
+  }
+}
+
+function renderStartError(root: HTMLElement): void {
+  const alert = document.createElement('civitai-alert');
+  alert.setAttribute('color', 'error');
+  alert.setAttribute('heading', 'This app could not start');
+  alert.setAttribute('role', 'alert');
+  alert.dataset.blockError = '';
+  // A fixed sentence, not the error's message: a message can carry host data,
+  // and the details are in the console.
+  alert.textContent = 'This app could not start. Reload the page to try again.';
+  const wrapper = document.createElement('div');
+  wrapper.dataset.blockRoot = '';
+  wrapper.append(alert);
+  root.replaceChildren(wrapper);
 }
 
 /**
@@ -83,25 +120,41 @@ VIEW.innerHTML = `
   </civitai-stack>
 `;
 
-function render(root: HTMLElement, app: BlockAppClient): void {
-  const view = VIEW.content.cloneNode(true) as DocumentFragment;
-  const field = (name: string) => view.querySelector<HTMLElement>(`[data-field="${name}"]`)!;
+interface View {
+  root: HTMLElement;
+  field(name: string): HTMLElement;
+}
 
+function createView(): View {
+  const fragment = VIEW.content.cloneNode(true) as DocumentFragment;
+  const root = fragment.querySelector<HTMLElement>('[data-block-root]')!;
+  return {
+    root,
+    field: (name) => root.querySelector<HTMLElement>(`[data-field="${name}"]`)!,
+  };
+}
+
+/**
+ * Writes the current snapshot into the view's fields. Runs on mount and on
+ * every `onChange`, so it must only UPDATE: set text and visibility, never
+ * replace nodes — anything you add to the view keeps its state across calls.
+ */
+function fill(view: View, app: BlockAppClient): void {
   const { context } = app;
-  field('slot').textContent = context.slotId;
+  view.field('slot').textContent = context.slotId;
 
   if (isModelSlotContext(context)) {
-    field('model-name').textContent = context.modelName;
-    field('model-id').textContent = String(context.modelId);
-    field('model-version-id').textContent = String(context.modelVersionId);
+    view.field('model').style.display = '';
+    view.field('model-name').textContent = context.modelName;
+    view.field('model-id').textContent = String(context.modelId);
+    view.field('model-version-id').textContent = String(context.modelVersionId);
   } else {
-    field('model').remove();
+    // An inline style, not the `hidden` attribute: a custom element's own
+    // `:host { display: … }` outranks the UA's `[hidden]` rule.
+    view.field('model').style.display = 'none';
   }
 
-  field('viewer').textContent = isSignedIn(app.viewer) ? 'signed in' : 'anonymous';
-
-  // Replacing #root's children is also what removes the boot skeleton.
-  root.replaceChildren(view);
+  view.field('viewer').textContent = isSignedIn(app.viewer) ? 'signed in' : 'anonymous';
 }
 
 /**

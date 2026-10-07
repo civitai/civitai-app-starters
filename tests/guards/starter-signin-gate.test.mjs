@@ -272,7 +272,10 @@ function readsViewerOffSdkClient(code) {
     names.add(m[1]);
   }
   for (const name of names) {
-    if (new RegExp(`(?<![\\w$.])${name.replace(/\$/g, '\\$')}\\s*\\.\\s*viewer\\b`).test(code)) return true;
+    // Full regex-escape: an identifier can only hold `$` among the specials, but
+    // escaping the whole class keeps this correct for whatever reaches it.
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`(?<![\\w$.])${escaped}\\s*\\.\\s*viewer\\b`).test(code)) return true;
   }
   return false;
 }
@@ -724,6 +727,9 @@ test('CONTROL — rule B scopes on a `viewer` BINDING, not the word `viewer`', (
     'function render(root: HTMLElement, app: BlockAppClient): void {\n  const v = app.viewer;\n}',
     'const app = await initialize();\nif (app.viewer) {}',
     'let client: BlockAppClient | null = null;\nclient.viewer;',
+    // `$` is legal in an identifier and special in a regex — the resolver
+    // escapes it rather than letting it anchor the pattern.
+    'const $app = await initialize();\nif ($app.viewer) {}',
   ]) {
     assert.ok(readsViewerFromContext(inScope), `scope predicate missed a real binding: ${inScope}`);
   }

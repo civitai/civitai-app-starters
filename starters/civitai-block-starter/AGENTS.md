@@ -5,9 +5,9 @@
 > injects everything (token, context, viewer, theme) via `BLOCK_INIT`;
 > `initialize()` from `@civitai/sdk` waits for it and returns `app`. The UI is
 > `<civitai-*>` custom elements from `@civitai/components`. The demo
-> (`src/block.ts`): `await initialize()`, render slot + viewer + theme into
-> elements, re-render on `app.onChange`, let `app.host.autoResize` drive the
-> iframe height.
+> (`src/block.ts`): `await initialize()`, build the view once, write slot +
+> viewer + theme into it, update it in place on `app.onChange`, let
+> `app.host.autoResize` drive the iframe height.
 
 You're inside the Civitai App starter. The user copied this to bootstrap their
 own block — there is **no monorepo around you**; the `@civitai/*` packages are
@@ -62,7 +62,7 @@ Don't try to "make this a real OAuth app." That is what the `next-app` /
 ├── vite.config.ts          # blockManifestPlugin — validates block.manifest.json on every dev boot + build
 ├── src/
 │   ├── main.ts             # entry: safe-storage FIRST, theme CSS, dev harness, mountBlock
-│   ├── block.ts            # the block: initialize → render → onChange → autoResize
+│   ├── block.ts            # the block: initialize → build view → fill (on every onChange) → autoResize
 │   ├── directLoad.ts       # "Open on Civitai" card for a top-level (unembedded) load
 │   ├── index.css
 │   └── dev/harness.ts      # local BLOCK_INIT simulator (`npm run dev:harness`)
@@ -74,9 +74,11 @@ Don't try to "make this a real OAuth app." That is what the `next-app` /
 - **Go through `@civitai/sdk`, never `window.parent`.** The bridge validates the
   parent origin, correlates replies and folds host pushes into one snapshot.
   Hand-rolled `postMessage` code skips all three.
-- **Render after `initialize()` resolves.** Until then the boot skeleton is the
+- **Mount after `initialize()` resolves.** Until then the boot skeleton is the
   loading state. Read `app.context` / `app.theme` / `app.viewer` on every
-  render — they are live — and re-render from `app.onChange`.
+  `fill` — they are live — and update the view in place from `app.onChange`.
+- **Fail visibly.** `src/main.ts` calls `startBlock`, which shows an error in
+  place of the skeleton if the block cannot start. Keep that wiring.
 - **Sync `<html data-theme>` from `app.theme`** (`syncTheme` in `src/block.ts`),
   and only after `initialize()` resolves — before that, the bridge's theme is a
   placeholder. The elements read `--civitai-*` tokens that `[data-theme]`
@@ -106,8 +108,8 @@ drop the other.** The key tells the full-page run host to stand down its own
 loading UI; over an empty `#root` the viewer stares at a blank iframe for the
 whole load. `tests/guards/boot-skeleton.test.mjs` in the monorepo blocks that.
 
-- **Nothing removes the skeleton but the first render** — `root.replaceChildren`
-  in `src/block.ts`. There is no framework clearing the container, so the
+- **Nothing removes the skeleton but the mount** — the one `root.replaceChildren`
+  in `mountBlock` (`src/block.ts`). There is no framework clearing the container, so the
   skeleton must stay a *descendant* of `#root`.
 - **The theme is the HOST's.** Dark by default; light only behind
   `html[data-theme='light']`, set from the host fragment before paint, then
@@ -136,16 +138,46 @@ separate.
   `context` for it. The slot enum is server-controlled.
 - **New scope** — add it to `block.manifest.json`'s `scopes`. The build gate
   refuses an unknown scope; a scope change resets approval and needs re-review.
-- **More UI** — add elements to the template in `src/block.ts` and fill them in
-  `render`. Listen for element events (`change`, `click`, …) with
-  `addEventListener`; keep state in a module variable and call `render` again.
+- **More UI** — add elements to the template in `src/block.ts` and set their
+  host-derived text in `fill`. The view is built ONCE; `fill` re-runs on every
+  `app.onChange` (including each token rotation, which changes nothing visible)
+  and only updates text and visibility in place — never rebuild the view or
+  `replaceChildren` there, or a host push wipes whatever the viewer typed
+  (`test/block.test.ts` pins this). Wire element events (`change`, `click`, …)
+  once, after the view is created, with `addEventListener`.
 - **Host UI** (resource picker, Buzz purchase, image upload, navigation,
   sign-in) — `app.host.*`; each rejects with a `BridgeError` carrying a `code`.
 - **Per-viewer storage** — `app.storage` (`get` / `set` / `list` /
   `getQuota`); refused for an anonymous viewer, so gate on
   `isSignedIn(app.viewer)`. Cross-viewer data: `app.sharedStorage`.
-- **Buzz-spending generation** — add `ai:write:budgeted` to `scopes` and submit
-  through the block route, `app.site.post('blocks/workflows/submit', …)`.
+- **Money calls — two rules the React hooks used to apply for you.** `@civitai/sdk`
+  has no Buzz-workflow or goods helper yet, so a block calls the `blocks/*`
+  routes through `app.site` and owns both of these itself:
+  1. **Consent first.** `ai:write:budgeted` and `goods:purchase:self` are
+     CONSENT-GATED: the token lacks them until the viewer grants them in the
+     host's dialog. Call `app.requestGrants([...])` before the call — it
+     resolves `true` at once when the token already holds the scopes, `false`
+     when consent cannot be granted here, and waits while the dialog is open, so
+     bound it with a `signal`. (`goods:read:self` is consent-exempt.)
+  2. **One idempotency key per intent, reused on every retry.** Mint it BEFORE
+     the first attempt and send the SAME value on any retry: a retry with a new
+     key is a second reservation of the viewer's Buzz. The key must match
+     `^[A-Za-z0-9_-]{1,64}$` — no colons; check one you compose yourself with
+     `isValidBlockIdempotencyKey` from `@civitai/app-sdk/blocks`.
+     `crypto.randomUUID()` conforms.
+- **Buzz-spending generation** — add `ai:write:budgeted` to `scopes`, then:
+
+  ```ts
+  if (!(await app.requestGrants(['ai:write:budgeted'], { signal: AbortSignal.timeout(60_000) }))) {
+    return; // the viewer did not grant it
+  }
+  const idempotencyKey = crypto.randomUUID(); // once per generation, reused by any retry
+  const { snapshot } = await app.site.post<{ snapshot: unknown }>('blocks/workflows/submit', {
+    body: workflowBody, // the workflow: steps + their inputs
+    idempotencyKey, // REQUIRED on this route — the request is refused without one
+  });
+  ```
+
   🔴 Do **not** call `app.orchestration` from a block: a direct orchestrator call
   skips the per-call budget, the daily caps and attribution (the `@civitai/sdk`
   README explains). The host caps each generation at the token's `buzzBudget`
@@ -157,27 +189,39 @@ separate.
     delivered, and for a page app it stays broken until a new manifest version
     is approved.
   - The `buzz-workflow` example in the civitai-app-starters repo is a complete
-    estimate → submit → poll flow (React, but the routes are the same).
+    estimate → submit → poll flow, in React through the host bridge; this REST
+    route forwards to the same server procedure.
 - **Selling something (digital goods)** — declare a `goods` array in
   `block.manifest.json`, add `goods:purchase:self` (to sell) and
   `goods:read:self` (to read entitlements back) to `scopes`. Each good is
   `{ id, title, priceBuzz }` plus an optional `description`; `priceBuzz` is
-  whole Buzz, 2–50000, at most 32 goods per manifest. There is no typed helper
-  in `@civitai/sdk` yet, so call the block routes through `app.site`:
-  `app.site.post('blocks/goods/purchase', { goodId, expectedPriceBuzz, idempotencyKey })`
-  and `app.site.get('blocks/entitlements')`.
+  whole Buzz, 2–50000, at most 32 goods per manifest. Then:
+
+  ```ts
+  import type { Scope } from '@civitai/sdk';
+
+  // `@civitai/sdk`'s Scope type does not list the goods scopes yet, hence the cast.
+  const purchaseScope = 'goods:purchase:self' as Scope;
+  if (!(await app.requestGrants([purchaseScope], { signal: AbortSignal.timeout(60_000) }))) {
+    return;
+  }
+  const idempotencyKey = crypto.randomUUID(); // once per purchase, reused by any retry
+  const purchase = () =>
+    app.site.post('blocks/goods/purchase', { goodId: 'extra-slots', expectedPriceBuzz: 250, idempotencyKey });
+  await purchase(); // on a timeout, `await purchase()` again — same key, so it cannot charge twice
+
+  const { entitlements } = await app.site.get<{ entitlements: unknown[] }>('blocks/entitlements');
+  ```
+
   - 🔴 **`id` is what an entitlement is keyed by.** Renaming it orphans every
     entitlement already granted under the old id.
   - 🔴 **The catalog is REVIEW-GATED** — a price change is a new manifest version
     and a new review, like a scope change.
   - **Pass `expectedPriceBuzz`**: the server charges its own price and refuses
     when yours disagrees, so a stale price becomes a clean refusal.
-  - **Reuse one `idempotencyKey` across retries of the same purchase** (validate
-    it with `isValidBlockIdempotencyKey` from `@civitai/app-sdk/blocks`): a
-    timed-out request may or may not have charged, and only a retry with the
-    SAME key can find out safely.
   - A purchase can be refused at a perfectly legal price (the viewer has a
-    daily ceiling across apps) — handle the 4xx.
+    daily ceiling across apps) — handle the 4xx (`ApiError`, with `status` and
+    `body`).
 
 ## Verifying changes
 

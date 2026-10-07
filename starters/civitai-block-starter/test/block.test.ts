@@ -8,7 +8,7 @@ import { getTransport } from '@civitai/sdk';
 import { __resetTransport } from '@civitai/sdk/testing';
 
 import { mountBlock } from '../src/block.js';
-import { DIRECT_LOAD_TIMEOUT_MS, hostToRunUrl } from '../src/directLoad.js';
+import { DIRECT_LOAD_TIMEOUT_MS, hostToRunUrl, renderDirectLoadFallback } from '../src/directLoad.js';
 
 /**
  * These drive the block through its REAL bridge: `mountBlock` → `initialize()`
@@ -32,6 +32,7 @@ interface Posted {
 let posted: Posted[];
 let root: HTMLElement;
 const realParent = window.parent;
+const realTop = window.top;
 
 function initPayload(overrides: Record<string, unknown> = {}) {
   return {
@@ -98,6 +99,7 @@ afterEach(() => {
   vi.useRealTimers();
   __resetTransport();
   Object.defineProperty(window, 'parent', { configurable: true, writable: true, value: realParent });
+  Object.defineProperty(window, 'top', { configurable: true, writable: true, value: realTop });
 });
 
 describe('mountBlock over the real bridge', () => {
@@ -177,8 +179,9 @@ describe('mountBlock over the real bridge', () => {
     await mounted;
     expect(field('viewer')?.textContent).toBe('anonymous');
     expect(field('slot')?.textContent).toBe('app.page');
-    // The model line is only for model slots.
-    expect(field('model')).toBeNull();
+    // The model line is only for model slots: hidden, not removed (the view is
+    // updated in place, so a later context can show it again).
+    expect(field('model')?.style.display).toBe('none');
   });
 
   test('host-provided strings are rendered as text, never parsed as markup', async () => {
@@ -226,3 +229,126 @@ describe('direct (unembedded) load', () => {
     expect(hostToRunUrl(hostname)).toBe(expected);
   });
 });
+
+describe('host pushes after mount', () => {
+  test('a TOKEN_REFRESH leaves the page and what the viewer typed intact', async () => {
+    const mounted = mountBlock(root);
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload() });
+    await mounted;
+
+    // A control a block author adds next to the starter's fields, holding
+    // something the viewer typed.
+    const input = document.createElement('input');
+    input.value = 'half-written prompt';
+    root.querySelector('[data-block-root]')!.append(input);
+    const heading = root.querySelector('civitai-text');
+
+    // The host rotates the token every few minutes. The snapshot changes (so
+    // onChange fires) but nothing the view shows does.
+    fromHost({
+      type: 'TOKEN_REFRESH',
+      payload: {
+        token: {
+          raw: 'rotated.token',
+          scopes: ['models:read:self'],
+          expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+        },
+      },
+    });
+
+    expect(input.isConnected).toBe(true);
+    expect(input.value).toBe('half-written prompt');
+    expect(root.querySelector('civitai-text')).toBe(heading);
+    expect(field('model-name')?.textContent).toBe('Lighthouse XL');
+  });
+
+  test('a THEME_CHANGE re-themes without rebuilding the view', async () => {
+    const mounted = mountBlock(root);
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload({ theme: 'light' }) });
+    await mounted;
+    const input = document.createElement('input');
+    input.value = 'kept';
+    root.querySelector('[data-block-root]')!.append(input);
+
+    fromHost({ type: 'THEME_CHANGE', payload: { theme: 'dark' } });
+
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(input.isConnected).toBe(true);
+    expect(input.value).toBe('kept');
+  });
+});
+
+describe('a block that cannot start', () => {
+  test('the entry module shows a visible error instead of leaving the skeleton up', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.resetModules();
+    // The real entry, as index.html loads it. A host payload with no context
+    // makes the first render throw.
+    await import('../src/main.js');
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload({ context: null }) });
+
+    await vi.waitFor(() => expect(root.querySelector('[data-block-error]')).not.toBeNull());
+    const alert = root.querySelector('[data-block-error]')!;
+    expect(alert.getAttribute('role')).toBe('alert');
+    expect(alert.textContent).toContain('could not start');
+    expect(root.querySelector('[data-boot-skeleton]')).toBeNull();
+    expect(errors).toHaveBeenCalled();
+    errors.mockRestore();
+  });
+});
+
+describe('embedded load', () => {
+  test('an embedded block never shows the direct-load card, however slow its host', async () => {
+    // Framed: window.top is some other window.
+    Object.defineProperty(window, 'top', { configurable: true, writable: true, value: {} });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const mounted = mountBlock(root);
+
+    await vi.advanceTimersByTimeAsync(DIRECT_LOAD_TIMEOUT_MS * 5);
+    expect(root.querySelector('[data-civitai-block-direct-load]')).toBeNull();
+    expect(root.querySelector('[data-boot-skeleton]')).not.toBeNull();
+
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload() });
+    await mounted;
+    expect(rendered()).toBe(true);
+  });
+});
+
+describe('the "Open on Civitai" link', () => {
+  test('a deployed block host links to its own run page', async () => {
+    // <civitai-button> is form-associated and calls attachInternals(), which
+    // happy-dom does not implement (real browsers do). A minimal stand-in, for
+    // this test only, so the element can upgrade and render its link.
+    const proto = HTMLElement.prototype as unknown as { attachInternals?: () => unknown };
+    const hadInternals = 'attachInternals' in proto;
+    if (!hadInternals) {
+      proto.attachInternals = () => ({
+        form: null,
+        setFormValue() {},
+        setValidity() {},
+        checkValidity: () => true,
+        reportValidity: () => true,
+        states: new Set(),
+      });
+    }
+    try {
+      await checkRunLink();
+    } finally {
+      if (!hadInternals) delete proto.attachInternals;
+    }
+  });
+});
+
+async function checkRunLink() {
+  {
+    renderDirectLoadFallback(root, 'my-app.civit.ai');
+    const button = root.querySelector('[data-civitai-block-direct-load] civitai-button');
+    expect(button?.getAttribute('href')).toBe('https://civitai.com/apps/run/my-app');
+    // …and the element really renders it as a link.
+    await (button as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    expect(button!.shadowRoot?.querySelector('a')?.getAttribute('href')).toBe(
+      'https://civitai.com/apps/run/my-app',
+    );
+    expect(root.textContent).not.toContain('Waiting for the Civitai host');
+  }
+}
