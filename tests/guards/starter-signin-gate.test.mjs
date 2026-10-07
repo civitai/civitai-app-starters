@@ -328,9 +328,14 @@ export function keysOfObjectLiteralBody(body) {
  * Returns one of:
  *   `{ kind: 'keys', keys }`      — a key set to compare against the host's.
  *   `{ kind: 'anonymous' }`       — an explicit `viewer: null` / `undefined`.
+ *   `{ kind: 'sdk-default' }`     — no viewer of its own: the file mounts the
+ *                                   SDK `Harness` without a `viewer` prop, so
+ *                                   what is posted is the mock host's
+ *                                   `DEFAULT_VIEWER` — the value Rule A pins to
+ *                                   the production key set before anything else.
  *   `{ kind: 'unreadable', why }` — this guard cannot tell what is posted.
  *
- * 🔴 THERE IS NO FOURTH OUTCOME, and that is the whole point. A shape it does
+ * 🔴 THERE IS NO FIFTH OUTCOME, and that is the whole point. A shape it does
  * not understand is reported as UNREADABLE, never skipped: the caller counts
  * the harnesses it actually compared and fails when that number is short.
  *
@@ -338,11 +343,19 @@ export function keysOfObjectLiteralBody(body) {
  * viewer today, so the reference-resolving branch has no in-tree exercise and
  * would otherwise be an unreachable guard.
  */
+const SDK_HARNESS_IMPORT =
+  /import\s*\{[^}]*\bHarness\b[^}]*\}\s*from\s*['"]@civitai\/blocks-react\/testing['"]/;
+
 export function readHarnessViewer(code) {
   HARNESS_VIEWER_FIELD.lastIndex = 0;
   const matches = [...code.matchAll(HARNESS_VIEWER_FIELD)];
 
   if (matches.length === 0) {
+    // Delegating to the SDK is readable only when it is UNAMBIGUOUS: the SDK
+    // `Harness` is imported, and no `viewer=` prop overrides its default.
+    if (SDK_HARNESS_IMPORT.test(code) && !/\bviewer\s*=\s*\{/.test(code)) {
+      return { kind: 'sdk-default' };
+    }
     return {
       kind: 'unreadable',
       why:
@@ -533,6 +546,17 @@ test('POSITIVE CONTROL — readHarnessViewer follows a HOISTED viewer and refuse
 
   // An anonymous viewer is a distinct outcome, not a comparison.
   assert.deepEqual(readHarnessViewer('viewer: null,'), { kind: 'anonymous' });
+
+  // Mounting the SDK Harness with no viewer of its own posts DEFAULT_VIEWER…
+  const sdkImport = "import { Harness as MockHost } from '@civitai/blocks-react/testing';\n";
+  assert.deepEqual(readHarnessViewer(`${sdkImport}<MockHost declaredScopes={s}>{children}</MockHost>`), {
+    kind: 'sdk-default',
+  });
+  // …but a `viewer` PROP overrides it, and that override is not read here.
+  assert.equal(
+    readHarnessViewer(`${sdkImport}<MockHost viewer={{ id: 2, status: 'active' }}>{c}</MockHost>`).kind,
+    'unreadable',
+  );
 
   // 🔴 AND THE SHAPES IT CANNOT READ MUST SAY SO rather than return nothing.
   for (const [label, code] of [
@@ -811,6 +835,9 @@ test('RULE A — every harness viewer has the key set the production host sends'
     }
 
     compared.push(rel);
+    // Delegates to the mock host, whose DEFAULT_VIEWER was asserted equal to
+    // `expected` at the top of this test.
+    if (read.kind === 'sdk-default') continue;
     if (read.keys.join(',') === expected.join(',')) continue;
     mismatches.push(`${rel} — has [${read.keys}], host sends [${expected}]`);
   }

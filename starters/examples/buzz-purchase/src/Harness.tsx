@@ -1,196 +1,80 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
-import type { BlockInitPayload, ModelSlotContext } from '@civitai/app-sdk/blocks';
+import { getTransport } from '@civitai/blocks-react';
+import { Harness as MockHost } from '@civitai/blocks-react/testing';
+// 🔴 `/live` is the REAL backend: a submit there spends your own Buzz. It has its
+// own subpath (never `/testing`) so the import line itself says so.
+import { createLiveHost } from '@civitai/blocks-react/live';
+import type { ModelSlotContext } from '@civitai/app-sdk/blocks';
 
-const DEV_TOKEN = 'dev.harness.mock.jwt.NOT.A.REAL.RS256';
-const DEV_INSTANCE_ID = 'bki_dev_buzz_purchase';
-const DEV_BLOCK_ID = 'buzz-purchase-demo';
-const DEV_APP_ID = 'app_dev';
+import manifest from '../block.manifest.json' with { type: 'json' };
 
 /**
- * Local dev harness. Civitai Apps normally mount inside an iframe the civitai.com
- * host controls; locally there's no host. `pnpm dev:harness` wraps the block in
- * this component, which:
+ * Dev-only host for `npm run dev:harness` (mock) and `npm run dev:live` (real
+ * backend). Never mounted in a production build — see src/main.tsx.
  *
- *  1. Intercepts `window.parent.postMessage` so the block's outbound messages
- *     (BLOCK_READY, RESIZE_IFRAME, REQUEST_TOKEN, …) land in a debug log.
- *  2. Echoes the host replies the block depends on (here: TOKEN_REFRESH_RESPONSE).
- *  3. Dispatches a fake BLOCK_INIT from the configured allowed-parent origin.
- *
- * GOTCHA #53: the IframeTransport drops any postMessage whose origin isn't in
- * `VITE_BLOCK_ALLOWED_PARENT_ORIGINS`. The harness fires BLOCK_INIT from
- * `window.location.origin`, so serve on the pinned origin
- * (`vite --host localhost --port 5180`, which `pnpm dev:harness` does) and set
- * `.env` to match, or BLOCK_INIT is origin-rejected and the block hangs on
- * "Loading…".
- *
- * The mock token is NOT a real RS256 JWT — orchestrator/API calls that verify
- * it will fail. The harness is for UI iteration, not integration testing.
+ * Both hosts post their replies from this page's own origin, and the SDK
+ * transport drops messages from any origin it was not told to trust. So the
+ * transport is created HERE, before any hook runs, with this origin allowed
+ * (gotcha #53) — no `.env` value has to match a port.
  */
+export function installDevTransport() {
+  getTransport({ allowedParentOrigins: [window.location.origin] });
+}
+
+/**
+ * What the host sends a block in the `model.sidebar_top` slot. Placeholder ids:
+ * for `dev:live`, put a real model's ids here.
+ */
+const MODEL_SLOT: ModelSlotContext = {
+  slotId: 'model.sidebar_top',
+  modelId: 12345,
+  modelVersionId: 67890,
+  modelName: 'Dev Mock Model',
+  modelType: 'Checkpoint',
+  modelNsfwLevel: 1,
+};
+
 export function Harness({ children }: { children: ReactNode }) {
-  const [outbound, setOutbound] = useState<Array<{ type: string; payload?: unknown }>>([]);
-  const [parentOrigin] = useState(() => window.location.origin);
-  const tokenSerialRef = useRef(0);
-
-  useEffect(() => {
-    const originalParent = window.parent;
-
-    const dispatchToBlock = (data: unknown) => {
-      window.dispatchEvent(new MessageEvent('message', { data, origin: parentOrigin }));
-    };
-
-    // Start with a budget BELOW the 120-Buzz cost so the first Generate trips
-    // the insufficient-funds path. A "purchase" raises it so the retry passes.
-    let buzzBudget = 50;
-
-    const nextToken = () => {
-      tokenSerialRef.current += 1;
-      return {
-        raw: `${DEV_TOKEN}.${tokenSerialRef.current}`,
-        scopes: ['models:read:self', 'ai:write:budgeted'],
-        expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
-        buzzBudget,
-      };
-    };
-
-    const parentMock = {
-      postMessage: (msg: unknown) => {
-        if (typeof msg !== 'object' || msg === null || typeof (msg as { type?: unknown }).type !== 'string') {
-          return;
-        }
-        const typed = msg as { type: string; payload?: { requestId?: string; suggestedAmount?: number } };
-        setOutbound((prev) => [...prev, { type: typed.type, payload: typed.payload }]);
-        const requestId = typed.payload?.requestId;
-
-        if (typed.type === 'REQUEST_TOKEN') {
-          dispatchToBlock({
-            type: 'TOKEN_REFRESH_RESPONSE',
-            payload: { ...(requestId ? { requestId } : {}), token: nextToken() },
-          });
-        }
-
-        if (typed.type === 'SUBMIT_WORKFLOW') {
-          if (buzzBudget < 120) {
-            // The host refuses an over-budget submit as a RESOLVED failure-shaped
-            // snapshot — a workflow OUTCOME the block recovers from, not a throw.
-            //
-            // 🔴 TWO FIELDS HERE ARE LOAD-BEARING; THIS FIXTURE HAD BOTH WRONG.
-            //   - `workflowId` MUST be non-empty. The SDK's inbound validator
-            //     DROPS any snapshot with an empty id, so the reply never
-            //     resolved the pending request and this demo's insufficient path
-            //     hung to the transport's 120s timeout instead of showing the
-            //     top-up CTA. `'failed'` is the sentinel the real host uses.
-            //   - `cost` MUST be present. A budget refusal quotes the price it
-            //     declined to charge, and since
-            //     civitai/civitai-app-starters#251 that is exactly what tells a
-            //     priced REFUSAL apart from an errored submit: a failure-shaped
-            //     reply with no price makes `submit()` REJECT, which would route
-            //     this demo into its `catch` and never show the top-up CTA.
-            dispatchToBlock({
-              type: 'WORKFLOW_SUBMITTED',
-              payload: {
-                requestId,
-                snapshot: {
-                  workflowId: 'failed',
-                  status: 'failed',
-                  cost: { total: 120 },
-                  error: 'insufficient Buzz budget',
-                },
-              },
-            });
-          } else {
-            dispatchToBlock({
-              type: 'WORKFLOW_SUBMITTED',
-              payload: { requestId, snapshot: { workflowId: 'wf_ok', status: 'succeeded', cost: { total: 120 } } },
-            });
-          }
-        }
-
-        if (typed.type === 'OPEN_BUZZ_PURCHASE') {
-          // Simulate a successful purchase that lifts the budget over the cost,
-          // then push a fresh token so the retry's submit passes.
-          buzzBudget = 1000;
-          dispatchToBlock({
-            type: 'TOKEN_REFRESH',
-            payload: { token: nextToken() },
-          });
-          dispatchToBlock({
-            type: 'BUZZ_PURCHASE_RESULT',
-            payload: { requestId, purchased: true, newBalance: 1000 },
-          });
-        }
-      },
-    };
-    Object.defineProperty(window, 'parent', { value: parentMock, configurable: true, writable: true });
-
-    const context: ModelSlotContext = {
-      slotId: 'model.sidebar_top',
-      modelId: 12345,
-      modelVersionId: 67890,
-      modelName: 'Dev Mock Model',
-      modelType: 'Checkpoint',
-      modelNsfwLevel: 1,
-      theme: 'dark',
-    };
-    const payload: BlockInitPayload = {
-      blockInstanceId: DEV_INSTANCE_ID,
-      blockId: DEV_BLOCK_ID,
-      appId: DEV_APP_ID,
-      token: nextToken(),
-      context,
-      settings: { publisherSettings: {}, userSettings: {} },
-      // Byte-for-byte the viewer the production host sends: `signedIn: true` on
-      // every present viewer (civitai/civitai `withSignedInFlag`), and NO
-      // `status` — the platform withholds the viewer's moderation state from
-      // third-party iframes (civitai #2521). Anonymous is `viewer: null`.
-      viewer: { id: 2, username: 'dev-viewer', signedIn: true },
-      theme: 'dark',
-      renderMode: 'iframe',
-    };
-    // Defer one tick so the block's transport listener is registered before
-    // the message fires.
-    const timer = window.setTimeout(() => dispatchToBlock({ type: 'BLOCK_INIT', payload }), 0);
-
-    return () => {
-      window.clearTimeout(timer);
-      Object.defineProperty(window, 'parent', { value: originalParent, configurable: true, writable: true });
-    };
-  }, [parentOrigin]);
-
+  if (import.meta.env.VITE_LIVE_MODE === 'true') return <LiveHost>{children}</LiveHost>;
+  // The SDK's mock host: no network, no Buzz. `declaredScopes` is the
+  // manifest's own list, so a scope the manifest forgot fails here exactly as
+  // the real host refuses it. URL knobs: `?theme=light`, `?viewer=anon`, …
   return (
-    <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', minHeight: '100vh' }}>
-      <header style={harnessHeaderStyle}>
-        <strong>DEV HARNESS</strong>
-        <span>mock BLOCK_INIT from {parentOrigin}</span>
-        <span style={{ marginLeft: 'auto' }}>outbound: {outbound.length}</span>
-      </header>
-      <main style={{ border: '1px dashed #888', margin: 16 }}>{children}</main>
-      <pre style={harnessLogStyle}>
-        {outbound.length === 0
-          ? '// no outbound messages yet'
-          : outbound.map((m, i) => `${i + 1}. ${m.type} ${JSON.stringify(m.payload ?? {})}`).join('\n')}
-      </pre>
-    </div>
+    <MockHost
+      declaredScopes={manifest.scopes}
+      blockId={manifest.blockId}
+      context={MODEL_SLOT}
+      // A 120-Buzz generation against a 50-Buzz wallet: the first Generate is
+      // refused and offers a top-up; the mock purchase refills the wallet and the
+      // retry lands. `?consent=granted&costPerGen=600` prices it over the
+      // mock's 200-Buzz per-generation budget instead — no top-up offered.
+      generation={{ costPerGen: 120 }}
+      buzz={{ balance: 50 }}
+      buzzBalance={{ blue: 50, green: 0, yellow: 0 }}
+    >
+      {children}
+    </MockHost>
   );
 }
 
-const harnessHeaderStyle = {
-  padding: '8px 12px',
-  background: '#222',
-  color: '#fff',
-  fontSize: 12,
-  fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-  display: 'flex',
-  gap: 16,
-  alignItems: 'center',
-} as const;
-
-const harnessLogStyle = {
-  margin: 0,
-  padding: 12,
-  background: '#111',
-  color: '#7fc',
-  fontSize: 11,
-  maxHeight: 240,
-  overflow: 'auto',
-} as const;
+/** `createLiveHost` forwards the bridge to the real API through the vite proxy. */
+function LiveHost({ children }: { children: ReactNode }) {
+  const token = import.meta.env.VITE_LIVE_BLOCK_TOKEN as string | undefined;
+  const [installed, setInstalled] = useState(false);
+  useEffect(() => {
+    if (!token) return;
+    // `backendBaseUrl: ''` = same origin; vite.config.ts proxies `/api`.
+    const host = createLiveHost({
+      blockToken: token,
+      backendBaseUrl: '',
+      context: MODEL_SLOT,
+      fetchImpl: (input, init) => fetch(input, init), // bound: a detached `fetch` throws
+    });
+    const uninstall = host.install();
+    setInstalled(true);
+    return uninstall;
+  }, [token]);
+  if (!token) return <p>dev:live needs VITE_LIVE_BLOCK_TOKEN in .env.development.local (see .env.example).</p>;
+  return installed ? children : null;
+}

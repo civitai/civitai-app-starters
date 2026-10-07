@@ -11,10 +11,25 @@
       "requiredContext": ["modelId", "modelVersionId"]
     }
   ],
-  "scopes": ["models:read:self", "ai:write:budgeted"],
+  "scopes": ["models:read:self", "ai:write:budgeted", "buzz:read:self"],
   "scopeJustifications": {
-    "ai:write:budgeted": "Runs a text-to-image generation on this model for the viewer, spending the viewer's Buzz within the per-generation budget; when they cannot afford it, offers a Buzz top-up and retries."
+    "ai:write:budgeted": "Runs a text-to-image generation on this model for the viewer, spending the viewer's Buzz within the per-generation budget; when they cannot afford it, offers a Buzz top-up and retries.",
+    "buzz:read:self": "Reads the viewer's Buzz balance to tell whether they can afford the generation before spending, and how much to top up if not."
   },
+  "settings": {
+    "buzz_budget_per_gen": {
+      "scope": "publisher",
+      "type": "number",
+      "widget": "number",
+      "label": "Max Buzz per generation",
+      "description": "Safety ceiling on what one generation may cost. The host signs it into the block token as buzzBudget and refuses any submit priced above it. Buying Buzz does not raise it.",
+      "default": 500,
+      "min": 1,
+      "max": 1000,
+      "requires_scope": "ai:write:budgeted"
+    }
+  },
+  "bootSkeleton": true,
   "iframe": {
     "minHeight": 300,
     "maxHeight": 700,

@@ -635,20 +635,21 @@ test('the mock host DERIVES its storage defaults from the constants', () => {
   }
 });
 
-test("the kv-storage harness DERIVES its ceilings from the constants", () => {
-  // The other runtime that used to carry hand-copied literals. Same structural
-  // shape, same reason: it is a place a reader copies from.
+test('the kv-storage harness takes its ceilings from the SDK mock host, unoverridden', () => {
+  // It used to hand-roll a KV store and carried its own copies of the three
+  // ceilings (pinned here as `const X = APP_STORAGE_…`). It now mounts the SDK
+  // `Harness`, whose defaults ARE the constants (the test above), so the
+  // property to hold is that the example passes no override of its own: a
+  // `storage={{ quotaBytes: … }}` here would re-open the gap the constants close.
   const rel = 'starters/examples/kv-storage/src/Harness.tsx';
   const src = readFileSync(join(REPO_ROOT, rel), 'utf8');
-  for (const [name, constant] of [
-    ['PER_VALUE_CAP', 'APP_STORAGE_MAX_VALUE_BYTES'],
-    ['QUOTA_BYTES', 'APP_STORAGE_MAX_BYTES'],
-    ['QUOTA_ROWS', 'APP_STORAGE_MAX_ROWS'],
-  ]) {
-    assert.ok(
-      new RegExp(`const ${name} = ${constant};`).test(src),
-      `${rel}: ${name} must be assigned directly from ${constant}, not re-derived`,
-    );
+  assert.match(
+    src,
+    /import\s*\{[^}]*\bHarness\b[^}]*\}\s*from\s*'@civitai\/blocks-react\/testing'/,
+    `${rel}: expected to mount the SDK Harness from @civitai/blocks-react/testing`,
+  );
+  for (const override of [/\bstorage\s*=\s*\{/, /\bquotaBytes\b/, /\bvalueCapBytes\b/, /\blimitRows\b/]) {
+    assert.doesNotMatch(src, override, `${rel}: overrides a mock-host storage ceiling (${override})`);
   }
 });
 

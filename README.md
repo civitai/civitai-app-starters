@@ -106,8 +106,9 @@ are React too.
 ### Examples
 
 Six minimal, runnable blocks under [`starters/examples/`](./starters/examples) —
-one per feature, each with its own README. Each runs offline via a dev harness
-that simulates the host. They are written in React with `@civitai/blocks-react`.
+one per feature, each with its own README. They are written in React with
+`@civitai/blocks-react`. Each runs offline against the SDK's mock host
+(`dev:harness`), or against the real backend (`dev:live`).
 
 | Example | Shows |
 |---|---|
@@ -116,16 +117,18 @@ that simulates the host. They are written in React with `@civitai/blocks-react`.
 | [`buzz-workflow`](./starters/examples/buzz-workflow) | `useBuzzWorkflow` estimate→submit→poll, the cost-quote-matches-charge rule |
 | [`kv-storage`](./starters/examples/kv-storage) | `useAppStorage` get/set/delete/list/getQuota |
 | [`scopes-api`](./starters/examples/scopes-api) | declaring scopes + calling scope-gated REST with the BLOCK_INIT token |
-| [`buzz-purchase`](./starters/examples/buzz-purchase) | `useBuzzPurchase` + the insufficient-budget flow |
+| [`buzz-purchase`](./starters/examples/buzz-purchase) | `useBuzzPurchase` + `useBuzzBalance`: top up a short wallet (a purchase never lifts the per-generation budget) |
 
 ### The dev → submit → review → deploy lifecycle
 
 Devs never touch git hosting. The path is:
 
-1. **Auth + Build** — `civitai login` once, scaffold with `civitai app init`,
-   iterate locally with `npm run dev:harness` (mock host) or `npm run dev:live`
-   (live host), `vite build` to a static `dist/`. Validate the manifest any time
-   with `civitai app validate`.
+1. **Auth + Build** — `civitai login` once, scaffold with `civitai app create`
+   (or copy `starters/civitai-block-starter`), iterate locally with
+   `npm run dev:harness` (mock host) — plus `npm run dev:live` (live host) where
+   the project has it: the CLI's `page-money` template and the six examples do,
+   `civitai-block-starter` does not yet — and `vite build` to a static `dist/`.
+   Validate the manifest any time with `civitai app validate`.
 2. **Submit** — `civitai app submit` validates, packages your project
    (`block.manifest.json` + `src/` + `index.html` + `package.json` +
    `vite.config.ts` + …), and uploads it for review with your stored token. You

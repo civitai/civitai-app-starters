@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { useBlockContext, useBlockResize, useBuzzWorkflow, WorkflowSubmitError } from '@civitai/blocks-react';
+import {
+  useBlockContext,
+  useBlockResize,
+  useBuzzWorkflow,
+  WorkflowEstimateError,
+  WorkflowSubmitError,
+} from '@civitai/blocks-react';
+import { Alert, Button, Card, Group, Stack, Textarea } from '@civitai/blocks-react/ui';
 import { isModelSlotContext } from '@civitai/app-sdk/blocks';
 import type { BlockTextToImageParams, BlockWorkflowSnapshot, WorkflowBody } from '@civitai/app-sdk/blocks';
 
@@ -36,6 +43,12 @@ export function App() {
   const rootRef = useRef<HTMLDivElement>(null);
   useBlockResize(rootRef);
 
+  // Keep <html> in step with the host theme (see hello-world for the why).
+  useEffect(() => {
+    if (!ready) return;
+    document.documentElement.dataset.theme = theme;
+  }, [ready, theme]);
+
   // NARROW, don't cast: `isModelSlotContext` is a runtime check that the host
   // really sent a model slot with every field a generation body needs. A cast
   // would hand `undefined` ids to the orchestrator on any other slot.
@@ -47,6 +60,8 @@ export function App() {
   // estimate + submit both read THIS so they can't drift (gotcha #59).
   const [isRegenerate, setIsRegenerate] = useState(false);
   const [quotedCost, setQuotedCost] = useState<number | null>(null);
+  // App-owned copy for why there is no price, chosen by `estimateFailureMessage`.
+  const [estimateNote, setEstimateNote] = useState<string | null>(null);
   const [queue, setQueue] = useState<QueueItem[]>([]);
 
   // Shared param builder — the ONLY place params are constructed, so estimate
@@ -82,21 +97,24 @@ export function App() {
     if (!body) return;
     estimate(body)
       .then((snap) => {
-        if (!cancelled) setQuotedCost(snap.cost?.total ?? null);
+        if (cancelled) return;
+        setQuotedCost(snap.cost?.total ?? null);
+        setEstimateNote(null);
       })
       .catch((err: unknown) => {
-        // 🔴 SAME RULE AS THE OTHER TWO ARMS. Since blocks-react 0.43 `estimate()`
-        // REJECTS with a `WorkflowEstimateError` carrying `.snapshot.error` — the
-        // server's reason, and the exact diagnostic civitai/civitai#4159 exists to
-        // preserve. Swallowing it left the CTA on a permanent "…" with nothing
-        // anywhere saying why. Logged for the developer; the CTA still just shows
-        // no price, because a missing quote is not viewer-actionable copy.
-        const snapshotError = (err as { snapshot?: { error?: string } })?.snapshot?.error;
-        console.warn(
-          '[buzz-workflow] estimate failed — no price shown:',
-          snapshotError ?? err,
-        );
-        if (!cancelled) setQuotedCost(null);
+        // 🔴 BRANCH ON THE ERROR'S `code`, NEVER ON ITS PROSE. Since blocks-react
+        // 0.43 an unusable estimate REJECTS with a `WorkflowEstimateError`; its
+        // `code` is the only stable branch target. `snapshot.error` is the
+        // server's own reason (unsanitised: log it, never render it) and
+        // `message` is developer-facing and not a contract.
+        if (err instanceof WorkflowEstimateError) {
+          console.warn(`[buzz-workflow] estimate ${err.code}:`, err.snapshot.error ?? '(no reason given)');
+        } else {
+          console.warn('[buzz-workflow] estimate did not complete:', err);
+        }
+        if (cancelled) return;
+        setQuotedCost(null);
+        setEstimateNote(estimateFailureMessage(err));
       });
     return () => {
       cancelled = true;
@@ -212,71 +230,54 @@ export function App() {
     [queue, cancel],
   );
 
-  if (!ready) {
-    // No `rootRef` here: the host shows its own loading state until BLOCK_READY,
-    // and `useBlockResize` observes the real root whenever it mounts.
-    return (
-      <div data-theme={theme} className="hw-root">
-        Loading…
-      </div>
-    );
-  }
+  if (!ready) return <div style={{ padding: 16 }}>Loading…</div>;
 
   // `confirming` is IDLE — the button stays enabled (gotcha #8).
   const busy = status === 'estimating' || status === 'submitting';
 
   return (
-    <div ref={rootRef} data-theme={theme} className="hw-root">
-      <strong>Generate on {model?.modelName}</strong>
+    <div ref={rootRef} data-theme={theme} style={{ padding: 16 }}>
+      <Stack gap={8}>
+        <strong>Generate on {model?.modelName}</strong>
 
-      <textarea
-        className="hw-card"
-        rows={3}
-        value={prompt}
-        onChange={(e) => setPrompt(e.target.value)}
-        style={{ resize: 'vertical', width: '100%' }}
-      />
+        <Textarea label="Prompt" minRows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
 
-      <button onClick={handleGenerate} disabled={busy} style={buttonStyle}>
-        Generate ·{' '}
-        {quotedCost == null ? '…' : quotedCost === 0 ? 'free (cache hit)' : `${quotedCost} Buzz`}
-      </button>
+        <div>
+          <Button onClick={handleGenerate} disabled={busy}>
+            Generate ·{' '}
+            {quotedCost == null ? '…' : quotedCost === 0 ? 'free (cache hit)' : `${quotedCost} Buzz`}
+          </Button>
+        </div>
+        {estimateNote ? <small style={dimmed}>{estimateNote}</small> : null}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {queue.map((it) => (
-          <div key={it.localId} className="hw-card" aria-label="Generating">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>{labelFor(it.status)}</span>
-              {!TERMINAL.has(it.status) ? (
-                <button onClick={() => cancelJob(it.localId)} style={linkButtonStyle}>
-                  Cancel
-                </button>
+          <Card key={it.localId} aria-label="Generating">
+            <Stack gap={8}>
+              <Group justify="space-between">
+                <span>{labelFor(it.status)}</span>
+                {!TERMINAL.has(it.status) ? (
+                  <Button variant="subtle" size="sm" onClick={() => cancelJob(it.localId)}>
+                    Cancel
+                  </Button>
+                ) : null}
+              </Group>
+              {it.snapshot?.imageUrls?.[0] ? (
+                <img src={it.snapshot.imageUrls[0]} alt="result" style={{ width: '100%', borderRadius: 6 }} />
               ) : null}
-            </div>
-            {it.snapshot?.imageUrls?.[0] ? (
-              <img
-                src={it.snapshot.imageUrls[0]}
-                alt="result"
-                style={{ width: '100%', borderRadius: 6, marginTop: 8 }}
-              />
-            ) : null}
-            {it.snapshot?.autoClaim ? (
-              <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>
-                +{it.snapshot.autoClaim.amount} daily boost claimed
-              </div>
-            ) : null}
-            {it.status === 'error' || it.snapshot?.status === 'failed' ? (
-              // 🔴 APP-OWNED COPY ONLY. This used to render `it.snapshot?.error`
-              // — a server-authored, unsanitised string — straight into markup.
-              // The server's own words are logged for the developer by
-              // `logServerReason`; they must not reach a viewer.
-              <div style={{ color: '#e03131', fontSize: 12, marginTop: 4 }}>
-                {it.viewerMessage ?? 'The generation failed. Please try again.'}
-              </div>
-            ) : null}
-          </div>
+              {it.snapshot?.autoClaim ? (
+                <small style={dimmed}>+{it.snapshot.autoClaim.amount} daily boost claimed</small>
+              ) : null}
+              {it.status === 'error' || it.snapshot?.status === 'failed' ? (
+                // 🔴 APP-OWNED COPY ONLY. This used to render `it.snapshot?.error`
+                // — a server-authored, unsanitised string — straight into markup.
+                // The server's own words are logged for the developer by
+                // `logServerReason`; they must not reach a viewer.
+                <Alert color="error">{it.viewerMessage ?? 'The generation failed. Please try again.'}</Alert>
+              ) : null}
+            </Stack>
+          </Card>
         ))}
-      </div>
+      </Stack>
     </div>
   );
 }
@@ -299,6 +300,25 @@ interface QueueItem {
 }
 type QueueStatus = 'submitting' | 'processing' | 'succeeded' | 'failed' | 'canceled' | 'expired' | 'error';
 const TERMINAL = new Set<QueueStatus>(['succeeded', 'failed', 'canceled', 'expired', 'error']);
+
+/**
+ * Viewer copy THIS APP owns for an estimate that produced no price.
+ *
+ * - `'failed'`  — the estimate did not succeed: usually the server refused this
+ *   configuration (its reason is on `snapshot.error`, logged above). Retrying the
+ *   same inputs will not help, so say so.
+ * - `'no-cost'` — the reply was not a failure but carried no price. Nothing for
+ *   the viewer to fix; the quote may come back on the next change.
+ * - anything else — the request itself did not complete (a timeout, say).
+ */
+function estimateFailureMessage(err: unknown): string {
+  if (err instanceof WorkflowEstimateError) {
+    return err.code === 'failed'
+      ? "This generation can't be priced as configured. Try a different prompt or settings."
+      : 'No price is available right now.';
+  }
+  return "Couldn't reach Civitai to price this generation.";
+}
 
 /**
  * Log the server's own words for the developer. Never rendered.
@@ -414,21 +434,4 @@ function round64(n: number): number {
   return Math.max(64, Math.round(n / 64) * 64);
 }
 
-const buttonStyle = {
-  padding: '8px 14px',
-  border: 'none',
-  borderRadius: 6,
-  background: '#1971c2',
-  color: '#fff',
-  fontWeight: 600,
-  cursor: 'pointer',
-} as const;
-
-const linkButtonStyle = {
-  border: 'none',
-  background: 'transparent',
-  color: 'inherit',
-  textDecoration: 'underline',
-  cursor: 'pointer',
-  fontSize: 12,
-} as const;
+const dimmed = { color: 'var(--civitai-color-text-dimmed)' } as const;

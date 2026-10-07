@@ -28,6 +28,7 @@
       "requires_scope": "ai:write:budgeted"
     }
   },
+  "bootSkeleton": true,
   "iframe": {
     "minHeight": 400,
     "maxHeight": 1200,
