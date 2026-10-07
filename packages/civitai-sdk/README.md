@@ -71,7 +71,10 @@ observed two ways is two values that can disagree.
 A block opts in by declaring `auth: "oauth"` in its `block.manifest.json`. The
 host then hands it a real OAuth access token that `/api/v1`, the orchestrator
 and the MCP accept, and consent — including `requestGrants` — goes through the
-host's consent dialog.
+host's consent dialog. The manifest must also declare `user:read:self`, which
+every OAuth token carries; without it the host never mints one and hands back
+the block token. And `auth: "oauth"` cannot be declared alongside any
+`apps:storage:*` scope: such a manifest is refused at submit.
 
 ### When the token is the block-scoped one
 

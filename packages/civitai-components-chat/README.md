@@ -35,11 +35,10 @@ and its workflow routes), so the token must be an OAuth access token:
 
 Inside a civitai.com block the host hands over the block-scoped token by default, and the
 orchestrator accepts no block token on any route, so every reply and every generation is refused.
-A block opts in by declaring `auth: "oauth"` in its `block.manifest.json` along with
-`user:read:self` and `ai:write:budgeted`. Even then the host mints an OAuth token only for a
-signed-in viewer and only where its OAuth mint is enabled (it is flag-gated); otherwise it hands back
-the block token and the chat cannot reply. A manifest cannot declare `auth: "oauth"` alongside an
-`apps:storage:*` scope. There is no host-proxied route for the chat: the block routes under
+The chat works in a block only when the host hands it an OAuth access token instead; when and how
+it does is in `@civitai/sdk`'s README, under [`initialize()`](../civitai-sdk/README.md#initialize)
+and its [When the token is the block-scoped one](../civitai-sdk/README.md#when-the-token-is-the-block-scoped-one),
+and the manifest also asks for `ai:write:budgeted`. There is no host-proxied route for the chat: the block routes under
 `/api/v1/blocks/workflows/*` run workflows only, not the chat model or the MCP. And with an OAuth
 token the chat's generations go to the orchestrator directly, without the spend caps, maturity clamp
 and app attribution the block routes add (`@civitai/sdk`'s
