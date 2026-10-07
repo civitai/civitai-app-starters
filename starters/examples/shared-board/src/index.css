@@ -1,0 +1,84 @@
+:root {
+  /* Dark first, in the same order as index.html's <meta name="color-scheme">:
+     this declaration overrides the meta once the stylesheet loads. */
+  color-scheme: dark light;
+  font-family: var(--civitai-font, system-ui, sans-serif);
+  color: var(--civitai-color-text);
+}
+
+body {
+  margin: 0;
+  /* No `background` on html/body: index.html's boot <style> owns the page
+     colour, and this file loads after it, so a rule here would win. */
+}
+
+/* Full width at every size: the frame decides how wide the block is (a narrow
+   sidebar slot on a model page, the whole viewport in the harness), so nothing
+   here caps it. Ideas flow into as many columns as fit. */
+.board-root {
+  padding: 16px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.board-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.board-title {
+  font-size: 1.1rem;
+}
+
+.board-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+/* Two columns once there is room for a composer beside the feed. */
+@media (min-width: 760px) {
+  .board-layout {
+    grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
+  }
+  .board-compose {
+    position: sticky;
+    top: 16px;
+  }
+}
+
+.board-compose,
+.board-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.board-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  gap: 12px;
+}
+
+.idea-title {
+  overflow-wrap: anywhere;
+}
+
+.idea-body {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dimmed {
+  color: var(--civitai-color-text-dimmed);
+}
