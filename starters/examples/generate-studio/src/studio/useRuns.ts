@@ -4,6 +4,7 @@ import { useBuzzWorkflow } from '@civitai/blocks-react';
 import type { BlockWorkflowSnapshot, WorkflowBody } from '@civitai/app-sdk/blocks';
 
 import { logServerReason, submitRejection, WATCH_FAILED_MESSAGE } from './copy.js';
+import { resolvedFailurePatch } from './resolvedFailure.js';
 
 export type RunStatus = 'submitting' | 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled' | 'expired' | 'refused';
 
@@ -73,7 +74,11 @@ export function useRuns(onSettled: () => void) {
     [watch, patch, onSettled],
   );
 
-  /** Submit `body`. Resolves with the snapshot when the HOST declined it before spending (a priced refusal). */
+  /**
+   * Submit `body`. Resolves with the snapshot when `submit` RESOLVED as `failed`
+   * (a cap refusal, or a run that came back failed — see resolvedFailure.ts),
+   * otherwise `null`.
+   */
   const start = useCallback(
     async (body: WorkflowBody): Promise<BlockWorkflowSnapshot | null> => {
       const localId = crypto.randomUUID();
@@ -83,20 +88,11 @@ export function useRuns(onSettled: () => void) {
         // a fresh valid key. The SDK's one automatic consent retry reuses it.
         const snap = await submit(body);
         if (snap.status === 'failed') {
-          // RESOLVED. With the `'failed'` sentinel id the host refused before
-          // spending (the budget, a daily or per-app cap, a velocity limit, a
-          // missing quote — never "out of Buzz", which REJECTS). With a REAL id a
-          // run was created and came back failed, and Buzz may have been spent.
-          // See useBuzzWorkflow's `submit` docs for the complete list.
+          // RESOLVED: a cap refusal ("Not started") or a run that came back failed
+          // and may have spent ("Failed", id recorded) — resolvedFailure.ts. Never
+          // "out of Buzz", which REJECTS (the catch below).
           logServerReason('submit', snap);
-          patch(localId, {
-            status: 'refused',
-            cost: snap.cost?.total ?? null,
-            message:
-              snap.workflowId === 'failed'
-                ? 'Not started — nothing was charged.'
-                : 'This run failed. Check your history before trying again.',
-          });
+          patch(localId, { ...resolvedFailurePatch(snap), cost: snap.cost?.total ?? null });
           onSettled();
           return snap;
         }

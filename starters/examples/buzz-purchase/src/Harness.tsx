@@ -46,9 +46,17 @@ export function Harness({ children }: { children: ReactNode }) {
       blockId={manifest.blockId}
       context={MODEL_SLOT}
       // A 120-Buzz generation against a 50-Buzz wallet: the first Generate is
-      // refused and offers a top-up; the mock purchase refills the wallet and the
-      // retry lands. `?consent=granted&costPerGen=600` prices it over the
-      // mock's 200-Buzz per-generation budget instead — no top-up offered.
+      // stopped by the pre-submit wallet check, which offers a top-up; the mock
+      // purchase refills the wallet and the retry lands. `?costPerGen=600` prices
+      // it over the mock's 200-Buzz per-generation budget instead — no top-up.
+      //
+      // 🔴 `consentGranted` IS WHY THE TOP-UP SHOWS HERE. This mock reports a
+      // short wallet as a RESOLVED priced refusal (production REJECTS with
+      // 'exception'), and the example treats every resolved refusal as a cap —
+      // never a top-up cue. So the harness demonstrates the top-up through the
+      // pre-submit check instead, which needs the spend budget on the token, i.e.
+      // the spend scope already granted.
+      consentGranted
       generation={{ costPerGen: 120 }}
       buzz={{ balance: 50 }}
       buzzBalance={{ blue: 50, green: 0, yellow: 0 }}

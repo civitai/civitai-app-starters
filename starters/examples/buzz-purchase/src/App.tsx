@@ -11,6 +11,7 @@ import {
 } from '@civitai/blocks-react';
 import { Alert, Button, Card, Stack } from '@civitai/blocks-react/ui';
 import { isModelSlotContext, isSfwCeiling } from '@civitai/app-sdk/blocks';
+import { resolvedFailureMessage, walletShortfall } from './outcome.js';
 import type { WorkflowBody } from '@civitai/app-sdk/blocks';
 
 /**
@@ -56,7 +57,7 @@ export function App() {
   const [status, setStatus] = useState<string | null>(null);
   /** How much Buzz to suggest buying, when the wallet is what's short. */
   const [topUp, setTopUp] = useState<number | null>(null);
-  /** A refused attempt waiting on a fresh balance read to say WHY it was refused. */
+  /** A REJECTED (`'exception'`) attempt waiting on a fresh balance read to say whether the wallet is short. */
   const [refused, setRefused] = useState<{ cost: number; otherwise: string } | null>(null);
   const [topUpPending, setTopUpPending] = useState(false);
   const topUpInFlight = useRef(false);
@@ -121,8 +122,9 @@ export function App() {
         );
         return true;
       }
-      if (wallet !== null && wallet < price) {
-        setTopUp(price - wallet);
+      const short = walletShortfall(price, wallet);
+      if (short !== null) {
+        setTopUp(short);
         return true;
       }
       return false;
@@ -130,7 +132,7 @@ export function App() {
     [budget, wallet],
   );
 
-  // A refused attempt waits for the balance it asked for, then gets explained.
+  // A rejected attempt waits for the balance it asked for, then gets explained.
   useEffect(() => {
     if (!refused || balanceLoading) return;
     if (!explainBlocker(refused.cost)) setStatus(refused.otherwise);
@@ -148,22 +150,16 @@ export function App() {
         setStatus(`submitted: ${snap.workflowId} (${snap.status})`);
         return;
       }
+      // RESOLVED failure — never a top-up (see outcome.ts): a cap refused it before
+      // the wallet was even looked at, or a real run failed and may have spent.
       // `snap.error` is server-authored — log it, never render it.
       console.warn('[buzz-purchase] submit failed:', snap.error);
-      if (snap.workflowId !== 'failed') {
-        // A REAL id: a run was created and came back failed, and Buzz may have
-        // been spent. Never offer a top-up-and-retry here (that could run it twice).
-        setStatus('This generation failed. Check your generation history before trying again.');
-        return;
-      }
-      // The 'failed' sentinel: the host declined before spending (a budget or cap
-      // gate). Re-read the wallet so the explanation comes from the numbers.
-      refetchBalance();
-      setRefused({ cost: snap.cost?.total ?? cost, otherwise: 'This generation could not be run right now. Please try again later.' });
+      setStatus(resolvedFailureMessage(snap));
     } catch (err) {
       // 🔴 NEVER RENDER `err.message`; branch on `err.code`. A short wallet is
       // the orchestrator refusing to debit, which reaches the block as
-      // `'exception'` — so that arm consults the wallet too.
+      // `'exception'` — so that arm, and ONLY that arm, re-reads the wallet and
+      // may offer a top-up (decided by spendable Buzz vs the quote).
       console.warn('[buzz-purchase] submit failed:', err);
       if (err instanceof WorkflowSubmitError && err.code === 'exception') {
         refetchBalance();
