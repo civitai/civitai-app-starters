@@ -371,9 +371,9 @@ describe('every <civitai-*> element the starter uses is defined', () => {
   const STARTER = join(dirname(fileURLToPath(import.meta.url)), '..');
   const TAG_USE = /<(civitai-[a-z][a-z0-9-]*)\b|createElement\(\s*['"`](civitai-[a-z][a-z0-9-]*)['"`]/g;
 
-  /** `index.html` plus every source file under `src/`. */
+  /** Every source file under `src/` (TypeScript and any HTML/CSS beside it). */
   function sourceFiles(): string[] {
-    const out = [join(STARTER, 'index.html')];
+    const out: string[] = [];
     const walk = (dir: string) => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const full = join(dir, entry.name);
@@ -387,11 +387,16 @@ describe('every <civitai-*> element the starter uses is defined', () => {
 
   function staticTags(): Set<string> {
     const tags = new Set<string>();
+    // index.html is PARSED, not pattern-matched: the parser drops comments by
+    // construction, so a tag named only in a comment is not counted as usage.
+    const html = new DOMParser().parseFromString(readFileSync(join(STARTER, 'index.html'), 'utf8'), 'text/html');
+    html.querySelectorAll('*').forEach((el) => {
+      if (el.localName.startsWith('civitai-')) tags.add(el.localName);
+    });
     for (const file of sourceFiles()) {
       // Comments name elements without using them (src/block.ts lists the ones
-      // `register` leaves out), so only CODE and markup count as usage.
+      // `register` leaves out), so only CODE counts as usage.
       const code = readFileSync(file, 'utf8')
-        .replace(/<!--[\s\S]*?-->/g, '')
         .replace(/\/\*[\s\S]*?\*\//g, '')
         .replace(/^\s*\/\/.*$/gm, '');
       for (const m of code.matchAll(TAG_USE)) tags.add((m[1] ?? m[2])!);
