@@ -56,7 +56,9 @@ export function installHarness(root: HTMLElement): () => void {
     tokenSerial += 1;
     return {
       raw: `${DEV_TOKEN}.${tokenSerial}`,
-      scopes: ['models:read:self'],
+      // The scopes block.manifest.json declares (none) — a harness that mints
+      // more lets the block use a permission production would not grant it.
+      scopes: [],
       expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
     };
   };

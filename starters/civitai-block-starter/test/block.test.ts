@@ -41,7 +41,7 @@ function initPayload(overrides: Record<string, unknown> = {}) {
     appId: 'app_test',
     token: {
       raw: 'test.token',
-      scopes: ['models:read:self'],
+      scopes: [],
       expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
     },
     context: {
@@ -250,7 +250,7 @@ describe('host pushes after mount', () => {
       payload: {
         token: {
           raw: 'rotated.token',
-          scopes: ['models:read:self'],
+          scopes: [],
           expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
         },
       },
@@ -455,5 +455,33 @@ describe('every <civitai-*> element the starter uses is defined', () => {
     }
     const undefinedTags = [...tags].filter((t) => !customElements.get(t)).sort();
     expect(undefinedTags, 'rendered by the starter but not defined by its imports').toEqual([]);
+  });
+});
+
+describe('scopes', () => {
+  const STARTER_DIR = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const manifestScopes = () =>
+    (JSON.parse(readFileSync(join(STARTER_DIR, 'block.manifest.json'), 'utf8')) as { scopes: string[] }).scopes;
+
+  test('the starter declares no scopes', () => {
+    // It renders from BLOCK_INIT's context alone, which carries no scope.
+    // `models:read:self` gates only GET /api/v1/models/{id}, which this starter
+    // never calls; declaring it anyway is a permission review has to weigh for
+    // nothing. Add scopes when you add the calls that need them.
+    expect(manifestScopes()).toEqual([]);
+  });
+
+  test('the dev harness mints exactly the scopes the manifest declares', async () => {
+    // The harness posts from the page's own origin.
+    __resetTransport();
+    getTransport({ allowedParentOrigins: [window.location.origin] });
+    const { installHarness } = await import('../src/dev/harness.js');
+    const uninstall = installHarness(root);
+    try {
+      await mountBlock(root);
+      expect([...getTransport().snapshot.get().token.scopes].sort()).toEqual([...manifestScopes()].sort());
+    } finally {
+      uninstall();
+    }
   });
 });
