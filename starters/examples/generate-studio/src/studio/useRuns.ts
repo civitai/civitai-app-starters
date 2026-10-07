@@ -83,14 +83,19 @@ export function useRuns(onSettled: () => void) {
         // a fresh valid key. The SDK's one automatic consent retry reuses it.
         const snap = await submit(body);
         if (snap.status === 'failed') {
-          // RESOLVED + priced: the host refused before spending (budget, a daily or
-          // per-app cap, a velocity limit, a missing quote, or an unaffordable
-          // wallet). The caller explains it from the numbers.
+          // RESOLVED. With the `'failed'` sentinel id the host refused before
+          // spending (the budget, a daily or per-app cap, a velocity limit, a
+          // missing quote — never "out of Buzz", which REJECTS). With a REAL id a
+          // run was created and came back failed, and Buzz may have been spent.
+          // See useBuzzWorkflow's `submit` docs for the complete list.
           logServerReason('submit', snap);
           patch(localId, {
             status: 'refused',
             cost: snap.cost?.total ?? null,
-            message: 'Not started — nothing was charged.',
+            message:
+              snap.workflowId === 'failed'
+                ? 'Not started — nothing was charged.'
+                : 'This run failed. Check your history before trying again.',
           });
           onSettled();
           return snap;

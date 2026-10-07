@@ -373,20 +373,24 @@ function submitRejectionOutcome(err: unknown): { viewerMessage: string; pollWork
  * `failed` submit carrying a price is the host declining to spend: a documented
  * OUTCOME, not a crash.
  *
- * 🔴 CAUSE-NEUTRAL ON PURPOSE. A priced refusal is not only "you can't afford
- * it" — it also covers a per-app or daily cap, a velocity limit, a transient
- * "temporarily unavailable" deny, and a missing price quote. Naming one of those
- * would be wrong four times out of five, so only the affordability case (which
- * the message identifies) gets a specific string; everything else says what is
- * true of all of them.
+ * 🔴 NEVER "NOT ENOUGH BUZZ". A resolved priced refusal is a spend CAP or limit
+ * (the per-call budget — whose error text literally reads "insufficient buzz
+ * budget" — a daily or per-app cap, a velocity limit, a transient deny, a
+ * missing quote), and buying Buzz raises none of them. A viewer who is genuinely
+ * out of Buzz makes `submit` REJECT instead. So the copy is cause-neutral and
+ * never matches on the server's wording.
+ *
+ * 🔴 AND "NOTHING WAS CHARGED" ONLY FOR THE SENTINEL. The `'failed'` sentinel id
+ * means the host refused before anything ran. A REAL workflow id means a run was
+ * created and came back failed, and Buzz may have been spent. (This example
+ * submits text-to-image, so it never sees the unconfirmed-TRAINING reply, which
+ * also uses the sentinel — see `useBuzzWorkflow`'s `submit` docs.)
  */
 function submitFailureMessage(snap: BlockWorkflowSnapshot): string {
-  if (typeof snap.cost?.total === 'number') {
-    return /insufficient|not enough|budget/i.test(snap.error ?? '')
-      ? 'Not enough Buzz for this generation.'
-      : 'This generation was not started. Please try again later.';
+  if (snap.workflowId === 'failed') {
+    return 'This generation was not started, and nothing was charged. Please try again later.';
   }
-  return 'The generation could not be started. Please try again.';
+  return 'This generation failed. Check your generation history before trying again.';
 }
 
 /**

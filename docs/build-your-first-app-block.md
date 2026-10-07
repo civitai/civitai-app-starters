@@ -61,7 +61,7 @@ civitai.com model page
 
 ## Prerequisites
 
-- Node ≥ 20, pnpm.
+- Node ≥ 20 and npm — the platform build runs `npm ci` (see §1).
 - A Civitai account. (Publishing is moderated; you submit a ZIP and a moderator
   approves it — you don't need any infra access.)
 - **For a block that calls the host API** (App Storage, and anything else the
@@ -200,9 +200,17 @@ Scaffolding is handled by the Go **`civitai` CLI**
 civitai app create my-block   # the default template: page-elements (web components)
 # (`civitai app init my-block` scaffolds the same default)
 cd my-block
-cp .env.example .env
-pnpm install
+npm install                   # writes package-lock.json — COMMIT it
 ```
+
+**Commit the lockfile.** The scaffold sets `"buildCommand": "npm run build"`,
+and the platform build installs strictly from the committed lockfile with
+`npm ci`, so without a committed `package-lock.json` the build hard-fails
+(`civitai app validate` says so). If you prefer pnpm or yarn, set
+`"buildCommand"` to `"pnpm run build"` / `"yarn run build"` (keeping the
+`"outputDir"` the schema requires beside it) and commit `pnpm-lock.yaml` /
+`yarn.lock` instead. No `.env` step is needed: the committed
+`.env.development` already allow-lists the dev harness's origin.
 
 The scaffolder writes a correct `block.manifest.json`; you then edit it by hand
 to set your slot and content rating (the manifest is the source of truth — see
@@ -225,10 +233,12 @@ The default template gives you:
 ```
 my-block/
 ├── block.manifest.json   # what you register — slot/page + scopes (NOT iframe.src; the platform stamps it)
+├── package-lock.json     # after `npm install` — commit it (the platform runs `npm ci`)
+├── .env.development      # dev-harness origin allowlist (http://localhost:5186)
 ├── index.html            # boot skeleton + pre-paint theme script
 ├── vite.config.ts        # base: '/'  (important — see §6)
 ├── src/                  # no Dockerfile/nginx.conf — the platform injects its own build at approve
-│   ├── block.ts          # your UI: initialize → render → onChange → autoResize
+│   ├── block.ts          # your UI: initialize → build the view → update it on onChange
 │   ├── main.ts           # entry
 │   └── dev/harness.ts    # local host simulator (dev only)
 └── test/                 # vitest + happy-dom, driving the real bridge
@@ -244,7 +254,6 @@ my-block/
 ```jsonc
 {
   "$schema": "https://civitai.com/schemas/app-block/v1.json",
-  "appId": "app_REPLACE_ME",        // NOT a canonical field — see the note below
   "blockId": "my-block",            // /^[a-z][a-z0-9-]*[a-z0-9]$/, 3–40 chars — also your subdomain
   "version": "0.1.0",               // semver; bump on each new submission
   "name": "My Block",
@@ -272,16 +281,17 @@ Only five of those are **required** by the
 [canonical schema](https://civitai.com/schemas/app-block/v1.json): `blockId`,
 `version`, `name`, `contentRating`, `scopes`. The rest are optional.
 
-> **`appId` is not a manifest field.** The `civitai` CLI identifies your app by
+> **There is no `appId` field.** The `civitai` CLI identifies your app by
 > `blockId`, and no project file holds a separate app id (an older
-> `civitai.app.json` is read by nothing current). The scaffold still carries an
-> `appId` key in the manifest; the platform ignores it, and nothing validates
-> it.
+> `civitai.app.json` is read by nothing current). None of the CLI's templates
+> writes an `appId` key; if a manifest you copied has one
+> (`starters/civitai-block-starter` still does), the platform ignores it and
+> nothing validates it.
 
 **You don't have to run the validator by hand** — the block scaffolds register
 `blockManifestPlugin` from `@civitai/app-sdk/vite` in their `vite.config.ts`,
-which validates `block.manifest.json` on every `pnpm dev`, `pnpm dev:harness` and
-`pnpm build`, and fails with the offending field path. It validates by compiling
+which validates `block.manifest.json` on every `npm run dev`, `npm run dev:harness`
+and `npm run build`, and fails with the offending field path. It validates by compiling
 the canonical schema above with Ajv, so what it enforces *is* the schema. It
 needs `ajv` in your devDependencies (an optional peer); the scaffolds already
 declare it.
@@ -379,12 +389,13 @@ and scripts, verbatim, so only pass a `src` you control.
 
 With the default template (no framework), `initialize()` from `@civitai/sdk`
 resolves once the host's `BLOCK_INIT` lands; read the context from `app` and
-update the page on `app.onChange`:
+update the page on `app.onChange`. The default template is a full **page**, so
+it narrows `app.context` with `isPageSlotContext` and does **not** size itself:
 
 ```ts
 import '@civitai/components/register'; // the generic <civitai-*> kit
 import { initialize } from '@civitai/sdk';
-import { isModelSlotContext, isSignedIn } from '@civitai/app-sdk/blocks';
+import { isPageSlotContext, isSignedIn } from '@civitai/app-sdk/blocks';
 
 const root = document.getElementById('root')!;
 const app = await initialize(); // resolves on the host's BLOCK_INIT
@@ -399,19 +410,21 @@ const update = () => {
   document.documentElement.dataset.theme = app.theme;
   // `context` is a union keyed on slotId — narrow with the guard, not a cast.
   // Sign-in gate: call `isSignedIn`, never an identity read.
-  line.textContent = isModelSlotContext(app.context)
-    ? `Block for ${app.context.modelName}, hi ${isSignedIn(app.viewer) ? 'there' : 'anon'}`
+  line.textContent = isPageSlotContext(app.context)
+    ? `${app.context.slug} at /${app.context.subPath}, hi ${isSignedIn(app.viewer) ? 'there' : 'anon'}`
     : 'Wrong slot.';
 };
 update();
 app.onChange(update);
-app.host.autoResize(root); // host fits the iframe to content
+// No `app.host.autoResize(root)`: a page fills the host surface. A MODEL-SLOT
+// block (a `targets` entry, like `starters/civitai-block-starter`) narrows with
+// `isModelSlotContext` instead and calls `app.host.autoResize(root)`.
 ```
 
 Host data goes in with `textContent`, never `innerHTML`. The starter's
 [`AGENTS.md`](../starters/civitai-block-starter/AGENTS.md) covers generation and
-digital goods on this path (consent, idempotency keys, and refusals, which
-resolve rather than reject).
+digital goods on this path (consent, idempotency keys, and refused submits,
+which resolve rather than reject).
 
 With a React template or example, read everything from the host with
 `useBlockContext()`; gate on `ready`:
@@ -449,7 +462,7 @@ pattern including the cost-quote rule and the caller-driven poll loop.
 ## 4. Run it locally
 
 ```bash
-pnpm dev:harness    # → http://localhost:<port> with a mock host
+npm run dev:harness    # → http://localhost:5186 with a mock host
 # (the Go CLI has no `dev` command — run the project's own dev script)
 ```
 
@@ -458,14 +471,14 @@ the React ones) posts a fake `BLOCK_INIT`, intercepts your
 outbound messages into a debug log, and echoes token refreshes — so you iterate
 without civitai.com embedding your block.
 
-> The harness pins the parent origin (e.g. `http://localhost:5180`) and so does
-> `.env`. They MUST match, or the transport's origin allowlist drops `BLOCK_INIT`
-> and the block hangs on "Loading…".
+> The harness pins the parent origin (`http://localhost:5186` in the default
+> template) and so does `.env.development`. They MUST match, or the transport's
+> origin allowlist drops `BLOCK_INIT` and the block hangs on "Loading…".
 
 ## 5. Build
 
 ```bash
-pnpm build          # → dist/  (static SPA)
+npm run build       # → dist/  (static SPA)
 ```
 
 ## 6. The four gotchas that block first deploys
@@ -491,7 +504,7 @@ civitai app submit      # validates, ZIPs the project, and uploads it for review
 ```
 
 `civitai app submit` bundles the project (`block.manifest.json`, `index.html`,
-`src/`, `package.json`, `vite.config.ts` — excluding `node_modules`, `dist`,
+`src/`, `package.json`, `package-lock.json`, `vite.config.ts` — excluding `node_modules`, `dist`,
 `.env`, and any `Dockerfile`/`nginx.conf`; the platform injects its own build)
 and uploads it. You're then redirected to **`/apps/build`** with status
 `pending`.

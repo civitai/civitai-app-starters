@@ -217,15 +217,27 @@ separate.
     try {
       if (!(await askConsent(app, ['ai:write:budgeted']))) return; // not granted: nothing was sent
       const idempotencyKey = crypto.randomUUID(); // once per generation, reused by any retry
-      const { snapshot } = await app.site.post<{ snapshot: BlockWorkflowSnapshot }>('blocks/workflows/submit', {
-        body: workflowBody, // the workflow: steps + their inputs
-        idempotencyKey, // REQUIRED on this route — the request is refused without one
-      });
-      // A REFUSAL IS AN HTTP 200, so it lands HERE, not in `catch`: `status: 'failed'`
-      // and the placeholder id 'failed' — there is no run to poll.
+      const reply = await app.site.post<{ snapshot: BlockWorkflowSnapshot; submissionUnconfirmed?: true }>(
+        'blocks/workflows/submit',
+        {
+          body: workflowBody, // the workflow: steps + their inputs
+          idempotencyKey, // REQUIRED on this route — the request is refused without one
+        },
+      );
+      const { snapshot } = reply;
+      // A REFUSAL IS AN HTTP 200, so it lands HERE, not in `catch`.
       if (snapshot.status === 'failed') {
-        console.warn('submit refused:', snapshot.error); // server text: log it, never render it
-        showMessage('This generation could not start. Nothing was charged.');
+        console.warn('submit failed:', snapshot.error); // server text: log it, never render it
+        if (reply.submissionUnconfirmed) {
+          // A training run the server could not confirm: it may be running, and charged.
+          showMessage('This could not be confirmed and may still be running. Check before retrying.');
+        } else if (snapshot.workflowId === 'failed') {
+          // The placeholder id: refused before anything ran.
+          showMessage('This generation could not start. Nothing was charged.');
+        } else {
+          // A real run that came back failed: Buzz may have been spent.
+          showMessage('This generation failed. Check your history before trying again.');
+        }
         return;
       }
       console.log(snapshot.workflowId); // a real run: poll it and render its progress here
@@ -239,22 +251,38 @@ separate.
   ```
 
   (`showMessage` stands for your own UI.) What lands where:
-  - **Resolved, `status: 'failed'` — a refusal.** The route answers **200** with
-    `{ snapshot: { workflowId: 'failed', status: 'failed', cost: { total }, error } }`
-    for every cap it applies: the per-call budget, the viewer's daily and consent
-    caps, the app's velocity and daily caps, the dev-session cap, a "temporarily
-    unavailable" deny and a missing price quote. A training step with no price
-    quote is refused the same way but with **no `cost`**, so do not read
-    `cost.total` without checking it. `app.site.post` throws only on a non-2xx,
-    so without the `status` check a refusal looks like a started run.
-    `snapshot.error` is unsanitised server text — log it, show your own copy.
-    🔴 **Never offer a Buzz top-up here**: buying Buzz raises none of these caps.
+  - **Resolved, `status: 'failed'`.** The route answers **200**, and
+    `app.site.post` throws only on a non-2xx, so without the `status` check a
+    failed submit looks like a started run. Three kinds of reply resolve this
+    way, and only the first may say "nothing was charged":
+    1. the placeholder id `'failed'` — a spend cap or limit refused it before
+       anything ran;
+    2. `submissionUnconfirmed: true` beside the snapshot — a training run the
+       server could not confirm, which may be running and may have spent;
+    3. a real `workflowId` — a run was created and came back failed, and Buzz
+       may have been spent.
+
+    The complete list of caps and replies is in `@civitai/blocks-react`'s
+    [`useBuzzWorkflow` `submit` docs](https://github.com/civitai/civitai-app-starters/blob/main/packages/civitai-blocks-react/src/hooks/useBuzzWorkflow.ts)
+    (search "THE ONE COMPLETE LIST"); keep it there, not here. A refusal can
+    carry **no `cost`** (an unpriced training step), so check before reading
+    `cost.total`. `snapshot.error` is unsanitised server text — log it, show
+    your own copy. 🔴 **Never offer a Buzz top-up here**: buying Buzz raises
+    none of those caps.
   - **Rejected — `catch`.** A non-2xx `ApiError`. This is where a viewer who is
     genuinely **out of Buzz** lands (the orchestrator refuses the run; the route
     answers 400), but so does any other bad request, with nothing structural to
     tell them apart. If you want to offer a top-up (`app.host.openBuzzPurchase()`),
-    decide from the viewer's balance — `app.site.get('blocks/buzz')`, which needs
-    `buzz:read:self` — not from the rejection alone.
+    decide from the viewer's SPENDABLE balance, not from the rejection:
+    `app.site.get('blocks/buzz')` returns `{ blue, green, yellow }`, needs
+    `buzz:read:self` declared in `block.manifest.json` (consent-gated, so
+    `askConsent` it first) and refuses an anonymous viewer. A block spends only
+    blue plus its domain's pool — green under an SFW ceiling, yellow under a
+    mature one — so compare `blue` plus `isSfwCeiling(maxBrowsingLevel) ? green
+    : yellow` (`isSfwCeiling` from `@civitai/app-sdk/blocks`;
+    `getTransport().snapshot.get().maxBrowsingLevel` from `@civitai/sdk`, the
+    domain ceiling the server keys on) against the quoted cost, never all
+    three.
 
   🔴 Do **not** call `app.orchestration` from a block: a direct orchestrator call
   skips the per-call budget, the daily caps and attribution (the `@civitai/sdk`

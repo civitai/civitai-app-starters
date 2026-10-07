@@ -4,12 +4,13 @@ import {
   useBlockContext,
   useBlockResize,
   useBuzzBalance,
+  useDomainMaturity,
   useBuzzPurchase,
   useBuzzWorkflow,
   WorkflowSubmitError,
 } from '@civitai/blocks-react';
 import { Alert, Button, Card, Stack } from '@civitai/blocks-react/ui';
-import { isModelSlotContext } from '@civitai/app-sdk/blocks';
+import { isModelSlotContext, isSfwCeiling } from '@civitai/app-sdk/blocks';
 import type { WorkflowBody } from '@civitai/app-sdk/blocks';
 
 /**
@@ -47,6 +48,7 @@ export function App() {
   const { estimate, submit } = useBuzzWorkflow();
   const { openPurchaseModal } = useBuzzPurchase();
   const { balance, loading: balanceLoading, refetch: refetchBalance } = useBuzzBalance();
+  const { maxBrowsingLevel } = useDomainMaturity();
   const rootRef = useRef<HTMLDivElement>(null);
   useBlockResize(rootRef);
 
@@ -95,11 +97,15 @@ export function App() {
     };
   }, [body, estimate]);
 
-  // Spendable Buzz, summed over the pools the host reports. The host spends
-  // only the pools the app's content rating allows (blue + green, or blue +
-  // yellow), so this can OVER-count — the safe direction for a purchase prompt:
-  // it never asks a viewer to buy Buzz they don't need.
-  const wallet = balance ? balance.blue + balance.green + balance.yellow : null;
+  // Spendable Buzz: blue plus this app's domain pool — green under an SFW
+  // ceiling, yellow under a mature one. The host spends nothing else, so summing
+  // all three over-counts, and that is NOT safe: a viewer whose only Buzz is in
+  // the other pool would never be offered the top-up they need. Keyed on the
+  // DOMAIN ceiling, as the server keys it — not on `isSfw`, which the viewer's
+  // own setting narrows. An unknown ceiling counts as SFW, as on the server.
+  const wallet = balance
+    ? balance.blue + (isSfwCeiling(maxBrowsingLevel) ? balance.green : balance.yellow)
+    : null;
   const budget = token.buzzBudget; // present once the spend scope is granted
 
   /**
@@ -142,9 +148,16 @@ export function App() {
         setStatus(`submitted: ${snap.workflowId} (${snap.status})`);
         return;
       }
-      // A RESOLVED, priced refusal: the host declined before spending (a budget
-      // or cap gate). `snap.error` is server-authored — log it, never render it.
-      console.warn('[buzz-purchase] submit refused:', snap.error);
+      // `snap.error` is server-authored — log it, never render it.
+      console.warn('[buzz-purchase] submit failed:', snap.error);
+      if (snap.workflowId !== 'failed') {
+        // A REAL id: a run was created and came back failed, and Buzz may have
+        // been spent. Never offer a top-up-and-retry here (that could run it twice).
+        setStatus('This generation failed. Check your generation history before trying again.');
+        return;
+      }
+      // The 'failed' sentinel: the host declined before spending (a budget or cap
+      // gate). Re-read the wallet so the explanation comes from the numbers.
       refetchBalance();
       setRefused({ cost: snap.cost?.total ?? cost, otherwise: 'This generation could not be run right now. Please try again later.' });
     } catch (err) {

@@ -43,8 +43,11 @@ installer's to change.
    so the first generation goes straight to `submit()` (which asks for that
    consent) and any refusal is explained afterwards, with a fresh balance read.
 3. **Submit.** A refusal comes back two ways, and both are explained by step 2:
-   - **resolved**, `status: 'failed'` with a `cost` — the host declined before
-     spending (a budget or cap gate);
+   - **resolved**, `status: 'failed'` with the `'failed'` placeholder id — the
+     host declined before spending (a budget or cap gate). A resolved `'failed'`
+     with a **real** workflow id is a run that came back failed and may have
+     spent, so the example never offers a top-up-and-retry for it (the complete
+     list is in `useBuzzWorkflow`'s `submit` docs);
    - **rejected** with `WorkflowSubmitError` code `'exception'` — the host had no
      workflow to report, which is how a wallet the orchestrator could not debit
      reaches the block.

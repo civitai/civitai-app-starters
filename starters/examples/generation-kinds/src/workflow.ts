@@ -47,18 +47,21 @@ export function logServerReason(where: string, snap: BlockWorkflowSnapshot | nul
 
 /**
  * Viewer copy for a `failed` SUBMIT reply (submit RESOLVED, it did not reject).
- * A failed submit that carries a `cost` is the host DECLINING to spend — the
- * per-call budget, a daily or per-app cap, a velocity limit, a transient deny.
- * Buying Buzz fixes none of those, so only the affordability case gets its own
- * string.
+ *
+ * 🔴 NEVER "NOT ENOUGH BUZZ". A resolved priced refusal is a spend CAP or limit
+ * (the per-call budget — whose error text reads "insufficient buzz budget" — a
+ * daily or per-app cap, a velocity limit, a transient deny, a missing quote);
+ * buying Buzz raises none of them, and a viewer who is genuinely out of Buzz
+ * makes `submit` REJECT instead. And "nothing was charged" holds only for the
+ * `'failed'` sentinel id: a real id means a run was created and may have spent.
+ * (This example submits no training kind, whose unconfirmed reply also uses the
+ * sentinel — see `useBuzzWorkflow`'s `submit` docs for the complete list.)
  */
 export function submitFailureMessage(snap: BlockWorkflowSnapshot): string {
-  if (typeof snap.cost?.total === 'number') {
-    return /insufficient|not enough|budget/i.test(snap.error ?? '')
-      ? 'Not enough Buzz (or over this app’s per-run budget) for this run.'
-      : 'This run was not started. Please try again later.';
+  if (snap.workflowId === 'failed') {
+    return 'This run was not started, and nothing was charged. Please try again later.';
   }
-  return 'This run could not be started. Please try again.';
+  return 'This run failed. Check your history before trying again.';
 }
 
 /**

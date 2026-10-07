@@ -474,10 +474,9 @@ export type WorkflowSubmitErrorCode = 'exception' | 'workflow-failed';
  *     the price it refused to charge, so the snapshot carries a numeric
  *     `cost.total`, and the block can tell the viewer what was refused and why,
  *     so it MUST keep RESOLVING. It is NOT a top-up cue: these are app and
- *     platform caps, and buying Buzz raises none of them (see
- *     {@link UseBuzzWorkflow.submit}). Every such exit on the server attaches a cost: the per-call
- *     `buzzBudget` gate, the per-user daily Buzz cap, the per-app aggregate and
- *     velocity caps, and the dev-tunnel session cap — on all three body kinds.
+ *     platform caps, and buying Buzz raises none of them. Every such exit on
+ *     the server attaches a cost; the complete list of them, and of the other
+ *     resolved `'failed'` replies, is on {@link UseBuzzWorkflow.submit}.
  *   - **caught server EXCEPTION** — `failureSnapshot(err)`, no `cost`, and the
  *     `'failed'` sentinel id. The host had no workflow to report — usually
  *     nothing was queued, but a lost response or an in-progress idempotency
@@ -730,14 +729,44 @@ export interface UseBuzzWorkflow {
    * 🔴 A BUDGET / SPEND-CAP REJECTION STILL RESOLVES, and that is deliberate. It
    * is a documented outcome, not an error: the server quotes what it refused to
    * charge, so the resolved snapshot has `status === 'failed'` AND a numeric
-   * `cost.total`. Branch on it to tell the viewer the run did not start.
+   * `cost.total`.
+   *
+   * 🔴 WHAT A RESOLVED `status: 'failed'` CAN MEAN — THE ONE COMPLETE LIST. The
+   * `@civitai/blocks-react` README, the `civitai-block-starter` AGENTS.md and the
+   * changesets link here rather than restating it. Every case below RESOLVES
+   * (`blocks.submitWorkflow` returns it; the REST route answers it with HTTP
+   * 200):
+   *
+   * 1. **Refused before anything ran — the `'failed'` sentinel `workflowId`, a
+   *    `cost.total`, nothing charged, every reservation released.**
+   *    - the per-call budget, `token.buzzBudget` (`insufficient buzz budget: …`);
+   *    - the viewer's daily Buzz cap — or, in its place, the review-session cap
+   *      (a moderator's run-for-real) or the private-run cap;
+   *    - the viewer's consent budget (the ceiling they set when they granted the
+   *      scope);
+   *    - the app's velocity limit or aggregate daily cap, or a fail-closed
+   *      "temporarily unavailable" deny;
+   *    - the dev-session cap (`dev:tunnel`);
+   *    - a missing price quote for a step ("generation temporarily unavailable").
+   *
+   *    A training step with no price quote is refused the same way but with NO
+   *    `cost`, which on this hook REJECTS as `'exception'` instead.
+   * 2. **Not confirmed — Buzz may have been spent.** A training run whose
+   *    submission the server could not confirm: the sentinel id, a `cost.total`,
+   *    and `submissionUnconfirmed: true` on the REST reply. The reservation is NOT
+   *    refunded and the run may be going. 🔴 The host bridge forwards only the
+   *    snapshot, so on this hook that flag never arrives and the reply looks like
+   *    case 1 — never tell a viewer "nothing was charged" for a resolved failed
+   *    `kind: 'training'` submit; send them to their trainings instead.
+   * 3. **A run was created and came back failed — a REAL `workflowId`.** The
+   *    reservation is kept and Buzz may have been spent. Priced, it resolves;
+   *    unpriced, it rejects as `'workflow-failed'`.
+   *
+   * So only case 1 may be told "could not start, nothing was charged".
    *
    * 🔴 A RESOLVED `'failed'` IS NEVER A TOP-UP CUE — do not wire it to
-   * `useBuzzPurchase().openPurchaseModal()`. Every resolving refusal is a cap
-   * that buying Buzz does not raise: the per-call `buzzBudget`, the per-viewer
-   * daily and consent caps, the per-app **velocity** and **aggregate daily**
-   * caps, the dev-session cap, a fail-closed "temporarily unavailable" deny and a
-   * **missing price quote**.
+   * `useBuzzPurchase().openPurchaseModal()`. Case 1 is a set of caps that buying
+   * Buzz does not raise, and cases 2 and 3 are not about the wallet.
    *
    * 🔴 THE CASE A TOP-UP DOES FIX — THE VIEWER IS ACTUALLY OUT OF BUZZ — REJECTS.
    * The orchestrator refuses the run, the server throws, and the host answers
@@ -748,7 +777,19 @@ export interface UseBuzzWorkflow {
    * shared, and `snapshot.error` is the upstream message, server-authored prose
    * that is not a contract. So decide a top-up from the BALANCE, not from the
    * rejection: on `'exception'`, read {@link useBuzzBalance} and offer
-   * `openPurchaseModal()` only if the viewer cannot cover the quoted cost.
+   * `openPurchaseModal()` only if the viewer's SPENDABLE Buzz is below the quoted
+   * cost. Two things make that read correct:
+   * - `useBuzzBalance` needs `buzz:read:self` declared in `block.manifest.json`,
+   *   and that scope is consent-gated (it is not consent-exempt), so request it
+   *   like any other gated scope. An anonymous viewer is refused outright.
+   * - A block spends only blue plus ITS DOMAIN'S pool: blue + green under an SFW
+   *   ceiling, blue + yellow under a mature one. The server keys this on the
+   *   token's DOMAIN ceiling (`maxBrowsingLevel`), so compute it as
+   *   `isSfwCeiling(useDomainMaturity().maxBrowsingLevel)` (from
+   *   `@civitai/app-sdk/blocks`; an unknown ceiling counts as SFW) — NOT
+   *   `useDomainMaturity().isSfw`, which is narrowed by the viewer's own setting —
+   *   and compare `blue` plus that one pool, never blue + green + yellow, against
+   *   the quoted cost.
    *
    * 🔴 THIS ALSO INCLUDES MODERATOR REVIEW PREVIEW. While an app is under review
    * the host short-circuits every workflow request with
@@ -833,15 +874,16 @@ export interface UseBuzzWorkflow {
  * snapshot with `status: 'failed'`, an `error` string and the `cost` the server
  * declined to charge. It is NOT a cue to call
  * `useBuzzPurchase().openPurchaseModal()`: every resolving refusal is a cap
- * buying Buzz does not raise (per-call budget, per-viewer daily and consent
- * caps, per-app velocity and aggregate daily caps, the dev-session cap, a
- * "temporarily unavailable" deny, a missing price quote).
+ * buying Buzz does not raise, or a reply that is not about the wallet at all —
+ * the complete list is on {@link UseBuzzWorkflow.submit}.
  *
  * 🔴 RUNNING OUT OF BUZZ REJECTS, and is not marked as such. The orchestrator's
  * refusal reaches the block as {@link WorkflowSubmitError} code `'exception'`,
- * shared with every other thrown submit. Offer a top-up only after checking
- * {@link useBuzzBalance} against the quoted cost — see
- * {@link UseBuzzWorkflow.submit}.
+ * shared with every other thrown submit. Offer a top-up only after checking the
+ * viewer's SPENDABLE Buzz ({@link useBuzzBalance}: blue plus the block's domain
+ * pool, `buzz:read:self` declared) against the quoted cost — see
+ * {@link UseBuzzWorkflow.submit}, which also holds the complete list of resolved
+ * refusals.
  *
  * AFTER `submit` FLIPS `status` TO `'polling'`, USE `watch(workflowId)`. It owns
  * the loop, resolves on the terminal snapshot, and pushes every intermediate
@@ -919,8 +961,9 @@ export interface UseBuzzWorkflow {
  * try {
  *   const snap = await submit(body); // status 'submitting' → 'polling'
  *   if (snap.status === 'failed') {
- *     // RESOLVED + priced = a server outcome (affordability, a cap, a velocity
- *     // limit, a transient deny). Only some of those are fixable by buying Buzz.
+ *     // RESOLVED = a server outcome: a cap, a limit, a missing quote — none of
+ *     // them fixed by buying Buzz — or a run that may have spent (see `submit`
+ *     // for the complete list). Never a top-up cue.
  *     showError(submitOutcomeMessage(snap));
  *   } else {
  *     const done = await watch(snap.workflowId, { onUpdate: render }); // → terminal
