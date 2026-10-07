@@ -16,6 +16,7 @@ offline against the SDK's mock host, or against the real backend with
 | [`buzz-purchase`](./buzz-purchase) | top-up | `useBuzzPurchase`, `useBuzzBalance`, `estimate` | a purchase raises the wallet, never the per-generation budget |
 | [`generation-kinds`](./generation-kinds) | other `WorkflowBody` kinds (page app) | `useBuzzWorkflow` with `customComfy` + `step`/`chat-completion`, `useWildcardPack`, `useRequestConsent` | both kinds page-only, `page.buzzBudgetPerGen` ≥ the recipe ceiling, chat text only on the poll; `training` not available to apps yet |
 | [`monetize`](./monetize) | earning: goods + tips | `useGoodPurchase`, `useEntitlements`, `useTip`, `useTipAllowance`, `TipButton` | entitlement gate order, one key per purchase, which rails pay nothing today |
+| [`page-app`](./page-app) | full-page app | manifest `page`, `useBlockBreakpoint`, `useCivitaiRoute`/`useCivitaiNavigate`, `useRequestSignIn`/`useRequestConsent`/`useConsentUnavailable`, `useViewer`, `useHostOrigin` | page frame ignores resize; consent-gated `user:read:self`; mock `NAVIGATE` gap |
 
 ## What every example shares
 
