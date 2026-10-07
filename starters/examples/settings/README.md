@@ -84,8 +84,8 @@ only renders when that scope is in `declaredScopes`.
 
 ```bash
 cp .env.example .env
-pnpm install
-pnpm dev:harness   # → http://localhost:5181
+npm install           # inside this monorepo: pnpm install, at the root
+npm run dev:harness   # → http://localhost:5181
 ```
 
 The harness seeds both publisher and viewer settings so the form starts

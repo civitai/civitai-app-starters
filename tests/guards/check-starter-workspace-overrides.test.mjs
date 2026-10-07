@@ -15,6 +15,7 @@ import {
   destroyFixture,
   runGuard,
   DEFAULT_STARTERS,
+  DEFAULT_EXAMPLES,
   DEFAULT_OVERRIDES,
   DEFAULT_THIRD_PARTY_OVERRIDES,
   defaultStarterMirrors,
@@ -39,7 +40,7 @@ describe('check-starter-workspace-overrides', () => {
   test('INVARIANT: the real-shaped tree passes and reports its coverage count', async () => {
     const r = await guard();
     assert.equal(r.code, 0, exitMsg(0, r));
-    assert.match(r.stdout, /14 published-range/);
+    assert.match(r.stdout, /26 published-range/);
   });
 
   test('INVARIANT: a published-range pin with no workspace override fails, naming the package', async () => {
@@ -85,8 +86,8 @@ describe('check-starter-workspace-overrides', () => {
     // so covered stays at exactly MIN_COVERED_PINS and the ban is the only rule
     // that can fail the run.
     const starters = clone(DEFAULT_STARTERS);
-    starters['react-pwa']['@civitai/components'] = '^0.3.0'; // 14 -> 15 covered
-    starters['react-pwa']['@civitai/theme'] = 'workspace:^'; // 15 -> 14 covered, at the floor
+    starters['react-pwa']['@civitai/components'] = '^0.3.0'; // 26 -> 27 covered
+    starters['react-pwa']['@civitai/theme'] = 'workspace:^'; // 27 -> 26 covered, at the floor
     const r = await guard({ starters });
     assert.equal(r.code, 1, exitMsg(1, r));
     assert.match(r.stderr, /WORKSPACE-PROTOCOL PIN IN A TIGED-CONSUMED STARTER/);
@@ -95,18 +96,28 @@ describe('check-starter-workspace-overrides', () => {
     assert.match(r.stdout, /OK   @civitai\/app-sdk/); // the scan really ran
   });
 
-  test('SCOPE: starters/examples/* may use the workspace: protocol (they are not tiged targets)', async () => {
-    // Positive control for the rule's scoping: the examples in the default
-    // fixture are workspace:^ pins and must NOT trip the ban.
-    const r = await guard();
-    assert.equal(r.code, 0, exitMsg(0, r));
-    assert.doesNotMatch(r.out, /WORKSPACE-PROTOCOL PIN/);
+  test('REGRESSION: an EXAMPLE flipped to workspace: FAILS — examples are copied out too', async () => {
+    // The examples used to be exempt as "in-repo illustrations" while the docs
+    // told people to copy one out, where `workspace:^` cannot install. Isolated
+    // like the starter case above: one pin added, one flipped, so coverage stays
+    // at the floor and the ban is the only rule that can fail the run.
+    const examples = clone(DEFAULT_EXAMPLES);
+    examples['kv-storage']['@civitai/theme'] = '^0.2.0'; // 26 -> 27 covered
+    examples['kv-storage']['@civitai/app-sdk'] = 'workspace:^'; // 27 -> 26, at the floor
+    const r = await guard({ examples });
+    assert.equal(r.code, 1, exitMsg(1, r));
+    assert.match(r.stderr, /WORKSPACE-PROTOCOL PIN IN A TIGED-CONSUMED STARTER/);
+    assert.match(r.stderr, /starters\/examples\/kv-storage\/package\.json/);
+    assert.doesNotMatch(r.stderr, /COVERAGE FLOOR/);
   });
 
-  test('SCOPE: an example declaring ONLY workspace: pins is exempt and does not fail the run', async () => {
-    const examples = { 'hello-world': { '@civitai/app-sdk': 'workspace:^' } };
-    const r = await guard({ examples });
+  test('INVARIANT: the examples\' published pins count toward coverage', async () => {
+    // Positive control that the examples are SCANNED, not merely tolerated: the
+    // real-shaped tree reports one covered line per example pin.
+    const r = await guard();
     assert.equal(r.code, 0, exitMsg(0, r));
+    const exampleLines = r.stdout.split('\n').filter((l) => /^OK {3}@civitai\/.*starters\/examples\//.test(l));
+    assert.equal(exampleLines.length, 12, r.stdout);
   });
 
   test('REGRESSION: dropping one covered pin outright trips the coverage floor', async () => {
@@ -117,7 +128,7 @@ describe('check-starter-workspace-overrides', () => {
     const r = await guard({ starters });
     assert.equal(r.code, 1, exitMsg(1, r));
     assert.match(r.stderr, /COVERAGE FLOOR/);
-    assert.match(r.stderr, /13 covered .*< .*14/s);
+    assert.match(r.stderr, /25 covered .*< .*26/s);
   });
 
   test('the coverage floor does not block GROWTH (a new covered pin passes)', async () => {
@@ -125,7 +136,7 @@ describe('check-starter-workspace-overrides', () => {
     starters['react-pwa']['@civitai/components'] = '^0.3.0';
     const r = await guard({ starters });
     assert.equal(r.code, 0, exitMsg(0, r));
-    assert.match(r.stdout, /15 published-range/);
+    assert.match(r.stdout, /27 published-range/);
   });
 
   test('the workspace: ban covers devDependencies, not just dependencies', async () => {
@@ -159,8 +170,8 @@ describe('check-starter-workspace-overrides — rule 4 (third-party overrides tr
   test('INVARIANT: the real-shaped tree mirrors every third-party override and reports the pair count', async () => {
     const r = await guard();
     assert.equal(r.code, 0, exitMsg(0, r));
-    // 5 tiged starters x 2 third-party constraints.
-    assert.match(r.stdout, /10 pair\(s\) verified/);
+    // (5 tiged starters + 6 examples) x 2 third-party constraints.
+    assert.match(r.stdout, /22 pair\(s\) verified/);
     assert.match(r.stdout, /2 third-party root override\(s\) mirrored/);
   });
 
@@ -228,8 +239,8 @@ describe('check-starter-workspace-overrides — rule 4 (third-party overrides tr
     // 🔴 ISOLATION. In the cases above the missing mirror ALSO drops the pair
     // count below the floor, so they would still go red with rule 4's own
     // `failed = true` deleted — killed by the floor, not by the rule. This
-    // fixture adds a THIRD root constraint and mirrors it everywhere (15 pairs)
-    // before breaking one, so the count stays at 14 — above the floor of 10 —
+    // fixture adds a THIRD root constraint and mirrors it everywhere (33 pairs)
+    // before breaking one, so the count stays at 32 — above the floor of 22 —
     // and rule 4 is the only thing that can fail the run.
     const overrides = { ...DEFAULT_OVERRIDES, 'braces@<3.0.3': '>=3.0.3' };
     const starterMirrors = defaultStarterMirrors(DEFAULT_STARTERS, overrides);
@@ -255,7 +266,7 @@ describe('check-starter-workspace-overrides — rule 4 (third-party overrides tr
     const r = await guard({ overrides, starterMirrors: null });
     assert.equal(r.code, 1, exitMsg(1, r));
     assert.match(r.stderr, /third-party override mirroring dropped/);
-    assert.match(r.stderr, /0 verified .*pair\(s\) < floor 10/s);
+    assert.match(r.stderr, /0 verified .*pair\(s\) < floor 22/s);
     // And it must be the FLOOR that fires, not the travel rule: with no
     // third-party override in the root there is genuinely nothing unmirrored.
     assert.doesNotMatch(r.stderr, /DOES NOT TRAVEL/);
@@ -265,18 +276,19 @@ describe('check-starter-workspace-overrides — rule 4 (third-party overrides tr
     const overrides = { ...DEFAULT_OVERRIDES, 'braces@<3.0.3': '>=3.0.3' };
     const r = await guard({ overrides, starterMirrors: defaultStarterMirrors(DEFAULT_STARTERS, overrides) });
     assert.equal(r.code, 0, exitMsg(0, r));
-    assert.match(r.stdout, /15 pair\(s\) verified/);
+    assert.match(r.stdout, /33 pair\(s\) verified/);
   });
 
-  test('SCOPE: starters/examples/* need no mirror — they are not tiged targets', async () => {
-    // Positive control for the rule's scoping. The examples in the default
-    // fixture carry no `overrides` block at all and must not trip rule 4; an
-    // in-repo example is installed from the workspace root, which HAS the
-    // override. Over-reporting here is the cry-wolf failure that gets a guard
-    // deleted.
-    const r = await guard();
-    assert.equal(r.code, 0, exitMsg(0, r));
-    assert.doesNotMatch(r.out, /examples/);
+  test('REGRESSION: an EXAMPLE that does not mirror a third-party override FAILS', async () => {
+    // Examples used to be out of rule 4's scope. A copied-out example resolves
+    // its dependencies with no monorepo root above it, so the constraint has to
+    // travel in its own manifest exactly as a starter's does.
+    const exampleMirrors = defaultStarterMirrors(DEFAULT_EXAMPLES, DEFAULT_OVERRIDES);
+    delete exampleMirrors['buzz-workflow'].overrides;
+    const r = await guard({ exampleMirrors });
+    assert.equal(r.code, 1, exitMsg(1, r));
+    assert.match(r.stderr, /DOES NOT TRAVEL/);
+    assert.match(r.stderr, /starters\/examples\/buzz-workflow\/package\.json \["overrides"\] — npm/);
   });
 
   test('SCOPE: rule 4 ignores the first-party @civitai/* overrides', async () => {

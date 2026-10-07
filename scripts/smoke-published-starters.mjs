@@ -36,21 +36,18 @@
  *      SKIP_ENV_VALIDATION=1, same as CI — there are no real secrets here).
  *
  * SCOPE:
- *   - COVERED: the depth-1 starters under `starters/` — the ones the docs tell
- *     users to `tiged`. Each is asserted to carry no `workspace:` pin; one that
- *     did would be reported as SKIP (loud), never quietly mis-tested.
- *   - NOT COVERED: `starters/examples/*`. Those pin `@civitai/*` via
- *     `workspace:^` BY DESIGN and `starters/examples/README.md` explicitly tells
- *     readers to swap to published versions when copying one out — they are
- *     in-repo illustrations, not user-scaffolded templates. There is no
- *     published-version contract to smoke.
+ *   - COVERED: the depth-1 starters under `starters/` AND the apps under
+ *     `starters/examples/*` (reported as `examples/<name>`) — everything the
+ *     docs tell users to `tiged`. Each is asserted to carry no `workspace:` pin;
+ *     one that did would be reported as SKIP (loud), never quietly mis-tested.
+ *     The examples used to be out of scope on `workspace:^`; they now pin
+ *     published carets like the starters, so they have the same contract.
  *
  * WHAT IT CATCHES: a starter using an API that exists only in the workspace
  *   source and not in the published version its pin admits (new export, changed
  *   signature, moved subpath export, a dependency never actually published).
  * WHAT IT DOES NOT CATCH: runtime behaviour (nothing is executed beyond the
- *   build), anything requiring real credentials, browser/e2e behaviour, and
- *   published-version breakage in `starters/examples/*` (out of scope, above).
+ *   build), anything requiring real credentials, and browser/e2e behaviour.
  *
  * EXIT CODES:
  *   0  every discovered starter installed + typechecked + built against npm,
@@ -208,23 +205,33 @@ function verifyPublishedResolution(workdir, pkgNames) {
 
 /* ------------------------------------------------------------- discovery */
 
-function discoverStarters() {
+/** Depth-1 dirs of `dir` that hold a package.json, as names relative to `starters/`. */
+function listCandidates(dir, prefix) {
   let entries;
   try {
-    entries = readdirSync(STARTERS_DIR, { withFileTypes: true });
+    entries = readdirSync(dir, { withFileTypes: true });
   } catch (err) {
-    console.error(`ERROR: cannot read ${relative(REPO_ROOT, STARTERS_DIR)}/: ${err.message}`);
+    console.error(`ERROR: cannot read ${relative(REPO_ROOT, dir)}/: ${err.message}`);
     process.exit(1);
   }
+  return entries
+    .filter((e) => e.isDirectory() && existsSync(join(dir, e.name, 'package.json')))
+    .map((e) => `${prefix}${e.name}`);
+}
+
+function discoverStarters() {
+  // The depth-1 starters, then `starters/examples/*` one level deeper. The
+  // `examples` dir itself has no package.json, so it never lists as a starter.
+  const candidates = [
+    ...listCandidates(STARTERS_DIR, ''),
+    ...(existsSync(join(STARTERS_DIR, 'examples')) ? listCandidates(join(STARTERS_DIR, 'examples'), 'examples/') : []),
+  ];
 
   const found = [];
   const skipped = [];
-  for (const e of entries) {
-    if (!e.isDirectory()) continue;
-    // `starters/examples/*` live one level deeper and are deliberately out of
-    // scope (workspace:^ by design — see the header). Depth-1 only.
-    const pkgPath = join(STARTERS_DIR, e.name, 'package.json');
-    if (!existsSync(pkgPath)) continue;
+  for (const name of candidates) {
+    const e = { name };
+    const pkgPath = join(STARTERS_DIR, name, 'package.json');
     if (requested.length > 0 && !requested.includes(e.name)) continue;
 
     let pkg;
@@ -301,7 +308,7 @@ async function main() {
   const results = [];
   for (const starter of found) {
     const relDir = `starters/${starter.name}`;
-    const workdir = mkdtempSync(join(tmpdir(), `starter-smoke-${starter.name}-`));
+    const workdir = mkdtempSync(join(tmpdir(), `starter-smoke-${starter.name.replace(/\//g, '-')}-`));
     const record = { name: starter.name, workdir, steps: [], ok: false, files: 0, resolved: [] };
     console.log(`─── ${starter.name} ────────────────────────────────────────────`);
 
@@ -456,12 +463,7 @@ function writeSummary({ found, skipped, results, registrySkip }) {
     for (const s of skipped) lines.push(`- \`${s.name}\` — ${s.reason}`);
     lines.push('');
   }
-  lines.push(
-    '`starters/examples/*` are out of scope by design: they pin `@civitai/*` via `workspace:^` and ' +
-      '`starters/examples/README.md` tells readers to swap to published versions when copying one out.',
-    '',
-    '_Advisory job. It depends on the public npm registry, so it is **not** a required check._',
-  );
+  lines.push('_Advisory job. It depends on the public npm registry, so it is **not** a required check._');
   lines.push(`\n<!-- discovered: ${found.length} -->`);
   appendFileSync(file, `${lines.join('\n')}\n`);
 }

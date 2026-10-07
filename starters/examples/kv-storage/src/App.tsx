@@ -24,10 +24,13 @@ import { classifyAppStorageError, isSignedIn } from '@civitai/app-sdk/blocks';
  * usage readout shows headroom right up to the rejection. This demo prints
  * both.
  *
- * The `apps:storage` capability is ambient at v0 — every block can call it
- * (it's gated by the host, not a declared manifest scope; a future version may
- * make it a real scope, see W11 H4). Anon viewers: `get`/`list` no-op (null /
- * empty), writes reject.
+ * 🔴 STORAGE IS A DECLARED SCOPE, NOT AMBIENT. The host gates every call by
+ * PRESENCE in the block's approved scope set: `get` / `list` / `getQuota` need
+ * `apps:storage:read`, `set` / `delete` need `apps:storage:write`. This
+ * example's `block.manifest.json` declares both (with justifications); drop
+ * one and every matching call is refused in production while still working
+ * against the local harness. Anon viewers: `get`/`list` no-op (null / empty),
+ * writes reject.
  *
  * This example is a tiny notes pad backed by KV.
  */

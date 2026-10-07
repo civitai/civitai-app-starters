@@ -1,12 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { useBlockContext, useBlockResize, useBuzzWorkflow } from '@civitai/blocks-react';
-import type {
-  BlockTextToImageParams,
-  BlockWorkflowSnapshot,
-  ModelSlotContext,
-  WorkflowBody,
-} from '@civitai/app-sdk/blocks';
+import { useBlockContext, useBlockResize, useBuzzWorkflow, WorkflowSubmitError } from '@civitai/blocks-react';
+import { isModelSlotContext } from '@civitai/app-sdk/blocks';
+import type { BlockTextToImageParams, BlockWorkflowSnapshot, WorkflowBody } from '@civitai/app-sdk/blocks';
 
 /**
  * buzz-workflow — generate an image and bill Buzz, the right way.
@@ -40,7 +36,10 @@ export function App() {
   const rootRef = useRef<HTMLDivElement>(null);
   useBlockResize(rootRef);
 
-  const model = ready ? (context as ModelSlotContext) : null;
+  // NARROW, don't cast: `isModelSlotContext` is a runtime check that the host
+  // really sent a model slot with every field a generation body needs. A cast
+  // would hand `undefined` ids to the orchestrator on any other slot.
+  const model = ready && isModelSlotContext(context) ? context : null;
 
   const [prompt, setPrompt] = useState('a serene mountain lake at golden hour');
   // After the first generation, the next Generate is a re-gen → randomize the
@@ -135,15 +134,21 @@ export function App() {
       // 🔴 THE ERROR IS NO LONGER SWALLOWED. This used to be a bare `catch {}`,
       // which threw away the only diagnostic a failed submit produces — so the
       // card said "generation failed" and nothing, anywhere, said why.
-      logServerReason('submit', null, err);
+      logServerReason('submit', err instanceof WorkflowSubmitError ? err.snapshot : null, err);
+      const outcome = submitRejectionOutcome(err);
       setQueue((q) =>
         q.map((it) =>
           it.localId === localId
-            ? {
-                ...it,
-                status: 'error',
-                viewerMessage: 'The generation could not be started. Please try again.',
-              }
+            ? outcome.pollWorkflowId
+              ? // A workflow probably exists: track it like any other submit so
+                // the poll loop below reports its REAL fate, instead of guessing.
+                {
+                  ...it,
+                  workflowId: outcome.pollWorkflowId,
+                  status: 'processing',
+                  viewerMessage: outcome.viewerMessage,
+                }
+              : { ...it, status: 'error', viewerMessage: outcome.viewerMessage }
             : it,
         ),
       );
@@ -162,9 +167,12 @@ export function App() {
         try {
           const snap = await poll(it.workflowId!);
           // Classify + log OUTSIDE the updater (see the submit arm), and use the
-          // POLL message — the submit discriminator does not hold here.
+          // POLL message — the submit discriminator does not hold here. A card
+          // that is being polled BECAUSE its submit was rejected 'workflow-failed'
+          // keeps its own, more cautious copy: that one must not invite a retry.
           if (snap.status === 'failed') logServerReason('poll', snap);
-          const viewerMessage = snap.status === 'failed' ? pollFailureMessage() : undefined;
+          const viewerMessage =
+            snap.status === 'failed' ? (it.viewerMessage ?? pollFailureMessage()) : undefined;
           setQueue((q) =>
             q.map((q2) =>
               q2.localId === it.localId
@@ -302,6 +310,38 @@ const TERMINAL = new Set<QueueStatus>(['succeeded', 'failed', 'canceled', 'expir
 function logServerReason(where: string, snap: BlockWorkflowSnapshot | null, thrown?: unknown) {
   if (snap?.error) console.warn(`[buzz-workflow] ${where} — server reason:`, snap.error);
   if (thrown) console.warn(`[buzz-workflow] ${where} threw:`, thrown);
+}
+
+/**
+ * What to show — and whether there is anything to poll — when `submit()`
+ * REJECTS (as opposed to resolving a priced refusal, handled above).
+ *
+ * 🔴 NOT EVERY REJECTION MAY SAY "TRY AGAIN". The three arms differ on MONEY, so
+ * they get different copy (the same split as the `buzz-purchase` example):
+ *   - `'workflow-failed'` — a workflow probably exists and Buzz MAY ALREADY BE
+ *     COMMITTED. Inviting a retry would mint a fresh idempotency key and reserve
+ *     a SECOND time. Poll the returned id instead — unless it is `'whatif'`, the
+ *     server's non-workflow sentinel, which has nothing behind it to poll.
+ *   - `'exception'` — the host had no workflow to report; usually nothing was
+ *     queued, so a retry is the sensible recovery.
+ *   - anything else is transport-level (most likely the request timeout), and a
+ *     timed-out submit may well have been queued and charged: most cautious copy.
+ */
+function submitRejectionOutcome(err: unknown): { viewerMessage: string; pollWorkflowId?: string } {
+  if (err instanceof WorkflowSubmitError) {
+    if (err.code === 'workflow-failed') {
+      const id = err.snapshot.workflowId;
+      return {
+        viewerMessage:
+          'The generation was submitted but did not complete. Check your generation history before retrying.',
+        ...(id && id !== 'whatif' ? { pollWorkflowId: id } : {}),
+      };
+    }
+    return { viewerMessage: 'Could not start the generation. Please try again.' };
+  }
+  return {
+    viewerMessage: 'We lost contact before the generation was confirmed. Check your generation history before trying again.',
+  };
 }
 
 /**

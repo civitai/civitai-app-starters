@@ -65,7 +65,8 @@ jobs:
   smoke:
     name: Published-starter smoke (advisory — do NOT require)
     runs-on: ubuntu-latest
-    # Five starters, each a full `npm install` + typecheck + build from the
+    # Five starters plus the six `starters/examples/*` apps, each a full
+    # `npm install` + typecheck + build from the
     # registry. Generous but bounded, so a hung install cannot burn an hour.
     timeout-minutes: 45
     steps:

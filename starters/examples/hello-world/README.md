@@ -35,15 +35,17 @@ set `data-theme` inside your iframe** — that's a cross-document boundary. So:
   `:hover`/`:focus` states — set `data-theme={theme}` on your root element and
   key the CSS off `[data-theme='dark'] …` (see `src/index.css`).
 
-If you forget, every `[data-theme='dark']` rule is silently dormant and the
-block renders in light mode on a dark host page.
+If you forget, every `[data-theme=…]` rule is silently dormant and the block
+ignores the host's theme. It does not simply stay light: `src/index.css` sets
+`color-scheme: light dark`, so the browser's own defaults follow the viewer's
+**OS** colour scheme — which need not match the host page, in either direction.
 
 ## Run it locally
 
 ```bash
 cp .env.example .env
-pnpm install
-pnpm dev:harness   # → http://localhost:5180 with a mock host
+npm install           # inside this monorepo: pnpm install, at the root
+npm run dev:harness   # → http://localhost:5180 with a mock host
 ```
 
 The harness (`src/Harness.tsx`) simulates the host: it posts a fake

@@ -22,8 +22,10 @@ body {
  * `data-theme` on an ancestor inside its OWN iframe document. The host
  * cannot reach across the iframe boundary to set it. `App.tsx` reads
  * `useBlockContext().theme` and sets `data-theme={theme}` on its root —
- * without that, every rule below is dormant and the block renders in the
- * light-mode defaults even on a dark host page.
+ * without that, every rule below is dormant and the block IGNORES the host's
+ * theme: it falls back to the browser defaults that `color-scheme: light dark`
+ * (above) picks from the viewer's OS setting, which need not match the host
+ * page's theme in either direction.
  *
  * Pseudo-elements (::after), :hover and :focus states are the usual
  * casualties because they can't be inline-styled. Inline-style what you can

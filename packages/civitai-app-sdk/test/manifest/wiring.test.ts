@@ -12,12 +12,11 @@
  *
  * NOT SEVEN COPIES ANY MORE. The previous revision duplicated the plugin
  * verbatim into all seven directories, justified as "a scaffold cannot import
- * from the monorepo". That was true of ONE of them and false of six: the
- * examples pin `workspace:^`, which is unresolvable outside the monorepo
- * anyway, and `starters/examples/README.md` tells a `tiged` user to swap to the
- * published packages. The block starter's case was not "the monorepo" either —
- * it was the PUBLISHED pin, which the release sequencing note in the PR body
- * covers. So the copies are gone, and with them the byte-identity ledger that
+ * from the monorepo". That was never the constraint: every scaffold — the
+ * block starter and, since they moved off `workspace:^`, all six examples —
+ * pins a PUBLISHED `@civitai/app-sdk` caret, and the published package ships
+ * the plugin. The real constraint is that the pin admits a version that HAS
+ * it, which the release sequencing note in the PR body covers. So the copies are gone, and with them the byte-identity ledger that
  * required every future manifest-shipping example to carry one.
  *
  * WHAT EACH ASSERTION IS WORTH:
