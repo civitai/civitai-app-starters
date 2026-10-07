@@ -297,13 +297,14 @@ test('every starter that ships a block.manifest.json satisfies the coupling', ()
 // ---------------------------------------------------------------------------
 
 /**
- * The block starter AND the six examples: each one is copied by someone, so each
- * gets the same dark-first checks. A new themed app joins by being listed here.
+ * The block starter AND the examples listed here: each one is copied by someone,
+ * so each gets the same dark-first checks. A new themed app joins by being
+ * listed here — with a `sync` value, or it fails (see SYNC_KINDS below).
  *
  * `sync` names WHERE the app keeps <html data-theme> in step with the host, because
  * that is the one check whose subject is framework code rather than the shared
  * index.html / index.css / manifest trio:
- *   - 'react' — an effect in src/App.tsx gated on `ready` (the six examples);
+ *   - 'react' — an effect in src/App.tsx gated on `ready` (the React examples);
  *   - 'sdk'   — `syncTheme` in src/block.ts, run after `initialize()` resolves and
  *               re-run from `app.onChange` (civitai-block-starter, which has no
  *               framework since it was converted to web components).
@@ -317,8 +318,29 @@ const THEMED_APPS = [
     dir: join(STARTERS, 'examples', name),
     sync: 'react',
   })),
-  { label: 'examples/generate-studio', dir: join(STARTERS, 'examples', 'generate-studio') },
+  { label: 'examples/generate-studio', dir: join(STARTERS, 'examples', 'generate-studio'), sync: 'react' },
 ];
+
+/**
+ * 🔴 THE ONLY VALID `sync` VALUES. The theme-sync check below is chosen BY this
+ * tag, so an entry without one (or with a typo) would get NEITHER check and
+ * pass silently — which is how a merge once dropped generate-studio's sync
+ * check. A missing or unknown value is therefore a FAILURE, both here and as a
+ * per-app test inside the loop, never a skip.
+ */
+const SYNC_KINDS = new Set(['react', 'sdk']);
+
+test('every THEMED_APPS entry names how it syncs the theme (react | sdk)', () => {
+  const bad = THEMED_APPS.filter((a) => !SYNC_KINDS.has(a.sync)).map(
+    (a) => `${a.label}: sync=${JSON.stringify(a.sync)}`,
+  );
+  assert.deepEqual(
+    bad,
+    [],
+    `THEMED_APPS entries without a valid \`sync\` (one of ${[...SYNC_KINDS].join(', ')}) — ` +
+      `their theme-sync check would be skipped:\n  ${bad.join('\n  ')}`,
+  );
+});
 
 for (const { label, dir, sync } of THEMED_APPS) {
   test(`${label}: manifest declares bootSkeleton: true (parsed, not grepped)`, () => {
@@ -505,6 +527,15 @@ for (const { label, dir, sync } of THEMED_APPS) {
     assert.ok(m, 'index.css must declare color-scheme');
     assert.equal(m[1].trim(), 'dark light');
   });
+
+  if (!SYNC_KINDS.has(sync)) {
+    test(`${label}: names a theme-sync kind`, () => {
+      assert.fail(
+        `${label} has sync=${JSON.stringify(sync)}; it must be one of ${[...SYNC_KINDS].join(', ')} ` +
+          'so that its theme-sync check runs',
+      );
+    });
+  }
 
   if (sync === 'react') {
     test(`${label}: App.tsx keeps the page in step with the host theme`, () => {
