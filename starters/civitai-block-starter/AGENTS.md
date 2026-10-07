@@ -7,7 +7,7 @@
 > `useBlockContext()`, render UI keyed on slot + viewer + theme, let
 > `useBlockResize` drive iframe height.
 
-You're inside the Civitai Apps starter for Civitai. The user cloned this to
+You're inside the **React** Civitai Apps starter for Civitai (the default, framework-free one is `starters/civitai-block-starter-elements`; don't port this one to it unless asked). The user cloned this to
 bootstrap their own block — there is **no monorepo around you**;
 `@civitai/app-sdk` and `@civitai/blocks-react` are npm dependencies, not
 sibling workspaces. Help them extend it.

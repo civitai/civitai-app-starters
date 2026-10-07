@@ -54,13 +54,13 @@ const BLOCK_STARTER = join(STARTERS, 'civitai-block-starter');
 /**
  * COVERAGE FLOOR. A sweep that finds zero files is indistinguishable from a
  * passing one, and a `find`-shaped guard silently narrows to nothing the moment
- * a directory moves. Measured at this commit: 7 manifests
- * (civitai-block-starter + 6 under starters/examples), 1 of which declares
- * bootSkeleton. Raise these when the real numbers rise; never lower them to make
- * a run green.
+ * a directory moves. Measured at this commit: 8 manifests
+ * (civitai-block-starter, civitai-block-starter-elements + 6 under
+ * starters/examples), 2 of which declare bootSkeleton (the two block starters).
+ * Raise these when the real numbers rise; never lower them to make a run green.
  */
-const MIN_MANIFESTS = 7;
-const MIN_DECLARING = 1;
+const MIN_MANIFESTS = 8;
+const MIN_DECLARING = 2;
 
 /** Every `block.manifest.json` under `starters/`, with its sibling entry document. */
 function collectBlockApps() {

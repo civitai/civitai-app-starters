@@ -1,5 +1,10 @@
 # Civitai App — Vite + React starter
 
+> **Not using React?** The default Civitai App starter is
+> [`civitai-block-starter-elements`](../civitai-block-starter-elements) — the same
+> manifest and demo built on web components (`@civitai/sdk` + the `<civitai-*>`
+> elements), with no UI framework. This starter is the React alternative.
+
 Scaffold for a [Civitai App](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-app-sdk/src/blocks) — an iframe-embedded UI that renders on civitai.com pages and authenticates via short-lived block-scoped JWTs.
 
 > This is **not** the same as the `react-pwa` starter. That one builds a full

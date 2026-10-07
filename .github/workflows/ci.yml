@@ -382,6 +382,7 @@ jobs:
           - react-pwa
           - svelte-pwa
           - civitai-block-starter
+          - civitai-block-starter-elements
     steps:
       - uses: actions/checkout@v7
 
@@ -493,6 +494,17 @@ jobs:
         env:
           PROBE_SKIP_BUILD: '1'
         timeout-minutes: 5
+
+      # A starter that ships its own suite runs it here. Keyed on the script's
+      # existence rather than on a matrix name, for the same reason as the lint
+      # step below: an `if:` on a name silently stops running on a rename.
+      - name: Test (if defined)
+        run: |
+          if pnpm --filter ./starters/${{ matrix.starter }} exec node -e "process.exit(require('./package.json').scripts?.test ? 0 : 1)" 2>/dev/null; then
+            pnpm --filter ./starters/${{ matrix.starter }} test
+          else
+            echo "No test script for ${{ matrix.starter }} — skipping."
+          fi
 
       - name: Lint (if defined)
         run: |
