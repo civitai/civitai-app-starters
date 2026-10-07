@@ -1,0 +1,49 @@
+{
+  "name": "example-generation-kinds",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Civitai App example — the other WorkflowBody kinds: a customComfy recipe and a chat-completion step, estimate to confirm to submit to poll, in a page app.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "dev:harness": "VITE_DEV_HARNESS=true vite --host localhost --port 5189",
+    "dev:live": "VITE_DEV_HARNESS=true VITE_LIVE_MODE=true vite --host localhost --port 5189",
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "preview": "vite preview"
+  },
+  "comment-overrides": [
+    "Security constraints on transitive dependencies, mirrored from the monorepo",
+    "root's pnpm.overrides so they travel with a copied-out example (the root",
+    "manifest is not part of the copy). Both keys on purpose: `overrides` is npm's,",
+    "`pnpm.overrides` is pnpm's. The full rationale is in",
+    "starters/civitai-block-starter/package.json; enforced by",
+    "scripts/check-starter-workspace-overrides.mjs rule 4."
+  ],
+  "overrides": {
+    "cookie@<0.7.0": "^0.7.0",
+    "postcss@<8.5.10": ">=8.5.10"
+  },
+  "pnpm": {
+    "overrides": {
+      "cookie@<0.7.0": "^0.7.0",
+      "postcss@<8.5.10": ">=8.5.10"
+    }
+  },
+  "dependencies": {
+    "@civitai/app-sdk": "^0.58.0",
+    "@civitai/blocks-react": "^0.65.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^6.0.2",
+    "ajv": "^8.17.1",
+    "typescript": "^5.9.2",
+    "vite": "^8.0.14"
+  }
+}
