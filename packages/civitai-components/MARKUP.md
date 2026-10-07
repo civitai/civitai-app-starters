@@ -163,28 +163,30 @@ layer down, and the same predicate decides all three:
   pages that set none.** Text does not paint `--civitai-color-text` on its own,
   so it renders in whatever colour it inherits: wherever an ancestor `color` and
   the token disagree, Text follows the ancestor. An ancestor `color` is the
-  common case, not the exception. Measured on both tracks at this commit, in the
-  shape a block in this repo actually has: a `[data-theme="dark"]` root carrying
-  `color: #e6e6e6`, which is what `civitai-block-starter` sets. Text computes `rgb(230, 230, 230)` — the root's
-  colour — against a dark token of `rgb(193, 194, 197)`. Restoring the removed
-  declaration on that same fixture puts both tracks back at `rgb(193, 194, 197)`
-  while the plain `<p>` beside them stays `rgb(230, 230, 230)`; that pair is the
-  trade, in the exact colours a block here ships. Dark is where it reads, the
-  token being a soft grey next to a near-white block colour. Light theme behaves
+  common case, not the exception. Measured on both tracks, on a
+  `[data-theme="dark"]` root carrying `color: #e6e6e6` — the shape this repo's
+  blocks had when the measurement was taken (none sets that colour today; see
+  below). Text computes `rgb(230, 230, 230)` — the root's colour — against a
+  dark token of `rgb(193, 194, 197)`. Restoring the removed declaration on that
+  same fixture puts both tracks back at `rgb(193, 194, 197)` while the plain
+  `<p>` beside them stays `rgb(230, 230, 230)`; that pair is the trade. Dark is
+  where it reads, the token being a soft grey next to a near-white page
+  colour. Light theme behaves
   the same way: with `color: rgb(24, 24, 27)` on `<body>` Text computes
   `rgb(24, 24, 27)` where it computed the token `rgb(34, 34, 34)` before.
 
-  Every in-repo consumer would be in that population once it renders Text — none
-  does today — by two different routes: four starters set the colour on `<body>`
-  with Tailwind
-  (`text-zinc-900 dark:text-zinc-100` — `starters/next-app/src/app/globals.css`,
-  `starters/react-pwa/index.html`, `starters/svelte-pwa/index.html`,
-  `starters/sveltekit-app/src/app.html`), and one sets it on a `[data-theme]`
-  root as `#1a1a1a` / `#e6e6e6` (`starters/civitai-block-starter/src/index.css`).
-  The package's own `demo/` and `playground/` and every
-  `starters/examples/*/src/index.css` are the exception that proves the rule:
-  they set `color: var(--civitai-color-text)` on their root, so they still show
-  the token — by inheriting it, not because Text names it. With no colour anywhere on the
+  In this repo the trade lands on four starters, which set their own colour on
+  `<body>` with Tailwind (`text-zinc-900 dark:text-zinc-100` —
+  `starters/next-app/src/app/globals.css`, `starters/react-pwa/index.html`,
+  `starters/svelte-pwa/index.html`, `starters/sveltekit-app/src/app.html`); none
+  of them renders Text today, so it would bite the first one that does. No page
+  here sets `#1a1a1a` / `#e6e6e6` any more. Every Civitai App page sets the
+  token itself instead — every `starters/examples/*/src/index.css` on `:root`,
+  and `starters/civitai-block-starter/src/index.css` on `body`, all as
+  `color: var(--civitai-color-text)` — as do the package's own `demo/` and
+  `playground/`. Those pages show the token in Text by inheriting it, not
+  because Text names it; of them, the block starter and the demo/playground
+  actually render Text. With no colour anywhere on the
   page Text lands on the UA default `rgb(0, 0, 0)`, since `@civitai/theme` ships
   tokens only and sets no `color`.
 

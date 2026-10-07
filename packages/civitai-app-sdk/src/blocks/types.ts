@@ -2088,11 +2088,13 @@ export interface BlockManifestV1 {
    */
   $schema?: 'https://civitai.com/schemas/app-block/v1.json' | (string & {});
   /**
-   * NOT a canonical manifest property, and NOT validated. Your app id lives in
-   * `civitai.app.json` (`{"appId": "..."}`), which is what the `civitai` CLI
-   * reads. The canonical does not forbid extra top-level keys, so the server
-   * ignores this one; the scaffolds still carry `"app_REPLACE_ME"` and it is
-   * inert.
+   * NOT a canonical manifest property, and NOT validated. Nothing reads it: the
+   * canonical does not forbid extra top-level keys, so the server ignores this
+   * one, and the Go `civitai` CLI identifies an app by the manifest's
+   * `blockId` (its `app submit` keys the submission on it). There is no
+   * separate app-id file either — an earlier version of this comment pointed at
+   * a `civitai.app.json`, which no current tool reads. Scaffolds that still
+   * carry `"app_REPLACE_ME"` here are carrying an inert key.
    */
   appId?: string;
   blockId: string;

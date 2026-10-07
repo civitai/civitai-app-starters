@@ -1,0 +1,487 @@
+import { readFileSync, readdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+
+import { getTransport } from '@civitai/sdk';
+import { __resetTransport } from '@civitai/sdk/testing';
+
+import { mountBlock, startBlock } from '../src/block.js';
+import { DIRECT_LOAD_TIMEOUT_MS, hostToRunUrl, renderDirectLoadFallback } from '../src/directLoad.js';
+
+/**
+ * These drive the block through its REAL bridge: `mountBlock` → `initialize()`
+ * from `@civitai/sdk` → the iframe transport's `message` listener. Each test
+ * plays the host by dispatching the same `postMessage` frames civitai.com sends,
+ * and reads what the block posts back through a stand-in `window.parent` — no
+ * fake transport, so the handshake, the origin allowlist and the outbound
+ * messages are the shipped code paths.
+ */
+
+const HOST_ORIGIN = 'https://civitai.com';
+// A path, not `new URL(…)`: under happy-dom the global `URL` is the DOM's, which
+// node:fs refuses as a file URL.
+const INDEX_HTML = join(dirname(fileURLToPath(import.meta.url)), '..', 'index.html');
+
+interface Posted {
+  message: { type: string; payload?: unknown };
+  targetOrigin: string;
+}
+
+let posted: Posted[];
+let root: HTMLElement;
+const realParent = window.parent;
+const realTop = window.top;
+
+function initPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    blockInstanceId: 'bki_test',
+    blockId: 'test-block',
+    appId: 'app_test',
+    token: {
+      raw: 'test.token',
+      scopes: [],
+      expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+    },
+    context: {
+      slotId: 'model.sidebar_top',
+      modelId: 4201,
+      modelVersionId: 9902,
+      modelName: 'Lighthouse XL',
+      modelType: 'Checkpoint',
+      modelNsfwLevel: 1,
+    },
+    settings: { publisherSettings: {}, userSettings: {} },
+    viewer: { id: 7, username: 'tester', signedIn: true },
+    theme: 'light',
+    renderMode: 'iframe',
+    ...overrides,
+  };
+}
+
+function fromHost(data: unknown, origin = HOST_ORIGIN) {
+  window.dispatchEvent(new MessageEvent('message', { data, origin }));
+}
+
+const sentTypes = () => posted.map((p) => p.message.type);
+const field = (name: string) => root.querySelector<HTMLElement>(`[data-field="${name}"]`);
+const rendered = () => root.querySelector('[data-block-root]') !== null;
+
+beforeEach(() => {
+  // The REAL #root from index.html, boot skeleton included, so "the first
+  // render removes the skeleton" is checked against the markup that ships.
+  const html = readFileSync(INDEX_HTML, 'utf8');
+  const shipped = new DOMParser().parseFromString(html, 'text/html').getElementById('root');
+  if (!shipped) throw new Error('index.html has no #root');
+  document.body.replaceChildren(document.importNode(shipped, true));
+  root = document.getElementById('root')!;
+  delete document.documentElement.dataset.theme;
+
+  posted = [];
+  Object.defineProperty(window, 'parent', {
+    configurable: true,
+    writable: true,
+    value: {
+      postMessage: (message: Posted['message'], targetOrigin: string) =>
+        posted.push({ message, targetOrigin }),
+    },
+  });
+
+  // A fresh bridge per test, pinned to the production host origin. (Without a
+  // VITE_ value the SDK's default list also contains it; pinning it here keeps
+  // a developer's local .env from changing what these tests see.)
+  __resetTransport();
+  getTransport({ allowedParentOrigins: [HOST_ORIGIN] });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  __resetTransport();
+  Object.defineProperty(window, 'parent', { configurable: true, writable: true, value: realParent });
+  Object.defineProperty(window, 'top', { configurable: true, writable: true, value: realTop });
+});
+
+describe('mountBlock over the real bridge', () => {
+  test('BLOCK_INIT renders the host context into upgraded <civitai-*> elements', async () => {
+    const mounted = mountBlock(root);
+    expect(root.querySelector('[data-boot-skeleton]')).not.toBeNull();
+
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload() });
+    await mounted;
+
+    // The host's context, on screen.
+    expect(field('slot')?.textContent).toBe('model.sidebar_top');
+    expect(field('model-name')?.textContent).toBe('Lighthouse XL');
+    expect(field('model-id')?.textContent).toBe('4201');
+    expect(field('model-version-id')?.textContent).toBe('9902');
+    expect(field('viewer')?.textContent).toBe('signed in');
+
+    // …inside REAL custom elements: registered, upgraded, and rendered by Lit
+    // into their shadow roots. An unregistered tag would still hold the text
+    // above, so this is the half that proves the design system is wired.
+    const TextElement = customElements.get('civitai-text');
+    expect(TextElement).toBeDefined();
+    const heading = root.querySelector('civitai-text');
+    expect(heading).toBeInstanceOf(TextElement!);
+    await (heading as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    expect(heading!.shadowRoot?.querySelector('h2')).not.toBeNull();
+    const badge = field('viewer')!;
+    expect(badge).toBeInstanceOf(customElements.get('civitai-badge')!);
+
+    // The first render replaced the boot skeleton.
+    expect(root.querySelector('[data-boot-skeleton]')).toBeNull();
+
+    // The page follows the host's theme (BLOCK_INIT is authoritative).
+    expect(document.documentElement.dataset.theme).toBe('light');
+
+    // And the block answered the host — to the host's origin, never '*'.
+    expect(sentTypes()).toContain('BLOCK_READY');
+    expect(sentTypes()).toContain('RESIZE_IFRAME');
+    for (const p of posted) expect(p.targetOrigin).toBe(HOST_ORIGIN);
+  });
+
+  test('a BLOCK_INIT from an origin not on the allowlist is ignored', async () => {
+    const mounted = mountBlock(root);
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload() }, 'https://evil.example');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(rendered()).toBe(false);
+    expect(root.querySelector('[data-boot-skeleton]')).not.toBeNull();
+    // Only the bridge's own startup BLOCK_HELLO — no reply to the impostor.
+    expect(sentTypes()).toEqual(['BLOCK_HELLO']);
+
+    // Positive control: the same frame from the real host mounts the block, so
+    // the silence above was the allowlist and not a dead test.
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload() });
+    await mounted;
+    expect(rendered()).toBe(true);
+  });
+
+  test('a THEME_CHANGE push re-themes the page live', async () => {
+    const mounted = mountBlock(root);
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload({ theme: 'light' }) });
+    await mounted;
+    expect(document.documentElement.dataset.theme).toBe('light');
+
+    fromHost({ type: 'THEME_CHANGE', payload: { theme: 'dark' } });
+    expect(document.documentElement.dataset.theme).toBe('dark');
+  });
+
+  test('an anonymous viewer on a non-model slot', async () => {
+    const mounted = mountBlock(root);
+    fromHost({
+      type: 'BLOCK_INIT',
+      payload: initPayload({
+        viewer: null,
+        context: { slotId: 'app.page', slug: 'my-app', subPath: '/', viewerUserId: null },
+      }),
+    });
+    await mounted;
+    expect(field('viewer')?.textContent).toBe('anonymous');
+    expect(field('slot')?.textContent).toBe('app.page');
+    // The model line is only for model slots: hidden rather than removed,
+    // because `fill` only ever updates the view in place.
+    expect(field('model')?.style.display).toBe('none');
+  });
+
+  test('host-provided strings are rendered as text, never parsed as markup', async () => {
+    const mounted = mountBlock(root);
+    const hostile = '<img src=x onerror="window.__pwned=1">';
+    fromHost({
+      type: 'BLOCK_INIT',
+      payload: initPayload({ context: { ...initPayload().context, modelName: hostile } }),
+    });
+    await mounted;
+    expect(field('model-name')?.textContent).toBe(hostile);
+    expect(root.querySelector('img')).toBeNull();
+  });
+});
+
+describe('direct (unembedded) load', () => {
+  test('top-level with no host: the "Open on Civitai" card, then the block once a host answers', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const mounted = mountBlock(root);
+
+    await vi.advanceTimersByTimeAsync(DIRECT_LOAD_TIMEOUT_MS - 1);
+    expect(root.querySelector('[data-civitai-block-direct-load]')).toBeNull();
+    await vi.advanceTimersByTimeAsync(1);
+    // happy-dom serves the page from localhost, so this is the neutral
+    // "waiting" card rather than a link to a run URL.
+    const card = root.querySelector('[data-civitai-block-direct-load]');
+    expect(card).not.toBeNull();
+    expect(card?.textContent).toContain('Waiting for the Civitai host');
+
+    // A late host still wins.
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload() });
+    await mounted;
+    expect(rendered()).toBe(true);
+    expect(root.querySelector('[data-civitai-block-direct-load]')).toBeNull();
+  });
+
+  test.each([
+    ['my-app.civit.ai', 'https://civitai.com/apps/run/my-app'],
+    ['My-App.Civit.AI.', 'https://civitai.com/apps/run/my-app'],
+    ['localhost', null],
+    ['civit.ai', null],
+    ['evil.example', null],
+    ['bad_label.civit.ai', null],
+  ])('hostToRunUrl(%s) → %s', (hostname, expected) => {
+    expect(hostToRunUrl(hostname)).toBe(expected);
+  });
+});
+
+describe('host pushes after mount', () => {
+  test('a TOKEN_REFRESH leaves the page and what the viewer typed intact', async () => {
+    const mounted = mountBlock(root);
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload() });
+    await mounted;
+
+    // A control a block author adds next to the starter's fields, holding
+    // something the viewer typed.
+    const input = document.createElement('input');
+    input.value = 'half-written prompt';
+    root.querySelector('[data-block-root]')!.append(input);
+    const heading = root.querySelector('civitai-text');
+
+    // The host rotates the token every few minutes. The snapshot changes (so
+    // onChange fires) but nothing the view shows does.
+    fromHost({
+      type: 'TOKEN_REFRESH',
+      payload: {
+        token: {
+          raw: 'rotated.token',
+          scopes: [],
+          expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+        },
+      },
+    });
+
+    expect(input.isConnected).toBe(true);
+    expect(input.value).toBe('half-written prompt');
+    expect(root.querySelector('civitai-text')).toBe(heading);
+    expect(field('model-name')?.textContent).toBe('Lighthouse XL');
+  });
+
+  test('a THEME_CHANGE re-themes without rebuilding the view', async () => {
+    const mounted = mountBlock(root);
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload({ theme: 'light' }) });
+    await mounted;
+    const input = document.createElement('input');
+    input.value = 'kept';
+    root.querySelector('[data-block-root]')!.append(input);
+
+    fromHost({ type: 'THEME_CHANGE', payload: { theme: 'dark' } });
+
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(input.isConnected).toBe(true);
+    expect(input.value).toBe('kept');
+  });
+});
+
+describe('a block that cannot start', () => {
+  test('the entry module shows a visible error instead of leaving the skeleton up', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.resetModules();
+    // The real entry, as index.html loads it. A host payload with no context
+    // makes the first render throw.
+    await import('../src/main.js');
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload({ context: null }) });
+
+    await vi.waitFor(() => expect(root.querySelector('[data-block-error]')).not.toBeNull());
+    const alert = root.querySelector('[data-block-error]')!;
+    expect(alert.getAttribute('role')).toBe('alert');
+    expect(alert.getAttribute('heading')).toBe('This app could not start');
+    expect(alert.textContent).toBe('Reload the page to try again.');
+    expect(root.querySelector('[data-boot-skeleton]')).toBeNull();
+    expect(errors).toHaveBeenCalled();
+    errors.mockRestore();
+  });
+});
+
+describe('embedded load', () => {
+  test('an embedded block never shows the direct-load card, however slow its host', async () => {
+    // Framed: window.top is some other window.
+    Object.defineProperty(window, 'top', { configurable: true, writable: true, value: {} });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const mounted = mountBlock(root);
+
+    await vi.advanceTimersByTimeAsync(DIRECT_LOAD_TIMEOUT_MS * 5);
+    expect(root.querySelector('[data-civitai-block-direct-load]')).toBeNull();
+    expect(root.querySelector('[data-boot-skeleton]')).not.toBeNull();
+
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload() });
+    await mounted;
+    expect(rendered()).toBe(true);
+  });
+});
+
+describe('the "Open on Civitai" link', () => {
+  test('a deployed block host links to its own run page', async () => {
+    await withAttachInternals(checkRunLink);
+  });
+});
+
+/**
+ * `<civitai-button>` is form-associated and calls attachInternals(), which
+ * happy-dom does not implement (real browsers do). A minimal stand-in, for the
+ * duration of `fn` only, so the element can upgrade and render.
+ */
+async function withAttachInternals(fn: () => Promise<void> | void): Promise<void> {
+  const proto = HTMLElement.prototype as unknown as { attachInternals?: () => unknown };
+  const hadInternals = 'attachInternals' in proto;
+  if (!hadInternals) {
+    proto.attachInternals = () => ({
+      form: null,
+      setFormValue() {},
+      setValidity() {},
+      checkValidity: () => true,
+      reportValidity: () => true,
+      states: new Set(),
+    });
+  }
+  try {
+    await fn();
+  } finally {
+    if (!hadInternals) delete proto.attachInternals;
+  }
+}
+
+async function checkRunLink() {
+  {
+    renderDirectLoadFallback(root, 'my-app.civit.ai');
+    const button = root.querySelector('[data-civitai-block-direct-load] civitai-button');
+    expect(button?.getAttribute('href')).toBe('https://civitai.com/apps/run/my-app');
+    // …and the element really renders it as a link.
+    await (button as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    expect(button!.shadowRoot?.querySelector('a')?.getAttribute('href')).toBe(
+      'https://civitai.com/apps/run/my-app',
+    );
+    expect(root.textContent).not.toContain('Waiting for the Civitai host');
+  }
+}
+
+/**
+ * 🔴 `@civitai/components/register` does NOT define every `<civitai-*>` element
+ * (the civitai.com vocabulary needs `register-site`; the SDK-backed buttons need
+ * their own `define`), and an undefined tag renders as an inert, unstyled box
+ * with no error at all. So this checks the starter's ACTUAL usage, collected two
+ * ways, against the registry its own imports produced.
+ */
+describe('every <civitai-*> element the starter uses is defined', () => {
+  const STARTER = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const TAG_USE = /<(civitai-[a-z][a-z0-9-]*)\b|createElement\(\s*['"`](civitai-[a-z][a-z0-9-]*)['"`]/g;
+
+  /** Every source file under `src/` (TypeScript and any HTML/CSS beside it). */
+  function sourceFiles(): string[] {
+    const out: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\.(ts|html|css)$/.test(entry.name)) out.push(full);
+      }
+    };
+    walk(join(STARTER, 'src'));
+    return out;
+  }
+
+  function staticTags(): Set<string> {
+    const tags = new Set<string>();
+    // index.html is PARSED, not pattern-matched: the parser drops comments by
+    // construction, so a tag named only in a comment is not counted as usage.
+    const html = new DOMParser().parseFromString(readFileSync(join(STARTER, 'index.html'), 'utf8'), 'text/html');
+    html.querySelectorAll('*').forEach((el) => {
+      if (el.localName.startsWith('civitai-')) tags.add(el.localName);
+    });
+    for (const file of sourceFiles()) {
+      // Comments name elements without using them (src/block.ts lists the ones
+      // `register` leaves out), so only CODE counts as usage.
+      const code = readFileSync(file, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '');
+      for (const m of code.matchAll(TAG_USE)) tags.add((m[1] ?? m[2])!);
+    }
+    return tags;
+  }
+
+  /** Every civitai-* node in the DOM after the starter renders each state it can render. */
+  async function runtimeTags(): Promise<Set<string>> {
+    const tags = new Set<string>();
+    const collect = () =>
+      root.querySelectorAll('*').forEach((el) => {
+        const name = el.localName;
+        if (name.startsWith('civitai-')) tags.add(name);
+      });
+
+    // 1. Mounted, with host context.
+    const mounted = mountBlock(root);
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload() });
+    await mounted;
+    collect();
+    // 2. The direct-load card, both branches.
+    await withAttachInternals(() => {
+      renderDirectLoadFallback(root, 'my-app.civit.ai');
+      collect();
+      renderDirectLoadFallback(root, 'localhost');
+      collect();
+    });
+    // 3. The start-error state.
+    __resetTransport();
+    getTransport({ allowedParentOrigins: [HOST_ORIGIN] });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const started = startBlock(root);
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload({ context: null }) });
+    await started;
+    errors.mockRestore();
+    collect();
+    return tags;
+  }
+
+  test('static usage (index.html + src/**) is all defined', () => {
+    const tags = staticTags();
+    // Positive control: the collector sees tags we know the starter uses.
+    for (const known of ['civitai-text', 'civitai-stack', 'civitai-badge', 'civitai-button', 'civitai-alert']) {
+      expect(tags, `static collector missed ${known}`).toContain(known);
+    }
+    const undefinedTags = [...tags].filter((t) => !customElements.get(t)).sort();
+    expect(undefinedTags, 'used by the starter but not defined by its imports').toEqual([]);
+  });
+
+  test('every element rendered at runtime is defined', async () => {
+    const tags = await runtimeTags();
+    // Positive control: one tag from each rendered state.
+    for (const known of ['civitai-badge', 'civitai-card', 'civitai-button', 'civitai-alert']) {
+      expect(tags, `runtime collector missed ${known}`).toContain(known);
+    }
+    const undefinedTags = [...tags].filter((t) => !customElements.get(t)).sort();
+    expect(undefinedTags, 'rendered by the starter but not defined by its imports').toEqual([]);
+  });
+});
+
+describe('scopes', () => {
+  const STARTER_DIR = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const manifestScopes = () =>
+    (JSON.parse(readFileSync(join(STARTER_DIR, 'block.manifest.json'), 'utf8')) as { scopes: string[] }).scopes;
+
+  test('the starter declares no scopes', () => {
+    // It renders from BLOCK_INIT's context alone, which carries no scope.
+    // `models:read:self` gates only GET /api/v1/models/{id}, which this starter
+    // never calls; declaring it anyway is a permission review has to weigh for
+    // nothing. Add scopes when you add the calls that need them.
+    expect(manifestScopes()).toEqual([]);
+  });
+
+  test('the dev harness mints exactly the scopes the manifest declares', async () => {
+    // The harness posts from the page's own origin.
+    __resetTransport();
+    getTransport({ allowedParentOrigins: [window.location.origin] });
+    const { installHarness } = await import('../src/dev/harness.js');
+    const uninstall = installHarness(root);
+    try {
+      await mountBlock(root);
+      expect([...getTransport().snapshot.get().token.scopes].sort()).toEqual([...manifestScopes()].sort());
+    } finally {
+      uninstall();
+    }
+  });
+});

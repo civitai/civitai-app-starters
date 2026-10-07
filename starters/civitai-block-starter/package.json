@@ -2,7 +2,7 @@
   "name": "civitai-block-starter",
   "version": "0.0.0",
   "private": true,
-  "description": "Vite + React 19 starter for building Civitai Apps — iframe-embedded UIs that render on civitai.com pages.",
+  "description": "Vite + TypeScript starter for building Civitai Apps — iframe-embedded UIs on civitai.com pages — with web components and no UI framework.",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -12,7 +12,8 @@
     "starter",
     "template",
     "vite",
-    "react"
+    "web-components",
+    "custom-elements"
   ],
   "homepage": "https://github.com/civitai/civitai-app-starters/tree/main/starters/civitai-block-starter#readme",
   "bugs": "https://github.com/civitai/civitai-app-starters/issues",
@@ -24,37 +25,24 @@
   "scripts": {
     "dev": "vite",
     "dev:harness": "VITE_DEV_HARNESS=true vite",
-    "dev:live": "VITE_DEV_HARNESS=true VITE_LIVE_MODE=true vite",
     "build": "vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
     "preview": "vite preview"
   },
   "comment-overrides": [
     "SECURITY CONSTRAINTS ON TRANSITIVE DEPENDENCIES. Declared HERE, in the",
     "starter's own manifest, because that is what travels: `npx tiged",
-    "civitai/civitai-app-starters/starters/civitai-block-starter my-app` copies this",
-    "directory alone, and the monorepo root's pnpm.overrides is NOT part of the",
-    "copy -- so a constraint kept only there protects the monorepo and nothing a",
-    "developer actually runs. Measured in starters/sveltekit-app before this",
-    "existed: a scaffolded copy resolved cookie@0.6.0 and `npm audit` reported 3",
-    "low advisories (GHSA-pxg6-pf52-xh8x) while the monorepo installed 0.7.x.",
-    "NEITHER ENTRY HAS A REFERENT IN THIS STARTER TODAY: it resolves no `cookie`",
-    "at all, and no `postcss` below 8.5.10 -- both are inert no-ops here. They",
-    "are mirrored anyway so the rule stays mechanical: the alternative is a",
-    "hand-maintained per-starter exception list that goes stale the first time a",
-    "dependency tree shifts.",
-    "BOTH blocks on purpose: `overrides` is npm's key, `pnpm.overrides` is",
-    "pnpm's, and an external developer may reach for either. The `@<range>`",
-    "SELECTOR spelling is used in both -- npm accepts it, and unlike the bare",
-    "spelling it does not trip `EOVERRIDE` where the manifest also depends on",
-    "the package directly (next-app devDepends on postcss).",
-    "EXPECTED NOISE: a workspace `pnpm install` prints `The field",
-    "\"pnpm.overrides\" was found in ... This will not take effect` for this file.",
-    "That warning is correct -- inside the monorepo only the ROOT manifest's",
-    "overrides apply -- and it is not a reason to delete this block: the block is",
-    "for the tiged'd copy, where this manifest IS the root. Measured: pnpm does",
-    "NOT read the plain `overrides` key (a scaffolded copy carrying only that key",
-    "resolved cookie@0.6.0), so both blocks are load-bearing.",
+    "civitai/civitai-app-starters/starters/civitai-block-starter my-app` copies",
+    "this directory alone, and the monorepo root's pnpm.overrides is NOT part of",
+    "the copy -- so a constraint kept only there protects the monorepo and nothing",
+    "a developer actually runs. NEITHER ENTRY HAS A REFERENT IN THIS STARTER",
+    "TODAY (it resolves no `cookie`, and no `postcss` below 8.5.10); both are",
+    "mirrored anyway so the rule stays mechanical rather than a hand-kept",
+    "exception list. BOTH blocks on purpose: `overrides` is npm's key and",
+    "`pnpm.overrides` is pnpm's -- pnpm does not read the plain key. Inside the",
+    "workspace pnpm warns `This will not take effect` for this file; that is",
+    "correct (only the root's overrides apply there) and not a reason to delete it.",
     "Enforced by scripts/check-starter-workspace-overrides.mjs rule 4."
   ],
   "overrides": {
@@ -69,17 +57,16 @@
   },
   "dependencies": {
     "@civitai/app-sdk": "^0.58.0",
-    "@civitai/blocks-react": "^0.65.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "@civitai/components": "^0.9.2",
+    "@civitai/sdk": "^0.10.1",
+    "@civitai/theme": "^0.5.2"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
-    "@types/react": "^19.2.15",
-    "@types/react-dom": "^19.0.0",
-    "@vitejs/plugin-react": "^6.0.2",
     "ajv": "^8.17.1",
+    "happy-dom": "^20.9.0",
     "typescript": "^5.9.2",
-    "vite": "^8.0.14"
+    "vite": "^8.0.14",
+    "vitest": "^4.1.11"
   }
 }

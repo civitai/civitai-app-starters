@@ -1,178 +1,283 @@
 # Agent Guide — `civitai-block-starter`
 
-> **If you only read one thing:** this is a Vite + React SPA designed to be
-> iframe-embedded by civitai.com inside a model-page slot. There is no BFF,
-> no OAuth flow, no session cookies — the host injects everything (token,
-> context, viewer, theme) via `BLOCK_INIT` postMessage. The demo: read
-> `useBlockContext()`, render UI keyed on slot + viewer + theme, let
-> `useBlockResize` drive iframe height.
+> **If you only read one thing:** this is a Vite + TypeScript SPA with **no UI
+> framework**, iframe-embedded by civitai.com in a model-page slot. The host
+> injects everything (token, context, viewer, theme) via `BLOCK_INIT`;
+> `initialize()` from `@civitai/sdk` waits for it and returns `app`. The UI is
+> `<civitai-*>` custom elements from `@civitai/components`. The demo
+> (`src/block.ts`): `await initialize()`, build the view once, write slot +
+> viewer + theme into it, update it in place on `app.onChange`, let
+> `app.host.autoResize` drive the iframe height.
 
-You're inside the Civitai Apps starter for Civitai. The user cloned this to
-bootstrap their own block — there is **no monorepo around you**;
-`@civitai/app-sdk` and `@civitai/blocks-react` are npm dependencies, not
-sibling workspaces. Help them extend it.
+You're inside the Civitai App starter. The user copied this to bootstrap their
+own block — there is **no monorepo around you**; the `@civitai/*` packages are
+npm dependencies. Help them extend it.
+
+If they want **React** instead, don't add it here. Point them at the Go
+[`civitai` CLI](https://github.com/civitai/cli)'s React template
+(`civitai app create <name>` — its default template, `page-money`, is
+Vite + React + TS) or at the React examples under
+`starters/examples/*` in the civitai-app-starters repo, which use the
+`@civitai/blocks-react` hooks.
 
 ## Stack
 
-- Vite 7 + React 19 + TypeScript strict
-- `@civitai/blocks-react` for the block hooks + the singleton `IframeTransport`.
-  🔴 **Do not trust a hook count — enumerate.** The hook set grows every release;
-  this line said "the eight hooks" until 2026-09-29, by which point the package
-  exported 37 and the two newest (`useGoodPurchase` / `useEntitlements`) had been
-  invisible to every agent that read it. Enumerate from the package you actually
-  installed — `node -e "import('@civitai/blocks-react').then(m => console.log(Object.keys(m).filter(k => k.startsWith('use')).sort().join(' ')))"`.
-- `@civitai/app-sdk/blocks` for the manifest types, scope strings and the JSON schema
-- `@civitai/app-sdk/vite` for `blockManifestPlugin`, the build-time manifest gate (needs the optional peer `ajv`, already in `devDependencies`)
-- No styling library — the demo uses inline styles + the `[data-theme]` attribute the host provides
+- Vite + TypeScript strict, no framework, no JSX
+- `@civitai/sdk` — the host bridge (`initialize`, `app.host`, `app.onChange`)
+  plus the API clients (`app.site`, `app.storage`, `app.sharedStorage`,
+  `app.orchestration`). Its README is the reference; read `app.host`'s methods
+  from the installed types rather than from a list here.
+- `@civitai/components` — the `<civitai-*>` elements. `import
+  '@civitai/components/register'` in `src/block.ts` defines the generic kit:
+  every element except the civitai.com vocabulary (`<civitai-avatar>`,
+  `<civitai-media-card>`, `<civitai-rating-badge>`, `<civitai-reaction>`,
+  `<civitai-tag>` — use `@civitai/components/register-site`, which includes the
+  kit) and the two SDK-backed elements (`<civitai-sign-in-button>`,
+  `<civitai-workflow-button>` — each needs its own
+  `@civitai/components/<tag>/define`). The full contract
+  (every tag, attribute, event, `::part` and slot) is
+  `node_modules/@civitai/components/custom-elements.json`.
+- `@civitai/theme` — the `--civitai-*` tokens (`src/main.ts` imports its CSS).
+- `@civitai/app-sdk` — `@civitai/app-sdk/blocks` for the slot/viewer predicates,
+  scope names and manifest types; `@civitai/app-sdk/vite` for
+  `blockManifestPlugin`, the build-time manifest gate (needs the optional peer
+  `ajv`, already a devDependency).
 
 ## Why this shape
 
 Civitai Apps render *inside* civitai.com pages, not as standalone destinations.
 That changes the trust model:
 
-- The block has no session of its own — it has a short-lived JWT minted by
+- The block has no session of its own — it has a short-lived token minted by
   civitai.com, scoped to a single block instance, with at most a `buzzBudget`
-  for orchestrator spend.
-- The block never sees `client_secret` or `access_token`. There's nothing
-  to leak.
-- All Civitai API calls flow with the block JWT, not OAuth bits.
-- The iframe is sandboxed by civitai.com (server-side) — `allow-same-origin`
-  is never granted, so `window.parent.document` is unreachable from the
-  block.
+  for spend.
+- The block never sees a `client_secret`. There's nothing to leak.
+- The iframe is sandboxed by civitai.com — `allow-same-origin` is not granted to
+  third-party blocks, so `window.parent.document` is unreachable and reading
+  `localStorage` throws (hence `@civitai/sdk/safe-storage`).
 
-Don't try to "make this a real OAuth app." That's what `react-pwa` is for.
+Don't try to "make this a real OAuth app." That is what the `next-app` /
+`react-pwa` starters are for.
 
 ## File layout
 
 ```
 .
-├── block.manifest.json     # registered with civitai.com — declares slot + scopes (NOT iframe.src; platform stamps it)
-├── civitai.app.json        # CLI config (appId + manifest list) — appId lives HERE, not in the manifest
-├── index.html
-├── vite.config.ts          # registers blockManifestPlugin — validates block.manifest.json on every dev boot + build
-├── .env.example
+├── block.manifest.json     # registered with civitai.com — slot + scopes (NOT iframe.src; the platform stamps it)
+├── index.html              # boot skeleton + pre-paint theme script
+├── vite.config.ts          # blockManifestPlugin — validates block.manifest.json on every dev boot + build
 ├── src/
-│   ├── App.tsx             # the block UI
-│   ├── main.tsx            # mounts <App/> (wraps in <Harness/> when VITE_DEV_HARNESS=true)
+│   ├── main.ts             # entry: safe-storage FIRST, theme CSS, dev harness, mountBlock
+│   ├── block.ts            # the block: initialize → build view → fill (on every onChange) → autoResize
+│   ├── directLoad.ts       # "Open on Civitai" card for a top-level (unembedded) load
 │   ├── index.css
-│   └── dev/
-│       └── Harness.tsx     # local BLOCK_INIT simulator
+│   └── dev/harness.ts      # local BLOCK_INIT simulator (`npm run dev:harness`)
+└── test/block.test.ts      # drives the block through the real bridge (happy-dom)
 ```
 
 ## Patterns to keep
 
-- **Read state through the hooks, never reach into `window.parent`.** The hook layer abstracts iframe vs. inline transport — block apps that touch `window.parent` directly will break in inline mode (v2). Add a hook if a hook doesn't exist; don't bypass.
-- **Gate UI on `ready`.** `useBlockContext().ready` is `false` until `BLOCK_INIT` lands. Render a small skeleton (or nothing) while waiting — the host shows its own loading state next to the iframe.
-- **Attach `useBlockResize` to your root element.** The iframe doesn't auto-resize; `RESIZE_IFRAME` messages drive that. Without `useBlockResize` the iframe stays at `iframe.minHeight` from the manifest.
-- **Narrow `context` per slot.** `BlockContext` is intentionally loose (`{ slotId, [key]: unknown }`). When you know your manifest targets model-page slots, cast to `ModelSlotContext` (from `@civitai/app-sdk/blocks`) to get `modelId`, `modelVersionId`, `modelName`, etc. typed. Other slot families get their own narrowing types as they ship.
-- **Gate sign-in with `isSignedIn(viewer)`** (from `@civitai/app-sdk/blocks`), and do not open-code the gate. The platform sends `viewer: null` for signed-out users — never an object with everything nulled out. Which spelling is correct has already changed once, so the SDK owns it in one function: `signedIn` is optional on the wire and is the one viewer field the init validator deliberately does not reject when malformed, so `isSignedIn` answers from presence. It reads neither `viewer.id` nor `viewer.username` (both `@deprecated` and scheduled for removal), so nothing you write through it changes when those go. Need the identity itself? Call `useViewer()` — scope-gated and audited per call.
+- **Go through `@civitai/sdk`, never `window.parent`.** The bridge validates the
+  parent origin, correlates replies and folds host pushes into one snapshot.
+  Hand-rolled `postMessage` code skips all three.
+- **Mount after `initialize()` resolves.** Until then the boot skeleton is the
+  loading state. Read `app.context` / `app.theme` / `app.viewer` on every
+  `fill` — they are live — and update the view in place from `app.onChange`.
+- **Fail visibly.** `src/main.ts` calls `startBlock`, which shows an error in
+  place of the skeleton if the block cannot start. Keep that wiring.
+- **Sync `<html data-theme>` from `app.theme`** (`syncTheme` in `src/block.ts`),
+  and only after `initialize()` resolves — before that, the bridge's theme is a
+  placeholder. The elements read `--civitai-*` tokens that `[data-theme]`
+  selects, so this one attribute re-themes the page and every element together.
+- **Call `app.host.autoResize(root)`.** Without it the iframe stays at the
+  manifest's `iframe.minHeight`.
+- **Narrow `context` with `isModelSlotContext` / `isPageSlotContext`** from
+  `@civitai/app-sdk/blocks` before reading slot fields.
+- **Gate sign-in with `isSignedIn(app.viewer)`** from `@civitai/app-sdk/blocks`,
+  never an open-coded check. The platform sends `viewer: null` for signed-out
+  users. For the viewer's identity, read the API (`app.site.get('me')`), not
+  `app.viewer`.
+- **Host data goes in with `textContent`, never `innerHTML`.** The view in
+  `src/block.ts` is a static template filled field by field; a model name is
+  user-authored, and interpolating it into markup is an XSS hole.
+  `test/block.test.ts` pins this.
+- **Register every element you use.** `@civitai/components/register` covers
+  the generic kit only — see Stack above for the seven it does not define. An
+  element nothing defines renders as an inert, unstyled tag with no error, so
+  `test/block.test.ts` collects every `<civitai-*>` tag the starter uses and
+  fails if one is undefined; keep it passing when you add elements or trim the
+  import to per-element `…/<tag>/define` lines.
+- **Keep `import '@civitai/sdk/safe-storage'` the first import in `src/main.ts`.**
 
 ## Boot skeleton
 
 `block.manifest.json` declares `"bootSkeleton": true` and `index.html` paints a
-matching skeleton inside `#root`. **They are ONE change — never keep one and drop
-the other.** The key tells the App Blocks full-page run host to stand down its
-own loading UI (no branded veil, iframe at `opacity: 1` from mount, no reveal
-transition; it publishes `aria-busy` on the iframe instead). Over an empty
-`#root` that is strictly *worse* than not opting in: the viewer stares at a blank
-iframe for the whole load, precisely because the covering veil was removed at the
-app's request. Deleting the skeleton markup while tidying `index.html` looks like
-removing dead scaffolding, which is why
-`tests/guards/boot-skeleton.test.mjs` in this monorepo blocks it.
+matching skeleton inside `#root`. **They are ONE change — never keep one and
+drop the other.** The key tells the full-page run host to stand down its own
+loading UI; over an empty `#root` the viewer stares at a blank iframe for the
+whole load. `tests/guards/boot-skeleton.test.mjs` in the monorepo blocks that.
 
-Two things worth knowing before you edit either half:
-
-- **The theme is not a guess — it is the HOST's.** Civitai apps default to
-  dark and never consult the OS/browser preference. Light engages only when
-  the viewer chose light on civitai.com, delivered by the host three ways:
-  the `#civitai-block=v1&theme=…` URL fragment (read by an inline script in
-  `index.html` **before first paint** — both host surfaces append it),
-  `BLOCK_INIT` (authoritative, corrects a stale fragment), and
-  `THEME_CHANGE` (the live push when the viewer toggles mid-session — synced
-  onto `<html>` by the effect in `src/App.tsx`, since the host does not
-  rewrite the iframe URL on a toggle). The base (unconditioned) CSS rules in
-  `index.html` carry the dark values, light is applied *only* behind
-  `html[data-theme='light']`, and there is deliberately **no** OS-preference
-  media query anywhere in the document — `tests/guards/boot-skeleton.test.mjs`
-  in this monorepo blocks one from coming back. `<meta name="color-scheme">`
-  and `src/index.css`'s `color-scheme` both list `dark` first for the UA
-  canvas (a CSS `color-scheme` declaration overrides the meta tag, and Vite
-  emits `index.css` as a render-blocking `<link>` in the built document).
-  🔴 `src/index.css` must NOT set a `background` on `html`/`body`: it is
-  emitted after the inline style, so it would win the cascade and hand the
-  page back to the OS canvas colour.
-- **Nothing removes the skeleton, and that is React-specific.**
-  `createRoot(container).render(...)` clears the container's children before its
-  first commit — measured, see
-  `packages/civitai-blocks-react/test/bootSkeletonRemoval.test.tsx`. Svelte 5's
-  `mount(App, { target })` **appends** and needs an explicit
-  `document.querySelector('[data-boot-skeleton]')?.remove()`. Assume append for
-  anything unmeasured. And keep the skeleton a *descendant* of `#root`: React
-  only clears what it mounts into, so a sibling stays on screen forever.
+- **Nothing removes the skeleton but the mount** — the one `root.replaceChildren`
+  in `mountBlock` (`src/block.ts`). There is no framework clearing the container, so the
+  skeleton must stay a *descendant* of `#root`.
+- **The theme is the HOST's.** Dark by default; light only behind
+  `html[data-theme='light']`, set from the host fragment before paint, then
+  `BLOCK_INIT`, then `THEME_CHANGE`. No OS-preference media query anywhere, and
+  🔴 `src/index.css` must not set a `background` on `html`/`body` — it would win
+  the cascade over the boot style.
 
 `bootSkeleton` is honoured by the **full-page run host only** — this starter
-targets `model.sidebar_top` and has no `page` surface, so the key changes nothing
-today. It ships as the scaffolded default, correct the moment the app gains a
-page surface, with the markup already in place so the two can never separate.
+targets `model.sidebar_top`, so the key changes nothing until the app gains a
+page surface. It ships as the default so the markup and the declaration never
+separate.
 
 ## Patterns to avoid
 
-- ❌ Storing tokens in `localStorage` / `sessionStorage` / `IndexedDB`. The transport caches the JWT and rotates it via `TOKEN_REFRESH` from the host every ~13 minutes; manual storage adds nothing and is one more thing to leak.
-- ❌ Decoding the JWT in the block. `useBlockToken().scopes` / `.buzzBudget` / `.expiresAt` are already pulled from the wrapped token; the orchestrator does the actual JWT verification via JWKS.
-- ❌ Calling `civitai.com` APIs that haven't been wired through the block-scoped path. The middleware on the server side only honors requests for scopes the block declared in its manifest — calls to other endpoints will fail.
-- ❌ Importing `process.env.*` for runtime config. Vite uses `import.meta.env`; build-time vars must be prefixed `VITE_`.
-- ❌ Removing the dev `Harness`. It's the only way to iterate UI without civitai.com embedding your block. If you don't need it, just don't run `pnpm dev:harness`.
+- ❌ Storing tokens anywhere. The SDK holds the token and refreshes it; use
+  `app.getToken()` for a call the SDK does not make itself.
+- ❌ Decoding the token in the block. Scopes and budget come with it; the
+  server does the verification.
+- ❌ `process.env.*` for runtime config. Vite uses `import.meta.env`, `VITE_`-prefixed.
+- ❌ Removing the dev harness. It is the only way to iterate without
+  civitai.com embedding your block, and it is dropped from production builds.
 
 ## Extending
 
-- **New slot** — change `targets[0].slotId` in `block.manifest.json`. The slot enum is server-controlled; the platform team adds new slots.
-- **New scope** — add the scope string to `block.manifest.json`'s `scopes` array, then re-register (Phase 2 self-service via the CLI; for now coordinate with the server team). Scope changes reset `app_blocks.status` to `pending` and require re-approval.
-- **Buzz-spending generation** — add `ai:write:budgeted` to manifest scopes and use `useBuzzWorkflow()`. The host caps each generation at the token's `buzzBudget`. For a **page app** that value comes from the manifest's `page.buzzBudgetPerGen`; for a **model-slot app** (like this starter) it comes from the install's `buzz_budget_per_gen` setting, not the manifest. Show `useBuzzWorkflow().status` next to your "Generate" button so users see polling state.
-  - 🔴 **The per-gen budget is a SAFETY CEILING, not a cost estimate — never size it to what you think a run costs.** It caps what ONE generation may cost so a buggy or compromised app can't drain the viewer's Buzz. Set it to *several times* your worst-case run (e.g. `1000` when you expect ~100). Headroom is free: the server re-prices every submit and charges the real price, clamps the budget at the per-gen cap (1000) anyway, and separately caps cumulative spend per viewer per day. Size it to an estimate and the app **breaks**: a submit priced above the budget is rejected outright with `insufficient buzz budget` — nothing charged, nothing delivered — and for a page app it stays broken for every user until a new manifest version ships and is re-approved. Any upward drift (more steps, bigger resolution, pricier model or recipe) does that.
-- **Selling something (digital goods)** — needs `@civitai/app-sdk` ≥ 0.52.0 and
-  `@civitai/blocks-react` ≥ 0.59.0; this starter already pins both, so a fresh
-  scaffold has the whole path. Declare a `goods` array in `block.manifest.json`,
-  add `goods:purchase:self` (to sell) and `goods:read:self` (to read entitlements
-  back) to `scopes`, then call `useGoodPurchase()` to buy and `useEntitlements()`
-  to check ownership (`owns(goodId)`). Each good is `{ id, title, priceBuzz }`
-  plus an optional `description`; `priceBuzz` is **whole Buzz, 2–50000** (the
-  floor is 2 because the owner's 70% share is floored, so a 1-Buzz item would
-  earn its owner nothing, permanently), at most 32 goods per manifest. Points
-  worth knowing before you design around it:
-  - 🔴 **`id` is what an entitlement is keyed by.** Renaming it in a later
-    version orphans every entitlement already granted under the old id.
-  - 🔴 **The catalog is REVIEW-GATED.** The catalog a moderator approves is the
-    catalog that can be sold, and changing a price means shipping a new manifest
-    version and being re-reviewed — the same gate as a scope change.
-  - **The platform owns the ledger, you own the meaning.** It records who bought
-    what, when, at what price, and its refund state; what the good *does* is your
-    app's business — keep those semantics in your own app storage.
-  - **Pass `expectedPriceBuzz`** — the server charges its own price and refuses
-    when yours disagrees, which turns "the app showed a stale price" into a clean
-    refusal instead of a viewer charged an amount they never saw.
-  - **A purchase can be refused at a perfectly legal price.** The viewer has a
-    daily ceiling across every app they have installed, so handle the 4xx; do not
-    treat a valid `priceBuzz` as a guarantee of success.
-  - Sales split platform 30% / app owner 70%, paid immediately.
-- **Per-viewer settings** — Phase 2 (`block_user_settings` table). Don't roll your own persistence — flag the gap and wait for the platform.
-- **Multiple manifests** (one repo, several blocks) — add entries to `civitai.app.json`'s `blocks` array. Each manifest is independently versioned and reviewed.
+- **New slot** — change `targets[0].slotId` in `block.manifest.json`; narrow
+  `context` for it. The slot enum is server-controlled.
+- **New scope** — add it to `block.manifest.json`'s `scopes`. The build gate
+  refuses an unknown scope; a scope change resets approval and needs re-review.
+- **More UI** — add elements to the template in `src/block.ts` and set their
+  host-derived text in `fill`. The view is built ONCE; `fill` re-runs on every
+  `app.onChange` (including each token rotation, which changes nothing visible)
+  and only updates text and visibility in place — never rebuild the view or
+  `replaceChildren` there, or a host push wipes whatever the viewer typed
+  (`test/block.test.ts` pins this). Wire element events (`change`, `click`, …)
+  once, after the view is created, with `addEventListener`.
+- **Host UI** (resource picker, Buzz purchase, image upload, navigation,
+  sign-in) — `app.host.*`; each rejects with a `BridgeError` carrying a `code`.
+- **Per-viewer storage** — `app.storage` (`get` / `set` / `list` /
+  `getQuota`); refused for an anonymous viewer, so gate on
+  `isSignedIn(app.viewer)`. Cross-viewer data: `app.sharedStorage`.
+- **Money calls — two rules the React hooks used to apply for you.** `@civitai/sdk`
+  has no Buzz-workflow or goods helper yet, so a block calls the `blocks/*`
+  routes through `app.site` and owns both of these itself:
+  1. **Consent first.** `ai:write:budgeted` and `goods:purchase:self` are
+     CONSENT-GATED: the token lacks them until the viewer grants them in the
+     host's dialog. Call `app.requestGrants([...])` before the call. It has
+     FOUR outcomes:
+     - resolves `true` — at once when the token already holds the scopes, or
+       when the viewer grants them;
+     - resolves `false` — the host says consent cannot be granted here;
+     - waits — while the dialog is open. A viewer who DISMISSES it sends
+       nothing, so without a `signal` it never settles;
+     - 🔴 **REJECTS** with the signal's `reason` when the `signal` aborts — so the
+       recommended `AbortSignal.timeout(60_000)` makes a dismissed dialog throw
+       a `TimeoutError` after 60 s (an already-aborted signal rejects at once).
+       Unhandled in a click handler, that is an unhandled rejection and any
+       "pending" UI never resets.
 
-## Demo flow
+     So: treat a `TimeoutError` / `AbortError` as "not granted", and reset
+     pending UI in a `finally`. The `askConsent` helper below does the first;
+     the snippets after it do the second. (`goods:read:self` is consent-exempt.)
+  2. **One idempotency key per intent, reused on every retry.** Mint it BEFORE
+     the first attempt and send the SAME value on any retry: a retry with a new
+     key is a second reservation of the viewer's Buzz. The key must match
+     `^[A-Za-z0-9_-]{1,64}$` — no colons; check one you compose yourself with
+     `isValidBlockIdempotencyKey` from `@civitai/app-sdk/blocks`.
+     `crypto.randomUUID()` conforms.
+  ```ts
+  import type { BlockAppClient, Scope } from '@civitai/sdk';
 
-1. `pnpm dev:harness` — Vite starts; harness mounts.
-2. Harness mocks `window.parent.postMessage` and posts a fake `BLOCK_INIT`.
-3. `useBlockContext()` flips `ready: true`; `App` renders with mock model context + viewer.
-4. `useBlockResize` posts a `RESIZE_IFRAME` to the harness's mock parent on every height change (visible in the bottom console panel).
-5. Token auto-refresh fires at the 2-min-before-expiry mark; the harness echoes `TOKEN_REFRESH_RESPONSE` with a new mock JWT.
+  /** `true` only when the viewer holds `scopes`; a timed-out or aborted wait is "not granted". */
+  async function askConsent(app: BlockAppClient, scopes: Scope[]): Promise<boolean> {
+    try {
+      return await app.requestGrants(scopes, { signal: AbortSignal.timeout(60_000) });
+    } catch (error) {
+      // A dismissed dialog never answers, so the timeout fires and requestGrants REJECTS.
+      if (error instanceof DOMException && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+        return false;
+      }
+      throw error;
+    }
+  }
+  ```
+- **Buzz-spending generation** — add `ai:write:budgeted` to `scopes`, then:
+
+  ```ts
+  generateButton.addEventListener('click', async () => {
+    generateButton.setAttribute('loading', '');
+    try {
+      if (!(await askConsent(app, ['ai:write:budgeted']))) return; // not granted: nothing was sent
+      const idempotencyKey = crypto.randomUUID(); // once per generation, reused by any retry
+      const { snapshot } = await app.site.post<{ snapshot: unknown }>('blocks/workflows/submit', {
+        body: workflowBody, // the workflow: steps + their inputs
+        idempotencyKey, // REQUIRED on this route — the request is refused without one
+      });
+      console.log(snapshot); // render the workflow's progress here
+    } catch (error) {
+      console.error(error); // and tell the viewer it failed
+    } finally {
+      generateButton.removeAttribute('loading'); // reset on every outcome, a rejection included
+    }
+  });
+  ```
+
+  🔴 Do **not** call `app.orchestration` from a block: a direct orchestrator call
+  skips the per-call budget, the daily caps and attribution (the `@civitai/sdk`
+  README explains). The host caps each generation at the token's `buzzBudget`
+  — for a model-slot app like this one that comes from the install's
+  per-generation setting; for a page app, from `page.buzzBudgetPerGen`.
+  - 🔴 **The per-gen budget is a SAFETY CEILING, not a cost estimate.** Set it to
+    several times your worst-case run. A submit priced above it is rejected
+    outright (`insufficient buzz budget`), nothing charged and nothing
+    delivered, and for a page app it stays broken until a new manifest version
+    is approved.
+  - The `buzz-workflow` example in the civitai-app-starters repo is a complete
+    estimate → submit → poll flow, in React through the host bridge; this REST
+    route forwards to the same server procedure.
+- **Selling something (digital goods)** — declare a `goods` array in
+  `block.manifest.json`, add `goods:purchase:self` (to sell) and
+  `goods:read:self` (to read entitlements back) to `scopes`. Each good is
+  `{ id, title, priceBuzz }` plus an optional `description`; `priceBuzz` is
+  whole Buzz, 2–50000, at most 32 goods per manifest. Then:
+
+  ```ts
+  // `@civitai/sdk`'s Scope type does not list the goods scopes yet, hence the cast.
+  const purchaseScope = 'goods:purchase:self' as Scope;
+
+  buyButton.addEventListener('click', async () => {
+    buyButton.setAttribute('loading', '');
+    try {
+      if (!(await askConsent(app, [purchaseScope]))) return; // not granted: nothing was charged
+      const idempotencyKey = crypto.randomUUID(); // once per purchase, reused by any retry
+      const purchase = () =>
+        app.site.post('blocks/goods/purchase', { goodId: 'extra-slots', expectedPriceBuzz: 250, idempotencyKey });
+      await purchase(); // on a timeout, `await purchase()` again — same key, so it cannot charge twice
+      const { entitlements } = await app.site.get<{ entitlements: unknown[] }>('blocks/entitlements');
+      console.log(entitlements); // show what the viewer now owns
+    } catch (error) {
+      console.error(error); // a refusal is an ApiError with `status` and `body`
+    } finally {
+      buyButton.removeAttribute('loading');
+    }
+  });
+  ```
+
+  - 🔴 **`id` is what an entitlement is keyed by.** Renaming it orphans every
+    entitlement already granted under the old id.
+  - 🔴 **The catalog is REVIEW-GATED** — a price change is a new manifest version
+    and a new review, like a scope change.
+  - **Pass `expectedPriceBuzz`**: the server charges its own price and refuses
+    when yours disagrees, so a stale price becomes a clean refusal.
+  - A purchase can be refused at a perfectly legal price (the viewer has a
+    daily ceiling across apps) — handle the 4xx (`ApiError`, with `status` and
+    `body`).
 
 ## Verifying changes
 
 | You touched | Run |
 |---|---|
-| `src/App.tsx`, any block UI | `pnpm typecheck && pnpm dev:harness` and verify visually |
-| `vite.config.ts`, env wiring | `pnpm build` |
-| `block.manifest.json` | Nothing extra — `blockManifestPlugin` (from `@civitai/app-sdk/vite`, registered in `vite.config.ts`) validates it against the canonical schema on every `pnpm dev`, `pnpm dev:harness` and `pnpm build`, and fails with the offending field path. `pnpm build` is the quickest way to check in isolation. Before submitting, also run `civitai app validate` — the CLI checks things only the server knows. |
-
-The starter intentionally ships without an e2e suite — real end-to-end
-verification requires civitai.com embedding the block. The dev harness +
-unit-level coverage in `@civitai/blocks-react` are the test surface.
+| `src/**` | `npm run typecheck && npm test`, then `npm run dev:harness` and look |
+| `vite.config.ts`, env wiring | `npm run build` |
+| `block.manifest.json` | `npm run build` (the manifest is validated on every dev boot and build); before submitting, `civitai app validate` |

@@ -297,19 +297,52 @@ test('every starter that ships a block.manifest.json satisfies the coupling', ()
 // ---------------------------------------------------------------------------
 
 /**
- * The block starter AND the six examples: each one is copied by someone, so each
- * gets the same dark-first checks. A new themed app joins by being listed here.
+ * The block starter AND the examples listed here: each one is copied by someone,
+ * so each gets the same dark-first checks. A new themed app joins by being
+ * listed here — with a `sync` value, or it fails (see SYNC_KINDS below).
+ *
+ * `sync` names WHERE the app keeps <html data-theme> in step with the host, because
+ * that is the one check whose subject is framework code rather than the shared
+ * index.html / index.css / manifest trio:
+ *   - 'react' — an effect in src/App.tsx gated on `ready` (the React examples);
+ *   - 'sdk'   — `syncTheme` in src/block.ts, run after `initialize()` resolves and
+ *               re-run from `app.onChange` (civitai-block-starter, which has no
+ *               framework since it was converted to web components).
+ * Both encode the same three rules: write <html>'s data-theme, re-run on a host
+ * theme change, never before BLOCK_INIT.
  */
 const THEMED_APPS = [
-  { label: 'civitai-block-starter', dir: BLOCK_STARTER },
+  { label: 'civitai-block-starter', dir: BLOCK_STARTER, sync: 'sdk' },
   ...['hello-world', 'settings', 'buzz-workflow', 'kv-storage', 'scopes-api', 'buzz-purchase', 'page-app'].map((name) => ({
     label: `examples/${name}`,
     dir: join(STARTERS, 'examples', name),
+    sync: 'react',
   })),
-  { label: 'examples/generate-studio', dir: join(STARTERS, 'examples', 'generate-studio') },
+  { label: 'examples/generate-studio', dir: join(STARTERS, 'examples', 'generate-studio'), sync: 'react' },
 ];
 
-for (const { label, dir } of THEMED_APPS) {
+/**
+ * 🔴 THE ONLY VALID `sync` VALUES. The theme-sync check below is chosen BY this
+ * tag, so an entry without one (or with a typo) would get NEITHER check and
+ * pass silently — which is how a merge once dropped generate-studio's sync
+ * check. A missing or unknown value is therefore a FAILURE, both here and as a
+ * per-app test inside the loop, never a skip.
+ */
+const SYNC_KINDS = new Set(['react', 'sdk']);
+
+test('every THEMED_APPS entry names how it syncs the theme (react | sdk)', () => {
+  const bad = THEMED_APPS.filter((a) => !SYNC_KINDS.has(a.sync)).map(
+    (a) => `${a.label}: sync=${JSON.stringify(a.sync)}`,
+  );
+  assert.deepEqual(
+    bad,
+    [],
+    `THEMED_APPS entries without a valid \`sync\` (one of ${[...SYNC_KINDS].join(', ')}) — ` +
+      `their theme-sync check would be skipped:\n  ${bad.join('\n  ')}`,
+  );
+});
+
+for (const { label, dir, sync } of THEMED_APPS) {
   test(`${label}: manifest declares bootSkeleton: true (parsed, not grepped)`, () => {
     const manifest = JSON.parse(readFileSync(join(dir, 'block.manifest.json'), 'utf8'));
     assert.equal(manifest.bootSkeleton, true);
@@ -495,29 +528,92 @@ for (const { label, dir } of THEMED_APPS) {
     assert.equal(m[1].trim(), 'dark light');
   });
 
-  test(`${label}: App.tsx keeps the page in step with the host theme`, () => {
-    // THEME_CHANGE arrives only as a transport push — no reload, no new
-    // fragment (the host deliberately does not rewrite the iframe src on a
-    // toggle). Without this sync a mounted block flips its components but
-    // leaves the page behind them in the old theme.
-    const src = readFileSync(join(dir, 'src', 'App.tsx'), 'utf8');
-    assert.match(
-      src,
-      /document\.documentElement/,
-      'the page background lives on <html>; the host theme must reach it',
-    );
-    assert.match(
-      src,
-      /dataset\.theme\s*=|setAttribute\(['"]data-theme/,
-      'the sync must set the same data-theme attribute the boot CSS keys on',
-    );
-    assert.match(
-      src,
-      /if \(!ready\)\s*return/,
-      'the sync must be gated on ready — before BLOCK_INIT `theme` is the transport ' +
-        "'light' sentinel, which would clobber the fragment seed of a dark host",
-    );
-  });
+  if (!SYNC_KINDS.has(sync)) {
+    test(`${label}: names a theme-sync kind`, () => {
+      assert.fail(
+        `${label} has sync=${JSON.stringify(sync)}; it must be one of ${[...SYNC_KINDS].join(', ')} ` +
+          'so that its theme-sync check runs',
+      );
+    });
+  }
+
+  if (sync === 'react') {
+    test(`${label}: App.tsx keeps the page in step with the host theme`, () => {
+      // THEME_CHANGE arrives only as a transport push — no reload, no new
+      // fragment (the host deliberately does not rewrite the iframe src on a
+      // toggle). Without this sync a mounted block flips its components but
+      // leaves the page behind them in the old theme.
+      const src = readFileSync(join(dir, 'src', 'App.tsx'), 'utf8');
+      assert.match(
+        src,
+        /document\.documentElement/,
+        'the page background lives on <html>; the host theme must reach it',
+      );
+      assert.match(
+        src,
+        /dataset\.theme\s*=|setAttribute\(['"]data-theme/,
+        'the sync must set the same data-theme attribute the boot CSS keys on',
+      );
+      assert.match(
+        src,
+        /if \(!ready\)\s*return/,
+        'the sync must be gated on ready — before BLOCK_INIT `theme` is the transport ' +
+          "'light' sentinel, which would clobber the fragment seed of a dark host",
+      );
+    });
+  }
+
+  if (sync === 'sdk') {
+    test(`${label}: src/block.ts keeps the page in step with the host theme`, () => {
+      // THEME_CHANGE arrives only as a bridge push — no reload, no new fragment.
+      // Without this sync a mounted block flips nothing: the page AND the
+      // <civitai-*> elements (which read the --civitai-* tokens [data-theme]
+      // selects) stay in the old theme. The same three rules as the React check:
+      //   writes <html> data-theme   -> syncTheme writes documentElement.dataset.theme from app.theme
+      //   re-runs on a theme change  -> update() calls syncTheme and is subscribed with app.onChange
+      //   never before BLOCK_INIT    -> the first sync runs only AFTER `await waitForHost(...)`
+      // (before BLOCK_INIT the bridge snapshot's `theme` is the 'light' sentinel,
+      // which would clobber the fragment seed of a dark host).
+      const src = readFileSync(join(dir, 'src', 'block.ts'), 'utf8')
+        // Comments out first, so prose that NAMES these calls cannot satisfy them.
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '');
+
+      const syncFn = /function\s+syncTheme\s*\(\s*app\b[^)]*\)[^{]*\{([^}]*)\}/.exec(src);
+      assert.ok(syncFn, 'src/block.ts must define syncTheme(app)');
+      assert.match(
+        syncFn[1],
+        /document\.documentElement\.dataset\.theme\s*=\s*app\.theme\b/,
+        'syncTheme must write <html> data-theme from app.theme — the attribute the boot CSS and the tokens key on',
+      );
+
+      const mount = /export\s+async\s+function\s+mountBlock\s*\([^)]*\)[^{]*\{([\s\S]*?)\n\}/.exec(src);
+      assert.ok(mount, 'src/block.ts must export async function mountBlock');
+      const body = mount[1];
+      const awaitAt = body.search(/await\s+waitForHost\s*\(/);
+      const syncAt = body.search(/syncTheme\s*\(\s*app\s*\)/);
+      assert.ok(awaitAt >= 0, 'mountBlock must await waitForHost() (the BLOCK_INIT gate)');
+      assert.ok(syncAt >= 0, 'mountBlock must call syncTheme(app)');
+      assert.ok(
+        awaitAt < syncAt,
+        'the theme sync must run only AFTER BLOCK_INIT (await waitForHost) — before it, the ' +
+          "snapshot theme is the 'light' sentinel and would clobber a dark host's fragment seed",
+      );
+      const update = /const\s+update\s*=\s*\(\)\s*=>\s*\{([\s\S]*?)\n  \};/.exec(body);
+      assert.ok(update && /syncTheme\s*\(\s*app\s*\)/.test(update[1]), 'update() must call syncTheme(app)');
+      assert.match(
+        body,
+        /app\.onChange\s*\(\s*update\s*\)/,
+        'update must be subscribed with app.onChange, or a live THEME_CHANGE never reaches <html>',
+      );
+      const callsOutsideDef = (src.replace(syncFn[0], '').match(/syncTheme\s*\(/g) ?? []).length;
+      assert.equal(
+        callsOutsideDef,
+        1,
+        'syncTheme must be called from exactly one place (update), so no pre-init call can exist',
+      );
+    });
+  }
 }
 
 /** Relative luminance of a #rgb/#rrggbb below the midpoint. */

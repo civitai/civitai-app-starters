@@ -422,8 +422,9 @@ jobs:
 
       # Starters consume the first-party packages via published caret ranges
       # that the root pnpm.overrides redirects to workspace:* (the block
-      # starter additionally consumes @civitai/blocks-react). Building all
-      # packages up front so each starter's typecheck sees fresh .d.ts files.
+      # starter consumes @civitai/sdk + @civitai/components + @civitai/theme).
+      # Building all packages up front so each starter's typecheck sees fresh
+      # .d.ts files.
       - run: pnpm -r --filter "./packages/*" build
 
       - name: Typecheck
@@ -493,6 +494,17 @@ jobs:
         env:
           PROBE_SKIP_BUILD: '1'
         timeout-minutes: 5
+
+      # A starter that ships its own suite runs it here. Keyed on the script's
+      # existence rather than on a matrix name, for the same reason as the lint
+      # step below: an `if:` on a name silently stops running on a rename.
+      - name: Test (if defined)
+        run: |
+          if pnpm --filter ./starters/${{ matrix.starter }} exec node -e "process.exit(require('./package.json').scripts?.test ? 0 : 1)" 2>/dev/null; then
+            pnpm --filter ./starters/${{ matrix.starter }} test
+          else
+            echo "No test script for ${{ matrix.starter }} — skipping."
+          fi
 
       - name: Lint (if defined)
         run: |

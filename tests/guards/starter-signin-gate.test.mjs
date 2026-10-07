@@ -13,7 +13,8 @@
  *      moving one side without the other is what goes red.
  *   B. No starter block app open-codes the sign-in gate. Every starter
  *      `.ts`/`.tsx` source that BINDS a `viewer` — off `useBlockContext()`
- *      directly, through a named context binding, or as a component prop —
+ *      directly, through a named context binding, as a component prop, or as
+ *      `.viewer` on an `@civitai/sdk` client (`BlockAppClient`) —
  *      must import `isSignedIn` from `@civitai/app-sdk/blocks` and answer
  *      through it. The precise scope, and the shapes it does NOT reach, are
  *      enumerated on {@link viewerReadingApps}; read that before quoting this
@@ -71,10 +72,10 @@
  *      though one of them is what `isSignedIn` does internally.
  *
  * 🔴 KNOWN LIMITS:
- *   - It reads SOURCE TEXT; the starters ship no test runner (adding one to a
- *     `tiged`-able template would cost every consumer). So it can see the key
- *     set a harness writes and the call an app makes, but it does not RENDER
- *     either. `isSignedIn`'s behaviour is covered by
+ *   - It reads SOURCE TEXT, so it can see the key set a harness writes and the
+ *     call an app makes, but it does not RENDER either. (`civitai-block-starter`
+ *     now ships its own vitest suite, which renders the signed-in and anonymous
+ *     cases through the real bridge; the examples ship none.) `isSignedIn`'s behaviour is covered by
  *     `packages/civitai-app-sdk/test/blocks/viewer-signed-in.test.ts`, and its
  *     behaviour on real payloads by `blockInitV2.test.ts` section 4.
  *   - {@link stripComments} tracks string and template literals so a `//` in a
@@ -126,12 +127,16 @@ const DEFAULT_VIEWER_DECL = /const\s+DEFAULT_VIEWER\s*:\s*ViewerInfo\s*=\s*\{([^
 
 /** The two reference block apps a new author copies from. */
 const REFERENCE_APPS = [
-  'starters/civitai-block-starter/src/App.tsx',
+  'starters/civitai-block-starter/src/block.ts',
   'starters/examples/hello-world/src/App.tsx',
 ];
 
-/** The one predicate the gate is allowed to be spelled as. */
-const GATE_CALL = /\bisSignedIn\s*\(\s*viewer\s*\)/;
+/**
+ * The one predicate the gate is allowed to be spelled as — on a bare `viewer`
+ * (the React hooks) or on a member `x.viewer` (the `@civitai/sdk` client,
+ * `isSignedIn(app.viewer)`).
+ */
+const GATE_CALL = /\bisSignedIn\s*\(\s*(?:[A-Za-z_$][\w$]*\s*\.\s*)?viewer\s*\)/;
 
 /** `import { …, isSignedIn, … } from '@civitai/app-sdk/blocks'` in CODE. */
 const GATE_IMPORT = /import\s*\{[^}]*\bisSignedIn\b[^}]*\}\s*from\s*['"]@civitai\/app-sdk\/blocks['"]/;
@@ -253,8 +258,34 @@ function readsViewerOffContextAlias(code) {
   return false;
 }
 
+/**
+ * `app.viewer` on an `@civitai/sdk` block client — how the framework-free
+ * starter reads it. The client is found by its BINDING, never by a bare
+ * `\w+\.viewer`: a parameter or variable annotated `BlockAppClient`, or one
+ * assigned from `initialize(…)`. Only a `.viewer` read off one of THOSE
+ * identifiers puts the file in scope.
+ */
+function readsViewerOffSdkClient(code) {
+  const names = new Set();
+  for (const m of code.matchAll(/([A-Za-z_$][\w$]*)\s*\??\s*:\s*BlockAppClient\b/g)) names.add(m[1]);
+  for (const m of code.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;]*)?=\s*(?:await\s+)?initialize\s*\(/g)) {
+    names.add(m[1]);
+  }
+  for (const name of names) {
+    // Full regex-escape: an identifier can only hold `$` among the specials, but
+    // escaping the whole class keeps this correct for whatever reaches it.
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`(?<![\\w$.])${escaped}\\s*\\.\\s*viewer\\b`).test(code)) return true;
+  }
+  return false;
+}
+
 function readsViewerFromContext(code) {
-  return VIEWER_BINDINGS.some((b) => b.pattern.test(code)) || readsViewerOffContextAlias(code);
+  return (
+    VIEWER_BINDINGS.some((b) => b.pattern.test(code)) ||
+    readsViewerOffContextAlias(code) ||
+    readsViewerOffSdkClient(code)
+  );
 }
 
 /**
@@ -406,11 +437,13 @@ function walkStarters(predicate) {
  * the accounting below can only reconcile the files this returns. Measured — a
  * `DevHarness.tsx` posting the 66f9e09 viewer leaves the suite green. The
  * mitigation is the convention, not this guard: every starter's `dev:harness`
- * entry point is named `Harness.tsx`, and the COVERAGE FLOOR test fails if
- * that stops producing at least seven files.
+ * entry point is named `Harness.tsx` (React) or `harness.ts` (the framework-free
+ * `civitai-block-starter`), and the COVERAGE FLOOR test fails if that stops
+ * producing at least seven files.
  */
+const HARNESS_NAMES = new Set(['Harness.tsx', 'harness.ts']);
 function harnessFiles() {
-  return walkStarters((name) => name === 'Harness.tsx');
+  return walkStarters((name) => HARNESS_NAMES.has(name));
 }
 
 /**
@@ -443,7 +476,7 @@ function harnessFiles() {
 export function viewerReadingApps() {
   const out = [];
   for (const file of walkStarters((name) => name.endsWith('.tsx') || name.endsWith('.ts'))) {
-    if (file.endsWith('Harness.tsx')) continue;
+    if (HARNESS_NAMES.has(file.split(/[\\/]/).pop())) continue;
     const code = stripComments(readFileSync(file, 'utf8'));
     if (!readsViewerFromContext(code)) continue;
     out.push(file);
@@ -666,7 +699,7 @@ test('COVERAGE FLOOR — every starter dev harness is found', () => {
     `expected at least 7 starter harnesses, found ${found.length}:\n  ${found.join('\n  ')}`,
   );
   for (const required of [
-    'starters/civitai-block-starter/src/dev/Harness.tsx',
+    'starters/civitai-block-starter/src/dev/harness.ts',
     'starters/examples/hello-world/src/Harness.tsx',
   ]) {
     assert.ok(found.includes(required), `walk did not reach ${required}`);
@@ -690,6 +723,13 @@ test('CONTROL — rule B scopes on a `viewer` BINDING, not the word `viewer`', (
     'export const Badge = ({ viewer, theme }) => <b>{theme}</b>;',
     'type Props = { viewer: ViewerInfo | null };',
     'function f(viewer?: ViewerInfo) {}',
+    // the @civitai/sdk client, as civitai-block-starter reads it
+    'function render(root: HTMLElement, app: BlockAppClient): void {\n  const v = app.viewer;\n}',
+    'const app = await initialize();\nif (app.viewer) {}',
+    'let client: BlockAppClient | null = null;\nclient.viewer;',
+    // `$` is legal in an identifier and special in a regex — the resolver
+    // escapes it rather than letting it anchor the pattern.
+    'const $app = await initialize();\nif ($app.viewer) {}',
   ]) {
     assert.ok(readsViewerFromContext(inScope), `scope predicate missed a real binding: ${inScope}`);
   }
@@ -731,6 +771,14 @@ test('CONTROL — rule B scopes on a `viewer` BINDING, not the word `viewer`', (
     !readsViewerFromContext('const ctx = useBlockContext();\nconst n = other.viewer;'),
     'the alias resolver matched `.viewer` on an unrelated object',
   );
+  // …and the same for the SDK client: `.viewer` off something that is not the
+  // BlockAppClient binding (or a property path that merely ends in its name).
+  for (const unrelated of [
+    'function render(app: BlockAppClient) {}\nconst n = other.viewer;',
+    'const app = await initialize();\nconst n = state.app.viewer;',
+  ]) {
+    assert.ok(!readsViewerFromContext(unrelated), `the SDK-client resolver over-reported on: ${unrelated}`);
+  }
 });
 
 test('COVERAGE FLOOR — rule B reaches both reference apps', () => {
@@ -858,7 +906,7 @@ test('RULE B — no starter block app open-codes the sign-in gate', () => {
   for (const rel of REFERENCE_APPS) {
     const code = stripComments(readFileSync(join(REPO_ROOT, rel), 'utf8'));
     if (!GATE_CALL.test(code)) {
-      offenders.push(`${rel} — no \`isSignedIn(viewer)\` call in CODE (a mention in a comment is not one)`);
+      offenders.push(`${rel} — no \`isSignedIn(viewer)\` / \`isSignedIn(app.viewer)\` call in CODE (a mention in a comment is not one)`);
     }
   }
 
