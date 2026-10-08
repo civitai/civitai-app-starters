@@ -1,6 +1,6 @@
 import type { CivitaiConfirmDialog } from '@civitai/components/civitai-confirm-dialog';
 import type { CivitaiToastRegion } from '@civitai/components/civitai-toast-region';
-import type { AppClient } from '@civitai/sdk';
+import type { AppClient, BlockAppClient } from '@civitai/sdk';
 import { LitElement, html, nothing, type PropertyDeclarations, type PropertyValues, type TemplateResult } from 'lit';
 import { keyed } from 'lit/directives/keyed.js';
 
@@ -291,10 +291,16 @@ export class CivitaiChat extends LitElement {
     session.store.addEventListener('conversation-change', () => this.#announceActivePanel());
     this.requestUpdate();
 
-    void app.site
-      .get<{ username?: string }>('me')
-      .then((me) => (this.userName = me.username ?? ''))
-      .catch(() => undefined);
+    // In a block the host already handed over the viewer, so the name needs no request. And `/me`
+    // must not be asked there: it accepts an OAuth token but refuses the block-scoped one, so a
+    // block on the default token would fail that call on every mount. `blocks/me` is not the
+    // answer either: it needs `user:read:self`, a consent prompt, to show a name.
+    if (isBlockClient(app)) this.userName = app.viewer?.username ?? '';
+    else
+      void app.site
+        .get<{ username?: string }>('me')
+        .then((me) => (this.userName = me.username ?? ''))
+        .catch(() => undefined);
     void session.store.refreshList().catch((error: unknown) => this.#toast('Could not load your chats.', error));
     void session.catalog().catch((error: unknown) => this.#toast('Could not reach Civitai tools; some things may not work.', error));
 
@@ -922,4 +928,12 @@ function microphoneProblem(error: unknown): string {
   if (name === 'NotAllowedError' || name === 'SecurityError') return 'The microphone is blocked. Allow it for this site in your browser to talk instead of typing.';
   if (name === 'NotFoundError') return 'No microphone was found.';
   return 'Could not start the microphone.';
+}
+
+/**
+ * A client `initialize()` made inside a civitai.com page, told apart by the members only that kind
+ * has. Whichever token it holds, the host's `viewer` names the person, so no API call is needed.
+ */
+function isBlockClient(app: AppClient): app is BlockAppClient {
+  return 'host' in app && 'viewer' in app;
 }
