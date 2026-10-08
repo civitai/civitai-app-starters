@@ -46,7 +46,10 @@ installer's to change.
    (`src/outcome.ts` holds the rule):
    - **resolved**, `status: 'failed'` — **never a top-up.** With the `'failed'`
      placeholder id a spend cap or limit refused it before the wallet was even
-     looked at, so a retry after buying Buzz hits the same cap; the example says
+     looked at, so a retry after buying Buzz hits the same cap. If the price is
+     above the per-generation budget — read from the token when the reply
+     arrives, since a first Generate only gets the budget by granting consent
+     inside `submit()` — the example shows the limit message; otherwise it says
      it couldn't run and nothing was charged. With a **real** workflow id a run
      came back failed and may have spent; the example says so and never
      retries. (The complete list is in `useBuzzWorkflow`'s `submit` docs.)

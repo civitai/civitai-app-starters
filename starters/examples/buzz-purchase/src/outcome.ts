@@ -21,11 +21,34 @@
  * The complete list of resolved replies is in `useBuzzWorkflow`'s `submit` docs.
  */
 
-/** What to tell the viewer after `submit` RESOLVED with `status: 'failed'`. Never a top-up. */
-export function resolvedFailureMessage(snap: { workflowId: string }): string {
-  return snap.workflowId === 'failed'
-    ? "This generation couldn't run right now, and nothing was charged. Please try again later."
-    : 'This generation failed and may have been charged. Check your generation history before trying again.';
+/** The per-generation limit message. The installer sets that limit; Buzz can't raise it. */
+export function overLimitMessage(price: number, budget: number): string {
+  return (
+    `This generation costs ${price} Buzz, over this app's ${budget}-Buzz limit per generation. ` +
+    "Buying Buzz can't change that limit; the app's installer sets it."
+  );
+}
+
+/**
+ * What to tell the viewer after `submit` RESOLVED with `status: 'failed'`. Never a top-up.
+ *
+ * `price` is the quote; `budget` is `token.buzzBudget` read when the reply
+ * arrives, NOT when Generate was pressed. On a first Generate the spend scope
+ * isn't granted yet, so the budget is unknown at the click; `submit` asks for
+ * consent, re-sends, and only then can a placeholder refusal be explained as the
+ * per-generation limit. Any other placeholder refusal is a cap or limit the
+ * viewer can't see the size of: "try again later".
+ */
+export function resolvedFailureMessage(
+  snap: { workflowId: string },
+  price: number,
+  budget: number | undefined,
+): string {
+  if (snap.workflowId !== 'failed') {
+    return 'This generation failed and may have been charged. Check your generation history before trying again.';
+  }
+  if (budget !== undefined && price > budget) return overLimitMessage(price, budget);
+  return "This generation couldn't run right now, and nothing was charged. Please try again later.";
 }
 
 /**

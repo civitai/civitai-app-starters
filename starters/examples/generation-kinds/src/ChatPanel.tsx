@@ -43,7 +43,8 @@ const SYSTEM = 'You are a concise, friendly assistant inside a Civitai app.';
 
 /** The ONE builder: the estimate prices exactly the body the submit sends. */
 function buildBody(model: string, history: Turn[], draft: string): WorkflowBodyStep {
-  // A turn that failed got no reply, so it is not context for the next one.
+  // A turn kept as failed (a RESOLVED failure with a real workflow id — the only
+  // case that keeps one) got no reply, so it is not context for the next one.
   const turns: Turn[] = [...turnsForModel(history), { role: 'user', content: draft.trim().slice(0, MAX_CHARS) }];
   // Keep the system message plus the most recent turns inside the 32-message cap.
   const messages = [{ role: 'system', content: SYSTEM }, ...turns.slice(-(MAX_MESSAGES - 1))];

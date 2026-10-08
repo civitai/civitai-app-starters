@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import {
   useBlockContext,
@@ -11,7 +11,7 @@ import {
 } from '@civitai/blocks-react';
 import { Alert, Button, Card, Stack } from '@civitai/blocks-react/ui';
 import { isModelSlotContext, isSfwCeiling } from '@civitai/app-sdk/blocks';
-import { resolvedFailureMessage, walletShortfall } from './outcome.js';
+import { overLimitMessage, resolvedFailureMessage, walletShortfall } from './outcome.js';
 import type { WorkflowBody } from '@civitai/app-sdk/blocks';
 
 /**
@@ -31,8 +31,12 @@ import type { WorkflowBody } from '@civitai/app-sdk/blocks';
  * The flow: price the generation with `estimate()` (never a hard-coded number —
  * the server prices it, author fee included), then check the budget, then the
  * wallet, and only then spend. The budget is only known once the viewer has
- * granted the spend scope, so the FIRST generation goes straight to `submit()`
- * (which asks for that consent) and the refusal, if any, is explained after.
+ * granted the spend scope, so the FIRST generation goes straight to `submit()`,
+ * which asks for that consent and re-sends. If that resolves as a placeholder
+ * refusal, the budget — now on the token — is read again: a price above it gets
+ * the limit message (never a top-up), anything else "couldn't run right now".
+ * A short wallet on that first attempt surfaces as a REJECTED `'exception'`,
+ * the only path that re-reads the balance and may offer a top-up.
  *
  * 🔴 THE GUARDING AROUND THE RETRY IS THE PATTERN TO COPY, NOT JUST THE CALL.
  * `openPurchaseModal` waits on a human (up to 10 minutes), so the retry it feeds
@@ -108,6 +112,14 @@ export function App() {
     ? balance.blue + (isSfwCeiling(maxBrowsingLevel) ? balance.green : balance.yellow)
     : null;
   const budget = token.buzzBudget; // present once the spend scope is granted
+  // The budget as of NOW, for code that runs after an await: `submit` may have
+  // just obtained consent, which mints a token carrying the budget, while the
+  // callback still closes over the value from before the click. Synced at
+  // commit (a layout effect), not during render.
+  const budgetRef = useRef(budget);
+  useLayoutEffect(() => {
+    budgetRef.current = budget;
+  }, [budget]);
 
   /**
    * Explain why a generation of `price` can't run — from the NUMBERS, never
@@ -116,10 +128,7 @@ export function App() {
   const explainBlocker = useCallback(
     (price: number) => {
       if (budget !== undefined && price > budget) {
-        setStatus(
-          `This generation costs ${price} Buzz, over this app's ${budget}-Buzz limit per generation. ` +
-            "Buying Buzz can't change that limit; the app's installer sets it.",
-        );
+        setStatus(overLimitMessage(price, budget));
         return true;
       }
       const short = walletShortfall(price, wallet);
@@ -150,11 +159,13 @@ export function App() {
         setStatus(`submitted: ${snap.workflowId} (${snap.status})`);
         return;
       }
-      // RESOLVED failure — never a top-up (see outcome.ts): a cap refused it before
-      // the wallet was even looked at, or a real run failed and may have spent.
+      // RESOLVED failure — never a top-up (see outcome.ts): a cap or limit refused
+      // it before the wallet was looked at, or a real run failed and may have
+      // spent. The budget is read through the ref, so a first Generate that just
+      // got consent explains an over-budget price as the limit, not "try later".
       // `snap.error` is server-authored — log it, never render it.
       console.warn('[buzz-purchase] submit failed:', snap.error);
-      setStatus(resolvedFailureMessage(snap));
+      setStatus(resolvedFailureMessage(snap, cost, budgetRef.current));
     } catch (err) {
       // 🔴 NEVER RENDER `err.message`; branch on `err.code`. A short wallet is
       // the orchestrator refusing to debit, which reaches the block as
