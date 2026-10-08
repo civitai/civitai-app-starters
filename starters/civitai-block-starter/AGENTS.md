@@ -342,3 +342,5 @@ separate.
 | `src/**` | `npm run typecheck && npm test`, then `npm run dev:harness` and look |
 | `vite.config.ts`, env wiring | `npm run build` |
 | `block.manifest.json` | `npm run build` (the manifest is validated on every dev boot and build); before submitting, `civitai app validate` |
+
+Before `civitai app submit`, self-run the [first-review checklist](https://developer.civitai.com/apps/guide/first-review.md) — what a reviewer checks first.

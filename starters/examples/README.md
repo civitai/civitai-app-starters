@@ -90,6 +90,9 @@ civitai app validate    # check the manifest
 civitai app submit      # validate, package, and upload for review
 ```
 
+Before `civitai app submit`, self-run the
+[first-review checklist](https://developer.civitai.com/apps/guide/first-review.md) — what a reviewer checks first.
+
 `civitai app submit` packages the example directory and uploads it for review
 with your stored token. The platform owns the build + serve recipe — it injects
 its own build (you don't ship a `Dockerfile` or `nginx.conf`), serves your
