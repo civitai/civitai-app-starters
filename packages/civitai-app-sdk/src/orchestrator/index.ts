@@ -217,12 +217,6 @@ export const WORKFLOW_STEP_TYPES = {
   imageScanning: 'Unified image moderation scan (NSFW level, AI/anime recognition, tagging, age detection)',
   /** Shieldstral text/prompt safety moderation (`mode: 'prompt' | 'text'`). */
   shieldstralModeration: 'Text / prompt safety moderation (Shieldstral)',
-  /**
-   * Moderate a `positivePrompt` (plus optional `negativePrompt`). The output
-   * names the `model` and `policyVersion` and returns one result per label:
-   * a calibrated `score`, its `threshold`, `flagged`, and `abstained`.
-   */
-  promptModeration: 'Prompt moderation — per-label scores and flags for a positive / negative prompt pair',
   /** ClamAV scan a model file for malware. */
   modelClamScan: 'Antivirus scan a model file',
   /** Pickle-scan a model file for unsafe pickles. */
@@ -270,6 +264,8 @@ export const WORKFLOW_STEP_TYPES = {
   comfyNodepackSnapshot: 'Snapshot a worker’s installed ComfyUI node packs (internal)',
   /** Qwen image benchmarking harness. */
   qwenImageBench: 'Qwen image benchmarking (internal)',
+  /** Per-label scores and flags for a positive / negative prompt pair, under a versioned policy. */
+  promptModeration: 'Prompt moderation — per-label scores and flags for a prompt pair (internal)',
 } as const;
 
 export type WorkflowStepType = keyof typeof WORKFLOW_STEP_TYPES;

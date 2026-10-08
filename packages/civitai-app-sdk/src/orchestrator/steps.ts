@@ -78,9 +78,9 @@
  * orchestrator's own authorization still decides.
  *
  * ⚠️ `WORKFLOW_STEP_TYPES` does NOT mark most of them. Counted at this commit:
- * of its 55 entries, exactly TWO sit under its "Platform internals" heading —
- * `comfyNodepackSnapshot` and `qwenImageBench`. `training`, `webScrape`,
- * `xGuardModeration`, `modelPickleScan` and the `model*` / `media*` steps are
+ * of its 55 entries, exactly THREE sit under its "Platform internals" heading —
+ * `comfyNodepackSnapshot`, `qwenImageBench` and `promptModeration`. `training`,
+ * `webScrape`, `xGuardModeration`, `modelPickleScan` and the `model*` / `media*` steps are
  * ordinary documented entries under ordinary headings, and `webScrape` carries
  * consumer-facing usage notes. So "the catalog already flags these as internal"
  * is not a reason this map types them, and an earlier version of this docblock
