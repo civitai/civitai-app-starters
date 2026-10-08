@@ -140,6 +140,9 @@ Devs never touch git hosting. The path is:
    don't include a `Dockerfile` or `nginx.conf` — the platform injects its own
    build recipe at approve. (If you have no token configured, `submit` writes the
    `.zip` and prints next steps; you can also web-upload at `/apps/submit`.)
+   Self-run the
+   [first-review checklist](https://developer.civitai.com/apps/guide/first-review.md)
+   before submitting.
 3. **Review** — a moderator reviews the manifest + file diff at **`/apps/review`**
    and approves (or rejects with a reason you see on `/apps/build`).
 4. **Deploy** — on approve, the platform builds + serves your `dist/` and stamps

@@ -496,6 +496,9 @@ submit** (esp. the seed), or the quoted cost won't match the charge — see the
 
 ## 7. Submit
 
+Before `civitai app submit`, self-run the
+[first-review checklist](https://developer.civitai.com/apps/guide/first-review.md) — what a reviewer checks first.
+
 Use the Go CLI (after `civitai login`):
 
 ```bash
