@@ -251,7 +251,8 @@ URL knobs:
 - `?domain=red` sets a mature surface: R outputs are shown blurred and the toggle appears.
 - `?price=1500` puts the price over the 1000 budget, so no top-up is offered.
 - `?balance=10` makes the wallet short, so a top-up is offered.
-- `?insufficient=1` produces a priced refusal that resolves.
+- `?insufficient=1` makes the submit reject with `'exception'`, as production does when the viewer is out of Buzz.
+- `?capRefusal=1` produces a priced spend-cap refusal that resolves.
 - `?failNext=1` makes the submit reject with `'exception'`.
 
 ### Where the mock host differs from production

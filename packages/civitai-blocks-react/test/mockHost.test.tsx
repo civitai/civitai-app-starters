@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AppWorkflow, BlockGatedImage } from '@civitai/app-sdk/blocks';
 
 import { useBlockContext } from '../src/hooks/useBlockContext.js';
-import { useBuzzWorkflow } from '../src/hooks/useBuzzWorkflow.js';
+import { useBuzzWorkflow, WorkflowSubmitError } from '../src/hooks/useBuzzWorkflow.js';
 import { useResourcePicker } from '../src/hooks/useResourcePicker.js';
 import { useRequestConsent } from '../src/hooks/useRequestConsent.js';
 import { useBlockToken } from '../src/hooks/useBlockToken.js';
@@ -94,19 +94,24 @@ describe('createMockHost', () => {
     expect(result.current.result?.imageUrls?.[0]).toContain('placehold.co');
   });
 
-  it('failMode "all" returns an insufficient-Buzz failed snapshot on submit', async () => {
-    uninstall = createMockHost({ failMode: 'all' }).install();
+  it('failMode "all" REJECTS submit as out of Buzz (exception, no cost), as production does', async () => {
+    uninstall = createMockHost({ consentGranted: true, failMode: 'all' }).install();
     const { result } = renderHook(() => useBuzzWorkflow());
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
 
-    let snap!: { status: string; error?: string };
+    let outcome: unknown;
     await act(async () => {
-      snap = await result.current.submit(TEXT_BODY);
+      outcome = await result.current.submit(TEXT_BODY).then(
+        (snap) => ({ unexpectedlyResolved: snap }),
+        (err) => err,
+      );
     });
-    // A `failed` snapshot is terminal → status 'done', error carried on the result.
-    await waitFor(() => expect(result.current.status).toBe('done'));
-    expect(snap.status).toBe('failed');
-    expect(result.current.result?.error).toMatch(/insufficient buzz/i);
+    expect(outcome).toBeInstanceOf(WorkflowSubmitError);
+    const err = outcome as WorkflowSubmitError;
+    expect(err.code).toBe('exception');
+    expect(err.snapshot.cost).toBeUndefined();
+    expect(err.snapshot.error).toMatch(/insufficient buzz/i);
+    await waitFor(() => expect(result.current.status).toBe('error'));
   });
 
   it('OPEN_RESOURCE_PICKER returns the canned LoRA pick', async () => {
