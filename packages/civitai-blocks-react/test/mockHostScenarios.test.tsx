@@ -536,6 +536,59 @@ describe('createMockHost — buzz balance scenario', () => {
     await waitFor(() => expect(host!.buzz.getBalance()).toBeGreaterThan(0));
   });
 
+  // A purchase ends every forced out-of-Buzz state — `buzz.insufficient` AND
+  // the legacy `failMode` spellings of it — so reject → top-up → retry lands.
+  // Before the fix only `buzz.insufficient` was cleared, and `?fail=insufficient`
+  // looped reject → top-up → reject. `'some'` is not a wallet state, so the
+  // purchase must leave it set (the control arm).
+  it.each([
+    ['failMode "insufficient"', { failMode: 'insufficient' as const }],
+    ['failMode "all"', { failMode: 'all' as const }],
+    ['buzz.insufficient', { buzz: { insufficient: true } }],
+  ])('OPEN_BUZZ_PURCHASE ends the out-of-Buzz state forced by %s', async (_label, opts) => {
+    host = createMockHost({ consentGranted: true, pollsUntilDone: 1, ...opts });
+    uninstall = host.install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    expectOutOfBuzz(await submitExpectingRejection(result));
+
+    const replies: unknown[] = [];
+    const onMsg = (ev: MessageEvent) => {
+      const d = ev.data as { type?: string; payload?: unknown };
+      if (d?.type === 'BUZZ_PURCHASE_RESULT') replies.push(d.payload);
+    };
+    window.addEventListener('message', onMsg);
+    try {
+      await act(async () => {
+        window.parent.postMessage({ type: 'OPEN_BUZZ_PURCHASE', payload: { requestId: 'p1' } }, ORIGIN);
+      });
+      await waitFor(() => expect(replies).toHaveLength(1));
+    } finally {
+      window.removeEventListener('message', onMsg);
+    }
+
+    const snap = await runGen(result, 1);
+    expect(snap.status).toBe('succeeded');
+  });
+
+  it('OPEN_BUZZ_PURCHASE leaves failMode "some" set (not a wallet state)', async () => {
+    host = createMockHost({ consentGranted: true, failMode: 'some', pollsUntilDone: 1 });
+    uninstall = host.install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    await act(async () => {
+      window.parent.postMessage({ type: 'OPEN_BUZZ_PURCHASE', payload: { requestId: 'p1' } }, ORIGIN);
+    });
+    // 'some' fails every 3rd submit; submits 1 and 2 succeed, 3 rejects.
+    expect((await runGen(result, 1)).status).toBe('succeeded');
+    expect((await runGen(result, 1)).status).toBe('succeeded');
+    const err = await submitExpectingRejection(result);
+    expect(err.code).toBe('exception');
+    expect(err.snapshot.error).toMatch(/simulated/i);
+  });
+
   it('stamps a synthetic spentAccountType (primary funder) when no accountType is picked', async () => {
     // Default wallet is yellow-dominant (5000) → primary funder 'yellow'. BODY
     // carries NO accountType, so the mock falls back to the largest-pool stamp.

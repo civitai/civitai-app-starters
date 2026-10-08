@@ -48,6 +48,17 @@ function startsWithConsent(): boolean {
   return consent !== '0' && consent !== 'ungrantable';
 }
 
+/**
+ * The starting wallet: 50, or `?balance=N`. The mock reads `?balance` for the
+ * balance a submit is checked against; this applies the same number to the
+ * balance `useBuzzBalance` reports, which the mock keeps separately.
+ */
+function startingWallet(): number {
+  const raw = new URLSearchParams(window.location.search).get('balance');
+  const n = raw === null || raw.trim() === '' ? NaN : Number(raw);
+  return Number.isFinite(n) ? n : 50;
+}
+
 export function Harness({ children }: { children: ReactNode }) {
   if (import.meta.env.VITE_LIVE_MODE === 'true') return <LiveHost>{children}</LiveHost>;
   // The SDK's mock host: no network, no Buzz. `declaredScopes` is the
@@ -67,15 +78,19 @@ export function Harness({ children }: { children: ReactNode }) {
       // `startsWithConsent`). Note the mock prices a generation even without the
       // spend scope, which the real host refuses; the example never asks it to.
       //
-      // 🔴 Starting granted is also why the TOP-UP shows here. This mock reports
-      // a short wallet as a RESOLVED priced refusal (production REJECTS with
-      // 'exception'), and the example treats every resolved refusal as a cap —
-      // never a top-up cue. So the harness demonstrates the top-up through the
-      // pre-submit check, which needs the spend budget on the token.
+      // A submit that DOES reach the mock with a short wallet is REJECTED with
+      // 'exception', as in production; the app then re-reads the wallet and
+      // offers the top-up only if that read shows the shortfall. The mock keeps
+      // TWO balances — `buzz.balance` (what a submit is checked against) and
+      // `buzzBalance` (what `useBuzzBalance` reads) — so `?balance=N` sets both
+      // here, keeping the re-read truthful. `?insufficient=1&costPerGen=40`
+      // forces the rejection with the wallet still reading 50: no shortfall, so
+      // the app shows "Could not start" — what production shows when the
+      // wallet read says there is enough.
       consentGranted={startsWithConsent()}
       generation={{ costPerGen: 120 }}
-      buzz={{ balance: 50 }}
-      buzzBalance={{ blue: 50, green: 0, yellow: 0 }}
+      buzz={{ balance: startingWallet() }}
+      buzzBalance={{ blue: startingWallet(), green: 0, yellow: 0 }}
     >
       {children}
     </MockHost>

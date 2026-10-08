@@ -182,7 +182,8 @@ const DEFAULT_STORAGE_LIMIT_ROWS = APP_STORAGE_MAX_ROWS;
 
 /**
  * How submits behave. `'none'` = everything succeeds; `'all'` / `'insufficient'`
- * = every submit fails as if the viewer were OUT OF BUZZ; `'some'` = ~1 in 3
+ * = every submit fails as if the viewer were OUT OF BUZZ, until an
+ * `OPEN_BUZZ_PURCHASE` resets the mode to `'none'`; `'some'` = ~1 in 3
  * submits fail with a generic error.
  *
  * 🔴 EVERY FAILING MODE **REJECTS** with `WorkflowSubmitError` code
@@ -519,7 +520,9 @@ export interface MockBuzzScenario {
    * Force every submit down the out-of-Buzz path regardless of balance — it
    * REJECTS with code `'exception'` (see above). Equivalent to the legacy
    * `failMode: 'insufficient'`; provided here so the path is reachable from the
-   * `buzz` group alone. `OPEN_BUZZ_PURCHASE` clears it.
+   * `buzz` group alone. `OPEN_BUZZ_PURCHASE` clears it — and clears
+   * `failMode: 'insufficient' | 'all'` too (back to `'none'`), so a top-up
+   * followed by a retry succeeds whichever knob forced the out-of-Buzz state.
    */
   insufficient?: boolean;
 }
@@ -2703,7 +2706,13 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // Refill the simulated balance so the post-top-up retry succeeds.
             const newBalance = typeof buzz.balance === 'number' ? buzz.balance + 1000 : 1000;
             if (typeof buzz.balance === 'number') buzz.balance = newBalance;
+            // A purchase ends EVERY forced out-of-Buzz state, not just the `buzz`
+            // group's flag: `failMode: 'insufficient' | 'all'` is documented as
+            // the same knob, and leaving it set made `?fail=insufficient` loop
+            // reject → top-up → reject. `'some'` is a generic failure, not a
+            // wallet, so a purchase leaves it alone.
             buzz.insufficient = false;
+            if (failMode === 'insufficient' || failMode === 'all') failMode = 'none';
             dispatchToBlock({
               type: 'BUZZ_PURCHASE_RESULT',
               payload: { requestId, purchased: true, newBalance },

@@ -12,4 +12,6 @@ Migrating a test: replace `const snap = await submit(body); expect(snap.status).
 
 New: `generation.submitCapRefusal` (`string | true`, or `?capRefusal=1|<text>` in the URL). It makes every submit resolve a priced spend-cap refusal, `{ workflowId: 'failed', status: 'failed', cost: { total }, error }`. That is what production returns when the per-generation budget, a daily, consent, per-app or dev-session cap stops a run. Buying Buzz does not lift any of those caps. It is checked before the out-of-Buzz path, as on the server, and it can be cleared live with `setScenario({ generation: { submitCapRefusal: undefined } })`.
 
+`OPEN_BUZZ_PURCHASE` now also resets `failMode: 'insufficient' | 'all'` to `'none'`. Before, it cleared only `buzz.insufficient`, so with `?fail=insufficient` every retry after a top-up was refused again.
+
 No option was renamed or removed. The knob names describe the viewer's state, not the reply shape, so only their documentation changed.

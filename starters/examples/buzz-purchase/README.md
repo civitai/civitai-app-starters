@@ -121,15 +121,19 @@ starts without it in a host that can never grant it, so Allow ends in the
 "isn't available" message. (The mock prices a generation even without the
 scope, which the real host refuses; the example never asks it to.)
 
-Two things the mock does differently from production, so don't read the harness
-as the host's exact shapes: it reports a short wallet as a *resolved* priced
-refusal (production rejects with `'exception'`), and its balance read
-(`useBuzzBalance`) is fixed at the starting wallet even after a purchase. Because
-of the first, a submit that reaches the mock with a short wallet shows the
-"couldn't run right now" message, not a top-up — this example (correctly, for
-production) never treats a resolved refusal as a top-up cue. The top-up shows
-because the wallet check in step 2 catches the shortfall before anything is
-submitted.
+A submit that reaches the mock with a short wallet is rejected with
+`'exception'`, as in production. The app then re-reads the wallet and offers a
+top-up only if that read shows the shortfall. `?balance=N` sets the starting
+wallet (default 50). `?insufficient=1&costPerGen=40` forces that rejection while
+the wallet still reads 50: the re-read shows no shortfall, so the app says
+"Could not start the generation" — what production shows when the balance read
+says there is enough and the submit fails anyway.
+
+One thing the mock does differently from production, so don't read the harness
+as the host's exact behaviour: its balance read (`useBuzzBalance`) is fixed at
+the starting wallet. It does not go down after a generation or up after a
+purchase. The mock keeps that read separate from the balance it checks a submit
+against, and `src/Harness.tsx` sets both to the same starting number.
 
 `npm run dev:live` runs against the real backend, but the live host refuses
 `OPEN_BUZZ_PURCHASE` (it answers `purchased: false`) — test the purchase here.
