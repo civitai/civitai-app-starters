@@ -325,12 +325,10 @@ if (priced) {
   try {
     const snap = await submit(body); // status 'submitting' → 'polling'
     if (snap.status === 'failed') {
-      // 🔴 A RESOLVED `failed` IS A PRICED SERVER OUTCOME — and only SOME of
-      // them are about the viewer's wallet. Affordability (per-call budget, the
-      // per-user daily Buzz cap) IS fixable by buying Buzz; the per-app velocity
-      // limit, the per-app aggregate daily cap, a fail-closed "temporarily
-      // unavailable" deny and a missing price quote are NOT. Selling Buzz for
-      // one of those takes money and fixes nothing, so branch before you offer.
+      // 🔴 A RESOLVED `failed` IS A SERVER OUTCOME, NEVER A TOP-UP CUE: a spend
+      // cap or limit buying Buzz does not raise, or a run that may already have
+      // spent. The complete list is on `useBuzzWorkflow`'s `submit` docs.
+      // Running OUT of Buzz rejects instead — see the catch below.
       showError(submitOutcomeMessage(snap)); // YOUR app owns this copy
     } else {
       await poll(snap.workflowId);   // you loop this on a backoff until terminal
@@ -375,11 +373,14 @@ if (priced) {
   `status: 'failed'`, an `error` string, **and a numeric `cost.total`** — the
   price the server refused to charge. That is a workflow *outcome*, not an error.
   Check `snap.status`, not just `try/catch`.
-  🔴 **Not all of them are affordability.** Only the per-call `buzzBudget` gate
-  and the per-user daily Buzz cap are about the wallet. The per-app **velocity**
-  limit, the per-app **aggregate daily** cap, a fail-closed **"temporarily
-  unavailable"** deny and a **missing price quote** are priced outcomes too, and
-  buying Buzz fixes none of them. Branch before you offer a top-up.
+  🔴 **None of them is a top-up cue.** Each is a spend cap or limit that buying
+  Buzz does not raise — the per-call `buzzBudget` and the viewer's daily cap
+  included — or a reply that may already have spent. The complete list, and
+  which of them may say "nothing was charged", is in `useBuzzWorkflow`'s
+  `submit` docs. A viewer who is genuinely **out of Buzz** makes `submit`
+  **reject** (`WorkflowSubmitError` code `'exception'`, shared with other
+  thrown submits): decide a top-up from `useBuzzBalance()` — blue plus the
+  block's domain pool, never all three — against the quoted cost.
 - **`submit` REJECTS when the reply carries no usable workflow outcome**
   (`@civitai/blocks-react@0.44.0+`). Every failure-shaped reply reports
   `status: 'failed'`, so `status` cannot tell them apart — **`cost` presence
@@ -468,7 +469,9 @@ if (priced) {
 
 ### `useBuzzPurchase()`
 
-Open the Buzz purchase modal — the insufficient-budget recovery path.
+Open the Buzz purchase modal. It raises the viewer's WALLET, never a spend cap:
+offer it when the viewer's spendable Buzz is below a quoted cost, never on a
+resolved `failed` submit (see `useBuzzWorkflow`'s `submit` docs).
 
 ```tsx
 const { openPurchaseModal } = useBuzzPurchase();

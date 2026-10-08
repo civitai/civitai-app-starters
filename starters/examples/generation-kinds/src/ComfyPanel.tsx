@@ -106,7 +106,9 @@ export function ComfyPanel({ canSpend, signedIn }: { canSpend: boolean; signedIn
     try {
       const snap = await submit(buildBody(prompt));
       if (snap.status === 'failed') {
-        // A RESOLVED failure: the host declined (budget, cap, refusal). Nothing to poll.
+        // A RESOLVED failure: a cap refusal before anything ran (the placeholder id,
+        // nothing charged) or a real run that came back failed and may have spent —
+        // `submitFailureMessage` says which. Either way there is nothing to poll.
         logServerReason('comfy submit', snap);
         setRun({ phase: 'error', message: submitFailureMessage(snap) });
         return;

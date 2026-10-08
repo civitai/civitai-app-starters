@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { flush } from '../test-support/fakes.js';
 import { defineElements } from './define.js';
 
 beforeAll(() => defineElements());
@@ -275,5 +276,69 @@ describe('civitai-chat', () => {
     say('/model smart');
     await chat.updateComplete;
     expect(JSON.parse(localStorage.getItem('cvt:settings') ?? '{}').assistantModel).toBeUndefined();
+  });
+});
+
+/**
+ * The viewer's name, on real `@civitai/sdk` clients rather than a hand-rolled fake, observed at
+ * the fetch the client makes. `/api/v1/me` accepts an OAuth token and refuses the block-scoped
+ * one, so a block must not ask it.
+ */
+describe("civitai-chat's viewer name", () => {
+  const SITE = 'https://site.test/api/v1';
+  const meCalls = (fetchSpy: ReturnType<typeof vi.fn>) =>
+    fetchSpy.mock.calls.filter(([input]) => new URL(String(input instanceof Request ? input.url : input)).pathname.endsWith('/me'));
+
+  function recordingFetch(username: string) {
+    return vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input instanceof Request ? input.url : input));
+      // A block-scoped token gets 401 here in production; serving 200 keeps a stray call visible as a name.
+      if (url.pathname.endsWith('/me')) return Response.json({ username });
+      return new Response('{}', { status: 503 });
+    });
+  }
+
+  async function mount(app: unknown) {
+    const chat = document.createElement('civitai-chat');
+    chat.app = app as never;
+    document.body.append(chat);
+    await vi.waitFor(() => expect(chat.shadowRoot?.querySelector('civitai-chat-welcome')).not.toBeNull());
+    // The same settle in both tests, so the OAuth one is the positive control for this window.
+    for (let i = 0; i < 5; i++) await flush();
+    return chat;
+  }
+
+  it('sends no /me request from a block holding the block-scoped token, and names the viewer from the host', async () => {
+    const fetchSpy = recordingFetch('from-me');
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { initialize } = await import('@civitai/sdk');
+    const { createFakeTransport } = await import('@civitai/sdk/testing');
+    const transport = createFakeTransport({
+      viewer: { id: 7, username: 'host-viewer' },
+      token: { raw: 'block-jwt', scopes: [], expiresAt: new Date(Date.now() + 600_000), kind: 'block' },
+    });
+    const app = await initialize({ transport, siteUrl: SITE, fetch: fetchSpy as typeof fetch });
+    const chat = await mount(app);
+
+    expect(meCalls(fetchSpy)).toHaveLength(0);
+    await vi.waitFor(() => expect(chat.shadowRoot!.querySelector('civitai-chat-welcome')?.textContent).toContain('Hi host-viewer'));
+  });
+
+  it('still asks /me for the name with an OAuth token outside a block', async () => {
+    const fetchSpy = recordingFetch('from-me');
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { initialize } = await import('@civitai/sdk');
+    const app = await initialize({ token: async () => 'oauth-access-token', requestGrants: () => true, siteUrl: SITE, fetch: fetchSpy as typeof fetch });
+    const chat = await mount(app);
+
+    expect(meCalls(fetchSpy)).toHaveLength(1);
+    await vi.waitFor(() => expect(chat.shadowRoot!.querySelector('civitai-chat-welcome')?.textContent).toContain('Hi from-me'));
+    const [input, init] = meCalls(fetchSpy)[0]!;
+    const headers = new Headers(input instanceof Request ? input.headers : (init as RequestInit | undefined)?.headers);
+    expect(headers.get('authorization')).toBe('Bearer oauth-access-token');
   });
 });

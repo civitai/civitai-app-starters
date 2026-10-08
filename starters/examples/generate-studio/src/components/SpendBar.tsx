@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 
-import { useBuzzPurchase, type UseBuzzBalance } from '@civitai/blocks-react';
+import { useBuzzPurchase, useDomainMaturity, type UseBuzzBalance } from '@civitai/blocks-react';
 import { Alert, Badge, Button, Card, Group, Stack } from '@civitai/blocks-react/ui';
 
 import { blockerMessage, findBlocker, walletTotal } from '../studio/blocker.js';
@@ -18,10 +18,11 @@ interface Props {
 /**
  * Price → budget → wallet → Generate.
  *
- * The budget is only on the token after consent, so the FIRST Generate goes
- * straight to `submit()` (which opens the host's consent dialog and re-sends
- * once). From then on a click that cannot land is stopped here, from the
- * numbers, and only a WALLET shortfall is offered a top-up.
+ * Nothing is priced, and Generate stays disabled, until the viewer has
+ * granted the spend scope (the App's "Allow" step): the host refuses an
+ * estimate without it. So by the time there is a price the budget is on the
+ * token too, a click that cannot land is stopped here from the numbers, and
+ * only a WALLET shortfall is offered a top-up.
  *
  * 🔴 No automatic retry after a purchase. `openPurchaseModal` waits on a human
  * for up to ten minutes, so a retry fired from its promise is a paid submit at a
@@ -33,8 +34,9 @@ export function SpendBar({ quote, budget, wallet, canGenerate, onGenerate }: Pro
   const [topUpNote, setTopUpNote] = useState<string | null>(null);
   const inFlight = useRef(false); // the real re-entry lock; `disabled` is UX
 
-  const blocker = quote.price === null ? null : findBlocker(quote.price, budget, wallet.balance);
-  const total = walletTotal(wallet.balance);
+  const { maxBrowsingLevel } = useDomainMaturity(); // the DOMAIN ceiling decides the spendable pool
+  const blocker = quote.price === null ? null : findBlocker(quote.price, budget, wallet.balance, maxBrowsingLevel);
+  const total = walletTotal(wallet.balance, maxBrowsingLevel);
 
   const topUp = async (amount: number) => {
     if (inFlight.current) return;

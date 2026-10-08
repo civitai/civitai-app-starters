@@ -398,8 +398,9 @@ describe('useBuzzWorkflow', () => {
   //
   // 🔴 THIS TEST WAS WRITTEN BEFORE THE FIX, AS A SCOPE PIN, AND IT SURVIVES THE
   // FIX UNCHANGED — that is the whole point of it. The budget-rejection arm MUST
-  // KEEP RESOLVING: a block recovers from it by opening a top-up flow, and
-  // turning it into a throw would break that recovery. The guard added for #251
+  // KEEP RESOLVING: it is a priced outcome the block reports (the run did not
+  // start, at this quoted price), and turning it into a throw would erase that.
+  // (It is not a top-up cue — buying Buzz raises none of these caps.) The guard added for #251
   // rejects only the OTHER producer (a caught server exception posted as
   // `failureSnapshot(err)`, which carries NO `cost`), so this arm is untouched.
   //

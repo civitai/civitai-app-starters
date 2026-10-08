@@ -35,6 +35,19 @@ const MODEL_SLOT: ModelSlotContext = {
   modelNsfwLevel: 1,
 };
 
+/**
+ * Whether the mock starts with the spend scope already granted. Default yes, so
+ * the top-up demo is one click away. `?consent=0` starts WITHOUT it — the
+ * "Allow generations" step, which grants on Allow; `?consent=ungrantable`
+ * starts without it in a host that can never grant it (the refusal path). The
+ * mock's own `?consent=granted` can only turn consent ON, which is why this
+ * reads the URL itself.
+ */
+function startsWithConsent(): boolean {
+  const consent = new URLSearchParams(window.location.search).get('consent');
+  return consent !== '0' && consent !== 'ungrantable';
+}
+
 export function Harness({ children }: { children: ReactNode }) {
   if (import.meta.env.VITE_LIVE_MODE === 'true') return <LiveHost>{children}</LiveHost>;
   // The SDK's mock host: no network, no Buzz. `declaredScopes` is the
@@ -46,9 +59,20 @@ export function Harness({ children }: { children: ReactNode }) {
       blockId={manifest.blockId}
       context={MODEL_SLOT}
       // A 120-Buzz generation against a 50-Buzz wallet: the first Generate is
-      // refused and offers a top-up; the mock purchase refills the wallet and the
-      // retry lands. `?consent=granted&costPerGen=600` prices it over the
-      // mock's 200-Buzz per-generation budget instead — no top-up offered.
+      // stopped by the pre-submit wallet check, which offers a top-up; the mock
+      // purchase refills the wallet and the retry lands. `?costPerGen=600` prices
+      // it over the mock's 200-Buzz per-generation budget instead — no top-up.
+      //
+      // `?consent=0` starts at the "Allow generations" step instead (see
+      // `startsWithConsent`). Note the mock prices a generation even without the
+      // spend scope, which the real host refuses; the example never asks it to.
+      //
+      // 🔴 Starting granted is also why the TOP-UP shows here. This mock reports
+      // a short wallet as a RESOLVED priced refusal (production REJECTS with
+      // 'exception'), and the example treats every resolved refusal as a cap —
+      // never a top-up cue. So the harness demonstrates the top-up through the
+      // pre-submit check, which needs the spend budget on the token.
+      consentGranted={startsWithConsent()}
       generation={{ costPerGen: 120 }}
       buzz={{ balance: 50 }}
       buzzBalance={{ blue: 50, green: 0, yellow: 0 }}

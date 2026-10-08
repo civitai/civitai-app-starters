@@ -83,13 +83,13 @@ export interface GoodPurchaseOptions extends ConsentRetryOptions {
    * fresh key here would work too, but it would make a lost response on the
    * retry unrecoverable, which is the thing idempotency keys exist to prevent.
    *
-   * ⚠️ RECONCILED WITH THE OPPOSITE POLICY NEXT DOOR, which a reader will hit.
-   * `useBuzzWorkflow` states twice that a resolved-failed budget "is the cue to
-   * call `useBuzzPurchase().openPurchaseModal()`" — i.e. the APP decides — and
-   * warns that "routing a rejection into a top-up sells Buzz for a failure Buzz
-   * cannot fix". That policy is right for a generation, and this option does not
-   * contradict it: it defaults to `false`, and it keys on the REASON
-   * (`insufficient_funds`) rather than on "the call failed", so it never offers
+   * ⚠️ RECONCILED WITH THE POLICY NEXT DOOR, which a reader will hit.
+   * `useBuzzWorkflow` says a resolved-failed generation is never a top-up cue
+   * (those are caps Buzz does not raise) and that running out of Buzz there
+   * rejects without a structural marker, so the APP decides a top-up from the
+   * balance. This option does not contradict that: it defaults to `false`, and
+   * it keys on the REASON (`insufficient_funds`, which a goods purchase DOES
+   * report structurally) rather than on "the call failed", so it never offers
    * Buzz for a failure Buzz cannot fix. What it buys, and the only reason it is
    * in the library at all rather than left to each app, is the same-key retry
    * above — a server contract an app gets wrong in the expensive direction.

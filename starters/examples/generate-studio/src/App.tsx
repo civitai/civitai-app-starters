@@ -5,6 +5,7 @@ import {
   useBlockContext,
   useBlockResize,
   useBuzzBalance,
+  useDomainMaturity,
   useRequestConsent,
   useRequestSignIn,
 } from '@civitai/blocks-react';
@@ -56,6 +57,7 @@ export function App() {
   const canReadBalance = token.scopes.includes(BALANCE);
 
   const wallet = useBuzzBalance();
+  const { maxBrowsingLevel } = useDomainMaturity(); // the DOMAIN ceiling decides the spendable pool
   const history = useAppWorkflows({ limit: 20 });
   const { refetch: refetchWallet } = wallet;
   const { refetch: refetchHistory } = history;
@@ -86,9 +88,9 @@ export function App() {
   const generate = useCallback(() => {
     if (!body || quote.price === null) return;
     // With the budget known, never send a submit that cannot land.
-    if (findBlocker(quote.price, token.buzzBudget, wallet.balance)) return;
+    if (findBlocker(quote.price, token.buzzBudget, wallet.balance, maxBrowsingLevel)) return;
     void start(body);
-  }, [body, quote.price, token.buzzBudget, wallet.balance, start]);
+  }, [body, quote.price, token.buzzBudget, wallet.balance, maxBrowsingLevel, start]);
 
   if (!ready) return <div style={{ padding: 16 }}>Loading…</div>;
 
