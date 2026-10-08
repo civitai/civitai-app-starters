@@ -122,8 +122,9 @@ configureChat({ autoRunLimit: 0 }); // ask before every generation
 `name` (what the chat calls itself in its sidebar, to its assistant and in messages; default
 "Civitai Chat"), `model` (the default chat model), `models` (others the viewer may pick in Settings,
 each `{ id, label, note }`; none by default, e.g. `configureChat({ models: [{ id: 'z-ai/glm-5.3-flash',
-label: 'GLM 5.3 Flash', note: 'Follows instructions closely.' }] })`), `orchestrationMcpUrl`, `siteMcpUrl` and `autoRunLimit` (the Buzz a new viewer's
-generations may cost before the chat asks) are the settings. In Settings the viewer picks the
+label: 'GLM 5.3 Flash', note: 'Follows instructions closely.' }] })`), `orchestrationMcpUrl`, `siteMcpUrl`, `autoRunLimit` (the Buzz a new viewer's
+generations may cost before the chat asks) and `webSearch` (whether the assistant may search the web
+and read pages, at 1 Buzz each; on by default) are the settings. In Settings the viewer picks the
 assistant's model from the default, `models`, or any model id the orchestrator's chat endpoint
 serves (Custom); conversation titles always use the default.
 
