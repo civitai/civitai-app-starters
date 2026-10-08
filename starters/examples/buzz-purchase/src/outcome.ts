@@ -33,11 +33,11 @@ export function overLimitMessage(price: number, budget: number): string {
  * What to tell the viewer after `submit` RESOLVED with `status: 'failed'`. Never a top-up.
  *
  * `price` is the quote; `budget` is `token.buzzBudget` read when the reply
- * arrives, NOT when Generate was pressed. On a first Generate the spend scope
- * isn't granted yet, so the budget is unknown at the click; `submit` asks for
- * consent, re-sends, and only then can a placeholder refusal be explained as the
- * per-generation limit. Any other placeholder refusal is a cap or limit the
- * viewer can't see the size of: "try again later".
+ * arrives, NOT when Generate was pressed (the token can be re-minted in
+ * between). A placeholder refusal priced over it is the per-generation limit.
+ * Any other placeholder refusal is a cap or limit the viewer can't see the size
+ * of: "try again later". An unknown budget (the token lost the spend scope)
+ * falls into that second case.
  */
 export function resolvedFailureMessage(
   snap: { workflowId: string },
