@@ -15,7 +15,9 @@ export interface UseBuzzPurchase {
  * Opens the Civitai Buzz purchase modal on the host. Resolves with the
  * outcome when the user closes the modal — `purchased: true` means the
  * balance increased; the new balance is included if the host reports it.
- * The insufficient-budget recovery path for {@link useBuzzWorkflow}.
+ * Raises the viewer's WALLET, never a spend cap: offer it when the viewer's
+ * spendable Buzz is below a quoted cost, never on a resolved `failed` submit
+ * from {@link useBuzzWorkflow} (see its `submit` docs for why).
  *
  * 🔴 HUMAN-GATED: the reply comes when the viewer closes the modal, and a
  * payment flow is nowhere near a ~30s round-trip — so this passes

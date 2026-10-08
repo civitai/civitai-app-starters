@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 
-import { useBuzzPurchase, type UseBuzzBalance } from '@civitai/blocks-react';
+import { useBuzzPurchase, useDomainMaturity, type UseBuzzBalance } from '@civitai/blocks-react';
 import { Alert, Badge, Button, Card, Group, Stack } from '@civitai/blocks-react/ui';
 
 import { blockerMessage, findBlocker, walletTotal } from '../studio/blocker.js';
@@ -33,8 +33,9 @@ export function SpendBar({ quote, budget, wallet, canGenerate, onGenerate }: Pro
   const [topUpNote, setTopUpNote] = useState<string | null>(null);
   const inFlight = useRef(false); // the real re-entry lock; `disabled` is UX
 
-  const blocker = quote.price === null ? null : findBlocker(quote.price, budget, wallet.balance);
-  const total = walletTotal(wallet.balance);
+  const { maxBrowsingLevel } = useDomainMaturity(); // the DOMAIN ceiling decides the spendable pool
+  const blocker = quote.price === null ? null : findBlocker(quote.price, budget, wallet.balance, maxBrowsingLevel);
+  const total = walletTotal(wallet.balance, maxBrowsingLevel);
 
   const topUp = async (amount: number) => {
     if (inFlight.current) return;

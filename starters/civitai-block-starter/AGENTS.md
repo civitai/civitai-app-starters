@@ -95,8 +95,13 @@ Don't try to "make this a real OAuth app." That is what the `next-app` /
   `@civitai/app-sdk/blocks` before reading slot fields.
 - **Gate sign-in with `isSignedIn(app.viewer)`** from `@civitai/app-sdk/blocks`,
   never an open-coded check. The platform sends `viewer: null` for signed-out
-  users. For the viewer's identity, read the API (`app.site.get('me')`), not
-  `app.viewer`.
+  users. For the viewer's identity, read the block route
+  `app.site.get('blocks/me')`, not `app.viewer`. 🔴 Not `app.site.get('me')`:
+  that is `/api/v1/me`, which authenticates sessions, API keys and OAuth
+  tokens only, so the block token gets a 401. `blocks/me` needs `user:read:self` declared in
+  `block.manifest.json` (this starter declares no scopes), and that scope is
+  consent-gated — call `askConsent(app, ['user:read:self'])` (below) before
+  the read. An anonymous viewer is refused, so gate on `isSignedIn` first.
 - **Host data goes in with `textContent`, never `innerHTML`.** The view in
   `src/block.ts` is a static template filled field by field; a model name is
   user-authored, and interpolating it into markup is an XSS hole.
@@ -205,23 +210,79 @@ separate.
 - **Buzz-spending generation** — add `ai:write:budgeted` to `scopes`, then:
 
   ```ts
+  import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
+
   generateButton.addEventListener('click', async () => {
     generateButton.setAttribute('loading', '');
     try {
       if (!(await askConsent(app, ['ai:write:budgeted']))) return; // not granted: nothing was sent
       const idempotencyKey = crypto.randomUUID(); // once per generation, reused by any retry
-      const { snapshot } = await app.site.post<{ snapshot: unknown }>('blocks/workflows/submit', {
-        body: workflowBody, // the workflow: steps + their inputs
-        idempotencyKey, // REQUIRED on this route — the request is refused without one
-      });
-      console.log(snapshot); // render the workflow's progress here
+      const reply = await app.site.post<{ snapshot: BlockWorkflowSnapshot; submissionUnconfirmed?: true }>(
+        'blocks/workflows/submit',
+        {
+          body: workflowBody, // the workflow: steps + their inputs
+          idempotencyKey, // REQUIRED on this route — the request is refused without one
+        },
+      );
+      const { snapshot } = reply;
+      // A REFUSAL IS AN HTTP 200, so it lands HERE, not in `catch`.
+      if (snapshot.status === 'failed') {
+        console.warn('submit failed:', snapshot.error); // server text: log it, never render it
+        if (reply.submissionUnconfirmed) {
+          // A training run the server could not confirm: it may be running, and charged.
+          showMessage('This could not be confirmed and may still be running. Check before retrying.');
+        } else if (snapshot.workflowId === 'failed') {
+          // The placeholder id: refused before anything ran.
+          showMessage('This generation could not start. Nothing was charged.');
+        } else {
+          // A real run that came back failed: Buzz may have been spent.
+          showMessage('This generation failed. Check your history before trying again.');
+        }
+        return;
+      }
+      console.log(snapshot.workflowId); // a real run: poll it and render its progress here
     } catch (error) {
-      console.error(error); // and tell the viewer it failed
+      console.error(error); // a non-2xx: an ApiError with `status` and `body`
+      showMessage('Something went wrong. Please try again.');
     } finally {
       generateButton.removeAttribute('loading'); // reset on every outcome, a rejection included
     }
   });
   ```
+
+  (`showMessage` stands for your own UI.) What lands where:
+  - **Resolved, `status: 'failed'`.** The route answers **200**, and
+    `app.site.post` throws only on a non-2xx, so without the `status` check a
+    failed submit looks like a started run. Three kinds of reply resolve this
+    way, and only the first may say "nothing was charged":
+    1. the placeholder id `'failed'` — a spend cap or limit refused it before
+       anything ran;
+    2. `submissionUnconfirmed: true` beside the snapshot — a training run the
+       server could not confirm, which may be running and may have spent;
+    3. a real `workflowId` — a run was created and came back failed, and Buzz
+       may have been spent.
+
+    The complete list of caps and replies is in `@civitai/blocks-react`'s
+    [`useBuzzWorkflow` `submit` docs](https://github.com/civitai/civitai-app-starters/blob/main/packages/civitai-blocks-react/src/hooks/useBuzzWorkflow.ts)
+    (search "THE ONE COMPLETE LIST"); keep it there, not here. A refusal can
+    carry **no `cost`** (an unpriced training step), so check before reading
+    `cost.total`. `snapshot.error` is unsanitised server text — log it, show
+    your own copy. 🔴 **Never offer a Buzz top-up here**: buying Buzz raises
+    none of those caps.
+  - **Rejected — `catch`.** A non-2xx `ApiError`. This is where a viewer who is
+    genuinely **out of Buzz** lands (the orchestrator refuses the run; the route
+    answers 400), but so does any other bad request, with nothing structural to
+    tell them apart. If you want to offer a top-up (`app.host.openBuzzPurchase()`),
+    decide from the viewer's SPENDABLE balance, not from the rejection:
+    `app.site.get('blocks/buzz')` returns `{ blue, green, yellow }`, needs
+    `buzz:read:self` declared in `block.manifest.json` (consent-gated, so
+    `askConsent` it first) and refuses an anonymous viewer. A block spends only
+    blue plus its domain's pool — green under an SFW ceiling, yellow under a
+    mature one — so compare `blue` plus `isSfwCeiling(maxBrowsingLevel) ? green
+    : yellow` (`isSfwCeiling` from `@civitai/app-sdk/blocks`;
+    `getTransport().snapshot.get().maxBrowsingLevel` from `@civitai/sdk`, the
+    domain ceiling the server keys on) against the quoted cost, never all
+    three.
 
   🔴 Do **not** call `app.orchestration` from a block: a direct orchestrator call
   skips the per-call budget, the daily caps and attribution (the `@civitai/sdk`
@@ -229,10 +290,10 @@ separate.
   — for a model-slot app like this one that comes from the install's
   per-generation setting; for a page app, from `page.buzzBudgetPerGen`.
   - 🔴 **The per-gen budget is a SAFETY CEILING, not a cost estimate.** Set it to
-    several times your worst-case run. A submit priced above it is rejected
-    outright (`insufficient buzz budget`), nothing charged and nothing
-    delivered, and for a page app it stays broken until a new manifest version
-    is approved.
+    several times your worst-case run. A submit priced above it is refused — the
+    `status: 'failed'` snapshot above, with an `insufficient buzz budget` error —
+    nothing charged and nothing delivered, and for a page app it stays broken
+    until a new manifest version is approved.
   - The `buzz-workflow` example in the civitai-app-starters repo is a complete
     estimate → submit → poll flow, in React through the host bridge; this REST
     route forwards to the same server procedure.

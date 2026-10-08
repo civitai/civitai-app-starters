@@ -41,13 +41,23 @@ installer's to change.
 
    The budget is only on the token once the viewer has granted the spend scope,
    so the first generation goes straight to `submit()` (which asks for that
-   consent) and any refusal is explained afterwards, with a fresh balance read.
-3. **Submit.** A refusal comes back two ways, and both are explained by step 2:
-   - **resolved**, `status: 'failed'` with a `cost` — the host declined before
-     spending (a budget or cap gate);
+   consent).
+3. **Submit.** A failure comes back two ways, and only ONE can lead to a top-up
+   (`src/outcome.ts` holds the rule):
+   - **resolved**, `status: 'failed'` — **never a top-up.** With the `'failed'`
+     placeholder id a spend cap or limit refused it before the wallet was even
+     looked at, so a retry after buying Buzz hits the same cap. If the price is
+     above the per-generation budget — read from the token when the reply
+     arrives, since a first Generate only gets the budget by granting consent
+     inside `submit()` — the example shows the limit message; otherwise it says
+     it couldn't run and nothing was charged. With a **real** workflow id a run
+     came back failed and may have spent; the example says so and never
+     retries. (The complete list is in `useBuzzWorkflow`'s `submit` docs.)
    - **rejected** with `WorkflowSubmitError` code `'exception'` — the host had no
      workflow to report, which is how a wallet the orchestrator could not debit
-     reaches the block.
+     reaches the block. This is the only branch that re-reads the balance and,
+     through step 2, offers a top-up when the viewer's spendable Buzz is below
+     the price.
 
    `'workflow-failed'` and transport errors are not affordability at all: Buzz
    may already be committed, so the example says so and does not retry.
@@ -81,16 +91,21 @@ npm run dev:harness   # → http://localhost:5185
 ```
 
 `src/Harness.tsx` sets the SDK mock host up with a 120-Buzz generation and a
-50-Buzz wallet: the first Generate is refused and offers a 70-Buzz top-up; the
-mock purchase refills the wallet and the retry lands.
-`?consent=granted&costPerGen=600` prices the generation above the mock's
-200-Buzz per-generation budget instead, and no top-up is offered.
+50-Buzz wallet, with the spend scope already granted (`consentGranted`): the
+first Generate is stopped by the step-2 wallet check, which offers a 70-Buzz
+top-up; the mock purchase refills the wallet and the retry lands.
+`?costPerGen=600` prices the generation above the mock's 200-Buzz
+per-generation budget instead, and no top-up is offered.
 
 Two things the mock does differently from production, so don't read the harness
 as the host's exact shapes: it reports a short wallet as a *resolved* priced
 refusal (production rejects with `'exception'`), and its balance read
-(`useBuzzBalance`) is fixed at the starting wallet even after a purchase. The
-example decides from the numbers, so both paths reach the same screen.
+(`useBuzzBalance`) is fixed at the starting wallet even after a purchase. Because
+of the first, a submit that reaches the mock with a short wallet shows the
+"couldn't run right now" message, not a top-up — this example (correctly, for
+production) never treats a resolved refusal as a top-up cue. That is why the
+harness pre-grants consent: with the budget on the token, the wallet check in
+step 2 catches the shortfall before anything is submitted.
 
 `npm run dev:live` runs against the real backend, but the live host refuses
 `OPEN_BUZZ_PURCHASE` (it answers `purchased: false`) — test the purchase here.

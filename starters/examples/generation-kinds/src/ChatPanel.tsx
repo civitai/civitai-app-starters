@@ -13,6 +13,7 @@ import {
   submitRejectionOutcome,
   TERMINAL_STATUSES,
 } from './workflow.js';
+import { RAN_AND_FAILED_NOTE, resolvedChatFailure, turnsForModel, type Turn } from './chatTurns.js';
 
 /**
  * `kind: 'step'`, REGISTRY arm, `step: 'chat-completion'` — a multi-turn LLM chat.
@@ -40,14 +41,11 @@ const MAX_CHARS = 8000;
 const MAX_TOKENS = 512;
 const SYSTEM = 'You are a concise, friendly assistant inside a Civitai app.';
 
-interface Turn {
-  role: 'user' | 'assistant';
-  content: string;
-}
-
 /** The ONE builder: the estimate prices exactly the body the submit sends. */
 function buildBody(model: string, history: Turn[], draft: string): WorkflowBodyStep {
-  const turns: Turn[] = [...history, { role: 'user', content: draft.trim().slice(0, MAX_CHARS) }];
+  // A turn kept as failed (a RESOLVED failure with a real workflow id — the only
+  // case that keeps one) got no reply, so it is not context for the next one.
+  const turns: Turn[] = [...turnsForModel(history), { role: 'user', content: draft.trim().slice(0, MAX_CHARS) }];
   // Keep the system message plus the most recent turns inside the 32-message cap.
   const messages = [{ role: 'system', content: SYSTEM }, ...turns.slice(-(MAX_MESSAGES - 1))];
   return { kind: 'step', step: 'chat-completion', params: { model, messages, maxTokens: MAX_TOKENS, temperature: 0.7 } };
@@ -144,8 +142,18 @@ export function ChatPanel({ canSpend }: { canSpend: boolean }) {
       if (snap.status === 'failed') {
         logServerReason('chat submit', snap);
         setPending(null);
-        setNotice({ color: 'error', text: submitFailureMessage(snap) });
-        return; // the draft stays in the box: nothing was sent
+        const failure = resolvedChatFailure(snap, text);
+        if (failure.kind === 'not-started') {
+          // The placeholder id: refused before anything ran, nothing charged.
+          setNotice({ color: 'error', text: submitFailureMessage(snap) });
+          return; // the draft stays in the box, ready to send again
+        }
+        // A real run came back failed and may have spent: keep it as a failed
+        // turn, and do NOT leave the draft primed for a separately charged resend.
+        setHistory((h) => [...h, failure.turn]);
+        setDraft('');
+        setNotice({ color: 'error', text: RAN_AND_FAILED_NOTE });
+        return;
       }
       setHistory((h) => [...h, { role: 'user', content: text }]);
       setDraft('');
@@ -183,8 +191,14 @@ export function ChatPanel({ canSpend }: { canSpend: boolean }) {
         <div style={transcriptStyle} data-testid="transcript" aria-live="polite">
           {history.length === 0 ? <small style={dimmed}>No messages yet.</small> : null}
           {history.map((t, i) => (
-            <div key={i} style={t.role === 'user' ? userBubble : assistantBubble} data-role={t.role}>
+            <div
+              key={i}
+              style={t.failed ? failedBubble : t.role === 'user' ? userBubble : assistantBubble}
+              data-role={t.role}
+              {...(t.failed ? { 'data-failed': '' } : {})}
+            >
               {t.content}
+              {t.failed ? <small style={{ display: 'block' }}>Failed — may have been charged.</small> : null}
             </div>
           ))}
           {busy ? (
@@ -240,3 +254,4 @@ const userBubble = {
   color: 'var(--civitai-color-primary-fg)',
 } as const;
 const assistantBubble = { ...bubble, alignSelf: 'flex-start', background: 'var(--civitai-color-surface-2)' } as const;
+const failedBubble = { ...userBubble, opacity: 0.6 } as const;
