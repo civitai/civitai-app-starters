@@ -7,6 +7,7 @@ wallet can't cover a generation, then retry it.
 
 | Concept | Where |
 |---|---|
+| Asking for consent BEFORE pricing, and every way that request can end | `src/consent.ts` |
 | Pricing with `estimate()` — never a hard-coded cost | `src/App.tsx` |
 | The two limits: the wallet (`useBuzzBalance`) vs the per-generation budget (`token.buzzBudget`) | `explainBlocker()` |
 | `useBuzzPurchase().openPurchaseModal()` → retry, with its guards | `topUpAndRetry()` |
@@ -31,6 +32,26 @@ installer's to change.
 
 ## The flow
 
+0. **Get consent.** Pricing needs the spend scope: the host refuses an
+   estimate from a token without `ai:write:budgeted`, and `estimate()` never
+   asks for consent itself (it runs on mount, with no click behind it). So
+   while the token lacks the scope the example shows an **Allow generations**
+   step and prices nothing. **Allow** calls `requestConsent({ scopes })` from
+   `useRequestConsent()`, which is fire-and-forget; `src/consent.ts` decides
+   what the step shows for each way it can end:
+   - **granted** — the host re-mints the token with the scope (and
+     `token.buzzBudget`); the step goes away and step 1 runs;
+   - **unavailable** — the host pushes `CONSENT_UNAVAILABLE`
+     (`useConsentUnavailable()`): the scope can never be granted here, so the
+     example says so and stops offering Allow;
+   - **dismissed** — nothing arrives at all, so Allow stays enabled, with
+     "If you closed it, press Allow again";
+   - **failed to send** — the call threw; the example says so and Allow stays
+     enabled.
+
+   A signed-out viewer gets no consent-gated scope, so they are asked to sign
+   in instead. Without this step, a viewer who hasn't consented sees no price
+   and a Generate button that never enables.
 1. **Price it.** `estimate(body)` returns the cost the server will charge (an
    author fee included). The button stays disabled until there is a price.
 2. **Check the budget, then the wallet** — `explainBlocker(price)`, from the
@@ -39,18 +60,15 @@ installer's to change.
    - `wallet < price` → "You're N Buzz short", with **Buy Buzz & retry**;
    - otherwise → submit.
 
-   The budget is only on the token once the viewer has granted the spend scope,
-   so the first generation goes straight to `submit()` (which asks for that
-   consent).
+   Consent came first, so the budget is always on the token by now.
 3. **Submit.** A failure comes back two ways, and only ONE can lead to a top-up
    (`src/outcome.ts` holds the rule):
    - **resolved**, `status: 'failed'` — **never a top-up.** With the `'failed'`
      placeholder id a spend cap or limit refused it before the wallet was even
      looked at, so a retry after buying Buzz hits the same cap. If the price is
-     above the per-generation budget — read from the token when the reply
-     arrives, since a first Generate only gets the budget by granting consent
-     inside `submit()` — the example shows the limit message; otherwise it says
-     it couldn't run and nothing was charged. With a **real** workflow id a run
+     above the per-generation budget (read from the token when the reply
+     arrives) the example shows the limit message; otherwise it says it
+     couldn't run and nothing was charged. With a **real** workflow id a run
      came back failed and may have spent; the example says so and never
      retries. (The complete list is in `useBuzzWorkflow`'s `submit` docs.)
    - **rejected** with `WorkflowSubmitError` code `'exception'` — the host had no
@@ -97,15 +115,21 @@ top-up; the mock purchase refills the wallet and the retry lands.
 `?costPerGen=600` prices the generation above the mock's 200-Buzz
 per-generation budget instead, and no top-up is offered.
 
+`?consent=0` starts WITHOUT the spend scope, at the Allow generations step;
+Allow grants it, and the price and Generate follow. `?consent=ungrantable`
+starts without it in a host that can never grant it, so Allow ends in the
+"isn't available" message. (The mock prices a generation even without the
+scope, which the real host refuses; the example never asks it to.)
+
 Two things the mock does differently from production, so don't read the harness
 as the host's exact shapes: it reports a short wallet as a *resolved* priced
 refusal (production rejects with `'exception'`), and its balance read
 (`useBuzzBalance`) is fixed at the starting wallet even after a purchase. Because
 of the first, a submit that reaches the mock with a short wallet shows the
 "couldn't run right now" message, not a top-up — this example (correctly, for
-production) never treats a resolved refusal as a top-up cue. That is why the
-harness pre-grants consent: with the budget on the token, the wallet check in
-step 2 catches the shortfall before anything is submitted.
+production) never treats a resolved refusal as a top-up cue. The top-up shows
+because the wallet check in step 2 catches the shortfall before anything is
+submitted.
 
 `npm run dev:live` runs against the real backend, but the live host refuses
 `OPEN_BUZZ_PURCHASE` (it answers `purchased: false`) — test the purchase here.

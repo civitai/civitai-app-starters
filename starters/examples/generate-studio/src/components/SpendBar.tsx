@@ -18,10 +18,11 @@ interface Props {
 /**
  * Price → budget → wallet → Generate.
  *
- * The budget is only on the token after consent, so the FIRST Generate goes
- * straight to `submit()` (which opens the host's consent dialog and re-sends
- * once). From then on a click that cannot land is stopped here, from the
- * numbers, and only a WALLET shortfall is offered a top-up.
+ * Nothing is priced, and Generate stays disabled, until the viewer has
+ * granted the spend scope (the App's "Allow" step): the host refuses an
+ * estimate without it. So by the time there is a price the budget is on the
+ * token too, a click that cannot land is stopped here from the numbers, and
+ * only a WALLET shortfall is offered a top-up.
  *
  * 🔴 No automatic retry after a purchase. `openPurchaseModal` waits on a human
  * for up to ten minutes, so a retry fired from its promise is a paid submit at a
