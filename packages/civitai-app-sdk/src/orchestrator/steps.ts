@@ -3,7 +3,7 @@
  * own generated client (`@civitai/client`).
  *
  * The sibling `@civitai/app-sdk/orchestrator` module gives you the *catalog*
- * (`WORKFLOW_STEP_TYPES` — 53 `$type` names and what each one does) and the
+ * (`WORKFLOW_STEP_TYPES` — 55 `$type` names and what each one does) and the
  * fetch helpers (`submitWorkflow`, `estimateWorkflow`, …), but its body
  * builders take `input: unknown`. This module is the missing half: the actual
  * per-step input shapes, tracked against the orchestrator's OpenAPI spec by
@@ -78,9 +78,9 @@
  * orchestrator's own authorization still decides.
  *
  * ⚠️ `WORKFLOW_STEP_TYPES` does NOT mark most of them. Counted at this commit:
- * of its 53 entries, exactly TWO sit under its "Platform internals" heading —
- * `comfyNodepackSnapshot` and `qwenImageBench`. `training`, `webScrape`,
- * `xGuardModeration`, `modelPickleScan` and the `model*` / `media*` steps are
+ * of its 55 entries, exactly THREE sit under its "Platform internals" heading —
+ * `comfyNodepackSnapshot`, `qwenImageBench` and `promptModeration`. `training`,
+ * `webScrape`, `xGuardModeration`, `modelPickleScan` and the `model*` / `media*` steps are
  * ordinary documented entries under ordinary headings, and `webScrape` carries
  * consumer-facing usage notes. So "the catalog already flags these as internal"
  * is not a reason this map types them, and an earlier version of this docblock
@@ -97,9 +97,10 @@
  * (#315) without anything going red. The measured state, derived rather than
  * typed:
  *
- * `WORKFLOW_STEP_TYPES` documents 53 `$type`s; this map covers 47. The 6 with
+ * `WORKFLOW_STEP_TYPES` documents 55 `$type`s; this map covers 47. The 8 with
  * no generated template in the pinned `@civitai/client` are `imageScanning`,
- * `liveTranscription`, `merge`, `preprocessVideo`, `soniloAudioGen`, `yuE2`, and
+ * `liveTextToSpeech`, `liveTranscription`, `merge`, `preprocessVideo`,
+ * `promptModeration`, `soniloAudioGen`, `yuE2`, and
  * `WorkflowStepTemplateFor<…>` is a compile error for each of them.
  *
  * That gap is EXPECTED and is not a defect in either surface. The catalog
@@ -110,7 +111,7 @@
  * stated: it is spelled as a `never` ledger in
  * `test/orchestrator/step-templates.test-d.ts` (which also pins the compile
  * error above, one `@ts-expect-error` per gap `$type`), and the sentence naming
- * the 3 is pinned character for character — here and in the README — by
+ * the gap is pinned character for character — here and in the README — by
  * `test/orchestrator/step-count-prose.test.ts`, which derives all four numbers
  * from `WORKFLOW_STEP_TYPES` and this file's own AST. Both go red when the gap
  * moves in either direction.
@@ -395,7 +396,7 @@ interface StepTemplateMap {
 }
 
 /**
- * `$type` → its step-template type, for 47 of the catalog's 53 step types.
+ * `$type` → its step-template type, for 47 of the catalog's 55 step types.
  *
  * Keyed by the WIRE name rather than the generated type name, because the wire
  * name is what you actually have in hand and the generator does not always

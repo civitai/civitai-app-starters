@@ -191,7 +191,7 @@ const CLAIMS: Claim[] = [
   {
     id: 'catalog-2',
     files: [STEPS_TS],
-    text: 'of its {catalog} entries, exactly TWO sit under its "Platform internals" heading',
+    text: 'of its {catalog} entries, exactly THREE sit under its "Platform internals" heading',
   },
   {
     id: 'catalog-3',
@@ -203,7 +203,7 @@ const CLAIMS: Claim[] = [
     files: [README],
     text:
       'Note that `WORKFLOW_STEP_TYPES` does **not** mark most of them: of its {catalog} ' +
-      'entries exactly two',
+      'entries exactly three',
   },
   {
     id: 'mapped-1',
