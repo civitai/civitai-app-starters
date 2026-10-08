@@ -10,8 +10,9 @@
  * no price and a Generate button that never enables — `submit()`, which DOES
  * ask for consent, is never reached.
  *
- * `requestConsent()` is fire-and-forget, so its outcomes arrive by different
- * routes, and every one of them must leave a usable screen:
+ * `requestConsent()` is fire-and-forget (it posts a message and returns; it does
+ * not throw), so its outcomes arrive by different routes, and every one of them
+ * must leave a usable screen:
  *
  * - GRANTED: the host re-mints the token with the scope (`canSpend` flips);
  *   the step disappears and pricing starts.
@@ -20,9 +21,10 @@
  *   which could only fail again.
  * - DISMISSED or never answered: NOTHING arrives — a closed dialog has no
  *   message. Keep Allow enabled and say how to reopen it. No timer is needed,
- *   because nothing is waiting.
- * - REJECTED: the request itself failed to send (it throws). Say so; Allow stays
- *   enabled.
+ *   because nothing is waiting. The same "asked, scope not here yet" state also
+ *   covers the moment between a grant and the re-minted token arriving, and a
+ *   grant that added only the balance scope — so its wording has to be true in
+ *   all three.
  *
  * Anonymous viewers get no consent-gated scope at all, so they are sent to
  * sign in instead of being shown an Allow button that cannot work.
@@ -39,22 +41,18 @@ export interface ConsentState {
   canSpend: boolean;
   /** `useConsentUnavailable().refusal !== null`. */
   refused: boolean;
-  /** Allow was pressed at least once (and the request went out). */
+  /** Allow was pressed at least once. */
   asked: boolean;
-  /** The last Allow press threw before the request went out. */
-  sendFailed: boolean;
 }
 
 export const UNAVAILABLE_MESSAGE =
   "Generating isn't available here: this page can't grant the permission it needs.";
 export const ASKED_MESSAGE =
-  'Confirm in the Civitai dialog. If you closed it, press Allow again.';
-export const SEND_FAILED_MESSAGE = "Couldn't open the permission dialog. Please try again.";
+  'Waiting for permission. If the dialog closed without allowing, press Allow again.';
 
 export function consentStep(s: ConsentState): ConsentStep {
   if (s.canSpend) return { kind: 'ready' };
   if (!s.signedIn) return { kind: 'sign-in' };
   if (s.refused) return { kind: 'unavailable', message: UNAVAILABLE_MESSAGE };
-  if (s.sendFailed) return { kind: 'ask', message: SEND_FAILED_MESSAGE };
   return { kind: 'ask', message: s.asked ? ASKED_MESSAGE : null };
 }

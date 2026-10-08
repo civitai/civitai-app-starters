@@ -45,9 +45,9 @@ installer's to change.
      (`useConsentUnavailable()`): the scope can never be granted here, so the
      example says so and stops offering Allow;
    - **dismissed** — nothing arrives at all, so Allow stays enabled, with
-     "If you closed it, press Allow again";
-   - **failed to send** — the call threw; the example says so and Allow stays
-     enabled.
+     "Waiting for permission. If the dialog closed without allowing, press
+     Allow again." (the same text covers the moment before a granted token
+     arrives).
 
    A signed-out viewer gets no consent-gated scope, so they are asked to sign
    in instead. Without this step, a viewer who hasn't consented sees no price

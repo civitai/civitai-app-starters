@@ -43,8 +43,8 @@ const BALANCE = BLOCK_SCOPES.BUZZ_READ_SELF;
  * 🔴 CONSENT COMES FIRST, BECAUSE PRICING NEEDS IT. The host refuses an estimate
  * from a token without `ai:write:budgeted`, and `estimate()` never asks for
  * consent itself. So a viewer who hasn't granted the scope sees an "Allow
- * generations" step (`consent.ts` handles granted / unavailable / dismissed /
- * failed-to-send), and nothing is priced until the token carries the scope.
+ * generations" step (`consent.ts` handles granted / unavailable / dismissed),
+ * and nothing is priced until the token carries the scope.
  * By the time Generate is enabled the budget is on the token, so a price above
  * it is caught before any submit, and never offered a top-up.
  *
@@ -78,10 +78,8 @@ export function App() {
   const [refused, setRefused] = useState<{ cost: number; otherwise: string } | null>(null);
   const [topUpPending, setTopUpPending] = useState(false);
   const topUpInFlight = useRef(false);
-  /** Allow was pressed and the request went out — nothing replies to a dismissed dialog. */
+  /** Allow was pressed — nothing replies to a dismissed dialog. */
   const [consentAsked, setConsentAsked] = useState(false);
-  /** The last Allow press threw before the request went out. */
-  const [consentSendFailed, setConsentSendFailed] = useState(false);
 
   // What the CURRENT token carries. Consent re-mints it, and these flip.
   const canSpend = token.scopes.includes(SPEND);
@@ -91,7 +89,6 @@ export function App() {
     canSpend,
     refused: refusal !== null,
     asked: consentAsked,
-    sendFailed: consentSendFailed,
   });
 
   // Keep <html> in step with the host theme (see hello-world for the why).
@@ -139,16 +136,10 @@ export function App() {
   }, [body, canSpend, estimate]);
 
   const allow = useCallback(() => {
-    setConsentSendFailed(false);
-    try {
-      // Name the scopes: the host computes "this can never be granted here"
-      // from the hint, and an empty hint gets no refusal at all.
-      requestConsent({ scopes: [SPEND, BALANCE] });
-      setConsentAsked(true);
-    } catch (err) {
-      console.warn('[buzz-purchase] consent request failed:', err);
-      setConsentSendFailed(true);
-    }
+    // Name the scopes: the host computes "this can never be granted here"
+    // from the hint, and an empty hint gets no refusal at all.
+    requestConsent({ scopes: [SPEND, BALANCE] });
+    setConsentAsked(true);
   }, [requestConsent]);
 
   // Spendable Buzz: blue plus this app's domain pool — green under an SFW
