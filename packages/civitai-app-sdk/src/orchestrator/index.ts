@@ -126,6 +126,15 @@ export const WORKFLOW_STEP_TYPES = {
   // ----- Audio -------------------------------------------------------------
   /** Text-to-speech (multi-voice, multi-language). */
   textToSpeech: 'Text-to-speech synthesis',
+  /**
+   * Streaming text-to-speech. Inputs mirror `textToSpeech`, restricted to voices
+   * that stream with low first-audio latency. The output hands back an
+   * `inputUrl` you POST UTF-8 text chunks to (`?seq=0,1,…`, `final=true` on the
+   * last) and one continuous `audioUrl` stream (`pcm` s16le 24 kHz mono, or
+   * `ogg` Opus). The session ends at `maxCharacters` or after
+   * `idleTimeoutSeconds` without input, and is billed on characters spoken.
+   */
+  liveTextToSpeech: 'Streaming text-to-speech — post text in chunks, read back one continuous audio stream',
   /** Music generation via ACE Step 1.5 (lyrics + style → song). */
   aceStepAudio: 'Music generation (ACE Step 1.5)',
   /**
@@ -152,6 +161,8 @@ export const WORKFLOW_STEP_TYPES = {
   soniloAudioGen: 'Music or a sound effect from a text prompt (Sonilo)',
   /** Speech-to-text transcription. */
   transcription: 'Speech-to-text transcription',
+  /** Speech-to-text over audio streamed in while the user is still talking. */
+  liveTranscription: 'Live speech-to-text from audio streamed while the user talks',
   /** Generate captions from audio. */
   audioCaptioning: 'Caption generation from audio',
 
@@ -206,6 +217,12 @@ export const WORKFLOW_STEP_TYPES = {
   imageScanning: 'Unified image moderation scan (NSFW level, AI/anime recognition, tagging, age detection)',
   /** Shieldstral text/prompt safety moderation (`mode: 'prompt' | 'text'`). */
   shieldstralModeration: 'Text / prompt safety moderation (Shieldstral)',
+  /**
+   * Moderate a `positivePrompt` (plus optional `negativePrompt`). The output
+   * names the `model` and `policyVersion` and returns one result per label:
+   * a calibrated `score`, its `threshold`, `flagged`, and `abstained`.
+   */
+  promptModeration: 'Prompt moderation — per-label scores and flags for a positive / negative prompt pair',
   /** ClamAV scan a model file for malware. */
   modelClamScan: 'Antivirus scan a model file',
   /** Pickle-scan a model file for unsafe pickles. */
@@ -242,6 +259,8 @@ export const WORKFLOW_STEP_TYPES = {
   echo: 'Echo step — round-trip the input for testing',
   /** Package multiple blobs into a zip archive. */
   blobArchive: 'Zip multiple blobs into an archive',
+  /** Combine fields from earlier steps' outputs into a single result. */
+  merge: "Merge — combine fields from earlier steps' outputs into one result",
 
   // ----- Platform internals ------------------------------------------------
   // Present in the consumer spec, so listed here for completeness — but these
@@ -251,15 +270,6 @@ export const WORKFLOW_STEP_TYPES = {
   comfyNodepackSnapshot: 'Snapshot a worker’s installed ComfyUI node packs (internal)',
   /** Qwen image benchmarking harness. */
   qwenImageBench: 'Qwen image benchmarking (internal)',
-  // ----- Auto-added 2026-10-06 from the orchestrator spec ----------------------
-  // Added by scripts/sync-orchestrator-catalogs.mjs: the live spec accepts
-  // these and this catalog did not list them. MOVE each entry into the right
-  // section above, and replace any TODO(catalog) line with a real one-line
-  // description — `pnpm check:catalogs` names every placeholder that is left.
-  // (That check is advisory, so it will not stop this merging. It is a
-  // reminder, not a gate.)
-  liveTranscription: 'Live speech-to-text from audio streamed while the user talks',
-  merge: "Merge — combine fields from earlier steps' outputs into one result",
 } as const;
 
 export type WorkflowStepType = keyof typeof WORKFLOW_STEP_TYPES;
