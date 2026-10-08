@@ -1,5 +1,15 @@
 # @civitai/app-sdk
 
+## 0.59.0
+
+### Minor Changes
+
+- 2a0f4c9: Sync the vendored App Block manifest schema + SDK constants with the canonical server-published schema (https://civitai.com/schemas/app-block/v1.json). Adds the 4-segment App Store sub-listing scope `apps:store:items:write` (civitai/civitai#5511 — publish the viewer's own app items as store cards under the calling app) to `BLOCK_SCOPES` (`APPS_STORE_ITEMS_WRITE`) and the schema's `scopes` enum, and names it in the schema's `scopeJustifications` sensitive-scope list. The scope is SENSITIVE (a declaring manifest must justify it, or the server rejects it at submit — not checked by `defineBlock`, see `KNOWN_GAPS`) and consent-exempt on the server (gated per call). Additive for authors: `defineBlock` now accepts a manifest declaring it; nothing previously accepted is rejected.
+
+### Patch Changes
+
+- e174afd: Docs only. `@civitai/components` MARKUP.md: correct which in-repo pages set an ancestor text colour — no in-repo page sets `#1a1a1a` / `#e6e6e6` any more — every `starters/examples/*` app sets `color: var(--civitai-color-text)` on `:root` and `civitai-block-starter` on `body`, so they join `demo/` and `playground/` as pages that inherit the token. `@civitai/app-sdk` README: the `blockManifestPlugin` sentence no longer counts "six" examples (there are eleven, and all register it).
+
 ## 0.58.0
 
 ### Minor Changes
@@ -298,15 +308,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-        🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-        stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-        the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-        same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-        1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-        code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-        gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-        `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-        single measurements on one machine.
+            🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+            stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+            the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+            same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+            1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+            code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+            gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+            `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+            single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -1214,10 +1224,10 @@ useCheckpointPicker>, UseCheckpointPicker>` row in `returnTypeLedger.ts` — whi
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                            before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                     @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                            after    @civitai/theme       0.3.1                   — 1 copy
-                                     @civitai/components  0.4.2                   — 1 copy
+                              before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                       @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                              after    @civitai/theme       0.3.1                   — 1 copy
+                                       @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
