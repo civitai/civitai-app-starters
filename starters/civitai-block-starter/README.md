@@ -156,7 +156,8 @@ submitting.
 Submit with the Go **`civitai` CLI** ([github.com/civitai/cli](https://github.com/civitai/cli)).
 After a one-time `civitai login`, run `civitai app validate` then
 `civitai app submit` — the latter validates, packages the project, and uploads it
-for review; a moderator reviews and approves it. The platform owns the build +
+for review; a moderator reviews and approves it. Before submitting, self-run the
+[first-review checklist](https://developer.civitai.com/apps/guide/first-review.md). The platform owns the build +
 serve recipe (you don't ship a `Dockerfile` or `nginx.conf`, or set
 `iframe.src`) and serves your `dist/` at `https://<blockId>.civit.ai/`.
 
