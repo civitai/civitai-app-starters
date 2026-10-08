@@ -33,6 +33,9 @@ const CANONICAL_BLOCK_SCOPES = [
   // calling app's own sales); `goods:purchase:self` is consent-GATED.
   'goods:read:self',
   'goods:purchase:self',
+  // App Store sub-listings (civitai/civitai#5511). SENSITIVE + consent-EXEMPT
+  // server-side (gated per call); 4-segment.
+  'apps:store:items:write',
 ] as const;
 
 describe('BLOCK_SCOPES', () => {
@@ -58,6 +61,10 @@ describe('BLOCK_SCOPES', () => {
   it('includes the 4-segment SHARED apps:storage:shared:* datastore scopes', () => {
     expect(BLOCK_SCOPES.APPS_STORAGE_SHARED_READ).toBe('apps:storage:shared:read');
     expect(BLOCK_SCOPES.APPS_STORAGE_SHARED_WRITE).toBe('apps:storage:shared:write');
+  });
+
+  it('includes the 4-segment App Store sub-listing scope apps:store:items:write', () => {
+    expect(BLOCK_SCOPES.APPS_STORE_ITEMS_WRITE).toBe('apps:store:items:write');
   });
 
   it('every value matches BLOCK_SCOPE_PATTERN (3 or 4 colon segments)', () => {
