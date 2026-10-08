@@ -1,5 +1,37 @@
 # @civitai/components-chat
 
+## 0.3.0
+
+### Minor Changes
+
+- 6d3d911: Chat replies use the viewer's free daily allowance (`X-Civitai-Tier: free`). Settings' Assistant choice gains Auto (free replies first, then Buzz; the default) and Free (free replies only; when used up a reply offers Continue with Buzz) next to Default (always Buzz), the configured models and Custom.
+
+  The package no longer lists a "Smart" model by default; hosts add their own with `configureChat({ models })`.
+
+- 7c4ac10: `<civitai-chat>` takes `commands`: a page adds its own slash commands (`{ usage, help, aliases?, run(arg, { send, compose, notify, conversationId }) }`), replaces a built-in by name or removes one with `null`, or builds the whole set from the built-ins with a function. Page commands show in suggestions, Tab completion and `/help`.
+- 798337d: `configureChat({ name })` sets what the chat calls itself: the sidebar brand, the assistant's persona, posting messages and the conversation export's file name. It defaults to "Civitai Chat" (it said ChatCVT, the working name).
+
+### Patch Changes
+
+- 2559552: `<civitai-chat>` no longer calls `/api/v1/me` inside a civitai.com block. That route accepts an OAuth token but refuses the block-scoped one, so a block on the default token sent a request that failed on every mount and showed no name. In a block the chat now takes the viewer's name from the host (`app.viewer.username`), which needs no request and no consent. Outside a block it still asks `/me`, as before.
+- 9887295: docs: the README listed "a block on civitai.com" as a plain way to sign the chat in, and by default it does not work
+
+  The Signing in table offered `await initialize()` in a block, with the manifest asking for
+  `ai:write:budgeted`, as one of three equal setups. The chat sends `app.getToken()` straight to the
+  orchestrator (its chat model, its MCP and its workflow routes), and the token a block holds by
+  default is the block-scoped one, which the orchestrator accepts on no route; `@civitai/sdk`'s own
+  README says the same. So in a block with the default token every reply is refused.
+
+  The README now says the chat needs an OAuth access token, links to `@civitai/sdk`'s README for when
+  a block gets one, says nothing proxies the chat's own endpoints (its model and MCP), and says its generations then
+  skip the controls the block workflow routes add.
+
+  Prose only, no behaviour change. A patch release because the README ships in the package.
+
+- Updated dependencies [13d004e]
+- Updated dependencies [e174afd]
+  - @civitai/components@0.9.3
+
 ## 0.2.0
 
 ### Minor Changes

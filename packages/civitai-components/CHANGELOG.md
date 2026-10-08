@@ -1,5 +1,12 @@
 # @civitai/components
 
+## 0.9.3
+
+### Patch Changes
+
+- 13d004e: Comment only. The `[data-civitai-ui='text']` rule's comment in `components.css` (also embedded in the generated `componentsCss` string) no longer says in-repo blocks colour a `[data-theme]` root `#e6e6e6`, or that no in-repo consumer renders Text: every Civitai App page sets `color: var(--civitai-color-text)` itself, and the block starter renders `<civitai-text>`. No rule or value changes.
+- e174afd: Docs only. `@civitai/components` MARKUP.md: correct which in-repo pages set an ancestor text colour — no in-repo page sets `#1a1a1a` / `#e6e6e6` any more — every `starters/examples/*` app sets `color: var(--civitai-color-text)` on `:root` and `civitai-block-starter` on `body`, so they join `demo/` and `playground/` as pages that inherit the token. `@civitai/app-sdk` README: the `blockManifestPlugin` sentence no longer counts "six" examples (there are eleven, and all register it).
+
 ## 0.9.2
 
 ### Patch Changes
@@ -989,10 +996,10 @@
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                        before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                 @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                        after    @civitai/theme       0.3.1                   — 1 copy
-                                 @civitai/components  0.4.2                   — 1 copy
+                          before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                   @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                          after    @civitai/theme       0.3.1                   — 1 copy
+                                   @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
