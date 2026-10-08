@@ -3,6 +3,8 @@ import type { McpConnection, McpTool } from '../mcp/clients.js';
 /** Tools whose work the app runs as jobs and lists itself. */
 export const DENIED_ORCHESTRATION_TOOLS = new Set(['get_workflow', 'cancel_workflow', 'list_workflows']);
 
+export const WEB_TOOLS: ReadonlySet<string> = new Set(['web_search', 'fetch_page']);
+
 /** Site tools the assistant may use; the rest post, comment or message as the user. */
 export const ALLOWED_SITE_TOOLS = new Set(['search_models', 'get_model', 'get_model_version', 'search_images']);
 

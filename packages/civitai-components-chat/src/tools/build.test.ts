@@ -8,6 +8,7 @@ import { JobManager } from '../orchestration/jobs.js';
 import { PanelManager } from '../panels/panel.js';
 import { PostManager } from '../posting/post.js';
 import { toolResult } from '../test-support/fakes.js';
+import { configureChat } from '../config.js';
 import { buildToolSet, type TurnToolContext } from './build.js';
 import { ALLOWED_SITE_TOOLS, DENIED_ORCHESTRATION_TOOLS, withoutControls, type ToolCatalog } from './catalog.js';
 
@@ -69,6 +70,22 @@ describe('buildToolSet', () => {
       expect(names).not.toContain(denied);
     }
     expect(names).not.toContain('create_post');
+  });
+
+  it('offers web search unless the host turned it off', () => {
+    const web: McpTool[] = ['web_search', 'fetch_page'].map((name) => ({ name, description: name, inputSchema: { type: 'object', properties: {} } }));
+    const withWeb = { ...catalog(), orchestration: [...catalog().orchestration, ...web] };
+    expect(Object.keys(buildToolSet(withWeb, context()))).toEqual(expect.arrayContaining(['web_search', 'fetch_page']));
+
+    configureChat({ webSearch: false });
+    try {
+      const names = Object.keys(buildToolSet(withWeb, context()));
+      expect(names).not.toContain('web_search');
+      expect(names).not.toContain('fetch_page');
+      expect(names).toContain('run_step');
+    } finally {
+      configureChat({ webSearch: true });
+    }
   });
 
   it('offers panels only when it can run steps and the chat has somewhere to keep them', () => {
