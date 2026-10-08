@@ -24,7 +24,7 @@ export const BLOCK_SCOPES = {
   // apps:storage:shared:* — the SHARED (app-global / cross-user) datastore. Same
   // no-OAuth-bit posture as apps:storage:*; the server gates them by presence in
   // the block's approved scope set (plus a min-trust gate + fail-closed flag).
-  // These are the SDK's only 4-segment scopes — see BLOCK_SCOPE_PATTERN below.
+  // 4-segment (as is `apps:store:items:write`) — see BLOCK_SCOPE_PATTERN below.
   APPS_STORAGE_SHARED_READ: 'apps:storage:shared:read',
   APPS_STORAGE_SHARED_WRITE: 'apps:storage:shared:write',
   // collections:* — the App Blocks Collections surface. These have no OAuth bit
@@ -62,6 +62,22 @@ export const BLOCK_SCOPES = {
   // always needs an explicit grant. Do not collapse the two.
   GOODS_READ_SELF: 'goods:read:self',
   GOODS_PURCHASE_SELF: 'goods:purchase:self',
+  // apps:store:items:write — publish the VIEWER'S OWN app items into the App
+  // Store as sub-listing cards under the calling app (civitai/civitai#5511,
+  // `/api/v1/blocks/sub-listings/{upsert,withdraw,mine}`). No OAuth bit.
+  //
+  // SENSITIVE: it writes store cards every visitor sees, under the viewer's
+  // name, so a declaring manifest MUST carry a `scopeJustifications` entry or
+  // the server rejects it at submit (not mirrored by `defineBlock` — see
+  // KNOWN_GAPS in `../manifest/defineBlock.ts`).
+  //
+  // CONSENT-EXEMPT on the server, like `apps:storage:shared:write`: the real
+  // gates run per call (the parent's enable switch, the shared-write trust
+  // check, item authorship, text safety, rate limits, moderator approval), and
+  // a consent-gated scope would be dropped from tokens before any could run.
+  // Requires a signed-in (non-anonymous) subject. 4-segment, like the shared
+  // storage scopes — see BLOCK_SCOPE_PATTERN below.
+  APPS_STORE_ITEMS_WRITE: 'apps:store:items:write',
 } as const;
 
 export type BlockScopeKey = keyof typeof BLOCK_SCOPES;
@@ -82,8 +98,8 @@ export type BlockScope = (typeof BLOCK_SCOPES)[BlockScopeKey];
  *
  * The 4th segment was added to mirror the server's 4-segment
  * `apps:storage:shared:read` / `apps:storage:shared:write` scopes (the SHARED
- * cross-user datastore). The SDK now tracks the server's 4-segment scopes
- * directly, so this is no longer a coordinated-major-bump situation — the
+ * cross-user datastore); `apps:store:items:write` is the same shape. The SDK
+ * now tracks the server's 4-segment scopes directly, so this is no longer a coordinated-major-bump situation — the
  * pattern just widened to accept the shapes the canonical enum already lists.
  */
 export const BLOCK_SCOPE_PATTERN = /^[a-z]+:[a-z]+:[a-z]+(?::[a-z]+)?$/;

@@ -34,7 +34,8 @@ in its order — a guard test fails if the two ever differ:
 `social:tip:self`, `apps:storage:read`, `apps:storage:write`,
 `apps:storage:shared:read`, `apps:storage:shared:write`,
 `collections:read:self`, `collections:write:self`, `collections:read:private`,
-`posts:write:self`, `goods:read:self`, `goods:purchase:self`.
+`posts:write:self`, `goods:read:self`, `goods:purchase:self`,
+`apps:store:items:write`.
 <!-- scopes-enum:end -->
 
 A moderator sees your declared scopes at review. The issued JWT carries the
