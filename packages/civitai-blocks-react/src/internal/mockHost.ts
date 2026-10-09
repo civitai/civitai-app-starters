@@ -182,14 +182,17 @@ const DEFAULT_STORAGE_LIMIT_ROWS = APP_STORAGE_MAX_ROWS;
 
 /**
  * How submits behave. `'none'` = everything succeeds; `'all'` / `'insufficient'`
- * = every submit RESOLVES an insufficient-Buzz `failed` snapshot, priced
- * (exercises the per-cell Top-Up CTA); `'some'` = ~1 in 3 submits fail.
+ * = every submit fails as if the viewer were OUT OF BUZZ, until an
+ * `OPEN_BUZZ_PURCHASE` resets the mode to `'none'`; `'some'` = ~1 in 3
+ * submits fail with a generic error.
  *
- * 🔴 THE TWO OUTCOMES ARE NO LONGER THE SAME SHAPE (civitai/civitai-app-starters#251).
- * `'all'`/`'insufficient'` RESOLVE — they carry a `cost`, so they are a budget
- * OUTCOME. `'some'` **REJECTS** with `code: 'exception'` — it emits the host's
- * cost-less `failureSnapshot(err)`. A mixed grid therefore needs both a
- * `snap.status` branch and a `catch`.
+ * 🔴 EVERY FAILING MODE **REJECTS** with `WorkflowSubmitError` code
+ * `'exception'` — each emits the host's cost-less `failureSnapshot(err)`. That
+ * includes `'all'`/`'insufficient'`, which until this was fixed RESOLVED a
+ * priced `failed` snapshot. Production never does that for an empty wallet: the
+ * orchestrator refuses the debit, the server throws, and the host replies with
+ * `failureSnapshot(err)` (no `cost`). See {@link MockBuzzScenario}. A priced,
+ * RESOLVING refusal is a spend CAP — {@link MockGenerationScenario.submitCapRefusal}.
  */
 export type MockHostFailMode = 'none' | 'some' | 'all' | 'insufficient';
 
@@ -299,15 +302,15 @@ export interface MockGenerationScenario {
    * error }` with **no `cost`**. `useBuzzWorkflow().submit()` rejects with a
    * `WorkflowSubmitError` whose `code` is `'exception'`.
    *
-   * 🔴 THIS IS THE PRODUCER THE OTHER SUBMIT KNOBS DO NOT SIMULATE, and that gap
-   * is how civitai/civitai-app-starters#251 stayed invisible: the balance /
-   * `insufficient` knobs model a budget REJECTION (a priced outcome the block
-   * recovers from with a top-up), so a block author testing "what if submit goes
-   * wrong" only ever saw the arm that resolves. The `failEstimate` knob is the
-   * estimate-side twin of this one.
+   * This knob was added for civitai/civitai-app-starters#251, when no other submit
+   * knob produced a rejection at all. The out-of-Buzz knobs
+   * ({@link MockBuzzScenario}) now emit this same shape, because production does;
+   * this one stays as the way to inject an arbitrary server message with the
+   * wallet untouched. The `failEstimate` knob is the estimate-side twin of this
+   * one.
    *
-   * Checked FIRST, before the disallowed-account / insufficient-Buzz / generic
-   * paths: a host-side throw pre-empts every server-side decision.
+   * Checked FIRST, before the disallowed-account / spend-cap / out-of-Buzz /
+   * generic paths: a host-side throw pre-empts every server-side decision.
    *
    * Default: unset (submits behave normally).
    */
@@ -318,6 +321,28 @@ export interface MockGenerationScenario {
    * check how your block's developer-facing error surface renders one.
    */
   failSubmitExceptionMessage?: string;
+  /**
+   * Make every SUBMIT come back as a server SPEND-CAP refusal — the priced,
+   * RESOLVING shape `{ workflowId:'failed', status:'failed', cost:{ total }, error }`,
+   * where `total` is this generation's cost. `useBuzzWorkflow().submit()`
+   * RESOLVES it (no rejection); the block reads `status === 'failed'`.
+   *
+   * This is what the real submit returns when a cap stops the run before
+   * anything is spent: the app's per-generation budget, the viewer's daily (or
+   * private-run) cap, the per-app consent budget, the app's spend or rate limit,
+   * or a dev-session cap. 🔴 **Buying Buzz fixes none of them**, so a block must
+   * not offer a top-up for this reply. Running OUT of Buzz is a different shape —
+   * a rejection; see {@link MockBuzzScenario}.
+   *
+   * Pass the server's text (e.g. `'insufficient buzz budget: estimate 600 exceeds
+   * budget 200'`), or `true` for a default message. Checked after the
+   * disallowed-account path and before the out-of-Buzz path, matching the real
+   * ordering: the caps are checked before the orchestrator is asked to debit.
+   * Live-tunable via `setScenario({ generation: { submitCapRefusal } })`; set it
+   * to `undefined` there to clear it. URL: `?capRefusal=1` (or `=<text>`).
+   * Default: unset.
+   */
+  submitCapRefusal?: string | true;
   /** A single result image url (or `(body) => url`). */
   image?: ImageSpec;
   /**
@@ -461,24 +486,43 @@ const DEFAULT_TRAINING_QUOTE_TOTAL = 500;
 const TRAINING_QUOTE_TTL_MS = 15 * 60_000;
 
 /**
- * BUZZ scenario controls — simulate a balance so the insufficient-Buzz / top-up
- * UX is exercisable. The mock host treats `balance` as a spendable wallet:
- * each succeeding generation DEBITS its cost; a submit whose cost would exceed
- * the remaining balance resolves to an insufficient-Buzz `failed` snapshot
- * (exercising the Top-Up CTA), and `OPEN_BUZZ_PURCHASE` REFILLS the balance.
+ * BUZZ scenario controls — simulate a viewer who runs out of Buzz. The mock host
+ * treats `balance` as a spendable wallet: each succeeding generation DEBITS its
+ * cost, a submit whose cost would exceed the remaining balance fails as
+ * OUT OF BUZZ, and `OPEN_BUZZ_PURCHASE` REFILLS the balance.
+ *
+ * 🔴 OUT OF BUZZ **REJECTS** — `useBuzzWorkflow().submit()` throws a
+ * `WorkflowSubmitError` with code `'exception'`, the reason on
+ * `err.snapshot.error`. That is what production does. The orchestrator refuses
+ * the debit (HTTP 403), the server turns that into a thrown `BAD_REQUEST`, and
+ * the host replies with its cost-less `failureSnapshot(err)`. These knobs used to
+ * RESOLVE a priced `failed` snapshot instead, so a block tested against the mock
+ * could build a "resolved refusal → top-up" flow that production never reaches.
+ *
+ * Nothing structural tells this rejection apart from other `'exception'`s (the
+ * server message is upstream text, not a contract). To decide whether to offer
+ * a top-up, compare the viewer's spendable balance (`useBuzzBalance()`) with the
+ * quoted cost — never the error text. In the mock, that balance is
+ * {@link MockHostOptions.buzzBalance}, which is separate from `balance` below.
+ *
+ * A priced, RESOLVING refusal is a spend CAP, which a top-up cannot fix — see
+ * {@link MockGenerationScenario.submitCapRefusal}.
  */
 export interface MockBuzzScenario {
   /**
    * Simulated spendable balance. When set, generations debit against it and a
-   * gen that would exceed it returns an insufficient-Buzz outcome. When
-   * `undefined`, balance is NOT simulated (back-compat: only the legacy
-   * `failMode` drives insufficiency).
+   * gen that would exceed it is refused as out of Buzz (a REJECTION, see above).
+   * When `undefined`, balance is NOT simulated (back-compat: only the legacy
+   * `failMode` and {@link insufficient} drive the out-of-Buzz path).
    */
   balance?: number;
   /**
-   * Force every submit down the insufficient-Buzz path regardless of balance.
-   * Equivalent to the legacy `failMode: 'insufficient'`; provided here so the
-   * insufficient UX is reachable from the `buzz` group alone.
+   * Force every submit down the out-of-Buzz path regardless of balance — it
+   * REJECTS with code `'exception'` (see above). Equivalent to the legacy
+   * `failMode: 'insufficient'`; provided here so the path is reachable from the
+   * `buzz` group alone. `OPEN_BUZZ_PURCHASE` clears it — and clears
+   * `failMode: 'insufficient' | 'all'` too (back to `'none'`), so a top-up
+   * followed by a retry succeeds whichever knob forced the out-of-Buzz state.
    */
   insufficient?: boolean;
 }
@@ -641,8 +685,8 @@ export interface MockHostOptions {
   consentGrantable?: boolean;
   /**
    * How submits behave. Default `'none'` (all succeed). See
-   * {@link MockHostFailMode} — `'some'` REJECTS while `'all'`/`'insufficient'`
-   * RESOLVE, since #251.
+   * {@link MockHostFailMode} — every failing mode REJECTS with code
+   * `'exception'`; `'all'`/`'insufficient'` model an out-of-Buzz viewer.
    */
   failMode?: MockHostFailMode;
   /**
@@ -694,8 +738,8 @@ export interface MockHostOptions {
    */
   generation?: MockGenerationScenario;
   /**
-   * BUZZ scenario: simulated balance + force-insufficient. See
-   * {@link MockBuzzScenario}.
+   * BUZZ scenario: simulated balance + force-out-of-Buzz. Both REJECT the
+   * submit, as production does. See {@link MockBuzzScenario}.
    */
   buzz?: MockBuzzScenario;
   /**
@@ -703,8 +747,9 @@ export interface MockHostOptions {
    * block via the host-mediated `GET_BUZZ_BALANCE` → `BUZZ_BALANCE_RESULT`
    * bridge (what the `useBuzzBalance` hook reads). Distinct from the
    * {@link MockBuzzScenario.balance} spendable-wallet knob, which only drives
-   * the insufficient-Buzz / top-up SUBMIT path — this is the displayable
-   * per-pool balance. Absent → {@link DEFAULT_BUZZ_BALANCE} (a plausible
+   * the out-of-Buzz SUBMIT rejection — this is the displayable per-pool balance,
+   * and the number a block should compare with the quoted cost to decide on a
+   * top-up. Set both when exercising that flow. Absent → {@link DEFAULT_BUZZ_BALANCE} (a plausible
    * non-zero wallet, so a block shows a balance out of the box).
    */
   buzzBalance?: MockBuzzBalance;
@@ -1264,8 +1309,15 @@ const DEFAULT_GENERATION_SOURCE_UPLOAD: BlockGenerationSourceImageInfo = {
  */
 const DEFAULT_VIEWER: ViewerInfo = { id: 2, username: 'dev-viewer', signedIn: true };
 
+/**
+ * The out-of-Buzz rejection's `error`. Production's text is whatever the
+ * orchestrator's 403 said (or the server's generic insufficient-funds default),
+ * so neither this string nor the real one is a contract — never branch on it.
+ */
 const INSUFFICIENT_BUZZ_ERROR = 'Insufficient Buzz to run this generation.';
 const GENERIC_GEN_ERROR = 'Generation failed (simulated).';
+/** Default `error` for `generation.submitCapRefusal: true`. */
+const DEFAULT_SUBMIT_CAP_REFUSAL = 'Buzz spend cap reached (simulated).';
 
 /** Default message for a simulated balance-read failure ({@link MockHostOptions.buzzBalanceError}). */
 const DEFAULT_BUZZ_BALANCE_ERROR = 'balance unavailable';
@@ -1575,8 +1627,9 @@ function jsonByteSize(value: unknown): number {
  * Reads the URL query toggles the gen-matrix dev harness uses, so a starter's
  * dev harness keeps working with `?viewer/?consent/?fail/?theme/?pick/?pickCkpt`.
  * Layer-1 additions: `?balance/?latency/?costPerGen/?failNext/?failRate/?seed`
- * map onto the new scenario groups so a dev can flip insufficient-buzz /
- * failures / latency without editing code.
+ * map onto the new scenario groups so a dev can flip out-of-Buzz /
+ * failures / latency without editing code. `?capRefusal=1` (or `=<text>`) sets
+ * {@link MockGenerationScenario.submitCapRefusal}.
  *
  * Returns a partial overlay applied ON TOP of explicit {@link MockHostOptions}
  * (URL wins — it's the interactive dev knob). No-op outside a browser.
@@ -1671,6 +1724,13 @@ export function readMockHostUrlOptions(
   if (failRate !== null && Number.isFinite(Number(failRate))) {
     generation.failRate = Number(failRate);
   }
+  // ?capRefusal=1|true → the default cap message; any other non-empty value is
+  // used as the server text verbatim.
+  const capRefusal = params.get('capRefusal');
+  if (capRefusal !== null && capRefusal.trim() !== '') {
+    generation.submitCapRefusal =
+      capRefusal === '1' || capRefusal === 'true' ? true : capRefusal;
+  }
 
   if (Object.keys(generation).length > 0) out.generation = generation;
   if (Object.keys(buzz).length > 0) out.buzz = buzz;
@@ -1727,7 +1787,7 @@ export function readMockHostUrlOptions(
  * const host = createMockHost({ generation: { failNext: 1, latencyMs: 1500 }, buzz: { balance: 5 } });
  * const uninstall = host.install();
  * // … drive the block / assertions …
- * host.buzz.setBalance(0);       // flip to insufficient mid-session
+ * host.buzz.setBalance(0);       // out of Buzz mid-session: submit() now rejects ('exception')
  * host.setScenario({ generation: { failRate: 1 } });
  * uninstall();
  */
@@ -2475,8 +2535,38 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               return;
             }
 
-            // Insufficient-Buzz path: legacy failMode, the buzz scenario's
-            // force flag, OR a simulated balance that can't cover this gen.
+            // Spend-CAP refusal (`generation.submitCapRefusal`). The server
+            // checks its caps (per-call budget, daily, consent, per-app, dev
+            // session) BEFORE it asks the orchestrator to debit, so this comes
+            // ahead of the out-of-Buzz path below.
+            if (gen.submitCapRefusal !== undefined) {
+              dispatchToBlock({
+                type: 'WORKFLOW_SUBMITTED',
+                payload: {
+                  requestId,
+                  snapshot: {
+                    // The server stamps this `'failed'` sentinel on every cap
+                    // refusal (a refused submit has no orchestrator id).
+                    workflowId: 'failed',
+                    status: 'failed',
+                    // 🔴 THE PRICE IS LOAD-BEARING. The real server quotes the
+                    // cost it refused to charge at every cap exit, and `cost`
+                    // presence is what makes `submit()` RESOLVE this rather than
+                    // reject it as an errored submit
+                    // (civitai/civitai-app-starters#251). Do not drop it.
+                    cost: { total: cost },
+                    error:
+                      gen.submitCapRefusal === true
+                        ? DEFAULT_SUBMIT_CAP_REFUSAL
+                        : gen.submitCapRefusal,
+                  },
+                },
+              });
+              return;
+            }
+
+            // OUT-OF-BUZZ path: legacy failMode, the buzz scenario's force
+            // flag, OR a simulated balance that can't cover this gen.
             const balanceSimulated = typeof buzz.balance === 'number';
             const insufficient =
               failMode === 'all' ||
@@ -2506,25 +2596,24 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                   snapshot: {
                     workflowId: 'failed',
                     status: 'failed',
-                    // The `'failed'` id above matches the server, which stamps
-                    // that same sentinel on every budget/cap refusal (a refused
-                    // submit has no orchestrator id). Nothing here depends on the
-                    // id — the price below is what makes this arm RESOLVE — but
-                    // the mock must not teach a shape the wire never carries.
+                    // 🔴 DELIBERATELY NO `cost` — the host's `failureSnapshot(err)`
+                    // shape exactly, so `submit()` REJECTS with code
+                    // `'exception'`. That is what production sends when a viewer
+                    // is out of Buzz. The orchestrator answers the real submit
+                    // with a 403. civitai's `throwOrchestratorFailure` maps that
+                    // to `throwInsufficientFundsError`, a thrown `BAD_REQUEST`.
+                    // `blocks.submitWorkflow`'s catch refunds the reservation and
+                    // rethrows it, and the iframe host's SUBMIT_WORKFLOW handler
+                    // catches the mutation's rejection into `failureSnapshot(err)`,
+                    // which has no `cost`.
                     //
-                    // 🔴 THE PRICE IS LOAD-BEARING, NOT COSMETIC. The real server
-                    // quotes the cost it refused to charge at EVERY budget/cap
-                    // exit on the submit path — the per-call `buzzBudget` gate,
-                    // the per-user daily cap, the per-app aggregate/velocity cap
-                    // and the dev-tunnel session cap, on all three body kinds —
-                    // and `cost` presence is exactly what tells a priced
-                    // REJECTION apart from an errored submit
-                    // (civitai/civitai-app-starters#251). Omitting it here made
-                    // the mock's top-up path indistinguishable from a server
-                    // exception, so `submit()` would reject it and the top-up UX
-                    // would be unreachable in the harness that exists to
-                    // exercise it. Do not drop this field.
-                    cost: { total: cost },
+                    // This arm used to carry `cost` and RESOLVE, on the theory
+                    // that out-of-Buzz was one of the server's priced cap
+                    // refusals. It is not: those caps compare against a budget,
+                    // not the wallet, and only they quote a price. A block
+                    // tested against the old shape built a "resolved refusal →
+                    // top-up" flow that production never reaches. Do not add a
+                    // `cost` back; the priced arm is `submitCapRefusal` above.
                     error: INSUFFICIENT_BUZZ_ERROR,
                   },
                 },
@@ -2552,8 +2641,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                     // failed". The backend DOES have generic transient submit
                     // failures — a fail-closed `unavailable` deny and a
                     // missing-price-quote exit — but it returns those as PRICED,
-                    // RESOLVING snapshots, which is a shape this mock does not
-                    // yet simulate. Do not read this branch as covering them.
+                    // RESOLVING snapshots. Simulate those with `submitCapRefusal`
+                    // and the server's text; do not read this branch as covering
+                    // them.
                     error: GENERIC_GEN_ERROR,
                   },
                 },
@@ -2616,7 +2706,13 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // Refill the simulated balance so the post-top-up retry succeeds.
             const newBalance = typeof buzz.balance === 'number' ? buzz.balance + 1000 : 1000;
             if (typeof buzz.balance === 'number') buzz.balance = newBalance;
+            // A purchase ends EVERY forced out-of-Buzz state, not just the `buzz`
+            // group's flag: `failMode: 'insufficient' | 'all'` is documented as
+            // the same knob, and leaving it set made `?fail=insufficient` loop
+            // reject → top-up → reject. `'some'` is a generic failure, not a
+            // wallet, so a purchase leaves it alone.
             buzz.insufficient = false;
+            if (failMode === 'insufficient' || failMode === 'all') failMode = 'none';
             dispatchToBlock({
               type: 'BUZZ_PURCHASE_RESULT',
               payload: { requestId, purchased: true, newBalance },

@@ -155,8 +155,11 @@ describe('createMockHost — idempotencyKey format gate', () => {
     expect(reply.snapshot?.error).toMatch(/must match pattern/);
     // The neighbour's error must NOT be what we are reading. Without this the
     // assertion above could pass while the insufficient path produced a message
-    // that merely happens to contain the pattern.
+    // that merely happens to contain the pattern. The message is the ONLY thing
+    // that tells the two apart: out of Buzz is also a cost-less `'failed'`
+    // snapshot (the host's `failureSnapshot(err)`, as in production).
     expect(reply.snapshot?.error).not.toMatch(/insufficient/i);
+    expect(reply.snapshot).not.toHaveProperty('cost');
   });
 
   /**
