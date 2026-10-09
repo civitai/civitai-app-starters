@@ -2023,8 +2023,14 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             //   • `imageId` — the host resolves it through the SAME per-viewer
             //     gated read that backs GET_IMAGES_BY_IDS, so a withheld or
             //     above-ceiling image can never be coerced into a download.
+            //   • `bytes` (#583) — refused here too. Its gate (content
+            //     classification, the cap) is reproducible, and `createMockHost`
+            //     reproduces it; but a dev:live "download" would be this
+            //     harness's tab saving a file, which proves nothing about the
+            //     production host's page-only rule or its top-frame download.
+            //     One honest refusal for every variant keeps this branch simple.
             //
-            // This harness has NEITHER gate. The allowlist is the production
+            // This harness has NEITHER of the url / imageId gates. The allowlist is the production
             // host's, not this SDK's — there is no origin set here to check
             // against — so a dev-side "download it anyway" would accept URLs
             // production refuses and let a block ship having never once handled
