@@ -23,9 +23,8 @@ import { sendTypedRequest } from '../transport/transport.js';
  *    `<a download>` does nothing in a block — its sandbox lacks
  *    `allow-downloads`, and the validator refuses that token for unverified
  *    blocks — so do not build one. 🔴 **Page apps only**: a slot (model) block's
- *    host has NO `SAVE_IMAGE` handler at all, so it never replies — the call
- *    rejects with the transport's request timeout (30 s by default), not with
- *    an error string.
+ *    host has no `SAVE_IMAGE` handler, so its generic unhandled-request reply
+ *    answers at once and the call rejects with `unsupported on this host`.
  *
  *    The host classifies by CONTENT and never trusts `filename` to make a file
  *    acceptable: PNG / WebP / JPEG by magic bytes; otherwise valid UTF-8 with

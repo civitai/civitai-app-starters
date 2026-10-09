@@ -1009,7 +1009,8 @@ export interface MockHostOptions {
    * `invalid save-image request`; over the host's byte cap,
    * `file exceeds the maximum save size`. 🔴 What the mock cannot model: that
    * the variant is PAGE-ONLY (it does not know which surface the block renders
-   * on; a slot host has no `SAVE_IMAGE` handler and never replies),
+   * on; a slot host has no `SAVE_IMAGE` handler and rejects it with
+   * `unsupported on this host`),
    * the host's concurrency and per-window rate limits (`busy` — force it
    * here), and the real browser
    * download. {@link onSaveBytes} reports what would have been saved.
