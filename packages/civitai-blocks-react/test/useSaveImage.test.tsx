@@ -1,9 +1,10 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SAVE_BYTES_MAX_BYTES, type BlockInitPayload } from '@civitai/app-sdk/blocks';
+import type { BlockInitPayload } from '@civitai/app-sdk/blocks';
 
 import { useSaveImage } from '../src/hooks/useSaveImage.js';
+import { SAVE_BYTES_MAX_BYTES } from '../src/internal/saveBytes.js';
 import { getTransport } from '../src/transport/singleton.js';
 import { isValidSaveImageResult } from '../src/transport/validate.js';
 import { resetTransport } from '../src/testing.js';
@@ -33,7 +34,6 @@ type SentSave = {
     url?: string;
     imageId?: number;
     bytes?: ArrayBuffer;
-    mimeType?: string;
     filename?: string;
   };
 };
@@ -196,13 +196,13 @@ describe('useSaveImage — the bytes variant', () => {
     return caught as unknown as Error;
   }
 
-  it('posts the SAME ArrayBuffer (not a copy, not a view) with the hints, and no url/imageId', async () => {
+  it('posts the SAME ArrayBuffer (not a copy, not a view) with the filename, and no url/imageId', async () => {
     const bytes = new TextEncoder().encode('{"a":1}').buffer as ArrayBuffer;
     const { result } = renderHook(() => useSaveImage());
     let done = false;
     act(() => {
       void result.current
-        .saveImage({ bytes, filename: 'sidecar.json', mimeType: 'application/json' })
+        .saveImage({ bytes, filename: 'sidecar.json' })
         .then(() => (done = true));
     });
     const sent = lastSave(postMessageMock);
@@ -210,7 +210,7 @@ describe('useSaveImage — the bytes variant', () => {
     // browser's structured clone makes the copy. No transfer list — see below.
     expect(sent.payload.bytes).toBe(bytes);
     expect(sent.payload.filename).toBe('sidecar.json');
-    expect(sent.payload.mimeType).toBe('application/json');
+    expect(Object.keys(sent.payload).sort()).toEqual(['bytes', 'filename', 'requestId']);
     expect(sent.payload).not.toHaveProperty('url');
     expect(sent.payload).not.toHaveProperty('imageId');
     dispatch('SAVE_IMAGE_RESULT', { requestId: sent.payload.requestId, ok: true });
@@ -229,31 +229,43 @@ describe('useSaveImage — the bytes variant', () => {
     expect(bytes.byteLength).toBe(3);
   });
 
-  it('refuses a non-ArrayBuffer `bytes` (a Uint8Array) before sending, with the host string', async () => {
-    const err = await refusedLocally({ bytes: new Uint8Array([0x89, 0x50]) });
-    expect(err.message).toBe('invalid save-image request');
+  // The hook's ONLY client-side refusal is the cap. Everything else is
+  // forwarded for the host to judge, so these pin that nothing is refused
+  // locally: each input reaches postMessage as given.
+  function sentFor(input: unknown): SentSave['payload'] {
+    const { result } = renderHook(() => useSaveImage());
+    act(() => {
+      void result.current.saveImage(input as Parameters<typeof result.current.saveImage>[0]).catch(() => {});
+    });
+    expect(calls(postMessageMock, 'SAVE_IMAGE')).toHaveLength(1);
+    return lastSave(postMessageMock).payload;
+  }
+
+  it('FORWARDS a non-ArrayBuffer `bytes` (a Uint8Array) for the host to refuse', () => {
+    const view = new Uint8Array([0x89, 0x50]);
+    expect(sentFor({ bytes: view }).bytes).toBe(view);
   });
 
-  it('refuses a Blob passed as `bytes` before sending', async () => {
-    const err = await refusedLocally({ bytes: new Blob(['x']) });
-    expect(err.message).toBe('invalid save-image request');
+  it('FORWARDS an empty buffer for the host to refuse', () => {
+    expect(sentFor({ bytes: new ArrayBuffer(0) }).bytes!.byteLength).toBe(0);
   });
 
-  it('refuses bytes + url (not exactly one variant) before sending', async () => {
-    const err = await refusedLocally({ bytes: new ArrayBuffer(1), url: 'https://image.civitai.com/x.png' });
-    expect(err.message).toBe('invalid save-image request');
+  it('FORWARDS bytes + url together for the host to refuse the mix', () => {
+    const sent = sentFor({ bytes: new ArrayBuffer(1), url: 'https://image.civitai.com/x.png' });
+    expect(sent.bytes!.byteLength).toBe(1);
+    expect(sent.url).toBe('https://image.civitai.com/x.png');
   });
 
-  it('refuses bytes + imageId before sending', async () => {
-    const err = await refusedLocally({ bytes: new ArrayBuffer(1), imageId: 5 });
-    expect(err.message).toBe('invalid save-image request');
+  it('FORWARDS bytes + imageId together for the host to refuse the mix', () => {
+    const sent = sentFor({ bytes: new ArrayBuffer(1), imageId: 5 });
+    expect(sent.imageId).toBe(5);
   });
 
-  it('refuses url + imageId, and an input with no variant, before sending', async () => {
-    expect((await refusedLocally({ url: 'https://image.civitai.com/x.png', imageId: 5 })).message).toBe(
-      'invalid save-image request',
-    );
-    expect((await refusedLocally({ filename: 'x.png' })).message).toBe('invalid save-image request');
+  it('keeps the pre-bytes behaviour for url + imageId: url wins, imageId is not sent', () => {
+    const sent = sentFor({ url: 'https://image.civitai.com/x.png', imageId: 5 });
+    expect(sent.url).toBe('https://image.civitai.com/x.png');
+    expect(sent).not.toHaveProperty('imageId');
+    expect(sent).not.toHaveProperty('bytes');
   });
 
   it('refuses a buffer ONE byte over SAVE_BYTES_MAX_BYTES before sending', async () => {

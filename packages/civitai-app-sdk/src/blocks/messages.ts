@@ -1571,14 +1571,15 @@ export type BlockToParentMessage =
   //     coerced into a download.
   //   • `bytes` — a file the block PRODUCED IN ITS OWN TAB (an `ArrayBuffer`,
   //     structured-cloned across postMessage — never transferred). PAGE APPS
-  //     ONLY. The host classifies by CONTENT, never by `mimeType`/`filename`:
-  //     PNG / WebP / JPEG by magic bytes; otherwise valid UTF-8 with no NUL
-  //     byte, which becomes JSON when it parses AND the hint (`mimeType:
-  //     'application/json'` or a `.json` filename) says json, else text/plain;
-  //     anything else is refused (`file type is not allowed`). The saved
-  //     extension is forced from the classified type. Over
-  //     `SAVE_BYTES_MAX_BYTES` → `file exceeds the maximum save size`. A host
-  //     that predates this variant replies `invalid save-image request`.
+  //     ONLY. The host classifies by CONTENT: PNG / WebP / JPEG by magic
+  //     bytes; otherwise valid UTF-8 with no NUL byte, which becomes JSON when
+  //     it parses AND `filename` ends `.json` (case-insensitive), else
+  //     text/plain; anything else is refused (`file type is not allowed`). An
+  //     empty buffer is `invalid save-image request`. The saved extension is
+  //     forced from the classified type. Over the host's save-bytes cap
+  //     (mirrored as `SAVE_BYTES_MAX_BYTES` in `@civitai/blocks-react`) →
+  //     `file exceeds the maximum save size`. A host that predates this
+  //     variant replies `invalid save-image request`.
   // `filename` is an optional download name (the host sanitizes it — no path
   // traversal / duplicate-extension). The block sends NO token.
   //
@@ -1596,13 +1597,15 @@ export type BlockToParentMessage =
         /** Cross-user image id — routed through the gated per-viewer read. Mutually exclusive with `url` / `bytes`. */
         imageId?: number;
         /**
-         * In-tab file bytes — classified by CONTENT host-side, capped at
-         * `SAVE_BYTES_MAX_BYTES`. Page apps only. Mutually exclusive with `url` / `imageId`.
+         * In-tab file bytes — classified by CONTENT host-side, size-capped host-side.
+         * Page apps only. Mutually exclusive with `url` / `imageId`.
          */
         bytes?: ArrayBuffer;
-        /** A HINT for the `bytes` variant (`'application/json'` selects JSON for valid JSON text). Never trusted. */
-        mimeType?: string;
-        /** Optional download filename (host-sanitized; for `bytes` the extension is forced from the classified type). */
+        /**
+         * Optional download filename (host-sanitized). For `bytes`, a `.json`
+         * name selects JSON for text that parses as JSON, and the extension is
+         * forced from the classified type.
+         */
         filename?: string;
       };
     }

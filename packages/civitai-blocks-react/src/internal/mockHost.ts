@@ -47,7 +47,6 @@ import {
   APP_STORAGE_MAX_ROWS,
   APP_STORAGE_MAX_VALUE_BYTES,
   BrowsingLevel,
-  SAVE_BYTES_MAX_BYTES,
   SFW_LEVELS,
   type BlockContext,
   type BlockInitPayload,
@@ -100,6 +99,7 @@ import {
   idempotencyKeyRefusal,
 } from './mockHostIdempotency.js';
 import {
+  SAVE_BYTES_MAX_BYTES,
   SAVE_BYTES_TOO_LARGE_ERROR,
   SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR,
   SAVE_IMAGE_INVALID_REQUEST_ERROR,
@@ -1006,9 +1006,9 @@ export interface MockHostOptions {
    *
    * The `bytes` variant is classified exactly as the host's contract says
    * (civitai/civitai-app-starters#583): PNG / WebP / JPEG by magic bytes, else
-   * UTF-8 text with no NUL (JSON when it parses and `mimeType:
-   * 'application/json'` or a `.json` filename hints json), else
-   * `file type is not allowed`; over `SAVE_BYTES_MAX_BYTES`,
+   * UTF-8 text with no NUL (JSON when it parses and `filename` ends `.json`,
+   * case-insensitive), else `file type is not allowed`; an empty buffer,
+   * `invalid save-image request`; over `SAVE_BYTES_MAX_BYTES`,
    * `file exceeds the maximum save size`. 🔴 What the mock cannot model: the
    * PAGE-ONLY refusal (it does not know which surface the block renders on),
    * the host's concurrency cap (`busy` — force it here), and the real browser
@@ -2208,7 +2208,6 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // SAVE_IMAGE `bytes` variant. `unknown`, not `ArrayBuffer`: the
             // gate's job is to refuse a non-buffer a block actually sent.
             bytes?: unknown;
-            mimeType?: unknown;
             filename?: unknown;
             collectionId?: number;
             follow?: boolean;
@@ -3700,7 +3699,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             if ((hasUrl ? 1 : 0) + (hasId ? 1 : 0) + (hasBytes ? 1 : 0) !== 1) {
               return saveReply({ ok: false, error: SAVE_IMAGE_INVALID_REQUEST_ERROR });
             }
-            if (hasBytes && !(p.bytes instanceof ArrayBuffer)) {
+            // A `bytes` must be a NON-EMPTY ArrayBuffer — the host refuses an
+            // empty one as a malformed request, not as an untyped file.
+            if (hasBytes && !(p.bytes instanceof ArrayBuffer && p.bytes.byteLength > 0)) {
               return saveReply({ ok: false, error: SAVE_IMAGE_INVALID_REQUEST_ERROR });
             }
             if (saveImageError !== undefined) return saveReply({ ok: false, error: saveImageError });
@@ -3709,10 +3710,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                 return saveReply({ ok: false, error: SAVE_BYTES_TOO_LARGE_ERROR });
               }
               const filename = typeof p.filename === 'string' ? p.filename : undefined;
-              const mimeType = classifySaveBytes(p.bytes, {
-                mimeType: typeof p.mimeType === 'string' ? p.mimeType : undefined,
-                filename,
-              });
+              const mimeType = classifySaveBytes(p.bytes, filename);
               if (mimeType === null) {
                 return saveReply({ ok: false, error: SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR });
               }

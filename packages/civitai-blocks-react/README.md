@@ -1223,21 +1223,18 @@ Pass exactly ONE of three inputs, each gated differently by the host:
   per-viewer gate as `useGatedImages()`. A withheld image is never saved.
 - **`{ bytes }`**: an `ArrayBuffer` the block made in the tab, such as a healed
   image or a JSON sidecar. 🔴 **Page apps only.** The host classifies it by
-  CONTENT and treats `mimeType` and `filename` as hints only. It accepts PNG,
-  WebP and JPEG by magic bytes. Anything else must be valid UTF-8 with no NUL
-  byte: it is saved as JSON when it parses and the hint (`mimeType:
-  'application/json'` or a `.json` filename) says json, and as plain text
-  otherwise. A GIF, a zip or other binary is refused with
-  `file type is not allowed`. The host forces the extension from the classified
-  type. The cap is `SAVE_BYTES_MAX_BYTES` (50 MiB, from
-  `@civitai/app-sdk/blocks`), and the hook refuses a larger buffer before
-  sending it: `file exceeds the maximum save size`. The buffer is copied, not
-  transferred, so you can keep displaying it.
+  CONTENT. It accepts PNG, WebP and JPEG by magic bytes. Anything else must be
+  valid UTF-8 with no NUL byte: it is saved as JSON when it parses and
+  `filename` ends `.json` (any case), and as plain text otherwise. A GIF, a zip
+  or other binary is refused with `file type is not allowed`. The host forces
+  the extension from the classified type. The cap is 50 MiB, and the hook
+  refuses a larger buffer before sending it: `file exceeds the maximum save
+  size`. The buffer is copied, not transferred, so you can keep displaying it.
 
 🔴 **On a host that predates the `bytes` variant, `saveImage({ bytes })` rejects
-with `invalid save-image request`.** That is also the hook's own error when the
-input is not exactly one variant, or when `bytes` is not an `ArrayBuffer`. Pass
-`await blob.arrayBuffer()`, not the `Blob` or a `Uint8Array`. The promise
+with `invalid save-image request`.** The host also replies that when the input
+is not exactly one variant, or when `bytes` is empty or not an `ArrayBuffer`.
+Pass `await blob.arrayBuffer()`, not the `Blob` or a `Uint8Array`. The promise
 resolves once the host has started the download. On any refusal it rejects with
 the host's error string, which can also be `busy` when too many saves are in
 flight.
@@ -1251,10 +1248,10 @@ const { saveImage } = useSaveImage();
 const healed: Blob = await healPngMetadata(file);
 await saveImage({ bytes: await healed.arrayBuffer(), filename: 'healed.png' });
 
-// Its JSON sidecar. The hint makes valid JSON save as .json rather than .txt.
+// Its JSON sidecar. The .json filename makes valid JSON save as .json rather than .txt.
 const sidecar = new TextEncoder().encode(JSON.stringify(metadata, null, 2));
 try {
-  await saveImage({ bytes: sidecar.slice().buffer, filename: 'healed.json', mimeType: 'application/json' });
+  await saveImage({ bytes: sidecar.slice().buffer, filename: 'healed.json' });
 } catch (err) {
   // 'invalid save-image request' here means this host cannot save bytes yet.
   setStatus(`Could not save the sidecar: ${(err as Error).message}`);

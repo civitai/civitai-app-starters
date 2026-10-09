@@ -1,9 +1,8 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SAVE_BYTES_MAX_BYTES } from '@civitai/app-sdk/blocks';
-
 import { useSaveImage, type SaveImageInput } from '../src/hooks/useSaveImage.js';
+import { SAVE_BYTES_MAX_BYTES } from '../src/internal/saveBytes.js';
 import { getTransport } from '../src/transport/singleton.js';
 import { createMockHost, resetTransport } from '../src/testing.js';
 import type { MockHostOptions } from '../src/testing.js';
@@ -76,24 +75,32 @@ describe('createMockHost — SAVE_IMAGE bytes variant', () => {
     ['JPEG', JPEG, 'image/jpeg', 'healed.jpg'],
     ['WebP', WEBP, 'image/webp', 'healed.webp'],
   ])('saves %s bytes, classified by magic and with the extension forced', async (_n, view, mime, name) => {
-    // The filename LIES (.txt) and the mimeType lies — content wins.
-    const err = await save({ bytes: buf(view), filename: 'healed.txt', mimeType: 'text/plain' });
+    // The filename LIES (.txt) — content wins.
+    const err = await save({ bytes: buf(view), filename: 'healed.txt' });
     expect(err).toBeNull();
     expect(saved).toHaveLength(1);
     expect(saved[0]!.mimeType).toBe(mime);
     expect(saved[0]!.filename).toBe(name);
   });
 
-  it('saves JSON bytes as JSON when mimeType hints json', async () => {
-    const err = await save({ bytes: text('{"healed":true}'), filename: 'sidecar', mimeType: 'application/json' });
+  it('saves JSON bytes as JSON when the filename ends .json', async () => {
+    const err = await save({ bytes: text('[1,2,3]'), filename: 'data.json' });
     expect(err).toBeNull();
     expect(saved[0]!.mimeType).toBe('application/json');
-    expect(saved[0]!.filename).toBe('sidecar.json');
+    expect(saved[0]!.filename).toBe('data.json');
   });
 
-  it('saves JSON bytes as JSON when the FILENAME hints json (no mimeType)', async () => {
-    await save({ bytes: text('[1,2,3]'), filename: 'data.json' });
+  it('matches the .json extension case-insensitively', async () => {
+    await save({ bytes: text('{"healed":true}'), filename: 'Sidecar.JSON' });
     expect(saved[0]!.mimeType).toBe('application/json');
+    expect(saved[0]!.filename).toBe('Sidecar.json');
+  });
+
+  it('ignores a `mimeType` a JS caller still sends — the field is not part of the contract', async () => {
+    const err = await save({ bytes: text('{"healed":true}'), filename: 'sidecar', mimeType: 'application/json' } as unknown as SaveImageInput);
+    expect(err).toBeNull();
+    expect(saved[0]!.mimeType).toBe('text/plain');
+    expect(saved[0]!.filename).toBe('sidecar.txt');
   });
 
   it('saves valid JSON WITHOUT a json hint as text/plain — the hint is required', async () => {
@@ -102,10 +109,15 @@ describe('createMockHost — SAVE_IMAGE bytes variant', () => {
     expect(saved[0]!.filename).toBe('sidecar.txt');
   });
 
-  it('saves a json-hinted payload that does NOT parse as text/plain, not a refusal', async () => {
-    const err = await save({ bytes: text('{not json'), mimeType: 'application/json' });
+  it('saves a .json-named payload that does NOT parse as text/plain, not a refusal', async () => {
+    const err = await save({ bytes: text('{not json'), filename: 'broken.json' });
     expect(err).toBeNull();
     expect(saved[0]!.mimeType).toBe('text/plain');
+    expect(saved[0]!.filename).toBe('broken.txt');
+  });
+
+  it('names an unnamed save `download` with the forced extension', async () => {
+    await save({ bytes: text('plain') });
     expect(saved[0]!.filename).toBe('download.txt');
   });
 
@@ -124,13 +136,13 @@ describe('createMockHost — SAVE_IMAGE bytes variant', () => {
   });
 
   it('refuses a GIF — a real image type the contract does not allow', async () => {
-    const err = await save({ bytes: buf(GIF), filename: 'anim.gif', mimeType: 'image/gif' });
+    const err = await save({ bytes: buf(GIF), filename: 'anim.gif' });
     expect(err?.message).toBe('file type is not allowed');
     expect(saved).toHaveLength(0);
   });
 
   it('refuses random binary that has no NUL byte (the UTF-8 check)', async () => {
-    const err = await save({ bytes: buf(BINARY_NO_NUL), mimeType: 'text/plain' });
+    const err = await save({ bytes: buf(BINARY_NO_NUL), filename: 'x.txt' });
     expect(err?.message).toBe('file type is not allowed');
     expect(saved).toHaveLength(0);
   });
@@ -151,6 +163,19 @@ describe('createMockHost — SAVE_IMAGE bytes variant', () => {
       'SAVE_IMAGE_RESULT',
     )) as { ok?: boolean; error?: string };
     expect(reply).toMatchObject({ ok: false, error: 'file exceeds the maximum save size' });
+  });
+
+  it('refuses an EMPTY buffer as a malformed request, as the host does (not as text/plain)', async () => {
+    const err = await save({ bytes: new ArrayBuffer(0), filename: 'empty.txt' });
+    expect(err?.message).toBe('invalid save-image request');
+    expect(saved).toHaveLength(0);
+  });
+
+  it('refuses an empty buffer ahead of the `saveImageError` knob', async () => {
+    // The shape gate runs BEFORE the forced-refusal knob, as for every other
+    // malformed request.
+    const err = await save({ bytes: new ArrayBuffer(0) }, { saveImageError: 'busy' });
+    expect(err?.message).toBe('invalid save-image request');
   });
 
   it('refuses a non-ArrayBuffer `bytes` that reaches it', async () => {

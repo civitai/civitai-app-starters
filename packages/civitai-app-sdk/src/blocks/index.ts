@@ -57,8 +57,6 @@ export {
   APP_STORAGE_MAX_ROWS,
 } from './appStorageLimits.js';
 
-export { SAVE_BYTES_MAX_BYTES } from './saveImageLimits.js';
-
 export {
   BLOCK_IDEMPOTENCY_KEY_REGEX,
   BLOCK_IDEMPOTENCY_KEY_MAX_LENGTH,

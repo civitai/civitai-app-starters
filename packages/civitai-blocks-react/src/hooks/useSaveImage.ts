@@ -1,10 +1,8 @@
 import { useCallback } from 'react';
 
-import { SAVE_BYTES_MAX_BYTES } from '@civitai/app-sdk/blocks';
-
 import { getTransport } from '../transport/singleton.js';
 import { throwOnFailedReply } from '../internal/replyError.js';
-import { SAVE_BYTES_TOO_LARGE_ERROR, SAVE_IMAGE_INVALID_REQUEST_ERROR } from '../internal/saveBytes.js';
+import { SAVE_BYTES_MAX_BYTES, SAVE_BYTES_TOO_LARGE_ERROR } from '../internal/saveBytes.js';
 import { sendTypedRequest } from '../transport/transport.js';
 
 /**
@@ -27,27 +25,21 @@ import { sendTypedRequest } from '../transport/transport.js';
  *    blocks — so do not build one. 🔴 **Page apps only**; a slot block's host
  *    refuses it.
  *
- *    The host classifies by CONTENT and never trusts `mimeType` or `filename`:
- *    PNG / WebP / JPEG by magic bytes; otherwise valid UTF-8 with no NUL byte,
- *    saved as JSON when it parses AND the hint (`mimeType: 'application/json'`
- *    or a `.json` filename) says json, else as text/plain. Anything else — a
- *    GIF, a zip, random binary — is refused with `file type is not allowed`.
- *    The saved extension is forced from the classified type, whatever
- *    `filename` says. The cap is `SAVE_BYTES_MAX_BYTES` (50 MiB) of raw bytes.
+ *    The host classifies by CONTENT and never trusts `filename` to make a file
+ *    acceptable: PNG / WebP / JPEG by magic bytes; otherwise valid UTF-8 with
+ *    no NUL byte, saved as JSON when it parses AND `filename` ends `.json`
+ *    (case-insensitive), else as text/plain. Anything else — a GIF, a zip,
+ *    random binary — is refused with `file type is not allowed`, and an empty
+ *    buffer with `invalid save-image request`. The saved extension is forced
+ *    from the classified type, whatever `filename` says. The cap is 50 MiB of
+ *    raw bytes.
  *    The buffer is COPIED across `postMessage`, never transferred, so the block
  *    can keep displaying it.
  */
 export type SaveImageInput =
   | { url: string; imageId?: never; bytes?: never; filename?: string }
   | { imageId: number; url?: never; bytes?: never; filename?: string }
-  | {
-      bytes: ArrayBuffer;
-      /** A HINT — `'application/json'` selects JSON for bytes that parse as JSON. Never trusted. */
-      mimeType?: string;
-      filename?: string;
-      url?: never;
-      imageId?: never;
-    };
+  | { bytes: ArrayBuffer; url?: never; imageId?: never; filename?: string };
 
 export interface UseSaveImage {
   /**
@@ -60,14 +52,16 @@ export interface UseSaveImage {
    * disallowed file type, an over-size file, a fetch failure, or `busy`), or
    * the transport timeout — the hook never hangs.
    *
-   * 🔴 Some calls are refused BEFORE sending, with the host's own strings:
-   * `invalid save-image request` when not exactly one of `url` / `imageId` /
-   * `bytes` is set, or when `bytes` is not an `ArrayBuffer` (pass an
-   * `ArrayBuffer` — `await blob.arrayBuffer()`, or `view.slice().buffer` for a
-   * typed array — not the `Uint8Array` or `Blob` itself); and
-   * `file exceeds the maximum save size` over the cap. On a host
-   * that predates the `bytes` variant the HOST replies `invalid save-image
-   * request`; treat that string as "this host cannot save bytes yet".
+   * 🔴 One call is refused BEFORE sending, with the host's own string: a
+   * `bytes` buffer over the 50 MiB cap rejects with `file exceeds the maximum
+   * save size`, so it is never copied across `postMessage` just to be refused.
+   * Everything else is forwarded and judged by the host, which replies
+   * `invalid save-image request` to a request that is not exactly one variant,
+   * to a `bytes` that is not a non-empty `ArrayBuffer` (pass
+   * `await blob.arrayBuffer()`, or `view.slice().buffer` for a typed array —
+   * not the `Uint8Array` or `Blob` itself), and, on a host that predates the
+   * `bytes` variant, to every `bytes` save; treat that string as "this host
+   * cannot save bytes yet".
    */
   saveImage: (input: SaveImageInput) => Promise<void>;
 }
@@ -76,31 +70,31 @@ type SaveImageWirePayload = {
   url?: string;
   imageId?: number;
   bytes?: ArrayBuffer;
-  mimeType?: string;
   filename?: string;
 };
 
 /**
- * Build the wire payload, or throw the host's own error string for an input the
- * host would refuse. The `bytes` checks run client-side so an over-cap buffer
- * is never copied across `postMessage` just to be refused.
+ * Build the wire payload. The ONLY client-side refusal is the cap, so an
+ * over-cap buffer is never copied across `postMessage` just to be refused.
+ * Everything else is forwarded as given and the host judges it: a `bytes`
+ * input is sent with whatever `url` / `imageId` came with it (the host refuses
+ * the mix), and a `url` / `imageId` input keeps its pre-`bytes` behaviour
+ * (`url` wins when both are set).
  */
 function toWirePayload(input: SaveImageInput): SaveImageWirePayload {
-  const raw = input as { url?: unknown; imageId?: unknown; bytes?: unknown };
-  const variants =
-    (raw.url !== undefined ? 1 : 0) + (raw.imageId !== undefined ? 1 : 0) + (raw.bytes !== undefined ? 1 : 0);
-  // Exactly one variant — the same rule, and the same string, as the host.
-  if (variants !== 1) throw new Error(SAVE_IMAGE_INVALID_REQUEST_ERROR);
+  const raw = input as { url?: string; imageId?: number; bytes?: unknown; filename?: string };
   if (raw.bytes !== undefined) {
-    if (!(raw.bytes instanceof ArrayBuffer)) throw new Error(SAVE_IMAGE_INVALID_REQUEST_ERROR);
-    if (raw.bytes.byteLength > SAVE_BYTES_MAX_BYTES) {
+    if (raw.bytes instanceof ArrayBuffer && raw.bytes.byteLength > SAVE_BYTES_MAX_BYTES) {
       throw new Error(SAVE_BYTES_TOO_LARGE_ERROR);
     }
-    const { mimeType, filename } = input as { mimeType?: string; filename?: string };
-    return { bytes: raw.bytes, mimeType, filename };
+    const payload: SaveImageWirePayload = { bytes: raw.bytes as ArrayBuffer, filename: raw.filename };
+    if (raw.url !== undefined) payload.url = raw.url;
+    if (raw.imageId !== undefined) payload.imageId = raw.imageId;
+    return payload;
   }
-  if (input.url !== undefined) return { url: input.url, filename: input.filename };
-  return { imageId: (input as { imageId: number }).imageId, filename: input.filename };
+  return 'url' in input && input.url !== undefined
+    ? { url: input.url, filename: input.filename }
+    : { imageId: (input as { imageId: number }).imageId, filename: input.filename };
 }
 
 /**
