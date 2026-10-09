@@ -12,7 +12,43 @@ half of that lives in [`tests/guards/blocks-react-peer-floor.test.mjs`](../../te
 — `PEER_VALUE_SYMBOL_SINCE`, `PEER_SUBPATH_SINCE`, and the assertions over them.
 This file is the prose half: why the number is what it is, and how to move it.
 
-Declared today: `">=0.57.0 <1.0.0"`.
+Declared today: `">=0.61.0 <1.0.0"`.
+
+---
+
+## 🔴 RAISED 0.57.0 → 0.61.0 (the seventh time), 2026-10-09 — the save-bytes cap
+
+`hooks/useSaveImage.ts` and `internal/mockHost.ts` value-import one new peer
+symbol from `@civitai/app-sdk/blocks`: `SAVE_BYTES_MAX_BYTES`, the 50 MiB cap on
+`SAVE_IMAGE`'s `bytes` variant, from the new module
+`src/blocks/saveImageLimits.ts` (#583). The hook refuses an over-cap buffer
+before sending it, and the mock host refuses one with the host's string.
+
+**`0.61.0` is a PREDICTION, pinned as one.** The symbol ships for the first time
+in the app-sdk minor released with this change, so there is no tarball to probe
+for a PRESENT reading. The number comes from the release plan: in-tree app-sdk is
+`0.60.0`, this branch's changeset bumps app-sdk `minor`, and `pnpm exec changeset
+status --verbose` prints `@civitai/app-sdk 0.61.0` (and `@civitai/blocks-react
+0.66.0`). It is pinned via `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH` plus the
+`PREDICTED ENTRY` test, which re-derives the number from the tree on every run.
+
+What *was* measured is that the symbol is absent from published versions, so the
+run cannot start lower. Method: `npm pack` each tarball, untar it, then
+`grep -l <symbol>` over `package/dist`. All rows were read 2026-10-09:
+
+| version | `SAVE_BYTES_MAX_BYTES` | `BLOCK_SCOPES` (pos. ctrl) | `__NOPE_7f3a__` (neg. ctrl) |
+|---|---|---|---|
+| 0.60.0 (newest published on that date) | absent (0 files) | present (7 files) | absent |
+| 0.59.0 | absent (0 files) | present (7 files) | absent |
+| 0.57.0 (old floor) | absent (0 files) | present (7 files) | absent |
+
+The rows are a sample. The claim that no published version has the symbol rests
+on git history instead: `src/blocks/saveImageLimits.ts` is added by this branch.
+
+🔴 **OWED AFTER THE RELEASE PUBLISHES:** empty
+`PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH`. Then re-read the entry off the real
+`0.61.0` tarball, using the newest version published below it as the ABSENT
+control, and record both here.
 
 ---
 

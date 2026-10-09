@@ -106,7 +106,7 @@ the package's type declarations (IDE hover / autocomplete on the package root) a
 the authoritative list of what exists.
 
 Exported from the package root with no snippet in this section, as of this
-writing: `useGatedImages()`, `usePublishGenerationOutputs()`, `useSaveImage()`,
+writing: `useGatedImages()`, `usePublishGenerationOutputs()`,
 `useTip()` and `useTipAllowance()` — for the tip pair, the
 [`TipButton`](#the-ui-subexport) row documents the intended usage and the
 allowance-sharing rule. `useDirectLoad()` is covered under
@@ -1207,6 +1207,68 @@ if (img) {
   });
 }
 ```
+
+### `useSaveImage()`
+
+Ask the host to download a file to the viewer's device. **A block cannot
+download anything itself.** Its sandbox lacks `allow-downloads`, and the
+validator refuses that token for unverified blocks, so an
+`<a href="blob:…" download>` click silently does nothing. 🔴 **This hook is the
+sanctioned way to deliver a file**, including one the block produced in the tab.
+Pass exactly ONE of three inputs, each gated differently by the host:
+
+- **`{ url }`**: the block's own generation output. The host allowlists the
+  origin to the civitai image CDN and refuses any other.
+- **`{ imageId }`**: an image from another user, read through the same
+  per-viewer gate as `useGatedImages()`. A withheld image is never saved.
+- **`{ bytes }`**: an `ArrayBuffer` the block made in the tab, such as a healed
+  image or a JSON sidecar. 🔴 **Page apps only.** The host classifies it by
+  CONTENT and treats `mimeType` and `filename` as hints only. It accepts PNG,
+  WebP and JPEG by magic bytes. Anything else must be valid UTF-8 with no NUL
+  byte: it is saved as JSON when it parses and the hint (`mimeType:
+  'application/json'` or a `.json` filename) says json, and as plain text
+  otherwise. A GIF, a zip or other binary is refused with
+  `file type is not allowed`. The host forces the extension from the classified
+  type. The cap is `SAVE_BYTES_MAX_BYTES` (50 MiB, from
+  `@civitai/app-sdk/blocks`), and the hook refuses a larger buffer before
+  sending it: `file exceeds the maximum save size`. The buffer is copied, not
+  transferred, so you can keep displaying it.
+
+🔴 **On a host that predates the `bytes` variant, `saveImage({ bytes })` rejects
+with `invalid save-image request`.** That is also the hook's own error when the
+input is not exactly one variant, or when `bytes` is not an `ArrayBuffer`. Pass
+`await blob.arrayBuffer()`, not the `Blob` or a `Uint8Array`. The promise
+resolves once the host has started the download. On any refusal it rejects with
+the host's error string, which can also be `busy` when too many saves are in
+flight.
+
+```tsx
+import { useSaveImage } from '@civitai/blocks-react';
+
+const { saveImage } = useSaveImage();
+
+// A file healed in the tab. It never leaves the device except to the viewer's disk.
+const healed: Blob = await healPngMetadata(file);
+await saveImage({ bytes: await healed.arrayBuffer(), filename: 'healed.png' });
+
+// Its JSON sidecar. The hint makes valid JSON save as .json rather than .txt.
+const sidecar = new TextEncoder().encode(JSON.stringify(metadata, null, 2));
+try {
+  await saveImage({ bytes: sidecar.slice().buffer, filename: 'healed.json', mimeType: 'application/json' });
+} catch (err) {
+  // 'invalid save-image request' here means this host cannot save bytes yet.
+  setStatus(`Could not save the sidecar: ${(err as Error).message}`);
+}
+
+// The block's own generation output, or another user's image.
+await saveImage({ url: output.url, filename: 'render.png' });
+await saveImage({ imageId: cell.imageId });
+```
+
+Under `createMockHost` / `Harness` the `bytes` variant is classified the same
+way. `onSaveBytes` reports what would have been downloaded, and `saveImageError`
+forces a refusal. Pass `saveImageError: 'invalid save-image request'` to test a
+host without the variant. `dev:live` refuses every save.
 
 ### `useGenerationResources()`
 

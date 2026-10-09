@@ -1037,7 +1037,9 @@ export type ParentToBlockMessage =
       // host has triggered the browser download in its unsandboxed top frame.
       // `error` on host-side failure — a URL whose origin isn't on the civitai
       // image/blob allowlist, an `imageId` the requesting viewer isn't allowed
-      // to see (gated read returned `hidden`/omitted), an over-size blob, or a
+      // to see (gated read returned `hidden`/omitted), `bytes` that classify
+      // as no allowed type (`file type is not allowed`), an over-size blob or
+      // buffer, a malformed request (`invalid save-image request`), or a
       // fetch failure. Consumers treat a PRESENT `error` (or `ok: false`) as
       // the reject signal — presence, not truthiness, so an `error: ''` cannot
       // read as success (see the union's header note).
@@ -1555,8 +1557,9 @@ export type BlockToParentMessage =
   // fetches the blob in its UNSANDBOXED top frame and triggers the browser
   // "Save As" (a sandboxed opaque-origin block lacks `allow-downloads`, so it
   // can only copy a URL). Host reads/validates + downloads, replying with
-  // `SAVE_IMAGE_RESULT`. TWO complementary variants (send exactly one of `url`
-  // / `imageId`):
+  // `SAVE_IMAGE_RESULT`. THREE complementary variants (send EXACTLY ONE of
+  // `url` / `imageId` / `bytes` — the host refuses zero or several with
+  // `invalid save-image request`):
   //   • `url` — the block's OWN fresh generation output (an orchestration blob
   //     it has no `imageId` for yet). The host ALLOWLISTS the URL's origin to
   //     the civitai image/blob CDN and REFUSES an arbitrary host (an unverified
@@ -1566,17 +1569,40 @@ export type BlockToParentMessage =
   //     resolves it through the SAME per-viewer gated read that backs
   //     `GET_IMAGES_BY_IDS`, so a withheld/above-ceiling image can NEVER be
   //     coerced into a download.
+  //   • `bytes` — a file the block PRODUCED IN ITS OWN TAB (an `ArrayBuffer`,
+  //     structured-cloned across postMessage — never transferred). PAGE APPS
+  //     ONLY. The host classifies by CONTENT, never by `mimeType`/`filename`:
+  //     PNG / WebP / JPEG by magic bytes; otherwise valid UTF-8 with no NUL
+  //     byte, which becomes JSON when it parses AND the hint (`mimeType:
+  //     'application/json'` or a `.json` filename) says json, else text/plain;
+  //     anything else is refused (`file type is not allowed`). The saved
+  //     extension is forced from the classified type. Over
+  //     `SAVE_BYTES_MAX_BYTES` → `file exceeds the maximum save size`. A host
+  //     that predates this variant replies `invalid save-image request`.
   // `filename` is an optional download name (the host sanitizes it — no path
   // traversal / duplicate-extension). The block sends NO token.
+  //
+  // The wire payload is FLAT (every variant field optional) rather than a
+  // union: the block-side `OutboundRequest` type strips `requestId` with a
+  // non-distributive `Omit`, which would collapse a union to its common keys.
+  // The exactly-one-of shape is enforced on the public input type
+  // (`SaveImageInput` in `@civitai/blocks-react`) and by the host.
   | {
       type: 'SAVE_IMAGE';
       payload: {
         requestId: string;
-        /** Own-output URL — origin-allowlisted host-side. Mutually exclusive with `imageId`. */
+        /** Own-output URL — origin-allowlisted host-side. Mutually exclusive with `imageId` / `bytes`. */
         url?: string;
-        /** Cross-user image id — routed through the gated per-viewer read. Mutually exclusive with `url`. */
+        /** Cross-user image id — routed through the gated per-viewer read. Mutually exclusive with `url` / `bytes`. */
         imageId?: number;
-        /** Optional download filename (host-sanitized). */
+        /**
+         * In-tab file bytes — classified by CONTENT host-side, capped at
+         * `SAVE_BYTES_MAX_BYTES`. Page apps only. Mutually exclusive with `url` / `imageId`.
+         */
+        bytes?: ArrayBuffer;
+        /** A HINT for the `bytes` variant (`'application/json'` selects JSON for valid JSON text). Never trusted. */
+        mimeType?: string;
+        /** Optional download filename (host-sanitized; for `bytes` the extension is forced from the classified type). */
         filename?: string;
       };
     }

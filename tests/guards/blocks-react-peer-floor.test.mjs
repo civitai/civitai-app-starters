@@ -327,6 +327,40 @@ const PEER_VALUE_SYMBOL_SINCE = {
   // control (0.56.1 on 2026-10-04 — read the registry rather than trusting
   // that), and record both here.
   fetchNestedDocument: '0.57.0',
+
+  // 🔴 A PREDICTION, pinned as one — see `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH`
+  // below. `SAVE_BYTES_MAX_BYTES` is the cap on `SAVE_IMAGE`'s `bytes` variant
+  // (#583), new module `src/blocks/saveImageLimits.ts`, value-imported by
+  // `src/hooks/useSaveImage.ts` (the pre-send cap check) and
+  // `src/internal/mockHost.ts` (the mock's copy of the host's refusal). It ships
+  // for the FIRST time in the app-sdk minor this branch's own changeset
+  // produces, so there is no tarball to probe for a PRESENT reading.
+  //
+  // Derived from the release plan, not guessed: in-tree app-sdk `0.60.0`; this
+  // branch's changeset bumps app-sdk `minor`; `pnpm exec changeset status
+  // --verbose` prints `@civitai/app-sdk 0.61.0` (and `@civitai/blocks-react
+  // 0.66.0`), read 2026-10-09.
+  //
+  // MEASURED — the half that CAN be measured: `npm pack @civitai/app-sdk@V`,
+  // untar, `grep -l <symbol>` over `package/dist`, all read 2026-10-09:
+  //
+  //   0.60.0 (newest published on that date)  0 files
+  //   0.59.0                                  0 files
+  //   0.57.0 (the old floor)                  0 files
+  //
+  // Those rows are a sample. The general claim rests on git history:
+  // `src/blocks/saveImageLimits.ts` is ADDED by this branch, so no version
+  // published before it can carry the symbol.
+  //
+  // Controls, run before each zero was believed:
+  //   - POSITIVE: `BLOCK_SCOPES` read PRESENT (7 files) on all three tarballs.
+  //   - NEGATIVE: `__NOPE_7f3a__` read ABSENT (0 files) on all three.
+  //
+  // 🔴 RE-MEASURE AND RETIRE after the release publishes: empty
+  // `PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH`, re-read this entry off the real
+  // 0.61.0 tarball with the newest version published BELOW it as the ABSENT
+  // control, and record both here.
+  SAVE_BYTES_MAX_BYTES: '0.61.0',
 };
 
 /**
@@ -465,7 +499,13 @@ const PEER_VALUE_SYMBOL_SINCE = {
 // The prediction was CORRECT, so `PEER_VALUE_SYMBOL_SINCE` stays at `0.57.0`
 // and the floor stays at `>=0.57.0` — step 4, "leave it alone if the
 // measurement agrees". Nothing here is owed.
-const PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH = [];
+//
+// RE-POPULATED 2026-10-09 — the fourth real occasion. `SAVE_BYTES_MAX_BYTES`,
+// the cap on `SAVE_IMAGE`'s `bytes` variant (#583), ships for the first time in
+// the app-sdk release THIS branch publishes (0.61.0 — `changeset status
+// --verbose`). The derivation and the measured absences are at its entry in
+// `PEER_VALUE_SYMBOL_SINCE`.
+const PEER_SYMBOLS_PREDICTED_BY_THIS_BRANCH = ['SAVE_BYTES_MAX_BYTES'];
 
 /**
  * The same ledger for SUBPATHS. A bare `import '@civitai/app-sdk/safe-storage'`

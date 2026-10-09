@@ -1413,7 +1413,7 @@ export function isValidSharedReportResult(p: unknown): boolean {
 /**
  * Reply to `SAVE_IMAGE` (host download bridge). On success `ok` is a boolean;
  * `error` is a free-text host-side failure (disallowed origin / withheld image
- * / over-size / fetch failure). Uniform `{ ok, error }` contract (module
+ * / disallowed `bytes` type / over-size / fetch failure / `busy`). Uniform `{ ok, error }` contract (module
  * header) — same shape as `isValidSharedReportResult`.
  */
 export function isValidSaveImageResult(p: unknown): boolean {

@@ -47,6 +47,7 @@ import {
   APP_STORAGE_MAX_ROWS,
   APP_STORAGE_MAX_VALUE_BYTES,
   BrowsingLevel,
+  SAVE_BYTES_MAX_BYTES,
   SFW_LEVELS,
   type BlockContext,
   type BlockInitPayload,
@@ -98,6 +99,13 @@ import {
   idempotencyKeyDeniedMessage,
   idempotencyKeyRefusal,
 } from './mockHostIdempotency.js';
+import {
+  SAVE_BYTES_TOO_LARGE_ERROR,
+  SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR,
+  SAVE_IMAGE_INVALID_REQUEST_ERROR,
+  classifySaveBytes,
+  forcedSaveBytesFilename,
+} from './saveBytes.js';
 import { RUN_TRAINING_ERROR_CODES } from '../hooks/useRunTraining.js';
 import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
@@ -986,6 +994,38 @@ export interface MockHostOptions {
    */
   runTrainingCapRefusal?: string;
   /**
+   * Force `SAVE_IMAGE` to reply with this `error` instead of saving — any of
+   * the host's free-text refusals (`'image url is not allowed'`,
+   * `'image is not available'`, `'busy'`, …), or
+   * `'invalid save-image request'` to model a host that PREDATES the `bytes`
+   * variant (what production replies to `saveImage({ bytes })` until the host
+   * ships it). Applies to every variant; checked after the request-shape gate,
+   * so an invalid request still gets `invalid save-image request`. Absent →
+   * the save succeeds (subject to the `bytes` classification below).
+   * Live-tunable via {@link MockHost.setScenario}; `undefined` clears it.
+   *
+   * The `bytes` variant is classified exactly as the host's contract says
+   * (civitai/civitai-app-starters#583): PNG / WebP / JPEG by magic bytes, else
+   * UTF-8 text with no NUL (JSON when it parses and `mimeType:
+   * 'application/json'` or a `.json` filename hints json), else
+   * `file type is not allowed`; over `SAVE_BYTES_MAX_BYTES`,
+   * `file exceeds the maximum save size`. 🔴 What the mock cannot model: the
+   * PAGE-ONLY refusal (it does not know which surface the block renders on),
+   * the host's concurrency cap (`busy` — force it here), and the real browser
+   * download. {@link onSaveBytes} reports what would have been saved.
+   */
+  saveImageError?: string;
+  /**
+   * Called with each `bytes` save the mock ACCEPTS — the classified `mimeType`
+   * (one of `image/png`, `image/webp`, `image/jpeg`, `application/json`,
+   * `text/plain`), the download `filename` with the extension forced from that type (an
+   * approximation of the host's sanitizer: the extension is the contract, the
+   * character-level sanitizing is not mirrored), and the `bytes` themselves.
+   * The mock cannot trigger a browser download, so this is the observable a
+   * test or harness asserts on.
+   */
+  onSaveBytes?: (file: { bytes: ArrayBuffer; mimeType: string; filename: string }) => void;
+  /**
    * Buzz pools a `SUBMIT_WORKFLOW` must REJECT when named in `body.accountType`
    * — simulates the real backend's content-rating clamp. The real host throws a
    * `BAD_REQUEST` at the currency-resolution boundary (before any spend) when a
@@ -1185,6 +1225,7 @@ export type MockHostScenarioPatch = Pick<
   | 'gatedImages'
   | 'gatedImagesError'
   | 'disallowedAccountTypes'
+  | 'saveImageError'
 >;
 
 /** Runtime Buzz-balance handle exposed on {@link MockHost.buzz}. */
@@ -1876,6 +1917,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   let trainingDatasetError: string | undefined = options.trainingDatasetError;
   let trainingQuoteTotal: number = options.trainingQuoteTotal ?? DEFAULT_TRAINING_QUOTE_TOTAL;
   let runTrainingError: string | undefined = options.runTrainingError;
+  // SAVE_IMAGE: a forced-refusal knob (see `saveImageError`).
+  let saveImageError: string | undefined = options.saveImageError;
   let runTrainingCapRefusal: string | undefined = options.runTrainingCapRefusal;
   // App-subqueue bridge data + forced free-text-error knob. `appWorkflows` is
   // MUTABLE — CANCEL_APP_WORKFLOW marks the matching row canceled in place so a
@@ -2162,6 +2205,11 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             reason?: string;
             url?: string;
             imageId?: number;
+            // SAVE_IMAGE `bytes` variant. `unknown`, not `ArrayBuffer`: the
+            // gate's job is to refuse a non-buffer a block actually sent.
+            bytes?: unknown;
+            mimeType?: unknown;
+            filename?: unknown;
             collectionId?: number;
             follow?: boolean;
             // CREATE_POST_FROM_APP. Typed `unknown` deliberately: this is an
@@ -3637,23 +3685,46 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
           }
 
           case 'SAVE_IMAGE': {
-            // The mock host can't trigger a real browser download; it just
-            // validates the request shape and acks so `useSaveImage()` resolves.
-            // Exactly one of url / imageId must be present.
-            const hasUrl = typeof typed.payload?.url === 'string' && typed.payload.url.length > 0;
-            const hasId = typeof typed.payload?.imageId === 'number';
-            if (hasUrl === hasId) {
-              dispatchToBlock({
-                type: 'SAVE_IMAGE_RESULT',
-                payload: { requestId, ok: false, error: 'INVALID_REQUEST' },
-              });
-              return;
+            // The mock host can't trigger a real browser download; it applies
+            // the host's request-shape gate and, for `bytes`, the host's
+            // CONTENT classifier (./saveBytes.ts), then acks so `useSaveImage()`
+            // resolves. Exactly one of url / imageId / bytes must be present —
+            // the same rule and string as the real host.
+            if (!isRoutableRequestId(requestId)) return;
+            const p = typed.payload ?? {};
+            const hasUrl = typeof p.url === 'string' && p.url.length > 0;
+            const hasId = typeof p.imageId === 'number';
+            const hasBytes = p.bytes !== undefined;
+            const saveReply = (r: { ok: true } | { ok: false; error: string }) =>
+              dispatchToBlock({ type: 'SAVE_IMAGE_RESULT', payload: { requestId, ...r } });
+            if ((hasUrl ? 1 : 0) + (hasId ? 1 : 0) + (hasBytes ? 1 : 0) !== 1) {
+              return saveReply({ ok: false, error: SAVE_IMAGE_INVALID_REQUEST_ERROR });
             }
-            dispatchToBlock({
-              type: 'SAVE_IMAGE_RESULT',
-              payload: { requestId, ok: true },
-            });
-            return;
+            if (hasBytes && !(p.bytes instanceof ArrayBuffer)) {
+              return saveReply({ ok: false, error: SAVE_IMAGE_INVALID_REQUEST_ERROR });
+            }
+            if (saveImageError !== undefined) return saveReply({ ok: false, error: saveImageError });
+            if (p.bytes instanceof ArrayBuffer) {
+              if (p.bytes.byteLength > SAVE_BYTES_MAX_BYTES) {
+                return saveReply({ ok: false, error: SAVE_BYTES_TOO_LARGE_ERROR });
+              }
+              const filename = typeof p.filename === 'string' ? p.filename : undefined;
+              const mimeType = classifySaveBytes(p.bytes, {
+                mimeType: typeof p.mimeType === 'string' ? p.mimeType : undefined,
+                filename,
+              });
+              if (mimeType === null) {
+                return saveReply({ ok: false, error: SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR });
+              }
+              // A COPY, as production's structured-clone `postMessage` delivers
+              // it — the block keeps (and may keep mutating) its own buffer.
+              options.onSaveBytes?.({
+                bytes: p.bytes.slice(0),
+                mimeType,
+                filename: forcedSaveBytesFilename(filename, mimeType),
+              });
+            }
+            return saveReply({ ok: true });
           }
 
           case 'SET_USER_CHECKPOINT': {
@@ -3815,6 +3886,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     if ('trainingDatasetError' in patch) trainingDatasetError = patch.trainingDatasetError;
     if (patch.trainingQuoteTotal !== undefined) trainingQuoteTotal = patch.trainingQuoteTotal;
     if ('runTrainingError' in patch) runTrainingError = patch.runTrainingError;
+    if ('saveImageError' in patch) saveImageError = patch.saveImageError;
     if ('runTrainingCapRefusal' in patch) runTrainingCapRefusal = patch.runTrainingCapRefusal;
     if (patch.appWorkflows !== undefined) {
       appWorkflows = {
