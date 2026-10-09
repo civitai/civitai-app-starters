@@ -1,5 +1,16 @@
 # @civitai/app-sdk
 
+## 0.60.0
+
+### Minor Changes
+
+- a207b1e: Catalog sync: two step types the orchestrator accepts are now in `WORKFLOW_STEP_TYPES`.
+
+  - `liveTextToSpeech`: streaming text-to-speech. Inputs mirror `textToSpeech`, limited to low-latency streaming voices; the step's output gives an input URL you post text chunks to and one continuous audio stream (`pcm` or `ogg`) for the whole session.
+  - `promptModeration`: listed under "Platform internals" — it serves Civitai's own pipelines and is not meant for third-party apps. It moderates a positive / negative prompt pair and returns a calibrated score, threshold and flag per label, along with the model and policy version used.
+
+  **Why `minor`.** `WorkflowStepType` is `keyof typeof WORKFLOW_STEP_TYPES`, so this widens an exported union. It is purely additive: nothing that compiled before stops compiling, and there is no runtime change. Both types sit in the `CatalogStepTypesWithoutAGeneratedType` ledger until `@civitai/client` republishes with templates for them.
+
 ## 0.59.0
 
 ### Minor Changes
@@ -308,15 +319,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-            🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-            stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-            the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-            same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-            1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-            code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-            gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-            `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-            single measurements on one machine.
+                🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+                stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+                the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+                same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+                1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+                code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+                gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+                `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+                single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -1224,10 +1235,10 @@ useCheckpointPicker>, UseCheckpointPicker>` row in `returnTypeLedger.ts` — whi
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                              before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                       @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                              after    @civitai/theme       0.3.1                   — 1 copy
-                                       @civitai/components  0.4.2                   — 1 copy
+                                before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                         @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                after    @civitai/theme       0.3.1                   — 1 copy
+                                         @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens

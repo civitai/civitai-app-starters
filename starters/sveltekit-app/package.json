@@ -70,7 +70,7 @@
     }
   },
   "dependencies": {
-    "@civitai/app-sdk": "^0.59.0",
+    "@civitai/app-sdk": "^0.60.0",
     "@civitai/components": "^0.9.3",
     "@civitai/theme": "^0.5.2",
     "@t3-oss/env-core": "^0.13.0",
