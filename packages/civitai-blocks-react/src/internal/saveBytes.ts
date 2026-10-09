@@ -35,6 +35,30 @@ export const SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR = 'file type is not allowed';
  */
 export const SAVE_IMAGE_INVALID_REQUEST_ERROR = 'invalid save-image request';
 
+/**
+ * Which `SAVE_IMAGE` variant a payload is, by the host's exact predicate
+ * (civitai/civitai `saveImageDownload.ts`, `resolveSaveImageRequest`). A
+ * non-null `bytes` wins the dispatch: ANY non-null `url` / `imageId` beside it
+ * (even `''` or `'5'`) is ambiguous and invalid, and `bytes` must be a
+ * non-empty `ArrayBuffer`. Without `bytes` (`null` or absent) exactly one of a
+ * non-empty string `url` / a positive-integer `imageId` must be present.
+ */
+export function saveImageRequestKind(p: {
+  url?: unknown;
+  imageId?: unknown;
+  bytes?: unknown;
+}): 'url' | 'id' | 'bytes' | 'invalid' {
+  if (p.bytes != null) {
+    if (p.url != null || p.imageId != null) return 'invalid';
+    if (!(p.bytes instanceof ArrayBuffer) || p.bytes.byteLength === 0) return 'invalid';
+    return 'bytes';
+  }
+  const hasUrl = typeof p.url === 'string' && p.url.length > 0;
+  const hasId = typeof p.imageId === 'number' && Number.isInteger(p.imageId) && p.imageId > 0;
+  if (hasUrl === hasId) return 'invalid';
+  return hasUrl ? 'url' : 'id';
+}
+
 /** The five types the host can classify a `bytes` payload as. */
 export type SaveBytesType = 'image/png' | 'image/webp' | 'image/jpeg' | 'application/json' | 'text/plain';
 
@@ -61,12 +85,14 @@ const RIFF = [0x52, 0x49, 0x46, 0x46] as const; // "RIFF"
 const WEBP = [0x57, 0x45, 0x42, 0x50] as const; // "WEBP" at offset 8
 
 /**
- * Classify a `bytes` payload by CONTENT. `filename` is the only hint: a name
- * ending `.json` (case-insensitive) chooses JSON over text/plain for bytes that
- * already parse as JSON, and it can never make a binary payload acceptable.
- * Returns `null` for anything the host refuses (`file type is not allowed`).
+ * Classify a `bytes` payload by CONTENT — the host's `classifySaveBytes`.
+ * `filename` is the only hint and must already be CLEANED
+ * ({@link sanitizeSaveBytesFilename}): a name ending `.json` (case-insensitive)
+ * chooses JSON over text/plain for bytes that already parse as JSON, and it can
+ * never make a binary payload acceptable. Returns `null` for anything the host
+ * refuses (`file type is not allowed`).
  */
-export function classifySaveBytes(bytes: ArrayBuffer, filename?: string): SaveBytesType | null {
+export function classifySaveBytes(bytes: ArrayBuffer, filename = ''): SaveBytesType | null {
   const view = new Uint8Array(bytes);
   if (startsWith(view, PNG)) return 'image/png';
   if (startsWith(view, RIFF) && startsWith(view, WEBP, 8)) return 'image/webp';
@@ -79,7 +105,7 @@ export function classifySaveBytes(bytes: ArrayBuffer, filename?: string): SaveBy
   } catch {
     return null; // not valid UTF-8 — random binary, a GIF, a zip, …
   }
-  if (typeof filename === 'string' && /\.json$/i.test(filename)) {
+  if (filename.toLowerCase().endsWith('.json')) {
     try {
       JSON.parse(text);
       return 'application/json';
@@ -90,14 +116,72 @@ export function classifySaveBytes(bytes: ArrayBuffer, filename?: string): SaveBy
   return 'text/plain';
 }
 
-/**
- * The download name the mock reports: the caller's basename with any extension
- * replaced by the one the classified type forces. ⚠️ An APPROXIMATION of the
- * host's sanitizer — it agrees on the forced extension, which is the contract;
- * the exact character-level sanitizing is the host's and is not mirrored.
+/*
+ * 🔴 The three functions below are a LINE-FOR-LINE port of the host's bytes
+ * filename rules (civitai/civitai `src/components/AppBlocks/saveImageDownload.ts`:
+ * `sanitizeDownloadFilename`, `sanitizeSaveBytesFilename`,
+ * `forceSaveBytesExtension`, `prepareSaveBytes`, as of civitai/civitai#5616 head
+ * 745624bc). Change them only together with the host, and keep
+ * test/saveBytesParity.test.ts — the host's own cases — green.
  */
-export function forcedSaveBytesFilename(filename: string | undefined, type: SaveBytesType): string {
-  const base = (filename ?? '').split(/[\\/]/).pop() ?? '';
-  const stem = base.replace(/\.[^.]*$/, '').replace(/[^\w.-]+/g, '_') || 'download';
-  return stem + SAVE_BYTES_EXTENSION[type];
+
+/** The host's shared url/imageId download-name cleaner, used here only with a string name. */
+function sanitizeDownloadFilename(name: string): string {
+  // Drop any directory component / traversal.
+  let clean = name.split(/[\\/]/).pop() ?? name;
+  // The host's query/fragment cut — a no-op for a bytes name, whose `?`/`#` are already replaced.
+  clean = clean.split('?')[0]!.split('#')[0]!;
+  // Collapse a duplicated trailing extension, preserving base dots.
+  const extMatch = clean.match(/\.([a-zA-Z0-9]{2,5})$/);
+  if (extMatch) {
+    const ext = extMatch[1]!;
+    clean = clean.replace(new RegExp(`(\\.${ext})+$`), `.${ext}`);
+  }
+  clean = clean.trim();
+  return clean.length > 0 ? clean : 'download';
+}
+
+/**
+ * Clean a block-supplied `bytes` filename BEFORE classification reads its
+ * `.json` suffix. The name is not a URL, so every `?` and `#` is REPLACED with
+ * `_` (not cut at): `issue#42.json` → `issue_42.json` (still JSON),
+ * `data.json?v=2` → `data.json_v=2` (no longer `.json`, so text). Then: keep
+ * the text after the last `/` or `\`, collapse a repeated trailing extension,
+ * trim; absent or empty → `download`.
+ */
+export function sanitizeSaveBytesFilename(name: string | undefined | null): string {
+  return sanitizeDownloadFilename((name ?? 'download').replace(/[?#]/g, '_'));
+}
+
+/**
+ * Replace the extension of a cleaned name with the classified type's own. First
+ * deletes every control and format character (`\p{Cc}` / `\p{Cf}`: bidi
+ * overrides, zero-width marks), trims, empty → `download`; then replaces a
+ * trailing `.<1–5 ASCII letters/digits>` that follows a non-empty base, or
+ * appends the extension when there is none (`.env` → `.env.txt`,
+ * `notes.markdown` → `notes.markdown.txt`).
+ */
+export function forceSaveBytesExtension(filename: string, type: SaveBytesType): string {
+  const cleaned = filename.replace(/[\p{Cc}\p{Cf}]/gu, '').trim();
+  const name = cleaned.length > 0 ? cleaned : 'download';
+  const m = name.match(/^(.+)\.([a-zA-Z0-9]{1,5})$/);
+  return `${m ? m[1] : name}${SAVE_BYTES_EXTENSION[type]}`;
+}
+
+/**
+ * Size-cap, clean the name, classify on the CLEANED name, and force the
+ * extension — the host's `prepareSaveBytes`, in its order. Every refusal is the
+ * reply's error string.
+ */
+export function prepareSaveBytes(req: {
+  bytes: ArrayBuffer;
+  filename?: string;
+}): { ok: true; type: SaveBytesType; filename: string } | { ok: false; error: string } {
+  if (req.bytes.byteLength > SAVE_BYTES_MAX_BYTES) {
+    return { ok: false, error: SAVE_BYTES_TOO_LARGE_ERROR };
+  }
+  const filename = sanitizeSaveBytesFilename(req.filename);
+  const type = classifySaveBytes(req.bytes, filename);
+  if (!type) return { ok: false, error: SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR };
+  return { ok: true, type, filename: forceSaveBytesExtension(filename, type) };
 }

@@ -22,13 +22,16 @@ import { sendTypedRequest } from '../transport/transport.js';
  *    is the sanctioned way for an in-tab tool to deliver a file.** A blob-anchor
  *    `<a download>` does nothing in a block — its sandbox lacks
  *    `allow-downloads`, and the validator refuses that token for unverified
- *    blocks — so do not build one. 🔴 **Page apps only**; a slot block's host
- *    refuses it.
+ *    blocks — so do not build one. 🔴 **Page apps only**: a slot (model) block's
+ *    host has NO `SAVE_IMAGE` handler at all, so it never replies — the call
+ *    rejects with the transport's request timeout (30 s by default), not with
+ *    an error string.
  *
  *    The host classifies by CONTENT and never trusts `filename` to make a file
  *    acceptable: PNG / WebP / JPEG by magic bytes; otherwise valid UTF-8 with
  *    no NUL byte, saved as JSON when it parses AND `filename` ends `.json`
- *    (case-insensitive), else as text/plain. Anything else — a GIF, a zip,
+ *    (case-insensitive) after the host replaces each `?` and `#` with `_` (so
+ *    `data.json?v=2` saves as text), else as text/plain. Anything else — a GIF, a zip,
  *    random binary — is refused with `file type is not allowed`, and an empty
  *    buffer with `invalid save-image request`. The saved extension is forced
  *    from the classified type, whatever `filename` says. The cap is 50 MiB of

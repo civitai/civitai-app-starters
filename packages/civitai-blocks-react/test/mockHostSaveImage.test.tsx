@@ -13,8 +13,9 @@ import type { MockHostOptions } from '../src/testing.js';
  * (civitai/civitai-app-starters#583).
  *
  * 🔴 WHAT THIS CANNOT PROVE: that the PRODUCTION host classifies the same way.
- * The mock's classifier is a copy of the contract, not of the host's code. It
- * also does not model the page-only refusal or the host's concurrency cap.
+ * The mock's rules are a hand port of the host's code, pinned by the parity
+ * table in saveBytesParity.test.ts — a later host change is invisible here. It
+ * also does not model the page-only surface or the host's concurrency cap.
  */
 
 const ORIGIN = window.location.origin;
@@ -195,6 +196,46 @@ describe('createMockHost — SAVE_IMAGE bytes variant', () => {
       { type: 'SAVE_IMAGE', payload: { bytes: buf(PNG), url: 'https://image.civitai.com/x.png' } },
       'SAVE_IMAGE_RESULT',
     )) as { ok?: boolean; error?: string };
+    expect(reply).toMatchObject({ ok: false, error: 'invalid save-image request' });
+  });
+
+  // The host's `resolveSaveImageRequest` (civitai/civitai saveImageDownload.ts):
+  // a non-null `bytes` makes ANY non-null url/imageId sibling ambiguous, even
+  // one that would be invalid on its own; a null `bytes` is absent.
+  async function sendRaw(payload: Record<string, unknown>): Promise<{ ok?: boolean; error?: string }> {
+    uninstall = createMockHost({ onSaveBytes: (f) => saved.push(f) }).install();
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+    return (await getTransport().sendRequest(
+      { type: 'SAVE_IMAGE', payload } as never,
+      'SAVE_IMAGE_RESULT',
+    )) as { ok?: boolean; error?: string };
+  }
+
+  it('refuses bytes + an EMPTY url (any non-null sibling is ambiguous, as on the host)', async () => {
+    const reply = await sendRaw({ bytes: buf(PNG), url: '' });
+    expect(reply).toMatchObject({ ok: false, error: 'invalid save-image request' });
+    expect(saved).toHaveLength(0);
+  });
+
+  it('refuses bytes + a STRING imageId, as the host does', async () => {
+    const reply = await sendRaw({ bytes: buf(PNG), imageId: '5' });
+    expect(reply).toMatchObject({ ok: false, error: 'invalid save-image request' });
+    expect(saved).toHaveLength(0);
+  });
+
+  it('treats `bytes: null` as absent — a url beside it takes the url path', async () => {
+    const reply = await sendRaw({ bytes: null, url: 'https://image.civitai.com/x/original.jpeg' });
+    expect(reply).toMatchObject({ ok: true });
+    expect(saved).toHaveLength(0); // the url path, not a bytes save
+  });
+
+  it.each([
+    ['a zero imageId', { imageId: 0 }],
+    ['a fractional imageId', { imageId: 1.5 }],
+    ['url + imageId', { url: 'https://image.civitai.com/x.jpeg', imageId: 5 }],
+    ['nothing', {}],
+  ])('refuses %s without bytes, as the host does', async (_n, payload) => {
+    const reply = await sendRaw(payload);
     expect(reply).toMatchObject({ ok: false, error: 'invalid save-image request' });
   });
 

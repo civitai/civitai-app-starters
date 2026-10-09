@@ -1225,7 +1225,8 @@ Pass exactly ONE of three inputs, each gated differently by the host:
   image or a JSON sidecar. 🔴 **Page apps only.** The host classifies it by
   CONTENT. It accepts PNG, WebP and JPEG by magic bytes. Anything else must be
   valid UTF-8 with no NUL byte: it is saved as JSON when it parses and
-  `filename` ends `.json` (any case), and as plain text otherwise. A GIF, a zip
+  `filename` ends `.json` (any case) once the host has replaced each `?` and
+  `#` with `_`, and as plain text otherwise. A GIF, a zip
   or other binary is refused with `file type is not allowed`. The host forces
   the extension from the classified type. The cap is 50 MiB, and the hook
   refuses a larger buffer before sending it: `file exceeds the maximum save

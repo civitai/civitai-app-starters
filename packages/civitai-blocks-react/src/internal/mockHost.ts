@@ -99,12 +99,9 @@ import {
   idempotencyKeyRefusal,
 } from './mockHostIdempotency.js';
 import {
-  SAVE_BYTES_MAX_BYTES,
-  SAVE_BYTES_TOO_LARGE_ERROR,
-  SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR,
   SAVE_IMAGE_INVALID_REQUEST_ERROR,
-  classifySaveBytes,
-  forcedSaveBytesFilename,
+  prepareSaveBytes,
+  saveImageRequestKind,
 } from './saveBytes.js';
 import { RUN_TRAINING_ERROR_CODES } from '../hooks/useRunTraining.js';
 import { hostContextWithTheme } from '../transport/transport.js';
@@ -1006,21 +1003,24 @@ export interface MockHostOptions {
    *
    * The `bytes` variant is classified exactly as the host's contract says
    * (civitai/civitai-app-starters#583): PNG / WebP / JPEG by magic bytes, else
-   * UTF-8 text with no NUL (JSON when it parses and `filename` ends `.json`,
-   * case-insensitive), else `file type is not allowed`; an empty buffer,
-   * `invalid save-image request`; over `SAVE_BYTES_MAX_BYTES`,
-   * `file exceeds the maximum save size`. 🔴 What the mock cannot model: the
-   * PAGE-ONLY refusal (it does not know which surface the block renders on),
-   * the host's concurrency cap (`busy` — force it here), and the real browser
+   * UTF-8 text with no NUL (JSON when it parses and the CLEANED `filename` —
+   * `?`/`#` replaced with `_`, path dropped — ends `.json`, case-insensitive),
+   * else `file type is not allowed`; an empty buffer,
+   * `invalid save-image request`; over the host's byte cap,
+   * `file exceeds the maximum save size`. 🔴 What the mock cannot model: that
+   * the variant is PAGE-ONLY (it does not know which surface the block renders
+   * on; a slot host has no `SAVE_IMAGE` handler and never replies),
+   * the host's concurrency and per-window rate limits (`busy` — force it
+   * here), and the real browser
    * download. {@link onSaveBytes} reports what would have been saved.
    */
   saveImageError?: string;
   /**
    * Called with each `bytes` save the mock ACCEPTS — the classified `mimeType`
    * (one of `image/png`, `image/webp`, `image/jpeg`, `application/json`,
-   * `text/plain`), the download `filename` with the extension forced from that type (an
-   * approximation of the host's sanitizer: the extension is the contract, the
-   * character-level sanitizing is not mirrored), and the `bytes` themselves.
+   * `text/plain`), the download `filename` exactly as the host cleans it (the
+   * same character rules, then the extension forced from that type), and the
+   * `bytes` themselves.
    * The mock cannot trigger a browser download, so this is the observable a
    * test or harness asserts on.
    */
@@ -3691,35 +3691,30 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // the same rule and string as the real host.
             if (!isRoutableRequestId(requestId)) return;
             const p = typed.payload ?? {};
-            const hasUrl = typeof p.url === 'string' && p.url.length > 0;
-            const hasId = typeof p.imageId === 'number';
-            const hasBytes = p.bytes !== undefined;
             const saveReply = (r: { ok: true } | { ok: false; error: string }) =>
               dispatchToBlock({ type: 'SAVE_IMAGE_RESULT', payload: { requestId, ...r } });
-            if ((hasUrl ? 1 : 0) + (hasId ? 1 : 0) + (hasBytes ? 1 : 0) !== 1) {
-              return saveReply({ ok: false, error: SAVE_IMAGE_INVALID_REQUEST_ERROR });
-            }
-            // A `bytes` must be a NON-EMPTY ArrayBuffer — the host refuses an
-            // empty one as a malformed request, not as an untyped file.
-            if (hasBytes && !(p.bytes instanceof ArrayBuffer && p.bytes.byteLength > 0)) {
+            // The host's exact shape predicate (./saveBytes.ts) — including that
+            // a non-empty-ArrayBuffer `bytes` is required, and that ANY non-null
+            // url/imageId beside a `bytes` is ambiguous.
+            const kind = saveImageRequestKind(p);
+            if (kind === 'invalid') {
               return saveReply({ ok: false, error: SAVE_IMAGE_INVALID_REQUEST_ERROR });
             }
             if (saveImageError !== undefined) return saveReply({ ok: false, error: saveImageError });
-            if (p.bytes instanceof ArrayBuffer) {
-              if (p.bytes.byteLength > SAVE_BYTES_MAX_BYTES) {
-                return saveReply({ ok: false, error: SAVE_BYTES_TOO_LARGE_ERROR });
-              }
-              const filename = typeof p.filename === 'string' ? p.filename : undefined;
-              const mimeType = classifySaveBytes(p.bytes, filename);
-              if (mimeType === null) {
-                return saveReply({ ok: false, error: SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR });
-              }
+            if (kind === 'bytes' && p.bytes instanceof ArrayBuffer) {
+              // The host's `prepareSaveBytes` (./saveBytes.ts): size cap, clean
+              // the name, classify on the CLEANED name, force the extension.
+              const prepared = prepareSaveBytes({
+                bytes: p.bytes,
+                filename: typeof p.filename === 'string' ? p.filename : undefined,
+              });
+              if (!prepared.ok) return saveReply(prepared);
               // A COPY, as production's structured-clone `postMessage` delivers
               // it — the block keeps (and may keep mutating) its own buffer.
               options.onSaveBytes?.({
                 bytes: p.bytes.slice(0),
-                mimeType,
-                filename: forcedSaveBytesFilename(filename, mimeType),
+                mimeType: prepared.type,
+                filename: prepared.filename,
               });
             }
             return saveReply({ ok: true });
