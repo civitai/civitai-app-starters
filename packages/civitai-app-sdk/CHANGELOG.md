@@ -1,5 +1,19 @@
 # @civitai/app-sdk
 
+## 0.61.0
+
+### Minor Changes
+
+- 529e5b2: **`useSaveImage()` can save a file the block produced in the tab (#583).** `saveImage({ bytes, filename? })` hands an `ArrayBuffer` to the host, which downloads it from its unsandboxed top frame. This is the sanctioned way for an in-tab tool, such as a metadata healer or an exporter, to deliver a file. A blob-anchor `<a download>` does nothing in a block, because its sandbox lacks `allow-downloads` and the validator refuses that token for unverified blocks.
+
+  - **Page apps only.**
+  - **The host classifies by content.** PNG, WebP and JPEG are recognised by magic bytes. Anything else must be valid UTF-8 with no NUL byte: it is saved as JSON when it parses and `filename` ends `.json` (case-insensitive) after the host replaces each `?` and `#` with `_`, and as text/plain otherwise. Everything else is refused with `file type is not allowed`. An empty buffer is refused with `invalid save-image request`. The saved extension is forced from the classified type.
+  - **The cap is 50 MiB.** The hook refuses a larger buffer before sending it, with the host's error `file exceeds the maximum save size`. That is the hook's only client-side refusal: every other input is forwarded and judged by the host, which replies `invalid save-image request` to a request that is not exactly one of `url` / `imageId` / `bytes`, or whose `bytes` is not a non-empty `ArrayBuffer` (pass `await blob.arrayBuffer()`, not the `Blob` or a `Uint8Array`). The buffer is copied across `postMessage`, never transferred.
+  - 🔴 **A host that predates this variant replies `invalid save-image request`.** Until the civitai.com host ships it, `saveImage({ bytes })` rejects with that string in production.
+  - `@civitai/app-sdk`: the `SAVE_IMAGE` payload type gains `bytes?: ArrayBuffer`.
+  - **Mock host (`createMockHost` / `Harness`, `@civitai/blocks-react/testing`):** it applies the same request-shape gate and content classification to `bytes`, including the empty-buffer refusal. It also gains a `saveImageError` knob (forced refusal; live-tunable via `setScenario`, and `undefined` clears it) and an `onSaveBytes` callback reporting what would have been downloaded (the classified type, the filename with its forced extension, and a copy of the bytes). Its invalid-request error is now the host's string `invalid save-image request`, where it used to be `INVALID_REQUEST`. A `SAVE_IMAGE` without a routable `requestId` is now dropped, as its sibling handlers already did. The mock does not model the page-only refusal or the host's `busy` concurrency cap; force `busy` with `saveImageError`.
+  - `dev:live` still refuses every `SAVE_IMAGE`, the `bytes` variant included.
+
 ## 0.60.0
 
 ### Minor Changes
@@ -319,15 +333,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-                🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-                stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-                the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-                same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-                1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-                code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-                gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-                `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-                single measurements on one machine.
+                    🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+                    stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+                    the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+                    same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+                    1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+                    code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+                    gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+                    `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+                    single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -1235,10 +1249,10 @@ useCheckpointPicker>, UseCheckpointPicker>` row in `returnTypeLedger.ts` — whi
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                         @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                after    @civitai/theme       0.3.1                   — 1 copy
-                                         @civitai/components  0.4.2                   — 1 copy
+                                  before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                           @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                  after    @civitai/theme       0.3.1                   — 1 copy
+                                           @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
