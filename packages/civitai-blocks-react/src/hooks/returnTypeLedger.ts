@@ -48,6 +48,7 @@
 import type {
   useAppStorage,
   useAppWorkflows,
+  useBatchEstimate,
   useBlockAnalytics,
   useBlockBreakpoint,
   useBlockContext,
@@ -91,6 +92,7 @@ import type {
   useWildcardPack,
   UseAppStorage,
   UseAppWorkflows,
+  UseBatchEstimate,
   UseBlockAnalytics,
   UseBlockBreakpoint,
   UseBlockContext,
@@ -142,6 +144,7 @@ type Assert<T extends true> = T;
 
 type _useAppStorage = Assert<Exact<ReturnType<typeof useAppStorage>, UseAppStorage>>;
 type _useAppWorkflows = Assert<Exact<ReturnType<typeof useAppWorkflows>, UseAppWorkflows>>;
+type _useBatchEstimate = Assert<Exact<ReturnType<typeof useBatchEstimate>, UseBatchEstimate>>;
 type _useBlockAnalytics = Assert<Exact<ReturnType<typeof useBlockAnalytics>, UseBlockAnalytics>>;
 type _useBlockBreakpoint = Assert<Exact<ReturnType<typeof useBlockBreakpoint>, UseBlockBreakpoint>>;
 type _useBlockContext = Assert<Exact<ReturnType<typeof useBlockContext>, UseBlockContext>>;

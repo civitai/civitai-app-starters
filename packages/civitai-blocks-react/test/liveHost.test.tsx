@@ -402,6 +402,53 @@ describe('createLiveHost — workflow forwarding', () => {
     expect(JSON.parse(String(init.body))).toEqual({ json: { blockToken: TOKEN, body: BODY } });
   });
 
+  it('ESTIMATE_WORKFLOW_BATCH → blocks.estimateWorkflowBatch → ESTIMATE_BATCH_RESULT', async () => {
+    const snapshots = [
+      { workflowId: 'wf_estimate', status: 'pending', cost: { total: 12 } },
+      { workflowId: 'failed', status: 'failed', error: 'modelId mismatch with token' },
+    ];
+    const aggregate = { total: 12, pricedCells: 1, cellCount: 2 };
+    installWithFetch(async (url) => {
+      if (url.endsWith('blocks.estimateWorkflowBatch')) {
+        return trpcData({ snapshots, aggregate });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('ESTIMATE_WORKFLOW_BATCH', { requestId: 'r-batch', bodies: [BODY, BODY] });
+    const payload = await waitForMessage(inbound, 'ESTIMATE_BATCH_RESULT');
+    expect(payload).toEqual({ requestId: 'r-batch', snapshots, aggregate });
+
+    const call = fetchMock.mock.calls.find((c) =>
+      String(c[0]).endsWith('blocks.estimateWorkflowBatch'),
+    )!;
+    const init = call[1] as RequestInit;
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({
+      json: { blockToken: TOKEN, bodies: [BODY, BODY] },
+    });
+    // Estimate only: no other procedure was called.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('ESTIMATE_WORKFLOW_BATCH: a whole-call server refusal comes back as `error`', async () => {
+    installWithFetch(async (url) => {
+      if (url.endsWith('blocks.estimateWorkflowBatch')) {
+        return trpcErr('Rate limit exceeded, please retry shortly.', 429);
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('ESTIMATE_WORKFLOW_BATCH', { requestId: 'r-batch-429', bodies: [BODY] });
+    const payload = await waitForMessage(inbound, 'ESTIMATE_BATCH_RESULT');
+    expect(payload).toEqual({
+      requestId: 'r-batch-429',
+      error: 'Rate limit exceeded, please retry shortly.',
+    });
+  });
+
   it('SUBMIT_WORKFLOW → blocks.submitWorkflow → WORKFLOW_SUBMITTED', async () => {
     installWithFetch(async (url) => {
       if (url.endsWith('blocks.submitWorkflow')) {

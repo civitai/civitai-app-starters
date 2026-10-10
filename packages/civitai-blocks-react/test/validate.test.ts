@@ -12,6 +12,7 @@ import {
   isValidBuzzBalanceResult,
   isValidConsentUnavailable,
   isValidBuzzPurchaseResult,
+  isValidEstimateBatchResult,
   isValidCheckpointPickerResult,
   isValidImageUploadResult,
   isValidResourcePickerResult,
@@ -251,6 +252,50 @@ describe('isValidWorkflowSnapshot', () => {
     ['publishedModel.modelVersionId missing', { publishedModel: { modelId: 1, published: true } }],
   ])('rejects %s', (_, extra) => {
     expect(isValidWorkflowSnapshot({ ...base, ...extra })).toBe(false);
+  });
+});
+
+describe('isValidEstimateBatchResult', () => {
+  const cell = { workflowId: 'wf_estimate', status: 'pending', cost: { total: 12 } };
+  const aggregate = { total: 12, pricedCells: 1, cellCount: 1 };
+
+  it('accepts snapshots + aggregate', () => {
+    expect(isValidEstimateBatchResult({ requestId: 'r', snapshots: [cell], aggregate })).toBe(true);
+  });
+
+  it("accepts a bare `error` — the host's generic `unsupported on this host` reply must REACH the hook", () => {
+    expect(
+      isValidEstimateBatchResult({ requestId: 'r', error: 'unsupported on this host' }),
+    ).toBe(true);
+    // A non-string error is not an error reply.
+    expect(isValidEstimateBatchResult({ requestId: 'r', error: 7 })).toBe(false);
+  });
+
+  it('accepts a failed cell beside a priced one', () => {
+    const failed = { workflowId: 'failed', status: 'failed', error: 'x' };
+    expect(
+      isValidEstimateBatchResult({
+        requestId: 'r',
+        snapshots: [failed, cell],
+        aggregate: { total: 12, pricedCells: 1, cellCount: 2 },
+      }),
+    ).toBe(true);
+  });
+
+  it('rejects a reply with one malformed cell, a missing aggregate, or a non-numeric total', () => {
+    const empty = { workflowId: '', status: 'pending' };
+    expect(isValidEstimateBatchResult({ requestId: 'r', snapshots: [cell, empty], aggregate })).toBe(
+      false,
+    );
+    expect(isValidEstimateBatchResult({ requestId: 'r', snapshots: [cell] })).toBe(false);
+    expect(
+      isValidEstimateBatchResult({
+        requestId: 'r',
+        snapshots: [cell],
+        aggregate: { total: '12', pricedCells: 1, cellCount: 1 },
+      }),
+    ).toBe(false);
+    expect(isValidEstimateBatchResult({ requestId: 'r' })).toBe(false);
   });
 });
 
@@ -1203,6 +1248,7 @@ describe('payloadValidatorFor', () => {
     // job. See `iframe-transport.test.ts` for the behavioural half (a
     // well-formed reply RESOLVES, a malformed one is DROPPED).
     expect(payloadValidatorFor('CREATE_POST_RESULT')).toBe(isValidCreatePostResult);
+    expect(payloadValidatorFor('ESTIMATE_BATCH_RESULT')).toBe(isValidEstimateBatchResult);
     // The 15 reply types added in the storage/shared PR (previously `default: null`).
     for (const t of [
       'APP_STORAGE_GET_RESULT',

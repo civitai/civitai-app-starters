@@ -61,6 +61,19 @@ export type {
   WatchWorkflowOptions,
   WorkflowSubmitErrorCode,
 } from './hooks/useBuzzWorkflow.js';
+export {
+  BATCH_ESTIMATE_MAX_CELLS,
+  BatchEstimateError,
+  useBatchEstimate,
+} from './hooks/useBatchEstimate.js';
+export type {
+  BatchEstimateCell,
+  BatchEstimateErrorCode,
+  BatchEstimateResult,
+  BlockEstimateBatchAggregate,
+  EstimateBatchOptions,
+  UseBatchEstimate,
+} from './hooks/useBatchEstimate.js';
 export { useEntitlements } from './hooks/useEntitlements.js';
 export type { UseEntitlements, Entitlement } from './hooks/useEntitlements.js';
 export { useGoodPurchase, GoodPurchaseRefusal } from './hooks/useGoodPurchase.js';

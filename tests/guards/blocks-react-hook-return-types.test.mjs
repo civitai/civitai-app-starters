@@ -60,6 +60,7 @@ const HOOKS = join(SRC, 'hooks');
 const HOOK_FILES = [
   'useAppStorage',
   'useAppWorkflows',
+  'useBatchEstimate',
   'useBlockAnalytics',
   'useBlockBreakpoint',
   'useBlockContext',

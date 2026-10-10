@@ -308,6 +308,34 @@ export interface MockGenerationScenario {
    */
   failEstimateMessage?: string;
   /**
+   * How the mock answers `ESTIMATE_WORKFLOW_BATCH` (`useBatchEstimate()`), so a
+   * block can exercise its per-cell fallback locally.
+   *
+   * - `'supported'` (default) — prices each cell exactly as an
+   *   `ESTIMATE_WORKFLOW` of that body would be priced (`costPerGen`,
+   *   `failEstimate` and the training rules all apply per cell) and replies with
+   *   the snapshots in order plus the host's aggregate.
+   * - `'unsupported'` — replies `{ error: 'unsupported on this host' }`, the
+   *   host's generic answer for a message it has no handler for.
+   *   `estimateBatch()` rejects with `BatchEstimateError` code `'unsupported'`.
+   * - `'silent'` — never replies, which is what a host that PREDATES the message
+   *   does. `estimateBatch()` rejects with code `'timeout'` once its wait ends;
+   *   pass a short `timeoutMs` to it in a test.
+   *
+   * Live-tunable via `setScenario({ generation: { batchEstimate } })`.
+   */
+  batchEstimate?: 'supported' | 'unsupported' | 'silent';
+  /**
+   * Indices of batch cells the mock answers as NOT PRICED IN TIME — the snapshot
+   * the host returns for a cell when the call's time budget runs out before that
+   * cell priced: `{ workflowId:'failed', status:'failed', error:'estimate timed out' }`.
+   * The other cells price normally and the call still resolves, so this tests a
+   * PARTIAL grid: the cell is `ok: false` with `WorkflowEstimateError` code
+   * `'failed'` and `snapshot.error === 'estimate timed out'`. Applies only with
+   * `batchEstimate: 'supported'`. Default: unset (no cell times out).
+   */
+  batchEstimateTimedOutCells?: number[];
+  /**
    * Force every SUBMIT to come back as a caught server EXCEPTION — the host's
    * real `failureSnapshot(err)` shape: `{ workflowId:'failed', status:'failed',
    * error }` with **no `cost`**. `useBuzzWorkflow().submit()` rejects with a
@@ -491,6 +519,21 @@ const PRE_CLAIM_RUN_TRAINING_ERRORS: ReadonlySet<string> = new Set(
   RUN_TRAINING_ERROR_CODES.filter((c) => c !== 'submission-unconfirmed'),
 );
 
+/**
+ * The host's cell cap for one `ESTIMATE_WORKFLOW_BATCH` (civitai/civitai
+ * `BLOCK_ESTIMATE_BATCH_MAX_CELLS`). The hook's `BATCH_ESTIMATE_MAX_CELLS` is the
+ * same number; the mock keeps its own copy so it refuses exactly as the host does
+ * when a block bypasses the hook.
+ */
+const MOCK_ESTIMATE_BATCH_MAX_CELLS = 16;
+/** The server's per-cell refusal of a `kind: 'training'` body inside a batch. */
+const MOCK_TRAINING_IN_BATCH_ERROR =
+  'a training estimate cannot be part of a batch — estimate it on its own';
+/**
+ * The host's per-cell error when a batch call's time budget ran out before that
+ * cell priced (civitai/civitai `BLOCK_ESTIMATE_BATCH_TIMEOUT_ERROR`).
+ */
+const MOCK_ESTIMATE_BATCH_TIMEOUT_ERROR = 'estimate timed out';
 /** Default quote total for a `kind: 'training'` estimate when {@link MockHostOptions.trainingQuoteTotal} is unset. */
 const DEFAULT_TRAINING_QUOTE_TOTAL = 500;
 /** The real quote lifetime (`BLOCK_TRAINING_QUOTE_TTL_SECONDS`, 15 min). */
@@ -2330,6 +2373,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // PREPARE_TRAINING_DATASET. `unknown` for the same reason as
             // `sources`: the gate's job is to refuse what a block actually sent.
             items?: unknown;
+            // ESTIMATE_WORKFLOW_BATCH. `unknown`: the list shape is what is checked.
+            bodies?: unknown;
           };
         };
 
@@ -2398,6 +2443,80 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             return;
           }
         }
+
+        /**
+         * The snapshot ONE estimate of `body` replies with. Shared by
+         * ESTIMATE_WORKFLOW and ESTIMATE_WORKFLOW_BATCH so a batch cell is priced
+         * exactly as a single estimate of the same body.
+         */
+        const estimateSnapshotFor = (body: WorkflowBody): BlockWorkflowSnapshot => {
+          // UNUSABLE-ESTIMATE simulation (`generation.failEstimate`). Reproduces
+          // the two real producers byte-for-byte so a block's `catch` around
+          // `estimate()` is exercisable locally — see the knob's docs for why
+          // that was previously impossible (civitai/civitai#4159).
+          if (gen.failEstimate === 'failed') {
+            // Mirrors the host's `failureSnapshot(err)` exactly: the 'failed'
+            // sentinel id (a real one would be empty and get dropped by the
+            // inbound validator), no `cost`.
+            return {
+              workflowId: 'failed',
+              status: 'failed',
+              error: gen.failEstimateMessage ?? 'mock: estimate failed',
+            };
+          }
+          if (gen.failEstimate === 'no-cost') {
+            // A SUCCESSFUL snapshot that simply has no price — no `error` to
+            // explain it, which is what makes this producer the harder of the
+            // two to diagnose from the block side.
+            return { workflowId: 'wf_estimate', status: 'pending' };
+          }
+          // TRAINING ESTIMATE — KIND-FAITHFUL, the one exception to the
+          // kind-agnostic rule above, because the real arm is not a priced
+          // pass-through: it needs the spend scope, names a dataset the server
+          // must hold, refuses a price above the per-run ceiling, and STORES a
+          // quote the run is later checked against. Each refusal is the
+          // server's message in the host's `failureSnapshot` shape.
+          if (body.kind === 'training') {
+            const refuse = (error: string): BlockWorkflowSnapshot => ({
+              workflowId: 'failed',
+              status: 'failed',
+              error,
+            });
+            if (!consentGranted) return refuse(MOCK_TRAINING_SCOPE_ERROR);
+            const imageCount = trainingDatasets.get(body.datasetId);
+            if (imageCount === undefined) return refuse(MOCK_TRAINING_DATASET_GONE_ERROR);
+            const total = trainingQuoteTotal;
+            if (total > MOCK_TRAINING_BOUNDS.maxBuzzPerRun) {
+              return refuse(
+                `this training run costs ${total} Buzz, above the per-run limit of ${MOCK_TRAINING_BOUNDS.maxBuzzPerRun} for apps`,
+              );
+            }
+            const quoteId = trainingHandle('tq_');
+            const expiresAtMs = Date.now() + TRAINING_QUOTE_TTL_MS;
+            trainingQuotes.set(quoteId, {
+              datasetId: body.datasetId,
+              total,
+              expiresAtMs,
+              spent: false,
+            });
+            return {
+              workflowId: 'wf_estimate',
+              status: 'pending',
+              cost: { total },
+              trainingQuote: {
+                quoteId,
+                total,
+                imageCount,
+                expiresAt: new Date(expiresAtMs).toISOString(),
+              },
+            };
+          }
+          return {
+            workflowId: 'wf_estimate',
+            status: 'pending',
+            cost: { total: costFor(body) },
+          };
+        };
 
         switch (typed.type) {
           case 'REQUEST_TOKEN':
@@ -2509,95 +2628,84 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             // a registry (that's server-only); the mock accepts any id, fail-open. The
             // sentinel `workflowId` is non-empty so the snapshot survives the
             // SDK inbound validator (which drops empty-workflowId snapshots).
+            // The pricing itself is `estimateSnapshotFor`, shared with the batch.
             const body = typed.payload?.body ?? ({} as WorkflowBody);
-            // UNUSABLE-ESTIMATE simulation (`generation.failEstimate`). Reproduces
-            // the two real producers byte-for-byte so a block's `catch` around
-            // `estimate()` is exercisable locally — see the knob's docs for why
-            // that was previously impossible (civitai/civitai#4159).
-            if (gen.failEstimate === 'failed') {
-              dispatchToBlock({
-                type: 'ESTIMATE_RESULT',
-                payload: {
-                  requestId,
-                  // Mirrors the host's `failureSnapshot(err)` exactly: the
-                  // 'failed' sentinel id (a real one would be empty and get
-                  // dropped by the inbound validator), no `cost`.
-                  snapshot: {
-                    workflowId: 'failed',
-                    status: 'failed',
-                    error: gen.failEstimateMessage ?? 'mock: estimate failed',
-                  },
-                },
-              });
-              return;
-            }
-            if (gen.failEstimate === 'no-cost') {
-              dispatchToBlock({
-                type: 'ESTIMATE_RESULT',
-                // A SUCCESSFUL snapshot that simply has no price — no `error` to
-                // explain it, which is what makes this producer the harder of the
-                // two to diagnose from the block side.
-                payload: { requestId, snapshot: { workflowId: 'wf_estimate', status: 'pending' } },
-              });
-              return;
-            }
-            // TRAINING ESTIMATE — KIND-FAITHFUL, the one exception to the
-            // kind-agnostic rule above, because the real arm is not a priced
-            // pass-through: it needs the spend scope, names a dataset the server
-            // must hold, refuses a price above the per-run ceiling, and STORES a
-            // quote the run is later checked against. Each refusal is the
-            // server's message in the host's `failureSnapshot` shape.
-            if (body.kind === 'training') {
-              const refuse = (error: string) =>
-                dispatchToBlock({
-                  type: 'ESTIMATE_RESULT',
-                  payload: { requestId, snapshot: { workflowId: 'failed', status: 'failed', error } },
-                });
-              if (!consentGranted) return refuse(MOCK_TRAINING_SCOPE_ERROR);
-              const imageCount = trainingDatasets.get(body.datasetId);
-              if (imageCount === undefined) return refuse(MOCK_TRAINING_DATASET_GONE_ERROR);
-              const total = trainingQuoteTotal;
-              if (total > MOCK_TRAINING_BOUNDS.maxBuzzPerRun) {
-                return refuse(
-                  `this training run costs ${total} Buzz, above the per-run limit of ${MOCK_TRAINING_BOUNDS.maxBuzzPerRun} for apps`,
-                );
-              }
-              const quoteId = trainingHandle('tq_');
-              const expiresAtMs = Date.now() + TRAINING_QUOTE_TTL_MS;
-              trainingQuotes.set(quoteId, {
-                datasetId: body.datasetId,
-                total,
-                expiresAtMs,
-                spent: false,
-              });
-              dispatchToBlock({
-                type: 'ESTIMATE_RESULT',
-                payload: {
-                  requestId,
-                  snapshot: {
-                    workflowId: 'wf_estimate',
-                    status: 'pending',
-                    cost: { total },
-                    trainingQuote: {
-                      quoteId,
-                      total,
-                      imageCount,
-                      expiresAt: new Date(expiresAtMs).toISOString(),
-                    },
-                  },
-                },
-              });
-              return;
-            }
             dispatchToBlock({
               type: 'ESTIMATE_RESULT',
+              payload: { requestId, snapshot: estimateSnapshotFor(body) },
+            });
+            return;
+          }
+
+          case 'ESTIMATE_WORKFLOW_BATCH': {
+            // The batch twin of ESTIMATE_WORKFLOW, in the host's order: the
+            // request shape, then the list, then each cell through
+            // `estimateSnapshotFor` — the function ESTIMATE_WORKFLOW prices with,
+            // so a cell is priced exactly as one estimate of that body would be.
+            // Nothing is submitted and no Buzz moves.
+            if (!isRoutableRequestId(requestId)) return;
+            const mode = gen.batchEstimate ?? 'supported';
+            // A host that predates the message sends nothing at all.
+            if (mode === 'silent') return;
+            if (mode === 'unsupported') {
+              dispatchToBlock({
+                type: 'ESTIMATE_BATCH_RESULT',
+                payload: { requestId, error: 'unsupported on this host' },
+              });
+              return;
+            }
+            const bodies: unknown = typed.payload?.bodies;
+            if (!Array.isArray(bodies) || bodies.length === 0) {
+              dispatchToBlock({
+                type: 'ESTIMATE_BATCH_RESULT',
+                payload: { requestId, error: 'invalid estimate batch' },
+              });
+              return;
+            }
+            if (bodies.length > MOCK_ESTIMATE_BATCH_MAX_CELLS) {
+              dispatchToBlock({
+                type: 'ESTIMATE_BATCH_RESULT',
+                payload: { requestId, error: 'estimate batch too large' },
+              });
+              return;
+            }
+            const snapshots = (bodies as WorkflowBody[]).map((cell, index): BlockWorkflowSnapshot => {
+              // The host's snapshot for a cell its call budget ran out on.
+              if (gen.batchEstimateTimedOutCells?.includes(index)) {
+                return {
+                  workflowId: 'failed',
+                  status: 'failed',
+                  error: MOCK_ESTIMATE_BATCH_TIMEOUT_ERROR,
+                };
+              }
+              // The server refuses a training cell in a batch: a training
+              // estimate stores the quote the viewer later confirms, so it is
+              // estimated on its own. Refused BEFORE `estimateSnapshotFor`, which
+              // would store one.
+              if (cell?.kind === 'training') {
+                return {
+                  workflowId: 'failed',
+                  status: 'failed',
+                  error: MOCK_TRAINING_IN_BATCH_ERROR,
+                };
+              }
+              return estimateSnapshotFor(cell ?? ({} as WorkflowBody));
+            });
+            // The server's aggregate rule: the cells that priced, i.e. not
+            // `'failed'` and carrying a numeric `cost.total`.
+            let total = 0;
+            let pricedCells = 0;
+            for (const snapshot of snapshots) {
+              if (snapshot.status === 'failed' || typeof snapshot.cost?.total !== 'number') continue;
+              total += snapshot.cost.total;
+              pricedCells += 1;
+            }
+            dispatchToBlock({
+              type: 'ESTIMATE_BATCH_RESULT',
               payload: {
                 requestId,
-                snapshot: {
-                  workflowId: 'wf_estimate',
-                  status: 'pending',
-                  cost: { total: costFor(body) },
-                },
+                snapshots,
+                aggregate: { total, pricedCells, cellCount: snapshots.length },
               },
             });
             return;

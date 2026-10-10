@@ -467,6 +467,160 @@ if (priced) {
 > your installed version predates 0.5.0, do the client-side half and add the
 > `cancel(...)` call after upgrading.
 
+### `useBatchEstimate()`
+
+Price a grid of generations in one request. `estimateBatch(bodies)` takes a list
+of workflow bodies, each exactly what `useBuzzWorkflow().estimate()` takes, and
+resolves with one cell per body, in order, plus the run total. Returns
+`{ estimateBatch, pending, result, error }`.
+
+- **One request against the estimate allowance** however many cells it carries.
+  On a page app that allowance is shared by every viewer of the app and by the
+  host's other reads for it, so a 16-cell grid priced cell by cell used 16 of it.
+- **At most 16 bodies per call** (`BATCH_ESTIMATE_MAX_CELLS`). Price a larger grid
+  in several calls.
+- **Cells are metered too**, against an allowance of their own that is shared
+  the same way (on a page app, by every viewer of the app), so a batch is not a
+  way around the estimate allowance. A call over either limit is refused whole:
+  it rejects with `BatchEstimateError` code `'failed'`. Retry in a few seconds.
+- **Every rule of a single estimate applies to each cell.** A cell that one
+  `estimate()` would reject comes back as `ok: false` with the same
+  `WorkflowEstimateError`, and the other cells still price.
+- **`kind: 'training'` bodies are refused per cell.** Estimate a training run
+  with `useBuzzWorkflow().estimate()`.
+- **Estimate only.** Nothing is submitted and no Buzz is held or spent. There is
+  no batch submit, watch or cancel. Submit each cell with
+  `useBuzzWorkflow().submit()`, which asks the viewer and checks the budget per
+  cell. `aggregate.total` is a quote, not a lock: each cell is priced again when
+  it is submitted.
+
+`aggregate.total` sums the cells that priced. It covers the whole grid only when
+`aggregate.pricedCells === aggregate.cellCount`; otherwise show it as a partial
+total.
+
+**The host bounds the time one call takes.** If its budget runs out, the call
+still resolves: the cells that priced are returned, and every other cell is
+`ok: false` with `snapshot.error === 'estimate timed out'`. Show those cells as
+unavailable and let the viewer retry later.
+
+`estimateBatch` rejects with `BatchEstimateError` only when the whole call
+failed. Branch on `err.code`:
+
+| `code` | Meaning | What to do |
+|---|---|---|
+| `'unsupported'` | The host answered `unsupported on this host`. | Price each cell with `estimate()`. |
+| `'timeout'` | No reply in time. A host that supports the batch replies within its own time budget, well inside the default wait, so this usually means a slow host, not an old one. | Show the estimate as unavailable and retry later. **Do not** fall back to one `estimate()` per cell: that sends up to 16 more estimates at a host that is already slow. |
+| `'invalid-request'` | Empty list, or more than 16 bodies. Refused before sending. | Fix the list. |
+| `'failed'` | Any other whole-call refusal: the scope, a rate limit, review preview. The reason is on `err.hostError`; log it, don't render it. | Show your own copy and retry later. |
+
+A 2 × 2 grid (two prompts × two checkpoints), falling back to per-cell estimates
+only on a host that answers `'unsupported'`:
+
+```tsx
+import { useState } from 'react';
+import type { WorkflowBody } from '@civitai/app-sdk/blocks';
+import {
+  BatchEstimateError,
+  useBatchEstimate,
+  useBuzzWorkflow,
+  WorkflowEstimateError,
+} from '@civitai/blocks-react';
+
+const PROMPTS = ['a lighthouse at dusk', 'a lighthouse in fog'];
+const CHECKPOINTS = [
+  { modelId: 101, modelVersionId: 1001 },
+  { modelId: 202, modelVersionId: 2002 },
+];
+
+/** One cell's quote: a price, or why it has none. */
+type CellQuote = { total: number } | { unavailable: string };
+
+export function GridQuote() {
+  const { estimateBatch } = useBatchEstimate();
+  const { estimate } = useBuzzWorkflow();
+  const [quotes, setQuotes] = useState<CellQuote[]>([]);
+  const [runTotal, setRunTotal] = useState<number | null>(null);
+
+  const bodies: WorkflowBody[] = PROMPTS.flatMap((prompt) =>
+    CHECKPOINTS.map((cp) => ({ kind: 'textToImage' as const, ...cp, params: { prompt } })),
+  );
+
+  // Your copy, chosen by code. Never render `err.message` or `snapshot.error`;
+  // matching the host's stable 'estimate timed out' string is fine.
+  const why = (err: WorkflowEstimateError) =>
+    err.snapshot.error === 'estimate timed out'
+      ? 'Price not ready, try again shortly'
+      : err.code === 'no-cost'
+        ? 'No price for this cell'
+        : 'This cell cannot run';
+
+  async function priceGrid() {
+    try {
+      const { cells, aggregate } = await estimateBatch(bodies);
+      setQuotes(cells.map((c) => (c.ok ? { total: c.cost.total } : { unavailable: why(c.error) })));
+      setRunTotal(aggregate.pricedCells === aggregate.cellCount ? aggregate.total : null);
+      return;
+    } catch (err) {
+      if (!(err instanceof BatchEstimateError)) throw err;
+      if (err.code !== 'unsupported') {
+        // 'timeout' is a slow host, not an old one: never fan out per cell here.
+        setQuotes([]);
+        setRunTotal(null);
+        return; // show "pricing unavailable, try again" in your UI
+      }
+    }
+    // This host has no batch estimate: one estimate() per cell, as before.
+    const fallback: CellQuote[] = [];
+    for (const body of bodies) {
+      try {
+        const snapshot = await estimate(body);
+        fallback.push({ total: snapshot.cost!.total });
+      } catch (err) {
+        if (!(err instanceof WorkflowEstimateError)) throw err;
+        fallback.push({ unavailable: why(err) });
+      }
+    }
+    setQuotes(fallback);
+    const priced = fallback.filter((q): q is { total: number } => 'total' in q);
+    setRunTotal(
+      priced.length === fallback.length ? priced.reduce((sum, q) => sum + q.total, 0) : null,
+    );
+  }
+
+  return (
+    <div>
+      <button onClick={() => void priceGrid()}>Price grid</button>
+      <ul>
+        {quotes.map((q, i) => (
+          <li key={i}>{'total' in q ? `${q.total} Buzz` : q.unavailable}</li>
+        ))}
+      </ul>
+      {runTotal !== null && <p>Run total: {runTotal} Buzz</p>}
+    </div>
+  );
+}
+```
+
+The fallback spends one request of the shared allowance per cell, which is why
+the batch exists. Each submit stays per cell: call `submit(bodies[i])` for each
+cell the viewer confirms.
+
+A host that predates the batch message never replies, so the call ends in
+`'timeout'` after the full wait. Only if your app must support such a host,
+detect it with a deliberate probe: send a one-body batch once with a short
+`{ timeoutMs }`, and treat only that probe's `'timeout'` as "no batch support".
+Any other `'timeout'` is a slow host.
+
+**Mock host:** `createMockHost` and `Harness` price each cell exactly as they
+price one `estimate()` of that body (`costPerGen` and `failEstimate` apply per
+cell). Set `generation.batchEstimate` to `'unsupported'` to test the fallback,
+or to `'silent'` to test a call that never gets a reply (pass a short
+`timeoutMs` in a test). Set `generation.batchEstimateTimedOutCells` to a list
+of cell indices to answer those cells as `'estimate timed out'`, the way the
+host does when its time budget runs out. **`dev:live`** forwards the call to civitai.com, so against
+a civitai.com that predates the batch procedure it rejects with `'failed'`
+rather than `'unsupported'`.
+
 ### `useBuzzPurchase()`
 
 Open the Buzz purchase modal. It raises the viewer's WALLET, never a spend cap:

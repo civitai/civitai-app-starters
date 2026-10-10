@@ -1795,6 +1795,28 @@ export interface BlockWorkflowSnapshot {
   trainingQuote?: BlockTrainingQuote;
 }
 
+/**
+ * The run total a BATCH estimate reports beside its per-cell snapshots
+ * (`ESTIMATE_BATCH_RESULT`, sent in reply to `ESTIMATE_WORKFLOW_BATCH`).
+ *
+ * `total` is the sum of `cost.total` over the cells that PRICED: a snapshot that
+ * is not `'failed'` and carries a numeric `cost.total`, the same rule one
+ * estimate is held to. It is the total for the whole list only when
+ * `pricedCells === cellCount`. Otherwise it is a partial sum; show it as one.
+ *
+ * 🔴 IT IS A QUOTE, NOT A LOCK, exactly as each cell is. Nothing reserves it. The
+ * host creates no workflow and no batch for the list, and each cell is priced
+ * again when the app submits it.
+ */
+export interface BlockEstimateBatchAggregate {
+  /** Sum of `cost.total` over the priced cells, in Buzz. `0` when none priced. */
+  total: number;
+  /** How many cells priced and are therefore in `total`. */
+  pricedCells: number;
+  /** How many cells the host answered — the length of the list it was sent. */
+  cellCount: number;
+}
+
 /** {@link BlockWorkflowSnapshot.trainingQuote}. */
 export interface BlockTrainingQuote {
   /** `tq_` + 32 hex characters. Opaque — pass it back verbatim. */
