@@ -707,6 +707,18 @@ export interface MockHostOptions {
    */
   cannedPicks?: Partial<Record<BlockResourcePickerType, CannedPick | null>>;
   /**
+   * What a MULTI-select `OPEN_RESOURCE_PICKER` (`multiple: { max }`, LoRA only)
+   * answers with: these picks, in this order, cut to the request's `max` (itself
+   * clamped to 5) — the real host's `selectedResources`. `null` or `[]`
+   * simulates a dismissed picker (→ an empty list). Defaults to two curated
+   * LoRAs, or to `[]` when `cannedPicks.LORA` is `null`, so one "the viewer
+   * dismissed" setting covers both pick modes.
+   *
+   * The mock applies the real host's refusals too: `multiple` with a Checkpoint,
+   * or a `max` that is not a whole number ≥ 1, is answered with an `error`.
+   */
+  cannedMultiPicks?: CannedPick[] | null;
+  /**
    * The canned moderated image returned from `OPEN_IMAGE_UPLOAD` when the block
    * requests `purpose:'display'` (the default) — what `useImageUpload().open()`
    * resolves with. `null` simulates a dismissed upload modal (→
@@ -1271,6 +1283,7 @@ export type MockHostScenarioPatch = Pick<
   | 'cost'
   | 'pollsUntilDone'
   | 'cannedPicks'
+  | 'cannedMultiPicks'
   | 'cannedImageUpload'
   | 'cannedGenerationSourceUpload'
   | 'cannedImageScan'
@@ -1373,6 +1386,26 @@ const DEFAULT_LORA_PICK: CannedPick = {
   trainedWords: ['sinfully stylish'],
   clipSkip: null,
 };
+
+// The second curated LoRA a MULTI-select request returns after
+// DEFAULT_LORA_PICK. Every field differs from the first so a block that mixes
+// two picks up (or renders one twice) shows it.
+const DEFAULT_SECOND_LORA_PICK: CannedPick = {
+  versionId: 777003,
+  modelId: 555003,
+  modelName: 'Ink Wash Lines',
+  versionName: 'v1.1',
+  baseModel: 'SDXL 1.0',
+  modelType: 'LORA',
+  strength: 0.8,
+  minStrength: -1,
+  maxStrength: 2,
+  trainedWords: ['ink wash'],
+  clipSkip: null,
+};
+
+/** The multi-select cap — the real host's, and `additionalResources`'. */
+const MOCK_RESOURCE_PICKER_MULTI_MAX = 5;
 
 /**
  * The canned image the mock host "returns" from `OPEN_IMAGE_UPLOAD`. Mirrors the
@@ -1958,6 +1991,9 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   let legacyCost = options.cost ?? 8;
   let cannedPicks: Partial<Record<BlockResourcePickerType, CannedPick | null>> =
     options.cannedPicks ?? { Checkpoint: DEFAULT_CHECKPOINT_PICK, LORA: DEFAULT_LORA_PICK };
+  // Canned MULTI-select picks. `undefined` = derive from the single LoRA pick
+  // (see the option's docs); `null` = dismissed.
+  let cannedMultiPicks: CannedPick[] | null | undefined = options.cannedMultiPicks;
   // Canned image-upload result. `null` = dismissed; undefined = default image.
   let cannedImageUpload: BlockUploadedImageInfo | null =
     options.cannedImageUpload === undefined ? DEFAULT_IMAGE_UPLOAD : options.cannedImageUpload;
@@ -3323,6 +3359,42 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
 
           case 'OPEN_RESOURCE_PICKER': {
             const rtype = typed.payload?.resourceType;
+            // MULTI-select (`multiple: { max }`) — the real host's rules, in the
+            // real host's order: LoRA family only, `max` a whole number ≥ 1
+            // (clamped to 5), and a LIST reply (`selectedResources`, `[]` when
+            // dismissed) with no `selected`. A request WITHOUT the key falls
+            // through to the single-pick reply below, unchanged.
+            const multiple = (typed.payload as { multiple?: unknown } | undefined)?.multiple;
+            if (multiple !== undefined && multiple !== null) {
+              const refuse = (error: string) =>
+                dispatchToBlock({ type: 'RESOURCE_PICKER_RESULT', payload: { requestId, error } });
+              if (!['lora', 'locon', 'dora'].includes(String(rtype).trim().toLowerCase())) {
+                refuse(
+                  `OPEN_RESOURCE_PICKER: multiple is only supported for LoRA-family resource types, not ${String(rtype)}.`,
+                );
+                return;
+              }
+              const max =
+                typeof multiple === 'object' ? (multiple as { max?: unknown }).max : undefined;
+              if (typeof max !== 'number' || !Number.isInteger(max) || max < 1) {
+                refuse('OPEN_RESOURCE_PICKER: multiple.max must be a whole number of at least 1.');
+                return;
+              }
+              const picks =
+                cannedMultiPicks !== undefined
+                  ? (cannedMultiPicks ?? [])
+                  : cannedPicks.LORA
+                    ? [cannedPicks.LORA, DEFAULT_SECOND_LORA_PICK]
+                    : [];
+              dispatchToBlock({
+                type: 'RESOURCE_PICKER_RESULT',
+                payload: {
+                  requestId,
+                  selectedResources: picks.slice(0, Math.min(max, MOCK_RESOURCE_PICKER_MULTI_MAX)),
+                },
+              });
+              return;
+            }
             const selected = rtype ? cannedPicks[rtype] : undefined;
             dispatchToBlock({
               type: 'RESOURCE_PICKER_RESULT',
@@ -4006,6 +4078,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     if (patch.pollsUntilDone !== undefined) pollsUntilDone = patch.pollsUntilDone;
     if (patch.cost !== undefined) legacyCost = patch.cost;
     if (patch.cannedPicks !== undefined) cannedPicks = patch.cannedPicks;
+    // `null` is a meaningful value (dismissed), so check for the KEY's presence.
+    if ('cannedMultiPicks' in patch) cannedMultiPicks = patch.cannedMultiPicks;
     // `null` is a meaningful value (dismissed), so check for the KEY's presence.
     if ('cannedImageUpload' in patch) cannedImageUpload = patch.cannedImageUpload ?? null;
     if ('cannedGenerationSourceUpload' in patch)

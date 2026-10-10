@@ -1140,9 +1140,10 @@ if (isModelSlotContext(context) && context.checkpoint) {
 ### `useResourcePicker()`
 
 Drive the platform resource picker for page blocks — `'Checkpoint' | 'LORA'`.
-The viewer searches in host chrome; the block only ever sees the one resource it
-picked. DISCOVERY ONLY — the returned `versionId` is re-validated + re-priced
-server-side at estimate/submit.
+The viewer searches in host chrome; the block only ever sees what the viewer
+picked: one resource, or with `multiple` the few LoRAs they chose. DISCOVERY
+ONLY — a returned `versionId` is re-validated + re-priced server-side at
+estimate/submit.
 
 🔴 **OMIT `baseModelGroup` BY DEFAULT, and never pass a HARDCODED ecosystem.** It
 is an ecosystem-family FILTER, not a label: the host hides every resource outside
@@ -1159,10 +1160,11 @@ a picker returned earlier.
 
 For a complete multi-LoRA app, see
 [`starters/examples/generate-studio`](https://github.com/civitai/civitai-app-starters/tree/main/starters/examples/generate-studio):
-`src/components/ModelSection.tsx` opens the picker once per LoRA slot, up to
+`src/components/ModelSection.tsx` fills one LoRA slot per picker session, up to
 `MAX_LORAS`, with a `baseModelGroup` derived from the selected checkpoint, and
 `keepCompatibleLoras` (`src/studio/setup.ts`) re-filters the stack when the
-checkpoint changes, dropping LoRAs made for another family.
+checkpoint changes, dropping LoRAs made for another family. To fill several
+slots in ONE session, use `multiple` (below).
 
 ```tsx
 const { open } = useResourcePicker();
@@ -1187,6 +1189,43 @@ if (checkpoint) {
   });
 }
 ```
+
+**Several LoRAs in one session — `multiple: { max }`.** The viewer stages up to
+`max` LoRAs in the picker and confirms once; `open` resolves with a **list**, in
+the order the viewer picked them, instead of a single resource. Dismissing
+resolves with `[]`.
+
+```tsx
+const { open } = useResourcePicker();
+
+const loras = await open({ resourceType: 'LORA', multiple: { max: 3 } });
+// [] when dismissed; otherwise up to 3 BlockResourceInfo, in pick order
+const additionalResources = loras.map((lora) => ({
+  modelVersionId: lora.versionId,
+  strength: lora.strength ?? 1,
+}));
+```
+
+- **LoRA only.** `multiple` with `resourceType: 'Checkpoint'` is a type error and
+  rejects at runtime — it is never quietly treated as a single pick.
+- **`max` is a whole number of at least 1, capped at 5** (the cap on
+  `additionalResources`, exported as `RESOURCE_PICKER_MULTIPLE_MAX`). A larger
+  value is clamped to 5; `0`, a negative or a fraction rejects.
+- **`baseModelGroup` works the same** — pass the family derived from the
+  checkpoint the block holds and every LoRA offered matches it.
+- **Each entry is the same `BlockResourceInfo`** a single pick returns, and every
+  id is still re-validated at estimate/submit.
+- **Without `multiple`, nothing changes**: `open` resolves with one resource or
+  `null`, exactly as before.
+- **On a host that predates multi-select** the viewer gets the single-pick
+  picker, and `open` still resolves with a list: of the one LoRA they picked, or
+  `[]`. A block that needs several can call again while the list is short.
+
+With the mock host — `createMockHost` or `Harness` from
+`@civitai/blocks-react/testing` — a `multiple` request resolves with two curated
+LoRAs by default. Pass `cannedMultiPicks: [...]` to choose the list (it is cut to
+the request's `max`), or `cannedMultiPicks: null` for a dismissed picker. The mock
+answers a raw `multiple` + Checkpoint request with the host's error.
 
 ### `useImageUpload()`
 

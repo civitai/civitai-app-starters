@@ -237,4 +237,200 @@ describe('useResourcePicker', () => {
     await expect(pickA).resolves.toEqual(resA);
     await expect(pickB).resolves.toEqual(resB);
   });
+
+  // ── Multi-select (`multiple: { max }`) ──────────────────────────────────────
+  //
+  // Reply helpers post the RAW payload, so a test can send exactly what a given
+  // host generation would: `selectedResources` (a host that knows multi-select),
+  // `selected` / nothing (one that predates it), or `error` (a refusal).
+  function replyRaw(payload: Record<string, unknown>) {
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'RESOURCE_PICKER_RESULT', payload },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+  }
+  const LORA_A = { versionId: 303, modelId: 33, modelName: 'C', versionName: 'v3', baseModel: 'SDXL 1.0', modelType: 'LORA' };
+  const LORA_B = { versionId: 101, modelId: 11, modelName: 'A', versionName: 'v1', baseModel: 'SDXL 1.0', modelType: 'LORA' };
+  const LORA_C = { versionId: 202, modelId: 22, modelName: 'B', versionName: 'v2', baseModel: 'SDXL 1.0', modelType: 'LORA' };
+
+  describe('multiple', () => {
+    it('sends `multiple: { max }` beside the usual fields', () => {
+      const { result } = renderHook(() => useResourcePicker());
+      act(() => {
+        result.current
+          .open({ resourceType: 'LORA', baseModelGroup: 'Flux.1 D', multiple: { max: 3 } })
+          .catch(() => {});
+      });
+      const sent = lastSent();
+      expect(sent.type).toBe('OPEN_RESOURCE_PICKER');
+      const { requestId, ...rest } = sent.payload as Record<string, unknown>;
+      expect(typeof requestId).toBe('string');
+      expect(rest).toEqual({ resourceType: 'LORA', baseModelGroup: 'Flux.1 D', multiple: { max: 3 } });
+    });
+
+    it('a request WITHOUT `multiple` puts no `multiple` key on the wire', () => {
+      const { result } = renderHook(() => useResourcePicker());
+      act(() => {
+        result.current.open({ resourceType: 'LORA', baseModelGroup: 'Flux.1 D' }).catch(() => {});
+      });
+      const { requestId: _requestId, ...rest } = lastSent().payload as Record<string, unknown>;
+      // The whole payload, pinned: exactly what this hook has always sent.
+      expect(rest).toEqual({ resourceType: 'LORA', baseModelGroup: 'Flux.1 D' });
+    });
+
+    it('resolves with the picked list IN THE ORDER the host sent it', async () => {
+      const { result } = renderHook(() => useResourcePicker());
+      let pick!: Promise<unknown>;
+      act(() => {
+        pick = result.current.open({ resourceType: 'LORA', multiple: { max: 3 } });
+      });
+      // Ids deliberately not ascending — a sort anywhere on the path shows.
+      replyRaw({ requestId: lastSent().payload.requestId, selectedResources: [LORA_A, LORA_B, LORA_C] });
+      await expect(pick).resolves.toEqual([
+        { versionId: 303, modelId: 33, modelName: 'C', versionName: 'v3', baseModel: 'SDXL 1.0', modelType: 'LORA' },
+        { versionId: 101, modelId: 11, modelName: 'A', versionName: 'v1', baseModel: 'SDXL 1.0', modelType: 'LORA' },
+        { versionId: 202, modelId: 22, modelName: 'B', versionName: 'v2', baseModel: 'SDXL 1.0', modelType: 'LORA' },
+      ]);
+    });
+
+    it('resolves with an EMPTY list when the viewer dismissed', async () => {
+      const { result } = renderHook(() => useResourcePicker());
+      let pick!: Promise<unknown>;
+      act(() => {
+        pick = result.current.open({ resourceType: 'LORA', multiple: { max: 2 } });
+      });
+      replyRaw({ requestId: lastSent().payload.requestId, selectedResources: [] });
+      await expect(pick).resolves.toEqual([]);
+    });
+
+    it('clamps a max above 5 to 5 on the wire', () => {
+      const { result } = renderHook(() => useResourcePicker());
+      act(() => {
+        result.current.open({ resourceType: 'LORA', multiple: { max: 12 } }).catch(() => {});
+      });
+      expect((lastSent().payload as Record<string, unknown>).multiple).toEqual({ max: 5 });
+    });
+
+    it('never returns more than `max`, keeping the first picks', async () => {
+      const { result } = renderHook(() => useResourcePicker());
+      let pick!: Promise<unknown>;
+      act(() => {
+        pick = result.current.open({ resourceType: 'LORA', multiple: { max: 2 } });
+      });
+      replyRaw({ requestId: lastSent().payload.requestId, selectedResources: [LORA_A, LORA_B, LORA_C] });
+      await expect(pick).resolves.toEqual([LORA_A, LORA_B]);
+    });
+
+    it.each([[0], [-1], [2.5], [Number.NaN], ['3' as unknown as number]])(
+      'rejects multiple.max = %s without sending anything',
+      async (max) => {
+        const { result } = renderHook(() => useResourcePicker());
+        await expect(
+          result.current.open({ resourceType: 'LORA', multiple: { max } }),
+        ).rejects.toThrow(
+          'useResourcePicker: `multiple.max` must be a whole number of at least 1 (values above 5 are clamped to 5).',
+        );
+        expect(postMessageMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it('rejects `multiple` with a Checkpoint without sending anything', async () => {
+      const { result } = renderHook(() => useResourcePicker());
+      await expect(
+        // The overload makes this a TYPE error too — the cast is the JS caller.
+        result.current.open({ resourceType: 'Checkpoint', multiple: { max: 2 } } as never),
+      ).rejects.toThrow(
+        'useResourcePicker: `multiple` is only supported for LoRA picks, not resourceType "Checkpoint". Call open() without `multiple` for a single pick.',
+      );
+      expect(postMessageMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects with the host\'s message when the host refuses the request', async () => {
+      const { result } = renderHook(() => useResourcePicker());
+      let pick!: Promise<unknown>;
+      act(() => {
+        pick = result.current.open({ resourceType: 'LORA', multiple: { max: 2 } });
+      });
+      const settled = pick.then(
+        () => 'resolved',
+        (err: Error) => err.message,
+      );
+      replyRaw({ requestId: lastSent().payload.requestId, error: 'host says no' });
+      await expect(settled).resolves.toBe('host says no');
+    });
+
+    // A host that predates multi-select never reads `multiple`: it opens the
+    // single-pick picker and answers `{ requestId, selected }` — or a bare
+    // `{ requestId }` on dismiss. The caller asked for a list and gets one.
+    it('OLD HOST: a single-pick `selected` reply is normalised to a one-item list', async () => {
+      const { result } = renderHook(() => useResourcePicker());
+      let pick!: Promise<unknown>;
+      act(() => {
+        pick = result.current.open({ resourceType: 'LORA', multiple: { max: 3 } });
+      });
+      replyRaw({ requestId: lastSent().payload.requestId, selected: LORA_B });
+      await expect(pick).resolves.toEqual([
+        { versionId: 101, modelId: 11, modelName: 'A', versionName: 'v1', baseModel: 'SDXL 1.0', modelType: 'LORA' },
+      ]);
+    });
+
+    it('OLD HOST: a bare dismiss reply is normalised to an empty list', async () => {
+      const { result } = renderHook(() => useResourcePicker());
+      let pick!: Promise<unknown>;
+      act(() => {
+        pick = result.current.open({ resourceType: 'LORA', multiple: { max: 3 } });
+      });
+      replyRaw({ requestId: lastSent().payload.requestId });
+      await expect(pick).resolves.toEqual([]);
+    });
+
+    it('drops a list reply with ONE malformed entry rather than returning the rest', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const { result } = renderHook(() => useResourcePicker());
+        let pick!: Promise<unknown>;
+        act(() => {
+          pick = result.current.open({ resourceType: 'LORA', multiple: { max: 3 } });
+        });
+        const requestId = lastSent().payload.requestId;
+        let settled = false;
+        void pick.then(
+          () => {
+            settled = true;
+          },
+          () => {
+            settled = true;
+          },
+        );
+        replyRaw({ requestId, selectedResources: [LORA_A, { ...LORA_B, versionId: '101' }] });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(settled).toBe(false);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('RESOURCE_PICKER_RESULT'));
+
+        replyRaw({ requestId, selectedResources: [LORA_A] });
+        await expect(pick).resolves.toEqual([LORA_A]);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    // Invariant guard (green before and after): a single pick is untouched by
+    // a host reply that ALSO happens to carry a list.
+    it('a single pick still resolves to the resource, never a list', async () => {
+      const { result } = renderHook(() => useResourcePicker());
+      let pick!: Promise<unknown>;
+      act(() => {
+        pick = result.current.open({ resourceType: 'LORA' });
+      });
+      replyRaw({ requestId: lastSent().payload.requestId, selected: LORA_C });
+      await expect(pick).resolves.toEqual({
+        versionId: 202, modelId: 22, modelName: 'B', versionName: 'v2', baseModel: 'SDXL 1.0', modelType: 'LORA',
+      });
+    });
+  });
 });
