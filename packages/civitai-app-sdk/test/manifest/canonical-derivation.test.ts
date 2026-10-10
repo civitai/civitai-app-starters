@@ -105,6 +105,25 @@ describe('NOT ABOVE THE CANONICAL: rules the previous implementation invented', 
     ['minApiVersion omitted', without(['minApiVersion'])],
     ['a 137-character name (the canonical caps nothing)', valid({ name: 'x'.repeat(137) })],
     ['an empty scopes array (the canonical sets no minItems)', valid({ scopes: [] })],
+    // -- analytics: a valid declaration is accepted (control for the rejections below)
+    [
+      'analytics with all three property types',
+      valid({
+        analytics: {
+          events: {
+            render_started: { description: 'The user pressed Generate.' },
+            render_finished: {
+              properties: {
+                style: { type: 'enum', values: ['anime', 'photo'] },
+                seconds: { type: 'number' },
+                upscaled: { type: 'boolean' },
+              },
+            },
+          },
+        },
+      }),
+    ],
+    ['analytics empty, and with an empty events map', valid({ analytics: { events: {} } })],
   ];
 
   it.each(cases)('%s', (_label, manifest) => {
@@ -150,6 +169,62 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
     ['assetBundleUrl pattern', valid({ assetBundleUrl: 'http://cdn.example.com/b.zip' }), 'assetBundleUrl'],
     ['page.path required', valid({ page: { title: 'T' } }), 'page.path'],
     ['page additionalProperties:false', valid({ page: { path: '/x', title: 'T', bogus: 1 } }), 'page.bogus'],
+    // -- analytics (custom events): every rule below is the canonical's ------
+    [
+      "analytics: no free-text 'string' property type",
+      valid({ analytics: { events: { searched: { properties: { query: { type: 'string' } } } } } }),
+      'analytics.events.searched.properties.query.type',
+    ],
+    [
+      'analytics: an event name must be lowercase snake_case',
+      valid({ analytics: { events: { RenderStarted: {} } } }),
+      'analytics.events.RenderStarted',
+    ],
+    [
+      'analytics: an enum must declare values',
+      valid({ analytics: { events: { picked: { properties: { style: { type: 'enum' } } } } } }),
+      'analytics.events.picked.properties.style.values',
+    ],
+    [
+      'analytics: an enum must declare at least one value',
+      valid({ analytics: { events: { picked: { properties: { style: { type: 'enum', values: [] } } } } } }),
+      'analytics.events.picked.properties.style.values',
+    ],
+    [
+      'analytics: unknown key on analytics',
+      valid({ analytics: { events: {}, sampleRate: 0.5 } }),
+      'analytics.sampleRate',
+    ],
+    [
+      'analytics: unknown key on an event',
+      valid({ analytics: { events: { clicked: { category: 'ui' } } } }),
+      'analytics.events.clicked.category',
+    ],
+    [
+      'analytics: unknown key on a property declaration',
+      valid({
+        analytics: {
+          events: { clicked: { properties: { via: { type: 'enum', values: ['key'], label: 'x' } } } },
+        },
+      }),
+      'analytics.events.clicked.properties.via.label',
+    ],
+    // ⚠ REJECTED, BUT THE MESSAGE POINTS AT THE WRONG THING. A property
+    // declaration is a `oneOf` of three closed shapes, and for a `number` or
+    // `boolean` carrying an extra key the reported error is the FIRST branch's
+    // ("`values` is required"), not "`label` is not a known property". The
+    // verdict is right and is what this pins; the wording is a known wart of
+    // reporting a failed `oneOf`, not a rule of the canonical.
+    [
+      'analytics: unknown key on a boolean property declaration (verdict only — see note)',
+      valid({ analytics: { events: { clicked: { properties: { on: { type: 'boolean', label: 'x' } } } } } }),
+      'analytics.events.clicked.properties.on.values',
+    ],
+    [
+      'analytics: values on a number property',
+      valid({ analytics: { events: { timed: { properties: { seconds: { type: 'number', values: ['1'] } } } } } }),
+      'analytics.events.timed.properties.seconds.type',
+    ],
     ['scopeJustifications value maxLength', valid({ scopeJustifications: { 'models:read:self': 'x'.repeat(501) } }), 'scopeJustifications.models:read:self'],
   ];
 
@@ -177,9 +252,8 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
  * every property check below "match nothing" and report clean — a guard that
  * retires itself the first time an interface is renamed or reformatted. Every
  * call site below therefore asserts the returned body is non-empty before
- * using it (the three `BlockManifestV1` reads, the per-shape read in the nested
- * test and the per-shape read in the TYPED_AHEAD test). Pair any new caller
- * with the same assertion.
+ * using it (the two `BlockManifestV1` reads and the per-shape read in the nested
+ * test). Pair any new caller with the same assertion.
  */
 function interfaceBody(src: string, name: string): string {
   const start = src.indexOf(`export interface ${name} {`);
@@ -191,24 +265,20 @@ function interfaceBody(src: string, name: string): string {
 
 /**
  * Nested manifest shapes typed on `BlockManifestV1` AHEAD of the vendored
- * schema bytes: the canonical schema has them, the published copy this repo
- * vendors does not yet. See the ledger in the nested-property test.
+ * schema bytes, and the deep-path twin of the same list. BOTH ARE EMPTY, and
+ * that is the normal state.
  *
- * `analytics` — the canonical gained it in civitai#5661; it reaches the
- * published schema on a later release cut, and the scheduled re-vendor brings
- * it here. Delete it from this list (and add it to that test's `LEDGER`) once
- * the vendored schema carries it. The nested test reaches ONE level in
- * (`analytics.events`); the levels below it (`patternProperties`, `allOf`,
- * `oneOf`) are covered by the DEEP test and its `DEEP_TYPED_AHEAD` ledger.
+ * They stay because the two shape ledgers below are EXACT. This repo's
+ * practice is to type a new manifest field before the published schema carries
+ * it, so that the scheduled re-vendor lands on an already-typed interface — and
+ * with an exact ledger a new NESTED shape would turn that re-vendor red however
+ * well it was typed. A shape listed here is expected by its ledger only once
+ * the vendored schema carries it, which keeps the suite green on both sides of
+ * the re-vendor. When the bytes land, move the entry into `LEDGER` /
+ * `DEEP_LEDGER` and empty this again.
  */
-const TYPED_AHEAD = ['analytics'];
-
-/**
- * The deep-shape twin of {@link TYPED_AHEAD}: shapes below the first level that
- * are typed ahead of the vendored bytes. Same lifecycle — move them into the
- * deep test's `DEEP_LEDGER` once the re-vendor merges.
- */
-const DEEP_TYPED_AHEAD = ['analytics.events.*', 'analytics.events.*.properties.*'];
+const TYPED_AHEAD: string[] = [];
+const DEEP_TYPED_AHEAD: string[] = [];
 
 /**
  * Every object shape in a JSON schema, keyed by a path from the manifest root,
@@ -418,15 +488,15 @@ describe('lockstep with the vendored schema (INVARIANT GUARDS — green before t
      * is what the ledger below is worth. JSON Schema does not require `type`,
      * so a nested shape written without it — the common form once a schema
      * starts composing — would not have been collected, the ledger would still
-     * have matched its four expected keys, and the TS2353 gap this test exists
+     * have matched its expected keys, and the TS2353 gap this test exists
      * to close would have reopened silently. A shape's own `properties` is the
      * thing this test actually reads, so it is the right thing to select on.
      *
      * ⚠️ RESIDUAL, AND DELIBERATELY NOT PAPERED OVER: a nested object reached
      * through `$ref`, `oneOf`, `anyOf` or `allOf` carries no inline
      * `properties`, so it is still invisible here and the ledger would still
-     * match. The canonical schema uses none of those today (measured: the four
-     * shapes below are the complete set of composed values in it). Resolving
+     * match. The canonical schema composes no FIRST-LEVEL shape that way today
+     * (measured: the shapes ledgered below are the complete first-level set). Resolving
      * them needs a real schema walk rather than a wider predicate, and the
      * honest statement is that this guard covers INLINE shapes only — so the
      * "fails when the set GROWS" claim below is scoped to those. (Below the
@@ -458,16 +528,9 @@ describe('lockstep with the vendored schema (INVARIANT GUARDS — green before t
     // cannot show). It cannot see a shape composed via `$ref`/`oneOf`/`anyOf`;
     // see the derivation's note above.
     //
-    // TYPED AHEAD OF THE BYTES. A shape listed in `TYPED_AHEAD` is already typed
-    // on `BlockManifestV1` while the vendored schema may not carry it yet — the
-    // canonical gained it, but the live published schema (which the byte guard
-    // and the scheduled re-vendor both read) only follows on a later release
-    // cut. The ledger expects it ONLY IF the vendored schema has it, so the
-    // suite is green on both sides of the re-vendor, and once the bytes land the
-    // per-property check below covers it like any other shape. Move it into
-    // `LEDGER` when the re-vendor merges. It is not a free pass: the test after
-    // this one fails if a typed-ahead key is not actually typed.
-    const LEDGER = ['goods', 'iframe', 'page', 'targets'];
+    // A `TYPED_AHEAD` shape is expected only once the vendored schema carries
+    // it; see that list for why it exists.
+    const LEDGER = ['analytics', 'goods', 'iframe', 'page', 'targets'];
     const present = new Set(Object.keys(schema.properties ?? {}));
     const expected = [...LEDGER, ...TYPED_AHEAD.filter((k) => present.has(k))].sort();
     expect(
@@ -496,20 +559,6 @@ describe('lockstep with the vendored schema (INVARIANT GUARDS — green before t
     expect(untyped, 'canonical nested properties with no interface key').toEqual([]);
   });
 
-  it('every TYPED_AHEAD shape really is typed on BlockManifestV1 by a named interface', () => {
-    // Without this, a typed-ahead entry is a silent exemption: the ledger above
-    // would accept the shape arriving in the bytes whether or not anyone typed it.
-    const src = readFileSync(new URL('../../src/blocks/types.ts', import.meta.url), 'utf8');
-    const manifestBody = interfaceBody(src, 'BlockManifestV1');
-    expect(manifestBody, 'interface BlockManifestV1 not found in types.ts').not.toBe('');
-    expect(TYPED_AHEAD.length).toBeGreaterThan(0); // delete this test with the last entry
-    for (const key of TYPED_AHEAD) {
-      const named = new RegExp(`^\\s{2}${key}\\??:\\s*([A-Za-z_$][\\w$]*)`, 'm').exec(manifestBody);
-      expect(named?.[1], `BlockManifestV1.${key} must be typed by a named interface`).toBeTruthy();
-      expect(interfaceBody(src, named![1]), `interface ${named![1]} not found`).not.toBe('');
-    }
-  });
-
   /**
    * 🔴 THE SAME GAP, AT ANY DEPTH. The two tests above read one level of
    * inline `properties`. `analytics` is the first canonical shape that nests
@@ -530,7 +579,7 @@ describe('lockstep with the vendored schema (INVARIANT GUARDS — green before t
     // nobody has typed or looked at) or SHRINKS (the walker stopped finding
     // one, which would make the key check below vacuous for it). Typed-ahead
     // paths are expected only when the vendored schema carries them.
-    const DEEP_LEDGER: string[] = [];
+    const DEEP_LEDGER = ['analytics.events.*', 'analytics.events.*.properties.*'];
     const deep = [...shapes.keys()].filter((p) => p.includes('.')).sort();
     const expected = [
       ...DEEP_LEDGER,
@@ -542,8 +591,10 @@ describe('lockstep with the vendored schema (INVARIANT GUARDS — green before t
     expect(deep, 'deep object shapes in the canonical schema').toEqual(expected);
 
     // Every key the schema declares on a deep shape must be a key of the type
-    // at that path. One-directional on purpose: the type may run AHEAD of the
-    // bytes (that is how this repo ships a new field), but never behind.
+    // at that path. DELIBERATELY ONE-WAY (schema keys ⊆ typed keys, not
+    // equality): this repo types a new field before the published schema
+    // carries it, so a type with a key the bytes do not have yet is the normal
+    // state for a while, and an exact match would turn that window red.
     const untyped: string[] = [];
     for (const path of deep) {
       const typed = typeKeysAt(path);
@@ -559,12 +610,19 @@ describe('lockstep with the vendored schema (INVARIANT GUARDS — green before t
   });
 
   it('the deep type resolver can see the analytics declaration types (positive control)', () => {
-    // Without this, a resolver that returns an empty set everywhere would make
-    // the deep test report "no type resolves" only once the bytes arrive — and
-    // until then nothing would show it had stopped working.
-    expect([...(typeKeysAt('analytics.events.*') ?? [])].sort()).toEqual(['description', 'properties']);
-    expect([...(typeKeysAt('analytics.events.*.properties.*') ?? [])].sort()).toEqual(['type', 'values']);
+    // The deep test already fails on a path that resolves to nothing. This
+    // pins that the resolver follows each path KIND to the right type — a map
+    // value (`*`), a union's members, an array's items (`[]`) — rather than to
+    // some other non-empty type. `arrayContaining`, not equality: the key check
+    // is one-way, so the type may carry a key the schema does not have yet.
+    expect([...(typeKeysAt('analytics.events.*') ?? [])]).toEqual(
+      expect.arrayContaining(['description', 'properties']),
+    );
+    expect([...(typeKeysAt('analytics.events.*.properties.*') ?? [])]).toEqual(
+      expect.arrayContaining(['type', 'values']),
+    );
     expect([...(typeKeysAt('goods[]') ?? [])]).toContain('priceBuzz');
+    expect(typeKeysAt('analytics.nope.*')).toBeNull();
   });
 
   it('the scopes enum holds exactly BLOCK_SCOPES — fails if either side grows OR shrinks', () => {
