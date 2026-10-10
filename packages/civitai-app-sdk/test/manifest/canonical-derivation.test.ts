@@ -173,10 +173,11 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
  *
  * 🔴 IT RETURNS `''` FOR AN INTERFACE IT CANNOT FIND, and an empty body makes
  * every property check below "match nothing" and report clean — a guard that
- * retires itself the first time an interface is renamed or reformatted. All
- * THREE call sites below therefore assert the returned body is non-empty
- * before using it (the two `BlockManifestV1` reads and the per-shape read in
- * the nested test). Pair any new caller with the same assertion.
+ * retires itself the first time an interface is renamed or reformatted. Every
+ * call site below therefore asserts the returned body is non-empty before
+ * using it (the three `BlockManifestV1` reads, the per-shape read in the nested
+ * test and the per-shape read in the TYPED_AHEAD test). Pair any new caller
+ * with the same assertion.
  */
 function interfaceBody(src: string, name: string): string {
   const start = src.indexOf(`export interface ${name} {`);
@@ -185,6 +186,20 @@ function interfaceBody(src: string, name: string): string {
   const end = rest.indexOf('\n}');
   return end < 0 ? '' : rest.slice(0, end);
 }
+
+/**
+ * Nested manifest shapes typed on `BlockManifestV1` AHEAD of the vendored
+ * schema bytes: the canonical schema has them, the published copy this repo
+ * vendors does not yet. See the ledger in the nested-property test.
+ *
+ * `analytics` — the canonical gained it in civitai#5661; it reaches the
+ * published schema on a later release cut, and the scheduled re-vendor brings
+ * it here. Delete it from this list (and add it to that test's `LEDGER`) once
+ * the vendored schema carries it. ⚠ The nested test reaches ONE level in
+ * (`analytics.events`); everything below that is `patternProperties`, which it
+ * does not read. `analytics-declaration.test-d.ts` pins the deeper shape.
+ */
+const TYPED_AHEAD = ['analytics'];
 
 describe('lockstep with the vendored schema (INVARIANT GUARDS — green before this change too)', () => {
   const schema = loadCanonicalSchema() as {
@@ -336,10 +351,23 @@ describe('lockstep with the vendored schema (INVARIANT GUARDS — green before t
     // below vacuous — the failure mode a plain `forEach` over an empty list
     // cannot show). It cannot see a shape composed via `$ref`/`oneOf`/`anyOf`;
     // see the derivation's note above.
+    //
+    // TYPED AHEAD OF THE BYTES. A shape listed in `TYPED_AHEAD` is already typed
+    // on `BlockManifestV1` while the vendored schema may not carry it yet — the
+    // canonical gained it, but the live published schema (which the byte guard
+    // and the scheduled re-vendor both read) only follows on a later release
+    // cut. The ledger expects it ONLY IF the vendored schema has it, so the
+    // suite is green on both sides of the re-vendor, and once the bytes land the
+    // per-property check below covers it like any other shape. Move it into
+    // `LEDGER` when the re-vendor merges. It is not a free pass: the test after
+    // this one fails if a typed-ahead key is not actually typed.
+    const LEDGER = ['goods', 'iframe', 'page', 'targets'];
+    const present = new Set(Object.keys(schema.properties ?? {}));
+    const expected = [...LEDGER, ...TYPED_AHEAD.filter((k) => present.has(k))].sort();
     expect(
       nested.map((n) => n.key).sort(),
       'nested object shapes in the canonical schema',
-    ).toEqual(['goods', 'iframe', 'page', 'targets']);
+    ).toEqual(expected);
 
     const untyped: string[] = [];
     for (const { key, props } of nested) {
@@ -360,6 +388,20 @@ describe('lockstep with the vendored schema (INVARIANT GUARDS — green before t
       }
     }
     expect(untyped, 'canonical nested properties with no interface key').toEqual([]);
+  });
+
+  it('every TYPED_AHEAD shape really is typed on BlockManifestV1 by a named interface', () => {
+    // Without this, a typed-ahead entry is a silent exemption: the ledger above
+    // would accept the shape arriving in the bytes whether or not anyone typed it.
+    const src = readFileSync(new URL('../../src/blocks/types.ts', import.meta.url), 'utf8');
+    const manifestBody = interfaceBody(src, 'BlockManifestV1');
+    expect(manifestBody, 'interface BlockManifestV1 not found in types.ts').not.toBe('');
+    expect(TYPED_AHEAD.length).toBeGreaterThan(0); // delete this test with the last entry
+    for (const key of TYPED_AHEAD) {
+      const named = new RegExp(`^\\s{2}${key}\\??:\\s*([A-Za-z_$][\\w$]*)`, 'm').exec(manifestBody);
+      expect(named?.[1], `BlockManifestV1.${key} must be typed by a named interface`).toBeTruthy();
+      expect(interfaceBody(src, named![1]), `interface ${named![1]} not found`).not.toBe('');
+    }
   });
 
   it('the scopes enum holds exactly BLOCK_SCOPES — fails if either side grows OR shrinks', () => {

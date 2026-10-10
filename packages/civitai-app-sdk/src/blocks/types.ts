@@ -2014,6 +2014,56 @@ export interface ManifestPreview {
 }
 
 /**
+ * One declared property of a custom event — see {@link BlockManifestV1.analytics}.
+ *
+ * Exactly three types, and deliberately NO free-text string:
+ *
+ * - `enum` — a string drawn from `values`: 1 to 50 distinct, non-empty strings of
+ *   at most 64 characters (Unicode code points) each. A string that is not one of
+ *   the declared values will never be recorded.
+ * - `number` — not range-limited, so do not use one to carry an identifier.
+ * - `boolean`.
+ *
+ * No other key is allowed on a declaration (`values` only on an `enum`).
+ * Mirrors the canonical schema's `analytics.events.*.properties.*`.
+ */
+export type BlockAnalyticsPropertyDeclaration =
+  | { type: 'enum'; values: string[] }
+  | { type: 'number' }
+  | { type: 'boolean' };
+
+/**
+ * One declared custom event — see {@link BlockManifestV1.analytics}. Mirrors the
+ * canonical schema's `analytics.events.*`.
+ */
+export interface BlockAnalyticsEventDeclaration {
+  /**
+   * Optional human-readable meaning of the event, shown to reviewers and in
+   * your analytics. At most 200 characters (Unicode code points).
+   */
+  description?: string;
+  /**
+   * Property name → declaration. At most 10 properties per event. A property
+   * name follows the same rule as an event name: lowercase snake_case, a letter
+   * then up to 63 of `a-z`, `0-9` or `_` (`^[a-z][a-z0-9_]{0,63}$`).
+   */
+  properties?: Record<string, BlockAnalyticsPropertyDeclaration>;
+}
+
+/**
+ * The manifest's `analytics` object — see {@link BlockManifestV1.analytics}.
+ * Mirrors the canonical schema's `analytics`; no other key is allowed.
+ */
+export interface BlockAnalyticsDeclaration {
+  /**
+   * Event name → declaration. At most 50 events. An event name is lowercase
+   * snake_case: a letter, then up to 63 of `a-z`, `0-9` or `_`
+   * (`^[a-z][a-z0-9_]{0,63}$`).
+   */
+  events?: Record<string, BlockAnalyticsEventDeclaration>;
+}
+
+/**
  * One entry of a manifest's `goods[]`. Mirrors the canonical schema exactly;
  * `id`, `title` and `priceBuzz` are required there and so are they here.
  *
@@ -2133,6 +2183,26 @@ export interface BlockManifestV1 {
    * Kept in lockstep with the canonical schema's `goods`.
    */
   goods?: BlockManifestGood[];
+  /**
+   * Optional CUSTOM EVENTS declaration. `events` names every event the app may
+   * send and the properties each event may carry. Manifest-governed and
+   * REVIEW-GATED: the declaration a moderator approves is the only one the
+   * platform accepts events against, so a reviewer can see what the app tracks.
+   *
+   * Properties are typed `enum` (a declared list of string values), `number` or
+   * `boolean` ONLY — free-text strings are deliberately not supported, so a
+   * string that is not one of an enum's declared values will never be recorded.
+   * That is what keeps prompts, emails and usernames out of string properties.
+   * Owners see aggregates only, never individual events.
+   *
+   * Limits (the canonical schema's, which this type cannot express): event and
+   * property names match `^[a-z][a-z0-9_]{0,63}$`; at most 50 events and 10
+   * properties per event; an enum declares 1 to 50 distinct non-empty values of
+   * at most 64 code points; a `description` is at most 200 code points. The
+   * platform's manifest validator is authoritative. Kept in lockstep with the
+   * canonical schema's `analytics`.
+   */
+  analytics?: BlockAnalyticsDeclaration;
   /** Optional; the canonical declares no required sub-field. */
   iframe?: ManifestIframe;
   /** Full-page surface descriptor (W10). */
