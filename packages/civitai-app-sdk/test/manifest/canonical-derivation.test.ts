@@ -21,6 +21,8 @@
  *     regression coverage, and not counted as any.
  */
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 import { defineBlock, loadCanonicalSchema } from '../../src/manifest/defineBlock.js';
@@ -195,11 +197,113 @@ function interfaceBody(src: string, name: string): string {
  * `analytics` — the canonical gained it in civitai#5661; it reaches the
  * published schema on a later release cut, and the scheduled re-vendor brings
  * it here. Delete it from this list (and add it to that test's `LEDGER`) once
- * the vendored schema carries it. ⚠ The nested test reaches ONE level in
- * (`analytics.events`); everything below that is `patternProperties`, which it
- * does not read. `analytics-declaration.test-d.ts` pins the deeper shape.
+ * the vendored schema carries it. The nested test reaches ONE level in
+ * (`analytics.events`); the levels below it (`patternProperties`, `allOf`,
+ * `oneOf`) are covered by the DEEP test and its `DEEP_TYPED_AHEAD` ledger.
  */
 const TYPED_AHEAD = ['analytics'];
+
+/**
+ * The deep-shape twin of {@link TYPED_AHEAD}: shapes below the first level that
+ * are typed ahead of the vendored bytes. Same lifecycle — move them into the
+ * deep test's `DEEP_LEDGER` once the re-vendor merges.
+ */
+const DEEP_TYPED_AHEAD = ['analytics.events.*', 'analytics.events.*.properties.*'];
+
+/**
+ * Every object shape in a JSON schema, keyed by a path from the manifest root,
+ * with the property names the schema declares on it.
+ *
+ * Path grammar: `a.b` for a named property, `a.*` for a value reached through
+ * `patternProperties` or an `additionalProperties` schema (a map), `a[]` for an
+ * array's `items`. A node's own key set is the UNION of its inline
+ * `properties` and those of every `allOf` / `oneOf` / `anyOf` branch, because
+ * any one of them is a key a manifest can legally carry there. Branches are
+ * descended into as well, so a nested shape declared only inside a branch is
+ * still found. `$ref` is NOT resolved — the canonical uses none today, and the
+ * shape ledger below would go red (SHRINK) if one replaced an inline shape.
+ */
+function schemaShapes(root: unknown): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  const join = (path: string, seg: string) => (path === '' ? seg : `${path}.${seg}`);
+  const isObj = (v: unknown): v is Record<string, unknown> =>
+    typeof v === 'object' && v !== null && !Array.isArray(v);
+  const branches = (n: Record<string, unknown>): Record<string, unknown>[] =>
+    (['allOf', 'oneOf', 'anyOf'] as const).flatMap((k) =>
+      Array.isArray(n[k]) ? (n[k] as unknown[]).filter(isObj) : [],
+    );
+  const keysOf = (n: Record<string, unknown>): string[] => [
+    ...(isObj(n.properties) ? Object.keys(n.properties) : []),
+    ...branches(n).flatMap(keysOf),
+  ];
+  const walk = (n: unknown, path: string): void => {
+    if (!isObj(n)) return;
+    const keys = keysOf(n);
+    if (keys.length > 0) {
+      const set = out.get(path) ?? new Set<string>();
+      keys.forEach((k) => set.add(k));
+      out.set(path, set);
+    }
+    for (const node of [n, ...branches(n)]) {
+      if (isObj(node.properties)) {
+        for (const [k, v] of Object.entries(node.properties)) walk(v, join(path, k));
+      }
+      if (isObj(node.patternProperties)) {
+        for (const v of Object.values(node.patternProperties)) walk(v, join(path, '*'));
+      }
+      if (isObj(node.additionalProperties)) walk(node.additionalProperties, join(path, '*'));
+      if (isObj(node.items)) walk(node.items, `${path}[]`);
+    }
+  };
+  walk(root, '');
+  return out;
+}
+
+/**
+ * The property names TypeScript gives the type reached by `path` from
+ * `BlockManifestV1`, via the COMPILER (not a source regex), so a type alias, a
+ * union or a `Record<string, X>` resolves the same way an inline literal
+ * passed to `defineBlock` is checked. A union contributes every member's keys
+ * (a discriminated union admits each member's keys on that member). Returns
+ * `null` when the path does not resolve, which the caller reports by name.
+ */
+let compiled: ts.Program | undefined;
+function typeKeysAt(path: string): Set<string> | null {
+  const file = fileURLToPath(new URL('../../src/blocks/types.ts', import.meta.url));
+  const program = (compiled ??= ts.createProgram([file], {
+    strict: true,
+    noEmit: true,
+    target: ts.ScriptTarget.ES2022,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    skipLibCheck: true,
+  }));
+  const checker = program.getTypeChecker();
+  const sf = program.getSourceFile(file);
+  if (!sf) return null;
+  const decl = sf.statements.find(
+    (s): s is ts.InterfaceDeclaration =>
+      ts.isInterfaceDeclaration(s) && s.name.text === 'BlockManifestV1',
+  );
+  if (!decl) return null;
+  let t: ts.Type | undefined = checker.getTypeAtLocation(decl.name);
+  for (const seg of path.split(/\.|(?=\[\])/)) {
+    if (!t) return null;
+    t = checker.getNonNullableType(t);
+    if (seg === '*') {
+      t = checker.getIndexInfoOfType(t, ts.IndexKind.String)?.type;
+    } else if (seg === '[]') {
+      t = checker.isArrayType(t) ? checker.getTypeArguments(t as ts.TypeReference)[0] : undefined;
+    } else {
+      const sym = checker.getPropertyOfType(t, seg);
+      t = sym ? checker.getTypeOfSymbolAtLocation(sym, decl) : undefined;
+    }
+  }
+  if (!t) return null;
+  t = checker.getNonNullableType(t);
+  const members = t.isUnion() ? t.types : [t];
+  return new Set(members.flatMap((m) => checker.getPropertiesOfType(m).map((p) => p.name)));
+}
 
 describe('lockstep with the vendored schema (INVARIANT GUARDS — green before this change too)', () => {
   const schema = loadCanonicalSchema() as {
@@ -325,7 +429,9 @@ describe('lockstep with the vendored schema (INVARIANT GUARDS — green before t
      * shapes below are the complete set of composed values in it). Resolving
      * them needs a real schema walk rather than a wider predicate, and the
      * honest statement is that this guard covers INLINE shapes only — so the
-     * "fails when the set GROWS" claim below is scoped to those.
+     * "fails when the set GROWS" claim below is scoped to those. (Below the
+     * first level, composition IS read: see the DEEP test further down, which
+     * walks `patternProperties`, `allOf`, `oneOf` and `anyOf`.)
      */
     const nested: { key: string; props: string[] }[] = [];
     for (const [key, def] of Object.entries(schema.properties ?? {})) {
@@ -402,6 +508,63 @@ describe('lockstep with the vendored schema (INVARIANT GUARDS — green before t
       expect(named?.[1], `BlockManifestV1.${key} must be typed by a named interface`).toBeTruthy();
       expect(interfaceBody(src, named![1]), `interface ${named![1]} not found`).not.toBe('');
     }
+  });
+
+  /**
+   * 🔴 THE SAME GAP, AT ANY DEPTH. The two tests above read one level of
+   * inline `properties`. `analytics` is the first canonical shape that nests
+   * further through `patternProperties` (a map keyed by event name) and
+   * `allOf`/`oneOf` (the property-declaration union), so a canonical that added
+   * `analytics.events.<name>.category` kept the whole suite green while
+   * `defineBlock`'s inline form rejected `category` with TS2353 and Ajv
+   * accepted it. This walks every shape below the first level and checks its
+   * keys against the type the COMPILER resolves at the same path.
+   */
+  it('every canonical DEEP property (below the first level, any composition) is TYPED', () => {
+    const shapes = schemaShapes(schema);
+    // Positive control on the walker: it must find the first-level shapes the
+    // test above ledgers, or every assertion below is about an empty map.
+    expect(shapes.has('iframe') && shapes.has('goods[]')).toBe(true);
+
+    // 🔴 LEDGER of deep shape PATHS, failing when the set GROWS (a deep shape
+    // nobody has typed or looked at) or SHRINKS (the walker stopped finding
+    // one, which would make the key check below vacuous for it). Typed-ahead
+    // paths are expected only when the vendored schema carries them.
+    const DEEP_LEDGER: string[] = [];
+    const deep = [...shapes.keys()].filter((p) => p.includes('.')).sort();
+    const expected = [
+      ...DEEP_LEDGER,
+      ...DEEP_TYPED_AHEAD.filter((p) => {
+        const top = p.split('.')[0]!;
+        return Object.keys(schema.properties ?? {}).includes(top);
+      }),
+    ].sort();
+    expect(deep, 'deep object shapes in the canonical schema').toEqual(expected);
+
+    // Every key the schema declares on a deep shape must be a key of the type
+    // at that path. One-directional on purpose: the type may run AHEAD of the
+    // bytes (that is how this repo ships a new field), but never behind.
+    const untyped: string[] = [];
+    for (const path of deep) {
+      const typed = typeKeysAt(path);
+      if (typed === null || typed.size === 0) {
+        untyped.push(`${path} (no type resolves at this path from BlockManifestV1)`);
+        continue;
+      }
+      for (const k of shapes.get(path)!) {
+        if (!typed.has(k)) untyped.push(`${path}.${k}`);
+      }
+    }
+    expect(untyped, 'canonical deep properties with no type key').toEqual([]);
+  });
+
+  it('the deep type resolver can see the analytics declaration types (positive control)', () => {
+    // Without this, a resolver that returns an empty set everywhere would make
+    // the deep test report "no type resolves" only once the bytes arrive — and
+    // until then nothing would show it had stopped working.
+    expect([...(typeKeysAt('analytics.events.*') ?? [])].sort()).toEqual(['description', 'properties']);
+    expect([...(typeKeysAt('analytics.events.*.properties.*') ?? [])].sort()).toEqual(['type', 'values']);
+    expect([...(typeKeysAt('goods[]') ?? [])]).toContain('priceBuzz');
   });
 
   it('the scopes enum holds exactly BLOCK_SCOPES — fails if either side grows OR shrinks', () => {
