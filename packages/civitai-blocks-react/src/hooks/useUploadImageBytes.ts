@@ -74,12 +74,8 @@ export interface UseUploadImageBytes {
  * - The buffer is COPIED across `postMessage`, never transferred, so the block
  *   can keep displaying it. Pass an `ArrayBuffer` (`await blob.arrayBuffer()`),
  *   not a `Blob` or a typed array, which the host refuses.
- * - 🔴 **A host that predates the variant ignores `bytes` and opens its picker.**
- *   Then the promise settles on whatever the viewer picks, or rejects with
- *   `the host returned no uploaded image` on a dismiss. It needs
- *   civitai/civitai#5639 merged and deployed to civitai.com; that PR is still
- *   changing, so no intermediate head of it is enough. Do not ship a block
- *   relying on this before then.
+ * - Ships in `@civitai/blocks-react` 0.67.0; the `bytes` payload type it sends
+ *   is in `@civitai/app-sdk` 0.62.0.
  *
  * Under `createMockHost` / `Harness` the host's admission rules are modelled
  * (see `MockHostOptions.uploadImageBytesResult`). `dev:live` has no bytes

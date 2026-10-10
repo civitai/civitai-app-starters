@@ -1249,11 +1249,35 @@ neither an image nor an error. If no reply arrives within 10 minutes it
 rejects with a `RequestTimeoutError`; the host may still have stored the
 image, so retrying after a timeout can create a duplicate.
 
-🔴 **A host that predates this variant ignores `bytes` and opens its upload
-picker instead**, so the call settles on whatever the viewer picks. The hook
-needs civitai/civitai#5639 merged and deployed to civitai.com. That PR is still
-changing, so no intermediate head of it is enough. Do not ship a block that
-relies on `useUploadImageBytes()` before then.
+The hook ships in `@civitai/blocks-react` 0.67.0, and the `bytes` payload type
+it sends is in `@civitai/app-sdk` 0.62.0.
+
+What the upload does and does not give you on civitai.com:
+
+- 🔴 **Generation metadata embedded in the file is not read.** The posted
+  image has no generation details (prompt, resources, sampler settings),
+  whatever the PNG or JPEG carries. In the example below the healed pixels are
+  posted, and the metadata the app repaired is not shown on the post.
+- 🔴 **Each uploaded image goes into exactly one post.** Once a post holds it,
+  `createPost()` refuses that `imageId` with `an image is not available to post`.
+  To post the same picture again, upload it again.
+- **An uploaded image never appears in `useGatedImages()`.** That read returns
+  only what the app published with `usePublishGenerationOutputs()`. Keep the
+  `imageId` and `url` that `upload` resolves with if you need to show it.
+- **A post holds at most 20 images and names at most 10 sources.** Past 20
+  images the server refuses with `a post may contain at most 20 images`.
+- **Posting from apps is still being rolled out.** A viewer who does not have it
+  yet is refused with `posting from apps is not enabled`, and the refusal
+  arrives from `upload` as well as from `createPost()`. Handle it as an
+  ordinary error branch, not as a bug in your app.
+- **Creating the post needs an account with a verified email or a linked
+  sign-in provider.** Other account checks apply too: onboarding must be
+  finished, the account must not be brand new, and it must not be muted or
+  banned. `upload` refuses a banned account but checks none of the rest, so a
+  viewer can upload and then be refused at `createPost()`.
+- **Server-side limits also apply**, to the upload and to the post, beyond the
+  host's per-page window above. A `busy` reply or a rate-limit error such as
+  `Rate limit exceeded, please retry shortly.` means wait and retry.
 
 ```tsx
 import {
