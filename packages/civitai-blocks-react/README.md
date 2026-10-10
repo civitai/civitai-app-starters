@@ -1219,7 +1219,9 @@ const additionalResources = loras.map((lora) => ({
   `null`, exactly as before.
 - **On a host that predates multi-select** the viewer gets the single-pick
   picker, and `open` still resolves with a list: of the one LoRA they picked, or
-  `[]`. A block that needs several can call again while the list is short.
+  `[]`. The result does not say which kind of host answered, so a one-item
+  list is not a signal to open the picker again: on a current host it means the
+  viewer chose one. Let the viewer add more with their own action instead.
 
 With the mock host — `createMockHost` or `Harness` from
 `@civitai/blocks-react/testing` — a `multiple` request resolves with two curated
