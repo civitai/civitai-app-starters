@@ -39,12 +39,21 @@ function buf(view: Uint8Array): ArrayBuffer {
   return view.slice().buffer as ArrayBuffer;
 }
 
+const BYTES_IMAGE = {
+  imageId: 12345701,
+  nsfwLevel: 1,
+  contentRating: 'pg',
+  url: 'https://image.civitai.com/mock/original=true/dev-bytes-upload.png',
+} as const;
+
+type CreatePostSources = Parameters<ReturnType<typeof useCreatePostFromApp>['createPost']>[0]['sources'];
 type Uploaded = Parameters<NonNullable<MockHostOptions['onUploadImageBytes']>>[0];
 type Reply = { requestId?: string; selected?: Record<string, unknown>; error?: string };
 
 describe('createMockHost — OPEN_IMAGE_UPLOAD bytes variant', () => {
   let uninstall: (() => void) | undefined;
   let uploaded: Uploaded[];
+  let outbound: Array<{ type: string; payload?: unknown }> = [];
 
   beforeEach(() => {
     uploaded = [];
@@ -60,8 +69,27 @@ describe('createMockHost — OPEN_IMAGE_UPLOAD bytes variant', () => {
   });
 
   async function install(options: MockHostOptions = {}) {
-    uninstall = createMockHost({ onUploadImageBytes: (f) => uploaded.push(f), ...options }).install();
+    outbound = [];
+    uninstall = createMockHost({
+      onUploadImageBytes: (f) => uploaded.push(f),
+      onOutbound: (m) => outbound.push(m),
+      ...options,
+    }).install();
     await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+  }
+
+  /** `useCreatePostFromApp().createPost(sources)` through the real hook. */
+  async function createPost(sources: CreatePostSources) {
+    const { result } = renderHook(() => useCreatePostFromApp());
+    let post: unknown;
+    let caught: Error | null = null;
+    await act(async () => {
+      await result.current
+        .createPost({ sources })
+        .then((v) => (post = v))
+        .catch((e: Error) => (caught = e));
+    });
+    return { post, caught: caught as Error | null };
   }
 
   /** The raw bridge, past the hook's own cap pre-check. */
@@ -99,24 +127,97 @@ describe('createMockHost — OPEN_IMAGE_UPLOAD bytes variant', () => {
     expect(uploaded[0]!.mimeType).toBe('image/png');
     expect(uploaded[0]!.filename).toBe('healed.png');
 
-    // Then post it through the EXISTING hook, as a block would.
-    const outbound: Array<{ type: string; payload: unknown }> = [];
-    uninstall?.();
-    uninstall = createMockHost({ onOutbound: (m) => outbound.push(m) }).install();
-    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
-    const { result } = renderHook(() => useCreatePostFromApp());
-    let post: unknown;
-    await act(async () => {
-      post = await result.current.createPost({
-        sources: [{ kind: 'published', imageIds: [(value as { imageId: number }).imageId] }],
-      });
-    });
+    // Then post it through the EXISTING hook, as a block would, on the SAME mock.
+    const { post } = await createPost([
+      { kind: 'published', imageIds: [(value as { imageId: number }).imageId] },
+    ]);
     expect(post).toEqual({ postId: 4242, url: 'https://civitai.com/posts/4242', imageIds: [9101, 9102] });
     const sent = outbound.filter((m) => m.type === 'CREATE_POST_FROM_APP');
     expect(sent).toHaveLength(1);
     expect((sent[0]!.payload as { sources: unknown }).sources).toEqual([
       { kind: 'published', imageIds: [12345701] },
     ]);
+  });
+
+  // ── CREATE_POST_FROM_APP `published` sources: only ids THIS mock issued ──
+  // Mirrors the host's `resolveAppPublishedImages` (civitai/civitai#5639): the
+  // app's provenance stamp + `postId IS NULL`, one uniform refusal string.
+
+  it('an uploaded id posts ONCE, then is refused as already posted', async () => {
+    await install({ uploadImageBytesResult: { ...BYTES_IMAGE, imageId: 5551 } });
+    expect((await upload(buf(PNG))).value).toMatchObject({ imageId: 5551 });
+    expect((await createPost([{ kind: 'published', imageIds: [5551] }])).caught).toBeNull();
+    const again = await createPost([{ kind: 'published', imageIds: [5551] }]);
+    expect(again.post).toBeUndefined();
+    expect(again.caught?.message).toBe('an image is not available to post');
+  });
+
+  it('a picked `useImageUpload()` id is refused: production leaves it unstamped', async () => {
+    await install();
+    const { result } = renderHook(() => useImageUpload());
+    let picked: { imageId: number } | null = null;
+    await act(async () => {
+      picked = (await result.current.open()) as { imageId: number } | null;
+    });
+    expect(picked).toMatchObject({ imageId: 12345678 });
+    const { post, caught } = await createPost([
+      { kind: 'published', imageIds: [(picked as unknown as { imageId: number }).imageId] },
+    ]);
+    expect(post).toBeUndefined();
+    expect(caught?.message).toBe('an image is not available to post');
+  });
+
+  it('an unknown id is refused, and a mixed set adopts nothing', async () => {
+    await install({ uploadImageBytesResult: { ...BYTES_IMAGE, imageId: 5552 } });
+    expect((await createPost([{ kind: 'published', imageIds: [424242] }])).caught?.message).toBe(
+      'an image is not available to post',
+    );
+    await upload(buf(PNG));
+    // Refused, not skipped: the valid 5552 is NOT consumed by the refused post…
+    expect(
+      (await createPost([{ kind: 'published', imageIds: [5552, 424242] }])).caught?.message,
+    ).toBe('an image is not available to post');
+    // …nor by a post whose LATER source is refused after an earlier one resolved.
+    expect(
+      (
+        await createPost([
+          { kind: 'published', imageIds: [5552] },
+          { kind: 'published', imageIds: [424242] },
+        ])
+      ).caught?.message,
+    ).toBe('an image is not available to post');
+    // …so it still posts on its own.
+    expect((await createPost([{ kind: 'published', imageIds: [5552] }])).caught).toBeNull();
+  });
+
+  it('a source with no positive integer id is refused with the server string', async () => {
+    await install();
+    expect((await createPost([{ kind: 'published', imageIds: [0, -1, 1.5] }])).caught?.message).toBe(
+      'no valid image ids in a published source',
+    );
+  });
+
+  it('ids from the mock PUBLISH_GENERATION_OUTPUTS reply are postable once', async () => {
+    await install({ publishImageIds: [7101, 7102] });
+    expect((await createPost([{ kind: 'published', imageIds: [7101] }])).caught?.message).toBe(
+      'an image is not available to post',
+    );
+    const reply = (await getTransport().sendRequest(
+      { type: 'PUBLISH_GENERATION_OUTPUTS', payload: { workflowId: 'wf_1', imageIndexes: [0, 1] } } as never,
+      'PUBLISH_RESULT',
+    )) as { result?: { imageIds: number[] } };
+    expect(reply.result?.imageIds).toEqual([7101, 7102]);
+    expect((await createPost([{ kind: 'published', imageIds: [7101, 7102] }])).caught).toBeNull();
+    expect((await createPost([{ kind: 'published', imageIds: [7102] }])).caught?.message).toBe(
+      'an image is not available to post',
+    );
+  });
+
+  it('a `workflow` source is not checked against the issued ids', async () => {
+    await install();
+    expect(
+      (await createPost([{ kind: 'workflow', workflowId: 'wf_1', imageIndexes: [0] }])).caught,
+    ).toBeNull();
   });
 
   it.each([

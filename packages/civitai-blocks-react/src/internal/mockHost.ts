@@ -842,8 +842,9 @@ export interface MockHostOptions {
   /**
    * The bare (post-less) scanned `Image` row ids returned from
    * `PUBLISH_GENERATION_OUTPUTS` (what `usePublishGenerationOutputs().publish()`
-   * resolves with). Absent → {@link DEFAULT_PUBLISH_IMAGE_IDS}. Live-tunable via
-   * {@link MockHost.setScenario}.
+   * resolves with). Absent → {@link DEFAULT_PUBLISH_IMAGE_IDS}. Each reply makes
+   * these ids postable once in a `CREATE_POST_FROM_APP` `published` source (see
+   * {@link createPostResult}). Live-tunable via {@link MockHost.setScenario}.
    */
   publishImageIds?: number[];
   /**
@@ -904,6 +905,18 @@ export interface MockHostOptions {
    * `useCreatePostFromApp().createPost()` resolves with). Absent →
    * {@link DEFAULT_CREATE_POST_RESULT}. Ignored when {@link createPostError} is
    * set. Live-tunable via {@link MockHost.setScenario}.
+   *
+   * A `{ kind: 'published', imageIds }` source is checked as the server's
+   * `resolveAppPublishedImages` checks it (civitai/civitai#5639). It may name
+   * ONLY ids this mock instance issued as postable: an accepted
+   * `OPEN_IMAGE_UPLOAD { bytes }` reply ({@link uploadImageBytesResult}) or a
+   * `PUBLISH_GENERATION_OUTPUTS` reply ({@link publishImageIds}). An unknown
+   * id, a picked `useImageUpload()` id (production leaves it unstamped) or an id
+   * a previous post already adopted is refused with
+   * `an image is not available to post`, and a source with no positive integer
+   * id with `no valid image ids in a published source`. A refused post adopts
+   * nothing. `workflow` sources are not checked. The mock does not model the
+   * scan wait, the viewer's ceiling or the server's input schema.
    */
   createPostResult?: BlockCreatePostResult;
   /**
@@ -1037,9 +1050,11 @@ export interface MockHostOptions {
    * (what `useUploadImageBytes().upload()` resolves with). Absent →
    * {@link DEFAULT_IMAGE_BYTES_UPLOAD}, whose `imageId` differs from
    * {@link DEFAULT_IMAGE_UPLOAD}'s so a block that confuses a picked upload
-   * with an uploaded one is visible. The mock's `CREATE_POST_FROM_APP` accepts
-   * it in a `{ kind: 'published', imageIds }` source, as the real host does for
-   * the app that uploaded it. Live-tunable via {@link MockHost.setScenario}.
+   * with an uploaded one is visible. Each accepted upload makes its `imageId`
+   * postable ONCE in a `CREATE_POST_FROM_APP` `{ kind: 'published', imageIds }`
+   * source on this same mock instance, as the real host allows for the app that
+   * uploaded it; see {@link createPostResult} for what the mock refuses.
+   * Live-tunable via {@link MockHost.setScenario}.
    *
    * The `bytes` variant runs the host's admission rules
    * (civitai/civitai#5639, `imageUploadBytes.ts`) in the host's order: not a
@@ -1987,6 +2002,13 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
     options.uploadImageBytesResult ?? DEFAULT_IMAGE_BYTES_UPLOAD;
   let uploadImageBytesError: string | undefined = options.uploadImageBytesError;
   let uploadBytesWindow: UploadBytesWindowEntry[] = [];
+  // The ids a `CREATE_POST_FROM_APP` `{ kind: 'published' }` source may name:
+  // ONLY ids this mock itself issued as postable (an accepted bytes upload, or a
+  // PUBLISH_GENERATION_OUTPUTS reply), and only until a post adopts them. Mirrors
+  // the host's `resolveAppPublishedImages` (civitai/civitai#5639): this app's
+  // provenance stamp and `postId IS NULL`. A picked `useImageUpload()` image is
+  // never added: production leaves it unstamped, so it is not postable.
+  const postableImageIds = new Set<number>();
   let runTrainingCapRefusal: string | undefined = options.runTrainingCapRefusal;
   // App-subqueue bridge data + forced free-text-error knob. `appWorkflows` is
   // MUTABLE — CANCEL_APP_WORKFLOW marks the matching row canceled in place so a
@@ -3087,6 +3109,33 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               });
               return;
             }
+            // `published` sources: the server's `resolveAppPublishedImages`
+            // refusals, verbatim. Ids are de-duplicated and non-positive /
+            // non-integer ones dropped first; none left → `no valid image ids
+            // in a published source`. Then ONE message for "unknown", "not this
+            // app's" (a picked upload is unstamped) and "already in a post", so
+            // the reply is no existence oracle. Refused, never skipped.
+            const adopted: number[] = [];
+            for (const source of sources as Array<{ kind?: unknown; imageIds?: unknown }>) {
+              if (source?.kind !== 'published') continue;
+              const raw = Array.isArray(source.imageIds) ? source.imageIds : [];
+              const ids = [...new Set(raw)].filter(
+                (n): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0,
+              );
+              const refusal =
+                ids.length === 0
+                  ? 'no valid image ids in a published source'
+                  : ids.some((id) => !postableImageIds.has(id))
+                    ? 'an image is not available to post'
+                    : undefined;
+              if (refusal !== undefined) {
+                dispatchToBlock({ type: 'CREATE_POST_RESULT', payload: { requestId, error: refusal } });
+                return;
+              }
+              adopted.push(...ids);
+            }
+            // Posted: the adopted images now have a `postId`, so never again.
+            for (const id of adopted) postableImageIds.delete(id);
             dispatchToBlock({
               type: 'CREATE_POST_RESULT',
               payload: { requestId, result: { ...createPostResult } },
@@ -3206,6 +3255,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               });
               return;
             }
+            for (const id of publishImageIds) postableImageIds.add(id);
             dispatchToBlock({
               type: 'PUBLISH_RESULT',
               payload: { requestId, result: { imageIds: [...publishImageIds] } },
@@ -3291,6 +3341,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                 mimeType: admitted.result.type,
                 filename: admitted.result.filename,
               });
+              postableImageIds.add(uploadImageBytesResult.imageId);
               return reply({ selected: { ...uploadImageBytesResult } });
             }
 

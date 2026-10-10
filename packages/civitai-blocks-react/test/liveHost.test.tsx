@@ -2247,7 +2247,7 @@ describe('createLiveHost — OPEN_IMAGE_UPLOAD (no headless upload contract)', (
   });
 
   it('replies IMAGE_UPLOAD_RESULT dismissed (no `selected`) instead of hanging', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const host = createLiveHost({
       blockToken: fakeJwt(DEFAULT_CLAIMS),
       viewer: { id: 42, username: 'dev-mod' },
@@ -2263,6 +2263,9 @@ describe('createLiveHost — OPEN_IMAGE_UPLOAD (no headless upload contract)', (
     expect(payload.requestId).toBe('r-img');
     // Dismissed: no `selected` → the hook resolves to null (no fabricated image).
     expect('selected' in payload).toBe(false);
+    const logged = warn.mock.calls.map((c) => String(c[0]));
+    expect(logged.filter((m) => m.includes('resolving the upload as dismissed (null)'))).toHaveLength(1);
+    expect(logged.filter((m) => m.includes('uploadImageBytesResult'))).toHaveLength(0);
   });
 
   it('a `useUploadImageBytes()` upload rejects with the no-image error, never hangs', async () => {
@@ -2272,7 +2275,7 @@ describe('createLiveHost — OPEN_IMAGE_UPLOAD (no headless upload contract)', (
     // validator, so a dropped reply would surface as a hook that never settles
     // (its own bound is the 10-minute human-interaction timeout, far past
     // `waitFor`'s).
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     getTransport({ allowedParentOrigins: [ORIGIN] });
     try {
       const host = createLiveHost({
@@ -2299,6 +2302,15 @@ describe('createLiveHost — OPEN_IMAGE_UPLOAD (no headless upload contract)', (
       const reply = await waitForMessage(inbound, 'IMAGE_UPLOAD_RESULT');
       expect('selected' in reply).toBe(false);
       expect('error' in reply).toBe(false);
+      // The log says it REJECTS (not "dismissed (null)") and names the mock option.
+      const logged = warn.mock.calls.map((c) => String(c[0]));
+      expect(logged).toContain(
+        '[createLiveHost] OPEN_IMAGE_UPLOAD { bytes } received but live dev mode has no bytes upload path — ' +
+          'useUploadImageBytes().upload() REJECTS with "the host returned no uploaded image". ' +
+          'Test the bytes upload against the real site, or use ' +
+          'createMockHost({ uploadImageBytesResult }) in dev:mock.',
+      );
+      expect(logged.filter((m) => m.includes('dismissed (null)'))).toHaveLength(0);
     } finally {
       resetTransport();
     }

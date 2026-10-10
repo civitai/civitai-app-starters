@@ -7,6 +7,7 @@ import { useUploadImageBytes } from '../src/hooks/useUploadImageBytes.js';
 import { UPLOAD_BYTES_MAX_BYTES } from '../src/internal/uploadBytes.js';
 import { HUMAN_INTERACTION_TIMEOUT_MS } from '../src/transport/requestTimeouts.js';
 import { getTransport } from '../src/transport/singleton.js';
+import { RequestTimeoutError } from '../src/transport/transport.js';
 import { resetTransport } from '../src/testing.js';
 
 /**
@@ -120,6 +121,8 @@ describe('useUploadImageBytes', () => {
     'invalid image-upload request',
     'no block token',
     'block lacks posts:write:self scope',
+    // A slot (model) host's generic NACK for a request it has no handler for.
+    'unsupported on this host',
   ])('rejects with the host error string %j (the validator must accept `error`)', async (error) => {
     const state = start(new ArrayBuffer(4));
     dispatch({ requestId: uploads()[0]!.payload.requestId, error });
@@ -177,6 +180,9 @@ describe('useUploadImageBytes', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2);
     });
-    expect(state.caught).toBeInstanceOf(Error);
+    // A transport timeout, NOT the no-image string: the host may have stored
+    // the image, so a caller must not treat this like a refusal and retry.
+    expect(state.caught).toBeInstanceOf(RequestTimeoutError);
+    expect(state.caught?.message).not.toBe('the host returned no uploaded image');
   });
 });

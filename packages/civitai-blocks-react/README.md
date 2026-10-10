@@ -1218,11 +1218,15 @@ render), with no picker, so the app can then post it. Returns `{ upload }`.
 `url`). That `imageId` is postable by this app through
 `useCreatePostFromApp()` as a `{ kind: 'published', imageIds }` source.
 
-- 🔴 **Page apps only.** A slot (model) block's host has no handler for it.
+- 🔴 **Page apps only.** A slot (model) block's host has no handler for it. The
+  host answers an unhandled request at once with its generic refusal, so on a
+  slot `upload` rejects immediately with `unsupported on this host` rather than
+  waiting out the 10-minute timeout.
 - 🔴 **Requires `posts:write:self`.** The server refuses the upload without
   it, and this hook does not prompt. Ask for the scope first with
-  `useRequestConsent()`, because the upload runs before the `createPost()`
-  call that would otherwise prompt.
+  `useRequestConsent()` and upload only once `useBlockToken().scopes` holds it
+  (the example below), because the upload runs before the `createPost()` call
+  that would otherwise prompt.
 - **Images only:** PNG, WebP or JPEG by magic bytes. Anything else is refused
   with `file type is not allowed`. The host names the stored file from the
   sniffed type, whatever `filename` says.
@@ -1241,7 +1245,9 @@ render), with no picker, so the app can then post it. Returns `{ upload }`.
 above, `no block token`, or a server message passed through verbatim (the
 missing scope, the posting flag, page-only, a rate limit, the scan). It
 rejects with `the host returned no uploaded image` if the reply carries
-neither an image nor an error.
+neither an image nor an error. If no reply arrives within 10 minutes it
+rejects with a `RequestTimeoutError`; the host may still have stored the
+image, so retrying after a timeout can create a duplicate.
 
 🔴 **A host that predates this variant ignores `bytes` and opens its upload
 picker instead**, so the call settles on whatever the viewer picks. The hook
@@ -1253,32 +1259,44 @@ stamp only persists from that head. Do not ship a block that relies on
 ```tsx
 import {
   CreatePostError,
+  useBlockToken,
   useCreatePostFromApp,
   useRequestConsent,
   useUploadImageBytes,
 } from '@civitai/blocks-react';
 
-const { requestConsent } = useRequestConsent();
-const { upload } = useUploadImageBytes();
-const { createPost } = useCreatePostFromApp();
+function PostHealedButton({ healed }: { healed: Blob }) {
+  const { scopes } = useBlockToken();
+  const { requestConsent } = useRequestConsent();
+  const { upload } = useUploadImageBytes();
+  const { createPost } = useCreatePostFromApp();
+  const canPost = scopes.includes('posts:write:self');
 
-// Once, before the first upload, e.g. on the button that starts the flow.
-requestConsent({ scopes: ['posts:write:self'] });
-
-async function postHealed(healed: Blob) {
-  try {
-    // 1. Bytes made in the tab, uploaded and scanned by the host.
-    const image = await upload(await healed.arrayBuffer(), { filename: 'healed.png' });
-    // 2. Posted through the existing bridge, with its own confirm.
-    const post = await createPost({
-      sources: [{ kind: 'published', imageIds: [image.imageId] }],
-      title: 'Fixed with Metadata Healer',
-    });
-    showToast(`Posted! ${post.url}`);
-  } catch (err) {
-    if (err instanceof CreatePostError && err.declined) return; // the viewer said no
-    showToast((err as Error).message); // e.g. 'busy', 'file type is not allowed'
+  async function onClick() {
+    if (!canPost) {
+      // Fire-and-forget: this opens the host's consent dialog and returns
+      // nothing. On a grant the host pushes a new token, `scopes` updates and
+      // the button re-renders as "Post". Never upload before that: the server
+      // refuses the upload without the scope.
+      requestConsent({ scopes: ['posts:write:self'] });
+      return;
+    }
+    try {
+      // 1. Bytes made in the tab, uploaded and scanned by the host.
+      const image = await upload(await healed.arrayBuffer(), { filename: 'healed.png' });
+      // 2. Posted through the existing bridge, with its own confirm.
+      const post = await createPost({
+        sources: [{ kind: 'published', imageIds: [image.imageId] }],
+        title: 'Fixed with Metadata Healer',
+      });
+      showToast(`Posted! ${post.url}`);
+    } catch (err) {
+      if (err instanceof CreatePostError && err.declined) return; // the viewer said no
+      showToast((err as Error).message); // e.g. 'busy', 'file type is not allowed'
+    }
   }
+
+  return <button onClick={onClick}>{canPost ? 'Post' : 'Allow posting'}</button>;
 }
 ```
 
@@ -1286,11 +1304,14 @@ Under `createMockHost` / `Harness` the host's checks run in the host's order:
 the cap, then the window, then the type. `uploadImageBytesResult` sets the
 image an accepted upload returns, `uploadImageBytesError` forces a refusal
 (for example `block lacks posts:write:self scope`), and `onUploadImageBytes`
-reports what was accepted. The mock's `CREATE_POST_FROM_APP` accepts the
-uploaded `imageId`. The mock does not model the page-only rule, the scope
-check, the real scan, or an older host's picker. `dev:live` has no bytes path:
-it replies dismissed, so `upload` rejects with `the host returned no uploaded
-image`.
+reports what was accepted. The mock's `CREATE_POST_FROM_APP` checks a
+`published` source the way the server does: it accepts only ids that same mock
+issued as postable (an accepted bytes upload, or a `PUBLISH_GENERATION_OUTPUTS`
+reply), each in one post only. An unknown id, a picked `useImageUpload()` id
+(production leaves it unstamped) or an already-posted id is refused with
+`an image is not available to post`. The mock does not model the page-only
+rule, the scope check, the real scan, or an older host's picker. `dev:live` has
+no bytes path: `upload` rejects with `the host returned no uploaded image`.
 
 ### `useSaveImage()`
 

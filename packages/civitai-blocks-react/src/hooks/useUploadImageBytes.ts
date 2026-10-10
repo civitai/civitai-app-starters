@@ -40,8 +40,15 @@ export interface UseUploadImageBytes {
    * `busy` (the host's rolling window is full; retry later), `no block token`,
    * or a server message passed through verbatim (a missing `posts:write:self`
    * scope, the posting flag, page-only, a rate limit, a scan refusal or
-   * timeout). Also rejects with `the host returned no uploaded image` when a
-   * reply carries neither an image nor an error, or on a transport timeout.
+   * timeout), or `unsupported on this host` on a slot (model) host, which has
+   * no handler and answers at once with its generic refusal. Rejects with
+   * `the host returned no uploaded image` when a reply carries neither an image
+   * nor an error.
+   *
+   * 🔴 With NO reply inside the 10-minute bound it rejects with a
+   * `RequestTimeoutError` instead, and the work may have completed: the host
+   * may have stored and scanned the image. Retrying after a timeout can create
+   * a duplicate image.
    *
    * 🔴 One call is refused BEFORE sending, with the host's own string: a buffer
    * over the 40 MiB cap rejects with `file exceeds the maximum upload size`,
@@ -57,8 +64,9 @@ export interface UseUploadImageBytes {
  * upload → persist → scan pipeline as a picked `display` upload and replies
  * only once the scan settles.
  *
- * - 🔴 **Page apps only**, and the token needs **`posts:write:self`** (the
- *   server refuses the persist without it). This hook does not prompt for the
+ * - 🔴 **Page apps only** (a slot host rejects at once with
+ *   `unsupported on this host`), and the token needs **`posts:write:self`**
+ *   (the server refuses the persist without it). This hook does not prompt for the
  *   scope, so ask for it first with `useRequestConsent()`: the upload runs
  *   before any `useCreatePostFromApp()` call that would otherwise prompt.
  * - **Images only:** PNG, WebP or JPEG by magic bytes. The cap is 40 MiB, and
