@@ -252,6 +252,23 @@ export interface MockGenerationScenario {
    */
   costPerGen?: CostSpec;
   /**
+   * The app author's per-generation fee, itemised as `cost.authorFee` on a
+   * QUOTE — the `ESTIMATE_RESULT` and the {@link submitCapRefusal} reply — and
+   * added into that quote's `cost.total` on top of {@link costPerGen}, as the
+   * real host does. A number, or a `(body) => number`. Default `0`, which is
+   * reported as `authorFee: 0` ("no fee on this request").
+   *
+   * Like the real host, only a `textToImage` or registered-`step` body is
+   * itemised; `customComfy`, pass-through `step` and `training` quotes carry no
+   * `authorFee`. The succeeded snapshot's `cost.total` stays {@link costPerGen}
+   * (a submitted workflow reports the generation's own cost), while a simulated
+   * {@link MockBuzzScenario.balance} is debited `costPerGen + authorFee`.
+   *
+   * `false` simulates a host that PREDATES the field: `authorFee` is omitted
+   * everywhere and no fee is added — use it to test your "not itemised" branch.
+   */
+  authorFee?: CostSpec | false;
+  /**
    * Synthetic latency before the SUBMITTED→succeeded transition lands, in ms.
    * A single number, or a `[min, max]` range (uniform random). Applied to the
    * poll that flips a workflow to `succeeded`. Default `0` (immediate).
@@ -1758,7 +1775,7 @@ function jsonByteSize(value: unknown): number {
 /**
  * Reads the URL query toggles the gen-matrix dev harness uses, so a starter's
  * dev harness keeps working with `?viewer/?consent/?fail/?theme/?pick/?pickCkpt`.
- * Layer-1 additions: `?balance/?latency/?costPerGen/?failNext/?failRate/?seed`
+ * Layer-1 additions: `?balance/?latency/?costPerGen/?authorFee/?failNext/?failRate/?seed`
  * map onto the new scenario groups so a dev can flip out-of-Buzz /
  * failures / latency without editing code. `?capRefusal=1` (or `=<text>`) sets
  * {@link MockGenerationScenario.submitCapRefusal}.
@@ -1846,6 +1863,14 @@ export function readMockHostUrlOptions(
   const costPerGen = params.get('costPerGen') ?? params.get('cost');
   if (costPerGen !== null && Number.isFinite(Number(costPerGen))) {
     generation.costPerGen = Number(costPerGen);
+  }
+  // `?authorFee=<n>` itemises an app fee on the quote; `?authorFee=off`
+  // simulates a host that predates the field.
+  const authorFee = params.get('authorFee');
+  if (authorFee === 'off') {
+    generation.authorFee = false;
+  } else if (authorFee !== null && authorFee !== '' && Number.isFinite(Number(authorFee))) {
+    generation.authorFee = Number(authorFee);
   }
 
   const failNext = params.get('failNext');
@@ -2108,6 +2133,24 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   const costFor = (body: WorkflowBody): number => {
     const spec: CostSpec | undefined = gen.costPerGen ?? legacyCost;
     return typeof spec === 'function' ? spec(body) : (spec ?? legacyCost);
+  };
+
+  // `null` = this quote is not itemised (a fee-less kind, or `authorFee: false`).
+  const authorFeeFor = (body: WorkflowBody): number | null => {
+    if (gen.authorFee === false) return null;
+    // A REGISTERED step is keyed on the VALUE of `step`, as the host keys it —
+    // never `'step' in body`: `{ kind: 'step', step: undefined, ... }` is a legal
+    // pass-through body, and a pass-through quote prices no fee.
+    const quotesFee =
+      body.kind === 'textToImage' || (body.kind === 'step' && typeof body.step === 'string');
+    if (!quotesFee) return null;
+    const spec = gen.authorFee ?? 0;
+    return typeof spec === 'function' ? spec(body) : spec;
+  };
+  /** The `cost` of a QUOTE: the fee is inside `total` and itemised beside it. */
+  const quotedCost = (body: WorkflowBody): { total: number; authorFee?: number } => {
+    const fee = authorFeeFor(body);
+    return fee === null ? { total: costFor(body) } : { total: costFor(body) + fee, authorFee: fee };
   };
 
   const latencyFor = (): number => {
@@ -2596,7 +2639,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                 snapshot: {
                   workflowId: 'wf_estimate',
                   status: 'pending',
-                  cost: { total: costFor(body) },
+                  cost: quotedCost(body),
                 },
               },
             });
@@ -2636,6 +2679,8 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               return;
             }
             const cost = costFor(body);
+            // What the viewer pays: the generation plus the app fee.
+            const charged = cost + (authorFeeFor(body) ?? 0);
 
             // CAUGHT-SERVER-EXCEPTION simulation (`generation.failSubmitException`).
             // Reproduces the host's `failureSnapshot(err)` byte-for-byte: the
@@ -2706,7 +2751,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                     // presence is what makes `submit()` RESOLVE this rather than
                     // reject it as an errored submit
                     // (civitai/civitai-app-starters#251). Do not drop it.
-                    cost: { total: cost },
+                    cost: quotedCost(body),
                     error:
                       gen.submitCapRefusal === true
                         ? DEFAULT_SUBMIT_CAP_REFUSAL
@@ -2724,7 +2769,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               failMode === 'all' ||
               failMode === 'insufficient' ||
               buzz.insufficient === true ||
-              (balanceSimulated && (buzz.balance as number) < cost);
+              (balanceSimulated && (buzz.balance as number) < charged);
 
             // Generic generation failure: failNext countdown, failRate dice, or
             // the legacy 'some' (~1 in 3) mode.
@@ -2804,7 +2849,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
             }
 
             // Success path: debit the simulated balance + remember body/cost.
-            if (balanceSimulated) buzz.balance = (buzz.balance as number) - cost;
+            if (balanceSimulated) buzz.balance = (buzz.balance as number) - charged;
             const workflowId = `wf_${submitCount}_${Date.now()}`;
             workflows.set(workflowId, { polls: 0, cost, body });
             dispatchToBlock({
