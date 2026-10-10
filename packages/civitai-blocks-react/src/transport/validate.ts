@@ -1528,32 +1528,53 @@ export function isValidCheckpointPickerResult(p: unknown): boolean {
 }
 
 /**
- * Reply to `OPEN_RESOURCE_PICKER`. `selected` is ABSENT on dismiss (the hook
- * resolves `null`); when present it is a `BlockResourceInfo` projection — the 5
- * base fields plus `modelType` and the OPTIONAL public recommended-settings
- * (`strength`/`minStrength`/`maxStrength` finite, `trainedWords` a string[],
- * `clipSkip` a finite number OR `null`).
+ * One `BlockResourceInfo` projection — the 5 base fields plus `modelType` and
+ * the OPTIONAL public recommended-settings (`strength`/`minStrength`/
+ * `maxStrength` finite, `trainedWords` a string[], `clipSkip` a finite number
+ * OR `null`). Shared by the single-pick `selected` and every entry of the
+ * multi-select `selectedResources`, so the two cannot drift on what a
+ * well-formed resource is.
+ */
+function isValidPickerResource(s: unknown): boolean {
+  if (!isObject(s)) return false;
+  if (!isValidPickerResourceBase(s)) return false;
+  if (s.modelType !== undefined && typeof s.modelType !== 'string') return false;
+  if (s.strength !== undefined && !isFiniteNumber(s.strength)) return false;
+  if (s.minStrength !== undefined && !isFiniteNumber(s.minStrength)) return false;
+  if (s.maxStrength !== undefined && !isFiniteNumber(s.maxStrength)) return false;
+  if (s.trainedWords !== undefined) {
+    if (!Array.isArray(s.trainedWords)) return false;
+    if (!s.trainedWords.every((w): w is string => typeof w === 'string')) return false;
+  }
+  // `clipSkip` is `number | null` — accept a finite number OR null; reject
+  // other present types.
+  if (s.clipSkip !== undefined && s.clipSkip !== null && !isFiniteNumber(s.clipSkip)) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Reply to `OPEN_RESOURCE_PICKER`.
+ *
+ * Single pick: `selected` is ABSENT on dismiss (the hook resolves `null`); when
+ * present it is a `BlockResourceInfo` projection.
+ *
+ * Multi-select: `selectedResources` is an array of the same projection (`[]` on
+ * dismiss). ONE malformed entry drops the whole reply — each `versionId` is
+ * money-adjacent, and handing the caller the well-formed remainder would
+ * silently change which resources a generation runs with.
+ *
+ * `error` (a refusal) is not validated here: the hook reads it by PRESENCE, and
+ * a reply carrying only `{ requestId, error }` must reach it.
  */
 export function isValidResourcePickerResult(p: unknown): boolean {
   if (!isObject(p)) return false;
   if (!isWireRequestIdShape(p.requestId)) return false;
-  if (p.selected !== undefined) {
-    const s = p.selected;
-    if (!isObject(s)) return false;
-    if (!isValidPickerResourceBase(s)) return false;
-    if (s.modelType !== undefined && typeof s.modelType !== 'string') return false;
-    if (s.strength !== undefined && !isFiniteNumber(s.strength)) return false;
-    if (s.minStrength !== undefined && !isFiniteNumber(s.minStrength)) return false;
-    if (s.maxStrength !== undefined && !isFiniteNumber(s.maxStrength)) return false;
-    if (s.trainedWords !== undefined) {
-      if (!Array.isArray(s.trainedWords)) return false;
-      if (!s.trainedWords.every((w): w is string => typeof w === 'string')) return false;
-    }
-    // `clipSkip` is `number | null` — accept a finite number OR null; reject
-    // other present types.
-    if (s.clipSkip !== undefined && s.clipSkip !== null && !isFiniteNumber(s.clipSkip)) {
-      return false;
-    }
+  if (p.selected !== undefined && !isValidPickerResource(p.selected)) return false;
+  if (p.selectedResources !== undefined) {
+    if (!Array.isArray(p.selectedResources)) return false;
+    if (!p.selectedResources.every(isValidPickerResource)) return false;
   }
   return true;
 }

@@ -75,7 +75,13 @@ export type PickerResultChannel = 'CHECKPOINT_PICKER_RESULT' | 'RESOURCE_PICKER_
  */
 export type PickerSelection =
   | { channel: 'CHECKPOINT_PICKER_RESULT'; selected: BlockCheckpointInfo }
-  | { channel: 'RESOURCE_PICKER_RESULT'; selected: BlockResourceInfo };
+  | { channel: 'RESOURCE_PICKER_RESULT'; selected: BlockResourceInfo }
+  /**
+   * MULTI-select (`OPEN_RESOURCE_PICKER` with `multiple`): the staged resources
+   * in the order they were staged. Only ever produced when
+   * {@link OpenPickerOptions.multiple} is set.
+   */
+  | { channel: 'RESOURCE_PICKER_RESULT'; selectedResources: BlockResourceInfo[] };
 
 export interface OpenPickerOptions {
   /**
@@ -111,6 +117,14 @@ export interface OpenPickerOptions {
   baseModelGroup?: string;
   /** Currently-selected versionId so the overlay can pre-highlight it. */
   currentVersionId?: number;
+  /**
+   * MULTI-select mode (`OPEN_RESOURCE_PICKER` with `multiple: { max }`). A card
+   * click STAGES (or un-stages) that resource instead of resolving; the "Add"
+   * button resolves with everything staged, in staging order, as
+   * `selectedResources`. At most `max` can be staged. Only meaningful on the
+   * `RESOURCE_PICKER_RESULT` channel — the checkpoint channel has no list reply.
+   */
+  multiple?: { max: number };
   /** Advisory-SFW for the PUBLIC fallback read. Defaults true (fail-closed SFW). */
   anonSfwOnly?: boolean;
   /** The document to mount into. Defaults to `globalThis.document`. */
@@ -137,6 +151,19 @@ export interface PickerOverlayHandle {
   selectByVersionId(versionId: number): void;
   /** Dismiss without a selection. Resolves `null` + tears down. */
   dismiss(): void;
+  /**
+   * MULTI-select only: stage the card with this versionId, or un-stage it if it
+   * already is. No-op when absent, when not in multi-select mode, or when
+   * staging would exceed `max`. Does NOT resolve.
+   */
+  toggleStagedByVersionId(versionId: number): void;
+  /** MULTI-select only: the staged versionIds, in staging order. */
+  readonly stagedVersionIds: readonly number[];
+  /**
+   * MULTI-select only: resolve with everything staged (in staging order) and
+   * tear down. No-op while nothing is staged, or outside multi-select mode.
+   */
+  commitStaged(): void;
   /** Force teardown (host teardown path). Resolves `null` if not already resolved. */
   close(): void;
   /** True once the overlay has resolved (selection or dismissal). */
@@ -255,7 +282,14 @@ export function openPickerOverlay(opts: OpenPickerOptions): PickerOverlayHandle 
   let grid: HTMLElement | null = null;
   let statusEl: HTMLElement | null = null;
   let searchEl: HTMLInputElement | null = null;
+  let commitBtn: HTMLButtonElement | null = null;
   let sentinel: HTMLElement | null = null;
+
+  // --- Multi-select state. `staged` is in STAGING order — that order is the
+  // reply's order, so it is an array and never a Set keyed for lookup. ---
+  const multiMax =
+    opts.multiple && opts.resultChannel === 'RESOURCE_PICKER_RESULT' ? opts.multiple.max : null;
+  let staged: CatalogCard[] = [];
   let observer: IntersectionObserver | null = null;
   // Separate observer that gates each thumbnail's `<img src>` (see observeThumb).
   let thumbObserver: IntersectionObserver | null = null;
@@ -343,6 +377,7 @@ export function openPickerOverlay(opts: OpenPickerOptions): PickerOverlayHandle 
     grid = null;
     statusEl = null;
     searchEl = null;
+    commitBtn = null;
   };
 
   const resolve = (selection: PickerSelection | null) => {
@@ -352,7 +387,52 @@ export function openPickerOverlay(opts: OpenPickerOptions): PickerOverlayHandle 
     opts.onResolve(selection);
   };
 
+  /** Repaint the staged outlines + the commit button from `staged`. */
+  const paintStaged = () => {
+    if (grid) {
+      for (const cell of Array.from(grid.querySelectorAll('[data-picker-card]'))) {
+        const id = Number(cell.getAttribute('data-picker-card'));
+        const isStaged = staged.some((c) => c.versionId === id);
+        cell.setAttribute('aria-pressed', String(isStaged));
+        (cell as HTMLElement).style.outline = isStaged ? '2px solid #5ec8a0' : '';
+      }
+    }
+    if (commitBtn) {
+      commitBtn.disabled = staged.length === 0;
+      commitBtn.textContent =
+        staged.length === 0 ? `Pick up to ${multiMax}` : `Add ${staged.length} of ${multiMax}`;
+    }
+  };
+
+  /** Multi-select: stage `card`, or un-stage it. Never exceeds `multiMax`. */
+  const toggleStaged = (card: CatalogCard) => {
+    if (multiMax === null || resolved) return;
+    if (staged.some((c) => c.versionId === card.versionId)) {
+      staged = staged.filter((c) => c.versionId !== card.versionId);
+    } else if (staged.length < multiMax) {
+      staged = [...staged, card];
+    }
+    paintStaged();
+  };
+
+  const commitStaged = () => {
+    if (multiMax === null || staged.length === 0) return;
+    resolve({
+      channel: 'RESOURCE_PICKER_RESULT',
+      selectedResources: staged.map((card) => cardToResource(card, opts.type)),
+    });
+  };
+
   const selectCard = (card: CatalogCard) => {
+    // Multi-select: a programmatic "select" is the one-resource batch — still a
+    // LIST reply, because the reply shape follows the REQUEST, not the count.
+    if (multiMax !== null) {
+      resolve({
+        channel: 'RESOURCE_PICKER_RESULT',
+        selectedResources: [cardToResource(card, opts.type)],
+      });
+      return;
+    }
     // 🔴 BRANCH ON THE REPLY CHANNEL, NOT ON `opts.type` (#391). The channel is
     // what the block's consumers read the payload as; the requested type is
     // only what the catalog was filtered by. Branching on the type sent a
@@ -388,6 +468,16 @@ export function openPickerOverlay(opts: OpenPickerOptions): PickerOverlayHandle 
     },
     dismiss() {
       resolve(null);
+    },
+    toggleStagedByVersionId(versionId: number) {
+      const found = cards.find((c) => c.versionId === versionId);
+      if (found) toggleStaged(found);
+    },
+    get stagedVersionIds() {
+      return staged.map((c) => c.versionId);
+    },
+    commitStaged() {
+      commitStaged();
     },
     close() {
       resolve(null);
@@ -460,7 +550,15 @@ export function openPickerOverlay(opts: OpenPickerOptions): PickerOverlayHandle 
     meta.textContent = [card.baseModel, card.versionName].filter(Boolean).join(' · ');
     cell.appendChild(meta);
 
-    cell.addEventListener('click', () => selectCard(card));
+    if (multiMax !== null) {
+      // A rebuilt grid (new search) keeps what is already staged marked.
+      const isStaged = staged.some((c) => c.versionId === card.versionId);
+      cell.setAttribute('aria-pressed', String(isStaged));
+      if (isStaged) cell.style.outline = '2px solid #5ec8a0';
+      cell.addEventListener('click', () => toggleStaged(card));
+    } else {
+      cell.addEventListener('click', () => selectCard(card));
+    }
     return cell;
   };
 
@@ -677,7 +775,11 @@ export function openPickerOverlay(opts: OpenPickerOptions): PickerOverlayHandle 
     const title = doc.createElement('div');
     Object.assign(title.style, TITLE_STYLE);
     title.textContent =
-      opts.type === 'LORA' ? 'Pick a LoRA (dev:live)' : 'Pick a checkpoint (dev:live)';
+      multiMax !== null
+        ? `Pick up to ${multiMax} LoRAs (dev:live)`
+        : opts.type === 'LORA'
+          ? 'Pick a LoRA (dev:live)'
+          : 'Pick a checkpoint (dev:live)';
     const closeBtn = doc.createElement('button');
     closeBtn.type = 'button';
     closeBtn.setAttribute('aria-label', 'Close picker');
@@ -720,6 +822,16 @@ export function openPickerOverlay(opts: OpenPickerOptions): PickerOverlayHandle 
     modal.appendChild(searchEl);
     modal.appendChild(statusEl);
     modal.appendChild(grid);
+    if (multiMax !== null) {
+      // Multi-select commit bar. A card click only stages; this resolves.
+      commitBtn = doc.createElement('button');
+      commitBtn.type = 'button';
+      commitBtn.setAttribute('data-picker-commit', '');
+      Object.assign(commitBtn.style, COMMIT_STYLE);
+      commitBtn.addEventListener('click', () => commitStaged());
+      modal.appendChild(commitBtn);
+      paintStaged();
+    }
     root.appendChild(modal);
 
     // Escape = dismiss.
@@ -775,6 +887,18 @@ const HEADER_STYLE: Partial<CSSStyleDeclaration> = {
 const TITLE_STYLE: Partial<CSSStyleDeclaration> = {
   fontSize: '15px',
   fontWeight: '600',
+};
+
+const COMMIT_STYLE: Partial<CSSStyleDeclaration> = {
+  margin: '10px 14px 14px',
+  padding: '8px 14px',
+  alignSelf: 'flex-end',
+  border: '1px solid #2f6f5a',
+  borderRadius: '6px',
+  background: '#1f4a3c',
+  color: '#e6edf3',
+  font: 'inherit',
+  cursor: 'pointer',
 };
 
 const CLOSE_STYLE: Partial<CSSStyleDeclaration> = {

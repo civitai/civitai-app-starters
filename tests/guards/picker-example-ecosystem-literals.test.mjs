@@ -162,11 +162,11 @@ const REQUIRED_SOURCES = [
  * sweep, because scoping the prose to the three required files and the
  * assertion to the sweep is exactly how this floor was first set 2 too low.
  *
- * Today the sweep yields 8 picker example regions and 4 `baseModelGroup:` sites:
+ * Today the sweep yields 12 picker example regions and 4 `baseModelGroup:` sites:
  *
- *   packages/civitai-blocks-react/README.md                      3 regions / 2 sites
- *   packages/civitai-blocks-react/src/hooks/useResourcePicker.ts  2 / 1
- *   packages/civitai-blocks-react/src/hooks/useCheckpointPicker.ts 1 / 1
+ *   packages/civitai-blocks-react/README.md                      5 regions / 2 sites
+ *   packages/civitai-blocks-react/src/hooks/useResourcePicker.ts  3 / 1
+ *   packages/civitai-blocks-react/src/hooks/useCheckpointPicker.ts 2 / 1
  *   packages/civitai-sdk/README.md                                1 / 0
  *   packages/civitai-sdk/api/public-api.md                        1 / 0
  *
@@ -189,7 +189,7 @@ const REQUIRED_SOURCES = [
  * name a picker or a picker option, so no new REGION qualified. The next example
  * added behind an install snippet will be the one that moves them.
  */
-const MIN_PICKER_EXAMPLES = 8;
+const MIN_PICKER_EXAMPLES = 12;
 const MIN_BASE_MODEL_GROUP_SITES = 4;
 
 /**

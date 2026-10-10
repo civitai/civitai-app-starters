@@ -991,6 +991,102 @@ describe('createLiveHost — picker (serves the catalog locally, no longer a stu
     expect(payload.selected).toBeUndefined();
   });
 
+  // ── Multi-select (`multiple: { max }`) ────────────────────────────────────
+  // Three LoRAs whose ids are NOT in catalog order, so a reply that follows the
+  // catalog (or sorts) instead of the staging order is visible.
+  const LORAS = [
+    { id: 310, name: 'Alpha', type: 'LORA', nsfw: false, modelVersions: [{ id: 5001, name: 'v1', baseModel: 'SDXL 1.0', images: [] }] },
+    { id: 320, name: 'Bravo', type: 'LORA', nsfw: false, modelVersions: [{ id: 5002, name: 'v2', baseModel: 'SDXL 1.0', images: [] }] },
+    { id: 330, name: 'Charlie', type: 'LORA', nsfw: false, modelVersions: [{ id: 5003, name: 'v3', baseModel: 'SDXL 1.0', images: [] }] },
+  ];
+
+  it('OPEN_RESOURCE_PICKER with `multiple` replies with the staged list in STAGING order', async () => {
+    install(LORAS, (h) => {
+      h.toggleStagedByVersionId(5003);
+      h.toggleStagedByVersionId(5001);
+      h.commitStaged();
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('OPEN_RESOURCE_PICKER', { requestId: 'r-multi', resourceType: 'LORA', multiple: { max: 3 } });
+    const payload = await waitForMessage(inbound, 'RESOURCE_PICKER_RESULT');
+    expect(payload).toEqual({
+      requestId: 'r-multi',
+      selectedResources: [
+        { versionId: 5003, modelId: 330, modelName: 'Charlie', versionName: 'v3', baseModel: 'SDXL 1.0', modelType: 'LORA' },
+        { versionId: 5001, modelId: 310, modelName: 'Alpha', versionName: 'v1', baseModel: 'SDXL 1.0', modelType: 'LORA' },
+      ],
+    });
+  });
+
+  it('`multiple` never stages past max, and un-staging frees a slot', async () => {
+    let staged: readonly number[] = [];
+    install(LORAS, (h) => {
+      h.toggleStagedByVersionId(5002);
+      h.toggleStagedByVersionId(5003);
+      h.toggleStagedByVersionId(5001); // over max:2 — ignored
+      staged = [...h.stagedVersionIds];
+      h.toggleStagedByVersionId(5002); // un-stage
+      h.toggleStagedByVersionId(5001); // now fits, and lands LAST
+      h.commitStaged();
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+
+    post('OPEN_RESOURCE_PICKER', { requestId: 'r-multi-max', resourceType: 'LORA', multiple: { max: 2 } });
+    const payload = await waitForMessage(inbound, 'RESOURCE_PICKER_RESULT');
+    expect(staged).toEqual([5002, 5003]);
+    expect((payload.selectedResources as BlockResourceInfo[]).map((r) => r.versionId)).toEqual([5003, 5001]);
+  });
+
+  it('`multiple` dismissal replies with an EMPTY list, not a bare payload', async () => {
+    install(LORAS, (h) => h.dismiss());
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('OPEN_RESOURCE_PICKER', { requestId: 'r-multi-x', resourceType: 'LORA', multiple: { max: 2 } });
+    const payload = await waitForMessage(inbound, 'RESOURCE_PICKER_RESULT');
+    expect(payload).toEqual({ requestId: 'r-multi-x', selectedResources: [] });
+  });
+
+  it('`multiple` with a Checkpoint is refused with an error and no overlay opens', async () => {
+    const onReady = vi.fn();
+    install([CKPT_MODEL], onReady);
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('OPEN_RESOURCE_PICKER', { requestId: 'r-multi-ckpt', resourceType: 'Checkpoint', multiple: { max: 2 } });
+    const payload = await waitForMessage(inbound, 'RESOURCE_PICKER_RESULT');
+    expect(payload).toEqual({
+      requestId: 'r-multi-ckpt',
+      error:
+        'OPEN_RESOURCE_PICKER: multiple is only supported for LoRA-family resource types, not Checkpoint.',
+    });
+    expect(document.querySelector('[data-live-picker-overlay]')).toBeNull();
+    expect(onReady).not.toHaveBeenCalled();
+  });
+
+  it('`multiple` overlay: clicking cards stages them and the commit button sends the list', async () => {
+    let captured: PickerOverlayHandle | undefined;
+    install(LORAS, (h) => {
+      captured = h;
+    });
+    await waitForMessage(inbound, 'BLOCK_INIT');
+    post('OPEN_RESOURCE_PICKER', { requestId: 'r-multi-dom', resourceType: 'LORA', multiple: { max: 2 } });
+    for (let i = 0; i < 50 && !captured; i += 1) await new Promise((r) => setTimeout(r, 5));
+    expect(captured).toBeTruthy();
+
+    const commit = document.querySelector('[data-picker-commit]') as HTMLButtonElement;
+    expect(commit.disabled).toBe(true);
+    (document.querySelector('[data-picker-card="5002"]') as HTMLElement).click();
+    // A card click STAGES in multi-select mode — the overlay must still be open.
+    expect(document.querySelector('[data-live-picker-overlay]')).not.toBeNull();
+    expect(document.querySelector('[data-picker-card="5002"]')!.getAttribute('aria-pressed')).toBe('true');
+    (document.querySelector('[data-picker-card="5001"]') as HTMLElement).click();
+    expect(commit.disabled).toBe(false);
+    expect(commit.textContent).toBe('Add 2 of 2');
+
+    commit.click();
+    const payload = await waitForMessage(inbound, 'RESOURCE_PICKER_RESULT');
+    expect((payload.selectedResources as BlockResourceInfo[]).map((r) => r.versionId)).toEqual([5002, 5001]);
+    expect(document.querySelector('[data-live-picker-overlay]')).toBeNull();
+  });
+
   it('mounts an overlay into the document and tears it down on selection', async () => {
     let captured: PickerOverlayHandle | undefined;
     install([CKPT_MODEL], (h) => {

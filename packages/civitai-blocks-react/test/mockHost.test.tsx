@@ -138,6 +138,111 @@ describe('createMockHost', () => {
     expect(picked).toBeNull();
   });
 
+  it('OPEN_RESOURCE_PICKER with `multiple` returns the default two LoRAs, in order', async () => {
+    uninstall = createMockHost().install();
+    const { result } = renderHook(() => useResourcePicker());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    let picked: unknown;
+    await act(async () => {
+      picked = await result.current.open({ resourceType: 'LORA', multiple: { max: 3 } });
+    });
+    expect((picked as { versionId: number; modelName: string }[]).map((p) => [p.versionId, p.modelName])).toEqual([
+      [666002, 'Sinfully Stylish'],
+      [777003, 'Ink Wash Lines'],
+    ]);
+  });
+
+  it('OPEN_RESOURCE_PICKER with `multiple` cuts the canned list to `max`, keeping order', async () => {
+    const pick = (versionId: number) => ({
+      versionId,
+      modelId: versionId + 1,
+      modelName: `L${versionId}`,
+      versionName: 'v1',
+      baseModel: 'SDXL 1.0',
+      modelType: 'LORA',
+    });
+    uninstall = createMockHost({ cannedMultiPicks: [pick(30), pick(10), pick(20), pick(40)] }).install();
+    const { result } = renderHook(() => useResourcePicker());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    let picked: unknown;
+    await act(async () => {
+      picked = await result.current.open({ resourceType: 'LORA', multiple: { max: 3 } });
+    });
+    expect((picked as { versionId: number }[]).map((p) => p.versionId)).toEqual([30, 10, 20]);
+  });
+
+  it('OPEN_RESOURCE_PICKER with `multiple` caps at 5 even when more are canned and asked for', async () => {
+    const pick = (versionId: number) => ({
+      versionId,
+      modelId: versionId + 1,
+      modelName: `L${versionId}`,
+      versionName: 'v1',
+      baseModel: 'SDXL 1.0',
+      modelType: 'LORA',
+    });
+    uninstall = createMockHost({
+      cannedMultiPicks: [7, 6, 5, 4, 3, 2, 1].map(pick),
+    }).install();
+    const { result } = renderHook(() => useResourcePicker());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    let picked: unknown;
+    await act(async () => {
+      picked = await result.current.open({ resourceType: 'LORA', multiple: { max: 9 } });
+    });
+    expect((picked as { versionId: number }[]).map((p) => p.versionId)).toEqual([7, 6, 5, 4, 3]);
+  });
+
+  it.each([
+    ['cannedMultiPicks: null', { cannedMultiPicks: null }],
+    ['cannedMultiPicks: []', { cannedMultiPicks: [] }],
+    ['cannedPicks.LORA: null (one dismiss setting covers both modes)', { cannedPicks: { LORA: null } }],
+  ])('OPEN_RESOURCE_PICKER with `multiple` resolves [] when dismissed — %s', async (_, options) => {
+    uninstall = createMockHost(options).install();
+    const { result } = renderHook(() => useResourcePicker());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    let picked: unknown = 'unset';
+    await act(async () => {
+      picked = await result.current.open({ resourceType: 'LORA', multiple: { max: 2 } });
+    });
+    expect(picked).toEqual([]);
+  });
+
+  it('the mock REFUSES a raw `multiple` + Checkpoint request with an error, like the host', async () => {
+    uninstall = createMockHost().install();
+    renderHook(() => useResourcePicker());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+
+    // The hook refuses this before sending, so post the raw message a
+    // hand-rolled client would, and read the mock's raw reply.
+    const replies: unknown[] = [];
+    const onMessage = (e: MessageEvent) => {
+      const d = e.data as { type?: string; payload?: unknown };
+      if (d?.type === 'RESOURCE_PICKER_RESULT') replies.push(d.payload);
+    };
+    window.addEventListener('message', onMessage);
+    try {
+      window.parent.postMessage(
+        {
+          type: 'OPEN_RESOURCE_PICKER',
+          payload: { requestId: 'raw-ckpt-multi', resourceType: 'Checkpoint', multiple: { max: 2 } },
+        },
+        '*',
+      );
+      await waitFor(() => expect(replies).toHaveLength(1));
+      expect(replies[0]).toEqual({
+        requestId: 'raw-ckpt-multi',
+        error:
+          'OPEN_RESOURCE_PICKER: multiple is only supported for LoRA-family resource types, not Checkpoint.',
+      });
+    } finally {
+      window.removeEventListener('message', onMessage);
+    }
+  });
+
   it('consent round-trip: REQUEST_CONSENT grants the scope + pushes a refreshed token', async () => {
     uninstall = createMockHost({ consentGranted: false }).install();
     const tokenHook = renderHook(() => useBlockToken());
