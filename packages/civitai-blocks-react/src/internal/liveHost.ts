@@ -46,8 +46,8 @@
  * --- BEGIN DERIVED ---
  * fetch chokepoints ..... 2
  * REST endpoints ........ GET /api/v1/blocks/me
- * tRPC procedures ....... 28 = blocks.* (13) + apps.shared.* (10) + apps.storage.* (5)
- * switch case labels .... 47, of which 10 REFUSE (enumerated under SCOPE below)
+ * tRPC procedures ....... 29 = blocks.* (14) + apps.shared.* (10) + apps.storage.* (5)
+ * switch case labels .... 48, of which 10 REFUSE (enumerated under SCOPE below)
  * --- END DERIVED ---
  *
  * PICKERS (Phase 1 of "make dev:live a faithful local host"): the live host
@@ -898,6 +898,8 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             imageIds?: number[];
             title?: string;
             body?: WorkflowBody;
+            // ESTIMATE_WORKFLOW_BATCH — forwarded as sent; the server checks it.
+            bodies?: unknown;
             path?: string;
             /**
              * NAVIGATE's space selector. Declared as the UNION rather than
@@ -972,6 +974,32 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
                 });
               },
             );
+            return;
+          }
+
+          case 'ESTIMATE_WORKFLOW_BATCH': {
+            // Forwarded to the token-bound `blocks.estimateWorkflowBatch`, the
+            // batch twin of the estimate above. Its reply is a plain
+            // `{ snapshots, aggregate }` (unwrapped with `callTrpcData`); a
+            // whole-call failure is FREE-TEXT `error`, a per-cell failure rides in
+            // `snapshots`. Estimate only — nothing is submitted. Unroutable
+            // without a requestId. Against a civitai that predates the procedure
+            // the server's own not-found error comes back here as `error`.
+            if (!isRoutableRequestId(requestId)) return;
+            void callTrpcData(
+              'blocks.estimateWorkflowBatch',
+              { blockToken: rawToken, bodies: typed.payload?.bodies },
+              'POST',
+            ).then((r) => {
+              const data = r.data as { snapshots?: unknown; aggregate?: unknown } | undefined;
+              dispatchToBlock({
+                type: 'ESTIMATE_BATCH_RESULT',
+                payload:
+                  data && Array.isArray(data.snapshots) && data.aggregate
+                    ? { requestId, snapshots: data.snapshots, aggregate: data.aggregate }
+                    : { requestId, error: r.error ?? 'batch estimate failed' },
+              });
+            });
             return;
           }
 

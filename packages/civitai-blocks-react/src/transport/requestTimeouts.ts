@@ -149,6 +149,9 @@ const REQUEST_TIMEOUT_CLASS = {
   // longer bound (`WORKFLOW_REQUEST_TIMEOUT_MS` in `hooks/useBuzzWorkflow.ts`)
   // for orchestrator latency — a different reason for a different number.
   ESTIMATE_WORKFLOW: 'protocol',
+  // The batch twin of ESTIMATE_WORKFLOW: no person in the loop, up to 16 cost
+  // quotes behind one reply. Sent under the same `WORKFLOW_REQUEST_TIMEOUT_MS`.
+  ESTIMATE_WORKFLOW_BATCH: 'protocol',
   POLL_WORKFLOW: 'protocol',
   SUBMIT_WORKFLOW: 'protocol',
   GET_BUZZ_ACCOUNTS: 'protocol',

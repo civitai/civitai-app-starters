@@ -25,6 +25,7 @@ import type {
   ViewerInfo,
   WorkflowBody,
   BlockWorkflowSnapshot,
+  BlockEstimateBatchAggregate,
   BlockBuzzTransaction,
   BlockBuzzAccount,
   BlockDailyCompensationResource,
@@ -553,6 +554,28 @@ export type ParentToBlockMessage =
       payload: ConsentUnavailablePayload;
     }
   | { type: 'ESTIMATE_RESULT'; payload: { requestId: string; snapshot: BlockWorkflowSnapshot } }
+  | {
+      // Reply to ESTIMATE_WORKFLOW_BATCH. Carries EITHER `snapshots` + `aggregate`
+      // OR `error`, never both.
+      //
+      // `snapshots[i]` answers `bodies[i]`: the snapshot ESTIMATE_RESULT would
+      // have carried for that body, or the host's failure-shape snapshot
+      // (`{ workflowId: 'failed', status: 'failed', error }`) when that estimate
+      // failed. So ONE cell failing is a normal reply, not an `error`.
+      //
+      // `error` is for the WHOLE call: the host has no handler for the message
+      // (its generic `unsupported on this host`), holds no credential, is in
+      // review preview, refused the list (`invalid estimate batch`,
+      // `estimate batch too large`), or the server refused the call (the scope,
+      // the rate limit). It is server-authored text, not a contract.
+      type: 'ESTIMATE_BATCH_RESULT';
+      payload: {
+        requestId: string;
+        snapshots?: BlockWorkflowSnapshot[];
+        aggregate?: BlockEstimateBatchAggregate;
+        error?: string;
+      };
+    }
   | { type: 'WORKFLOW_SUBMITTED'; payload: { requestId: string; snapshot: BlockWorkflowSnapshot } }
   | { type: 'WORKFLOW_STATUS'; payload: { requestId: string; snapshot: BlockWorkflowSnapshot } }
   | { type: 'WORKFLOW_CANCELED'; payload: { requestId: string; snapshot: BlockWorkflowSnapshot } }
@@ -1140,6 +1163,24 @@ export type BlockToParentMessage =
       payload: { requestId: string; body: WorkflowBody; idempotencyKey?: string };
     }
   | { type: 'ESTIMATE_WORKFLOW'; payload: { requestId: string; body: WorkflowBody } }
+  // ESTIMATE_WORKFLOW for a LIST of bodies, for an app that prices one
+  // generation per grid cell. Each body is exactly what ESTIMATE_WORKFLOW
+  // carries. The host answers with ESTIMATE_BATCH_RESULT: one snapshot per body,
+  // in order, plus a run total.
+  //
+  // 🔴 ESTIMATE ONLY. Nothing is submitted, no Buzz is held or spent, and the
+  // host issues no id for the list. Each cell is still submitted through
+  // SUBMIT_WORKFLOW with its own confirmation.
+  //
+  // At most 16 bodies per message; the host refuses a longer list for the whole
+  // call. `kind: 'training'` bodies are refused per cell — estimate a training
+  // run with ESTIMATE_WORKFLOW.
+  //
+  // 🔴 A HOST THAT PREDATES THIS MESSAGE DOES NOT ANSWER IT. The host's generic
+  // `unsupported on this host` reply exists only for message types the host
+  // already knows, so against an older host this request ends at the caller's
+  // timeout rather than with an error reply.
+  | { type: 'ESTIMATE_WORKFLOW_BATCH'; payload: { requestId: string; bodies: WorkflowBody[] } }
   // `waitSeconds` (OPTIONAL): ask the host to LONG-POLL this read — to hold the
   // request open on the orchestrator (its `?wait=` parameter, in SECONDS, not
   // milliseconds) until the workflow reaches a terminal status, instead of
@@ -1732,6 +1773,7 @@ export const BLOCK_TO_PARENT_MESSAGE_TYPES = [
   'RESIZE_IFRAME',
   'SUBMIT_WORKFLOW',
   'ESTIMATE_WORKFLOW',
+  'ESTIMATE_WORKFLOW_BATCH',
   'POLL_WORKFLOW',
   'CANCEL_WORKFLOW',
   'OPEN_BUZZ_PURCHASE',

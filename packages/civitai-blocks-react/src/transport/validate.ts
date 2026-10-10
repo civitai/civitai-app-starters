@@ -497,6 +497,38 @@ export function isValidWorkflowReply(
   return true;
 }
 
+/**
+ * Reply to a block-initiated `ESTIMATE_WORKFLOW_BATCH`. A well-formed reply
+ * carries EITHER an `error` string OR `snapshots` + `aggregate`.
+ *
+ * 🔴 A PRESENT `error` IS ACCEPTED ON ITS OWN, unlike the single-estimate reply
+ * ({@link isValidWorkflowReply}, which requires a snapshot). That is what lets
+ * the host's generic `{ requestId, error: 'unsupported on this host' }` reach
+ * `useBatchEstimate`, which turns it into the typed error an app falls back to
+ * per-cell estimates on. Dropping it would leave the block waiting out the
+ * timeout instead. `error` is shape-checked only: the channel carries free-text
+ * server messages.
+ *
+ * Without an `error`, EVERY cell must be a valid workflow snapshot and the
+ * aggregate must hold three finite numbers. One malformed cell rejects the whole
+ * reply, the same way one malformed snapshot rejects a single-estimate reply:
+ * the block dereferences these fields.
+ */
+export function isValidEstimateBatchResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined) return typeof p.error === 'string';
+  if (!Array.isArray(p.snapshots)) return false;
+  if (!p.snapshots.every((s) => isValidWorkflowSnapshot(s))) return false;
+  const a = p.aggregate;
+  if (!isObject(a)) return false;
+  for (const key of ['total', 'pricedCells', 'cellCount'] as const) {
+    const value = a[key];
+    if (typeof value !== 'number' || !Number.isFinite(value)) return false;
+  }
+  return true;
+}
+
 export function isValidBuzzPurchaseResult(
   p: unknown,
 ): p is { purchased: boolean; newBalance?: number; requestId?: string } {
@@ -1652,6 +1684,8 @@ export function payloadValidatorFor(
     case 'WORKFLOW_STATUS':
     case 'WORKFLOW_CANCELED':
       return isValidWorkflowReply;
+    case 'ESTIMATE_BATCH_RESULT':
+      return isValidEstimateBatchResult;
     case 'BUZZ_PURCHASE_RESULT':
       return isValidBuzzPurchaseResult;
     case 'BUZZ_BALANCE_RESULT':
