@@ -455,6 +455,46 @@ if (priced) {
   prices a cache hit at 0). `estimate` resolves it; only a non-numeric
   `cost.total` rejects.
 
+#### Showing the app fee: `cost.authorFee`
+
+`cost.total` is what the viewer pays and **already includes the app author's
+per-generation fee**. `cost.authorFee` is that fee on its own, in whole Buzz, so
+`total - authorFee` is the generation's price. It is display only.
+
+```tsx
+import type { BlockWorkflowSnapshot, WorkflowBody } from '@civitai/app-sdk/blocks';
+
+const { estimate } = useBuzzWorkflow();
+declare const body: WorkflowBody;
+
+function priceLine(cost: NonNullable<BlockWorkflowSnapshot['cost']>): string {
+  // Absent = not itemised. Show the total alone; do NOT treat it as a 0 fee.
+  if (cost.authorFee === undefined) return `${cost.total} Buzz`;
+  // 0 = a fee was looked up and none applies to this request.
+  if (cost.authorFee === 0) return `${cost.total} Buzz (no app fee)`;
+  const generation = cost.total - cost.authorFee;
+  return `${cost.total} Buzz (generation ${generation} + app fee ${cost.authorFee})`;
+}
+
+const quote = await estimate(body); // rejects without a usable price — see above
+if (quote.cost) showPrice(priceLine(quote.cost));
+```
+
+| `cost.authorFee` | Means | Where |
+|---|---|---|
+| a number `> 0` | that much of `total` is the app fee | `estimate()` for a `textToImage` or registered-`step` body, and the priced refusal `submit()` resolves for those kinds |
+| `0` | a fee was looked up and none applies to this request | the same replies |
+| absent | the total is **not itemised** | a host that predates the field; every snapshot of a submitted workflow (`submit` success, `poll`, `cancel`), whose `total` is the generation's realized cost with the fee charged separately; and `customComfy`, pass-through `step` and `training` quotes, which price no fee |
+
+- **Against an older host the field is simply absent.** Nothing else changes:
+  `total` has the same value with or without it, so an app that never reads
+  `authorFee` is unaffected.
+- **Test all three locally** with the mock host's `generation.authorFee`
+  (`createMockHost({ generation: { costPerGen: 40, authorFee: 5 } })`, or
+  `?authorFee=5` in the dev harness): a number itemises it, the default `0`
+  reports `authorFee: 0`, and `authorFee: false` (`?authorFee=off`) leaves it
+  out, as an older host does.
+
 > **Estimate must mirror submit** (gotcha #59): build the params for `estimate`
 > with the *exact* same logic as `submit` — same seed decision especially. The
 > orchestrator whatif prices a cache hit (identical workflow) at 0 and a fresh

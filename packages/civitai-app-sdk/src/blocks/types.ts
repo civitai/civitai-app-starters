@@ -1594,7 +1594,27 @@ export type WorkflowBody =
 export interface BlockWorkflowSnapshot {
   workflowId: string;
   status: 'pending' | 'processing' | 'succeeded' | 'failed' | 'expired' | 'canceled';
-  cost?: { total: number };
+  cost?: {
+    /** Whole Buzz. Includes {@link authorFee} whenever that field is present. */
+    total: number;
+    /**
+     * The part of `total` that is the app author's per-generation fee, in whole
+     * Buzz — so `total - authorFee` is the generation's own price. Display only:
+     * it is the amount the host added into `total` for this reply.
+     *
+     * - **A number** wherever `total` was built from a fee quote: the
+     *   `estimate()` result for a `textToImage` or registered-`step` body, and
+     *   the priced refusal `submit()` resolves for those kinds. **`0` means a fee
+     *   was looked up and none applies** to this request.
+     * - **Absent** when the total is not itemised: a host that predates the
+     *   field; every snapshot of a submitted workflow (`submit` success, `poll`,
+     *   `cancel` — its total is the realized generation cost and the fee is a
+     *   separate charge); and the kinds that price no fee (`customComfy`,
+     *   pass-through `step`, `training`). **Do not read absent as `0`** — show
+     *   `total` on its own.
+     */
+    authorFee?: number;
+  };
   imageUrls?: string[];
   error?: string;
   /**
