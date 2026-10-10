@@ -174,6 +174,40 @@ describe('useBatchEstimate', () => {
     expect(aggregate).toEqual({ total: 31, pricedCells: 1, cellCount: 3 });
   });
 
+  it("a cell the host's time budget ran out on is `timedOut: true`; every other failed cell is `timedOut: false`", async () => {
+    const { result } = renderHook(() => useBatchEstimate());
+    const { outcome, done } = start(result.current.estimateBatch, [
+      body('a'),
+      body('b'),
+      body('c'),
+      body('d'),
+    ]);
+    // The host's literal for a cell not priced in time (civitai/civitai
+    // `BLOCK_ESTIMATE_BATCH_TIMEOUT_ERROR`), typed here on purpose rather than
+    // imported, so the test pins the wire value and not the constant.
+    const timedOut = { workflowId: 'failed', status: 'failed', error: 'estimate timed out' };
+    const otherFailed = { workflowId: 'failed', status: 'failed', error: 'modelId mismatch with token' };
+    const noCost = { workflowId: 'wf_estimate', status: 'pending' };
+    reply({
+      requestId: sentBatches()[0].payload.requestId,
+      snapshots: [timedOut, otherFailed, noCost, priced(7)],
+      aggregate: { total: 7, pricedCells: 1, cellCount: 4 },
+    });
+    await act(async () => {
+      await done;
+    });
+
+    const { cells } = outcome.value as {
+      cells: Array<{ ok: boolean; timedOut?: boolean; error?: WorkflowEstimateError }>;
+    };
+    expect(cells.map((c) => (c.ok ? 'priced' : c.timedOut))).toEqual([true, false, false, 'priced']);
+    // The timed-out cell is otherwise the same per-cell error as any failed cell.
+    expect(cells[0].error).toBeInstanceOf(WorkflowEstimateError);
+    expect(cells[0].error?.code).toBe('failed');
+    expect(cells[1].error?.code).toBe('failed');
+    expect(cells[2].error?.code).toBe('no-cost');
+  });
+
   it('passes a cell cost object through untouched, including fields it does not know', async () => {
     const { result } = renderHook(() => useBatchEstimate());
     const { outcome, done } = start(result.current.estimateBatch, [body('a')]);

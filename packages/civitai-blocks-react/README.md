@@ -540,8 +540,9 @@ total.
 
 **The host bounds the time one call takes.** If its budget runs out, the call
 still resolves: the cells that priced are returned, and every other cell is
-`ok: false` with `snapshot.error === 'estimate timed out'`. Show those cells as
-unavailable and let the viewer retry later.
+`ok: false` with `timedOut: true`. Show those cells as unavailable and let the
+viewer retry later. Branch on `timedOut`, not on `snapshot.error`: the host's
+wording is not a contract.
 
 `estimateBatch` rejects with `BatchEstimateError` only when the whole call
 failed. Branch on `err.code`:
@@ -585,10 +586,10 @@ export function GridQuote() {
     CHECKPOINTS.map((cp) => ({ kind: 'textToImage' as const, ...cp, params: { prompt } })),
   );
 
-  // Your copy, chosen by code. Never render `err.message` or `snapshot.error`;
-  // matching the host's stable 'estimate timed out' string is fine.
-  const why = (err: WorkflowEstimateError) =>
-    err.snapshot.error === 'estimate timed out'
+  // Your copy, chosen by `code` (and, for a batch cell, `timedOut`). Never
+  // render or match `err.message` or `snapshot.error`.
+  const why = (err: WorkflowEstimateError, timedOut = false) =>
+    timedOut
       ? 'Price not ready, try again shortly'
       : err.code === 'no-cost'
         ? 'No price for this cell'
@@ -597,7 +598,9 @@ export function GridQuote() {
   async function priceGrid() {
     try {
       const { cells, aggregate } = await estimateBatch(bodies);
-      setQuotes(cells.map((c) => (c.ok ? { total: c.cost.total } : { unavailable: why(c.error) })));
+      setQuotes(
+        cells.map((c) => (c.ok ? { total: c.cost.total } : { unavailable: why(c.error, c.timedOut) })),
+      );
       setRunTotal(aggregate.pricedCells === aggregate.cellCount ? aggregate.total : null);
       return;
     } catch (err) {
@@ -656,8 +659,8 @@ price one `estimate()` of that body (`costPerGen` and `failEstimate` apply per
 cell). Set `generation.batchEstimate` to `'unsupported'` to test the fallback,
 or to `'silent'` to test a call that never gets a reply (pass a short
 `timeoutMs` in a test). Set `generation.batchEstimateTimedOutCells` to a list
-of cell indices to answer those cells as `'estimate timed out'`, the way the
-host does when its time budget runs out. **`dev:live`** forwards the call to civitai.com, so against
+of cell indices to answer those cells the way the host does when its time
+budget runs out (`ok: false`, `timedOut: true`). **`dev:live`** forwards the call to civitai.com, so against
 a civitai.com that predates the batch procedure it rejects with `'failed'`
 rather than `'unsupported'`.
 

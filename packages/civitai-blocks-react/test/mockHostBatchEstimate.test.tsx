@@ -3,7 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { WorkflowBody } from '@civitai/app-sdk/blocks';
 
-import { BatchEstimateError, useBatchEstimate } from '../src/hooks/useBatchEstimate.js';
+import {
+  BATCH_ESTIMATE_CELL_TIMEOUT_ERROR,
+  BatchEstimateError,
+  useBatchEstimate,
+} from '../src/hooks/useBatchEstimate.js';
 import { useBuzzWorkflow } from '../src/hooks/useBuzzWorkflow.js';
 import { getTransport } from '../src/transport/singleton.js';
 import { createMockHost, resetTransport } from '../src/testing.js';
@@ -118,11 +122,14 @@ describe('createMockHost — batch estimate', () => {
     expect(batch!.cells.map((c) => (c.ok ? c.cost.total : null))).toEqual([12, null, 7]);
     const timedOut = batch!.cells[1];
     expect(timedOut.ok === false && timedOut.error.code).toBe('failed');
+    expect(timedOut.ok === false && timedOut.timedOut).toBe(true);
     expect(timedOut.snapshot).toEqual({
       workflowId: 'failed',
       status: 'failed',
-      error: 'estimate timed out',
+      error: BATCH_ESTIMATE_CELL_TIMEOUT_ERROR,
     });
+    // The other cells did not time out, so none of them reads as one.
+    expect(batch!.cells.filter((c) => !c.ok && c.timedOut)).toHaveLength(1);
     expect(batch!.aggregate).toEqual({ total: 19, pricedCells: 2, cellCount: 3 });
   });
 

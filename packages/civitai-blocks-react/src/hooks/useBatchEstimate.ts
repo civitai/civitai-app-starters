@@ -32,6 +32,16 @@ export const BATCH_ESTIMATE_MAX_CELLS = 16;
 const HOST_UNSUPPORTED_REPLY = 'unsupported on this host';
 
 /**
+ * The host's `snapshot.error` for a batch cell its time budget ran out on before
+ * the cell priced. The copy is the host's (`BLOCK_ESTIMATE_BATCH_TIMEOUT_ERROR`
+ * in civitai/civitai `src/server/routers/blocks.router.ts`). This is the ONE
+ * place the SDK spells it: the hook maps it to {@link BatchEstimateCell}'s
+ * `timedOut`, and the mock host answers with it. Not exported from the package:
+ * apps branch on `timedOut`, never on this string.
+ */
+export const BATCH_ESTIMATE_CELL_TIMEOUT_ERROR = 'estimate timed out';
+
+/**
  * Why a WHOLE batch estimate was refused. The stable branch target on
  * {@link BatchEstimateError}.
  *
@@ -40,9 +50,9 @@ const HOST_UNSUPPORTED_REPLY = 'unsupported on this host';
  *   back to one `useBuzzWorkflow().estimate()` per cell.**
  * - `'timeout'` — no reply arrived in time. A host that supports the message
  *   bounds its own work and replies well inside the default wait, marking any
- *   cell it could not price in time as failed (`snapshot.error ===
- *   'estimate timed out'`), so this code usually means the host or its upstream
- *   is SLOW, not that it is old. 🔴 Do NOT fall back to per-cell estimates here:
+ *   cell it could not price in time as an `ok: false` cell with `timedOut:
+ *   true`, so this code usually means the host or its upstream is SLOW, not
+ *   that it is old. 🔴 Do NOT fall back to per-cell estimates here:
  *   that sends up to 16 more estimates at an upstream that is already struggling.
  *   Show the estimate as unavailable and let the viewer retry later. A host that
  *   predates the message also ends here (it never replies); an app that must
@@ -95,10 +105,12 @@ export class BatchEstimateError extends Error {
  *   `WorkflowEstimateError` a single `estimate()` of that body would have
  *   rejected with (`code: 'failed' | 'no-cost'`, the reason on
  *   `error.snapshot.error`), so one function can turn either into viewer copy.
- *   It is a value here, not a throw: the other cells are still usable. A cell
- *   whose `snapshot.error` is `'estimate timed out'` was not priced before the
- *   host's time budget for the call ran out: show it as unavailable and retry
- *   later rather than re-estimating it at once.
+ *   It is a value here, not a throw: the other cells are still usable.
+ * - `timedOut` (on `ok: false` only) — `true` when the host's time budget for
+ *   the call ran out before this cell priced (its `error.code` is `'failed'`).
+ *   Show it as unavailable and retry later rather than re-estimating it at once.
+ *   Branch on `timedOut`, never on `snapshot.error`: the host's wording is not a
+ *   contract, and the hook maps it here so no app has to match it.
  *
  * `snapshot` is the host's snapshot for the cell, verbatim, on both arms.
  */
@@ -108,7 +120,13 @@ export type BatchEstimateCell =
       cost: NonNullable<BlockWorkflowSnapshot['cost']>;
       snapshot: BlockWorkflowSnapshot;
     }
-  | { ok: false; error: WorkflowEstimateError; snapshot: BlockWorkflowSnapshot };
+  | {
+      ok: false;
+      error: WorkflowEstimateError;
+      /** `true` when the host's time budget for the call ran out before this cell priced. */
+      timedOut: boolean;
+      snapshot: BlockWorkflowSnapshot;
+    };
 
 /** What {@link UseBatchEstimate.estimateBatch} resolves with. */
 export interface BatchEstimateResult {
@@ -165,11 +183,22 @@ export interface UseBatchEstimate {
 function toCell(snapshot: BlockWorkflowSnapshot): BatchEstimateCell {
   // The rule `useBuzzWorkflow().estimate()` applies to one reply, per cell.
   if (snapshot.status === 'failed') {
-    return { ok: false, error: new WorkflowEstimateError(snapshot, 'failed'), snapshot };
+    return {
+      ok: false,
+      error: new WorkflowEstimateError(snapshot, 'failed'),
+      // The one place the host's per-cell timeout string is matched.
+      timedOut: snapshot.error === BATCH_ESTIMATE_CELL_TIMEOUT_ERROR,
+      snapshot,
+    };
   }
   const cost = snapshot.cost;
   if (!cost || typeof cost.total !== 'number') {
-    return { ok: false, error: new WorkflowEstimateError(snapshot, 'no-cost'), snapshot };
+    return {
+      ok: false,
+      error: new WorkflowEstimateError(snapshot, 'no-cost'),
+      timedOut: false,
+      snapshot,
+    };
   }
   return { ok: true, cost, snapshot };
 }
@@ -214,7 +243,8 @@ function toBatchEstimateError(err: unknown): BatchEstimateError {
  * const { estimateBatch } = useBatchEstimate();
  * try {
  *   const { cells, aggregate } = await estimateBatch(bodies);
- *   // cells[i] answers bodies[i]
+ *   // cells[i] answers bodies[i]; a cell with `!c.ok && c.timedOut` was not
+ *   // priced in time — show it as unavailable and retry later
  * } catch (err) {
  *   if (!(err instanceof BatchEstimateError)) throw err;
  *   if (err.code === 'unsupported') {

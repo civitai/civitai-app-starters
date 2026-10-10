@@ -109,6 +109,7 @@ import {
   resolveUploadBytesRequest,
   type UploadBytesWindowEntry,
 } from './uploadBytes.js';
+import { BATCH_ESTIMATE_CELL_TIMEOUT_ERROR } from '../hooks/useBatchEstimate.js';
 import { RUN_TRAINING_ERROR_CODES } from '../hooks/useRunTraining.js';
 import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
@@ -345,10 +346,11 @@ export interface MockGenerationScenario {
   /**
    * Indices of batch cells the mock answers as NOT PRICED IN TIME — the snapshot
    * the host returns for a cell when the call's time budget runs out before that
-   * cell priced: `{ workflowId:'failed', status:'failed', error:'estimate timed out' }`.
+   * cell priced: `{ workflowId:'failed', status:'failed', error:'estimate timed out' }`
+   * (the host's string, held once in `BATCH_ESTIMATE_CELL_TIMEOUT_ERROR`).
    * The other cells price normally and the call still resolves, so this tests a
-   * PARTIAL grid: the cell is `ok: false` with `WorkflowEstimateError` code
-   * `'failed'` and `snapshot.error === 'estimate timed out'`. Applies only with
+   * PARTIAL grid: the cell is `ok: false`, `timedOut: true`, with
+   * `WorkflowEstimateError` code `'failed'`. Applies only with
    * `batchEstimate: 'supported'`. Default: unset (no cell times out).
    */
   batchEstimateTimedOutCells?: number[];
@@ -546,11 +548,6 @@ const MOCK_ESTIMATE_BATCH_MAX_CELLS = 16;
 /** The server's per-cell refusal of a `kind: 'training'` body inside a batch. */
 const MOCK_TRAINING_IN_BATCH_ERROR =
   'a training estimate cannot be part of a batch — estimate it on its own';
-/**
- * The host's per-cell error when a batch call's time budget ran out before that
- * cell priced (civitai/civitai `BLOCK_ESTIMATE_BATCH_TIMEOUT_ERROR`).
- */
-const MOCK_ESTIMATE_BATCH_TIMEOUT_ERROR = 'estimate timed out';
 /** Default quote total for a `kind: 'training'` estimate when {@link MockHostOptions.trainingQuoteTotal} is unset. */
 const DEFAULT_TRAINING_QUOTE_TOTAL = 500;
 /** The real quote lifetime (`BLOCK_TRAINING_QUOTE_TTL_SECONDS`, 15 min). */
@@ -2754,7 +2751,7 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
                 return {
                   workflowId: 'failed',
                   status: 'failed',
-                  error: MOCK_ESTIMATE_BATCH_TIMEOUT_ERROR,
+                  error: BATCH_ESTIMATE_CELL_TIMEOUT_ERROR,
                 };
               }
               // The server refuses a training cell in a batch: a training
