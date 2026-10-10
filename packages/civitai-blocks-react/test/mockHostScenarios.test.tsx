@@ -194,6 +194,46 @@ describe('createMockHost — generation scenario', () => {
     expect(comfy.snap.cost!.total).toBe(4);
   });
 
+  // The host routes a `kind: 'step'` body on the VALUE of `step`, not on the key
+  // being present: `{ kind: 'step', step: undefined, $type, ... }` is a legal
+  // PASS-THROUGH body (an app spreading an optional variable produces one), and
+  // a pass-through quote prices no fee. The mock must route it the same way.
+  it('a pass-through step body carrying `step: undefined` is not itemised and debits no fee', async () => {
+    const passThrough = {
+      kind: 'step',
+      step: undefined,
+      $type: 'imageBackgroundRemoval',
+      input: { image: 'https://example.test/a.png' },
+      maxBuzz: 20,
+    } as never;
+
+    const { snap } = await estimateWith({ costPerGen: 4, authorFee: 13 }, passThrough);
+    expect(
+      Object.keys(snap.cost!),
+      'a pass-through quote with `step: undefined` must not carry authorFee',
+    ).toEqual(['total']);
+    expect(snap.cost!.total).toBe(4);
+    uninstall?.();
+    resetTransport();
+    getTransport({ allowedParentOrigins: [ORIGIN] });
+
+    const host = createMockHost({
+      consentGranted: true,
+      buzz: { balance: 100 },
+      generation: { costPerGen: 4, authorFee: 13 },
+      pollsUntilDone: 1,
+    });
+    uninstall = host.install();
+    const { result } = renderHook(() => useBuzzWorkflow());
+    await waitFor(() => expect(getTransport().getSnapshot().ready).toBe(true));
+    let submitted!: Awaited<ReturnType<typeof result.current.submit>>;
+    await act(async () => {
+      submitted = await result.current.submit(passThrough);
+    });
+    expect(submitted.status).not.toBe('failed');
+    expect(host.buzz.getBalance(), 'only the generation is debited, no fee').toBe(96);
+  });
+
   it('costPerGen as a function varies cost by the submitted body', async () => {
     uninstall = createMockHost({
       generation: { costPerGen: (req) => (req.params?.prompt === 'a cat' ? 5 : 99) },

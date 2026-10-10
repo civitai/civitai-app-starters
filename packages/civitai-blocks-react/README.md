@@ -482,9 +482,9 @@ if (quote.cost) showPrice(priceLine(quote.cost));
 
 | `cost.authorFee` | Means | Where |
 |---|---|---|
-| a number `> 0` | that much of `total` is the app fee | `estimate()` for a `textToImage` or registered-`step` body, and the priced refusal `submit()` resolves for those kinds |
+| a number `> 0` | that much of `total` is the app fee | `estimate()` for a `textToImage` or registered-`step` body, and the refusal `submit()` resolves for those kinds when a budget, spend cap or rate limit refuses the quoted price |
 | `0` | a fee was looked up and none applies to this request | the same replies |
-| absent | the total is **not itemised** | a host that predates the field; every snapshot of a submitted workflow (`submit` success, `poll`, `cancel`), whose `total` is the generation's realized cost with the fee charged separately; and `customComfy`, pass-through `step` and `training` quotes, which price no fee |
+| absent | the total is **not itemised** | a host that predates the field; every snapshot of a submitted workflow (`submit` success, `poll`, `cancel`), whose `total` is the generation's realized cost with the fee charged separately; the registered-`step` `submit()` refusal for a missing orchestrator price quote, which refuses before any fee is looked up; and `customComfy`, pass-through `step` and `training` quotes, which price no fee |
 
 - **Against an older host the field is simply absent.** Nothing else changes:
   `total` has the same value with or without it, so an app that never reads

@@ -2138,7 +2138,11 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
   // `null` = this quote is not itemised (a fee-less kind, or `authorFee: false`).
   const authorFeeFor = (body: WorkflowBody): number | null => {
     if (gen.authorFee === false) return null;
-    const quotesFee = body.kind === 'textToImage' || (body.kind === 'step' && 'step' in body);
+    // A REGISTERED step is keyed on the VALUE of `step`, as the host keys it —
+    // never `'step' in body`: `{ kind: 'step', step: undefined, ... }` is a legal
+    // pass-through body, and a pass-through quote prices no fee.
+    const quotesFee =
+      body.kind === 'textToImage' || (body.kind === 'step' && typeof body.step === 'string');
     if (!quotesFee) return null;
     const spec = gen.authorFee ?? 0;
     return typeof spec === 'function' ? spec(body) : spec;
