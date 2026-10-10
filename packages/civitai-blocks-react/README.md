@@ -1244,9 +1244,11 @@ rejects with `the host returned no uploaded image` if the reply carries
 neither an image nor an error.
 
 🔴 **A host that predates this variant ignores `bytes` and opens its upload
-picker instead**, so the call settles on whatever the viewer picks. Do not ship
-a block that relies on `useUploadImageBytes()` until the civitai.com host
-supports it.
+picker instead**, so the call settles on whatever the viewer picks. The hook
+needs the civitai.com host from civitai/civitai#5639 at
+`95bb43430f864549e47ef4dbc5ae5569066826a0` or later, deployed: the upload's app
+stamp only persists from that head. Do not ship a block that relies on
+`useUploadImageBytes()` before then.
 
 ```tsx
 import {
@@ -1286,8 +1288,9 @@ image an accepted upload returns, `uploadImageBytesError` forces a refusal
 (for example `block lacks posts:write:self scope`), and `onUploadImageBytes`
 reports what was accepted. The mock's `CREATE_POST_FROM_APP` accepts the
 uploaded `imageId`. The mock does not model the page-only rule, the scope
-check, the real scan, or an older host's picker. `dev:live` refuses every
-`bytes` upload.
+check, the real scan, or an older host's picker. `dev:live` has no bytes path:
+it replies dismissed, so `upload` rejects with `the host returned no uploaded
+image`.
 
 ### `useSaveImage()`
 

@@ -68,11 +68,15 @@ export interface UseUploadImageBytes {
  *   not a `Blob` or a typed array, which the host refuses.
  * - 🔴 **A host that predates the variant ignores `bytes` and opens its picker.**
  *   Then the promise settles on whatever the viewer picks, or rejects with
- *   `the host returned no uploaded image` on a dismiss. Do not ship a block
- *   relying on this before the civitai.com host supports it.
+ *   `the host returned no uploaded image` on a dismiss. It needs the host from
+ *   civitai/civitai#5639 at `95bb43430f864549e47ef4dbc5ae5569066826a0` or later,
+ *   deployed (the upload's app stamp only persists from that head). Do not ship
+ *   a block relying on this before then.
  *
  * Under `createMockHost` / `Harness` the host's admission rules are modelled
- * (see `MockHostOptions.uploadImageBytesResult`). `dev:live` refuses it.
+ * (see `MockHostOptions.uploadImageBytesResult`). `dev:live` has no bytes
+ * path: it replies dismissed, so `upload` rejects with
+ * `the host returned no uploaded image`.
  *
  * @example
  * const { upload } = useUploadImageBytes();

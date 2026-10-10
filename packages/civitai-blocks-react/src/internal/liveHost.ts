@@ -115,8 +115,7 @@
  *   • GET_WILDCARD_PACK — needs the session-authed resolve plus the in-tab
  *     zip/yaml parse that lives in civitai, not this SDK. Replies `parse-failed`.
  *   • OPEN_IMAGE_UPLOAD — needs the host's native modal + session-authed byte
- *     pipeline. Replies DISMISSED (the hook resolves `null`); the `bytes`
- *     variant replies with a refusal.
+ *     pipeline. Replies DISMISSED (the hook resolves `null`).
  *   • SAVE_IMAGE — the download bridge is the production host's unsandboxed top
  *     frame plus its CDN origin allowlist / gated per-viewer read. Replies with
  *     a refusal (#386).
@@ -1493,29 +1492,6 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
             // the hook resolves to `null`) and log an actionable message. Honest-
             // by-design — never fabricate a moderated image id. Mirrors the
             // OPEN_BUZZ_PURCHASE "no headless contract" pattern.
-            //
-            // The `bytes` variant (civitai/civitai#5639) gets an explicit
-            // `error` instead: its hook has no "dismissed" outcome, and the
-            // upload needs the production host's session-authed store and
-            // persist, which this harness does not have.
-            const p = (typed.payload ?? {}) as { bytes?: unknown };
-            if (p.bytes != null) {
-              if (!isRoutableRequestId(requestId)) return;
-              logOnce(
-                'open-image-upload-bytes',
-                'OPEN_IMAGE_UPLOAD { bytes } is not supported in dev:live (the upload needs the ' +
-                  "production host's session-authed store and persist). Replying with a refusal. " +
-                  'Use dev:mock to exercise the upload path.',
-              );
-              dispatchToBlock({
-                type: 'IMAGE_UPLOAD_RESULT',
-                payload: {
-                  requestId,
-                  error: 'uploading image bytes is not supported in dev:live — use dev:mock',
-                },
-              });
-              return;
-            }
             logOnce(
               'open-image-upload',
               'OPEN_IMAGE_UPLOAD received but live dev mode cannot serve the native upload ' +

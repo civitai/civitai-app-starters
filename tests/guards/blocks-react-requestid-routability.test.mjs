@@ -224,7 +224,7 @@ test('no routability or wire-shape decision is open-coded outside the helper', (
  * file that had none.
  */
 const HELPER_CALL_LEDGER = {
-  'internal/liveHost.ts': 17, // +1: OPEN_IMAGE_UPLOAD { bytes } refusal drops an unroutable requestId (#582)
+  'internal/liveHost.ts': 16,
   'internal/mockHost.ts': 18, // +1 SAVE_IMAGE (#583), +1 OPEN_IMAGE_UPLOAD { bytes } (#582)
   'transport/iframeTransport.ts': 2,
   'transport/validate.ts': 36,
