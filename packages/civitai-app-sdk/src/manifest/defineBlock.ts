@@ -49,6 +49,7 @@ import Ajv2020, { type ErrorObject, type ValidateFunction } from 'ajv/dist/2020.
 import { BlockManifestError } from '../blocks/manifestError.js';
 import { BLOCK_SCOPES } from '../blocks/scopes.js';
 import type { BlockManifest } from '../blocks/types.js';
+import { preferDiscriminatedBranch, type Discriminator } from './discriminatedBranch.js';
 
 /**
  * Rules `defineBlock` applies that the canonical schema does NOT express in
@@ -197,7 +198,11 @@ function canonicalValidator(): ValidateFunction {
   // scaffold. The gap is recorded in KNOWN_GAPS, not shouted at the author on
   // every boot. NOTE this silences Ajv's own diagnostics only; validation
   // errors are returned in `validate.errors`, never logged.
-  const ajv = new Ajv2020({ allErrors: true, strict: false, logger: false });
+  //
+  // `verbose: true` puts the failed keyword's own `schema` and the offending
+  // `data` on each error. `preferDiscriminatedBranch` reads both off a failed
+  // `oneOf` / `anyOf`; it changes which error is REPORTED, never the verdict.
+  const ajv = new Ajv2020({ allErrors: true, strict: false, logger: false, verbose: true });
   compiled = ajv.compile(loadCanonicalSchema());
   return compiled;
 }
@@ -219,12 +224,18 @@ function toDotPath(instancePath: string): string {
 const PASCAL_CASE_PATTERN = /^[A-Z][A-Za-z0-9]*$/;
 
 /**
- * Turns the FIRST Ajv error into a `BlockManifestError`. Ajv's own wording is
- * kept (it is derived from the schema, so it cannot drift); only the field path
- * is reshaped, and one case gets an extra hint because it is the mistake the
+ * Turns ONE Ajv error (the one {@link preferDiscriminatedBranch} picked) into a
+ * `BlockManifestError`. Ajv's own wording is kept (it is derived from the
+ * schema, so it cannot drift); only the field path is reshaped, and two cases
+ * get extra wording: an unknown key inside a discriminated branch says which
+ * branch, and a PascalCase scope gets a hint because it is the mistake the
  * docs see most.
  */
-function toManifestError(error: ErrorObject, manifest: unknown): BlockManifestError {
+function toManifestError(
+  error: ErrorObject,
+  manifest: unknown,
+  discriminator?: Discriminator,
+): BlockManifestError {
   const base = toDotPath(error.instancePath);
   if (error.keyword === 'required') {
     const missing = (error.params as { missingProperty: string }).missingProperty;
@@ -242,7 +253,10 @@ function toManifestError(error: ErrorObject, manifest: unknown): BlockManifestEr
   }
   if (error.keyword === 'additionalProperties') {
     const extra = (error.params as { additionalProperty: string }).additionalProperty;
-    message = `${shown}.${extra} is not a known property here`;
+    message = discriminator
+      ? `${shown}.${extra} is not a known property when \`${discriminator.key}\` is ` +
+        JSON.stringify(discriminator.value)
+      : `${shown}.${extra} is not a known property here`;
     return new BlockManifestError(message, field === '' ? extra : `${field}.${extra}`);
   }
 
@@ -319,11 +333,10 @@ export function defineBlock(config: DefineBlockConfig): BlockManifest {
   // whatever Ajv rejects, this rejects.
   const validate = canonicalValidator();
   if (!validate(manifest)) {
-    const errors = validate.errors ?? [];
-    const first = errors[0];
+    const picked = preferDiscriminatedBranch(validate.errors ?? []);
     /* c8 ignore next */
-    if (!first) throw new BlockManifestError('manifest failed schema validation');
-    throw toManifestError(first, manifest);
+    if (!picked) throw new BlockManifestError('manifest failed schema validation');
+    throw toManifestError(picked.error, manifest, picked.discriminator);
   }
 
   // (2) The prose-only server rejections. Strictly additive, one per
