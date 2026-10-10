@@ -304,6 +304,36 @@ describe('a failed discriminated oneOf reports the member the author wrote', () 
       `${AT}.on.label`,
       `manifest.${AT}.on.label is not a known property when \`type\` is "boolean"`,
     ],
+    // PREFIX-NAMED SIBLINGS. `…/s` is a string prefix of `…/seconds` without
+    // being its parent, so the two declarations' errors must not be pooled.
+    // The longer-name-first cases are the ones that go wrong if they are: the
+    // shorter sibling's members then swallow every error of the longer one and
+    // what is left to report is its summary ("must match exactly one schema in
+    // oneOf"). The shorter-name-first cases pin the other order.
+    [
+      'prefix-named siblings, longer name first (`seconds` then `s`)',
+      decl({ seconds: { type: 'number', min: 0 }, s: { type: 'enum', values: ['a'], x: 1 } }),
+      `${AT}.seconds.min`,
+      `manifest.${AT}.seconds.min is not a known property when \`type\` is "number"`,
+    ],
+    [
+      'prefix-named siblings, longer name first (`count_total` then `count`)',
+      decl({ count_total: { type: 'boolean', label: 'x' }, count: { type: 'number', values: ['1'] } }),
+      `${AT}.count_total.label`,
+      `manifest.${AT}.count_total.label is not a known property when \`type\` is "boolean"`,
+    ],
+    [
+      'prefix-named siblings, shorter name first (`s` then `seconds`)',
+      decl({ s: { type: 'enum', values: ['a'], x: 1 }, seconds: { type: 'number', min: 0 } }),
+      `${AT}.s.x`,
+      `manifest.${AT}.s.x is not a known property when \`type\` is "enum"`,
+    ],
+    [
+      'prefix-named siblings, shorter name first (`count` then `count_total`)',
+      decl({ count: { type: 'number', values: ['1'] }, count_total: { type: 'boolean', label: 'x' } }),
+      `${AT}.count.values`,
+      `manifest.${AT}.count.values is not a known property when \`type\` is "number"`,
+    ],
   ];
 
   it.each(cases)('%s', (_label, manifest, field, message) => {
@@ -383,10 +413,15 @@ function interfaceBody(src: string, name: string): string {
  * `SHAPE_LEDGER` and empty this again.
  *
  * A `DEEP_TYPED_AHEAD` entry is matched on the PATH itself, so it can exempt a
- * new shape under a key the schema already has (`analytics.events.*.range`). A
- * new first-level shape needs an entry in each list: its key in `TYPED_AHEAD`
- * and its path (`foo`, or `foo[]` for an array of objects) in
- * `DEEP_TYPED_AHEAD`.
+ * new shape under a key the schema already has (`analytics.events.*.range`).
+ *
+ * A new FIRST-LEVEL shape always needs its path (`foo`, or `foo[]` for an
+ * array of objects) in `DEEP_TYPED_AHEAD`, because the walker sees every
+ * first-level shape. Whether it ALSO needs its key in `TYPED_AHEAD` depends on
+ * how the schema declares it: the older NESTED test collects a top-level
+ * property only when it carries `properties` inline (directly, or on its
+ * `items`), so an inline shape needs both entries, and one declared only
+ * through composition (`allOf` / `oneOf` / `anyOf`) needs the deep entry alone.
  */
 const TYPED_AHEAD: string[] = [];
 const DEEP_TYPED_AHEAD: string[] = [];

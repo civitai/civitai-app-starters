@@ -56,6 +56,7 @@ const shapeSchema = (keyword: 'oneOf' | 'anyOf') => ({
   properties: {
     shape: { [keyword]: [circle, rect] },
     shapes: { type: 'array', items: { [keyword]: [circle, rect] } },
+    named: { type: 'object', additionalProperties: { [keyword]: [circle, rect] } },
   },
 });
 
@@ -105,6 +106,34 @@ describe.each(['oneOf', 'anyOf'] as const)('preferDiscriminatedBranch: a discrim
 
     const second = pick(schema, { shapes: [{ kind: 'circle', r: 5 }, { kind: 'rect', w: 3 }] });
     expect(second.at).toBe(`required @ /shapes/1 ← #/properties/shapes/items/${keyword}/1/required`);
+  });
+
+  /**
+   * `/named/count` is a string prefix of `/named/count_total` but not its
+   * parent. "Inside this instance" must mean the path itself or one under it
+   * (`…/`), or the shorter sibling's members claim the longer sibling's errors.
+   */
+  describe('instances whose names are prefixes of each other', () => {
+    const longer = { kind: 'rect', w: 3 }; // names member 1; `h` is missing
+    const shorter = { kind: 'circle', r: 5, bogus: 1 }; // names member 0; `bogus` is unknown
+    const path = `#/properties/named/additionalProperties/${keyword}`;
+
+    it('longer name first: its own member’s error is reported, not its summary', () => {
+      const { errors, at, discriminator } = pick(schema, { named: { count_total: longer, count: shorter } });
+      // CONTROL: both instances failed, so the shorter one's members are in play.
+      expect(errors.filter((e) => e.keyword === keyword).map((e) => e.instancePath)).toEqual([
+        '/named/count_total',
+        '/named/count',
+      ]);
+      expect(at).toBe(`required @ /named/count_total ← ${path}/1/required`);
+      expect(discriminator).toEqual({ key: 'kind', value: 'rect' });
+    });
+
+    it('shorter name first: its own member’s error is reported', () => {
+      const { at, discriminator } = pick(schema, { named: { count: shorter, count_total: longer } });
+      expect(at).toBe(`additionalProperties @ /named/count ← ${path}/0/additionalProperties`);
+      expect(discriminator).toEqual({ key: 'kind', value: 'circle' });
+    });
   });
 });
 
